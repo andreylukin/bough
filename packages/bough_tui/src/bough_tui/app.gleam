@@ -42,6 +42,8 @@ pub type Model {
     status: String,
     pending: Bool,
     frame: Int,
+    // Set when the workspace can't be sandboxed by nono (home or an ancestor).
+    note: Option(String),
   )
 }
 
@@ -71,6 +73,7 @@ pub fn init() -> #(Model, List(fn() -> Msg)) {
       status: "connecting to " <> server <> " …",
       pending: False,
       frame: 0,
+      note: unsandboxable_note(project),
     )
   #(model, [fn() { SessionCreated(client.create_session(server, project)) }])
 }
@@ -142,6 +145,20 @@ fn tick() -> Msg {
   Tick
 }
 
+/// nono keeps its protected state inside $HOME, so it refuses to sandbox the
+/// home directory or any ancestor of it. Warn instead of failing mid-task.
+fn unsandboxable_note(project: String) -> Option(String) {
+  let home = envoy.get("HOME") |> result.unwrap("")
+  case home != "" && string.starts_with(home <> "/", project <> "/") {
+    True ->
+      Some(
+        "⚠ nono can't sandbox this directory (it contains nono's own state). "
+        <> "Quit with Ctrl+X and run `bough` from a project subdirectory.",
+      )
+    False -> None
+  }
+}
+
 // --- View ----------------------------------------------------------------
 
 pub fn view(model: Model) -> shore.Node(Msg) {
@@ -164,7 +181,11 @@ fn conversation(model: Model) -> shore.Node(Msg) {
     True -> [thinking_block(model.frame)]
     False -> []
   }
-  let body = case history, thinking {
+  let banner = case model.note {
+    Some(text) -> [ui.text_wrapped_styled(text, Some(style.Red), None), ui.text("")]
+    None -> []
+  }
+  let main = case history, thinking {
     [], [] -> [
       ui.text_styled(
         "Tab to focus · type a task · Enter to send",
@@ -174,7 +195,7 @@ fn conversation(model: Model) -> shore.Node(Msg) {
     ]
     _, _ -> list.append(history, thinking)
   }
-  ui.box_styled(body, Some("conversation"), Some(style.Blue))
+  ui.box_styled(list.append(banner, main), Some("conversation"), Some(style.Blue))
 }
 
 fn render_entry(entry: Entry) -> List(shore.Node(Msg)) {
@@ -292,11 +313,18 @@ fn status(model: Model) -> shore.Node(Msg) {
   )
 }
 
+fn workspace_color(model: Model) -> style.Color {
+  case model.note {
+    Some(_) -> style.Red
+    None -> style.Cyan
+  }
+}
+
 fn network(model: Model) -> shore.Node(Msg) {
   ui.box_styled(
     [
       ui.text_styled("workspace", Some(style.White), None),
-      ui.text_wrapped_styled(model.project, Some(style.Cyan), None),
+      ui.text_wrapped_styled(model.project, Some(workspace_color(model)), None),
       ui.br(),
       ui.text_styled("policy", Some(style.White), None),
       ui.text_styled("· bash   sandbox · net BLOCKED", Some(style.Green), None),
