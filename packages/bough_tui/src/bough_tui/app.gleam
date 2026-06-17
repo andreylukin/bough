@@ -126,9 +126,11 @@ pub fn update(model: Model, msg: Msg) -> #(Model, List(fn() -> Msg)) {
 
     ScrollBy(n) -> {
       // Clamp to the real range so the counter can't overshoot the top (which
-      // would make the first presses back down do nothing).
+      // would make the first presses back down do nothing). The +2 matches the
+      // two marker rows scroll_window reserves once scrolled, so the very first
+      // line is reachable.
       let max_scroll =
-        int.max(list.length(transcript(model)) - conversation_rows(), 0)
+        int.max(list.length(transcript(model)) - conversation_rows() + 2, 0)
       #(Model(..model, scroll: int.clamp(model.scroll + n, 0, max_scroll)), [])
     }
 

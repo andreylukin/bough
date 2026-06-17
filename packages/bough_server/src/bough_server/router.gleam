@@ -21,6 +21,7 @@ import envoy
 import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/http.{Get, Post}
+import gleam/int
 import gleam/json
 import gleam/option.{type Option, None, Some}
 import gleam/result
@@ -28,7 +29,9 @@ import wisp.{type Request, type Response}
 
 const system_prompt = "You are bough, a coding agent operating inside a sandboxed workspace. Use the tools to accomplish the user's task: `bash` runs in a sandbox with no network and workspace read/write; `read`/`write`/`edit` manage files. Prefer absolute paths under the workspace. Be concise."
 
-const default_model = "claude-sonnet-4-6"
+const default_model = "claude-haiku-4-5-20251001"
+
+const default_max_turns = 50
 
 pub fn handle_request(req: Request) -> Response {
   case wisp.path_segments(req), req.method {
@@ -132,7 +135,9 @@ fn run_agent(tree: SessionTree, content: String) -> Response {
     Error(_) -> json_error("ANTHROPIC_API_KEY is not set")
     Ok(api_key) -> {
       let model = envoy.get("BOUGH_MODEL") |> result.unwrap(default_model)
-      case agent.run(api_key, model, tree.project, system_prompt, content) {
+      case
+        agent.run(api_key, model, tree.project, system_prompt, content, max_turns())
+      {
         Error(message) -> {
           let _ = session_manager.save(tree)
           json_error(message)
@@ -153,6 +158,13 @@ fn run_agent(tree: SessionTree, content: String) -> Response {
         }
       }
     }
+  }
+}
+
+fn max_turns() -> Int {
+  case envoy.get("BOUGH_MAX_TURNS") {
+    Ok(v) -> int.parse(v) |> result.unwrap(default_max_turns)
+    Error(_) -> default_max_turns
   }
 }
 
@@ -205,6 +217,7 @@ fn launch_run(id: String, tree: SessionTree, content: String) -> Response {
               tree.project,
               system_prompt,
               content,
+              max_turns(),
               fn(steps) { run_store.write(id, "running", steps, "") },
             )
           {

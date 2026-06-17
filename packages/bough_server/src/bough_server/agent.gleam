@@ -8,12 +8,11 @@
 import bough_server/anthropic
 import bough_server/json_value.{type JsonValue, JArray, JObject, JString}
 import bough_server/tools
+import gleam/int
 import gleam/json
 import gleam/list
 import gleam/result
 import gleam/string
-
-const max_turns = 16
 
 pub type Step {
   StepText(text: String)
@@ -31,8 +30,11 @@ pub fn run(
   workspace: String,
   system: String,
   user_prompt: String,
+  max_turns: Int,
 ) -> Result(Outcome, String) {
-  run_streaming(api_key, model, workspace, system, user_prompt, fn(_) { Nil })
+  run_streaming(api_key, model, workspace, system, user_prompt, max_turns, fn(_) {
+    Nil
+  })
 }
 
 /// Like `run`, but invokes `emit` with the full chronological transcript after
@@ -43,9 +45,20 @@ pub fn run_streaming(
   workspace: String,
   system: String,
   user_prompt: String,
+  max_turns: Int,
   emit: fn(List(Step)) -> Nil,
 ) -> Result(Outcome, String) {
-  loop(api_key, model, workspace, system, [user_text(user_prompt)], 0, [], emit)
+  loop(
+    api_key,
+    model,
+    workspace,
+    system,
+    [user_text(user_prompt)],
+    0,
+    max_turns,
+    [],
+    emit,
+  )
 }
 
 fn loop(
@@ -55,12 +68,31 @@ fn loop(
   system: String,
   messages: List(JsonValue),
   turn: Int,
+  max_turns: Int,
   // Newest first; reversed when emitted / returned.
   steps: List(Step),
   emit: fn(List(Step)) -> Nil,
 ) -> Result(Outcome, String) {
   case turn >= max_turns {
-    True -> Error("agent exceeded max turns")
+    // Don't discard the work done so far: end the run with the transcript
+    // intact plus a note, instead of erroring it away.
+    True -> {
+      let steps =
+        emit_step(
+          StepText(
+            "⚠ stopped: reached the "
+            <> int.to_string(max_turns)
+            <> "-turn limit (raise BOUGH_MAX_TURNS to allow more)",
+          ),
+          steps,
+          emit,
+        )
+      Ok(Outcome(
+        text: "stopped at the turn limit",
+        turns: turn,
+        steps: list.reverse(steps),
+      ))
+    }
     False -> {
       use resp <- result.try(anthropic.complete(
         api_key,
@@ -90,6 +122,7 @@ fn loop(
             system,
             list.append(messages, [user_blocks(list.reverse(result_blocks))]),
             turn + 1,
+            max_turns,
             steps,
             emit,
           )
