@@ -1,14 +1,13 @@
 //// The bough TUI application (shore / The Elm Architecture).
 ////
-//// Layout: a conversation pane beside a network side pane, an input line, and
-//// a status line (SPEC.md §9). Network calls run as shore effects (separate
-//// processes) so the UI stays responsive while the agent works.
-////
-//// Not yet wired: live egress streaming into the network pane and rule editing
-//// (need server SSE + a rules endpoint), and the session-tree overlay.
+//// Layout (SPEC.md §9): a conversation pane beside a network side pane, an
+//// input line, and a status line. Network calls run as shore effects so the
+//// UI stays responsive; an animated "thinking" block plays while the agent
+//// works. Live egress streaming and the tree overlay are still pending.
 
 import bough_tui/client
 import envoy
+import gleam/erlang/process
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
@@ -19,6 +18,8 @@ import shore/style
 import shore/ui
 
 const default_server = "http://127.0.0.1:4096"
+
+const spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
 pub type ChatLine {
   ChatLine(role: String, text: String)
@@ -33,6 +34,8 @@ pub type Model {
     // Newest first; reversed for display.
     chat: List(ChatLine),
     status: String,
+    pending: Bool,
+    frame: Int,
   )
 }
 
@@ -41,6 +44,7 @@ pub type Msg {
   InputChanged(String)
   Submit
   AgentReplied(Result(String, String))
+  Tick
 }
 
 pub fn init() -> #(Model, List(fn() -> Msg)) {
@@ -59,6 +63,8 @@ pub fn init() -> #(Model, List(fn() -> Msg)) {
       input: "",
       chat: [],
       status: "connecting to " <> server <> " …",
+      pending: False,
+      frame: 0,
     )
   #(model, [fn() { SessionCreated(client.create_session(server, project)) }])
 }
@@ -79,6 +85,7 @@ pub fn update(model: Model, msg: Msg) -> #(Model, List(fn() -> Msg)) {
       Model(
         ..model,
         status: "ready",
+        pending: False,
         chat: [ChatLine("bough", text), ..model.chat],
       ),
       [],
@@ -87,10 +94,17 @@ pub fn update(model: Model, msg: Msg) -> #(Model, List(fn() -> Msg)) {
       Model(
         ..model,
         status: "error",
+        pending: False,
         chat: [ChatLine("error", e), ..model.chat],
       ),
       [],
     )
+
+    Tick ->
+      case model.pending {
+        True -> #(Model(..model, frame: model.frame + 1), [tick])
+        False -> #(model, [])
+      }
   }
 }
 
@@ -102,14 +116,27 @@ fn submit(model: Model) -> #(Model, List(fn() -> Msg)) {
           ..model,
           input: "",
           status: "thinking …",
+          pending: True,
+          frame: 0,
           chat: [ChatLine("you", text), ..model.chat],
         )
       let server = model.server
-      #(model, [fn() { AgentReplied(client.send_message(server, id, text)) }])
+      #(model, [
+        fn() { AgentReplied(client.send_message(server, id, text)) },
+        tick,
+      ])
     }
     _, _ -> #(model, [])
   }
 }
+
+/// Self-scheduling animation tick (~120ms) for the thinking spinner.
+fn tick() -> Msg {
+  process.sleep(120)
+  Tick
+}
+
+// --- View ----------------------------------------------------------------
 
 pub fn view(model: Model) -> shore.Node(Msg) {
   layout.grid(
@@ -126,37 +153,109 @@ pub fn view(model: Model) -> shore.Node(Msg) {
 }
 
 fn conversation(model: Model) -> shore.Node(Msg) {
-  let lines = case model.chat {
-    [] -> [ui.text("Press Tab to focus the input, type a task, Enter to send.")]
-    chat ->
-      chat
-      |> list.reverse
-      |> list.map(fn(line) { ui.text_wrapped(line.role <> ": " <> line.text) })
+  let history = model.chat |> list.reverse |> list.flat_map(render_message)
+  let thinking = case model.pending {
+    True -> [thinking_block(model.frame)]
+    False -> []
   }
-  ui.box(lines, Some("conversation"))
+  let body = case history, thinking {
+    [], [] -> [
+      ui.text_styled(
+        "Tab to focus · type a task · Enter to send",
+        Some(style.Cyan),
+        None,
+      ),
+    ]
+    _, _ -> list.append(history, thinking)
+  }
+  ui.box_styled(body, Some("conversation"), Some(style.Blue))
+}
+
+fn render_message(line: ChatLine) -> List(shore.Node(Msg)) {
+  let #(label, color) = case line.role {
+    "you" -> #("▌ you", style.Cyan)
+    "bough" -> #("▌ bough", style.Green)
+    _ -> #("▌ error", style.Red)
+  }
+  let header = ui.text_styled(label, Some(color), None)
+  let body = case line.role {
+    "bough" -> render_markdown(line.text)
+    _ -> [ui.text_wrapped(line.text)]
+  }
+  list.flatten([[header], body, [ui.text("")]])
+}
+
+/// Lightweight markdown: style headings and turn rules into lines. Everything
+/// else (tables, code) is left as wrapped text.
+fn render_markdown(text: String) -> List(shore.Node(Msg)) {
+  text
+  |> string.split("\n")
+  |> list.map(render_md_line)
+}
+
+fn render_md_line(line: String) -> shore.Node(Msg) {
+  let trimmed = string.trim_end(line)
+  case
+    strip_prefix(trimmed, "### "),
+    strip_prefix(trimmed, "## "),
+    strip_prefix(trimmed, "# ")
+  {
+    Ok(h), _, _ | _, Ok(h), _ | _, _, Ok(h) ->
+      ui.text_styled(h, Some(style.Magenta), None)
+    _, _, _ ->
+      case trimmed == "---" || trimmed == "***" || trimmed == "___" {
+        True -> ui.hr()
+        False -> ui.text_wrapped(line)
+      }
+  }
+}
+
+fn strip_prefix(s: String, prefix: String) -> Result(String, Nil) {
+  case string.starts_with(s, prefix) {
+    True -> Ok(string.drop_start(s, string.length(prefix)))
+    False -> Error(Nil)
+  }
+}
+
+fn thinking_block(frame: Int) -> shore.Node(Msg) {
+  let glyph = case list.drop(spinner, frame % 10) {
+    [g, ..] -> g
+    [] -> "⠋"
+  }
+  ui.text_styled(glyph <> " thinking …", Some(style.Yellow), None)
 }
 
 fn message_input(model: Model) -> shore.Node(Msg) {
-  ui.box(
+  ui.box_styled(
     [ui.input_submit("> ", model.input, style.Fill, InputChanged, Submit, False)],
     Some("message — Tab to focus"),
+    Some(style.Cyan),
   )
 }
 
 fn status(model: Model) -> shore.Node(Msg) {
-  ui.text(model.status <> "   ·   Tab: focus   Enter: send   Ctrl+X: quit")
+  let color = case string.starts_with(model.status, "error") {
+    True -> style.Red
+    False -> style.Magenta
+  }
+  ui.text_styled(
+    model.status <> "   ·   Tab: focus   Enter: send   Ctrl+X: quit",
+    Some(color),
+    None,
+  )
 }
 
 fn network(_model: Model) -> shore.Node(Msg) {
-  ui.box(
+  ui.box_styled(
     [
-      ui.text("policy"),
-      ui.text("· bash  → sandbox, network BLOCKED"),
-      ui.text("· files → in-process (unsandboxed)"),
+      ui.text_styled("policy", Some(style.White), None),
+      ui.text_styled("· bash   sandbox · net BLOCKED", Some(style.Green), None),
+      ui.text_styled("· files  in-process (unsandboxed)", Some(style.Yellow), None),
       ui.br(),
-      ui.text("live egress feed:"),
-      ui.text("(pending server SSE)"),
+      ui.text_styled("live egress feed", Some(style.White), None),
+      ui.text_styled("(pending server SSE)", Some(style.Blue), None),
     ],
     Some("network"),
+    Some(style.Magenta),
   )
 }
