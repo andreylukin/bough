@@ -56,6 +56,8 @@ pub type Model {
     suggestions: List(String),
     // Rows scrolled up from the bottom; 0 follows the latest output.
     scroll: Int,
+    // When true, tool results show their full output instead of a few lines.
+    expand_output: Bool,
   )
 }
 
@@ -69,6 +71,8 @@ pub type Msg {
   Tick
   // Scroll the transcript by N rows (positive = back into history).
   ScrollBy(Int)
+  // Expand/collapse full tool output.
+  ToggleOutput
 }
 
 pub fn init() -> #(Model, List(fn() -> Msg)) {
@@ -94,6 +98,7 @@ pub fn init() -> #(Model, List(fn() -> Msg)) {
       files: [],
       suggestions: [],
       scroll: 0,
+      expand_output: False,
     )
   // Both effects run off the init path (the actor initialiser has a ~1s
   // budget); scanning the workspace synchronously here would time it out.
@@ -133,6 +138,8 @@ pub fn update(model: Model, msg: Msg) -> #(Model, List(fn() -> Msg)) {
         int.max(list.length(transcript(model)) - conversation_rows() + 2, 0)
       #(Model(..model, scroll: int.clamp(model.scroll + n, 0, max_scroll)), [])
     }
+
+    ToggleOutput -> #(Model(..model, expand_output: !model.expand_output), [])
 
     Submit ->
       case model.suggestions {
@@ -356,11 +363,12 @@ pub fn view(model: Model) -> shore.Node(Msg) {
 /// row budget and scroll bounds always agree.
 fn transcript(model: Model) -> List(shore.Node(Msg)) {
   let width = conv_width()
+  let expand = model.expand_output
   let history =
-    model.chat |> list.reverse |> list.flat_map(render_entry(_, width))
+    model.chat |> list.reverse |> list.flat_map(render_entry(_, width, expand))
   let live = case model.pending {
     True ->
-      list.append(render_entry(Bough(model.running_steps), width), [
+      list.append(render_entry(Bough(model.running_steps), width, expand), [
         thinking_block(model.frame),
       ])
     False -> []
@@ -408,6 +416,7 @@ fn scroll_keys() -> List(shore.Node(Msg)) {
     ui.keybind(key.PageDown, ScrollBy(-10)),
     ui.keybind(key.Char("k"), ScrollBy(1)),
     ui.keybind(key.Char("j"), ScrollBy(-1)),
+    ui.keybind(key.Char("o"), ToggleOutput),
   ]
 }
 
@@ -549,7 +558,11 @@ fn suggestion_view(suggestions: List(String)) -> List(shore.Node(Msg)) {
   }
 }
 
-fn render_entry(entry: Entry, width: Int) -> List(shore.Node(Msg)) {
+fn render_entry(
+  entry: Entry,
+  width: Int,
+  expand: Bool,
+) -> List(shore.Node(Msg)) {
   case entry {
     You(text) ->
       list.flatten([
@@ -566,19 +579,19 @@ fn render_entry(entry: Entry, width: Int) -> List(shore.Node(Msg)) {
     Bough(steps) ->
       list.flatten([
         [header("▌ bough", style.Green)],
-        list.flat_map(steps, render_step(_, width)),
+        list.flat_map(steps, render_step(_, width, expand)),
         [ui.text("")],
       ])
   }
 }
 
-fn render_step(step: Step, width: Int) -> List(shore.Node(Msg)) {
+fn render_step(step: Step, width: Int, expand: Bool) -> List(shore.Node(Msg)) {
   case step {
     Text(text) -> render_markdown(text, width)
     ToolCall(name, input) -> [
       ui.text_styled("⚙ " <> format_tool_call(name, input), Some(style.Yellow), None),
     ]
-    ToolResult(_name, output) -> render_result(output)
+    ToolResult(_name, output) -> render_result(output, width, expand)
   }
 }
 
@@ -604,20 +617,32 @@ fn json_field(input: String, key: String) -> Result(String, Nil) {
   |> result.replace_error(Nil)
 }
 
-fn render_result(output: String) -> List(shore.Node(Msg)) {
+fn render_result(
+  output: String,
+  width: Int,
+  expand: Bool,
+) -> List(shore.Node(Msg)) {
   case string.trim_end(output) {
     "" -> [rail("(no output)"), ui.text("")]
     trimmed -> {
       let lines = string.split(trimmed, "\n")
-      let shown =
-        lines |> list.take(result_lines) |> list.map(fn(l) { rail(truncate(l, 160)) })
-      let more = case list.length(lines) - result_lines {
-        extra if extra > 0 -> [
-          rail("…(+" <> int.to_string(extra) <> " more lines)"),
-        ]
-        _ -> []
+      let total = list.length(lines)
+      // One row per line (truncated to the rail width) so the row budget and
+      // scroll stay accurate when expanded.
+      let railed = fn(ls) { list.map(ls, fn(l) { rail(truncate(l, width - 4)) }) }
+      case expand {
+        True -> list.flatten([railed(lines), [ui.text("")]])
+        False -> {
+          let shown = railed(list.take(lines, result_lines))
+          let more = case total - result_lines {
+            extra if extra > 0 -> [
+              rail("▸ +" <> int.to_string(extra) <> " lines · Esc then o to expand"),
+            ]
+            _ -> []
+          }
+          list.flatten([shown, more, [ui.text("")]])
+        }
       }
-      list.flatten([shown, more, [ui.text("")]])
     }
   }
 }
@@ -693,7 +718,9 @@ fn status(model: Model) -> shore.Node(Msg) {
       ui.text_styled(
         "SCROLL ↑"
           <> int.to_string(model.scroll)
-          <> "   ·   ↑/↓ PgUp/PgDn (or j/k) scroll   ·   ↓ to latest   ·   Tab: type",
+          <> "   ·   ↑/↓ PgUp/PgDn scroll   ·   o: "
+          <> output_label(model)
+          <> "   ·   ↓ latest   ·   Tab: type",
         Some(style.Yellow),
         None,
       )
@@ -704,11 +731,20 @@ fn status(model: Model) -> shore.Node(Msg) {
       }
       ui.text_styled(
         model.status
-          <> "   ·   Esc then ↑/↓: scroll   ·   Enter: send   Ctrl+X: quit",
+          <> "   ·   Esc then ↑/↓ scroll · o "
+          <> output_label(model)
+          <> "   ·   Ctrl+X: quit",
         Some(color),
         None,
       )
     }
+  }
+}
+
+fn output_label(model: Model) -> String {
+  case model.expand_output {
+    True -> "collapse output"
+    False -> "expand output"
   }
 }
 
