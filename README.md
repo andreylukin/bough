@@ -37,5 +37,14 @@ Or per package: `cd packages/<name> && gleam check`.
 
 ## Status
 
-Scaffold. Stub modules compile and type-check; nothing is wired end-to-end yet.
-Next is the v1 thin vertical slice — see [SPEC.md §10](SPEC.md).
+Early slices of the v1 vertical slice (SPEC.md §10) are working:
+
+- Server boots (wisp/mist) with `/`, `/health`, `/doc`.
+- Session CRUD with JSONL persistence to `~/.bough/sessions/`
+  (`POST /session`, `GET /session/:id`, `POST /session/:id/entry`).
+- TUI client connects to the server.
+- nono bridge launches/stops real sandboxes (`nono_bridge`), with a pure,
+  unit-tested args builder driven from a capability `Profile`.
+
+Next: capture rollback snapshots per node + live proxy-audit feed into the
+network side pane, then the Anthropic provider + agent loop.

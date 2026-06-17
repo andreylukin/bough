@@ -23,6 +23,7 @@ gleam_http = ">= 4.3.0 and < 5.0.0"
 envoy = ">= 1.2.0 and < 2.0.0"
 simplifile = ">= 2.4.0 and < 3.0.0"
 gleam_json = ">= 3.1.0 and < 4.0.0"
+shellout = ">= 1.8.0 and < 2.0.0"
 
 [dev_dependencies]
 gleeunit = ">= 1.0.0 and < 2.0.0"
