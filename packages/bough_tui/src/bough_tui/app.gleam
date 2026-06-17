@@ -17,10 +17,11 @@ import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 import shore
-import simplifile
+import shore/key
 import shore/layout
 import shore/style
 import shore/ui
+import simplifile
 
 const default_server = "http://127.0.0.1:4096"
 
@@ -53,6 +54,8 @@ pub type Model {
     files: List(String),
     // Current `@`-mention matches for the active token; empty when inactive.
     suggestions: List(String),
+    // Rows scrolled up from the bottom; 0 follows the latest output.
+    scroll: Int,
   )
 }
 
@@ -64,6 +67,8 @@ pub type Msg {
   Started(Result(Nil, String))
   Polled(Result(client.RunState, String))
   Tick
+  // Scroll the transcript by N rows (positive = back into history).
+  ScrollBy(Int)
 }
 
 pub fn init() -> #(Model, List(fn() -> Msg)) {
@@ -88,6 +93,7 @@ pub fn init() -> #(Model, List(fn() -> Msg)) {
       note: unsandboxable_note(project),
       files: [],
       suggestions: [],
+      scroll: 0,
     )
   // Both effects run off the init path (the actor initialiser has a ~1s
   // budget); scanning the workspace synchronously here would time it out.
@@ -108,9 +114,23 @@ pub fn update(model: Model, msg: Msg) -> #(Model, List(fn() -> Msg)) {
     FilesScanned(files) -> #(Model(..model, files: files), [])
 
     InputChanged(value) -> #(
-      Model(..model, input: value, suggestions: suggestions_for(value, model.files)),
+      Model(
+        ..model,
+        input: value,
+        suggestions: suggestions_for(value, model.files),
+        // Typing snaps the view back to the latest output.
+        scroll: 0,
+      ),
       [],
     )
+
+    ScrollBy(n) -> {
+      // Clamp to the real range so the counter can't overshoot the top (which
+      // would make the first presses back down do nothing).
+      let max_scroll =
+        int.max(list.length(transcript(model)) - conversation_rows(), 0)
+      #(Model(..model, scroll: int.clamp(model.scroll + n, 0, max_scroll)), [])
+    }
 
     Submit ->
       case model.suggestions {
@@ -161,6 +181,7 @@ fn submit(model: Model) -> #(Model, List(fn() -> Msg)) {
           ..model,
           input: "",
           suggestions: [],
+          scroll: 0,
           status: "thinking …",
           pending: True,
           frame: 0,
@@ -312,8 +333,11 @@ fn accept_completion(input: String, choice: String) -> String {
 // --- View ----------------------------------------------------------------
 
 pub fn view(model: Model) -> shore.Node(Msg) {
+  // gap MUST stay 0: shore's calc_sizes allocates the full height to the rows
+  // and then adds gaps on top, so any gap overflows the grid and pushes the
+  // status line off the bottom of the screen.
   layout.grid(
-    gap: 1,
+    gap: 0,
     rows: [style.Fill, style.Px(3), style.Px(1)],
     cols: [style.Fill, style.Pct(32)],
     cells: [
@@ -325,7 +349,10 @@ pub fn view(model: Model) -> shore.Node(Msg) {
   )
 }
 
-fn conversation(model: Model) -> shore.Node(Msg) {
+/// All transcript rows (banner, history, in-flight steps, `@` picker) as one
+/// node-per-visual-row list. Shared by the view and by scroll clamping so the
+/// row budget and scroll bounds always agree.
+fn transcript(model: Model) -> List(shore.Node(Msg)) {
   let width = conv_width()
   let history =
     model.chat |> list.reverse |> list.flat_map(render_entry(_, width))
@@ -337,8 +364,7 @@ fn conversation(model: Model) -> shore.Node(Msg) {
     False -> []
   }
   let banner = case model.note {
-    Some(text) ->
-      list.append(wrap_styled(text, width, style.Red), [ui.text("")])
+    Some(text) -> list.append(wrap_styled(text, width, style.Red), [ui.text("")])
     None -> []
   }
   let main = case history, live {
@@ -351,44 +377,88 @@ fn conversation(model: Model) -> shore.Node(Msg) {
     ]
     _, _ -> list.append(history, live)
   }
-  let body = list.flatten([banner, main, suggestion_view(model.suggestions)])
+  list.flatten([banner, main, suggestion_view(model.suggestions)])
+}
+
+fn conversation(model: Model) -> shore.Node(Msg) {
   // shore renders every child top-down with no clipping, so an overflowing
-  // conversation would spill past the box into the input. Follow the tail:
-  // keep only the most recent lines that fit the pane.
+  // conversation would spill past the box into the input. Show a window of the
+  // rows that fit, offset by the scroll position (0 = follow the latest).
+  let content =
+    scroll_window(transcript(model), conversation_rows(), model.scroll)
+  // KeyBinds fire only while the input is unfocused (press Esc), so scrolling
+  // is a deliberate mode — shore swallows these keys while you're typing.
   ui.box_styled(
-    tail_to_fit(body, conversation_rows()),
+    list.append(content, scroll_keys()),
     Some("conversation"),
     Some(style.Blue),
   )
 }
 
-/// Keep the last `budget` rows of the transcript so the newest output is always
-/// visible; prepend a marker noting how many earlier lines are hidden.
-fn tail_to_fit(
+/// Non-visible keybinds that scroll the transcript. They only trigger when no
+/// input is focused (Esc clears focus), since shore routes keys to a focused
+/// input first.
+fn scroll_keys() -> List(shore.Node(Msg)) {
+  [
+    ui.keybind(key.Up, ScrollBy(1)),
+    ui.keybind(key.Down, ScrollBy(-1)),
+    ui.keybind(key.PageUp, ScrollBy(10)),
+    ui.keybind(key.PageDown, ScrollBy(-10)),
+    ui.keybind(key.Char("k"), ScrollBy(1)),
+    ui.keybind(key.Char("j"), ScrollBy(-1)),
+  ]
+}
+
+/// The visible window of transcript rows. With more rows than fit, a marker
+/// tops the pane (and bottoms it when scrolled up) so position is legible.
+fn scroll_window(
   nodes: List(shore.Node(Msg)),
   budget: Int,
+  scroll: Int,
 ) -> List(shore.Node(Msg)) {
   let total = list.length(nodes)
-  case total > budget {
-    False -> nodes
-    True -> {
-      let hidden = total - budget + 1
-      let marker =
-        ui.text_styled(
-          "⋯ " <> int.to_string(hidden) <> " earlier lines",
-          Some(style.Blue),
-          None,
-        )
-      [marker, ..list.drop(nodes, hidden)]
+  case total <= budget {
+    True -> nodes
+    False -> {
+      let scrolled = scroll > 0
+      // Reserve a row for the top marker (always, since total > budget) and the
+      // bottom marker (only when scrolled up off the latest output).
+      let inner = int.max(budget - 1 - bool_int(scrolled), 1)
+      let max_scroll = total - inner
+      let s = int.clamp(scroll, 0, max_scroll)
+      let start = int.max(total - inner - s, 0)
+      let visible = nodes |> list.drop(start) |> list.take(inner)
+      let above = start
+      let below = total - start - inner
+      let top = case above > 0 {
+        True -> [marker("⋯ " <> int.to_string(above) <> " above")]
+        False -> []
+      }
+      let bottom = case below > 0 {
+        True -> [marker("⋯ " <> int.to_string(below) <> " below")]
+        False -> []
+      }
+      list.flatten([top, visible, bottom])
     }
   }
 }
 
+fn marker(text: String) -> shore.Node(Msg) {
+  ui.text_styled(text, Some(style.Blue), None)
+}
+
+fn bool_int(b: Bool) -> Int {
+  case b {
+    True -> 1
+    False -> 0
+  }
+}
+
 /// Rows available inside the conversation box: terminal height minus the input
-/// box (3), status line (1), grid gaps (2) and the box border (2).
+/// box (3), status line (1) and the box border (2). gap is 0 (see view).
 fn conversation_rows() -> Int {
   case term_rows() {
-    Ok(n) -> int.max(n - 8, 5)
+    Ok(n) -> int.max(n - 6, 5)
     Error(_) -> 20
   }
 }
@@ -616,15 +686,28 @@ fn message_input(model: Model) -> shore.Node(Msg) {
 }
 
 fn status(model: Model) -> shore.Node(Msg) {
-  let color = case string.starts_with(model.status, "error") {
-    True -> style.Red
-    False -> style.Magenta
+  case model.scroll > 0 {
+    True ->
+      ui.text_styled(
+        "SCROLL ↑"
+          <> int.to_string(model.scroll)
+          <> "   ·   ↑/↓ PgUp/PgDn (or j/k) scroll   ·   ↓ to latest   ·   Tab: type",
+        Some(style.Yellow),
+        None,
+      )
+    False -> {
+      let color = case string.starts_with(model.status, "error") {
+        True -> style.Red
+        False -> style.Magenta
+      }
+      ui.text_styled(
+        model.status
+          <> "   ·   Esc then ↑/↓: scroll   ·   Enter: send   Ctrl+X: quit",
+        Some(color),
+        None,
+      )
+    }
   }
-  ui.text_styled(
-    model.status <> "   ·   Tab: focus   Enter: send   Ctrl+X: quit",
-    Some(color),
-    None,
-  )
 }
 
 fn workspace_color(model: Model) -> style.Color {
