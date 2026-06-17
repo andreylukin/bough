@@ -5,8 +5,13 @@
 //// `to_args` and `parse_session_id` are pure (unit-tested); `launch`/`stop`
 //// shell out via shellout.
 
-import bough_core/nono.{type AuditEvent, type Profile, type Snapshot}
+import bough_core/nono.{
+  type AuditEvent, type Profile, type Snapshot, Allow, AuditEvent,
+}
+import gleam/dynamic/decode
+import gleam/json
 import gleam/list
+import gleam/option.{None}
 import gleam/result
 import gleam/string
 import shellout
@@ -69,20 +74,80 @@ pub fn stop(session_id: String) -> Result(Nil, String) {
   }
 }
 
-// --- Not yet implemented (later slices) ----------------------------------
+// --- Network audit feed (SPEC.md §7) -------------------------------------
 
-/// Tail the proxy audit log for a session, feeding the network side pane
-/// (SPEC.md §7).
-pub fn audit_events(_session_id: String) -> Result(List(AuditEvent), String) {
-  Error("nono_bridge.audit_events: not implemented")
+/// Read the proxy audit log for a session as `AuditEvent`s for the network
+/// side pane. `session_id` is nono's audit session id (YYYYMMDD-HHMMSS-PID).
+pub fn audit_events(session_id: String) -> Result(List(AuditEvent), String) {
+  case
+    shellout.command("nono", ["audit", "show", session_id, "--json"], ".", [])
+  {
+    Ok(output) -> parse_network_events(output)
+    Error(#(_code, message)) -> Error(message)
+  }
 }
 
-/// Capture a rollback snapshot of the current filesystem state (SPEC.md §4.1).
+/// Parse `nono audit show --json` into network `AuditEvent`s.
+pub fn parse_network_events(json: String) -> Result(List(AuditEvent), String) {
+  json.parse(json, audit_decoder())
+  |> result.replace_error("could not parse nono audit JSON")
+}
+
+fn audit_decoder() -> decode.Decoder(List(AuditEvent)) {
+  use events <- decode.field(
+    "network_events",
+    decode.list(network_event_decoder()),
+  )
+  decode.success(events)
+}
+
+fn network_event_decoder() -> decode.Decoder(AuditEvent) {
+  use host <- decode.field("target", decode.string)
+  use port <- decode.field("port", decode.int)
+  use method <- decode.field("method", decode.optional(decode.string))
+  use path <- decode.field("path", decode.optional(decode.string))
+  use decision_s <- decode.field("decision", decode.string)
+  use reason <- decode.field("reason", decode.optional(decode.string))
+  use timestamp <- decode.field("timestamp_unix_ms", decode.int)
+  case nono.decision_from_string(decision_s) {
+    Ok(decision) ->
+      decode.success(AuditEvent(
+        host: host,
+        port: port,
+        method: method,
+        path: path,
+        decision: decision,
+        reason: reason,
+        timestamp: timestamp,
+      ))
+    Error(_) ->
+      decode.failure(
+        AuditEvent(host, port, None, None, Allow, None, timestamp),
+        "NetDecision",
+      )
+  }
+}
+
+// --- Snapshots (SPEC.md §4.1) --------------------------------------------
+
+/// Restore a snapshot before continuing from a forked node.
+pub fn restore(snapshot: Snapshot) -> Result(Nil, String) {
+  case shellout.command("nono", restore_args(snapshot), ".", []) {
+    Ok(_) -> Ok(Nil)
+    Error(#(_code, message)) -> Error(message)
+  }
+}
+
+pub fn restore_args(snapshot: Snapshot) -> List(String) {
+  [
+    "rollback", "restore", snapshot.session_id, "--snapshot",
+    snapshot.reference,
+  ]
+}
+
+/// On-demand, per-write-turn snapshot capture is not a nono CLI primitive —
+/// nono snapshots at session boundaries under `--rollback`. Cadence is an open
+/// design question (SPEC.md §11); deferred.
 pub fn snapshot(_session_id: String) -> Result(Snapshot, String) {
-  Error("nono_bridge.snapshot: not implemented")
-}
-
-/// Restore a snapshot before continuing from a forked node (SPEC.md §4.1).
-pub fn restore(_snapshot: Snapshot) -> Result(Nil, String) {
-  Error("nono_bridge.restore: not implemented")
+  Error("nono_bridge.snapshot: deferred — see SPEC.md §11")
 }

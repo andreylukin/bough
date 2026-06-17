@@ -1,5 +1,6 @@
-import bough_core/nono
+import bough_core/nono.{Allow, AuditEvent, Deny, Snapshot}
 import bough_server/nono_bridge
+import gleam/option.{None, Some}
 import gleeunit
 
 pub fn main() -> Nil {
@@ -34,6 +35,34 @@ pub fn parse_session_id_test() {
 
 pub fn parse_session_id_missing_test() {
   assert nono_bridge.parse_session_id("nothing here") == Error(Nil)
+}
+
+pub fn parse_network_events_test() {
+  // Shape taken verbatim from `nono audit show --json`.
+  let json =
+    "{\"network_events\":["
+    <> "{\"timestamp_unix_ms\":1781670296845,\"mode\":\"connect\",\"decision\":\"allow\",\"target\":\"example.com\",\"port\":443,\"method\":\"CONNECT\",\"path\":null,\"status\":null,\"reason\":null},"
+    <> "{\"timestamp_unix_ms\":1781670296934,\"mode\":\"connect\",\"decision\":\"deny\",\"denial_category\":\"host_denied\",\"target\":\"api.github.com\",\"port\":443,\"method\":null,\"path\":null,\"status\":null,\"reason\":\"host api.github.com is not in the allowlist\"}"
+    <> "]}"
+
+  assert nono_bridge.parse_network_events(json)
+    == Ok([
+      AuditEvent("example.com", 443, Some("CONNECT"), None, Allow, None, 1781670296845),
+      AuditEvent(
+        "api.github.com",
+        443,
+        None,
+        None,
+        Deny,
+        Some("host api.github.com is not in the allowlist"),
+        1781670296934,
+      ),
+    ])
+}
+
+pub fn restore_args_test() {
+  assert nono_bridge.restore_args(Snapshot("20260617-002456-39161", "1", 0))
+    == ["rollback", "restore", "20260617-002456-39161", "--snapshot", "1"]
 }
 
 /// Live integration: drive nono through the bridge to launch and stop a real

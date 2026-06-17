@@ -45,6 +45,9 @@ Early slices of the v1 vertical slice (SPEC.md §10) are working:
 - TUI client connects to the server.
 - nono bridge launches/stops real sandboxes (`nono_bridge`), with a pure,
   unit-tested args builder driven from a capability `Profile`.
+- nono proxy audit log parsed into `AuditEvent`s (the network side-pane data),
+  plus `rollback restore` plumbing. Per-write-turn snapshot capture is deferred
+  (nono snapshots at session boundaries — SPEC.md §11).
 
-Next: capture rollback snapshots per node + live proxy-audit feed into the
-network side pane, then the Anthropic provider + agent loop.
+Next: render the chat + live network side pane in the TUI, then the Anthropic
+provider + agent loop.
