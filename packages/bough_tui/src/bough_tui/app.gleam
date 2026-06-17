@@ -14,6 +14,7 @@ import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 import shore
+import shore/layout
 import shore/style
 import shore/ui
 
@@ -106,19 +107,39 @@ fn submit(model: Model) -> #(Model, List(fn() -> Msg)) {
 }
 
 pub fn view(model: Model) -> shore.Node(Msg) {
-  ui.col([
-    ui.row([conversation(model), network(model)]),
-    ui.input_submit("> ", model.input, style.Fill, InputChanged, Submit, False),
-    ui.text(model.status),
-  ])
+  layout.grid(
+    gap: 1,
+    rows: [style.Fill, style.Px(3), style.Px(1)],
+    cols: [style.Fill, style.Pct(32)],
+    cells: [
+      layout.cell(conversation(model), #(0, 0), #(0, 0)),
+      layout.cell(network(model), #(0, 0), #(1, 1)),
+      layout.cell(message_input(model), #(1, 1), #(0, 1)),
+      layout.cell(status(model), #(2, 2), #(0, 1)),
+    ],
+  )
 }
 
 fn conversation(model: Model) -> shore.Node(Msg) {
-  let lines =
-    model.chat
-    |> list.reverse
-    |> list.map(fn(line) { ui.text_wrapped(line.role <> ": " <> line.text) })
+  let lines = case model.chat {
+    [] -> [ui.text("Press Tab to focus the input, type a task, Enter to send.")]
+    chat ->
+      chat
+      |> list.reverse
+      |> list.map(fn(line) { ui.text_wrapped(line.role <> ": " <> line.text) })
+  }
   ui.box(lines, Some("conversation"))
+}
+
+fn message_input(model: Model) -> shore.Node(Msg) {
+  ui.box(
+    [ui.input_submit("> ", model.input, style.Fill, InputChanged, Submit, False)],
+    Some("message — Tab to focus"),
+  )
+}
+
+fn status(model: Model) -> shore.Node(Msg) {
+  ui.text(model.status <> "   ·   Tab: focus   Enter: send   Ctrl+X: quit")
 }
 
 fn network(_model: Model) -> shore.Node(Msg) {
