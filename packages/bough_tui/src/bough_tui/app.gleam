@@ -45,7 +45,12 @@ pub type Msg {
 
 pub fn init() -> #(Model, List(fn() -> Msg)) {
   let server = envoy.get("BOUGH_SERVER") |> result.unwrap(default_server)
-  let project = envoy.get("PWD") |> result.unwrap(".")
+  // BOUGH_PROJECT is set by the `bough` shell function to the directory you
+  // launched from (the package's own cwd would otherwise leak in via PWD).
+  let project =
+    envoy.get("BOUGH_PROJECT")
+    |> result.or(envoy.get("PWD"))
+    |> result.unwrap(".")
   let model =
     Model(
       server: server,
