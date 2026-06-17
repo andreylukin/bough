@@ -74,6 +74,29 @@ pub fn get(tree: SessionTree, id: String) -> Option(Entry) {
   |> option.from_result
 }
 
+/// The active branch: entries from the root down to `active_leaf`, oldest
+/// first. This is the conversation to replay for context (SPEC.md §4) — a fork
+/// just repoints `active_leaf` at an earlier node, yielding a different path.
+pub fn path(tree: SessionTree) -> List(Entry) {
+  case tree.active_leaf {
+    None -> []
+    Some(leaf) -> walk_up(tree, leaf, [])
+  }
+}
+
+fn walk_up(tree: SessionTree, id: String, acc: List(Entry)) -> List(Entry) {
+  case get(tree, id) {
+    None -> acc
+    Some(e) -> {
+      let acc = [e, ..acc]
+      case e.parent_id {
+        Some(parent) -> walk_up(tree, parent, acc)
+        None -> acc
+      }
+    }
+  }
+}
+
 /// Move the active leaf to an existing node — the basis for `/tree` jumps and
 /// `/fork` (SPEC.md §4).
 pub fn set_leaf(tree: SessionTree, id: String) -> SessionTree {

@@ -22,6 +22,7 @@ import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/http.{Get, Post}
 import gleam/int
+import gleam/list
 import gleam/json
 import gleam/option.{type Option, None, Some}
 import gleam/result
@@ -38,12 +39,14 @@ pub fn handle_request(req: Request) -> Response {
     [], _ -> json_ok("{\"service\":\"bough\",\"version\":\"" <> bough_core.version <> "\"}")
     ["health"], _ -> json_ok("{\"status\":\"ok\"}")
     ["doc"], _ -> doc()
+    ["sessions"], Get -> list_sessions()
     ["session"], Post -> create_session(req)
     ["session", id], Get -> get_session(id)
     ["session", id, "entry"], Post -> add_entry(req, id)
     ["session", id, "message"], Post -> send_message(req, id)
     ["session", id, "run"], Post -> start_run(req, id)
     ["session", id, "run"], Get -> get_run(id)
+    ["session", id, "fork"], Post -> fork_session(req, id)
     _, _ -> wisp.not_found()
   }
 }
@@ -128,6 +131,7 @@ fn send_message(req: Request, id: String) -> Response {
 }
 
 fn run_agent(tree: SessionTree, content: String) -> Response {
+  let history = history_of(tree)
   let user = make_entry(session.User, content, tree.active_leaf)
   let tree = session.append(tree, user)
 
@@ -136,7 +140,15 @@ fn run_agent(tree: SessionTree, content: String) -> Response {
     Ok(api_key) -> {
       let model = envoy.get("BOUGH_MODEL") |> result.unwrap(default_model)
       case
-        agent.run(api_key, model, tree.project, system_prompt, content, max_turns())
+        agent.run(
+          api_key,
+          model,
+          tree.project,
+          system_prompt,
+          history,
+          content,
+          max_turns(),
+        )
       {
         Error(message) -> {
           let _ = session_manager.save(tree)
@@ -166,6 +178,61 @@ fn max_turns() -> Int {
     Ok(v) -> int.parse(v) |> result.unwrap(default_max_turns)
     Error(_) -> default_max_turns
   }
+}
+
+/// The active branch as `#(role, content)` turns for the agent to replay.
+fn history_of(tree: SessionTree) -> List(#(String, String)) {
+  session.path(tree)
+  |> list.filter_map(fn(e) {
+    case e.role {
+      session.User -> Ok(#("user", e.content))
+      session.Assistant -> Ok(#("assistant", e.content))
+      _ -> Error(Nil)
+    }
+  })
+}
+
+// --- Sessions list + fork (resume / branch) ------------------------------
+
+fn list_sessions() -> Response {
+  case session_manager.list() {
+    Ok(summaries) ->
+      json_ok(json.to_string(json.array(summaries, summary_to_json)))
+    Error(_) -> wisp.internal_server_error()
+  }
+}
+
+fn summary_to_json(s: session_manager.Summary) -> json.Json {
+  json.object([
+    #("id", json.string(s.id)),
+    #("project", json.string(s.project)),
+    #("title", json.string(s.title)),
+    #("turns", json.int(s.turns)),
+    #("updated", json.int(s.updated)),
+  ])
+}
+
+fn fork_session(req: Request, id: String) -> Response {
+  use body <- wisp.require_json(req)
+  case decode.run(body, fork_decoder()) {
+    Error(_) -> wisp.bad_request("expected {\"entry_id\": string}")
+    Ok(entry_id) ->
+      case session_manager.load(id) {
+        Error(_) -> wisp.not_found()
+        Ok(tree) -> {
+          let tree = session.set_leaf(tree, entry_id)
+          case session_manager.save(tree) {
+            Ok(_) -> json_ok(json.to_string(session.tree_to_json(tree)))
+            Error(_) -> wisp.internal_server_error()
+          }
+        }
+      }
+  }
+}
+
+fn fork_decoder() -> decode.Decoder(String) {
+  use entry_id <- decode.field("entry_id", decode.string)
+  decode.success(entry_id)
 }
 
 fn make_entry(
@@ -202,6 +269,7 @@ fn launch_run(id: String, tree: SessionTree, content: String) -> Response {
   case envoy.get("ANTHROPIC_API_KEY") {
     Error(_) -> json_error("ANTHROPIC_API_KEY is not set")
     Ok(api_key) -> {
+      let history = history_of(tree)
       let user = make_entry(session.User, content, tree.active_leaf)
       let tree = session.append(tree, user)
       let _ = session_manager.save(tree)
@@ -216,6 +284,7 @@ fn launch_run(id: String, tree: SessionTree, content: String) -> Response {
               model,
               tree.project,
               system_prompt,
+              history,
               content,
               max_turns(),
               fn(steps) { run_store.write(id, "running", steps, "") },

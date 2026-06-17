@@ -29,36 +29,49 @@ pub fn run(
   model: String,
   workspace: String,
   system: String,
+  history: List(#(String, String)),
   user_prompt: String,
   max_turns: Int,
 ) -> Result(Outcome, String) {
-  run_streaming(api_key, model, workspace, system, user_prompt, max_turns, fn(_) {
-    Nil
-  })
+  run_streaming(
+    api_key,
+    model,
+    workspace,
+    system,
+    history,
+    user_prompt,
+    max_turns,
+    fn(_) { Nil },
+  )
 }
 
 /// Like `run`, but invokes `emit` with the full chronological transcript after
-/// each new step is produced.
+/// each new step is produced. `history` is the prior conversation along the
+/// active branch as `#(role, content)` pairs (role "user"/"assistant"), which
+/// is what gives continued and forked sessions their memory.
 pub fn run_streaming(
   api_key: String,
   model: String,
   workspace: String,
   system: String,
+  history: List(#(String, String)),
   user_prompt: String,
   max_turns: Int,
   emit: fn(List(Step)) -> Nil,
 ) -> Result(Outcome, String) {
-  loop(
-    api_key,
-    model,
-    workspace,
-    system,
-    [user_text(user_prompt)],
-    0,
-    max_turns,
-    [],
-    emit,
-  )
+  let messages =
+    list.append(history_to_messages(history), [user_text(user_prompt)])
+  loop(api_key, model, workspace, system, messages, 0, max_turns, [], emit)
+}
+
+fn history_to_messages(history: List(#(String, String))) -> List(JsonValue) {
+  list.map(history, fn(turn) {
+    let #(role, content) = turn
+    case role {
+      "assistant" -> assistant_text(content)
+      _ -> user_text(content)
+    }
+  })
 }
 
 fn loop(
@@ -188,6 +201,10 @@ pub fn step_to_json(step: Step) -> json.Json {
 
 fn user_text(text: String) -> JsonValue {
   JObject([#("role", JString("user")), #("content", JString(text))])
+}
+
+fn assistant_text(text: String) -> JsonValue {
+  JObject([#("role", JString("assistant")), #("content", JString(text))])
 }
 
 fn assistant_msg(content: List(JsonValue)) -> JsonValue {

@@ -8,6 +8,7 @@ import gleam/http/request
 import gleam/http/response
 import gleam/httpc
 import gleam/json
+import gleam/option
 import gleam/result
 import gleam/string
 
@@ -32,6 +33,105 @@ pub type Reply {
 /// Progress of a background agent run (polled).
 pub type RunState {
   RunState(status: String, steps: List(Step), text: String)
+}
+
+/// A stored session, for the resume picker.
+pub type Summary {
+  Summary(id: String, project: String, title: String, turns: Int, updated: Int)
+}
+
+/// One node of a session tree.
+pub type TreeEntry {
+  TreeEntry(
+    id: String,
+    parent_id: String,
+    role: String,
+    content: String,
+  )
+}
+
+pub type Tree {
+  Tree(
+    id: String,
+    project: String,
+    active_leaf: String,
+    entries: List(TreeEntry),
+  )
+}
+
+/// GET `/sessions`; the stored sessions, most recent first.
+pub fn list_sessions(base: String) -> Result(List(Summary), String) {
+  use req <- result.try(
+    request.to(base <> "/sessions") |> result.replace_error("invalid server URL"),
+  )
+  case httpc.send(req) {
+    Error(err) -> Error("cannot reach server: " <> string.inspect(err))
+    Ok(response.Response(status: 200, body: body, ..)) ->
+      json.parse(body, decode.list(summary_decoder()))
+      |> result.replace_error("bad sessions response")
+    Ok(response.Response(status: code, ..)) ->
+      Error("server error " <> string.inspect(code))
+  }
+}
+
+/// GET `/session/:id`; the full tree.
+pub fn get_session(base: String, id: String) -> Result(Tree, String) {
+  use req <- result.try(
+    request.to(base <> "/session/" <> id)
+    |> result.replace_error("invalid server URL"),
+  )
+  case httpc.send(req) {
+    Error(err) -> Error("cannot reach server: " <> string.inspect(err))
+    Ok(response.Response(status: 200, body: body, ..)) ->
+      json.parse(body, tree_decoder())
+      |> result.replace_error("bad session response")
+    Ok(response.Response(status: code, ..)) ->
+      Error("server error " <> string.inspect(code))
+  }
+}
+
+/// POST `/session/:id/fork`; repoint the active leaf, returning the new tree.
+pub fn fork(base: String, id: String, entry_id: String) -> Result(Tree, String) {
+  let body =
+    json.to_string(json.object([#("entry_id", json.string(entry_id))]))
+  use resp <- result.try(post(base, "/session/" <> id <> "/fork", body) |> describe)
+  json.parse(resp, tree_decoder())
+  |> result.replace_error("bad fork response")
+}
+
+fn summary_decoder() -> decode.Decoder(Summary) {
+  use id <- decode.field("id", decode.string)
+  use project <- decode.field("project", decode.string)
+  use title <- decode.field("title", decode.string)
+  use turns <- decode.field("turns", decode.int)
+  use updated <- decode.field("updated", decode.int)
+  decode.success(Summary(id:, project:, title:, turns:, updated:))
+}
+
+fn tree_decoder() -> decode.Decoder(Tree) {
+  use id <- decode.field("id", decode.string)
+  use project <- decode.field("project", decode.string)
+  use active_leaf <- decode.field("active_leaf", decode.optional(decode.string))
+  use entries <- decode.field("entries", decode.list(tree_entry_decoder()))
+  decode.success(Tree(
+    id:,
+    project:,
+    active_leaf: option.unwrap(active_leaf, ""),
+    entries:,
+  ))
+}
+
+fn tree_entry_decoder() -> decode.Decoder(TreeEntry) {
+  use id <- decode.field("id", decode.string)
+  use parent_id <- decode.field("parent_id", decode.optional(decode.string))
+  use role <- decode.field("role", decode.string)
+  use content <- decode.field("content", decode.string)
+  decode.success(TreeEntry(
+    id:,
+    parent_id: option.unwrap(parent_id, ""),
+    role:,
+    content:,
+  ))
 }
 
 /// GET `<base>/health`; returns the response body on success.

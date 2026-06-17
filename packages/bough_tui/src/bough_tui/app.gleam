@@ -71,7 +71,21 @@ pub type Model {
     expand_all: Bool,
     // Set once the user asks to quit.
     quit: Bool,
+    // Which screen is showing: the chat, or a picker overlay.
+    view: View,
+    // Sessions for the resume picker.
+    sessions: List(client.Summary),
+    // The current session's active branch, for the fork/branch picker.
+    branch: List(client.TreeEntry),
+    // Selected row in the active overlay.
+    sel: Int,
   )
+}
+
+pub type View {
+  ChatV
+  SessionsV
+  TreeV
 }
 
 pub type Msg {
@@ -89,6 +103,16 @@ pub type Msg {
   ToggleAll
   SetFocus(Bool)
   Quit
+  // Resume / branch overlays.
+  OpenSessions
+  SessionsLoaded(Result(List(client.Summary), String))
+  OpenTree
+  TreeLoaded(Result(client.Tree, String))
+  PickMove(Int)
+  PickChoose
+  CloseOverlay
+  Resumed(Result(client.Tree, String))
+  Forked(Result(client.Tree, String))
 }
 
 pub fn init() -> #(Model, List(fn() -> Msg)) {
@@ -117,6 +141,10 @@ pub fn init() -> #(Model, List(fn() -> Msg)) {
       expanded: set.new(),
       expand_all: False,
       quit: False,
+      view: ChatV,
+      sessions: [],
+      branch: [],
+      sel: 0,
     )
   #(model, [
     fn() { SessionCreated(client.create_session(server, project)) },
@@ -201,7 +229,148 @@ pub fn update(model: Model, msg: Msg) -> #(Model, List(fn() -> Msg)) {
     SetFocus(f) -> #(Model(..model, focused: f), [])
 
     Quit -> #(Model(..model, quit: True), [])
+
+    OpenSessions -> {
+      let server = model.server
+      #(Model(..model, view: SessionsV, sel: 0, status: "loading sessions …"), [
+        fn() { SessionsLoaded(client.list_sessions(server)) },
+      ])
+    }
+    SessionsLoaded(Ok(sessions)) -> #(
+      Model(..model, sessions: sessions, sel: 0),
+      [],
+    )
+    SessionsLoaded(Error(e)) -> #(
+      Model(..model, view: ChatV, status: "error: " <> e),
+      [],
+    )
+
+    OpenTree ->
+      case model.session {
+        Some(id) -> {
+          let server = model.server
+          #(Model(..model, view: TreeV, sel: 0, status: "loading history …"), [
+            fn() { TreeLoaded(client.get_session(server, id)) },
+          ])
+        }
+        None -> #(model, [])
+      }
+    TreeLoaded(Ok(tree)) -> {
+      let branch = branch_path(tree)
+      #(
+        Model(..model, branch: branch, sel: int.max(list.length(branch) - 1, 0)),
+        [],
+      )
+    }
+    TreeLoaded(Error(e)) -> #(
+      Model(..model, view: ChatV, status: "error: " <> e),
+      [],
+    )
+
+    PickMove(n) -> #(Model(..model, sel: clamp_sel(model, model.sel + n)), [])
+
+    PickChoose -> pick_choose(model)
+
+    CloseOverlay -> #(Model(..model, view: ChatV), [])
+
+    Resumed(Ok(tree)) -> #(
+      Model(
+        ..model,
+        view: ChatV,
+        session: Some(tree.id),
+        project: tree.project,
+        chat: chat_from_tree(tree),
+        scroll: 0,
+        status: "resumed · session " <> tree.id,
+      ),
+      [],
+    )
+    Resumed(Error(e)) -> #(Model(..model, view: ChatV, status: "error: " <> e), [])
+
+    Forked(Ok(tree)) -> #(
+      Model(
+        ..model,
+        view: ChatV,
+        chat: chat_from_tree(tree),
+        scroll: 0,
+        status: "branched · type to continue from here",
+      ),
+      [],
+    )
+    Forked(Error(e)) -> #(Model(..model, view: ChatV, status: "error: " <> e), [])
   }
+}
+
+fn clamp_sel(model: Model, n: Int) -> Int {
+  let len = case model.view {
+    SessionsV -> list.length(model.sessions)
+    TreeV -> list.length(model.branch)
+    ChatV -> 0
+  }
+  int.clamp(n, 0, int.max(len - 1, 0))
+}
+
+fn pick_choose(model: Model) -> #(Model, List(fn() -> Msg)) {
+  let server = model.server
+  case model.view {
+    SessionsV ->
+      case list_at(model.sessions, model.sel) {
+        Ok(s) -> #(Model(..model, status: "resuming …"), [
+          fn() { Resumed(client.get_session(server, s.id)) },
+        ])
+        Error(_) -> #(model, [])
+      }
+    TreeV ->
+      case model.session, list_at(model.branch, model.sel) {
+        Some(id), Ok(e) -> #(Model(..model, status: "branching …"), [
+          fn() { Forked(client.fork(server, id, e.id)) },
+        ])
+        _, _ -> #(model, [])
+      }
+    ChatV -> #(model, [])
+  }
+}
+
+fn list_at(items: List(a), i: Int) -> Result(a, Nil) {
+  items |> list.drop(i) |> list.first
+}
+
+/// The active branch of a fetched tree (root→active_leaf, oldest first).
+fn branch_path(tree: client.Tree) -> List(client.TreeEntry) {
+  case tree.active_leaf {
+    "" -> []
+    leaf -> walk_branch(tree.entries, leaf, [])
+  }
+}
+
+fn walk_branch(
+  entries: List(client.TreeEntry),
+  id: String,
+  acc: List(client.TreeEntry),
+) -> List(client.TreeEntry) {
+  case list.find(entries, fn(e) { e.id == id }) {
+    Ok(e) -> {
+      let acc = [e, ..acc]
+      case e.parent_id {
+        "" -> acc
+        parent -> walk_branch(entries, parent, acc)
+      }
+    }
+    Error(_) -> acc
+  }
+}
+
+/// Rebuild the chat view (newest-first) from a tree's active branch.
+fn chat_from_tree(tree: client.Tree) -> List(Entry) {
+  branch_path(tree)
+  |> list.filter_map(fn(e) {
+    case e.role {
+      "user" -> Ok(You(e.content))
+      "assistant" -> Ok(Bough([client.Text(e.content)]))
+      _ -> Error(Nil)
+    }
+  })
+  |> list.reverse
 }
 
 fn submit(model: Model) -> #(Model, List(fn() -> Msg)) {
@@ -320,10 +489,24 @@ fn on_key(model: Model, ke: event.KeyEvent) -> #(Model, List(fn() -> Msg)) {
         _ -> #(model, [])
       }
     _ ->
-      case model.focused {
-        True -> on_key_typing(model, ke)
-        False -> on_key_command(model, ke)
+      case model.view {
+        ChatV ->
+          case model.focused {
+            True -> on_key_typing(model, ke)
+            False -> on_key_command(model, ke)
+          }
+        _ -> on_key_overlay(model, ke)
       }
+  }
+}
+
+fn on_key_overlay(model: Model, ke: event.KeyEvent) -> #(Model, List(fn() -> Msg)) {
+  case ke.code {
+    event.Esc -> update(model, CloseOverlay)
+    event.UpArrow | event.Char("k") -> update(model, PickMove(-1))
+    event.DownArrow | event.Char("j") -> update(model, PickMove(1))
+    event.Enter -> update(model, PickChoose)
+    _ -> #(model, [])
   }
 }
 
@@ -366,6 +549,8 @@ fn on_key_command(
     event.PageDown -> update(model, ScrollBy(-10))
     event.Char("o") -> update(model, ToggleAll)
     event.Char("g") -> #(scroll_by(model, 100_000), [])
+    event.Char("s") -> update(model, OpenSessions)
+    event.Char("t") -> update(model, OpenTree)
     _ -> #(model, [])
   }
 }
@@ -374,11 +559,13 @@ fn on_mouse(
   model: Model,
   me: event.MouseEvent,
 ) -> #(Model, List(fn() -> Msg)) {
-  case me.kind {
-    event.ScrollUp -> update(model, ScrollBy(3))
-    event.ScrollDown -> update(model, ScrollBy(-3))
-    event.Down(event.Left) -> on_click(model, me.column, me.row)
-    _ -> #(model, [])
+  case model.view, me.kind {
+    ChatV, event.ScrollUp -> update(model, ScrollBy(3))
+    ChatV, event.ScrollDown -> update(model, ScrollBy(-3))
+    ChatV, event.Down(event.Left) -> on_click(model, me.column, me.row)
+    _, event.ScrollUp -> update(model, PickMove(-1))
+    _, event.ScrollDown -> update(model, PickMove(1))
+    _, _ -> #(model, [])
   }
 }
 
@@ -722,6 +909,82 @@ fn bool_int(b: Bool) -> Int {
 // --- Render to etch commands ----------------------------------------------
 
 pub fn render(model: Model) -> List(Command) {
+  case model.view {
+    ChatV -> render_chat(model)
+    SessionsV ->
+      render_overlay(
+        model,
+        "resume session  ·  ↑↓ select · Enter open · Esc cancel",
+        list.map(model.sessions, fn(s) {
+          let when = case s.turns {
+            1 -> "1 turn"
+            n -> int.to_string(n) <> " turns"
+          }
+          one_line(s.title <> "   (" <> when <> ")")
+        }),
+      )
+    TreeV ->
+      render_overlay(
+        model,
+        "branch from a point  ·  ↑↓ select · Enter fork · Esc cancel",
+        list.map(model.branch, fn(e) {
+          let who = case e.role {
+            "user" -> "you   "
+            "assistant" -> "bough "
+            other -> other
+          }
+          one_line(who <> "│ " <> string.replace(e.content, "\n", " "))
+        }),
+      )
+  }
+}
+
+fn one_line(text: String) -> String {
+  text
+}
+
+/// A full-screen list picker (resume / branch), with the selected row arrowed.
+fn render_overlay(
+  model: Model,
+  title: String,
+  items: List(String),
+) -> List(Command) {
+  let #(cols, rows, _conv_w, _conv_h) = dims(model)
+  let inner_h = int.max(rows - 2, 1)
+  let total = list.length(items)
+  let start = case total > inner_h {
+    True -> int.clamp(model.sel - inner_h / 2, 0, total - inner_h)
+    False -> 0
+  }
+  let visible = items |> list.drop(start) |> list.take(inner_h)
+  let body =
+    visible
+    |> list.index_map(fn(text, i) {
+      let selected = start + i == model.sel
+      let prefix = case selected {
+        True -> "› "
+        False -> "  "
+      }
+      case selected {
+        True -> draw(2, i + 1, truncate(prefix <> text, cols - 3), style.Cyan, [style.Bold])
+        False -> draw(2, i + 1, truncate(prefix <> text, cols - 3), style.Default, [])
+      }
+    })
+    |> list.flatten
+  let empty = case total {
+    0 -> draw(2, 1, "(no sessions yet)", style.Grey, [style.Dim])
+    _ -> []
+  }
+  list.flatten([
+    [command.Clear(terminal.All)],
+    box(0, 0, cols, rows, title, style.Cyan),
+    body,
+    empty,
+    [command.HideCursor],
+  ])
+}
+
+fn render_chat(model: Model) -> List(Command) {
   let #(cols, rows, conv_w, conv_h) = dims(model)
   let net_x = conv_w
   let net_w = cols - conv_w
@@ -793,7 +1056,7 @@ fn status_line(model: Model, row: Int, cols: Int) -> List(Command) {
           <> "  ·  Esc: scroll/mouse mode  ·  Enter: send  ·  Ctrl+X: quit"
         False ->
           model.status
-          <> "  ·  wheel/↑↓ scroll · click to expand · o all · i type · Ctrl+X quit"
+          <> "  ·  ↑↓ scroll · s resume · t branch · o expand · i type · Ctrl+X quit"
       }
   }
   let #(color, attrs) = case string.starts_with(model.status, "error") {
