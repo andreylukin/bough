@@ -8,8 +8,10 @@
 
 import bough_tui/client.{type Step, Text, ToolCall, ToolResult}
 import envoy
+import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/int
+import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
@@ -266,10 +268,32 @@ fn render_step(step: Step) -> List(shore.Node(Msg)) {
   case step {
     Text(text) -> render_markdown(text)
     ToolCall(name, input) -> [
-      ui.text_styled("⚙ " <> name <> "  " <> truncate(input, 100), Some(style.Yellow), None),
+      ui.text_styled("⚙ " <> format_tool_call(name, input), Some(style.Yellow), None),
     ]
     ToolResult(_name, output) -> render_result(output)
   }
+}
+
+/// Human-readable tool call: `bash ls`, `read path`, etc., falling back to the
+/// raw JSON input when the expected field is missing.
+fn format_tool_call(name: String, input: String) -> String {
+  let summary = case name {
+    "bash" -> json_field(input, "command")
+    "read" | "write" | "edit" -> json_field(input, "path")
+    _ -> Error(Nil)
+  }
+  case summary {
+    Ok(value) -> name <> "  " <> truncate(value, 120)
+    Error(_) -> name <> "  " <> truncate(input, 120)
+  }
+}
+
+fn json_field(input: String, key: String) -> Result(String, Nil) {
+  json.parse(input, {
+    use value <- decode.field(key, decode.string)
+    decode.success(value)
+  })
+  |> result.replace_error(Nil)
 }
 
 fn render_result(output: String) -> List(shore.Node(Msg)) {
