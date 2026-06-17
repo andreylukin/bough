@@ -79,6 +79,8 @@ pub type Model {
     branch: List(client.TreeEntry),
     // Selected row in the active overlay.
     sel: Int,
+    // Set by --continue: resume this project's latest session once listed.
+    auto_continue: Bool,
   )
 }
 
@@ -145,11 +147,24 @@ pub fn init() -> #(Model, List(fn() -> Msg)) {
       sessions: [],
       branch: [],
       sel: 0,
+      auto_continue: envoy.get("BOUGH_CONTINUE") |> result.is_ok,
     )
-  #(model, [
+  let resume = envoy.get("BOUGH_RESUME") |> result.is_ok
+  // --resume opens the picker on launch; --continue resumes silently once the
+  // session list arrives (handled in SessionsLoaded).
+  let model = case resume {
+    True -> Model(..model, view: SessionsV, status: "resume a session …")
+    False -> model
+  }
+  let base = [
     fn() { SessionCreated(client.create_session(server, project)) },
     fn() { FilesScanned(list_project_files(project)) },
-  ])
+  ]
+  let effects = case resume || model.auto_continue {
+    True -> [fn() { SessionsLoaded(client.list_sessions(server)) }, ..base]
+    False -> base
+  }
+  #(model, effects)
 }
 
 pub fn set_size(model: Model, size: #(Int, Int)) -> Model {
@@ -236,10 +251,25 @@ pub fn update(model: Model, msg: Msg) -> #(Model, List(fn() -> Msg)) {
         fn() { SessionsLoaded(client.list_sessions(server)) },
       ])
     }
-    SessionsLoaded(Ok(sessions)) -> #(
-      Model(..model, sessions: sessions, sel: 0),
-      [],
-    )
+    SessionsLoaded(Ok(sessions)) -> {
+      let model = Model(..model, sessions: sessions, sel: 0)
+      case model.auto_continue {
+        True -> {
+          let server = model.server
+          // Resume this project's most recent session (sessions are newest-first).
+          case list.find(sessions, fn(s) { s.project == model.project }) {
+            Ok(s) -> #(Model(..model, auto_continue: False, status: "continuing …"), [
+              fn() { Resumed(client.get_session(server, s.id)) },
+            ])
+            Error(_) -> #(
+              Model(..model, auto_continue: False, status: "no previous session here — new session"),
+              [],
+            )
+          }
+        }
+        False -> #(model, [])
+      }
+    }
     SessionsLoaded(Error(e)) -> #(
       Model(..model, view: ChatV, status: "error: " <> e),
       [],
