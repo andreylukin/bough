@@ -14,7 +14,7 @@
 import bough_tui/client.{type Step, Text, ToolCall, ToolResult}
 import etch/command.{type Command}
 import etch/event.{type Event}
-import etch/style.{type Color}
+import etch/style.{type Attribute, type Color}
 import etch/terminal
 import envoy
 import gleam/dynamic/decode
@@ -420,11 +420,21 @@ fn conv_inner_h(model: Model) -> Int {
 // --- Transcript (as styled, clickable lines) ------------------------------
 
 pub type CLine {
-  CLine(text: String, color: Color, click: Option(Msg))
+  CLine(text: String, color: Color, attrs: List(Attribute), click: Option(Msg))
 }
 
 fn line(text: String, color: Color) -> CLine {
-  CLine(text, color, None)
+  CLine(text, color, [], None)
+}
+
+/// A bold line (used for turn headers and markdown headings).
+fn bold(text: String, color: Color) -> CLine {
+  CLine(text, color, [style.Bold], None)
+}
+
+/// A dim, low-emphasis line (tool metadata, hints, chrome).
+fn dim(text: String, color: Color) -> CLine {
+  CLine(text, color, [style.Dim], None)
 }
 
 /// Build the whole transcript, one CLine per visual row, threading a counter so
@@ -451,9 +461,9 @@ fn transcript(model: Model) -> List(CLine) {
   }
   let main = case history, live {
     [], [] -> [
-      line(
+      dim(
         "type a task · Enter to send · @ to mention a file · Esc for scroll/mouse",
-        style.Cyan,
+        style.Grey,
       ),
     ]
     _, _ -> list.append(history, live)
@@ -470,7 +480,7 @@ fn render_entry(
   case entry {
     You(text) -> #(
       list.flatten([
-        [line("▌ you", style.Cyan)],
+        [bold("▌ you", style.Cyan)],
         wrap_styled(text, width, style.Default),
         [line("", style.Default)],
       ]),
@@ -478,7 +488,7 @@ fn render_entry(
     )
     Failed(e) -> #(
       list.flatten([
-        [line("▌ error", style.Red)],
+        [bold("▌ error", style.Red)],
         wrap_styled(e, width, style.Red),
         [line("", style.Default)],
       ]),
@@ -492,7 +502,7 @@ fn render_entry(
           #(list.append(ls, more), i2)
         })
       #(
-        list.flatten([[line("▌ bough", style.Green)], step_lines, [line("", style.Default)]]),
+        list.flatten([[bold("▌ bough", style.Green)], step_lines, [line("", style.Default)]]),
         idx2,
       )
     }
@@ -508,7 +518,7 @@ fn render_step(
   case step {
     Text(text) -> #(render_markdown(text, width), idx)
     ToolCall(name, input) -> #(
-      [line("⚙ " <> format_tool_call(name, input), style.Yellow)],
+      [dim("↳ " <> format_tool_call(name, input), style.Grey)],
       idx,
     )
     ToolResult(_name, output) -> #(render_result(output, width, model, idx), idx + 1)
@@ -532,7 +542,14 @@ fn render_result(
         True ->
           list.flatten([
             railed(lines),
-            [CLine("  ▾ click to collapse", style.BrightYellow, Some(ToggleResult(idx)))],
+            [
+              CLine(
+                "  ▾ collapse",
+                style.Cyan,
+                [],
+                Some(ToggleResult(idx)),
+              ),
+            ],
             [line("", style.Default)],
           ])
         False -> {
@@ -540,8 +557,9 @@ fn render_result(
           let more = case total - result_lines {
             extra if extra > 0 -> [
               CLine(
-                "  ▸ +" <> int.to_string(extra) <> " lines · click to expand",
-                style.BrightYellow,
+                "  ▸ +" <> int.to_string(extra) <> " lines",
+                style.Cyan,
+                [],
                 Some(ToggleResult(idx)),
               ),
             ]
@@ -555,25 +573,70 @@ fn render_result(
 }
 
 fn rail(text: String) -> CLine {
+  // Grey but not Dim: secondary to prose, yet legible when expanded for reading.
   line("  │ " <> text, style.Grey)
 }
 
+/// Lightweight markdown. Hierarchy comes from weight (bold headings) and dim
+/// (code/quotes), not a spread of hues — keeps prose the brightest thing.
 fn render_markdown(text: String, width: Int) -> List(CLine) {
-  text
-  |> string.split("\n")
-  |> list.flat_map(fn(l) { render_md_line(l, width) })
+  let lines = string.split(text, "\n")
+  let #(acc, _in_code) =
+    list.fold(lines, #([], False), fn(state, l) {
+      let #(acc, in_code) = state
+      case string.starts_with(string.trim_start(l), "```") {
+        // Fence lines toggle code mode and aren't rendered themselves.
+        True -> #(acc, !in_code)
+        False ->
+          case in_code {
+            True -> #(list.append(acc, [code_line(l, width)]), True)
+            False -> #(list.append(acc, render_md_line(l, width)), False)
+          }
+      }
+    })
+  acc
+}
+
+fn code_line(l: String, width: Int) -> CLine {
+  line("▏ " <> truncate(l, width - 2), style.Cyan)
 }
 
 fn render_md_line(l: String, width: Int) -> List(CLine) {
   let trimmed = string.trim_end(l)
-  case strip_prefix(trimmed, "### "), strip_prefix(trimmed, "## "), strip_prefix(trimmed, "# ") {
-    Ok(h), _, _ | _, Ok(h), _ | _, _, Ok(h) -> [line(h, style.Magenta)]
-    _, _, _ ->
+  case
+    strip_prefix(trimmed, "### "),
+    strip_prefix(trimmed, "## "),
+    strip_prefix(trimmed, "# "),
+    bullet_prefix(string.trim_start(l)),
+    strip_prefix(string.trim_start(l), "> ")
+  {
+    Ok(h), _, _, _, _ | _, Ok(h), _, _, _ | _, _, Ok(h), _, _ ->
+      [bold(h, style.Default)]
+    _, _, _, Ok(rest), _ -> bullet_lines(rest, width)
+    _, _, _, _, Ok(q) -> [dim("▏ " <> truncate(q, width - 2), style.Grey)]
+    _, _, _, _, _ ->
       case trimmed == "---" || trimmed == "***" || trimmed == "___" {
-        True -> [line(string.repeat("─", int.min(width, 24)), style.Grey)]
+        True -> [dim(string.repeat("─", int.min(width, 40)), style.Grey)]
         False -> wrap_plain(l, width)
       }
   }
+}
+
+fn bullet_prefix(s: String) -> Result(String, Nil) {
+  case strip_prefix(s, "- "), strip_prefix(s, "* "), strip_prefix(s, "+ ") {
+    Ok(r), _, _ | _, Ok(r), _ | _, _, Ok(r) -> Ok(r)
+    _, _, _ -> Error(Nil)
+  }
+}
+
+fn bullet_lines(rest: String, width: Int) -> List(CLine) {
+  wrap_text(rest, width - 2)
+  |> list.index_map(fn(l, i) {
+    case i {
+      0 -> line("• " <> l, style.Default)
+      _ -> line("  " <> l, style.Default)
+    }
+  })
 }
 
 fn thinking_line(frame: Int) -> CLine {
@@ -581,19 +644,19 @@ fn thinking_line(frame: Int) -> CLine {
     [g, ..] -> g
     [] -> "⠋"
   }
-  line(glyph <> " thinking …", style.Yellow)
+  dim(glyph <> " thinking …", style.Grey)
 }
 
 fn suggestion_lines(suggestions: List(String)) -> List(CLine) {
   case suggestions {
     [] -> []
     _ -> {
-      let header = line("@ files · Enter completes top", style.Magenta)
+      let header = dim("@ files · Enter completes top", style.Grey)
       let rows =
         list.index_map(suggestions, fn(path, i) {
           case i {
             0 -> line("→ " <> path, style.Cyan)
-            _ -> line("  " <> path, style.White)
+            _ -> dim("  " <> path, style.Grey)
           }
         })
       [line("", style.Default), header, ..rows]
@@ -637,11 +700,11 @@ fn scroll_window(nodes: List(CLine), budget: Int, scroll: Int) -> List(CLine) {
       let above = start
       let below = total - start - inner
       let top = case above > 0 {
-        True -> [line("⋯ " <> int.to_string(above) <> " above", style.BrightGrey)]
+        True -> [dim("⋯ " <> int.to_string(above) <> " above", style.Grey)]
         False -> []
       }
       let bottom = case below > 0 {
-        True -> [line("⋯ " <> int.to_string(below) <> " below", style.BrightGrey)]
+        True -> [dim("⋯ " <> int.to_string(below) <> " below", style.Grey)]
         False -> []
       }
       list.flatten([top, visible, bottom])
@@ -667,7 +730,7 @@ pub fn render(model: Model) -> List(Command) {
     visible_conversation(model)
     |> list.flat_map(fn(pair) {
       let #(row, cl) = pair
-      put(2, row, truncate(cl.text, conv_w - 3), cl.color)
+      draw(2, row, truncate(cl.text, conv_w - 3), cl.color, cl.attrs)
     })
 
   list.flatten([
@@ -696,7 +759,14 @@ fn input_panel(model: Model, conv_h: Int, cols: Int) -> List(Command) {
     True -> string.slice(model.input, string.length(model.input) - avail, avail)
     False -> model.input
   }
-  put(2, conv_h + 1, "> " <> shown, style.Default)
+  let mark_color = case model.focused {
+    True -> style.Cyan
+    False -> style.Grey
+  }
+  list.flatten([
+    draw(2, conv_h + 1, "›", mark_color, []),
+    put(4, conv_h + 1, shown, style.Default),
+  ])
 }
 
 fn cursor(model: Model, conv_h: Int, cols: Int) -> List(Command) {
@@ -726,15 +796,15 @@ fn status_line(model: Model, row: Int, cols: Int) -> List(Command) {
           <> "  ·  wheel/↑↓ scroll · click to expand · o all · i type · Ctrl+X quit"
       }
   }
-  let color = case string.starts_with(model.status, "error") {
-    True -> style.Red
+  let #(color, attrs) = case string.starts_with(model.status, "error") {
+    True -> #(style.Red, [])
     False ->
       case model.scroll > 0 {
-        True -> style.Yellow
-        False -> style.Magenta
+        True -> #(style.Cyan, [])
+        False -> #(style.Grey, [style.Dim])
       }
   }
-  put(0, row, truncate(text, cols), color)
+  draw(0, row, truncate(text, cols), color, attrs)
 }
 
 fn network_panel(model: Model, x: Int, w: Int) -> List(Command) {
@@ -743,40 +813,53 @@ fn network_panel(model: Model, x: Int, w: Int) -> List(Command) {
     None -> style.Cyan
   }
   list.flatten([
-    put(x, 1, "workspace", style.White),
+    draw(x, 1, "workspace", style.Grey, [style.Dim]),
     put(x, 2, truncate(model.project, w), ws_color),
-    put(x, 4, "policy", style.White),
+    draw(x, 4, "policy", style.Grey, [style.Dim]),
     put(x, 5, "· bash   sandbox · net BLOCKED", style.Green),
     put(x, 6, "· files  in-process (unsandboxed)", style.Yellow),
-    put(x, 8, "live egress feed", style.White),
-    put(x, 9, "(pending server SSE)", style.Blue),
+    draw(x, 8, "live egress feed", style.Grey, [style.Dim]),
+    draw(x, 9, "(pending server SSE)", style.Grey, [style.Dim]),
   ])
 }
 
 // --- Box + text drawing primitives ----------------------------------------
 
-fn put(x: Int, y: Int, text: String, color: Color) -> List(Command) {
+fn draw(
+  x: Int,
+  y: Int,
+  text: String,
+  color: Color,
+  attrs: List(Attribute),
+) -> List(Command) {
   [
     command.MoveTo(x, y),
-    command.SetForegroundColor(color),
+    command.SetStyle(style.Style(bg: style.Default, fg: color, attributes: attrs)),
     command.Print(text),
-    command.ResetColor,
+    command.ResetStyle,
   ]
 }
 
-fn box(x: Int, y: Int, w: Int, h: Int, title: String, color: Color) -> List(Command) {
+fn put(x: Int, y: Int, text: String, color: Color) -> List(Command) {
+  draw(x, y, text, color, [])
+}
+
+/// Quiet chrome: dim grey borders with a dim title.
+fn box(x: Int, y: Int, w: Int, h: Int, title: String, _color: Color) -> List(Command) {
   let prefix = "╭─ " <> title <> " "
   let fill = int.max(w - string.length(prefix) - 1, 0)
   let top = prefix <> string.repeat("─", fill) <> "╮"
   let bottom = "╰" <> string.repeat("─", int.max(w - 2, 0)) <> "╯"
+  let c = style.Grey
+  let a = [style.Dim]
   let sides =
     list.repeat(Nil, int.max(h - 2, 0))
     |> list.index_map(fn(_, i) {
       let r = y + i + 1
-      list.flatten([put(x, r, "│", color), put(x + w - 1, r, "│", color)])
+      list.flatten([draw(x, r, "│", c, a), draw(x + w - 1, r, "│", c, a)])
     })
     |> list.flatten
-  list.flatten([put(x, y, top, color), sides, put(x, y + h - 1, bottom, color)])
+  list.flatten([draw(x, y, top, c, a), sides, draw(x, y + h - 1, bottom, c, a)])
 }
 
 // --- `@` autocomplete -----------------------------------------------------
