@@ -1,0 +1,10 @@
+# Gleam / Erlang build artifacts
+build/
+*.beam
+*.ez
+erl_crash.dump
+
+# Keep manifest.toml (lockfiles) committed.
+
+# OS
+.DS_Store
