@@ -42,7 +42,10 @@ Early slices of the v1 vertical slice (SPEC.md §10) are working:
 - Server boots (wisp/mist) with `/`, `/health`, `/doc`.
 - Session CRUD with JSONL persistence to `~/.bough/sessions/`
   (`POST /session`, `GET /session/:id`, `POST /session/:id/entry`).
-- TUI client connects to the server.
+- TUI client (shore) with a conversation pane + network side pane + input
+  line; sends prompts and shows replies. Network calls run as async effects so
+  the UI stays responsive. Run it in a real terminal (`gleam run` in
+  `packages/bough_tui`); set `BOUGH_SERVER` to override the default.
 - nono bridge launches/stops real sandboxes (`nono_bridge`), with a pure,
   unit-tested args builder driven from a capability `Profile`.
 - nono proxy audit log parsed into `AuditEvent`s (the network side-pane data),
@@ -52,5 +55,6 @@ Early slices of the v1 vertical slice (SPEC.md §10) are working:
   in a nono sandbox (network blocked, workspace-scoped); `read`/`write`/`edit`
   manage files. User + assistant turns persist to the session tree.
 
-Next: render the chat + live network side pane in the TUI; sandbox the file
-tools (currently in-process); reconcile per-call vs. session-long sandboxing.
+Next: stream live egress + tool activity into the network pane and add rule
+editing (needs server SSE + a rules endpoint); a session-tree overlay; sandbox
+the file tools (currently in-process).

@@ -1,21 +1,24 @@
-//// bough TUI client.
+//// bough TUI client entry point.
 ////
-//// Connects to a bough server over HTTP + SSE. Default `bough` (no subcommand)
-//// starts a server and attaches this client, opencode-style (SPEC.md §8).
-//// Layout: chat pane + live network side pane, with the session tree as an
-//// overlay (SPEC.md §9). TUI rendering (shore/etch/plushie) is added next,
-//// behind `bough_tui/app`. For now `main` proves it can reach the server.
+//// Starts a shore TUI that talks to a bough server over HTTP (SPEC.md §8, §9).
+//// Set BOUGH_SERVER to point at a non-default server; the session's project
+//// defaults to $PWD.
 
-import bough_tui/client
-import gleam/io
-
-const default_server = "http://127.0.0.1:4096"
+import bough_tui/app
+import gleam/erlang/process
+import shore
 
 pub fn main() -> Nil {
-  io.println("bough TUI — connecting to " <> default_server)
-  case client.health(default_server) {
-    Ok(body) -> io.println("connected: " <> body)
-    Error(_) ->
-      io.println("could not reach bough server — start it with `make serve`")
-  }
+  let exit = process.new_subject()
+  let assert Ok(_actor) =
+    shore.spec(
+      init: app.init,
+      update: app.update,
+      view: app.view,
+      exit: exit,
+      keybinds: shore.default_keybinds(),
+      redraw: shore.on_timer(100),
+    )
+    |> shore.start
+  process.receive_forever(exit)
 }
