@@ -17,6 +17,7 @@ import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 import shore
+import simplifile
 import shore/layout
 import shore/style
 import shore/ui
@@ -48,11 +49,16 @@ pub type Model {
     running_steps: List(Step),
     // Set when the workspace can't be sandboxed by nono (home or an ancestor).
     note: Option(String),
+    // Workspace files (relative paths) for `@` autocomplete, scanned once.
+    files: List(String),
+    // Current `@`-mention matches for the active token; empty when inactive.
+    suggestions: List(String),
   )
 }
 
 pub type Msg {
   SessionCreated(Result(String, String))
+  FilesScanned(List(String))
   InputChanged(String)
   Submit
   Started(Result(Nil, String))
@@ -80,8 +86,15 @@ pub fn init() -> #(Model, List(fn() -> Msg)) {
       frame: 0,
       running_steps: [],
       note: unsandboxable_note(project),
+      files: [],
+      suggestions: [],
     )
-  #(model, [fn() { SessionCreated(client.create_session(server, project)) }])
+  // Both effects run off the init path (the actor initialiser has a ~1s
+  // budget); scanning the workspace synchronously here would time it out.
+  #(model, [
+    fn() { SessionCreated(client.create_session(server, project)) },
+    fn() { FilesScanned(list_project_files(project)) },
+  ])
 }
 
 pub fn update(model: Model, msg: Msg) -> #(Model, List(fn() -> Msg)) {
@@ -92,9 +105,27 @@ pub fn update(model: Model, msg: Msg) -> #(Model, List(fn() -> Msg)) {
     )
     SessionCreated(Error(e)) -> #(Model(..model, status: "error: " <> e), [])
 
-    InputChanged(value) -> #(Model(..model, input: value), [])
+    FilesScanned(files) -> #(Model(..model, files: files), [])
 
-    Submit -> submit(model)
+    InputChanged(value) -> #(
+      Model(..model, input: value, suggestions: suggestions_for(value, model.files)),
+      [],
+    )
+
+    Submit ->
+      case model.suggestions {
+        // A completion is active: Enter accepts the top match instead of
+        // sending. A second Enter (now with no active token) sends.
+        [top, ..] -> #(
+          Model(
+            ..model,
+            input: accept_completion(model.input, top),
+            suggestions: [],
+          ),
+          [],
+        )
+        [] -> submit(model)
+      }
 
     Started(Ok(_)) ->
       case model.session {
@@ -129,6 +160,7 @@ fn submit(model: Model) -> #(Model, List(fn() -> Msg)) {
         Model(
           ..model,
           input: "",
+          suggestions: [],
           status: "thinking …",
           pending: True,
           frame: 0,
@@ -209,6 +241,74 @@ fn unsandboxable_note(project: String) -> Option(String) {
   }
 }
 
+// --- `@` autocomplete ----------------------------------------------------
+
+const max_suggestions = 8
+
+const max_files = 2000
+
+/// Scan the workspace once for files to offer as `@`-mentions. Heavy/noise
+/// directories are skipped; paths are made relative to the project root.
+fn list_project_files(project: String) -> List(String) {
+  case simplifile.get_files(project) {
+    Error(_) -> []
+    Ok(paths) ->
+      paths
+      |> list.map(relativize(_, project))
+      |> list.filter(is_useful_path)
+      |> list.take(max_files)
+  }
+}
+
+fn relativize(path: String, project: String) -> String {
+  case string.starts_with(path, project <> "/") {
+    True -> string.drop_start(path, string.length(project) + 1)
+    False -> path
+  }
+}
+
+fn is_useful_path(path: String) -> Bool {
+  let noise = ["/.git/", "/build/", "/node_modules/", "/.elixir_ls/", "/_build/"]
+  let hidden = string.starts_with(path, ".")
+  !hidden && !list.any(noise, string.contains(path, _))
+}
+
+/// The text after the last unbroken `@…` in the input — the active mention
+/// token — or `None` when there is no live mention to complete.
+fn active_token(input: String) -> Option(String) {
+  case string.split(input, "@") {
+    [] | [_] -> None
+    parts -> {
+      let token = list.last(parts) |> result.unwrap("")
+      case string.contains(token, " ") || string.contains(token, "\n") {
+        True -> None
+        False -> Some(token)
+      }
+    }
+  }
+}
+
+fn suggestions_for(input: String, files: List(String)) -> List(String) {
+  case active_token(input) {
+    None -> []
+    Some(token) -> {
+      let needle = string.lowercase(token)
+      files
+      |> list.filter(fn(f) { string.contains(string.lowercase(f), needle) })
+      |> list.take(max_suggestions)
+    }
+  }
+}
+
+/// Replace the active `@token` with the chosen path (and a trailing space).
+fn accept_completion(input: String, choice: String) -> String {
+  case active_token(input) {
+    None -> input
+    Some(token) ->
+      string.drop_end(input, string.length(token) + 1) <> choice <> " "
+  }
+}
+
 // --- View ----------------------------------------------------------------
 
 pub fn view(model: Model) -> shore.Node(Msg) {
@@ -241,14 +341,77 @@ fn conversation(model: Model) -> shore.Node(Msg) {
   let main = case history, live {
     [], [] -> [
       ui.text_styled(
-        "Tab to focus · type a task · Enter to send",
+        "Tab to focus · type a task · Enter to send · @ to mention a file",
         Some(style.Cyan),
         None,
       ),
     ]
     _, _ -> list.append(history, live)
   }
-  ui.box_styled(list.append(banner, main), Some("conversation"), Some(style.Blue))
+  let body = list.flatten([banner, main, suggestion_view(model.suggestions)])
+  // shore renders every child top-down with no clipping, so an overflowing
+  // conversation would spill past the box into the input. Follow the tail:
+  // keep only the most recent lines that fit the pane.
+  ui.box_styled(
+    tail_to_fit(body, conversation_rows()),
+    Some("conversation"),
+    Some(style.Blue),
+  )
+}
+
+/// Keep the last `budget` rows of the transcript so the newest output is always
+/// visible; prepend a marker noting how many earlier lines are hidden.
+fn tail_to_fit(
+  nodes: List(shore.Node(Msg)),
+  budget: Int,
+) -> List(shore.Node(Msg)) {
+  let total = list.length(nodes)
+  case total > budget {
+    False -> nodes
+    True -> {
+      let hidden = total - budget + 1
+      let marker =
+        ui.text_styled(
+          "⋯ " <> int.to_string(hidden) <> " earlier lines",
+          Some(style.Blue),
+          None,
+        )
+      [marker, ..list.drop(nodes, hidden)]
+    }
+  }
+}
+
+/// Rows available inside the conversation box: terminal height minus the input
+/// box (3), status line (1), grid gaps (2) and the box border (2).
+fn conversation_rows() -> Int {
+  case term_rows() {
+    Ok(n) -> int.max(n - 8, 5)
+    Error(_) -> 20
+  }
+}
+
+type IoError
+
+@external(erlang, "io", "rows")
+fn term_rows() -> Result(Int, IoError)
+
+/// A compact `@`-mention picker; the top match (Enter to accept) is arrowed.
+fn suggestion_view(suggestions: List(String)) -> List(shore.Node(Msg)) {
+  case suggestions {
+    [] -> []
+    _ -> {
+      let header =
+        ui.text_styled("@ files · Enter completes top", Some(style.Magenta), None)
+      let rows =
+        list.index_map(suggestions, fn(path, i) {
+          case i {
+            0 -> ui.text_styled("→ " <> path, Some(style.Cyan), None)
+            _ -> ui.text_styled("  " <> path, Some(style.White), None)
+          }
+        })
+      [ui.hr(), header, ..rows]
+    }
+  }
 }
 
 fn render_entry(entry: Entry) -> List(shore.Node(Msg)) {
