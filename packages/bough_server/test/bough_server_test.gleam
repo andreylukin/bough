@@ -1,5 +1,7 @@
 import bough_core/nono.{Allow, AuditEvent, Deny, Snapshot}
+import bough_server/json_value
 import bough_server/nono_bridge
+import gleam/json
 import gleam/option.{None, Some}
 import gleeunit
 
@@ -58,6 +60,16 @@ pub fn parse_network_events_test() {
         1781670296934,
       ),
     ])
+}
+
+pub fn json_value_round_trip_test() {
+  // Covers the tool-use round-trip: arbitrary JSON must re-encode unchanged.
+  let src =
+    "{\"a\":\"x\",\"n\":1,\"b\":true,\"z\":null,\"arr\":[1,\"two\",false]}"
+  let assert Ok(value) = json.parse(src, json_value.decoder())
+  let assert Ok(reparsed) =
+    json.parse(json.to_string(json_value.to_json(value)), json_value.decoder())
+  assert reparsed == value
 }
 
 pub fn restore_args_test() {

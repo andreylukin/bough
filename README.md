@@ -48,6 +48,9 @@ Early slices of the v1 vertical slice (SPEC.md §10) are working:
 - nono proxy audit log parsed into `AuditEvent`s (the network side-pane data),
   plus `rollback restore` plumbing. Per-write-turn snapshot capture is deferred
   (nono snapshots at session boundaries — SPEC.md §11).
+- Anthropic agent loop with tool use (`POST /session/:id/message`): `bash` runs
+  in a nono sandbox (network blocked, workspace-scoped); `read`/`write`/`edit`
+  manage files. User + assistant turns persist to the session tree.
 
-Next: render the chat + live network side pane in the TUI, then the Anthropic
-provider + agent loop.
+Next: render the chat + live network side pane in the TUI; sandbox the file
+tools (currently in-process); reconcile per-call vs. session-long sandboxing.

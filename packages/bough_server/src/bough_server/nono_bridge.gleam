@@ -19,25 +19,43 @@ import shellout
 /// Build `nono run` arguments from a capability profile. Always detached so the
 /// supervisor keeps the agent running while clients attach/detach (SPEC.md §8).
 pub fn to_args(profile: Profile, command: List(String)) -> List(String) {
-  let filesystem = ["--allow", profile.workspace]
-
-  let network = case profile.block_net {
-    True -> ["--block-net"]
-    False ->
-      list.flat_map(profile.allow_domains, fn(d) { ["--allow-domain", d] })
-  }
-
   let rollback = case profile.rollback {
     True -> ["--rollback", "--no-rollback-prompt"]
     False -> ["--no-rollback"]
   }
 
   list.flatten([
-    ["run", "--detached"],
-    filesystem,
-    network,
+    ["run", "--detached", "--allow", profile.workspace],
+    net_flags(profile),
     rollback,
     ["--"],
+    command,
+  ])
+}
+
+fn net_flags(profile: Profile) -> List(String) {
+  case profile.block_net {
+    True -> ["--block-net"]
+    False ->
+      list.flat_map(profile.allow_domains, fn(d) { ["--allow-domain", d] })
+  }
+}
+
+/// Run a command foreground inside the sandbox and capture its combined output.
+/// Used for one-shot tool execution (e.g. the `bash` tool). Returns whatever
+/// the command printed, even on non-zero exit, so the agent can see errors.
+pub fn run(profile: Profile, command: List(String)) -> String {
+  case shellout.command("nono", run_args(profile, command), profile.workspace, []) {
+    Ok(output) -> output
+    Error(#(_code, output)) -> output
+  }
+}
+
+pub fn run_args(profile: Profile, command: List(String)) -> List(String) {
+  list.flatten([
+    ["run", "-s", "--allow", profile.workspace, "--allow-cwd"],
+    net_flags(profile),
+    ["--no-rollback", "--"],
     command,
   ])
 }
