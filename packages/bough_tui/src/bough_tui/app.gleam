@@ -326,16 +326,19 @@ pub fn view(model: Model) -> shore.Node(Msg) {
 }
 
 fn conversation(model: Model) -> shore.Node(Msg) {
-  let history = model.chat |> list.reverse |> list.flat_map(render_entry)
+  let width = conv_width()
+  let history =
+    model.chat |> list.reverse |> list.flat_map(render_entry(_, width))
   let live = case model.pending {
     True ->
-      list.append(render_entry(Bough(model.running_steps)), [
+      list.append(render_entry(Bough(model.running_steps), width), [
         thinking_block(model.frame),
       ])
     False -> []
   }
   let banner = case model.note {
-    Some(text) -> [ui.text_wrapped_styled(text, Some(style.Red), None), ui.text("")]
+    Some(text) ->
+      list.append(wrap_styled(text, width, style.Red), [ui.text("")])
     None -> []
   }
   let main = case history, live {
@@ -390,10 +393,70 @@ fn conversation_rows() -> Int {
   }
 }
 
+/// Text columns inside the conversation box: the Fill grid cell (terminal
+/// width minus the 32%% network pane and the gap) minus the box chrome. Kept
+/// slightly narrow so our wrapping never under-counts shore's own wrapping
+/// (which would let content overflow the box again).
+fn conv_width() -> Int {
+  case term_cols() {
+    Ok(n) -> int.max(n * 68 / 100 - 6, 20)
+    Error(_) -> 80
+  }
+}
+
 type IoError
 
 @external(erlang, "io", "rows")
 fn term_rows() -> Result(Int, IoError)
+
+@external(erlang, "io", "columns")
+fn term_cols() -> Result(Int, IoError)
+
+/// Wrap text to `width` columns, one returned string per visual row, so that
+/// counting nodes equals counting rows (what `tail_to_fit` budgets on).
+fn wrap_text(text: String, width: Int) -> List(String) {
+  text
+  |> string.split("\n")
+  |> list.flat_map(fn(line) { wrap_line(line, int.max(width, 8)) })
+}
+
+fn wrap_line(line: String, width: Int) -> List(String) {
+  case string.length(line) <= width {
+    True -> [line]
+    False -> {
+      let #(acc, cur) =
+        string.split(line, " ")
+        |> list.fold(#([], ""), fn(st, word) {
+          let #(acc, cur) = st
+          case cur == "" {
+            True -> #(acc, word)
+            False ->
+              case string.length(cur) + 1 + string.length(word) <= width {
+                True -> #(acc, cur <> " " <> word)
+                False -> #([cur, ..acc], word)
+              }
+          }
+        })
+      list.reverse(case cur {
+        "" -> acc
+        _ -> [cur, ..acc]
+      })
+    }
+  }
+}
+
+fn wrap_plain(text: String, width: Int) -> List(shore.Node(Msg)) {
+  wrap_text(text, width) |> list.map(ui.text)
+}
+
+fn wrap_styled(
+  text: String,
+  width: Int,
+  color: style.Color,
+) -> List(shore.Node(Msg)) {
+  wrap_text(text, width)
+  |> list.map(fn(l) { ui.text_styled(l, Some(color), None) })
+}
 
 /// A compact `@`-mention picker; the top match (Enter to accept) is arrowed.
 fn suggestion_view(suggestions: List(String)) -> List(shore.Node(Msg)) {
@@ -414,22 +477,32 @@ fn suggestion_view(suggestions: List(String)) -> List(shore.Node(Msg)) {
   }
 }
 
-fn render_entry(entry: Entry) -> List(shore.Node(Msg)) {
+fn render_entry(entry: Entry, width: Int) -> List(shore.Node(Msg)) {
   case entry {
-    You(text) -> [header("▌ you", style.Cyan), ui.text_wrapped(text), ui.text("")]
-    Failed(e) -> [header("▌ error", style.Red), ui.text_wrapped(e), ui.text("")]
+    You(text) ->
+      list.flatten([
+        [header("▌ you", style.Cyan)],
+        wrap_plain(text, width),
+        [ui.text("")],
+      ])
+    Failed(e) ->
+      list.flatten([
+        [header("▌ error", style.Red)],
+        wrap_plain(e, width),
+        [ui.text("")],
+      ])
     Bough(steps) ->
       list.flatten([
         [header("▌ bough", style.Green)],
-        list.flat_map(steps, render_step),
+        list.flat_map(steps, render_step(_, width)),
         [ui.text("")],
       ])
   }
 }
 
-fn render_step(step: Step) -> List(shore.Node(Msg)) {
+fn render_step(step: Step, width: Int) -> List(shore.Node(Msg)) {
   case step {
-    Text(text) -> render_markdown(text)
+    Text(text) -> render_markdown(text, width)
     ToolCall(name, input) -> [
       ui.text_styled("⚙ " <> format_tool_call(name, input), Some(style.Yellow), None),
     ]
@@ -487,26 +560,27 @@ fn header(label: String, color: style.Color) -> shore.Node(Msg) {
 }
 
 /// Lightweight markdown: style headings and turn rules into lines. Everything
-/// else (tables, code) is left as wrapped text.
-fn render_markdown(text: String) -> List(shore.Node(Msg)) {
+/// else (tables, code) is wrapped to one node per visual row.
+fn render_markdown(text: String, width: Int) -> List(shore.Node(Msg)) {
   text
   |> string.split("\n")
-  |> list.map(render_md_line)
+  |> list.flat_map(render_md_line(_, width))
 }
 
-fn render_md_line(line: String) -> shore.Node(Msg) {
+fn render_md_line(line: String, width: Int) -> List(shore.Node(Msg)) {
   let trimmed = string.trim_end(line)
   case
     strip_prefix(trimmed, "### "),
     strip_prefix(trimmed, "## "),
     strip_prefix(trimmed, "# ")
   {
-    Ok(h), _, _ | _, Ok(h), _ | _, _, Ok(h) ->
-      ui.text_styled(h, Some(style.Magenta), None)
+    Ok(h), _, _ | _, Ok(h), _ | _, _, Ok(h) -> [
+      ui.text_styled(h, Some(style.Magenta), None),
+    ]
     _, _, _ ->
       case trimmed == "---" || trimmed == "***" || trimmed == "___" {
-        True -> ui.hr()
-        False -> ui.text_wrapped(line)
+        True -> [ui.hr()]
+        False -> wrap_plain(line, width)
       }
   }
 }
