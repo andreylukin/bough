@@ -1,12 +1,21 @@
-//// The bough TUI application (shore / The Elm Architecture).
+//// The bough TUI on the etch backend.
 ////
-//// Layout (SPEC.md §9): a conversation pane beside a network side pane, an
-//// input line, and a status line. Assistant turns render their transcript —
-//// intermediate text, tool calls, and (truncated) tool results — as colored
-//// blocks. An animated spinner plays while the agent works. Live streaming of
-//// these steps is a later SSE refinement.
+//// etch is a terminal backend (raw mode, events, styled output), not a
+//// framework, so this module owns the model/update/render directly. The event
+//// loop and terminal lifecycle live in `bough_tui`. We keep the shore-era
+//// effect convention: `update` returns `#(Model, List(fn() -> Msg))` and the
+//// loop spawns each effect, sending its result back.
+////
+//// etch gives us native mouse (wheel + click) and resize events, so the
+//// conversation scrolls with the wheel, tool output expands on click, and we
+//// manage input focus ourselves (Esc toggles a typing/command mode) instead of
+//// shore's Tab-focus dance.
 
 import bough_tui/client.{type Step, Text, ToolCall, ToolResult}
+import etch/command.{type Command}
+import etch/event.{type Event}
+import etch/style.{type Color}
+import etch/terminal
 import envoy
 import gleam/dynamic/decode
 import gleam/erlang/process
@@ -15,12 +24,8 @@ import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
+import gleam/set.{type Set}
 import gleam/string
-import shore
-import shore/key
-import shore/layout
-import shore/style
-import shore/ui
 import simplifile
 
 const default_server = "http://127.0.0.1:4096"
@@ -28,6 +33,10 @@ const default_server = "http://127.0.0.1:4096"
 const spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
 const result_lines = 6
+
+const max_suggestions = 8
+
+const max_files = 2000
 
 pub type Entry {
   You(String)
@@ -46,39 +55,44 @@ pub type Model {
     status: String,
     pending: Bool,
     frame: Int,
-    // Live transcript of the in-flight run, replaced on each poll.
     running_steps: List(Step),
-    // Set when the workspace can't be sandboxed by nono (home or an ancestor).
     note: Option(String),
-    // Workspace files (relative paths) for `@` autocomplete, scanned once.
     files: List(String),
-    // Current `@`-mention matches for the active token; empty when inactive.
     suggestions: List(String),
     // Rows scrolled up from the bottom; 0 follows the latest output.
     scroll: Int,
-    // When true, tool results show their full output instead of a few lines.
-    expand_output: Bool,
+    // Terminal size #(columns, rows).
+    size: #(Int, Int),
+    // True while typing into the input; False = command/scroll mode.
+    focused: Bool,
+    // Tool-result indices (appearance order) shown in full.
+    expanded: Set(Int),
+    // Expand every tool result regardless of `expanded`.
+    expand_all: Bool,
+    // Set once the user asks to quit.
+    quit: Bool,
   )
 }
 
 pub type Msg {
+  EtchEvent(Event)
   SessionCreated(Result(String, String))
   FilesScanned(List(String))
-  InputChanged(String)
-  Submit
   Started(Result(Nil, String))
   Polled(Result(client.RunState, String))
   Tick
-  // Scroll the transcript by N rows (positive = back into history).
+  // Internal messages produced by translating events.
+  InputChanged(String)
+  Submit
   ScrollBy(Int)
-  // Expand/collapse full tool output.
-  ToggleOutput
+  ToggleResult(Int)
+  ToggleAll
+  SetFocus(Bool)
+  Quit
 }
 
 pub fn init() -> #(Model, List(fn() -> Msg)) {
   let server = envoy.get("BOUGH_SERVER") |> result.unwrap(default_server)
-  // BOUGH_PROJECT is set by the `bough` shell function to the directory you
-  // launched from (the package's own cwd would otherwise leak in via PWD).
   let project =
     envoy.get("BOUGH_PROJECT")
     |> result.or(envoy.get("PWD"))
@@ -98,18 +112,32 @@ pub fn init() -> #(Model, List(fn() -> Msg)) {
       files: [],
       suggestions: [],
       scroll: 0,
-      expand_output: False,
+      size: #(80, 24),
+      focused: True,
+      expanded: set.new(),
+      expand_all: False,
+      quit: False,
     )
-  // Both effects run off the init path (the actor initialiser has a ~1s
-  // budget); scanning the workspace synchronously here would time it out.
   #(model, [
     fn() { SessionCreated(client.create_session(server, project)) },
     fn() { FilesScanned(list_project_files(project)) },
   ])
 }
 
+pub fn set_size(model: Model, size: #(Int, Int)) -> Model {
+  Model(..model, size: size)
+}
+
+pub fn is_quit(model: Model) -> Bool {
+  model.quit
+}
+
+// --- Update ---------------------------------------------------------------
+
 pub fn update(model: Model, msg: Msg) -> #(Model, List(fn() -> Msg)) {
   case msg {
+    EtchEvent(ev) -> on_event(model, ev)
+
     SessionCreated(Ok(id)) -> #(
       Model(..model, session: Some(id), status: "ready · session " <> id),
       [],
@@ -123,38 +151,12 @@ pub fn update(model: Model, msg: Msg) -> #(Model, List(fn() -> Msg)) {
         ..model,
         input: value,
         suggestions: suggestions_for(value, model.files),
-        // Typing snaps the view back to the latest output.
         scroll: 0,
       ),
       [],
     )
 
-    ScrollBy(n) -> {
-      // Clamp to the real range so the counter can't overshoot the top (which
-      // would make the first presses back down do nothing). The +2 matches the
-      // two marker rows scroll_window reserves once scrolled, so the very first
-      // line is reachable.
-      let max_scroll =
-        int.max(list.length(transcript(model)) - conversation_rows() + 2, 0)
-      #(Model(..model, scroll: int.clamp(model.scroll + n, 0, max_scroll)), [])
-    }
-
-    ToggleOutput -> #(Model(..model, expand_output: !model.expand_output), [])
-
-    Submit ->
-      case model.suggestions {
-        // A completion is active: Enter accepts the top match instead of
-        // sending. A second Enter (now with no active token) sends.
-        [top, ..] -> #(
-          Model(
-            ..model,
-            input: accept_completion(model.input, top),
-            suggestions: [],
-          ),
-          [],
-        )
-        [] -> submit(model)
-      }
+    Submit -> submit(model)
 
     Started(Ok(_)) ->
       case model.session {
@@ -162,13 +164,17 @@ pub fn update(model: Model, msg: Msg) -> #(Model, List(fn() -> Msg)) {
         None -> #(model, [])
       }
     Started(Error(e)) -> #(
-      Model(..model, status: "error", pending: False, chat: [Failed(e), ..model.chat]),
+      Model(
+        ..model,
+        status: "error",
+        pending: False,
+        chat: [Failed(e), ..model.chat],
+      ),
       [],
     )
 
     Polled(Ok(run)) -> polled(model, run)
     Polled(Error(_)) ->
-      // Transient (e.g. server briefly unavailable); keep polling while pending.
       case model.session, model.pending {
         Some(id), True -> #(model, [poll(model.server, id)])
         _, _ -> #(model, [])
@@ -179,28 +185,52 @@ pub fn update(model: Model, msg: Msg) -> #(Model, List(fn() -> Msg)) {
         True -> #(Model(..model, frame: model.frame + 1), [tick])
         False -> #(model, [])
       }
+
+    ScrollBy(n) -> #(scroll_by(model, n), [])
+
+    ToggleResult(i) -> {
+      let expanded = case set.contains(model.expanded, i) {
+        True -> set.delete(model.expanded, i)
+        False -> set.insert(model.expanded, i)
+      }
+      #(Model(..model, expanded: expanded), [])
+    }
+
+    ToggleAll -> #(Model(..model, expand_all: !model.expand_all), [])
+
+    SetFocus(f) -> #(Model(..model, focused: f), [])
+
+    Quit -> #(Model(..model, quit: True), [])
   }
 }
 
 fn submit(model: Model) -> #(Model, List(fn() -> Msg)) {
-  case model.session, string.trim(model.input) {
-    Some(id), text if text != "" -> {
-      let model =
-        Model(
-          ..model,
-          input: "",
-          suggestions: [],
-          scroll: 0,
-          status: "thinking …",
-          pending: True,
-          frame: 0,
-          running_steps: [],
-          chat: [You(text), ..model.chat],
-        )
-      let server = model.server
-      #(model, [fn() { Started(client.start_run(server, id, text)) }, tick])
-    }
-    _, _ -> #(model, [])
+  // An active `@` completion: Enter accepts it instead of sending.
+  case model.suggestions {
+    [top, ..] -> #(
+      Model(..model, input: accept_completion(model.input, top), suggestions: []),
+      [],
+    )
+    [] ->
+      case model.session, string.trim(model.input) {
+        Some(id), text if text != "" -> {
+          let model =
+            Model(
+              ..model,
+              input: "",
+              suggestions: [],
+              scroll: 0,
+              status: "thinking …",
+              pending: True,
+              frame: 0,
+              running_steps: [],
+              chat: [You(text), ..model.chat],
+            )
+          let server = model.server
+          #(model, [fn() { Started(client.start_run(server, id, text)) }, tick])
+        }
+        _, _ -> #(model, [])
+      }
   }
 }
 
@@ -243,7 +273,6 @@ fn error_text(text: String) -> String {
   }
 }
 
-/// Self-scheduling poll (~400ms) for run progress.
 fn poll(server: String, id: String) -> fn() -> Msg {
   fn() {
     process.sleep(400)
@@ -251,34 +280,507 @@ fn poll(server: String, id: String) -> fn() -> Msg {
   }
 }
 
-/// Self-scheduling animation tick (~120ms) for the thinking spinner.
 fn tick() -> Msg {
   process.sleep(120)
   Tick
 }
 
-/// nono keeps its protected state inside $HOME, so it refuses to sandbox the
-/// home directory or any ancestor of it. Warn instead of failing mid-task.
-fn unsandboxable_note(project: String) -> Option(String) {
-  let home = envoy.get("HOME") |> result.unwrap("")
-  case home != "" && string.starts_with(home <> "/", project <> "/") {
-    True ->
-      Some(
-        "⚠ nono can't sandbox this directory (it contains nono's own state). "
-        <> "Quit with Ctrl+X and run `bough` from a project subdirectory.",
-      )
-    False -> None
+fn scroll_by(model: Model, n: Int) -> Model {
+  let budget = conv_inner_h(model)
+  let max_scroll =
+    int.max(list.length(transcript(model)) - budget + 2, 0)
+  Model(..model, scroll: int.clamp(model.scroll + n, 0, max_scroll))
+}
+
+// --- Event translation ----------------------------------------------------
+
+fn on_event(model: Model, ev: Event) -> #(Model, List(fn() -> Msg)) {
+  case ev {
+    event.Resize(c, r) -> #(Model(..model, size: #(c, r)), [])
+    event.FocusGained -> #(model, [])
+    event.FocusLost -> #(model, [])
+    event.Key(ke) ->
+      case ke.kind {
+        event.Release -> #(model, [])
+        _ -> on_key(model, ke)
+      }
+    event.Mouse(me) -> on_mouse(model, me)
   }
 }
 
-// --- `@` autocomplete ----------------------------------------------------
+fn on_key(model: Model, ke: event.KeyEvent) -> #(Model, List(fn() -> Msg)) {
+  // etch's legacy parser delivers Ctrl+key as the raw control codepoint with no
+  // control modifier, so match those directly (and the kitty path too).
+  case ke.code {
+    // Ctrl+X (0x18) / Ctrl+C (0x03) always quit.
+    event.Char("\u{0018}") | event.Char("\u{0003}") -> update(model, Quit)
+    event.Char(c) if ke.modifiers.control ->
+      case string.lowercase(c) {
+        "c" | "x" -> update(model, Quit)
+        _ -> #(model, [])
+      }
+    _ ->
+      case model.focused {
+        True -> on_key_typing(model, ke)
+        False -> on_key_command(model, ke)
+      }
+  }
+}
 
-const max_suggestions = 8
+fn on_key_typing(
+  model: Model,
+  ke: event.KeyEvent,
+) -> #(Model, List(fn() -> Msg)) {
+  case ke.code {
+    event.Enter -> update(model, Submit)
+    event.Esc -> update(model, SetFocus(False))
+    event.Backspace ->
+      update(model, InputChanged(string.drop_end(model.input, 1)))
+    event.Char(c) ->
+      case printable(c) {
+        True -> update(model, InputChanged(model.input <> c))
+        False -> #(model, [])
+      }
+    _ -> #(model, [])
+  }
+}
 
-const max_files = 2000
+/// Reject control codepoints so stray Ctrl+key bytes never land in the input.
+fn printable(c: String) -> Bool {
+  case string.to_utf_codepoints(c) {
+    [cp] -> string.utf_codepoint_to_int(cp) >= 0x20
+    _ -> True
+  }
+}
 
-/// Scan the workspace once for files to offer as `@`-mentions. Heavy/noise
-/// directories are skipped; paths are made relative to the project root.
+fn on_key_command(
+  model: Model,
+  ke: event.KeyEvent,
+) -> #(Model, List(fn() -> Msg)) {
+  case ke.code {
+    event.Char("i") | event.Enter -> update(model, SetFocus(True))
+    event.Esc -> update(model, SetFocus(True))
+    event.UpArrow | event.Char("k") -> update(model, ScrollBy(1))
+    event.DownArrow | event.Char("j") -> update(model, ScrollBy(-1))
+    event.PageUp -> update(model, ScrollBy(10))
+    event.PageDown -> update(model, ScrollBy(-10))
+    event.Char("o") -> update(model, ToggleAll)
+    event.Char("g") -> #(scroll_by(model, 100_000), [])
+    _ -> #(model, [])
+  }
+}
+
+fn on_mouse(
+  model: Model,
+  me: event.MouseEvent,
+) -> #(Model, List(fn() -> Msg)) {
+  case me.kind {
+    event.ScrollUp -> update(model, ScrollBy(3))
+    event.ScrollDown -> update(model, ScrollBy(-3))
+    event.Down(event.Left) -> on_click(model, me.column, me.row)
+    _ -> #(model, [])
+  }
+}
+
+fn on_click(model: Model, _col: Int, row: Int) -> #(Model, List(fn() -> Msg)) {
+  // A click below the conversation (input box) focuses it; a click on a
+  // tool-result line toggles that result.
+  let #(_cols, _rows, _conv_w, conv_h) = dims(model)
+  case row >= conv_h {
+    True -> update(model, SetFocus(True))
+    False ->
+      case list.key_find(clickable_rows(model), row) {
+        Ok(msg) -> update(model, msg)
+        Error(_) -> #(model, [])
+      }
+  }
+}
+
+// --- Layout dimensions ----------------------------------------------------
+
+fn dims(model: Model) -> #(Int, Int, Int, Int) {
+  let #(cols, rows) = model.size
+  let net_w = int.max(cols * 32 / 100, 24)
+  let conv_w = int.max(cols - net_w, 24)
+  // conversation box height: terminal minus input box (3) and status (1).
+  let conv_h = int.max(rows - 4, 3)
+  #(cols, rows, conv_w, conv_h)
+}
+
+fn conv_text_width(model: Model) -> Int {
+  let #(_cols, _rows, conv_w, _conv_h) = dims(model)
+  int.max(conv_w - 4, 20)
+}
+
+fn conv_inner_h(model: Model) -> Int {
+  let #(_cols, _rows, _conv_w, conv_h) = dims(model)
+  int.max(conv_h - 2, 1)
+}
+
+// --- Transcript (as styled, clickable lines) ------------------------------
+
+pub type CLine {
+  CLine(text: String, color: Color, click: Option(Msg))
+}
+
+fn line(text: String, color: Color) -> CLine {
+  CLine(text, color, None)
+}
+
+/// Build the whole transcript, one CLine per visual row, threading a counter so
+/// each tool result has a stable index for per-item expand/collapse.
+fn transcript(model: Model) -> List(CLine) {
+  let width = conv_text_width(model)
+  let banner = case model.note {
+    Some(text) -> list.append(wrap_styled(text, width, style.Red), [line("", style.Default)])
+    None -> []
+  }
+  let entries = list.reverse(model.chat)
+  let #(history, idx) =
+    list.fold(entries, #([], 0), fn(acc, entry) {
+      let #(lines, i) = acc
+      let #(more, i2) = render_entry(entry, width, model, i)
+      #(list.append(lines, more), i2)
+    })
+  let live = case model.pending {
+    True -> {
+      let #(more, _) = render_entry(Bough(model.running_steps), width, model, idx)
+      list.append(more, [thinking_line(model.frame)])
+    }
+    False -> []
+  }
+  let main = case history, live {
+    [], [] -> [
+      line(
+        "type a task · Enter to send · @ to mention a file · Esc for scroll/mouse",
+        style.Cyan,
+      ),
+    ]
+    _, _ -> list.append(history, live)
+  }
+  list.flatten([banner, main, suggestion_lines(model.suggestions)])
+}
+
+fn render_entry(
+  entry: Entry,
+  width: Int,
+  model: Model,
+  idx: Int,
+) -> #(List(CLine), Int) {
+  case entry {
+    You(text) -> #(
+      list.flatten([
+        [line("▌ you", style.Cyan)],
+        wrap_styled(text, width, style.Default),
+        [line("", style.Default)],
+      ]),
+      idx,
+    )
+    Failed(e) -> #(
+      list.flatten([
+        [line("▌ error", style.Red)],
+        wrap_styled(e, width, style.Red),
+        [line("", style.Default)],
+      ]),
+      idx,
+    )
+    Bough(steps) -> {
+      let #(step_lines, idx2) =
+        list.fold(steps, #([], idx), fn(acc, step) {
+          let #(ls, i) = acc
+          let #(more, i2) = render_step(step, width, model, i)
+          #(list.append(ls, more), i2)
+        })
+      #(
+        list.flatten([[line("▌ bough", style.Green)], step_lines, [line("", style.Default)]]),
+        idx2,
+      )
+    }
+  }
+}
+
+fn render_step(
+  step: Step,
+  width: Int,
+  model: Model,
+  idx: Int,
+) -> #(List(CLine), Int) {
+  case step {
+    Text(text) -> #(render_markdown(text, width), idx)
+    ToolCall(name, input) -> #(
+      [line("⚙ " <> format_tool_call(name, input), style.Yellow)],
+      idx,
+    )
+    ToolResult(_name, output) -> #(render_result(output, width, model, idx), idx + 1)
+  }
+}
+
+fn render_result(
+  output: String,
+  width: Int,
+  model: Model,
+  idx: Int,
+) -> List(CLine) {
+  let expanded = model.expand_all || set.contains(model.expanded, idx)
+  case string.trim_end(output) {
+    "" -> [rail("(no output)"), line("", style.Default)]
+    trimmed -> {
+      let lines = string.split(trimmed, "\n")
+      let total = list.length(lines)
+      let railed = fn(ls) { list.map(ls, fn(l) { rail(truncate(l, width - 2)) }) }
+      case expanded {
+        True ->
+          list.flatten([
+            railed(lines),
+            [CLine("  ▾ click to collapse", style.BrightYellow, Some(ToggleResult(idx)))],
+            [line("", style.Default)],
+          ])
+        False -> {
+          let shown = railed(list.take(lines, result_lines))
+          let more = case total - result_lines {
+            extra if extra > 0 -> [
+              CLine(
+                "  ▸ +" <> int.to_string(extra) <> " lines · click to expand",
+                style.BrightYellow,
+                Some(ToggleResult(idx)),
+              ),
+            ]
+            _ -> []
+          }
+          list.flatten([shown, more, [line("", style.Default)]])
+        }
+      }
+    }
+  }
+}
+
+fn rail(text: String) -> CLine {
+  line("  │ " <> text, style.Grey)
+}
+
+fn render_markdown(text: String, width: Int) -> List(CLine) {
+  text
+  |> string.split("\n")
+  |> list.flat_map(fn(l) { render_md_line(l, width) })
+}
+
+fn render_md_line(l: String, width: Int) -> List(CLine) {
+  let trimmed = string.trim_end(l)
+  case strip_prefix(trimmed, "### "), strip_prefix(trimmed, "## "), strip_prefix(trimmed, "# ") {
+    Ok(h), _, _ | _, Ok(h), _ | _, _, Ok(h) -> [line(h, style.Magenta)]
+    _, _, _ ->
+      case trimmed == "---" || trimmed == "***" || trimmed == "___" {
+        True -> [line(string.repeat("─", int.min(width, 24)), style.Grey)]
+        False -> wrap_plain(l, width)
+      }
+  }
+}
+
+fn thinking_line(frame: Int) -> CLine {
+  let glyph = case list.drop(spinner, frame % 10) {
+    [g, ..] -> g
+    [] -> "⠋"
+  }
+  line(glyph <> " thinking …", style.Yellow)
+}
+
+fn suggestion_lines(suggestions: List(String)) -> List(CLine) {
+  case suggestions {
+    [] -> []
+    _ -> {
+      let header = line("@ files · Enter completes top", style.Magenta)
+      let rows =
+        list.index_map(suggestions, fn(path, i) {
+          case i {
+            0 -> line("→ " <> path, style.Cyan)
+            _ -> line("  " <> path, style.White)
+          }
+        })
+      [line("", style.Default), header, ..rows]
+    }
+  }
+}
+
+// --- Scroll windowing -----------------------------------------------------
+
+/// The visible conversation lines paired with their absolute screen rows, after
+/// applying scroll. Shared by the renderer and mouse hit-testing.
+fn visible_conversation(model: Model) -> List(#(Int, CLine)) {
+  let budget = conv_inner_h(model)
+  let windowed = scroll_window(transcript(model), budget, model.scroll)
+  // Content starts at row 1 (row 0 is the box's top border).
+  list.index_map(windowed, fn(cl, i) { #(i + 1, cl) })
+}
+
+fn clickable_rows(model: Model) -> List(#(Int, Msg)) {
+  visible_conversation(model)
+  |> list.filter_map(fn(pair) {
+    let #(row, cl) = pair
+    case cl.click {
+      Some(msg) -> Ok(#(row, msg))
+      None -> Error(Nil)
+    }
+  })
+}
+
+fn scroll_window(nodes: List(CLine), budget: Int, scroll: Int) -> List(CLine) {
+  let total = list.length(nodes)
+  case total <= budget {
+    True -> nodes
+    False -> {
+      let scrolled = scroll > 0
+      let inner = int.max(budget - 1 - bool_int(scrolled), 1)
+      let max_scroll = total - inner
+      let s = int.clamp(scroll, 0, max_scroll)
+      let start = int.max(total - inner - s, 0)
+      let visible = nodes |> list.drop(start) |> list.take(inner)
+      let above = start
+      let below = total - start - inner
+      let top = case above > 0 {
+        True -> [line("⋯ " <> int.to_string(above) <> " above", style.BrightGrey)]
+        False -> []
+      }
+      let bottom = case below > 0 {
+        True -> [line("⋯ " <> int.to_string(below) <> " below", style.BrightGrey)]
+        False -> []
+      }
+      list.flatten([top, visible, bottom])
+    }
+  }
+}
+
+fn bool_int(b: Bool) -> Int {
+  case b {
+    True -> 1
+    False -> 0
+  }
+}
+
+// --- Render to etch commands ----------------------------------------------
+
+pub fn render(model: Model) -> List(Command) {
+  let #(cols, rows, conv_w, conv_h) = dims(model)
+  let net_x = conv_w
+  let net_w = cols - conv_w
+
+  let convo =
+    visible_conversation(model)
+    |> list.flat_map(fn(pair) {
+      let #(row, cl) = pair
+      put(2, row, truncate(cl.text, conv_w - 3), cl.color)
+    })
+
+  list.flatten([
+    [command.Clear(terminal.All)],
+    box(0, 0, conv_w, conv_h, "conversation", style.Blue),
+    convo,
+    box(net_x, 0, net_w, conv_h, "network", style.Magenta),
+    network_panel(model, net_x + 2, net_w - 3),
+    box(0, conv_h, cols, 3, input_title(model), style.Cyan),
+    input_panel(model, conv_h, cols),
+    status_line(model, rows - 1, cols),
+    cursor(model, conv_h, cols),
+  ])
+}
+
+fn input_title(model: Model) -> String {
+  case model.focused {
+    True -> "message"
+    False -> "message — i/Enter to type"
+  }
+}
+
+fn input_panel(model: Model, conv_h: Int, cols: Int) -> List(Command) {
+  let avail = cols - 5
+  let shown = case string.length(model.input) > avail {
+    True -> string.slice(model.input, string.length(model.input) - avail, avail)
+    False -> model.input
+  }
+  put(2, conv_h + 1, "> " <> shown, style.Default)
+}
+
+fn cursor(model: Model, conv_h: Int, cols: Int) -> List(Command) {
+  case model.focused {
+    True -> {
+      let avail = cols - 5
+      let len = int.min(string.length(model.input), avail)
+      [command.MoveTo(4 + len, conv_h + 1), command.ShowCursor]
+    }
+    False -> [command.HideCursor]
+  }
+}
+
+fn status_line(model: Model, row: Int, cols: Int) -> List(Command) {
+  let text = case model.scroll > 0 {
+    True ->
+      "SCROLL ↑"
+      <> int.to_string(model.scroll)
+      <> "  ·  wheel/↑↓/PgUp·PgDn scroll  ·  o expand all  ·  ↓ latest  ·  i type"
+    False ->
+      case model.focused {
+        True ->
+          model.status
+          <> "  ·  Esc: scroll/mouse mode  ·  Enter: send  ·  Ctrl+X: quit"
+        False ->
+          model.status
+          <> "  ·  wheel/↑↓ scroll · click to expand · o all · i type · Ctrl+X quit"
+      }
+  }
+  let color = case string.starts_with(model.status, "error") {
+    True -> style.Red
+    False ->
+      case model.scroll > 0 {
+        True -> style.Yellow
+        False -> style.Magenta
+      }
+  }
+  put(0, row, truncate(text, cols), color)
+}
+
+fn network_panel(model: Model, x: Int, w: Int) -> List(Command) {
+  let ws_color = case model.note {
+    Some(_) -> style.Red
+    None -> style.Cyan
+  }
+  list.flatten([
+    put(x, 1, "workspace", style.White),
+    put(x, 2, truncate(model.project, w), ws_color),
+    put(x, 4, "policy", style.White),
+    put(x, 5, "· bash   sandbox · net BLOCKED", style.Green),
+    put(x, 6, "· files  in-process (unsandboxed)", style.Yellow),
+    put(x, 8, "live egress feed", style.White),
+    put(x, 9, "(pending server SSE)", style.Blue),
+  ])
+}
+
+// --- Box + text drawing primitives ----------------------------------------
+
+fn put(x: Int, y: Int, text: String, color: Color) -> List(Command) {
+  [
+    command.MoveTo(x, y),
+    command.SetForegroundColor(color),
+    command.Print(text),
+    command.ResetColor,
+  ]
+}
+
+fn box(x: Int, y: Int, w: Int, h: Int, title: String, color: Color) -> List(Command) {
+  let prefix = "╭─ " <> title <> " "
+  let fill = int.max(w - string.length(prefix) - 1, 0)
+  let top = prefix <> string.repeat("─", fill) <> "╮"
+  let bottom = "╰" <> string.repeat("─", int.max(w - 2, 0)) <> "╯"
+  let sides =
+    list.repeat(Nil, int.max(h - 2, 0))
+    |> list.index_map(fn(_, i) {
+      let r = y + i + 1
+      list.flatten([put(x, r, "│", color), put(x + w - 1, r, "│", color)])
+    })
+    |> list.flatten
+  list.flatten([put(x, y, top, color), sides, put(x, y + h - 1, bottom, color)])
+}
+
+// --- `@` autocomplete -----------------------------------------------------
+
 fn list_project_files(project: String) -> List(String) {
   case simplifile.get_files(project) {
     Error(_) -> []
@@ -299,12 +801,9 @@ fn relativize(path: String, project: String) -> String {
 
 fn is_useful_path(path: String) -> Bool {
   let noise = ["/.git/", "/build/", "/node_modules/", "/.elixir_ls/", "/_build/"]
-  let hidden = string.starts_with(path, ".")
-  !hidden && !list.any(noise, string.contains(path, _))
+  !string.starts_with(path, ".") && !list.any(noise, string.contains(path, _))
 }
 
-/// The text after the last unbroken `@…` in the input — the active mention
-/// token — or `None` when there is no live mention to complete.
 fn active_token(input: String) -> Option(String) {
   case string.split(input, "@") {
     [] | [_] -> None
@@ -330,183 +829,27 @@ fn suggestions_for(input: String, files: List(String)) -> List(String) {
   }
 }
 
-/// Replace the active `@token` with the chosen path (and a trailing space).
 fn accept_completion(input: String, choice: String) -> String {
   case active_token(input) {
     None -> input
-    Some(token) ->
-      string.drop_end(input, string.length(token) + 1) <> choice <> " "
+    Some(token) -> string.drop_end(input, string.length(token) + 1) <> choice <> " "
   }
 }
 
-// --- View ----------------------------------------------------------------
+// --- Text helpers ---------------------------------------------------------
 
-pub fn view(model: Model) -> shore.Node(Msg) {
-  // gap MUST stay 0: shore's calc_sizes allocates the full height to the rows
-  // and then adds gaps on top, so any gap overflows the grid and pushes the
-  // status line off the bottom of the screen.
-  layout.grid(
-    gap: 0,
-    rows: [style.Fill, style.Px(3), style.Px(1)],
-    cols: [style.Fill, style.Pct(32)],
-    cells: [
-      layout.cell(conversation(model), #(0, 0), #(0, 0)),
-      layout.cell(network(model), #(0, 0), #(1, 1)),
-      layout.cell(message_input(model), #(1, 1), #(0, 1)),
-      layout.cell(status(model), #(2, 2), #(0, 1)),
-    ],
-  )
-}
-
-/// All transcript rows (banner, history, in-flight steps, `@` picker) as one
-/// node-per-visual-row list. Shared by the view and by scroll clamping so the
-/// row budget and scroll bounds always agree.
-fn transcript(model: Model) -> List(shore.Node(Msg)) {
-  let width = conv_width()
-  let expand = model.expand_output
-  let history =
-    model.chat |> list.reverse |> list.flat_map(render_entry(_, width, expand))
-  let live = case model.pending {
-    True ->
-      list.append(render_entry(Bough(model.running_steps), width, expand), [
-        thinking_block(model.frame),
-      ])
-    False -> []
-  }
-  let banner = case model.note {
-    Some(text) -> list.append(wrap_styled(text, width, style.Red), [ui.text("")])
-    None -> []
-  }
-  let main = case history, live {
-    [], [] -> [
-      ui.text_styled(
-        "Tab to focus · type a task · Enter to send · @ to mention a file",
-        Some(style.Cyan),
-        None,
-      ),
-    ]
-    _, _ -> list.append(history, live)
-  }
-  list.flatten([banner, main, suggestion_view(model.suggestions)])
-}
-
-fn conversation(model: Model) -> shore.Node(Msg) {
-  // shore renders every child top-down with no clipping, so an overflowing
-  // conversation would spill past the box into the input. Show a window of the
-  // rows that fit, offset by the scroll position (0 = follow the latest).
-  let content =
-    scroll_window(transcript(model), conversation_rows(), model.scroll)
-  // KeyBinds fire only while the input is unfocused (press Esc), so scrolling
-  // is a deliberate mode — shore swallows these keys while you're typing.
-  ui.box_styled(
-    list.append(content, scroll_keys()),
-    Some("conversation"),
-    Some(style.Blue),
-  )
-}
-
-/// Non-visible keybinds that scroll the transcript. They only trigger when no
-/// input is focused (Esc clears focus), since shore routes keys to a focused
-/// input first.
-fn scroll_keys() -> List(shore.Node(Msg)) {
-  [
-    ui.keybind(key.Up, ScrollBy(1)),
-    ui.keybind(key.Down, ScrollBy(-1)),
-    ui.keybind(key.PageUp, ScrollBy(10)),
-    ui.keybind(key.PageDown, ScrollBy(-10)),
-    ui.keybind(key.Char("k"), ScrollBy(1)),
-    ui.keybind(key.Char("j"), ScrollBy(-1)),
-    ui.keybind(key.Char("o"), ToggleOutput),
-  ]
-}
-
-/// The visible window of transcript rows. With more rows than fit, a marker
-/// tops the pane (and bottoms it when scrolled up) so position is legible.
-fn scroll_window(
-  nodes: List(shore.Node(Msg)),
-  budget: Int,
-  scroll: Int,
-) -> List(shore.Node(Msg)) {
-  let total = list.length(nodes)
-  case total <= budget {
-    True -> nodes
-    False -> {
-      let scrolled = scroll > 0
-      // Reserve a row for the top marker (always, since total > budget) and the
-      // bottom marker (only when scrolled up off the latest output).
-      let inner = int.max(budget - 1 - bool_int(scrolled), 1)
-      let max_scroll = total - inner
-      let s = int.clamp(scroll, 0, max_scroll)
-      let start = int.max(total - inner - s, 0)
-      let visible = nodes |> list.drop(start) |> list.take(inner)
-      let above = start
-      let below = total - start - inner
-      let top = case above > 0 {
-        True -> [marker("⋯ " <> int.to_string(above) <> " above")]
-        False -> []
-      }
-      let bottom = case below > 0 {
-        True -> [marker("⋯ " <> int.to_string(below) <> " below")]
-        False -> []
-      }
-      list.flatten([top, visible, bottom])
-    }
-  }
-}
-
-fn marker(text: String) -> shore.Node(Msg) {
-  ui.text_styled(text, Some(style.Blue), None)
-}
-
-fn bool_int(b: Bool) -> Int {
-  case b {
-    True -> 1
-    False -> 0
-  }
-}
-
-/// Rows available inside the conversation box: terminal height minus the input
-/// box (3), status line (1) and the box border (2). gap is 0 (see view).
-fn conversation_rows() -> Int {
-  case term_rows() {
-    Ok(n) -> int.max(n - 6, 5)
-    Error(_) -> 20
-  }
-}
-
-/// Text columns inside the conversation box: the Fill grid cell (terminal
-/// width minus the 32%% network pane and the gap) minus the box chrome. Kept
-/// slightly narrow so our wrapping never under-counts shore's own wrapping
-/// (which would let content overflow the box again).
-fn conv_width() -> Int {
-  case term_cols() {
-    Ok(n) -> int.max(n * 68 / 100 - 6, 20)
-    Error(_) -> 80
-  }
-}
-
-type IoError
-
-@external(erlang, "io", "rows")
-fn term_rows() -> Result(Int, IoError)
-
-@external(erlang, "io", "columns")
-fn term_cols() -> Result(Int, IoError)
-
-/// Wrap text to `width` columns, one returned string per visual row, so that
-/// counting nodes equals counting rows (what `tail_to_fit` budgets on).
 fn wrap_text(text: String, width: Int) -> List(String) {
   text
   |> string.split("\n")
-  |> list.flat_map(fn(line) { wrap_line(line, int.max(width, 8)) })
+  |> list.flat_map(fn(l) { wrap_line(l, int.max(width, 8)) })
 }
 
-fn wrap_line(line: String, width: Int) -> List(String) {
-  case string.length(line) <= width {
-    True -> [line]
+fn wrap_line(l: String, width: Int) -> List(String) {
+  case string.length(l) <= width {
+    True -> [l]
     False -> {
       let #(acc, cur) =
-        string.split(line, " ")
+        string.split(l, " ")
         |> list.fold(#([], ""), fn(st, word) {
           let #(acc, cur) = st
           case cur == "" {
@@ -526,77 +869,14 @@ fn wrap_line(line: String, width: Int) -> List(String) {
   }
 }
 
-fn wrap_plain(text: String, width: Int) -> List(shore.Node(Msg)) {
-  wrap_text(text, width) |> list.map(ui.text)
+fn wrap_plain(text: String, width: Int) -> List(CLine) {
+  wrap_text(text, width) |> list.map(fn(l) { line(l, style.Default) })
 }
 
-fn wrap_styled(
-  text: String,
-  width: Int,
-  color: style.Color,
-) -> List(shore.Node(Msg)) {
-  wrap_text(text, width)
-  |> list.map(fn(l) { ui.text_styled(l, Some(color), None) })
+fn wrap_styled(text: String, width: Int, color: Color) -> List(CLine) {
+  wrap_text(text, width) |> list.map(fn(l) { line(l, color) })
 }
 
-/// A compact `@`-mention picker; the top match (Enter to accept) is arrowed.
-fn suggestion_view(suggestions: List(String)) -> List(shore.Node(Msg)) {
-  case suggestions {
-    [] -> []
-    _ -> {
-      let header =
-        ui.text_styled("@ files · Enter completes top", Some(style.Magenta), None)
-      let rows =
-        list.index_map(suggestions, fn(path, i) {
-          case i {
-            0 -> ui.text_styled("→ " <> path, Some(style.Cyan), None)
-            _ -> ui.text_styled("  " <> path, Some(style.White), None)
-          }
-        })
-      [ui.hr(), header, ..rows]
-    }
-  }
-}
-
-fn render_entry(
-  entry: Entry,
-  width: Int,
-  expand: Bool,
-) -> List(shore.Node(Msg)) {
-  case entry {
-    You(text) ->
-      list.flatten([
-        [header("▌ you", style.Cyan)],
-        wrap_plain(text, width),
-        [ui.text("")],
-      ])
-    Failed(e) ->
-      list.flatten([
-        [header("▌ error", style.Red)],
-        wrap_plain(e, width),
-        [ui.text("")],
-      ])
-    Bough(steps) ->
-      list.flatten([
-        [header("▌ bough", style.Green)],
-        list.flat_map(steps, render_step(_, width, expand)),
-        [ui.text("")],
-      ])
-  }
-}
-
-fn render_step(step: Step, width: Int, expand: Bool) -> List(shore.Node(Msg)) {
-  case step {
-    Text(text) -> render_markdown(text, width)
-    ToolCall(name, input) -> [
-      ui.text_styled("⚙ " <> format_tool_call(name, input), Some(style.Yellow), None),
-    ]
-    ToolResult(_name, output) -> render_result(output, width, expand)
-  }
-}
-
-/// Human-readable tool call: `bash ls`, `read path`, etc., falling back to the
-/// raw JSON input when the expected field is missing.
 fn format_tool_call(name: String, input: String) -> String {
   let summary = case name {
     "bash" -> json_field(input, "command")
@@ -617,71 +897,6 @@ fn json_field(input: String, key: String) -> Result(String, Nil) {
   |> result.replace_error(Nil)
 }
 
-fn render_result(
-  output: String,
-  width: Int,
-  expand: Bool,
-) -> List(shore.Node(Msg)) {
-  case string.trim_end(output) {
-    "" -> [rail("(no output)"), ui.text("")]
-    trimmed -> {
-      let lines = string.split(trimmed, "\n")
-      let total = list.length(lines)
-      // One row per line (truncated to the rail width) so the row budget and
-      // scroll stay accurate when expanded.
-      let railed = fn(ls) { list.map(ls, fn(l) { rail(truncate(l, width - 4)) }) }
-      case expand {
-        True -> list.flatten([railed(lines), [ui.text("")]])
-        False -> {
-          let shown = railed(list.take(lines, result_lines))
-          let more = case total - result_lines {
-            extra if extra > 0 -> [
-              rail("▸ +" <> int.to_string(extra) <> " lines · Esc then o to expand"),
-            ]
-            _ -> []
-          }
-          list.flatten([shown, more, [ui.text("")]])
-        }
-      }
-    }
-  }
-}
-
-/// A tool-output line, indented behind a dim left rail.
-fn rail(text: String) -> shore.Node(Msg) {
-  ui.text_styled("  │ " <> text, Some(style.Blue), None)
-}
-
-fn header(label: String, color: style.Color) -> shore.Node(Msg) {
-  ui.text_styled(label, Some(color), None)
-}
-
-/// Lightweight markdown: style headings and turn rules into lines. Everything
-/// else (tables, code) is wrapped to one node per visual row.
-fn render_markdown(text: String, width: Int) -> List(shore.Node(Msg)) {
-  text
-  |> string.split("\n")
-  |> list.flat_map(render_md_line(_, width))
-}
-
-fn render_md_line(line: String, width: Int) -> List(shore.Node(Msg)) {
-  let trimmed = string.trim_end(line)
-  case
-    strip_prefix(trimmed, "### "),
-    strip_prefix(trimmed, "## "),
-    strip_prefix(trimmed, "# ")
-  {
-    Ok(h), _, _ | _, Ok(h), _ | _, _, Ok(h) -> [
-      ui.text_styled(h, Some(style.Magenta), None),
-    ]
-    _, _, _ ->
-      case trimmed == "---" || trimmed == "***" || trimmed == "___" {
-        True -> [ui.hr()]
-        False -> wrap_plain(line, width)
-      }
-  }
-}
-
 fn strip_prefix(s: String, prefix: String) -> Result(String, Nil) {
   case string.starts_with(s, prefix) {
     True -> Ok(string.drop_start(s, string.length(prefix)))
@@ -691,84 +906,19 @@ fn strip_prefix(s: String, prefix: String) -> Result(String, Nil) {
 
 fn truncate(s: String, n: Int) -> String {
   case string.length(s) > n {
-    True -> string.slice(s, 0, n) <> "…"
+    True -> string.slice(s, 0, int.max(n - 1, 0)) <> "…"
     False -> s
   }
 }
 
-fn thinking_block(frame: Int) -> shore.Node(Msg) {
-  let glyph = case list.drop(spinner, frame % 10) {
-    [g, ..] -> g
-    [] -> "⠋"
-  }
-  ui.text_styled(glyph <> " thinking …", Some(style.Yellow), None)
-}
-
-fn message_input(model: Model) -> shore.Node(Msg) {
-  ui.box_styled(
-    [ui.input_submit("> ", model.input, style.Fill, InputChanged, Submit, False)],
-    Some("message — Tab to focus"),
-    Some(style.Cyan),
-  )
-}
-
-fn status(model: Model) -> shore.Node(Msg) {
-  case model.scroll > 0 {
+fn unsandboxable_note(project: String) -> Option(String) {
+  let home = envoy.get("HOME") |> result.unwrap("")
+  case home != "" && string.starts_with(home <> "/", project <> "/") {
     True ->
-      ui.text_styled(
-        "SCROLL ↑"
-          <> int.to_string(model.scroll)
-          <> "   ·   ↑/↓ PgUp/PgDn scroll   ·   o: "
-          <> output_label(model)
-          <> "   ·   ↓ latest   ·   Tab: type",
-        Some(style.Yellow),
-        None,
+      Some(
+        "⚠ nono can't sandbox this directory (it contains nono's own state). "
+        <> "Quit with Ctrl+X and run `bough` from a project subdirectory.",
       )
-    False -> {
-      let color = case string.starts_with(model.status, "error") {
-        True -> style.Red
-        False -> style.Magenta
-      }
-      ui.text_styled(
-        model.status
-          <> "   ·   Esc then ↑/↓ scroll · o "
-          <> output_label(model)
-          <> "   ·   Ctrl+X: quit",
-        Some(color),
-        None,
-      )
-    }
+    False -> None
   }
-}
-
-fn output_label(model: Model) -> String {
-  case model.expand_output {
-    True -> "collapse output"
-    False -> "expand output"
-  }
-}
-
-fn workspace_color(model: Model) -> style.Color {
-  case model.note {
-    Some(_) -> style.Red
-    None -> style.Cyan
-  }
-}
-
-fn network(model: Model) -> shore.Node(Msg) {
-  ui.box_styled(
-    [
-      ui.text_styled("workspace", Some(style.White), None),
-      ui.text_wrapped_styled(model.project, Some(workspace_color(model)), None),
-      ui.br(),
-      ui.text_styled("policy", Some(style.White), None),
-      ui.text_styled("· bash   sandbox · net BLOCKED", Some(style.Green), None),
-      ui.text_styled("· files  in-process (unsandboxed)", Some(style.Yellow), None),
-      ui.br(),
-      ui.text_styled("live egress feed", Some(style.White), None),
-      ui.text_styled("(pending server SSE)", Some(style.Blue), None),
-    ],
-    Some("network"),
-    Some(style.Magenta),
-  )
 }
