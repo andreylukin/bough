@@ -18,6 +18,17 @@ pub type ClientError {
   Decode(String)
 }
 
+/// One step in the agent's transcript for a turn.
+pub type Step {
+  Text(text: String)
+  ToolCall(name: String, input: String)
+  ToolResult(name: String, output: String)
+}
+
+pub type Reply {
+  Reply(text: String, steps: List(Step))
+}
+
 /// GET `<base>/health`; returns the response body on success.
 pub fn health(base: String) -> Result(String, ClientError) {
   use req <- result.try(
@@ -39,16 +50,43 @@ pub fn create_session(base: String, project: String) -> Result(String, String) {
   |> result.replace_error("bad create-session response: " <> resp)
 }
 
-/// POST `/session/:id/message`; returns the assistant's reply text.
+/// POST `/session/:id/message`; returns the assistant's reply and transcript.
 pub fn send_message(
   base: String,
   id: String,
   content: String,
-) -> Result(String, String) {
+) -> Result(Reply, String) {
   let body = json.to_string(json.object([#("content", json.string(content))]))
   use resp <- result.try(post(base, "/session/" <> id <> "/message", body) |> describe)
-  json.parse(resp, string_field("content"))
+  json.parse(resp, reply_decoder())
   |> result.replace_error("bad message response: " <> resp)
+}
+
+fn reply_decoder() -> decode.Decoder(Reply) {
+  use text <- decode.field("text", decode.string)
+  use steps <- decode.field("steps", decode.list(step_decoder()))
+  decode.success(Reply(text: text, steps: steps))
+}
+
+fn step_decoder() -> decode.Decoder(Step) {
+  use kind <- decode.field("type", decode.string)
+  case kind {
+    "text" -> {
+      use text <- decode.field("text", decode.string)
+      decode.success(Text(text))
+    }
+    "tool" -> {
+      use name <- decode.field("name", decode.string)
+      use input <- decode.field("input", decode.string)
+      decode.success(ToolCall(name, input))
+    }
+    "result" -> {
+      use name <- decode.field("name", decode.string)
+      use output <- decode.field("output", decode.string)
+      decode.success(ToolResult(name, output))
+    }
+    _ -> decode.failure(Text(""), "Step")
+  }
 }
 
 // --- internals -----------------------------------------------------------

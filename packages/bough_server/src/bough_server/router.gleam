@@ -13,13 +13,16 @@
 
 import bough_core
 import bough_core/session.{type Entry, type SessionTree, Entry}
-import bough_server/agent
+import bough_server/agent.{
+  type Outcome, type Step, StepText, StepToolCall, StepToolResult,
+}
 import bough_server/clock
 import bough_server/session_manager
 import envoy
 import gleam/dynamic/decode
 import gleam/http.{Get, Post}
 import gleam/json
+import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import wisp.{type Request, type Response}
@@ -138,7 +141,7 @@ fn run_agent(tree: SessionTree, content: String) -> Response {
             make_entry(session.Assistant, outcome.text, Some(user.id))
           let tree = session.append(tree, assistant)
           case session_manager.save(tree) {
-            Ok(_) -> created(json.to_string(session.entry_to_json(assistant)))
+            Ok(_) -> created(json.to_string(outcome_json(outcome)))
             Error(_) -> wisp.internal_server_error()
           }
         }
@@ -161,6 +164,32 @@ fn make_entry(
     label: None,
     timestamp: clock.now_ms(),
   )
+}
+
+fn outcome_json(outcome: Outcome) -> json.Json {
+  json.object([
+    #("text", json.string(outcome.text)),
+    #("steps", json.preprocessed_array(list.map(outcome.steps, step_json))),
+  ])
+}
+
+fn step_json(step: Step) -> json.Json {
+  case step {
+    StepText(text) ->
+      json.object([#("type", json.string("text")), #("text", json.string(text))])
+    StepToolCall(name, input) ->
+      json.object([
+        #("type", json.string("tool")),
+        #("name", json.string(name)),
+        #("input", json.string(input)),
+      ])
+    StepToolResult(name, output) ->
+      json.object([
+        #("type", json.string("result")),
+        #("name", json.string(name)),
+        #("output", json.string(output)),
+      ])
+  }
 }
 
 // --- Request bodies ------------------------------------------------------

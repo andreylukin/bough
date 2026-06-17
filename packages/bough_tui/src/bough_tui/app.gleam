@@ -1,13 +1,15 @@
 //// The bough TUI application (shore / The Elm Architecture).
 ////
 //// Layout (SPEC.md §9): a conversation pane beside a network side pane, an
-//// input line, and a status line. Network calls run as shore effects so the
-//// UI stays responsive; an animated "thinking" block plays while the agent
-//// works. Live egress streaming and the tree overlay are still pending.
+//// input line, and a status line. Assistant turns render their transcript —
+//// intermediate text, tool calls, and (truncated) tool results — as colored
+//// blocks. An animated spinner plays while the agent works. Live streaming of
+//// these steps is a later SSE refinement.
 
-import bough_tui/client
+import bough_tui/client.{type Step, Text, ToolCall, ToolResult}
 import envoy
 import gleam/erlang/process
+import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
@@ -21,8 +23,12 @@ const default_server = "http://127.0.0.1:4096"
 
 const spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
-pub type ChatLine {
-  ChatLine(role: String, text: String)
+const result_lines = 6
+
+pub type Entry {
+  You(String)
+  Bough(List(Step))
+  Failed(String)
 }
 
 pub type Model {
@@ -32,7 +38,7 @@ pub type Model {
     session: Option(String),
     input: String,
     // Newest first; reversed for display.
-    chat: List(ChatLine),
+    chat: List(Entry),
     status: String,
     pending: Bool,
     frame: Int,
@@ -43,7 +49,7 @@ pub type Msg {
   SessionCreated(Result(String, String))
   InputChanged(String)
   Submit
-  AgentReplied(Result(String, String))
+  AgentReplied(Result(client.Reply, String))
   Tick
 }
 
@@ -81,12 +87,12 @@ pub fn update(model: Model, msg: Msg) -> #(Model, List(fn() -> Msg)) {
 
     Submit -> submit(model)
 
-    AgentReplied(Ok(text)) -> #(
+    AgentReplied(Ok(reply)) -> #(
       Model(
         ..model,
         status: "ready",
         pending: False,
-        chat: [ChatLine("bough", text), ..model.chat],
+        chat: [Bough(reply.steps), ..model.chat],
       ),
       [],
     )
@@ -95,7 +101,7 @@ pub fn update(model: Model, msg: Msg) -> #(Model, List(fn() -> Msg)) {
         ..model,
         status: "error",
         pending: False,
-        chat: [ChatLine("error", e), ..model.chat],
+        chat: [Failed(e), ..model.chat],
       ),
       [],
     )
@@ -118,7 +124,7 @@ fn submit(model: Model) -> #(Model, List(fn() -> Msg)) {
           status: "thinking …",
           pending: True,
           frame: 0,
-          chat: [ChatLine("you", text), ..model.chat],
+          chat: [You(text), ..model.chat],
         )
       let server = model.server
       #(model, [
@@ -153,7 +159,7 @@ pub fn view(model: Model) -> shore.Node(Msg) {
 }
 
 fn conversation(model: Model) -> shore.Node(Msg) {
-  let history = model.chat |> list.reverse |> list.flat_map(render_message)
+  let history = model.chat |> list.reverse |> list.flat_map(render_entry)
   let thinking = case model.pending {
     True -> [thinking_block(model.frame)]
     False -> []
@@ -171,18 +177,52 @@ fn conversation(model: Model) -> shore.Node(Msg) {
   ui.box_styled(body, Some("conversation"), Some(style.Blue))
 }
 
-fn render_message(line: ChatLine) -> List(shore.Node(Msg)) {
-  let #(label, color) = case line.role {
-    "you" -> #("▌ you", style.Cyan)
-    "bough" -> #("▌ bough", style.Green)
-    _ -> #("▌ error", style.Red)
+fn render_entry(entry: Entry) -> List(shore.Node(Msg)) {
+  case entry {
+    You(text) -> [header("▌ you", style.Cyan), ui.text_wrapped(text), ui.text("")]
+    Failed(e) -> [header("▌ error", style.Red), ui.text_wrapped(e), ui.text("")]
+    Bough(steps) ->
+      list.flatten([
+        [header("▌ bough", style.Green)],
+        list.flat_map(steps, render_step),
+        [ui.text("")],
+      ])
   }
-  let header = ui.text_styled(label, Some(color), None)
-  let body = case line.role {
-    "bough" -> render_markdown(line.text)
-    _ -> [ui.text_wrapped(line.text)]
+}
+
+fn render_step(step: Step) -> List(shore.Node(Msg)) {
+  case step {
+    Text(text) -> render_markdown(text)
+    ToolCall(name, input) -> [
+      ui.text_styled("⚙ " <> name <> "  " <> truncate(input, 100), Some(style.Yellow), None),
+    ]
+    ToolResult(_name, output) -> render_result(output)
   }
-  list.flatten([[header], body, [ui.text("")]])
+}
+
+fn render_result(output: String) -> List(shore.Node(Msg)) {
+  let lines = string.split(string.trim_end(output), "\n")
+  let shown =
+    lines
+    |> list.take(result_lines)
+    |> list.map(fn(l) {
+      ui.text_styled("  " <> truncate(l, 160), Some(style.Blue), None)
+    })
+  case list.length(lines) - result_lines {
+    extra if extra > 0 ->
+      list.append(shown, [
+        ui.text_styled(
+          "  …(+" <> int.to_string(extra) <> " more lines)",
+          Some(style.Blue),
+          None,
+        ),
+      ])
+    _ -> shown
+  }
+}
+
+fn header(label: String, color: style.Color) -> shore.Node(Msg) {
+  ui.text_styled(label, Some(color), None)
 }
 
 /// Lightweight markdown: style headings and turn rules into lines. Everything
@@ -217,6 +257,13 @@ fn strip_prefix(s: String, prefix: String) -> Result(String, Nil) {
   }
 }
 
+fn truncate(s: String, n: Int) -> String {
+  case string.length(s) > n {
+    True -> string.slice(s, 0, n) <> "…"
+    False -> s
+  }
+}
+
 fn thinking_block(frame: Int) -> shore.Node(Msg) {
   let glyph = case list.drop(spinner, frame % 10) {
     [g, ..] -> g
@@ -245,9 +292,12 @@ fn status(model: Model) -> shore.Node(Msg) {
   )
 }
 
-fn network(_model: Model) -> shore.Node(Msg) {
+fn network(model: Model) -> shore.Node(Msg) {
   ui.box_styled(
     [
+      ui.text_styled("workspace", Some(style.White), None),
+      ui.text_wrapped_styled(model.project, Some(style.Cyan), None),
+      ui.br(),
       ui.text_styled("policy", Some(style.White), None),
       ui.text_styled("· bash   sandbox · net BLOCKED", Some(style.Green), None),
       ui.text_styled("· files  in-process (unsandboxed)", Some(style.Yellow), None),
