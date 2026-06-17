@@ -297,24 +297,26 @@ fn json_field(input: String, key: String) -> Result(String, Nil) {
 }
 
 fn render_result(output: String) -> List(shore.Node(Msg)) {
-  let lines = string.split(string.trim_end(output), "\n")
-  let shown =
-    lines
-    |> list.take(result_lines)
-    |> list.map(fn(l) {
-      ui.text_styled("  " <> truncate(l, 160), Some(style.Blue), None)
-    })
-  case list.length(lines) - result_lines {
-    extra if extra > 0 ->
-      list.append(shown, [
-        ui.text_styled(
-          "  …(+" <> int.to_string(extra) <> " more lines)",
-          Some(style.Blue),
-          None,
-        ),
-      ])
-    _ -> shown
+  case string.trim_end(output) {
+    "" -> [rail("(no output)"), ui.text("")]
+    trimmed -> {
+      let lines = string.split(trimmed, "\n")
+      let shown =
+        lines |> list.take(result_lines) |> list.map(fn(l) { rail(truncate(l, 160)) })
+      let more = case list.length(lines) - result_lines {
+        extra if extra > 0 -> [
+          rail("…(+" <> int.to_string(extra) <> " more lines)"),
+        ]
+        _ -> []
+      }
+      list.flatten([shown, more, [ui.text("")]])
+    }
   }
+}
+
+/// A tool-output line, indented behind a dim left rail.
+fn rail(text: String) -> shore.Node(Msg) {
+  ui.text_styled("  │ " <> text, Some(style.Blue), None)
 }
 
 fn header(label: String, color: style.Color) -> shore.Node(Msg) {
