@@ -929,6 +929,24 @@ fn scroll_window(nodes: List(CLine), budget: Int, scroll: Int) -> List(CLine) {
   }
 }
 
+/// The visible window over the transcript as `#(start, inner, total)`, matching
+/// scroll_window's math so the scrollbar agrees with the "N above/below" markers.
+fn window_bounds(model: Model) -> #(Int, Int, Int) {
+  let total = list.length(transcript(model))
+  let budget = conv_inner_h(model)
+  case total <= budget {
+    True -> #(0, total, total)
+    False -> {
+      let scrolled = model.scroll > 0
+      let inner = int.max(budget - 1 - bool_int(scrolled), 1)
+      let max_scroll = total - inner
+      let s = int.clamp(model.scroll, 0, max_scroll)
+      let start = int.max(total - inner - s, 0)
+      #(start, inner, total)
+    }
+  }
+}
+
 fn bool_int(b: Bool) -> Int {
   case b {
     True -> 1
@@ -1023,13 +1041,15 @@ fn render_chat(model: Model) -> List(Command) {
     visible_conversation(model)
     |> list.flat_map(fn(pair) {
       let #(row, cl) = pair
-      draw(2, row, truncate(cl.text, conv_w - 3), cl.color, cl.attrs)
+      // Leave the last interior column for the right-hand scrollbar.
+      draw(2, row, truncate(cl.text, conv_w - 4), cl.color, cl.attrs)
     })
 
   list.flatten([
     [command.Clear(terminal.All)],
     box(0, 0, conv_w, conv_h, "conversation", style.Blue),
     convo,
+    scrollbar(model),
     box(net_x, 0, net_w, conv_h, "network", style.Magenta),
     network_panel(model, net_x + 2, net_w - 3),
     box(0, conv_h, cols, 3, input_title(model), style.Cyan),
@@ -1037,6 +1057,32 @@ fn render_chat(model: Model) -> List(Command) {
     status_line(model, rows - 1, cols),
     cursor(model, conv_h, cols),
   ])
+}
+
+/// A vertical scrollbar just inside the conversation's right border: a dim track
+/// the height of the viewport with a brighter thumb sized and positioned to the
+/// visible window. Hidden when everything already fits.
+fn scrollbar(model: Model) -> List(Command) {
+  let #(_cols, _rows, conv_w, _conv_h) = dims(model)
+  let x = conv_w - 2
+  let track = conv_inner_h(model)
+  let #(start, inner, total) = window_bounds(model)
+  case total <= track {
+    True -> []
+    False -> {
+      // Map the visible window [start, start+inner) of `total` onto the track.
+      let thumb_h = int.clamp(track * inner / total, 1, track)
+      let thumb_top = int.clamp(track * start / total, 0, track - thumb_h)
+      list.repeat(Nil, track)
+      |> list.index_map(fn(_, i) {
+        case i >= thumb_top && i < thumb_top + thumb_h {
+          True -> draw(x, i + 1, "█", style.Grey, [])
+          False -> draw(x, i + 1, "░", style.Grey, [style.Dim])
+        }
+      })
+      |> list.flatten
+    }
+  }
 }
 
 fn input_title(model: Model) -> String {
