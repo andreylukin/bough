@@ -29,6 +29,11 @@ pub type Reply {
   Reply(text: String, steps: List(Step))
 }
 
+/// Progress of a background agent run (polled).
+pub type RunState {
+  RunState(status: String, steps: List(Step), text: String)
+}
+
 /// GET `<base>/health`; returns the response body on success.
 pub fn health(base: String) -> Result(String, ClientError) {
   use req <- result.try(
@@ -60,6 +65,37 @@ pub fn send_message(
   use resp <- result.try(post(base, "/session/" <> id <> "/message", body) |> describe)
   json.parse(resp, reply_decoder())
   |> result.replace_error("bad message response: " <> resp)
+}
+
+/// POST `/session/:id/run` to start a background run (returns immediately).
+pub fn start_run(base: String, id: String, content: String) -> Result(Nil, String) {
+  let body = json.to_string(json.object([#("content", json.string(content))]))
+  post(base, "/session/" <> id <> "/run", body)
+  |> describe
+  |> result.map(fn(_) { Nil })
+}
+
+/// GET `/session/:id/run` for current run progress.
+pub fn get_run(base: String, id: String) -> Result(RunState, String) {
+  use req <- result.try(
+    request.to(base <> "/session/" <> id <> "/run")
+    |> result.replace_error("invalid server URL"),
+  )
+  case httpc.send(req) {
+    Error(err) -> Error("cannot reach server: " <> string.inspect(err))
+    Ok(response.Response(status: 200, body: body, ..)) ->
+      json.parse(body, run_state_decoder())
+      |> result.replace_error("bad run response")
+    Ok(response.Response(status: code, ..)) ->
+      Error("server error " <> string.inspect(code))
+  }
+}
+
+fn run_state_decoder() -> decode.Decoder(RunState) {
+  use status <- decode.field("status", decode.string)
+  use text <- decode.field("text", decode.string)
+  use steps <- decode.field("steps", decode.list(step_decoder()))
+  decode.success(RunState(status: status, steps: steps, text: text))
 }
 
 fn reply_decoder() -> decode.Decoder(Reply) {

@@ -42,6 +42,8 @@ pub type Model {
     status: String,
     pending: Bool,
     frame: Int,
+    // Live transcript of the in-flight run, replaced on each poll.
+    running_steps: List(Step),
     // Set when the workspace can't be sandboxed by nono (home or an ancestor).
     note: Option(String),
   )
@@ -51,7 +53,8 @@ pub type Msg {
   SessionCreated(Result(String, String))
   InputChanged(String)
   Submit
-  AgentReplied(Result(client.Reply, String))
+  Started(Result(Nil, String))
+  Polled(Result(client.RunState, String))
   Tick
 }
 
@@ -73,6 +76,7 @@ pub fn init() -> #(Model, List(fn() -> Msg)) {
       status: "connecting to " <> server <> " …",
       pending: False,
       frame: 0,
+      running_steps: [],
       note: unsandboxable_note(project),
     )
   #(model, [fn() { SessionCreated(client.create_session(server, project)) }])
@@ -90,24 +94,23 @@ pub fn update(model: Model, msg: Msg) -> #(Model, List(fn() -> Msg)) {
 
     Submit -> submit(model)
 
-    AgentReplied(Ok(reply)) -> #(
-      Model(
-        ..model,
-        status: "ready",
-        pending: False,
-        chat: [Bough(reply.steps), ..model.chat],
-      ),
+    Started(Ok(_)) ->
+      case model.session {
+        Some(id) -> #(model, [poll(model.server, id)])
+        None -> #(model, [])
+      }
+    Started(Error(e)) -> #(
+      Model(..model, status: "error", pending: False, chat: [Failed(e), ..model.chat]),
       [],
     )
-    AgentReplied(Error(e)) -> #(
-      Model(
-        ..model,
-        status: "error",
-        pending: False,
-        chat: [Failed(e), ..model.chat],
-      ),
-      [],
-    )
+
+    Polled(Ok(run)) -> polled(model, run)
+    Polled(Error(_)) ->
+      // Transient (e.g. server briefly unavailable); keep polling while pending.
+      case model.session, model.pending {
+        Some(id), True -> #(model, [poll(model.server, id)])
+        _, _ -> #(model, [])
+      }
 
     Tick ->
       case model.pending {
@@ -127,15 +130,60 @@ fn submit(model: Model) -> #(Model, List(fn() -> Msg)) {
           status: "thinking …",
           pending: True,
           frame: 0,
+          running_steps: [],
           chat: [You(text), ..model.chat],
         )
       let server = model.server
-      #(model, [
-        fn() { AgentReplied(client.send_message(server, id, text)) },
-        tick,
-      ])
+      #(model, [fn() { Started(client.start_run(server, id, text)) }, tick])
     }
     _, _ -> #(model, [])
+  }
+}
+
+fn polled(model: Model, run: client.RunState) -> #(Model, List(fn() -> Msg)) {
+  case run.status {
+    "done" -> #(
+      Model(
+        ..model,
+        status: "ready",
+        pending: False,
+        running_steps: [],
+        chat: [Bough(run.steps), ..model.chat],
+      ),
+      [],
+    )
+    "error" -> #(
+      Model(
+        ..model,
+        status: "error",
+        pending: False,
+        running_steps: [],
+        chat: [Failed(error_text(run.text)), ..model.chat],
+      ),
+      [],
+    )
+    _ ->
+      case model.session {
+        Some(id) -> #(Model(..model, running_steps: run.steps), [
+          poll(model.server, id),
+        ])
+        None -> #(Model(..model, running_steps: run.steps), [])
+      }
+  }
+}
+
+fn error_text(text: String) -> String {
+  case text {
+    "" -> "agent run failed"
+    t -> t
+  }
+}
+
+/// Self-scheduling poll (~400ms) for run progress.
+fn poll(server: String, id: String) -> fn() -> Msg {
+  fn() {
+    process.sleep(400)
+    Polled(client.get_run(server, id))
   }
 }
 
@@ -177,15 +225,18 @@ pub fn view(model: Model) -> shore.Node(Msg) {
 
 fn conversation(model: Model) -> shore.Node(Msg) {
   let history = model.chat |> list.reverse |> list.flat_map(render_entry)
-  let thinking = case model.pending {
-    True -> [thinking_block(model.frame)]
+  let live = case model.pending {
+    True ->
+      list.append(render_entry(Bough(model.running_steps)), [
+        thinking_block(model.frame),
+      ])
     False -> []
   }
   let banner = case model.note {
     Some(text) -> [ui.text_wrapped_styled(text, Some(style.Red), None), ui.text("")]
     None -> []
   }
-  let main = case history, thinking {
+  let main = case history, live {
     [], [] -> [
       ui.text_styled(
         "Tab to focus · type a task · Enter to send",
@@ -193,7 +244,7 @@ fn conversation(model: Model) -> shore.Node(Msg) {
         None,
       ),
     ]
-    _, _ -> list.append(history, thinking)
+    _, _ -> list.append(history, live)
   }
   ui.box_styled(list.append(banner, main), Some("conversation"), Some(style.Blue))
 }

@@ -13,16 +13,15 @@
 
 import bough_core
 import bough_core/session.{type Entry, type SessionTree, Entry}
-import bough_server/agent.{
-  type Outcome, type Step, StepText, StepToolCall, StepToolResult,
-}
+import bough_server/agent
 import bough_server/clock
+import bough_server/run_store
 import bough_server/session_manager
 import envoy
 import gleam/dynamic/decode
+import gleam/erlang/process
 import gleam/http.{Get, Post}
 import gleam/json
-import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import wisp.{type Request, type Response}
@@ -40,6 +39,8 @@ pub fn handle_request(req: Request) -> Response {
     ["session", id], Get -> get_session(id)
     ["session", id, "entry"], Post -> add_entry(req, id)
     ["session", id, "message"], Post -> send_message(req, id)
+    ["session", id, "run"], Post -> start_run(req, id)
+    ["session", id, "run"], Get -> get_run(id)
     _, _ -> wisp.not_found()
   }
 }
@@ -141,7 +142,12 @@ fn run_agent(tree: SessionTree, content: String) -> Response {
             make_entry(session.Assistant, outcome.text, Some(user.id))
           let tree = session.append(tree, assistant)
           case session_manager.save(tree) {
-            Ok(_) -> created(json.to_string(outcome_json(outcome)))
+            Ok(_) ->
+              created(json.to_string(agent.run_json(
+                "done",
+                outcome.steps,
+                outcome.text,
+              )))
             Error(_) -> wisp.internal_server_error()
           }
         }
@@ -166,29 +172,60 @@ fn make_entry(
   )
 }
 
-fn outcome_json(outcome: Outcome) -> json.Json {
-  json.object([
-    #("text", json.string(outcome.text)),
-    #("steps", json.preprocessed_array(list.map(outcome.steps, step_json))),
-  ])
+// --- Streaming run (start + poll) ----------------------------------------
+
+fn start_run(req: Request, id: String) -> Response {
+  use body <- wisp.require_json(req)
+  case decode.run(body, content_decoder()) {
+    Error(_) -> wisp.bad_request("expected {\"content\": string}")
+    Ok(content) ->
+      case session_manager.load(id) {
+        Error(_) -> wisp.not_found()
+        Ok(tree) -> launch_run(id, tree, content)
+      }
+  }
 }
 
-fn step_json(step: Step) -> json.Json {
-  case step {
-    StepText(text) ->
-      json.object([#("type", json.string("text")), #("text", json.string(text))])
-    StepToolCall(name, input) ->
-      json.object([
-        #("type", json.string("tool")),
-        #("name", json.string(name)),
-        #("input", json.string(input)),
-      ])
-    StepToolResult(name, output) ->
-      json.object([
-        #("type", json.string("result")),
-        #("name", json.string(name)),
-        #("output", json.string(output)),
-      ])
+fn launch_run(id: String, tree: SessionTree, content: String) -> Response {
+  case envoy.get("ANTHROPIC_API_KEY") {
+    Error(_) -> json_error("ANTHROPIC_API_KEY is not set")
+    Ok(api_key) -> {
+      let user = make_entry(session.User, content, tree.active_leaf)
+      let tree = session.append(tree, user)
+      let _ = session_manager.save(tree)
+      let model = envoy.get("BOUGH_MODEL") |> result.unwrap(default_model)
+
+      run_store.write(id, "running", [], "")
+      let _ =
+        process.spawn_unlinked(fn() {
+          case
+            agent.run_streaming(
+              api_key,
+              model,
+              tree.project,
+              system_prompt,
+              content,
+              fn(steps) { run_store.write(id, "running", steps, "") },
+            )
+          {
+            Ok(outcome) -> {
+              let assistant =
+                make_entry(session.Assistant, outcome.text, Some(user.id))
+              let _ = session_manager.save(session.append(tree, assistant))
+              run_store.write(id, "done", outcome.steps, outcome.text)
+            }
+            Error(message) -> run_store.write(id, "error", [], message)
+          }
+        })
+      wisp.json_response("{\"status\":\"started\"}", 202)
+    }
+  }
+}
+
+fn get_run(id: String) -> Response {
+  case run_store.read_raw(id) {
+    Ok(body) -> json_ok(body)
+    Error(_) -> json_ok("{\"status\":\"idle\",\"text\":\"\",\"steps\":[]}")
   }
 }
 

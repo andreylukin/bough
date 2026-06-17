@@ -1,9 +1,9 @@
 //// The agent loop (SPEC.md §5): send context to the provider, execute any
 //// tool calls (sandboxed), append results, repeat until the model stops.
 ////
-//// The loop records a transcript of `Step`s (assistant text, tool calls, tool
-//// results) so the client can show what the agent did, not just the final
-//// answer. Live streaming of these steps is a later SSE refinement.
+//// `run_streaming` calls `emit` with the running transcript after every step
+//// (assistant text, tool call, tool result) so a caller can publish progress
+//// as it happens; `run` is the non-streaming variant.
 
 import bough_server/anthropic
 import bough_server/json_value.{type JsonValue, JArray, JObject, JString}
@@ -32,7 +32,20 @@ pub fn run(
   system: String,
   user_prompt: String,
 ) -> Result(Outcome, String) {
-  loop(api_key, model, workspace, system, [user_text(user_prompt)], 0, [])
+  run_streaming(api_key, model, workspace, system, user_prompt, fn(_) { Nil })
+}
+
+/// Like `run`, but invokes `emit` with the full chronological transcript after
+/// each new step is produced.
+pub fn run_streaming(
+  api_key: String,
+  model: String,
+  workspace: String,
+  system: String,
+  user_prompt: String,
+  emit: fn(List(Step)) -> Nil,
+) -> Result(Outcome, String) {
+  loop(api_key, model, workspace, system, [user_text(user_prompt)], 0, [], emit)
 }
 
 fn loop(
@@ -42,8 +55,9 @@ fn loop(
   system: String,
   messages: List(JsonValue),
   turn: Int,
-  // Newest first; reversed into the Outcome.
+  // Newest first; reversed when emitted / returned.
   steps: List(Step),
+  emit: fn(List(Step)) -> Nil,
 ) -> Result(Outcome, String) {
   case turn >= max_turns {
     True -> Error("agent exceeded max turns")
@@ -56,10 +70,7 @@ fn loop(
         tools.definitions(),
       ))
       let messages = list.append(messages, [assistant_msg(resp.content)])
-      let steps = case string.trim(resp.text) {
-        "" -> steps
-        text -> [StepText(text), ..steps]
-      }
+      let steps = push_text(steps, resp.text, emit)
 
       case resp.stop_reason {
         "tool_use" -> {
@@ -67,12 +78,9 @@ fn loop(
             list.fold(resp.tool_uses, #([], steps), fn(acc, tu) {
               let #(blocks, steps) = acc
               let input = json.to_string(json_value.to_json(tu.input))
+              let steps = emit_step(StepToolCall(tu.name, input), steps, emit)
               let output = tools.execute(tu.name, tu.input, workspace)
-              let steps = [
-                StepToolResult(tu.name, output),
-                StepToolCall(tu.name, input),
-                ..steps
-              ]
+              let steps = emit_step(StepToolResult(tu.name, output), steps, emit)
               #([tool_result(tu.id, output), ..blocks], steps)
             })
           loop(
@@ -83,12 +91,63 @@ fn loop(
             list.append(messages, [user_blocks(list.reverse(result_blocks))]),
             turn + 1,
             steps,
+            emit,
           )
         }
         _ ->
           Ok(Outcome(text: resp.text, turns: turn + 1, steps: list.reverse(steps)))
       }
     }
+  }
+}
+
+fn push_text(
+  steps: List(Step),
+  text: String,
+  emit: fn(List(Step)) -> Nil,
+) -> List(Step) {
+  case string.trim(text) {
+    "" -> steps
+    t -> emit_step(StepText(t), steps, emit)
+  }
+}
+
+fn emit_step(
+  step: Step,
+  steps: List(Step),
+  emit: fn(List(Step)) -> Nil,
+) -> List(Step) {
+  let steps = [step, ..steps]
+  emit(list.reverse(steps))
+  steps
+}
+
+// --- JSON ----------------------------------------------------------------
+
+pub fn run_json(status: String, steps: List(Step), text: String) -> json.Json {
+  json.object([
+    #("status", json.string(status)),
+    #("text", json.string(text)),
+    #("steps", json.preprocessed_array(list.map(steps, step_to_json))),
+  ])
+}
+
+pub fn step_to_json(step: Step) -> json.Json {
+  case step {
+    StepText(text) ->
+      json.object([#("type", json.string("text")), #("text", json.string(text))])
+    StepToolCall(name, input) ->
+      json.object([
+        #("type", json.string("tool")),
+        #("name", json.string(name)),
+        #("input", json.string(input)),
+      ])
+    StepToolResult(name, output) ->
+      json.object([
+        #("type", json.string("result")),
+        #("name", json.string(name)),
+        #("output", json.string(output)),
+      ])
   }
 }
 
