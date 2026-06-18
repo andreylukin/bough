@@ -99,8 +99,10 @@ Granularity is up to you. Approve a **host** (`api.foo.com`, a CONNECT tunnel),
 or a **method+path glob** (`https://api.foo.com/v1/**`); nono TLS-intercepts
 hosts that have a path rule and enforces at the endpoint level, so once a host is
 scoped, later denials show the exact `METHOD host/path` and you can narrow
-further. (Globs, not regex: `*` = one path segment, `**` = zero or more. One
-effective rule per host — a new rule for a host replaces the previous.)
+further. (Globs, not regex: `*` = one path segment, `**` = zero or more.)
+Multiple path rules for the same host **union** — approving `/v1/**` then
+`/v2/**` allows both. Approvals are compiled to a per-session nono profile under
+`~/.bough/`.
 
 Without `BOUGH_NET`, commands have no network (as before). The supervisor's own
 model calls are made by the server, outside the sandbox, so the leash governs

@@ -1,10 +1,12 @@
 import bough_core/nono.{Allow, AuditEvent, Deny, Snapshot}
 import bough_server/control
 import bough_server/json_value
+import bough_server/net_profile
 import bough_server/nono_bridge
 import bough_server/snapshots
 import gleam/json
 import gleam/option.{None, Some}
+import gleam/string
 import gleeunit
 import simplifile
 
@@ -100,6 +102,34 @@ pub fn control_round_trip_test() {
   assert control.take(id) == Error(Nil)
 }
 
+/// The generated network profile groups rules by host: multiple path rules for
+/// one host union into one endpoints array; a bare host stays a plain string.
+pub fn net_profile_unions_paths_test() {
+  let j =
+    json.to_string(net_profile.build([
+      "https://api.foo.com/v1/**", "https://api.foo.com/v2/**", "bare.example.com",
+    ]))
+  // Both path globs present under the one host, as endpoint rules.
+  assert string.contains(j, "/v1/**")
+  assert string.contains(j, "/v2/**")
+  assert string.contains(j, "\"domain\":\"api.foo.com\"")
+  // The bare host appears as a plain allowlist string (no endpoints object).
+  assert string.contains(j, "\"bare.example.com\"")
+  // One endpoints array for the host (i.e. unioned, not two domain objects).
+  assert count_occurrences(j, "\"domain\":\"api.foo.com\"") == 1
+}
+
+fn count_occurrences(haystack: String, needle: String) -> Int {
+  list_length(string.split(haystack, needle)) - 1
+}
+
+fn list_length(l: List(a)) -> Int {
+  case l {
+    [] -> 0
+    [_, ..rest] -> 1 + list_length(rest)
+  }
+}
+
 /// The endpoint-deny reason yields method + path; a plain CONNECT deny yields
 /// neither (host-only).
 pub fn parse_endpoint_reason_test() {
@@ -116,19 +146,21 @@ pub fn parse_endpoint_reason_test() {
   assert nono_bridge.parse_endpoint_reason(None) == #(None, None)
 }
 
-/// Network denial detection picks the newest audit session whose command
-/// matches and which had network events (ignoring no-net and other commands).
+/// Detection finds the newest audit session matching the command and started
+/// after the watermark, with its net-event count (older runs / other commands
+/// excluded). No-net runs are still found, so the caller can stop polling.
 pub fn pick_session_newest_matching_test() {
   let cmd = ["sh", "-c", "curl x"]
   let json =
     "["
-    <> "{\"session_id\":\"old\",\"started\":\"2026-06-18T16:00:00-04:00\",\"command\":[\"sh\",\"-c\",\"curl x\"],\"network_event_count\":2},"
-    <> "{\"session_id\":\"new\",\"started\":\"2026-06-18T16:05:00-04:00\",\"command\":[\"sh\",\"-c\",\"curl x\"],\"network_event_count\":1},"
-    <> "{\"session_id\":\"nonet\",\"started\":\"2026-06-18T16:08:00-04:00\",\"command\":[\"sh\",\"-c\",\"curl x\"],\"network_event_count\":0},"
+    <> "{\"session_id\":\"old\",\"started\":\"2026-06-18T16:00:00-04:00\",\"command\":[\"sh\",\"-c\",\"curl x\"],\"network_event_count\":0},"
+    <> "{\"session_id\":\"run\",\"started\":\"2026-06-18T16:05:00-04:00\",\"command\":[\"sh\",\"-c\",\"curl x\"],\"network_event_count\":2},"
     <> "{\"session_id\":\"other\",\"started\":\"2026-06-18T16:09:00-04:00\",\"command\":[\"ls\"],\"network_event_count\":3}"
     <> "]"
-  assert nono_bridge.pick_session(json, cmd, "") == Ok("new")
-  // The watermark excludes sessions started at/before it (prior runs/retries).
+  // Newest matching after an early watermark: the run, with its net count.
+  assert nono_bridge.pick_session(json, cmd, "2026-06-18T16:02:00-04:00")
+    == Ok(#("run", 2))
+  // Watermark past the run excludes it.
   assert nono_bridge.pick_session(json, cmd, "2026-06-18T16:06:00-04:00")
     == Error(Nil)
 }

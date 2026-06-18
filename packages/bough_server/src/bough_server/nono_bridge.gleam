@@ -71,6 +71,29 @@ pub fn run_args(profile: Profile, command: List(String)) -> List(String) {
   ])
 }
 
+/// Run a command in the sandbox under a generated nono profile (the network
+/// leash, SPEC §7). The profile supplies default-deny network + the session's
+/// allow rules (unioned per host); `--allow` supplies workspace filesystem.
+/// Returns the exit code and combined output.
+pub fn run_in_profile(
+  workspace: String,
+  profile_path: String,
+  command: List(String),
+) -> #(Int, String) {
+  let args =
+    list.flatten([
+      [
+        "run", "-s", "--profile", profile_path, "--allow", workspace,
+        "--allow-cwd", "--no-rollback", "--",
+      ],
+      command,
+    ])
+  case shellout.command("nono", args, workspace, []) {
+    Ok(output) -> #(0, output)
+    Error(#(code, output)) -> #(code, output)
+  }
+}
+
 /// Extract the session id from `nono run --detached` output
 /// ("Started detached session <id>.").
 pub fn parse_session_id(output: String) -> Result(String, Nil) {
@@ -132,12 +155,16 @@ fn audit_decoder() -> decode.Decoder(List(AuditEvent)) {
 
 fn network_event_decoder() -> decode.Decoder(AuditEvent) {
   use host <- decode.field("target", decode.string)
-  use port <- decode.field("port", decode.int)
+  // `port` is null on intercepted L7 events (only the CONNECT carries it), so
+  // tolerate null/absent — a strict int decode here would fail the whole list
+  // and drop every event in the session, including the denials.
+  use port_opt <- decode.field("port", decode.optional(decode.int))
   use method <- decode.field("method", decode.optional(decode.string))
   use path <- decode.field("path", decode.optional(decode.string))
   use decision_s <- decode.field("decision", decode.string)
   use reason <- decode.field("reason", decode.optional(decode.string))
   use timestamp <- decode.field("timestamp_unix_ms", decode.int)
+  let port = option.unwrap(port_opt, 0)
   case nono.decision_from_string(decision_s) {
     Ok(decision) ->
       decode.success(AuditEvent(
@@ -165,32 +192,25 @@ pub type Denial {
   Denial(host: String, method: Option(String), path: Option(String))
 }
 
-/// The distinct requests the just-run sandboxed `command` was DENIED, read from
-/// nono's audit trail. `after` is a watermark (the newest matching session's
-/// `started`, captured *before* the run via `session_watermark`) so prior runs
-/// of an identical command — and the run's own earlier retries — are excluded.
-/// Empty if there were no denials (or audit is unavailable — non-fatal).
-pub fn denials(command: List(String), after: String) -> List(Denial) {
-  case latest_session(command, after) {
+/// The distinct requests denied in the given audit session, host plus
+/// method/path when intercepted. Empty if none (or the session is unreadable).
+pub fn denials_of(session_id: String) -> List(Denial) {
+  case audit_events(session_id) {
+    Ok(events) ->
+      events
+      |> list.filter_map(fn(e) {
+        case e.decision {
+          Deny -> Ok(to_denial(e))
+          Allow -> Error(Nil)
+        }
+      })
+      |> list.unique
     Error(_) -> []
-    Ok(session_id) ->
-      case audit_events(session_id) {
-        Ok(events) ->
-          events
-          |> list.filter_map(fn(e) {
-            case e.decision {
-              Deny -> Ok(to_denial(e))
-              Allow -> Error(Nil)
-            }
-          })
-          |> list.unique
-        Error(_) -> []
-      }
   }
 }
 
 /// The newest `started` among audit sessions for `command` right now, or "" if
-/// none. Capture this before running so `denials` can ignore older sessions.
+/// none. Capture before running so `find_session` can ignore older sessions.
 pub fn session_watermark(command: List(String)) -> String {
   case shellout.command("nono", ["audit", "list", "--today", "--json"], ".", []) {
     Error(_) -> ""
@@ -205,6 +225,20 @@ pub fn session_watermark(command: List(String)) -> String {
           |> list.last
           |> result.unwrap("")
       }
+  }
+}
+
+/// The audit session for the run we just did: the newest matching `command` and
+/// started after the watermark. Returns its id and network-event count, so the
+/// caller can poll until it appears (the audit is flushed slightly after the
+/// command exits) and then inspect denials only when there were net events.
+pub fn find_session(
+  command: List(String),
+  after: String,
+) -> Result(#(String, Int), Nil) {
+  case shellout.command("nono", ["audit", "list", "--today", "--json"], ".", []) {
+    Ok(out) -> pick_session(out, command, after)
+    Error(_) -> Error(Nil)
   }
 }
 
@@ -239,36 +273,27 @@ pub fn parse_endpoint_reason(
   }
 }
 
-/// The most recent audit session whose command matches `command`, recorded
-/// network events, and started after the watermark — i.e. the run we just did.
-fn latest_session(command: List(String), after: String) -> Result(String, Nil) {
-  case shellout.command("nono", ["audit", "list", "--today", "--json"], ".", []) {
-    Ok(out) -> pick_session(out, command, after)
-    Error(_) -> Error(Nil)
-  }
-}
-
-/// Pure: pick the matching session id from `nono audit list --json` output —
-/// matching command, with network events, started strictly after `after`.
+/// Pure: pick the run's session from `nono audit list --json` output — the
+/// newest entry matching `command` and started strictly after `after`. Returns
+/// its id and network-event count (no net-count filter, so a no-network run is
+/// found too, which lets the caller stop polling).
 pub fn pick_session(
   out: String,
   command: List(String),
   after: String,
-) -> Result(String, Nil) {
+) -> Result(#(String, Int), Nil) {
   use entries <- result.try(
     json.parse(out, decode.list(audit_list_decoder()))
     |> result.replace_error(Nil),
   )
   entries
   |> list.filter(fn(e) {
-    e.command == command
-    && e.net_count > 0
-    && string.compare(e.started, after) == Gt
+    e.command == command && string.compare(e.started, after) == Gt
   })
   |> list.sort(fn(a, b) { string.compare(a.started, b.started) })
   |> list.reverse
   |> list.first
-  |> result.map(fn(e) { e.session_id })
+  |> result.map(fn(e) { #(e.session_id, e.net_count) })
 }
 
 type AuditListEntry {

@@ -25,6 +25,7 @@ import bough_server/clock
 import bough_server/control
 import bough_server/integrity
 import bough_server/json_value.{type JsonValue}
+import bough_server/net_profile
 import bough_server/nono_bridge
 import bough_server/prompts
 import bough_server/provider
@@ -33,6 +34,7 @@ import bough_server/tools
 import bough_server/worker
 import envoy
 import gleam/dict.{type Dict}
+import gleam/erlang/process
 import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
@@ -138,6 +140,8 @@ type State {
     instructions: Option(String),
     // The network allowlist for sandboxed commands; grows as hosts are approved.
     net_allow: List(String),
+    // Where the generated nono network profile for this run is written.
+    net_profile_path: String,
     // activities newest-first; reversed on emit/return
     activities: List(Activity),
   )
@@ -160,6 +164,7 @@ pub fn run_streaming(
   subagents: Subagents,
   net_allow: List(String),
 ) -> Result(Outcome, String) {
+  let dir = bb_dir()
   let state =
     State(
       api_key: api_key,
@@ -173,7 +178,7 @@ pub fn run_streaming(
       convo: seed_convo(history, user_prompt),
       context_tokens: 0,
       baseline: integrity.snapshot(workspace),
-      bb_dir: bb_dir(),
+      bb_dir: dir,
       bb_idx: 0,
       check: None,
       check_ok: False,
@@ -181,6 +186,7 @@ pub fn run_streaming(
       steps_done: 0,
       instructions: read_agents_md(workspace),
       net_allow: net_allow,
+      net_profile_path: dir <> "/net.json",
       activities: [],
     )
   let #(state, rounds) = run_rounds(state, 1)
@@ -530,12 +536,12 @@ fn exec_run_net(state: State, cmd: String, tries: Int) -> #(State, Exec) {
     True -> nono_bridge.session_watermark(command)
     False -> ""
   }
-  let #(code, out) = nono_bridge.run_result(profile(state), command)
+  let #(code, out) = sandboxed(state, command)
   let state = bump(state)
   case state.config.net_gate && tries < net_max_retries {
     False -> #(state, Exec(code, out))
     True ->
-      case nono_bridge.denials(command, watermark) {
+      case net_denials(command, watermark, 0) {
         [] -> #(state, Exec(code, out))
         [denial, ..] ->
           case net_decision(state, denial) {
@@ -553,26 +559,40 @@ fn exec_run_net(state: State, cmd: String, tries: Int) -> #(State, Exec) {
   }
 }
 
-/// Add an allow rule, replacing any prior rule for the same host. nono's CLI
-/// allowlist is last-wins per host (repeated `--allow-domain` for a host do not
-/// union — the latest replaces), so we keep exactly one rule per host: the most
-/// recent approval. Appended last so it is the effective one.
+/// Add an allow rule (deduped). The generated nono profile groups rules by host
+/// and unions their endpoint globs (`net_profile`), so accumulating multiple
+/// path rules for one host widens access rather than replacing it.
 fn add_rule(rules: List(String), rule: String) -> List(String) {
-  let host = rule_host(rule)
-  rules
-  |> list.filter(fn(r) { rule_host(r) != host })
-  |> list.append([rule])
+  case list.contains(rules, rule) {
+    True -> rules
+    False -> list.append(rules, [rule])
+  }
 }
 
-/// The host part of an allow rule, whether bare (`example.com`) or a URL glob
-/// (`https://example.com/v1/**`).
-fn rule_host(rule: String) -> String {
-  rule
-  |> string.replace("https://", "")
-  |> string.replace("http://", "")
-  |> string.split("/")
-  |> list.first
-  |> result.unwrap(rule)
+/// Denied requests for the run just performed. Polls until the run's audit
+/// session appears (nono flushes it shortly after the command exits) so a
+/// denial isn't missed by reading too early; then inspects it only if it had
+/// network events. Bounded (~1s) — if the session never shows, assume no denial.
+fn net_denials(
+  command: List(String),
+  watermark: String,
+  polls: Int,
+) -> List(nono_bridge.Denial) {
+  case nono_bridge.find_session(command, watermark) {
+    Ok(#(session_id, net_count)) ->
+      case net_count > 0 {
+        True -> nono_bridge.denials_of(session_id)
+        False -> []
+      }
+    Error(_) ->
+      case polls >= 12 {
+        True -> []
+        False -> {
+          process.sleep(80)
+          net_denials(command, watermark, polls + 1)
+        }
+      }
+  }
 }
 
 /// Ask the human about a denied request; map their choice to an allow rule
@@ -681,14 +701,14 @@ fn read_file(
       <> "p'"
     None -> "cat -n -- '" <> resolved <> "'"
   }
-  let #(code, out) = nono_bridge.run_result(profile(state), ["sh", "-c", cmd])
+  let #(code, out) = sandboxed(state, ["sh", "-c", cmd])
   #(bump(state), Exec(code, out))
 }
 
 fn grep(state: State, pattern: String) -> #(State, Exec) {
   let escaped = string.replace(pattern, "'", "'\\''")
   let cmd = "grep -rnI -- '" <> escaped <> "' . | head -n 200 || true"
-  let #(code, out) = nono_bridge.run_result(profile(state), ["sh", "-c", cmd])
+  let #(code, out) = sandboxed(state, ["sh", "-c", cmd])
   #(bump(state), Exec(code, out))
 }
 
@@ -706,7 +726,7 @@ fn run_check(state: State, fb_rev: List(String)) -> #(State, List(String)) {
         False -> #(state, fb_rev)
         True -> {
           let #(code, out) =
-            nono_bridge.run_result(profile(state), ["sh", "-c", check])
+            sandboxed(state, ["sh", "-c", check])
           let state = State(..bump(state), check_ok: code == 0)
           let dig = digest.digest(out, 1000)
           let state = emit_activity(state, StepCheck(code == 0, dig))
@@ -804,25 +824,27 @@ fn read_agents_md(workspace: String) -> Option(String) {
   |> option.from_result
 }
 
-/// A host the agent never contacts, included in the allowlist whenever the gate
-/// is on. nono only engages proxy filtering (and thus per-host deny + audit)
-/// when the allowlist is non-empty; the sentinel keeps an otherwise-empty
-/// allowlist in default-deny mode rather than silently unrestricted.
-const net_sentinel = "bough.sentinel.invalid"
-
-fn profile(state: State) -> nono.Profile {
-  // Steps run workspace-scoped. With the net gate off, the network is blocked
-  // entirely (§5.2); with it on, it's default-deny against the session
-  // allowlist (+ sentinel), and a denied host is surfaced for approval (§7).
+/// Run a command in the sandbox. With the net gate off, the network is blocked
+/// entirely (§5.2); with it on, the run uses a generated nono profile that is
+/// default-deny against the session allowlist (§7), so a denied request can be
+/// detected and surfaced for approval.
+fn sandboxed(state: State, command: List(String)) -> #(Int, String) {
   case state.config.net_gate {
-    False -> nono.Profile(state.workspace, [], True, False)
-    True ->
-      nono.Profile(
-        state.workspace,
-        [net_sentinel, ..state.net_allow],
-        False,
-        False,
+    False ->
+      nono_bridge.run_result(
+        nono.Profile(state.workspace, [], True, False),
+        command,
       )
+    True ->
+      case net_profile.write(state.net_profile_path, state.net_allow) {
+        Ok(path) -> nono_bridge.run_in_profile(state.workspace, path, command)
+        // If the profile can't be written, fail safe: block the network.
+        Error(_) ->
+          nono_bridge.run_result(
+            nono.Profile(state.workspace, [], True, False),
+            command,
+          )
+      }
   }
 }
 

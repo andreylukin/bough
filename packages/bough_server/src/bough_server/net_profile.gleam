@@ -1,0 +1,114 @@
+//// Generate a nono profile JSON from the session's network allow rules
+//// (SPEC §7). Each rule is either a bare host (`api.foo.com` — a CONNECT
+//// tunnel, all paths) or a URL path-glob (`https://api.foo.com/v1/**` — an L7
+//// endpoint rule). Rules are grouped by host so multiple path rules for one
+//// host **union** (nono's CLI allowlist is last-wins per host; a profile's
+//// `endpoints` array is "allow if any match"). An empty rule set yields an
+//// empty allowlist — default-deny, which is the whole point of the leash.
+
+import gleam/dict
+import gleam/json
+import gleam/list
+import gleam/option.{type Option, None, Some}
+import gleam/result
+import gleam/string
+import simplifile
+
+/// Write the profile for `rules` to `path`, returning it. Errors are non-fatal
+/// to the caller (it falls back to blocking the run).
+pub fn write(path: String, rules: List(String)) -> Result(String, Nil) {
+  let _ = simplifile.create_directory_all(dirname(path))
+  case simplifile.write(path, json.to_string(build(rules))) {
+    Ok(_) -> Ok(path)
+    Error(_) -> Error(Nil)
+  }
+}
+
+/// A host the agent never contacts, always included so the allowlist is
+/// non-empty — nono only engages proxy filtering (and thus per-host deny +
+/// audit) when it is; otherwise the network would be silently unrestricted.
+const sentinel = "bough.sentinel.invalid"
+
+/// Pure: the profile JSON for a set of allow rules.
+pub fn build(rules: List(String)) -> json.Json {
+  json.object([
+    #("meta", json.object([#("name", json.string("bough-net"))])),
+    #(
+      "network",
+      json.object([
+        #(
+          "allow_domain",
+          json.preprocessed_array([json.string(sentinel), ..entries(rules)]),
+        ),
+      ]),
+    ),
+  ])
+}
+
+type HostRule {
+  HostRule(bare: Bool, paths: List(String))
+}
+
+fn entries(rules: List(String)) -> List(json.Json) {
+  group(rules)
+  |> dict.to_list
+  |> list.map(fn(pair) {
+    let #(host, rule) = pair
+    case rule.bare {
+      // A bare-host approval allows everything on the host.
+      True -> json.string(host)
+      False ->
+        json.object([
+          #("domain", json.string(host)),
+          #(
+            "endpoints",
+            json.array(rule.paths, fn(p) {
+              json.object([
+                #("method", json.string("*")),
+                #("path", json.string(p)),
+              ])
+            }),
+          ),
+        ])
+    }
+  })
+}
+
+fn group(rules: List(String)) -> dict.Dict(String, HostRule) {
+  list.fold(rules, dict.new(), fn(acc, rule) {
+    let #(host, path) = parse(rule)
+    let existing = dict.get(acc, host) |> result.unwrap(HostRule(False, []))
+    let updated = case path {
+      None -> HostRule(..existing, bare: True)
+      Some(p) ->
+        case list.contains(existing.paths, p) {
+          True -> existing
+          False -> HostRule(..existing, paths: [p, ..existing.paths])
+        }
+    }
+    dict.insert(acc, host, updated)
+  })
+}
+
+/// Split a rule into its host and optional path glob.
+fn parse(rule: String) -> #(String, Option(String)) {
+  let stripped =
+    rule
+    |> string.replace("https://", "")
+    |> string.replace("http://", "")
+  case string.split_once(stripped, "/") {
+    Ok(#(host, rest)) -> #(host, Some("/" <> rest))
+    Error(_) -> #(stripped, None)
+  }
+}
+
+fn dirname(path: String) -> String {
+  case string.split_once(reverse(path), "/") {
+    Ok(#(_, rest)) -> reverse(rest)
+    Error(_) -> "."
+  }
+}
+
+fn reverse(s: String) -> String {
+  s |> string.to_graphemes |> list.reverse |> string.join("")
+}
