@@ -2115,35 +2115,43 @@ fn render_plan_overlay(model: Model) -> List(Command) {
   ])
 }
 
-/// A turn's steps flattened to colored display lines for the plan overlay: the
-/// supervisor's prose, each action (verb + arg) with full WRITE/EDIT content,
-/// any worker fixes, and the CHECK.
+/// A turn's steps flattened to colored display lines for the plan overlay: just
+/// the plan itself — the numbered actions (verb + arg) with full WRITE/EDIT
+/// content, any worker fixes, and the CHECK. The supervisor's prose and its
+/// final answer are the turn's *output*, shown in the chat, not the plan.
 fn plan_rows(steps: List(Step)) -> List(#(String, Color)) {
-  list.flat_map(steps, fn(step) {
-    case step {
-      Plan(text) ->
-        list.append(
-          list.map(string.split(string.trim(text), "\n"), fn(l) {
-            #(l, style.Default)
-          }),
-          [#("", style.Default)],
-        )
-      Call(verb, arg, detail) -> {
-        let head = #(verb <> "  " <> arg, style.Yellow)
-        let body = case string.trim(detail) {
-          "" -> []
-          d -> list.map(string.split(d, "\n"), fn(l) { #("    " <> l, style.Grey) })
+  let #(rows, _n) =
+    list.fold(steps, #([], 1), fn(acc, step) {
+      let #(rows, n) = acc
+      case step {
+        Call(verb, arg, detail) -> {
+          let head = #(int.to_string(n) <> ". " <> verb <> "  " <> arg, style.Yellow)
+          let body = case string.trim(detail) {
+            "" -> []
+            d ->
+              list.map(string.split(d, "\n"), fn(l) {
+                #("      " <> l, style.Grey)
+              })
+          }
+          #(list.flatten([rows, [head], body, [#("", style.Default)]]), n + 1)
         }
-        list.flatten([[head], body, [#("", style.Default)]])
+        Worker(cmd, exit) -> #(
+          list.append(rows, [
+            #("   ↺ worker  " <> cmd <> exit_mark(exit), style.Yellow),
+            #("", style.Default),
+          ]),
+          n,
+        )
+        Check(ok, _) -> #(
+          list.append(rows, [#(check_text(ok), check_color(ok)), #("", style.Default)]),
+          n,
+        )
+        // Prose (Plan), the final answer (Text), step output (Exec), and review
+        // notes are the turn's output — not part of the plan.
+        _ -> #(rows, n)
       }
-      Worker(cmd, exit) -> [
-        #("worker  " <> cmd <> exit_mark(exit), style.Yellow),
-        #("", style.Default),
-      ]
-      Check(ok, _) -> [#(check_text(ok), check_color(ok)), #("", style.Default)]
-      _ -> []
-    }
-  })
+    })
+  rows
 }
 
 fn exit_mark(exit: Int) -> String {
