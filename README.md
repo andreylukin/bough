@@ -28,9 +28,10 @@ Already cloned? Run `./install.sh` from the checkout instead. The script is
 idempotent — re-running updates, rebuilds, and resumes a partial model download.
 Knobs: `BOUGH_HOME` (clone target, default `~/repos/bough`), `BOUGH_NO_LLAMA=1`
 (skip `llama.cpp`), `BOUGH_NO_MODEL=1` (skip the model download), and
-`BOUGH_MODEL_URL` (use a different GGUF). The worker is wired in at runtime only
-when you set `BOUGH_WORKER=<model>`; with the weights already on disk it starts
-with no first-run download.
+`BOUGH_MODEL_URL` (use a different GGUF). The Qwen2.5-Coder worker is always on:
+bough starts a local `llama-server` on first run and uses the pre-installed
+weights, so there's nothing to configure. Point `BOUGH_WORKER_URL` at a remote
+endpoint to override.
 
 Then set your key and start it:
 
@@ -91,11 +92,11 @@ Early slices of the v1 vertical slice (SPEC.md §10) are working:
   passing plus an adversarial review, tracks file integrity, and caps the turn
   with round/step budgets. Earlier provider tool-use code (`agent`, `tools`)
   remains but is no longer wired in.
-- **Worker runtime** (`worker_runtime`, SPEC §5.6): enable with `BOUGH_WORKER=<model>`.
-  bough downloads the GGUF (`BOUGH_WORKER_GGUF_URL`) and supervises a local
-  `llama-server`, handing the engine a localhost OpenAI-compatible endpoint; a
-  failed step gets one worker fix command. Set `BOUGH_WORKER_URL` to use a
-  running/remote endpoint instead, or leave it unset for supervisor-only fixes.
+- **Worker runtime** (`worker_runtime`, SPEC §5.6): always on, fixed to
+  Qwen2.5-Coder. bough supervises a local `llama-server` against the
+  pre-installed GGUF (`~/.bough/models/`), handing the engine a localhost
+  OpenAI-compatible endpoint; a failed step gets one worker fix command. Set
+  `BOUGH_WORKER_URL` to use a running/remote endpoint instead.
 
 Next: stream live egress + step activity into the network pane and add rule
 editing (needs server SSE + a rules endpoint); a session-tree overlay; sandbox

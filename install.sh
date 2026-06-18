@@ -114,5 +114,6 @@ Run it (two terminals):
 Or use the launcher (starts the server, then the TUI, and cleans up on exit):
     "$SRC/scripts/bough"
 
-Optional knobs: BOUGH_MODEL, BOUGH_PROVIDER, BOUGH_WORKER, BOUGH_MAX_TURNS — see README.md.
+The Qwen2.5-Coder worker is always on (local llama-server, no config needed).
+Optional knobs: BOUGH_MODEL, BOUGH_PROVIDER, BOUGH_MAX_TURNS — see README.md.
 EOF

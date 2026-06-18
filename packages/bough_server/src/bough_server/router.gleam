@@ -41,6 +41,11 @@ const default_max_turns = 20
 
 const default_worker_port = 8080
 
+// The only worker model bough uses: Qwen2.5-Coder, served locally via
+// llama-server. This is the label sent to the OpenAI-compatible endpoint;
+// llama-server serves whatever GGUF it was started with (see worker_runtime).
+const worker_model = "qwen2.5-coder"
+
 pub fn handle_request(req: Request) -> Response {
   case wisp.path_segments(req), req.method {
     [], _ -> json_ok("{\"service\":\"bough\",\"version\":\"" <> bough_core.version <> "\"}")
@@ -194,25 +199,18 @@ fn max_rounds() -> Int {
   }
 }
 
-/// Engine config from the environment. The worker is enabled by setting
-/// `BOUGH_WORKER` to a model name; bough then ensures a local inference server
-/// is up (SPEC.md §5.6) and points the worker at it.
+/// Engine config from the environment. The worker (Qwen2.5-Coder, SPEC.md §5.6)
+/// is always enabled: bough ensures a local llama-server is up and points the
+/// worker at it. Set `BOUGH_WORKER_URL` to use a remote endpoint instead
+/// (honored inside `worker_runtime.ensure`).
 fn engine_config(prov: provider.Provider) -> engine.Config {
-  let worker = case envoy.get("BOUGH_WORKER") {
-    Ok("") -> None
-    Ok(model) -> Some(model)
-    Error(_) -> None
-  }
   let base = engine.default_config()
-  let worker_url = case worker {
-    Some(_) ->
-      worker_runtime.ensure(worker_port()) |> result.unwrap(base.worker_url)
-    None -> base.worker_url
-  }
+  let worker_url =
+    worker_runtime.ensure(worker_port()) |> result.unwrap(base.worker_url)
   engine.Config(
     ..base,
     provider: prov,
-    worker: worker,
+    worker: Some(worker_model),
     worker_url: worker_url,
     max_rounds: max_rounds(),
   )
