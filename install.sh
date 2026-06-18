@@ -99,7 +99,13 @@ else
   fi
 fi
 
-# 6. Next steps ------------------------------------------------------------
+# 6. Put `bough` on PATH ---------------------------------------------------
+# Symlink the launcher into Homebrew's bin (already on PATH from shellenv).
+link_dir="$(brew --prefix)/bin"
+ln -sf "$SRC/scripts/bough" "$link_dir/bough"
+info "linked 'bough' -> $link_dir/bough"
+
+# 7. Next steps ------------------------------------------------------------
 cat <<EOF
 
 $(info "bough is built at $SRC")
@@ -107,12 +113,12 @@ $(info "bough is built at $SRC")
 Set your API key (add to ~/.zshrc to make it permanent):
     export ANTHROPIC_API_KEY=sk-ant-...
 
-Run it (two terminals):
+Run it from anywhere (starts the server, then the TUI, cleans up on exit):
+    bough
+
+Or run the two processes by hand (two terminals):
     cd "$SRC" && make serve                       # terminal 1: the server (127.0.0.1:4096)
     cd "$SRC/packages/bough_tui" && gleam run      # terminal 2: the TUI client
-
-Or use the launcher (starts the server, then the TUI, and cleans up on exit):
-    "$SRC/scripts/bough"
 
 The Qwen2.5-Coder worker is always on (local llama-server, no config needed).
 Optional knobs: BOUGH_MODEL, BOUGH_PROVIDER, BOUGH_MAX_TURNS — see README.md.

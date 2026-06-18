@@ -37,11 +37,12 @@ Then set your key and start it:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...   # add to ~/.zshrc to persist
-scripts/bough                         # starts the server, waits for health, runs the TUI
+bough                                  # starts the server, waits for health, runs the TUI
 ```
 
-`scripts/bough` is a convenience launcher; you can also run the two processes by
-hand (see [Develop](#develop)).
+The installer symlinks `bough` (the `scripts/bough` launcher) into Homebrew's
+`bin`, so it's on your PATH and runnable from anywhere. You can also run the two
+processes by hand (see [Develop](#develop)).
 
 ## Layout
 
