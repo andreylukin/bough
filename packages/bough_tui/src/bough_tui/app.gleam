@@ -12,7 +12,8 @@
 //// shore's Tab-focus dance.
 
 import bough_tui/client.{
-  type Step, Call, Check, Exec, Plan, Review, Text, ToolCall, ToolResult, Worker,
+  type Step, Await, Call, Check, Exec, Plan, Review, Text, ToolCall, ToolResult,
+  Worker,
 }
 import etch/command.{type Command}
 import etch/event.{type Event}
@@ -105,6 +106,12 @@ pub type Model {
     context_tokens: Int,
     // Supervisor model in use (from the server's /config), shown in the status line.
     model_name: String,
+    // Plan-review gate: when on, runs pause for approval before executing.
+    review: Bool,
+    // True while a plan is paused awaiting the human's allow/steer/reject.
+    awaiting: Bool,
+    // True while typing a steer message for a paused plan (Enter sends it).
+    steering: Bool,
   )
 }
 
@@ -167,6 +174,13 @@ pub type Msg {
   Noop
   // Timer tick that advances an in-progress edge autoscroll.
   AutoScroll
+  // Plan-review gate.
+  ToggleReview
+  BeginSteer
+  CancelSteer
+  // Resolve a paused plan: decision "allow"/"steer" plus a steer message.
+  SendControl(String, String)
+  Controlled(Result(Nil, String))
 }
 
 pub fn init() -> #(Model, List(fn() -> Msg)) {
@@ -206,6 +220,9 @@ pub fn init() -> #(Model, List(fn() -> Msg)) {
       autoscroll: 0,
       context_tokens: 0,
       model_name: "",
+      review: envoy.get("BOUGH_REVIEW") |> result.is_ok,
+      awaiting: False,
+      steering: False,
     )
   let resume = envoy.get("BOUGH_RESUME") |> result.is_ok
   // --resume opens the picker on launch; --continue resumes silently once the
@@ -423,6 +440,57 @@ pub fn update(model: Model, msg: Msg) -> #(Model, List(fn() -> Msg)) {
       [],
     )
     Forked(Error(e)) -> #(Model(..model, view: ChatV, status: "error: " <> e), [])
+
+    ToggleReview -> {
+      let review = !model.review
+      let note = case review {
+        True -> "plan review: ON — runs pause for approval"
+        False -> "plan review: off"
+      }
+      #(Model(..model, review: review, status: note), [])
+    }
+
+    BeginSteer -> #(
+      Model(
+        ..model,
+        steering: True,
+        focused: True,
+        input: "",
+        cursor: 0,
+        status: "guidance for the plan · Enter sends · Esc cancels",
+      ),
+      [],
+    )
+
+    CancelSteer -> #(
+      Model(..model, steering: False, input: "", cursor: 0, status: "review the plan"),
+      [],
+    )
+
+    SendControl(decision, message) -> {
+      let server = model.server
+      case model.session {
+        Some(id) -> #(
+          Model(
+            ..model,
+            awaiting: False,
+            steering: False,
+            input: "",
+            cursor: 0,
+            status: "resuming …",
+          ),
+          [fn() { Controlled(client.send_control(server, id, decision, message)) }],
+        )
+        None -> #(model, [])
+      }
+    }
+
+    Controlled(Ok(_)) ->
+      case model.session, model.pending {
+        Some(id), True -> #(model, [poll(model.server, id)])
+        _, _ -> #(model, [])
+      }
+    Controlled(Error(e)) -> #(Model(..model, status: "error: " <> e), [])
   }
 }
 
@@ -644,7 +712,7 @@ fn step_color(step: client.Step) -> Color {
         True -> style.Green
         False -> style.Red
       }
-    client.Review(_) -> style.Magenta
+    client.Review(_) | client.Await(_) -> style.Magenta
   }
 }
 
@@ -682,6 +750,7 @@ fn step_label(step: client.Step) -> String {
         False -> "[check: fail]"
       }
     client.Review(note) -> "[review: " <> oneline(note) <> "]"
+    client.Await(_) -> "[plan: awaiting approval]"
     client.ToolCall(name, input) ->
       "[" <> name <> ": " <> oneline(input) <> "]"
     client.ToolResult(_name, output) -> "↳ " <> oneline(output)
@@ -744,6 +813,14 @@ fn flush_steps(buffer: List(client.Step), entries: List(Entry)) -> List(Entry) {
 }
 
 fn submit(model: Model) -> #(Model, List(fn() -> Msg)) {
+  // Steering a paused plan: Enter sends the typed guidance, not a new run.
+  case model.steering {
+    True -> update(model, SendControl("steer", string.trim(model.input)))
+    False -> submit_run(model)
+  }
+}
+
+fn submit_run(model: Model) -> #(Model, List(fn() -> Msg)) {
   // An active `@` completion: Enter accepts it instead of sending.
   case model.suggestions {
     [top, ..] -> {
@@ -775,7 +852,11 @@ fn submit(model: Model) -> #(Model, List(fn() -> Msg)) {
               chat: [You(text), ..model.chat],
             )
           let server = model.server
-          #(model, [fn() { Started(client.start_run(server, id, text)) }, tick])
+          let review = model.review
+          #(model, [
+            fn() { Started(client.start_run(server, id, text, review)) },
+            tick,
+          ])
         }
         _, _ -> #(model, [])
       }
@@ -806,15 +887,26 @@ fn polled(model: Model, run: client.RunState) -> #(Model, List(fn() -> Msg)) {
       ),
       [],
     )
+    // A plan is paused at the review gate: show it and stop polling until the
+    // human resolves it (SendControl resumes the poll loop).
+    "awaiting_plan" -> #(
+      rebuild_tree(
+        Model(..model, awaiting: True, steering: False, running_steps: run.steps, status: "review the plan"),
+      ),
+      [],
+    )
     _ ->
       case model.session {
         // While the tree overlay is open, fold the in-progress steps into it
         // live (they aren't persisted until the turn finishes).
         Some(id) -> #(
-          rebuild_tree(Model(..model, running_steps: run.steps)),
+          rebuild_tree(Model(..model, awaiting: False, running_steps: run.steps)),
           [poll(model.server, id)],
         )
-        None -> #(rebuild_tree(Model(..model, running_steps: run.steps)), [])
+        None -> #(
+          rebuild_tree(Model(..model, awaiting: False, running_steps: run.steps)),
+          [],
+        )
       }
   }
 }
@@ -880,12 +972,27 @@ fn on_key(model: Model, ke: event.KeyEvent) -> #(Model, List(fn() -> Msg)) {
     _ ->
       case model.view {
         ChatV ->
-          case model.focused {
-            True -> on_key_typing(model, ke)
-            False -> on_key_command(model, ke)
+          case model.awaiting, model.steering {
+            // A plan is paused for approval and we're not yet typing guidance.
+            True, False -> on_key_await(model, ke)
+            _, _ ->
+              case model.focused {
+                True -> on_key_typing(model, ke)
+                False -> on_key_command(model, ke)
+              }
           }
         _ -> on_key_overlay(model, ke)
       }
+  }
+}
+
+/// Keys while a plan is paused at the review gate: allow, reject, or steer.
+fn on_key_await(model: Model, ke: event.KeyEvent) -> #(Model, List(fn() -> Msg)) {
+  case ke.code {
+    event.Char("a") -> update(model, SendControl("allow", ""))
+    event.Char("r") -> update(model, SendControl("steer", ""))
+    event.Char("e") -> update(model, BeginSteer)
+    _ -> #(model, [])
   }
 }
 
@@ -906,7 +1013,11 @@ fn on_key_typing(
   let len = string.length(model.input)
   case ke.code {
     event.Enter -> update(model, Submit)
-    event.Esc -> update(model, SetFocus(False))
+    event.Esc ->
+      case model.steering {
+        True -> update(model, CancelSteer)
+        False -> update(model, SetFocus(False))
+      }
     // Cmd+Left / Cmd+Right jump to the start / end of the line.
     event.LeftArrow if ke.modifiers.super -> #(Model(..model, cursor: 0), [])
     event.RightArrow if ke.modifiers.super -> #(Model(..model, cursor: len), [])
@@ -962,6 +1073,7 @@ fn on_key_command(
     event.Char("g") -> #(scroll_by(model, 100_000), [])
     event.Char("s") -> update(model, OpenSessions)
     event.Char("t") -> update(model, OpenTree)
+    event.Char("p") -> update(model, ToggleReview)
     _ -> #(model, [])
   }
 }
@@ -1303,7 +1415,11 @@ fn transcript(model: Model) -> List(CLine) {
   let live = case model.pending {
     True -> {
       let #(more, _) = render_entry(Bough(model.running_steps), width, model, idx)
-      list.append(more, [thinking_line(model.frame)])
+      // No spinner while a plan is paused for approval — the prompt says it all.
+      case model.awaiting {
+        True -> more
+        False -> list.append(more, [thinking_line(model.frame)])
+      }
     }
     False -> []
   }
@@ -1498,6 +1614,17 @@ fn render_step(
       #([status, ..render_result(digest, width, model, idx, !ok)], idx + 1)
     }
     Review(note) -> #(wrap_styled("◆ review — " <> note, width, style.Magenta), idx)
+    Await(plan) -> {
+      let header = [bold("◆ plan awaiting approval", style.Magenta)]
+      let body =
+        string.split(plan, "\n")
+        |> list.map(fn(l) { line("  " <> truncate(l, width - 2), style.Default) })
+      let prompt = [
+        line("", style.Default),
+        bold("  a allow   ·   e edit/steer   ·   r reject", style.Yellow),
+      ]
+      #(list.flatten([header, [line("", style.Default)], body, prompt]), idx)
+    }
   }
 }
 
@@ -1993,19 +2120,21 @@ fn cursor(model: Model, conv_h: Int, cols: Int) -> List(Command) {
 }
 
 fn status_line(model: Model, row: Int, cols: Int) -> List(Command) {
-  let text = case model.scroll > 0 {
-    True ->
+  let text = case model.awaiting, model.steering, model.scroll > 0 {
+    _, True, _ -> model.status <> "  ·  Enter: send guidance  ·  Esc: cancel"
+    True, _, _ -> model.status <> "  ·  a allow  ·  e edit/steer  ·  r reject"
+    _, _, True ->
       "SCROLL ↑"
       <> int.to_string(model.scroll)
       <> "  ·  wheel/↑↓/PgUp·PgDn scroll  ·  o expand all  ·  ↓ latest  ·  i type"
-    False ->
+    _, _, False ->
       case model.focused {
         True ->
           model.status
           <> "  ·  Esc: scroll/mouse mode  ·  Enter: send  ·  Ctrl+X: quit"
         False ->
           model.status
-          <> "  ·  ↑↓ scroll · drag copies · s resume · t branch · o expand · i type · Ctrl+X quit"
+          <> "  ·  ↑↓ scroll · s resume · t branch · p review · o expand · i type · Ctrl+X quit"
       }
   }
   let #(color, attrs) = case string.starts_with(model.status, "error") {
@@ -2033,10 +2162,15 @@ fn status_line(model: Model, row: Int, cols: Int) -> List(Command) {
 /// The right-hand status segment: `<model> · ctx NN%`, omitting either part
 /// that isn't known yet.
 fn right_status(model: Model) -> String {
-  case model.model_name, context_meter(model.context_tokens) {
+  let base = case model.model_name, context_meter(model.context_tokens) {
     "", ctx -> ctx
     name, "" -> name
     name, ctx -> name <> " · " <> ctx
+  }
+  // A leading marker when the plan-review gate is armed.
+  case model.review {
+    True -> "⏸ review · " <> base
+    False -> base
   }
 }
 

@@ -1,4 +1,5 @@
 import bough_core/nono.{Allow, AuditEvent, Deny, Snapshot}
+import bough_server/control
 import bough_server/json_value
 import bough_server/nono_bridge
 import gleam/json
@@ -75,6 +76,26 @@ pub fn json_value_round_trip_test() {
 pub fn restore_args_test() {
   assert nono_bridge.restore_args(Snapshot("20260617-002456-39161", "1", 0))
     == ["rollback", "restore", "20260617-002456-39161", "--snapshot", "1"]
+}
+
+/// The control channel is read-once: a put is taken exactly once, a steer
+/// carries its message, and clear/empty yields Error.
+pub fn control_round_trip_test() {
+  let id = "bough-test-control-slot"
+  control.clear(id)
+  assert control.take(id) == Error(Nil)
+
+  control.put(id, control.Allow)
+  assert control.take(id) == Ok(control.Allow)
+  // Read-once: the slot is now empty.
+  assert control.take(id) == Error(Nil)
+
+  control.put(id, control.Steer("try a smaller change"))
+  assert control.take(id) == Ok(control.Steer("try a smaller change"))
+
+  control.put(id, control.Allow)
+  control.clear(id)
+  assert control.take(id) == Error(Nil)
 }
 
 /// Live integration: drive nono through the bridge to launch and stop a real

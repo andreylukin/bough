@@ -16,10 +16,11 @@ import bough_core/artifact.{type Step, Edit, Grep, Read, Run, Write}
 import bough_core/digest
 import bough_core/nono
 import bough_server/agent.{
-  type Outcome, type Step as Activity, Outcome, StepCall, StepCheck, StepExec,
-  StepPlan, StepReview, StepText, StepWorker,
+  type Outcome, type Step as Activity, Outcome, StepAwait, StepCall, StepCheck,
+  StepExec, StepPlan, StepReview, StepText, StepWorker,
 }
 import bough_server/clock
+import bough_server/control
 import bough_server/integrity
 import bough_server/json_value.{type JsonValue}
 import bough_server/nono_bridge
@@ -50,6 +51,9 @@ pub type Config {
     max_steps: Int,
     digest_limit: Int,
     fix_attempts: Int,
+    /// When true, each non-empty plan pauses for human approval before the
+    /// harness runs it (the plan-review gate, SPEC §5.4).
+    review: Bool,
   )
 }
 
@@ -62,6 +66,7 @@ pub fn default_config() -> Config {
     max_steps: 120,
     digest_limit: 1500,
     fix_attempts: 1,
+    review: False,
   )
 }
 
@@ -75,7 +80,13 @@ type State {
     sup_model: String,
     workspace: String,
     config: Config,
-    emit: fn(List(Activity), Int) -> Nil,
+    // Publishes the run's status + full activity list + context tokens after
+    // each new activity. Status is "running", or "awaiting_plan" while a plan
+    // is paused at the review gate.
+    emit: fn(String, List(Activity), Int) -> Nil,
+    // Blocks until the human resolves a paused plan (review gate). Supplied by
+    // the caller; the engine only calls it when `config.review` is on.
+    await: fn() -> control.Decision,
     // append-only Anthropic message list, oldest first. Carries tool_use /
     // tool_result blocks verbatim, so it is JsonValue rather than text pairs.
     convo: List(JsonValue),
@@ -88,6 +99,8 @@ type State {
     check_ok: Bool,
     reviewed: Bool,
     steps_done: Int,
+    // Project instructions (AGENTS.md), read once at run start.
+    instructions: Option(String),
     // activities newest-first; reversed on emit/return
     activities: List(Activity),
   )
@@ -104,7 +117,8 @@ pub fn run_streaming(
   config: Config,
   history: List(#(String, String)),
   user_prompt: String,
-  emit: fn(List(Activity), Int) -> Nil,
+  emit: fn(String, List(Activity), Int) -> Nil,
+  await: fn() -> control.Decision,
 ) -> Result(Outcome, String) {
   let state =
     State(
@@ -113,6 +127,7 @@ pub fn run_streaming(
       workspace: workspace,
       config: config,
       emit: emit,
+      await: await,
       convo: seed_convo(history, user_prompt),
       context_tokens: 0,
       baseline: integrity.snapshot(workspace),
@@ -122,6 +137,7 @@ pub fn run_streaming(
       check_ok: False,
       reviewed: False,
       steps_done: 0,
+      instructions: read_agents_md(workspace),
       activities: [],
     )
   let #(state, rounds) = run_rounds(state, 1)
@@ -142,12 +158,16 @@ pub fn run(
   history: List(#(String, String)),
   user_prompt: String,
 ) -> Result(Outcome, String) {
-  run_streaming(api_key, sup_model, workspace, config, history, user_prompt, fn(
-    _,
-    _,
-  ) {
-    Nil
-  })
+  run_streaming(
+    api_key,
+    sup_model,
+    workspace,
+    config,
+    history,
+    user_prompt,
+    fn(_, _, _) { Nil },
+    fn() { control.Allow },
+  )
 }
 
 fn run_rounds(state: State, round: Int) -> #(State, Int) {
@@ -207,6 +227,56 @@ fn run_rounds(state: State, round: Int) -> #(State, Int) {
 }
 
 fn run_steps_round(
+  state: State,
+  round: Int,
+  parsed: tool_steps.Parsed,
+  tool_id: String,
+) -> #(State, Int) {
+  // Plan-review gate (SPEC §5.4): pause a non-empty plan for human approval.
+  case state.config.review && !list.is_empty(parsed.steps) {
+    False -> execute_plan(state, round, parsed, tool_id)
+    True ->
+      case await_plan(state, parsed.steps) {
+        control.Allow -> execute_plan(state, round, parsed, tool_id)
+        control.Steer(message) -> {
+          let guidance = case string.trim(message) {
+            "" -> "The human rejected this plan. Reconsider and propose a different approach."
+            m ->
+              "The human reviewed your plan and did NOT approve it. Their guidance:\n"
+              <> m
+              <> "\nRevise the plan accordingly and call run_steps again."
+          }
+          let state = emit_activity(state, StepReview("plan rejected by human"))
+          let state =
+            push_message(
+              state,
+              provider.tool_result(state.config.provider, tool_id, guidance),
+            )
+          run_rounds(state, round + 1)
+        }
+      }
+  }
+}
+
+/// Publish the proposed plan with status "awaiting_plan" and block on the
+/// caller's `await` until the human allows or steers it. The await marker is
+/// transient — it isn't kept in the persisted activity list.
+fn await_plan(state: State, steps: List(Step)) -> control.Decision {
+  let activities = [StepAwait(plan_summary(steps)), ..state.activities]
+  state.emit("awaiting_plan", list.reverse(activities), state.context_tokens)
+  state.await()
+}
+
+/// A compact, human-scannable rendering of a planned batch: one line per step.
+fn plan_summary(steps: List(Step)) -> String {
+  steps
+  |> list.index_map(fn(step, i) {
+    int.to_string(i + 1) <> ". " <> step_verb(step) <> "  " <> step_arg(step)
+  })
+  |> string.join("\n")
+}
+
+fn execute_plan(
   state: State,
   round: Int,
   parsed: tool_steps.Parsed,
@@ -548,7 +618,7 @@ fn supervisor_call(state: State) -> Result(provider.Response, String) {
     state.config.provider,
     state.api_key,
     state.sup_model,
-    prompts.supervisor_system(state.workspace),
+    prompts.supervisor_system(state.workspace, state.instructions),
     state.convo,
     // The supervisor acts only through the run_steps tool (§5.2).
     tools.run_steps_name,
@@ -558,6 +628,24 @@ fn supervisor_call(state: State) -> Result(provider.Response, String) {
 }
 
 // --- State helpers -------------------------------------------------------
+
+/// Project instructions for the supervisor: the workspace's AGENTS.md, or
+/// CLAUDE.md as a fallback, if present and non-empty (SPEC.md §5). Read once per
+/// run and injected into the system prompt.
+fn read_agents_md(workspace: String) -> Option(String) {
+  [workspace <> "/AGENTS.md", workspace <> "/CLAUDE.md"]
+  |> list.find_map(fn(path) {
+    case simplifile.read(path) {
+      Ok(content) ->
+        case string.trim(content) {
+          "" -> Error(Nil)
+          c -> Ok(c)
+        }
+      Error(_) -> Error(Nil)
+    }
+  })
+  |> option.from_result
+}
 
 fn profile(state: State) -> nono.Profile {
   // Steps run workspace-scoped with the network blocked by default (§5.2).
@@ -619,7 +707,7 @@ fn update_check(state: State, check: Option(String)) -> State {
 
 fn emit_activity(state: State, activity: Activity) -> State {
   let activities = [activity, ..state.activities]
-  state.emit(list.reverse(activities), state.context_tokens)
+  state.emit("running", list.reverse(activities), state.context_tokens)
   State(..state, activities: activities)
 }
 

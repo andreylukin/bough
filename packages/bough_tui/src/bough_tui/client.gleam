@@ -32,6 +32,9 @@ pub type Step {
   Worker(command: String, exit: Int)
   Check(ok: Bool, digest: String)
   Review(note: String)
+  /// The plan-review gate: a proposed plan awaiting the human's approval. The
+  /// run's status is "awaiting_plan" while this is the live tail step.
+  Await(plan: String)
 }
 
 pub type Reply {
@@ -181,9 +184,37 @@ pub fn send_message(
 }
 
 /// POST `/session/:id/run` to start a background run (returns immediately).
-pub fn start_run(base: String, id: String, content: String) -> Result(Nil, String) {
-  let body = json.to_string(json.object([#("content", json.string(content))]))
+/// `review` turns on the plan-review gate for this run.
+pub fn start_run(
+  base: String,
+  id: String,
+  content: String,
+  review: Bool,
+) -> Result(Nil, String) {
+  let body =
+    json.to_string(json.object([
+      #("content", json.string(content)),
+      #("review", json.bool(review)),
+    ]))
   post(base, "/session/" <> id <> "/run", body)
+  |> describe
+  |> result.map(fn(_) { Nil })
+}
+
+/// POST `/session/:id/control`: resolve a paused plan (or steer a subagent).
+/// `decision` is "allow" or "steer"; `message` carries guidance for a steer.
+pub fn send_control(
+  base: String,
+  id: String,
+  decision: String,
+  message: String,
+) -> Result(Nil, String) {
+  let body =
+    json.to_string(json.object([
+      #("decision", json.string(decision)),
+      #("message", json.string(message)),
+    ]))
+  post(base, "/session/" <> id <> "/control", body)
   |> describe
   |> result.map(fn(_) { Nil })
 }
@@ -295,6 +326,10 @@ fn step_decoder() -> decode.Decoder(Step) {
     "review" -> {
       use note <- decode.field("note", decode.string)
       decode.success(Review(note))
+    }
+    "await" -> {
+      use plan <- decode.field("plan", decode.string)
+      decode.success(Await(plan))
     }
     _ -> decode.failure(Text(""), "Step")
   }

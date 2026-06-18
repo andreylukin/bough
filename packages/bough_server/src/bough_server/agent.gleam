@@ -32,6 +32,10 @@ pub type Step {
   StepCheck(ok: Bool, digest: String)
   /// An adversarial-review event before `DONE` is accepted.
   StepReview(note: String)
+  /// The plan-review gate: a proposed batch of steps awaiting the human's
+  /// approval before the harness runs it (SPEC §5.4). `plan` is the rendered
+  /// summary; the run's status is "awaiting_plan" while this is live.
+  StepAwait(plan: String)
 }
 
 pub type Outcome {
@@ -264,6 +268,11 @@ pub fn step_to_json(step: Step) -> json.Json {
       json.object([
         #("type", json.string("review")),
         #("note", json.string(note)),
+      ])
+    StepAwait(plan) ->
+      json.object([
+        #("type", json.string("await")),
+        #("plan", json.string(plan)),
       ])
   }
 }

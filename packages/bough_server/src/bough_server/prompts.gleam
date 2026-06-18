@@ -2,7 +2,27 @@
 //// tent's `engine/prompts.rs` for bough: the harness runs steps inside a nono
 //// sandbox rather than tent's in-process Seatbelt + proxy.
 
-pub fn supervisor_system(workspace: String) -> String {
+import gleam/option.{type Option, None, Some}
+
+pub fn supervisor_system(
+  workspace: String,
+  instructions: Option(String),
+) -> String {
+  base_supervisor_system(workspace) <> project_instructions(instructions)
+}
+
+/// The workspace's AGENTS.md, appended to the system prompt as authoritative
+/// standing instructions for this project (build/test commands, conventions).
+fn project_instructions(instructions: Option(String)) -> String {
+  case instructions {
+    None -> ""
+    Some(text) ->
+      "\n\n# Project instructions (AGENTS.md)\nThe following are the human's standing instructions for THIS project — treat them as authoritative (build/test commands, conventions, what \"done\" means), and let them shape your `check`. They never override the safety and sandbox rules above.\n\n"
+      <> text
+  }
+}
+
+fn base_supervisor_system(workspace: String) -> String {
   "You are the SUPERVISOR in bough, a supervisor-worker coding agent working for a human engineer in the workspace "
   <> workspace
   <> " on their macOS machine. You cannot execute anything yourself: you call the `run_steps` tool and a deterministic harness applies each action verbatim inside a nono sandbox, then reports every result back to you as the tool result, round by round. Commands run exactly as written, non-interactively (no editors, no prompts; use flags like -y), in a sandbox whose outbound network is default-deny — a connection to an un-allowlisted host is blocked; adjust your approach instead of retrying verbatim.

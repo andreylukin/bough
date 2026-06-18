@@ -15,6 +15,7 @@ import bough_core
 import bough_core/session.{type Entry, type SessionTree, Entry}
 import bough_server/agent
 import bough_server/clock
+import bough_server/control
 import bough_server/engine
 import bough_server/provider
 import bough_server/run_store
@@ -59,6 +60,7 @@ pub fn handle_request(req: Request) -> Response {
     ["session", id, "message"], Post -> send_message(req, id)
     ["session", id, "run"], Post -> start_run(req, id)
     ["session", id, "run"], Get -> get_run(id)
+    ["session", id, "control"], Post -> control_run(req, id)
     ["session", id, "fork"], Post -> fork_session(req, id)
     _, _ -> wisp.not_found()
   }
@@ -165,7 +167,7 @@ fn run_agent(tree: SessionTree, content: String) -> Response {
           api_key,
           model,
           tree.project,
-          engine_config(prov),
+          engine_config(prov, False),
           history,
           content,
         )
@@ -203,7 +205,7 @@ fn max_rounds() -> Int {
 /// is always enabled: bough ensures a local llama-server is up and points the
 /// worker at it. Set `BOUGH_WORKER_URL` to use a remote endpoint instead
 /// (honored inside `worker_runtime.ensure`).
-fn engine_config(prov: provider.Provider) -> engine.Config {
+fn engine_config(prov: provider.Provider, review: Bool) -> engine.Config {
   let base = engine.default_config()
   let worker_url =
     worker_runtime.ensure(worker_port()) |> result.unwrap(base.worker_url)
@@ -213,6 +215,7 @@ fn engine_config(prov: provider.Provider) -> engine.Config {
     worker: Some(worker_model),
     worker_url: worker_url,
     max_rounds: max_rounds(),
+    review: review,
   )
 }
 
@@ -252,6 +255,23 @@ fn agent_setup() -> Result(#(provider.Provider, String, String), String) {
       )
       Ok(#(provider.OpenAICompat(openrouter_base), key, model))
     }
+  }
+}
+
+/// Block the running engine until the human resolves a paused plan, polling the
+/// control slot. Capped (~10 min at 250ms/poll) so an abandoned run can't pin a
+/// process forever — a timeout steers the supervisor to pause rather than act.
+fn await_decision(id: String, polls: Int) -> control.Decision {
+  case control.take(id) {
+    Ok(decision) -> decision
+    Error(_) ->
+      case polls > 2400 {
+        True -> control.Steer("Approval timed out. Stop and wait for the human.")
+        False -> {
+          process.sleep(250)
+          await_decision(id, polls + 1)
+        }
+      }
   }
 }
 
@@ -359,17 +379,37 @@ fn make_entry(
 
 fn start_run(req: Request, id: String) -> Response {
   use body <- wisp.require_json(req)
-  case decode.run(body, content_decoder()) {
+  case decode.run(body, run_req_decoder()) {
     Error(_) -> wisp.bad_request("expected {\"content\": string}")
-    Ok(content) ->
+    Ok(rr) ->
       case session_manager.load(id) {
         Error(_) -> wisp.not_found()
-        Ok(tree) -> launch_run(id, tree, content)
+        Ok(tree) -> launch_run(id, tree, rr.content, rr.review)
       }
   }
 }
 
-fn launch_run(id: String, tree: SessionTree, content: String) -> Response {
+/// POST `/session/:id/control`: deliver a plan-review (or subagent) decision to
+/// the running engine — `{"decision":"allow"}` or
+/// `{"decision":"steer","message":...}`.
+fn control_run(req: Request, id: String) -> Response {
+  use body <- wisp.require_json(req)
+  case decode.run(body, control.request_decoder()) {
+    Error(_) ->
+      wisp.bad_request("expected {\"decision\":\"allow\"|\"steer\", ...}")
+    Ok(decision) -> {
+      control.put(id, decision)
+      json_ok("{\"status\":\"ok\"}")
+    }
+  }
+}
+
+fn launch_run(
+  id: String,
+  tree: SessionTree,
+  content: String,
+  review: Bool,
+) -> Response {
   case agent_setup() {
     Error(m) -> json_error(m)
     Ok(#(prov, api_key, model)) -> {
@@ -378,6 +418,8 @@ fn launch_run(id: String, tree: SessionTree, content: String) -> Response {
       let tree = session.append(tree, user)
       let _ = session_manager.save(tree)
 
+      // Drop any stale approval so it can't leak into this fresh run.
+      control.clear(id)
       run_store.write(id, "running", [], "", 0)
       let _ =
         process.spawn_unlinked(fn() {
@@ -386,12 +428,13 @@ fn launch_run(id: String, tree: SessionTree, content: String) -> Response {
               api_key,
               model,
               tree.project,
-              engine_config(prov),
+              engine_config(prov, review),
               history,
               content,
-              fn(steps, context_tokens) {
-                run_store.write(id, "running", steps, "", context_tokens)
+              fn(status, steps, context_tokens) {
+                run_store.write(id, status, steps, "", context_tokens)
               },
+              fn() { await_decision(id, 0) },
             )
           {
             Ok(outcome) -> {
@@ -424,6 +467,18 @@ fn get_run(id: String) -> Response {
 fn content_decoder() -> decode.Decoder(String) {
   use content <- decode.field("content", decode.string)
   decode.success(content)
+}
+
+type RunReq {
+  RunReq(content: String, review: Bool)
+}
+
+/// Start-run body: the prompt plus an optional `review` flag that turns on the
+/// plan-review gate for this run.
+fn run_req_decoder() -> decode.Decoder(RunReq) {
+  use content <- decode.field("content", decode.string)
+  use review <- decode.optional_field("review", False, decode.bool)
+  decode.success(RunReq(content: content, review: review))
 }
 
 fn create_decoder() -> decode.Decoder(String) {
