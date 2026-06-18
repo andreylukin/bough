@@ -44,6 +44,12 @@ The installer symlinks `bough` (the `scripts/bough` launcher) into Homebrew's
 `bin`, so it's on your PATH and runnable from anywhere. You can also run the two
 processes by hand (see [Develop](#develop)).
 
+To pull the latest version and rebuild in place:
+
+```bash
+bough update     # git pull --ff-only + make build, then prints the new commit
+```
+
 ## Working with bough
 
 **Project instructions.** Drop an `AGENTS.md` (or `CLAUDE.md`) at the root of a

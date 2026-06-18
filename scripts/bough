@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Start the bough server, wait for it to come up, then run the TUI.
-# When the TUI exits, the server is torn down too.
+# bough launcher.
+#   bough          start the server, wait for health, then run the TUI
+#                  (the server is torn down when the TUI exits)
+#   bough update   pull the latest version from git and rebuild in place
 
 set -euo pipefail
 
@@ -13,6 +15,32 @@ while [ -L "$SOURCE" ]; do
 done
 ROOT="$(cd -P "$(dirname "$SOURCE")/.." && pwd)"
 SERVER="${BOUGH_SERVER:-http://127.0.0.1:4096}"
+
+# Subcommands.
+case "${1:-}" in
+  update)
+    echo "updating bough in $ROOT"
+    branch="$(git -C "$ROOT" symbolic-ref --quiet --short HEAD || echo HEAD)"
+    if ! git -C "$ROOT" pull --ff-only; then
+      echo "error: could not fast-forward $branch — resolve changes in $ROOT and retry." >&2
+      exit 1
+    fi
+    make -C "$ROOT" build
+    echo "bough updated to $(git -C "$ROOT" rev-parse --short HEAD) ($branch)."
+    exit 0
+    ;;
+  -h | --help)
+    echo "usage: bough [update]"
+    echo "  (no args)  start the server and TUI"
+    echo "  update     pull the latest version from git and rebuild"
+    exit 0
+    ;;
+  "") ;;
+  *)
+    echo "unknown command: $1 (try: bough | bough update)" >&2
+    exit 1
+    ;;
+esac
 
 [ -n "${ANTHROPIC_API_KEY:-}" ] || {
   echo "warning: ANTHROPIC_API_KEY is not set — the agent loop will fail to plan." >&2
