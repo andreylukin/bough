@@ -19,7 +19,7 @@ import bough_core/digest
 import bough_core/nono
 import bough_server/agent.{
   type Outcome, type Step as Activity, Outcome, StepAwait, StepCall, StepCheck,
-  StepExec, StepPlan, StepReview, StepText, StepWorker,
+  StepExec, StepNet, StepPlan, StepReview, StepText, StepWorker,
 }
 import bough_server/clock
 import bough_server/control
@@ -56,6 +56,11 @@ pub type Config {
     /// When true, each non-empty plan pauses for human approval before the
     /// harness runs it (the plan-review gate, SPEC §5.4).
     review: Bool,
+    /// When true, the agent's commands get the network (default-deny + the
+    /// session allowlist) instead of being fully blocked, and a denied host
+    /// pauses for human approval — the network leash (SPEC §7). When false,
+    /// commands run with the network blocked, as before.
+    net_gate: Bool,
   )
 }
 
@@ -91,6 +96,7 @@ pub fn default_config() -> Config {
     digest_limit: 1500,
     fix_attempts: 1,
     review: False,
+    net_gate: False,
   )
 }
 
@@ -130,6 +136,8 @@ type State {
     steps_done: Int,
     // Project instructions (AGENTS.md), read once at run start.
     instructions: Option(String),
+    // The network allowlist for sandboxed commands; grows as hosts are approved.
+    net_allow: List(String),
     // activities newest-first; reversed on emit/return
     activities: List(Activity),
   )
@@ -150,6 +158,7 @@ pub fn run_streaming(
   await: fn() -> control.Decision,
   inbox: fn() -> Option(String),
   subagents: Subagents,
+  net_allow: List(String),
 ) -> Result(Outcome, String) {
   let state =
     State(
@@ -171,6 +180,7 @@ pub fn run_streaming(
       reviewed: False,
       steps_done: 0,
       instructions: read_agents_md(workspace),
+      net_allow: net_allow,
       activities: [],
     )
   let #(state, rounds) = run_rounds(state, 1)
@@ -179,6 +189,7 @@ pub fn run_streaming(
     turns: rounds,
     steps: list.reverse(state.activities),
     context_tokens: state.context_tokens,
+    net_allow: state.net_allow,
   ))
 }
 
@@ -202,6 +213,7 @@ pub fn run(
     fn() { control.Allow },
     fn() { None },
     no_subagents(),
+    [],
   )
 }
 
@@ -500,8 +512,43 @@ fn apply(state: State, step: Step) -> #(State, Exec) {
 }
 
 fn exec_run(state: State, cmd: String) -> #(State, Exec) {
-  let #(code, out) = nono_bridge.run_result(profile(state), ["sh", "-c", cmd])
-  #(bump(state), Exec(code, out))
+  let command = ["sh", "-c", cmd]
+  let #(code, out) = nono_bridge.run_result(profile(state), command)
+  let state = bump(state)
+  // The network leash (SPEC §7): if the command was denied a host and the gate
+  // is on, ask the human; on approval, allow the host and run the command once
+  // more so it can succeed. On denial, keep the failure for the supervisor.
+  case state.config.net_gate {
+    False -> #(state, Exec(code, out))
+    True ->
+      case new_denied_hosts(state, command) {
+        [] -> #(state, Exec(code, out))
+        hosts ->
+          case await_net(state, hosts) {
+            control.Allow -> {
+              let state =
+                State(..state, net_allow: list.append(state.net_allow, hosts))
+              let #(rcode, rout) =
+                nono_bridge.run_result(profile(state), command)
+              #(bump(state), Exec(rcode, rout))
+            }
+            control.Steer(_) -> #(state, Exec(code, out))
+          }
+      }
+  }
+}
+
+/// Hosts this command was denied that aren't already approved.
+fn new_denied_hosts(state: State, command: List(String)) -> List(String) {
+  nono_bridge.denied_hosts(command)
+  |> list.filter(fn(h) { !list.contains(state.net_allow, h) })
+}
+
+/// Publish the denied hosts with status "awaiting_net" and block on the human.
+fn await_net(state: State, hosts: List(String)) -> control.Decision {
+  let activities = [StepNet(string.join(hosts, ", ")), ..state.activities]
+  state.emit("awaiting_net", list.reverse(activities), state.context_tokens)
+  state.await()
 }
 
 fn write_file(state: State, path: String, content: String) -> #(State, Exec) {
@@ -690,9 +737,26 @@ fn read_agents_md(workspace: String) -> Option(String) {
   |> option.from_result
 }
 
+/// A host the agent never contacts, included in the allowlist whenever the gate
+/// is on. nono only engages proxy filtering (and thus per-host deny + audit)
+/// when the allowlist is non-empty; the sentinel keeps an otherwise-empty
+/// allowlist in default-deny mode rather than silently unrestricted.
+const net_sentinel = "bough.sentinel.invalid"
+
 fn profile(state: State) -> nono.Profile {
-  // Steps run workspace-scoped with the network blocked by default (§5.2).
-  nono.Profile(state.workspace, [], True, False)
+  // Steps run workspace-scoped. With the net gate off, the network is blocked
+  // entirely (§5.2); with it on, it's default-deny against the session
+  // allowlist (+ sentinel), and a denied host is surfaced for approval (§7).
+  case state.config.net_gate {
+    False -> nono.Profile(state.workspace, [], True, False)
+    True ->
+      nono.Profile(
+        state.workspace,
+        [net_sentinel, ..state.net_allow],
+        False,
+        False,
+      )
+  }
 }
 
 fn budget_left(state: State) -> Bool {

@@ -12,8 +12,8 @@
 //// shore's Tab-focus dance.
 
 import bough_tui/client.{
-  type Step, Await, Call, Check, Exec, Plan, Review, Text, ToolCall, ToolResult,
-  Worker,
+  type Step, Await, Call, Check, Exec, Net, Plan, Review, Text, ToolCall,
+  ToolResult, Worker,
 }
 import etch/command.{type Command}
 import etch/event.{type Event}
@@ -778,6 +778,7 @@ fn step_color(step: client.Step) -> Color {
         False -> style.Red
       }
     client.Review(_) | client.Await(_) -> style.Magenta
+    client.Net(_) -> style.Yellow
   }
 }
 
@@ -816,6 +817,7 @@ fn step_label(step: client.Step) -> String {
       }
     client.Review(note) -> "[review: " <> oneline(note) <> "]"
     client.Await(_) -> "[plan: awaiting approval]"
+    client.Net(hosts) -> "[net: allow " <> oneline(hosts) <> "?]"
     client.ToolCall(name, input) ->
       "[" <> name <> ": " <> oneline(input) <> "]"
     client.ToolResult(_name, output) -> "↳ " <> oneline(output)
@@ -967,11 +969,17 @@ fn polled(model: Model, run: client.RunState) -> #(Model, List(fn() -> Msg)) {
       ),
       [],
     )
-    // A plan is paused at the review gate: show it and stop polling until the
-    // human resolves it (SendControl resumes the poll loop).
+    // A plan or a network request is paused at a gate: show it and stop polling
+    // until the human resolves it (SendControl resumes the poll loop).
     "awaiting_plan" -> #(
       rebuild_tree(
         Model(..model, awaiting: True, steering: False, running_steps: run.steps, status: "review the plan"),
+      ),
+      [],
+    )
+    "awaiting_net" -> #(
+      rebuild_tree(
+        Model(..model, awaiting: True, steering: False, running_steps: run.steps, status: "network request"),
       ),
       [],
     )
@@ -1732,6 +1740,18 @@ fn render_step(
       ]
       #(list.flatten([header, [line("", style.Default)], body, prompt]), idx)
     }
+    Net(hosts) -> #(
+      list.flatten([
+        [bold("◆ network request", style.Yellow)],
+        wrap_styled(
+          "the agent's command was blocked from reaching: " <> hosts,
+          width,
+          style.Default,
+        ),
+        [bold("  a allow   ·   r deny", style.Yellow)],
+      ]),
+      idx,
+    )
   }
 }
 

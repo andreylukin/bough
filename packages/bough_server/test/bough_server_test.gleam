@@ -100,6 +100,26 @@ pub fn control_round_trip_test() {
   assert control.take(id) == Error(Nil)
 }
 
+/// Network denial detection picks the newest audit session whose command
+/// matches and which had network events (ignoring no-net and other commands).
+pub fn pick_session_newest_matching_test() {
+  let cmd = ["sh", "-c", "curl x"]
+  let json =
+    "["
+    <> "{\"session_id\":\"old\",\"started\":\"2026-06-18T16:00:00-04:00\",\"command\":[\"sh\",\"-c\",\"curl x\"],\"network_event_count\":2},"
+    <> "{\"session_id\":\"new\",\"started\":\"2026-06-18T16:05:00-04:00\",\"command\":[\"sh\",\"-c\",\"curl x\"],\"network_event_count\":1},"
+    <> "{\"session_id\":\"nonet\",\"started\":\"2026-06-18T16:08:00-04:00\",\"command\":[\"sh\",\"-c\",\"curl x\"],\"network_event_count\":0},"
+    <> "{\"session_id\":\"other\",\"started\":\"2026-06-18T16:09:00-04:00\",\"command\":[\"ls\"],\"network_event_count\":3}"
+    <> "]"
+  assert nono_bridge.pick_session(json, cmd) == Ok("new")
+}
+
+pub fn pick_session_no_match_test() {
+  let json =
+    "[{\"session_id\":\"x\",\"started\":\"2026-06-18T16:00:00-04:00\",\"command\":[\"ls\"],\"network_event_count\":1}]"
+  assert nono_bridge.pick_session(json, ["sh", "-c", "curl x"]) == Error(Nil)
+}
+
 /// A snapshot captures the workspace; a later restore reverts a modified file
 /// and removes a file added after the snapshot (SPEC §4.1).
 pub fn snapshot_capture_and_restore_test() {

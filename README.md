@@ -89,6 +89,15 @@ revert to that point, so you can explore a branch and jump back if it goes wrong
 Snapshots live in a per-session shadow git repo under `~/.bough/snapshots/` and
 never touch your project's own `.git`; set `BOUGH_NO_SNAPSHOTS=1` to turn them off.
 
+**Network leash.** With `BOUGH_NET=1`, the agent's sandboxed commands get the
+network on a default-deny allowlist instead of being fully blocked. When a
+command is denied a host, the run **pauses** and asks you (`a` allow · `r` deny),
+exactly like the plan gate. Approve and bough adds the host to the session's
+allowlist and retries the command; the approved hosts persist with the session,
+so you're only asked once per host. Without `BOUGH_NET`, commands have no network
+(as before). The supervisor's own model calls are made by the server, outside
+the sandbox, so the leash governs only what the agent runs.
+
 | Key (`Esc` enters scroll/command mode) | Action |
 |---|---|
 | `i` / `Enter` | back to typing |

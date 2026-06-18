@@ -46,11 +46,20 @@ pub type SessionTree {
     project: String,
     entries: List(Entry),
     active_leaf: Option(String),
+    /// Hosts the human has approved for the agent's sandboxed commands — the
+    /// network allowlist, which grows as requests are approved (SPEC.md §7).
+    allow_domains: List(String),
   )
 }
 
 pub fn new(id: String, project: String) -> SessionTree {
-  SessionTree(id: id, project: project, entries: [], active_leaf: None)
+  SessionTree(
+    id: id,
+    project: project,
+    entries: [],
+    active_leaf: None,
+    allow_domains: [],
+  )
 }
 
 /// Append an entry and move the active leaf to it.
@@ -192,6 +201,7 @@ pub fn tree_to_json(tree: SessionTree) -> json.Json {
     #("id", json.string(tree.id)),
     #("project", json.string(tree.project)),
     #("active_leaf", json.nullable(tree.active_leaf, json.string)),
+    #("allow_domains", json.array(tree.allow_domains, json.string)),
     #("entries", json.array(list.reverse(tree.entries), entry_to_json)),
   ])
 }
@@ -199,7 +209,12 @@ pub fn tree_to_json(tree: SessionTree) -> json.Json {
 // --- JSONL persistence ---------------------------------------------------
 
 type Meta {
-  Meta(id: String, project: String, active_leaf: Option(String))
+  Meta(
+    id: String,
+    project: String,
+    active_leaf: Option(String),
+    allow_domains: List(String),
+  )
 }
 
 fn meta_to_json(tree: SessionTree) -> json.Json {
@@ -207,6 +222,7 @@ fn meta_to_json(tree: SessionTree) -> json.Json {
     #("id", json.string(tree.id)),
     #("project", json.string(tree.project)),
     #("active_leaf", json.nullable(tree.active_leaf, json.string)),
+    #("allow_domains", json.array(tree.allow_domains, json.string)),
   ])
 }
 
@@ -214,7 +230,18 @@ fn meta_decoder() -> decode.Decoder(Meta) {
   use id <- decode.field("id", decode.string)
   use project <- decode.field("project", decode.string)
   use active_leaf <- decode.field("active_leaf", decode.optional(decode.string))
-  decode.success(Meta(id: id, project: project, active_leaf: active_leaf))
+  // Older session files predate the allowlist — default to empty.
+  use allow_domains <- decode.optional_field(
+    "allow_domains",
+    [],
+    decode.list(decode.string),
+  )
+  decode.success(Meta(
+    id: id,
+    project: project,
+    active_leaf: active_leaf,
+    allow_domains: allow_domains,
+  ))
 }
 
 /// Serialize a tree to JSONL: meta line followed by entries oldest-first.
@@ -253,6 +280,7 @@ pub fn from_jsonl(contents: String) -> Result(SessionTree, String) {
         project: meta.project,
         entries: list.reverse(entries),
         active_leaf: meta.active_leaf,
+        allow_domains: meta.allow_domains,
       ))
     }
   }

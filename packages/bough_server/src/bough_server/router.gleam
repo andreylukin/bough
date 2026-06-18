@@ -170,7 +170,7 @@ fn run_agent(tree: SessionTree, content: String) -> Response {
           api_key,
           model,
           tree.project,
-          engine_config(prov, False),
+          engine_config(prov, False, False),
           history,
           content,
         )
@@ -209,7 +209,11 @@ fn max_rounds() -> Int {
 /// is always enabled: bough ensures a local llama-server is up and points the
 /// worker at it. Set `BOUGH_WORKER_URL` to use a remote endpoint instead
 /// (honored inside `worker_runtime.ensure`).
-fn engine_config(prov: provider.Provider, review: Bool) -> engine.Config {
+fn engine_config(
+  prov: provider.Provider,
+  review: Bool,
+  net_gate: Bool,
+) -> engine.Config {
   let base = engine.default_config()
   let worker_url =
     worker_runtime.ensure(worker_port()) |> result.unwrap(base.worker_url)
@@ -220,7 +224,15 @@ fn engine_config(prov: provider.Provider, review: Bool) -> engine.Config {
     worker_url: worker_url,
     max_rounds: max_rounds(),
     review: review,
+    net_gate: net_gate,
   )
+}
+
+/// The network leash is opt-in: with `BOUGH_NET=1`, the agent's commands get
+/// default-deny network with per-host approval; otherwise the network is fully
+/// blocked, as before.
+fn net_gate() -> Bool {
+  envoy.get("BOUGH_NET") |> result.is_ok
 }
 
 /// The resolved supervisor provider name and model from the environment
@@ -346,7 +358,7 @@ fn spawn_subagent(
           api_key,
           model,
           workspace,
-          engine_config(prov, False),
+          engine_config(prov, False, False),
           [],
           task,
           fn(status, steps, context_tokens) {
@@ -355,6 +367,7 @@ fn spawn_subagent(
           fn() { await_decision(child_id, 0) },
           fn() { inbox_of(child_id) },
           subagents_for(child_id, prov, api_key, model, workspace),
+          [],
         )
       {
         Ok(outcome) -> {
@@ -599,7 +612,7 @@ fn launch_run(
               api_key,
               model,
               tree.project,
-              engine_config(prov, review),
+              engine_config(prov, review, net_gate()),
               history,
               content,
               fn(status, steps, context_tokens) {
@@ -608,9 +621,13 @@ fn launch_run(
               fn() { await_decision(id, 0) },
               fn() { inbox_of(id) },
               subagents_for(id, prov, api_key, model, tree.project),
+              tree.allow_domains,
             )
           {
             Ok(outcome) -> {
+              // Persist any hosts approved during the run as session state.
+              let tree =
+                session.SessionTree(..tree, allow_domains: outcome.net_allow)
               let snap = capture_snapshot(id, tree.project)
               let _ = session_manager.save(append_turn(tree, outcome, snap))
               run_store.write(

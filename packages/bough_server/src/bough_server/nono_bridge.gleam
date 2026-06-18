@@ -6,7 +6,7 @@
 //// shell out via shellout.
 
 import bough_core/nono.{
-  type AuditEvent, type Profile, type Snapshot, Allow, AuditEvent,
+  type AuditEvent, type Profile, type Snapshot, Allow, AuditEvent, Deny,
 }
 import gleam/dynamic/decode
 import gleam/json
@@ -154,6 +154,72 @@ fn network_event_decoder() -> decode.Decoder(AuditEvent) {
         "NetDecision",
       )
   }
+}
+
+// --- Network denials (the leash, SPEC.md §7) -----------------------------
+
+/// The distinct hosts the just-run sandboxed `command` was DENIED outbound
+/// access to, read from nono's audit trail. Drives the network-approval gate:
+/// a denied host is surfaced to the human, and on approval added to the
+/// allowlist for a retry. Empty if there were no denials (or audit is
+/// unavailable — non-fatal).
+pub fn denied_hosts(command: List(String)) -> List(String) {
+  case latest_session(command) {
+    Error(_) -> []
+    Ok(session_id) ->
+      case audit_events(session_id) {
+        Ok(events) ->
+          events
+          |> list.filter_map(fn(e) {
+            case e.decision {
+              Deny -> Ok(e.host)
+              Allow -> Error(Nil)
+            }
+          })
+          |> list.unique
+        Error(_) -> []
+      }
+  }
+}
+
+/// The most recent audit session whose command matches `command` and which
+/// recorded network events — i.e. the run we just performed.
+fn latest_session(command: List(String)) -> Result(String, Nil) {
+  case shellout.command("nono", ["audit", "list", "--today", "--json"], ".", []) {
+    Ok(out) -> pick_session(out, command)
+    Error(_) -> Error(Nil)
+  }
+}
+
+/// Pure: pick the matching session id from `nono audit list --json` output.
+pub fn pick_session(out: String, command: List(String)) -> Result(String, Nil) {
+  use entries <- result.try(
+    json.parse(out, decode.list(audit_list_decoder()))
+    |> result.replace_error(Nil),
+  )
+  entries
+  |> list.filter(fn(e) { e.command == command && e.net_count > 0 })
+  |> list.sort(fn(a, b) { string.compare(a.started, b.started) })
+  |> list.reverse
+  |> list.first
+  |> result.map(fn(e) { e.session_id })
+}
+
+type AuditListEntry {
+  AuditListEntry(
+    session_id: String,
+    started: String,
+    command: List(String),
+    net_count: Int,
+  )
+}
+
+fn audit_list_decoder() -> decode.Decoder(AuditListEntry) {
+  use session_id <- decode.field("session_id", decode.string)
+  use started <- decode.field("started", decode.string)
+  use command <- decode.field("command", decode.list(decode.string))
+  use net_count <- decode.field("network_event_count", decode.int)
+  decode.success(AuditListEntry(session_id:, started:, command:, net_count:))
 }
 
 // --- Snapshots (SPEC.md §4.1) --------------------------------------------

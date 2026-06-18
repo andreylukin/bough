@@ -36,6 +36,10 @@ pub type Step {
   /// approval before the harness runs it (SPEC §5.4). `plan` is the rendered
   /// summary; the run's status is "awaiting_plan" while this is live.
   StepAwait(plan: String)
+  /// The network gate (SPEC §7): a sandboxed command was denied access to one
+  /// or more hosts; `hosts` (comma-separated) awaits the human's allow/deny.
+  /// The run's status is "awaiting_net" while this is live.
+  StepNet(hosts: String)
 }
 
 pub type Outcome {
@@ -45,6 +49,9 @@ pub type Outcome {
     steps: List(Step),
     /// Tokens occupying the supervisor's context after the latest turn.
     context_tokens: Int,
+    /// The network allowlist after this run — grown by any hosts approved
+    /// during it, so the session can persist them (SPEC §7).
+    net_allow: List(String),
   )
 }
 
@@ -129,6 +136,7 @@ fn loop(
         turns: turn,
         steps: list.reverse(steps),
         context_tokens: 0,
+        net_allow: [],
       ))
     }
     False -> {
@@ -171,6 +179,7 @@ fn loop(
             turns: turn + 1,
             steps: list.reverse(steps),
             context_tokens: 0,
+            net_allow: [],
           ))
       }
     }
@@ -273,6 +282,11 @@ pub fn step_to_json(step: Step) -> json.Json {
       json.object([
         #("type", json.string("await")),
         #("plan", json.string(plan)),
+      ])
+    StepNet(hosts) ->
+      json.object([
+        #("type", json.string("net")),
+        #("hosts", json.string(hosts)),
       ])
   }
 }
