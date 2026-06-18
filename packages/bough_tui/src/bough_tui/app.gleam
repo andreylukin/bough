@@ -1522,22 +1522,23 @@ fn transcript(model: Model) -> List(CLine) {
   list.flatten([banner, main, suggestion_lines(model.suggestions)])
 }
 
-/// The bough mark: a high-cut trunk with one bough still growing off it, shown
-/// on the empty conversation. Mirrors `assets/logo.svg`.
+/// The bough mark in block art: a thick high-cut trunk with one bough growing
+/// off it, shown on the empty conversation.
 fn ascii_logo() -> List(CLine) {
   [
     line("", style.Default),
-    line("      _____", style.Green),
-    line("     /     \\", style.Green),
-    line("    (  (o)  )", style.Green),
-    line("     \\_____/", style.Green),
-    line("        |  __", style.Green),
-    line("        | /", style.Green),
-    line("        |/", style.Green),
-    line("        |", style.Green),
-    line("       _|_", style.Green),
+    line("   ██████        ██", style.Green),
+    line("   ██████      ▟██▛", style.Green),
+    line("   ██████    ▟██▛", style.Green),
+    line("   ██████  ▟██▛", style.Green),
+    line("   ██████▟██▛", style.Green),
+    line("   ███████▛", style.Green),
+    line("   ██████", style.Green),
+    line("   ██████", style.Green),
+    line("   ██████", style.Green),
+    line("  ████████", style.Green),
     line("", style.Default),
-    bold("       bough", style.Green),
+    bold("   bough", style.Green),
   ]
 }
 
