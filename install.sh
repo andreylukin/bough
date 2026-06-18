@@ -18,11 +18,17 @@
 #   BOUGH_HOME       where to clone if not run from a checkout (default ~/repos/bough)
 #   BOUGH_REPO       git URL to clone (default https://github.com/andreylukin/bough.git)
 #   BOUGH_NO_LLAMA=1 skip the (large) llama.cpp install; supervisor-only fixes still work
+#   BOUGH_NO_MODEL=1 skip the worker model download (~4.7 GB)
+#   BOUGH_MODEL_URL  override the GGUF download URL (default: Qwen2.5-Coder-7B q4_k_m)
 
 set -euo pipefail
 
 BOUGH_HOME="${BOUGH_HOME:-$HOME/repos/bough}"
 BOUGH_REPO="${BOUGH_REPO:-https://github.com/andreylukin/bough.git}"
+# Default worker model — filename must match worker_runtime.gleam's default_gguf
+# so bough finds it at ~/.bough/models/ without any env vars.
+BOUGH_MODEL_FILE="qwen2.5-coder-7b-instruct-q4_k_m.gguf"
+BOUGH_MODEL_URL="${BOUGH_MODEL_URL:-https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/${BOUGH_MODEL_FILE}}"
 
 info() { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m==>\033[0m %s\n' "$*" >&2; }
@@ -76,7 +82,24 @@ fi
 info "building all packages"
 make -C "$SRC" build
 
-# 5. Next steps ------------------------------------------------------------
+# 5. Worker model ----------------------------------------------------------
+if [ "${BOUGH_NO_MODEL:-0}" = "1" ]; then
+  info "skipping worker model download (BOUGH_NO_MODEL=1)"
+else
+  model_dir="$HOME/.bough/models"
+  model_path="$model_dir/$BOUGH_MODEL_FILE"
+  if [ -f "$model_path" ]; then
+    info "worker model already present at $model_path"
+  else
+    info "downloading worker model (~4.7 GB) to $model_path"
+    mkdir -p "$model_dir"
+    # -C - resumes a partial download so a re-run after an interruption continues.
+    curl -fSL -C - -o "$model_path" "$BOUGH_MODEL_URL" \
+      || die "model download failed; re-run install.sh to resume, or set BOUGH_NO_MODEL=1 to skip"
+  fi
+fi
+
+# 6. Next steps ------------------------------------------------------------
 cat <<EOF
 
 $(info "bough is built at $SRC")

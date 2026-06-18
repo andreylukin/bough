@@ -17,16 +17,20 @@ See **[SPEC.md](SPEC.md)** for the full design and the v1 milestone.
 ## Install
 
 One line on any Mac — installs the toolchain (Gleam/Erlang, the `nono` sandbox,
-`llama.cpp` for the worker model), clones bough, and builds it:
+`llama.cpp` for the worker), downloads the default worker model
+(Qwen2.5-Coder-7B, ~4.7 GB, to `~/.bough/models/`), clones bough, and builds it:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/andreylukin/bough/main/install.sh | bash
 ```
 
 Already cloned? Run `./install.sh` from the checkout instead. The script is
-idempotent, so re-running it just updates and rebuilds. Knobs: `BOUGH_HOME`
-(clone target, default `~/repos/bough`) and `BOUGH_NO_LLAMA=1` (skip the large
-`llama.cpp` download; supervisor-only fixes still work).
+idempotent — re-running updates, rebuilds, and resumes a partial model download.
+Knobs: `BOUGH_HOME` (clone target, default `~/repos/bough`), `BOUGH_NO_LLAMA=1`
+(skip `llama.cpp`), `BOUGH_NO_MODEL=1` (skip the model download), and
+`BOUGH_MODEL_URL` (use a different GGUF). The worker is wired in at runtime only
+when you set `BOUGH_WORKER=<model>`; with the weights already on disk it starts
+with no first-run download.
 
 Then set your key and start it:
 
