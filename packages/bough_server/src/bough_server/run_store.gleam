@@ -5,6 +5,7 @@
 
 import bough_server/agent.{type Step}
 import envoy
+import gleam/dynamic/decode
 import gleam/json
 import gleam/result
 import simplifile
@@ -50,4 +51,16 @@ pub fn write(
 pub fn read_raw(session_id: String) -> Result(String, Nil) {
   use d <- result.try(dir())
   simplifile.read(path(d, session_id)) |> result.replace_error(Nil)
+}
+
+/// The session's current `#(status, text)` — used by `collect` to wait on a
+/// subagent and read back its result.
+pub fn read_status_text(session_id: String) -> Result(#(String, String), Nil) {
+  use body <- result.try(read_raw(session_id))
+  json.parse(body, {
+    use status <- decode.field("status", decode.string)
+    use text <- decode.field("text", decode.string)
+    decode.success(#(status, text))
+  })
+  |> result.replace_error(Nil)
 }

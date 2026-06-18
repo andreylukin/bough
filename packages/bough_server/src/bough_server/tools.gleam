@@ -71,7 +71,7 @@ pub fn run_steps_schema() -> json.Json {
         #("action", json.object([
           #("type", json.string("string")),
           #("description", json.string("Which action this step performs.")),
-          #("enum", json.array(["run", "write", "edit", "read", "grep", "spawn"], json.string)),
+          #("enum", json.array(["run", "write", "edit", "read", "grep", "spawn", "tell", "collect"], json.string)),
         ])),
         #("title", str("Short human-readable title for this step.")),
         #("command", str("Shell command to run (action=run).")),
@@ -81,7 +81,9 @@ pub fn run_steps_schema() -> json.Json {
         #("replace", str("Replacement text (action=edit).")),
         #("range", str("Optional line range like \"10-40\" (action=read).")),
         #("pattern", str("Search pattern; recursive, line-numbered (action=grep).")),
-        #("task", str("Self-contained instructions for a subagent to carry out on this workspace (action=spawn). The subagent runs its own plan to completion and its result is returned to you.")),
+        #("task", str("Self-contained instructions for a subagent (action=spawn). Spawning is asynchronous: the subagent runs concurrently and the step returns its id.")),
+        #("target", str("The subagent id (returned by an earlier spawn) to message or wait for (action=tell/collect).")),
+        #("message", str("Context, info, or a correction to send the target subagent (action=tell). Delivered at its next round.")),
       ])),
       #("required", json.array(["action", "title"], json.string)),
     ])

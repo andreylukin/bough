@@ -33,7 +33,9 @@ For questions or discussion, reply in plain prose with no tool call. For work on
 - {\"action\":\"edit\",  \"title\":..., \"path\":..., \"find\":\"<exact text, byte-for-byte and unique>\", \"replace\":\"<replacement>\"}
 - {\"action\":\"read\",  \"title\":..., \"path\":..., \"range\":\"<start>-<end>\" (optional)}
 - {\"action\":\"grep\",  \"title\":..., \"pattern\":\"<recursive, line-numbered search>\"}
-- {\"action\":\"spawn\", \"title\":..., \"task\":\"<self-contained instructions>\"} — delegate an independent sub-task to a subagent: a fresh agent that plans and executes it on this same workspace and returns its result to you. Use it to parallelize or isolate a well-scoped piece of work (e.g. \"write tests for module X\"); give it everything it needs, since it does not see this conversation.
+- {\"action\":\"spawn\", \"title\":..., \"task\":\"<self-contained instructions>\"} — delegate an independent sub-task to a subagent: a fresh agent that plans and executes it on this same workspace. Spawning is ASYNCHRONOUS — the subagent starts running concurrently and the step returns its id; it does not see this conversation, so put everything it needs in the task.
+- {\"action\":\"tell\",  \"title\":..., \"target\":\"<subagent id>\", \"message\":\"<context/info/correction>\"} — send a message to a running subagent (it arrives at the subagent's next round). Use it to add context or redirect it while it works.
+- {\"action\":\"collect\", \"title\":..., \"target\":\"<subagent id>\"} — wait for a subagent to finish and read back its result. You MUST collect every subagent you spawn before finishing, so its work is actually done and verified.
 
 Also pass `check`: a shell command that exits 0 if and only if the task's literal acceptance criteria hold (not merely that commands ran). And pass `done`: true only after the check has passed and you have reviewed the result.
 

@@ -30,10 +30,16 @@ pub type Step {
   /// Recursive, line-numbered search of the workspace.
   Grep(title: String, pattern: String)
   /// Delegate a self-contained sub-task to a subagent (SPEC §5): a fresh
-  /// supervisor run on the same workspace, driven by `task`. The harness runs it
-  /// to completion and feeds its result back as this step's output. The human
-  /// can jump into the subagent to watch it and send it messages.
+  /// supervisor run on the same workspace, driven by `task`. Spawning is
+  /// asynchronous — the subagent runs concurrently and the step returns its id;
+  /// use `Tell`/`Collect` to communicate with it. The human can also jump into
+  /// it to watch and message it.
   Spawn(title: String, task: String)
+  /// Send a message (context, a correction, more info) to a running subagent,
+  /// addressed by the id `Spawn` returned. Delivered at the subagent's next round.
+  Tell(title: String, target: String, message: String)
+  /// Wait for a running subagent (by id) to finish and read back its result.
+  Collect(title: String, target: String)
 }
 
 pub type Artifacts {
@@ -55,6 +61,8 @@ pub fn step_title(step: Step) -> String {
     Read(title, ..) -> title
     Grep(title, ..) -> title
     Spawn(title, ..) -> title
+    Tell(title, ..) -> title
+    Collect(title, ..) -> title
   }
 }
 

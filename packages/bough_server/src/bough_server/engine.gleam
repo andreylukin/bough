@@ -12,7 +12,9 @@
 //// (with exit code), a local-worker fix is `StepWorker`, and the guardrails are
 //// `StepCheck` and `StepReview`. Plain `StepText` is left for notices.
 
-import bough_core/artifact.{type Step, Edit, Grep, Read, Run, Spawn, Write}
+import bough_core/artifact.{
+  type Step, Collect, Edit, Grep, Read, Run, Spawn, Tell, Write,
+}
 import bough_core/digest
 import bough_core/nono
 import bough_server/agent.{
@@ -57,6 +59,28 @@ pub type Config {
   )
 }
 
+/// The subagent operations the engine delegates to the caller (the router wires
+/// them to real sessions). Spawning is async — `spawn` returns the new child's
+/// id immediately; `tell` sends a running child a message; `collect` waits for a
+/// child and returns its result.
+pub type Subagents {
+  Subagents(
+    spawn: fn(String, String) -> String,
+    tell: fn(String, String) -> String,
+    collect: fn(String) -> String,
+  )
+}
+
+/// A no-op set, for runs that can't host subagents (the non-streaming path).
+pub fn no_subagents() -> Subagents {
+  let unavailable = "subagents are only available in a streaming run"
+  Subagents(
+    spawn: fn(_, _) { unavailable },
+    tell: fn(_, _) { unavailable },
+    collect: fn(_) { unavailable },
+  )
+}
+
 pub fn default_config() -> Config {
   Config(
     provider: provider.Anthropic,
@@ -90,9 +114,8 @@ type State {
     // Non-blocking: a message the human added to this run since the last round,
     // injected into the conversation so they can steer any agent mid-flight.
     inbox: fn() -> Option(String),
-    // Delegate a sub-task to a subagent: given a title and task, runs a fresh
-    // agent to completion on the same workspace and returns its result.
-    spawn: fn(String, String) -> String,
+    // Spawn / message / collect subagents (async delegation).
+    subagents: Subagents,
     // append-only Anthropic message list, oldest first. Carries tool_use /
     // tool_result blocks verbatim, so it is JsonValue rather than text pairs.
     convo: List(JsonValue),
@@ -126,7 +149,7 @@ pub fn run_streaming(
   emit: fn(String, List(Activity), Int) -> Nil,
   await: fn() -> control.Decision,
   inbox: fn() -> Option(String),
-  spawn: fn(String, String) -> String,
+  subagents: Subagents,
 ) -> Result(Outcome, String) {
   let state =
     State(
@@ -137,7 +160,7 @@ pub fn run_streaming(
       emit: emit,
       await: await,
       inbox: inbox,
-      spawn: spawn,
+      subagents: subagents,
       convo: seed_convo(history, user_prompt),
       context_tokens: 0,
       baseline: integrity.snapshot(workspace),
@@ -178,7 +201,7 @@ pub fn run(
     fn(_, _, _) { Nil },
     fn() { control.Allow },
     fn() { None },
-    fn(_, _) { "subagents are only available in a streaming run" },
+    no_subagents(),
   )
 }
 
@@ -468,9 +491,11 @@ fn apply(state: State, step: Step) -> #(State, Exec) {
     Edit(_, path, search, replace) -> edit_file(state, path, search, replace)
     Read(_, path, range) -> read_file(state, path, range)
     Grep(_, pattern) -> grep(state, pattern)
-    // Delegation runs out-of-band (a nested agent), not in the sandbox; the
-    // injected `spawn` returns the subagent's result to feed back.
-    Spawn(title, task) -> #(bump(state), Exec(0, state.spawn(title, task)))
+    // Delegation runs out-of-band (concurrent nested agents), not in the
+    // sandbox; the injected ops return text to feed back to the supervisor.
+    Spawn(title, task) -> #(bump(state), Exec(0, state.subagents.spawn(title, task)))
+    Tell(_, target, message) -> #(bump(state), Exec(0, state.subagents.tell(target, message)))
+    Collect(_, target) -> #(bump(state), Exec(0, state.subagents.collect(target)))
   }
 }
 
@@ -765,6 +790,8 @@ fn step_detail(step: Step) -> String {
     Read(_, path, _) -> "READ " <> path
     Grep(_, pattern) -> "GREP " <> pattern
     Spawn(title, _) -> "SPAWN " <> title
+    Tell(_, target, _) -> "TELL " <> target
+    Collect(_, target) -> "COLLECT " <> target
   }
 }
 
@@ -777,6 +804,8 @@ fn step_verb(step: Step) -> String {
     Read(_, _, _) -> "READ"
     Grep(_, _) -> "GREP"
     Spawn(_, _) -> "SPAWN"
+    Tell(_, _, _) -> "TELL"
+    Collect(_, _) -> "COLLECT"
   }
 }
 
@@ -789,6 +818,8 @@ fn step_arg(step: Step) -> String {
     Read(_, path, _) -> path
     Grep(_, pattern) -> pattern
     Spawn(title, _) -> title
+    Tell(_, target, _) -> target
+    Collect(_, target) -> target
   }
 }
 

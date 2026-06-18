@@ -291,11 +291,33 @@ fn subagents_of(id: String) -> Response {
   json_ok(json.to_string(subagents.to_json(subagents.list(id))))
 }
 
-/// Run a subagent to completion and return its result to the parent. The child
-/// is a fresh session on the same workspace with its own run/control slots, so
-/// the human can jump into it and steer it while it works (SPEC §5). Recursive:
-/// a subagent can itself spawn subagents.
-fn run_subagent(
+/// The subagent operations for a parent session: spawn (async), tell (message a
+/// running child), collect (wait for a child's result). Wired recursively so a
+/// subagent gets the same operations over its own children.
+fn subagents_for(
+  parent_id: String,
+  prov: provider.Provider,
+  api_key: String,
+  model: String,
+  workspace: String,
+) -> engine.Subagents {
+  engine.Subagents(
+    spawn: fn(title, task) {
+      spawn_subagent(parent_id, prov, api_key, model, workspace, title, task)
+    },
+    tell: fn(target, message) {
+      control.put(target, control.Steer(message))
+      "Message queued for subagent " <> target <> "."
+    },
+    collect: fn(target) { collect_subagent(target) },
+  )
+}
+
+/// Start a subagent running concurrently and return its id immediately (SPEC
+/// §5). The child is a fresh session on the same workspace with its own
+/// run/control slots, so the parent (via tell/collect) and the human (by jumping
+/// in) can both message it while it works.
+fn spawn_subagent(
   parent_id: String,
   prov: provider.Provider,
   api_key: String,
@@ -315,40 +337,80 @@ fn run_subagent(
   control.clear(child_id)
   run_store.write(child_id, "running", [], "", 0)
 
-  case
-    engine.run_streaming(
-      api_key,
-      model,
-      workspace,
-      engine_config(prov, False),
-      [],
-      task,
-      fn(status, steps, context_tokens) {
-        run_store.write(child_id, status, steps, "", context_tokens)
-      },
-      fn() { await_decision(child_id, 0) },
-      fn() { inbox_of(child_id) },
-      fn(t, tk) {
-        run_subagent(child_id, prov, api_key, model, workspace, t, tk)
-      },
-    )
-  {
-    Ok(outcome) -> {
-      let _ = session_manager.save(append_turn(child, outcome))
-      run_store.write(
-        child_id,
-        "done",
-        outcome.steps,
-        outcome.text,
-        outcome.context_tokens,
-      )
-      subagents.set_status(parent_id, child_id, "done")
-      "Subagent \"" <> title <> "\" finished. Result:\n" <> outcome.text
-    }
-    Error(message) -> {
-      run_store.write(child_id, "error", [], message, 0)
-      subagents.set_status(parent_id, child_id, "error")
-      "Subagent \"" <> title <> "\" failed: " <> message
+  let _ =
+    process.spawn_unlinked(fn() {
+      case
+        engine.run_streaming(
+          api_key,
+          model,
+          workspace,
+          engine_config(prov, False),
+          [],
+          task,
+          fn(status, steps, context_tokens) {
+            run_store.write(child_id, status, steps, "", context_tokens)
+          },
+          fn() { await_decision(child_id, 0) },
+          fn() { inbox_of(child_id) },
+          subagents_for(child_id, prov, api_key, model, workspace),
+        )
+      {
+        Ok(outcome) -> {
+          let _ = session_manager.save(append_turn(child, outcome))
+          run_store.write(
+            child_id,
+            "done",
+            outcome.steps,
+            outcome.text,
+            outcome.context_tokens,
+          )
+          subagents.set_status(parent_id, child_id, "done")
+        }
+        Error(message) -> {
+          run_store.write(child_id, "error", [], message, 0)
+          subagents.set_status(parent_id, child_id, "error")
+        }
+      }
+    })
+  "Spawned subagent \""
+  <> title
+  <> "\" with id "
+  <> child_id
+  <> ". It is running concurrently — `tell` it (target="
+  <> child_id
+  <> ") to add context, and `collect` it (target="
+  <> child_id
+  <> ") to wait for and read its result."
+}
+
+/// Block until a subagent finishes, then return its result. Capped (~20 min at
+/// 250ms/poll) so a stuck child can't pin the parent forever.
+fn collect_subagent(child_id: String) -> String {
+  collect_loop(child_id, 0)
+}
+
+fn collect_loop(child_id: String, polls: Int) -> String {
+  case run_store.read_status_text(child_id) {
+    Ok(#("done", text)) ->
+      "Subagent " <> child_id <> " finished. Result:\n" <> text
+    Ok(#("error", text)) -> "Subagent " <> child_id <> " failed: " <> text
+    // A live child: keep waiting.
+    Ok(#(_running, _)) -> wait_then_collect(child_id, polls)
+    // No run for this id at all — a bogus/blank target. Fail fast so the
+    // supervisor corrects it instead of blocking on a session that never runs.
+    Error(_) ->
+      "No subagent with id \""
+      <> child_id
+      <> "\". Pass the exact id returned by spawn (target=<id>)."
+  }
+}
+
+fn wait_then_collect(child_id: String, polls: Int) -> String {
+  case polls > 4800 {
+    True -> "Subagent " <> child_id <> " did not finish within the time limit."
+    False -> {
+      process.sleep(250)
+      collect_loop(child_id, polls + 1)
     }
   }
 }
@@ -514,9 +576,7 @@ fn launch_run(
               },
               fn() { await_decision(id, 0) },
               fn() { inbox_of(id) },
-              fn(title, task) {
-                run_subagent(id, prov, api_key, model, tree.project, title, task)
-              },
+              subagents_for(id, prov, api_key, model, tree.project),
             )
           {
             Ok(outcome) -> {

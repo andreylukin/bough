@@ -67,11 +67,17 @@ press Enter — it's injected into that agent's conversation at its next round. 
 need to wait for it to finish or stop it.
 
 **Subagents.** The supervisor can delegate a self-contained sub-task with a
-`spawn` action; the subagent is a fresh run on the same workspace that works to
-completion and returns its result. Press `a` to list a session's subagents and
-Enter to jump into one — you'll see its live transcript and can type messages to
-it (steering, as above); `b` returns to the parent. Subagents can spawn their own
-subagents.
+`spawn` action. Spawning is **asynchronous**: the subagent runs concurrently on
+the same workspace and `spawn` returns its id, so the supervisor can `tell` it
+more context while it works and `collect` it to wait for and read its result —
+the main agent and its subagents stay in contact, not just hand-off-and-wait.
+Press `a` to list a session's subagents and Enter to jump into one — you'll see
+its live transcript and can type messages to it yourself (steering, as above);
+`b` returns to the parent. Subagents can spawn their own subagents.
+
+> Concurrency note: subagents share one workspace, so the supervisor is
+> responsible for not running conflicting file edits in parallel (it can `collect`
+> one before starting the next). Isolated per-subagent branches are future work.
 
 | Key (`Esc` enters scroll/command mode) | Action |
 |---|---|

@@ -4,7 +4,9 @@
 //// a malformed action yields a clear `Error` the engine hands back as a
 //// tool_result for the model to correct.
 
-import bough_core/artifact.{type Step, Edit, Grep, Read, Run, Spawn, Write}
+import bough_core/artifact.{
+  type Step, Collect, Edit, Grep, Read, Run, Spawn, Tell, Write,
+}
 import bough_server/json_value.{type JsonValue, JArray, JBool}
 import gleam/int
 import gleam/list
@@ -87,12 +89,21 @@ fn parse_step(s: JsonValue, idx: Int) -> Result(Step, String) {
       field(s, "task")
       |> result.map(Spawn(title, _))
       |> result.replace_error(at <> " (spawn): missing \"task\"")
+    "tell" -> {
+      use target <- result.try(nonblank(s, "target", at, "tell"))
+      use message <- result.try(req(s, "message", at, "tell"))
+      Ok(Tell(title, target, message))
+    }
+    "collect" -> {
+      use target <- result.try(nonblank(s, "target", at, "collect"))
+      Ok(Collect(title, target))
+    }
     other ->
       Error(
         at
         <> ": unknown action \""
         <> other
-        <> "\" (use run/write/edit/read/grep/spawn)",
+        <> "\" (use run/write/edit/read/grep/spawn/tell/collect)",
       )
   }
 }
@@ -109,6 +120,21 @@ fn req(
 ) -> Result(String, String) {
   field(s, key)
   |> result.replace_error(at <> " (" <> action <> "): missing \"" <> key <> "\"")
+}
+
+/// Like `req`, but also rejects a present-but-blank value — used for the subagent
+/// `target`, where an empty id would otherwise address a nonexistent session.
+fn nonblank(
+  s: JsonValue,
+  key: String,
+  at: String,
+  action: String,
+) -> Result(String, String) {
+  use value <- result.try(req(s, key, at, action))
+  case string.trim(value) {
+    "" -> Error(at <> " (" <> action <> "): \"" <> key <> "\" is empty")
+    trimmed -> Ok(trimmed)
+  }
 }
 
 fn parse_range(r: Result(String, Nil)) -> Option(#(Int, Int)) {

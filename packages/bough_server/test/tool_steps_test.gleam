@@ -1,4 +1,4 @@
-import bough_core/artifact.{Run, Spawn, Write}
+import bough_core/artifact.{Collect, Run, Spawn, Tell, Write}
 import bough_server/json_value.{JArray, JBool, JObject, JString}
 import bough_server/tool_steps.{Parsed}
 import gleam/option.{None, Some}
@@ -63,6 +63,48 @@ pub fn spawn_without_task_is_an_error_test() {
   assert tool_steps.parse(input) == Error("step 1 (spawn): missing \"task\"")
 }
 
+pub fn parses_tell_and_collect_test() {
+  let input =
+    JObject([
+      #("steps", JArray([
+        step([
+          #("action", JString("tell")),
+          #("title", JString("nudge")),
+          #("target", JString("child123")),
+          #("message", JString("also handle the empty case")),
+        ]),
+        step([
+          #("action", JString("collect")),
+          #("title", JString("await")),
+          #("target", JString("child123")),
+        ]),
+      ])),
+    ])
+  assert tool_steps.parse(input)
+    == Ok(Parsed(
+      [
+        Tell("nudge", "child123", "also handle the empty case"),
+        Collect("await", "child123"),
+      ],
+      None,
+      False,
+    ))
+}
+
+pub fn tell_without_target_is_an_error_test() {
+  let input =
+    JObject([
+      #("steps", JArray([
+        step([
+          #("action", JString("tell")),
+          #("title", JString("x")),
+          #("message", JString("hi")),
+        ]),
+      ])),
+    ])
+  assert tool_steps.parse(input) == Error("step 1 (tell): missing \"target\"")
+}
+
 pub fn missing_per_action_field_is_an_error_test() {
   let input =
     JObject([
@@ -87,7 +129,7 @@ pub fn unknown_action_is_an_error_test() {
       ])),
     ])
   assert tool_steps.parse(input)
-    == Error("step 1: unknown action \"frobnicate\" (use run/write/edit/read/grep/spawn)")
+    == Error("step 1: unknown action \"frobnicate\" (use run/write/edit/read/grep/spawn/tell/collect)")
 }
 
 pub fn missing_steps_array_is_an_error_test() {

@@ -14,6 +14,7 @@
 import envoy
 import gleam/dynamic/decode
 import gleam/json
+import gleam/list
 import gleam/result
 import simplifile
 
@@ -35,14 +36,46 @@ fn path(d: String, session_id: String) -> String {
   d <> "/" <> session_id <> ".json"
 }
 
-/// Publish a decision for a session, replacing any unconsumed one.
+/// Enqueue a decision for a session (FIFO). Several messages may be in flight —
+/// e.g. the parent agent sending a running subagent successive context — so this
+/// appends rather than replacing; `take` consumes them oldest-first.
 pub fn put(session_id: String, decision: Decision) -> Nil {
   case dir() {
     Error(_) -> Nil
-    Ok(d) -> {
-      let target = path(d, session_id)
+    Ok(d) -> write_queue(d, session_id, list.append(read_queue(d, session_id), [decision]))
+  }
+}
+
+/// Consume the oldest pending decision for a session, if any (read-once).
+pub fn take(session_id: String) -> Result(Decision, Nil) {
+  use d <- result.try(dir())
+  case read_queue(d, session_id) {
+    [] -> Error(Nil)
+    [head, ..rest] -> {
+      write_queue(d, session_id, rest)
+      Ok(head)
+    }
+  }
+}
+
+fn read_queue(d: String, session_id: String) -> List(Decision) {
+  case simplifile.read(path(d, session_id)) {
+    Error(_) -> []
+    Ok(body) -> json.parse(body, decode.list(decoder())) |> result.unwrap([])
+  }
+}
+
+fn write_queue(d: String, session_id: String, queue: List(Decision)) -> Nil {
+  let target = path(d, session_id)
+  case queue {
+    [] -> {
+      let _ = simplifile.delete(target)
+      Nil
+    }
+    _ -> {
       let tmp = target <> ".tmp"
-      case simplifile.write(tmp, json.to_string(to_json(decision))) {
+      let body = json.to_string(json.array(queue, to_json))
+      case simplifile.write(tmp, body) {
         Ok(_) -> {
           let _ = simplifile.rename(tmp, target)
           Nil
@@ -51,16 +84,6 @@ pub fn put(session_id: String, decision: Decision) -> Nil {
       }
     }
   }
-}
-
-/// Consume the pending decision for a session, if any. Read-once: the slot is
-/// cleared so the same decision is never applied twice.
-pub fn take(session_id: String) -> Result(Decision, Nil) {
-  use d <- result.try(dir())
-  let target = path(d, session_id)
-  use body <- result.try(simplifile.read(target) |> result.replace_error(Nil))
-  let _ = simplifile.delete(target)
-  json.parse(body, decoder()) |> result.replace_error(Nil)
 }
 
 /// Drop any pending decision for a session (e.g. when a fresh run starts) so a
