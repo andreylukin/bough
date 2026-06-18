@@ -1506,15 +1506,39 @@ fn transcript(model: Model) -> List(CLine) {
     False -> []
   }
   let main = case history, live {
-    [], [] -> [
-      dim(
-        "type a task · Enter to send · @ to mention a file · Esc for scroll/mouse",
-        style.Grey,
-      ),
-    ]
+    [], [] ->
+      list.flatten([
+        ascii_logo(),
+        [
+          line("", style.Default),
+          dim(
+            "type a task · Enter to send · @ to mention a file · Esc for scroll/mouse",
+            style.Grey,
+          ),
+        ],
+      ])
     _, _ -> list.append(history, live)
   }
   list.flatten([banner, main, suggestion_lines(model.suggestions)])
+}
+
+/// The bough mark: a high-cut trunk with one bough still growing off it, shown
+/// on the empty conversation. Mirrors `assets/logo.svg`.
+fn ascii_logo() -> List(CLine) {
+  [
+    line("", style.Default),
+    line("      _____", style.Green),
+    line("     /     \\", style.Green),
+    line("    (  (o)  )", style.Green),
+    line("     \\_____/", style.Green),
+    line("        |  __", style.Green),
+    line("        | /", style.Green),
+    line("        |/", style.Green),
+    line("        |", style.Green),
+    line("       _|_", style.Green),
+    line("", style.Default),
+    bold("       bough", style.Green),
+  ]
 }
 
 fn render_entry(

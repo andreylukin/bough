@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.svg" alt="bough" width="150" height="163">
+</p>
+
 # bough
 
 A sandboxed coding agent with branchable history. Written in **Gleam** (BEAM/OTP),
