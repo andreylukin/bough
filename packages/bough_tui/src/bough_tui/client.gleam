@@ -27,7 +27,9 @@ pub type Step {
   ToolCall(name: String, input: String)
   ToolResult(name: String, output: String)
   Plan(text: String)
-  Call(verb: String, arg: String)
+  /// A harness action: verb (RUN/WRITE/EDIT/…), its arg, and `detail` — the full
+  /// content for WRITE / the find+replace for EDIT (empty otherwise).
+  Call(verb: String, arg: String, detail: String)
   Exec(verb: String, exit: Int, digest: String)
   Worker(command: String, exit: Int)
   Check(ok: Bool, digest: String)
@@ -337,7 +339,8 @@ fn step_decoder() -> decode.Decoder(Step) {
     "call" -> {
       use verb <- decode.field("verb", decode.string)
       use arg <- decode.field("arg", decode.string)
-      decode.success(Call(verb, arg))
+      use detail <- decode.optional_field("detail", "", decode.string)
+      decode.success(Call(verb, arg, detail))
     }
     "exec" -> {
       use verb <- decode.field("verb", decode.string)

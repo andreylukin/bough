@@ -22,8 +22,11 @@ pub type Step {
   // render each role distinctly instead of a flat tool stream.
   /// Supervisor prose (plans, narration).
   StepPlan(text: String)
-  /// A harness step starting: the verb (RUN/WRITE/EDIT/READ/GREP) and its arg.
-  StepCall(verb: String, arg: String)
+  /// A harness step starting: the verb (RUN/WRITE/EDIT/READ/GREP), its arg
+  /// (command/path/pattern), and `detail` — the full content for WRITE or the
+  /// find/replace for EDIT, so a client can show the complete plan. Empty
+  /// otherwise.
+  StepCall(verb: String, arg: String, detail: String)
   /// A harness step's result: its exit code and an output digest.
   StepExec(verb: String, exit: Int, digest: String)
   /// A local-worker fix attempt: the command it ran and that command's exit.
@@ -249,11 +252,12 @@ pub fn step_to_json(step: Step) -> json.Json {
       ])
     StepPlan(text) ->
       json.object([#("type", json.string("plan")), #("text", json.string(text))])
-    StepCall(verb, arg) ->
+    StepCall(verb, arg, detail) ->
       json.object([
         #("type", json.string("call")),
         #("verb", json.string(verb)),
         #("arg", json.string(arg)),
+        #("detail", json.string(detail)),
       ])
     StepExec(verb, exit, digest) ->
       json.object([

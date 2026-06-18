@@ -120,6 +120,8 @@ pub type Model {
     subagents: List(client.Subagent),
     // The session to return to after jumping into a subagent (for `b` back).
     parent: Option(String),
+    // The steps of the turn being shown in the full-plan overlay.
+    plan_steps: List(client.Step),
   )
 }
 
@@ -137,6 +139,7 @@ pub type View {
   SessionsV
   TreeV
   SubagentsV
+  PlanV
 }
 
 /// One node of the flattened session tree shown in the tree overlay. `prefix`
@@ -194,6 +197,8 @@ pub type Msg {
   OpenSubagents
   SubagentsListed(Result(List(client.Subagent), String))
   BackToParent
+  // Open the full-plan overlay for a turn (its complete steps + content).
+  OpenPlan(List(client.Step))
 }
 
 pub fn init() -> #(Model, List(fn() -> Msg)) {
@@ -240,6 +245,7 @@ pub fn init() -> #(Model, List(fn() -> Msg)) {
       net_rule: "",
       subagents: [],
       parent: None,
+      plan_steps: [],
     )
   let resume = envoy.get("BOUGH_RESUME") |> result.is_ok
   // --resume opens the picker on launch; --continue resumes silently once the
@@ -551,6 +557,11 @@ pub fn update(model: Model, msg: Msg) -> #(Model, List(fn() -> Msg)) {
         }
         None -> #(model, [])
       }
+
+    OpenPlan(steps) -> #(
+      Model(..model, view: PlanV, plan_steps: steps, sel: 0, status: "full plan"),
+      [],
+    )
   }
 }
 
@@ -559,6 +570,7 @@ fn clamp_sel(model: Model, n: Int) -> Int {
     SessionsV -> list.length(model.sessions)
     TreeV -> list.length(model.tree_rows)
     SubagentsV -> list.length(model.subagents)
+    PlanV -> list.length(plan_rows(model.plan_steps))
     ChatV -> 0
   }
   int.clamp(n, 0, int.max(len - 1, 0))
@@ -601,6 +613,8 @@ fn pick_choose(model: Model) -> #(Model, List(fn() -> Msg)) {
         )
         Error(_) -> #(model, [])
       }
+    // The plan overlay is read-only; Enter does nothing.
+    PlanV -> #(model, [])
     ChatV -> #(model, [])
   }
 }
@@ -778,7 +792,7 @@ fn step_color(step: client.Step) -> Color {
     // Supervisor narration: de-emphasized.
     client.Text(_) | client.Plan(_) -> style.Grey
     // Tool invocations.
-    client.Call(_, _) | client.ToolCall(_, _) -> style.Yellow
+    client.Call(_, _, _) | client.ToolCall(_, _) -> style.Yellow
     // Results: green on success, red on failure.
     client.Exec(_, exit, _) | client.Worker(_, exit) ->
       case exit == 0 {
@@ -819,7 +833,7 @@ fn step_label(step: client.Step) -> String {
   case step {
     client.Text(t) -> oneline(t)
     client.Plan(t) -> oneline(t)
-    client.Call(verb, arg) ->
+    client.Call(verb, arg, _) ->
       "[" <> string.lowercase(verb) <> ": " <> oneline(arg) <> "]"
     client.Exec(_verb, exit, _digest) -> "↳ exit " <> int.to_string(exit)
     client.Worker(cmd, exit) ->
@@ -1200,8 +1214,25 @@ fn on_key_command(
     event.Char("p") -> update(model, ToggleReview)
     event.Char("a") -> update(model, OpenSubagents)
     event.Char("b") -> update(model, BackToParent)
+    // Full plan of the most recent turn (click a turn for an earlier one).
+    event.Char("f") ->
+      case latest_bough(model.chat) {
+        Some(steps) -> update(model, OpenPlan(steps))
+        None -> #(model, [])
+      }
     _ -> #(model, [])
   }
+}
+
+/// The steps of the most recent bough turn in the chat (newest-first).
+fn latest_bough(chat: List(Entry)) -> Option(List(Step)) {
+  list.find_map(chat, fn(entry) {
+    case entry {
+      Bough(steps) -> Ok(steps)
+      _ -> Error(Nil)
+    }
+  })
+  |> option.from_result
 }
 
 fn on_mouse(
@@ -1571,12 +1602,12 @@ fn transcript(model: Model) -> List(CLine) {
 fn ascii_logo() -> List(CLine) {
   [
     line("", style.Default),
-    line("   ██████        ██", style.Green),
-    line("   ██████      ▟██▛", style.Green),
-    line("   ██████    ▟██▛", style.Green),
-    line("   ██████  ▟██▛", style.Green),
-    line("   ██████▟██▛", style.Green),
-    line("   ███████▛", style.Green),
+    line("   ██████", style.Green),
+    line("   ██████ ▟▙", style.Green),
+    line("   ██████▟▛", style.Green),
+    line("   ██████", style.Green),
+    line("   ██████", style.Green),
+    line("   ██████", style.Green),
     line("   ██████", style.Green),
     line("   ██████", style.Green),
     line("   ██████", style.Green),
@@ -1636,14 +1667,21 @@ fn render_entry(
           }
           #(list.append(ls, more), i2, p + 1)
         })
-      #(
+      // Make the turn clickable to open its full plan — every line that isn't
+      // already a control (e.g. a result-toggle) opens the plan overlay.
+      let lines =
         list.flatten([
           [bold("▌ bough", style.Green), line("", style.Default)],
           step_lines,
           [line("", style.Default)],
-        ]),
-        idx2,
-      )
+        ])
+        |> list.map(fn(cl) {
+          case cl.click {
+            Some(_) -> cl
+            None -> CLine(..cl, click: Some(OpenPlan(steps)))
+          }
+        })
+      #(lines, idx2)
     }
   }
 }
@@ -1735,7 +1773,7 @@ fn render_step(
     // READ/GREP are the agent inspecting the workspace — output for the
     // supervisor, not the viewer — so they're hidden from the timeline. Press
     // `o` (expand-all) to reveal them.
-    Call(verb, arg) ->
+    Call(verb, arg, _) ->
       case is_introspection(verb) && !model.expand_all {
         True -> #([], idx)
         False -> #([call_line(verb <> "  " <> arg)], idx)
@@ -2039,6 +2077,93 @@ pub fn render(model: Model) -> List(Command) {
           one_line(status_glyph(s.status) <> " " <> s.title <> "   (" <> s.status <> ")")
         }),
       )
+    PlanV -> render_plan_overlay(model)
+  }
+}
+
+/// The full-plan overlay: the turn's supervisor/worker plan in full — every
+/// action with its argument, the complete WRITE/EDIT content, and the CHECK.
+fn render_plan_overlay(model: Model) -> List(Command) {
+  let #(cols, rows, _conv_w, _conv_h) = dims(model)
+  let title = "full plan  ·  ↑↓ scroll · Esc close"
+  let inner_h = int.max(rows - 2, 1)
+  let body_rows = plan_rows(model.plan_steps)
+  let total = list.length(body_rows)
+  let start = case total > inner_h {
+    True -> int.clamp(model.sel - inner_h / 2, 0, total - inner_h)
+    False -> 0
+  }
+  let body =
+    body_rows
+    |> list.drop(start)
+    |> list.take(inner_h)
+    |> list.index_map(fn(row, i) {
+      let #(text, color) = row
+      draw(2, i + 1, truncate(text, cols - 4), color, [])
+    })
+    |> list.flatten
+  let empty = case total {
+    0 -> draw(2, 1, "(no plan)", style.Grey, [style.Dim])
+    _ -> []
+  }
+  list.flatten([
+    [command.Clear(terminal.All)],
+    box(0, 0, cols, rows, title, style.Cyan),
+    body,
+    empty,
+    [command.HideCursor],
+  ])
+}
+
+/// A turn's steps flattened to colored display lines for the plan overlay: the
+/// supervisor's prose, each action (verb + arg) with full WRITE/EDIT content,
+/// any worker fixes, and the CHECK.
+fn plan_rows(steps: List(Step)) -> List(#(String, Color)) {
+  list.flat_map(steps, fn(step) {
+    case step {
+      Plan(text) ->
+        list.append(
+          list.map(string.split(string.trim(text), "\n"), fn(l) {
+            #(l, style.Default)
+          }),
+          [#("", style.Default)],
+        )
+      Call(verb, arg, detail) -> {
+        let head = #(verb <> "  " <> arg, style.Yellow)
+        let body = case string.trim(detail) {
+          "" -> []
+          d -> list.map(string.split(d, "\n"), fn(l) { #("    " <> l, style.Grey) })
+        }
+        list.flatten([[head], body, [#("", style.Default)]])
+      }
+      Worker(cmd, exit) -> [
+        #("worker  " <> cmd <> exit_mark(exit), style.Yellow),
+        #("", style.Default),
+      ]
+      Check(ok, _) -> [#(check_text(ok), check_color(ok)), #("", style.Default)]
+      _ -> []
+    }
+  })
+}
+
+fn exit_mark(exit: Int) -> String {
+  case exit == 0 {
+    True -> "  ✓"
+    False -> "  ✗ exit " <> int.to_string(exit)
+  }
+}
+
+fn check_text(ok: Bool) -> String {
+  case ok {
+    True -> "CHECK  ✓ pass"
+    False -> "CHECK  ✗ fail"
+  }
+}
+
+fn check_color(ok: Bool) -> Color {
+  case ok {
+    True -> style.Green
+    False -> style.Red
   }
 }
 
@@ -2310,7 +2435,7 @@ fn status_line(model: Model, row: Int, cols: Int) -> List(Command) {
           <> "  ·  Esc: scroll/mouse mode  ·  Enter: send  ·  Ctrl+X: quit"
         False ->
           model.status
-          <> "  ·  ↑↓ scroll · s resume · t branch · a agents · p review · i type · Ctrl+X quit"
+          <> "  ·  ↑↓ scroll · s resume · t branch · a agents · f plan · p review · i type · Ctrl+X quit"
       }
   }
   let #(color, attrs) = case string.starts_with(model.status, "error") {

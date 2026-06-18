@@ -108,11 +108,17 @@ Without `BOUGH_NET`, commands have no network (as before). The supervisor's own
 model calls are made by the server, outside the sandbox, so the leash governs
 only what the agent runs.
 
+**Full plan of a turn.** Click anywhere on a bough turn (or press `f` for the
+latest one) to open the full-plan overlay: the supervisor's complete plan in one
+view — every action with its argument, the full `WRITE`/`EDIT` content, the
+otherwise-hidden `READ`/`GREP` steps, worker fixes, and the `CHECK`. `↑↓` scroll,
+`Esc` closes.
+
 | Key (`Esc` enters scroll/command mode) | Action |
 |---|---|
 | `i` / `Enter` | back to typing |
 | `s` · `t` · `a` · `b` | resume session · branch (tree) · subagents · back to parent |
-| `p` · `o` | toggle plan-review gate · expand all output |
+| `f` · `p` · `o` | full plan of latest turn · toggle plan-review gate · expand all output |
 | `a` / `e` / `r` | while a plan is paused: allow / edit-steer / reject |
 
 ## Layout

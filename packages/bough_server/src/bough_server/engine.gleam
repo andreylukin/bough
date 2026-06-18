@@ -410,7 +410,8 @@ fn exec_steps(
         True -> {
           let title = artifact.step_title(step)
           let verb = step_verb(step)
-          let state = emit_activity(state, StepCall(verb, step_arg(step)))
+          let state =
+            emit_activity(state, StepCall(verb, step_arg(step), step_full(step)))
           let #(state, result, fixes) = apply_with_fixes(state, step)
           let dig = digest.digest(result.output, state.config.digest_limit)
           let #(state, pointer) = maybe_save(state, result.output, dig)
@@ -959,6 +960,19 @@ fn step_verb(step: Step) -> String {
     Spawn(_, _) -> "SPAWN"
     Tell(_, _, _) -> "TELL"
     Collect(_, _) -> "COLLECT"
+  }
+}
+
+/// The full content of a step for the plan view: the file body for WRITE, the
+/// find/replace for EDIT, the task for SPAWN. Empty when the arg already says it
+/// all (RUN/READ/GREP/TELL/COLLECT).
+fn step_full(step: Step) -> String {
+  case step {
+    Write(_, _, content) -> content
+    Edit(_, _, find, replace) ->
+      "── find ──\n" <> find <> "\n── replace ──\n" <> replace
+    Spawn(_, task) -> task
+    _ -> ""
   }
 }
 
