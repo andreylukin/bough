@@ -112,6 +112,10 @@ pub type Model {
     awaiting: Bool,
     // True while typing a steer message for a paused plan (Enter sends it).
     steering: Bool,
+    // True when the current pause is a network request (vs a plan).
+    awaiting_net: Bool,
+    // Suggested allow rule to pre-fill when editing a network decision.
+    net_rule: String,
     // Subagents the current session has spawned (for the subagents picker).
     subagents: List(client.Subagent),
     // The session to return to after jumping into a subagent (for `b` back).
@@ -232,6 +236,8 @@ pub fn init() -> #(Model, List(fn() -> Msg)) {
       review: envoy.get("BOUGH_REVIEW") |> result.is_ok,
       awaiting: False,
       steering: False,
+      awaiting_net: False,
+      net_rule: "",
       subagents: [],
       parent: None,
     )
@@ -461,17 +467,25 @@ pub fn update(model: Model, msg: Msg) -> #(Model, List(fn() -> Msg)) {
       #(Model(..model, review: review, status: note), [])
     }
 
-    BeginSteer -> #(
-      Model(
-        ..model,
-        steering: True,
-        focused: True,
-        input: "",
-        cursor: 0,
-        status: "guidance for the plan · Enter sends · Esc cancels",
-      ),
-      [],
-    )
+    BeginSteer -> {
+      // For a network request, pre-fill the suggested allow rule (editable);
+      // for a plan, start blank for free-text guidance.
+      let #(text, hint) = case model.awaiting_net {
+        True -> #(model.net_rule, "allow rule · edit & Enter to allow · Esc cancels")
+        False -> #("", "guidance for the plan · Enter sends · Esc cancels")
+      }
+      #(
+        Model(
+          ..model,
+          steering: True,
+          focused: True,
+          input: text,
+          cursor: string.length(text),
+          status: hint,
+        ),
+        [],
+      )
+    }
 
     CancelSteer -> #(
       Model(..model, steering: False, input: "", cursor: 0, status: "review the plan"),
@@ -778,7 +792,7 @@ fn step_color(step: client.Step) -> Color {
         False -> style.Red
       }
     client.Review(_) | client.Await(_) -> style.Magenta
-    client.Net(_) -> style.Yellow
+    client.Net(_, _) -> style.Yellow
   }
 }
 
@@ -817,7 +831,7 @@ fn step_label(step: client.Step) -> String {
       }
     client.Review(note) -> "[review: " <> oneline(note) <> "]"
     client.Await(_) -> "[plan: awaiting approval]"
-    client.Net(hosts) -> "[net: allow " <> oneline(hosts) <> "?]"
+    client.Net(detail, _) -> "[net: allow " <> oneline(detail) <> "?]"
     client.ToolCall(name, input) ->
       "[" <> name <> ": " <> oneline(input) <> "]"
     client.ToolResult(_name, output) -> "↳ " <> oneline(output)
@@ -973,13 +987,21 @@ fn polled(model: Model, run: client.RunState) -> #(Model, List(fn() -> Msg)) {
     // until the human resolves it (SendControl resumes the poll loop).
     "awaiting_plan" -> #(
       rebuild_tree(
-        Model(..model, awaiting: True, steering: False, running_steps: run.steps, status: "review the plan"),
+        Model(..model, awaiting: True, awaiting_net: False, steering: False, running_steps: run.steps, status: "review the plan"),
       ),
       [],
     )
     "awaiting_net" -> #(
       rebuild_tree(
-        Model(..model, awaiting: True, steering: False, running_steps: run.steps, status: "network request"),
+        Model(
+          ..model,
+          awaiting: True,
+          awaiting_net: True,
+          steering: False,
+          net_rule: net_rule_of(run.steps),
+          running_steps: run.steps,
+          status: "network request",
+        ),
       ),
       [],
     )
@@ -988,11 +1010,11 @@ fn polled(model: Model, run: client.RunState) -> #(Model, List(fn() -> Msg)) {
         // While the tree overlay is open, fold the in-progress steps into it
         // live (they aren't persisted until the turn finishes).
         Some(id) -> #(
-          rebuild_tree(Model(..model, awaiting: False, running_steps: run.steps)),
+          rebuild_tree(Model(..model, awaiting: False, awaiting_net: False, running_steps: run.steps)),
           [poll(model.server, id)],
         )
         None -> #(
-          rebuild_tree(Model(..model, awaiting: False, running_steps: run.steps)),
+          rebuild_tree(Model(..model, awaiting: False, awaiting_net: False, running_steps: run.steps)),
           [],
         )
       }
@@ -1004,6 +1026,20 @@ fn error_text(text: String) -> String {
     "" -> "agent run failed"
     t -> t
   }
+}
+
+/// The suggested allow rule from the latest network-gate step, for pre-filling
+/// the custom-rule editor.
+fn net_rule_of(steps: List(client.Step)) -> String {
+  steps
+  |> list.reverse
+  |> list.find_map(fn(s) {
+    case s {
+      client.Net(_, rule) -> Ok(rule)
+      _ -> Error(Nil)
+    }
+  })
+  |> result.unwrap("")
 }
 
 fn poll(server: String, id: String) -> fn() -> Msg {
@@ -1740,15 +1776,11 @@ fn render_step(
       ]
       #(list.flatten([header, [line("", style.Default)], body, prompt]), idx)
     }
-    Net(hosts) -> #(
+    Net(detail, _rule) -> #(
       list.flatten([
         [bold("◆ network request", style.Yellow)],
-        wrap_styled(
-          "the agent's command was blocked from reaching: " <> hosts,
-          width,
-          style.Default,
-        ),
-        [bold("  a allow   ·   r deny", style.Yellow)],
+        wrap_styled("the agent was blocked from: " <> detail, width, style.Default),
+        [bold("  a allow host   ·   e custom rule   ·   r deny", style.Yellow)],
       ]),
       idx,
     )

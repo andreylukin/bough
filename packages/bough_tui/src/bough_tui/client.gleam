@@ -35,9 +35,10 @@ pub type Step {
   /// The plan-review gate: a proposed plan awaiting the human's approval. The
   /// run's status is "awaiting_plan" while this is the live tail step.
   Await(plan: String)
-  /// The network gate: sandboxed command was denied these host(s), awaiting the
-  /// human's allow/deny. Run status is "awaiting_net".
-  Net(hosts: String)
+  /// The network gate: a sandboxed command was denied a request, awaiting the
+  /// human. `detail` is the denied request; `rule` is a suggested allow rule
+  /// (path-glob) to pre-fill. Run status is "awaiting_net".
+  Net(detail: String, rule: String)
 }
 
 pub type Reply {
@@ -363,8 +364,9 @@ fn step_decoder() -> decode.Decoder(Step) {
       decode.success(Await(plan))
     }
     "net" -> {
-      use hosts <- decode.field("hosts", decode.string)
-      decode.success(Net(hosts))
+      use detail <- decode.field("detail", decode.string)
+      use rule <- decode.field("rule", decode.string)
+      decode.success(Net(detail, rule))
     }
     _ -> decode.failure(Text(""), "Step")
   }

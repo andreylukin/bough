@@ -100,6 +100,22 @@ pub fn control_round_trip_test() {
   assert control.take(id) == Error(Nil)
 }
 
+/// The endpoint-deny reason yields method + path; a plain CONNECT deny yields
+/// neither (host-only).
+pub fn parse_endpoint_reason_test() {
+  assert nono_bridge.parse_endpoint_reason(Some(
+      "endpoint rules denied GET /secret: no rule matched on example.com:443",
+    ))
+    == #(Some("GET"), Some("/secret"))
+
+  assert nono_bridge.parse_endpoint_reason(Some(
+      "host api.github.com is not in the allowlist",
+    ))
+    == #(None, None)
+
+  assert nono_bridge.parse_endpoint_reason(None) == #(None, None)
+}
+
 /// Network denial detection picks the newest audit session whose command
 /// matches and which had network events (ignoring no-net and other commands).
 pub fn pick_session_newest_matching_test() {
@@ -111,13 +127,16 @@ pub fn pick_session_newest_matching_test() {
     <> "{\"session_id\":\"nonet\",\"started\":\"2026-06-18T16:08:00-04:00\",\"command\":[\"sh\",\"-c\",\"curl x\"],\"network_event_count\":0},"
     <> "{\"session_id\":\"other\",\"started\":\"2026-06-18T16:09:00-04:00\",\"command\":[\"ls\"],\"network_event_count\":3}"
     <> "]"
-  assert nono_bridge.pick_session(json, cmd) == Ok("new")
+  assert nono_bridge.pick_session(json, cmd, "") == Ok("new")
+  // The watermark excludes sessions started at/before it (prior runs/retries).
+  assert nono_bridge.pick_session(json, cmd, "2026-06-18T16:06:00-04:00")
+    == Error(Nil)
 }
 
 pub fn pick_session_no_match_test() {
   let json =
     "[{\"session_id\":\"x\",\"started\":\"2026-06-18T16:00:00-04:00\",\"command\":[\"ls\"],\"network_event_count\":1}]"
-  assert nono_bridge.pick_session(json, ["sh", "-c", "curl x"]) == Error(Nil)
+  assert nono_bridge.pick_session(json, ["sh", "-c", "curl x"], "") == Error(Nil)
 }
 
 /// A snapshot captures the workspace; a later restore reverts a modified file

@@ -511,44 +511,111 @@ fn apply(state: State, step: Step) -> #(State, Exec) {
   }
 }
 
+/// Cap on the approve→retry loop for one command, so a never-matching rule
+/// can't spin forever.
+const net_max_retries = 6
+
 fn exec_run(state: State, cmd: String) -> #(State, Exec) {
+  exec_run_net(state, cmd, 0)
+}
+
+/// Run a command in the sandbox. With the net gate on (SPEC §7), a denied
+/// request pauses for the human: approve at host or path-glob granularity and
+/// the command is retried with the new rule; deny and the failure stands.
+fn exec_run_net(state: State, cmd: String, tries: Int) -> #(State, Exec) {
   let command = ["sh", "-c", cmd]
+  // Watermark the audit log before running so denial detection ignores prior
+  // runs of an identical command (and this command's own earlier retries).
+  let watermark = case state.config.net_gate {
+    True -> nono_bridge.session_watermark(command)
+    False -> ""
+  }
   let #(code, out) = nono_bridge.run_result(profile(state), command)
   let state = bump(state)
-  // The network leash (SPEC §7): if the command was denied a host and the gate
-  // is on, ask the human; on approval, allow the host and run the command once
-  // more so it can succeed. On denial, keep the failure for the supervisor.
-  case state.config.net_gate {
+  case state.config.net_gate && tries < net_max_retries {
     False -> #(state, Exec(code, out))
     True ->
-      case new_denied_hosts(state, command) {
+      case nono_bridge.denials(command, watermark) {
         [] -> #(state, Exec(code, out))
-        hosts ->
-          case await_net(state, hosts) {
-            control.Allow -> {
-              let state =
-                State(..state, net_allow: list.append(state.net_allow, hosts))
-              let #(rcode, rout) =
-                nono_bridge.run_result(profile(state), command)
-              #(bump(state), Exec(rcode, rout))
-            }
-            control.Steer(_) -> #(state, Exec(code, out))
+        [denial, ..] ->
+          case net_decision(state, denial) {
+            // Denied (or no rule given): keep the failure for the supervisor.
+            Error(_) -> #(state, Exec(code, out))
+            // A new allow rule: add it (deduped) and retry so it can succeed.
+            Ok(rule) ->
+              exec_run_net(
+                State(..state, net_allow: add_rule(state.net_allow, rule)),
+                cmd,
+                tries + 1,
+              )
           }
       }
   }
 }
 
-/// Hosts this command was denied that aren't already approved.
-fn new_denied_hosts(state: State, command: List(String)) -> List(String) {
-  nono_bridge.denied_hosts(command)
-  |> list.filter(fn(h) { !list.contains(state.net_allow, h) })
+/// Add an allow rule, replacing any prior rule for the same host. nono's CLI
+/// allowlist is last-wins per host (repeated `--allow-domain` for a host do not
+/// union — the latest replaces), so we keep exactly one rule per host: the most
+/// recent approval. Appended last so it is the effective one.
+fn add_rule(rules: List(String), rule: String) -> List(String) {
+  let host = rule_host(rule)
+  rules
+  |> list.filter(fn(r) { rule_host(r) != host })
+  |> list.append([rule])
 }
 
-/// Publish the denied hosts with status "awaiting_net" and block on the human.
-fn await_net(state: State, hosts: List(String)) -> control.Decision {
-  let activities = [StepNet(string.join(hosts, ", ")), ..state.activities]
+/// The host part of an allow rule, whether bare (`example.com`) or a URL glob
+/// (`https://example.com/v1/**`).
+fn rule_host(rule: String) -> String {
+  rule
+  |> string.replace("https://", "")
+  |> string.replace("http://", "")
+  |> string.split("/")
+  |> list.first
+  |> result.unwrap(rule)
+}
+
+/// Ask the human about a denied request; map their choice to an allow rule
+/// (`Ok`) or a denial (`Error`). `Allow` = the bare host; a typed `Steer`
+/// = that exact rule (a path-glob); an empty `Steer` = deny.
+fn net_decision(state: State, denial: nono_bridge.Denial) -> Result(String, Nil) {
+  case await_net(state, denial) {
+    control.Allow -> Ok(denial.host)
+    control.Steer(rule) ->
+      case string.trim(rule) {
+        "" -> Error(Nil)
+        r -> Ok(r)
+      }
+  }
+}
+
+/// Publish the denial with status "awaiting_net" and block on the human.
+fn await_net(state: State, denial: nono_bridge.Denial) -> control.Decision {
+  let step = StepNet(net_detail(denial), net_suggestion(denial))
+  let activities = [step, ..state.activities]
   state.emit("awaiting_net", list.reverse(activities), state.context_tokens)
   state.await()
+}
+
+/// Human-readable denied request: "GET host/path" when intercepted, else "host".
+fn net_detail(denial: nono_bridge.Denial) -> String {
+  case denial.method, denial.path {
+    Some(m), Some(p) -> m <> " " <> denial.host <> p
+    _, _ -> denial.host
+  }
+}
+
+/// A suggested allow rule to pre-fill the path-glob option: the directory glob
+/// of the denied path when known, otherwise the bare host.
+fn net_suggestion(denial: nono_bridge.Denial) -> String {
+  case denial.path {
+    None -> denial.host
+    Some(p) -> {
+      let segs = string.split(p, "/")
+      let prefix = string.join(list.take(segs, list.length(segs) - 1), "/")
+      "https://" <> denial.host <> prefix <> "/**"
+    }
+  }
 }
 
 fn write_file(state: State, path: String, content: String) -> #(State, Exec) {

@@ -91,12 +91,20 @@ never touch your project's own `.git`; set `BOUGH_NO_SNAPSHOTS=1` to turn them o
 
 **Network leash.** With `BOUGH_NET=1`, the agent's sandboxed commands get the
 network on a default-deny allowlist instead of being fully blocked. When a
-command is denied a host, the run **pauses** and asks you (`a` allow · `r` deny),
-exactly like the plan gate. Approve and bough adds the host to the session's
-allowlist and retries the command; the approved hosts persist with the session,
-so you're only asked once per host. Without `BOUGH_NET`, commands have no network
-(as before). The supervisor's own model calls are made by the server, outside
-the sandbox, so the leash governs only what the agent runs.
+command is denied, the run **pauses** and asks you — `a` allow the host, `e` a
+custom path-glob rule (pre-filled), or `r` deny — then adds the rule and retries
+the command. Approvals persist with the session, so you're asked once per host.
+
+Granularity is up to you. Approve a **host** (`api.foo.com`, a CONNECT tunnel),
+or a **method+path glob** (`https://api.foo.com/v1/**`); nono TLS-intercepts
+hosts that have a path rule and enforces at the endpoint level, so once a host is
+scoped, later denials show the exact `METHOD host/path` and you can narrow
+further. (Globs, not regex: `*` = one path segment, `**` = zero or more. One
+effective rule per host — a new rule for a host replaces the previous.)
+
+Without `BOUGH_NET`, commands have no network (as before). The supervisor's own
+model calls are made by the server, outside the sandbox, so the leash governs
+only what the agent runs.
 
 | Key (`Esc` enters scroll/command mode) | Action |
 |---|---|

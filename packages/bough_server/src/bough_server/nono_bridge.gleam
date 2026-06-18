@@ -11,7 +11,8 @@ import bough_core/nono.{
 import gleam/dynamic/decode
 import gleam/json
 import gleam/list
-import gleam/option.{None}
+import gleam/option.{type Option, None, Some}
+import gleam/order.{Gt}
 import gleam/result
 import gleam/string
 import shellout
@@ -158,13 +159,19 @@ fn network_event_decoder() -> decode.Decoder(AuditEvent) {
 
 // --- Network denials (the leash, SPEC.md §7) -----------------------------
 
-/// The distinct hosts the just-run sandboxed `command` was DENIED outbound
-/// access to, read from nono's audit trail. Drives the network-approval gate:
-/// a denied host is surfaced to the human, and on approval added to the
-/// allowlist for a retry. Empty if there were no denials (or audit is
-/// unavailable — non-fatal).
-pub fn denied_hosts(command: List(String)) -> List(String) {
-  case latest_session(command) {
+/// A denied outbound request: the host, plus the method/path when nono was
+/// intercepting that host at L7 (otherwise just the host, from a CONNECT deny).
+pub type Denial {
+  Denial(host: String, method: Option(String), path: Option(String))
+}
+
+/// The distinct requests the just-run sandboxed `command` was DENIED, read from
+/// nono's audit trail. `after` is a watermark (the newest matching session's
+/// `started`, captured *before* the run via `session_watermark`) so prior runs
+/// of an identical command — and the run's own earlier retries — are excluded.
+/// Empty if there were no denials (or audit is unavailable — non-fatal).
+pub fn denials(command: List(String), after: String) -> List(Denial) {
+  case latest_session(command, after) {
     Error(_) -> []
     Ok(session_id) ->
       case audit_events(session_id) {
@@ -172,7 +179,7 @@ pub fn denied_hosts(command: List(String)) -> List(String) {
           events
           |> list.filter_map(fn(e) {
             case e.decision {
-              Deny -> Ok(e.host)
+              Deny -> Ok(to_denial(e))
               Allow -> Error(Nil)
             }
           })
@@ -182,23 +189,82 @@ pub fn denied_hosts(command: List(String)) -> List(String) {
   }
 }
 
-/// The most recent audit session whose command matches `command` and which
-/// recorded network events — i.e. the run we just performed.
-fn latest_session(command: List(String)) -> Result(String, Nil) {
+/// The newest `started` among audit sessions for `command` right now, or "" if
+/// none. Capture this before running so `denials` can ignore older sessions.
+pub fn session_watermark(command: List(String)) -> String {
   case shellout.command("nono", ["audit", "list", "--today", "--json"], ".", []) {
-    Ok(out) -> pick_session(out, command)
+    Error(_) -> ""
+    Ok(out) ->
+      case json.parse(out, decode.list(audit_list_decoder())) {
+        Error(_) -> ""
+        Ok(entries) ->
+          entries
+          |> list.filter(fn(e) { e.command == command })
+          |> list.map(fn(e) { e.started })
+          |> list.sort(string.compare)
+          |> list.last
+          |> result.unwrap("")
+      }
+  }
+}
+
+fn to_denial(e: AuditEvent) -> Denial {
+  // On an L7 (intercepted) deny, nono puts the method+path in the reason, e.g.
+  // "endpoint rules denied GET /secret: no rule matched on host:443". A plain
+  // CONNECT deny ("host X is not in the allowlist") has neither.
+  let #(method, path) = parse_endpoint_reason(e.reason)
+  Denial(host: e.host, method: method, path: path)
+}
+
+/// Pure: pull `#(method, path)` out of an endpoint-deny reason string, if present.
+pub fn parse_endpoint_reason(
+  reason: Option(String),
+) -> #(Option(String), Option(String)) {
+  case reason {
+    None -> #(None, None)
+    Some(r) ->
+      case string.split_once(r, "denied ") {
+        Error(_) -> #(None, None)
+        Ok(#(_, rest)) -> {
+          let head = case string.split_once(rest, ":") {
+            Ok(#(h, _)) -> h
+            Error(_) -> rest
+          }
+          case string.split_once(string.trim(head), " ") {
+            Ok(#(method, path)) -> #(Some(method), Some(string.trim(path)))
+            Error(_) -> #(None, None)
+          }
+        }
+      }
+  }
+}
+
+/// The most recent audit session whose command matches `command`, recorded
+/// network events, and started after the watermark — i.e. the run we just did.
+fn latest_session(command: List(String), after: String) -> Result(String, Nil) {
+  case shellout.command("nono", ["audit", "list", "--today", "--json"], ".", []) {
+    Ok(out) -> pick_session(out, command, after)
     Error(_) -> Error(Nil)
   }
 }
 
-/// Pure: pick the matching session id from `nono audit list --json` output.
-pub fn pick_session(out: String, command: List(String)) -> Result(String, Nil) {
+/// Pure: pick the matching session id from `nono audit list --json` output —
+/// matching command, with network events, started strictly after `after`.
+pub fn pick_session(
+  out: String,
+  command: List(String),
+  after: String,
+) -> Result(String, Nil) {
   use entries <- result.try(
     json.parse(out, decode.list(audit_list_decoder()))
     |> result.replace_error(Nil),
   )
   entries
-  |> list.filter(fn(e) { e.command == command && e.net_count > 0 })
+  |> list.filter(fn(e) {
+    e.command == command
+    && e.net_count > 0
+    && string.compare(e.started, after) == Gt
+  })
   |> list.sort(fn(a, b) { string.compare(a.started, b.started) })
   |> list.reverse
   |> list.first

@@ -36,10 +36,11 @@ pub type Step {
   /// approval before the harness runs it (SPEC §5.4). `plan` is the rendered
   /// summary; the run's status is "awaiting_plan" while this is live.
   StepAwait(plan: String)
-  /// The network gate (SPEC §7): a sandboxed command was denied access to one
-  /// or more hosts; `hosts` (comma-separated) awaits the human's allow/deny.
-  /// The run's status is "awaiting_net" while this is live.
-  StepNet(hosts: String)
+  /// The network gate (SPEC §7): a sandboxed command was denied a request,
+  /// awaiting the human's decision. `detail` is the human-readable denied
+  /// request (e.g. "GET api.foo.com/v1/x"); `rule` is a suggested allow rule to
+  /// pre-fill for the path-glob option. Run status is "awaiting_net".
+  StepNet(detail: String, rule: String)
 }
 
 pub type Outcome {
@@ -283,10 +284,11 @@ pub fn step_to_json(step: Step) -> json.Json {
         #("type", json.string("await")),
         #("plan", json.string(plan)),
       ])
-    StepNet(hosts) ->
+    StepNet(detail, rule) ->
       json.object([
         #("type", json.string("net")),
-        #("hosts", json.string(hosts)),
+        #("detail", json.string(detail)),
+        #("rule", json.string(rule)),
       ])
   }
 }
