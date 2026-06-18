@@ -103,6 +103,24 @@ pub fn set_leaf(tree: SessionTree, id: String) -> SessionTree {
   SessionTree(..tree, active_leaf: Some(id))
 }
 
+/// The snapshot to restore when forking to node `id`: its own `snapshot_ref`, or
+/// the nearest ancestor's if it has none (only completed turns carry one). Used
+/// so a fork restores the filesystem to that node's state (SPEC.md §4.1).
+pub fn nearest_snapshot(tree: SessionTree, id: String) -> Option(String) {
+  case get(tree, id) {
+    None -> None
+    Some(e) ->
+      case e.snapshot_ref {
+        Some(_) -> e.snapshot_ref
+        None ->
+          case e.parent_id {
+            Some(parent) -> nearest_snapshot(tree, parent)
+            None -> None
+          }
+      }
+  }
+}
+
 // --- Roles ---------------------------------------------------------------
 
 pub fn role_to_string(role: Role) -> String {

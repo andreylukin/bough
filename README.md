@@ -79,6 +79,12 @@ its live transcript and can type messages to it yourself (steering, as above);
 > responsible for not running conflicting file edits in parallel (it can `collect`
 > one before starting the next). Isolated per-subagent branches are future work.
 
+**Checkpoints.** Every turn checkpoints the workspace. Open the tree with `t` and
+press Enter on an earlier node to fork from it: the conversation **and the files**
+revert to that point, so you can explore a branch and jump back if it goes wrong.
+Snapshots live in a per-session shadow git repo under `~/.bough/snapshots/` and
+never touch your project's own `.git`; set `BOUGH_NO_SNAPSHOTS=1` to turn them off.
+
 | Key (`Esc` enters scroll/command mode) | Action |
 |---|---|
 | `i` / `Enter` | back to typing |
@@ -123,9 +129,12 @@ Early slices of the v1 vertical slice (SPEC.md §10) are working:
   `packages/bough_tui`); set `BOUGH_SERVER` to override the default.
 - nono bridge launches/stops real sandboxes (`nono_bridge`), with a pure,
   unit-tested args builder driven from a capability `Profile`.
-- nono proxy audit log parsed into `AuditEvent`s (the network side-pane data),
-  plus `rollback restore` plumbing. Per-write-turn snapshot capture is deferred
-  (nono snapshots at session boundaries — SPEC.md §11).
+- nono proxy audit log parsed into `AuditEvent`s (the network side-pane data).
+- **Checkpoints** (`snapshots`, SPEC §4.1): every turn checkpoints the workspace
+  to a per-session shadow git repo (`~/.bough/snapshots/`, never the user's own
+  `.git`), recorded as the node's `snapshot_ref`. A `fork` restores the files to
+  that node — branch the history and the filesystem branches with it. Disable
+  with `BOUGH_NO_SNAPSHOTS=1`.
 - **Supervisor-worker engine** (`engine`, SPEC §5), driving `POST
   /session/:id/message` and the streaming `…/run`: the Anthropic supervisor
   plans via plain-text `STEP`/`RUN`/`WRITE`/`EDIT`/`READ`/`GREP` + `### CHECK`
@@ -142,6 +151,5 @@ Early slices of the v1 vertical slice (SPEC.md §10) are working:
   `BOUGH_WORKER_URL` to use a running/remote endpoint instead.
 
 Next: stream live egress + step activity into the network pane and add rule
-editing (needs server SSE + a rules endpoint); a session-tree overlay; sandbox
-the file tools (WRITE/EDIT currently run in-process); per-write-turn snapshots
-so a failed review can fork back (SPEC §5.4).
+editing (needs server SSE + a rules endpoint); sandbox the file tools (WRITE/EDIT
+currently run in-process); context compaction for long autonomous runs.

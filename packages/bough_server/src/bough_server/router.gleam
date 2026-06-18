@@ -20,6 +20,7 @@ import bough_server/engine
 import bough_server/provider
 import bough_server/run_store
 import bough_server/session_manager
+import bough_server/snapshots
 import bough_server/subagents
 import bough_server/worker_runtime
 import envoy
@@ -179,7 +180,8 @@ fn run_agent(tree: SessionTree, content: String) -> Response {
           json_error(message)
         }
         Ok(outcome) -> {
-          let tree = append_turn(tree, outcome)
+          let snap = capture_snapshot(tree.id, tree.project)
+          let tree = append_turn(tree, outcome, snap)
           case session_manager.save(tree) {
             Ok(_) ->
               created(json.to_string(agent.run_json(
@@ -356,7 +358,9 @@ fn spawn_subagent(
         )
       {
         Ok(outcome) -> {
-          let _ = session_manager.save(append_turn(child, outcome))
+          // Subagents share the workspace; only top-level turns checkpoint, so
+          // the fork tree has one coherent snapshot timeline.
+          let _ = session_manager.save(append_turn(child, outcome, None))
           run_store.write(
             child_id,
             "done",
@@ -463,6 +467,15 @@ fn fork_session(req: Request, id: String) -> Response {
         Error(_) -> wisp.not_found()
         Ok(tree) -> {
           let tree = session.set_leaf(tree, entry_id)
+          // Restore the filesystem to the forked node's checkpoint, so the
+          // working tree matches the branch point, not the latest turn.
+          case session.nearest_snapshot(tree, entry_id) {
+            Some(ref) -> {
+              let _ = snapshots.restore(tree.id, tree.project, ref)
+              Nil
+            }
+            None -> Nil
+          }
           case session_manager.save(tree) {
             Ok(_) -> json_ok(json.to_string(session.tree_to_json(tree)))
             Error(_) -> wisp.internal_server_error()
@@ -481,8 +494,13 @@ fn fork_decoder() -> decode.Decoder(String) {
 /// display-only `ToolResult` entry (content = step JSON, the shape the TUI
 /// decodes for the live chat), chained in order, ending in the `Assistant` text
 /// entry as the new leaf. `ToolResult` entries are skipped by `history_of`, so
-/// the conversation replayed to the model is unchanged.
-fn append_turn(tree: SessionTree, outcome: agent.Outcome) -> SessionTree {
+/// the conversation replayed to the model is unchanged. The assistant leaf
+/// carries `snapshot_ref` — the filesystem checkpoint for this turn (SPEC §4.1).
+fn append_turn(
+  tree: SessionTree,
+  outcome: agent.Outcome,
+  snapshot_ref: Option(String),
+) -> SessionTree {
   let tree =
     list.fold(outcome.steps, tree, fn(tr, step) {
       let entry =
@@ -493,10 +511,23 @@ fn append_turn(tree: SessionTree, outcome: agent.Outcome) -> SessionTree {
         )
       session.append(tr, entry)
     })
-  session.append(
-    tree,
-    make_entry(session.Assistant, outcome.text, tree.active_leaf),
-  )
+  let leaf =
+    Entry(
+      id: wisp.random_string(16),
+      parent_id: tree.active_leaf,
+      role: session.Assistant,
+      content: outcome.text,
+      snapshot_ref: snapshot_ref,
+      label: None,
+      timestamp: clock.now_ms(),
+    )
+  session.append(tree, leaf)
+}
+
+/// Checkpoint the workspace after a top-level turn; `None` if snapshots are
+/// disabled or fail (non-fatal — the turn still persists, just without a ref).
+fn capture_snapshot(session_id: String, workspace: String) -> Option(String) {
+  snapshots.capture(session_id, workspace) |> option.from_result
 }
 
 fn make_entry(
@@ -580,7 +611,8 @@ fn launch_run(
             )
           {
             Ok(outcome) -> {
-              let _ = session_manager.save(append_turn(tree, outcome))
+              let snap = capture_snapshot(id, tree.project)
+              let _ = session_manager.save(append_turn(tree, outcome, snap))
               run_store.write(
                 id,
                 "done",

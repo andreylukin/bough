@@ -2,9 +2,11 @@ import bough_core/nono.{Allow, AuditEvent, Deny, Snapshot}
 import bough_server/control
 import bough_server/json_value
 import bough_server/nono_bridge
+import bough_server/snapshots
 import gleam/json
 import gleam/option.{None, Some}
 import gleeunit
+import simplifile
 
 pub fn main() -> Nil {
   gleeunit.main()
@@ -96,6 +98,27 @@ pub fn control_round_trip_test() {
   control.put(id, control.Allow)
   control.clear(id)
   assert control.take(id) == Error(Nil)
+}
+
+/// A snapshot captures the workspace; a later restore reverts a modified file
+/// and removes a file added after the snapshot (SPEC §4.1).
+pub fn snapshot_capture_and_restore_test() {
+  let ws = "/tmp/bough-snap-test-ws"
+  let sid = "bough-snap-test"
+  let _ = simplifile.delete(ws)
+  let _ = simplifile.create_directory_all(ws)
+  let _ = simplifile.write(ws <> "/a.txt", "one")
+
+  let assert Ok(ref) = snapshots.capture(sid, ws)
+
+  let _ = simplifile.write(ws <> "/a.txt", "two")
+  let _ = simplifile.write(ws <> "/b.txt", "new")
+
+  let assert Ok(_) = snapshots.restore(sid, ws, ref)
+  assert simplifile.read(ws <> "/a.txt") == Ok("one")
+  assert simplifile.is_file(ws <> "/b.txt") == Ok(False)
+
+  let _ = simplifile.delete(ws)
 }
 
 /// Live integration: drive nono through the bridge to launch and stop a real
