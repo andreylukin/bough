@@ -56,6 +56,11 @@ pub type Summary {
   Summary(id: String, project: String, title: String, turns: Int, updated: Int)
 }
 
+/// A subagent a session has spawned, for the subagents picker.
+pub type Subagent {
+  Subagent(id: String, title: String, status: String)
+}
+
 /// One node of a session tree.
 pub type TreeEntry {
   TreeEntry(
@@ -88,6 +93,29 @@ pub fn list_sessions(base: String) -> Result(List(Summary), String) {
     Ok(response.Response(status: code, ..)) ->
       Error("server error " <> string.inspect(code))
   }
+}
+
+/// GET `/session/:id/subagents`; the children this session has spawned.
+pub fn list_subagents(base: String, id: String) -> Result(List(Subagent), String) {
+  use req <- result.try(
+    request.to(base <> "/session/" <> id <> "/subagents")
+    |> result.replace_error("invalid server URL"),
+  )
+  case httpc.send(req) {
+    Error(err) -> Error("cannot reach server: " <> string.inspect(err))
+    Ok(response.Response(status: 200, body: body, ..)) ->
+      json.parse(body, decode.list(subagent_decoder()))
+      |> result.replace_error("bad subagents response")
+    Ok(response.Response(status: code, ..)) ->
+      Error("server error " <> string.inspect(code))
+  }
+}
+
+fn subagent_decoder() -> decode.Decoder(Subagent) {
+  use id <- decode.field("id", decode.string)
+  use title <- decode.field("title", decode.string)
+  use status <- decode.field("status", decode.string)
+  decode.success(Subagent(id:, title:, status:))
 }
 
 /// GET `/session/:id`; the full tree.

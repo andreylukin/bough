@@ -12,7 +12,7 @@
 //// (with exit code), a local-worker fix is `StepWorker`, and the guardrails are
 //// `StepCheck` and `StepReview`. Plain `StepText` is left for notices.
 
-import bough_core/artifact.{type Step, Edit, Grep, Read, Run, Write}
+import bough_core/artifact.{type Step, Edit, Grep, Read, Run, Spawn, Write}
 import bough_core/digest
 import bough_core/nono
 import bough_server/agent.{
@@ -87,6 +87,12 @@ type State {
     // Blocks until the human resolves a paused plan (review gate). Supplied by
     // the caller; the engine only calls it when `config.review` is on.
     await: fn() -> control.Decision,
+    // Non-blocking: a message the human added to this run since the last round,
+    // injected into the conversation so they can steer any agent mid-flight.
+    inbox: fn() -> Option(String),
+    // Delegate a sub-task to a subagent: given a title and task, runs a fresh
+    // agent to completion on the same workspace and returns its result.
+    spawn: fn(String, String) -> String,
     // append-only Anthropic message list, oldest first. Carries tool_use /
     // tool_result blocks verbatim, so it is JsonValue rather than text pairs.
     convo: List(JsonValue),
@@ -119,6 +125,8 @@ pub fn run_streaming(
   user_prompt: String,
   emit: fn(String, List(Activity), Int) -> Nil,
   await: fn() -> control.Decision,
+  inbox: fn() -> Option(String),
+  spawn: fn(String, String) -> String,
 ) -> Result(Outcome, String) {
   let state =
     State(
@@ -128,6 +136,8 @@ pub fn run_streaming(
       config: config,
       emit: emit,
       await: await,
+      inbox: inbox,
+      spawn: spawn,
       convo: seed_convo(history, user_prompt),
       context_tokens: 0,
       baseline: integrity.snapshot(workspace),
@@ -167,10 +177,15 @@ pub fn run(
     user_prompt,
     fn(_, _, _) { Nil },
     fn() { control.Allow },
+    fn() { None },
+    fn(_, _) { "subagents are only available in a streaming run" },
   )
 }
 
 fn run_rounds(state: State, round: Int) -> #(State, Int) {
+  // Fold in any message the human added to this run since the last round, so a
+  // human can steer the agent (or a subagent they've jumped into) mid-flight.
+  let state = drain_inbox(state)
   case round > state.config.max_rounds {
     True -> #(notice(state, "Round budget exhausted."), round - 1)
     False ->
@@ -453,6 +468,9 @@ fn apply(state: State, step: Step) -> #(State, Exec) {
     Edit(_, path, search, replace) -> edit_file(state, path, search, replace)
     Read(_, path, range) -> read_file(state, path, range)
     Grep(_, pattern) -> grep(state, pattern)
+    // Delegation runs out-of-band (a nested agent), not in the sandbox; the
+    // injected `spawn` returns the subagent's result to feed back.
+    Spawn(title, task) -> #(bump(state), Exec(0, state.spawn(title, task)))
   }
 }
 
@@ -715,6 +733,18 @@ fn notice(state: State, text: String) -> State {
   emit_activity(state, StepText("⚠ " <> text))
 }
 
+/// Inject a pending human message into the conversation (echoed as an activity),
+/// so the supervisor sees it on its next call. At most one per round.
+fn drain_inbox(state: State) -> State {
+  case state.inbox() {
+    None -> state
+    Some(msg) -> {
+      let state = emit_activity(state, StepText("⟵ human: " <> msg))
+      push_message(state, provider.user_text(msg))
+    }
+  }
+}
+
 fn round_line(state: State, round: Int) -> String {
   "Round "
   <> int.to_string(round)
@@ -734,6 +764,7 @@ fn step_detail(step: Step) -> String {
     Edit(_, path, _, _) -> "EDIT " <> path
     Read(_, path, _) -> "READ " <> path
     Grep(_, pattern) -> "GREP " <> pattern
+    Spawn(title, _) -> "SPAWN " <> title
   }
 }
 
@@ -745,6 +776,7 @@ fn step_verb(step: Step) -> String {
     Edit(_, _, _, _) -> "EDIT"
     Read(_, _, _) -> "READ"
     Grep(_, _) -> "GREP"
+    Spawn(_, _) -> "SPAWN"
   }
 }
 
@@ -756,6 +788,7 @@ fn step_arg(step: Step) -> String {
     Edit(_, path, _, _) -> path
     Read(_, path, _) -> path
     Grep(_, pattern) -> pattern
+    Spawn(title, _) -> title
   }
 }
 

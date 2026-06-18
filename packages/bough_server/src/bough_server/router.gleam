@@ -20,6 +20,7 @@ import bough_server/engine
 import bough_server/provider
 import bough_server/run_store
 import bough_server/session_manager
+import bough_server/subagents
 import bough_server/worker_runtime
 import envoy
 import gleam/dynamic/decode
@@ -61,6 +62,7 @@ pub fn handle_request(req: Request) -> Response {
     ["session", id, "run"], Post -> start_run(req, id)
     ["session", id, "run"], Get -> get_run(id)
     ["session", id, "control"], Post -> control_run(req, id)
+    ["session", id, "subagents"], Get -> subagents_of(id)
     ["session", id, "fork"], Post -> fork_session(req, id)
     _, _ -> wisp.not_found()
   }
@@ -275,6 +277,82 @@ fn await_decision(id: String, polls: Int) -> control.Decision {
   }
 }
 
+/// A pending human message for a run, consumed non-blocking (only `Steer`
+/// messages; a stray `Allow` outside the review gate is ignored).
+fn inbox_of(id: String) -> Option(String) {
+  case control.take(id) {
+    Ok(control.Steer(message)) -> Some(message)
+    _ -> None
+  }
+}
+
+/// GET `/session/:id/subagents`: the children this session has spawned.
+fn subagents_of(id: String) -> Response {
+  json_ok(json.to_string(subagents.to_json(subagents.list(id))))
+}
+
+/// Run a subagent to completion and return its result to the parent. The child
+/// is a fresh session on the same workspace with its own run/control slots, so
+/// the human can jump into it and steer it while it works (SPEC §5). Recursive:
+/// a subagent can itself spawn subagents.
+fn run_subagent(
+  parent_id: String,
+  prov: provider.Provider,
+  api_key: String,
+  model: String,
+  workspace: String,
+  title: String,
+  task: String,
+) -> String {
+  let child_id = wisp.random_string(16)
+  subagents.add(parent_id, child_id, title)
+  let child =
+    session.append(
+      session.new(child_id, workspace),
+      make_entry(session.User, task, None),
+    )
+  let _ = session_manager.save(child)
+  control.clear(child_id)
+  run_store.write(child_id, "running", [], "", 0)
+
+  case
+    engine.run_streaming(
+      api_key,
+      model,
+      workspace,
+      engine_config(prov, False),
+      [],
+      task,
+      fn(status, steps, context_tokens) {
+        run_store.write(child_id, status, steps, "", context_tokens)
+      },
+      fn() { await_decision(child_id, 0) },
+      fn() { inbox_of(child_id) },
+      fn(t, tk) {
+        run_subagent(child_id, prov, api_key, model, workspace, t, tk)
+      },
+    )
+  {
+    Ok(outcome) -> {
+      let _ = session_manager.save(append_turn(child, outcome))
+      run_store.write(
+        child_id,
+        "done",
+        outcome.steps,
+        outcome.text,
+        outcome.context_tokens,
+      )
+      subagents.set_status(parent_id, child_id, "done")
+      "Subagent \"" <> title <> "\" finished. Result:\n" <> outcome.text
+    }
+    Error(message) -> {
+      run_store.write(child_id, "error", [], message, 0)
+      subagents.set_status(parent_id, child_id, "error")
+      "Subagent \"" <> title <> "\" failed: " <> message
+    }
+  }
+}
+
 fn worker_port() -> Int {
   case envoy.get("BOUGH_WORKER_PORT") {
     Ok(v) -> int.parse(v) |> result.unwrap(default_worker_port)
@@ -435,6 +513,10 @@ fn launch_run(
                 run_store.write(id, status, steps, "", context_tokens)
               },
               fn() { await_decision(id, 0) },
+              fn() { inbox_of(id) },
+              fn(title, task) {
+                run_subagent(id, prov, api_key, model, tree.project, title, task)
+              },
             )
           {
             Ok(outcome) -> {

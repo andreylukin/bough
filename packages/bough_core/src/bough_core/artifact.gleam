@@ -29,6 +29,11 @@ pub type Step {
   Read(title: String, path: String, range: Option(#(Int, Int)))
   /// Recursive, line-numbered search of the workspace.
   Grep(title: String, pattern: String)
+  /// Delegate a self-contained sub-task to a subagent (SPEC §5): a fresh
+  /// supervisor run on the same workspace, driven by `task`. The harness runs it
+  /// to completion and feeds its result back as this step's output. The human
+  /// can jump into the subagent to watch it and send it messages.
+  Spawn(title: String, task: String)
 }
 
 pub type Artifacts {
@@ -49,6 +54,7 @@ pub fn step_title(step: Step) -> String {
     Edit(title, ..) -> title
     Read(title, ..) -> title
     Grep(title, ..) -> title
+    Spawn(title, ..) -> title
   }
 }
 

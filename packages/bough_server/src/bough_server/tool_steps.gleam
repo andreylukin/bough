@@ -4,7 +4,7 @@
 //// a malformed action yields a clear `Error` the engine hands back as a
 //// tool_result for the model to correct.
 
-import bough_core/artifact.{type Step, Edit, Grep, Read, Run, Write}
+import bough_core/artifact.{type Step, Edit, Grep, Read, Run, Spawn, Write}
 import bough_server/json_value.{type JsonValue, JArray, JBool}
 import gleam/int
 import gleam/list
@@ -83,12 +83,16 @@ fn parse_step(s: JsonValue, idx: Int) -> Result(Step, String) {
       field(s, "pattern")
       |> result.map(Grep(title, _))
       |> result.replace_error(at <> " (grep): missing \"pattern\"")
+    "spawn" ->
+      field(s, "task")
+      |> result.map(Spawn(title, _))
+      |> result.replace_error(at <> " (spawn): missing \"task\"")
     other ->
       Error(
         at
         <> ": unknown action \""
         <> other
-        <> "\" (use run/write/edit/read/grep)",
+        <> "\" (use run/write/edit/read/grep/spawn)",
       )
   }
 }

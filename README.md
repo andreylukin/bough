@@ -44,6 +44,36 @@ The installer symlinks `bough` (the `scripts/bough` launcher) into Homebrew's
 `bin`, so it's on your PATH and runnable from anywhere. You can also run the two
 processes by hand (see [Develop](#develop)).
 
+## Working with bough
+
+**Project instructions.** Drop an `AGENTS.md` (or `CLAUDE.md`) at the root of a
+project and the supervisor treats it as authoritative — build/test commands,
+conventions, what "done" means. It shapes the supervisor's plan and its `check`.
+
+**Plan-review gate.** Toggle it with `p` (or start with `BOUGH_REVIEW=1`). When
+on, every non-empty plan pauses before the harness runs it: bough shows the
+batch of actions and you press `a` to allow, `e` to edit/steer (type guidance,
+Enter sends), or `r` to reject. Steering and rejection feed your words back to
+the supervisor to replan. A `⏸ review` marker in the status bar shows it's armed.
+
+**Steer a run mid-flight.** While any run is in progress, just type a message and
+press Enter — it's injected into that agent's conversation at its next round. No
+need to wait for it to finish or stop it.
+
+**Subagents.** The supervisor can delegate a self-contained sub-task with a
+`spawn` action; the subagent is a fresh run on the same workspace that works to
+completion and returns its result. Press `a` to list a session's subagents and
+Enter to jump into one — you'll see its live transcript and can type messages to
+it (steering, as above); `b` returns to the parent. Subagents can spawn their own
+subagents.
+
+| Key (`Esc` enters scroll/command mode) | Action |
+|---|---|
+| `i` / `Enter` | back to typing |
+| `s` · `t` · `a` · `b` | resume session · branch (tree) · subagents · back to parent |
+| `p` · `o` | toggle plan-review gate · expand all output |
+| `a` / `e` / `r` | while a plan is paused: allow / edit-steer / reject |
+
 ## Layout
 
 Gleam has no native workspace, so this is a set of packages wired with `path`

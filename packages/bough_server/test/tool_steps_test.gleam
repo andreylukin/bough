@@ -1,7 +1,7 @@
-import bough_core/artifact.{Run, Write}
+import bough_core/artifact.{Run, Spawn, Write}
 import bough_server/json_value.{JArray, JBool, JObject, JString}
 import bough_server/tool_steps.{Parsed}
-import gleam/option.{Some}
+import gleam/option.{None, Some}
 
 fn step(fields: List(#(String, json_value.JsonValue))) -> json_value.JsonValue {
   JObject(fields)
@@ -34,6 +34,35 @@ pub fn parses_a_batch_with_check_and_done_test() {
     ))
 }
 
+pub fn parses_a_spawn_action_test() {
+  let input =
+    JObject([
+      #("steps", JArray([
+        step([
+          #("action", JString("spawn")),
+          #("title", JString("write tests")),
+          #("task", JString("Add unit tests for the parser module.")),
+        ]),
+      ])),
+    ])
+  assert tool_steps.parse(input)
+    == Ok(Parsed(
+      [Spawn("write tests", "Add unit tests for the parser module.")],
+      None,
+      False,
+    ))
+}
+
+pub fn spawn_without_task_is_an_error_test() {
+  let input =
+    JObject([
+      #("steps", JArray([
+        step([#("action", JString("spawn")), #("title", JString("x"))]),
+      ])),
+    ])
+  assert tool_steps.parse(input) == Error("step 1 (spawn): missing \"task\"")
+}
+
 pub fn missing_per_action_field_is_an_error_test() {
   let input =
     JObject([
@@ -58,7 +87,7 @@ pub fn unknown_action_is_an_error_test() {
       ])),
     ])
   assert tool_steps.parse(input)
-    == Error("step 1: unknown action \"frobnicate\" (use run/write/edit/read/grep)")
+    == Error("step 1: unknown action \"frobnicate\" (use run/write/edit/read/grep/spawn)")
 }
 
 pub fn missing_steps_array_is_an_error_test() {

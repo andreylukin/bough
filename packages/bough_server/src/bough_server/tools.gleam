@@ -71,7 +71,7 @@ pub fn run_steps_schema() -> json.Json {
         #("action", json.object([
           #("type", json.string("string")),
           #("description", json.string("Which action this step performs.")),
-          #("enum", json.array(["run", "write", "edit", "read", "grep"], json.string)),
+          #("enum", json.array(["run", "write", "edit", "read", "grep", "spawn"], json.string)),
         ])),
         #("title", str("Short human-readable title for this step.")),
         #("command", str("Shell command to run (action=run).")),
@@ -81,6 +81,7 @@ pub fn run_steps_schema() -> json.Json {
         #("replace", str("Replacement text (action=edit).")),
         #("range", str("Optional line range like \"10-40\" (action=read).")),
         #("pattern", str("Search pattern; recursive, line-numbered (action=grep).")),
+        #("task", str("Self-contained instructions for a subagent to carry out on this workspace (action=spawn). The subagent runs its own plan to completion and its result is returned to you.")),
       ])),
       #("required", json.array(["action", "title"], json.string)),
     ])

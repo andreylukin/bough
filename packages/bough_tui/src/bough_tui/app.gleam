@@ -112,6 +112,10 @@ pub type Model {
     awaiting: Bool,
     // True while typing a steer message for a paused plan (Enter sends it).
     steering: Bool,
+    // Subagents the current session has spawned (for the subagents picker).
+    subagents: List(client.Subagent),
+    // The session to return to after jumping into a subagent (for `b` back).
+    parent: Option(String),
   )
 }
 
@@ -128,6 +132,7 @@ pub type View {
   ChatV
   SessionsV
   TreeV
+  SubagentsV
 }
 
 /// One node of the flattened session tree shown in the tree overlay. `prefix`
@@ -181,6 +186,10 @@ pub type Msg {
   // Resolve a paused plan: decision "allow"/"steer" plus a steer message.
   SendControl(String, String)
   Controlled(Result(Nil, String))
+  // Subagents.
+  OpenSubagents
+  SubagentsListed(Result(List(client.Subagent), String))
+  BackToParent
 }
 
 pub fn init() -> #(Model, List(fn() -> Msg)) {
@@ -223,6 +232,8 @@ pub fn init() -> #(Model, List(fn() -> Msg)) {
       review: envoy.get("BOUGH_REVIEW") |> result.is_ok,
       awaiting: False,
       steering: False,
+      subagents: [],
+      parent: None,
     )
   let resume = envoy.get("BOUGH_RESUME") |> result.is_ok
   // --resume opens the picker on launch; --continue resumes silently once the
@@ -470,27 +481,62 @@ pub fn update(model: Model, msg: Msg) -> #(Model, List(fn() -> Msg)) {
     SendControl(decision, message) -> {
       let server = model.server
       case model.session {
-        Some(id) -> #(
-          Model(
-            ..model,
-            awaiting: False,
-            steering: False,
-            input: "",
-            cursor: 0,
-            status: "resuming …",
-          ),
-          [fn() { Controlled(client.send_control(server, id, decision, message)) }],
-        )
+        Some(id) -> {
+          let send = fn() {
+            Controlled(client.send_control(server, id, decision, message))
+          }
+          // Resolving a *paused* plan restarts the poll loop that the gate
+          // stopped; a mid-run message rides the loop that's already running.
+          let effects = case model.awaiting {
+            True -> [send, poll(server, id), tick]
+            False -> [send]
+          }
+          #(
+            Model(
+              ..model,
+              awaiting: False,
+              steering: False,
+              input: "",
+              cursor: 0,
+              status: "sent …",
+            ),
+            effects,
+          )
+        }
         None -> #(model, [])
       }
     }
 
-    Controlled(Ok(_)) ->
-      case model.session, model.pending {
-        Some(id), True -> #(model, [poll(model.server, id)])
-        _, _ -> #(model, [])
-      }
+    Controlled(Ok(_)) -> #(model, [])
     Controlled(Error(e)) -> #(Model(..model, status: "error: " <> e), [])
+
+    OpenSubagents ->
+      case model.session {
+        Some(id) -> {
+          let server = model.server
+          #(
+            Model(..model, view: SubagentsV, sel: 0, status: "loading subagents …"),
+            [fn() { SubagentsListed(client.list_subagents(server, id)) }],
+          )
+        }
+        None -> #(model, [])
+      }
+    SubagentsListed(Ok(subs)) -> #(Model(..model, subagents: subs, sel: 0), [])
+    SubagentsListed(Error(e)) -> #(
+      Model(..model, view: ChatV, status: "error: " <> e),
+      [],
+    )
+
+    BackToParent ->
+      case model.parent {
+        Some(pid) -> {
+          let server = model.server
+          #(Model(..model, parent: None, status: "back to parent …"), [
+            fn() { Resumed(client.get_session(server, pid)) },
+          ])
+        }
+        None -> #(model, [])
+      }
   }
 }
 
@@ -498,6 +544,7 @@ fn clamp_sel(model: Model, n: Int) -> Int {
   let len = case model.view {
     SessionsV -> list.length(model.sessions)
     TreeV -> list.length(model.tree_rows)
+    SubagentsV -> list.length(model.subagents)
     ChatV -> 0
   }
   int.clamp(n, 0, int.max(len - 1, 0))
@@ -521,6 +568,24 @@ fn pick_choose(model: Model) -> #(Model, List(fn() -> Msg)) {
           fn() { Forked(client.fork(server, id, row.fork_id)) },
         ])
         _, _ -> #(model, [])
+      }
+    // Jump into a subagent: switch the active session to the child. A running
+    // child keeps updating via the parent's live poll loop (which now targets
+    // the child); a finished child shows its persisted transcript.
+    SubagentsV ->
+      case list_at(model.subagents, model.sel) {
+        Ok(sub) -> #(
+          Model(
+            ..model,
+            view: ChatV,
+            parent: model.session,
+            session: Some(sub.id),
+            running_steps: [],
+            status: "subagent · " <> sub.title,
+          ),
+          [fn() { Resumed(client.get_session(server, sub.id)) }],
+        )
+        Error(_) -> #(model, [])
       }
     ChatV -> #(model, [])
   }
@@ -813,10 +878,18 @@ fn flush_steps(buffer: List(client.Step), entries: List(Entry)) -> List(Entry) {
 }
 
 fn submit(model: Model) -> #(Model, List(fn() -> Msg)) {
-  // Steering a paused plan: Enter sends the typed guidance, not a new run.
-  case model.steering {
-    True -> update(model, SendControl("steer", string.trim(model.input)))
-    False -> submit_run(model)
+  case model.steering, model.pending {
+    // Steering a paused plan: Enter sends the typed guidance.
+    True, _ -> update(model, SendControl("steer", string.trim(model.input)))
+    // A run is in flight (the main agent, or a subagent you've jumped into):
+    // typed text becomes a message injected into that run at its next round.
+    False, True ->
+      case string.trim(model.input) {
+        "" -> #(model, [])
+        text -> update(model, SendControl("steer", text))
+      }
+    // Idle: a normal new task.
+    False, False -> submit_run(model)
   }
 }
 
@@ -866,17 +939,24 @@ fn submit_run(model: Model) -> #(Model, List(fn() -> Msg)) {
 fn polled(model: Model, run: client.RunState) -> #(Model, List(fn() -> Msg)) {
   let model = Model(..model, context_tokens: run.context_tokens)
   case run.status {
-    "done" -> #(
-      Model(
-        ..model,
-        status: "ready",
-        pending: False,
-        running_steps: [],
-        chat: [Bough(run.steps), ..model.chat],
-      ),
-      // If the tree overlay is open, reload it now that the turn is persisted.
-      tree_reload_effect(model),
-    )
+    "done" -> {
+      // Avoid double-appending when a poll redirects to an already-finished
+      // session whose transcript the chat already shows (e.g. entering a done
+      // subagent): if the latest entry is the same-sized step group, skip it.
+      let already = case model.chat {
+        [Bough(prev), ..] -> list.length(prev) == list.length(run.steps)
+        _ -> False
+      }
+      let chat = case already {
+        True -> model.chat
+        False -> [Bough(run.steps), ..model.chat]
+      }
+      #(
+        Model(..model, status: "ready", pending: False, running_steps: [], chat: chat),
+        // If the tree overlay is open, reload it now that the turn is persisted.
+        tree_reload_effect(model),
+      )
+    }
     "error" -> #(
       Model(
         ..model,
@@ -1074,6 +1154,8 @@ fn on_key_command(
     event.Char("s") -> update(model, OpenSessions)
     event.Char("t") -> update(model, OpenTree)
     event.Char("p") -> update(model, ToggleReview)
+    event.Char("a") -> update(model, OpenSubagents)
+    event.Char("b") -> update(model, BackToParent)
     _ -> #(model, [])
   }
 }
@@ -1872,6 +1954,23 @@ pub fn render(model: Model) -> List(Command) {
         }),
       )
     TreeV -> render_tree_overlay(model)
+    SubagentsV ->
+      render_overlay(
+        model,
+        "subagents  ·  ↑↓ select · Enter open · Esc cancel",
+        list.map(model.subagents, fn(s) {
+          one_line(status_glyph(s.status) <> " " <> s.title <> "   (" <> s.status <> ")")
+        }),
+      )
+  }
+}
+
+fn status_glyph(status: String) -> String {
+  case status {
+    "running" -> "◐"
+    "done" -> "✓"
+    "error" -> "✗"
+    _ -> "·"
   }
 }
 
@@ -2134,7 +2233,7 @@ fn status_line(model: Model, row: Int, cols: Int) -> List(Command) {
           <> "  ·  Esc: scroll/mouse mode  ·  Enter: send  ·  Ctrl+X: quit"
         False ->
           model.status
-          <> "  ·  ↑↓ scroll · s resume · t branch · p review · o expand · i type · Ctrl+X quit"
+          <> "  ·  ↑↓ scroll · s resume · t branch · a agents · p review · i type · Ctrl+X quit"
       }
   }
   let #(color, attrs) = case string.starts_with(model.status, "error") {
