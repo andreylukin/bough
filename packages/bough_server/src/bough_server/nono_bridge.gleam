@@ -51,6 +51,16 @@ pub fn run(profile: Profile, command: List(String)) -> String {
   }
 }
 
+/// Like `run`, but also returns the exit code (0 on success). The engine needs
+/// it: RUN-step success and the CHECK gate are decided by exit status, not just
+/// captured output (SPEC.md §5.3).
+pub fn run_result(profile: Profile, command: List(String)) -> #(Int, String) {
+  case shellout.command("nono", run_args(profile, command), profile.workspace, []) {
+    Ok(output) -> #(0, output)
+    Error(#(code, output)) -> #(code, output)
+  }
+}
+
 pub fn run_args(profile: Profile, command: List(String)) -> List(String) {
   list.flatten([
     ["run", "-s", "--allow", profile.workspace, "--allow-cwd"],

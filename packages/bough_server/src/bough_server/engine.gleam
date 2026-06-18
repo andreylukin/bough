@@ -1,0 +1,703 @@
+//// The supervisor-worker loop — the harness proper (SPEC.md §5.3).
+////
+//// One append-only conversation per task. Each user message starts a turn: the
+//// supervisor replies with prose and/or STEP artifacts, the harness (the only
+//// thing that executes) applies them inside the nono sandbox, feeds every
+//// result back, and gates completion on a deterministic CHECK plus an
+//// adversarial review. Ported from tent's `engine/mod.rs`.
+////
+//// Output reuses `agent.Step`/`agent.Outcome`/`agent.run_json`, but emits the
+//// loop's roles as phased events so the TUI can render each distinctly:
+//// supervisor prose is `StepPlan`, a harness step is `StepCall` + `StepExec`
+//// (with exit code), a local-worker fix is `StepWorker`, and the guardrails are
+//// `StepCheck` and `StepReview`. Plain `StepText` is left for notices.
+
+import bough_core/artifact.{type Step, Edit, Grep, Read, Run, Write}
+import bough_core/digest
+import bough_core/nono
+import bough_server/agent.{
+  type Outcome, type Step as Activity, Outcome, StepCall, StepCheck, StepExec,
+  StepPlan, StepReview, StepText, StepWorker,
+}
+import bough_server/clock
+import bough_server/integrity
+import bough_server/json_value.{type JsonValue}
+import bough_server/nono_bridge
+import bough_server/prompts
+import bough_server/provider
+import bough_server/tool_steps
+import bough_server/tools
+import bough_server/worker
+import envoy
+import gleam/dict.{type Dict}
+import gleam/int
+import gleam/list
+import gleam/option.{type Option, None, Some}
+import gleam/result
+import gleam/string
+import simplifile
+
+pub type Config {
+  Config(
+    /// Which supervisor provider to call (Anthropic or an OpenAI-compatible
+    /// endpoint such as OpenRouter).
+    provider: provider.Provider,
+    /// Worker model name, or `None` to disable worker fixes (supervisor fixes
+    /// its own failures).
+    worker: Option(String),
+    worker_url: String,
+    max_rounds: Int,
+    max_steps: Int,
+    digest_limit: Int,
+    fix_attempts: Int,
+  )
+}
+
+pub fn default_config() -> Config {
+  Config(
+    provider: provider.Anthropic,
+    worker: None,
+    worker_url: "http://127.0.0.1:8080",
+    max_rounds: 20,
+    max_steps: 120,
+    digest_limit: 1500,
+    fix_attempts: 1,
+  )
+}
+
+type Exec {
+  Exec(exit: Int, output: String)
+}
+
+type State {
+  State(
+    api_key: String,
+    sup_model: String,
+    workspace: String,
+    config: Config,
+    emit: fn(List(Activity), Int) -> Nil,
+    // append-only Anthropic message list, oldest first. Carries tool_use /
+    // tool_result blocks verbatim, so it is JsonValue rather than text pairs.
+    convo: List(JsonValue),
+    // Tokens occupying the supervisor's context after the latest turn.
+    context_tokens: Int,
+    baseline: Dict(String, Int),
+    bb_dir: String,
+    bb_idx: Int,
+    check: Option(String),
+    check_ok: Bool,
+    reviewed: Bool,
+    steps_done: Int,
+    // activities newest-first; reversed on emit/return
+    activities: List(Activity),
+  )
+}
+
+/// One full turn: user message in, control back when the supervisor has either
+/// answered conversationally or driven the task to DONE (or a budget/refusal
+/// stopped it). `emit` is called with the full chronological activity list
+/// after each new activity, for live progress.
+pub fn run_streaming(
+  api_key: String,
+  sup_model: String,
+  workspace: String,
+  config: Config,
+  history: List(#(String, String)),
+  user_prompt: String,
+  emit: fn(List(Activity), Int) -> Nil,
+) -> Result(Outcome, String) {
+  let state =
+    State(
+      api_key: api_key,
+      sup_model: sup_model,
+      workspace: workspace,
+      config: config,
+      emit: emit,
+      convo: seed_convo(history, user_prompt),
+      context_tokens: 0,
+      baseline: integrity.snapshot(workspace),
+      bb_dir: bb_dir(),
+      bb_idx: 0,
+      check: None,
+      check_ok: False,
+      reviewed: False,
+      steps_done: 0,
+      activities: [],
+    )
+  let #(state, rounds) = run_rounds(state, 1)
+  Ok(Outcome(
+    text: last_assistant_text(state.config.provider, state.convo),
+    turns: rounds,
+    steps: list.reverse(state.activities),
+    context_tokens: state.context_tokens,
+  ))
+}
+
+/// Non-streaming variant.
+pub fn run(
+  api_key: String,
+  sup_model: String,
+  workspace: String,
+  config: Config,
+  history: List(#(String, String)),
+  user_prompt: String,
+) -> Result(Outcome, String) {
+  run_streaming(api_key, sup_model, workspace, config, history, user_prompt, fn(
+    _,
+    _,
+  ) {
+    Nil
+  })
+}
+
+fn run_rounds(state: State, round: Int) -> #(State, Int) {
+  case round > state.config.max_rounds {
+    True -> #(notice(state, "Round budget exhausted."), round - 1)
+    False ->
+      case supervisor_call(state) {
+        Error(e) -> #(notice(state, "error: " <> e), round)
+        Ok(reply) -> {
+          let state =
+            State(
+              ..state,
+              context_tokens: reply.input_tokens + reply.output_tokens,
+            )
+          case reply.stop_reason == "refusal" {
+            True -> #(notice(state, reply.text), round)
+            False -> {
+              // Echo the assistant turn verbatim (carries the tool_use block).
+              let state = push_message(state, reply.assistant)
+              let state = case string.trim(reply.text) {
+                "" -> state
+                p -> emit_activity(state, StepPlan(p))
+              }
+              case find_run_steps(reply.tool_uses) {
+                // No tool call → a conversational reply ends the turn.
+                None -> #(state, round)
+                Some(tu) ->
+                  case tool_steps.parse(tu.input) {
+                    Error(msg) -> {
+                      let state =
+                        push_message(
+                          state,
+                          provider.tool_result(
+                            state.config.provider,
+                            tu.id,
+                            "run_steps rejected: "
+                              <> msg
+                              <> "\nFix the arguments and call run_steps again.",
+                          ),
+                        )
+                      run_rounds(state, round + 1)
+                    }
+                    Ok(parsed) -> {
+                      let state = update_check(state, parsed.check)
+                      case parsed.done && list.is_empty(parsed.steps) {
+                        True -> handle_done(state, round, tu.id)
+                        False -> run_steps_round(state, round, parsed, tu.id)
+                      }
+                    }
+                  }
+              }
+            }
+          }
+        }
+      }
+  }
+}
+
+fn run_steps_round(
+  state: State,
+  round: Int,
+  parsed: tool_steps.Parsed,
+  tool_id: String,
+) -> #(State, Int) {
+  let #(state, fb_rev) = exec_steps(state, parsed.steps, 1, [])
+  let #(state, fb_rev) = run_check(state, fb_rev)
+  let #(state, fb_rev) = review_or_status(state, fb_rev)
+  let feedback =
+    [round_line(state, round), ..fb_rev]
+    |> list.reverse
+    |> string.join("\n\n")
+  let state =
+    push_message(state, provider.tool_result(state.config.provider, tool_id, feedback))
+  case budget_left(state) {
+    False -> #(
+      notice(
+        state,
+        "Budget exhausted: " <> int.to_string(state.steps_done) <> " steps.",
+      ),
+      round,
+    )
+    True -> run_rounds(state, round + 1)
+  }
+}
+
+fn handle_done(state: State, round: Int, tool_id: String) -> #(State, Int) {
+  case state.check_ok && state.reviewed {
+    True -> #(emit_activity(state, StepReview("accepted → DONE")), round)
+    False ->
+      case state.check == None && state.steps_done == 0 {
+        // done used loosely on a non-task turn — just a reply.
+        True -> #(state, round)
+        False -> {
+          let why = case state.check_ok {
+            False -> "the check has not passed (or was never committed). "
+            True -> "final review not completed. "
+          }
+          let state =
+            push_message(
+              state,
+              provider.tool_result(
+                state.config.provider,
+                tool_id,
+                "Cannot finish: "
+                  <> why
+                  <> "Call run_steps with corrective steps (and a stricter check).",
+              ),
+            )
+          run_rounds(state, round + 1)
+        }
+      }
+  }
+}
+
+/// The first `run_steps` call in the assistant turn, if any.
+fn find_run_steps(tool_uses: List(provider.ToolUse)) -> Option(provider.ToolUse) {
+  list.find(tool_uses, fn(tu) { tu.name == tools.run_steps_name })
+  |> option.from_result
+}
+
+// --- Step execution ------------------------------------------------------
+
+fn exec_steps(
+  state: State,
+  steps: List(Step),
+  idx: Int,
+  fb_rev: List(String),
+) -> #(State, List(String)) {
+  case steps {
+    [] -> #(state, fb_rev)
+    [step, ..rest] ->
+      case budget_left(state) {
+        False -> #(state, fb_rev)
+        True -> {
+          let title = artifact.step_title(step)
+          let verb = step_verb(step)
+          let state = emit_activity(state, StepCall(verb, step_arg(step)))
+          let #(state, result, fixes) = apply_with_fixes(state, step)
+          let dig = digest.digest(result.output, state.config.digest_limit)
+          let #(state, pointer) = maybe_save(state, result.output, dig)
+          let state = emit_activity(state, StepExec(verb, result.exit, dig <> pointer))
+          let fixed = case fixes > 0 {
+            True -> " (after " <> int.to_string(fixes) <> " worker fix)"
+            False -> ""
+          }
+          let fb =
+            "### RESULT "
+            <> int.to_string(idx)
+            <> ": "
+            <> title
+            <> fixed
+            <> "\nexit "
+            <> int.to_string(result.exit)
+            <> "\n"
+            <> dig
+            <> pointer
+          exec_steps(state, rest, idx + 1, [fb, ..fb_rev])
+        }
+      }
+  }
+}
+
+/// Apply one step; on failure, give the worker `fix_attempts` shots at one fix
+/// command each, through the same sandbox path.
+fn apply_with_fixes(state: State, step: Step) -> #(State, Exec, Int) {
+  let #(state, result) = apply(state, step)
+  case state.config.worker {
+    None -> #(state, result, 0)
+    Some(model) -> fix_loop(state, step, result, model, 0)
+  }
+}
+
+fn fix_loop(
+  state: State,
+  step: Step,
+  result: Exec,
+  model: String,
+  fixes: Int,
+) -> #(State, Exec, Int) {
+  case
+    result.exit != 0
+    && fixes < state.config.fix_attempts
+    && budget_left(state)
+  {
+    False -> #(state, result, fixes)
+    True -> {
+      let prompt =
+        "FAILED STEP: "
+        <> artifact.step_title(step)
+        <> "\n"
+        <> step_detail(step)
+        <> "\n\nEXIT CODE: "
+        <> int.to_string(result.exit)
+        <> "\nOUTPUT:\n"
+        <> digest.digest(result.output, state.config.digest_limit)
+      case
+        worker.complete(
+          state.config.worker_url,
+          model,
+          prompts.worker_system,
+          prompt,
+          1500,
+        )
+      {
+        Error(e) -> {
+          let state = notice(state, "worker unavailable: " <> e)
+          #(state, result, fixes)
+        }
+        Ok(text) ->
+          case artifact.first_fence(text) {
+            None -> #(state, result, fixes)
+            Some(cmd) -> {
+              let #(state, retry) = exec_run(state, cmd)
+              let state = emit_activity(state, StepWorker(cmd, retry.exit))
+              // Keep the retry if it fixed things or at least changed the
+              // failure mode; otherwise keep the original result.
+              let result = case retry.exit == 0 || retry.exit != result.exit {
+                True -> retry
+                False -> result
+              }
+              fix_loop(state, step, result, model, fixes + 1)
+            }
+          }
+      }
+    }
+  }
+}
+
+fn apply(state: State, step: Step) -> #(State, Exec) {
+  case step {
+    Run(_, cmd) -> exec_run(state, cmd)
+    Write(_, path, content) -> write_file(state, path, content)
+    Edit(_, path, search, replace) -> edit_file(state, path, search, replace)
+    Read(_, path, range) -> read_file(state, path, range)
+    Grep(_, pattern) -> grep(state, pattern)
+  }
+}
+
+fn exec_run(state: State, cmd: String) -> #(State, Exec) {
+  let #(code, out) = nono_bridge.run_result(profile(state), ["sh", "-c", cmd])
+  #(bump(state), Exec(code, out))
+}
+
+fn write_file(state: State, path: String, content: String) -> #(State, Exec) {
+  let resolved = resolve(state.workspace, path)
+  let exec = case simplifile.write(resolved, content) {
+    Ok(_) ->
+      Exec(
+        0,
+        "wrote "
+          <> resolved
+          <> " ("
+          <> int.to_string(string.length(content))
+          <> " chars)",
+      )
+    Error(e) -> Exec(1, "write failed: " <> string.inspect(e))
+  }
+  #(bump(state), exec)
+}
+
+fn edit_file(
+  state: State,
+  path: String,
+  search: String,
+  replace: String,
+) -> #(State, Exec) {
+  let resolved = resolve(state.workspace, path)
+  let exec = case simplifile.read(resolved) {
+    Error(e) -> Exec(1, "edit: cannot read " <> resolved <> ": " <> string.inspect(e))
+    Ok(contents) ->
+      case occurrences(contents, search) {
+        0 -> Exec(1, "edit: search text not found in " <> resolved)
+        1 ->
+          case simplifile.write(resolved, string.replace(contents, search, replace)) {
+            Ok(_) -> Exec(0, "edited " <> resolved <> " (1 replacement)")
+            Error(e) -> Exec(1, "edit: write failed: " <> string.inspect(e))
+          }
+        n ->
+          Exec(
+            1,
+            "edit: search text is not unique ("
+              <> int.to_string(n)
+              <> " matches) — READ the file and make the search text unambiguous",
+          )
+      }
+  }
+  #(bump(state), exec)
+}
+
+fn read_file(
+  state: State,
+  path: String,
+  range: Option(#(Int, Int)),
+) -> #(State, Exec) {
+  let resolved = resolve(state.workspace, path)
+  let cmd = case range {
+    Some(#(s, e)) ->
+      "cat -n -- '"
+      <> resolved
+      <> "' | sed -n '"
+      <> int.to_string(s)
+      <> ","
+      <> int.to_string(e)
+      <> "p'"
+    None -> "cat -n -- '" <> resolved <> "'"
+  }
+  let #(code, out) = nono_bridge.run_result(profile(state), ["sh", "-c", cmd])
+  #(bump(state), Exec(code, out))
+}
+
+fn grep(state: State, pattern: String) -> #(State, Exec) {
+  let escaped = string.replace(pattern, "'", "'\\''")
+  let cmd = "grep -rnI -- '" <> escaped <> "' . | head -n 200 || true"
+  let #(code, out) = nono_bridge.run_result(profile(state), ["sh", "-c", cmd])
+  #(bump(state), Exec(code, out))
+}
+
+fn occurrences(haystack: String, needle: String) -> Int {
+  list.length(string.split(haystack, needle)) - 1
+}
+
+// --- CHECK and review ----------------------------------------------------
+
+fn run_check(state: State, fb_rev: List(String)) -> #(State, List(String)) {
+  case state.check {
+    None -> #(state, fb_rev)
+    Some(check) ->
+      case budget_left(state) {
+        False -> #(state, fb_rev)
+        True -> {
+          let #(code, out) =
+            nono_bridge.run_result(profile(state), ["sh", "-c", check])
+          let state = State(..bump(state), check_ok: code == 0)
+          let dig = digest.digest(out, 1000)
+          let state = emit_activity(state, StepCheck(code == 0, dig))
+          let fb =
+            "### CHECK RESULT\n`"
+            <> check
+            <> "`\nexit "
+            <> int.to_string(code)
+            <> "\n"
+            <> dig
+          #(state, [fb, ..fb_rev])
+        }
+      }
+  }
+}
+
+fn review_or_status(
+  state: State,
+  fb_rev: List(String),
+) -> #(State, List(String)) {
+  case state.check_ok, state.reviewed {
+    True, False -> {
+      let state = State(..state, reviewed: True)
+      let mutated = integrity.changed_preexisting(state.workspace, state.baseline)
+      let note = case mutated {
+        [] -> "requested"
+        _ -> "requested · touched " <> string.join(list.take(mutated, 5), ", ")
+      }
+      let state = emit_activity(state, StepReview(note))
+      #(state, [review_prompt(mutated), ..fb_rev])
+    }
+    True, True -> #(state, [
+      "### STATUS\nCheck passing. Call run_steps with done:true to finish, or send more steps.",
+      ..fb_rev
+    ])
+    _, _ ->
+      case state.check {
+        None -> #(state, [
+          "### STATUS\nNo check committed yet — pass a `check` (exits 0 iff the acceptance criteria hold) before you can finish.",
+          ..fb_rev
+        ])
+        Some(_) -> #(state, fb_rev)
+      }
+  }
+}
+
+fn review_prompt(mutated: List(String)) -> String {
+  "### REVIEW REQUESTED\nThe check passes — but a passing check is not proof, only evidence. Do NOT set done:true yet. First, adversarially verify: (1) re-read the task and list its literal acceptance criteria; (2) for at least one criterion, compute the expected result independently and compare it to what was produced with a concrete run action; (3) probe an edge case whose correct answer you know without running the implementation; (4) confirm your check actually tests those criteria on real values — if it only checks that a file exists or a command exited 0, pass a stricter `check` and let it re-run. Call run_steps with done:true only once an independent probe has confirmed correctness; otherwise send corrective steps."
+  <> mutated_suffix(mutated)
+}
+
+fn mutated_suffix(mutated: List(String)) -> String {
+  case mutated {
+    [] -> ""
+    _ ->
+      "\nNote — pre-existing files modified this session: "
+      <> string.join(list.take(mutated, 10), ", ")
+      <> ". If any are tests or references your CHECK relies on, make sure you did not weaken them; a check that passes against weakened references is a failure."
+  }
+}
+
+// --- Supervisor call -----------------------------------------------------
+
+fn supervisor_call(state: State) -> Result(provider.Response, String) {
+  provider.complete(
+    state.config.provider,
+    state.api_key,
+    state.sup_model,
+    prompts.supervisor_system(state.workspace),
+    state.convo,
+    // The supervisor acts only through the run_steps tool (§5.2).
+    tools.run_steps_name,
+    tools.run_steps_description(),
+    tools.run_steps_schema(),
+  )
+}
+
+// --- State helpers -------------------------------------------------------
+
+fn profile(state: State) -> nono.Profile {
+  // Steps run workspace-scoped with the network blocked by default (§5.2).
+  nono.Profile(state.workspace, [], True, False)
+}
+
+fn budget_left(state: State) -> Bool {
+  state.steps_done < state.config.max_steps
+}
+
+fn bump(state: State) -> State {
+  State(..state, steps_done: state.steps_done + 1)
+}
+
+fn push_message(state: State, message: JsonValue) -> State {
+  State(..state, convo: list.append(state.convo, [message]))
+}
+
+/// Seed the conversation from the branch's prior turns (plain text) plus the
+/// new user prompt. tool_use/tool_result blocks only appear within this run.
+fn seed_convo(
+  history: List(#(String, String)),
+  user_prompt: String,
+) -> List(JsonValue) {
+  list.append(
+    list.map(history, fn(turn) {
+      case turn.0 {
+        "assistant" -> provider.assistant_text(turn.1)
+        _ -> provider.user_text(turn.1)
+      }
+    }),
+    [provider.user_text(user_prompt)],
+  )
+}
+
+/// The text of the most recent assistant message, for the turn's Outcome.
+fn last_assistant_text(p: provider.Provider, convo: List(JsonValue)) -> String {
+  convo
+  |> list.reverse
+  |> list.find_map(fn(msg) {
+    case json_value.string_field(msg, "role") {
+      Ok("assistant") -> Ok(provider.message_text(p, msg))
+      _ -> Error(Nil)
+    }
+  })
+  |> result.unwrap("")
+}
+
+fn update_check(state: State, check: Option(String)) -> State {
+  case check {
+    Some(c) ->
+      case Some(c) != state.check {
+        True -> State(..state, check: Some(c), check_ok: False)
+        False -> state
+      }
+    None -> state
+  }
+}
+
+fn emit_activity(state: State, activity: Activity) -> State {
+  let activities = [activity, ..state.activities]
+  state.emit(list.reverse(activities), state.context_tokens)
+  State(..state, activities: activities)
+}
+
+fn notice(state: State, text: String) -> State {
+  emit_activity(state, StepText("⚠ " <> text))
+}
+
+fn round_line(state: State, round: Int) -> String {
+  "Round "
+  <> int.to_string(round)
+  <> "/"
+  <> int.to_string(state.config.max_rounds)
+  <> ", steps "
+  <> int.to_string(state.steps_done)
+  <> "/"
+  <> int.to_string(state.config.max_steps)
+  <> "."
+}
+
+fn step_detail(step: Step) -> String {
+  case step {
+    Run(_, cmd) -> "RUN: " <> cmd
+    Write(_, path, _) -> "WRITE " <> path
+    Edit(_, path, _, _) -> "EDIT " <> path
+    Read(_, path, _) -> "READ " <> path
+    Grep(_, pattern) -> "GREP " <> pattern
+  }
+}
+
+/// The verb label shown in the step timeline.
+fn step_verb(step: Step) -> String {
+  case step {
+    Run(_, _) -> "RUN"
+    Write(_, _, _) -> "WRITE"
+    Edit(_, _, _, _) -> "EDIT"
+    Read(_, _, _) -> "READ"
+    Grep(_, _) -> "GREP"
+  }
+}
+
+/// The concrete argument (command / path / pattern) for a step.
+fn step_arg(step: Step) -> String {
+  case step {
+    Run(_, cmd) -> cmd
+    Write(_, path, _) -> path
+    Edit(_, path, _, _) -> path
+    Read(_, path, _) -> path
+    Grep(_, pattern) -> pattern
+  }
+}
+
+fn resolve(workspace: String, path: String) -> String {
+  case string.starts_with(path, "/") {
+    True -> path
+    False -> workspace <> "/" <> path
+  }
+}
+
+// --- Blackboard ----------------------------------------------------------
+
+fn bb_dir() -> String {
+  let home = result.unwrap(envoy.get("HOME"), "/tmp")
+  home <> "/.bough/bb/" <> int.to_string(clock.now_ms())
+}
+
+/// Save full output to a numbered blackboard file when it exceeds its digest,
+/// returning a pointer suffix to append to the conversation (empty if inline).
+fn maybe_save(state: State, full: String, dig: String) -> #(State, String) {
+  case string.length(full) > string.length(dig) {
+    False -> #(state, "")
+    True -> {
+      let idx = state.bb_idx + 1
+      let _ = simplifile.create_directory_all(state.bb_dir)
+      let path = state.bb_dir <> "/out_" <> int.to_string(idx) <> ".txt"
+      case simplifile.write(path, full) {
+        Ok(_) -> #(State(..state, bb_idx: idx), "\n[full output saved: " <> path <> "]")
+        Error(_) -> #(state, "")
+      }
+    }
+  }
+}

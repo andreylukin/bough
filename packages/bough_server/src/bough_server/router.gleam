@@ -15,8 +15,11 @@ import bough_core
 import bough_core/session.{type Entry, type SessionTree, Entry}
 import bough_server/agent
 import bough_server/clock
+import bough_server/engine
+import bough_server/provider
 import bough_server/run_store
 import bough_server/session_manager
+import bough_server/worker_runtime
 import envoy
 import gleam/dynamic/decode
 import gleam/erlang/process
@@ -28,16 +31,21 @@ import gleam/option.{type Option, None, Some}
 import gleam/result
 import wisp.{type Request, type Response}
 
-const system_prompt = "You are bough, a coding agent operating inside a sandboxed workspace. Use the tools to accomplish the user's task: `bash` runs in a sandbox with no network and workspace read/write; `read`/`write`/`edit` manage files. Prefer absolute paths under the workspace. Be concise."
-
 const default_model = "claude-haiku-4-5-20251001"
 
-const default_max_turns = 50
+const default_openrouter_model = "z-ai/glm-5.2"
+
+const openrouter_base = "https://openrouter.ai/api/v1"
+
+const default_max_turns = 20
+
+const default_worker_port = 8080
 
 pub fn handle_request(req: Request) -> Response {
   case wisp.path_segments(req), req.method {
     [], _ -> json_ok("{\"service\":\"bough\",\"version\":\"" <> bough_core.version <> "\"}")
     ["health"], _ -> json_ok("{\"status\":\"ok\"}")
+    ["config"], Get -> config()
     ["doc"], _ -> doc()
     ["sessions"], Get -> list_sessions()
     ["session"], Post -> create_session(req)
@@ -57,6 +65,15 @@ fn doc() -> Response {
     <> bough_core.version
     <> "\"},\"paths\":{}}",
   )
+}
+
+/// The active supervisor provider and model, so clients can show what's in use.
+fn config() -> Response {
+  let #(name, model) = resolved_model()
+  json_ok(json.to_string(json.object([
+    #("provider", json.string(name)),
+    #("model", json.string(model)),
+  ])))
 }
 
 // --- Sessions ------------------------------------------------------------
@@ -135,19 +152,17 @@ fn run_agent(tree: SessionTree, content: String) -> Response {
   let user = make_entry(session.User, content, tree.active_leaf)
   let tree = session.append(tree, user)
 
-  case envoy.get("ANTHROPIC_API_KEY") {
-    Error(_) -> json_error("ANTHROPIC_API_KEY is not set")
-    Ok(api_key) -> {
-      let model = envoy.get("BOUGH_MODEL") |> result.unwrap(default_model)
+  case agent_setup() {
+    Error(m) -> json_error(m)
+    Ok(#(prov, api_key, model)) -> {
       case
-        agent.run(
+        engine.run(
           api_key,
           model,
           tree.project,
-          system_prompt,
+          engine_config(prov),
           history,
           content,
-          max_turns(),
         )
       {
         Error(message) -> {
@@ -155,15 +170,14 @@ fn run_agent(tree: SessionTree, content: String) -> Response {
           json_error(message)
         }
         Ok(outcome) -> {
-          let assistant =
-            make_entry(session.Assistant, outcome.text, Some(user.id))
-          let tree = session.append(tree, assistant)
+          let tree = append_turn(tree, outcome)
           case session_manager.save(tree) {
             Ok(_) ->
               created(json.to_string(agent.run_json(
                 "done",
                 outcome.steps,
                 outcome.text,
+                outcome.context_tokens,
               )))
             Error(_) -> wisp.internal_server_error()
           }
@@ -173,10 +187,80 @@ fn run_agent(tree: SessionTree, content: String) -> Response {
   }
 }
 
-fn max_turns() -> Int {
+fn max_rounds() -> Int {
   case envoy.get("BOUGH_MAX_TURNS") {
     Ok(v) -> int.parse(v) |> result.unwrap(default_max_turns)
     Error(_) -> default_max_turns
+  }
+}
+
+/// Engine config from the environment. The worker is enabled by setting
+/// `BOUGH_WORKER` to a model name; bough then ensures a local inference server
+/// is up (SPEC.md §5.6) and points the worker at it.
+fn engine_config(prov: provider.Provider) -> engine.Config {
+  let worker = case envoy.get("BOUGH_WORKER") {
+    Ok("") -> None
+    Ok(model) -> Some(model)
+    Error(_) -> None
+  }
+  let base = engine.default_config()
+  let worker_url = case worker {
+    Some(_) ->
+      worker_runtime.ensure(worker_port()) |> result.unwrap(base.worker_url)
+    None -> base.worker_url
+  }
+  engine.Config(
+    ..base,
+    provider: prov,
+    worker: worker,
+    worker_url: worker_url,
+    max_rounds: max_rounds(),
+  )
+}
+
+/// The resolved supervisor provider name and model from the environment
+/// (no key required, so `/config` can report it before any run). Defaults to
+/// OpenRouter / z-ai/glm-5.2; set `BOUGH_PROVIDER=anthropic` for Anthropic.
+fn resolved_model() -> #(String, String) {
+  case envoy.get("BOUGH_PROVIDER") {
+    Ok("anthropic") -> #(
+      "anthropic",
+      envoy.get("BOUGH_MODEL") |> result.unwrap(default_model),
+    )
+    _ -> #(
+      "openrouter",
+      envoy.get("BOUGH_MODEL") |> result.unwrap(default_openrouter_model),
+    )
+  }
+}
+
+/// Pick the supervisor provider, API key, and model from the environment.
+/// Default is OpenRouter (OPENROUTER_API_KEY, model z-ai/glm-5.2);
+/// `BOUGH_PROVIDER=anthropic` uses Anthropic with ANTHROPIC_API_KEY.
+fn agent_setup() -> Result(#(provider.Provider, String, String), String) {
+  let #(name, model) = resolved_model()
+  case name {
+    "anthropic" -> {
+      use key <- result.try(
+        envoy.get("ANTHROPIC_API_KEY")
+        |> result.replace_error("ANTHROPIC_API_KEY is not set"),
+      )
+      Ok(#(provider.Anthropic, key, model))
+    }
+    _ -> {
+      use key <- result.try(
+        envoy.get("OPENROUTER_API_KEY")
+        |> result.replace_error("OPENROUTER_API_KEY is not set"),
+      )
+      Ok(#(provider.OpenAICompat(openrouter_base), key, model))
+    }
+  }
+}
+
+fn worker_port() -> Int {
+  case envoy.get("BOUGH_WORKER_PORT") {
+    Ok(v) -> int.parse(v) |> result.unwrap(default_worker_port)
+    Error(_) -> default_worker_port
   }
 }
 
@@ -235,6 +319,28 @@ fn fork_decoder() -> decode.Decoder(String) {
   decode.success(entry_id)
 }
 
+/// Append a completed turn to the tree: each run activity becomes a
+/// display-only `ToolResult` entry (content = step JSON, the shape the TUI
+/// decodes for the live chat), chained in order, ending in the `Assistant` text
+/// entry as the new leaf. `ToolResult` entries are skipped by `history_of`, so
+/// the conversation replayed to the model is unchanged.
+fn append_turn(tree: SessionTree, outcome: agent.Outcome) -> SessionTree {
+  let tree =
+    list.fold(outcome.steps, tree, fn(tr, step) {
+      let entry =
+        make_entry(
+          session.ToolResult,
+          agent.step_json_string(step),
+          tr.active_leaf,
+        )
+      session.append(tr, entry)
+    })
+  session.append(
+    tree,
+    make_entry(session.Assistant, outcome.text, tree.active_leaf),
+  )
+}
+
 fn make_entry(
   role: session.Role,
   content: String,
@@ -266,37 +372,41 @@ fn start_run(req: Request, id: String) -> Response {
 }
 
 fn launch_run(id: String, tree: SessionTree, content: String) -> Response {
-  case envoy.get("ANTHROPIC_API_KEY") {
-    Error(_) -> json_error("ANTHROPIC_API_KEY is not set")
-    Ok(api_key) -> {
+  case agent_setup() {
+    Error(m) -> json_error(m)
+    Ok(#(prov, api_key, model)) -> {
       let history = history_of(tree)
       let user = make_entry(session.User, content, tree.active_leaf)
       let tree = session.append(tree, user)
       let _ = session_manager.save(tree)
-      let model = envoy.get("BOUGH_MODEL") |> result.unwrap(default_model)
 
-      run_store.write(id, "running", [], "")
+      run_store.write(id, "running", [], "", 0)
       let _ =
         process.spawn_unlinked(fn() {
           case
-            agent.run_streaming(
+            engine.run_streaming(
               api_key,
               model,
               tree.project,
-              system_prompt,
+              engine_config(prov),
               history,
               content,
-              max_turns(),
-              fn(steps) { run_store.write(id, "running", steps, "") },
+              fn(steps, context_tokens) {
+                run_store.write(id, "running", steps, "", context_tokens)
+              },
             )
           {
             Ok(outcome) -> {
-              let assistant =
-                make_entry(session.Assistant, outcome.text, Some(user.id))
-              let _ = session_manager.save(session.append(tree, assistant))
-              run_store.write(id, "done", outcome.steps, outcome.text)
+              let _ = session_manager.save(append_turn(tree, outcome))
+              run_store.write(
+                id,
+                "done",
+                outcome.steps,
+                outcome.text,
+                outcome.context_tokens,
+              )
             }
-            Error(message) -> run_store.write(id, "error", [], message)
+            Error(message) -> run_store.write(id, "error", [], message, 0)
           }
         })
       wisp.json_response("{\"status\":\"started\"}", 202)

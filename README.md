@@ -2,7 +2,10 @@
 
 A sandboxed coding agent with branchable history. Written in **Gleam** (BEAM/OTP),
 sandboxed by **[nono](https://nono.sh)**, structured like **opencode** (a headless
-server with thin clients), with **closedshell**-style live network visibility.
+server with thin clients), with **closedshell**-style live network visibility — and
+a **ReDACT-style supervisor-worker** agent loop (as in **tent**): a frontier model
+plans, a deterministic harness is the only thing that executes, a local model
+patches trivial breakage.
 
 > A *bough* is a branch: history is a tree you can fork at any point — and the
 > filesystem forks with it. And it's safe to leave growing: every agent runs
@@ -11,6 +14,30 @@ server with thin clients), with **closedshell**-style live network visibility.
 
 See **[SPEC.md](SPEC.md)** for the full design and the v1 milestone.
 
+## Install
+
+One line on any Mac — installs the toolchain (Gleam/Erlang, the `nono` sandbox,
+`llama.cpp` for the worker model), clones bough, and builds it:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/andreylukin/bough/main/install.sh | bash
+```
+
+Already cloned? Run `./install.sh` from the checkout instead. The script is
+idempotent, so re-running it just updates and rebuilds. Knobs: `BOUGH_HOME`
+(clone target, default `~/repos/bough`) and `BOUGH_NO_LLAMA=1` (skip the large
+`llama.cpp` download; supervisor-only fixes still work).
+
+Then set your key and start it:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...   # add to ~/.zshrc to persist
+scripts/bough                         # starts the server, waits for health, runs the TUI
+```
+
+`scripts/bough` is a convenience launcher; you can also run the two processes by
+hand (see [Develop](#develop)).
+
 ## Layout
 
 Gleam has no native workspace, so this is a set of packages wired with `path`
@@ -18,8 +45,8 @@ dependencies:
 
 | Package | Role |
 |---------|------|
-| [`packages/bough_core`](packages/bough_core) | Shared, side-effect-free types & logic: session tree, provider interface, tools, nono contract. |
-| [`packages/bough_server`](packages/bough_server) | Headless server: agent loop, session supervision, nono bridge, HTTP+SSE API. Depends on `bough_core`. |
+| [`packages/bough_core`](packages/bough_core) | Shared, side-effect-free types & logic: session tree, provider interface, artifact grammar, nono contract. |
+| [`packages/bough_server`](packages/bough_server) | Headless server: supervisor-worker loop, session supervision, nono bridge, HTTP+SSE API. Depends on `bough_core`. |
 | [`packages/bough_tui`](packages/bough_tui) | Terminal client: chat pane + live network side pane + tree overlay. Depends on `bough_core`. |
 
 ## Develop
@@ -51,10 +78,22 @@ Early slices of the v1 vertical slice (SPEC.md §10) are working:
 - nono proxy audit log parsed into `AuditEvent`s (the network side-pane data),
   plus `rollback restore` plumbing. Per-write-turn snapshot capture is deferred
   (nono snapshots at session boundaries — SPEC.md §11).
-- Anthropic agent loop with tool use (`POST /session/:id/message`): `bash` runs
-  in a nono sandbox (network blocked, workspace-scoped); `read`/`write`/`edit`
-  manage files. User + assistant turns persist to the session tree.
+- **Supervisor-worker engine** (`engine`, SPEC §5), driving `POST
+  /session/:id/message` and the streaming `…/run`: the Anthropic supervisor
+  plans via plain-text `STEP`/`RUN`/`WRITE`/`EDIT`/`READ`/`GREP` + `### CHECK`
+  artifacts (parsed by `bough_core/artifact`, unit-tested against tent's suite);
+  the harness executes each step in a nono sandbox (network blocked,
+  workspace-scoped), digests output to the blackboard, gates `DONE` on the CHECK
+  passing plus an adversarial review, tracks file integrity, and caps the turn
+  with round/step budgets. Earlier provider tool-use code (`agent`, `tools`)
+  remains but is no longer wired in.
+- **Worker runtime** (`worker_runtime`, SPEC §5.6): enable with `BOUGH_WORKER=<model>`.
+  bough downloads the GGUF (`BOUGH_WORKER_GGUF_URL`) and supervises a local
+  `llama-server`, handing the engine a localhost OpenAI-compatible endpoint; a
+  failed step gets one worker fix command. Set `BOUGH_WORKER_URL` to use a
+  running/remote endpoint instead, or leave it unset for supervisor-only fixes.
 
-Next: stream live egress + tool activity into the network pane and add rule
+Next: stream live egress + step activity into the network pane and add rule
 editing (needs server SSE + a rules endpoint); a session-tree overlay; sandbox
-the file tools (currently in-process).
+the file tools (WRITE/EDIT currently run in-process); per-write-turn snapshots
+so a failed review can fork back (SPEC §5.4).

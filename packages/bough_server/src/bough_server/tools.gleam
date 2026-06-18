@@ -41,6 +41,71 @@ pub fn definitions() -> json.Json {
   ])
 }
 
+/// The single tool the supervisor calls to act on the workspace: an ordered
+/// batch of typed actions plus an optional `check` and `done` (SPEC §5.2,
+/// folded into one tool). The schema is intentionally flat — `action` is a
+/// strict enum, the per-action fields are optional here and validated in
+/// `tool_steps` so a missing field comes back as a tool_result the model fixes.
+///
+/// Exposed as name/description/schema pieces so each `provider` can wrap them in
+/// its own tool format (Anthropic `input_schema` vs OpenAI `function`).
+pub const run_steps_name = "run_steps"
+
+pub fn run_steps_description() -> String {
+  "The ONLY way to act on the workspace. Provide an ordered batch of typed actions; the harness runs each in the sandbox and returns exit codes and output digests, then runs your check. Use a read/grep action to inspect files before editing."
+}
+
+/// The JSON Schema for the tool's input (the object passed as `input_schema` /
+/// `parameters`).
+pub fn run_steps_schema() -> json.Json {
+  let str = fn(desc) {
+    json.object([
+      #("type", json.string("string")),
+      #("description", json.string(desc)),
+    ])
+  }
+  let step_schema =
+    json.object([
+      #("type", json.string("object")),
+      #("properties", json.object([
+        #("action", json.object([
+          #("type", json.string("string")),
+          #("description", json.string("Which action this step performs.")),
+          #("enum", json.array(["run", "write", "edit", "read", "grep"], json.string)),
+        ])),
+        #("title", str("Short human-readable title for this step.")),
+        #("command", str("Shell command to run (action=run).")),
+        #("path", str("File path, workspace-relative or absolute (action=write/edit/read).")),
+        #("content", str("Full file content (action=write).")),
+        #("find", str("Exact text to replace — must match byte-for-byte and uniquely (action=edit).")),
+        #("replace", str("Replacement text (action=edit).")),
+        #("range", str("Optional line range like \"10-40\" (action=read).")),
+        #("pattern", str("Search pattern; recursive, line-numbered (action=grep).")),
+      ])),
+      #("required", json.array(["action", "title"], json.string)),
+    ])
+  json.object([
+    #("type", json.string("object")),
+    #("properties", json.object([
+      #("steps", json.object([
+        #("type", json.string("array")),
+        #("description", json.string("Actions to run, in order, this round.")),
+        #("items", step_schema),
+      ])),
+      #("check", str(
+        "Shell command that exits 0 if and only if the task's acceptance criteria hold. Commit one as soon as the task is verifiable; it re-runs every round.",
+      )),
+      #("done", json.object([
+        #("type", json.string("boolean")),
+        #("description", json.string(
+          "Set true only after the check has passed and you have adversarially reviewed the result; honored only then.",
+        )),
+      ])),
+    ])),
+    #("required", json.array(["steps"], json.string)),
+  ])
+}
+
 fn tool(
   name: String,
   description: String,

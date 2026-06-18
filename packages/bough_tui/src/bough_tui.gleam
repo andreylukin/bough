@@ -7,6 +7,7 @@
 
 import bough_tui/app
 import etch/command
+import etch/event
 import etch/erlang/input
 import etch/erlang/tty
 import etch/stdout
@@ -32,6 +33,9 @@ fn run() -> Nil {
   stdout.execute([
     command.EnterAlternateScreen,
     command.EnableMouseCapture,
+    // Negotiate the kitty keyboard protocol so terminals (e.g. Ghostty) report
+    // modifiers like Super/Cmd on functional keys such as the arrows.
+    command.PushKeyboardEnhancementFlags([event.DisambiguateEscapeCode]),
     command.HideCursor,
     command.Clear(terminal.All),
   ])
@@ -86,6 +90,7 @@ fn render(model: app.Model) -> Nil {
 
 fn teardown() -> Nil {
   stdout.execute([
+    command.PopKeyboardEnhancementFlags,
     command.DisableMouseCapture,
     command.ShowCursor,
     command.LeaveAlternateScreen,

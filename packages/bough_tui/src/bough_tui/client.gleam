@@ -19,11 +19,19 @@ pub type ClientError {
   Decode(String)
 }
 
-/// One step in the agent's transcript for a turn.
+/// One step in the agent's transcript for a turn. The first three are the
+/// generic provider-tool-use shapes; the rest are the supervisor-worker engine's
+/// phased events (SPEC §5), which the TUI renders by role.
 pub type Step {
   Text(text: String)
   ToolCall(name: String, input: String)
   ToolResult(name: String, output: String)
+  Plan(text: String)
+  Call(verb: String, arg: String)
+  Exec(verb: String, exit: Int, digest: String)
+  Worker(command: String, exit: Int)
+  Check(ok: Bool, digest: String)
+  Review(note: String)
 }
 
 pub type Reply {
@@ -32,7 +40,12 @@ pub type Reply {
 
 /// Progress of a background agent run (polled).
 pub type RunState {
-  RunState(status: String, steps: List(Step), text: String)
+  RunState(
+    status: String,
+    steps: List(Step),
+    text: String,
+    context_tokens: Int,
+  )
 }
 
 /// A stored session, for the resume picker.
@@ -175,6 +188,27 @@ pub fn start_run(base: String, id: String, content: String) -> Result(Nil, Strin
   |> result.map(fn(_) { Nil })
 }
 
+/// GET `/config`; the active supervisor provider and model.
+pub fn get_config(base: String) -> Result(#(String, String), String) {
+  use req <- result.try(
+    request.to(base <> "/config") |> result.replace_error("invalid server URL"),
+  )
+  case httpc.send(req) {
+    Error(err) -> Error("cannot reach server: " <> string.inspect(err))
+    Ok(response.Response(status: 200, body: body, ..)) ->
+      json.parse(body, config_decoder())
+      |> result.replace_error("bad config response")
+    Ok(response.Response(status: code, ..)) ->
+      Error("server error " <> string.inspect(code))
+  }
+}
+
+fn config_decoder() -> decode.Decoder(#(String, String)) {
+  use provider <- decode.field("provider", decode.string)
+  use model <- decode.field("model", decode.string)
+  decode.success(#(provider, model))
+}
+
 /// GET `/session/:id/run` for current run progress.
 pub fn get_run(base: String, id: String) -> Result(RunState, String) {
   use req <- result.try(
@@ -195,13 +229,25 @@ fn run_state_decoder() -> decode.Decoder(RunState) {
   use status <- decode.field("status", decode.string)
   use text <- decode.field("text", decode.string)
   use steps <- decode.field("steps", decode.list(step_decoder()))
-  decode.success(RunState(status: status, steps: steps, text: text))
+  use context_tokens <- decode.optional_field("context_tokens", 0, decode.int)
+  decode.success(RunState(
+    status: status,
+    steps: steps,
+    text: text,
+    context_tokens: context_tokens,
+  ))
 }
 
 fn reply_decoder() -> decode.Decoder(Reply) {
   use text <- decode.field("text", decode.string)
   use steps <- decode.field("steps", decode.list(step_decoder()))
   decode.success(Reply(text: text, steps: steps))
+}
+
+/// Decode a single run step from a JSON string. Tree entries with the
+/// `tool_result` role carry one of these as their content.
+pub fn decode_step(content: String) -> Result(Step, Nil) {
+  json.parse(content, step_decoder()) |> result.replace_error(Nil)
 }
 
 fn step_decoder() -> decode.Decoder(Step) {
@@ -220,6 +266,35 @@ fn step_decoder() -> decode.Decoder(Step) {
       use name <- decode.field("name", decode.string)
       use output <- decode.field("output", decode.string)
       decode.success(ToolResult(name, output))
+    }
+    "plan" -> {
+      use text <- decode.field("text", decode.string)
+      decode.success(Plan(text))
+    }
+    "call" -> {
+      use verb <- decode.field("verb", decode.string)
+      use arg <- decode.field("arg", decode.string)
+      decode.success(Call(verb, arg))
+    }
+    "exec" -> {
+      use verb <- decode.field("verb", decode.string)
+      use exit <- decode.field("exit", decode.int)
+      use digest <- decode.field("digest", decode.string)
+      decode.success(Exec(verb, exit, digest))
+    }
+    "worker" -> {
+      use command <- decode.field("command", decode.string)
+      use exit <- decode.field("exit", decode.int)
+      decode.success(Worker(command, exit))
+    }
+    "check" -> {
+      use ok <- decode.field("ok", decode.bool)
+      use digest <- decode.field("digest", decode.string)
+      decode.success(Check(ok, digest))
+    }
+    "review" -> {
+      use note <- decode.field("note", decode.string)
+      decode.success(Review(note))
     }
     _ -> decode.failure(Text(""), "Step")
   }

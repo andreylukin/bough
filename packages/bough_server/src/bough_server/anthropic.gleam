@@ -20,6 +20,9 @@ const anthropic_version = "2023-06-01"
 
 const max_tokens = 4096
 
+// A turn (with tools + growing context) can run past httpc's 30s default.
+const request_timeout = 300_000
+
 pub type ToolUse {
   ToolUse(id: String, name: String, input: JsonValue)
 }
@@ -31,6 +34,9 @@ pub type Response {
     text: String,
     tool_uses: List(ToolUse),
     stop_reason: String,
+    /// Token counts from the response `usage` block (0 if absent).
+    input_tokens: Int,
+    output_tokens: Int,
   )
 }
 
@@ -65,7 +71,7 @@ pub fn complete(
     |> request.set_header("anthropic-version", anthropic_version)
     |> request.set_body(body)
 
-  case httpc.send(req) {
+  case httpc.configure() |> httpc.timeout(request_timeout) |> httpc.dispatch(req) {
     Error(e) -> Error("http error: " <> string.inspect(e))
     Ok(response.Response(status: 200, body: body, ..)) -> parse_response(body)
     Ok(response.Response(status: code, body: body, ..)) ->
@@ -74,21 +80,29 @@ pub fn complete(
 }
 
 fn parse_response(body: String) -> Result(Response, String) {
+  let usage_decoder = {
+    use input <- decode.optional_field("input_tokens", 0, decode.int)
+    use output <- decode.optional_field("output_tokens", 0, decode.int)
+    decode.success(#(input, output))
+  }
   let decoder = {
     use stop_reason <- decode.field("stop_reason", decode.string)
     use content <- decode.field("content", decode.list(json_value.decoder()))
-    decode.success(#(stop_reason, content))
+    use usage <- decode.optional_field("usage", #(0, 0), usage_decoder)
+    decode.success(#(stop_reason, content, usage))
   }
   use parsed <- result.try(
     json.parse(body, decoder)
     |> result.replace_error("could not parse anthropic response: " <> body),
   )
-  let #(stop_reason, content) = parsed
+  let #(stop_reason, content, #(input_tokens, output_tokens)) = parsed
   Ok(Response(
     content: content,
     text: extract_text(content),
     tool_uses: extract_tool_uses(content),
     stop_reason: stop_reason,
+    input_tokens: input_tokens,
+    output_tokens: output_tokens,
   ))
 }
 

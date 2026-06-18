@@ -18,10 +18,30 @@ pub type Step {
   StepText(text: String)
   StepToolCall(name: String, input: String)
   StepToolResult(name: String, output: String)
+  // Phased events from the supervisor-worker engine (SPEC §5), so the TUI can
+  // render each role distinctly instead of a flat tool stream.
+  /// Supervisor prose (plans, narration).
+  StepPlan(text: String)
+  /// A harness step starting: the verb (RUN/WRITE/EDIT/READ/GREP) and its arg.
+  StepCall(verb: String, arg: String)
+  /// A harness step's result: its exit code and an output digest.
+  StepExec(verb: String, exit: Int, digest: String)
+  /// A local-worker fix attempt: the command it ran and that command's exit.
+  StepWorker(command: String, exit: Int)
+  /// The deterministic CHECK result (ground truth for completion).
+  StepCheck(ok: Bool, digest: String)
+  /// An adversarial-review event before `DONE` is accepted.
+  StepReview(note: String)
 }
 
 pub type Outcome {
-  Outcome(text: String, turns: Int, steps: List(Step))
+  Outcome(
+    text: String,
+    turns: Int,
+    steps: List(Step),
+    /// Tokens occupying the supervisor's context after the latest turn.
+    context_tokens: Int,
+  )
 }
 
 pub fn run(
@@ -104,6 +124,7 @@ fn loop(
         text: "stopped at the turn limit",
         turns: turn,
         steps: list.reverse(steps),
+        context_tokens: 0,
       ))
     }
     False -> {
@@ -141,7 +162,12 @@ fn loop(
           )
         }
         _ ->
-          Ok(Outcome(text: resp.text, turns: turn + 1, steps: list.reverse(steps)))
+          Ok(Outcome(
+            text: resp.text,
+            turns: turn + 1,
+            steps: list.reverse(steps),
+            context_tokens: 0,
+          ))
       }
     }
   }
@@ -170,12 +196,25 @@ fn emit_step(
 
 // --- JSON ----------------------------------------------------------------
 
-pub fn run_json(status: String, steps: List(Step), text: String) -> json.Json {
+pub fn run_json(
+  status: String,
+  steps: List(Step),
+  text: String,
+  context_tokens: Int,
+) -> json.Json {
   json.object([
     #("status", json.string(status)),
     #("text", json.string(text)),
     #("steps", json.preprocessed_array(list.map(steps, step_to_json))),
+    #("context_tokens", json.int(context_tokens)),
   ])
+}
+
+/// A step serialized to a compact JSON string — used to persist run activities
+/// as display-only `ToolResult` tree entries (same shape the TUI already
+/// decodes for the live chat).
+pub fn step_json_string(step: Step) -> String {
+  json.to_string(step_to_json(step))
 }
 
 pub fn step_to_json(step: Step) -> json.Json {
@@ -193,6 +232,38 @@ pub fn step_to_json(step: Step) -> json.Json {
         #("type", json.string("result")),
         #("name", json.string(name)),
         #("output", json.string(output)),
+      ])
+    StepPlan(text) ->
+      json.object([#("type", json.string("plan")), #("text", json.string(text))])
+    StepCall(verb, arg) ->
+      json.object([
+        #("type", json.string("call")),
+        #("verb", json.string(verb)),
+        #("arg", json.string(arg)),
+      ])
+    StepExec(verb, exit, digest) ->
+      json.object([
+        #("type", json.string("exec")),
+        #("verb", json.string(verb)),
+        #("exit", json.int(exit)),
+        #("digest", json.string(digest)),
+      ])
+    StepWorker(command, exit) ->
+      json.object([
+        #("type", json.string("worker")),
+        #("command", json.string(command)),
+        #("exit", json.int(exit)),
+      ])
+    StepCheck(ok, digest) ->
+      json.object([
+        #("type", json.string("check")),
+        #("ok", json.bool(ok)),
+        #("digest", json.string(digest)),
+      ])
+    StepReview(note) ->
+      json.object([
+        #("type", json.string("review")),
+        #("note", json.string(note)),
       ])
   }
 }

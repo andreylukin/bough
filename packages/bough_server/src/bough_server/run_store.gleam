@@ -26,13 +26,15 @@ pub fn write(
   status: String,
   steps: List(Step),
   text: String,
+  context_tokens: Int,
 ) -> Nil {
   case dir() {
     Error(_) -> Nil
     Ok(d) -> {
       let target = path(d, session_id)
       let tmp = target <> ".tmp"
-      let content = json.to_string(agent.run_json(status, steps, text))
+      let content =
+        json.to_string(agent.run_json(status, steps, text, context_tokens))
       case simplifile.write(tmp, content) {
         Ok(_) -> {
           let _ = simplifile.rename(tmp, target)
