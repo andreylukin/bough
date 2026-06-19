@@ -63,6 +63,10 @@ pub type Config {
     /// pauses for human approval — the network leash (SPEC §7). When false,
     /// commands run with the network blocked, as before.
     net_gate: Bool,
+    /// Credentials nono injects into sandboxed commands on egress (SPEC §6.4):
+    /// (credential_name, env_var) pairs declared in the generated profile so the
+    /// raw secret never enters the sandbox. Empty by default (opt-in).
+    net_credentials: List(#(String, String)),
   )
 }
 
@@ -99,6 +103,7 @@ pub fn default_config() -> Config {
     fix_attempts: 1,
     review: False,
     net_gate: False,
+    net_credentials: [],
   )
 }
 
@@ -296,7 +301,8 @@ fn run_steps_round(
         control.Allow -> execute_plan(state, round, parsed, tool_id)
         control.Steer(message) -> {
           let guidance = case string.trim(message) {
-            "" -> "The human rejected this plan. Reconsider and propose a different approach."
+            "" ->
+              "The human rejected this plan. Reconsider and propose a different approach."
             m ->
               "The human reviewed your plan and did NOT approve it. Their guidance:\n"
               <> m
@@ -346,7 +352,10 @@ fn execute_plan(
     |> list.reverse
     |> string.join("\n\n")
   let state =
-    push_message(state, provider.tool_result(state.config.provider, tool_id, feedback))
+    push_message(
+      state,
+      provider.tool_result(state.config.provider, tool_id, feedback),
+    )
   case budget_left(state) {
     False -> #(
       notice(
@@ -411,11 +420,15 @@ fn exec_steps(
           let title = artifact.step_title(step)
           let verb = step_verb(step)
           let state =
-            emit_activity(state, StepCall(verb, step_arg(step), step_full(step)))
+            emit_activity(
+              state,
+              StepCall(verb, step_arg(step), step_full(step)),
+            )
           let #(state, result, fixes) = apply_with_fixes(state, step)
           let dig = digest.digest(result.output, state.config.digest_limit)
           let #(state, pointer) = maybe_save(state, result.output, dig)
-          let state = emit_activity(state, StepExec(verb, result.exit, dig <> pointer))
+          let state =
+            emit_activity(state, StepExec(verb, result.exit, dig <> pointer))
           let fixed = case fixes > 0 {
             True -> " (after " <> int.to_string(fixes) <> " worker fix)"
             False -> ""
@@ -455,9 +468,7 @@ fn fix_loop(
   fixes: Int,
 ) -> #(State, Exec, Int) {
   case
-    result.exit != 0
-    && fixes < state.config.fix_attempts
-    && budget_left(state)
+    result.exit != 0 && fixes < state.config.fix_attempts && budget_left(state)
   {
     False -> #(state, result, fixes)
     True -> {
@@ -512,9 +523,18 @@ fn apply(state: State, step: Step) -> #(State, Exec) {
     Grep(_, pattern) -> grep(state, pattern)
     // Delegation runs out-of-band (concurrent nested agents), not in the
     // sandbox; the injected ops return text to feed back to the supervisor.
-    Spawn(title, task) -> #(bump(state), Exec(0, state.subagents.spawn(title, task)))
-    Tell(_, target, message) -> #(bump(state), Exec(0, state.subagents.tell(target, message)))
-    Collect(_, target) -> #(bump(state), Exec(0, state.subagents.collect(target)))
+    Spawn(title, task) -> #(
+      bump(state),
+      Exec(0, state.subagents.spawn(title, task)),
+    )
+    Tell(_, target, message) -> #(
+      bump(state),
+      Exec(0, state.subagents.tell(target, message)),
+    )
+    Collect(_, target) -> #(
+      bump(state),
+      Exec(0, state.subagents.collect(target)),
+    )
   }
 }
 
@@ -664,12 +684,18 @@ fn edit_file(
 ) -> #(State, Exec) {
   let resolved = resolve(state.workspace, path)
   let exec = case simplifile.read(resolved) {
-    Error(e) -> Exec(1, "edit: cannot read " <> resolved <> ": " <> string.inspect(e))
+    Error(e) ->
+      Exec(1, "edit: cannot read " <> resolved <> ": " <> string.inspect(e))
     Ok(contents) ->
       case occurrences(contents, search) {
         0 -> Exec(1, "edit: search text not found in " <> resolved)
         1 ->
-          case simplifile.write(resolved, string.replace(contents, search, replace)) {
+          case
+            simplifile.write(
+              resolved,
+              string.replace(contents, search, replace),
+            )
+          {
             Ok(_) -> Exec(0, "edited " <> resolved <> " (1 replacement)")
             Error(e) -> Exec(1, "edit: write failed: " <> string.inspect(e))
           }
@@ -726,8 +752,7 @@ fn run_check(state: State, fb_rev: List(String)) -> #(State, List(String)) {
       case budget_left(state) {
         False -> #(state, fb_rev)
         True -> {
-          let #(code, out) =
-            sandboxed(state, ["sh", "-c", check])
+          let #(code, out) = sandboxed(state, ["sh", "-c", check])
           let state = State(..bump(state), check_ok: code == 0)
           let dig = digest.digest(out, 1000)
           let state = emit_activity(state, StepCheck(code == 0, dig))
@@ -751,7 +776,8 @@ fn review_or_status(
   case state.check_ok, state.reviewed {
     True, False -> {
       let state = State(..state, reviewed: True)
-      let mutated = integrity.changed_preexisting(state.workspace, state.baseline)
+      let mutated =
+        integrity.changed_preexisting(state.workspace, state.baseline)
       let note = case mutated {
         [] -> "requested"
         _ -> "requested · touched " <> string.join(list.take(mutated, 5), ", ")
@@ -837,9 +863,10 @@ fn sandboxed(state: State, command: List(String)) -> #(Int, String) {
         command,
       )
     True ->
-      case net_profile.write(state.net_profile_path, state.net_allow) {
+      case write_net_profile(state) {
         Ok(path) -> nono_bridge.run_in_profile(state.workspace, path, command)
-        // If the profile can't be written, fail safe: block the network.
+        // If the profile can't be written or doesn't validate, fail safe:
+        // block the network rather than run under a profile nono can't parse.
         Error(_) ->
           nono_bridge.run_result(
             nono.Profile(state.workspace, [], True, False),
@@ -847,6 +874,20 @@ fn sandboxed(state: State, command: List(String)) -> #(Int, String) {
           )
       }
   }
+}
+
+/// Write the session's leash profile, then validate it against the installed
+/// nono so a malformed/drifted profile is caught here rather than failing the
+/// command opaquely (SPEC §6, §7). Either failure makes the caller block the net.
+fn write_net_profile(state: State) -> Result(String, Nil) {
+  use path <- result.try(net_profile.write(
+    state.net_profile_path,
+    state.net_allow,
+    state.config.net_credentials,
+  ))
+  nono_bridge.validate_profile(path)
+  |> result.replace(path)
+  |> result.replace_error(Nil)
 }
 
 fn budget_left(state: State) -> Bool {
@@ -1014,7 +1055,10 @@ fn maybe_save(state: State, full: String, dig: String) -> #(State, String) {
       let _ = simplifile.create_directory_all(state.bb_dir)
       let path = state.bb_dir <> "/out_" <> int.to_string(idx) <> ".txt"
       case simplifile.write(path, full) {
-        Ok(_) -> #(State(..state, bb_idx: idx), "\n[full output saved: " <> path <> "]")
+        Ok(_) -> #(
+          State(..state, bb_idx: idx),
+          "\n[full output saved: " <> path <> "]",
+        )
         Error(_) -> #(state, "")
       }
     }

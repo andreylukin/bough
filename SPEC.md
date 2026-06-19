@@ -267,13 +267,21 @@ integration" from Gleam means, in priority order:
 3. **Use rollback** (`nono run --rollback`, `nono rollback list/restore`) as the
    snapshot backend for §4.1.
 4. **Use credential injection** so API keys (Anthropic, etc.) never enter the
-   sandbox — the proxy injects them on egress.
+   sandbox — the proxy injects them on egress. *(Implemented: opt-in via
+   `BOUGH_NET_CREDENTIALS`; declared as `env_credentials` in the generated
+   profile — `net_profile`.)*
 5. **(Later, optional) Rustler NIF over `nono-core`** if CLI-level coupling
    proves too coarse for live policy control.
 
 **Capability profile:** bough generates a nono capability profile/manifest per
-session — allow the workspace dir, set the network allowlist (LLM provider +
-explicitly approved hosts), block everything else.
+session — allow the workspace dir (plus read-only access to the language
+toolchains under `$HOME` and nono's `git_config` group, so sandboxed
+`RUN`/`CHECK` can use git/cargo/go/node), set the network allowlist (default-deny
++ explicitly approved hosts), block everything else. The generated profile is
+run through `nono profile validate` before use (`nono_bridge.validate_profile`),
+so schema drift fails safe (the run blocks the network) instead of nono rejecting
+it opaquely. Network denials are read from nono's structured audit JSON
+(method/path fields) rather than parsing its prose deny reasons.
 
 ---
 
