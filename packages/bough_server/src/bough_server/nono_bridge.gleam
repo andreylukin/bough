@@ -6,7 +6,8 @@
 //// shell out via shellout.
 
 import bough_core/nono.{
-  type AuditEvent, type Profile, type Snapshot, Allow, AuditEvent, Deny,
+  type AuditEvent, type Group, type GroupDetail, type GroupPath, type Profile,
+  type Snapshot, Allow, AuditEvent, Deny, Group, GroupDetail, GroupPath,
 }
 import envoy
 import gleam/dynamic/decode
@@ -48,8 +49,14 @@ fn net_flags(profile: Profile) -> List(String) {
 /// Used for one-shot tool execution (e.g. the `bash` tool). Returns whatever
 /// the command printed, even on non-zero exit, so the agent can see errors.
 pub fn run(profile: Profile, command: List(String)) -> String {
-  let args = run_args(profile, toolchain_reads(), command)
-  case shellout.command("nono", args, profile.workspace, []) {
+  case
+    shellout.command(
+      "nono",
+      run_args(profile, [], command),
+      profile.workspace,
+      [],
+    )
+  {
     Ok(output) -> output
     Error(#(_code, output)) -> output
   }
@@ -57,10 +64,21 @@ pub fn run(profile: Profile, command: List(String)) -> String {
 
 /// Like `run`, but also returns the exit code (0 on success). The engine needs
 /// it: RUN-step success and the CHECK gate are decided by exit status, not just
-/// captured output (SPEC.md §5.3).
-pub fn run_result(profile: Profile, command: List(String)) -> #(Int, String) {
-  let args = run_args(profile, toolchain_reads(), command)
-  case shellout.command("nono", args, profile.workspace, []) {
+/// captured output (SPEC.md §5.3). `reads` are extra single-file read grants
+/// (e.g. a staged write source outside the workspace).
+pub fn run_result(
+  profile: Profile,
+  reads: List(String),
+  command: List(String),
+) -> #(Int, String) {
+  case
+    shellout.command(
+      "nono",
+      run_args(profile, reads, command),
+      profile.workspace,
+      [],
+    )
+  {
     Ok(output) -> #(0, output)
     Error(#(code, output)) -> #(code, output)
   }
@@ -73,7 +91,8 @@ pub fn run_args(
 ) -> List(String) {
   list.flatten([
     ["run", "-s", "--allow", profile.workspace, "--allow-cwd"],
-    reads,
+    toolchain_reads(),
+    read_flags(reads),
     net_flags(profile),
     ["--no-rollback", "--"],
     command,
@@ -103,6 +122,12 @@ pub fn toolchain_reads() -> List(String) {
   }
 }
 
+/// `--read-file` grants for files the sandboxed command may read but not write
+/// (used to feed a staged write whose source lives outside the workspace).
+fn read_flags(reads: List(String)) -> List(String) {
+  list.flat_map(reads, fn(r) { ["--read-file", r] })
+}
+
 /// Validate a generated profile against the installed nono
 /// (`nono profile validate <path>`). Surfaces schema drift loudly instead of
 /// letting `nono run` reject it opaquely. `Ok` if valid; `Error` with nono's
@@ -121,20 +146,17 @@ pub fn validate_profile(path: String) -> Result(Nil, String) {
 pub fn run_in_profile(
   workspace: String,
   profile_path: String,
+  reads: List(String),
   command: List(String),
 ) -> #(Int, String) {
   let args =
     list.flatten([
       [
-        "run",
-        "-s",
-        "--profile",
-        profile_path,
-        "--allow",
-        workspace,
+        "run", "-s", "--profile", profile_path, "--allow", workspace,
         "--allow-cwd",
       ],
       toolchain_reads(),
+      read_flags(reads),
       ["--no-rollback", "--"],
       command,
     ])
@@ -174,6 +196,122 @@ pub fn stop(session_id: String) -> Result(Nil, String) {
     Ok(_) -> Ok(Nil)
     Error(#(_code, message)) -> Error(message)
   }
+}
+
+// --- Capability-group catalog (SPEC.md §7) -------------------------------
+
+/// The nono policy-group catalog for this host. `locked` is set for groups nono
+/// always applies (the `required` denies + the default base), which the human
+/// can't toggle off. Empty if nono is unavailable or its output unparseable, so
+/// the picker degrades to "no groups" rather than erroring. nono already filters
+/// the catalog to the host platform, so no OS filtering is needed here.
+pub fn list_groups() -> List(Group) {
+  let locked = default_group_names()
+  case shellout.command("nono", ["profile", "groups", "--json"], ".", []) {
+    Ok(output) ->
+      case json.parse(crop_to(output, "["), groups_decoder()) {
+        Ok(groups) ->
+          list.map(groups, fn(g) {
+            let #(name, description, platform, required) = g
+            Group(
+              name: name,
+              description: description,
+              platform: platform,
+              locked: required || list.contains(locked, name),
+            )
+          })
+        Error(_) -> []
+      }
+    Error(_) -> []
+  }
+}
+
+/// Names of the groups in nono's `default` profile — always applied, so locked.
+fn default_group_names() -> List(String) {
+  case
+    shellout.command("nono", ["profile", "show", "default", "--json"], ".", [])
+  {
+    Ok(output) ->
+      json.parse(crop_to(output, "{"), default_include_decoder())
+      |> result.unwrap([])
+    Error(_) -> []
+  }
+}
+
+/// nono may print an update banner before its JSON; slice from the first opening
+/// bracket so the payload parses either way.
+fn crop_to(output: String, bracket: String) -> String {
+  string.crop(output, bracket)
+}
+
+fn groups_decoder() -> decode.Decoder(List(#(String, String, String, Bool))) {
+  decode.list({
+    use name <- decode.field("name", decode.string)
+    use description <- decode.field("description", decode.string)
+    use platform <- decode.field("platform", decode.string)
+    use required <- decode.field("required", decode.bool)
+    decode.success(#(name, description, platform, required))
+  })
+}
+
+fn default_include_decoder() -> decode.Decoder(List(String)) {
+  use include <- decode.subfield(
+    ["groups", "include"],
+    decode.list(decode.string),
+  )
+  decode.success(include)
+}
+
+/// The full contents of one group: the paths it grants or denies. Used by the
+/// TUI's group inspector. `Error` if nono is unavailable or the name is unknown.
+pub fn group_detail(name: String) -> Result(GroupDetail, String) {
+  case shellout.command("nono", ["profile", "groups", name, "--json"], ".", []) {
+    Ok(output) ->
+      json.parse(crop_to(output, "{"), group_detail_decoder())
+      |> result.replace_error("could not parse group detail for " <> name)
+    Error(#(_code, message)) -> Error(message)
+  }
+}
+
+fn group_detail_decoder() -> decode.Decoder(GroupDetail) {
+  use name <- decode.field("name", decode.string)
+  use description <- decode.field("description", decode.string)
+  // `allow`/`deny` may be absent or null; wrap in `optional` to tolerate both.
+  use allow <- decode.optional_field("allow", None, decode.optional(allow_decoder()))
+  use deny <- decode.optional_field("deny", None, decode.optional(deny_decoder()))
+  let #(read, write, rw) = option.unwrap(allow, #([], [], []))
+  let deny_paths = option.unwrap(deny, [])
+  let paths =
+    list.flatten([
+      label_paths("read", read),
+      label_paths("rw", rw),
+      label_paths("write", write),
+      label_paths("deny", deny_paths),
+    ])
+  decode.success(GroupDetail(name: name, description: description, paths: paths))
+}
+
+fn allow_decoder() -> decode.Decoder(#(List(String), List(String), List(String))) {
+  use read <- decode.optional_field("read", [], raw_paths())
+  use write <- decode.optional_field("write", [], raw_paths())
+  use rw <- decode.optional_field("readwrite", [], raw_paths())
+  decode.success(#(read, write, rw))
+}
+
+fn deny_decoder() -> decode.Decoder(List(String)) {
+  use access <- decode.optional_field("access", [], raw_paths())
+  decode.success(access)
+}
+
+fn raw_paths() -> decode.Decoder(List(String)) {
+  decode.list({
+    use raw <- decode.field("raw", decode.string)
+    decode.success(raw)
+  })
+}
+
+fn label_paths(access: String, paths: List(String)) -> List(GroupPath) {
+  list.map(paths, fn(p) { GroupPath(access: access, path: p) })
 }
 
 // --- Network audit feed (SPEC.md §7) -------------------------------------

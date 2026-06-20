@@ -12,12 +12,14 @@
 //// The message/fork/events routes (agent loop, SSE) land next (SPEC.md §10).
 
 import bough_core
+import bough_core/nono
 import bough_core/session.{type Entry, type SessionTree, Entry}
 import bough_server/agent
 import bough_server/clock
 import bough_server/control
 import bough_server/engine
 import bough_server/net_profile
+import bough_server/nono_bridge
 import bough_server/provider
 import bough_server/run_store
 import bough_server/session_manager
@@ -58,6 +60,8 @@ pub fn handle_request(req: Request) -> Response {
       )
     ["health"], _ -> json_ok("{\"status\":\"ok\"}")
     ["config"], Get -> config()
+    ["groups"], Get -> groups_catalog()
+    ["groups", name], Get -> group_detail(name)
     ["doc"], _ -> doc()
     ["sessions"], Get -> list_sessions()
     ["session"], Post -> create_session(req)
@@ -68,7 +72,10 @@ pub fn handle_request(req: Request) -> Response {
     ["session", id, "run"], Get -> get_run(id)
     ["session", id, "control"], Post -> control_run(req, id)
     ["session", id, "subagents"], Get -> subagents_of(id)
+    ["session", id, "groups"], Get -> get_session_groups(id)
+    ["session", id, "groups"], Post -> set_session_groups(req, id)
     ["session", id, "fork"], Post -> fork_session(req, id)
+    ["session", id, "graft"], Post -> graft_session(req, id)
     _, _ -> wisp.not_found()
   }
 }
@@ -92,6 +99,94 @@ fn config() -> Response {
       ]),
     ),
   )
+}
+
+// --- Capability groups (SPEC §7) -----------------------------------------
+
+/// The nono policy-group catalog for this host (name, description, locked).
+fn groups_catalog() -> Response {
+  json_ok(json.to_string(json.array(nono_bridge.list_groups(), group_to_json)))
+}
+
+fn group_to_json(g: nono.Group) -> json.Json {
+  json.object([
+    #("name", json.string(g.name)),
+    #("description", json.string(g.description)),
+    #("platform", json.string(g.platform)),
+    #("locked", json.bool(g.locked)),
+  ])
+}
+
+/// The full contents (granted/denied paths) of one group, for the inspector.
+fn group_detail(name: String) -> Response {
+  case nono_bridge.group_detail(name) {
+    Ok(d) ->
+      json_ok(
+        json.to_string(
+          json.object([
+            #("name", json.string(d.name)),
+            #("description", json.string(d.description)),
+            #(
+              "paths",
+              json.array(d.paths, fn(p) {
+                json.object([
+                  #("access", json.string(p.access)),
+                  #("path", json.string(p.path)),
+                ])
+              }),
+            ),
+          ]),
+        ),
+      )
+    Error(_) -> wisp.not_found()
+  }
+}
+
+/// A session's enabled (toggleable) groups.
+fn get_session_groups(id: String) -> Response {
+  case session_manager.load(id) {
+    Ok(tree) ->
+      json_ok(
+        json.to_string(
+          json.object([#("groups", json.array(tree.groups, json.string))]),
+        ),
+      )
+    Error(_) -> wisp.not_found()
+  }
+}
+
+/// Replace a session's enabled groups. Rejects locked/unknown names — only the
+/// toggleable catalog entries may be set.
+fn set_session_groups(req: Request, id: String) -> Response {
+  use body <- wisp.require_json(req)
+  case decode.run(body, groups_req_decoder()) {
+    Error(_) -> wisp.bad_request("expected {\"groups\": [string]}")
+    Ok(names) ->
+      case session_manager.load(id) {
+        Error(_) -> wisp.not_found()
+        Ok(tree) -> {
+          let toggleable =
+            nono_bridge.list_groups()
+            |> list.filter(fn(g) { !g.locked })
+            |> list.map(fn(g) { g.name })
+          case list.all(names, fn(n) { list.contains(toggleable, n) }) {
+            False -> wisp.bad_request("unknown or locked group")
+            True -> {
+              let tree = session.SessionTree(..tree, groups: names)
+              case session_manager.save(tree) {
+                Ok(_) -> json_ok(json.to_string(session.tree_to_json(tree)))
+                Error(_) -> wisp.internal_server_error()
+              }
+            }
+          }
+        }
+      }
+  }
+}
+
+fn groups_req_decoder() -> decode.Decoder(List(String)) {
+  use groups <- decode.field("groups", decode.list(decode.string))
+  decode.success(groups)
 }
 
 // --- Sessions ------------------------------------------------------------
@@ -145,6 +240,7 @@ fn persist_entry(tree: SessionTree, er: EntryReq) -> Response {
       snapshot_ref: None,
       label: None,
       timestamp: clock.now_ms(),
+      grafted_from: None,
     )
   case session_manager.save(session.append(tree, entry)) {
     Ok(_) -> created(json.to_string(session.entry_to_json(entry)))
@@ -182,6 +278,7 @@ fn run_agent(tree: SessionTree, content: String) -> Response {
           engine_config(prov, False, False),
           history,
           content,
+          tree.groups,
         )
       {
         Error(message) -> {
@@ -351,6 +448,9 @@ fn subagents_for(
       "Message queued for subagent " <> target <> "."
     },
     collect: fn(target) { collect_subagent(target) },
+    pending: fn() {
+      list.any(subagents.list(parent_id), fn(s) { s.status == "running" })
+    },
   )
 }
 
@@ -369,9 +469,14 @@ fn spawn_subagent(
 ) -> String {
   let child_id = wisp.random_string(16)
   subagents.add(parent_id, child_id, title)
+  // Subagents share the workspace, so they inherit the parent's enabled groups.
+  let inherited = case session_manager.load(parent_id) {
+    Ok(parent) -> parent.groups
+    Error(_) -> []
+  }
   let child =
     session.append(
-      session.new(child_id, workspace),
+      session.SessionTree(..session.new(child_id, workspace), groups: inherited),
       make_entry(session.User, task, None),
     )
   let _ = session_manager.save(child)
@@ -395,6 +500,7 @@ fn spawn_subagent(
           fn() { inbox_of(child_id) },
           subagents_for(child_id, prov, api_key, model, workspace),
           [],
+          inherited,
         )
       {
         Ok(outcome) -> {
@@ -409,10 +515,35 @@ fn spawn_subagent(
             outcome.context_tokens,
             outcome.net_events,
           )
+          // Push the final output to the parent's inbox BEFORE flipping the
+          // status, so a parent waiting on `pending` never sees the child go
+          // idle without its result already queued.
+          control.put(
+            parent_id,
+            control.Steer(
+              "Subagent \""
+              <> title
+              <> "\" ("
+              <> child_id
+              <> ") finished. Final output:\n"
+              <> outcome.text,
+            ),
+          )
           subagents.set_status(parent_id, child_id, "done")
         }
         Error(message) -> {
           run_store.write(child_id, "error", [], message, 0, [])
+          control.put(
+            parent_id,
+            control.Steer(
+              "Subagent \""
+              <> title
+              <> "\" ("
+              <> child_id
+              <> ") failed: "
+              <> message,
+            ),
+          )
           subagents.set_status(parent_id, child_id, "error")
         }
       }
@@ -421,42 +552,41 @@ fn spawn_subagent(
   <> title
   <> "\" with id "
   <> child_id
-  <> ". It is running concurrently — `tell` it (target="
+  <> ". It runs concurrently and its final output is delivered to you "
+  <> "automatically when it finishes — you do NOT need to block on it. `tell` "
+  <> "it (target="
   <> child_id
-  <> ") to add context, and `collect` it (target="
+  <> ") to add context, or `collect` it (target="
   <> child_id
-  <> ") to wait for and read its result."
+  <> ") to check its current status without waiting."
 }
 
-/// Block until a subagent finishes, then return its result. Capped (~20 min at
-/// 250ms/poll) so a stuck child can't pin the parent forever.
+/// Report a subagent's current status without blocking. A finished child's
+/// final output is pushed to the parent's inbox automatically (see
+/// `spawn_subagent`), so the parent never sits and waits — `collect` is just a
+/// non-blocking status probe.
 fn collect_subagent(child_id: String) -> String {
-  collect_loop(child_id, 0)
-}
-
-fn collect_loop(child_id: String, polls: Int) -> String {
   case run_store.read_status_text(child_id) {
-    Ok(#("done", text)) ->
-      "Subagent " <> child_id <> " finished. Result:\n" <> text
+    Ok(#("done", _)) ->
+      "Subagent "
+      <> child_id
+      <> " has finished; its final output has been delivered to you as a "
+      <> "message."
     Ok(#("error", text)) -> "Subagent " <> child_id <> " failed: " <> text
-    // A live child: keep waiting.
-    Ok(#(_running, _)) -> wait_then_collect(child_id, polls)
-    // No run for this id at all — a bogus/blank target. Fail fast so the
-    // supervisor corrects it instead of blocking on a session that never runs.
+    // Still running: don't block. Its result will arrive on its own.
+    Ok(#(_running, _)) ->
+      "Subagent "
+      <> child_id
+      <> " is still running. You don't need to wait — its final output will be "
+      <> "delivered to you automatically when it finishes. Carry on with other "
+      <> "work, or `tell` it (target="
+      <> child_id
+      <> ") if it needs steering."
+    // No run for this id at all — a bogus/blank target.
     Error(_) ->
       "No subagent with id \""
       <> child_id
       <> "\". Pass the exact id returned by spawn (target=<id>)."
-  }
-}
-
-fn wait_then_collect(child_id: String, polls: Int) -> String {
-  case polls > 4800 {
-    True -> "Subagent " <> child_id <> " did not finish within the time limit."
-    False -> {
-      process.sleep(250)
-      collect_loop(child_id, polls + 1)
-    }
   }
 }
 
@@ -531,6 +661,50 @@ fn fork_decoder() -> decode.Decoder(String) {
   decode.success(entry_id)
 }
 
+/// Reattach the subtree rooted at `section_root` onto `onto` (SPEC.md §4.2). A
+/// graft moves the conversation only — the copies carry no snapshot — so there
+/// is no filesystem restore here, unlike `fork`. The working tree stays as it is
+/// until the next run rebuilds against it.
+fn graft_session(req: Request, id: String) -> Response {
+  use body <- wisp.require_json(req)
+  case decode.run(body, graft_decoder()) {
+    Error(_) ->
+      wisp.bad_request("expected {\"section_root\": string, \"onto\": string}")
+    Ok(#(section_root, onto)) ->
+      case session_manager.load(id) {
+        Error(_) -> wisp.not_found()
+        Ok(tree) ->
+          case
+            session.plan_graft(
+              tree,
+              section_root,
+              onto,
+              wisp.random_string(16),
+              clock.now_ms(),
+            )
+          {
+            Error(_) ->
+              wisp.bad_request(
+                "invalid graft: unknown node, or onto is inside the section",
+              )
+            Ok(graft) -> {
+              let tree = session.apply_graft(tree, graft)
+              case session_manager.save(tree) {
+                Ok(_) -> json_ok(json.to_string(session.tree_to_json(tree)))
+                Error(_) -> wisp.internal_server_error()
+              }
+            }
+          }
+      }
+  }
+}
+
+fn graft_decoder() -> decode.Decoder(#(String, String)) {
+  use section_root <- decode.field("section_root", decode.string)
+  use onto <- decode.field("onto", decode.string)
+  decode.success(#(section_root, onto))
+}
+
 /// Append a completed turn to the tree: each run activity becomes a
 /// display-only `ToolResult` entry (content = step JSON, the shape the TUI
 /// decodes for the live chat), chained in order, ending in the `Assistant` text
@@ -561,6 +735,7 @@ fn append_turn(
       snapshot_ref: snapshot_ref,
       label: None,
       timestamp: clock.now_ms(),
+      grafted_from: None,
     )
   session.append(tree, leaf)
 }
@@ -584,6 +759,7 @@ fn make_entry(
     snapshot_ref: None,
     label: None,
     timestamp: clock.now_ms(),
+    grafted_from: None,
   )
 }
 
@@ -650,6 +826,7 @@ fn launch_run(
               fn() { inbox_of(id) },
               subagents_for(id, prov, api_key, model, tree.project),
               tree.allow_domains,
+              tree.groups,
             )
           {
             Ok(outcome) -> {

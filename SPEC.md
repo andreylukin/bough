@@ -97,6 +97,7 @@ Operations (exposed as API verbs and TUI commands):
 |------|---------|
 | `tree` | Navigate/visualize the tree; jump the leaf to any node. |
 | `fork` | Start a new branch from an earlier user message (edit + resubmit). |
+| `graft` | Reattach a section of the tree onto a different parent (§4.2, longterm). |
 | `clone` | Duplicate the active branch into a new session. |
 | `resume` | Pick a past session for the current project. |
 | `label` | Name a node for navigation. |
@@ -118,6 +119,79 @@ dedup, APFS `clonefile` COW — cheap on macOS).
 > **Open design point:** snapshot granularity (every write-turn vs. on-branch
 > only) and how restore interacts with the user's live working tree need a small
 > prototype. Default to snapshot-per-write-turn, restore-on-branch.
+
+### 4.2 Graft — reattaching sections of the tree (longterm)
+
+`fork` branches *forward* from a point; `graft` is its complement: reattach a
+section of the tree onto a different parent. Uses: lift a run of refactor turns
+off a buggy base, reorder turns, or — once subagents get isolated branches (§5)
+— land a subagent's branch back onto its parent.
+
+**Graft moves the conversation, not the files.** A grafted section carries no
+snapshot; jumping to it inherits the new base's files (the tree already walks up
+to the nearest ancestor snapshot, §4.1). So a graft relocates *intent*, not a
+finished result — the moved turns may describe edits that aren't on disk. The
+agent rebuilds them against the real files on its next turn. A one-line marker is
+injected into the grafted conversation so it doesn't assume that work exists:
+`[grafted — prior files aren't present; current files are the base]`.
+
+This is deliberate: no diffs to replay, no rebase, no merge conflicts. Carrying
+file history would mean rebasing snapshots and resolving conflicts — out of
+scope.
+
+**Storage — graft is more appends, never a mutation**, keeping the JSONL log and
+tamper-evident audit (§6) intact:
+
+- The section's nodes are re-emitted as **new `Entry`s with new ids**, parented
+  onto the target, with **no `snapshotRef`** and a `graftedFrom: id?` pointing at
+  the original (so the UI can show `↪ grafted from <branch>`).
+- **Originals are never deleted.** One graft-event record marks them superseded —
+  a third JSONL record kind beside the meta and entry lines:
+
+  ```json
+  {"op":"graft","id":"g_<rand>","sectionRoot":"<old_id>","onto":"<target_id>",
+   "mapping":{"<old_id>":"<new_id>", ...},"ts":1718000000000}
+  ```
+
+  Undo = drop the new ids and clear the superseded flag; no prior line is edited.
+  The default tree view hides superseded branches; a toggle reveals them.
+
+**Section = subtree** (a node + all descendants). Reject grafting a subtree onto
+its own descendant (cycle).
+
+**Sketch** (`bough_core/session.gleam`, pure — IO lives in the server):
+
+```gleam
+pub type Entry {
+  Entry(
+    // ...existing fields (snapshot_ref stays None on graft copies)...
+    grafted_from: Option(String),
+  )
+}
+
+pub type GraftEvent {
+  GraftEvent(
+    id: String,
+    section_root: String,
+    onto: String,
+    mapping: Dict(String, String),  // old id -> new id
+    timestamp: Int,
+  )
+}
+
+/// Validate (nodes exist, no cycle) and produce the re-parented copies + event.
+/// The server appends them; nothing touches the filesystem.
+pub fn plan_graft(
+  tree: SessionTree,
+  section_root: String,
+  onto: String,
+) -> Result(#(List(Entry), GraftEvent), GraftError)
+```
+
+**UX — in the tree overlay (`t`).** `g` on a node marks the section root and
+enters "pick new parent" mode; navigate to the target and Enter to confirm,
+after a preview ("Graft *<label>* (N descendants) onto *<target>*"). Originals
+dim as superseded. API: `POST /session/:id/graft` `{sectionRoot, onto}`.
 
 ---
 

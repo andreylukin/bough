@@ -114,15 +114,15 @@ pub fn control_round_trip_test() {
 /// one host union into one endpoints array; a bare host stays a plain string.
 pub fn net_profile_unions_paths_test() {
   let j =
-    json.to_string(
-      net_profile.build(
-        [
-          "https://api.foo.com/v1/**", "https://api.foo.com/v2/**",
-          "bare.example.com",
-        ],
-        [],
-      ),
-    )
+    json.to_string(net_profile.build(
+      [
+        "https://api.foo.com/v1/**", "https://api.foo.com/v2/**",
+        "bare.example.com",
+      ],
+      False,
+      [],
+      [],
+    ))
   // Both path globs present under the one host, as endpoint rules.
   assert string.contains(j, "/v1/**")
   assert string.contains(j, "/v2/**")
@@ -141,7 +141,12 @@ pub fn net_profile_unions_paths_test() {
 /// the profile (SPEC §6.4).
 pub fn net_profile_credentials_test() {
   let j =
-    json.to_string(net_profile.build([], [#("github_token", "GITHUB_TOKEN")]))
+    json.to_string(net_profile.build(
+      [],
+      True,
+      [],
+      [#("github_token", "GITHUB_TOKEN")],
+    ))
   assert string.contains(j, "\"env_credentials\"")
   assert string.contains(j, "\"github_token\":\"GITHUB_TOKEN\"")
 }
@@ -157,6 +162,25 @@ pub fn parse_credentials_test() {
       #("anthropic_api_key", "ANTHROPIC_API_KEY"),
     ]
   assert net_profile.parse_credentials("") == []
+}
+
+/// Every base profile grants the git_config group (so git steps can read the
+/// user's config). With `block`, the network section denies all outbound; the
+/// allowlist form is reserved for the net-gate-on path.
+pub fn net_profile_base_grants_test() {
+  let blocked = json.to_string(net_profile.build([], True, [], []))
+  assert string.contains(blocked, "\"git_config\"")
+  assert string.contains(blocked, "\"block\":true")
+
+  let open = json.to_string(net_profile.build([], False, [], []))
+  assert string.contains(open, "\"git_config\"")
+  assert string.contains(open, "allow_domain")
+
+  // Session-enabled groups layer on top of the always-on git_config.
+  let with_groups =
+    json.to_string(net_profile.build([], True, ["user_caches_macos"], []))
+  assert string.contains(with_groups, "\"git_config\"")
+  assert string.contains(with_groups, "\"user_caches_macos\"")
 }
 
 fn count_occurrences(haystack: String, needle: String) -> Int {

@@ -72,13 +72,16 @@ pub type Config {
 
 /// The subagent operations the engine delegates to the caller (the router wires
 /// them to real sessions). Spawning is async — `spawn` returns the new child's
-/// id immediately; `tell` sends a running child a message; `collect` waits for a
-/// child and returns its result.
+/// id immediately; `tell` sends a running child a message; `collect` reports a
+/// child's status without blocking (its final output is delivered to the parent
+/// automatically when it finishes); `pending` is true while any spawned child is
+/// still running, so the harness can hold the turn open until they all report.
 pub type Subagents {
   Subagents(
     spawn: fn(String, String) -> String,
     tell: fn(String, String) -> String,
     collect: fn(String) -> String,
+    pending: fn() -> Bool,
   )
 }
 
@@ -89,6 +92,7 @@ pub fn no_subagents() -> Subagents {
     spawn: fn(_, _) { unavailable },
     tell: fn(_, _) { unavailable },
     collect: fn(_) { unavailable },
+    pending: fn() { False },
   )
 }
 
@@ -145,6 +149,8 @@ type State {
     instructions: Option(String),
     // The network allowlist for sandboxed commands; grows as hosts are approved.
     net_allow: List(String),
+    // Session-enabled nono capability groups, layered into the run's profile.
+    groups: List(String),
     // Where the generated nono network profile for this run is written.
     net_profile_path: String,
     // activities newest-first; reversed on emit/return
@@ -171,6 +177,7 @@ pub fn run_streaming(
   inbox: fn() -> Option(String),
   subagents: Subagents,
   net_allow: List(String),
+  groups: List(String),
 ) -> Result(Outcome, String) {
   let dir = bb_dir()
   let state =
@@ -194,6 +201,7 @@ pub fn run_streaming(
       steps_done: 0,
       instructions: read_agents_md(workspace),
       net_allow: net_allow,
+      groups: groups,
       net_profile_path: dir <> "/net.json",
       activities: [],
       net_events: [],
@@ -217,6 +225,7 @@ pub fn run(
   config: Config,
   history: List(#(String, String)),
   user_prompt: String,
+  groups: List(String),
 ) -> Result(Outcome, String) {
   run_streaming(
     api_key,
@@ -230,6 +239,7 @@ pub fn run(
     fn() { None },
     no_subagents(),
     [],
+    groups,
   )
 }
 
@@ -253,13 +263,16 @@ fn run_rounds(state: State, round: Int) -> #(State, Int) {
             False -> {
               // Echo the assistant turn verbatim (carries the tool_use block).
               let state = push_message(state, reply.assistant)
-              let state = case string.trim(reply.text) {
+              let prose = string.trim(reply.text)
+              let state = case prose {
                 "" -> state
                 p -> emit_activity(state, StepPlan(p))
               }
               case find_run_steps(reply.tool_uses) {
-                // No tool call → a conversational reply ends the turn.
-                None -> #(state, round)
+                // No tool call → a conversational reply ends the turn, unless
+                // subagents it spawned are still running (then hold and fold in
+                // their results so it can synthesize).
+                None -> settle_subagents(state, round)
                 Some(tu) ->
                   case tool_steps.parse(tu.input) {
                     Error(msg) -> {
@@ -280,7 +293,16 @@ fn run_rounds(state: State, round: Int) -> #(State, Int) {
                       let state = update_check(state, parsed.check)
                       case parsed.done && list.is_empty(parsed.steps) {
                         True -> handle_done(state, round, tu.id)
-                        False -> run_steps_round(state, round, parsed, tu.id)
+                        False -> {
+                          // Every executed run_steps call is its own plan; mark
+                          // the boundary even when the supervisor offered no
+                          // prose this round, so the plan pane can separate them.
+                          let state = case prose {
+                            "" -> emit_activity(state, StepPlan(""))
+                            _ -> state
+                          }
+                          run_steps_round(state, round, parsed, tu.id)
+                        }
                       }
                     }
                   }
@@ -380,11 +402,12 @@ fn execute_plan(
 
 fn handle_done(state: State, round: Int, tool_id: String) -> #(State, Int) {
   case state.check_ok && state.reviewed {
-    True -> #(emit_activity(state, StepReview("accepted → DONE")), round)
+    True ->
+      settle_subagents(emit_activity(state, StepReview("accepted → DONE")), round)
     False ->
       case state.check == None && state.steps_done == 0 {
         // done used loosely on a non-task turn — just a reply.
-        True -> #(state, round)
+        True -> settle_subagents(state, round)
         False -> {
           let why = case state.check_ok {
             False -> "the check has not passed (or was never committed). "
@@ -567,7 +590,7 @@ fn exec_run_net(state: State, cmd: String, tries: Int) -> #(State, Exec) {
     True -> nono_bridge.session_watermark(command)
     False -> ""
   }
-  let #(code, out) = sandboxed(state, command)
+  let #(code, out) = sandboxed(state, command, [])
   let state = bump(state)
   // One audit read serves both: record this run's egress for the network dock,
   // and derive any denials to gate on. Off the net gate there is no audit
@@ -702,8 +725,8 @@ fn net_suggestion(denial: nono_bridge.Denial) -> String {
 
 fn write_file(state: State, path: String, content: String) -> #(State, Exec) {
   let resolved = resolve(state.workspace, path)
-  let exec = case simplifile.write(resolved, content) {
-    Ok(_) ->
+  let exec = case sandboxed_write(state, resolved, content) {
+    #(0, _) ->
       Exec(
         0,
         "wrote "
@@ -712,7 +735,8 @@ fn write_file(state: State, path: String, content: String) -> #(State, Exec) {
           <> int.to_string(string.length(content))
           <> " chars)",
       )
-    Error(e) -> Exec(1, "write failed: " <> string.inspect(e))
+    #(code, out) ->
+      Exec(code, "write failed (exit " <> int.to_string(code) <> "): " <> out)
   }
   #(bump(state), exec)
 }
@@ -732,13 +756,21 @@ fn edit_file(
         0 -> Exec(1, "edit: search text not found in " <> resolved)
         1 ->
           case
-            simplifile.write(
+            sandboxed_write(
+              state,
               resolved,
               string.replace(contents, search, replace),
             )
           {
-            Ok(_) -> Exec(0, "edited " <> resolved <> " (1 replacement)")
-            Error(e) -> Exec(1, "edit: write failed: " <> string.inspect(e))
+            #(0, _) -> Exec(0, "edited " <> resolved <> " (1 replacement)")
+            #(code, out) ->
+              Exec(
+                code,
+                "edit: write failed (exit "
+                  <> int.to_string(code)
+                  <> "): "
+                  <> out,
+              )
           }
         n ->
           Exec(
@@ -769,14 +801,14 @@ fn read_file(
       <> "p'"
     None -> "cat -n -- '" <> resolved <> "'"
   }
-  let #(code, out) = sandboxed(state, ["sh", "-c", cmd])
+  let #(code, out) = sandboxed(state, ["sh", "-c", cmd], [])
   #(bump(state), Exec(code, out))
 }
 
 fn grep(state: State, pattern: String) -> #(State, Exec) {
   let escaped = string.replace(pattern, "'", "'\\''")
   let cmd = "grep -rnI -- '" <> escaped <> "' . | head -n 200 || true"
-  let #(code, out) = sandboxed(state, ["sh", "-c", cmd])
+  let #(code, out) = sandboxed(state, ["sh", "-c", cmd], [])
   #(bump(state), Exec(code, out))
 }
 
@@ -793,7 +825,7 @@ fn run_check(state: State, fb_rev: List(String)) -> #(State, List(String)) {
       case budget_left(state) {
         False -> #(state, fb_rev)
         True -> {
-          let #(code, out) = sandboxed(state, ["sh", "-c", check])
+          let #(code, out) = sandboxed(state, ["sh", "-c", check], [])
           let state = State(..bump(state), check_ok: code == 0)
           let dig = digest.digest(out, 1000)
           let state = emit_activity(state, StepCheck(code == 0, dig))
@@ -892,43 +924,68 @@ fn read_agents_md(workspace: String) -> Option(String) {
   |> option.from_result
 }
 
-/// Run a command in the sandbox. With the net gate off, the network is blocked
-/// entirely (§5.2); with it on, the run uses a generated nono profile that is
-/// default-deny against the session allowlist (§7), so a denied request can be
-/// detected and surfaced for approval.
-fn sandboxed(state: State, command: List(String)) -> #(Int, String) {
-  case state.config.net_gate {
-    False ->
+/// Run a command in the sandbox under the run's nono profile (§7). The profile
+/// always grants read-only git config (so git steps don't abort, §5.6) and sets
+/// the network posture: blocked entirely with the net gate off (§5.2), or
+/// default-deny against the session allowlist with it on, so a denied request
+/// can be detected and surfaced for approval.
+fn sandboxed(
+  state: State,
+  command: List(String),
+  reads: List(String),
+) -> #(Int, String) {
+  let block = !state.config.net_gate
+  case write_net_profile(state, block) {
+    Ok(path) -> nono_bridge.run_in_profile(state.workspace, path, reads, command)
+    // If the profile can't be written or doesn't validate, fail safe: block the
+    // network rather than run under a profile nono can't parse.
+    Error(_) ->
       nono_bridge.run_result(
         nono.Profile(state.workspace, [], True, False),
+        reads,
         command,
       )
-    True ->
-      case write_net_profile(state) {
-        Ok(path) -> nono_bridge.run_in_profile(state.workspace, path, command)
-        // If the profile can't be written or doesn't validate, fail safe:
-        // block the network rather than run under a profile nono can't parse.
-        Error(_) ->
-          nono_bridge.run_result(
-            nono.Profile(state.workspace, [], True, False),
-            command,
-          )
-      }
   }
 }
 
-/// Write the session's leash profile, then validate it against the installed
-/// nono so a malformed/drifted profile is caught here rather than failing the
-/// command opaquely (SPEC §6, §7). Either failure makes the caller block the net.
-fn write_net_profile(state: State) -> Result(String, Nil) {
+/// Write the run's nono profile, then validate it against the installed nono so
+/// a malformed/drifted profile is caught here rather than failing the command
+/// opaquely (SPEC §6, §7). Either failure makes the caller block the net.
+fn write_net_profile(state: State, block: Bool) -> Result(String, Nil) {
   use path <- result.try(net_profile.write(
     state.net_profile_path,
     state.net_allow,
+    block,
+    state.groups,
     state.config.net_credentials,
   ))
   nono_bridge.validate_profile(path)
   |> result.replace(path)
   |> result.replace_error(Nil)
+}
+
+/// Write `content` to `dest` through the nono sandbox, so the workspace boundary
+/// is kernel-enforced — a path that escapes the workspace (including via a
+/// symlink) is denied, matching how run/read/grep are confined. The content is
+/// staged in bough's own dir and granted to the sandbox read-only, so it never
+/// passes through argv (no length limit, no escaping of the bytes).
+fn sandboxed_write(state: State, dest: String, content: String) -> #(Int, String) {
+  let _ = simplifile.create_directory_all(state.bb_dir)
+  let stage = state.bb_dir <> "/stage"
+  case simplifile.write(stage, content) {
+    Error(e) -> #(1, "could not stage write: " <> string.inspect(e))
+    Ok(_) -> {
+      let cmd = "cat -- " <> shq(stage) <> " > " <> shq(dest)
+      let result = sandboxed(state, ["sh", "-c", cmd], [stage])
+      let _ = simplifile.delete(stage)
+      result
+    }
+  }
+}
+
+/// Single-quote a path for `sh -c`, escaping any embedded single quotes.
+fn shq(s: String) -> String {
+  "'" <> string.replace(s, "'", "'\\''") <> "'"
 }
 
 fn budget_left(state: State) -> Bool {
@@ -997,6 +1054,43 @@ fn emit_activity(state: State, activity: Activity) -> State {
 
 fn notice(state: State, text: String) -> State {
   emit_activity(state, StepText("⚠ " <> text))
+}
+
+/// The turn is about to end. If subagents the supervisor spawned are still
+/// running, don't finish — wait for the next one to deliver its result, fold it
+/// into the conversation, and let the supervisor run again so it can synthesize.
+/// Ends only once every spawned subagent has reported. This is what lets the
+/// supervisor `spawn` and move on instead of sitting in a blocking `collect`.
+fn settle_subagents(state: State, round: Int) -> #(State, Int) {
+  case state.subagents.pending() {
+    False -> #(state, round)
+    True ->
+      wait_for_subagent(
+        emit_activity(state, StepText("… waiting for subagents to report")),
+        round,
+      )
+  }
+}
+
+fn wait_for_subagent(state: State, round: Int) -> #(State, Int) {
+  case state.inbox() {
+    // A subagent result (or a human steer) arrived — fold it in and let the
+    // supervisor continue so it can act on it.
+    Some(msg) -> {
+      let state = emit_activity(state, StepText("⟵ subagent: " <> msg))
+      let state = push_message(state, provider.user_text(msg))
+      run_rounds(state, round + 1)
+    }
+    // Nothing yet. Keep waiting while a child is still working; otherwise end.
+    None ->
+      case state.subagents.pending() {
+        True -> {
+          process.sleep(250)
+          wait_for_subagent(state, round)
+        }
+        False -> #(state, round)
+      }
+  }
 }
 
 /// Inject a pending human message into the conversation (echoed as an activity),

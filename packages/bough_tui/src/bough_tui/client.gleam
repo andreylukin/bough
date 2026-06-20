@@ -2,12 +2,14 @@
 //// server (SPEC.md §3, §8); these calls run inside shore effects so the UI
 //// stays responsive while the agent works.
 
+import gleam/dict
 import gleam/dynamic/decode
 import gleam/http.{Post}
 import gleam/http/request
 import gleam/http/response
 import gleam/httpc
 import gleam/json
+import gleam/list
 import gleam/option
 import gleam/result
 import gleam/string
@@ -82,13 +84,31 @@ pub type Subagent {
   Subagent(id: String, title: String, status: String)
 }
 
-/// One node of a session tree.
+/// One nono policy group in the capability picker. `locked` groups are always
+/// applied (required denies + the default base) and can't be toggled off.
+pub type Group {
+  Group(name: String, description: String, platform: String, locked: Bool)
+}
+
+/// One path a group governs; `access` is "read"/"write"/"rw"/"deny".
+pub type GroupPath {
+  GroupPath(access: String, path: String)
+}
+
+/// A group's full contents, for the inspector overlay.
+pub type GroupDetail {
+  GroupDetail(name: String, description: String, paths: List(GroupPath))
+}
+
+/// One node of a session tree. `grafted_from` is the original node id when this
+/// is a graft copy (empty otherwise), for rendering graft provenance (§4.2).
 pub type TreeEntry {
   TreeEntry(
     id: String,
     parent_id: String,
     role: String,
     content: String,
+    grafted_from: String,
   )
 }
 
@@ -98,6 +118,10 @@ pub type Tree {
     project: String,
     active_leaf: String,
     entries: List(TreeEntry),
+    /// Original ids superseded by grafts — hidden in the default tree view.
+    superseded: List(String),
+    /// Capability groups enabled for this session (restores the picker state).
+    groups: List(String),
   )
 }
 
@@ -139,6 +163,92 @@ fn subagent_decoder() -> decode.Decoder(Subagent) {
   decode.success(Subagent(id:, title:, status:))
 }
 
+/// GET `/groups`; the nono policy-group catalog for this host.
+pub fn get_groups(base: String) -> Result(List(Group), String) {
+  use req <- result.try(
+    request.to(base <> "/groups") |> result.replace_error("invalid server URL"),
+  )
+  case httpc.send(req) {
+    Error(err) -> Error("cannot reach server: " <> string.inspect(err))
+    Ok(response.Response(status: 200, body: body, ..)) ->
+      json.parse(body, decode.list(group_decoder()))
+      |> result.replace_error("bad groups response")
+    Ok(response.Response(status: code, ..)) ->
+      Error("server error " <> string.inspect(code))
+  }
+}
+
+fn group_decoder() -> decode.Decoder(Group) {
+  use name <- decode.field("name", decode.string)
+  use description <- decode.field("description", decode.string)
+  use platform <- decode.field("platform", decode.string)
+  use locked <- decode.field("locked", decode.bool)
+  decode.success(Group(name:, description:, platform:, locked:))
+}
+
+/// GET `/groups/:name`; the full contents (granted/denied paths) of one group.
+pub fn get_group(base: String, name: String) -> Result(GroupDetail, String) {
+  use req <- result.try(
+    request.to(base <> "/groups/" <> name)
+    |> result.replace_error("invalid server URL"),
+  )
+  case httpc.send(req) {
+    Error(err) -> Error("cannot reach server: " <> string.inspect(err))
+    Ok(response.Response(status: 200, body: body, ..)) ->
+      json.parse(body, group_detail_decoder())
+      |> result.replace_error("bad group-detail response")
+    Ok(response.Response(status: code, ..)) ->
+      Error("server error " <> string.inspect(code))
+  }
+}
+
+fn group_detail_decoder() -> decode.Decoder(GroupDetail) {
+  use name <- decode.field("name", decode.string)
+  use description <- decode.field("description", decode.string)
+  use paths <- decode.field("paths", decode.list(group_path_decoder()))
+  decode.success(GroupDetail(name:, description:, paths:))
+}
+
+fn group_path_decoder() -> decode.Decoder(GroupPath) {
+  use access <- decode.field("access", decode.string)
+  use path <- decode.field("path", decode.string)
+  decode.success(GroupPath(access:, path:))
+}
+
+/// GET `/session/:id/groups`; the session's enabled (toggleable) groups.
+pub fn get_session_groups(base: String, id: String) -> Result(List(String), String) {
+  use req <- result.try(
+    request.to(base <> "/session/" <> id <> "/groups")
+    |> result.replace_error("invalid server URL"),
+  )
+  case httpc.send(req) {
+    Error(err) -> Error("cannot reach server: " <> string.inspect(err))
+    Ok(response.Response(status: 200, body: body, ..)) ->
+      json.parse(body, groups_field_decoder())
+      |> result.replace_error("bad session-groups response")
+    Ok(response.Response(status: code, ..)) ->
+      Error("server error " <> string.inspect(code))
+  }
+}
+
+fn groups_field_decoder() -> decode.Decoder(List(String)) {
+  use groups <- decode.field("groups", decode.list(decode.string))
+  decode.success(groups)
+}
+
+/// POST `/session/:id/groups`; replace the session's enabled groups.
+pub fn set_session_groups(
+  base: String,
+  id: String,
+  names: List(String),
+) -> Result(Nil, String) {
+  let body =
+    json.to_string(json.object([#("groups", json.array(names, json.string))]))
+  post(base, "/session/" <> id <> "/groups", body)
+  |> describe
+  |> result.map(fn(_) { Nil })
+}
+
 /// GET `/session/:id`; the full tree.
 pub fn get_session(base: String, id: String) -> Result(Tree, String) {
   use req <- result.try(
@@ -164,6 +274,24 @@ pub fn fork(base: String, id: String, entry_id: String) -> Result(Tree, String) 
   |> result.replace_error("bad fork response")
 }
 
+/// POST `/session/:id/graft`; reattach the subtree at `section_root` onto `onto`
+/// (§4.2), returning the new tree.
+pub fn graft(
+  base: String,
+  id: String,
+  section_root: String,
+  onto: String,
+) -> Result(Tree, String) {
+  let body =
+    json.to_string(json.object([
+      #("section_root", json.string(section_root)),
+      #("onto", json.string(onto)),
+    ]))
+  use resp <- result.try(post(base, "/session/" <> id <> "/graft", body) |> describe)
+  json.parse(resp, tree_decoder())
+  |> result.replace_error("bad graft response")
+}
+
 fn summary_decoder() -> decode.Decoder(Summary) {
   use id <- decode.field("id", decode.string)
   use project <- decode.field("project", decode.string)
@@ -178,12 +306,30 @@ fn tree_decoder() -> decode.Decoder(Tree) {
   use project <- decode.field("project", decode.string)
   use active_leaf <- decode.field("active_leaf", decode.optional(decode.string))
   use entries <- decode.field("entries", decode.list(tree_entry_decoder()))
+  use superseded <- decode.optional_field(
+    "grafts",
+    [],
+    decode.list(graft_superseded_decoder()),
+  )
+  use groups <- decode.optional_field("groups", [], decode.list(decode.string))
   decode.success(Tree(
     id:,
     project:,
     active_leaf: option.unwrap(active_leaf, ""),
     entries:,
+    superseded: list.flatten(superseded),
+    groups:,
   ))
+}
+
+/// The superseded (original) ids contributed by one graft record: its mapping
+/// keys.
+fn graft_superseded_decoder() -> decode.Decoder(List(String)) {
+  use mapping <- decode.field(
+    "mapping",
+    decode.dict(decode.string, decode.string),
+  )
+  decode.success(dict.keys(mapping))
 }
 
 fn tree_entry_decoder() -> decode.Decoder(TreeEntry) {
@@ -191,11 +337,17 @@ fn tree_entry_decoder() -> decode.Decoder(TreeEntry) {
   use parent_id <- decode.field("parent_id", decode.optional(decode.string))
   use role <- decode.field("role", decode.string)
   use content <- decode.field("content", decode.string)
+  use grafted_from <- decode.optional_field(
+    "grafted_from",
+    option.None,
+    decode.optional(decode.string),
+  )
   decode.success(TreeEntry(
     id:,
     parent_id: option.unwrap(parent_id, ""),
     role:,
     content:,
+    grafted_from: option.unwrap(grafted_from, ""),
   ))
 }
 

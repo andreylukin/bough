@@ -63,3 +63,20 @@ pub fn default_profile(workspace: String, allow: List(String)) -> Profile {
     rollback: True,
   )
 }
+
+/// A nono policy group from the catalog (SPEC.md §7). `locked` is true for the
+/// groups nono always applies (the `required` denies + the default base) — the
+/// human can't turn those off; the rest are opt-in capability grants.
+pub type Group {
+  Group(name: String, description: String, platform: String, locked: Bool)
+}
+
+/// One path a group governs. `access` is "read" / "write" / "rw" / "deny".
+pub type GroupPath {
+  GroupPath(access: String, path: String)
+}
+
+/// A group's full contents: the paths it grants (or denies), for the inspector.
+pub type GroupDetail {
+  GroupDetail(name: String, description: String, paths: List(GroupPath))
+}

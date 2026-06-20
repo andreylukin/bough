@@ -6,9 +6,11 @@
 //// session supervision and the agent loop land next (SPEC.md §10).
 
 import bough_server/router
+import envoy
 import gleam/erlang/process
 import gleam/int
 import gleam/io
+import gleam/result
 import mist
 import wisp
 import wisp/wisp_mist
@@ -16,7 +18,11 @@ import wisp/wisp_mist
 const default_port = 4096
 
 pub fn main() -> Nil {
-  serve(default_port)
+  let port =
+    envoy.get("BOUGH_PORT")
+    |> result.try(int.parse)
+    |> result.unwrap(default_port)
+  serve(port)
 }
 
 pub fn serve(port: Int) -> Nil {

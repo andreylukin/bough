@@ -1,5 +1,11 @@
-//// Generate a nono profile JSON from the session's network allow rules
-//// (SPEC §7). Each rule is either a bare host (`api.foo.com` — a CONNECT
+//// Generate the run's nono profile JSON (SPEC §7). This is the single base
+//// profile every sandboxed step runs under: it always grants read-only access
+//// to the user's git config (the `git_config` policy group — without it git
+//// aborts with exit 128, since the config lives outside the workspace) and
+//// carries the network posture, either blocked outright or limited to the
+//// session's allow rules.
+////
+//// Each network rule is either a bare host (`api.foo.com` — a CONNECT
 //// tunnel, all paths) or a URL path-glob (`https://api.foo.com/v1/**` — an L7
 //// endpoint rule). Rules are grouped by host so multiple path rules for one
 //// host **union** (nono's CLI allowlist is last-wins per host; a profile's
@@ -15,15 +21,24 @@ import gleam/string
 import simplifile
 
 /// Write the profile for `rules` (and any injected `credentials`) to `path`,
-/// returning it. Errors are non-fatal to the caller (it falls back to blocking
-/// the run).
+/// returning it. `block` denies the network entirely (net gate off); otherwise
+/// it's limited to `rules`. `groups` are the session's enabled capability groups,
+/// layered on the always-on `git_config`. Errors are non-fatal to the caller (it
+/// falls back to blocking the run).
 pub fn write(
   path: String,
   rules: List(String),
+  block: Bool,
+  groups: List(String),
   credentials: List(#(String, String)),
 ) -> Result(String, Nil) {
   let _ = simplifile.create_directory_all(dirname(path))
-  case simplifile.write(path, json.to_string(build(rules, credentials))) {
+  case
+    simplifile.write(
+      path,
+      json.to_string(build(rules, block, groups, credentials)),
+    )
+  {
     Ok(_) -> Ok(path)
     Error(_) -> Error(Nil)
   }
@@ -34,43 +49,51 @@ pub fn write(
 /// audit) when it is; otherwise the network would be silently unrestricted.
 const sentinel = "bough.sentinel.invalid"
 
-/// Pure: the profile JSON for a set of allow rules and injected credentials.
-/// Carries the documented nono profile shape — versioned `meta`, a `groups`
-/// include for git's config/credential helpers (so a sandboxed `git` works),
-/// the network allowlist, and an optional `env_credentials` map (SPEC §6.4).
+/// Pure: the base profile JSON. Carries the documented nono shape — versioned
+/// `meta`, a `groups` include (always `git_config`, plus the session's enabled
+/// `groups`), the network posture (`block` or the allowlist), and an optional
+/// `env_credentials` map (SPEC §6.4).
 pub fn build(
   rules: List(String),
+  block: Bool,
+  groups: List(String),
   credentials: List(#(String, String)),
 ) -> json.Json {
+  let include =
+    ["git_config", ..groups]
+    |> list.unique
   let base = [
     #(
       "meta",
       json.object([
-        #("name", json.string("bough-net")),
+        #("name", json.string("bough")),
         #("version", json.string("1.0.0")),
       ]),
     ),
-    // nono's documented group: grants git its config + credential-helper access
-    // inside the sandbox (without it a sandboxed `git` can't read ~/.gitconfig).
-    #(
-      "groups",
-      json.object([#("include", json.array(["git_config"], json.string))]),
-    ),
-    #(
-      "network",
-      json.object([
-        #(
-          "allow_domain",
-          json.preprocessed_array([json.string(sentinel), ..entries(rules)]),
-        ),
-      ]),
-    ),
+    #("groups", json.object([#("include", json.array(include, json.string))])),
+    #("network", network(rules, block)),
   ]
   json.object(case credentials {
     [] -> base
     creds ->
       list.append(base, [#("env_credentials", credentials_object(creds))])
   })
+}
+
+/// The network section: blocked outright, or default-deny against the allow
+/// rules (the sentinel keeps the allowlist non-empty so filtering engages even
+/// when no host is approved yet).
+fn network(rules: List(String), block: Bool) -> json.Json {
+  case block {
+    True -> json.object([#("block", json.bool(True))])
+    False ->
+      json.object([
+        #(
+          "allow_domain",
+          json.preprocessed_array([json.string(sentinel), ..entries(rules)]),
+        ),
+      ])
+  }
 }
 
 /// `env_credentials` maps a credential name to the env var nono reads (outside

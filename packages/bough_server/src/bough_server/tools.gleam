@@ -82,7 +82,7 @@ pub fn run_steps_schema() -> json.Json {
         #("range", str("Optional line range like \"10-40\" (action=read).")),
         #("pattern", str("Search pattern; recursive, line-numbered (action=grep).")),
         #("task", str("Self-contained instructions for a subagent (action=spawn). Spawning is asynchronous: the subagent runs concurrently and the step returns its id.")),
-        #("target", str("The subagent id (returned by an earlier spawn) to message or wait for (action=tell/collect).")),
+        #("target", str("The subagent id (returned by an earlier spawn) to message (action=tell) or check the status of (action=collect). collect does NOT block — a finished subagent's output is delivered to you automatically.")),
         #("message", str("Context, info, or a correction to send the target subagent (action=tell). Delivered at its next round.")),
       ])),
       #("required", json.array(["action", "title"], json.string)),

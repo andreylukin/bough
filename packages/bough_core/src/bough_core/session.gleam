@@ -9,6 +9,7 @@
 //// This module is pure: it (de)serializes but performs no IO. The server owns
 //// id generation, timestamps, and disk access.
 
+import gleam/dict.{type Dict}
 import gleam/dynamic/decode
 import gleam/json
 import gleam/list
@@ -28,6 +29,10 @@ pub type Role {
 /// `snapshot_ref`, when present, points at a nono rollback snapshot captured
 /// for this node — that is what lets a fork restore the filesystem, not just
 /// the chat (SPEC.md §4.1).
+///
+/// `grafted_from`, when present, marks this node as a graft copy and points at
+/// the original it was copied from (SPEC.md §4.2). Graft copies carry no
+/// `snapshot_ref`: a graft moves the conversation, not the files.
 pub type Entry {
   Entry(
     id: String,
@@ -37,6 +42,7 @@ pub type Entry {
     snapshot_ref: Option(String),
     label: Option(String),
     timestamp: Int,
+    grafted_from: Option(String),
   )
 }
 
@@ -49,6 +55,13 @@ pub type SessionTree {
     /// Hosts the human has approved for the agent's sandboxed commands — the
     /// network allowlist, which grows as requests are approved (SPEC.md §7).
     allow_domains: List(String),
+    /// nono capability groups the human has enabled for this session, layered
+    /// into the sandbox profile on top of the always-on base (SPEC.md §7).
+    groups: List(String),
+    /// The graft operations applied to this tree, newest first (SPEC.md §4.2).
+    /// Each records which original nodes it superseded; that's what marks them
+    /// hidden in the default view without ever deleting a line.
+    grafts: List(GraftEvent),
   )
 }
 
@@ -59,6 +72,8 @@ pub fn new(id: String, project: String) -> SessionTree {
     entries: [],
     active_leaf: None,
     allow_domains: [],
+    groups: [],
+    grafts: [],
   )
 }
 
@@ -130,6 +145,189 @@ pub fn nearest_snapshot(tree: SessionTree, id: String) -> Option(String) {
   }
 }
 
+// --- Graft (SPEC.md §4.2) ------------------------------------------------
+
+/// A graft moves the conversation, not the files: the agent rebuilds any work
+/// against the real files on its next turn, so this marker is injected ahead of
+/// the moved turns to stop it assuming that work is already present.
+pub const graft_marker = "[grafted — prior files aren't present; current files are the base]"
+
+/// One graft operation, persisted as its own JSONL record (not an `Entry`).
+/// `mapping` is original id → new (copy) id; its keys are the superseded nodes.
+pub type GraftEvent {
+  GraftEvent(
+    id: String,
+    section_root: String,
+    onto: String,
+    mapping: Dict(String, String),
+    timestamp: Int,
+  )
+}
+
+pub type GraftError {
+  /// `section_root` or `onto` is not a node in the tree.
+  GraftNodeNotFound(String)
+  /// `onto` is the section itself or one of its descendants — would cycle.
+  GraftCycle
+}
+
+/// The product of planning a graft: the new entries to append (the marker
+/// followed by the re-parented copies, parent-first), the event to record, and
+/// the leaf to move to.
+pub type Graft {
+  Graft(entries: List(Entry), event: GraftEvent, new_leaf: String)
+}
+
+/// The original ids superseded by grafts — hidden from the default tree view.
+pub fn superseded_ids(tree: SessionTree) -> List(String) {
+  list.flat_map(tree.grafts, fn(g) { dict.keys(g.mapping) })
+}
+
+/// Plan a graft of the subtree rooted at `section_root` onto `onto`: validate it,
+/// then produce copies of the section re-parented under `onto` (via an injected
+/// marker), each stamped with `grafted_from` and carrying no snapshot. Pure —
+/// the caller supplies a fresh, unique `salt` (the server uses a random string)
+/// that prefixes every generated id, plus the timestamp (`now`) — and applies
+/// the result with `apply_graft`. Originals are left untouched; the returned
+/// `GraftEvent` is what marks them superseded.
+pub fn plan_graft(
+  tree: SessionTree,
+  section_root: String,
+  onto: String,
+  salt: String,
+  now: Int,
+) -> Result(Graft, GraftError) {
+  use _ <- result.try(
+    get(tree, section_root) |> option.to_result(GraftNodeNotFound(section_root)),
+  )
+  use _ <- result.try(
+    get(tree, onto) |> option.to_result(GraftNodeNotFound(onto)),
+  )
+  let section = subtree(tree, section_root)
+  case list.any(section, fn(e) { e.id == onto }) {
+    True -> Error(GraftCycle)
+    False -> {
+      // A node's copy id is the salt-prefixed original; the salt is fresh per
+      // graft, so copies are unique even when re-grafting a graft.
+      let new_id = fn(id) { salt <> "-" <> id }
+      let marker_id = salt <> "-marker"
+      let mapping =
+        list.fold(section, dict.new(), fn(acc, e) {
+          dict.insert(acc, e.id, new_id(e.id))
+        })
+      let copies =
+        list.map(section, fn(e) {
+          let parent = case e.id == section_root {
+            True -> Some(marker_id)
+            False -> Some(new_id(option.unwrap(e.parent_id, section_root)))
+          }
+          Entry(
+            id: new_id(e.id),
+            parent_id: parent,
+            role: e.role,
+            content: e.content,
+            snapshot_ref: None,
+            label: e.label,
+            timestamp: e.timestamp,
+            grafted_from: Some(e.id),
+          )
+        })
+      let marker =
+        Entry(
+          id: marker_id,
+          parent_id: Some(onto),
+          role: User,
+          content: graft_marker,
+          snapshot_ref: None,
+          label: None,
+          timestamp: now,
+          grafted_from: None,
+        )
+      let event =
+        GraftEvent(
+          id: salt <> "-graft",
+          section_root: section_root,
+          onto: onto,
+          mapping: mapping,
+          timestamp: now,
+        )
+      Ok(Graft(
+        entries: [marker, ..copies],
+        event: event,
+        // Continue from the copy of the section's tip (follow first children),
+        // so you pick up where the moved work left off.
+        new_leaf: new_id(section_tip(tree, section_root)),
+      ))
+    }
+  }
+}
+
+/// Apply a planned graft: append its entries, record the event, and move the
+/// active leaf onto the grafted section. Append-only — nothing is removed.
+pub fn apply_graft(tree: SessionTree, graft: Graft) -> SessionTree {
+  SessionTree(
+    ..tree,
+    entries: list.append(list.reverse(graft.entries), tree.entries),
+    grafts: [graft.event, ..tree.grafts],
+    active_leaf: Some(graft.new_leaf),
+  )
+}
+
+/// The subtree rooted at `id` (the node and all descendants), parent-first.
+fn subtree(tree: SessionTree, id: String) -> List(Entry) {
+  case get(tree, id) {
+    None -> []
+    Some(e) -> [
+      e,
+      ..list.flat_map(children_of(tree, Some(id)), fn(c) { subtree(tree, c.id) })
+    ]
+  }
+}
+
+/// The deepest node reached by following the first child from `id` — the tip of
+/// the section in the common linear case.
+fn section_tip(tree: SessionTree, id: String) -> String {
+  case children_of(tree, Some(id)) {
+    [] -> id
+    [first, ..] -> section_tip(tree, first.id)
+  }
+}
+
+fn graft_event_to_json(g: GraftEvent) -> json.Json {
+  json.object([
+    #("op", json.string("graft")),
+    #("id", json.string(g.id)),
+    #("section_root", json.string(g.section_root)),
+    #("onto", json.string(g.onto)),
+    #(
+      "mapping",
+      json.object(
+        dict.to_list(g.mapping) |> list.map(fn(p) { #(p.0, json.string(p.1)) }),
+      ),
+    ),
+    #("timestamp", json.int(g.timestamp)),
+  ])
+}
+
+fn graft_event_decoder() -> decode.Decoder(GraftEvent) {
+  use _ <- decode.field("op", decode.string)
+  use id <- decode.field("id", decode.string)
+  use section_root <- decode.field("section_root", decode.string)
+  use onto <- decode.field("onto", decode.string)
+  use mapping <- decode.field(
+    "mapping",
+    decode.dict(decode.string, decode.string),
+  )
+  use timestamp <- decode.field("timestamp", decode.int)
+  decode.success(GraftEvent(
+    id: id,
+    section_root: section_root,
+    onto: onto,
+    mapping: mapping,
+    timestamp: timestamp,
+  ))
+}
+
 // --- Roles ---------------------------------------------------------------
 
 pub fn role_to_string(role: Role) -> String {
@@ -162,6 +360,7 @@ pub fn entry_to_json(entry: Entry) -> json.Json {
     #("snapshot_ref", json.nullable(entry.snapshot_ref, json.string)),
     #("label", json.nullable(entry.label, json.string)),
     #("timestamp", json.int(entry.timestamp)),
+    #("grafted_from", json.nullable(entry.grafted_from, json.string)),
   ])
 }
 
@@ -176,6 +375,12 @@ pub fn entry_decoder() -> decode.Decoder(Entry) {
   )
   use label <- decode.field("label", decode.optional(decode.string))
   use timestamp <- decode.field("timestamp", decode.int)
+  // Older session files predate graft — default to a non-graft node.
+  use grafted_from <- decode.optional_field(
+    "grafted_from",
+    None,
+    decode.optional(decode.string),
+  )
   case role_from_string(role_s) {
     Ok(role) ->
       decode.success(Entry(
@@ -186,23 +391,28 @@ pub fn entry_decoder() -> decode.Decoder(Entry) {
         snapshot_ref: snapshot_ref,
         label: label,
         timestamp: timestamp,
+        grafted_from: grafted_from,
       ))
     Error(_) ->
       decode.failure(
-        Entry(id, None, User, content, None, None, timestamp),
+        Entry(id, None, User, content, None, None, timestamp, None),
         "Role",
       )
   }
 }
 
-/// Full tree as a JSON object (for API responses).
+/// Full tree as a JSON object (for API responses). `grafts` lets a client
+/// compute which nodes are superseded (`superseded_ids`) and hide them by
+/// default; `grafted_from` on an entry lets it render the graft provenance.
 pub fn tree_to_json(tree: SessionTree) -> json.Json {
   json.object([
     #("id", json.string(tree.id)),
     #("project", json.string(tree.project)),
     #("active_leaf", json.nullable(tree.active_leaf, json.string)),
     #("allow_domains", json.array(tree.allow_domains, json.string)),
+    #("groups", json.array(tree.groups, json.string)),
     #("entries", json.array(list.reverse(tree.entries), entry_to_json)),
+    #("grafts", json.array(list.reverse(tree.grafts), graft_event_to_json)),
   ])
 }
 
@@ -214,6 +424,7 @@ type Meta {
     project: String,
     active_leaf: Option(String),
     allow_domains: List(String),
+    groups: List(String),
   )
 }
 
@@ -223,6 +434,7 @@ fn meta_to_json(tree: SessionTree) -> json.Json {
     #("project", json.string(tree.project)),
     #("active_leaf", json.nullable(tree.active_leaf, json.string)),
     #("allow_domains", json.array(tree.allow_domains, json.string)),
+    #("groups", json.array(tree.groups, json.string)),
   ])
 }
 
@@ -236,22 +448,31 @@ fn meta_decoder() -> decode.Decoder(Meta) {
     [],
     decode.list(decode.string),
   )
+  // Older session files predate capability groups — default to empty.
+  use groups <- decode.optional_field("groups", [], decode.list(decode.string))
   decode.success(Meta(
     id: id,
     project: project,
     active_leaf: active_leaf,
     allow_domains: allow_domains,
+    groups: groups,
   ))
 }
 
-/// Serialize a tree to JSONL: meta line followed by entries oldest-first.
+/// Serialize a tree to JSONL: meta line, entries oldest-first, then graft
+/// records oldest-first. Graft lines are tagged with `"op":"graft"` so the
+/// parser can tell them from entries.
 pub fn to_jsonl(tree: SessionTree) -> String {
   let meta = json.to_string(meta_to_json(tree))
   let entries =
     tree.entries
     |> list.reverse
     |> list.map(fn(e) { json.to_string(entry_to_json(e)) })
-  string.join([meta, ..entries], "\n")
+  let grafts =
+    tree.grafts
+    |> list.reverse
+    |> list.map(fn(g) { json.to_string(graft_event_to_json(g)) })
+  string.join([meta, ..list.append(entries, grafts)], "\n")
 }
 
 /// Parse a tree from JSONL produced by `to_jsonl`.
@@ -263,25 +484,42 @@ pub fn from_jsonl(contents: String) -> Result(SessionTree, String) {
 
   case lines {
     [] -> Error("empty session file")
-    [meta_line, ..entry_lines] -> {
+    [meta_line, ..record_lines] -> {
       use meta <- result.try(
         json.parse(meta_line, meta_decoder())
         |> result.replace_error("invalid meta line"),
       )
-      use entries <- result.try(
-        entry_lines
-        |> list.try_map(fn(l) {
-          json.parse(l, entry_decoder())
-          |> result.replace_error("invalid entry line")
-        }),
-      )
+      use #(entries, grafts) <- result.try(parse_records(record_lines, [], []))
       Ok(SessionTree(
         id: meta.id,
         project: meta.project,
         entries: list.reverse(entries),
         active_leaf: meta.active_leaf,
         allow_domains: meta.allow_domains,
+        groups: meta.groups,
+        grafts: list.reverse(grafts),
       ))
     }
+  }
+}
+
+/// Split the post-meta lines into entries and graft records (each oldest-first),
+/// telling them apart by the `"op":"graft"` tag the graft decoder requires.
+fn parse_records(
+  lines: List(String),
+  entries: List(Entry),
+  grafts: List(GraftEvent),
+) -> Result(#(List(Entry), List(GraftEvent)), String) {
+  case lines {
+    [] -> Ok(#(list.reverse(entries), list.reverse(grafts)))
+    [l, ..rest] ->
+      case json.parse(l, graft_event_decoder()) {
+        Ok(g) -> parse_records(rest, entries, [g, ..grafts])
+        Error(_) ->
+          case json.parse(l, entry_decoder()) {
+            Ok(e) -> parse_records(rest, [e, ..entries], grafts)
+            Error(_) -> Error("invalid record line")
+          }
+      }
   }
 }

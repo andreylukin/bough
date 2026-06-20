@@ -127,6 +127,24 @@ pub type Model {
     net_open: Bool,
     // The latest run's egress feed (allow/deny), shown in the network dock.
     network: List(client.NetEvent),
+    // In the tree overlay, the section root marked for a graft (`g`): while
+    // `Some`, the overlay is in "pick the new parent" mode and Enter grafts onto
+    // the selected node instead of forking (§4.2).
+    graft_root: Option(String),
+    // Reveal nodes superseded by grafts (hidden by default) in the tree overlay.
+    show_superseded: Bool,
+    // The nono capability-group catalog (right-panel picker).
+    groups_catalog: List(client.Group),
+    // Toggleable groups enabled for the current session.
+    groups_enabled: List(String),
+    // True when the right-hand capabilities panel has keyboard focus.
+    panel_focus: Bool,
+    // Selected row in the capabilities panel (index into the panel item list).
+    panel_sel: Int,
+    // Reveal the collapsed "always on" (locked) groups section.
+    show_locked: Bool,
+    // The group whose contents are shown in the inspector overlay (GroupV).
+    group_detail: Option(client.GroupDetail),
   )
 }
 
@@ -145,6 +163,7 @@ pub type View {
   TreeV
   SubagentsV
   PlanV
+  GroupV
 }
 
 /// One node of the flattened session tree shown in the tree overlay. `prefix`
@@ -187,6 +206,12 @@ pub type Msg {
   CloseOverlay
   Resumed(Result(client.Tree, String))
   Forked(Result(client.Tree, String))
+  // Graft (§4.2): mark the selected node as the section root, toggle revealing
+  // superseded nodes, cancel a pending graft, and the graft result.
+  BeginGraft
+  ToggleSuperseded
+  CancelGraft
+  Grafted(Result(client.Tree, String))
   // Returned by the clipboard-copy side effect; no model change.
   Noop
   // Timer tick that advances an in-progress edge autoscroll.
@@ -206,6 +231,20 @@ pub type Msg {
   BackToParent
   // Open the full-plan overlay for a turn (its complete steps + content).
   OpenPlan(List(client.Step))
+  // Capability-group picker (right panel).
+  GroupsLoaded(Result(List(client.Group), String))
+  FocusPanel
+  ExitPanel
+  PanelMove(Int)
+  // Activate the selected panel row: toggle a group, or fold the "always on"
+  // section.
+  ActivateItem
+  // Click a panel row: focus the panel, select it, and activate it.
+  ClickGroup(Int)
+  GroupsSaved(Result(Nil, String))
+  // Inspect a group's contents (right-click): fetch and open the overlay.
+  OpenGroup(String)
+  GroupDetailLoaded(Result(client.GroupDetail, String))
 }
 
 pub fn init() -> #(Model, List(fn() -> Msg)) {
@@ -255,6 +294,14 @@ pub fn init() -> #(Model, List(fn() -> Msg)) {
       plan_steps: [],
       net_open: envoy.get("BOUGH_NET_PANE") |> result.is_ok,
       network: [],
+      graft_root: None,
+      show_superseded: False,
+      groups_catalog: [],
+      groups_enabled: [],
+      panel_focus: False,
+      panel_sel: 0,
+      show_locked: False,
+      group_detail: None,
     )
   let resume = envoy.get("BOUGH_RESUME") |> result.is_ok
   // --resume opens the picker on launch; --continue resumes silently once the
@@ -267,6 +314,7 @@ pub fn init() -> #(Model, List(fn() -> Msg)) {
     fn() { SessionCreated(client.create_session(server, project)) },
     fn() { FilesScanned(list_project_files(project)) },
     fn() { ConfigLoaded(client.get_config(server)) },
+    fn() { GroupsLoaded(client.get_groups(server)) },
   ]
   let effects = case resume || model.auto_continue {
     True -> [fn() { SessionsLoaded(client.list_sessions(server)) }, ..base]
@@ -441,11 +489,17 @@ pub fn update(model: Model, msg: Msg) -> #(Model, List(fn() -> Msg)) {
       [],
     )
 
-    PickMove(n) -> #(Model(..model, sel: clamp_sel(model, model.sel + n)), [])
+    PickMove(n) -> {
+      let model = Model(..model, sel: clamp_sel(model, model.sel + n))
+      case model.graft_root {
+        Some(_) -> #(Model(..model, status: graft_hint(model)), [])
+        None -> #(model, [])
+      }
+    }
 
     PickChoose -> pick_choose(model)
 
-    CloseOverlay -> #(Model(..model, view: ChatV), [])
+    CloseOverlay -> #(Model(..model, view: ChatV, group_detail: None), [])
 
     Resumed(Ok(tree)) -> #(
       Model(
@@ -456,6 +510,7 @@ pub fn update(model: Model, msg: Msg) -> #(Model, List(fn() -> Msg)) {
         chat: chat_from_tree(tree),
         scroll: 0,
         status: "resumed · session " <> tree.id,
+        groups_enabled: tree.groups,
       ),
       [],
     )
@@ -472,6 +527,49 @@ pub fn update(model: Model, msg: Msg) -> #(Model, List(fn() -> Msg)) {
       [],
     )
     Forked(Error(e)) -> #(Model(..model, view: ChatV, status: "error: " <> e), [])
+
+    // Mark the selected tree node as the graft section root. Only real nodes
+    // (with a fork_id) can be grafted; live in-progress rows can't.
+    BeginGraft ->
+      case list_at(model.tree_rows, model.sel) {
+        Ok(TreeRow(fork_id: "", ..)) -> #(model, [])
+        Ok(row) -> #(
+          Model(..model, graft_root: Some(row.fork_id), status: graft_hint(model)),
+          [],
+        )
+        Error(_) -> #(model, [])
+      }
+
+    CancelGraft -> #(
+      Model(..model, graft_root: None, status: "branch · Enter forks · g grafts"),
+      [],
+    )
+
+    ToggleSuperseded -> {
+      let show = !model.show_superseded
+      let model = rebuild_tree(Model(..model, show_superseded: show))
+      let note = case show {
+        True -> "showing superseded (grafted-away) nodes"
+        False -> "hiding superseded nodes"
+      }
+      #(Model(..model, sel: clamp_sel(model, model.sel), status: note), [])
+    }
+
+    Grafted(Ok(tree)) -> #(
+      Model(
+        ..model,
+        view: ChatV,
+        graft_root: None,
+        chat: chat_from_tree(tree),
+        scroll: 0,
+        status: "grafted · type to continue from here",
+      ),
+      [],
+    )
+    Grafted(Error(e)) -> #(
+      Model(..model, graft_root: None, status: "graft failed: " <> e),
+      [],
+    )
 
     ToggleReview -> {
       let review = !model.review
@@ -580,6 +678,83 @@ pub fn update(model: Model, msg: Msg) -> #(Model, List(fn() -> Msg)) {
       Model(..model, view: PlanV, plan_steps: steps, sel: 0, status: "full plan"),
       [],
     )
+
+    GroupsLoaded(Ok(catalog)) -> #(Model(..model, groups_catalog: catalog), [])
+    GroupsLoaded(Error(_)) -> #(model, [])
+
+    FocusPanel ->
+      case model.groups_catalog {
+        [] -> #(Model(..model, status: "no capability groups available"), [])
+        _ -> #(
+          Model(..model, net_open: True, panel_focus: True, focused: False, status: "capabilities — ↑/↓ move · space toggle · esc back"),
+          [],
+        )
+      }
+    ExitPanel -> #(Model(..model, panel_focus: False), [])
+    PanelMove(d) -> #(
+      Model(
+        ..model,
+        panel_sel: int.clamp(
+          model.panel_sel + d,
+          0,
+          int.max(0, list.length(panel_items(model)) - 1),
+        ),
+      ),
+      [],
+    )
+    ActivateItem -> activate_selected(model)
+    ClickGroup(idx) ->
+      activate_selected(
+        Model(..model, panel_focus: True, focused: False, panel_sel: idx),
+      )
+    GroupsSaved(Ok(_)) -> #(model, [])
+    GroupsSaved(Error(e)) -> #(Model(..model, status: "groups: " <> e), [])
+
+    OpenGroup(name) -> {
+      let server = model.server
+      #(
+        Model(..model, status: "loading " <> name <> " …"),
+        [fn() { GroupDetailLoaded(client.get_group(server, name)) }],
+      )
+    }
+    GroupDetailLoaded(Ok(detail)) -> #(
+      Model(..model, view: GroupV, sel: 0, group_detail: Some(detail), status: detail.name),
+      [],
+    )
+    GroupDetailLoaded(Error(e)) -> #(Model(..model, status: "group: " <> e), [])
+  }
+}
+
+/// Act on the selected panel row: fold the "always on" section, toggle a group
+/// (locked rows are no-ops), and persist. Group changes apply to the next run.
+fn activate_selected(model: Model) -> #(Model, List(fn() -> Msg)) {
+  case nth(panel_items(model), model.panel_sel) {
+    // Expand/collapse the locked section; keep the cursor on the fold row.
+    Ok(Expander(_)) -> #(
+      Model(
+        ..model,
+        show_locked: !model.show_locked,
+        panel_sel: toggleable_count(model),
+      ),
+      [],
+    )
+    Ok(GroupRow(g)) ->
+      case g.locked, model.session {
+        True, _ -> #(Model(..model, status: g.name <> " is always on"), [])
+        False, Some(id) -> {
+          let enabled = case list.contains(model.groups_enabled, g.name) {
+            True -> list.filter(model.groups_enabled, fn(n) { n != g.name })
+            False -> [g.name, ..model.groups_enabled]
+          }
+          let server = model.server
+          #(
+            Model(..model, groups_enabled: enabled),
+            [fn() { GroupsSaved(client.set_session_groups(server, id, enabled)) }],
+          )
+        }
+        False, None -> #(model, [])
+      }
+    Error(_) -> #(model, [])
   }
 }
 
@@ -589,6 +764,7 @@ fn clamp_sel(model: Model, n: Int) -> Int {
     TreeV -> list.length(model.tree_rows)
     SubagentsV -> list.length(model.subagents)
     PlanV -> list.length(plan_rows(model.plan_steps))
+    GroupV -> list.length(group_detail_rows(model))
     ChatV -> 0
   }
   int.clamp(n, 0, int.max(len - 1, 0))
@@ -606,11 +782,20 @@ fn pick_choose(model: Model) -> #(Model, List(fn() -> Msg)) {
       }
     TreeV ->
       case model.session, list_at(model.tree_rows, model.sel) {
-        // Live (in-progress) rows carry no fork_id and aren't forkable.
+        // Live (in-progress) rows carry no fork_id, so can't be forked or be a
+        // graft target.
         Some(_), Ok(TreeRow(fork_id: "", ..)) -> #(model, [])
-        Some(id), Ok(row) -> #(Model(..model, status: "branching …"), [
-          fn() { Forked(client.fork(server, id, row.fork_id)) },
-        ])
+        // In graft mode, Enter grafts the marked section onto the selection;
+        // otherwise it forks from the selection (§4.2).
+        Some(id), Ok(row) ->
+          case model.graft_root {
+            Some(root) -> #(Model(..model, status: "grafting …"), [
+              fn() { Grafted(client.graft(server, id, root, row.fork_id)) },
+            ])
+            None -> #(Model(..model, status: "branching …"), [
+              fn() { Forked(client.fork(server, id, row.fork_id)) },
+            ])
+          }
         _, _ -> #(model, [])
       }
     // Jump into a subagent: switch the active session to the child. A running
@@ -631,14 +816,47 @@ fn pick_choose(model: Model) -> #(Model, List(fn() -> Msg)) {
         )
         Error(_) -> #(model, [])
       }
-    // The plan overlay is read-only; Enter does nothing.
+    // The plan and group overlays are read-only; Enter does nothing.
     PlanV -> #(model, [])
+    GroupV -> #(model, [])
     ChatV -> #(model, [])
   }
 }
 
 fn list_at(items: List(a), i: Int) -> Result(a, Nil) {
   items |> list.drop(i) |> list.first
+}
+
+/// The live preview shown while a graft is being aimed: the marked section root
+/// and, once the cursor is on a different node, the node it would land on.
+fn graft_hint(model: Model) -> String {
+  case model.graft_root {
+    None -> ""
+    Some(rid) -> {
+      let root = short(row_label(model.tree_rows, rid))
+      let onto = list_at(model.tree_rows, model.sel)
+      case onto {
+        Ok(row) if row.fork_id != rid && row.fork_id != "" ->
+          "graft " <> root <> " → onto " <> short(row.label) <> " · Enter · Esc cancels"
+        _ -> "graft " <> root <> " — move to the new parent · Enter · Esc cancels"
+      }
+    }
+  }
+}
+
+/// The label of the tree row that branches from `fork_id`, if any.
+fn row_label(rows: List(TreeRow), fork_id: String) -> String {
+  case list.find(rows, fn(r) { r.fork_id == fork_id }) {
+    Ok(row) -> row.label
+    Error(_) -> fork_id
+  }
+}
+
+fn short(s: String) -> String {
+  case string.length(s) > 28 {
+    True -> string.slice(s, 0, 27) <> "…"
+    False -> s
+  }
 }
 
 /// The active branch of a fetched tree (root→active_leaf, oldest first).
@@ -675,7 +893,7 @@ fn rebuild_tree(model: Model) -> Model {
   case model.tree {
     None -> model
     Some(tree) -> {
-      let rows = build_tree_rows(tree)
+      let rows = build_tree_rows(tree, model.show_superseded)
       let rows = case model.pending, model.running_steps {
         True, [_, ..] -> merge_live_steps(rows, model.running_steps)
         _, _ -> rows
@@ -723,11 +941,20 @@ fn merge_live_steps(
 }
 
 /// Flatten the tree depth-first. Linear (single-child) runs keep a straight
-/// gutter; only real fork points draw `├─`/`└─` connectors and indent.
-fn build_tree_rows(tree: client.Tree) -> List(TreeRow) {
-  case children_of(tree.entries, "") {
-    [root] -> emit_node(tree.entries, root, "", "", tree.active_leaf)
-    roots -> emit_siblings(tree.entries, roots, "", tree.active_leaf)
+/// gutter; only real fork points draw `├─`/`└─` connectors and indent. Nodes
+/// superseded by a graft are dropped unless `show_superseded` (their whole
+/// subtree is superseded together, so this never orphans a visible node).
+fn build_tree_rows(tree: client.Tree, show_superseded: Bool) -> List(TreeRow) {
+  let entries = case show_superseded {
+    True -> tree.entries
+    False ->
+      list.filter(tree.entries, fn(e) {
+        !list.contains(tree.superseded, e.id)
+      })
+  }
+  case children_of(entries, "") {
+    [root] -> emit_node(entries, root, "", "", tree.active_leaf)
+    roots -> emit_siblings(entries, roots, "", tree.active_leaf)
   }
 }
 
@@ -738,10 +965,15 @@ fn emit_node(
   connector: String,
   active_leaf: String,
 ) -> List(TreeRow) {
+  // Graft copies are flagged with a leading ↪ so the move is never invisible.
+  let label = case node.grafted_from {
+    "" -> entry_label(node)
+    _ -> "↪ " <> entry_label(node)
+  }
   let row =
     TreeRow(
       prefix: gutter <> connector,
-      label: entry_label(node),
+      label: label,
       color: entry_color(node),
       active: node.id == active_leaf,
       fork_id: node.id,
@@ -1129,10 +1361,12 @@ fn on_key(model: Model, ke: event.KeyEvent) -> #(Model, List(fn() -> Msg)) {
     _ ->
       case model.view {
         ChatV ->
-          case model.awaiting, model.steering {
+          case model.panel_focus, model.awaiting, model.steering {
+            // The capabilities panel has focus: its keys take priority.
+            True, _, _ -> on_key_panel(model, ke)
             // A plan is paused for approval and we're not yet typing guidance.
-            True, False -> on_key_await(model, ke)
-            _, _ ->
+            _, True, False -> on_key_await(model, ke)
+            _, _, _ ->
               case model.focused {
                 True -> on_key_typing(model, ke)
                 False -> on_key_command(model, ke)
@@ -1140,6 +1374,17 @@ fn on_key(model: Model, ke: event.KeyEvent) -> #(Model, List(fn() -> Msg)) {
           }
         _ -> on_key_overlay(model, ke)
       }
+  }
+}
+
+/// Keys while the capabilities panel has focus: navigate and toggle groups.
+fn on_key_panel(model: Model, ke: event.KeyEvent) -> #(Model, List(fn() -> Msg)) {
+  case ke.code {
+    event.Esc | event.Char("c") -> update(model, ExitPanel)
+    event.UpArrow | event.Char("k") -> update(model, PanelMove(-1))
+    event.DownArrow | event.Char("j") -> update(model, PanelMove(1))
+    event.Char(" ") | event.Enter -> update(model, ActivateItem)
+    _ -> #(model, [])
   }
 }
 
@@ -1155,10 +1400,18 @@ fn on_key_await(model: Model, ke: event.KeyEvent) -> #(Model, List(fn() -> Msg))
 
 fn on_key_overlay(model: Model, ke: event.KeyEvent) -> #(Model, List(fn() -> Msg)) {
   case ke.code {
-    event.Esc -> update(model, CloseOverlay)
+    // Esc cancels a pending graft first; only then closes the overlay.
+    event.Esc ->
+      case model.view, model.graft_root {
+        TreeV, Some(_) -> update(model, CancelGraft)
+        _, _ -> update(model, CloseOverlay)
+      }
     event.UpArrow | event.Char("k") -> update(model, PickMove(-1))
     event.DownArrow | event.Char("j") -> update(model, PickMove(1))
     event.Enter -> update(model, PickChoose)
+    // Tree-only: g marks the section root for a graft, x reveals superseded nodes.
+    event.Char("g") if model.view == TreeV -> update(model, BeginGraft)
+    event.Char("x") if model.view == TreeV -> update(model, ToggleSuperseded)
     _ -> #(model, [])
   }
 }
@@ -1234,6 +1487,7 @@ fn on_key_command(
     event.Char("n") -> update(model, ToggleNet)
     event.Char("a") -> update(model, OpenSubagents)
     event.Char("b") -> update(model, BackToParent)
+    event.Char("c") -> update(model, FocusPanel)
     // Full plan of the most recent turn (click a turn for an earlier one).
     event.Char("f") ->
       case latest_bough(model.chat) {
@@ -1259,10 +1513,17 @@ fn on_mouse(
   model: Model,
   me: event.MouseEvent,
 ) -> #(Model, List(fn() -> Msg)) {
+  let #(_cols, _rows, conv_w, _conv_h) = dims(model)
+  let over_panel = me.column >= conv_w
   case model.view, me.kind {
+    // Scrolling over the capabilities panel moves its selection.
+    ChatV, event.ScrollUp if over_panel -> update(model, PanelMove(-1))
+    ChatV, event.ScrollDown if over_panel -> update(model, PanelMove(1))
     ChatV, event.ScrollUp -> update(clear_sel(model), ScrollBy(3))
     ChatV, event.ScrollDown -> update(clear_sel(model), ScrollBy(-3))
     ChatV, event.Down(event.Left) -> on_mouse_down(model, me.column, me.row)
+    // Right-click a group row opens its contents inspector.
+    ChatV, event.Down(event.Right) -> on_right_click(model, me.column, me.row)
     ChatV, event.Drag(event.Left) -> on_mouse_drag(model, me.column, me.row)
     ChatV, event.Up(event.Left) -> on_mouse_up(model)
     _, event.ScrollUp -> update(model, PickMove(-1))
@@ -1362,17 +1623,36 @@ fn on_mouse_up(model: Model) -> #(Model, List(fn() -> Msg)) {
   }
 }
 
-fn on_click(model: Model, _col: Int, row: Int) -> #(Model, List(fn() -> Msg)) {
-  // A click below the conversation (input box) focuses it; a click on a
-  // tool-result line toggles that result.
-  let #(_cols, _rows, _conv_w, conv_h) = dims(model)
-  case row >= conv_h {
-    True -> update(model, SetFocus(True))
-    False ->
+fn on_click(model: Model, col: Int, row: Int) -> #(Model, List(fn() -> Msg)) {
+  // A click below the conversation (input box) focuses it; a click in the
+  // capabilities panel toggles the group row; a click on a tool-result line
+  // toggles that result.
+  let #(_cols, _rows, conv_w, conv_h) = dims(model)
+  case row >= conv_h, col >= conv_w {
+    True, _ -> update(model, SetFocus(True))
+    False, True ->
+      case item_at_row(model, row) {
+        Ok(idx) -> update(model, ClickGroup(idx))
+        Error(_) -> #(model, [])
+      }
+    False, False ->
       case list.key_find(clickable_rows(model), row) {
         Ok(msg) -> update(model, msg)
         Error(_) -> #(model, [])
       }
+  }
+}
+
+/// Right-click in the capabilities panel: inspect the group under the pointer.
+fn on_right_click(model: Model, col: Int, row: Int) -> #(Model, List(fn() -> Msg)) {
+  let #(_cols, _rows, conv_w, _conv_h) = dims(model)
+  case col >= conv_w, item_at_row(model, row) {
+    True, Ok(idx) ->
+      case nth(panel_items(model), idx) {
+        Ok(GroupRow(g)) -> update(model, OpenGroup(g.name))
+        _ -> #(model, [])
+      }
+    _, _ -> #(model, [])
   }
 }
 
@@ -2103,41 +2383,138 @@ pub fn render(model: Model) -> List(Command) {
         }),
       )
     PlanV -> render_plan_overlay(model)
+    GroupV -> render_group_overlay(model)
   }
+}
+
+// --- Floating overlay frame ------------------------------------------------
+// Overlays float as a centered box over the dimmed-out chat, sized to their
+// content rather than filling the screen.
+
+/// Geometry for a centered overlay sized to `content_h` body rows: `#(ox, oy,
+/// ow, oh)`. Width leaves a margin and caps at a readable maximum; height shrinks
+/// to the content (plus borders) but never exceeds the screen.
+fn overlay_geom(model: Model, content_h: Int) -> #(Int, Int, Int, Int) {
+  let #(cols, rows, _conv_w, _conv_h) = dims(model)
+  let ow = int.clamp(cols - 8, 24, 92)
+  let oh = int.clamp(content_h + 2, 3, int.max(rows - 4, 3))
+  let ox = { cols - ow } / 2
+  let oy = { rows - oh } / 2
+  #(ox, oy, ow, oh)
+}
+
+/// The scroll offset that keeps row `sel` visible in an `inner_h`-tall window.
+fn overlay_start(total: Int, inner_h: Int, sel: Int) -> Int {
+  case total > inner_h {
+    True -> int.clamp(sel - inner_h / 2, 0, total - inner_h)
+    False -> 0
+  }
+}
+
+/// Blank the interior of a floating overlay so the chat backdrop doesn't show
+/// through behind the content.
+fn overlay_fill(ox: Int, oy: Int, ow: Int, oh: Int) -> List(Command) {
+  let blank = string.repeat(" ", int.max(ow - 2, 0))
+  list.repeat(Nil, int.max(oh - 2, 0))
+  |> list.index_map(fn(_, i) { draw(ox + 1, oy + i + 1, blank, style.Default, []) })
+  |> list.flatten
+}
+
+/// Compose a floating overlay: the chat as backdrop, a blanked interior, the
+/// titled border, then `body` (already positioned by the caller).
+fn floating_overlay(
+  model: Model,
+  geom: #(Int, Int, Int, Int),
+  title: String,
+  body: List(Command),
+) -> List(Command) {
+  let #(ox, oy, ow, oh) = geom
+  list.flatten([
+    render_chat(model),
+    overlay_fill(ox, oy, ow, oh),
+    box(ox, oy, ow, oh, title, style.Cyan),
+    body,
+    [command.HideCursor],
+  ])
 }
 
 /// The full-plan overlay: the turn's supervisor/worker plan in full — every
 /// action with its argument, the complete WRITE/EDIT content, and the CHECK.
 fn render_plan_overlay(model: Model) -> List(Command) {
-  let #(cols, rows, _conv_w, _conv_h) = dims(model)
   let title = "full plan  ·  ↑↓ scroll · Esc close"
-  let inner_h = int.max(rows - 2, 1)
   let body_rows = plan_rows(model.plan_steps)
   let total = list.length(body_rows)
-  let start = case total > inner_h {
-    True -> int.clamp(model.sel - inner_h / 2, 0, total - inner_h)
-    False -> 0
-  }
+  let geom = overlay_geom(model, int.max(total, 1))
+  let #(ox, oy, ow, oh) = geom
+  let inner_h = oh - 2
+  let start = overlay_start(total, inner_h, model.sel)
   let body =
     body_rows
     |> list.drop(start)
     |> list.take(inner_h)
     |> list.index_map(fn(row, i) {
       let #(text, color) = row
-      draw(2, i + 1, truncate(text, cols - 4), color, [])
+      draw(ox + 2, oy + 1 + i, truncate(text, ow - 4), color, [])
     })
     |> list.flatten
   let empty = case total {
-    0 -> draw(2, 1, "(no plan)", style.Grey, [style.Dim])
+    0 -> draw(ox + 2, oy + 1, "(no plan)", style.Grey, [style.Dim])
     _ -> []
   }
-  list.flatten([
-    [command.Clear(terminal.All)],
-    box(0, 0, cols, rows, title, style.Cyan),
-    body,
-    empty,
-    [command.HideCursor],
-  ])
+  floating_overlay(model, geom, title, list.append(body, empty))
+}
+
+/// The group inspector: the group's name, description, and the paths it grants
+/// or denies (read/write/rw/deny), scrollable.
+fn render_group_overlay(model: Model) -> List(Command) {
+  let title = "group  ·  ↑↓ scroll · Esc close"
+  let body_rows = group_detail_rows(model)
+  let total = list.length(body_rows)
+  let geom = overlay_geom(model, int.max(total, 1))
+  let #(ox, oy, ow, oh) = geom
+  let inner_h = oh - 2
+  let start = overlay_start(total, inner_h, model.sel)
+  let body =
+    body_rows
+    |> list.drop(start)
+    |> list.take(inner_h)
+    |> list.index_map(fn(row, i) {
+      let #(text, color) = row
+      draw(ox + 2, oy + 1 + i, truncate(text, ow - 4), color, [])
+    })
+    |> list.flatten
+  floating_overlay(model, geom, title, body)
+}
+
+/// The selected group's contents as colored display lines: a header (name +
+/// description), then one line per governed path tagged by access kind.
+fn group_detail_rows(model: Model) -> List(#(String, Color)) {
+  case model.group_detail {
+    None -> []
+    Some(d) -> {
+      let header = [
+        #(d.name, style.White),
+        #(d.description, style.Grey),
+        #("", style.Default),
+      ]
+      let paths =
+        list.map(d.paths, fn(p) {
+          let #(tag, color) = case p.access {
+            "deny" -> #("deny ", style.Red)
+            "read" -> #("read ", style.Green)
+            "write" -> #("write", style.Yellow)
+            "rw" -> #("rw   ", style.Yellow)
+            other -> #(other, style.Default)
+          }
+          #(tag <> "  " <> p.path, color)
+        })
+      let body = case paths {
+        [] -> [#("(no paths)", style.Grey)]
+        _ -> paths
+      }
+      list.append(header, body)
+    }
+  }
 }
 
 /// A turn's steps flattened to colored display lines for the plan overlay: just
@@ -2145,10 +2522,24 @@ fn render_plan_overlay(model: Model) -> List(Command) {
 /// content, any worker fixes, and the CHECK. The supervisor's prose and its
 /// final answer are the turn's *output*, shown in the chat, not the plan.
 fn plan_rows(steps: List(Step)) -> List(#(String, Color)) {
-  let #(rows, _n) =
-    list.fold(steps, #([], 1), fn(acc, step) {
-      let #(rows, n) = acc
+  let #(rows, _n, _first) =
+    list.fold(steps, #([], 1, True), fn(acc, step) {
+      let #(rows, n, first) = acc
       case step {
+        // Each Plan starts a new plan call (one run_steps round). Render its
+        // prose as a section header and restart the step numbering; a
+        // prose-less round (empty text) gets a plain divider instead.
+        Plan(text) -> {
+          let header = case oneline(text) {
+            "" -> #("──────", style.Grey)
+            t -> #(t, style.Grey)
+          }
+          let lead = case first {
+            True -> []
+            False -> [#("", style.Default)]
+          }
+          #(list.flatten([rows, lead, [header], [#("", style.Default)]]), 1, False)
+        }
         Call(verb, arg, detail) -> {
           let head = #(int.to_string(n) <> ". " <> verb <> "  " <> arg, style.Yellow)
           let body = case string.trim(detail) {
@@ -2158,7 +2549,7 @@ fn plan_rows(steps: List(Step)) -> List(#(String, Color)) {
                 #("      " <> l, style.Grey)
               })
           }
-          #(list.flatten([rows, [head], body, [#("", style.Default)]]), n + 1)
+          #(list.flatten([rows, [head], body, [#("", style.Default)]]), n + 1, first)
         }
         Worker(cmd, exit) -> #(
           list.append(rows, [
@@ -2166,14 +2557,16 @@ fn plan_rows(steps: List(Step)) -> List(#(String, Color)) {
             #("", style.Default),
           ]),
           n,
+          first,
         )
         Check(ok, _) -> #(
           list.append(rows, [#(check_text(ok), check_color(ok)), #("", style.Default)]),
           n,
+          first,
         )
-        // Prose (Plan), the final answer (Text), step output (Exec), and review
-        // notes are the turn's output — not part of the plan.
-        _ -> #(rows, n)
+        // The final answer (Text), step output (Exec), and review notes are the
+        // turn's output — not part of the plan.
+        _ -> #(rows, n, first)
       }
     })
   rows
@@ -2213,36 +2606,38 @@ fn status_glyph(status: String) -> String {
 /// stay straight and only forks indent. Dim connector gutters, role/step-tinted
 /// labels, and an `← active` marker on the current leaf.
 fn render_tree_overlay(model: Model) -> List(Command) {
-  let #(cols, rows, _conv_w, _conv_h) = dims(model)
-  let title =
-    "conversation tree  ·  ↑↓ select · Enter fork from here · Esc cancel"
-  let inner_h = int.max(rows - 2, 1)
-  let total = list.length(model.tree_rows)
-  let start = case total > inner_h {
-    True -> int.clamp(model.sel - inner_h / 2, 0, total - inner_h)
-    False -> 0
+  let title = case model.graft_root {
+    Some(_) ->
+      "graft  ·  ↑↓ pick new parent · Enter graft · Esc cancel"
+    None ->
+      "conversation tree  ·  ↑↓ select · Enter fork · g graft · x superseded · Esc"
   }
+  let total = list.length(model.tree_rows)
+  let geom = overlay_geom(model, int.max(total, 1))
+  let #(ox, oy, ow, oh) = geom
+  let inner_h = oh - 2
+  let start = overlay_start(total, inner_h, model.sel)
   let body =
     model.tree_rows
     |> list.drop(start)
     |> list.take(inner_h)
     |> list.index_map(fn(row, i) {
-      let screen_row = i + 1
+      let screen_row = oy + 1 + i
       let selected = start + i == model.sel
       // Selection caret.
       let caret = case selected {
-        True -> draw(2, screen_row, "›", style.Cyan, [style.Bold])
+        True -> draw(ox + 2, screen_row, "›", style.Cyan, [style.Bold])
         False -> []
       }
       // Dim connector gutter.
-      let gutter = draw(4, screen_row, row.prefix, style.Grey, [style.Dim])
-      let lx = 4 + string.length(row.prefix)
+      let gutter = draw(ox + 4, screen_row, row.prefix, style.Grey, [style.Dim])
+      let lx = ox + 4 + string.length(row.prefix)
       let marker = case row.active {
         True -> " ← active"
         False -> ""
       }
       let bold = selected || row.active
-      let avail = int.max(cols - lx - 2 - string.length(marker), 1)
+      let avail = int.max(ox + ow - lx - 2 - string.length(marker), 1)
       let label = truncate(row.label, avail)
       let label_cmds = draw_label(lx, screen_row, label, row.color, bold)
       let active_cmds = case row.active {
@@ -2256,61 +2651,50 @@ fn render_tree_overlay(model: Model) -> List(Command) {
     })
     |> list.flatten
   let empty = case total {
-    0 -> draw(2, 1, "(no history yet)", style.Grey, [style.Dim])
+    0 -> draw(ox + 2, oy + 1, "(no history yet)", style.Grey, [style.Dim])
     _ -> []
   }
-  list.flatten([
-    [command.Clear(terminal.All)],
-    box(0, 0, cols, rows, title, style.Cyan),
-    body,
-    empty,
-    [command.HideCursor],
-  ])
+  floating_overlay(model, geom, title, list.append(body, empty))
 }
 
 fn one_line(text: String) -> String {
   text
 }
 
-/// A full-screen list picker (resume / branch), with the selected row arrowed.
+/// A centered list picker (resume / branch / subagents), with the selected row
+/// arrowed. Sized to its items rather than filling the screen.
 fn render_overlay(
   model: Model,
   title: String,
   items: List(String),
 ) -> List(Command) {
-  let #(cols, rows, _conv_w, _conv_h) = dims(model)
-  let inner_h = int.max(rows - 2, 1)
   let total = list.length(items)
-  let start = case total > inner_h {
-    True -> int.clamp(model.sel - inner_h / 2, 0, total - inner_h)
-    False -> 0
-  }
-  let visible = items |> list.drop(start) |> list.take(inner_h)
+  let geom = overlay_geom(model, int.max(total, 1))
+  let #(ox, oy, ow, oh) = geom
+  let inner_h = oh - 2
+  let start = overlay_start(total, inner_h, model.sel)
   let body =
-    visible
+    items
+    |> list.drop(start)
+    |> list.take(inner_h)
     |> list.index_map(fn(text, i) {
       let selected = start + i == model.sel
       let prefix = case selected {
         True -> "› "
         False -> "  "
       }
+      let txt = truncate(prefix <> text, ow - 3)
       case selected {
-        True -> draw(2, i + 1, truncate(prefix <> text, cols - 3), style.Cyan, [style.Bold])
-        False -> draw(2, i + 1, truncate(prefix <> text, cols - 3), style.Default, [])
+        True -> draw(ox + 2, oy + 1 + i, txt, style.Cyan, [style.Bold])
+        False -> draw(ox + 2, oy + 1 + i, txt, style.Default, [])
       }
     })
     |> list.flatten
   let empty = case total {
-    0 -> draw(2, 1, "(no sessions yet)", style.Grey, [style.Dim])
+    0 -> draw(ox + 2, oy + 1, "(nothing here yet)", style.Grey, [style.Dim])
     _ -> []
   }
-  list.flatten([
-    [command.Clear(terminal.All)],
-    box(0, 0, cols, rows, title, style.Cyan),
-    body,
-    empty,
-    [command.HideCursor],
-  ])
+  floating_overlay(model, geom, title, list.append(body, empty))
 }
 
 /// Draw colored text. etch's `SetStyle` with empty attributes emits a trailing
@@ -2345,8 +2729,8 @@ fn render_chat(model: Model) -> List(Command) {
   let net_pane = case model.net_open {
     True ->
       list.flatten([
-        box(net_x, 0, net_w, conv_h, "network", style.Magenta),
-        network_panel(model, net_x + 2, net_w - 3),
+        box(net_x, 0, net_w, conv_h, capabilities_title(model), style.Magenta),
+        capabilities_panel(model, net_x + 2, net_w - 3),
       ])
     False -> []
   }
@@ -2529,48 +2913,160 @@ fn context_meter(tokens: Int) -> String {
   }
 }
 
-fn network_panel(model: Model, x: Int, w: Int) -> List(Command) {
+/// Box title for the capabilities panel; a marker shows when it has focus.
+fn capabilities_title(model: Model) -> String {
+  case model.panel_focus {
+    True -> "capabilities ◂"
+    False -> "capabilities — c"
+  }
+}
+
+/// The right-hand panel: workspace, the sandbox posture, and the scrollable nono
+/// group picker (● enabled / ○ off). Locked groups live in a collapsed
+/// "always on" section the user can expand.
+fn capabilities_panel(model: Model, x: Int, w: Int) -> List(Command) {
   let ws_color = case model.note {
     Some(_) -> style.Red
     None -> style.Cyan
   }
-  let header = [
-    draw(x, 1, "workspace", style.Grey, [style.Dim]),
-    put(x, 2, truncate(model.project, w), ws_color),
-    draw(x, 4, "policy", style.Grey, [style.Dim]),
-    put(x, 5, "· bash   sandboxed", style.Green),
-    put(x, 6, "· files  in-process", style.Yellow),
-    draw(x, 8, "egress  ✓ allow · ✗ deny", style.Grey, [style.Dim]),
-  ]
-  list.flatten([list.flatten(header), network_feed(model, x, 9, w)])
+  let header =
+    list.flatten([
+      draw(x, 1, "workspace", style.Grey, [style.Dim]),
+      put(x, 2, truncate(model.project, w), ws_color),
+      put(x, 4, "· sandbox  nono (workspace + groups)", style.Green),
+      put(x, 5, "· network  default-deny", style.Green),
+      draw(x, 7, "groups", style.Grey, [style.Dim]),
+    ])
+  list.append(header, panel_rows(model, x, w))
 }
 
-/// The live egress feed: the most recent allow/deny events that fit the pane,
-/// oldest first. Empty until a sandboxed command reaches out (only under the
-/// net leash, `BOUGH_NET=1`; otherwise the policy is simply "net blocked").
-fn network_feed(model: Model, x: Int, y0: Int, w: Int) -> List(Command) {
+/// One navigable row of the capabilities picker: a group, or the fold control
+/// for the "always on" (locked) section.
+type PanelItem {
+  GroupRow(client.Group)
+  Expander(count: Int)
+}
+
+/// The navigable rows: the toggleable groups, then the "always on" fold, then
+/// (when expanded) the locked groups.
+fn panel_items(model: Model) -> List(PanelItem) {
+  let #(toggleable, locked) =
+    list.partition(model.groups_catalog, fn(g) { !g.locked })
+  let head = list.map(toggleable, GroupRow)
+  case locked {
+    [] -> head
+    _ -> {
+      let fold = [Expander(list.length(locked))]
+      let tail = case model.show_locked {
+        True -> list.map(locked, GroupRow)
+        False -> []
+      }
+      list.flatten([head, fold, tail])
+    }
+  }
+}
+
+/// Number of toggleable groups — also the index of the "always on" fold row.
+fn toggleable_count(model: Model) -> Int {
+  list.count(model.groups_catalog, fn(g) { !g.locked })
+}
+
+/// First screen row of the picker list inside the capabilities panel.
+const group_list_top = 8
+
+/// Layout of the picker list: `#(top_row, visible_rows, scroll_start)`. Shared by
+/// the renderer and the click handler so a click lands on the row it looks like.
+fn list_geom(model: Model, total: Int) -> #(Int, Int, Int) {
   let #(_cols, _rows, _conv_w, conv_h) = dims(model)
-  let avail = int.max(conv_h - 1 - y0, 1)
-  case model.network {
-    [] -> draw(x, y0, "no egress yet", style.Grey, [style.Dim])
-    events -> {
-      let shown =
-        events |> list.drop(int.max(list.length(events) - avail, 0))
-      shown
-      |> list.index_map(fn(e, i) {
-        let #(glyph, color) = case e.decision {
-          "deny" -> #("✗", style.Red)
-          _ -> #("✓", style.Green)
-        }
-        let endpoint = case e.method, e.path {
-          Some(m), Some(p) -> " " <> m <> " " <> p
-          _, _ -> ""
-        }
-        draw(x, y0 + i, truncate(glyph <> " " <> e.host <> endpoint, w), color, [])
+  let avail = int.max(1, conv_h - 2 - group_list_top + 1)
+  let start = int.clamp(model.panel_sel - avail / 2, 0, int.max(0, total - avail))
+  #(group_list_top, avail, start)
+}
+
+/// The picker list, windowed to fit and scrolled to keep the selected row
+/// visible. Empty catalog → a hint line.
+fn panel_rows(model: Model, x: Int, w: Int) -> List(Command) {
+  case model.groups_catalog {
+    [] -> draw(x, group_list_top, "(nono unavailable)", style.Grey, [style.Dim])
+    _ -> {
+      let items = panel_items(model)
+      let #(top, avail, start) = list_geom(model, list.length(items))
+      items
+      |> list.drop(start)
+      |> list.take(avail)
+      |> list.index_map(fn(item, i) {
+        panel_item_row(model, item, start + i, x, w, top + i)
       })
       |> list.flatten
     }
   }
+}
+
+/// The item index at screen `row` in the capabilities panel, if `row` is a
+/// picker row (not header/chrome and within the list).
+fn item_at_row(model: Model, row: Int) -> Result(Int, Nil) {
+  let total = list.length(panel_items(model))
+  let #(top, avail, start) = list_geom(model, total)
+  let i = row - top
+  let idx = start + i
+  case i >= 0 && i < avail && idx < total {
+    True -> Ok(idx)
+    False -> Error(Nil)
+  }
+}
+
+fn panel_item_row(
+  model: Model,
+  item: PanelItem,
+  idx: Int,
+  x: Int,
+  w: Int,
+  y: Int,
+) -> List(Command) {
+  let selected = model.panel_focus && idx == model.panel_sel
+  let caret = case selected {
+    True -> "▸"
+    False -> " "
+  }
+  let cmds = case item {
+    GroupRow(g) -> {
+      let enabled = list.contains(model.groups_enabled, g.name)
+      let #(marker, mark_color) = case g.locked, enabled {
+        True, _ -> #("▪", style.Grey)
+        False, True -> #("●", style.Green)
+        False, False -> #("○", style.Grey)
+      }
+      let name_color = case selected, g.locked {
+        True, _ -> style.Cyan
+        False, True -> style.Grey
+        False, False -> style.Default
+      }
+      let attrs = case g.locked {
+        True -> [style.Dim]
+        False -> []
+      }
+      list.flatten([
+        draw(x + 2, y, marker, mark_color, []),
+        draw(x + 4, y, truncate(g.name, int.max(1, w - 4)), name_color, attrs),
+      ])
+    }
+    Expander(count) -> {
+      let fold = case model.show_locked {
+        True -> "▾"
+        False -> "▸"
+      }
+      let color = case selected {
+        True -> style.Cyan
+        False -> style.Grey
+      }
+      let label = "always on (" <> int.to_string(count) <> ")"
+      list.flatten([
+        draw(x + 2, y, fold, color, [style.Dim]),
+        draw(x + 4, y, truncate(label, int.max(1, w - 4)), color, [style.Dim]),
+      ])
+    }
+  }
+  list.append(draw(x, y, caret, style.Cyan, []), cmds)
 }
 
 // --- Box + text drawing primitives ----------------------------------------
