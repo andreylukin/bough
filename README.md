@@ -108,6 +108,20 @@ Without `BOUGH_NET`, commands have no network (as before). The supervisor's own
 model calls are made by the server, outside the sandbox, so the leash governs
 only what the agent runs.
 
+**Toolchain access.** Sandboxed `RUN`/`CHECK` commands get the workspace plus
+read-only access to the language-toolchain dirs that exist under `$HOME`
+(`~/.cargo/bin`, `~/go/bin`, `~/.pyenv/shims`, `~/.nvm`, `~/.local/bin`, …), and
+the generated profile includes nono's `git_config` group, so `git`, `cargo`,
+`go`, `node`, etc. resolve on `PATH` without granting write access outside the
+workspace.
+
+**Credential injection.** For an authed `RUN` (e.g. `curl` to a private API),
+set `BOUGH_NET_CREDENTIALS` to a comma-separated list of `name=ENV_VAR` (or a
+bare `name`, whose env var defaults to its upper-cased form). Each one whose env
+var is set on the server is declared in the session's nono profile as an
+`env_credentials` entry, so nono injects it on egress and the raw secret never
+enters the sandbox (SPEC §6.4). Off by default.
+
 **Full plan of a turn.** Click anywhere on a bough turn (or press `f` for the
 latest one) to open the full-plan overlay: the supervisor's complete plan in one
 view — every action with its argument, the full `WRITE`/`EDIT` content, the

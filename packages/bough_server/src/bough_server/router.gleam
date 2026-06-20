@@ -17,6 +17,7 @@ import bough_server/agent
 import bough_server/clock
 import bough_server/control
 import bough_server/engine
+import bough_server/net_profile
 import bough_server/provider
 import bough_server/run_store
 import bough_server/session_manager
@@ -28,8 +29,8 @@ import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/http.{Get, Post}
 import gleam/int
-import gleam/list
 import gleam/json
+import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import wisp.{type Request, type Response}
@@ -51,7 +52,10 @@ const worker_model = "qwen2.5-coder"
 
 pub fn handle_request(req: Request) -> Response {
   case wisp.path_segments(req), req.method {
-    [], _ -> json_ok("{\"service\":\"bough\",\"version\":\"" <> bough_core.version <> "\"}")
+    [], _ ->
+      json_ok(
+        "{\"service\":\"bough\",\"version\":\"" <> bough_core.version <> "\"}",
+      )
     ["health"], _ -> json_ok("{\"status\":\"ok\"}")
     ["config"], Get -> config()
     ["doc"], _ -> doc()
@@ -80,10 +84,14 @@ fn doc() -> Response {
 /// The active supervisor provider and model, so clients can show what's in use.
 fn config() -> Response {
   let #(name, model) = resolved_model()
-  json_ok(json.to_string(json.object([
-    #("provider", json.string(name)),
-    #("model", json.string(model)),
-  ])))
+  json_ok(
+    json.to_string(
+      json.object([
+        #("provider", json.string(name)),
+        #("model", json.string(model)),
+      ]),
+    ),
+  )
 }
 
 // --- Sessions ------------------------------------------------------------
@@ -112,7 +120,8 @@ fn get_session(id: String) -> Response {
 fn add_entry(req: Request, id: String) -> Response {
   use body <- wisp.require_json(req)
   case decode.run(body, entry_req_decoder()) {
-    Error(_) -> wisp.bad_request("expected {\"role\": string, \"content\": string}")
+    Error(_) ->
+      wisp.bad_request("expected {\"role\": string, \"content\": string}")
     Ok(er) ->
       case session_manager.load(id) {
         Error(_) -> wisp.not_found()
@@ -184,12 +193,14 @@ fn run_agent(tree: SessionTree, content: String) -> Response {
           let tree = append_turn(tree, outcome, snap)
           case session_manager.save(tree) {
             Ok(_) ->
-              created(json.to_string(agent.run_json(
-                "done",
-                outcome.steps,
-                outcome.text,
-                outcome.context_tokens,
-              )))
+              created(
+                json.to_string(agent.run_json(
+                  "done",
+                  outcome.steps,
+                  outcome.text,
+                  outcome.context_tokens,
+                )),
+              )
             Error(_) -> wisp.internal_server_error()
           }
         }
@@ -225,6 +236,7 @@ fn engine_config(
     max_rounds: max_rounds(),
     review: review,
     net_gate: net_gate,
+    net_credentials: net_credentials(),
   )
 }
 
@@ -233,6 +245,19 @@ fn engine_config(
 /// blocked, as before.
 fn net_gate() -> Bool {
   envoy.get("BOUGH_NET") |> result.is_ok
+}
+
+/// Opt-in credential injection for sandboxed commands (SPEC §6.4): set
+/// `BOUGH_NET_CREDENTIALS` to a comma-separated list of `name=ENV_VAR` (or bare
+/// `name`). Only entries whose env var is actually set are declared, so the
+/// generated profile never references a missing credential.
+fn net_credentials() -> List(#(String, String)) {
+  case envoy.get("BOUGH_NET_CREDENTIALS") {
+    Error(_) -> []
+    Ok(spec) ->
+      net_profile.parse_credentials(spec)
+      |> list.filter(fn(c) { envoy.get(c.1) |> result.is_ok })
+  }
 }
 
 /// The resolved supervisor provider name and model from the environment
@@ -282,7 +307,8 @@ fn await_decision(id: String, polls: Int) -> control.Decision {
     Ok(decision) -> decision
     Error(_) ->
       case polls > 2400 {
-        True -> control.Steer("Approval timed out. Stop and wait for the human.")
+        True ->
+          control.Steer("Approval timed out. Stop and wait for the human.")
         False -> {
           process.sleep(250)
           await_decision(id, polls + 1)

@@ -8,6 +8,7 @@
 import bough_core/nono.{
   type AuditEvent, type Profile, type Snapshot, Allow, AuditEvent, Deny,
 }
+import envoy
 import gleam/dynamic/decode
 import gleam/json
 import gleam/list
@@ -16,6 +17,7 @@ import gleam/order.{Gt}
 import gleam/result
 import gleam/string
 import shellout
+import simplifile
 
 /// Build `nono run` arguments from a capability profile. Always detached so the
 /// supervisor keeps the agent running while clients attach/detach (SPEC.md §8).
@@ -46,7 +48,8 @@ fn net_flags(profile: Profile) -> List(String) {
 /// Used for one-shot tool execution (e.g. the `bash` tool). Returns whatever
 /// the command printed, even on non-zero exit, so the agent can see errors.
 pub fn run(profile: Profile, command: List(String)) -> String {
-  case shellout.command("nono", run_args(profile, command), profile.workspace, []) {
+  let args = run_args(profile, toolchain_reads(), command)
+  case shellout.command("nono", args, profile.workspace, []) {
     Ok(output) -> output
     Error(#(_code, output)) -> output
   }
@@ -56,19 +59,59 @@ pub fn run(profile: Profile, command: List(String)) -> String {
 /// it: RUN-step success and the CHECK gate are decided by exit status, not just
 /// captured output (SPEC.md §5.3).
 pub fn run_result(profile: Profile, command: List(String)) -> #(Int, String) {
-  case shellout.command("nono", run_args(profile, command), profile.workspace, []) {
+  let args = run_args(profile, toolchain_reads(), command)
+  case shellout.command("nono", args, profile.workspace, []) {
     Ok(output) -> #(0, output)
     Error(#(code, output)) -> #(code, output)
   }
 }
 
-pub fn run_args(profile: Profile, command: List(String)) -> List(String) {
+pub fn run_args(
+  profile: Profile,
+  reads: List(String),
+  command: List(String),
+) -> List(String) {
   list.flatten([
     ["run", "-s", "--allow", profile.workspace, "--allow-cwd"],
+    reads,
     net_flags(profile),
     ["--no-rollback", "--"],
     command,
   ])
+}
+
+/// Toolchain dirs (relative to `$HOME`) that hold language-tool binaries —
+/// cargo, go, node, pyenv, etc. The sandbox grants only the workspace by
+/// default, so a RUN/CHECK that shells out to one of these needs read access to
+/// find it on PATH (nono docs: "Enabling LSPs, Linters, and Dev Tools").
+const toolchain_dirs = [
+  ".cargo/bin", "go/bin", ".pyenv/shims", ".pyenv/bin", ".rbenv/shims",
+  ".rbenv/bin", ".ghcup/bin", ".nvm", ".local/share/fnm", ".local/share/pnpm",
+  ".local/bin",
+]
+
+/// `--read` flag pairs for the toolchain dirs that exist under `$HOME`. Read,
+/// not allow: enough for PATH lookup, no write access granted.
+pub fn toolchain_reads() -> List(String) {
+  case envoy.get("HOME") {
+    Ok(home) if home != "" ->
+      toolchain_dirs
+      |> list.map(fn(d) { home <> "/" <> d })
+      |> list.filter(fn(p) { simplifile.is_directory(p) == Ok(True) })
+      |> list.flat_map(fn(p) { ["--read", p] })
+    _ -> []
+  }
+}
+
+/// Validate a generated profile against the installed nono
+/// (`nono profile validate <path>`). Surfaces schema drift loudly instead of
+/// letting `nono run` reject it opaquely. `Ok` if valid; `Error` with nono's
+/// complaint otherwise.
+pub fn validate_profile(path: String) -> Result(Nil, String) {
+  case shellout.command("nono", ["profile", "validate", path], ".", []) {
+    Ok(_) -> Ok(Nil)
+    Error(#(_code, message)) -> Error(message)
+  }
 }
 
 /// Run a command in the sandbox under a generated nono profile (the network
@@ -83,9 +126,16 @@ pub fn run_in_profile(
   let args =
     list.flatten([
       [
-        "run", "-s", "--profile", profile_path, "--allow", workspace,
-        "--allow-cwd", "--no-rollback", "--",
+        "run",
+        "-s",
+        "--profile",
+        profile_path,
+        "--allow",
+        workspace,
+        "--allow-cwd",
       ],
+      toolchain_reads(),
+      ["--no-rollback", "--"],
       command,
     ])
   case shellout.command("nono", args, workspace, []) {
@@ -212,7 +262,9 @@ pub fn denials_of(session_id: String) -> List(Denial) {
 /// The newest `started` among audit sessions for `command` right now, or "" if
 /// none. Capture before running so `find_session` can ignore older sessions.
 pub fn session_watermark(command: List(String)) -> String {
-  case shellout.command("nono", ["audit", "list", "--today", "--json"], ".", []) {
+  case
+    shellout.command("nono", ["audit", "list", "--today", "--json"], ".", [])
+  {
     Error(_) -> ""
     Ok(out) ->
       case json.parse(out, decode.list(audit_list_decoder())) {
@@ -236,18 +288,27 @@ pub fn find_session(
   command: List(String),
   after: String,
 ) -> Result(#(String, Int), Nil) {
-  case shellout.command("nono", ["audit", "list", "--today", "--json"], ".", []) {
+  case
+    shellout.command("nono", ["audit", "list", "--today", "--json"], ".", [])
+  {
     Ok(out) -> pick_session(out, command, after)
     Error(_) -> Error(Nil)
   }
 }
 
 fn to_denial(e: AuditEvent) -> Denial {
-  // On an L7 (intercepted) deny, nono puts the method+path in the reason, e.g.
-  // "endpoint rules denied GET /secret: no rule matched on host:443". A plain
+  // Prefer nono's structured method/path fields from the audit JSON. Only when
+  // both are absent fall back to parsing the prose reason — on some L7
+  // (intercepted) denies nono carries them only in the reason string, e.g.
+  // "endpoint rules denied GET /secret: no rule matched on host:443"; a plain
   // CONNECT deny ("host X is not in the allowlist") has neither.
-  let #(method, path) = parse_endpoint_reason(e.reason)
-  Denial(host: e.host, method: method, path: path)
+  case e.method, e.path {
+    None, None -> {
+      let #(method, path) = parse_endpoint_reason(e.reason)
+      Denial(host: e.host, method: method, path: path)
+    }
+    _, _ -> Denial(host: e.host, method: e.method, path: e.path)
+  }
 }
 
 /// Pure: pull `#(method, path)` out of an endpoint-deny reason string, if present.
@@ -324,10 +385,7 @@ pub fn restore(snapshot: Snapshot) -> Result(Nil, String) {
 }
 
 pub fn restore_args(snapshot: Snapshot) -> List(String) {
-  [
-    "rollback", "restore", snapshot.session_id, "--snapshot",
-    snapshot.reference,
-  ]
+  ["rollback", "restore", snapshot.session_id, "--snapshot", snapshot.reference]
 }
 
 /// On-demand, per-write-turn snapshot capture is not a nono CLI primitive —

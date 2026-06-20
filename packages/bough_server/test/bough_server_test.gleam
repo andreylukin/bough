@@ -54,7 +54,15 @@ pub fn parse_network_events_test() {
 
   assert nono_bridge.parse_network_events(json)
     == Ok([
-      AuditEvent("example.com", 443, Some("CONNECT"), None, Allow, None, 1781670296845),
+      AuditEvent(
+        "example.com",
+        443,
+        Some("CONNECT"),
+        None,
+        Allow,
+        None,
+        1_781_670_296_845,
+      ),
       AuditEvent(
         "api.github.com",
         443,
@@ -62,7 +70,7 @@ pub fn parse_network_events_test() {
         None,
         Deny,
         Some("host api.github.com is not in the allowlist"),
-        1781670296934,
+        1_781_670_296_934,
       ),
     ])
 }
@@ -106,9 +114,15 @@ pub fn control_round_trip_test() {
 /// one host union into one endpoints array; a bare host stays a plain string.
 pub fn net_profile_unions_paths_test() {
   let j =
-    json.to_string(net_profile.build([
-      "https://api.foo.com/v1/**", "https://api.foo.com/v2/**", "bare.example.com",
-    ]))
+    json.to_string(
+      net_profile.build(
+        [
+          "https://api.foo.com/v1/**", "https://api.foo.com/v2/**",
+          "bare.example.com",
+        ],
+        [],
+      ),
+    )
   // Both path globs present under the one host, as endpoint rules.
   assert string.contains(j, "/v1/**")
   assert string.contains(j, "/v2/**")
@@ -117,6 +131,32 @@ pub fn net_profile_unions_paths_test() {
   assert string.contains(j, "\"bare.example.com\"")
   // One endpoints array for the host (i.e. unioned, not two domain objects).
   assert count_occurrences(j, "\"domain\":\"api.foo.com\"") == 1
+  // The git_config group is always included so a sandboxed `git` can read its
+  // config; no env_credentials block when none are injected.
+  assert string.contains(j, "\"git_config\"")
+  assert !string.contains(j, "env_credentials")
+}
+
+/// Injected credentials become an `env_credentials` map (name -> env var) in
+/// the profile (SPEC §6.4).
+pub fn net_profile_credentials_test() {
+  let j =
+    json.to_string(net_profile.build([], [#("github_token", "GITHUB_TOKEN")]))
+  assert string.contains(j, "\"env_credentials\"")
+  assert string.contains(j, "\"github_token\":\"GITHUB_TOKEN\"")
+}
+
+/// The BOUGH_NET_CREDENTIALS spec parses `name=ENV` and bare `name` entries,
+/// trims blanks, and upper-cases the env var for bare names.
+pub fn parse_credentials_test() {
+  assert net_profile.parse_credentials(
+      "github_token=GH_PAT, anthropic_api_key, ",
+    )
+    == [
+      #("github_token", "GH_PAT"),
+      #("anthropic_api_key", "ANTHROPIC_API_KEY"),
+    ]
+  assert net_profile.parse_credentials("") == []
 }
 
 fn count_occurrences(haystack: String, needle: String) -> Int {
@@ -168,7 +208,8 @@ pub fn pick_session_newest_matching_test() {
 pub fn pick_session_no_match_test() {
   let json =
     "[{\"session_id\":\"x\",\"started\":\"2026-06-18T16:00:00-04:00\",\"command\":[\"ls\"],\"network_event_count\":1}]"
-  assert nono_bridge.pick_session(json, ["sh", "-c", "curl x"], "") == Error(Nil)
+  assert nono_bridge.pick_session(json, ["sh", "-c", "curl x"], "")
+    == Error(Nil)
 }
 
 /// A snapshot captures the workspace; a later restore reverts a modified file

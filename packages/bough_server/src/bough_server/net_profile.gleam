@@ -14,11 +14,16 @@ import gleam/result
 import gleam/string
 import simplifile
 
-/// Write the profile for `rules` to `path`, returning it. Errors are non-fatal
-/// to the caller (it falls back to blocking the run).
-pub fn write(path: String, rules: List(String)) -> Result(String, Nil) {
+/// Write the profile for `rules` (and any injected `credentials`) to `path`,
+/// returning it. Errors are non-fatal to the caller (it falls back to blocking
+/// the run).
+pub fn write(
+  path: String,
+  rules: List(String),
+  credentials: List(#(String, String)),
+) -> Result(String, Nil) {
   let _ = simplifile.create_directory_all(dirname(path))
-  case simplifile.write(path, json.to_string(build(rules))) {
+  case simplifile.write(path, json.to_string(build(rules, credentials))) {
     Ok(_) -> Ok(path)
     Error(_) -> Error(Nil)
   }
@@ -29,10 +34,28 @@ pub fn write(path: String, rules: List(String)) -> Result(String, Nil) {
 /// audit) when it is; otherwise the network would be silently unrestricted.
 const sentinel = "bough.sentinel.invalid"
 
-/// Pure: the profile JSON for a set of allow rules.
-pub fn build(rules: List(String)) -> json.Json {
-  json.object([
-    #("meta", json.object([#("name", json.string("bough-net"))])),
+/// Pure: the profile JSON for a set of allow rules and injected credentials.
+/// Carries the documented nono profile shape — versioned `meta`, a `groups`
+/// include for git's config/credential helpers (so a sandboxed `git` works),
+/// the network allowlist, and an optional `env_credentials` map (SPEC §6.4).
+pub fn build(
+  rules: List(String),
+  credentials: List(#(String, String)),
+) -> json.Json {
+  let base = [
+    #(
+      "meta",
+      json.object([
+        #("name", json.string("bough-net")),
+        #("version", json.string("1.0.0")),
+      ]),
+    ),
+    // nono's documented group: grants git its config + credential-helper access
+    // inside the sandbox (without it a sandboxed `git` can't read ~/.gitconfig).
+    #(
+      "groups",
+      json.object([#("include", json.array(["git_config"], json.string))]),
+    ),
     #(
       "network",
       json.object([
@@ -42,7 +65,35 @@ pub fn build(rules: List(String)) -> json.Json {
         ),
       ]),
     ),
-  ])
+  ]
+  json.object(case credentials {
+    [] -> base
+    creds ->
+      list.append(base, [#("env_credentials", credentials_object(creds))])
+  })
+}
+
+/// `env_credentials` maps a credential name to the env var nono reads (outside
+/// the sandbox) and injects on egress — so the raw secret never enters the
+/// sandbox. e.g. `{"github_token": "GITHUB_TOKEN"}`.
+fn credentials_object(creds: List(#(String, String))) -> json.Json {
+  json.object(list.map(creds, fn(c) { #(c.0, json.string(c.1)) }))
+}
+
+/// Parse a `BOUGH_NET_CREDENTIALS` spec into (credential_name, env_var) pairs.
+/// Comma-separated; each entry is `name=ENV_VAR` or a bare `name` (env var
+/// defaults to the upper-cased name). Blanks are dropped.
+pub fn parse_credentials(spec: String) -> List(#(String, String)) {
+  spec
+  |> string.split(",")
+  |> list.map(string.trim)
+  |> list.filter(fn(s) { s != "" })
+  |> list.map(fn(s) {
+    case string.split_once(s, "=") {
+      Ok(#(name, env)) -> #(string.trim(name), string.trim(env))
+      Error(_) -> #(s, string.uppercase(s))
+    }
+  })
 }
 
 type HostRule {
