@@ -125,6 +125,8 @@ pub type Model {
     // Whether the network side pane is open. When off, the conversation takes
     // the full width; a paused network request still surfaces inline.
     net_open: Bool,
+    // The latest run's egress feed (allow/deny), shown in the network dock.
+    network: List(client.NetEvent),
   )
 }
 
@@ -252,6 +254,7 @@ pub fn init() -> #(Model, List(fn() -> Msg)) {
       parent: None,
       plan_steps: [],
       net_open: envoy.get("BOUGH_NET_PANE") |> result.is_ok,
+      network: [],
     )
   let resume = envoy.get("BOUGH_RESUME") |> result.is_ok
   // --resume opens the picker on launch; --continue resumes silently once the
@@ -982,7 +985,8 @@ fn submit_run(model: Model) -> #(Model, List(fn() -> Msg)) {
 }
 
 fn polled(model: Model, run: client.RunState) -> #(Model, List(fn() -> Msg)) {
-  let model = Model(..model, context_tokens: run.context_tokens)
+  let model =
+    Model(..model, context_tokens: run.context_tokens, network: run.network)
   case run.status {
     "done" -> {
       // Avoid double-appending when a poll redirects to an already-finished
@@ -2530,15 +2534,43 @@ fn network_panel(model: Model, x: Int, w: Int) -> List(Command) {
     Some(_) -> style.Red
     None -> style.Cyan
   }
-  list.flatten([
+  let header = [
     draw(x, 1, "workspace", style.Grey, [style.Dim]),
     put(x, 2, truncate(model.project, w), ws_color),
     draw(x, 4, "policy", style.Grey, [style.Dim]),
-    put(x, 5, "· bash   sandbox · net BLOCKED", style.Green),
-    put(x, 6, "· files  in-process (unsandboxed)", style.Yellow),
-    draw(x, 8, "live egress feed", style.Grey, [style.Dim]),
-    draw(x, 9, "(pending server SSE)", style.Grey, [style.Dim]),
-  ])
+    put(x, 5, "· bash   sandboxed", style.Green),
+    put(x, 6, "· files  in-process", style.Yellow),
+    draw(x, 8, "egress  ✓ allow · ✗ deny", style.Grey, [style.Dim]),
+  ]
+  list.flatten([list.flatten(header), network_feed(model, x, 9, w)])
+}
+
+/// The live egress feed: the most recent allow/deny events that fit the pane,
+/// oldest first. Empty until a sandboxed command reaches out (only under the
+/// net leash, `BOUGH_NET=1`; otherwise the policy is simply "net blocked").
+fn network_feed(model: Model, x: Int, y0: Int, w: Int) -> List(Command) {
+  let #(_cols, _rows, _conv_w, conv_h) = dims(model)
+  let avail = int.max(conv_h - 1 - y0, 1)
+  case model.network {
+    [] -> draw(x, y0, "no egress yet", style.Grey, [style.Dim])
+    events -> {
+      let shown =
+        events |> list.drop(int.max(list.length(events) - avail, 0))
+      shown
+      |> list.index_map(fn(e, i) {
+        let #(glyph, color) = case e.decision {
+          "deny" -> #("✗", style.Red)
+          _ -> #("✓", style.Green)
+        }
+        let endpoint = case e.method, e.path {
+          Some(m), Some(p) -> " " <> m <> " " <> p
+          _, _ -> ""
+        }
+        draw(x, y0 + i, truncate(glyph <> " " <> e.host <> endpoint, w), color, [])
+      })
+      |> list.flatten
+    }
+  }
 }
 
 // --- Box + text drawing primitives ----------------------------------------

@@ -128,11 +128,15 @@ view — every action with its argument, the full `WRITE`/`EDIT` content, the
 otherwise-hidden `READ`/`GREP` steps, worker fixes, and the `CHECK`. `↑↓` scroll,
 `Esc` closes.
 
-**Network pane.** The live egress feed is a collapsible side pane, not a fixed
-column: it starts hidden so the conversation gets the full width, and you toggle
-it with `n` (start it open with `BOUGH_NET_PANE=1`). Collapsing it loses nothing
-critical — when the leash pauses on a denied request, the allow/deny prompt
-surfaces inline in the conversation regardless.
+**Network pane.** A collapsible side pane (not a fixed column): it starts hidden
+so the conversation gets the full width, and you toggle it with `n` (start it
+open with `BOUGH_NET_PANE=1`). When open it streams the run's **live egress
+feed** — each sandboxed request the agent made, `✓` allowed (green) or `✗` denied
+(red), with the host and, where nono intercepted at L7, the `METHOD /path`. The
+feed populates under the leash (`BOUGH_NET=1`); without it the policy is simply
+"net blocked". Collapsing loses nothing critical — when the leash pauses on a
+denied request, the allow/deny prompt surfaces inline in the conversation
+regardless.
 
 | Key (`Esc` enters scroll/command mode) | Action |
 |---|---|
@@ -199,6 +203,11 @@ Early slices of the v1 vertical slice (SPEC.md §10) are working:
   OpenAI-compatible endpoint; a failed step gets one worker fix command. Set
   `BOUGH_WORKER_URL` to use a running/remote endpoint instead.
 
-Next: stream live egress + step activity into the network pane and add rule
-editing (needs server SSE + a rules endpoint); sandbox the file tools (WRITE/EDIT
-currently run in-process); context compaction for long autonomous runs.
+- **Live egress feed** (network dock): each run accumulates the sandbox's
+  observed egress (allow/deny, host + intercepted method/path) in the engine and
+  publishes it on the run-poll JSON (`…/run`), which the TUI renders in the
+  collapsible network pane. Populated under the leash (`BOUGH_NET=1`).
+
+Next: push run/egress updates over SSE instead of polling, and add in-pane rule
+editing (a rules endpoint); sandbox the file tools (WRITE/EDIT currently run
+in-process); context compaction for long autonomous runs.

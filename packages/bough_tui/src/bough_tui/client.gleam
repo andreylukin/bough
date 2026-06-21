@@ -47,6 +47,20 @@ pub type Reply {
   Reply(text: String, steps: List(Step))
 }
 
+/// One egress event observed by the sandbox, for the network dock's live feed
+/// (SPEC §7). `decision` is "allow" or "deny"; method/path are absent when nono
+/// saw only the CONNECT.
+pub type NetEvent {
+  NetEvent(
+    host: String,
+    port: Int,
+    method: option.Option(String),
+    path: option.Option(String),
+    decision: String,
+    reason: option.Option(String),
+  )
+}
+
 /// Progress of a background agent run (polled).
 pub type RunState {
   RunState(
@@ -54,6 +68,7 @@ pub type RunState {
     steps: List(Step),
     text: String,
     context_tokens: Int,
+    network: List(NetEvent),
   )
 }
 
@@ -295,11 +310,34 @@ fn run_state_decoder() -> decode.Decoder(RunState) {
   use text <- decode.field("text", decode.string)
   use steps <- decode.field("steps", decode.list(step_decoder()))
   use context_tokens <- decode.optional_field("context_tokens", 0, decode.int)
+  use network <- decode.optional_field(
+    "network",
+    [],
+    decode.list(net_event_decoder()),
+  )
   decode.success(RunState(
     status: status,
     steps: steps,
     text: text,
     context_tokens: context_tokens,
+    network: network,
+  ))
+}
+
+fn net_event_decoder() -> decode.Decoder(NetEvent) {
+  use host <- decode.field("host", decode.string)
+  use port <- decode.optional_field("port", 0, decode.int)
+  use method <- decode.field("method", decode.optional(decode.string))
+  use path <- decode.field("path", decode.optional(decode.string))
+  use decision <- decode.field("decision", decode.string)
+  use reason <- decode.field("reason", decode.optional(decode.string))
+  decode.success(NetEvent(
+    host: host,
+    port: port,
+    method: method,
+    path: path,
+    decision: decision,
+    reason: reason,
   ))
 }
 
