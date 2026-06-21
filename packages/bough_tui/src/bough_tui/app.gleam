@@ -122,6 +122,9 @@ pub type Model {
     parent: Option(String),
     // The steps of the turn being shown in the full-plan overlay.
     plan_steps: List(client.Step),
+    // Whether the network side pane is open. When off, the conversation takes
+    // the full width; a paused network request still surfaces inline.
+    net_open: Bool,
   )
 }
 
@@ -188,6 +191,8 @@ pub type Msg {
   AutoScroll
   // Plan-review gate.
   ToggleReview
+  // Show/hide the network side pane.
+  ToggleNet
   BeginSteer
   CancelSteer
   // Resolve a paused plan: decision "allow"/"steer" plus a steer message.
@@ -246,6 +251,7 @@ pub fn init() -> #(Model, List(fn() -> Msg)) {
       subagents: [],
       parent: None,
       plan_steps: [],
+      net_open: envoy.get("BOUGH_NET_PANE") |> result.is_ok,
     )
   let resume = envoy.get("BOUGH_RESUME") |> result.is_ok
   // --resume opens the picker on launch; --continue resumes silently once the
@@ -471,6 +477,15 @@ pub fn update(model: Model, msg: Msg) -> #(Model, List(fn() -> Msg)) {
         False -> "plan review: off"
       }
       #(Model(..model, review: review, status: note), [])
+    }
+
+    ToggleNet -> {
+      let net_open = !model.net_open
+      let note = case net_open {
+        True -> "network pane: on"
+        False -> "network pane: off"
+      }
+      #(Model(..model, net_open: net_open, status: note), [])
     }
 
     BeginSteer -> {
@@ -1212,6 +1227,7 @@ fn on_key_command(
     event.Char("s") -> update(model, OpenSessions)
     event.Char("t") -> update(model, OpenTree)
     event.Char("p") -> update(model, ToggleReview)
+    event.Char("n") -> update(model, ToggleNet)
     event.Char("a") -> update(model, OpenSubagents)
     event.Char("b") -> update(model, BackToParent)
     // Full plan of the most recent turn (click a turn for an earlier one).
@@ -1509,7 +1525,12 @@ fn osc52(text: String) -> String {
 
 fn dims(model: Model) -> #(Int, Int, Int, Int) {
   let #(cols, rows) = model.size
-  let net_w = int.max(cols * 32 / 100, 24)
+  // The network pane is collapsible: when closed it yields all width to the
+  // conversation. A paused network request still surfaces inline in the chat.
+  let net_w = case model.net_open {
+    True -> int.max(cols * 32 / 100, 24)
+    False -> 0
+  }
   let conv_w = int.max(cols - net_w, 24)
   // conversation box height: terminal minus input box (3) and status (1).
   let conv_h = int.max(rows - 4, 3)
@@ -2315,6 +2336,17 @@ fn render_chat(model: Model) -> List(Command) {
   let net_x = conv_w
   let net_w = cols - conv_w
 
+  // The network pane is drawn only when open; closed, the conversation already
+  // spans the full width (net_w is 0) so there is nothing to render here.
+  let net_pane = case model.net_open {
+    True ->
+      list.flatten([
+        box(net_x, 0, net_w, conv_h, "network", style.Magenta),
+        network_panel(model, net_x + 2, net_w - 3),
+      ])
+    False -> []
+  }
+
   let convo =
     visible_conversation(model)
     |> list.flat_map(fn(pair) {
@@ -2349,8 +2381,7 @@ fn render_chat(model: Model) -> List(Command) {
     convo,
     selection_overlay(model),
     scrollbar(model),
-    box(net_x, 0, net_w, conv_h, "network", style.Magenta),
-    network_panel(model, net_x + 2, net_w - 3),
+    net_pane,
     box(0, conv_h, cols, 3, input_title(model), style.Cyan),
     input_panel(model, conv_h, cols),
     status_line(model, rows - 1, cols),
@@ -2443,7 +2474,7 @@ fn status_line(model: Model, row: Int, cols: Int) -> List(Command) {
           <> "  ·  Esc: scroll/mouse mode  ·  Enter: send  ·  Ctrl+X: quit"
         False ->
           model.status
-          <> "  ·  ↑↓ scroll · s resume · t branch · a agents · f plan · p review · i type · Ctrl+X quit"
+          <> "  ·  ↑↓ scroll · s resume · t branch · a agents · f plan · p review · n net · i type · Ctrl+X quit"
       }
   }
   let #(color, attrs) = case string.starts_with(model.status, "error") {

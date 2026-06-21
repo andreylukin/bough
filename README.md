@@ -128,11 +128,17 @@ view — every action with its argument, the full `WRITE`/`EDIT` content, the
 otherwise-hidden `READ`/`GREP` steps, worker fixes, and the `CHECK`. `↑↓` scroll,
 `Esc` closes.
 
+**Network pane.** The live egress feed is a collapsible side pane, not a fixed
+column: it starts hidden so the conversation gets the full width, and you toggle
+it with `n` (start it open with `BOUGH_NET_PANE=1`). Collapsing it loses nothing
+critical — when the leash pauses on a denied request, the allow/deny prompt
+surfaces inline in the conversation regardless.
+
 | Key (`Esc` enters scroll/command mode) | Action |
 |---|---|
 | `i` / `Enter` | back to typing |
 | `s` · `t` · `a` · `b` | resume session · branch (tree) · subagents · back to parent |
-| `f` · `p` · `o` | full plan of latest turn · toggle plan-review gate · expand all output |
+| `f` · `p` · `o` · `n` | full plan of latest turn · toggle plan-review gate · expand all output · toggle network pane |
 | `a` / `e` / `r` | while a plan is paused: allow / edit-steer / reject |
 
 ## Layout
