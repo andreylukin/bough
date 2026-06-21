@@ -5,12 +5,14 @@
 //// (assistant text, tool call, tool result) so a caller can publish progress
 //// as it happens; `run` is the non-streaming variant.
 
+import bough_core/nono.{type AuditEvent, Allow}
 import bough_server/anthropic
 import bough_server/json_value.{type JsonValue, JArray, JObject, JString}
 import bough_server/tools
 import gleam/int
 import gleam/json
 import gleam/list
+import gleam/option
 import gleam/result
 import gleam/string
 
@@ -56,6 +58,9 @@ pub type Outcome {
     /// The network allowlist after this run — grown by any hosts approved
     /// during it, so the session can persist them (SPEC §7).
     net_allow: List(String),
+    /// Every egress event the sandbox observed this run (allow/deny), for the
+    /// network dock's live feed (SPEC §7). Chronological, oldest first.
+    net_events: List(AuditEvent),
   )
 }
 
@@ -141,6 +146,7 @@ fn loop(
         steps: list.reverse(steps),
         context_tokens: 0,
         net_allow: [],
+        net_events: [],
       ))
     }
     False -> {
@@ -184,6 +190,7 @@ fn loop(
             steps: list.reverse(steps),
             context_tokens: 0,
             net_allow: [],
+            net_events: [],
           ))
       }
     }
@@ -218,12 +225,38 @@ pub fn run_json(
   steps: List(Step),
   text: String,
   context_tokens: Int,
+  net_events: List(AuditEvent),
 ) -> json.Json {
   json.object([
     #("status", json.string(status)),
     #("text", json.string(text)),
     #("steps", json.preprocessed_array(list.map(steps, step_to_json))),
     #("context_tokens", json.int(context_tokens)),
+    #("network", json.preprocessed_array(list.map(net_events, audit_to_json))),
+  ])
+}
+
+/// One egress event serialized for the network dock. `decision` is "allow" or
+/// "deny"; `method`/`path`/`reason` are null when nono saw only the CONNECT.
+pub fn audit_to_json(e: AuditEvent) -> json.Json {
+  let decision = case e.decision {
+    Allow -> "allow"
+    nono.Deny -> "deny"
+  }
+  let opt = fn(o) {
+    case o {
+      option.Some(s) -> json.string(s)
+      option.None -> json.null()
+    }
+  }
+  json.object([
+    #("host", json.string(e.host)),
+    #("port", json.int(e.port)),
+    #("method", opt(e.method)),
+    #("path", opt(e.path)),
+    #("decision", json.string(decision)),
+    #("reason", opt(e.reason)),
+    #("timestamp", json.int(e.timestamp)),
   ])
 }
 

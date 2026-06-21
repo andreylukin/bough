@@ -199,6 +199,7 @@ fn run_agent(tree: SessionTree, content: String) -> Response {
                   outcome.steps,
                   outcome.text,
                   outcome.context_tokens,
+                  outcome.net_events,
                 )),
               )
             Error(_) -> wisp.internal_server_error()
@@ -375,7 +376,7 @@ fn spawn_subagent(
     )
   let _ = session_manager.save(child)
   control.clear(child_id)
-  run_store.write(child_id, "running", [], "", 0)
+  run_store.write(child_id, "running", [], "", 0, [])
 
   let _ =
     process.spawn_unlinked(fn() {
@@ -387,8 +388,8 @@ fn spawn_subagent(
           engine_config(prov, False, False),
           [],
           task,
-          fn(status, steps, context_tokens) {
-            run_store.write(child_id, status, steps, "", context_tokens)
+          fn(status, steps, context_tokens, net_events) {
+            run_store.write(child_id, status, steps, "", context_tokens, net_events)
           },
           fn() { await_decision(child_id, 0) },
           fn() { inbox_of(child_id) },
@@ -406,11 +407,12 @@ fn spawn_subagent(
             outcome.steps,
             outcome.text,
             outcome.context_tokens,
+            outcome.net_events,
           )
           subagents.set_status(parent_id, child_id, "done")
         }
         Error(message) -> {
-          run_store.write(child_id, "error", [], message, 0)
+          run_store.write(child_id, "error", [], message, 0, [])
           subagents.set_status(parent_id, child_id, "error")
         }
       }
@@ -630,7 +632,7 @@ fn launch_run(
 
       // Drop any stale approval so it can't leak into this fresh run.
       control.clear(id)
-      run_store.write(id, "running", [], "", 0)
+      run_store.write(id, "running", [], "", 0, [])
       let _ =
         process.spawn_unlinked(fn() {
           case
@@ -641,8 +643,8 @@ fn launch_run(
               engine_config(prov, review, net_gate()),
               history,
               content,
-              fn(status, steps, context_tokens) {
-                run_store.write(id, status, steps, "", context_tokens)
+              fn(status, steps, context_tokens, net_events) {
+                run_store.write(id, status, steps, "", context_tokens, net_events)
               },
               fn() { await_decision(id, 0) },
               fn() { inbox_of(id) },
@@ -662,9 +664,10 @@ fn launch_run(
                 outcome.steps,
                 outcome.text,
                 outcome.context_tokens,
+                outcome.net_events,
               )
             }
-            Error(message) -> run_store.write(id, "error", [], message, 0)
+            Error(message) -> run_store.write(id, "error", [], message, 0, [])
           }
         })
       wisp.json_response("{\"status\":\"started\"}", 202)

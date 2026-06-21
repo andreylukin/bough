@@ -120,7 +120,7 @@ type State {
     // Publishes the run's status + full activity list + context tokens after
     // each new activity. Status is "running", or "awaiting_plan" while a plan
     // is paused at the review gate.
-    emit: fn(String, List(Activity), Int) -> Nil,
+    emit: fn(String, List(Activity), Int, List(nono.AuditEvent)) -> Nil,
     // Blocks until the human resolves a paused plan (review gate). Supplied by
     // the caller; the engine only calls it when `config.review` is on.
     await: fn() -> control.Decision,
@@ -149,6 +149,9 @@ type State {
     net_profile_path: String,
     // activities newest-first; reversed on emit/return
     activities: List(Activity),
+    // Egress events the sandbox observed this run, oldest first — published to
+    // the network dock with every emit (SPEC §7).
+    net_events: List(nono.AuditEvent),
   )
 }
 
@@ -163,7 +166,7 @@ pub fn run_streaming(
   config: Config,
   history: List(#(String, String)),
   user_prompt: String,
-  emit: fn(String, List(Activity), Int) -> Nil,
+  emit: fn(String, List(Activity), Int, List(nono.AuditEvent)) -> Nil,
   await: fn() -> control.Decision,
   inbox: fn() -> Option(String),
   subagents: Subagents,
@@ -193,6 +196,7 @@ pub fn run_streaming(
       net_allow: net_allow,
       net_profile_path: dir <> "/net.json",
       activities: [],
+      net_events: [],
     )
   let #(state, rounds) = run_rounds(state, 1)
   Ok(Outcome(
@@ -201,6 +205,7 @@ pub fn run_streaming(
     steps: list.reverse(state.activities),
     context_tokens: state.context_tokens,
     net_allow: state.net_allow,
+    net_events: state.net_events,
   ))
 }
 
@@ -220,7 +225,7 @@ pub fn run(
     config,
     history,
     user_prompt,
-    fn(_, _, _) { Nil },
+    fn(_, _, _, _) { Nil },
     fn() { control.Allow },
     fn() { None },
     no_subagents(),
@@ -325,7 +330,12 @@ fn run_steps_round(
 /// transient — it isn't kept in the persisted activity list.
 fn await_plan(state: State, steps: List(Step)) -> control.Decision {
   let activities = [StepAwait(plan_summary(steps)), ..state.activities]
-  state.emit("awaiting_plan", list.reverse(activities), state.context_tokens)
+  state.emit(
+    "awaiting_plan",
+    list.reverse(activities),
+    state.context_tokens,
+    state.net_events,
+  )
   state.await()
 }
 
@@ -559,10 +569,22 @@ fn exec_run_net(state: State, cmd: String, tries: Int) -> #(State, Exec) {
   }
   let #(code, out) = sandboxed(state, command)
   let state = bump(state)
+  // One audit read serves both: record this run's egress for the network dock,
+  // and derive any denials to gate on. Off the net gate there is no audit
+  // session, so the feed stays empty (the policy is simply "net blocked").
+  let #(state, denials) = case state.config.net_gate {
+    False -> #(state, [])
+    True -> {
+      let events = net_events_for(command, watermark, 0)
+      let state =
+        State(..state, net_events: list.append(state.net_events, events))
+      #(state, denials_from(events))
+    }
+  }
   case state.config.net_gate && tries < net_max_retries {
     False -> #(state, Exec(code, out))
     True ->
-      case net_denials(command, watermark, 0) {
+      case denials {
         [] -> #(state, Exec(code, out))
         [denial, ..] ->
           case net_decision(state, denial) {
@@ -590,19 +612,19 @@ fn add_rule(rules: List(String), rule: String) -> List(String) {
   }
 }
 
-/// Denied requests for the run just performed. Polls until the run's audit
-/// session appears (nono flushes it shortly after the command exits) so a
-/// denial isn't missed by reading too early; then inspects it only if it had
-/// network events. Bounded (~1s) — if the session never shows, assume no denial.
-fn net_denials(
+/// The egress events for the run just performed. Polls until the run's audit
+/// session appears (nono flushes it shortly after the command exits) so events
+/// aren't missed by reading too early; reads them only if the session had
+/// network activity. Bounded (~1s) — if the session never shows, assume none.
+fn net_events_for(
   command: List(String),
   watermark: String,
   polls: Int,
-) -> List(nono_bridge.Denial) {
+) -> List(nono.AuditEvent) {
   case nono_bridge.find_session(command, watermark) {
     Ok(#(session_id, net_count)) ->
       case net_count > 0 {
-        True -> nono_bridge.denials_of(session_id)
+        True -> nono_bridge.audit_events(session_id) |> result.unwrap([])
         False -> []
       }
     Error(_) ->
@@ -610,10 +632,24 @@ fn net_denials(
         True -> []
         False -> {
           process.sleep(80)
-          net_denials(command, watermark, polls + 1)
+          net_events_for(command, watermark, polls + 1)
         }
       }
   }
+}
+
+/// The distinct denied requests within a run's egress events — what the leash
+/// gates on. Mirrors `nono_bridge.denials_of` but over already-read events.
+fn denials_from(events: List(nono.AuditEvent)) -> List(nono_bridge.Denial) {
+  events
+  |> list.filter_map(fn(e) {
+    case e.decision {
+      nono.Deny ->
+        Ok(nono_bridge.Denial(host: e.host, method: e.method, path: e.path))
+      nono.Allow -> Error(Nil)
+    }
+  })
+  |> list.unique
 }
 
 /// Ask the human about a denied request; map their choice to an allow rule
@@ -634,7 +670,12 @@ fn net_decision(state: State, denial: nono_bridge.Denial) -> Result(String, Nil)
 fn await_net(state: State, denial: nono_bridge.Denial) -> control.Decision {
   let step = StepNet(net_detail(denial), net_suggestion(denial))
   let activities = [step, ..state.activities]
-  state.emit("awaiting_net", list.reverse(activities), state.context_tokens)
+  state.emit(
+    "awaiting_net",
+    list.reverse(activities),
+    state.context_tokens,
+    state.net_events,
+  )
   state.await()
 }
 
@@ -945,7 +986,12 @@ fn update_check(state: State, check: Option(String)) -> State {
 
 fn emit_activity(state: State, activity: Activity) -> State {
   let activities = [activity, ..state.activities]
-  state.emit("running", list.reverse(activities), state.context_tokens)
+  state.emit(
+    "running",
+    list.reverse(activities),
+    state.context_tokens,
+    state.net_events,
+  )
   State(..state, activities: activities)
 }
 

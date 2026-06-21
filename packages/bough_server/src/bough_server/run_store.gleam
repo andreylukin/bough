@@ -3,6 +3,7 @@
 //// the file atomically (temp + rename) after each step; readers tolerate a
 //// missing file (idle).
 
+import bough_core/nono.{type AuditEvent}
 import bough_server/agent.{type Step}
 import envoy
 import gleam/dynamic/decode
@@ -28,6 +29,7 @@ pub fn write(
   steps: List(Step),
   text: String,
   context_tokens: Int,
+  net_events: List(AuditEvent),
 ) -> Nil {
   case dir() {
     Error(_) -> Nil
@@ -35,7 +37,13 @@ pub fn write(
       let target = path(d, session_id)
       let tmp = target <> ".tmp"
       let content =
-        json.to_string(agent.run_json(status, steps, text, context_tokens))
+        json.to_string(agent.run_json(
+          status,
+          steps,
+          text,
+          context_tokens,
+          net_events,
+        ))
       case simplifile.write(tmp, content) {
         Ok(_) -> {
           let _ = simplifile.rename(tmp, target)
