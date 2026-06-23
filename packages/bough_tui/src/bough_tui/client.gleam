@@ -43,6 +43,11 @@ pub type Step {
   /// human. `detail` is the denied request; `rule` is a suggested allow rule
   /// (path-glob) to pre-fill. Run status is "awaiting_net".
   Net(detail: String, rule: String)
+  /// The capability-group gate: a sandboxed step was denied filesystem access an
+  /// enableable group would grant. `detail` is the denied path(s); `groups` is
+  /// the comma-joined candidate group(s) to enable. Run status is
+  /// "awaiting_group".
+  GroupGate(detail: String, groups: String)
 }
 
 pub type Reply {
@@ -122,6 +127,8 @@ pub type Tree {
     superseded: List(String),
     /// Capability groups enabled for this session (restores the picker state).
     groups: List(String),
+    /// Groups the worker suggested enabling after a denial (advisory markers).
+    suggested: List(String),
   )
 }
 
@@ -312,6 +319,11 @@ fn tree_decoder() -> decode.Decoder(Tree) {
     decode.list(graft_superseded_decoder()),
   )
   use groups <- decode.optional_field("groups", [], decode.list(decode.string))
+  use suggested <- decode.optional_field(
+    "suggested",
+    [],
+    decode.list(decode.string),
+  )
   decode.success(Tree(
     id:,
     project:,
@@ -319,6 +331,7 @@ fn tree_decoder() -> decode.Decoder(Tree) {
     entries:,
     superseded: list.flatten(superseded),
     groups:,
+    suggested:,
   ))
 }
 
@@ -560,6 +573,11 @@ fn step_decoder() -> decode.Decoder(Step) {
       use detail <- decode.field("detail", decode.string)
       use rule <- decode.field("rule", decode.string)
       decode.success(Net(detail, rule))
+    }
+    "group" -> {
+      use detail <- decode.field("detail", decode.string)
+      use groups <- decode.field("groups", decode.string)
+      decode.success(GroupGate(detail, groups))
     }
     _ -> decode.failure(Text(""), "Step")
   }

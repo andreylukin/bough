@@ -3,7 +3,7 @@
 
 PACKAGES := bough_core bough_server bough_tui
 
-.PHONY: check test build clean $(addprefix check-,$(PACKAGES))
+.PHONY: check test build clean serve $(addprefix check-,$(PACKAGES))
 
 check: ## Type-check every package
 	@for p in $(PACKAGES); do echo "== check $$p =="; (cd packages/$$p && gleam check) || exit 1; done
@@ -17,6 +17,6 @@ test: ## Run tests for every package
 clean: ## Remove build artifacts
 	@for p in $(PACKAGES); do rm -rf packages/$$p/build; done
 
-# Run the server (placeholder until the agent loop lands; SPEC.md §10)
+# Run the server on 127.0.0.1:4096 (SPEC.md §10)
 serve:
 	cd packages/bough_server && gleam run

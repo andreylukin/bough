@@ -46,6 +46,12 @@ pub type Step {
   /// request (e.g. "GET api.foo.com/v1/x"); `rule` is a suggested allow rule to
   /// pre-fill for the path-glob option. Run status is "awaiting_net".
   StepNet(detail: String, rule: String)
+  /// The capability-group gate (SPEC §7): a sandboxed step was denied
+  /// filesystem access that an enableable group would grant, awaiting the
+  /// human's decision. `detail` is the denied path(s); `groups` is the
+  /// comma-joined candidate group name(s) to enable on approval / pre-fill for
+  /// the edit option. Run status is "awaiting_group".
+  StepGroup(detail: String, groups: String)
 }
 
 pub type Outcome {
@@ -61,6 +67,11 @@ pub type Outcome {
     /// Every egress event the sandbox observed this run (allow/deny), for the
     /// network dock's live feed (SPEC §7). Chronological, oldest first.
     net_events: List(AuditEvent),
+    /// Capability groups the worker suggested enabling during this run (advisory).
+    suggested: List(String),
+    /// Capability groups enabled during this run — the human approved them at the
+    /// group gate (SPEC §7), so the session should persist them.
+    groups: List(String),
   )
 }
 
@@ -147,6 +158,8 @@ fn loop(
         context_tokens: 0,
         net_allow: [],
         net_events: [],
+        suggested: [],
+        groups: [],
       ))
     }
     False -> {
@@ -191,6 +204,8 @@ fn loop(
             context_tokens: 0,
             net_allow: [],
             net_events: [],
+            suggested: [],
+            groups: [],
           ))
       }
     }
@@ -326,6 +341,12 @@ pub fn step_to_json(step: Step) -> json.Json {
         #("type", json.string("net")),
         #("detail", json.string(detail)),
         #("rule", json.string(rule)),
+      ])
+    StepGroup(detail, groups) ->
+      json.object([
+        #("type", json.string("group")),
+        #("detail", json.string(detail)),
+        #("groups", json.string(groups)),
       ])
   }
 }

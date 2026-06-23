@@ -12,8 +12,8 @@
 //// shore's Tab-focus dance.
 
 import bough_tui/client.{
-  type Step, Await, Call, Check, Exec, Net, Plan, Review, Text, ToolCall,
-  ToolResult, Worker,
+  type Step, Await, Call, Check, Exec, GroupGate, Net, Plan, Review, Text,
+  ToolCall, ToolResult, Worker,
 }
 import etch/command.{type Command}
 import etch/event.{type Event}
@@ -116,6 +116,10 @@ pub type Model {
     awaiting_net: Bool,
     // Suggested allow rule to pre-fill when editing a network decision.
     net_rule: String,
+    // True when the current pause is a capability-group request (vs a plan/net).
+    awaiting_group: Bool,
+    // Candidate group(s) to pre-fill when editing a group decision.
+    group_suggest: String,
     // Subagents the current session has spawned (for the subagents picker).
     subagents: List(client.Subagent),
     // The session to return to after jumping into a subagent (for `b` back).
@@ -137,6 +141,8 @@ pub type Model {
     groups_catalog: List(client.Group),
     // Toggleable groups enabled for the current session.
     groups_enabled: List(String),
+    // Groups the worker suggested enabling after a denial (advisory markers).
+    groups_suggested: List(String),
     // True when the right-hand capabilities panel has keyboard focus.
     panel_focus: Bool,
     // Selected row in the capabilities panel (index into the panel item list).
@@ -145,6 +151,9 @@ pub type Model {
     show_locked: Bool,
     // The group whose contents are shown in the inspector overlay (GroupV).
     group_detail: Option(client.GroupDetail),
+    // Briefly true after the session id is clicked, so its status segment
+    // blinks as copy feedback before a timer clears it.
+    session_flash: Bool,
   )
 }
 
@@ -214,6 +223,8 @@ pub type Msg {
   Grafted(Result(client.Tree, String))
   // Returned by the clipboard-copy side effect; no model change.
   Noop
+  // Ends the session-id blink started by clicking it.
+  SessionFlashOff
   // Timer tick that advances an in-progress edge autoscroll.
   AutoScroll
   // Plan-review gate.
@@ -245,6 +256,8 @@ pub type Msg {
   // Inspect a group's contents (right-click): fetch and open the overlay.
   OpenGroup(String)
   GroupDetailLoaded(Result(client.GroupDetail, String))
+  // Refresh enabled/suggested groups from the session after a run.
+  GroupsSynced(Result(client.Tree, String))
 }
 
 pub fn init() -> #(Model, List(fn() -> Msg)) {
@@ -289,6 +302,8 @@ pub fn init() -> #(Model, List(fn() -> Msg)) {
       steering: False,
       awaiting_net: False,
       net_rule: "",
+      awaiting_group: False,
+      group_suggest: "",
       subagents: [],
       parent: None,
       plan_steps: [],
@@ -298,10 +313,12 @@ pub fn init() -> #(Model, List(fn() -> Msg)) {
       show_superseded: False,
       groups_catalog: [],
       groups_enabled: [],
+      groups_suggested: [],
       panel_focus: False,
       panel_sel: 0,
       show_locked: False,
       group_detail: None,
+      session_flash: False,
     )
   let resume = envoy.get("BOUGH_RESUME") |> result.is_ok
   // --resume opens the picker on launch; --continue resumes silently once the
@@ -339,11 +356,18 @@ pub fn update(model: Model, msg: Msg) -> #(Model, List(fn() -> Msg)) {
 
     Noop -> #(model, [])
 
+    SessionFlashOff -> #(Model(..model, session_flash: False), [])
+
     AutoScroll ->
       case model.mouse_sel, model.autoscroll {
         Some(r), step if step != 0 -> {
           let #(_cols, _rows, conv_w, _conv_h) = dims(model)
           let before = model.scroll
+          // Each held tick nudges the speed one line faster (capped). The top
+          // edge is row 0 with no room above to express "push further", so a
+          // distance ramp can't work there — time gives the ramp instead, and
+          // the bottom accelerates the same way for symmetry.
+          let step = ramp_autoscroll(step)
           let model = scroll_by(model, step)
           case model.scroll == before {
             // Reached the top/bottom: stop the loop.
@@ -356,6 +380,7 @@ pub fn update(model: Model, msg: Msg) -> #(Model, List(fn() -> Msg)) {
               #(
                 Model(
                   ..model,
+                  autoscroll: step,
                   mouse_sel: Some(Region(r.anchor_line, r.anchor_col, head_line, head_col)),
                 ),
                 [autoscroll_tick],
@@ -511,6 +536,7 @@ pub fn update(model: Model, msg: Msg) -> #(Model, List(fn() -> Msg)) {
         scroll: 0,
         status: "resumed · session " <> tree.id,
         groups_enabled: tree.groups,
+        groups_suggested: tree.suggested,
       ),
       [],
     )
@@ -590,11 +616,12 @@ pub fn update(model: Model, msg: Msg) -> #(Model, List(fn() -> Msg)) {
     }
 
     BeginSteer -> {
-      // For a network request, pre-fill the suggested allow rule (editable);
-      // for a plan, start blank for free-text guidance.
-      let #(text, hint) = case model.awaiting_net {
-        True -> #(model.net_rule, "allow rule · edit & Enter to allow · Esc cancels")
-        False -> #("", "guidance for the plan · Enter sends · Esc cancels")
+      // For a network request, pre-fill the suggested allow rule; for a group
+      // request, the candidate group name(s); for a plan, start blank.
+      let #(text, hint) = case model.awaiting_net, model.awaiting_group {
+        True, _ -> #(model.net_rule, "allow rule · edit & Enter to allow · Esc cancels")
+        _, True -> #(model.group_suggest, "group(s) to enable · edit & Enter · Esc cancels")
+        _, _ -> #("", "guidance for the plan · Enter sends · Esc cancels")
       }
       #(
         Model(
@@ -722,6 +749,12 @@ pub fn update(model: Model, msg: Msg) -> #(Model, List(fn() -> Msg)) {
       [],
     )
     GroupDetailLoaded(Error(e)) -> #(Model(..model, status: "group: " <> e), [])
+
+    GroupsSynced(Ok(tree)) -> #(
+      Model(..model, groups_enabled: tree.groups, groups_suggested: tree.suggested),
+      [],
+    )
+    GroupsSynced(Error(_)) -> #(model, [])
   }
 }
 
@@ -1056,7 +1089,7 @@ fn step_color(step: client.Step) -> Color {
         False -> style.Red
       }
     client.Review(_) | client.Await(_) -> style.Magenta
-    client.Net(_, _) -> style.Yellow
+    client.Net(_, _) | client.GroupGate(_, _) -> style.Yellow
   }
 }
 
@@ -1096,6 +1129,7 @@ fn step_label(step: client.Step) -> String {
     client.Review(note) -> "[review: " <> oneline(note) <> "]"
     client.Await(_) -> "[plan: awaiting approval]"
     client.Net(detail, _) -> "[net: allow " <> oneline(detail) <> "?]"
+    client.GroupGate(_, groups) -> "[group: enable " <> oneline(groups) <> "?]"
     client.ToolCall(name, input) ->
       "[" <> name <> ": " <> oneline(input) <> "]"
     client.ToolResult(_name, output) -> "↳ " <> oneline(output)
@@ -1232,10 +1266,16 @@ fn polled(model: Model, run: client.RunState) -> #(Model, List(fn() -> Msg)) {
         True -> model.chat
         False -> [Bough(run.steps), ..model.chat]
       }
+      let server = model.server
+      let sync = case model.session {
+        Some(id) -> [fn() { GroupsSynced(client.get_session(server, id)) }]
+        None -> []
+      }
       #(
         Model(..model, status: "ready", pending: False, running_steps: [], chat: chat),
-        // If the tree overlay is open, reload it now that the turn is persisted.
-        tree_reload_effect(model),
+        // Reload the tree overlay if open, and refresh enabled/suggested groups
+        // now that the turn (and any new suggestions) are persisted.
+        list.append(tree_reload_effect(model), sync),
       )
     }
     "error" -> #(
@@ -1252,7 +1292,7 @@ fn polled(model: Model, run: client.RunState) -> #(Model, List(fn() -> Msg)) {
     // until the human resolves it (SendControl resumes the poll loop).
     "awaiting_plan" -> #(
       rebuild_tree(
-        Model(..model, awaiting: True, awaiting_net: False, steering: False, running_steps: run.steps, status: "review the plan"),
+        Model(..model, awaiting: True, awaiting_net: False, awaiting_group: False, steering: False, running_steps: run.steps, status: "review the plan"),
       ),
       [],
     )
@@ -1262,10 +1302,26 @@ fn polled(model: Model, run: client.RunState) -> #(Model, List(fn() -> Msg)) {
           ..model,
           awaiting: True,
           awaiting_net: True,
+          awaiting_group: False,
           steering: False,
           net_rule: net_rule_of(run.steps),
           running_steps: run.steps,
           status: "network request",
+        ),
+      ),
+      [],
+    )
+    "awaiting_group" -> #(
+      rebuild_tree(
+        Model(
+          ..model,
+          awaiting: True,
+          awaiting_net: False,
+          awaiting_group: True,
+          steering: False,
+          group_suggest: group_suggest_of(run.steps),
+          running_steps: run.steps,
+          status: "capability request",
         ),
       ),
       [],
@@ -1275,11 +1331,11 @@ fn polled(model: Model, run: client.RunState) -> #(Model, List(fn() -> Msg)) {
         // While the tree overlay is open, fold the in-progress steps into it
         // live (they aren't persisted until the turn finishes).
         Some(id) -> #(
-          rebuild_tree(Model(..model, awaiting: False, awaiting_net: False, running_steps: run.steps)),
+          rebuild_tree(Model(..model, awaiting: False, awaiting_net: False, awaiting_group: False, running_steps: run.steps)),
           [poll(model.server, id)],
         )
         None -> #(
-          rebuild_tree(Model(..model, awaiting: False, awaiting_net: False, running_steps: run.steps)),
+          rebuild_tree(Model(..model, awaiting: False, awaiting_net: False, awaiting_group: False, running_steps: run.steps)),
           [],
         )
       }
@@ -1307,6 +1363,20 @@ fn net_rule_of(steps: List(client.Step)) -> String {
   |> result.unwrap("")
 }
 
+/// The candidate group(s) from the latest group-gate step, for pre-filling the
+/// "pick group" editor.
+fn group_suggest_of(steps: List(client.Step)) -> String {
+  steps
+  |> list.reverse
+  |> list.find_map(fn(s) {
+    case s {
+      client.GroupGate(_, groups) -> Ok(groups)
+      _ -> Error(Nil)
+    }
+  })
+  |> result.unwrap("")
+}
+
 fn poll(server: String, id: String) -> fn() -> Msg {
   fn() {
     process.sleep(400)
@@ -1320,10 +1390,102 @@ fn tick() -> Msg {
 }
 
 fn scroll_by(model: Model, n: Int) -> Model {
-  let budget = conv_inner_h(model)
-  let max_scroll =
-    int.max(list.length(transcript(model)) - budget + 2, 0)
-  Model(..model, scroll: int.clamp(model.scroll + n, 0, max_scroll))
+  // Already at the bottom and scrolling further down is a no-op — skip the
+  // transcript rebuild that computing `max_scroll` would need. This is the hot
+  // path under a wheel burst at the bottom of the conversation.
+  case model.scroll == 0 && n <= 0 {
+    True -> model
+    False -> {
+      let budget = conv_inner_h(model)
+      let max_scroll = int.max(list.length(transcript(model)) - budget + 2, 0)
+      Model(..model, scroll: int.clamp(model.scroll + n, 0, max_scroll))
+    }
+  }
+}
+
+/// Wheel-scroll the conversation. With an active selection, keep it and extend
+/// the head to the newly exposed edge line (like edge autoscroll) so scrolling
+/// to reach off-screen content grows the selection instead of destroying it;
+/// with no movement (already at an end) the selection is left untouched.
+fn scroll_conv(model: Model, n: Int) -> Model {
+  case model.mouse_sel {
+    None -> scroll_by(model, n)
+    Some(r) -> {
+      let #(_cols, _rows, conv_w, _conv_h) = dims(model)
+      let before = model.scroll
+      let model = scroll_by(model, n)
+      case model.scroll == before {
+        True -> model
+        False -> {
+          let #(head_line, head_col) = case n > 0 {
+            True -> #(top_visible_line(model), 2)
+            False -> #(bottom_visible_line(model), conv_w - 3)
+          }
+          Model(
+            ..model,
+            mouse_sel: Some(Region(r.anchor_line, r.anchor_col, head_line, head_col)),
+          )
+        }
+      }
+    }
+  }
+}
+
+// --- Terminal input buffering ----------------------------------------------
+
+/// Split a grapheme buffer into the part that's safe to parse now and a trailing
+/// incomplete escape sequence to carry into the next read.
+///
+/// etch's input loop parses each terminal read independently, so a CSI/SGR
+/// sequence — e.g. a mouse report `ESC [ < … M` emitted while scrolling — that
+/// straddles a read boundary has its tail parsed as plain text and leaked into
+/// the UI (the `;45M;…` you see typed into the input). Holding the unterminated
+/// tail until its final byte arrives in the next read fixes that. A lone trailing
+/// ESC is left in the safe part (parsed as the Esc key), so Esc stays responsive
+/// rather than waiting on a sequence that may never come.
+pub fn split_pending_escape(
+  graphemes: List(String),
+) -> #(List(String), List(String)) {
+  case last_index(graphemes, "\u{001b}") {
+    None -> #(graphemes, [])
+    Some(i) -> {
+      let tail = list.drop(graphemes, i)
+      case tail_incomplete(tail) {
+        True -> #(list.take(graphemes, i), tail)
+        False -> #(graphemes, [])
+      }
+    }
+  }
+}
+
+/// A trailing `ESC [ …` (CSI) is incomplete until a final byte (0x40–0x7E)
+/// arrives; a trailing `ESC O` (SS3) needs its one following byte. Anything else
+/// (lone ESC, `ESC` + a non-CSI char) is a complete event we can parse now.
+fn tail_incomplete(tail: List(String)) -> Bool {
+  case tail {
+    [_esc, "[", ..rest] -> !list.any(rest, is_csi_final)
+    [_esc, "O", ..rest] -> rest == []
+    _ -> False
+  }
+}
+
+fn is_csi_final(g: String) -> Bool {
+  case string.to_utf_codepoints(g) {
+    [cp, ..] -> {
+      let n = string.utf_codepoint_to_int(cp)
+      n >= 0x40 && n <= 0x7e
+    }
+    [] -> False
+  }
+}
+
+fn last_index(items: List(String), target: String) -> Option(Int) {
+  list.index_fold(items, None, fn(acc, item, i) {
+    case item == target {
+      True -> Some(i)
+      False -> acc
+    }
+  })
 }
 
 // --- Event translation ----------------------------------------------------
@@ -1519,8 +1681,8 @@ fn on_mouse(
     // Scrolling over the capabilities panel moves its selection.
     ChatV, event.ScrollUp if over_panel -> update(model, PanelMove(-1))
     ChatV, event.ScrollDown if over_panel -> update(model, PanelMove(1))
-    ChatV, event.ScrollUp -> update(clear_sel(model), ScrollBy(3))
-    ChatV, event.ScrollDown -> update(clear_sel(model), ScrollBy(-3))
+    ChatV, event.ScrollUp -> #(scroll_conv(model, 3), [])
+    ChatV, event.ScrollDown -> #(scroll_conv(model, -3), [])
     ChatV, event.Down(event.Left) -> on_mouse_down(model, me.column, me.row)
     // Right-click a group row opens its contents inspector.
     ChatV, event.Down(event.Right) -> on_right_click(model, me.column, me.row)
@@ -1567,6 +1729,10 @@ fn on_mouse_drag(model: Model, col: Int, row: Int) -> #(Model, List(fn() -> Msg)
         // Inside the pane: head follows the line under the cursor.
         _, _ -> #(line_under_row(model, row), int.clamp(col, 2, conv_w - 3), 0)
       }
+      // Jittery drag events keep firing while a button is held past an edge;
+      // preserve the timer's in-progress ramp instead of snapping back to the
+      // positional base on every motion report.
+      let dir = keep_ramp(was, dir)
       let model =
         Model(
           ..model,
@@ -1589,9 +1755,39 @@ fn edge_step(d: Int) -> Int {
   int.clamp(d, 1, 6)
 }
 
+/// One held autoscroll tick: accelerate the signed speed toward the ±12 cap,
+/// preserving direction. ~6 ticks (≈180 ms) to reach full speed.
+fn ramp_autoscroll(step: Int) -> Int {
+  case step > 0 {
+    True -> int.min(step + 2, 12)
+    False -> int.max(step - 2, -12)
+  }
+}
+
+/// Combine the in-progress autoscroll speed `was` with the drag's positional
+/// `base`: same direction keeps the faster of the two (so the timer's ramp
+/// survives the jittery drag events fired while a button is held past an edge);
+/// a stop or direction change adopts the new base.
+fn keep_ramp(was: Int, base: Int) -> Int {
+  case base != 0 && was != 0 && { was > 0 } == { base > 0 } {
+    True ->
+      case base > 0 {
+        True -> int.max(was, base)
+        False -> int.min(was, base)
+      }
+    False -> base
+  }
+}
+
 fn autoscroll_tick() -> Msg {
   process.sleep(30)
   AutoScroll
+}
+
+/// Holds the session-id blink on for ~700 ms after a click, then clears it.
+fn session_flash_off() -> Msg {
+  process.sleep(700)
+  SessionFlashOff
 }
 
 /// Releasing finishes a drag: an empty region was really a click (toggle/focus);
@@ -1627,18 +1823,26 @@ fn on_click(model: Model, col: Int, row: Int) -> #(Model, List(fn() -> Msg)) {
   // A click below the conversation (input box) focuses it; a click in the
   // capabilities panel toggles the group row; a click on a tool-result line
   // toggles that result.
-  let #(_cols, _rows, conv_w, conv_h) = dims(model)
-  case row >= conv_h, col >= conv_w {
-    True, _ -> update(model, SetFocus(True))
-    False, True ->
-      case item_at_row(model, row) {
-        Ok(idx) -> update(model, ClickGroup(idx))
-        Error(_) -> #(model, [])
-      }
-    False, False ->
-      case list.key_find(clickable_rows(model), row) {
-        Ok(msg) -> update(model, msg)
-        Error(_) -> #(model, [])
+  let #(_cols, rows, conv_w, conv_h) = dims(model)
+  // A click on the session id in the status line copies it to the clipboard.
+  case row == rows - 1, session_status_span(model), model.session {
+    True, Some(#(s, e)), Some(id) if col >= s && col <= e -> #(
+      Model(..model, status: "copied session " <> id, session_flash: True),
+      [copy_effect(id), session_flash_off],
+    )
+    _, _, _ ->
+      case row >= conv_h, col >= conv_w {
+        True, _ -> update(model, SetFocus(True))
+        False, True ->
+          case item_at_row(model, row) {
+            Ok(idx) -> update(model, ClickGroup(idx))
+            Error(_) -> #(model, [])
+          }
+        False, False ->
+          case list.key_find(clickable_rows(model), row) {
+            Ok(msg) -> update(model, msg)
+            Error(_) -> #(model, [])
+          }
       }
   }
 }
@@ -1782,7 +1986,8 @@ fn int_range(from: Int, to: Int) -> List(Int) {
   }
 }
 
-fn selection_text(model: Model, r: Region) -> String {
+@internal
+pub fn selection_text(model: Model, r: Region) -> String {
   selection_pieces(model, r)
   |> list.map(fn(piece) {
     let #(_line, _start, text) = piece
@@ -1868,12 +2073,17 @@ fn transcript(model: Model) -> List(CLine) {
     None -> []
   }
   let entries = list.reverse(model.chat)
-  let #(history, idx) =
-    list.fold(entries, #([], 0), fn(acc, entry) {
-      let #(lines, i) = acc
+  // Render each entry to its own line list, then flatten once. Folding with
+  // `list.append` into a growing accumulator is O(n²) — it re-copies the whole
+  // transcript per entry, which makes a long conversation bog the UI down (every
+  // scroll/tick rebuilds it). `map_fold` keeps the running line index; flatten
+  // is linear.
+  let #(idx, chunks) =
+    list.map_fold(entries, 0, fn(i, entry) {
       let #(more, i2) = render_entry(entry, width, model, i)
-      #(list.append(lines, more), i2)
+      #(i2, more)
     })
+  let history = list.flatten(chunks)
   let live = case model.pending {
     True -> {
       let #(more, _) = render_entry(Bough(model.running_steps), width, model, idx)
@@ -1899,7 +2109,38 @@ fn transcript(model: Model) -> List(CLine) {
       ])
     _, _ -> list.append(history, live)
   }
-  list.flatten([banner, main, suggestion_lines(model.suggestions)])
+  list.flatten([
+    banner,
+    capability_banner(model),
+    main,
+    suggestion_lines(model.suggestions),
+  ])
+}
+
+/// Capability groups the agent asked for (after a sandbox denial) that aren't
+/// enabled yet — a prominent, clickable call to action above the transcript.
+/// Clears itself as groups are enabled (the router drops enabled groups from
+/// `suggested`). Click it, or press `c`, to open the capabilities panel.
+fn capability_banner(model: Model) -> List(CLine) {
+  let pending =
+    list.filter(model.groups_suggested, fn(name) {
+      !list.contains(model.groups_enabled, name)
+    })
+  case pending {
+    [] -> []
+    _ -> [
+      CLine(
+        "✋ agent requested capabilities: "
+          <> string.join(pending, ", ")
+          <> "  · press c to review",
+        style.Yellow,
+        [style.Bold],
+        Some(FocusPanel),
+        [],
+      ),
+      line("", style.Default),
+    ]
+  }
 }
 
 /// The bough mark in block art: a thick high-cut trunk with one bough growing
@@ -2124,6 +2365,15 @@ fn render_step(
         [bold("◆ network request", style.Yellow)],
         wrap_styled("the agent was blocked from: " <> detail, width, style.Default),
         [bold("  a allow host   ·   e custom rule   ·   r deny", style.Yellow)],
+      ]),
+      idx,
+    )
+    GroupGate(detail, groups) -> #(
+      list.flatten([
+        [bold("◆ capability request", style.Yellow)],
+        wrap_styled("a sandboxed step was denied: " <> detail, width, style.Default),
+        wrap_styled("enable group(s): " <> groups, width, style.Default),
+        [bold("  a enable   ·   e pick group   ·   r deny", style.Yellow)],
       ]),
       idx,
     )
@@ -2624,10 +2874,11 @@ fn render_tree_overlay(model: Model) -> List(Command) {
     |> list.index_map(fn(row, i) {
       let screen_row = oy + 1 + i
       let selected = start + i == model.sel
-      // Selection caret.
+      // Per-row bullet (pi-style): the selected row gets a caret, the rest a dim
+      // dot, so the whole branch reads as one bulleted transcript.
       let caret = case selected {
         True -> draw(ox + 2, screen_row, "›", style.Cyan, [style.Bold])
-        False -> []
+        False -> draw(ox + 2, screen_row, "•", style.Grey, [style.Dim])
       }
       // Dim connector gutter.
       let gutter = draw(ox + 4, screen_row, row.prefix, style.Grey, [style.Dim])
@@ -2654,7 +2905,15 @@ fn render_tree_overlay(model: Model) -> List(Command) {
     0 -> draw(ox + 2, oy + 1, "(no history yet)", style.Grey, [style.Dim])
     _ -> []
   }
-  floating_overlay(model, geom, title, list.append(body, empty))
+  // Position counter on the footer border, e.g. `(9/10)` (pi-style).
+  let counter = case total {
+    0 -> []
+    _ -> {
+      let text = "(" <> int.to_string(model.sel + 1) <> "/" <> int.to_string(total) <> ")"
+      draw(ox + ow - string.length(text) - 2, oy + oh - 1, text, style.Grey, [style.Dim])
+    }
+  }
+  floating_overlay(model, geom, title, list.flatten([body, empty, counter]))
 }
 
 fn one_line(text: String) -> String {
@@ -2881,20 +3140,36 @@ fn status_line(model: Model, row: Int, cols: Int) -> List(Command) {
     True -> draw(cols - right_w, row, right, style.Grey, [style.Dim])
     False -> []
   }
+  // A single highlight pulse over the session id segment as click feedback: it
+  // lights up bright on click, then the flash timer reverts it to normal.
+  let flash = case model.session_flash, session_status_span(model), model.session {
+    True, Some(#(s, _e)), Some(id) ->
+      draw(s, row, "session " <> id, style.BrightCyan, [style.Bold])
+    _, _, _ -> []
+  }
   list.flatten([
     draw(0, row, truncate(text, int.max(0, cols - right_w - 1)), color, attrs),
     meter,
+    flash,
   ])
 }
 
-/// The right-hand status segment: `<model> · ctx NN%`, omitting either part
-/// that isn't known yet.
+/// The right-hand status segment: `session <id> · <model> · ctx NN%`, omitting
+/// any part that isn't known yet. The session id is always shown once present.
 fn right_status(model: Model) -> String {
-  let base = case model.model_name, context_meter(model.context_tokens) {
+  let model_ctx = case model.model_name, context_meter(model.context_tokens) {
     "", ctx -> ctx
     name, "" -> name
     name, ctx -> name <> " · " <> ctx
   }
+  let session = case model.session {
+    Some(id) -> "session " <> id
+    None -> ""
+  }
+  let base =
+    [session, model_ctx]
+    |> list.filter(fn(part) { part != "" })
+    |> string.join(" · ")
   // A leading marker when the plan-review gate is armed.
   case model.review {
     True -> "⏸ review · " <> base
@@ -2902,7 +3177,26 @@ fn right_status(model: Model) -> String {
   }
 }
 
-const context_window = 200_000
+/// Screen column span `#(start, end)` (inclusive) of the `session <id>` segment
+/// in the right-aligned status text, or None when no session is active. The
+/// session id is the first segment of `right_status`, after the review marker.
+fn session_status_span(model: Model) -> Option(#(Int, Int)) {
+  case model.session {
+    None -> None
+    Some(id) -> {
+      let #(cols, _rows) = model.size
+      let prefix = case model.review {
+        True -> string.length("⏸ review · ")
+        False -> 0
+      }
+      let label_w = string.length("session " <> id)
+      let start = cols - string.length(right_status(model)) + prefix
+      Some(#(start, start + label_w - 1))
+    }
+  }
+}
+
+const context_window = 1_000_000
 
 /// "ctx NN%" for the status meter, or "" when no run has reported tokens yet.
 fn context_meter(tokens: Int) -> String {
@@ -3031,15 +3325,21 @@ fn panel_item_row(
   let cmds = case item {
     GroupRow(g) -> {
       let enabled = list.contains(model.groups_enabled, g.name)
-      let #(marker, mark_color) = case g.locked, enabled {
-        True, _ -> #("▪", style.Grey)
-        False, True -> #("●", style.Green)
-        False, False -> #("○", style.Grey)
+      // A disabled, unlocked group an agent has asked for (after a denial): show
+      // a raised hand next to it. Cleared once enabled.
+      let requested =
+        !enabled && !g.locked && list.contains(model.groups_suggested, g.name)
+      let #(marker, mark_color) = case g.locked, enabled, requested {
+        True, _, _ -> #("▪", style.Grey)
+        False, True, _ -> #("●", style.Green)
+        False, False, True -> #("✋", style.Yellow)
+        False, False, False -> #("○", style.Grey)
       }
-      let name_color = case selected, g.locked {
-        True, _ -> style.Cyan
-        False, True -> style.Grey
-        False, False -> style.Default
+      let name_color = case selected, g.locked, requested {
+        True, _, _ -> style.Cyan
+        False, True, _ -> style.Grey
+        False, False, True -> style.Yellow
+        False, False, False -> style.Default
       }
       let attrs = case g.locked {
         True -> [style.Dim]

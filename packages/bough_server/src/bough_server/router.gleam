@@ -35,6 +35,7 @@ import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
+import gleam/string
 import wisp.{type Request, type Response}
 
 const default_model = "claude-haiku-4-5-20251001"
@@ -172,7 +173,11 @@ fn set_session_groups(req: Request, id: String) -> Response {
           case list.all(names, fn(n) { list.contains(toggleable, n) }) {
             False -> wisp.bad_request("unknown or locked group")
             True -> {
-              let tree = session.SessionTree(..tree, groups: names)
+              // Enabling a group clears it from the advisory suggestions.
+              let suggested =
+                list.filter(tree.suggested, fn(s) { !list.contains(names, s) })
+              let tree =
+                session.SessionTree(..tree, groups: names, suggested: suggested)
               case session_manager.save(tree) {
                 Ok(_) -> json_ok(json.to_string(session.tree_to_json(tree)))
                 Error(_) -> wisp.internal_server_error()
@@ -501,11 +506,19 @@ fn spawn_subagent(
           subagents_for(child_id, prov, api_key, model, workspace),
           [],
           inherited,
+          [],
         )
       {
         Ok(outcome) -> {
           // Subagents share the workspace; only top-level turns checkpoint, so
-          // the fork tree has one coherent snapshot timeline.
+          // the fork tree has one coherent snapshot timeline. Persist any groups
+          // the subagent asked for / enabled so its requests show when you view it.
+          let child =
+            session.SessionTree(
+              ..child,
+              groups: list.unique(list.append(child.groups, outcome.groups)),
+              suggested: outcome.suggested,
+            )
           let _ = session_manager.save(append_turn(child, outcome, None))
           run_store.write(
             child_id,
@@ -597,16 +610,90 @@ fn worker_port() -> Int {
   }
 }
 
-/// The active branch as `#(role, content)` turns for the agent to replay.
-fn history_of(tree: SessionTree) -> List(#(String, String)) {
-  session.path(tree)
-  |> list.filter_map(fn(e) {
-    case e.role {
-      session.User -> Ok(#("user", e.content))
-      session.Assistant -> Ok(#("assistant", e.content))
-      _ -> Error(Nil)
-    }
-  })
+/// The active branch as `#(role, content)` turns for the agent to replay. A
+/// `System` action digest (written by `append_turn`) is folded into the front of
+/// the assistant turn it precedes, so the supervisor sees what it did last turn
+/// rather than only its own prose. `ToolResult` display entries are skipped.
+pub fn history_of(tree: SessionTree) -> List(#(String, String)) {
+  let #(turns, pending) =
+    session.path(tree)
+    |> list.fold(#([], None), fn(acc, e) {
+      let #(turns, pending) = acc
+      case e.role {
+        session.User -> #([#("user", e.content), ..turns], pending)
+        session.System -> #(turns, Some(e.content))
+        session.Assistant -> {
+          let content = case pending {
+            Some(digest) -> digest <> "\n\n" <> e.content
+            None -> e.content
+          }
+          #([#("assistant", content), ..turns], None)
+        }
+        session.ToolResult -> #(turns, pending)
+      }
+    })
+  // A trailing digest with no assistant turn after it (e.g. the branch was
+  // forked onto a System node) is still replayed so the work isn't lost.
+  let turns = case pending {
+    Some(digest) -> [#("assistant", digest), ..turns]
+    None -> turns
+  }
+  list.reverse(turns)
+}
+
+/// A typed digest of the actions a turn performed — verbs, targets, and exit
+/// codes, but not their output (dropped on purpose to keep replayed context
+/// small). `None` for a purely conversational turn, so chat-only turns stay
+/// clean. Derived from the typed steps, so no display-JSON re-parsing.
+pub fn actions_summary(steps: List(agent.Step)) -> Option(String) {
+  let #(lines, _) =
+    list.fold(steps, #([], ""), fn(acc, step) {
+      let #(lines, arg) = acc
+      case step {
+        // A call's arg (command/path/pattern) is paired with the exec that
+        // follows it; hold it until then.
+        agent.StepCall(_verb, a, _detail) -> #(lines, a)
+        agent.StepExec(verb, exit, _digest) -> {
+          let target = case string.trim(arg) {
+            "" -> ""
+            a -> " " <> oneline_clip(a, 60)
+          }
+          let line = verb <> target <> " (exit " <> int.to_string(exit) <> ")"
+          #([line, ..lines], "")
+        }
+        agent.StepWorker(_command, exit) -> #(
+          ["worker fix (exit " <> int.to_string(exit) <> ")", ..lines],
+          arg,
+        )
+        agent.StepCheck(ok, _digest) -> {
+          let verdict = case ok {
+            True -> "passed"
+            False -> "failed"
+          }
+          #(["CHECK " <> verdict, ..lines], arg)
+        }
+        // Prose, review notes, and gate events aren't actions.
+        _ -> #(lines, arg)
+      }
+    })
+  case list.reverse(lines) {
+    [] -> None
+    ls ->
+      Some(
+        "[Context — actions you performed this turn (output omitted): "
+        <> string.join(ls, "; ")
+        <> "]",
+      )
+  }
+}
+
+/// Collapse to one line and clip to `max` chars with an ellipsis if longer.
+fn oneline_clip(s: String, max: Int) -> String {
+  let one = s |> string.replace("\n", " ") |> string.trim
+  case string.length(one) > max {
+    True -> string.slice(one, 0, max) <> "…"
+    False -> one
+  }
 }
 
 // --- Sessions list + fork (resume / branch) ------------------------------
@@ -711,6 +798,12 @@ fn graft_decoder() -> decode.Decoder(#(String, String)) {
 /// entry as the new leaf. `ToolResult` entries are skipped by `history_of`, so
 /// the conversation replayed to the model is unchanged. The assistant leaf
 /// carries `snapshot_ref` — the filesystem checkpoint for this turn (SPEC §4.1).
+///
+/// When the turn ran actions, a compact `System` entry holding a typed digest of
+/// them (verbs, targets, exit codes) is chained just before the assistant leaf.
+/// The supervisor's real tool_use/tool_result blocks don't survive the run, so
+/// without this the next turn can't see what it did (it would only replay its
+/// own prose); `history_of` folds the digest back into that turn's context.
 fn append_turn(
   tree: SessionTree,
   outcome: agent.Outcome,
@@ -726,6 +819,14 @@ fn append_turn(
         )
       session.append(tr, entry)
     })
+  let tree = case actions_summary(outcome.steps) {
+    Some(summary) ->
+      session.append(
+        tree,
+        make_entry(session.System, summary, tree.active_leaf),
+      )
+    None -> tree
+  }
   let leaf =
     Entry(
       id: wisp.random_string(16),
@@ -827,12 +928,32 @@ fn launch_run(
               subagents_for(id, prov, api_key, model, tree.project),
               tree.allow_domains,
               tree.groups,
+              tree.suggested,
             )
           {
             Ok(outcome) -> {
-              // Persist any hosts approved during the run as session state.
+              // Persist hosts approved + groups suggested during the run. Re-read
+              // the live `groups` from disk so a group the human enabled while the
+              // run was in flight isn't clobbered by the run-start snapshot; drop
+              // any now-enabled group from the suggestions.
+              let disk_groups = case session_manager.load(id) {
+                Ok(latest) -> latest.groups
+                Error(_) -> tree.groups
+              }
+              // Union groups enabled at the gate during the run with any the
+              // human toggled via the picker mid-run.
+              let groups = list.unique(list.append(disk_groups, outcome.groups))
+              let suggested =
+                list.filter(outcome.suggested, fn(s) {
+                  !list.contains(groups, s)
+                })
               let tree =
-                session.SessionTree(..tree, allow_domains: outcome.net_allow)
+                session.SessionTree(
+                  ..tree,
+                  groups: groups,
+                  allow_domains: outcome.net_allow,
+                  suggested: suggested,
+                )
               let snap = capture_snapshot(id, tree.project)
               let _ = session_manager.save(append_turn(tree, outcome, snap))
               run_store.write(

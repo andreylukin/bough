@@ -58,6 +58,9 @@ pub type SessionTree {
     /// nono capability groups the human has enabled for this session, layered
     /// into the sandbox profile on top of the always-on base (SPEC.md §7).
     groups: List(String),
+    /// Capability groups the worker has *suggested* enabling after a sandbox
+    /// denial (advisory — the human decides). Cleared per group as it's enabled.
+    suggested: List(String),
     /// The graft operations applied to this tree, newest first (SPEC.md §4.2).
     /// Each records which original nodes it superseded; that's what marks them
     /// hidden in the default view without ever deleting a line.
@@ -73,6 +76,7 @@ pub fn new(id: String, project: String) -> SessionTree {
     active_leaf: None,
     allow_domains: [],
     groups: [],
+    suggested: [],
     grafts: [],
   )
 }
@@ -411,6 +415,7 @@ pub fn tree_to_json(tree: SessionTree) -> json.Json {
     #("active_leaf", json.nullable(tree.active_leaf, json.string)),
     #("allow_domains", json.array(tree.allow_domains, json.string)),
     #("groups", json.array(tree.groups, json.string)),
+    #("suggested", json.array(tree.suggested, json.string)),
     #("entries", json.array(list.reverse(tree.entries), entry_to_json)),
     #("grafts", json.array(list.reverse(tree.grafts), graft_event_to_json)),
   ])
@@ -425,6 +430,7 @@ type Meta {
     active_leaf: Option(String),
     allow_domains: List(String),
     groups: List(String),
+    suggested: List(String),
   )
 }
 
@@ -435,6 +441,7 @@ fn meta_to_json(tree: SessionTree) -> json.Json {
     #("active_leaf", json.nullable(tree.active_leaf, json.string)),
     #("allow_domains", json.array(tree.allow_domains, json.string)),
     #("groups", json.array(tree.groups, json.string)),
+    #("suggested", json.array(tree.suggested, json.string)),
   ])
 }
 
@@ -450,12 +457,18 @@ fn meta_decoder() -> decode.Decoder(Meta) {
   )
   // Older session files predate capability groups — default to empty.
   use groups <- decode.optional_field("groups", [], decode.list(decode.string))
+  use suggested <- decode.optional_field(
+    "suggested",
+    [],
+    decode.list(decode.string),
+  )
   decode.success(Meta(
     id: id,
     project: project,
     active_leaf: active_leaf,
     allow_domains: allow_domains,
     groups: groups,
+    suggested: suggested,
   ))
 }
 
@@ -497,6 +510,7 @@ pub fn from_jsonl(contents: String) -> Result(SessionTree, String) {
         active_leaf: meta.active_leaf,
         allow_domains: meta.allow_domains,
         groups: meta.groups,
+        suggested: meta.suggested,
         grafts: list.reverse(grafts),
       ))
     }

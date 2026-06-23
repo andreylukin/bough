@@ -19,7 +19,7 @@ import bough_core/digest
 import bough_core/nono
 import bough_server/agent.{
   type Outcome, type Step as Activity, Outcome, StepAwait, StepCall, StepCheck,
-  StepExec, StepNet, StepPlan, StepReview, StepText, StepWorker,
+  StepExec, StepGroup, StepNet, StepPlan, StepReview, StepText, StepWorker,
 }
 import bough_server/clock
 import bough_server/control
@@ -147,10 +147,17 @@ type State {
     steps_done: Int,
     // Project instructions (AGENTS.md), read once at run start.
     instructions: Option(String),
+    // A plain-language summary of this run's sandbox reach (network posture,
+    // enabled capability groups, filesystem limits), built once at run start
+    // and injected into the supervisor's system prompt so it reasons about what
+    // it can do up front instead of rediscovering limits round by round.
+    capabilities: String,
     // The network allowlist for sandboxed commands; grows as hosts are approved.
     net_allow: List(String),
     // Session-enabled nono capability groups, layered into the run's profile.
     groups: List(String),
+    // Groups the worker suggested enabling after a denial this run (advisory).
+    suggested: List(String),
     // Where the generated nono network profile for this run is written.
     net_profile_path: String,
     // activities newest-first; reversed on emit/return
@@ -178,6 +185,7 @@ pub fn run_streaming(
   subagents: Subagents,
   net_allow: List(String),
   groups: List(String),
+  suggested: List(String),
 ) -> Result(Outcome, String) {
   let dir = bb_dir()
   let state =
@@ -200,8 +208,10 @@ pub fn run_streaming(
       reviewed: False,
       steps_done: 0,
       instructions: read_agents_md(workspace),
+      capabilities: capabilities_summary(config, net_allow, groups),
       net_allow: net_allow,
       groups: groups,
+      suggested: suggested,
       net_profile_path: dir <> "/net.json",
       activities: [],
       net_events: [],
@@ -214,6 +224,8 @@ pub fn run_streaming(
     context_tokens: state.context_tokens,
     net_allow: state.net_allow,
     net_events: state.net_events,
+    suggested: state.suggested,
+    groups: state.groups,
   ))
 }
 
@@ -240,6 +252,7 @@ pub fn run(
     no_subagents(),
     [],
     groups,
+    [],
   )
 }
 
@@ -253,6 +266,7 @@ fn run_rounds(state: State, round: Int) -> #(State, Int) {
       case supervisor_call(state) {
         Error(e) -> #(notice(state, "error: " <> e), round)
         Ok(reply) -> {
+          log_supervisor(state, round, reply)
           let state =
             State(
               ..state,
@@ -271,8 +285,23 @@ fn run_rounds(state: State, round: Int) -> #(State, Int) {
               case find_run_steps(reply.tool_uses) {
                 // No tool call → a conversational reply ends the turn, unless
                 // subagents it spawned are still running (then hold and fold in
-                // their results so it can synthesize).
-                None -> settle_subagents(state, round)
+                // their results so it can synthesize). Guard the degenerate
+                // case: an empty turn (no prose, no tool call, no pending
+                // subagent) would otherwise end silently and read as "bough
+                // never responded" — surface it with the stop_reason instead.
+                None ->
+                  case state.subagents.pending() == False && prose == "" {
+                    True -> #(
+                      notice(
+                        state,
+                        "supervisor returned an empty turn (stop_reason: "
+                          <> reply.stop_reason
+                          <> ")",
+                      ),
+                      round,
+                    )
+                    False -> settle_subagents(state, round)
+                  }
                 Some(tu) ->
                   case tool_steps.parse(tu.input) {
                     Error(msg) -> {
@@ -487,10 +516,236 @@ fn exec_steps(
 /// command each, through the same sandbox path.
 fn apply_with_fixes(state: State, step: Step) -> #(State, Exec, Int) {
   let #(state, result) = apply(state, step)
+  // On a sandbox filesystem denial, pause for the human to enable a capability
+  // group that would grant the access, then retry the step (SPEC §7).
+  let #(state, result) = gate_groups(state, step, result, 0)
   case state.config.worker {
     None -> #(state, result, 0)
     Some(model) -> fix_loop(state, step, result, model, 0)
   }
+}
+
+/// Cap on the approve→retry loop for one step's group gate.
+const group_max_retries = 4
+
+/// When a step is denied filesystem access that an enableable group would grant,
+/// pause for the human (status "awaiting_group"): approve to enable the
+/// candidate group(s) — rebuilding the run's nono profile — and retry the step,
+/// or reject and keep the failure for the supervisor. A denial with no candidate
+/// group (e.g. a path outside any group's reach) is left to stand.
+fn gate_groups(
+  state: State,
+  step: Step,
+  result: Exec,
+  tries: Int,
+) -> #(State, Exec) {
+  case is_fs_denial(result) && tries < group_max_retries {
+    False -> #(state, result)
+    True ->
+      case candidate_groups(state, step, result) {
+        [] -> #(state, result)
+        candidates -> {
+          let enable = group_decision(state, step, result, candidates)
+          // Candidates the agent needed but the human didn't enable become
+          // advisory suggestions (persisted, surfaced as ✋ and the banner) so
+          // the ask isn't lost when the run moves on.
+          let unmet =
+            list.filter(candidates, fn(c) { !list.contains(enable, c) })
+          let state =
+            State(
+              ..state,
+              suggested: list.unique(list.append(state.suggested, unmet)),
+            )
+          case enable {
+            // Rejected (or no usable group named): the failure stands.
+            [] -> #(state, result)
+            _ -> {
+              let state =
+                State(..state, groups: list.unique(list.append(state.groups, enable)))
+              let #(state, result) = apply(state, step)
+              gate_groups(state, step, result, tries + 1)
+            }
+          }
+        }
+      }
+  }
+}
+
+/// True when a step's output carries a sandbox/OS filesystem-permission denial.
+fn is_fs_denial(result: Exec) -> Bool {
+  result.exit != 0 && contains_any(result.output, denial_markers)
+}
+
+/// The toggleable capability groups that would grant the denied access: the
+/// deterministic path→group match, plus any the worker proposes, minus those
+/// already enabled.
+fn candidate_groups(state: State, step: Step, result: Exec) -> List(String) {
+  let targets =
+    list.append(step_paths(step), denied_paths(result.output))
+    |> list.unique
+  let deterministic = case targets {
+    [] -> []
+    _ -> nono_bridge.groups_for_paths(targets)
+  }
+  list.append(deterministic, suggester_worker(state, result, targets))
+  |> list.unique
+  |> list.filter(fn(g) { !list.contains(state.groups, g) })
+}
+
+/// Publish the gate with status "awaiting_group" and block on the human. Returns
+/// the group name(s) to enable: `Allow` enables every candidate; a non-empty
+/// `Steer` enables the named candidate(s) it lists; an empty `Steer` (reject)
+/// enables none.
+fn group_decision(
+  state: State,
+  _step: Step,
+  result: Exec,
+  candidates: List(String),
+) -> List(String) {
+  let detail = group_detail_text(result.output)
+  let step = StepGroup(detail, string.join(candidates, ", "))
+  let activities = [step, ..state.activities]
+  state.emit(
+    "awaiting_group",
+    list.reverse(activities),
+    state.context_tokens,
+    state.net_events,
+  )
+  case state.await() {
+    control.Allow -> candidates
+    control.Steer(message) -> {
+      let named =
+        message
+        |> string.replace("\n", ",")
+        |> string.split(",")
+        |> list.map(fn(s) { string.trim(string.lowercase(s)) })
+      list.filter(candidates, fn(c) { list.contains(named, string.lowercase(c)) })
+    }
+  }
+}
+
+/// The denied path(s) for the gate prompt — the distinct paths the denial named.
+fn group_detail_text(output: String) -> String {
+  case denied_paths(output) |> list.unique {
+    [] -> "a sandboxed step was denied filesystem access"
+    paths -> string.join(paths, ", ")
+  }
+}
+
+/// Signatures a sandbox/OS permission denial leaves in command output.
+const denial_markers = ["Operation not permitted", "Permission denied"]
+
+/// Ask the worker which available groups would resolve the denial. `[]` if the
+/// worker is disabled/unreachable or proposes nothing usable. Constrained to the
+/// toggleable catalog the human can actually enable.
+fn suggester_worker(state: State, result: Exec, paths: List(String)) -> List(String) {
+  case state.config.worker {
+    None -> []
+    Some(model) -> {
+      let catalog =
+        nono_bridge.list_groups()
+        |> list.filter(fn(g) { !g.locked && !list.contains(state.groups, g.name) })
+      let listing =
+        catalog
+        |> list.map(fn(g) { "- " <> g.name <> ": " <> g.description })
+        |> string.join("\n")
+      let prompt =
+        "DENIED PATHS: "
+        <> string.join(paths, ", ")
+        <> "\n\nOUTPUT:\n"
+        <> digest.digest(result.output, state.config.digest_limit)
+        <> "\n\nAVAILABLE GROUPS:\n"
+        <> listing
+      case
+        worker.complete(
+          state.config.worker_url,
+          model,
+          prompts.suggester_system,
+          prompt,
+          200,
+        )
+      {
+        Error(_) -> []
+        Ok(text) -> parse_suggested(text, catalog)
+      }
+    }
+  }
+}
+
+/// Parse the worker's comma/newline-separated reply into known toggleable group
+/// names (case-insensitive), dropping "none" and anything off the catalog.
+pub fn parse_suggested(text: String, catalog: List(nono.Group)) -> List(String) {
+  let names = list.map(catalog, fn(g) { g.name })
+  text
+  |> string.replace("\n", ",")
+  |> string.split(",")
+  |> list.map(fn(s) { string.trim(string.lowercase(s)) })
+  |> list.filter_map(fn(s) {
+    case list.find(names, fn(n) { string.lowercase(n) == s }) {
+      Ok(n) -> Ok(n)
+      Error(_) -> Error(Nil)
+    }
+  })
+}
+
+/// Filesystem paths named in denial lines like
+/// `mkdir: /Users/x/Library: Operation not permitted` — the text before the
+/// marker, last colon-separated token.
+pub fn denied_paths(output: String) -> List(String) {
+  output
+  |> string.split("\n")
+  |> list.filter_map(fn(line) {
+    case list.find(denial_markers, fn(m) { string.contains(line, m) }) {
+      Error(_) -> Error(Nil)
+      Ok(marker) ->
+        case string.split_once(line, ": " <> marker) {
+          Ok(#(before, _)) ->
+            case string.split(before, ": ") |> list.last {
+              Ok(path) ->
+                case string.starts_with(string.trim(path), "/") {
+                  True -> Ok(string.trim(path))
+                  False -> Error(Nil)
+                }
+              Error(_) -> Error(Nil)
+            }
+          Error(_) -> Error(Nil)
+        }
+    }
+  })
+  |> list.unique
+}
+
+fn contains_any(haystack: String, needles: List(String)) -> Bool {
+  list.any(needles, fn(n) { string.contains(haystack, n) })
+}
+
+/// The path(s) a step targets — the specific paths to map a denial against. For
+/// a RUN, the path-like tokens in its command; for WRITE/EDIT, the file.
+fn step_paths(step: Step) -> List(String) {
+  case step {
+    Run(_, cmd) -> paths_in(cmd)
+    Write(_, path, _) -> [path]
+    Edit(_, path, _, _) -> [path]
+    _ -> []
+  }
+}
+
+/// Whitespace tokens that look like filesystem paths (absolute, `~`, or
+/// `$HOME`-rooted), unquoted — a cheap way to recover what a command touched.
+fn paths_in(text: String) -> List(String) {
+  text
+  |> string.replace("\n", " ")
+  |> string.split(" ")
+  |> list.map(fn(t) {
+    t
+    |> string.replace("'", "")
+    |> string.replace("\"", "")
+  })
+  |> list.filter(fn(t) {
+    string.starts_with(t, "/")
+    || string.starts_with(t, "~")
+    || string.starts_with(t, "$HOME")
+  })
 }
 
 fn fix_loop(
@@ -895,13 +1150,47 @@ fn supervisor_call(state: State) -> Result(provider.Response, String) {
     state.config.provider,
     state.api_key,
     state.sup_model,
-    prompts.supervisor_system(state.workspace, state.instructions),
+    prompts.supervisor_system(
+      state.workspace,
+      state.instructions,
+      state.capabilities,
+    ),
     state.convo,
     // The supervisor acts only through the run_steps tool (§5.2).
     tools.run_steps_name,
     tools.run_steps_description(),
     tools.run_steps_schema(),
   )
+}
+
+/// Persist one line of supervisor-call telemetry to the run's bb dir, so a
+/// surprising turn (notably an empty one — no prose, no run_steps) is
+/// diagnosable after the fact: stop_reason, token counts, and whether a
+/// run_steps tool call was present. Best-effort; never fails the run.
+fn log_supervisor(state: State, round: Int, reply: provider.Response) -> Nil {
+  let has_run_steps = case find_run_steps(reply.tool_uses) {
+    Some(_) -> "true"
+    None -> "false"
+  }
+  let line =
+    "{\"round\":"
+    <> int.to_string(round)
+    <> ",\"stop_reason\":\""
+    <> reply.stop_reason
+    <> "\",\"input_tokens\":"
+    <> int.to_string(reply.input_tokens)
+    <> ",\"output_tokens\":"
+    <> int.to_string(reply.output_tokens)
+    <> ",\"text_len\":"
+    <> int.to_string(string.length(reply.text))
+    <> ",\"tool_uses\":"
+    <> int.to_string(list.length(reply.tool_uses))
+    <> ",\"run_steps\":"
+    <> has_run_steps
+    <> "}\n"
+  let _ = simplifile.create_directory_all(state.bb_dir)
+  let _ = simplifile.append(state.bb_dir <> "/supervisor.jsonl", line)
+  Nil
 }
 
 // --- State helpers -------------------------------------------------------
@@ -922,6 +1211,53 @@ fn read_agents_md(workspace: String) -> Option(String) {
     }
   })
   |> option.from_result
+}
+
+/// A plain-language description of this run's sandbox reach, injected into the
+/// supervisor's system prompt (SPEC §7). The point is that the supervisor can
+/// predict what will fail — a signed commit, an SSH push, a fetch to a host
+/// that isn't allowlisted — instead of burning rounds rediscovering each limit.
+/// Built once at run start.
+fn capabilities_summary(
+  config: Config,
+  net_allow: List(String),
+  groups: List(String),
+) -> String {
+  let network = case config.net_gate {
+    // Fully blocked: no outbound connection succeeds.
+    False ->
+      "blocked entirely — no outbound network. `git push`/`git fetch` over the network, package installs, and any remote fetch will fail."
+    // Default-deny against the session allowlist.
+    True -> {
+      let hosts = case net_allow {
+        [] -> "(empty — nothing is allowed yet)"
+        _ -> string.join(net_allow, ", ")
+      }
+      "default-deny against this run's allowlist: "
+      <> hosts
+      <> ". A connection to any other host is blocked and pauses for human approval — propose the host to add rather than retrying."
+    }
+  }
+
+  // Enabled capability groups, with nono's own descriptions where available.
+  let catalog = nono_bridge.list_groups()
+  let group_lines =
+    list.map(groups, fn(name) {
+      case list.find(catalog, fn(g) { g.name == name }) {
+        Ok(g) -> name <> " — " <> g.description
+        Error(_) -> name
+      }
+    })
+  let groups_text = case group_lines {
+    [] -> "none beyond the locked defaults"
+    _ -> string.join(group_lines, "; ")
+  }
+
+  "\n\n# Capabilities this run\nYour actions run inside a nono sandbox with a fixed, known reach. Reason about it BEFORE acting; if a request needs access you don't have, say so plainly and propose the smallest change (a host to allowlist, a capability group to enable, or a step for the human to run outside the sandbox) instead of retrying.\n\n- Filesystem: the workspace is read-write, and the language-toolchain directories bough grants are read-only. The rest of $HOME is DENIED — credentials and keys (~/.ssh, ~/.aws, ~/.config, keychains, git signing keys) are not readable. Anything that needs them fails: a signed `git commit` (commit.gpgsign / SSH signing) and SSH-authenticated git will not work from here.\n- Network: "
+  <> network
+  <> "\n- Capability groups enabled: "
+  <> groups_text
+  <> "."
 }
 
 /// Run a command in the sandbox under the run's nono profile (§7). The profile

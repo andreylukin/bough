@@ -1,5 +1,9 @@
-import bough_core/nono.{Allow, AuditEvent, Deny, Snapshot}
+import bough_core/nono.{Allow, AuditEvent, Deny, Group, Snapshot}
+import bough_core/session
+import bough_server/agent
 import bough_server/control
+import bough_server/engine
+import bough_server/router
 import bough_server/json_value
 import bough_server/net_profile
 import bough_server/nono_bridge
@@ -12,6 +16,69 @@ import simplifile
 
 pub fn main() -> Nil {
   gleeunit.main()
+}
+
+/// A tool-bearing turn digests to its verbs/targets/exit codes, not its output.
+pub fn actions_summary_test() {
+  let steps = [
+    agent.StepPlan("I'll edit it"),
+    agent.StepCall("EDIT", "README.md", "find/replace"),
+    agent.StepExec("EDIT", 0, "edited README.md"),
+    agent.StepCall("RUN", "git status", ""),
+    agent.StepExec("RUN", 0, "M README.md"),
+    agent.StepCheck(True, "OK"),
+  ]
+  let assert Some(summary) = router.actions_summary(steps)
+  assert string.contains(summary, "EDIT README.md (exit 0)")
+  assert string.contains(summary, "RUN git status (exit 0)")
+  assert string.contains(summary, "CHECK passed")
+}
+
+/// A purely conversational turn (only prose) has no actions — no digest.
+pub fn actions_summary_conversational_test() {
+  assert router.actions_summary([agent.StepPlan("here's an overview")]) == None
+}
+
+/// `history_of` skips display-only tool entries and folds a `System` action
+/// digest into the front of the assistant turn it precedes.
+pub fn history_of_folds_digest_test() {
+  let digest = "[Context — actions you performed this turn: EDIT README.md]"
+  let tree =
+    session.new("s1", "proj")
+    |> session.append(history_entry("u1", None, session.User, "update the readme"))
+    |> session.append(history_entry(
+      "t1",
+      Some("u1"),
+      session.ToolResult,
+      "{\"type\":\"call\"}",
+    ))
+    |> session.append(history_entry("sys1", Some("t1"), session.System, digest))
+    |> session.append(history_entry(
+      "a1",
+      Some("sys1"),
+      session.Assistant,
+      "Done.",
+    ))
+  assert router.history_of(tree)
+    == [#("user", "update the readme"), #("assistant", digest <> "\n\nDone.")]
+}
+
+fn history_entry(
+  id: String,
+  parent: option.Option(String),
+  role: session.Role,
+  content: String,
+) -> session.Entry {
+  session.Entry(
+    id: id,
+    parent_id: parent,
+    role: role,
+    content: content,
+    snapshot_ref: None,
+    label: None,
+    timestamp: 0,
+    grafted_from: None,
+  )
 }
 
 pub fn to_args_block_net_test() {
@@ -181,6 +248,31 @@ pub fn net_profile_base_grants_test() {
     json.to_string(net_profile.build([], True, ["user_caches_macos"], []))
   assert string.contains(with_groups, "\"git_config\"")
   assert string.contains(with_groups, "\"user_caches_macos\"")
+}
+
+/// The capability suggester parses denied filesystem paths out of command
+/// output (the part before the permission marker), and ignores clean output.
+pub fn denied_paths_test() {
+  let out =
+    "mkdir: /Users/x/Library: Operation not permitted\n"
+    <> "some other line\n"
+    <> "cat: /etc/secret: Permission denied"
+  assert engine.denied_paths(out) == ["/Users/x/Library", "/etc/secret"]
+  assert engine.denied_paths("all good\nexit 0") == []
+}
+
+/// The suggester maps the worker's free-text reply to known toggleable group
+/// names (case-insensitive), dropping unknowns and "none".
+pub fn parse_suggested_test() {
+  let catalog = [
+    Group("user_caches_macos", "caches", "macos", False),
+    Group("rust_runtime", "rust", "cross-platform", False),
+  ]
+  assert engine.parse_suggested("user_caches_macos, rust_runtime", catalog)
+    == ["user_caches_macos", "rust_runtime"]
+  assert engine.parse_suggested("USER_CACHES_MACOS\nbogus\nnone", catalog)
+    == ["user_caches_macos"]
+  assert engine.parse_suggested("none", catalog) == []
 }
 
 fn count_occurrences(haystack: String, needle: String) -> Int {

@@ -115,6 +115,17 @@ the generated profile includes nono's `git_config` group, so `git`, `cargo`,
 `go`, `node`, etc. resolve on `PATH` without granting write access outside the
 workspace.
 
+**Capability groups.** nono exposes capability *groups* — bundles of paths
+and permissions (e.g. `git_config`, a language toolchain, a secrets dir) that
+layer into the sandbox profile on top of the always-on base. The right-hand
+capabilities panel lists the catalog for this host: the locked "always on"
+groups (folded away) and the toggleable ones. Press `c` to focus it, `↑`/`↓`
+(or `k`/`j`) to move, `space` (or `Enter`) to toggle a group for this session,
+and `Esc` (or `c`) to return to the conversation; right-click a group to
+inspect its paths and description in an overlay. Enabled groups persist with the
+session and apply to every subsequent run. The catalog is also reachable over
+the API (`GET /groups`, `GET /groups/:name`, `POST /session/:id/groups`).
+
 **Credential injection.** For an authed `RUN` (e.g. `curl` to a private API),
 set `BOUGH_NET_CREDENTIALS` to a comma-separated list of `name=ENV_VAR` (or a
 bare `name`, whose env var defaults to its upper-cased form). Each one whose env
@@ -142,7 +153,7 @@ regardless.
 |---|---|
 | `i` / `Enter` | back to typing |
 | `s` · `t` · `a` · `b` | resume session · branch (tree) · subagents · back to parent |
-| `f` · `p` · `o` · `n` | full plan of latest turn · toggle plan-review gate · expand all output · toggle network pane |
+| `f` · `p` · `o` · `n` · `c` | full plan of latest turn · toggle plan-review gate · expand all output · toggle network pane · focus capabilities panel |
 | `a` / `e` / `r` | while a plan is paused: allow / edit-steer / reject |
 
 ## Layout
@@ -153,7 +164,7 @@ dependencies:
 | Package | Role |
 |---------|------|
 | [`packages/bough_core`](packages/bough_core) | Shared, side-effect-free types & logic: session tree, provider interface, artifact grammar, nono contract. |
-| [`packages/bough_server`](packages/bough_server) | Headless server: supervisor-worker loop, session supervision, nono bridge, HTTP+SSE API. Depends on `bough_core`. |
+| [`packages/bough_server`](packages/bough_server) | Headless server: supervisor-worker loop, session supervision, nono bridge, HTTP API. Depends on `bough_core`. |
 | [`packages/bough_tui`](packages/bough_tui) | Terminal client: chat pane + live network side pane + tree overlay. Depends on `bough_core`. |
 
 ## Develop
@@ -164,7 +175,7 @@ Requires Gleam (`brew install gleam`, which pulls in Erlang/OTP).
 make check    # type-check all packages
 make test     # run all tests
 make build    # compile all packages
-make serve    # run the server (placeholder)
+make serve    # run the server (127.0.0.1:4096)
 ```
 
 Or per package: `cd packages/<name> && gleam check`.
@@ -176,7 +187,7 @@ Early slices of the v1 vertical slice (SPEC.md §10) are working:
 - Server boots (wisp/mist) with `/`, `/health`, `/doc`.
 - Session CRUD with JSONL persistence to `~/.bough/sessions/`
   (`POST /session`, `GET /session/:id`, `POST /session/:id/entry`).
-- TUI client (shore) with a conversation pane + network side pane + input
+- TUI client (etch) with a conversation pane + network side pane + input
   line; sends prompts and shows replies. Network calls run as async effects so
   the UI stays responsive. Run it in a real terminal (`gleam run` in
   `packages/bough_tui`); set `BOUGH_SERVER` to override the default.
@@ -207,7 +218,18 @@ Early slices of the v1 vertical slice (SPEC.md §10) are working:
   observed egress (allow/deny, host + intercepted method/path) in the engine and
   publishes it on the run-poll JSON (`…/run`), which the TUI renders in the
   collapsible network pane. Populated under the leash (`BOUGH_NET=1`).
+- **Capability groups picker** (`nono_bridge`, SPEC §7): the TUI's capabilities
+  panel lists nono's policy-group catalog for this host — toggleable groups the
+  human enables per session (persisted, layered into the run profile) plus the
+  locked "always on" base; right-click inspects a group. Served over `GET
+  /groups`, `GET /groups/:name`, `POST /session/:id/groups`.
+- **Sandboxed file tools**: READ/GREP/WRITE/EDIT now run through the nono sandbox
+  (`sandboxed`/`sandboxed_write`) alongside RUN/CHECK, so a path that escapes the
+  workspace — including via a symlink — is kernel-denied. The write content is
+  staged in bough's own dir and granted to the sandbox read-only, so it never
+  passes through argv.
 
 Next: push run/egress updates over SSE instead of polling, and add in-pane rule
-editing (a rules endpoint); sandbox the file tools (WRITE/EDIT currently run
-in-process); context compaction for long autonomous runs.
+editing (a rules endpoint); context compaction for long autonomous runs; and an
+optional auto-fork on diverging edits, so the human can compare two branches
+side by side before committing to either.

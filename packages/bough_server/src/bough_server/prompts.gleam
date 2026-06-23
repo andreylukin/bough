@@ -7,8 +7,11 @@ import gleam/option.{type Option, None, Some}
 pub fn supervisor_system(
   workspace: String,
   instructions: Option(String),
+  capabilities: String,
 ) -> String {
-  base_supervisor_system(workspace) <> project_instructions(instructions)
+  base_supervisor_system(workspace)
+  <> capabilities
+  <> project_instructions(instructions)
 }
 
 /// The workspace's AGENTS.md, appended to the system prompt as authoritative
@@ -53,3 +56,5 @@ pub const worker_system: String = "You are the WORKER in a supervisor-worker cod
 ```sh
 <command>
 ```"
+
+pub const suggester_system: String = "You map a sandbox permission denial to the nono capability groups that would grant the needed access. You are given the failed command's output and a list of AVAILABLE GROUPS (name: description). Reply with ONLY the names of groups that would resolve the denial, comma-separated, choosing only from the provided list. If none apply, reply exactly: none. No prose, no code fences."

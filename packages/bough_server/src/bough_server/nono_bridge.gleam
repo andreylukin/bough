@@ -314,6 +314,48 @@ fn label_paths(access: String, paths: List(String)) -> List(GroupPath) {
   list.map(paths, fn(p) { GroupPath(access: access, path: p) })
 }
 
+/// Toggleable group names that would grant one of the `targets` — the paths the
+/// denied step was actually trying to touch. A group matches only when a target
+/// is the group's grant or sits *under* it (not merely a shared ancestor), so a
+/// coarse denial like `~/Library` doesn't pull in every `~/Library/*` group.
+/// Fetches each toggleable group's detail once; `[]` if nono is unavailable.
+pub fn groups_for_paths(targets: List(String)) -> List(String) {
+  let home = envoy.get("HOME") |> result.unwrap("")
+  let wanted = list.map(targets, fn(t) { normalize_path(t, home) })
+  list_groups()
+  |> list.filter(fn(g) { !g.locked })
+  |> list.filter_map(fn(g) {
+    case group_detail(g.name) {
+      Ok(d) -> {
+        let grants =
+          d.paths
+          |> list.filter(fn(p) { p.access != "deny" })
+          |> list.map(fn(p) { normalize_path(p.path, home) })
+        case
+          list.any(wanted, fn(t) { list.any(grants, fn(gr) { covers(gr, t) }) })
+        {
+          True -> Ok(g.name)
+          False -> Error(Nil)
+        }
+      }
+      Error(_) -> Error(Nil)
+    }
+  })
+}
+
+fn normalize_path(raw: String, home: String) -> String {
+  raw
+  |> string.replace("$HOME", home)
+  |> string.replace("~", home)
+}
+
+/// True when `target` is `grant` itself or a path under it — i.e. enabling the
+/// group would actually grant the denied access. Empty paths never match.
+fn covers(grant: String, target: String) -> Bool {
+  grant != ""
+  && { target == grant || string.starts_with(target, grant <> "/") }
+}
+
 // --- Network audit feed (SPEC.md §7) -------------------------------------
 
 /// Read the proxy audit log for a session as `AuditEvent`s for the network
