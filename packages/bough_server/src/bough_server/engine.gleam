@@ -128,6 +128,10 @@ type Exec {
   Exec(exit: Int, output: String)
 }
 
+/// Consecutive unproductive supervisor turns to tolerate before giving up with a
+/// diagnostic (instead of retrying to the round budget).
+const max_bad_turns = 3
+
 type State {
   State(
     api_key: String,
@@ -152,6 +156,11 @@ type State {
     // A subject this run process owns; a subagent sends to it on completion so
     // the synthesis wait is woken by an event instead of a 250 ms poll loop.
     wake: process.Subject(Nil),
+    // Consecutive unproductive supervisor turns (empty / cut-off / malformed
+    // tool args). Reset on any valid run_steps call; capped so a model that
+    // keeps emitting garbage fails fast with a clear message instead of burning
+    // the whole round budget.
+    bad_turns: Int,
     // append-only Anthropic message list, oldest first. Carries tool_use /
     // tool_result blocks verbatim, so it is JsonValue rather than text pairs.
     convo: List(JsonValue),
@@ -224,6 +233,7 @@ pub fn run_streaming(
       stopped: stopped,
       subagents: subagents,
       wake: wake,
+      bad_turns: 0,
       convo: seed_convo(history, user_prompt),
       context_tokens: 0,
       baseline: integrity.snapshot(workspace),
@@ -327,34 +337,58 @@ fn run_rounds_active(state: State, round: Int) -> #(State, Int) {
                 // never responded" — surface it with the stop_reason instead.
                 None ->
                   case state.subagents.pending() == False && prose == "" {
-                    True -> #(
-                      notice(
+                    // Empty / cut-off turn with nothing to act on: don't give up
+                    // — nudge and retry, bounded by max_bad_turns.
+                    True ->
+                      recover_bad_turn(
                         state,
-                        "supervisor returned an empty turn (stop_reason: "
+                        round,
+                        "Supervisor returned an empty turn (stop_reason: "
                           <> reply.stop_reason
                           <> ")",
-                      ),
-                      round,
-                    )
+                        empty_turn_nudge(reply.stop_reason),
+                      )
                     False -> settle_subagents(state, round)
                   }
                 Some(tu) ->
                   case tool_steps.parse(tu.input) {
+                    // Malformed run_steps args: feed the parse error back and
+                    // retry, but capped so a model stuck emitting garbage fails
+                    // fast instead of looping to the round budget.
                     Error(msg) -> {
-                      let state =
-                        push_message(
-                          state,
-                          provider.tool_result(
-                            state.config.provider,
-                            tu.id,
-                            "run_steps rejected: "
+                      let n = state.bad_turns + 1
+                      case n >= max_bad_turns {
+                        True -> #(
+                          notice(
+                            state,
+                            "Supervisor kept sending malformed run_steps arguments ("
                               <> msg
-                              <> "\nFix the arguments and call run_steps again.",
+                              <> ") — gave up after "
+                              <> int.to_string(n)
+                              <> " tries in a row.",
                           ),
+                          round,
                         )
-                      run_rounds(state, round + 1)
+                        False -> {
+                          let state = State(..state, bad_turns: n)
+                          let state =
+                            push_message(
+                              state,
+                              provider.tool_result(
+                                state.config.provider,
+                                tu.id,
+                                "run_steps rejected: "
+                                  <> msg
+                                  <> "\nFix the arguments and call run_steps again.",
+                              ),
+                            )
+                          run_rounds(state, round + 1)
+                        }
+                      }
                     }
                     Ok(parsed) -> {
+                      // A valid call — the supervisor is productive again.
+                      let state = State(..state, bad_turns: 0)
                       let state = update_check(state, parsed.check)
                       case parsed.done && list.is_empty(parsed.steps) {
                         True -> handle_done(state, round, tu.id)
@@ -1449,6 +1483,46 @@ fn emit_activity(state: State, activity: Activity) -> State {
 
 fn notice(state: State, text: String) -> State {
   emit_activity(state, StepText("⚠ " <> text))
+}
+
+/// A supervisor turn produced nothing usable. Inject a corrective nudge and
+/// retry — but only up to `max_bad_turns` in a row, then surface a clear
+/// diagnostic instead of looping (recovery, not give-up; bounded, not endless).
+fn recover_bad_turn(
+  state: State,
+  round: Int,
+  diagnostic: String,
+  nudge: String,
+) -> #(State, Int) {
+  let n = state.bad_turns + 1
+  case n >= max_bad_turns {
+    True -> #(
+      notice(
+        state,
+        diagnostic
+          <> " — gave up after "
+          <> int.to_string(n)
+          <> " unproductive turns in a row. Try a more capable model or a smaller task.",
+      ),
+      round,
+    )
+    False -> {
+      let state = State(..state, bad_turns: n)
+      let state = push_message(state, provider.user_text(nudge))
+      run_rounds(state, round + 1)
+    }
+  }
+}
+
+/// The corrective message for an empty turn, tailored to whether the output was
+/// truncated (cut off mid-thought) or just empty.
+fn empty_turn_nudge(stop_reason: String) -> String {
+  case stop_reason {
+    "max_tokens" | "length" ->
+      "Your previous response was cut off before you produced an action. Be concise — emit a single `run_steps` tool call now, splitting a long program into smaller steps if needed."
+    _ ->
+      "Your previous turn produced no action. Respond now with a single `run_steps` tool call, or give your final answer if the task is already done."
+  }
 }
 
 /// The turn is about to end. If subagents the supervisor spawned are still

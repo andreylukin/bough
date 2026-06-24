@@ -3,6 +3,7 @@
 //// `JsonValue` so assistant turns (incl. tool_use blocks) round-trip verbatim.
 
 import bough_server/json_value.{type JsonValue}
+import envoy
 import gleam/dynamic/decode
 import gleam/http.{Post}
 import gleam/http/request
@@ -18,7 +19,16 @@ const api_url = "https://api.anthropic.com/v1/messages"
 
 const anthropic_version = "2023-06-01"
 
-const max_tokens = 4096
+/// Output-token cap. Raised from the old 4096 so a code-mode program + the
+/// supervisor's reasoning don't get truncated mid-turn — truncation surfaces as
+/// an empty / cut-off turn (`stop_reason: max_tokens`) the harness then has to
+/// recover from. Override with `BOUGH_MAX_TOKENS`.
+fn max_tokens() -> Int {
+  case envoy.get("BOUGH_MAX_TOKENS") {
+    Ok(v) -> int.parse(v) |> result.unwrap(8192)
+    Error(_) -> 8192
+  }
+}
 
 // A turn (with tools + growing context) can run past httpc's 30s default.
 const request_timeout = 300_000
@@ -50,7 +60,7 @@ pub fn complete(
   let body =
     json.object([
       #("model", json.string(model)),
-      #("max_tokens", json.int(max_tokens)),
+      #("max_tokens", json.int(max_tokens())),
       #("system", json.string(system)),
       #(
         "messages",
