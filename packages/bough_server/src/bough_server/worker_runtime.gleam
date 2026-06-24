@@ -23,7 +23,7 @@ import gleam/result
 import shellout
 import simplifile
 
-const default_gguf = "qwen2.5-coder-7b-instruct-q4_k_m.gguf"
+const default_gguf = "vibethinker-3b-q4_k_m.gguf"
 
 /// Ensure a worker endpoint is reachable and return its base URL. Reuses an
 /// already-running server (or `BOUGH_WORKER_URL`); otherwise downloads the

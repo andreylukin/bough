@@ -6,5 +6,8 @@ erl_crash.dump
 
 # Keep manifest.toml (lockfiles) committed.
 
+# Rust (bough-monty code-mode sidecar) build artifacts. Cargo.lock is kept.
+sidecar/target/
+
 # OS
 .DS_Store

@@ -11,6 +11,8 @@ import gleam/http/response
 import gleam/httpc
 import gleam/int
 import gleam/json
+import gleam/list
+import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 
@@ -22,16 +24,39 @@ pub fn complete(
   user: String,
   max_tokens: Int,
 ) -> Result(String, String) {
-  let body =
-    json.object([
-      #("model", json.string(model)),
-      #("max_tokens", json.int(max_tokens)),
-      #(
-        "messages",
-        json.preprocessed_array([msg("system", system), msg("user", user)]),
-      ),
-    ])
-    |> json.to_string
+  complete_with(base_url, model, system, user, max_tokens, None, None)
+}
+
+/// Like `complete`, but with explicit sampling. Reasoning-tuned workers (e.g.
+/// VibeThinker-3B) require their recommended decoding — temperature 1.0, top_p
+/// 0.95 — and lowering temperature degrades them; pass them here. `None` leaves
+/// the field off so the server's default applies (matching `complete`).
+pub fn complete_with(
+  base_url: String,
+  model: String,
+  system: String,
+  user: String,
+  max_tokens: Int,
+  temperature: Option(Float),
+  top_p: Option(Float),
+) -> Result(String, String) {
+  let fields = [
+    #("model", json.string(model)),
+    #("max_tokens", json.int(max_tokens)),
+    #(
+      "messages",
+      json.preprocessed_array([msg("system", system), msg("user", user)]),
+    ),
+  ]
+  let fields = case temperature {
+    Some(t) -> list.append(fields, [#("temperature", json.float(t))])
+    None -> fields
+  }
+  let fields = case top_p {
+    Some(p) -> list.append(fields, [#("top_p", json.float(p))])
+    None -> fields
+  }
+  let body = json.object(fields) |> json.to_string
 
   use base <- result.try(
     request.to(base_url <> "/v1/chat/completions")

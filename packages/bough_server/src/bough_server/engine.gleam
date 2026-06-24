@@ -13,7 +13,7 @@
 //// `StepCheck` and `StepReview`. Plain `StepText` is left for notices.
 
 import bough_core/artifact.{
-  type Step, Collect, Edit, Grep, Read, Run, Spawn, Tell, Write,
+  type Step, Code, Collect, Edit, Grep, Read, Run, Spawn, Tell, Write,
 }
 import bough_core/digest
 import bough_core/nono
@@ -25,6 +25,7 @@ import bough_server/clock
 import bough_server/control
 import bough_server/integrity
 import bough_server/json_value.{type JsonValue}
+import bough_server/monty_bridge
 import bough_server/net_profile
 import bough_server/nono_bridge
 import bough_server/prompts
@@ -278,10 +279,11 @@ fn run_rounds(state: State, round: Int) -> #(State, Int) {
               // Echo the assistant turn verbatim (carries the tool_use block).
               let state = push_message(state, reply.assistant)
               let prose = string.trim(reply.text)
-              let state = case prose {
-                "" -> state
-                p -> emit_activity(state, StepPlan(p))
-              }
+              // Prose is recorded as a plan step only when it narrates steps the
+              // round is about to run (see run_steps_round below). A final
+              // conversational reply is NOT emitted as a plan, so it isn't
+              // duplicated against the assistant answer (`Outcome.text`, which is
+              // the last assistant message).
               case find_run_steps(reply.tool_uses) {
                 // No tool call → a conversational reply ends the turn, unless
                 // subagents it spawned are still running (then hold and fold in
@@ -323,13 +325,10 @@ fn run_rounds(state: State, round: Int) -> #(State, Int) {
                       case parsed.done && list.is_empty(parsed.steps) {
                         True -> handle_done(state, round, tu.id)
                         False -> {
-                          // Every executed run_steps call is its own plan; mark
-                          // the boundary even when the supervisor offered no
-                          // prose this round, so the plan pane can separate them.
-                          let state = case prose {
-                            "" -> emit_activity(state, StepPlan(""))
-                            _ -> state
-                          }
+                          // This round narrates and runs steps: record its prose
+                          // as the plan (an empty StepPlan still marks the
+                          // boundary so consecutive run_steps calls stay separate).
+                          let state = emit_activity(state, StepPlan(prose))
                           run_steps_round(state, round, parsed, tu.id)
                         }
                       }
@@ -804,6 +803,7 @@ fn fix_loop(
 
 fn apply(state: State, step: Step) -> #(State, Exec) {
   case step {
+    Code(_, code) -> exec_code(state, code)
     Run(_, cmd) -> exec_run(state, cmd)
     Write(_, path, content) -> write_file(state, path, content)
     Edit(_, path, search, replace) -> edit_file(state, path, search, replace)
@@ -824,6 +824,17 @@ fn apply(state: State, step: Step) -> #(State, Exec) {
       Exec(0, state.subagents.collect(target)),
     )
   }
+}
+
+/// Run a Python program in the monty sandbox (SPEC §5.2) — the supervisor's
+/// primary action. The program's `bash` calls go through nono *inside* the
+/// sidecar, so unlike `exec_run` the engine's net gate does not wrap this: the
+/// live denial/approve loop and egress feed don't observe code-mode bash (a
+/// known limitation of running host functions sidecar-side rather than calling
+/// back into the engine).
+fn exec_code(state: State, code: String) -> #(State, Exec) {
+  let #(exit, output) = monty_bridge.run_code(state.workspace, code)
+  #(bump(state), Exec(exit, output))
 }
 
 /// Cap on the approve→retry loop for one command, so a never-matching rule
@@ -1455,6 +1466,7 @@ fn round_line(state: State, round: Int) -> String {
 
 fn step_detail(step: Step) -> String {
   case step {
+    Code(_, code) -> "CODE:\n" <> code
     Run(_, cmd) -> "RUN: " <> cmd
     Write(_, path, _) -> "WRITE " <> path
     Edit(_, path, _, _) -> "EDIT " <> path
@@ -1469,6 +1481,7 @@ fn step_detail(step: Step) -> String {
 /// The verb label shown in the step timeline.
 fn step_verb(step: Step) -> String {
   case step {
+    Code(_, _) -> "CODE"
     Run(_, _) -> "RUN"
     Write(_, _, _) -> "WRITE"
     Edit(_, _, _, _) -> "EDIT"
@@ -1485,6 +1498,7 @@ fn step_verb(step: Step) -> String {
 /// all (RUN/READ/GREP/TELL/COLLECT).
 fn step_full(step: Step) -> String {
   case step {
+    Code(_, code) -> code
     Write(_, _, content) -> content
     Edit(_, _, find, replace) ->
       "── find ──\n" <> find <> "\n── replace ──\n" <> replace
@@ -1496,6 +1510,7 @@ fn step_full(step: Step) -> String {
 /// The concrete argument (command / path / pattern) for a step.
 fn step_arg(step: Step) -> String {
   case step {
+    Code(_, _) -> ""
     Run(_, cmd) -> cmd
     Write(_, path, _) -> path
     Edit(_, path, _, _) -> path

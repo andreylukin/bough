@@ -9,26 +9,29 @@
 #
 # What it does, idempotently:
 #   1. ensures Homebrew is present
-#   2. installs gleam (Erlang/OTP), nono (sandbox), and llama.cpp (worker model)
+#   2. installs gleam (Erlang/OTP), nono (sandbox), llama.cpp (worker model),
+#      and rust (to build the monty code-mode sidecar)
 #   3. clones bough to $BOUGH_HOME (default ~/repos/bough) if not already here
-#   4. builds every package
+#   4. builds every package + the bough-monty sidecar
 #   5. prints how to run it and what to set
 #
 # Env knobs:
 #   BOUGH_HOME       where to clone if not run from a checkout (default ~/repos/bough)
 #   BOUGH_REPO       git URL to clone (default https://github.com/andreylukin/bough.git)
 #   BOUGH_NO_LLAMA=1 skip the (large) llama.cpp install; supervisor-only fixes still work
-#   BOUGH_NO_MODEL=1 skip the worker model download (~4.7 GB)
-#   BOUGH_MODEL_URL  override the GGUF download URL (default: Qwen2.5-Coder-7B q4_k_m)
+#   BOUGH_NO_MODEL=1 skip the worker model download (~1.9 GB)
+#   BOUGH_MODEL_URL  override the GGUF download URL (default: VibeThinker-3B q4_k_m)
+#   BOUGH_NO_MONTY=1 skip the rust toolchain + bough-monty sidecar build (no code-mode)
 
 set -euo pipefail
 
 BOUGH_HOME="${BOUGH_HOME:-$HOME/repos/bough}"
 BOUGH_REPO="${BOUGH_REPO:-https://github.com/andreylukin/bough.git}"
-# Default worker model — filename must match worker_runtime.gleam's default_gguf
-# so bough finds it at ~/.bough/models/ without any env vars.
-BOUGH_MODEL_FILE="qwen2.5-coder-7b-instruct-q4_k_m.gguf"
-BOUGH_MODEL_URL="${BOUGH_MODEL_URL:-https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/${BOUGH_MODEL_FILE}}"
+# Default worker model — VibeThinker-3B (arXiv:2606.16140), a reasoning/coding
+# SLM built on Qwen2.5-Coder-3B. Filename must match worker_runtime.gleam's
+# default_gguf so bough finds it at ~/.bough/models/ without any env vars.
+BOUGH_MODEL_FILE="vibethinker-3b-q4_k_m.gguf"
+BOUGH_MODEL_URL="${BOUGH_MODEL_URL:-https://huggingface.co/oussaber/VibeThinker-3B-Q4_K_M-GGUF/resolve/main/${BOUGH_MODEL_FILE}}"
 
 info() { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m==>\033[0m %s\n' "$*" >&2; }
@@ -49,9 +52,12 @@ have brew || die "Homebrew install failed; install it manually from https://brew
 # 2. System dependencies ---------------------------------------------------
 deps=(gleam nono)
 [ "${BOUGH_NO_LLAMA:-0}" = "1" ] || deps+=(llama.cpp)
+[ "${BOUGH_NO_MONTY:-0}" = "1" ] || deps+=(rust)
 for d in "${deps[@]}"; do
-  # `gleam`, `nono`, etc.; llama.cpp's binary is `llama-server`.
-  bin="$d"; [ "$d" = "llama.cpp" ] && bin="llama-server"
+  # `gleam`, `nono`, etc.; llama.cpp's binary is `llama-server`, rust's is `cargo`.
+  bin="$d"
+  [ "$d" = "llama.cpp" ] && bin="llama-server"
+  [ "$d" = "rust" ] && bin="cargo"
   if have "$bin"; then
     info "$d already installed"
   else
@@ -59,6 +65,13 @@ for d in "${deps[@]}"; do
     brew install "$d"
   fi
 done
+
+# monty (the code-mode sidecar, built by `make build`) needs a recent stable
+# Rust; refresh the toolchain here, before the build, when we manage it.
+if [ "${BOUGH_NO_MONTY:-0}" != "1" ] && have rustup; then
+  info "ensuring a recent stable Rust toolchain (monty needs >= 1.95)"
+  rustup update stable >/dev/null 2>&1 || true
+fi
 
 # 3. Source checkout -------------------------------------------------------
 # If this script lives inside a checkout (Makefile next to it), build in place.
@@ -79,7 +92,11 @@ else
 fi
 
 # 4. Build -----------------------------------------------------------------
-info "building all packages"
+# `make build` compiles every Gleam package and, unless BOUGH_NO_MONTY=1 (or
+# cargo is missing), builds the bough-monty code-mode sidecar (Rust, embedding
+# the monty interpreter — the BEAM can't host it in-process) and symlinks it
+# into ~/.bough/bin. SPEC §5.2.
+info "building all packages (+ the bough-monty code-mode sidecar)"
 make -C "$SRC" build
 
 # 5. Worker model ----------------------------------------------------------
@@ -91,7 +108,7 @@ else
   if [ -f "$model_path" ]; then
     info "worker model already present at $model_path"
   else
-    info "downloading worker model (~4.7 GB) to $model_path"
+    info "downloading worker model (~1.9 GB) to $model_path"
     mkdir -p "$model_dir"
     # -C - resumes a partial download so a re-run after an interruption continues.
     curl -fSL -C - -o "$model_path" "$BOUGH_MODEL_URL" \
@@ -120,6 +137,8 @@ Or run the two processes by hand (two terminals):
     cd "$SRC" && make serve                       # terminal 1: the server (127.0.0.1:4096)
     cd "$SRC/packages/bough_tui" && gleam run      # terminal 2: the TUI client
 
-The Qwen2.5-Coder worker is always on (local llama-server, no config needed).
-Optional knobs: BOUGH_MODEL, BOUGH_PROVIDER, BOUGH_MAX_TURNS — see README.md.
+The VibeThinker-3B worker is always on (local llama-server, no config needed).
+The supervisor acts via the bough-monty code-mode sandbox (set BOUGH_MONTY_BIN
+to override the binary). Optional knobs: BOUGH_MODEL, BOUGH_PROVIDER,
+BOUGH_MAX_TURNS — see README.md.
 EOF

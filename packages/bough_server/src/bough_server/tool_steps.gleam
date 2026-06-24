@@ -5,10 +5,11 @@
 //// tool_result for the model to correct.
 
 import bough_core/artifact.{
-  type Step, Collect, Edit, Grep, Read, Run, Spawn, Tell, Write,
+  type Step, Code, Collect, Edit, Grep, Read, Run, Spawn, Tell, Write,
 }
-import bough_server/json_value.{type JsonValue, JArray, JBool}
+import bough_server/json_value.{type JsonValue, JArray, JBool, JString}
 import gleam/int
+import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
@@ -26,6 +27,13 @@ pub fn parse(input: JsonValue) -> Result(Parsed, String) {
   )
   use raw <- result.try(case steps_val {
     JArray(xs) -> Ok(xs)
+    // Tolerate models that double-encode the array as a JSON string (observed
+    // with sub-3B models via ollama tool-calling); decode it (SPEC §5.5).
+    JString(s) ->
+      case json.parse(s, json_value.decoder()) {
+        Ok(JArray(xs)) -> Ok(xs)
+        _ -> Error("\"steps\" must be an array")
+      }
     _ -> Error("\"steps\" must be an array")
   })
   use steps <- result.try(parse_steps(raw, 1, []))
@@ -62,6 +70,10 @@ fn parse_step(s: JsonValue, idx: Int) -> Result(Step, String) {
   )
   let title = field(s, "title") |> result.unwrap("")
   case action {
+    "code" ->
+      field(s, "code")
+      |> result.map(Code(title, _))
+      |> result.replace_error(at <> " (code): missing \"code\"")
     "run" ->
       field(s, "command")
       |> result.map(Run(title, _))
@@ -103,7 +115,7 @@ fn parse_step(s: JsonValue, idx: Int) -> Result(Step, String) {
         at
         <> ": unknown action \""
         <> other
-        <> "\" (use run/write/edit/read/grep/spawn/tell/collect)",
+        <> "\" (use code/spawn/tell/collect)",
       )
   }
 }

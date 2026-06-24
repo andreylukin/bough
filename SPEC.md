@@ -33,13 +33,13 @@ sandbox — and a small local model patches trivial breakage for free (see §5).
 |------|----------|
 | Language / target | **Gleam on the BEAM** (Erlang/OTP). |
 | Agent | **Own supervisor-worker loop** (ReDACT-style, per `tent`), not a wrapper. Supervisor plans via plain-text artifacts; deterministic harness executes; local worker fixes. |
-| LLM providers | **Provider-agnostic core**, ship **Anthropic** (supervisor) first; **local Ollama** (`qwen2.5-coder`) as the optional worker. |
+| LLM providers | **Provider-agnostic core**, ship **Anthropic** (supervisor) first; **local `vibethinker-3b`** (arXiv:2606.16140) as the worker, served via a bundled `llama-server`. |
 | nono coupling | **Deep integration** (see §6 for what that means given no BEAM SDK). |
 | Platform (v1) | **macOS only** (Seatbelt via nono). |
 | History | **Session tree only** — pi-mono style (`id`/`parentId`, `/tree`, `/fork`, `/clone`). |
 | Branch scope | **Conversation + filesystem snapshot.** Forking restores chat *and* files. |
 | Net rule control | **Recommended:** observe live, "disallow" forks a stricter branch (see §7). |
-| Agent actions (v1) | Plain-text artifacts the harness executes: `RUN`, `WRITE`, `EDIT`, `READ`, `GREP`, plus a `### CHECK`. Web fetch is a `RUN` through the nono allowlist. |
+| Agent actions (v1) | **Code-mode**: the supervisor writes Python run in a **monty** sandbox (§5.2), calling host functions `bash`/`read`/`write`/`edit`, plus a `### CHECK`. `bash` goes through the nono allowlist; web fetch is just `bash("curl …")`. |
 | TUI | Chat pane + live **network side pane**; session tree as an overlay. |
 | Service model | **opencode-style**: headless server + thin clients, OpenAPI spec. |
 | v1 milestone | **Thin vertical slice** — whole pipe end-to-end (see §10). |
@@ -205,12 +205,13 @@ Measured against the same model running a full agentic tool-use loop on the same
 tasks, the architecture is roughly **2× cheaper, 2× faster, and ~20× fewer
 tokens**.
 
-**Why this over provider tool-use** (and why §2 no longer lists JSON-schema
-tools): the supervisor emits **plain-text artifacts**, not provider tool-call
-JSON. One stable, append-only conversation keeps the prefix cacheable (re-reads
-at ~10% price); code travels as plain fenced text (structured JSON payloads
-break on real code's escaping); and completion is gated on a deterministic CHECK
-rather than the model's self-report.
+**Why this over provider tool-use**: instead of threading a long sequence of
+provider tool calls, the supervisor writes **one Python program per round**
+(code-mode, §5.2) that the harness runs in a monty sandbox. One stable,
+append-only conversation keeps the prefix cacheable (re-reads at ~10% price); a
+program expresses a whole round's worth of inspect→change→verify in a single
+call (and a small code-strong model writes it well, §5.6); and completion is
+gated on a deterministic CHECK rather than the model's self-report.
 
 ### 5.1 The three roles
 
@@ -221,29 +222,51 @@ rather than the model's self-report.
   each one inside the nono sandbox, feeds every result back round by round in one
   continuous conversation, and gates completion. The only actor with side
   effects.
-- **Worker** (small local model, optional — e.g. Ollama `qwen2.5-coder`): when a
+- **Worker** (small local model, optional — `vibethinker-3b`, arXiv:2606.16140): when a
   step fails, gets one shot at a single fix command through the same policy +
   sandbox path. Disable it (`worker: null`) to fall back to supervisor-only
   fixes.
 
-### 5.2 Artifact grammar (replaces provider tool-use)
+### 5.2 Action model — code-mode in a monty sandbox
 
-The supervisor answers in one fixed plain-text shape — prose first, then `### STEP`
-blocks, each holding exactly one action:
+The supervisor acts by writing **Python**, not by emitting typed file/shell
+actions. Each round it calls `run_steps` with an ordered batch whose primary
+action is `code`: a program run in a [monty](https://github.com/pydantic/monty)
+sandbox — a Rust Python interpreter that can touch nothing on the host except
+the host functions we hand it. This is "code-mode": the small worker-class model
+the harness is built around (VibeThinker-3B, §5.6) is far stronger writing a
+short program than threading a long sequence of JSON tool calls, so the program
+*is* the plan.
 
-| Verb | Action |
-|------|--------|
-| `RUN` | shell command(s), in a fenced block |
-| `WRITE <path>` | create/replace a file wholesale (fenced full content) |
-| `EDIT <path>` | surgical replace of one exact, unique occurrence (two fences: find / replace) |
-| `READ <path> [start-end]` | line-numbered read — the precise way to see bytes before an `EDIT` |
-| `GREP <pattern>` | recursive, line-numbered workspace search |
-| `### CHECK` | a command that exits 0 **iff** the task's literal acceptance criteria hold |
+The host functions are the entire capability surface:
 
-All of these execute inside the nono sandbox (workspace-scoped; network
-default-deny except the provider). There is no separate `webfetch` tool — an
-allowed fetch is just a `RUN` (`curl …`) through the nono net allowlist, and it
-surfaces in the side pane like any other connection (§7).
+| Host function | Action |
+|---------------|--------|
+| `bash(cmd) -> str` | run shell command(s) in the sandbox; returns combined output |
+| `read(path) -> str` | read a workspace file |
+| `write(path, content)` | create/replace a file wholesale |
+| `edit(path, old, new)` | surgical replace of one exact, unique occurrence |
+
+Alongside `code`, the batch may carry `spawn`/`tell`/`collect` (the subagent
+protocol, §5) and a `### CHECK` — a command that exits 0 **iff** the task's
+literal acceptance criteria hold. There is no separate `webfetch` tool — an
+allowed fetch is just `bash("curl …")` through the nono net allowlist (§7).
+
+**Two nested sandboxes** (the seam with §6): monty is a *language/capability*
+sandbox confining the agent's Python (no `import os`, no sockets, resource
+limits); `bash` — the one door that runs native processes — opens into a *nono*
+cell (kernel-enforced workspace + network allowlist). monty replaces the
+tool-dispatch layer; nono stays exactly where it was, behind `bash`. The
+interpreter lives in a small Rust sidecar (`bough-monty`, driven over `shellout`
+like nono — the BEAM can't host monty in-process); the typed `RUN`/`WRITE`/…
+verbs remain inside the harness for the worker's fix commands and the CHECK.
+
+**Honest limit:** `read`/`write`/`edit` run as trusted host code *inside* the
+sidecar (path-scoped to the workspace there), and `bash` runs nono *inside* the
+sidecar too — so the engine's live net gate and egress feed (§7) don't observe
+code-mode `bash`. nono still enforces default-deny network; bough just loses the
+interactive approve-and-retry loop for it. Routing host calls back through the
+engine (to restore that) is a deferred option (§11).
 
 ### 5.3 How a turn works
 
@@ -300,9 +323,11 @@ A `worker_runtime` module in `bough_server`, on first worker use:
 
 1. **Ensures the model is present** — downloads a quantized GGUF to
    `~/.bough/models/` (with a checksum) if absent. Default
-   `qwen2.5-coder:7b` at Q4: a worker fix is one short command (~1500 output
-   tokens), so a 7B is plenty and bigger models are not worth the latency on
-   this hardware.
+   `vibethinker-3b` at Q4 (arXiv:2606.16140 — a reasoning/coding SLM distilled
+   on Qwen2.5-Coder-3B, strong on LiveCodeBench/LeetCode): a worker fix is one
+   short command (~1500 output tokens), and at 3B the ~1.9 GB GGUF fits in
+   2–3 GB and keeps fix latency low on this hardware. Its code strength is also
+   why the agent's tools are expressed as Python run in a monty sandbox (§5.2).
 2. **Launches a bundled inference server** as an OTP-supervised external
    process — `llama-server --host 127.0.0.1 --port <p> -m <model.gguf>` (this is
    the engine Ollama itself wraps; bundling it cuts out the daemon). It exposes
@@ -356,6 +381,19 @@ run through `nono profile validate` before use (`nono_bridge.validate_profile`),
 so schema drift fails safe (the run blocks the network) instead of nono rejecting
 it opaquely. Network denials are read from nono's structured audit JSON
 (method/path fields) rather than parsing its prose deny reasons.
+
+**monty + nono — two rings, one airlock.** With code-mode (§5.2) there are now
+two sandboxes at different layers. monty confines the *agent's Python* (a
+language/capability ring: the program reaches the host only through the host
+functions we register). nono confines the *native processes* that Python's
+`bash` launches (a kernel ring: workspace + network allowlist + audit). They are
+orthogonal and complementary — monty has no visibility into a subprocess once it
+shells out (nono's job), and nono can't do per-call in-language capability gating
+(monty's job). They meet at exactly one point: `bash`, the only host function
+that runs native code, opens into a nono cell. The `bough-monty` sidecar is the
+trusted broker between the two untrusted zones (the agent's Python and the shell
+command). Because the sidecar runs nono itself, code-mode `bash` is outside the
+engine's live net gate — see the honest limit in §5.2.
 
 ---
 

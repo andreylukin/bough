@@ -18,6 +18,12 @@ import gleam/result
 import gleam/string
 
 pub type Step {
+  /// Run agent-authored Python in the monty sandbox (SPEC §5.2) — the
+  /// supervisor's primary way to act. The program calls the host functions
+  /// `bash`/`read`/`write`/`edit`; monty confines the code and `bash` goes
+  /// through nono. Supersedes the per-action `Run`/`Write`/`Edit`/`Read`/`Grep`
+  /// verbs (still parsed for back-compat and used by harness-internal fixes).
+  Code(title: String, code: String)
   Run(title: String, cmd: String)
   Write(title: String, path: String, content: String)
   /// Surgical in-place edit: replace the single exact occurrence of `search`
@@ -55,6 +61,7 @@ pub type Artifacts {
 /// The title of any step.
 pub fn step_title(step: Step) -> String {
   case step {
+    Code(title, ..) -> title
     Run(title, ..) -> title
     Write(title, ..) -> title
     Edit(title, ..) -> title

@@ -1,0 +1,20 @@
+[package]
+name = "bough-monty"
+version = "0.1.0"
+edition = "2021"
+description = "bough's code-mode sidecar: runs agent-authored Python in a monty sandbox, exposing bash/read/write/edit as host functions (bash goes through nono)."
+
+[[bin]]
+name = "bough-monty"
+path = "src/main.rs"
+
+# monty is not on crates.io (experimental), so pin to the upstream git package.
+# It supplies the in-process Python sandbox; bough wraps it with host functions.
+[dependencies]
+monty = { git = "https://github.com/pydantic/monty" }
+serde_json = "1"
+
+[profile.release]
+# Small, fast-starting binary — monty's whole point is microsecond startup.
+opt-level = 2
+strip = true

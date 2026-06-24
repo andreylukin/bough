@@ -36,6 +36,7 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
+import simplifile
 import wisp.{type Request, type Response}
 
 const default_model = "claude-haiku-4-5-20251001"
@@ -48,17 +49,21 @@ const default_max_turns = 20
 
 const default_worker_port = 8080
 
-// The only worker model bough uses: Qwen2.5-Coder, served locally via
+// The only worker model bough uses: VibeThinker-3B (arXiv:2606.16140), a
+// reasoning/coding SLM built on Qwen2.5-Coder-3B, served locally via
 // llama-server. This is the label sent to the OpenAI-compatible endpoint;
 // llama-server serves whatever GGUF it was started with (see worker_runtime).
-const worker_model = "qwen2.5-coder"
+const worker_model = "vibethinker-3b"
 
 pub fn handle_request(req: Request) -> Response {
+  let web = web_dir()
+  // The web client's static assets (app.js, style.css, logo.svg) live under
+  // /static; everything else falls through to the JSON API below. API routes
+  // are all under /session, /sessions, /groups, /config, /health, /doc, so
+  // nothing is shadowed.
+  use <- wisp.serve_static(req, under: "/static", from: web <> "/static")
   case wisp.path_segments(req), req.method {
-    [], _ ->
-      json_ok(
-        "{\"service\":\"bough\",\"version\":\"" <> bough_core.version <> "\"}",
-      )
+    [], Get -> serve_index(web)
     ["health"], _ -> json_ok("{\"status\":\"ok\"}")
     ["config"], Get -> config()
     ["groups"], Get -> groups_catalog()
@@ -78,6 +83,29 @@ pub fn handle_request(req: Request) -> Response {
     ["session", id, "fork"], Post -> fork_session(req, id)
     ["session", id, "graft"], Post -> graft_session(req, id)
     _, _ -> wisp.not_found()
+  }
+}
+
+// --- Web client ----------------------------------------------------------
+
+/// The directory holding the web client's assets: `<priv>/web`. The SPA's
+/// `index.html` is served at `/` and its `static/` assets under `/static`.
+fn web_dir() -> String {
+  case wisp.priv_directory("bough_server") {
+    Ok(priv) -> priv <> "/web"
+    Error(_) -> "priv/web"
+  }
+}
+
+/// Serve the single-page web client. Falls back to the service banner if the
+/// asset is missing (e.g. running from a build without `priv/web`).
+fn serve_index(web: String) -> Response {
+  case simplifile.read(web <> "/index.html") {
+    Ok(html) -> wisp.html_response(html, 200)
+    Error(_) ->
+      json_ok(
+        "{\"service\":\"bough\",\"version\":\"" <> bough_core.version <> "\"}",
+      )
   }
 }
 
@@ -319,7 +347,7 @@ fn max_rounds() -> Int {
   }
 }
 
-/// Engine config from the environment. The worker (Qwen2.5-Coder, SPEC.md §5.6)
+/// Engine config from the environment. The worker (VibeThinker-3B, SPEC.md §5.6)
 /// is always enabled: bough ensures a local llama-server is up and points the
 /// worker at it. Set `BOUGH_WORKER_URL` to use a remote endpoint instead
 /// (honored inside `worker_runtime.ensure`).
@@ -365,39 +393,40 @@ fn net_credentials() -> List(#(String, String)) {
 
 /// The resolved supervisor provider name and model from the environment
 /// (no key required, so `/config` can report it before any run). Defaults to
-/// OpenRouter / z-ai/glm-5.2; set `BOUGH_PROVIDER=anthropic` for Anthropic.
+/// Anthropic / claude-haiku-4-5 (cheap to iterate against); set
+/// `BOUGH_PROVIDER=openrouter` for OpenRouter / z-ai/glm-5.2.
 fn resolved_model() -> #(String, String) {
   case envoy.get("BOUGH_PROVIDER") {
-    Ok("anthropic") -> #(
-      "anthropic",
-      envoy.get("BOUGH_MODEL") |> result.unwrap(default_model),
-    )
-    _ -> #(
+    Ok("openrouter") -> #(
       "openrouter",
       envoy.get("BOUGH_MODEL") |> result.unwrap(default_openrouter_model),
+    )
+    _ -> #(
+      "anthropic",
+      envoy.get("BOUGH_MODEL") |> result.unwrap(default_model),
     )
   }
 }
 
 /// Pick the supervisor provider, API key, and model from the environment.
-/// Default is OpenRouter (OPENROUTER_API_KEY, model z-ai/glm-5.2);
-/// `BOUGH_PROVIDER=anthropic` uses Anthropic with ANTHROPIC_API_KEY.
+/// Default is Anthropic (ANTHROPIC_API_KEY, model claude-haiku-4-5);
+/// `BOUGH_PROVIDER=openrouter` uses OpenRouter with OPENROUTER_API_KEY.
 fn agent_setup() -> Result(#(provider.Provider, String, String), String) {
   let #(name, model) = resolved_model()
   case name {
-    "anthropic" -> {
-      use key <- result.try(
-        envoy.get("ANTHROPIC_API_KEY")
-        |> result.replace_error("ANTHROPIC_API_KEY is not set"),
-      )
-      Ok(#(provider.Anthropic, key, model))
-    }
-    _ -> {
+    "openrouter" -> {
       use key <- result.try(
         envoy.get("OPENROUTER_API_KEY")
         |> result.replace_error("OPENROUTER_API_KEY is not set"),
       )
       Ok(#(provider.OpenAICompat(openrouter_base), key, model))
+    }
+    _ -> {
+      use key <- result.try(
+        envoy.get("ANTHROPIC_API_KEY")
+        |> result.replace_error("ANTHROPIC_API_KEY is not set"),
+      )
+      Ok(#(provider.Anthropic, key, model))
     }
   }
 }

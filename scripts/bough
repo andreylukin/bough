@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # bough launcher.
-#   bough          start the server, wait for health, then run the TUI
-#                  (the server is torn down when the TUI exits)
+#   bough          start the server, wait for health, then open the web UI
+#                  in your browser (the server runs in the foreground; Ctrl-C
+#                  stops it)
 #   bough update   pull the latest version from git and rebuild in place
 
 set -euo pipefail
@@ -31,7 +32,7 @@ case "${1:-}" in
     ;;
   -h | --help)
     echo "usage: bough [update]"
-    echo "  (no args)  start the server and TUI"
+    echo "  (no args)  start the server and open the web UI"
     echo "  update     pull the latest version from git and rebuild"
     exit 0
     ;;
@@ -51,7 +52,7 @@ echo "starting bough server..."
 SERVER_PID=$!
 trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT INT TERM
 
-# Wait for /health before launching the client.
+# Wait for /health before opening the UI.
 for _ in $(seq 1 60); do
   if curl -fsS "$SERVER/health" >/dev/null 2>&1; then break; fi
   if ! kill -0 "$SERVER_PID" 2>/dev/null; then
@@ -60,5 +61,11 @@ for _ in $(seq 1 60); do
   sleep 0.5
 done
 
-cd "$ROOT/packages/bough_tui"
-exec gleam run
+# Open the web UI in the default browser (best-effort), then keep the server in
+# the foreground so Ctrl-C tears it down via the trap above.
+echo "bough web UI: $SERVER"
+if command -v open >/dev/null 2>&1; then open "$SERVER" >/dev/null 2>&1 || true
+elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$SERVER" >/dev/null 2>&1 || true
+fi
+
+wait "$SERVER_PID"

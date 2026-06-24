@@ -52,7 +52,7 @@ pub fn definitions() -> json.Json {
 pub const run_steps_name = "run_steps"
 
 pub fn run_steps_description() -> String {
-  "The ONLY way to act on the workspace. Provide an ordered batch of typed actions; the harness runs each in the sandbox and returns exit codes and output digests, then runs your check. Use a read/grep action to inspect files before editing."
+  "The ONLY way to act on the workspace. Provide an ordered batch of typed actions; the harness runs each and returns exit codes and output digests, then runs your check. The `code` action runs Python in a monty sandbox with host functions bash/read/write/edit — use it to inspect, edit, run, and verify."
 }
 
 /// The JSON Schema for the tool's input (the object passed as `input_schema` /
@@ -71,16 +71,10 @@ pub fn run_steps_schema() -> json.Json {
         #("action", json.object([
           #("type", json.string("string")),
           #("description", json.string("Which action this step performs.")),
-          #("enum", json.array(["run", "write", "edit", "read", "grep", "spawn", "tell", "collect"], json.string)),
+          #("enum", json.array(["code", "spawn", "tell", "collect"], json.string)),
         ])),
         #("title", str("Short human-readable title for this step.")),
-        #("command", str("Shell command to run (action=run).")),
-        #("path", str("File path, workspace-relative or absolute (action=write/edit/read).")),
-        #("content", str("Full file content (action=write).")),
-        #("find", str("Exact text to replace — must match byte-for-byte and uniquely (action=edit).")),
-        #("replace", str("Replacement text (action=edit).")),
-        #("range", str("Optional line range like \"10-40\" (action=read).")),
-        #("pattern", str("Search pattern; recursive, line-numbered (action=grep).")),
+        #("code", str("Python program run in the monty sandbox (action=code). Call the host functions bash(cmd)->str, read(path)->str, write(path, content), edit(path, old, new), and print() what you find. A monty Python subset: stdlib only (no third-party imports), and no class or match statements yet.")),
         #("task", str("Self-contained instructions for a subagent (action=spawn). Spawning is asynchronous: the subagent runs concurrently and the step returns its id.")),
         #("target", str("The subagent id (returned by an earlier spawn) to message (action=tell) or check the status of (action=collect). collect does NOT block — a finished subagent's output is delivered to you automatically.")),
         #("message", str("Context, info, or a correction to send the target subagent (action=tell). Delivered at its next round.")),
