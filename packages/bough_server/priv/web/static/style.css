@@ -311,13 +311,30 @@ details.detail[open] summary::before { content: '▾'; }
 /* subagents */
 .sub { display: flex; align-items: center; gap: 9px; padding: 9px 7px; border-radius: 7px; cursor: pointer; }
 .sub:hover { background: var(--moss-soft); }
-.sub .stitle { flex: 1; color: var(--birch); }
-.sub .st { font-size: 10px; font-family: var(--mono); padding: 1px 7px; border-radius: 10px; }
+.sub:hover .sgo { color: var(--leaf); }
+.sub .stitle { flex: 1; color: var(--birch); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sub .st { font-size: 10px; font-family: var(--mono); padding: 1px 7px; border-radius: 10px; flex: 0 0 auto; }
 .sub .st.running { color: var(--sap); background: rgba(226,160,63,0.14); }
 .sub .st.done { color: var(--leaf); background: rgba(116,196,128,0.14); }
 .sub .st.error { color: var(--rust); background: rgba(206,111,87,0.14); }
+.sub .sgo { color: var(--lichen-dim); flex: 0 0 auto; }
+/* a running subagent: amber rail + its own spinner */
+.sub { position: relative; }
+.sub.live { background: rgba(226,160,63,0.05); border-left: 2px solid var(--sap); padding-left: 9px; }
+/* "Completed" disclosure for finished subagents */
+.sub-done-head { display: flex; align-items: center; gap: 7px; margin-top: 10px; padding: 4px 2px; cursor: pointer; color: var(--lichen-dim); font-size: 12px; user-select: none; }
+.sub-done-head:hover { color: var(--lichen); }
+.sub-done-head .caret { transition: transform 0.12s; font-size: 9px; }
+.sub-done-head.open .caret { transform: rotate(90deg); }
+.sub-done-head .tabct { margin-left: auto; }
 
 .subbar { display: flex; align-items: center; gap: 10px; padding: 7px 26px; background: var(--bark-2); border-bottom: 1px solid var(--moss); font-size: 12px; color: var(--lichen); }
+.subbar .sb-title { color: var(--birch); font-weight: 500; max-width: 280px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.subbar .st { font-size: 10px; font-family: var(--mono); padding: 1px 7px; border-radius: 10px; }
+.subbar .st.running { color: var(--sap); background: rgba(226,160,63,0.14); }
+.subbar .st.done { color: var(--leaf); background: rgba(116,196,128,0.14); }
+.subbar .st.error { color: var(--rust); background: rgba(206,111,87,0.14); }
+.subbar .sb-hint { color: var(--lichen-dim); margin-left: auto; }
 
 /* status badge */
 .badge { font-size: 10px; font-family: var(--mono); padding: 1px 8px; border-radius: 10px; letter-spacing: 0.2px; }
