@@ -4,6 +4,7 @@
 //// its `tool_calls`) can be echoed back verbatim, like the Anthropic client.
 
 import bough_server/json_value.{type JsonValue, JObject, JString}
+import envoy
 import gleam/dynamic/decode
 import gleam/http.{Post}
 import gleam/http/request
@@ -15,7 +16,15 @@ import gleam/list
 import gleam/result
 import gleam/string
 
-const max_tokens = 4096
+/// Output-token cap, raised from 4096 so the supervisor's reasoning + a
+/// code-mode program don't truncate mid-turn (which surfaces as an empty /
+/// cut-off turn). Override with `BOUGH_MAX_TOKENS`.
+fn max_tokens() -> Int {
+  case envoy.get("BOUGH_MAX_TOKENS") {
+    Ok(v) -> int.parse(v) |> result.unwrap(8192)
+    Error(_) -> 8192
+  }
+}
 
 // Slow reasoning models behind OpenRouter, plus a conversation that grows each
 // round, can run well past httpc's 30s default.
@@ -44,7 +53,7 @@ pub fn complete(
   let body =
     json.object([
       #("model", json.string(model)),
-      #("max_tokens", json.int(max_tokens)),
+      #("max_tokens", json.int(max_tokens())),
       #("messages", json.preprocessed_array(list.map(all, json_value.to_json))),
       #("tools", tools),
       #("tool_choice", json.string("auto")),
