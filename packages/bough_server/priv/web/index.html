@@ -31,7 +31,9 @@
 
       <section id="center">
         <div class="transcript" id="transcript"></div>
+        <div id="attachments" hidden></div>
         <form id="composer" autocomplete="off">
+          <button type="button" id="stop" class="composer-stop" title="Stop this run at its next step" hidden>■ Stop</button>
           <textarea id="prompt" rows="2" placeholder="Ask bough to do something…  (Enter to send, Shift+Enter for newline)"></textarea>
           <button type="submit" id="send" class="primary">Send</button>
         </form>
