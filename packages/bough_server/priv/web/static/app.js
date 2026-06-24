@@ -21,6 +21,7 @@ const state = {
   mapOpen: false,        // session map overlay (pannable/zoomable 2-D tree)
   mapView: null,         // map camera { x, y, scale }; null = fit on next paint
   mapShowSuperseded: false,
+  mapExpanded: new Set(), // map: turn ids whose tool-call steps are expanded
   viewChildId: null,     // when set, the transcript shows this subagent
   childTree: null,
   childRun: null,
@@ -375,10 +376,13 @@ function renderConversation(box, tree, run) {
   const flush = () => { if (steps.length) { renderStepList(stream, steps); steps = []; } };
   for (const e of path) {
     if (e.role === "tool_result") {
-      try { steps.push(JSON.parse(e.content)); } catch {}
+      // Carry the entry id so a step card can anchor a map "jump to" (see
+      // jumpToEntry); it rides along harmlessly through the step pipeline.
+      try { const s = JSON.parse(e.content); s._eid = e.id; steps.push(s); } catch {}
     } else if (e.role === "user") {
       flush();
-      stream.appendChild(el("div", "msg user", esc(e.content)));
+      const m = el("div", "msg user", esc(e.content)); m.dataset.eid = e.id;
+      stream.appendChild(m);
     } else if (e.role === "assistant") {
       // Guard against an older bug where the final reply was also stored as a
       // trailing plan step: drop a plan/text step identical to the answer so it
@@ -386,7 +390,8 @@ function renderConversation(box, tree, run) {
       const ans = (e.content || "").trim();
       steps = steps.filter((s) => !((s.type === "plan" || s.type === "text") && (s.text || "").trim() === ans));
       flush();
-      stream.appendChild(el("div", "msg assistant prose", md(e.content)));
+      const m = el("div", "msg assistant prose", md(e.content)); m.dataset.eid = e.id;
+      stream.appendChild(m);
     }
     // system digests are hidden and do NOT flush: a digest always sits right
     // before the assistant leaf, and flushing here would render the trailing
@@ -489,6 +494,11 @@ function inspectNode(node) {
   const content = node.role === "tool_result" ? stepLabel(node.content) : node.content;
   body.appendChild(preField("content", content));
   const acts = el("div", "drawer-actions");
+  if (onActivePath(node.id)) {
+    const jump = el("button", "ghost", "↡ Jump to in transcript");
+    jump.onclick = () => { closeDrawer(); jumpToEntry(node.id); };
+    acts.appendChild(jump);
+  }
   const fork = el("button", "primary", "Fork from here");
   fork.onclick = () => { forkNode(node.id); closeDrawer(); };
   acts.appendChild(fork);
@@ -518,9 +528,12 @@ function renderStepList(box, steps) {
   for (let i = 0; i < steps.length; i++) {
     const s = steps[i], next = steps[i + 1];
     if (s.type === "call" && next && next.type === "exec") {
-      box.appendChild(mergedCard(s, next)); i++; continue;
+      const card = mergedCard(s, next);
+      if (s._eid) card.dataset.eid = s._eid; // anchor for map jump-to
+      box.appendChild(card); i++; continue;
     }
-    const c = stepCard(s); if (c) box.appendChild(c);
+    const c = stepCard(s);
+    if (c) { if (s._eid) c.dataset.eid = s._eid; box.appendChild(c); }
   }
 }
 
@@ -720,8 +733,58 @@ function openMap() {
   if (!state.tree) { toast("Open a session first.", true); return; }
   state.mapOpen = true;
   state.mapView = null; // fit on first paint
+  state.mapExpanded = new Set();
   renderMap();
   requestAnimationFrame(fitMap); // fit needs the canvas laid out in the DOM
+}
+
+const parseStep = (content) => { try { return JSON.parse(content); } catch { return {}; } };
+function onActivePath(eid) { return activePath(state.tree).some((e) => e.id === eid); }
+
+// The tool-call rows shown when a turn is expanded — mirroring what the
+// transcript actually renders (call+exec merged, empty/duplicate plans dropped)
+// so every row's `eid` matches a real `[data-eid]` anchor to jump to.
+function turnStepRows(stepEntries, turnEntry) {
+  const ans = (turnEntry.content || "").trim();
+  const ps = stepEntries.map((en) => ({ en, s: parseStep(en.content) }));
+  const rows = [];
+  for (let i = 0; i < ps.length; i++) {
+    const { en, s } = ps[i], nx = ps[i + 1];
+    if (s.type === "plan" || s.type === "text") {
+      const txt = (s.text || "").trim();
+      if (!txt || txt === ans) continue; // empty, or the trailing plan == the reply
+      rows.push({ eid: en.id, type: "plan", tag: "plan", label: txt });
+    } else if (s.type === "call" && nx && nx.s.type === "exec") {
+      rows.push({ eid: en.id, type: "call", tag: s.verb || "call", label: s.arg || s.detail || "" });
+      i++; // the exec is folded into this row, as in the transcript
+    } else if (s.type === "call" || s.type === "exec") {
+      rows.push({ eid: en.id, type: s.type, tag: s.verb || s.type, label: s.arg || s.detail || "" });
+    } else if (s.type === "check") {
+      rows.push({ eid: en.id, type: "check", tag: s.ok ? "✓" : "✗", label: "check" });
+    } else if (s.type === "worker") {
+      rows.push({ eid: en.id, type: "worker", tag: "worker", label: s.command || "" });
+    }
+  }
+  return rows;
+}
+
+// Jump the main transcript to a turn or tool-call: close the map, scroll its
+// anchor into view, and flash it. Only the active branch is rendered, so a node
+// on another branch can't be scrolled to — nudge toward Fork instead.
+function jumpToEntry(eid) {
+  closeMap();
+  const node = document.querySelector(`#transcript [data-eid="${eid}"]`);
+  if (!node) { toast("That's on another branch — Fork to switch to it.", true); return; }
+  node.scrollIntoView({ behavior: "smooth", block: "center" });
+  node.classList.remove("flash"); void node.offsetWidth; node.classList.add("flash");
+  setTimeout(() => node.classList.remove("flash"), 1700);
+}
+
+function toggleMapExpand(id) {
+  if (!state.mapExpanded) state.mapExpanded = new Set();
+  if (state.mapExpanded.has(id)) state.mapExpanded.delete(id);
+  else state.mapExpanded.add(id);
+  renderMap();
 }
 
 function closeMap() {
@@ -742,21 +805,25 @@ function visibleGraph(tree, showSup) {
     children.get(e.parent_id).push(e);
   }
   const isVisible = (n) => n.role === "user" || n.role === "assistant";
-  const vnodes = new Map();      // id -> { id, entry, parent }
+  const vnodes = new Map();      // id -> { id, entry, parent, steps: [stepEntry] }
   const vchildren = new Map();   // visible-parent-id (or null) -> [child id]
   const roots = tree.entries.filter((e) => !e.parent_id || !byId.has(e.parent_id));
-  const walk = (node, vparent) => {
+  // `pending` carries the tool_result steps seen since the last visible node, so
+  // each turn owns the steps that produced it (kept per-branch — a fork resets
+  // pending down each child path).
+  const walk = (node, vparent, pending) => {
     if (sup.has(node.id)) return;
-    let myV = vparent;
     if (isVisible(node)) {
-      vnodes.set(node.id, { id: node.id, entry: node, parent: vparent });
+      vnodes.set(node.id, { id: node.id, entry: node, parent: vparent, steps: pending });
       if (!vchildren.has(vparent)) vchildren.set(vparent, []);
       vchildren.get(vparent).push(node.id);
-      myV = node.id;
+      (children.get(node.id) || []).forEach((c) => walk(c, node.id, []));
+    } else {
+      const next = node.role === "tool_result" ? pending.concat(node) : pending;
+      (children.get(node.id) || []).forEach((c) => walk(c, vparent, next));
     }
-    (children.get(node.id) || []).forEach((c) => walk(c, myV));
   };
-  roots.forEach((r) => walk(r, null));
+  roots.forEach((r) => walk(r, null, []));
   return { vnodes, vchildren };
 }
 
@@ -807,7 +874,7 @@ function buildMapShell() {
   // Drag the empty canvas to pan; nodes keep their own click.
   let drag = false, sx = 0, sy = 0, ox = 0, oy = 0;
   canvas.addEventListener("pointerdown", (e) => {
-    if (e.target.closest(".map-node")) return;
+    if (e.target.closest(".map-node, .mnode-steps")) return;
     drag = true; canvas.setPointerCapture(e.pointerId);
     sx = e.clientX; sy = e.clientY;
     ox = state.mapView ? state.mapView.x : 0;
@@ -887,7 +954,7 @@ function renderMap() {
     (tree.project || "").split("/").filter(Boolean).pop() + " · " + tree.entries.length + " nodes";
   $("#mapview .map-hint").innerHTML = state.graftRoot
     ? `grafting — click a parent for <b>${esc(clip(nodeLabel(state.graftRoot), 22))}</b>`
-    : `drag to pan · scroll to zoom · click a node to fork or graft`;
+    : `drag to pan · scroll to zoom · click a turn to jump to it · ▸ expands its tool calls · ⑂ to fork/graft`;
   $("#mapview #map-sup").checked = !!state.mapShowSuperseded;
 
   const { vnodes, vchildren } = visibleGraph(tree, state.mapShowSuperseded);
@@ -917,12 +984,17 @@ function renderMap() {
   }
   svg.innerHTML = paths;
 
-  // Nodes (rebuilt each render; svg stays).
-  world.querySelectorAll(".map-node").forEach((n) => n.remove());
+  // Active path drives jump-to; precompute the id set once.
+  const activeIds = new Set(activePath(tree).map((x) => x.id));
+  const expanded = state.mapExpanded || new Set();
+
+  // Nodes + step popovers (rebuilt each render; svg stays).
+  world.querySelectorAll(".map-node, .mnode-steps").forEach((n) => n.remove());
   for (const [id, obj] of vnodes) {
     const p = pos.get(id), e = obj.entry;
     const node = el("div", "map-node" +
       (id === tree.active_leaf ? " leaf" : "") +
+      (activeIds.has(id) ? " onpath" : "") +
       (id === state.graftRoot ? " graftroot" : "") +
       (e.grafted_from ? " grafted" : ""));
     node.style.left = p.x + "px"; node.style.top = p.y + "px"; node.style.width = MAP.NODE_W + "px";
@@ -930,11 +1002,44 @@ function renderMap() {
       `<span class="role ${esc(e.role)}">${e.role === "user" ? "you" : "bgh"}</span>` +
       (e.grafted_from ? `<span class="gmark" title="grafted from another branch">↪</span>` : "") +
       `<span class="snippet">${esc(clip(e.content, 64))}</span>`;
+
+    // Hover action: open the inspector (fork / graft) without firing a jump.
+    const insp = el("button", "mnode-act", "⑂");
+    insp.title = "Fork / graft from here";
+    insp.onclick = (ev) => { ev.stopPropagation(); inspectNode(e); };
+    node.appendChild(insp);
+
+    // Expand toggle: reveal the tool-call steps that produced this turn.
+    const rows = turnStepRows(obj.steps || [], e);
+    if (rows.length) {
+      const exp = el("button", "mnode-exp" + (expanded.has(id) ? " on" : ""),
+        `${expanded.has(id) ? "▾" : "▸"} ${rows.length} step${rows.length === 1 ? "" : "s"}`);
+      exp.title = "Show the tool calls in this turn";
+      exp.onclick = (ev) => { ev.stopPropagation(); toggleMapExpand(id); };
+      node.appendChild(exp);
+    }
+
     node.onclick = () => {
       if (state.graftRoot && state.graftRoot !== id) graftOnto(id);
+      else if (activeIds.has(id)) jumpToEntry(id);
       else inspectNode(e);
     };
     world.appendChild(node);
+
+    // Expanded step strip: a popover under the node; each row jumps to that step.
+    if (expanded.has(id) && rows.length) {
+      const pop = el("div", "mnode-steps");
+      pop.style.left = p.x + "px"; pop.style.top = (p.y + MAP.NODE_H + 8) + "px"; pop.style.width = MAP.NODE_W + "px";
+      for (const r of rows) {
+        const row = el("div", "mstep t-" + esc(r.type));
+        row.innerHTML = `<span class="mstep-tag">${esc(String(r.tag))}</span>` +
+          `<span class="mstep-lbl">${esc(clip(r.label || r.type, 42))}</span>`;
+        row.title = "Jump to this step in the transcript";
+        row.onclick = (ev) => { ev.stopPropagation(); jumpToEntry(r.eid); };
+        pop.appendChild(row);
+      }
+      world.appendChild(pop);
+    }
   }
   applyMapTransform();
 }
