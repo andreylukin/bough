@@ -33,6 +33,7 @@ import gleam/http.{Get, Post}
 import gleam/int
 import gleam/json
 import gleam/list
+import gleam/float
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
@@ -49,11 +50,16 @@ const default_max_turns = 20
 
 const default_worker_port = 8080
 
-// The only worker model bough uses: VibeThinker-3B (arXiv:2606.16140), a
-// reasoning/coding SLM built on Qwen2.5-Coder-3B, served locally via
-// llama-server. This is the label sent to the OpenAI-compatible endpoint;
-// llama-server serves whatever GGUF it was started with (see worker_runtime).
-const worker_model = "vibethinker-3b"
+// The default worker model: Qwen2.5-Coder-3B, a fast instruct-coder. The
+// worker's job is a quick one-shot fix of a failed step, which a fast coder
+// does better (and far faster) than a long-chain-of-thought reasoning model;
+// experiments put reasoning SLMs (e.g. VibeThinker-3B) far behind here on
+// execution latency. Override with BOUGH_WORKER_MODEL (and point
+// BOUGH_WORKER_URL / the GGUF at it). This label is sent to the
+// OpenAI-compatible endpoint; llama-server serves whatever GGUF it loaded.
+fn worker_model() -> String {
+  envoy.get("BOUGH_WORKER_MODEL") |> result.unwrap("qwen2.5-coder:3b")
+}
 
 pub fn handle_request(req: Request) -> Response {
   let web = web_dir()
@@ -359,15 +365,38 @@ fn engine_config(
   let base = engine.default_config()
   let worker_url =
     worker_runtime.ensure(worker_port()) |> result.unwrap(base.worker_url)
+  let #(worker_temp, worker_top_p) = worker_decoding(base)
   engine.Config(
     ..base,
     provider: prov,
-    worker: Some(worker_model),
+    worker: Some(worker_model()),
     worker_url: worker_url,
     max_rounds: max_rounds(),
     review: review,
     net_gate: net_gate,
     net_credentials: net_credentials(),
+    worker_temperature: worker_temp,
+    worker_top_p: worker_top_p,
+  )
+}
+
+/// Worker decoding from the environment, falling back to the defaults (suited to
+/// the fast-coder default worker). Set BOUGH_WORKER_TEMP / BOUGH_WORKER_TOP_P
+/// when swapping in a reasoning worker (e.g. VibeThinker-3B wants 1.0 / 0.95).
+fn worker_decoding(base: engine.Config) -> #(Option(Float), Option(Float)) {
+  let parse = fn(name, fallback) {
+    case envoy.get(name) {
+      Ok(v) ->
+        case float.parse(v) {
+          Ok(f) -> Some(f)
+          Error(_) -> fallback
+        }
+      Error(_) -> fallback
+    }
+  }
+  #(
+    parse("BOUGH_WORKER_TEMP", base.worker_temperature),
+    parse("BOUGH_WORKER_TOP_P", base.worker_top_p),
   )
 }
 
@@ -532,6 +561,7 @@ fn spawn_subagent(
           },
           fn() { await_decision(child_id, 0) },
           fn() { inbox_of(child_id) },
+          fn() { control.stop_requested(child_id) },
           subagents_for(child_id, prov, api_key, model, workspace),
           [],
           inherited,
@@ -912,14 +942,30 @@ fn start_run(req: Request, id: String) -> Response {
 /// `{"decision":"steer","message":...}`.
 fn control_run(req: Request, id: String) -> Response {
   use body <- wisp.require_json(req)
-  case decode.run(body, control.request_decoder()) {
-    Error(_) ->
-      wisp.bad_request("expected {\"decision\":\"allow\"|\"steer\", ...}")
-    Ok(decision) -> {
-      control.put(id, decision)
+  // A stop is a separate channel from the decision queue (so it lands no matter
+  // what is pending and never collides with a steer message).
+  case decode.run(body, decision_kind_decoder()) {
+    Ok("stop") -> {
+      control.request_stop(id)
       json_ok("{\"status\":\"ok\"}")
     }
+    _ ->
+      case decode.run(body, control.request_decoder()) {
+        Error(_) ->
+          wisp.bad_request(
+            "expected {\"decision\":\"allow\"|\"steer\"|\"stop\", ...}",
+          )
+        Ok(decision) -> {
+          control.put(id, decision)
+          json_ok("{\"status\":\"ok\"}")
+        }
+      }
   }
+}
+
+fn decision_kind_decoder() -> decode.Decoder(String) {
+  use kind <- decode.field("decision", decode.string)
+  decode.success(kind)
 }
 
 fn launch_run(
@@ -954,6 +1000,7 @@ fn launch_run(
               },
               fn() { await_decision(id, 0) },
               fn() { inbox_of(id) },
+              fn() { control.stop_requested(id) },
               subagents_for(id, prov, api_key, model, tree.project),
               tree.allow_domains,
               tree.groups,

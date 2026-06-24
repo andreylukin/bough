@@ -68,6 +68,13 @@ pub type Config {
     /// (credential_name, env_var) pairs declared in the generated profile so the
     /// raw secret never enters the sandbox. Empty by default (opt-in).
     net_credentials: List(#(String, String)),
+    /// Sampling for the worker's fix/suggestion calls. A fast instruct-coder
+    /// worker (the default) wants a low temperature for deterministic fixes; a
+    /// reasoning worker (e.g. VibeThinker-3B) wants its documented decoding
+    /// (temperature 1.0, top_p 0.95) — lowering it degrades that model. `None`
+    /// leaves the field off so the server default applies.
+    worker_temperature: Option(Float),
+    worker_top_p: Option(Float),
   )
 }
 
@@ -109,6 +116,9 @@ pub fn default_config() -> Config {
     review: False,
     net_gate: False,
     net_credentials: [],
+    // Default worker is a fast instruct-coder: low temperature, deterministic.
+    worker_temperature: Some(0.2),
+    worker_top_p: None,
   )
 }
 
@@ -132,6 +142,9 @@ type State {
     // Non-blocking: a message the human added to this run since the last round,
     // injected into the conversation so they can steer any agent mid-flight.
     inbox: fn() -> Option(String),
+    // Non-blocking: True if the human asked to stop this run. Checked at each
+    // round boundary so a freely-running turn can be halted.
+    stopped: fn() -> Bool,
     // Spawn / message / collect subagents (async delegation).
     subagents: Subagents,
     // append-only Anthropic message list, oldest first. Carries tool_use /
@@ -183,6 +196,7 @@ pub fn run_streaming(
   emit: fn(String, List(Activity), Int, List(nono.AuditEvent)) -> Nil,
   await: fn() -> control.Decision,
   inbox: fn() -> Option(String),
+  stopped: fn() -> Bool,
   subagents: Subagents,
   net_allow: List(String),
   groups: List(String),
@@ -198,6 +212,7 @@ pub fn run_streaming(
       emit: emit,
       await: await,
       inbox: inbox,
+      stopped: stopped,
       subagents: subagents,
       convo: seed_convo(history, user_prompt),
       context_tokens: 0,
@@ -250,6 +265,7 @@ pub fn run(
     fn(_, _, _, _) { Nil },
     fn() { control.Allow },
     fn() { None },
+    fn() { False },
     no_subagents(),
     [],
     groups,
@@ -258,6 +274,14 @@ pub fn run(
 }
 
 fn run_rounds(state: State, round: Int) -> #(State, Int) {
+  // Honor a human stop request before doing any more work this turn.
+  case state.stopped() {
+    True -> #(notice(state, "Stopped by you."), round - 1)
+    False -> run_rounds_active(state, round)
+  }
+}
+
+fn run_rounds_active(state: State, round: Int) -> #(State, Int) {
   // Fold in any message the human added to this run since the last round, so a
   // human can steer the agent (or a subagent they've jumped into) mid-flight.
   let state = drain_inbox(state)
@@ -656,12 +680,14 @@ fn suggester_worker(state: State, result: Exec, paths: List(String)) -> List(Str
         <> "\n\nAVAILABLE GROUPS:\n"
         <> listing
       case
-        worker.complete(
+        worker.complete_with(
           state.config.worker_url,
           model,
           prompts.suggester_system,
           prompt,
           200,
+          state.config.worker_temperature,
+          state.config.worker_top_p,
         )
       {
         Error(_) -> []
@@ -769,12 +795,14 @@ fn fix_loop(
         <> "\nOUTPUT:\n"
         <> digest.digest(result.output, state.config.digest_limit)
       case
-        worker.complete(
+        worker.complete_with(
           state.config.worker_url,
           model,
           prompts.worker_system,
           prompt,
           1500,
+          state.config.worker_temperature,
+          state.config.worker_top_p,
         )
       {
         Error(e) -> {
@@ -1420,6 +1448,13 @@ fn settle_subagents(state: State, round: Int) -> #(State, Int) {
 }
 
 fn wait_for_subagent(state: State, round: Int) -> #(State, Int) {
+  case state.stopped() {
+    True -> #(notice(state, "Stopped by you."), round)
+    False -> wait_for_subagent_active(state, round)
+  }
+}
+
+fn wait_for_subagent_active(state: State, round: Int) -> #(State, Int) {
   case state.inbox() {
     // A subagent result (or a human steer) arrived — fold it in and let the
     // supervisor continue so it can act on it.

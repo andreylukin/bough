@@ -36,6 +36,40 @@ fn path(d: String, session_id: String) -> String {
   d <> "/" <> session_id <> ".json"
 }
 
+fn stop_path(d: String, session_id: String) -> String {
+  d <> "/" <> session_id <> ".stop"
+}
+
+/// Ask a running engine to stop at its next round boundary. A marker file,
+/// separate from the decision queue, so a stop is honored no matter what is (or
+/// isn't) pending — and never collides with a steer message.
+pub fn request_stop(session_id: String) -> Nil {
+  case dir() {
+    Error(_) -> Nil
+    Ok(d) -> {
+      let _ = simplifile.write(stop_path(d, session_id), "1")
+      Nil
+    }
+  }
+}
+
+/// Read-once: True if a stop was requested for this session (clears the marker).
+pub fn stop_requested(session_id: String) -> Bool {
+  case dir() {
+    Error(_) -> False
+    Ok(d) -> {
+      let p = stop_path(d, session_id)
+      case simplifile.read(p) {
+        Ok(_) -> {
+          let _ = simplifile.delete(p)
+          True
+        }
+        Error(_) -> False
+      }
+    }
+  }
+}
+
 /// Enqueue a decision for a session (FIFO). Several messages may be in flight —
 /// e.g. the parent agent sending a running subagent successive context — so this
 /// appends rather than replacing; `take` consumes them oldest-first.
@@ -93,6 +127,7 @@ pub fn clear(session_id: String) -> Nil {
     Error(_) -> Nil
     Ok(d) -> {
       let _ = simplifile.delete(path(d, session_id))
+      let _ = simplifile.delete(stop_path(d, session_id))
       Nil
     }
   }

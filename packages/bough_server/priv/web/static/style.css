@@ -300,6 +300,9 @@ details.detail[open] summary::before { content: '▾'; }
 #toast.err { border-color: var(--rust); color: #f6d8d0; }
 
 /* growth indicator */
+.card.plan.live { display: flex; align-items: center; gap: 12px; }
+.stop-btn { background: transparent; border: 1px solid var(--sap-deep); color: var(--sap); border-radius: 6px; padding: 3px 11px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.3px; }
+.stop-btn:hover { background: rgba(226,160,63,0.12); border-color: var(--sap); }
 .spin { display: inline-flex; align-items: center; gap: 8px; color: var(--lichen-dim); font-family: var(--mono); font-size: 11px; }
 .spin .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--leaf); animation: pulse 1.4s ease-in-out infinite; }
 @keyframes pulse { 0%, 100% { opacity: 0.25; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.15); } }

@@ -53,6 +53,7 @@ const api = {
   run: (id) => jget(`/session/${id}/run`),
   startRun: (id, content, review) => jpost(`/session/${id}/run`, { content, review }),
   control: (id, decision, message) => jpost(`/session/${id}/control`, { decision, message: message || "" }),
+  stop: (id) => jpost(`/session/${id}/control`, { decision: "stop" }),
   fork: (id, entry_id) => jpost(`/session/${id}/fork`, { entry_id }),
   graft: (id, section_root, onto) => jpost(`/session/${id}/graft`, { section_root, onto }),
   subagents: (id) => jget(`/session/${id}/subagents`),
@@ -343,8 +344,15 @@ function renderConversation(box, tree, run) {
     renderStepList(stream, run.steps);
     const gate = gateBar(run, tree ? tree.id : state.sessionId);
     if (gate) stream.appendChild(gate);
-    else stream.appendChild(el("div", "card plan",
-      `<span class="spin"><span class="pulse"></span> ${esc(growthLabel(run.status))}</span>`));
+    else {
+      const card = el("div", "card plan live",
+        `<span class="spin"><span class="pulse"></span> ${esc(growthLabel(run.status))}</span>`);
+      const stop = el("button", "stop-btn", "Stop");
+      stop.dataset.act = "stop-run";
+      stop.title = "Stop this run at its next step";
+      card.appendChild(stop);
+      stream.appendChild(card);
+    }
   } else if (run && run.status === "error") {
     const c = el("div", "card bad");
     c.innerHTML = `<div class="head"><span class="verb">error</span></div>`;
@@ -815,6 +823,13 @@ async function submitComposer() {
   } catch (e) { toast(String(e.message || e), true); }
 }
 
+async function stopRun() {
+  const id = state.viewChildId || state.sessionId;
+  if (!id) return;
+  try { await api.stop(id); toast("stopping — will halt at the next step"); }
+  catch (e) { toast(String(e.message || e), true); }
+}
+
 async function gateDecision(decision, message) {
   const id = state.viewChildId || state.sessionId;
   try {
@@ -983,6 +998,7 @@ function wire() {
     };
     switch (act) {
       case "copy-id": copyText(id, "Session id copied"); break;
+      case "stop-run": stopRun(); break;
       case "toggle-project": toggleProject(t.dataset.proj); break;
       case "open-session": openSession(id); break;
       case "open-child": openChild(id); break;
