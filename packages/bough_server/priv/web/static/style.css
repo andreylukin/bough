@@ -257,6 +257,12 @@ details.detail[open] summary::before { content: '▾'; }
 .node .role.assistant { color: var(--leaf); background: rgba(116,196,128,0.10); }
 .node .snippet { flex: 1; color: var(--lichen); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .node.leaf .snippet { color: var(--birch); }
+/* forked branches step out under their parent with a connector, instead of a
+   diagonal staircase; the trunk (primary line) stays flush left */
+.node .tconn { flex: 0 0 auto; margin-left: -4px; color: var(--lichen-dim); font-family: var(--mono); font-size: 12px; }
+.node.branch .role { opacity: 0.92; }
+.node .gmark { flex: 0 0 auto; color: var(--heartwood); font-size: 11px; }
+.node.grafted { border: 1px dashed var(--moss); }
 .node .acts { display: none; gap: 4px; }
 .node:hover .acts { display: flex; }
 .node .acts button { background: var(--bark-2); border: none; color: var(--lichen); border-radius: 4px; padding: 1px 6px; font-size: 11px; }
