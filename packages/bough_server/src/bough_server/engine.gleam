@@ -86,7 +86,9 @@ pub type Config {
 /// still running, so the harness can hold the turn open until they all report.
 pub type Subagents {
   Subagents(
-    spawn: fn(String, String) -> String,
+    // `spawn` is handed the run's `wake` subject so the child can signal this
+    // process the instant it finishes (event-driven; no busy-polling).
+    spawn: fn(String, String, process.Subject(Nil)) -> String,
     tell: fn(String, String) -> String,
     collect: fn(String) -> String,
     pending: fn() -> Bool,
@@ -97,7 +99,7 @@ pub type Subagents {
 pub fn no_subagents() -> Subagents {
   let unavailable = "subagents are only available in a streaming run"
   Subagents(
-    spawn: fn(_, _) { unavailable },
+    spawn: fn(_, _, _) { unavailable },
     tell: fn(_, _) { unavailable },
     collect: fn(_) { unavailable },
     pending: fn() { False },
@@ -147,6 +149,9 @@ type State {
     stopped: fn() -> Bool,
     // Spawn / message / collect subagents (async delegation).
     subagents: Subagents,
+    // A subject this run process owns; a subagent sends to it on completion so
+    // the synthesis wait is woken by an event instead of a 250 ms poll loop.
+    wake: process.Subject(Nil),
     // append-only Anthropic message list, oldest first. Carries tool_use /
     // tool_result blocks verbatim, so it is JsonValue rather than text pairs.
     convo: List(JsonValue),
@@ -203,6 +208,10 @@ pub fn run_streaming(
   suggested: List(String),
 ) -> Result(Outcome, String) {
   let dir = bb_dir()
+  // Owned by this run process (run_streaming runs inside the spawned run
+  // process), so `process.receive` on it is legal and a child's `process.send`
+  // from another process wakes us immediately.
+  let wake = process.new_subject()
   let state =
     State(
       api_key: api_key,
@@ -214,6 +223,7 @@ pub fn run_streaming(
       inbox: inbox,
       stopped: stopped,
       subagents: subagents,
+      wake: wake,
       convo: seed_convo(history, user_prompt),
       context_tokens: 0,
       baseline: integrity.snapshot(workspace),
@@ -846,7 +856,7 @@ fn apply(state: State, step: Step) -> #(State, Exec) {
     // sandbox; the injected ops return text to feed back to the supervisor.
     Spawn(title, task) -> #(
       bump(state),
-      Exec(0, state.subagents.spawn(title, task)),
+      Exec(0, state.subagents.spawn(title, task, state.wake)),
     )
     Tell(_, target, message) -> #(
       bump(state),
@@ -1477,7 +1487,10 @@ fn wait_for_subagent_active(state: State, round: Int) -> #(State, Int) {
     None ->
       case state.subagents.pending() {
         True -> {
-          process.sleep(250)
+          // Block until a child signals completion on `wake` — event-driven, no
+          // busy-poll. The 1 s cap is just a fallback so a human steer (which
+          // writes the disk inbox without a wake) is still picked up promptly.
+          let _ = process.receive(state.wake, 1000)
           wait_for_subagent(state, round)
         }
         False -> #(state, round)
