@@ -61,6 +61,15 @@ button:disabled { opacity: 0.45; cursor: default; }
 #ctx .sid { color: var(--lichen-dim); cursor: pointer; padding: 1px 6px; border-radius: 5px; border: 1px solid var(--moss); transition: color 0.12s, border-color 0.12s; }
 #ctx .sid::before { content: '⧉ '; opacity: 0.7; }
 #ctx .sid:hover { color: var(--leaf); border-color: var(--leaf-deep); }
+/* context-window gauge */
+.ctxmeter { display: inline-flex; align-items: center; gap: 6px; }
+.ctxmeter .ctxbar { width: 46px; height: 5px; border-radius: 3px; background: var(--moss); overflow: hidden; }
+.ctxmeter .ctxfill { display: block; height: 100%; border-radius: 3px; background: var(--leaf); transition: width 0.3s ease; }
+.ctxmeter .ctxnum { color: var(--lichen-dim); }
+.ctxmeter.warm .ctxfill { background: var(--sap); }
+.ctxmeter.warm .ctxnum { color: var(--sap); }
+.ctxmeter.hot .ctxfill { background: var(--rust); }
+.ctxmeter.hot .ctxnum { color: var(--rust); }
 .spacer { flex: 1; }
 .review-toggle { display: flex; align-items: center; gap: 7px; color: var(--lichen); font-size: 12px; user-select: none; cursor: pointer; }
 .review-toggle input { accent-color: var(--sap); }
@@ -420,6 +429,25 @@ details.detail[open] summary::before { content: '▾'; }
   border: 1px solid var(--moss); background: var(--bark-2); color: var(--lichen); border-radius: 5px; font-size: 11px; }
 .mstep:hover .mstep-fork { opacity: 1; }
 .mstep-fork:hover { color: var(--leaf); border-color: var(--leaf-deep); }
+
+/* Changes (diff review) tab */
+.changes-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.changes-sum { font-size: 12px; color: var(--lichen); margin-bottom: 10px; font-family: var(--mono); }
+.changes-sum .add { color: var(--leaf); } .changes-sum .del { color: var(--rust); }
+.changes-files { display: flex; flex-direction: column; gap: 2px; margin-bottom: 12px; }
+.cfile { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 2px 1px; }
+.cfile .cst { flex: 0 0 auto; width: 15px; height: 15px; line-height: 15px; text-align: center; font-family: var(--mono); font-size: 9px; border-radius: 3px; color: #06210f; font-weight: 600; }
+.cfile .cst.s-A { background: var(--leaf); }
+.cfile .cst.s-M { background: var(--sap); }
+.cfile .cst.s-D { background: var(--rust); }
+.cfile .cst.s-R { background: var(--heartwood); }
+.cfile .cpath { color: var(--lichen); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--mono); font-size: 11.5px; min-width: 0; }
+.diff { margin: 0; padding: 8px 10px; background: var(--ink); border: 1px solid var(--moss); border-radius: 7px; overflow: auto; font-family: var(--mono); font-size: 11px; line-height: 1.5; max-height: 58vh; }
+.diff .dl { display: block; white-space: pre; color: var(--lichen); }
+.diff .dmeta { color: var(--lichen-dim); }
+.diff .dhunk { color: var(--sap); }
+.diff .dadd { color: var(--leaf); background: rgba(116,196,128,0.08); }
+.diff .ddel { color: var(--rust); background: rgba(206,111,87,0.09); }
 
 /* flash a transcript turn/step when you jump to it from the map */
 .flash { animation: jumpflash 1.7s ease-out; border-radius: 8px; }
