@@ -481,7 +481,17 @@ function inspectStep(call, exec) {
     body.appendChild(preField(verb.toLowerCase() === "code" ? "program" : "content", call.detail));
   if (exec && exec.digest && exec.digest.trim())
     body.appendChild(preField("output", cleanDigest(exec.digest)));
-  openDrawer("step", verb.toLowerCase() === "code" ? "code-mode step" : verb + " step", body);
+  // The entry id rides on the parsed step (set in renderConversation); when
+  // present, you can branch the conversation off this exact tool call.
+  const eid = (call && call._eid) || (exec && exec._eid);
+  let acts = null;
+  if (eid) {
+    acts = el("div", "drawer-actions");
+    const fork = el("button", "primary", "⑂ Branch off this step");
+    fork.onclick = () => { forkNode(eid); closeDrawer(); closeMap(); };
+    acts.appendChild(fork);
+  }
+  openDrawer("step", verb.toLowerCase() === "code" ? "code-mode step" : verb + " step", body, acts);
 }
 
 function inspectNode(node) {
@@ -500,7 +510,7 @@ function inspectNode(node) {
     acts.appendChild(jump);
   }
   const fork = el("button", "primary", "Fork from here");
-  fork.onclick = () => { forkNode(node.id); closeDrawer(); };
+  fork.onclick = () => { forkNode(node.id); closeDrawer(); closeMap(); };
   acts.appendChild(fork);
   const graft = el("button", "ghost", "Graft this subtree");
   graft.onclick = () => { state.graftRoot = node.id; state.rightTab = "tree"; renderRight(); closeDrawer(); toast("pick a parent node to graft onto"); };
@@ -827,26 +837,42 @@ function visibleGraph(tree, showSup) {
   return { vnodes, vchildren };
 }
 
-// Naive tidy layout: leaves take successive columns, parents center over their
-// children, depth sets the row. Good enough for conversation trees (mostly
-// linear with the odd fork) without dragging in a layout lib.
-function layoutGraph(vchildren) {
-  const pos = new Map();
-  let col = 0;
-  const assign = (id, depth) => {
+// Trunk-and-branches layout (not a centered/symmetric tidy tree): the "main
+// bough" runs straight down a single lane, and every fork sends its secondary
+// children off into fresh lanes to the right. The bough is the child that
+// carries the active branch, or — failing that — the deepest line, so it stays
+// stable and reads like a tree with one main limb.
+function layoutGraph(vchildren, tree) {
+  const activeIds = new Set(activePath(tree).map((e) => e.id));
+  const depthMemo = new Map();
+  const subDepth = (id) => {
+    if (depthMemo.has(id)) return depthMemo.get(id);
     const kids = vchildren.get(id) || [];
-    const y = depth * MAP.Y;
-    if (kids.length === 0) {
-      const x = col * MAP.X; col++;
-      pos.set(id, { x, y });
-      return x;
-    }
-    const xs = kids.map((k) => assign(k, depth + 1));
-    const x = (xs[0] + xs[xs.length - 1]) / 2;
-    pos.set(id, { x, y });
-    return x;
+    const d = kids.length ? 1 + Math.max(...kids.map(subDepth)) : 0;
+    depthMemo.set(id, d);
+    return d;
   };
-  (vchildren.get(null) || []).forEach((r) => assign(r, 0));
+  const score = (id) => (activeIds.has(id) ? 1e6 : 0) + subDepth(id);
+  // Children with the main bough first, the rest left in chronological order.
+  const ordered = (id) => {
+    const kids = (vchildren.get(id) || []).slice();
+    if (kids.length <= 1) return kids;
+    let best = 0;
+    for (let i = 1; i < kids.length; i++) if (score(kids[i]) > score(kids[best])) best = i;
+    return [kids[best], ...kids.filter((_, i) => i !== best)];
+  };
+
+  const pos = new Map();
+  let maxLane = -1;
+  // The primary child inherits the parent's lane (straight down); each later
+  // sibling claims a brand-new lane to the right. Because the primary subtree is
+  // laid out first, those new lanes never collide with it.
+  const place = (id, lane, depth) => {
+    if (lane > maxLane) maxLane = lane;
+    pos.set(id, { x: lane * MAP.X, y: depth * MAP.Y });
+    ordered(id).forEach((k, i) => place(k, i === 0 ? lane : ++maxLane, depth + 1));
+  };
+  (vchildren.get(null) || []).forEach((r, i) => place(r, i === 0 ? 0 : ++maxLane, 0));
   return pos;
 }
 
@@ -958,7 +984,7 @@ function renderMap() {
   $("#mapview #map-sup").checked = !!state.mapShowSuperseded;
 
   const { vnodes, vchildren } = visibleGraph(tree, state.mapShowSuperseded);
-  const pos = layoutGraph(vchildren);
+  const pos = layoutGraph(vchildren, tree);
 
   let maxX = 0, maxY = 0;
   for (const p of pos.values()) { maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); }
@@ -1033,9 +1059,13 @@ function renderMap() {
       for (const r of rows) {
         const row = el("div", "mstep t-" + esc(r.type));
         row.innerHTML = `<span class="mstep-tag">${esc(String(r.tag))}</span>` +
-          `<span class="mstep-lbl">${esc(clip(r.label || r.type, 42))}</span>`;
+          `<span class="mstep-lbl">${esc(clip(r.label || r.type, 38))}</span>`;
         row.title = "Jump to this step in the transcript";
         row.onclick = (ev) => { ev.stopPropagation(); jumpToEntry(r.eid); };
+        const fk = el("button", "mstep-fork", "⑂");
+        fk.title = "Branch off this tool call";
+        fk.onclick = (ev) => { ev.stopPropagation(); forkNode(r.eid); closeMap(); };
+        row.appendChild(fk);
         pop.appendChild(row);
       }
       world.appendChild(pop);

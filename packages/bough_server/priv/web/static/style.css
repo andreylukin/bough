@@ -416,6 +416,10 @@ details.detail[open] summary::before { content: '▾'; }
 .mstep.t-check .mstep-tag { color: var(--sap); background: rgba(226,160,63,0.12); }
 .mstep-lbl { flex: 1; min-width: 0; font-size: 11.5px; color: var(--lichen); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mstep:hover .mstep-lbl { color: var(--birch); }
+.mstep-fork { flex: 0 0 auto; width: 18px; height: 18px; padding: 0; line-height: 1; opacity: 0; transition: opacity 0.12s;
+  border: 1px solid var(--moss); background: var(--bark-2); color: var(--lichen); border-radius: 5px; font-size: 11px; }
+.mstep:hover .mstep-fork { opacity: 1; }
+.mstep-fork:hover { color: var(--leaf); border-color: var(--leaf-deep); }
 
 /* flash a transcript turn/step when you jump to it from the map */
 .flash { animation: jumpflash 1.7s ease-out; border-radius: 8px; }
