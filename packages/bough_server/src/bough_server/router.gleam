@@ -43,11 +43,16 @@ import gleam/string
 import simplifile
 import wisp.{type Request, type Response}
 
-const default_model = "claude-haiku-4-5-20251001"
+// Per-provider default models, used when BOUGH_MODEL is unset.
+const default_anthropic_model = "claude-haiku-4-5-20251001"
+
+const default_openai_model = "gpt-4o"
 
 const default_openrouter_model = "z-ai/glm-5.2"
 
 const openrouter_base = "https://openrouter.ai/api/v1"
+
+const openai_base = "https://api.openai.com/v1"
 
 const default_max_turns = 20
 
@@ -622,16 +627,25 @@ fn net_credentials() -> List(#(String, String)) {
 /// (no key required, so `/config` can report it before any run). Defaults to
 /// Anthropic / claude-haiku-4-5 (cheap to iterate against); set
 /// `BOUGH_PROVIDER=openrouter` for OpenRouter / z-ai/glm-5.2.
+/// Resolve the configured supervisor `#(provider_name, model)`.
+///
+/// `BOUGH_PROVIDER` is one of `anthropic` (default), `openai`, `openrouter`, or
+/// `custom` (any OpenAI-compatible endpoint via `BOUGH_BASE_URL`). `BOUGH_MODEL`
+/// names the model — any model the chosen provider serves — or a per-provider
+/// default if unset.
 fn resolved_model() -> #(String, String) {
-  case envoy.get("BOUGH_PROVIDER") {
-    Ok("openrouter") -> #(
-      "openrouter",
-      envoy.get("BOUGH_MODEL") |> result.unwrap(default_openrouter_model),
-    )
-    _ -> #(
-      "anthropic",
-      envoy.get("BOUGH_MODEL") |> result.unwrap(default_model),
-    )
+  let name = envoy.get("BOUGH_PROVIDER") |> result.unwrap("anthropic")
+  let model =
+    envoy.get("BOUGH_MODEL") |> result.unwrap(default_model_for(name))
+  #(name, model)
+}
+
+fn default_model_for(name: String) -> String {
+  case name {
+    "openai" -> default_openai_model
+    "openrouter" -> default_openrouter_model
+    // anthropic, or custom (where the user is expected to set BOUGH_MODEL).
+    _ -> default_anthropic_model
   }
 }
 
@@ -641,21 +655,32 @@ fn resolved_model() -> #(String, String) {
 fn agent_setup() -> Result(#(provider.Provider, String, String), String) {
   let #(name, model) = resolved_model()
   case name {
-    "openrouter" -> {
-      use key <- result.try(
-        envoy.get("OPENROUTER_API_KEY")
-        |> result.replace_error("OPENROUTER_API_KEY is not set"),
+    "openai" -> with_key("OPENAI_API_KEY", provider.OpenAICompat(openai_base), model)
+    "openrouter" ->
+      with_key("OPENROUTER_API_KEY", provider.OpenAICompat(openrouter_base), model)
+    // Any OpenAI-compatible endpoint: bring your own base URL + key.
+    "custom" -> {
+      use base <- result.try(
+        envoy.get("BOUGH_BASE_URL")
+        |> result.replace_error(
+          "BOUGH_BASE_URL is not set (required for BOUGH_PROVIDER=custom)",
+        ),
       )
-      Ok(#(provider.OpenAICompat(openrouter_base), key, model))
+      with_key("BOUGH_API_KEY", provider.OpenAICompat(base), model)
     }
-    _ -> {
-      use key <- result.try(
-        envoy.get("ANTHROPIC_API_KEY")
-        |> result.replace_error("ANTHROPIC_API_KEY is not set"),
-      )
-      Ok(#(provider.Anthropic, key, model))
-    }
+    _ -> with_key("ANTHROPIC_API_KEY", provider.Anthropic, model)
   }
+}
+
+/// Read an API key from `env_var` and pair it with the resolved provider/model.
+fn with_key(
+  env_var: String,
+  prov: provider.Provider,
+  model: String,
+) -> Result(#(provider.Provider, String, String), String) {
+  envoy.get(env_var)
+  |> result.replace_error(env_var <> " is not set")
+  |> result.map(fn(key) { #(prov, key, model) })
 }
 
 /// Block the running engine until the human resolves a paused plan, polling the
