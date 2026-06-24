@@ -149,12 +149,29 @@ pub fn run_in_profile(
   reads: List(String),
   command: List(String),
 ) -> #(Int, String) {
+  run_celled(workspace, Some(profile_path), reads, command)
+}
+
+/// Wrap an arbitrary command in one nono cell scoped to `workspace` (read/write
+/// + the toolchain dirs on PATH), optionally under the session `profile`
+/// (capability groups + net leash + credentials). Running the monty sidecar
+/// this way puts its in-process `read`/`write`/`edit` — not just `bash` — behind
+/// the kernel sandbox, and children inherit the cell (SPEC §6). One arg builder
+/// for both the typed RUN path and code-mode, so the two can't drift.
+pub fn run_celled(
+  workspace: String,
+  profile: Option(String),
+  reads: List(String),
+  command: List(String),
+) -> #(Int, String) {
+  let profile_flags = case profile {
+    Some(path) -> ["--profile", path]
+    None -> []
+  }
   let args =
     list.flatten([
-      [
-        "run", "-s", "--profile", profile_path, "--allow", workspace,
-        "--allow-cwd",
-      ],
+      ["run", "-s", "--allow", workspace, "--allow-cwd"],
+      profile_flags,
       toolchain_reads(),
       read_flags(reads),
       ["--no-rollback", "--"],

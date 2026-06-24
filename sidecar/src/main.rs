@@ -6,12 +6,18 @@
 //! interpreter that can touch *nothing* on the host except the host functions
 //! we hand it — so the agent's only doors out are the four functions below.
 //!
-//! Two nested sandboxes meet here (SPEC.md §6): monty confines the
-//! agent-authored Python (no imports of the OS, no sockets, resource-limited);
-//! `bash` — the one door that runs real processes — opens into a `nono` cell
-//! (kernel-enforced workspace + network allowlist). `read`/`write`/`edit` are
-//! trusted host code, so this binary itself scopes their paths to the
-//! workspace.
+//! Two sandboxes meet here (SPEC.md §6): monty confines the agent-authored
+//! Python (no imports of the OS, no sockets, resource-limited), and nono
+//! confines what the *process* can touch at the kernel level. There are two
+//! enforcement layouts:
+//!
+//!   * Sandboxed (`--bash-inherit`, driven by `BOUGH_MONTY_SANDBOXED=1`): the
+//!     whole sidecar already runs inside one nono cell, so `read`/`write`/`edit`
+//!     (in-process) *and* any `bash` child inherit the workspace + network +
+//!     secret-deny policy. `bash` is then a plain subprocess — no nested nono.
+//!   * Legacy: the sidecar runs unsandboxed, only `bash` opens its own nono
+//!     cell, and `read`/`write`/`edit` are scoped lexically by `resolve()` here
+//!     (weaker — not symlink-aware).
 //!
 //! Protocol (one shot per invocation, driven by `monty_bridge.gleam`):
 //!   args:   --workspace <abs dir>  (--code-str <program> | --code <file>)
@@ -35,7 +41,7 @@ use monty::{
 };
 
 fn main() {
-    let (workspace, code, profile) = match parse_args() {
+    let (workspace, code, profile, bash_inherit) = match parse_args() {
         Ok(parsed) => parsed,
         Err(e) => {
             emit(false, "", &e);
@@ -43,27 +49,31 @@ fn main() {
         }
     };
 
-    match run(&code, &workspace, profile.as_deref()) {
+    match run(&code, &workspace, profile.as_deref(), bash_inherit) {
         Ok(output) => emit(true, &output, ""),
         Err((output, error)) => emit(false, &output, &error),
     }
 }
 
 /// Minimal flag parsing — `--workspace <dir>` plus the program inline via
-/// `--code-str <program>` or from a file via `--code <file>`, and an optional
-/// `--nono-profile <path>` that scopes `bash`'s sandbox (capability groups +
-/// network leash the human granted for this session). We avoid a CLI crate to
-/// keep the binary tiny (monty's selling point is startup speed).
-fn parse_args() -> Result<(String, String, Option<String>), String> {
+/// `--code-str <program>` or from a file via `--code <file>`. `--nono-profile
+/// <path>` scopes legacy-mode `bash` (capability groups + net leash);
+/// `--bash-inherit` switches to sandboxed mode where the surrounding nono cell
+/// already confines everything, so `bash` runs as a plain subprocess that
+/// inherits it. We avoid a CLI crate to keep the binary tiny (monty's selling
+/// point is startup speed).
+fn parse_args() -> Result<(String, String, Option<String>, bool), String> {
     let mut workspace = String::new();
     let mut code: Option<String> = None;
     let mut profile: Option<String> = None;
+    let mut bash_inherit = false;
     let mut args = env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--workspace" => workspace = args.next().unwrap_or_default(),
             "--code-str" => code = Some(args.next().unwrap_or_default()),
             "--nono-profile" => profile = args.next(),
+            "--bash-inherit" => bash_inherit = true,
             "--code" => {
                 let file = args.next().unwrap_or_default();
                 code = Some(fs::read_to_string(&file).map_err(|e| format!("cannot read {file}: {e}"))?);
@@ -72,7 +82,7 @@ fn parse_args() -> Result<(String, String, Option<String>), String> {
         }
     }
     match code {
-        Some(c) => Ok((workspace, c, profile)),
+        Some(c) => Ok((workspace, c, profile, bash_inherit)),
         None => Err("no program given (--code-str or --code)".to_owned()),
     }
 }
@@ -81,7 +91,7 @@ fn parse_args() -> Result<(String, String, Option<String>), String> {
 /// every call to an undefined-but-called name (`bash`, `read`, ...) suspends as
 /// a `FunctionCall`, which we service and resume. Returns the captured stdout,
 /// or `(partial stdout, error message)`.
-fn run(code: &str, workspace: &str, profile: Option<&str>) -> Result<String, (String, String)> {
+fn run(code: &str, workspace: &str, profile: Option<&str>, bash_inherit: bool) -> Result<String, (String, String)> {
     let runner = MontyRun::new(code.to_owned(), "agent.py", vec![])
         .map_err(|e| (String::new(), format!("python compile error:\n{}", format_exc(&e))))?;
 
@@ -98,7 +108,7 @@ fn run(code: &str, workspace: &str, profile: Option<&str>) -> Result<String, (St
         progress = match progress {
             RunProgress::Complete(_) => return Ok(output),
             RunProgress::FunctionCall(call) => {
-                let result = dispatch(&call.function_name, &call.args, workspace, profile);
+                let result = dispatch(&call.function_name, &call.args, workspace, profile, bash_inherit);
                 let print = PrintWriter::CollectString(&mut output);
                 match call.resume(result, print) {
                     Ok(next) => next,
@@ -131,7 +141,7 @@ fn run(code: &str, workspace: &str, profile: Option<&str>) -> Result<String, (St
 
 /// Service one host-function call. Unknown names become a Python `NameError`
 /// (via `NotFound`); everything else returns a string the program can use.
-fn dispatch(name: &str, args: &[MontyObject], workspace: &str, profile: Option<&str>) -> ExtFunctionResult {
+fn dispatch(name: &str, args: &[MontyObject], workspace: &str, profile: Option<&str>, bash_inherit: bool) -> ExtFunctionResult {
     let arg = |i: usize| -> String {
         match args.get(i) {
             Some(MontyObject::String(s)) => s.clone(),
@@ -142,7 +152,7 @@ fn dispatch(name: &str, args: &[MontyObject], workspace: &str, profile: Option<&
     let ret = |s: String| ExtFunctionResult::Return(MontyObject::String(s));
 
     match name {
-        "bash" => ret(bash(&arg(0), workspace, profile)),
+        "bash" => ret(bash(&arg(0), workspace, profile, bash_inherit)),
         "read" => ret(read(&arg(0), workspace)),
         "write" => ret(write(&arg(0), &arg(1), workspace)),
         "edit" => ret(edit(&arg(0), &arg(1), &arg(2), workspace)),
@@ -152,11 +162,23 @@ fn dispatch(name: &str, args: &[MontyObject], workspace: &str, profile: Option<&
 
 // --- Host functions -------------------------------------------------------
 
-/// `bash(cmd) -> str`: run a shell command inside a nono sandbox (workspace
-/// read/write, network default-deny) and return its combined output. This is
-/// the one host function that runs native processes, so it is the seam where
-/// monty's language sandbox hands off to nono's kernel sandbox.
-fn bash(cmd: &str, workspace: &str, profile: Option<&str>) -> String {
+/// `bash(cmd) -> str`: run a shell command and return its combined output.
+///
+/// Sandboxed mode (`inherit`): the whole sidecar already runs inside a nono
+/// cell, so a plain child process inherits the kernel sandbox (workspace +
+/// network + secret denies) automatically — no nested nono. Legacy mode: the
+/// sidecar is unsandboxed, so `bash` opens its own nono cell here.
+fn bash(cmd: &str, workspace: &str, profile: Option<&str>, inherit: bool) -> String {
+    if inherit {
+        return match Command::new("sh").arg("-c").arg(cmd).current_dir(workspace).output() {
+            Ok(o) => {
+                let mut s = String::from_utf8_lossy(&o.stdout).into_owned();
+                s.push_str(&String::from_utf8_lossy(&o.stderr));
+                s
+            }
+            Err(e) => format!("error: could not run command: {e}"),
+        };
+    }
     let mut args: Vec<String> = vec![
         "run".into(),
         "-s".into(),
