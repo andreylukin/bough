@@ -84,6 +84,14 @@ button:disabled { opacity: 0.45; cursor: default; }
 .search::placeholder { color: var(--lichen-dim); }
 .search:focus { outline: none; border-color: var(--leaf-deep); }
 .sessions { overflow-y: auto; display: flex; flex-direction: column; gap: 1px; margin: 0 -4px; padding: 0 4px; }
+.proj-head { display: flex; align-items: center; gap: 7px; padding: 7px 9px; border-radius: 7px; cursor: pointer; user-select: none; margin-top: 6px; }
+.proj-head:first-child { margin-top: 0; }
+.proj-head:hover { background: var(--moss-soft); }
+.proj-head .caret { color: var(--lichen-dim); font-size: 9px; transition: transform 0.12s; flex: 0 0 auto; }
+.proj-head.open .caret { transform: rotate(90deg); }
+.proj-head .pname { flex: 1; color: var(--leaf); font-size: 12px; font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0.85; }
+.proj-head .pcount { color: var(--lichen-dim); font-size: 10px; font-family: var(--mono); background: var(--moss-soft); border-radius: 9px; padding: 0 7px; }
+.session-item { margin-left: 10px; }
 .session-item { position: relative; padding: 9px 11px 9px 13px; border-radius: 8px; cursor: pointer; }
 .session-item:hover { background: var(--moss-soft); }
 .session-item.active { background: var(--moss-soft); }

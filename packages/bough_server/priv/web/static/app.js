@@ -22,6 +22,7 @@ const state = {
   childRun: null,
   poll: null,
   filter: "",            // sidebar search query
+  openProjects: null,    // sidebar: which project groups are expanded (null = default)
   lastFocus: null,       // focus to restore when the drawer closes
   lastSig: null,         // last rendered run signature (skip no-op re-renders)
 };
@@ -71,6 +72,10 @@ const el = (tag, cls, html) => {
 };
 const esc = (s) => (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const clip = (s, n) => { s = (s || "").replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n) + "…" : s; };
+// The harness appends `[full output saved: /Users/.../out_N.txt]` to a capped
+// digest; the absolute path is internal noise, so show the truncation marker
+// without it.
+const cleanDigest = (s) => (s || "").replace(/\[full output saved: [^\]]*\]/g, "[output truncated]");
 const ago = (ms) => {
   if (!ms) return "";
   const s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
@@ -191,7 +196,7 @@ function stepCard(step) {
       head.appendChild(el("span", "exit " + (ok ? "ok" : "bad"), "exit " + step.exit));
       card.appendChild(head);
       if (step.digest && step.digest.trim())
-        card.appendChild(el("pre", "out", esc(step.digest)));
+        card.appendChild(el("pre", "out", esc(cleanDigest(step.digest))));
       card.onclick = () => inspectStep(null, step);
       return card;
     }
@@ -406,7 +411,7 @@ function inspectStep(call, exec) {
   if (call && call.detail && call.detail.trim())
     body.appendChild(preField(verb.toLowerCase() === "code" ? "program" : "content", call.detail));
   if (exec && exec.digest && exec.digest.trim())
-    body.appendChild(preField("output", exec.digest));
+    body.appendChild(preField("output", cleanDigest(exec.digest)));
   openDrawer("step", verb.toLowerCase() === "code" ? "code-mode step" : verb + " step", body);
 }
 
@@ -467,7 +472,7 @@ function mergedCard(call, exec) {
   head.appendChild(el("span", "exit " + (ok ? "ok" : "bad"), "exit " + exec.exit));
   card.appendChild(head);
   if (exec.digest && exec.digest.trim())
-    card.appendChild(el("pre", "out", esc(exec.digest)));
+    card.appendChild(el("pre", "out", esc(cleanDigest(exec.digest))));
   card.onclick = () => inspectStep(call, exec);
   return card;
 }
@@ -495,6 +500,8 @@ function renderHeader() {
   $("#review-toggle").checked = state.reviewArmed;
 }
 
+const projBase = (p) => (p || "").split("/").filter(Boolean).pop() || p || "untitled";
+
 function renderSidebar() {
   const box = $("#sessions");
   box.innerHTML = "";
@@ -507,16 +514,58 @@ function renderSidebar() {
     box.appendChild(el("div", "hint", q ? "No sessions match." : "No sessions yet."));
     return;
   }
+
+  // Group by project, preserving the server's recency order (groups ranked by
+  // their most-recent session, sessions within a group by recency).
+  const groups = [];
+  const byProj = new Map();
   for (const s of sessions) {
-    const item = el("div", "session-item" + (s.id === state.sessionId ? " active" : ""));
-    item.dataset.act = "open-session";
-    item.dataset.id = s.id;
-    const proj = (s.project || "").split("/").filter(Boolean).pop() || s.project;
-    item.appendChild(el("div", "title", esc(clip(s.title || "untitled task", 60))));
-    item.appendChild(el("div", "meta",
-      `<span class="proj">${esc(proj)}</span><span>${s.turns} turn${s.turns === 1 ? "" : "s"} · ${ago(s.updated)}</span>`));
-    box.appendChild(item);
+    const key = s.project || "";
+    if (!byProj.has(key)) { byProj.set(key, []); groups.push(key); }
+    byProj.get(key).push(s);
   }
+
+  // The active session's project is the one you're working in: expand it by
+  // default, collapse the rest. A search query expands every match.
+  const activeProj = state.tree ? state.tree.project : null;
+  const isOpen = (key) =>
+    q ? true : (state.openProjects ? state.openProjects.has(key) : key === activeProj);
+
+  const item = (s) => {
+    const it = el("div", "session-item" + (s.id === state.sessionId ? " active" : ""));
+    it.dataset.act = "open-session";
+    it.dataset.id = s.id;
+    it.appendChild(el("div", "title", esc(clip(s.title || "untitled task", 60))));
+    it.appendChild(el("div", "meta",
+      `<span>${s.turns} turn${s.turns === 1 ? "" : "s"} · ${ago(s.updated)}</span>`));
+    return it;
+  };
+
+  for (const key of groups) {
+    const list = byProj.get(key);
+    const open = isOpen(key);
+    const head = el("div", "proj-head" + (open ? " open" : ""));
+    head.dataset.act = "toggle-project";
+    head.dataset.proj = key;
+    head.innerHTML =
+      `<span class="caret">▸</span><span class="pname">${esc(projBase(key))}</span>` +
+      `<span class="pcount">${list.length}</span>`;
+    box.appendChild(head);
+    if (open) for (const s of list) box.appendChild(item(s));
+  }
+}
+
+function toggleProject(key) {
+  if (!state.openProjects) {
+    // Seed from the current default (active project open) so the first click is
+    // a deliberate add/remove rather than a reset.
+    state.openProjects = new Set();
+    const activeProj = state.tree ? state.tree.project : null;
+    if (activeProj) state.openProjects.add(activeProj);
+  }
+  if (state.openProjects.has(key)) state.openProjects.delete(key);
+  else state.openProjects.add(key);
+  renderSidebar();
 }
 
 // ---- rendering: right pane ----------------------------------------------
@@ -934,6 +983,7 @@ function wire() {
     };
     switch (act) {
       case "copy-id": copyText(id, "Session id copied"); break;
+      case "toggle-project": toggleProject(t.dataset.proj); break;
       case "open-session": openSession(id); break;
       case "open-child": openChild(id); break;
       case "back-parent": backToParent(); break;
