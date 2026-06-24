@@ -13,6 +13,7 @@ const state = {
   tree: null,            // { id, project, active_leaf, entries[], superseded[], groups[], suggested[] }
   run: null,             // { status, steps[], text, context_tokens, network[] }
   subagents: [],
+  diff: null,            // { sessionId, git, files[], patch } — lazy-loaded Changes tab
   groupsCatalog: [],
   packs: [],
   rightTab: "tree",
@@ -67,6 +68,7 @@ const api = {
   fork: (id, entry_id) => jpost(`/session/${id}/fork`, { entry_id }),
   graft: (id, section_root, onto) => jpost(`/session/${id}/graft`, { section_root, onto }),
   subagents: (id) => jget(`/session/${id}/subagents`),
+  diff: (id) => jget(`/session/${id}/diff`),
   groupsCatalog: () => jget("/groups"),
   groupDetail: (name) => jget(`/groups/${name}`),
   setGroups: (id, groups) => jpost(`/session/${id}/groups`, { groups }),
@@ -574,17 +576,45 @@ function renderHeader() {
   else {
     const st = state.run ? state.run.status : "idle";
     const cls = ACTIVE.has(st) ? (st === "running" ? "running" : "awaiting") : st;
-    const tok = state.run && state.run.context_tokens
-      ? ` · ${state.run.context_tokens} tok` : "";
+    const meter = contextMeter(state.run ? state.run.context_tokens : 0, state.config.model);
     const full = state.tree.project || "";
     const base = full.split("/").filter(Boolean).pop() || full;
     ctx.innerHTML =
       `<span class="proj" title="${esc(full)}">${esc(base)}</span> ` +
       `<span class="sid" data-act="copy-id" data-id="${esc(state.tree.id)}" ` +
       `title="Click to copy session id">${esc(state.tree.id)}</span> ` +
-      `<span class="badge ${cls}">${esc(st)}</span>${tok}`;
+      `<span class="badge ${cls}">${esc(st)}</span>${meter}`;
   }
   $("#review-toggle").checked = state.reviewArmed;
+}
+
+// Context-window gauge: how full the model's context is after the last turn.
+// `context_tokens` is the last turn's input+output (engine.gleam); the window is
+// estimated per model family (override exact value isn't worth a round-trip).
+function contextMeter(tokens, model) {
+  if (!tokens) return "";
+  const win = contextWindow(model);
+  const pct = Math.min(100, Math.round((tokens / win) * 100));
+  const lvl = pct >= 85 ? "hot" : pct >= 60 ? "warm" : "ok";
+  return (
+    ` <span class="ctxmeter ${lvl}" title="${tokens.toLocaleString()} of ~${win.toLocaleString()} context tokens used (last turn)">` +
+    `<span class="ctxbar"><span class="ctxfill" style="width:${pct}%"></span></span>` +
+    `<span class="ctxnum">${humanTok(tokens)}/${humanTok(win)} · ${pct}%</span></span>`
+  );
+}
+function contextWindow(model) {
+  const m = (model || "").toLowerCase();
+  if (/gemini/.test(m)) return 1000000;
+  if (/claude/.test(m)) return 200000;
+  if (/glm/.test(m)) return 200000;
+  if (/gpt-5|gpt-4\.1|o[1-4]\b/.test(m)) return 200000;
+  if (/gpt-4o|gpt-4/.test(m)) return 128000;
+  return 128000; // llama/mistral/qwen/deepseek and unknowns
+}
+function humanTok(n) {
+  if (n < 1000) return String(n);
+  const k = n / 1000;
+  return (k >= 100 ? Math.round(k) : Math.round(k * 10) / 10) + "k";
 }
 
 const projBase = (p) => (p || "").split("/").filter(Boolean).pop() || p || "untitled";
@@ -659,13 +689,16 @@ function toggleProject(key) {
 
 function renderRight() {
   const run = state.viewChildId ? state.childRun : state.run;
+  const diffN = state.diff && state.tree && state.diff.sessionId === state.tree.id
+    ? state.diff.files.length : 0;
   const counts = {
     tree: null,
+    changes: diffN,
     network: run && run.network ? run.network.length : 0,
     caps: (state.tree && state.tree.groups ? state.tree.groups.length : 0),
     subagents: state.subagents.length,
   };
-  const labels = { tree: "Tree", network: "Network", caps: "Capabilities", subagents: "Subagents" };
+  const labels = { tree: "Tree", changes: "Changes", network: "Network", caps: "Capabilities", subagents: "Subagents" };
   document.querySelectorAll("#tabs button").forEach((b) => {
     const t = b.dataset.tab;
     const n = counts[t];
@@ -676,6 +709,7 @@ function renderRight() {
   body.innerHTML = "";
   if (!state.tree) { body.appendChild(el("div", "hint", "Open or create a session.")); return; }
   if (state.rightTab === "tree") renderTree(body);
+  else if (state.rightTab === "changes") renderChanges(body);
   else if (state.rightTab === "network") renderNetwork(body);
   else if (state.rightTab === "caps") renderCaps(body);
   else if (state.rightTab === "subagents") renderSubagents(body);
@@ -1088,6 +1122,91 @@ function stepLabel(content) {
   } catch { return content; }
 }
 
+// ---- Changes (diff review) ----------------------------------------------
+// The agent writes straight to the workspace; this is the review surface — the
+// uncommitted diff (modified + new files) so you can see what it actually did
+// before keeping it. Lazy-loaded and cached per session in state.diff.
+
+async function refreshDiff() {
+  if (!state.sessionId) return;
+  const id = state.sessionId;
+  try {
+    const d = await api.diff(id);
+    state.diff = { sessionId: id, ...d };
+  } catch {
+    state.diff = { sessionId: id, git: false, files: [], patch: "" };
+  }
+  if (state.rightTab === "changes") renderRight();
+}
+
+function renderChanges(body) {
+  const fresh = state.diff && state.diff.sessionId === state.tree.id;
+  if (!fresh) {
+    body.appendChild(el("div", "hint", "Loading changes…"));
+    refreshDiff();
+    return;
+  }
+  const d = state.diff;
+
+  const head = el("div", "changes-head");
+  head.innerHTML =
+    `<span class="caps-sub">Working changes</span>` +
+    `<button class="mini ghost" data-act="diff-refresh" title="Re-read the workspace">↻</button>`;
+  body.appendChild(head);
+
+  if (!d.git) {
+    body.appendChild(el("div", "hint",
+      "Not a git repo — no diff to show. Changes review reads the workspace's uncommitted git changes."));
+    return;
+  }
+  if (d.files.length === 0) {
+    body.appendChild(el("div", "hint", "No uncommitted changes — the workspace matches its last commit."));
+    return;
+  }
+
+  const sum = el("div", "changes-sum");
+  sum.innerHTML = `<b>${d.files.length}</b> file${d.files.length === 1 ? "" : "s"} · ` +
+    `<span class="add">+${countDiffLines(d.patch, "+")}</span> ` +
+    `<span class="del">−${countDiffLines(d.patch, "-")}</span>`;
+  body.appendChild(sum);
+
+  const flist = el("div", "changes-files");
+  for (const f of d.files) {
+    const sc = ({ "?": "A", A: "A", M: "M", D: "D", R: "R" })[f.status] || "M";
+    const row = el("div", "cfile");
+    row.innerHTML = `<span class="cst s-${sc}">${esc(f.status || "?")}</span>` +
+      `<span class="cpath" title="${esc(f.path)}">${esc(f.path)}</span>`;
+    flist.appendChild(row);
+  }
+  body.appendChild(flist);
+  body.appendChild(renderDiff(d.patch));
+}
+
+function countDiffLines(patch, sign) {
+  let n = 0;
+  for (const l of (patch || "").split("\n")) {
+    if (l[0] === sign && !l.startsWith(sign.repeat(3))) n++;
+  }
+  return n;
+}
+
+// A unified diff as colored, line-per-block spans (adds green, dels red,
+// hunks amber, file headers dim).
+function renderDiff(patch) {
+  const pre = el("pre", "diff");
+  let html = "";
+  for (const line of (patch || "").split("\n")) {
+    let cls = "dl";
+    if (/^(diff --git|index |--- |\+\+\+ |new file|deleted file|rename )/.test(line)) cls = "dl dmeta";
+    else if (line.startsWith("@@")) cls = "dl dhunk";
+    else if (line.startsWith("+")) cls = "dl dadd";
+    else if (line.startsWith("-")) cls = "dl ddel";
+    html += `<span class="${cls}">${esc(line) || "&nbsp;"}</span>`;
+  }
+  pre.innerHTML = html;
+  return pre;
+}
+
 function renderNetwork(body) {
   const net = state.run && state.run.network ? state.run.network : [];
   const leashed = !!(state.config && state.config.net);
@@ -1393,7 +1512,7 @@ async function openSession(id) {
   closeDrawer();
   state.sessionId = id;
   state.viewChildId = null; state.childTree = null; state.childRun = null;
-  state.graftRoot = null; state.lastSig = null;
+  state.graftRoot = null; state.lastSig = null; state.diff = null;
   try {
     state.tree = await api.tree(id);
     state.run = await api.run(id).catch(() => null);
@@ -1595,6 +1714,7 @@ async function tick() {
   if (done) {
     state.tree = await api.tree(id).catch(() => state.tree);
     await loadSessions();
+    state.diff = null; // the run may have written files — reload Changes on next view
     stopPoll();
   }
   const sig = runSig(run, state.subagents);
@@ -1652,6 +1772,7 @@ function wire() {
       case "open-child": openChild(id); break;
       case "back-parent": backToParent(); break;
       case "graft-cancel": state.graftRoot = null; renderRight(); break;
+      case "diff-refresh": state.diff = null; refreshDiff(); break;
       case "allow": gateDecision("allow", ""); break;
       case "steer": gateDecision("steer", steerInput()); break;
       case "enable-groups": {

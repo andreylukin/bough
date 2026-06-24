@@ -27,6 +27,7 @@ import bough_server/run_store
 import bough_server/session_manager
 import bough_server/snapshots
 import bough_server/subagents
+import bough_server/workdiff
 import bough_server/worker_runtime
 import envoy
 import gleam/dynamic/decode
@@ -90,6 +91,7 @@ pub fn handle_request(req: Request) -> Response {
     ["session", id, "run"], Get -> get_run(id)
     ["session", id, "control"], Post -> control_run(req, id)
     ["session", id, "subagents"], Get -> subagents_of(id)
+    ["session", id, "diff"], Get -> session_diff(id)
     ["session", id, "groups"], Get -> get_session_groups(id)
     ["session", id, "groups"], Post -> set_session_groups(req, id)
     ["session", id, "packs"], Post -> apply_packs(req, id)
@@ -686,6 +688,34 @@ fn inbox_of(id: String) -> Option(String) {
 /// GET `/session/:id/subagents`: the children this session has spawned.
 fn subagents_of(id: String) -> Response {
   json_ok(json.to_string(subagents.to_json(subagents.list(id))))
+}
+
+/// The agent's uncommitted changes in the session's workspace (SPEC §4.1) — a
+/// review surface so a human can see what was written before keeping it.
+fn session_diff(id: String) -> Response {
+  case session_manager.load(id) {
+    Error(_) -> wisp.not_found()
+    Ok(tree) -> {
+      let #(is_git, files, patch) = workdiff.working_diff(tree.project)
+      json_ok(
+        json.to_string(
+          json.object([
+            #("git", json.bool(is_git)),
+            #("patch", json.string(patch)),
+            #(
+              "files",
+              json.array(files, fn(f) {
+                json.object([
+                  #("status", json.string(f.status)),
+                  #("path", json.string(f.path)),
+                ])
+              }),
+            ),
+          ]),
+        ),
+      )
+    }
+  }
 }
 
 /// The subagent operations for a parent session: spawn (async), tell (message a
