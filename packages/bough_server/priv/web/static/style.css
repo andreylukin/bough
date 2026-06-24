@@ -219,6 +219,20 @@ details.detail[open] summary::before { content: '▾'; }
 #prompt:focus { outline: none; border-color: var(--leaf-deep); }
 #composer.steering #prompt { border-color: var(--sap); background: rgba(226,160,63,0.04); }
 #send { align-self: stretch; }
+/* Stop control, left of the chat box; visible only while a run is in flight */
+.composer-stop { align-self: stretch; background: transparent; border: 1px solid var(--sap-deep); color: var(--sap); border-radius: var(--rad); padding: 0 13px; font-family: var(--mono); font-size: 12px; letter-spacing: 0.3px; display: inline-flex; align-items: center; white-space: nowrap; transition: background 0.12s, border-color 0.12s; }
+.composer-stop:hover { background: rgba(226,160,63,0.12); border-color: var(--sap); }
+.composer-stop[hidden] { display: none; }
+
+/* Collapsed large pastes, shown as chips above the composer */
+#attachments { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 18px 0; }
+#attachments[hidden] { display: none; }
+.paste-chip { display: inline-flex; align-items: center; gap: 8px; background: var(--bark-2); border: 1px solid var(--moss); border-radius: 8px; padding: 5px 7px 5px 10px; font-size: 12px; }
+.paste-chip .pc-ic { color: var(--leaf); font-family: var(--mono); font-size: 12px; }
+.paste-chip .pc-label { color: var(--lichen); cursor: pointer; font-family: var(--mono); }
+.paste-chip .pc-label:hover { color: var(--birch); }
+.paste-chip .pc-x { background: transparent; border: none; color: var(--lichen-dim); padding: 0 2px; font-size: 12px; line-height: 1; cursor: pointer; }
+.paste-chip .pc-x:hover { color: var(--rust); }
 
 /* ---- right pane ---- */
 .tabs { display: flex; border-bottom: 1px solid var(--moss); flex: 0 0 auto; }

@@ -14,6 +14,7 @@ const state = {
   run: null,             // { status, steps[], text, context_tokens, network[] }
   subagents: [],
   diff: null,            // { sessionId, git, files[], patch } — lazy-loaded Changes tab
+  pastes: [],            // large clipboard pastes collapsed into chips, expanded on send
   groupsCatalog: [],
   packs: [],
   rightTab: "tree",
@@ -407,12 +408,9 @@ function renderConversation(box, tree, run) {
     const gate = gateBar(run, tree ? tree.id : state.sessionId);
     if (gate) stream.appendChild(gate);
     else {
+      // The spinner stays in the stream; the Stop control lives on the composer.
       const card = el("div", "card plan live",
         `<span class="spin"><span class="pulse"></span> ${esc(growthLabel(run.status))}</span>`);
-      const stop = el("button", "stop-btn", "Stop");
-      stop.dataset.act = "stop-run";
-      stop.title = "Stop this run at its next step";
-      card.appendChild(stop);
       stream.appendChild(card);
     }
   } else if (run && run.status === "error") {
@@ -1494,6 +1492,9 @@ function render() {
   const composer = $("#composer");
   const steering = !state.viewChildId && state.run && ACTIVE.has(state.run.status);
   composer.classList.toggle("steering", !!steering);
+  // Show the Stop control while the viewed run (parent or subagent) is in flight.
+  const activeRun = state.viewChildId ? state.childRun : state.run;
+  $("#stop").hidden = !(activeRun && ACTIVE.has(activeRun.status));
   $("#prompt").placeholder = steering
     ? "Steer this run — type and Enter to inject…"
     : (state.viewChildId ? "Message this subagent…" : "Ask bough to do something…  (Enter to send, Shift+Enter for newline)");
@@ -1512,7 +1513,7 @@ async function openSession(id) {
   closeDrawer();
   state.sessionId = id;
   state.viewChildId = null; state.childTree = null; state.childRun = null;
-  state.graftRoot = null; state.lastSig = null; state.diff = null;
+  state.graftRoot = null; state.lastSig = null; state.diff = null; clearPastes();
   try {
     state.tree = await api.tree(id);
     state.run = await api.run(id).catch(() => null);
@@ -1554,25 +1555,77 @@ function newSession() {
   setTimeout(() => input.focus(), 60);
 }
 
+// ---- large-paste collapsing ---------------------------------------------
+// A big paste (a log, a file) shouldn't bury the composer in a wall of text.
+// We intercept it, keep it as a chip, and splice it back in on send.
+const PASTE_MIN_LINES = 12, PASTE_MIN_CHARS = 1500;
+
+function onPaste(e) {
+  const cb = e.clipboardData || window.clipboardData;
+  const t = cb ? cb.getData("text") : "";
+  if (!t) return;
+  const lines = t.split("\n").length;
+  if (lines < PASTE_MIN_LINES && t.length < PASTE_MIN_CHARS) return; // small → paste inline
+  e.preventDefault();
+  state.pastes.push({ id: "p" + Date.now() + Math.random().toString(36).slice(2, 6), text: t, lines, chars: t.length });
+  renderAttachments();
+  toast(`Collapsed a ${lines.toLocaleString()}-line paste — sent with your message`);
+}
+
+function renderAttachments() {
+  const box = $("#attachments");
+  box.innerHTML = "";
+  if (!state.pastes.length) { box.hidden = true; return; }
+  box.hidden = false;
+  for (const p of state.pastes) {
+    const chip = el("div", "paste-chip");
+    chip.innerHTML =
+      `<span class="pc-ic">¶</span>` +
+      `<span class="pc-label" data-act="paste-preview" data-id="${p.id}">` +
+      `pasted · ${p.lines.toLocaleString()} lines · ${fmtBytes(p.chars)}</span>` +
+      `<button class="pc-x" data-act="paste-remove" data-id="${p.id}" title="Remove">✕</button>`;
+    box.appendChild(chip);
+  }
+}
+
+function removePaste(id) { state.pastes = state.pastes.filter((p) => p.id !== id); renderAttachments(); }
+function clearPastes() { state.pastes = []; renderAttachments(); }
+function previewPaste(id) {
+  const p = state.pastes.find((x) => x.id === id);
+  if (!p) return;
+  const body = el("div");
+  body.appendChild(preField(`${p.lines.toLocaleString()} lines · ${fmtBytes(p.chars)}`, p.text));
+  openDrawer("paste", "Pasted content", body);
+}
+const fmtBytes = (n) => n < 1024 ? n + " B" : n < 1048576 ? (n / 1024).toFixed(1) + " KB" : (n / 1048576).toFixed(1) + " MB";
+
+// The message actually sent: the typed text with any collapsed pastes appended.
+function composeMessage() {
+  const typed = $("#prompt").value.trim();
+  if (!state.pastes.length) return typed;
+  return [typed, ...state.pastes.map((p) => p.text)].filter(Boolean).join("\n\n");
+}
+
 async function submitComposer() {
   const ta = $("#prompt");
-  const text = ta.value.trim();
+  const text = composeMessage();
   if (!text || !state.sessionId) return;
+  const clear = () => { ta.value = ""; clearPastes(); };
 
   // Steering a subagent.
   if (state.viewChildId) {
-    try { await api.control(state.viewChildId, "steer", text); ta.value = ""; toast("sent to subagent"); }
+    try { await api.control(state.viewChildId, "steer", text); clear(); toast("sent to subagent"); }
     catch (e) { toast(String(e.message || e), true); }
     return;
   }
   // Steering the live run.
   if (state.run && ACTIVE.has(state.run.status)) {
-    try { await api.control(state.sessionId, "steer", text); ta.value = ""; toast("steering…"); }
+    try { await api.control(state.sessionId, "steer", text); clear(); toast("steering…"); }
     catch (e) { toast(String(e.message || e), true); }
     return;
   }
   // New run.
-  ta.value = "";
+  clear();
   try {
     await api.startRun(state.sessionId, text, state.reviewArmed);
     state.tree = await api.tree(state.sessionId);
@@ -1744,9 +1797,11 @@ function wire() {
 
   // Composer.
   $("#composer").addEventListener("submit", (e) => { e.preventDefault(); submitComposer(); });
+  $("#stop").addEventListener("click", stopRun);
   $("#prompt").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submitComposer(); }
   });
+  $("#prompt").addEventListener("paste", onPaste);
 
   // Delegated clicks (sidebar, subagents, graft toolbar, gates). Tree nodes,
   // network rows, steps and groups bind their own handlers (they carry data).
@@ -1773,6 +1828,8 @@ function wire() {
       case "back-parent": backToParent(); break;
       case "graft-cancel": state.graftRoot = null; renderRight(); break;
       case "diff-refresh": state.diff = null; refreshDiff(); break;
+      case "paste-remove": removePaste(id); break;
+      case "paste-preview": previewPaste(id); break;
       case "allow": gateDecision("allow", ""); break;
       case "steer": gateDecision("steer", steerInput()); break;
       case "enable-groups": {
