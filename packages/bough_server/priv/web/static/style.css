@@ -260,8 +260,10 @@ details.detail[open] summary::before { content: '▾'; }
 /* ---- inspector drawer (click any element → full detail) ---- */
 #scrim { position: absolute; inset: 0; background: rgba(6,10,8,0.45); opacity: 0; pointer-events: none; transition: opacity 0.18s; z-index: 25; }
 #scrim.show { opacity: 1; pointer-events: auto; }
-#drawer { position: absolute; top: 0; right: 0; bottom: 0; width: 460px; max-width: 88%; background: var(--bark); border-left: 1px solid var(--moss); box-shadow: -18px 0 40px rgba(0,0,0,0.4); transform: translateX(100%); transition: transform 0.18s ease; display: flex; flex-direction: column; z-index: 30; }
-#drawer.open { transform: translateX(0); }
+#drawer { position: absolute; top: 0; right: 0; bottom: 0; width: 460px; max-width: 88%; background: var(--bark); border-left: 1px solid var(--moss); box-shadow: -18px 0 40px rgba(0,0,0,0.4); transform: translateX(100%); visibility: hidden; pointer-events: none; transition: transform 0.18s ease, visibility 0s linear 0.18s; display: flex; flex-direction: column; z-index: 30; }
+/* When closed the drawer is parked past #center's right edge, which overlaps the
+   right pane; hide it so it can't mask or swallow clicks on those tabs. */
+#drawer.open { transform: translateX(0); visibility: visible; pointer-events: auto; transition: transform 0.18s ease; }
 .field input.fin { width: 100%; background: var(--ink); border: 1px solid var(--moss); border-radius: 7px; color: var(--birch); padding: 9px 11px; font-family: var(--mono); font-size: 13px; }
 .field input.fin:focus { outline: none; border-color: var(--leaf-deep); }
 .drawer-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--moss); flex: 0 0 auto; }
