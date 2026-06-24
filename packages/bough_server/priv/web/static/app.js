@@ -18,6 +18,9 @@ const state = {
   rightTab: "tree",
   reviewArmed: false,
   graftRoot: null,       // node id selected as a graft section root
+  mapOpen: false,        // session map overlay (pannable/zoomable 2-D tree)
+  mapView: null,         // map camera { x, y, scale }; null = fit on next paint
+  mapShowSuperseded: false,
   viewChildId: null,     // when set, the transcript shows this subagent
   childTree: null,
   childRun: null,
@@ -441,6 +444,7 @@ function closeDrawer() {
   d.classList.remove("open"); d.setAttribute("aria-hidden", "true");
   $("#scrim").classList.remove("show");
   if (state.lastFocus && state.lastFocus.focus) state.lastFocus.focus();
+  if (state.mapOpen) renderMap(); // reflect graft-arming / actions taken in the inspector
 }
 function kvField(label, rows) {
   const f = el("div", "field");
@@ -662,6 +666,10 @@ function renderTree(body) {
   } else {
     tb.innerHTML = `<span class="hint">click ⑂ to fork a node, or graft a subtree</span>`;
   }
+  const mapBtn = el("button", "ghost map-open", "⤢ Map");
+  mapBtn.title = "Open the 2-D session map";
+  mapBtn.onclick = openMap;
+  tb.appendChild(mapBtn);
   body.appendChild(tb);
 
   const sup = new Set(state.tree.superseded || []);
@@ -697,6 +705,238 @@ function renderTree(body) {
     (children.get(node.id) || []).forEach((c) => walk(c, depth + 1));
   };
   roots.forEach((r) => walk(r, 0));
+}
+
+// ---- session map (pannable / zoomable 2-D tree) --------------------------
+// The right-pane Tree tab is a quick outline; the map is the spatial view —
+// a tidy-tree layout you pan (drag) and zoom (scroll), with branches splaying
+// out so forks and grafts read at a glance. Camera lives in state.mapView so a
+// poll-driven refresh never yanks the viewport.
+
+const MAP = { NODE_W: 188, NODE_H: 52, X: 216, Y: 108, PAD: 64 };
+const clampScale = (s) => Math.max(0.15, Math.min(2.6, s));
+
+function openMap() {
+  if (!state.tree) { toast("Open a session first.", true); return; }
+  state.mapOpen = true;
+  state.mapView = null; // fit on first paint
+  renderMap();
+  requestAnimationFrame(fitMap); // fit needs the canvas laid out in the DOM
+}
+
+function closeMap() {
+  state.mapOpen = false;
+  const m = $("#mapview");
+  if (m) m.remove();
+}
+
+// Collapse the raw entry tree to the *conversation* tree (user + assistant
+// nodes), linking each visible node to its nearest visible ancestor — the same
+// rule the outline uses, so the two views agree.
+function visibleGraph(tree, showSup) {
+  const sup = new Set(showSup ? [] : (tree.superseded || []));
+  const byId = new Map(tree.entries.map((e) => [e.id, e]));
+  const children = new Map();
+  for (const e of tree.entries) {
+    if (!children.has(e.parent_id)) children.set(e.parent_id, []);
+    children.get(e.parent_id).push(e);
+  }
+  const isVisible = (n) => n.role === "user" || n.role === "assistant";
+  const vnodes = new Map();      // id -> { id, entry, parent }
+  const vchildren = new Map();   // visible-parent-id (or null) -> [child id]
+  const roots = tree.entries.filter((e) => !e.parent_id || !byId.has(e.parent_id));
+  const walk = (node, vparent) => {
+    if (sup.has(node.id)) return;
+    let myV = vparent;
+    if (isVisible(node)) {
+      vnodes.set(node.id, { id: node.id, entry: node, parent: vparent });
+      if (!vchildren.has(vparent)) vchildren.set(vparent, []);
+      vchildren.get(vparent).push(node.id);
+      myV = node.id;
+    }
+    (children.get(node.id) || []).forEach((c) => walk(c, myV));
+  };
+  roots.forEach((r) => walk(r, null));
+  return { vnodes, vchildren };
+}
+
+// Naive tidy layout: leaves take successive columns, parents center over their
+// children, depth sets the row. Good enough for conversation trees (mostly
+// linear with the odd fork) without dragging in a layout lib.
+function layoutGraph(vchildren) {
+  const pos = new Map();
+  let col = 0;
+  const assign = (id, depth) => {
+    const kids = vchildren.get(id) || [];
+    const y = depth * MAP.Y;
+    if (kids.length === 0) {
+      const x = col * MAP.X; col++;
+      pos.set(id, { x, y });
+      return x;
+    }
+    const xs = kids.map((k) => assign(k, depth + 1));
+    const x = (xs[0] + xs[xs.length - 1]) / 2;
+    pos.set(id, { x, y });
+    return x;
+  };
+  (vchildren.get(null) || []).forEach((r) => assign(r, 0));
+  return pos;
+}
+
+function buildMapShell() {
+  if ($("#mapview")) return;
+  const m = el("div");
+  m.id = "mapview";
+  m.innerHTML =
+    `<div class="map-bar">
+       <div class="map-bar-l">
+         <span class="map-title"></span>
+         <span class="map-hint"></span>
+       </div>
+       <div class="map-bar-r">
+         <label class="map-sup"><input type="checkbox" id="map-sup"> superseded</label>
+         <button class="ghost" data-map="fit" title="Fit to view">Fit</button>
+         <span class="map-zoom"><button data-map="zout" aria-label="Zoom out">−</button><span class="map-pct">100%</span><button data-map="zin" aria-label="Zoom in">+</button></span>
+         <button class="ghost" data-map="close" title="Close map (Esc)">✕ Close</button>
+       </div>
+     </div>
+     <div class="map-canvas"><div class="map-world"><svg class="map-edges"></svg></div></div>`;
+  document.body.appendChild(m);
+
+  const canvas = m.querySelector(".map-canvas");
+  // Drag the empty canvas to pan; nodes keep their own click.
+  let drag = false, sx = 0, sy = 0, ox = 0, oy = 0;
+  canvas.addEventListener("pointerdown", (e) => {
+    if (e.target.closest(".map-node")) return;
+    drag = true; canvas.setPointerCapture(e.pointerId);
+    sx = e.clientX; sy = e.clientY;
+    ox = state.mapView ? state.mapView.x : 0;
+    oy = state.mapView ? state.mapView.y : 0;
+    canvas.classList.add("grabbing");
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!drag || !state.mapView) return;
+    state.mapView.x = ox + (e.clientX - sx);
+    state.mapView.y = oy + (e.clientY - sy);
+    applyMapTransform();
+  });
+  const end = () => { drag = false; canvas.classList.remove("grabbing"); };
+  canvas.addEventListener("pointerup", end);
+  canvas.addEventListener("pointercancel", end);
+  // Zoom toward the cursor.
+  canvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const v = state.mapView; if (!v) return;
+    const r = canvas.getBoundingClientRect();
+    const mx = e.clientX - r.left, my = e.clientY - r.top;
+    const ns = clampScale(v.scale * Math.exp(-e.deltaY * 0.0015));
+    v.x = mx - (mx - v.x) * (ns / v.scale);
+    v.y = my - (my - v.y) * (ns / v.scale);
+    v.scale = ns;
+    applyMapTransform();
+  }, { passive: false });
+
+  m.querySelector(".map-bar-r").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-map]"); if (!b) return;
+    if (b.dataset.map === "close") closeMap();
+    else if (b.dataset.map === "fit") fitMap();
+    else if (b.dataset.map === "zin") zoomBy(1.2);
+    else if (b.dataset.map === "zout") zoomBy(1 / 1.2);
+  });
+  m.querySelector("#map-sup").addEventListener("change", (e) => {
+    state.mapShowSuperseded = e.target.checked; renderMap();
+  });
+}
+
+function applyMapTransform() {
+  const w = $("#mapview .map-world");
+  const v = state.mapView; if (!w || !v) return;
+  w.style.transform = `translate(${v.x}px, ${v.y}px) scale(${v.scale})`;
+  const pct = $("#mapview .map-pct"); if (pct) pct.textContent = Math.round(v.scale * 100) + "%";
+}
+
+function zoomBy(f) {
+  const canvas = $("#mapview .map-canvas"); const v = state.mapView;
+  if (!canvas || !v) return;
+  const r = canvas.getBoundingClientRect();
+  const cx = r.width / 2, cy = r.height / 2;
+  const ns = clampScale(v.scale * f);
+  v.x = cx - (cx - v.x) * (ns / v.scale);
+  v.y = cy - (cy - v.y) * (ns / v.scale);
+  v.scale = ns;
+  applyMapTransform();
+}
+
+function fitMap() {
+  const canvas = $("#mapview .map-canvas");
+  const world = $("#mapview .map-world");
+  if (!canvas || !world) return;
+  const w = world._w || 1, h = world._h || 1; // world size stashed by renderMap
+  const r = canvas.getBoundingClientRect();
+  const s = clampScale(Math.min((r.width - MAP.PAD * 2) / w, (r.height - MAP.PAD * 2) / h, 1.1));
+  state.mapView = { scale: s, x: (r.width - w * s) / 2, y: Math.max(MAP.PAD, (r.height - h * s) / 2) };
+  applyMapTransform();
+}
+
+function renderMap() {
+  if (!state.mapOpen || !state.tree) return;
+  buildMapShell();
+  const tree = state.tree;
+
+  $("#mapview .map-title").textContent =
+    (tree.project || "").split("/").filter(Boolean).pop() + " · " + tree.entries.length + " nodes";
+  $("#mapview .map-hint").innerHTML = state.graftRoot
+    ? `grafting — click a parent for <b>${esc(clip(nodeLabel(state.graftRoot), 22))}</b>`
+    : `drag to pan · scroll to zoom · click a node to fork or graft`;
+  $("#mapview #map-sup").checked = !!state.mapShowSuperseded;
+
+  const { vnodes, vchildren } = visibleGraph(tree, state.mapShowSuperseded);
+  const pos = layoutGraph(vchildren);
+
+  let maxX = 0, maxY = 0;
+  for (const p of pos.values()) { maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); }
+  const worldW = maxX + MAP.NODE_W, worldH = maxY + MAP.NODE_H;
+
+  const world = $("#mapview .map-world");
+  world.style.width = worldW + "px"; world.style.height = worldH + "px";
+  world._w = worldW; world._h = worldH;
+
+  // Edges first (under the nodes).
+  const svg = world.querySelector(".map-edges");
+  svg.setAttribute("width", worldW); svg.setAttribute("height", worldH);
+  svg.setAttribute("viewBox", `0 0 ${worldW} ${worldH}`);
+  let paths = "";
+  for (const [id, obj] of vnodes) {
+    if (!obj.parent || !pos.has(obj.parent)) continue;
+    const a = pos.get(obj.parent), b = pos.get(id);
+    const x1 = a.x + MAP.NODE_W / 2, y1 = a.y + MAP.NODE_H;
+    const x2 = b.x + MAP.NODE_W / 2, y2 = b.y;
+    const my = (y1 + y2) / 2;
+    const cls = "edge" + (obj.entry.grafted_from ? " grafted" : "");
+    paths += `<path class="${cls}" d="M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}"/>`;
+  }
+  svg.innerHTML = paths;
+
+  // Nodes (rebuilt each render; svg stays).
+  world.querySelectorAll(".map-node").forEach((n) => n.remove());
+  for (const [id, obj] of vnodes) {
+    const p = pos.get(id), e = obj.entry;
+    const node = el("div", "map-node" +
+      (id === tree.active_leaf ? " leaf" : "") +
+      (id === state.graftRoot ? " graftroot" : "") +
+      (e.grafted_from ? " grafted" : ""));
+    node.style.left = p.x + "px"; node.style.top = p.y + "px"; node.style.width = MAP.NODE_W + "px";
+    node.innerHTML =
+      `<span class="role ${esc(e.role)}">${e.role === "user" ? "you" : "bgh"}</span>` +
+      (e.grafted_from ? `<span class="gmark" title="grafted from another branch">↪</span>` : "") +
+      `<span class="snippet">${esc(clip(e.content, 64))}</span>`;
+    node.onclick = () => {
+      if (state.graftRoot && state.graftRoot !== id) graftOnto(id);
+      else inspectNode(e);
+    };
+    world.appendChild(node);
+  }
+  applyMapTransform();
 }
 
 function nodeLabel(id) {
@@ -1003,6 +1243,7 @@ function render() {
   $("#prompt").placeholder = steering
     ? "Steer this run — type and Enter to inject…"
     : (state.viewChildId ? "Message this subagent…" : "Ask bough to do something…  (Enter to send, Shift+Enter for newline)");
+  if (state.mapOpen) renderMap(); // keep the map in sync with new turns/forks/grafts
 }
 function dropSubbarIfPresentWithoutChild() { dropSubbar(); }
 
@@ -1298,9 +1539,11 @@ function wire() {
     if (c) toggleGroup(c.dataset.name, c.checked);
   });
 
-  // Esc closes the inspector drawer.
+  // Esc closes the inspector drawer first, then the map overlay.
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") closeDrawer();
+    if (e.key !== "Escape") return;
+    if ($("#drawer.open")) closeDrawer();
+    else if (state.mapOpen) closeMap();
   });
 }
 
