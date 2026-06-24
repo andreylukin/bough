@@ -595,8 +595,13 @@ fn gate_groups(
 }
 
 /// True when a step's output carries a sandbox/OS filesystem-permission denial.
+/// Exit-agnostic on purpose: a code-mode step wraps the denied command in a
+/// monty program that itself exits 0 (the inner `bash()` failure lives only in
+/// the captured output), so keying on a non-zero exit would miss every denial on
+/// the default execution path. The denied-path→group match in `candidate_groups`
+/// is the filter that keeps a stray mention from opening a gate.
 fn is_fs_denial(result: Exec) -> Bool {
-  result.exit != 0 && contains_any(result.output, denial_markers)
+  contains_any(result.output, denial_markers)
 }
 
 /// The toggleable capability groups that would grant the denied access: the
@@ -856,12 +861,17 @@ fn apply(state: State, step: Step) -> #(State, Exec) {
 
 /// Run a Python program in the monty sandbox (SPEC §5.2) — the supervisor's
 /// primary action. The program's `bash` calls go through nono *inside* the
-/// sidecar, so unlike `exec_run` the engine's net gate does not wrap this: the
-/// live denial/approve loop and egress feed don't observe code-mode bash (a
-/// known limitation of running host functions sidecar-side rather than calling
-/// back into the engine).
+/// sidecar; the engine scopes them with the session profile (capability groups +
+/// net leash), so the policy is enforced. The live egress feed and the
+/// net-approval gate do NOT cover code-mode: nono flushes a session's audited
+/// egress events only on finalization (10+s later), so there's no timely,
+/// per-command signal to surface or gate on — they remain RUN-path features.
 fn exec_code(state: State, code: String) -> #(State, Exec) {
-  let #(exit, output) = monty_bridge.run_code(state.workspace, code)
+  // Scope the sidecar's `bash` with the session profile (capability groups +
+  // net leash). Without it, enabling a group never reaches code-mode (SPEC §7).
+  let block = !state.config.net_gate
+  let profile = option.from_result(write_net_profile(state, block))
+  let #(exit, output) = monty_bridge.run_code(state.workspace, code, profile)
   #(bump(state), Exec(exit, output))
 }
 

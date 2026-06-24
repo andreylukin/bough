@@ -186,6 +186,17 @@ details.detail[open] summary::before { content: '▾'; }
 .gate::before { display: none !important; }
 .gate h4 { margin: 0 0 9px; font-size: 13px; font-family: var(--display); font-weight: 600; color: var(--sap); display: flex; align-items: center; gap: 8px; }
 .gate pre { margin: 0 0 11px; background: var(--ink); padding: 9px 11px; border-radius: 6px; font-family: var(--mono); font-size: 12px; white-space: pre-wrap; max-height: 220px; overflow: auto; color: var(--lichen); }
+.gate-lead { color: var(--lichen); font-size: 12.5px; line-height: 1.55; margin: 0 0 11px; }
+.gate-lead code { font-family: var(--mono); font-size: 0.9em; background: var(--ink); border: 1px solid var(--moss); border-radius: 4px; padding: 1px 5px; color: var(--birch); }
+.gate-groups { display: flex; flex-direction: column; gap: 6px; margin: 0 0 12px; }
+.gate-group { display: flex; align-items: flex-start; gap: 10px; padding: 9px 11px; background: var(--ink); border: 1px solid var(--moss); border-radius: 7px; cursor: pointer; }
+.gate-group:hover { border-color: var(--sap-deep); }
+.gate-group input[type=checkbox] { margin-top: 2px; accent-color: var(--sap); flex: 0 0 auto; }
+.gate-group .gg-meta { flex: 1; min-width: 0; }
+.gate-group .gg-meta b { color: var(--birch); font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
+.gate-group .gg-desc { color: var(--lichen-dim); font-size: 11.5px; margin-top: 2px; line-height: 1.45; }
+.gate-group .gg-inspect { background: transparent; border: none; color: var(--sap); font-family: var(--mono); font-size: 11px; padding: 1px 4px; flex: 0 0 auto; align-self: center; }
+.gate-group .gg-inspect:hover { text-decoration: underline; }
 .gate .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .gate input[type=text] { flex: 1; min-width: 180px; background: var(--ink); border: 1px solid var(--moss); border-radius: 6px; color: var(--birch); padding: 7px 9px; font-family: var(--mono); font-size: 12px; }
 .gate .accept { background: var(--leaf); border: 1px solid var(--leaf); color: #06210f; border-radius: 6px; padding: 7px 13px; font-weight: 600; }
@@ -229,6 +240,14 @@ details.detail[open] summary::before { content: '▾'; }
 .node .acts button:hover { color: var(--birch); }
 
 /* network feed */
+.net-posture { display: flex; align-items: flex-start; gap: 9px; padding: 9px 11px; border-radius: 8px; margin-bottom: 10px; font-size: 12px; line-height: 1.5; border: 1px solid var(--moss); }
+.net-posture .dot { flex: 0 0 auto; font-size: 13px; line-height: 1.4; }
+.net-posture b { color: var(--birch); }
+.net-posture code { font-family: var(--mono); font-size: 0.88em; background: var(--ink); border: 1px solid var(--moss); border-radius: 4px; padding: 0 4px; color: var(--lichen); }
+.net-posture.leashed { background: rgba(116,196,128,0.06); border-color: var(--leaf-deep); }
+.net-posture.leashed .dot { color: var(--leaf); }
+.net-posture.blocked { background: rgba(159,176,162,0.05); }
+.net-posture.blocked .dot { color: var(--lichen-dim); }
 .net-row { display: flex; gap: 8px; align-items: baseline; font-family: var(--mono); font-size: 12px; padding: 5px 4px; border-bottom: 1px solid var(--moss-soft); cursor: pointer; border-radius: 5px; }
 .net-row:hover { background: var(--moss-soft); }
 .net-row .dot { flex: 0 0 auto; }

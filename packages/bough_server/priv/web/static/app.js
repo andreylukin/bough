@@ -266,19 +266,60 @@ function gateBar(run, sessionId) {
       `<button class="reject" data-act="reject">Deny</button>`;
     bar.appendChild(row);
   } else if (run.status === "awaiting_group" && tail.type === "group") {
-    bar.appendChild(el("h4", null, "🔑 Capability — a step needs filesystem access"));
-    bar.appendChild(el("pre", null, esc(tail.detail)));
-    const row = el("div", "row");
-    row.innerHTML =
-      `<button class="accept" data-act="allow">Enable all</button>` +
-      `<input type="text" data-role="steer" value="${esc(tail.groups || "")}" placeholder="group name(s)…" />` +
-      `<button class="ghost" data-act="steer">Enable selected</button>` +
-      `<button class="reject" data-act="reject">Reject</button>`;
-    bar.appendChild(row);
+    groupGate(bar, tail);
   } else {
     return null;
   }
   return bar;
+}
+
+// The capability gate: bough asks to grant filesystem access a step was denied.
+// Present each candidate group with its description and a click-through to its
+// exact paths, so granting access is an informed choice rather than approving an
+// opaque name.
+function groupGate(bar, tail) {
+  bar.appendChild(el("h4", null, "🔑 Capability — a step needs access it doesn't have"));
+  bar.appendChild(el("div", "gate-lead",
+    `A sandboxed step was denied access to <code>${esc(tail.detail)}</code>. ` +
+    `Enabling a group below grants that access for this session, then bough retries the step.`));
+
+  ensureGroupsCatalog();
+  const byName = new Map((state.groupsCatalog || []).map((g) => [g.name, g]));
+  const names = (tail.groups || "").split(",").map((s) => s.trim()).filter(Boolean);
+
+  const list = el("div", "gate-groups");
+  for (const n of names) {
+    const g = byName.get(n);
+    const item = el("label", "gate-group");
+    const cb = el("input"); cb.type = "checkbox"; cb.checked = true; cb.dataset.group = n;
+    item.appendChild(cb);
+    const meta = el("div", "gg-meta");
+    meta.innerHTML = `<b>${esc(n)}</b>` +
+      (g && g.description ? `<div class="gg-desc">${esc(g.description)}</div>` : "");
+    item.appendChild(meta);
+    const inspect = el("button", "gg-inspect", "paths ›");
+    inspect.type = "button";
+    inspect.onclick = (e) => { e.preventDefault(); e.stopPropagation(); inspectGroup(n); };
+    item.appendChild(inspect);
+    list.appendChild(item);
+  }
+  bar.appendChild(list);
+
+  const row = el("div", "row");
+  row.innerHTML =
+    `<button class="accept" data-act="enable-groups">Enable &amp; retry</button>` +
+    `<button class="reject" data-act="reject">Reject</button>`;
+  bar.appendChild(row);
+}
+
+// Load the capability catalog once (for the gate's group descriptions), then
+// re-render so the descriptions appear.
+function ensureGroupsCatalog() {
+  if ((state.groupsCatalog && state.groupsCatalog.length) || state._catalogLoading) return;
+  state._catalogLoading = true;
+  api.groupsCatalog()
+    .then((g) => { state.groupsCatalog = g; state._catalogLoading = false; render(); })
+    .catch(() => { state._catalogLoading = false; });
 }
 
 function renderTranscript() {
@@ -663,9 +704,18 @@ function stepLabel(content) {
 
 function renderNetwork(body) {
   const net = state.run && state.run.network ? state.run.network : [];
+  const leashed = !!(state.config && state.config.net);
+
+  const posture = el("div", "net-posture " + (leashed ? "leashed" : "blocked"));
+  posture.innerHTML = leashed
+    ? `<span class="dot">◉</span><div><b>Leashed</b> — default-deny allowlist; a denied request pauses for your approval.</div>`
+    : `<span class="dot">⦸</span><div><b>Blocked</b> — sandboxed commands have no network. Start with <code>BOUGH_NET=1</code> to leash instead.</div>`;
+  body.appendChild(posture);
+
   if (net.length === 0) {
-    body.appendChild(el("div", "hint",
-      "No egress observed. The live feed populates under the leash (start the server with BOUGH_NET=1)."));
+    body.appendChild(el("div", "hint", leashed
+      ? "No requests itemized yet. Egress the engine observes appears here; code-mode bash is policy-enforced but isn't streamed (nono flushes its audit on session close)."
+      : "Nothing to itemize while the network is off."));
     return;
   }
   for (const ev of net) {
@@ -1006,6 +1056,15 @@ function wire() {
       case "graft-cancel": state.graftRoot = null; renderRight(); break;
       case "allow": gateDecision("allow", ""); break;
       case "steer": gateDecision("steer", steerInput()); break;
+      case "enable-groups": {
+        const bar = t.closest(".gate");
+        const picked = bar
+          ? [...bar.querySelectorAll("input[type=checkbox][data-group]")].filter((c) => c.checked).map((c) => c.dataset.group)
+          : [];
+        if (picked.length === 0) { toast("Tick a group to enable, or Reject.", true); break; }
+        gateDecision("steer", picked.join(","));
+        break;
+      }
       case "reject": gateDecision("steer", ""); break; // empty steer = deny (net/group)
       case "reject-plan": gateDecision("steer", steerInput() || "Reject this plan and revise the approach."); break;
     }

@@ -131,6 +131,9 @@ fn config() -> Response {
       json.object([
         #("provider", json.string(name)),
         #("model", json.string(model)),
+        // The network posture so the UI can describe it honestly: leashed
+        // (default-deny allowlist) vs fully blocked.
+        #("net", json.bool(net_gate())),
       ]),
     ),
   )
