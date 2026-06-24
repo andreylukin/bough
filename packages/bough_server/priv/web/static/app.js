@@ -736,39 +736,38 @@ function renderTree(body) {
   tb.appendChild(mapBtn);
   body.appendChild(tb);
 
-  const sup = new Set(state.tree.superseded || []);
-  const byId = new Map(state.tree.entries.map((e) => [e.id, e]));
-  const children = new Map();
-  for (const e of state.tree.entries) {
-    if (!children.has(e.parent_id)) children.set(e.parent_id, []);
-    children.get(e.parent_id).push(e);
-  }
-  const roots = state.tree.entries.filter((e) => !e.parent_id || !byId.has(e.parent_id));
+  // Same collapsed conversation graph and trunk-first ordering the map uses, so
+  // a linear chat reads as a straight vertical list (no diagonal staircase) and
+  // only real forks indent — the off-branch turns step out under their parent.
+  const { vnodes, vchildren } = visibleGraph(state.tree, state.mapShowSuperseded);
+  const ordered = branchOrder(vchildren, state.tree);
 
-  // The tree is a branching map of the *conversation*: only user prompts and
-  // assistant replies are fork points. Intermediate step nodes (tool_result)
-  // and digests (system) are passed through so the tree stays legible.
-  const walk = (node, depth) => {
-    if (sup.has(node.id)) return; // hide superseded by default
-    if (node.role === "system" || node.role === "tool_result") {
-      (children.get(node.id) || []).forEach((c) => walk(c, depth));
-      return;
-    }
-    const row = el("div", "node" + (node.id === state.tree.active_leaf ? " leaf" : "") +
-      (node.id === state.graftRoot ? " graftroot" : ""));
-    row.style.marginLeft = depth * 14 + "px";
+  const walk = (id, indent, branched) => {
+    const obj = vnodes.get(id);
+    if (!obj) return;
+    const e = obj.entry;
+    const row = el("div", "node" +
+      (id === state.tree.active_leaf ? " leaf" : "") +
+      (id === state.graftRoot ? " graftroot" : "") +
+      (e.grafted_from ? " grafted" : "") +
+      (branched ? " branch" : ""));
+    row.style.marginLeft = indent * 16 + "px";
     row.innerHTML =
-      `<span class="role ${esc(node.role)}">${node.role === "user" ? "you" : "bgh"}</span>` +
-      `<span class="snippet">${esc(clip(node.content, 46))}</span>`;
-    // Click a node to open it: when arming a graft, click the target parent.
+      (branched ? `<span class="tconn">└</span>` : "") +
+      `<span class="role ${esc(e.role)}">${e.role === "user" ? "you" : "bgh"}</span>` +
+      (e.grafted_from ? `<span class="gmark" title="grafted">↪</span>` : "") +
+      `<span class="snippet">${esc(clip(e.content, 44))}</span>`;
+    // Click a node to open it; when arming a graft, click the target parent.
     row.onclick = () => {
-      if (state.graftRoot && state.graftRoot !== node.id) graftOnto(node.id);
-      else inspectNode(node);
+      if (state.graftRoot && state.graftRoot !== id) graftOnto(id);
+      else inspectNode(e);
     };
     body.appendChild(row);
-    (children.get(node.id) || []).forEach((c) => walk(c, depth + 1));
+    // The primary child continues the trunk at the same indent; later siblings
+    // are forks that step out one level.
+    ordered(id).forEach((k, i) => walk(k, i === 0 ? indent : indent + 1, i !== 0));
   };
-  roots.forEach((r) => walk(r, 0));
+  (vchildren.get(null) || []).forEach((r, i) => walk(r, 0, i !== 0));
 }
 
 // ---- session map (pannable / zoomable 2-D tree) --------------------------
@@ -883,7 +882,10 @@ function visibleGraph(tree, showSup) {
 // children off into fresh lanes to the right. The bough is the child that
 // carries the active branch, or — failing that — the deepest line, so it stays
 // stable and reads like a tree with one main limb.
-function layoutGraph(vchildren, tree) {
+// Order a node's visible children with the "main bough" first — the child on
+// the active branch, else the deepest line. Used by both the map layout and the
+// outline so a linear chain stays straight and only real forks branch off.
+function branchOrder(vchildren, tree) {
   const activeIds = new Set(activePath(tree).map((e) => e.id));
   const depthMemo = new Map();
   const subDepth = (id) => {
@@ -894,15 +896,17 @@ function layoutGraph(vchildren, tree) {
     return d;
   };
   const score = (id) => (activeIds.has(id) ? 1e6 : 0) + subDepth(id);
-  // Children with the main bough first, the rest left in chronological order.
-  const ordered = (id) => {
+  return (id) => {
     const kids = (vchildren.get(id) || []).slice();
     if (kids.length <= 1) return kids;
     let best = 0;
     for (let i = 1; i < kids.length; i++) if (score(kids[i]) > score(kids[best])) best = i;
     return [kids[best], ...kids.filter((_, i) => i !== best)];
   };
+}
 
+function layoutGraph(vchildren, tree) {
+  const ordered = branchOrder(vchildren, tree);
   const pos = new Map();
   let maxLane = -1;
   // The primary child inherits the parent's lane (straight down); each later
