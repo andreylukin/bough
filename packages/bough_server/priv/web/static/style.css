@@ -256,6 +256,26 @@ details.detail[open] summary::before { content: '▾'; }
 .net-row .host { color: var(--birch); }
 .net-row .pathm { color: var(--lichen-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+/* packs */
+.caps-sub { display: block; font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--lichen-dim); margin: 4px 0 8px; }
+.packs-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.packs-head .caps-sub { margin: 0; }
+.packs-actions { display: flex; gap: 6px; }
+.mini { font-size: 11px; padding: 3px 9px; border-radius: 6px; }
+.mini.ghost { background: transparent; color: var(--lichen); border: 1px solid var(--moss); }
+.mini.ghost:hover { background: var(--bark-2); color: var(--birch); }
+.mini.primary { background: var(--leaf-deep); color: #eafaee; border: 1px solid transparent; }
+.mini.primary:hover { background: var(--leaf); color: #06210f; }
+.mini.x { background: transparent; border: none; color: var(--lichen-dim); padding: 3px 6px; }
+.mini.x:hover { color: var(--rust); }
+.pack { display: flex; align-items: center; gap: 8px; padding: 8px 4px; border-bottom: 1px solid var(--moss-soft); }
+.pack .pack-meta { flex: 1; min-width: 0; cursor: pointer; }
+.pack .pack-meta b { color: var(--birch); font-size: 12.5px; }
+.pack .pdesc { color: var(--lichen); font-size: 11px; margin-top: 1px; }
+.pack .pcounts { color: var(--lichen-dim); font-size: 10px; font-family: var(--mono); margin-top: 2px; }
+.field textarea.fin { width: 100%; resize: vertical; background: var(--ink); border: 1px solid var(--moss); border-radius: 7px; color: var(--birch); padding: 9px 11px; font-family: var(--mono); font-size: 12.5px; line-height: 1.45; }
+.field textarea.fin:focus { outline: none; border-color: var(--leaf-deep); }
+
 /* capability groups */
 .group { display: flex; align-items: center; gap: 9px; padding: 8px 4px; border-bottom: 1px solid var(--moss-soft); font-size: 12px; }
 .group .gname { flex: 1; cursor: pointer; }

@@ -14,6 +14,7 @@ const state = {
   run: null,             // { status, steps[], text, context_tokens, network[] }
   subagents: [],
   groupsCatalog: [],
+  packs: [],
   rightTab: "tree",
   reviewArmed: false,
   graftRoot: null,       // node id selected as a graft section root
@@ -44,6 +45,11 @@ async function jpost(path, body) {
   const t = await r.text();
   return t ? JSON.parse(t) : {};
 }
+async function jdel(path) {
+  const r = await fetch(path, { method: "DELETE" });
+  if (!r.ok) throw new Error(`DELETE ${path} → ${r.status}`);
+  return {};
+}
 
 const api = {
   config: () => jget("/config"),
@@ -60,6 +66,11 @@ const api = {
   groupsCatalog: () => jget("/groups"),
   groupDetail: (name) => jget(`/groups/${name}`),
   setGroups: (id, groups) => jpost(`/session/${id}/groups`, { groups }),
+  packs: () => jget("/packs"),
+  savePack: (pack) => jpost("/packs", pack),
+  deletePack: (name) => jdel(`/packs/${encodeURIComponent(name)}`),
+  applyPacks: (id, names) => jpost(`/session/${id}/packs`, { names }),
+  draftPack: (description) => jpost("/packs/draft", { description }),
 };
 
 // ---- helpers -------------------------------------------------------------
@@ -729,7 +740,211 @@ function renderNetwork(body) {
   }
 }
 
+// Packs: saved bundles of capability groups + network allow-rules, applied to a
+// session up front. Sits atop the Capabilities panel.
+function renderPacks(body) {
+  const head = el("div", "packs-head");
+  head.appendChild(el("span", "caps-sub", "Packs"));
+  const acts = el("div", "packs-actions");
+  acts.innerHTML =
+    `<button class="mini ghost" data-act="pack-draft">✦ Draft with AI</button>` +
+    `<button class="mini ghost" data-act="pack-save-current">Save current</button>`;
+  head.appendChild(acts);
+  body.appendChild(head);
+
+  if (state.packs.length === 0) {
+    body.appendChild(el("div", "hint",
+      "No packs yet. Draft one with AI, or save this session's enabled groups + allowlist as a reusable pack."));
+    return;
+  }
+  for (const p of state.packs) {
+    const row = el("div", "pack");
+    const counts = `${p.allow.length} host${p.allow.length === 1 ? "" : "s"} · ${p.groups.length} group${p.groups.length === 1 ? "" : "s"}`;
+    const meta = el("div", "pack-meta");
+    meta.innerHTML = `<b>${esc(p.name)}</b>` +
+      (p.description ? `<div class="pdesc">${esc(clip(p.description, 70))}</div>` : "") +
+      `<div class="pcounts">${counts}</div>`;
+    meta.onclick = () => inspectPack(p);
+    row.appendChild(meta);
+    const apply = el("button", "mini primary", "Apply");
+    apply.dataset.act = "pack-apply"; apply.dataset.name = p.name;
+    row.appendChild(apply);
+    const del = el("button", "mini x", "✕");
+    del.dataset.act = "pack-delete"; del.dataset.name = p.name;
+    del.title = "Delete pack";
+    row.appendChild(del);
+    body.appendChild(row);
+  }
+}
+
+async function refreshPacks() {
+  try { state.packs = await api.packs(); } catch { state.packs = []; }
+  if (state.rightTab === "caps") renderRight();
+}
+
+async function applyPack(name) {
+  if (!state.sessionId) { toast("Open a session first.", true); return; }
+  try {
+    state.tree = await api.applyPacks(state.sessionId, [name]);
+    toast(`Applied “${name}”`);
+    render();
+  } catch (e) { toast(String(e.message || e), true); }
+}
+
+async function deletePackByName(name) {
+  try { await api.deletePack(name); await refreshPacks(); toast("Pack deleted"); }
+  catch (e) { toast(String(e.message || e), true); }
+}
+
+function inspectPack(p) {
+  const body = el("div");
+  if (p.description) {
+    const f = el("div", "field");
+    f.appendChild(el("div", "flabel", "about"));
+    f.appendChild(el("div", "fval", esc(p.description)));
+    body.appendChild(f);
+  }
+  body.appendChild(listField(`network allowlist (${p.allow.length})`, p.allow));
+  body.appendChild(listField(`capability groups (${p.groups.length})`, p.groups));
+  const acts = el("div", "drawer-actions");
+  const apply = el("button", "primary", "Apply to session");
+  apply.onclick = () => { applyPack(p.name); closeDrawer(); };
+  acts.appendChild(apply);
+  openDrawer("pack", p.name, body, acts);
+}
+
+function listField(label, items) {
+  const f = el("div", "field");
+  f.appendChild(el("div", "flabel", label));
+  if (items.length === 0) f.appendChild(el("div", "fval", "—"));
+  else for (const it of items) {
+    const row = el("div", "path-row");
+    row.innerHTML = `<span class="pp">${esc(it)}</span>`;
+    f.appendChild(row);
+  }
+  return f;
+}
+
+// "Save current" — capture the session's enabled groups + allowlist as a pack.
+function savePackCurrent() {
+  if (!state.tree) { toast("Open a session first.", true); return; }
+  const groups = state.tree.groups || [];
+  const allow = state.tree.allow_domains || [];
+  if (groups.length === 0 && allow.length === 0) {
+    toast("Nothing to save yet — no groups or allow-rules enabled in this session.", true);
+    return;
+  }
+  const body = el("div");
+  const nameF = el("div", "field");
+  nameF.appendChild(el("div", "flabel", "pack name"));
+  const nameInput = el("input", "fin"); nameInput.type = "text"; nameInput.placeholder = "e.g. node-github";
+  nameF.appendChild(nameInput);
+  body.appendChild(nameF);
+  const descF = el("div", "field");
+  descF.appendChild(el("div", "flabel", "description"));
+  const descInput = el("input", "fin"); descInput.type = "text"; descInput.placeholder = "what this pack is for";
+  descF.appendChild(descInput);
+  body.appendChild(descF);
+  body.appendChild(listField(`network allowlist (${allow.length})`, allow));
+  body.appendChild(listField(`capability groups (${groups.length})`, groups));
+
+  const save = async () => {
+    const name = nameInput.value.trim();
+    if (!name) { toast("Enter a pack name.", true); nameInput.focus(); return; }
+    try {
+      await api.savePack({ name, description: descInput.value.trim(), groups, allow });
+      closeDrawer(); await refreshPacks(); toast(`Saved “${name}”`);
+    } catch (e) { toast(String(e.message || e), true); }
+  };
+  nameInput.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); save(); } };
+  const acts = el("div", "drawer-actions");
+  const btn = el("button", "primary", "Save pack"); btn.onclick = save;
+  acts.appendChild(btn);
+  openDrawer("pack", "Save current as pack", body, acts);
+  setTimeout(() => nameInput.focus(), 60);
+}
+
+// "Draft with AI" — describe the work, get a draft pack to review, edit, save.
+function draftPackFlow() {
+  const body = el("div");
+  body.appendChild(el("div", "hint",
+    "Describe the work and bough drafts a least-privilege allowlist (hosts + capability groups) for you to review before saving."));
+  const f = el("div", "field");
+  f.appendChild(el("div", "flabel", "what are you doing?"));
+  const ta = el("textarea", "fin"); ta.rows = 3;
+  ta.placeholder = "e.g. A Python project that installs from PyPI and calls the OpenAI API.";
+  f.appendChild(ta);
+  body.appendChild(f);
+  const acts = el("div", "drawer-actions");
+  const btn = el("button", "primary", "✦ Draft");
+  btn.onclick = async () => {
+    const desc = ta.value.trim();
+    if (!desc) { toast("Describe the work first.", true); ta.focus(); return; }
+    btn.disabled = true; btn.textContent = "Drafting…";
+    try {
+      const draft = await api.draftPack(desc);
+      if (state.groupsCatalog.length === 0)
+        state.groupsCatalog = await api.groupsCatalog().catch(() => []);
+      packReview(desc, draft);
+    } catch (e) { toast(String(e.message || e), true); btn.disabled = false; btn.textContent = "✦ Draft"; }
+  };
+  acts.appendChild(btn);
+  openDrawer("pack", "Draft a pack", body, acts);
+  setTimeout(() => ta.focus(), 60);
+}
+
+// Editable review of a drafted pack before saving.
+function packReview(description, draft) {
+  const body = el("div");
+  const nameF = el("div", "field");
+  nameF.appendChild(el("div", "flabel", "pack name"));
+  const nameInput = el("input", "fin"); nameInput.type = "text"; nameInput.placeholder = "name this pack";
+  nameF.appendChild(nameInput);
+  body.appendChild(nameF);
+
+  const allowF = el("div", "field");
+  allowF.appendChild(el("div", "flabel", "network allowlist — one per line"));
+  const allowTa = el("textarea", "fin"); allowTa.rows = Math.max(3, (draft.allow || []).length + 1);
+  allowTa.value = (draft.allow || []).join("\n");
+  allowF.appendChild(allowTa);
+  body.appendChild(allowF);
+
+  const groupsF = el("div", "field");
+  groupsF.appendChild(el("div", "flabel", "capability groups"));
+  const chosen = new Set(draft.groups || []);
+  const toggleable = state.groupsCatalog.filter((g) => !g.locked);
+  if (toggleable.length === 0) groupsF.appendChild(el("div", "fval", "—"));
+  for (const g of toggleable) {
+    const item = el("label", "gate-group");
+    const cb = el("input"); cb.type = "checkbox"; cb.checked = chosen.has(g.name); cb.dataset.pgroup = g.name;
+    item.appendChild(cb);
+    const meta = el("div", "gg-meta");
+    meta.innerHTML = `<b>${esc(g.name)}</b><div class="gg-desc">${esc(clip(g.description, 70))}</div>`;
+    item.appendChild(meta);
+    groupsF.appendChild(item);
+  }
+  body.appendChild(groupsF);
+
+  const save = async () => {
+    const name = nameInput.value.trim();
+    if (!name) { toast("Name the pack.", true); nameInput.focus(); return; }
+    const allow = allowTa.value.split("\n").map((s) => s.trim()).filter(Boolean);
+    const groups = [...body.querySelectorAll("input[type=checkbox][data-pgroup]")].filter((c) => c.checked).map((c) => c.dataset.pgroup);
+    try {
+      await api.savePack({ name, description, groups, allow });
+      closeDrawer(); await refreshPacks(); toast(`Saved “${name}”`);
+    } catch (e) { toast(String(e.message || e), true); }
+  };
+  const acts = el("div", "drawer-actions");
+  const btn = el("button", "primary", "Save pack"); btn.onclick = save;
+  acts.appendChild(btn);
+  openDrawer("pack", "Review draft", body, acts);
+  setTimeout(() => nameInput.focus(), 60);
+}
+
 function renderCaps(body) {
+  renderPacks(body);
+  body.appendChild(el("div", "caps-sub", "Capability groups"));
   if (state.groupsCatalog.length === 0) {
     body.appendChild(el("div", "hint", "No capability groups for this host."));
     return;
@@ -1018,8 +1233,11 @@ function wire() {
     const b = e.target.closest("button[data-tab]");
     if (!b) return;
     state.rightTab = b.dataset.tab;
-    if (state.rightTab === "caps" && state.groupsCatalog.length === 0)
-      api.groupsCatalog().then((g) => { state.groupsCatalog = g; renderRight(); }).catch(() => {});
+    if (state.rightTab === "caps") {
+      if (state.groupsCatalog.length === 0)
+        api.groupsCatalog().then((g) => { state.groupsCatalog = g; renderRight(); }).catch(() => {});
+      refreshPacks();
+    }
     renderRight();
   });
 
@@ -1050,6 +1268,10 @@ function wire() {
       case "copy-id": copyText(id, "Session id copied"); break;
       case "stop-run": stopRun(); break;
       case "toggle-project": toggleProject(t.dataset.proj); break;
+      case "pack-apply": applyPack(t.dataset.name); break;
+      case "pack-delete": deletePackByName(t.dataset.name); break;
+      case "pack-draft": draftPackFlow(); break;
+      case "pack-save-current": savePackCurrent(); break;
       case "open-session": openSession(id); break;
       case "open-child": openChild(id); break;
       case "back-parent": backToParent(); break;
