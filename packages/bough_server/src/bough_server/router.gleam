@@ -18,7 +18,9 @@ import bough_server/agent
 import bough_server/clock
 import bough_server/control
 import bough_server/engine
+import bough_server/json_value.{type JsonValue, JArray}
 import bough_server/net_profile
+import bough_server/packs
 import bough_server/nono_bridge
 import bough_server/provider
 import bough_server/run_store
@@ -29,7 +31,7 @@ import bough_server/worker_runtime
 import envoy
 import gleam/dynamic/decode
 import gleam/erlang/process
-import gleam/http.{Get, Post}
+import gleam/http.{Delete, Get, Post}
 import gleam/int
 import gleam/json
 import gleam/list
@@ -74,6 +76,10 @@ pub fn handle_request(req: Request) -> Response {
     ["config"], Get -> config()
     ["groups"], Get -> groups_catalog()
     ["groups", name], Get -> group_detail(name)
+    ["packs"], Get -> list_packs()
+    ["packs"], Post -> save_pack(req)
+    ["packs", "draft"], Post -> draft_pack(req)
+    ["packs", name], Delete -> delete_pack(name)
     ["doc"], _ -> doc()
     ["sessions"], Get -> list_sessions()
     ["session"], Post -> create_session(req)
@@ -86,6 +92,7 @@ pub fn handle_request(req: Request) -> Response {
     ["session", id, "subagents"], Get -> subagents_of(id)
     ["session", id, "groups"], Get -> get_session_groups(id)
     ["session", id, "groups"], Post -> set_session_groups(req, id)
+    ["session", id, "packs"], Post -> apply_packs(req, id)
     ["session", id, "fork"], Post -> fork_session(req, id)
     ["session", id, "graft"], Post -> graft_session(req, id)
     _, _ -> wisp.not_found()
@@ -131,6 +138,9 @@ fn config() -> Response {
       json.object([
         #("provider", json.string(name)),
         #("model", json.string(model)),
+        // The network posture so the UI can describe it honestly: leashed
+        // (default-deny allowlist) vs fully blocked.
+        #("net", json.bool(net_gate())),
       ]),
     ),
   )
@@ -226,6 +236,192 @@ fn set_session_groups(req: Request, id: String) -> Response {
 fn groups_req_decoder() -> decode.Decoder(List(String)) {
   use groups <- decode.field("groups", decode.list(decode.string))
   decode.success(groups)
+}
+
+// --- Allowlist packs -----------------------------------------------------
+
+fn list_packs() -> Response {
+  json_ok(json.to_string(json.array(packs.list(), packs.to_json)))
+}
+
+/// Upsert a pack (by name).
+fn save_pack(req: Request) -> Response {
+  use body <- wisp.require_json(req)
+  case decode.run(body, packs.decoder()) {
+    Error(_) ->
+      wisp.bad_request(
+        "expected {\"name\":string, \"description\":string, \"groups\":[string], \"allow\":[string]}",
+      )
+    Ok(pack) ->
+      case string.trim(pack.name) {
+        "" -> wisp.bad_request("pack name is required")
+        _ -> {
+          packs.save(pack)
+          json_ok(json.to_string(packs.to_json(pack)))
+        }
+      }
+  }
+}
+
+fn delete_pack(name: String) -> Response {
+  packs.delete(name)
+  json_ok("{\"status\":\"ok\"}")
+}
+
+/// Apply named packs to a session: union their groups + allow-rules into the
+/// session (the profile recomposes from those). Unknown/locked groups dropped.
+fn apply_packs(req: Request, id: String) -> Response {
+  use body <- wisp.require_json(req)
+  case decode.run(body, names_req_decoder()) {
+    Error(_) -> wisp.bad_request("expected {\"names\": [string]}")
+    Ok(names) ->
+      case session_manager.load(id) {
+        Error(_) -> wisp.not_found()
+        Ok(tree) -> {
+          let chosen = list.filter_map(names, packs.get)
+          let toggleable =
+            nono_bridge.list_groups()
+            |> list.filter(fn(g) { !g.locked })
+            |> list.map(fn(g) { g.name })
+          let groups =
+            list.fold(chosen, tree.groups, fn(acc, p) {
+              list.append(acc, p.groups)
+            })
+            |> list.unique
+            |> list.filter(fn(g) { list.contains(toggleable, g) })
+          let allow =
+            list.fold(chosen, tree.allow_domains, fn(acc, p) {
+              list.append(acc, p.allow)
+            })
+            |> list.unique
+          let suggested =
+            list.filter(tree.suggested, fn(s) { !list.contains(groups, s) })
+          let tree =
+            session.SessionTree(
+              ..tree,
+              groups: groups,
+              allow_domains: allow,
+              suggested: suggested,
+            )
+          case session_manager.save(tree) {
+            Ok(_) -> json_ok(json.to_string(session.tree_to_json(tree)))
+            Error(_) -> wisp.internal_server_error()
+          }
+        }
+      }
+  }
+}
+
+fn names_req_decoder() -> decode.Decoder(List(String)) {
+  use names <- decode.field("names", decode.list(decode.string))
+  decode.success(names)
+}
+
+/// Draft a pack from a natural-language description: a one-shot supervisor-model
+/// call returns the minimal network allow-rules + capability groups the work
+/// needs. Returns a *draft* (not saved) for the human to review and edit.
+fn draft_pack(req: Request) -> Response {
+  use body <- wisp.require_json(req)
+  case decode.run(body, draft_req_decoder()) {
+    Error(_) -> wisp.bad_request("expected {\"description\": string}")
+    Ok(description) ->
+      case agent_setup() {
+        Error(m) -> json_error(m)
+        Ok(#(prov, key, model)) -> {
+          let catalog =
+            nono_bridge.list_groups() |> list.filter(fn(g) { !g.locked })
+          let listing =
+            catalog
+            |> list.map(fn(g) { "- " <> g.name <> ": " <> g.description })
+            |> string.join("\n")
+          let user =
+            "Work to be sandboxed:\n"
+            <> description
+            <> "\n\nAvailable capability groups (choose only from these exact names; pick none if filesystem access beyond the workspace isn't needed):\n"
+            <> listing
+          case
+            provider.complete(
+              prov,
+              key,
+              model,
+              pack_draft_system,
+              [provider.user_text(user)],
+              "propose_pack",
+              "Propose the minimal sandbox allowlist for the described work.",
+              pack_schema(),
+            )
+          {
+            Error(e) -> json_error(e)
+            Ok(resp) ->
+              case resp.tool_uses {
+                [tu, ..] -> {
+                  let names = list.map(catalog, fn(g) { g.name })
+                  let groups =
+                    string_list(tu.input, "groups")
+                    |> list.filter(fn(g) { list.contains(names, g) })
+                  let allow = string_list(tu.input, "allow")
+                  json_ok(
+                    json.to_string(
+                      json.object([
+                        #("groups", json.array(groups, json.string)),
+                        #("allow", json.array(allow, json.string)),
+                      ]),
+                    ),
+                  )
+                }
+                [] -> json_error("the model did not propose a pack")
+              }
+          }
+        }
+      }
+  }
+}
+
+fn draft_req_decoder() -> decode.Decoder(String) {
+  use description <- decode.field("description", decode.string)
+  decode.success(description)
+}
+
+/// Pull a list of strings from a JsonValue object field (the model's tool args).
+fn string_list(input: JsonValue, key: String) -> List(String) {
+  case json_value.field(input, key) {
+    Ok(JArray(items)) -> list.filter_map(items, json_value.as_string)
+    _ -> []
+  }
+}
+
+const pack_draft_system = "You design a minimal, least-privilege sandbox allowlist for a coding agent. Given a description of the work, return: `allow` — the network hosts (e.g. \"api.github.com\") or METHOD-path globs (e.g. \"https://api.foo.com/v1/**\") the work legitimately needs, and `groups` — capability group names drawn ONLY from the provided catalog. Be conservative: include only what the described work plainly requires, prefer specific hosts over broad ones, and return empty lists rather than guessing. Do not invent group names."
+
+fn pack_schema() -> json.Json {
+  let str_array = fn(desc) {
+    json.object([
+      #("type", json.string("array")),
+      #("items", json.object([#("type", json.string("string"))])),
+      #("description", json.string(desc)),
+    ])
+  }
+  json.object([
+    #("type", json.string("object")),
+    #(
+      "properties",
+      json.object([
+        #(
+          "allow",
+          str_array(
+            "network hosts or METHOD path-globs to allowlist for the work",
+          ),
+        ),
+        #(
+          "groups",
+          str_array("capability group names from the provided catalog"),
+        ),
+      ]),
+    ),
+    #(
+      "required",
+      json.preprocessed_array([json.string("allow"), json.string("groups")]),
+    ),
+  ])
 }
 
 // --- Sessions ------------------------------------------------------------

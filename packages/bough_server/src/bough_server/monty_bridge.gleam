@@ -13,17 +13,27 @@
 import envoy
 import gleam/dynamic/decode
 import gleam/json
+import gleam/list
+import gleam/option.{type Option, None, Some}
 import gleam/string
 import shellout
 
 /// Run one Python program in the monty sandbox over `workspace`. Returns an
 /// exit-code-style pair (`0` on success, `1` on a Python/sidecar error) plus the
 /// captured stdout (or the error text), matching the engine's `Exec` shape.
-pub fn run_code(workspace: String, code: String) -> #(Int, String) {
+pub fn run_code(
+  workspace: String,
+  code: String,
+  profile: Option(String),
+) -> #(Int, String) {
+  let profile_args = case profile {
+    Some(path) -> ["--nono-profile", path]
+    None -> []
+  }
   case
     shellout.command(
       binary_path(),
-      ["--workspace", workspace, "--code-str", code],
+      list.append(["--workspace", workspace, "--code-str", code], profile_args),
       workspace,
       [],
     )

@@ -35,7 +35,7 @@ use monty::{
 };
 
 fn main() {
-    let (workspace, code) = match parse_args() {
+    let (workspace, code, profile) = match parse_args() {
         Ok(parsed) => parsed,
         Err(e) => {
             emit(false, "", &e);
@@ -43,23 +43,27 @@ fn main() {
         }
     };
 
-    match run(&code, &workspace) {
+    match run(&code, &workspace, profile.as_deref()) {
         Ok(output) => emit(true, &output, ""),
         Err((output, error)) => emit(false, &output, &error),
     }
 }
 
 /// Minimal flag parsing — `--workspace <dir>` plus the program inline via
-/// `--code-str <program>` or from a file via `--code <file>`. We avoid a CLI
-/// crate to keep the binary tiny (monty's selling point is startup speed).
-fn parse_args() -> Result<(String, String), String> {
+/// `--code-str <program>` or from a file via `--code <file>`, and an optional
+/// `--nono-profile <path>` that scopes `bash`'s sandbox (capability groups +
+/// network leash the human granted for this session). We avoid a CLI crate to
+/// keep the binary tiny (monty's selling point is startup speed).
+fn parse_args() -> Result<(String, String, Option<String>), String> {
     let mut workspace = String::new();
     let mut code: Option<String> = None;
+    let mut profile: Option<String> = None;
     let mut args = env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--workspace" => workspace = args.next().unwrap_or_default(),
             "--code-str" => code = Some(args.next().unwrap_or_default()),
+            "--nono-profile" => profile = args.next(),
             "--code" => {
                 let file = args.next().unwrap_or_default();
                 code = Some(fs::read_to_string(&file).map_err(|e| format!("cannot read {file}: {e}"))?);
@@ -68,7 +72,7 @@ fn parse_args() -> Result<(String, String), String> {
         }
     }
     match code {
-        Some(c) => Ok((workspace, c)),
+        Some(c) => Ok((workspace, c, profile)),
         None => Err("no program given (--code-str or --code)".to_owned()),
     }
 }
@@ -77,7 +81,7 @@ fn parse_args() -> Result<(String, String), String> {
 /// every call to an undefined-but-called name (`bash`, `read`, ...) suspends as
 /// a `FunctionCall`, which we service and resume. Returns the captured stdout,
 /// or `(partial stdout, error message)`.
-fn run(code: &str, workspace: &str) -> Result<String, (String, String)> {
+fn run(code: &str, workspace: &str, profile: Option<&str>) -> Result<String, (String, String)> {
     let runner = MontyRun::new(code.to_owned(), "agent.py", vec![])
         .map_err(|e| (String::new(), format!("python compile error:\n{}", format_exc(&e))))?;
 
@@ -94,7 +98,7 @@ fn run(code: &str, workspace: &str) -> Result<String, (String, String)> {
         progress = match progress {
             RunProgress::Complete(_) => return Ok(output),
             RunProgress::FunctionCall(call) => {
-                let result = dispatch(&call.function_name, &call.args, workspace);
+                let result = dispatch(&call.function_name, &call.args, workspace, profile);
                 let print = PrintWriter::CollectString(&mut output);
                 match call.resume(result, print) {
                     Ok(next) => next,
@@ -127,7 +131,7 @@ fn run(code: &str, workspace: &str) -> Result<String, (String, String)> {
 
 /// Service one host-function call. Unknown names become a Python `NameError`
 /// (via `NotFound`); everything else returns a string the program can use.
-fn dispatch(name: &str, args: &[MontyObject], workspace: &str) -> ExtFunctionResult {
+fn dispatch(name: &str, args: &[MontyObject], workspace: &str, profile: Option<&str>) -> ExtFunctionResult {
     let arg = |i: usize| -> String {
         match args.get(i) {
             Some(MontyObject::String(s)) => s.clone(),
@@ -138,7 +142,7 @@ fn dispatch(name: &str, args: &[MontyObject], workspace: &str) -> ExtFunctionRes
     let ret = |s: String| ExtFunctionResult::Return(MontyObject::String(s));
 
     match name {
-        "bash" => ret(bash(&arg(0), workspace)),
+        "bash" => ret(bash(&arg(0), workspace, profile)),
         "read" => ret(read(&arg(0), workspace)),
         "write" => ret(write(&arg(0), &arg(1), workspace)),
         "edit" => ret(edit(&arg(0), &arg(1), &arg(2), workspace)),
@@ -152,7 +156,7 @@ fn dispatch(name: &str, args: &[MontyObject], workspace: &str) -> ExtFunctionRes
 /// read/write, network default-deny) and return its combined output. This is
 /// the one host function that runs native processes, so it is the seam where
 /// monty's language sandbox hands off to nono's kernel sandbox.
-fn bash(cmd: &str, workspace: &str) -> String {
+fn bash(cmd: &str, workspace: &str, profile: Option<&str>) -> String {
     let mut args: Vec<String> = vec![
         "run".into(),
         "-s".into(),
@@ -161,6 +165,13 @@ fn bash(cmd: &str, workspace: &str) -> String {
         "--allow-cwd".into(),
         "--no-rollback".into(),
     ];
+    // A session profile scopes the sandbox with the capability groups + network
+    // leash the human granted (SPEC §7). Without it `bash` only ever gets the
+    // workspace, so enabling a group would silently do nothing in code-mode.
+    if let Some(path) = profile {
+        args.push("--profile".into());
+        args.push(path.into());
+    }
     // Read-only PATH access to the language toolchains so a sandboxed command
     // can find cargo/go/node/etc. (mirrors nono_bridge.toolchain_reads — SPEC §6).
     for dir in toolchain_reads() {

@@ -14,9 +14,14 @@ const state = {
   run: null,             // { status, steps[], text, context_tokens, network[] }
   subagents: [],
   groupsCatalog: [],
+  packs: [],
   rightTab: "tree",
   reviewArmed: false,
   graftRoot: null,       // node id selected as a graft section root
+  mapOpen: false,        // session map overlay (pannable/zoomable 2-D tree)
+  mapView: null,         // map camera { x, y, scale }; null = fit on next paint
+  mapShowSuperseded: false,
+  mapExpanded: new Set(), // map: turn ids whose tool-call steps are expanded
   viewChildId: null,     // when set, the transcript shows this subagent
   childTree: null,
   childRun: null,
@@ -44,6 +49,11 @@ async function jpost(path, body) {
   const t = await r.text();
   return t ? JSON.parse(t) : {};
 }
+async function jdel(path) {
+  const r = await fetch(path, { method: "DELETE" });
+  if (!r.ok) throw new Error(`DELETE ${path} → ${r.status}`);
+  return {};
+}
 
 const api = {
   config: () => jget("/config"),
@@ -60,6 +70,11 @@ const api = {
   groupsCatalog: () => jget("/groups"),
   groupDetail: (name) => jget(`/groups/${name}`),
   setGroups: (id, groups) => jpost(`/session/${id}/groups`, { groups }),
+  packs: () => jget("/packs"),
+  savePack: (pack) => jpost("/packs", pack),
+  deletePack: (name) => jdel(`/packs/${encodeURIComponent(name)}`),
+  applyPacks: (id, names) => jpost(`/session/${id}/packs`, { names }),
+  draftPack: (description) => jpost("/packs/draft", { description }),
 };
 
 // ---- helpers -------------------------------------------------------------
@@ -266,19 +281,60 @@ function gateBar(run, sessionId) {
       `<button class="reject" data-act="reject">Deny</button>`;
     bar.appendChild(row);
   } else if (run.status === "awaiting_group" && tail.type === "group") {
-    bar.appendChild(el("h4", null, "🔑 Capability — a step needs filesystem access"));
-    bar.appendChild(el("pre", null, esc(tail.detail)));
-    const row = el("div", "row");
-    row.innerHTML =
-      `<button class="accept" data-act="allow">Enable all</button>` +
-      `<input type="text" data-role="steer" value="${esc(tail.groups || "")}" placeholder="group name(s)…" />` +
-      `<button class="ghost" data-act="steer">Enable selected</button>` +
-      `<button class="reject" data-act="reject">Reject</button>`;
-    bar.appendChild(row);
+    groupGate(bar, tail);
   } else {
     return null;
   }
   return bar;
+}
+
+// The capability gate: bough asks to grant filesystem access a step was denied.
+// Present each candidate group with its description and a click-through to its
+// exact paths, so granting access is an informed choice rather than approving an
+// opaque name.
+function groupGate(bar, tail) {
+  bar.appendChild(el("h4", null, "🔑 Capability — a step needs access it doesn't have"));
+  bar.appendChild(el("div", "gate-lead",
+    `A sandboxed step was denied access to <code>${esc(tail.detail)}</code>. ` +
+    `Enabling a group below grants that access for this session, then bough retries the step.`));
+
+  ensureGroupsCatalog();
+  const byName = new Map((state.groupsCatalog || []).map((g) => [g.name, g]));
+  const names = (tail.groups || "").split(",").map((s) => s.trim()).filter(Boolean);
+
+  const list = el("div", "gate-groups");
+  for (const n of names) {
+    const g = byName.get(n);
+    const item = el("label", "gate-group");
+    const cb = el("input"); cb.type = "checkbox"; cb.checked = true; cb.dataset.group = n;
+    item.appendChild(cb);
+    const meta = el("div", "gg-meta");
+    meta.innerHTML = `<b>${esc(n)}</b>` +
+      (g && g.description ? `<div class="gg-desc">${esc(g.description)}</div>` : "");
+    item.appendChild(meta);
+    const inspect = el("button", "gg-inspect", "paths ›");
+    inspect.type = "button";
+    inspect.onclick = (e) => { e.preventDefault(); e.stopPropagation(); inspectGroup(n); };
+    item.appendChild(inspect);
+    list.appendChild(item);
+  }
+  bar.appendChild(list);
+
+  const row = el("div", "row");
+  row.innerHTML =
+    `<button class="accept" data-act="enable-groups">Enable &amp; retry</button>` +
+    `<button class="reject" data-act="reject">Reject</button>`;
+  bar.appendChild(row);
+}
+
+// Load the capability catalog once (for the gate's group descriptions), then
+// re-render so the descriptions appear.
+function ensureGroupsCatalog() {
+  if ((state.groupsCatalog && state.groupsCatalog.length) || state._catalogLoading) return;
+  state._catalogLoading = true;
+  api.groupsCatalog()
+    .then((g) => { state.groupsCatalog = g; state._catalogLoading = false; render(); })
+    .catch(() => { state._catalogLoading = false; });
 }
 
 function renderTranscript() {
@@ -320,10 +376,13 @@ function renderConversation(box, tree, run) {
   const flush = () => { if (steps.length) { renderStepList(stream, steps); steps = []; } };
   for (const e of path) {
     if (e.role === "tool_result") {
-      try { steps.push(JSON.parse(e.content)); } catch {}
+      // Carry the entry id so a step card can anchor a map "jump to" (see
+      // jumpToEntry); it rides along harmlessly through the step pipeline.
+      try { const s = JSON.parse(e.content); s._eid = e.id; steps.push(s); } catch {}
     } else if (e.role === "user") {
       flush();
-      stream.appendChild(el("div", "msg user", esc(e.content)));
+      const m = el("div", "msg user", esc(e.content)); m.dataset.eid = e.id;
+      stream.appendChild(m);
     } else if (e.role === "assistant") {
       // Guard against an older bug where the final reply was also stored as a
       // trailing plan step: drop a plan/text step identical to the answer so it
@@ -331,7 +390,8 @@ function renderConversation(box, tree, run) {
       const ans = (e.content || "").trim();
       steps = steps.filter((s) => !((s.type === "plan" || s.type === "text") && (s.text || "").trim() === ans));
       flush();
-      stream.appendChild(el("div", "msg assistant prose", md(e.content)));
+      const m = el("div", "msg assistant prose", md(e.content)); m.dataset.eid = e.id;
+      stream.appendChild(m);
     }
     // system digests are hidden and do NOT flush: a digest always sits right
     // before the assistant leaf, and flushing here would render the trailing
@@ -389,6 +449,7 @@ function closeDrawer() {
   d.classList.remove("open"); d.setAttribute("aria-hidden", "true");
   $("#scrim").classList.remove("show");
   if (state.lastFocus && state.lastFocus.focus) state.lastFocus.focus();
+  if (state.mapOpen) renderMap(); // reflect graft-arming / actions taken in the inspector
 }
 function kvField(label, rows) {
   const f = el("div", "field");
@@ -420,7 +481,17 @@ function inspectStep(call, exec) {
     body.appendChild(preField(verb.toLowerCase() === "code" ? "program" : "content", call.detail));
   if (exec && exec.digest && exec.digest.trim())
     body.appendChild(preField("output", cleanDigest(exec.digest)));
-  openDrawer("step", verb.toLowerCase() === "code" ? "code-mode step" : verb + " step", body);
+  // The entry id rides on the parsed step (set in renderConversation); when
+  // present, you can branch the conversation off this exact tool call.
+  const eid = (call && call._eid) || (exec && exec._eid);
+  let acts = null;
+  if (eid) {
+    acts = el("div", "drawer-actions");
+    const fork = el("button", "primary", "⑂ Branch off this step");
+    fork.onclick = () => { forkNode(eid); closeDrawer(); closeMap(); };
+    acts.appendChild(fork);
+  }
+  openDrawer("step", verb.toLowerCase() === "code" ? "code-mode step" : verb + " step", body, acts);
 }
 
 function inspectNode(node) {
@@ -433,8 +504,13 @@ function inspectNode(node) {
   const content = node.role === "tool_result" ? stepLabel(node.content) : node.content;
   body.appendChild(preField("content", content));
   const acts = el("div", "drawer-actions");
+  if (onActivePath(node.id)) {
+    const jump = el("button", "ghost", "↡ Jump to in transcript");
+    jump.onclick = () => { closeDrawer(); jumpToEntry(node.id); };
+    acts.appendChild(jump);
+  }
   const fork = el("button", "primary", "Fork from here");
-  fork.onclick = () => { forkNode(node.id); closeDrawer(); };
+  fork.onclick = () => { forkNode(node.id); closeDrawer(); closeMap(); };
   acts.appendChild(fork);
   const graft = el("button", "ghost", "Graft this subtree");
   graft.onclick = () => { state.graftRoot = node.id; state.rightTab = "tree"; renderRight(); closeDrawer(); toast("pick a parent node to graft onto"); };
@@ -462,9 +538,12 @@ function renderStepList(box, steps) {
   for (let i = 0; i < steps.length; i++) {
     const s = steps[i], next = steps[i + 1];
     if (s.type === "call" && next && next.type === "exec") {
-      box.appendChild(mergedCard(s, next)); i++; continue;
+      const card = mergedCard(s, next);
+      if (s._eid) card.dataset.eid = s._eid; // anchor for map jump-to
+      box.appendChild(card); i++; continue;
     }
-    const c = stepCard(s); if (c) box.appendChild(c);
+    const c = stepCard(s);
+    if (c) { if (s._eid) c.dataset.eid = s._eid; box.appendChild(c); }
   }
 }
 
@@ -610,6 +689,10 @@ function renderTree(body) {
   } else {
     tb.innerHTML = `<span class="hint">click ⑂ to fork a node, or graft a subtree</span>`;
   }
+  const mapBtn = el("button", "ghost map-open", "⤢ Map");
+  mapBtn.title = "Open the 2-D session map";
+  mapBtn.onclick = openMap;
+  tb.appendChild(mapBtn);
   body.appendChild(tb);
 
   const sup = new Set(state.tree.superseded || []);
@@ -647,6 +730,350 @@ function renderTree(body) {
   roots.forEach((r) => walk(r, 0));
 }
 
+// ---- session map (pannable / zoomable 2-D tree) --------------------------
+// The right-pane Tree tab is a quick outline; the map is the spatial view —
+// a tidy-tree layout you pan (drag) and zoom (scroll), with branches splaying
+// out so forks and grafts read at a glance. Camera lives in state.mapView so a
+// poll-driven refresh never yanks the viewport.
+
+const MAP = { NODE_W: 188, NODE_H: 52, X: 216, Y: 108, PAD: 64 };
+const clampScale = (s) => Math.max(0.15, Math.min(2.6, s));
+
+function openMap() {
+  if (!state.tree) { toast("Open a session first.", true); return; }
+  state.mapOpen = true;
+  state.mapView = null; // fit on first paint
+  state.mapExpanded = new Set();
+  renderMap();
+  requestAnimationFrame(fitMap); // fit needs the canvas laid out in the DOM
+}
+
+const parseStep = (content) => { try { return JSON.parse(content); } catch { return {}; } };
+function onActivePath(eid) { return activePath(state.tree).some((e) => e.id === eid); }
+
+// The tool-call rows shown when a turn is expanded — mirroring what the
+// transcript actually renders (call+exec merged, empty/duplicate plans dropped)
+// so every row's `eid` matches a real `[data-eid]` anchor to jump to.
+function turnStepRows(stepEntries, turnEntry) {
+  const ans = (turnEntry.content || "").trim();
+  const ps = stepEntries.map((en) => ({ en, s: parseStep(en.content) }));
+  const rows = [];
+  for (let i = 0; i < ps.length; i++) {
+    const { en, s } = ps[i], nx = ps[i + 1];
+    if (s.type === "plan" || s.type === "text") {
+      const txt = (s.text || "").trim();
+      if (!txt || txt === ans) continue; // empty, or the trailing plan == the reply
+      rows.push({ eid: en.id, type: "plan", tag: "plan", label: txt });
+    } else if (s.type === "call" && nx && nx.s.type === "exec") {
+      rows.push({ eid: en.id, type: "call", tag: s.verb || "call", label: s.arg || s.detail || "" });
+      i++; // the exec is folded into this row, as in the transcript
+    } else if (s.type === "call" || s.type === "exec") {
+      rows.push({ eid: en.id, type: s.type, tag: s.verb || s.type, label: s.arg || s.detail || "" });
+    } else if (s.type === "check") {
+      rows.push({ eid: en.id, type: "check", tag: s.ok ? "✓" : "✗", label: "check" });
+    } else if (s.type === "worker") {
+      rows.push({ eid: en.id, type: "worker", tag: "worker", label: s.command || "" });
+    }
+  }
+  return rows;
+}
+
+// Jump the main transcript to a turn or tool-call: close the map, scroll its
+// anchor into view, and flash it. Only the active branch is rendered, so a node
+// on another branch can't be scrolled to — nudge toward Fork instead.
+function jumpToEntry(eid) {
+  closeMap();
+  const node = document.querySelector(`#transcript [data-eid="${eid}"]`);
+  if (!node) { toast("That's on another branch — Fork to switch to it.", true); return; }
+  node.scrollIntoView({ behavior: "smooth", block: "center" });
+  node.classList.remove("flash"); void node.offsetWidth; node.classList.add("flash");
+  setTimeout(() => node.classList.remove("flash"), 1700);
+}
+
+function toggleMapExpand(id) {
+  if (!state.mapExpanded) state.mapExpanded = new Set();
+  if (state.mapExpanded.has(id)) state.mapExpanded.delete(id);
+  else state.mapExpanded.add(id);
+  renderMap();
+}
+
+function closeMap() {
+  state.mapOpen = false;
+  const m = $("#mapview");
+  if (m) m.remove();
+}
+
+// Collapse the raw entry tree to the *conversation* tree (user + assistant
+// nodes), linking each visible node to its nearest visible ancestor — the same
+// rule the outline uses, so the two views agree.
+function visibleGraph(tree, showSup) {
+  const sup = new Set(showSup ? [] : (tree.superseded || []));
+  const byId = new Map(tree.entries.map((e) => [e.id, e]));
+  const children = new Map();
+  for (const e of tree.entries) {
+    if (!children.has(e.parent_id)) children.set(e.parent_id, []);
+    children.get(e.parent_id).push(e);
+  }
+  const isVisible = (n) => n.role === "user" || n.role === "assistant";
+  const vnodes = new Map();      // id -> { id, entry, parent, steps: [stepEntry] }
+  const vchildren = new Map();   // visible-parent-id (or null) -> [child id]
+  const roots = tree.entries.filter((e) => !e.parent_id || !byId.has(e.parent_id));
+  // `pending` carries the tool_result steps seen since the last visible node, so
+  // each turn owns the steps that produced it (kept per-branch — a fork resets
+  // pending down each child path).
+  const walk = (node, vparent, pending) => {
+    if (sup.has(node.id)) return;
+    if (isVisible(node)) {
+      vnodes.set(node.id, { id: node.id, entry: node, parent: vparent, steps: pending });
+      if (!vchildren.has(vparent)) vchildren.set(vparent, []);
+      vchildren.get(vparent).push(node.id);
+      (children.get(node.id) || []).forEach((c) => walk(c, node.id, []));
+    } else {
+      const next = node.role === "tool_result" ? pending.concat(node) : pending;
+      (children.get(node.id) || []).forEach((c) => walk(c, vparent, next));
+    }
+  };
+  roots.forEach((r) => walk(r, null, []));
+  return { vnodes, vchildren };
+}
+
+// Trunk-and-branches layout (not a centered/symmetric tidy tree): the "main
+// bough" runs straight down a single lane, and every fork sends its secondary
+// children off into fresh lanes to the right. The bough is the child that
+// carries the active branch, or — failing that — the deepest line, so it stays
+// stable and reads like a tree with one main limb.
+function layoutGraph(vchildren, tree) {
+  const activeIds = new Set(activePath(tree).map((e) => e.id));
+  const depthMemo = new Map();
+  const subDepth = (id) => {
+    if (depthMemo.has(id)) return depthMemo.get(id);
+    const kids = vchildren.get(id) || [];
+    const d = kids.length ? 1 + Math.max(...kids.map(subDepth)) : 0;
+    depthMemo.set(id, d);
+    return d;
+  };
+  const score = (id) => (activeIds.has(id) ? 1e6 : 0) + subDepth(id);
+  // Children with the main bough first, the rest left in chronological order.
+  const ordered = (id) => {
+    const kids = (vchildren.get(id) || []).slice();
+    if (kids.length <= 1) return kids;
+    let best = 0;
+    for (let i = 1; i < kids.length; i++) if (score(kids[i]) > score(kids[best])) best = i;
+    return [kids[best], ...kids.filter((_, i) => i !== best)];
+  };
+
+  const pos = new Map();
+  let maxLane = -1;
+  // The primary child inherits the parent's lane (straight down); each later
+  // sibling claims a brand-new lane to the right. Because the primary subtree is
+  // laid out first, those new lanes never collide with it.
+  const place = (id, lane, depth) => {
+    if (lane > maxLane) maxLane = lane;
+    pos.set(id, { x: lane * MAP.X, y: depth * MAP.Y });
+    ordered(id).forEach((k, i) => place(k, i === 0 ? lane : ++maxLane, depth + 1));
+  };
+  (vchildren.get(null) || []).forEach((r, i) => place(r, i === 0 ? 0 : ++maxLane, 0));
+  return pos;
+}
+
+function buildMapShell() {
+  if ($("#mapview")) return;
+  const m = el("div");
+  m.id = "mapview";
+  m.innerHTML =
+    `<div class="map-bar">
+       <div class="map-bar-l">
+         <span class="map-title"></span>
+         <span class="map-hint"></span>
+       </div>
+       <div class="map-bar-r">
+         <label class="map-sup"><input type="checkbox" id="map-sup"> superseded</label>
+         <button class="ghost" data-map="fit" title="Fit to view">Fit</button>
+         <span class="map-zoom"><button data-map="zout" aria-label="Zoom out">−</button><span class="map-pct">100%</span><button data-map="zin" aria-label="Zoom in">+</button></span>
+         <button class="ghost" data-map="close" title="Close map (Esc)">✕ Close</button>
+       </div>
+     </div>
+     <div class="map-canvas"><div class="map-world"><svg class="map-edges"></svg></div></div>`;
+  document.body.appendChild(m);
+
+  const canvas = m.querySelector(".map-canvas");
+  // Drag the empty canvas to pan; nodes keep their own click.
+  let drag = false, sx = 0, sy = 0, ox = 0, oy = 0;
+  canvas.addEventListener("pointerdown", (e) => {
+    if (e.target.closest(".map-node, .mnode-steps")) return;
+    drag = true; canvas.setPointerCapture(e.pointerId);
+    sx = e.clientX; sy = e.clientY;
+    ox = state.mapView ? state.mapView.x : 0;
+    oy = state.mapView ? state.mapView.y : 0;
+    canvas.classList.add("grabbing");
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!drag || !state.mapView) return;
+    state.mapView.x = ox + (e.clientX - sx);
+    state.mapView.y = oy + (e.clientY - sy);
+    applyMapTransform();
+  });
+  const end = () => { drag = false; canvas.classList.remove("grabbing"); };
+  canvas.addEventListener("pointerup", end);
+  canvas.addEventListener("pointercancel", end);
+  // Zoom toward the cursor.
+  canvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const v = state.mapView; if (!v) return;
+    const r = canvas.getBoundingClientRect();
+    const mx = e.clientX - r.left, my = e.clientY - r.top;
+    const ns = clampScale(v.scale * Math.exp(-e.deltaY * 0.0015));
+    v.x = mx - (mx - v.x) * (ns / v.scale);
+    v.y = my - (my - v.y) * (ns / v.scale);
+    v.scale = ns;
+    applyMapTransform();
+  }, { passive: false });
+
+  m.querySelector(".map-bar-r").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-map]"); if (!b) return;
+    if (b.dataset.map === "close") closeMap();
+    else if (b.dataset.map === "fit") fitMap();
+    else if (b.dataset.map === "zin") zoomBy(1.2);
+    else if (b.dataset.map === "zout") zoomBy(1 / 1.2);
+  });
+  m.querySelector("#map-sup").addEventListener("change", (e) => {
+    state.mapShowSuperseded = e.target.checked; renderMap();
+  });
+}
+
+function applyMapTransform() {
+  const w = $("#mapview .map-world");
+  const v = state.mapView; if (!w || !v) return;
+  w.style.transform = `translate(${v.x}px, ${v.y}px) scale(${v.scale})`;
+  const pct = $("#mapview .map-pct"); if (pct) pct.textContent = Math.round(v.scale * 100) + "%";
+}
+
+function zoomBy(f) {
+  const canvas = $("#mapview .map-canvas"); const v = state.mapView;
+  if (!canvas || !v) return;
+  const r = canvas.getBoundingClientRect();
+  const cx = r.width / 2, cy = r.height / 2;
+  const ns = clampScale(v.scale * f);
+  v.x = cx - (cx - v.x) * (ns / v.scale);
+  v.y = cy - (cy - v.y) * (ns / v.scale);
+  v.scale = ns;
+  applyMapTransform();
+}
+
+function fitMap() {
+  const canvas = $("#mapview .map-canvas");
+  const world = $("#mapview .map-world");
+  if (!canvas || !world) return;
+  const w = world._w || 1, h = world._h || 1; // world size stashed by renderMap
+  const r = canvas.getBoundingClientRect();
+  const s = clampScale(Math.min((r.width - MAP.PAD * 2) / w, (r.height - MAP.PAD * 2) / h, 1.1));
+  state.mapView = { scale: s, x: (r.width - w * s) / 2, y: Math.max(MAP.PAD, (r.height - h * s) / 2) };
+  applyMapTransform();
+}
+
+function renderMap() {
+  if (!state.mapOpen || !state.tree) return;
+  buildMapShell();
+  const tree = state.tree;
+
+  $("#mapview .map-title").textContent =
+    (tree.project || "").split("/").filter(Boolean).pop() + " · " + tree.entries.length + " nodes";
+  $("#mapview .map-hint").innerHTML = state.graftRoot
+    ? `grafting — click a parent for <b>${esc(clip(nodeLabel(state.graftRoot), 22))}</b>`
+    : `drag to pan · scroll to zoom · click a turn to jump to it · ▸ expands its tool calls · ⑂ to fork/graft`;
+  $("#mapview #map-sup").checked = !!state.mapShowSuperseded;
+
+  const { vnodes, vchildren } = visibleGraph(tree, state.mapShowSuperseded);
+  const pos = layoutGraph(vchildren, tree);
+
+  let maxX = 0, maxY = 0;
+  for (const p of pos.values()) { maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); }
+  const worldW = maxX + MAP.NODE_W, worldH = maxY + MAP.NODE_H;
+
+  const world = $("#mapview .map-world");
+  world.style.width = worldW + "px"; world.style.height = worldH + "px";
+  world._w = worldW; world._h = worldH;
+
+  // Edges first (under the nodes).
+  const svg = world.querySelector(".map-edges");
+  svg.setAttribute("width", worldW); svg.setAttribute("height", worldH);
+  svg.setAttribute("viewBox", `0 0 ${worldW} ${worldH}`);
+  let paths = "";
+  for (const [id, obj] of vnodes) {
+    if (!obj.parent || !pos.has(obj.parent)) continue;
+    const a = pos.get(obj.parent), b = pos.get(id);
+    const x1 = a.x + MAP.NODE_W / 2, y1 = a.y + MAP.NODE_H;
+    const x2 = b.x + MAP.NODE_W / 2, y2 = b.y;
+    const my = (y1 + y2) / 2;
+    const cls = "edge" + (obj.entry.grafted_from ? " grafted" : "");
+    paths += `<path class="${cls}" d="M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}"/>`;
+  }
+  svg.innerHTML = paths;
+
+  // Active path drives jump-to; precompute the id set once.
+  const activeIds = new Set(activePath(tree).map((x) => x.id));
+  const expanded = state.mapExpanded || new Set();
+
+  // Nodes + step popovers (rebuilt each render; svg stays).
+  world.querySelectorAll(".map-node, .mnode-steps").forEach((n) => n.remove());
+  for (const [id, obj] of vnodes) {
+    const p = pos.get(id), e = obj.entry;
+    const node = el("div", "map-node" +
+      (id === tree.active_leaf ? " leaf" : "") +
+      (activeIds.has(id) ? " onpath" : "") +
+      (id === state.graftRoot ? " graftroot" : "") +
+      (e.grafted_from ? " grafted" : ""));
+    node.style.left = p.x + "px"; node.style.top = p.y + "px"; node.style.width = MAP.NODE_W + "px";
+    node.innerHTML =
+      `<span class="role ${esc(e.role)}">${e.role === "user" ? "you" : "bgh"}</span>` +
+      (e.grafted_from ? `<span class="gmark" title="grafted from another branch">↪</span>` : "") +
+      `<span class="snippet">${esc(clip(e.content, 64))}</span>`;
+
+    // Hover action: open the inspector (fork / graft) without firing a jump.
+    const insp = el("button", "mnode-act", "⑂");
+    insp.title = "Fork / graft from here";
+    insp.onclick = (ev) => { ev.stopPropagation(); inspectNode(e); };
+    node.appendChild(insp);
+
+    // Expand toggle: reveal the tool-call steps that produced this turn.
+    const rows = turnStepRows(obj.steps || [], e);
+    if (rows.length) {
+      const exp = el("button", "mnode-exp" + (expanded.has(id) ? " on" : ""),
+        `${expanded.has(id) ? "▾" : "▸"} ${rows.length} step${rows.length === 1 ? "" : "s"}`);
+      exp.title = "Show the tool calls in this turn";
+      exp.onclick = (ev) => { ev.stopPropagation(); toggleMapExpand(id); };
+      node.appendChild(exp);
+    }
+
+    node.onclick = () => {
+      if (state.graftRoot && state.graftRoot !== id) graftOnto(id);
+      else if (activeIds.has(id)) jumpToEntry(id);
+      else inspectNode(e);
+    };
+    world.appendChild(node);
+
+    // Expanded step strip: a popover under the node; each row jumps to that step.
+    if (expanded.has(id) && rows.length) {
+      const pop = el("div", "mnode-steps");
+      pop.style.left = p.x + "px"; pop.style.top = (p.y + MAP.NODE_H + 8) + "px"; pop.style.width = MAP.NODE_W + "px";
+      for (const r of rows) {
+        const row = el("div", "mstep t-" + esc(r.type));
+        row.innerHTML = `<span class="mstep-tag">${esc(String(r.tag))}</span>` +
+          `<span class="mstep-lbl">${esc(clip(r.label || r.type, 38))}</span>`;
+        row.title = "Jump to this step in the transcript";
+        row.onclick = (ev) => { ev.stopPropagation(); jumpToEntry(r.eid); };
+        const fk = el("button", "mstep-fork", "⑂");
+        fk.title = "Branch off this tool call";
+        fk.onclick = (ev) => { ev.stopPropagation(); forkNode(r.eid); closeMap(); };
+        row.appendChild(fk);
+        pop.appendChild(row);
+      }
+      world.appendChild(pop);
+    }
+  }
+  applyMapTransform();
+}
+
 function nodeLabel(id) {
   const e = state.tree.entries.find((x) => x.id === id);
   return e ? (e.role === "tool_result" ? stepLabel(e.content) : e.content) : id;
@@ -663,9 +1090,18 @@ function stepLabel(content) {
 
 function renderNetwork(body) {
   const net = state.run && state.run.network ? state.run.network : [];
+  const leashed = !!(state.config && state.config.net);
+
+  const posture = el("div", "net-posture " + (leashed ? "leashed" : "blocked"));
+  posture.innerHTML = leashed
+    ? `<span class="dot">◉</span><div><b>Leashed</b> — default-deny allowlist; a denied request pauses for your approval.</div>`
+    : `<span class="dot">⦸</span><div><b>Blocked</b> — sandboxed commands have no network. Start with <code>BOUGH_NET=1</code> to leash instead.</div>`;
+  body.appendChild(posture);
+
   if (net.length === 0) {
-    body.appendChild(el("div", "hint",
-      "No egress observed. The live feed populates under the leash (start the server with BOUGH_NET=1)."));
+    body.appendChild(el("div", "hint", leashed
+      ? "No requests itemized yet. Egress the engine observes appears here; code-mode bash is policy-enforced but isn't streamed (nono flushes its audit on session close)."
+      : "Nothing to itemize while the network is off."));
     return;
   }
   for (const ev of net) {
@@ -679,7 +1115,211 @@ function renderNetwork(body) {
   }
 }
 
+// Packs: saved bundles of capability groups + network allow-rules, applied to a
+// session up front. Sits atop the Capabilities panel.
+function renderPacks(body) {
+  const head = el("div", "packs-head");
+  head.appendChild(el("span", "caps-sub", "Packs"));
+  const acts = el("div", "packs-actions");
+  acts.innerHTML =
+    `<button class="mini ghost" data-act="pack-draft">✦ Draft with AI</button>` +
+    `<button class="mini ghost" data-act="pack-save-current">Save current</button>`;
+  head.appendChild(acts);
+  body.appendChild(head);
+
+  if (state.packs.length === 0) {
+    body.appendChild(el("div", "hint",
+      "No packs yet. Draft one with AI, or save this session's enabled groups + allowlist as a reusable pack."));
+    return;
+  }
+  for (const p of state.packs) {
+    const row = el("div", "pack");
+    const counts = `${p.allow.length} host${p.allow.length === 1 ? "" : "s"} · ${p.groups.length} group${p.groups.length === 1 ? "" : "s"}`;
+    const meta = el("div", "pack-meta");
+    meta.innerHTML = `<b>${esc(p.name)}</b>` +
+      (p.description ? `<div class="pdesc">${esc(clip(p.description, 70))}</div>` : "") +
+      `<div class="pcounts">${counts}</div>`;
+    meta.onclick = () => inspectPack(p);
+    row.appendChild(meta);
+    const apply = el("button", "mini primary", "Apply");
+    apply.dataset.act = "pack-apply"; apply.dataset.name = p.name;
+    row.appendChild(apply);
+    const del = el("button", "mini x", "✕");
+    del.dataset.act = "pack-delete"; del.dataset.name = p.name;
+    del.title = "Delete pack";
+    row.appendChild(del);
+    body.appendChild(row);
+  }
+}
+
+async function refreshPacks() {
+  try { state.packs = await api.packs(); } catch { state.packs = []; }
+  if (state.rightTab === "caps") renderRight();
+}
+
+async function applyPack(name) {
+  if (!state.sessionId) { toast("Open a session first.", true); return; }
+  try {
+    state.tree = await api.applyPacks(state.sessionId, [name]);
+    toast(`Applied “${name}”`);
+    render();
+  } catch (e) { toast(String(e.message || e), true); }
+}
+
+async function deletePackByName(name) {
+  try { await api.deletePack(name); await refreshPacks(); toast("Pack deleted"); }
+  catch (e) { toast(String(e.message || e), true); }
+}
+
+function inspectPack(p) {
+  const body = el("div");
+  if (p.description) {
+    const f = el("div", "field");
+    f.appendChild(el("div", "flabel", "about"));
+    f.appendChild(el("div", "fval", esc(p.description)));
+    body.appendChild(f);
+  }
+  body.appendChild(listField(`network allowlist (${p.allow.length})`, p.allow));
+  body.appendChild(listField(`capability groups (${p.groups.length})`, p.groups));
+  const acts = el("div", "drawer-actions");
+  const apply = el("button", "primary", "Apply to session");
+  apply.onclick = () => { applyPack(p.name); closeDrawer(); };
+  acts.appendChild(apply);
+  openDrawer("pack", p.name, body, acts);
+}
+
+function listField(label, items) {
+  const f = el("div", "field");
+  f.appendChild(el("div", "flabel", label));
+  if (items.length === 0) f.appendChild(el("div", "fval", "—"));
+  else for (const it of items) {
+    const row = el("div", "path-row");
+    row.innerHTML = `<span class="pp">${esc(it)}</span>`;
+    f.appendChild(row);
+  }
+  return f;
+}
+
+// "Save current" — capture the session's enabled groups + allowlist as a pack.
+function savePackCurrent() {
+  if (!state.tree) { toast("Open a session first.", true); return; }
+  const groups = state.tree.groups || [];
+  const allow = state.tree.allow_domains || [];
+  if (groups.length === 0 && allow.length === 0) {
+    toast("Nothing to save yet — no groups or allow-rules enabled in this session.", true);
+    return;
+  }
+  const body = el("div");
+  const nameF = el("div", "field");
+  nameF.appendChild(el("div", "flabel", "pack name"));
+  const nameInput = el("input", "fin"); nameInput.type = "text"; nameInput.placeholder = "e.g. node-github";
+  nameF.appendChild(nameInput);
+  body.appendChild(nameF);
+  const descF = el("div", "field");
+  descF.appendChild(el("div", "flabel", "description"));
+  const descInput = el("input", "fin"); descInput.type = "text"; descInput.placeholder = "what this pack is for";
+  descF.appendChild(descInput);
+  body.appendChild(descF);
+  body.appendChild(listField(`network allowlist (${allow.length})`, allow));
+  body.appendChild(listField(`capability groups (${groups.length})`, groups));
+
+  const save = async () => {
+    const name = nameInput.value.trim();
+    if (!name) { toast("Enter a pack name.", true); nameInput.focus(); return; }
+    try {
+      await api.savePack({ name, description: descInput.value.trim(), groups, allow });
+      closeDrawer(); await refreshPacks(); toast(`Saved “${name}”`);
+    } catch (e) { toast(String(e.message || e), true); }
+  };
+  nameInput.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); save(); } };
+  const acts = el("div", "drawer-actions");
+  const btn = el("button", "primary", "Save pack"); btn.onclick = save;
+  acts.appendChild(btn);
+  openDrawer("pack", "Save current as pack", body, acts);
+  setTimeout(() => nameInput.focus(), 60);
+}
+
+// "Draft with AI" — describe the work, get a draft pack to review, edit, save.
+function draftPackFlow() {
+  const body = el("div");
+  body.appendChild(el("div", "hint",
+    "Describe the work and bough drafts a least-privilege allowlist (hosts + capability groups) for you to review before saving."));
+  const f = el("div", "field");
+  f.appendChild(el("div", "flabel", "what are you doing?"));
+  const ta = el("textarea", "fin"); ta.rows = 3;
+  ta.placeholder = "e.g. A Python project that installs from PyPI and calls the OpenAI API.";
+  f.appendChild(ta);
+  body.appendChild(f);
+  const acts = el("div", "drawer-actions");
+  const btn = el("button", "primary", "✦ Draft");
+  btn.onclick = async () => {
+    const desc = ta.value.trim();
+    if (!desc) { toast("Describe the work first.", true); ta.focus(); return; }
+    btn.disabled = true; btn.textContent = "Drafting…";
+    try {
+      const draft = await api.draftPack(desc);
+      if (state.groupsCatalog.length === 0)
+        state.groupsCatalog = await api.groupsCatalog().catch(() => []);
+      packReview(desc, draft);
+    } catch (e) { toast(String(e.message || e), true); btn.disabled = false; btn.textContent = "✦ Draft"; }
+  };
+  acts.appendChild(btn);
+  openDrawer("pack", "Draft a pack", body, acts);
+  setTimeout(() => ta.focus(), 60);
+}
+
+// Editable review of a drafted pack before saving.
+function packReview(description, draft) {
+  const body = el("div");
+  const nameF = el("div", "field");
+  nameF.appendChild(el("div", "flabel", "pack name"));
+  const nameInput = el("input", "fin"); nameInput.type = "text"; nameInput.placeholder = "name this pack";
+  nameF.appendChild(nameInput);
+  body.appendChild(nameF);
+
+  const allowF = el("div", "field");
+  allowF.appendChild(el("div", "flabel", "network allowlist — one per line"));
+  const allowTa = el("textarea", "fin"); allowTa.rows = Math.max(3, (draft.allow || []).length + 1);
+  allowTa.value = (draft.allow || []).join("\n");
+  allowF.appendChild(allowTa);
+  body.appendChild(allowF);
+
+  const groupsF = el("div", "field");
+  groupsF.appendChild(el("div", "flabel", "capability groups"));
+  const chosen = new Set(draft.groups || []);
+  const toggleable = state.groupsCatalog.filter((g) => !g.locked);
+  if (toggleable.length === 0) groupsF.appendChild(el("div", "fval", "—"));
+  for (const g of toggleable) {
+    const item = el("label", "gate-group");
+    const cb = el("input"); cb.type = "checkbox"; cb.checked = chosen.has(g.name); cb.dataset.pgroup = g.name;
+    item.appendChild(cb);
+    const meta = el("div", "gg-meta");
+    meta.innerHTML = `<b>${esc(g.name)}</b><div class="gg-desc">${esc(clip(g.description, 70))}</div>`;
+    item.appendChild(meta);
+    groupsF.appendChild(item);
+  }
+  body.appendChild(groupsF);
+
+  const save = async () => {
+    const name = nameInput.value.trim();
+    if (!name) { toast("Name the pack.", true); nameInput.focus(); return; }
+    const allow = allowTa.value.split("\n").map((s) => s.trim()).filter(Boolean);
+    const groups = [...body.querySelectorAll("input[type=checkbox][data-pgroup]")].filter((c) => c.checked).map((c) => c.dataset.pgroup);
+    try {
+      await api.savePack({ name, description, groups, allow });
+      closeDrawer(); await refreshPacks(); toast(`Saved “${name}”`);
+    } catch (e) { toast(String(e.message || e), true); }
+  };
+  const acts = el("div", "drawer-actions");
+  const btn = el("button", "primary", "Save pack"); btn.onclick = save;
+  acts.appendChild(btn);
+  openDrawer("pack", "Review draft", body, acts);
+  setTimeout(() => nameInput.focus(), 60);
+}
+
 function renderCaps(body) {
+  renderPacks(body);
+  body.appendChild(el("div", "caps-sub", "Capability groups"));
   if (state.groupsCatalog.length === 0) {
     body.appendChild(el("div", "hint", "No capability groups for this host."));
     return;
@@ -738,6 +1378,7 @@ function render() {
   $("#prompt").placeholder = steering
     ? "Steer this run — type and Enter to inject…"
     : (state.viewChildId ? "Message this subagent…" : "Ask bough to do something…  (Enter to send, Shift+Enter for newline)");
+  if (state.mapOpen) renderMap(); // keep the map in sync with new turns/forks/grafts
 }
 function dropSubbarIfPresentWithoutChild() { dropSubbar(); }
 
@@ -968,8 +1609,11 @@ function wire() {
     const b = e.target.closest("button[data-tab]");
     if (!b) return;
     state.rightTab = b.dataset.tab;
-    if (state.rightTab === "caps" && state.groupsCatalog.length === 0)
-      api.groupsCatalog().then((g) => { state.groupsCatalog = g; renderRight(); }).catch(() => {});
+    if (state.rightTab === "caps") {
+      if (state.groupsCatalog.length === 0)
+        api.groupsCatalog().then((g) => { state.groupsCatalog = g; renderRight(); }).catch(() => {});
+      refreshPacks();
+    }
     renderRight();
   });
 
@@ -1000,12 +1644,25 @@ function wire() {
       case "copy-id": copyText(id, "Session id copied"); break;
       case "stop-run": stopRun(); break;
       case "toggle-project": toggleProject(t.dataset.proj); break;
+      case "pack-apply": applyPack(t.dataset.name); break;
+      case "pack-delete": deletePackByName(t.dataset.name); break;
+      case "pack-draft": draftPackFlow(); break;
+      case "pack-save-current": savePackCurrent(); break;
       case "open-session": openSession(id); break;
       case "open-child": openChild(id); break;
       case "back-parent": backToParent(); break;
       case "graft-cancel": state.graftRoot = null; renderRight(); break;
       case "allow": gateDecision("allow", ""); break;
       case "steer": gateDecision("steer", steerInput()); break;
+      case "enable-groups": {
+        const bar = t.closest(".gate");
+        const picked = bar
+          ? [...bar.querySelectorAll("input[type=checkbox][data-group]")].filter((c) => c.checked).map((c) => c.dataset.group)
+          : [];
+        if (picked.length === 0) { toast("Tick a group to enable, or Reject.", true); break; }
+        gateDecision("steer", picked.join(","));
+        break;
+      }
       case "reject": gateDecision("steer", ""); break; // empty steer = deny (net/group)
       case "reject-plan": gateDecision("steer", steerInput() || "Reject this plan and revise the approach."); break;
     }
@@ -1017,9 +1674,11 @@ function wire() {
     if (c) toggleGroup(c.dataset.name, c.checked);
   });
 
-  // Esc closes the inspector drawer.
+  // Esc closes the inspector drawer first, then the map overlay.
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") closeDrawer();
+    if (e.key !== "Escape") return;
+    if ($("#drawer.open")) closeDrawer();
+    else if (state.mapOpen) closeMap();
   });
 }
 
