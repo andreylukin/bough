@@ -729,8 +729,8 @@ fn subagents_for(
   workspace: String,
 ) -> engine.Subagents {
   engine.Subagents(
-    spawn: fn(title, task) {
-      spawn_subagent(parent_id, prov, api_key, model, workspace, title, task)
+    spawn: fn(title, task, wake) {
+      spawn_subagent(parent_id, prov, api_key, model, workspace, title, task, wake)
     },
     tell: fn(target, message) {
       control.put(target, control.Steer(message))
@@ -755,6 +755,7 @@ fn spawn_subagent(
   workspace: String,
   title: String,
   task: String,
+  wake: process.Subject(Nil),
 ) -> String {
   let child_id = wisp.random_string(16)
   subagents.add(parent_id, child_id, title)
@@ -828,6 +829,10 @@ fn spawn_subagent(
             ),
           )
           subagents.set_status(parent_id, child_id, "done")
+          // Wake the parent run process now that its result is queued — instant,
+          // no poll. (Harmless if the parent isn't currently waiting; the message
+          // just buffers in its mailbox.)
+          process.send(wake, Nil)
         }
         Error(message) -> {
           run_store.write(child_id, "error", [], message, 0, [])
@@ -843,6 +848,7 @@ fn spawn_subagent(
             ),
           )
           subagents.set_status(parent_id, child_id, "error")
+          process.send(wake, Nil)
         }
       }
     })

@@ -13,6 +13,7 @@ const state = {
   tree: null,            // { id, project, active_leaf, entries[], superseded[], groups[], suggested[] }
   run: null,             // { status, steps[], text, context_tokens, network[] }
   subagents: [],
+  showDoneSubs: false,   // Subagents pane: reveal the collapsed completed ones
   diff: null,            // { sessionId, git, files[], patch } — lazy-loaded Changes tab
   pastes: [],            // large clipboard pastes collapsed into chips, expanded on send
   groupsCatalog: [],
@@ -346,9 +347,16 @@ function renderTranscript() {
 
   // Subagent view: a back bar + the child's transcript.
   if (state.viewChildId) {
+    const meta = (state.subagents || []).find((s) => s.id === state.viewChildId);
+    const title = meta ? meta.title : state.viewChildId;
+    const status = state.childRun ? state.childRun.status : (meta ? meta.status : "");
+    const live = ACTIVE.has(status);
     const bar = el("div", "subbar");
-    bar.innerHTML = `<button class="ghost" data-act="back-parent">‹ back to parent</button>
-      <span>viewing subagent ${esc(state.viewChildId)}</span>`;
+    bar.innerHTML =
+      `<button class="ghost" data-act="back-parent">‹ back</button>` +
+      `<span class="sb-title" title="${esc(state.viewChildId)}">${esc(title)}</span>` +
+      `<span class="st ${live ? "running" : esc(status || "done")}">${esc(status || "—")}</span>` +
+      `<span class="sb-hint">${live ? "type below to message this subagent" : "this subagent has finished"}</span>`;
     $("#center").insertBefore(bar, box);
     renderConversation(box, state.childTree, state.childRun);
     cleanupSubbar(bar);
@@ -694,7 +702,8 @@ function renderRight() {
     changes: diffN,
     network: run && run.network ? run.network.length : 0,
     caps: (state.tree && state.tree.groups ? state.tree.groups.length : 0),
-    subagents: state.subagents.length,
+    // The pane is about *live* work — badge the running count, not the registry.
+    subagents: state.subagents.filter((s) => s.status === "running").length,
   };
   const labels = { tree: "Tree", changes: "Changes", network: "Network", caps: "Capabilities", subagents: "Subagents" };
   document.querySelectorAll("#tabs button").forEach((b) => {
@@ -1468,17 +1477,42 @@ function renderCaps(body) {
 
 function renderSubagents(body) {
   if (state.subagents.length === 0) {
-    body.appendChild(el("div", "hint", "No subagents. The supervisor spawns these for self-contained sub-tasks."));
+    body.appendChild(el("div", "hint",
+      "No subagents. The supervisor spawns these for self-contained sub-tasks — they appear here while running, and you can open one to follow its progress or message it."));
     return;
   }
-  for (const s of state.subagents) {
-    const row = el("div", "sub");
-    row.dataset.act = "open-child";
-    row.dataset.id = s.id;
-    row.innerHTML = `<span class="stitle">${esc(s.title)}</span>` +
-      `<span class="st ${esc(s.status)}">${esc(s.status)}</span>`;
-    body.appendChild(row);
+  const running = state.subagents.filter((s) => s.status === "running");
+  const finished = state.subagents.filter((s) => s.status !== "running");
+
+  // Live subagents are the point of this pane.
+  body.appendChild(el("div", "caps-sub", "Running"));
+  if (running.length === 0) {
+    body.appendChild(el("div", "hint", "Nothing running right now."));
+  } else {
+    for (const s of running) body.appendChild(subRow(s, true));
   }
+
+  // Completed ones are collapsed below so they don't crowd out live work.
+  if (finished.length) {
+    const head = el("div", "sub-done-head" + (state.showDoneSubs ? " open" : ""));
+    head.dataset.act = "toggle-done-subs";
+    head.innerHTML = `<span class="caret">▸</span><span>Completed</span>` +
+      `<span class="tabct">${finished.length}</span>`;
+    body.appendChild(head);
+    if (state.showDoneSubs) for (const s of finished) body.appendChild(subRow(s, false));
+  }
+}
+
+function subRow(s, live) {
+  const row = el("div", "sub" + (live ? " live" : ""));
+  row.dataset.act = "open-child";
+  row.dataset.id = s.id;
+  row.innerHTML =
+    (live ? `<span class="spin"><span class="pulse"></span></span>` : "") +
+    `<span class="stitle">${esc(s.title)}</span>` +
+    `<span class="st ${esc(s.status)}">${esc(s.status)}</span>` +
+    `<span class="sgo">›</span>`;
+  return row;
 }
 
 // ---- top-level render ----------------------------------------------------
@@ -1830,6 +1864,7 @@ function wire() {
       case "diff-refresh": state.diff = null; refreshDiff(); break;
       case "paste-remove": removePaste(id); break;
       case "paste-preview": previewPaste(id); break;
+      case "toggle-done-subs": state.showDoneSubs = !state.showDoneSubs; renderRight(); break;
       case "allow": gateDecision("allow", ""); break;
       case "steer": gateDecision("steer", steerInput()); break;
       case "enable-groups": {
