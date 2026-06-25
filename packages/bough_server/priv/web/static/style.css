@@ -40,7 +40,7 @@ html, body {
   font-family: var(--sans); font-size: 14px; line-height: 1.55;
   -webkit-font-smoothing: antialiased;
 }
-body { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+body { display: flex; flex-direction: column; height: 100vh; height: 100dvh; overflow: hidden; }
 
 button { font-family: inherit; font-size: 13px; cursor: pointer; color: inherit; }
 button:disabled { opacity: 0.45; cursor: default; }
@@ -582,19 +582,52 @@ details.detail[open] summary::before { content: '▾'; }
   100% { outline: 2px solid rgba(226,160,63,0); outline-offset: 2px; }
 }
 
-/* responsive floor: shed columns on narrow viewports */
+/* ---- responsive: side panes become slide-over overlays ----
+   Below a breakpoint a side pane leaves the grid and slides in over the
+   transcript, opened from its top-bar toggle and dismissed by the scrim, Esc,
+   or picking something. The right (Tree/Changes/…) folds first since the
+   transcript wants the room; the sessions list only on phones. */
+#nav-scrim { display: none; }
+
+/* tablet: right pane → overlay; sessions stays a column */
 @media (max-width: 1080px) {
   #layout { grid-template-columns: 230px 1fr; }
-  #rightpane { display: none; }
+  #rightpane {
+    position: fixed; top: 52px; bottom: 0; right: 0; z-index: 40;
+    width: min(86vw, 380px); transform: translateX(101%);
+    transition: transform 0.22s ease; box-shadow: -10px 0 44px rgba(0,0,0,0.45);
+  }
+  body.nav-right #rightpane { transform: translateX(0); }
   #drawer { width: 440px; }
 }
-@media (max-width: 720px) {
+
+/* phone: single column; sessions list also becomes an overlay */
+@media (max-width: 760px) {
   #layout { grid-template-columns: 1fr; }
-  #sidebar { display: none; }
-  #topbar { gap: 12px; padding: 0 12px; }
-  .model { display: none; }
+  #sidebar {
+    position: fixed; top: 52px; bottom: 0; left: 0; z-index: 40;
+    width: min(86vw, 320px); transform: translateX(-101%);
+    transition: transform 0.22s ease; box-shadow: 10px 0 44px rgba(0,0,0,0.45);
+  }
+  body.nav-left #sidebar { transform: translateX(0); }
+  #topbar { gap: 8px; padding: 0 10px; }
+  #ctx .sid, .ctxmeter, .model { display: none; }
   .msg.user, .msg.assistant { max-width: 100%; }
   #drawer { width: 100%; max-width: 100%; }
+  /* roomier tap targets for touch */
+  .pane-toggle { width: 32px; height: 32px; }
+  .tabs button { padding: 12px 11px; }
+  .session-item { padding: 11px 12px; }
+  /* keep the composer clear of the home indicator */
+  #composer { padding-bottom: calc(11px + env(safe-area-inset-bottom)); }
+}
+
+/* scrim behind any open overlay (tablet + phone) */
+@media (max-width: 1080px) {
+  body.nav-left #nav-scrim, body.nav-right #nav-scrim {
+    display: block; position: fixed; inset: 52px 0 0 0;
+    background: rgba(0,0,0,0.5); z-index: 38;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

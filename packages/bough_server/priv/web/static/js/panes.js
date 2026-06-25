@@ -1,4 +1,4 @@
-import { forkNode, graftOnto, inspectGroup } from "./actions.js";
+import { closeNav, forkNode, graftOnto, inspectGroup } from "./actions.js";
 import { api } from "./api.js";
 import { $, ago, clip, el, esc, humanTok, projBase, toast } from "./dom.js";
 import { branchOrder, nodeLabel, treeBranches, visibleGraph } from "./graph.js";
@@ -242,6 +242,7 @@ export function renderTree(body) {
 
 export async function switchBranch(leafId) {
   if (!leafId || !state.tree || leafId === state.tree.active_leaf) return;
+  closeNav(); // picked a branch from the sessions overlay — reveal the transcript
   await forkNode(leafId);
 }
 

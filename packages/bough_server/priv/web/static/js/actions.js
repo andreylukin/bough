@@ -13,6 +13,7 @@ export async function loadSessions() {
 export async function openSession(id) {
   stopPoll();
   closeDrawer();
+  closeNav(); // came from the sessions overlay on mobile — return to the transcript
   state.sessionId = id;
   state.viewChildId = null; state.childTree = null; state.childRun = null;
   state.graftRoot = null; state.lastSig = null; state.diff = null; state.files = null;
@@ -241,13 +242,34 @@ export function applyPanes() {
   document.body.classList.toggle("right-collapsed", !!v.right);
 }
 
+// Below these widths a side pane is a slide-over overlay (toggled open), not a
+// desktop column you collapse: the right pane folds to an overlay sooner (the
+// transcript wants the room), the sessions list only on phones.
+function isOverlay(side) {
+  const w = side === "right" ? 1080 : 760;
+  return window.matchMedia(`(max-width: ${w}px)`).matches;
+}
+
 export function togglePane(side) {
+  if (isOverlay(side)) {
+    const cls = "nav-" + side;
+    const wasOpen = document.body.classList.contains(cls);
+    document.body.classList.remove("nav-left", "nav-right"); // one overlay at a time
+    if (!wasOpen) document.body.classList.add(cls);
+    return;
+  }
   const cls = side + "-collapsed";
   document.body.classList.toggle(cls);
   localStorage.setItem(PANES_KEY, JSON.stringify({
     left: document.body.classList.contains("left-collapsed"),
     right: document.body.classList.contains("right-collapsed"),
   }));
+}
+
+// Dismiss any open slide-over pane — on the scrim tap, or after you've picked
+// something (so you land back on the transcript).
+export function closeNav() {
+  document.body.classList.remove("nav-left", "nav-right");
 }
 
 // ---- "@" file picker -----------------------------------------------------

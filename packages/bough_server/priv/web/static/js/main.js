@@ -1,4 +1,4 @@
-import { applyPanes, backToParent, gateDecision, loadSessions, newSession, newSessionInProject, openChild, openSession, stopRun, toggleGroup, togglePane } from "./actions.js";
+import { applyPanes, backToParent, closeNav, gateDecision, loadSessions, newSession, newSessionInProject, openChild, openSession, stopRun, toggleGroup, togglePane } from "./actions.js";
 import { api } from "./api.js";
 import { choosePicker, closePicker, movePicker, onPaste, picker, previewPaste, refreshPicker, removePaste, submitComposer } from "./composer.js";
 import { $, copyText, toast } from "./dom.js";
@@ -49,6 +49,7 @@ export function wire() {
   $("#review-toggle").addEventListener("change", (e) => { state.reviewArmed = e.target.checked; });
   $("#session-search").addEventListener("input", (e) => { state.filter = e.target.value; renderSidebar(); });
   $("#scrim").addEventListener("click", closeDrawer);
+  $("#nav-scrim").addEventListener("click", closeNav);
 
   // Composer.
   $("#composer").addEventListener("submit", (e) => { e.preventDefault(); submitComposer(); });
@@ -126,11 +127,13 @@ export function wire() {
     if (c) toggleGroup(c.dataset.name, c.checked);
   });
 
-  // Esc closes the inspector drawer first, then the map overlay.
+  // Esc closes the inspector drawer first, then the map overlay, then any open
+  // slide-over pane.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
     if ($("#drawer.open")) closeDrawer();
     else if (state.mapOpen) closeMap();
+    else closeNav();
   });
 }
 
@@ -144,7 +147,5 @@ export async function boot() {
   if (state.sessions.length > 0) await openSession(state.sessions[0].id);
   else render();
 }
-
-boot();
 
 boot();
