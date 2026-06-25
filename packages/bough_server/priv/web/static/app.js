@@ -752,6 +752,19 @@ function renderSidebar() {
     return it;
   };
 
+  // One row per branch (live leaf), nested under the session you're viewing, so
+  // forked conversations show side by side. Click to switch the active branch.
+  const branchRow = (b) => {
+    const r = el("div", "branch-item" + (b.active ? " active" : ""));
+    r.dataset.act = "switch-branch";
+    r.dataset.leaf = b.leafId;
+    r.innerHTML =
+      `<span class="bconn">${b.active ? "●" : "○"}</span>` +
+      `<span class="bname">${esc(b.name)}</span>` +
+      `<span class="bmeta">${b.turns}</span>`;
+    return r;
+  };
+
   for (const key of groups) {
     const list = byProj.get(key);
     const open = isOpen(key);
@@ -764,7 +777,15 @@ function renderSidebar() {
       `<button class="proj-new" data-act="new-in-project" data-proj="${esc(key)}" ` +
       `title="New session in ${esc(projBase(key))}" aria-label="New session in ${esc(projBase(key))}">+</button>`;
     box.appendChild(head);
-    if (open) for (const s of list) box.appendChild(item(s));
+    if (open) for (const s of list) {
+      box.appendChild(item(s));
+      // Show the open session's branches as nested rows (only when it actually
+      // has more than one — a linear chat needs no branch list).
+      if (s.id === state.sessionId) {
+        const branches = treeBranches(state.tree);
+        if (branches.length > 1) for (const b of branches) box.appendChild(branchRow(b));
+      }
+    }
   }
 }
 
@@ -836,8 +857,10 @@ function renderTree(body) {
     const obj = vnodes.get(id);
     if (!obj) return;
     const e = obj.entry;
+    const isTip = !((vchildren.get(id) || []).length);
     const row = el("div", "node" +
       (id === state.tree.active_leaf ? " leaf" : "") +
+      (isTip ? " tip" : "") +
       (id === state.graftRoot ? " graftroot" : "") +
       (e.grafted_from ? " grafted" : "") +
       (branched ? " branch" : ""));
@@ -846,7 +869,8 @@ function renderTree(body) {
       (branched ? `<span class="tconn">└</span>` : "") +
       `<span class="role ${esc(e.role)}">${e.role === "user" ? "you" : "bgh"}</span>` +
       (e.grafted_from ? `<span class="gmark" title="grafted">↪</span>` : "") +
-      `<span class="snippet">${esc(clip(e.content, 44))}</span>`;
+      `<span class="snippet">${esc(clip(e.content, 44))}</span>` +
+      (isTip ? `<span class="tipdot" title="branch tip">●</span>` : "");
     // Click a node to open it; when arming a graft, click the target parent.
     row.onclick = () => {
       if (state.graftRoot && state.graftRoot !== id) graftOnto(id);
@@ -993,6 +1017,36 @@ function branchOrder(vchildren, tree) {
     for (let i = 1; i < kids.length; i++) if (score(kids[i]) > score(kids[best])) best = i;
     return [kids[best], ...kids.filter((_, i) => i !== best)];
   };
+}
+
+// A "branch" is a live leaf of the conversation tree — its own continuable
+// thread sharing a common prefix with its siblings. Phase 1 derives them from
+// the visible graph; switching is a fork (set-leaf + snapshot restore), and
+// continuing appends to whichever leaf is active.
+function treeBranches(tree) {
+  if (!tree || !tree.entries || !tree.entries.length) return [];
+  const { vnodes, vchildren } = visibleGraph(tree, false);
+  const activeIds = new Set(activePath(tree).map((e) => e.id));
+  const leaves = [...vnodes.values()].filter((n) => !(vchildren.get(n.id) || []).length);
+  const branches = leaves.map((n) => {
+    let turns = 0, cur = n;
+    while (cur) { turns++; cur = cur.parent ? vnodes.get(cur.parent) : null; }
+    return {
+      leafId: n.id,
+      name: clip(n.entry.content, 38) || "branch",
+      turns,
+      active: activeIds.has(n.id),
+    };
+  });
+  branches.sort((a, b) => (a.active === b.active ? 0 : a.active ? -1 : 1));
+  return branches;
+}
+
+// Switch the active branch to a leaf — reuses fork (set active_leaf + restore
+// that leaf's filesystem snapshot). No-op if it's already the active branch.
+async function switchBranch(leafId) {
+  if (!leafId || !state.tree || leafId === state.tree.active_leaf) return;
+  await forkNode(leafId);
 }
 
 function layoutGraph(vchildren, tree) {
@@ -2174,6 +2228,7 @@ function wire() {
       case "pack-draft": draftPackFlow(); break;
       case "pack-save-current": savePackCurrent(); break;
       case "open-session": openSession(id); break;
+      case "switch-branch": switchBranch(t.dataset.leaf); break;
       case "open-child": openChild(id); break;
       case "back-parent": backToParent(); break;
       case "graft-cancel": state.graftRoot = null; renderRight(); break;
