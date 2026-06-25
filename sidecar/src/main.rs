@@ -31,8 +31,9 @@
 
 use std::{
     env, fs,
+    io::{self, BufRead, Write},
     path::{Component, Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
 };
 
 use monty::{
@@ -156,6 +157,7 @@ fn dispatch(name: &str, args: &[MontyObject], workspace: &str, profile: Option<&
         "read" => ret(read(&arg(0), workspace)),
         "write" => ret(write(&arg(0), &arg(1), workspace)),
         "edit" => ret(edit(&arg(0), &arg(1), &arg(2), workspace)),
+        "mcp" => ret(mcp(&arg(0), &arg(1), &arg(2))),
         other => ExtFunctionResult::NotFound(other.to_owned()),
     }
 }
@@ -285,6 +287,156 @@ fn edit(path: &str, old: &str, new: &str, workspace: &str) -> String {
                 },
                 n => format!("error: 'old' text is not unique in {path} ({n} matches)"),
             }
+        }
+    }
+}
+
+/// `mcp(server_cmd, tool, args_json) -> str`: spawn an MCP stdio server via
+/// `sh -c server_cmd`, speak JSON-RPC 2.0 (initialize then tools/call), and
+/// return the tool result's text. On any failure return a string starting with
+/// `error:`.
+fn mcp(server_cmd: &str, tool: &str, args_json: &str) -> String {
+    let mut child = match Command::new("sh")
+        .arg("-c")
+        .arg(server_cmd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => return format!("error: failed to spawn MCP server: {e}"),
+    };
+
+    let mut stdin = child.stdin.take().expect("child stdin was piped");
+    let stdout = child.stdout.take().expect("child stdout was piped");
+    let mut reader = io::BufReader::new(stdout);
+
+    let arguments: serde_json::Value = if args_json.trim().is_empty() {
+        serde_json::json!({})
+    } else {
+        match serde_json::from_str(args_json) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = child.kill();
+                return format!("error: args_json is not valid JSON: {e}");
+            }
+        }
+    };
+
+    let send = |stdin: &mut std::process::ChildStdin,
+                msg: &serde_json::Value|
+     -> Result<(), String> {
+        write!(stdin, "{msg}\n").map_err(|e| format!("error: write to MCP server: {e}"))?;
+        stdin
+            .flush()
+            .map_err(|e| format!("error: flush MCP stdin: {e}"))
+    };
+
+    // 1. initialize
+    let init = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {"name": "bough-monty", "version": "0.1.0"}
+        }
+    });
+    if let Err(e) = send(&mut stdin, &init) {
+        let _ = child.kill();
+        return e;
+    }
+    let init_resp = match mcp_read_response(&mut reader, 1) {
+        Ok(v) => v,
+        Err(e) => {
+            let _ = child.kill();
+            return format!("error: {e}");
+        }
+    };
+    if let Some(err) = init_resp.get("error") {
+        let _ = child.kill();
+        return format!("error: MCP initialize failed: {err}");
+    }
+
+    // 2. tools/call
+    let call = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+            "name": tool,
+            "arguments": arguments,
+        }
+    });
+    if let Err(e) = send(&mut stdin, &call) {
+        let _ = child.kill();
+        return e;
+    }
+    let call_resp = match mcp_read_response(&mut reader, 2) {
+        Ok(v) => v,
+        Err(e) => {
+            let _ = child.kill();
+            return format!("error: {e}");
+        }
+    };
+    let _ = child.kill();
+
+    if let Some(err) = call_resp.get("error") {
+        return format!("error: MCP tools/call failed: {err}");
+    }
+    let result = match call_resp.get("result") {
+        Some(r) => r,
+        None => return format!("error: MCP response has no result field"),
+    };
+    let texts: Vec<String> = result
+        .get("content")
+        .and_then(|c| c.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|item| {
+                    if item.get("type").and_then(|t| t.as_str()) == Some("text") {
+                        item.get("text").and_then(|t| t.as_str()).map(String::from)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if texts.is_empty() {
+        format!("error: no text content in MCP result: {result}")
+    } else {
+        texts.join("\n")
+    }
+}
+
+/// Read newline-delimited JSON-RPC messages from an MCP server's stdout until
+/// one bears the matching `id`, skipping notifications.
+fn mcp_read_response(
+    reader: &mut io::BufReader<std::process::ChildStdout>,
+    expected_id: i64,
+) -> Result<serde_json::Value, String> {
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let n = reader
+            .read_line(&mut line)
+            .map_err(|e| format!("reading MCP stdout: {e}"))?;
+        if n == 0 {
+            return Err("MCP server closed stdout".to_string());
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let v: serde_json::Value = match serde_json::from_str(trimmed) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if v.get("id").and_then(|i| i.as_i64()) == Some(expected_id) {
+            return Ok(v);
         }
     }
 }
