@@ -14,7 +14,10 @@ const state = {
   run: null,             // { status, steps[], text, context_tokens, network[] }
   subagents: [],
   showDoneSubs: false,   // Subagents pane: reveal the collapsed completed ones
+  capsOpen: {},          // Capabilities pane: per-subsection collapse state (key → bool)
+  capsFilter: "",        // Capabilities pane: search query over groups
   diff: null,            // { sessionId, git, files[], patch } — lazy-loaded Changes tab
+  files: null,           // { sessionId, list[] } — workspace files for the "@" picker
   pastes: [],            // large clipboard pastes collapsed into chips, expanded on send
   groupsCatalog: [],
   packs: [],
@@ -71,6 +74,7 @@ const api = {
   graft: (id, section_root, onto) => jpost(`/session/${id}/graft`, { section_root, onto }),
   subagents: (id) => jget(`/session/${id}/subagents`),
   diff: (id) => jget(`/session/${id}/diff`),
+  files: (id) => jget(`/session/${id}/files`),
   groupsCatalog: () => jget("/groups"),
   groupDetail: (name) => jget(`/groups/${name}`),
   setGroups: (id, groups) => jpost(`/session/${id}/groups`, { groups }),
@@ -127,7 +131,7 @@ function md(src) {
       const code = [];
       while (i < lines.length && !/^```\s*$/.test(lines[i])) { code.push(lines[i]); i++; }
       i++;
-      html += `<pre class="code"><code>${esc(code.join("\n"))}</code></pre>`;
+      html += `<details><summary>Code block</summary><pre class="code"><code>${esc(code.join("\n"))}</code></pre></details>`;
       continue;
     }
     const h = line.match(/^(#{1,6})\s+(.*)$/);
@@ -756,7 +760,9 @@ function renderSidebar() {
     head.dataset.proj = key;
     head.innerHTML =
       `<span class="caret">▸</span><span class="pname">${esc(projBase(key))}</span>` +
-      `<span class="pcount">${list.length}</span>`;
+      `<span class="pcount">${list.length}</span>` +
+      `<button class="proj-new" data-act="new-in-project" data-proj="${esc(key)}" ` +
+      `title="New session in ${esc(projBase(key))}" aria-label="New session in ${esc(projBase(key))}">+</button>`;
     box.appendChild(head);
     if (open) for (const s of list) box.appendChild(item(s));
   }
@@ -1538,9 +1544,61 @@ function renderCaps(body) {
     body.appendChild(el("div", "hint", "No capability groups for this host."));
     return;
   }
+
+  // Search box over group name + description.
+  const search = el("input", "search caps-search");
+  search.id = "caps-search";
+  search.type = "search";
+  search.placeholder = "Filter capabilities…";
+  search.setAttribute("aria-label", "Filter capabilities");
+  search.value = state.capsFilter;
+  search.oninput = (e) => {
+    state.capsFilter = e.target.value;
+    renderRight();
+    const n = $("#caps-search");
+    if (n) { n.focus(); const v = n.value; n.setSelectionRange(v.length, v.length); }
+  };
+  body.appendChild(search);
+
+  const q = state.capsFilter.trim().toLowerCase();
+  const matches = (g) => !q ||
+    g.name.toLowerCase().includes(q) ||
+    (g.description || "").toLowerCase().includes(q);
+
   const enabled = new Set(state.tree.groups || []);
   const suggested = new Set(state.tree.suggested || []);
-  for (const g of state.groupsCatalog) {
+
+  // Split the catalog into subsections by status. "Always on" (locked) is the
+  // least actionable, so it starts collapsed; the toggleable sections open.
+  const sections = [
+    { key: "suggested", title: "Suggested", defaultOpen: true,
+      groups: state.groupsCatalog.filter((g) => !g.locked && suggested.has(g.name) && !enabled.has(g.name)) },
+    { key: "available", title: "Available", defaultOpen: true,
+      groups: state.groupsCatalog.filter((g) => !g.locked && !(suggested.has(g.name) && !enabled.has(g.name))) },
+    { key: "alwayson", title: "Always on", defaultOpen: false,
+      groups: state.groupsCatalog.filter((g) => g.locked) },
+  ];
+  for (const s of sections) s.groups = s.groups.filter(matches);
+  if (q && sections.every((s) => s.groups.length === 0)) {
+    body.appendChild(el("div", "hint", "No capabilities match your search."));
+    return;
+  }
+  // A search makes collapse state moot — show every matching section open.
+  for (const s of sections) capsSection(body, s, enabled, suggested, !!q);
+}
+
+// One collapsible subsection of the Capabilities pane.
+function capsSection(body, sec, enabled, suggested, forceOpen) {
+  if (sec.groups.length === 0) return;
+  const open = forceOpen || (sec.key in state.capsOpen ? state.capsOpen[sec.key] : sec.defaultOpen);
+  const head = el("div", "caps-group-head" + (open ? " open" : ""));
+  head.dataset.act = "toggle-caps-section";
+  head.dataset.key = sec.key;
+  head.innerHTML = `<span class="caret">▸</span><span>${esc(sec.title)}</span>` +
+    `<span class="tabct">${sec.groups.length}</span>`;
+  body.appendChild(head);
+  if (!open) return;
+  for (const g of sec.groups) {
     const row = el("div", "group");
     if (g.locked) {
       row.appendChild(el("span", "cbspace", ""));
@@ -1635,7 +1693,8 @@ async function openSession(id) {
   closeDrawer();
   state.sessionId = id;
   state.viewChildId = null; state.childTree = null; state.childRun = null;
-  state.graftRoot = null; state.lastSig = null; state.diff = null; clearPastes();
+  state.graftRoot = null; state.lastSig = null; state.diff = null; state.files = null;
+  closePicker(); clearPastes();
   try {
     state.tree = await api.tree(id);
     state.run = await api.run(id).catch(() => null);
@@ -1643,6 +1702,17 @@ async function openSession(id) {
   } catch (e) { toast(String(e.message || e), true); return; }
   render();
   if (state.run && ACTIVE.has(state.run.status)) startPoll();
+}
+
+// Start a fresh session straight in a folder you already have — no form, since
+// the project path is the folder header we clicked from.
+async function newSessionInProject(proj) {
+  if (!proj) return;
+  try {
+    const s = await api.createSession(proj);
+    await loadSessions();
+    await openSession(s.id);
+  } catch (e) { toast(String(e.message || e), true); }
 }
 
 // A clean in-app form (no native prompt) to start a session in a project dir.
@@ -1732,7 +1802,7 @@ async function submitComposer() {
   const ta = $("#prompt");
   const text = composeMessage();
   if (!text || !state.sessionId) return;
-  const clear = () => { ta.value = ""; clearPastes(); };
+  const clear = () => { ta.value = ""; clearPastes(); closePicker(); };
 
   // Steering a subagent.
   if (state.viewChildId) {
@@ -1896,6 +1966,153 @@ async function tick() {
   if (done || sig !== state.lastSig) { state.lastSig = sig; render(); }
 }
 
+// ---- collapsible side panes ----------------------------------------------
+// Either side pane can be folded away to give the transcript more room; the
+// choice persists across reloads (this is a daily driver).
+const PANES_KEY = "bough.panes";
+
+function applyPanes() {
+  let v = {};
+  try { v = JSON.parse(localStorage.getItem(PANES_KEY) || "{}"); } catch {}
+  document.body.classList.toggle("left-collapsed", !!v.left);
+  document.body.classList.toggle("right-collapsed", !!v.right);
+}
+
+function togglePane(side) {
+  const cls = side + "-collapsed";
+  document.body.classList.toggle(cls);
+  localStorage.setItem(PANES_KEY, JSON.stringify({
+    left: document.body.classList.contains("left-collapsed"),
+    right: document.body.classList.contains("right-collapsed"),
+  }));
+}
+
+// ---- "@" file picker -----------------------------------------------------
+// Type "@" in the composer and a fuzzy file picker opens inline over the input.
+// Files come from GET /session/:id/files (git-tracked + untracked, .gitignore
+// respected), cached per session. ↑/↓ move, Enter/Tab insert, Esc closes.
+
+const picker = { open: false, items: [], active: 0, at: -1 };
+const PICKER_MAX = 12;
+
+async function ensureFiles() {
+  if (state.files && state.files.sessionId === state.sessionId) return state.files.list;
+  if (!state.sessionId) return [];
+  try {
+    const r = await api.files(state.sessionId);
+    state.files = { sessionId: state.sessionId, list: r.files || [] };
+  } catch {
+    state.files = { sessionId: state.sessionId, list: [] };
+  }
+  return state.files.list;
+}
+
+// The "@token" the caret sits in: an "@" at the start of a word (preceded by
+// start-of-line or whitespace), followed by non-whitespace up to the caret.
+function atToken(ta) {
+  const pos = ta.selectionStart;
+  const m = ta.value.slice(0, pos).match(/(^|\s)@([^\s@]*)$/);
+  if (!m) return null;
+  return { at: pos - m[2].length - 1, query: m[2] };
+}
+
+// fzf-ish subsequence scorer: query chars must appear in order; reward
+// contiguous runs, basename hits, and segment-start positions.
+function fuzzyScore(query, path) {
+  if (!query) return 1;
+  const q = query.toLowerCase(), p = path.toLowerCase();
+  const lastSlash = p.lastIndexOf("/");
+  let qi = 0, score = 0, run = 0;
+  for (let pi = 0; pi < p.length && qi < q.length; pi++) {
+    if (p[pi] === q[qi]) {
+      run++;
+      score += run * 2;                                // contiguous matches compound
+      if (pi > lastSlash) score += 3;                  // basename matters most
+      if (pi === 0 || p[pi - 1] === "/") score += 4;   // segment starts
+      qi++;
+    } else run = 0;
+  }
+  if (qi < q.length) return -1;                        // not a subsequence
+  return score - path.length * 0.05;                   // mild bias toward shorter paths
+}
+
+function fuzzyFilter(query, files) {
+  const scored = [];
+  for (const path of files) {
+    const s = fuzzyScore(query, path);
+    if (s >= 0) scored.push({ path, score: s });
+  }
+  scored.sort((a, b) => b.score - a.score || a.path.length - b.path.length);
+  return scored.slice(0, PICKER_MAX);
+}
+
+async function refreshPicker() {
+  const ta = $("#prompt");
+  if (!atToken(ta)) { closePicker(); return; }
+  const files = await ensureFiles();
+  const now = atToken(ta); // the token may have changed while we awaited
+  if (!now) { closePicker(); return; }
+  picker.items = fuzzyFilter(now.query, files);
+  picker.at = now.at;
+  if (picker.items.length === 0) { closePicker(); return; }
+  picker.open = true;
+  picker.active = Math.min(picker.active, picker.items.length - 1);
+  renderPicker(now.query);
+}
+
+function renderPicker(query) {
+  const box = $("#filepicker");
+  box.innerHTML = "";
+  picker.items.forEach((it, i) => {
+    const row = el("div", "fp-item" + (i === picker.active ? " active" : ""));
+    row.setAttribute("role", "option");
+    row.innerHTML = fpHighlight(it.path);
+    row.onmousedown = (e) => { e.preventDefault(); choosePicker(i); };
+    box.appendChild(row);
+  });
+  box.style.bottom = ($("#composer").offsetHeight + 6) + "px";
+  box.hidden = false;
+}
+
+// Dim the directory, brighten the basename so the file you want stands out.
+function fpHighlight(path) {
+  const slash = path.lastIndexOf("/");
+  const dir = slash >= 0 ? esc(path.slice(0, slash + 1)) : "";
+  const base = esc(slash >= 0 ? path.slice(slash + 1) : path);
+  return `<span class="fp-dir">${dir}</span><span class="fp-base">${base}</span>`;
+}
+
+function closePicker() {
+  picker.open = false; picker.active = 0; picker.items = [];
+  const box = $("#filepicker");
+  if (box) { box.hidden = true; box.innerHTML = ""; }
+}
+
+function movePicker(delta) {
+  if (!picker.open) return;
+  const n = picker.items.length;
+  picker.active = (picker.active + delta + n) % n;
+  const tok = atToken($("#prompt"));
+  renderPicker(tok ? tok.query : "");
+  const active = $("#filepicker .fp-item.active");
+  if (active) active.scrollIntoView({ block: "nearest" });
+}
+
+// Replace the "@query" token with the chosen path (plus a trailing space).
+function choosePicker(i) {
+  const it = picker.items[i];
+  if (!it) return;
+  const ta = $("#prompt");
+  const before = ta.value.slice(0, picker.at);
+  const after = ta.value.slice(ta.selectionStart);
+  const insert = it.path + " ";
+  ta.value = before + insert + after;
+  const caret = before.length + insert.length;
+  ta.setSelectionRange(caret, caret);
+  closePicker();
+  ta.focus();
+}
+
 // ---- event wiring --------------------------------------------------------
 
 function wire() {
@@ -1913,6 +2130,8 @@ function wire() {
   });
 
   $("#new-session").addEventListener("click", newSession);
+  $("#toggle-left").addEventListener("click", () => togglePane("left"));
+  $("#toggle-right").addEventListener("click", () => togglePane("right"));
   $("#review-toggle").addEventListener("change", (e) => { state.reviewArmed = e.target.checked; });
   $("#session-search").addEventListener("input", (e) => { state.filter = e.target.value; renderSidebar(); });
   $("#scrim").addEventListener("click", closeDrawer);
@@ -1921,8 +2140,16 @@ function wire() {
   $("#composer").addEventListener("submit", (e) => { e.preventDefault(); submitComposer(); });
   $("#stop").addEventListener("click", stopRun);
   $("#prompt").addEventListener("keydown", (e) => {
+    if (picker.open) {
+      if (e.key === "ArrowDown") { e.preventDefault(); movePicker(1); return; }
+      if (e.key === "ArrowUp") { e.preventDefault(); movePicker(-1); return; }
+      if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); choosePicker(picker.active); return; }
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closePicker(); return; }
+    }
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submitComposer(); }
   });
+  $("#prompt").addEventListener("input", refreshPicker);
+  $("#prompt").addEventListener("blur", () => setTimeout(closePicker, 120));
   $("#prompt").addEventListener("paste", onPaste);
 
   // Delegated clicks (sidebar, subagents, graft toolbar, gates). Tree nodes,
@@ -1941,6 +2168,7 @@ function wire() {
       case "copy-id": copyText(id, "Session id copied"); break;
       case "stop-run": stopRun(); break;
       case "toggle-project": toggleProject(t.dataset.proj); break;
+      case "new-in-project": newSessionInProject(t.dataset.proj); break;
       case "pack-apply": applyPack(t.dataset.name); break;
       case "pack-delete": deletePackByName(t.dataset.name); break;
       case "pack-draft": draftPackFlow(); break;
@@ -1953,6 +2181,13 @@ function wire() {
       case "paste-remove": removePaste(id); break;
       case "paste-preview": previewPaste(id); break;
       case "toggle-done-subs": state.showDoneSubs = !state.showDoneSubs; renderRight(); break;
+      case "toggle-caps-section": {
+        const k = t.dataset.key;
+        const cur = k in state.capsOpen ? state.capsOpen[k] : (k !== "alwayson");
+        state.capsOpen[k] = !cur;
+        renderRight();
+        break;
+      }
       case "allow": gateDecision("allow", ""); break;
       case "steer": gateDecision("steer", steerInput()); break;
       case "enable-groups": {
@@ -1986,6 +2221,7 @@ function wire() {
 // ---- boot ----------------------------------------------------------------
 
 async function boot() {
+  applyPanes();
   wire();
   try { state.config = await api.config(); } catch {}
   await loadSessions();

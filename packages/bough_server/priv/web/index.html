@@ -9,6 +9,7 @@
   </head>
   <body>
     <header id="topbar">
+      <button id="toggle-left" class="pane-toggle" title="Toggle sessions panel" aria-label="Toggle sessions panel">‹</button>
       <div class="brand">
         <img src="/static/logo.svg" alt="bough" width="22" height="24" />
         <span>bough</span>
@@ -20,6 +21,7 @@
         <span>plan review</span>
       </label>
       <div class="model" id="model"></div>
+      <button id="toggle-right" class="pane-toggle" title="Toggle side panel" aria-label="Toggle side panel">›</button>
     </header>
 
     <main id="layout">
@@ -32,6 +34,7 @@
       <section id="center">
         <div class="transcript" id="transcript"></div>
         <div id="attachments" hidden></div>
+        <div id="filepicker" hidden role="listbox" aria-label="File suggestions"></div>
         <form id="composer" autocomplete="off">
           <button type="button" id="stop" class="composer-stop" title="Stop this run at its next step" hidden>■ Stop</button>
           <textarea id="prompt" rows="2" placeholder="Ask bough to do something…  (Enter to send, Shift+Enter for newline)"></textarea>

@@ -28,6 +28,7 @@ import bough_server/session_manager
 import bough_server/snapshots
 import bough_server/subagents
 import bough_server/workdiff
+import bough_server/workfiles
 import bough_server/worker_runtime
 import envoy
 import gleam/dynamic/decode
@@ -43,16 +44,11 @@ import gleam/string
 import simplifile
 import wisp.{type Request, type Response}
 
-// Per-provider default models, used when BOUGH_MODEL is unset.
-const default_anthropic_model = "claude-haiku-4-5-20251001"
-
-const default_openai_model = "gpt-4o"
+const default_model = "claude-haiku-4-5-20251001"
 
 const default_openrouter_model = "z-ai/glm-5.2"
 
 const openrouter_base = "https://openrouter.ai/api/v1"
-
-const openai_base = "https://api.openai.com/v1"
 
 const default_max_turns = 20
 
@@ -97,6 +93,7 @@ pub fn handle_request(req: Request) -> Response {
     ["session", id, "control"], Post -> control_run(req, id)
     ["session", id, "subagents"], Get -> subagents_of(id)
     ["session", id, "diff"], Get -> session_diff(id)
+    ["session", id, "files"], Get -> session_files(id)
     ["session", id, "groups"], Get -> get_session_groups(id)
     ["session", id, "groups"], Post -> set_session_groups(req, id)
     ["session", id, "packs"], Post -> apply_packs(req, id)
@@ -566,13 +563,22 @@ fn engine_config(
   net_gate: Bool,
 ) -> engine.Config {
   let base = engine.default_config()
-  let worker_url =
-    worker_runtime.ensure(worker_port()) |> result.unwrap(base.worker_url)
+  // If the worker server can't be brought up, disable the worker outright
+  // rather than pointing every fix attempt at a dead URL — otherwise a failed
+  // step floods the run with "worker unavailable" notices. The supervisor then
+  // does its own fixes (engine gates the whole path on `worker`).
+  let #(worker, worker_url) = case worker_runtime.ensure(worker_port()) {
+    Ok(url) -> #(Some(worker_model()), url)
+    Error(reason) -> {
+      wisp.log_warning("worker disabled: " <> reason)
+      #(None, base.worker_url)
+    }
+  }
   let #(worker_temp, worker_top_p) = worker_decoding(base)
   engine.Config(
     ..base,
     provider: prov,
-    worker: Some(worker_model()),
+    worker: worker,
     worker_url: worker_url,
     max_rounds: max_rounds(),
     review: review,
@@ -625,62 +631,42 @@ fn net_credentials() -> List(#(String, String)) {
 
 /// The resolved supervisor provider name and model from the environment
 /// (no key required, so `/config` can report it before any run). Defaults to
-/// Anthropic / claude-haiku-4-5 (cheap to iterate against); set
-/// `BOUGH_PROVIDER=openrouter` for OpenRouter / z-ai/glm-5.2.
-/// Resolve the configured supervisor `#(provider_name, model)`.
-///
-/// `BOUGH_PROVIDER` is one of `anthropic` (default), `openai`, `openrouter`, or
-/// `custom` (any OpenAI-compatible endpoint via `BOUGH_BASE_URL`). `BOUGH_MODEL`
-/// names the model — any model the chosen provider serves — or a per-provider
-/// default if unset.
+/// OpenRouter / z-ai/glm-5.2; set `BOUGH_PROVIDER=anthropic` for
+/// Anthropic / claude-haiku-4-5.
 fn resolved_model() -> #(String, String) {
-  let name = envoy.get("BOUGH_PROVIDER") |> result.unwrap("anthropic")
-  let model =
-    envoy.get("BOUGH_MODEL") |> result.unwrap(default_model_for(name))
-  #(name, model)
-}
-
-fn default_model_for(name: String) -> String {
-  case name {
-    "openai" -> default_openai_model
-    "openrouter" -> default_openrouter_model
-    // anthropic, or custom (where the user is expected to set BOUGH_MODEL).
-    _ -> default_anthropic_model
+  case envoy.get("BOUGH_PROVIDER") {
+    Ok("anthropic") -> #(
+      "anthropic",
+      envoy.get("BOUGH_MODEL") |> result.unwrap(default_model),
+    )
+    _ -> #(
+      "openrouter",
+      envoy.get("BOUGH_MODEL") |> result.unwrap(default_openrouter_model),
+    )
   }
 }
 
 /// Pick the supervisor provider, API key, and model from the environment.
-/// Default is Anthropic (ANTHROPIC_API_KEY, model claude-haiku-4-5);
-/// `BOUGH_PROVIDER=openrouter` uses OpenRouter with OPENROUTER_API_KEY.
+/// Default is OpenRouter (OPENROUTER_API_KEY, model z-ai/glm-5.2);
+/// `BOUGH_PROVIDER=anthropic` uses Anthropic with ANTHROPIC_API_KEY.
 fn agent_setup() -> Result(#(provider.Provider, String, String), String) {
   let #(name, model) = resolved_model()
   case name {
-    "openai" -> with_key("OPENAI_API_KEY", provider.OpenAICompat(openai_base), model)
-    "openrouter" ->
-      with_key("OPENROUTER_API_KEY", provider.OpenAICompat(openrouter_base), model)
-    // Any OpenAI-compatible endpoint: bring your own base URL + key.
-    "custom" -> {
-      use base <- result.try(
-        envoy.get("BOUGH_BASE_URL")
-        |> result.replace_error(
-          "BOUGH_BASE_URL is not set (required for BOUGH_PROVIDER=custom)",
-        ),
+    "anthropic" -> {
+      use key <- result.try(
+        envoy.get("ANTHROPIC_API_KEY")
+        |> result.replace_error("ANTHROPIC_API_KEY is not set"),
       )
-      with_key("BOUGH_API_KEY", provider.OpenAICompat(base), model)
+      Ok(#(provider.Anthropic, key, model))
     }
-    _ -> with_key("ANTHROPIC_API_KEY", provider.Anthropic, model)
+    _ -> {
+      use key <- result.try(
+        envoy.get("OPENROUTER_API_KEY")
+        |> result.replace_error("OPENROUTER_API_KEY is not set"),
+      )
+      Ok(#(provider.OpenAICompat(openrouter_base), key, model))
+    }
   }
-}
-
-/// Read an API key from `env_var` and pair it with the resolved provider/model.
-fn with_key(
-  env_var: String,
-  prov: provider.Provider,
-  model: String,
-) -> Result(#(provider.Provider, String, String), String) {
-  envoy.get(env_var)
-  |> result.replace_error(env_var <> " is not set")
-  |> result.map(fn(key) { #(prov, key, model) })
 }
 
 /// Block the running engine until the human resolves a paused plan, polling the
@@ -740,6 +726,25 @@ fn session_diff(id: String) -> Response {
         ),
       )
     }
+  }
+}
+
+/// GET `/session/:id/files`: workspace-relative file paths for the composer's
+/// "@" file picker (git-tracked + untracked-not-ignored, or a `find` fallback).
+fn session_files(id: String) -> Response {
+  case session_manager.load(id) {
+    Error(_) -> wisp.not_found()
+    Ok(tree) ->
+      json_ok(
+        json.to_string(
+          json.object([
+            #(
+              "files",
+              json.array(workfiles.list_files(tree.project), json.string),
+            ),
+          ]),
+        ),
+      )
   }
 }
 
