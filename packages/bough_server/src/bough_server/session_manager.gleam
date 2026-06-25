@@ -37,7 +37,16 @@ fn path_for(d: String, id: String) -> String {
 
 pub fn save(tree: SessionTree) -> Result(Nil, StoreError) {
   use d <- result.try(dir())
-  simplifile.write(path_for(d, tree.id), session.to_jsonl(tree))
+  // Write-temp-then-rename so a concurrent reader (another branch's run) never
+  // sees a half-written file: rename is atomic, so a load gets either the old
+  // or the new complete tree, never a truncated one.
+  let target = path_for(d, tree.id)
+  let tmp = target <> ".tmp"
+  use _ <- result.try(
+    simplifile.write(tmp, session.to_jsonl(tree))
+    |> result.map_error(fn(e) { Io(string.inspect(e)) }),
+  )
+  simplifile.rename(tmp, target)
   |> result.map_error(fn(e) { Io(string.inspect(e)) })
 }
 

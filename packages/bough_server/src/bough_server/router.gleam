@@ -24,6 +24,7 @@ import bough_server/packs
 import bough_server/nono_bridge
 import bough_server/provider
 import bough_server/run_store
+import bough_server/session_lock
 import bough_server/session_manager
 import bough_server/snapshots
 import bough_server/subagents
@@ -483,7 +484,9 @@ fn persist_entry(tree: SessionTree, er: EntryReq) -> Response {
       timestamp: clock.now_ms(),
       grafted_from: None,
     )
-  case session_manager.save(session.append(tree, entry)) {
+  // Append under the session lock so concurrent appends (e.g. parallel branch
+  // runs) serialize against the freshest tree instead of clobbering each other.
+  case session_lock.mutate(tree.id, fn(fresh) { session.append(fresh, entry) }) {
     Ok(_) -> created(json.to_string(session.entry_to_json(entry)))
     Error(_) -> wisp.internal_server_error()
   }
