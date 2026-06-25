@@ -992,7 +992,7 @@ pub fn actions_summary(steps: List(agent.Step)) -> Option(String) {
           let line = verb <> target <> " (exit " <> int.to_string(exit) <> ")"
           #([line, ..lines], "")
         }
-        agent.StepWorker(_command, exit) -> #(
+        agent.StepWorker(_brief, _command, exit) -> #(
           ["worker fix (exit " <> int.to_string(exit) <> ")", ..lines],
           arg,
         )

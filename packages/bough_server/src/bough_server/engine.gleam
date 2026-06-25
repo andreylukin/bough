@@ -913,7 +913,9 @@ fn fix_loop(
             None -> #(state, result, fixes)
             Some(cmd) -> {
               let #(state, retry) = exec_run(state, cmd)
-              let state = emit_activity(state, StepWorker(cmd, retry.exit))
+              // Carry the brief the worker was handed (the failing step + its
+              // error), so the UI can show the plan, not just the fix command.
+              let state = emit_activity(state, StepWorker(prompt, cmd, retry.exit))
               // Keep the retry if it fixed things or at least changed the
               // failure mode; otherwise keep the original result.
               let result = case retry.exit == 0 || retry.exit != result.exit {

@@ -31,8 +31,10 @@ pub type Step {
   StepCall(verb: String, arg: String, detail: String)
   /// A harness step's result: its exit code and an output digest.
   StepExec(verb: String, exit: Int, digest: String)
-  /// A local-worker fix attempt: the command it ran and that command's exit.
-  StepWorker(command: String, exit: Int)
+  /// A local-worker fix attempt: `brief` is what the supervisor handed the
+  /// worker (the failing step + its error — the "plan"), `command` is the fix
+  /// the worker proposed, `exit` is that command's exit code.
+  StepWorker(brief: String, command: String, exit: Int)
   /// The deterministic CHECK result (ground truth for completion).
   StepCheck(ok: Bool, digest: String)
   /// An adversarial-review event before `DONE` is accepted.
@@ -314,9 +316,10 @@ pub fn step_to_json(step: Step) -> json.Json {
         #("exit", json.int(exit)),
         #("digest", json.string(digest)),
       ])
-    StepWorker(command, exit) ->
+    StepWorker(brief, command, exit) ->
       json.object([
         #("type", json.string("worker")),
+        #("brief", json.string(brief)),
         #("command", json.string(command)),
         #("exit", json.int(exit)),
       ])
