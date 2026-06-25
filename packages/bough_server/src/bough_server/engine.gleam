@@ -30,6 +30,7 @@ import bough_server/net_profile
 import bough_server/nono_bridge
 import bough_server/prompts
 import bough_server/provider
+import bough_server/skills
 import bough_server/tool_steps
 import bough_server/tools
 import bough_server/worker
@@ -174,6 +175,9 @@ type State {
     steps_done: Int,
     // Project instructions (AGENTS.md), read once at run start.
     instructions: Option(String),
+    // Instructions from any `/<skill>` the run's message invoked, appended to
+    // the system prompt for this run. Empty when none named.
+    skills: String,
     // A plain-language summary of this run's sandbox reach (network posture,
     // enabled capability groups, filesystem limits), built once at run start
     // and injected into the supervisor's system prompt so it reasons about what
@@ -242,6 +246,7 @@ pub fn run_streaming(
       reviewed: False,
       steps_done: 0,
       instructions: read_agents_md(workspace),
+      skills: skills.active_for(user_prompt),
       capabilities: capabilities_summary(config, net_allow, groups),
       net_allow: net_allow,
       groups: groups,
@@ -1299,6 +1304,7 @@ fn supervisor_call(state: State) -> Result(provider.Response, String) {
       state.workspace,
       state.instructions,
       state.capabilities,
+      state.skills,
     ),
     state.convo,
     // The supervisor acts only through the run_steps tool (§5.2).
