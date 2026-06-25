@@ -1169,7 +1169,7 @@ function renderMap() {
     (tree.project || "").split("/").filter(Boolean).pop() + " · " + tree.entries.length + " nodes";
   $("#mapview .map-hint").innerHTML = state.graftRoot
     ? `grafting — click a parent for <b>${esc(clip(nodeLabel(state.graftRoot), 22))}</b>`
-    : `drag to pan · scroll to zoom · click a turn to jump to it · ▸ expands its tool calls · ⑂ to fork/graft`;
+    : `drag to pan · scroll to zoom · click a turn to jump · a branch tip ● to switch · ▸ steps · ⑂ fork/graft`;
   $("#mapview #map-sup").checked = !!state.mapShowSuperseded;
 
   const { vnodes, vchildren } = visibleGraph(tree, state.mapShowSuperseded);
@@ -1207,8 +1207,10 @@ function renderMap() {
   world.querySelectorAll(".map-node, .mnode-steps").forEach((n) => n.remove());
   for (const [id, obj] of vnodes) {
     const p = pos.get(id), e = obj.entry;
+    const isTip = !((vchildren.get(id) || []).length);
     const node = el("div", "map-node" +
       (id === tree.active_leaf ? " leaf" : "") +
+      (isTip ? " tip" : "") +
       (activeIds.has(id) ? " onpath" : "") +
       (id === state.graftRoot ? " graftroot" : "") +
       (e.grafted_from ? " grafted" : ""));
@@ -1216,7 +1218,8 @@ function renderMap() {
     node.innerHTML =
       `<span class="role ${esc(e.role)}">${e.role === "user" ? "you" : "bgh"}</span>` +
       (e.grafted_from ? `<span class="gmark" title="grafted from another branch">↪</span>` : "") +
-      `<span class="snippet">${esc(clip(e.content, 64))}</span>`;
+      `<span class="snippet">${esc(clip(e.content, 64))}</span>` +
+      (isTip ? `<span class="tipdot" title="branch tip">●</span>` : "");
 
     // Hover action: open the inspector (fork / graft) without firing a jump.
     const insp = el("button", "mnode-act", "⑂");
@@ -1234,9 +1237,12 @@ function renderMap() {
       node.appendChild(exp);
     }
 
-    node.onclick = () => {
+    node.onclick = async () => {
       if (state.graftRoot && state.graftRoot !== id) graftOnto(id);
       else if (activeIds.has(id)) jumpToEntry(id);
+      // A branch tip off the active path: single-click switches to it (parity
+      // with the sidebar). Interior off-path nodes still open the inspector.
+      else if (isTip) { await switchBranch(id); closeMap(); }
       else inspectNode(e);
     };
     world.appendChild(node);
