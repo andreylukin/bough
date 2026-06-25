@@ -73,6 +73,7 @@ const api = {
   fork: (id, entry_id) => jpost(`/session/${id}/fork`, { entry_id }),
   graft: (id, section_root, onto) => jpost(`/session/${id}/graft`, { section_root, onto }),
   label: (id, entry_id, label) => jpost(`/session/${id}/label`, { entry_id, label }),
+  adopt: (id, entry_id) => jpost(`/session/${id}/adopt`, { entry_id }),
   subagents: (id) => jget(`/session/${id}/subagents`),
   diff: (id) => jget(`/session/${id}/diff`),
   files: (id) => jget(`/session/${id}/files`),
@@ -756,13 +757,18 @@ function renderSidebar() {
   // One row per branch (live leaf), nested under the session you're viewing, so
   // forked conversations show side by side. Click to switch the active branch.
   const branchRow = (b) => {
-    const r = el("div", "branch-item" + (b.active ? " active" : "") + (b.named ? " named" : ""));
+    const r = el("div", "branch-item" + (b.active ? " active" : "") + (b.named ? " named" : "") + (b.trunk ? " trunk" : ""));
     r.dataset.act = "switch-branch";
     r.dataset.leaf = b.leafId;
+    // The trunk branch is on disk; others get an "adopt" button to bring their
+    // files into the project dir (and become trunk).
+    const tail = b.trunk
+      ? `<span class="btrunk" title="the project dir reflects this branch">trunk</span>`
+      : `<button class="badopt" data-act="adopt-branch" data-leaf="${esc(b.leafId)}" title="restore the project dir to this branch and make it trunk">adopt</button>`;
     r.innerHTML =
       `<span class="bconn">${b.active ? "●" : "○"}</span>` +
       `<span class="bname" title="double-click to rename">${esc(b.name)}</span>` +
-      `<span class="bmeta">${b.turns}</span>`;
+      `<span class="bmeta">${b.turns}</span>` + tail;
     // Double-click the name to rename the branch inline (Enter saves, Esc cancels).
     r.querySelector(".bname").ondblclick = (ev) => { ev.stopPropagation(); renameBranch(r, b); };
     return r;
@@ -1040,6 +1046,7 @@ function treeBranches(tree) {
       named: !!(n.entry.label || "").trim(),
       turns,
       active: activeIds.has(n.id),
+      trunk: n.id === tree.trunk_leaf,
     };
   });
   branches.sort((a, b) => (a.active === b.active ? 0 : a.active ? -1 : 1));
@@ -1051,6 +1058,19 @@ function treeBranches(tree) {
 async function switchBranch(leafId) {
   if (!leafId || !state.tree || leafId === state.tree.active_leaf) return;
   await forkNode(leafId);
+}
+
+// Adopt a branch as trunk: restore the project dir to it and move the trunk
+// pointer. The one place the working tree changes on purpose.
+async function adoptBranch(leafId) {
+  if (!leafId || !state.tree || leafId === state.tree.trunk_leaf) return;
+  try {
+    state.tree = await api.adopt(state.sessionId, leafId);
+    state.run = await api.run(state.sessionId).catch(() => state.run);
+    state.diff = null;
+    toast("adopted to trunk");
+    render();
+  } catch (e) { toast(String(e.message || e), true); }
 }
 
 // Inline-rename a branch: swap its name for an input (Enter saves via the label
@@ -2265,6 +2285,7 @@ function wire() {
       case "pack-save-current": savePackCurrent(); break;
       case "open-session": openSession(id); break;
       case "switch-branch": switchBranch(t.dataset.leaf); break;
+      case "adopt-branch": adoptBranch(t.dataset.leaf); break;
       case "open-child": openChild(id); break;
       case "back-parent": backToParent(); break;
       case "graft-cancel": state.graftRoot = null; renderRight(); break;

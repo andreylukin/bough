@@ -52,6 +52,12 @@ pub type SessionTree {
     project: String,
     entries: List(Entry),
     active_leaf: Option(String),
+    /// Which branch tip the real `project` working dir currently reflects.
+    /// Decoupled from `active_leaf` (what you're *viewing*) so switching a
+    /// branch no longer rewrites the filesystem — only an explicit *adopt*
+    /// moves trunk. A run on the trunk branch acts on `project` and advances
+    /// this; a run on any other branch acts on an isolated worktree.
+    trunk_leaf: Option(String),
     /// Hosts the human has approved for the agent's sandboxed commands — the
     /// network allowlist, which grows as requests are approved (SPEC.md §7).
     allow_domains: List(String),
@@ -74,6 +80,7 @@ pub fn new(id: String, project: String) -> SessionTree {
     project: project,
     entries: [],
     active_leaf: None,
+    trunk_leaf: None,
     allow_domains: [],
     groups: [],
     suggested: [],
@@ -129,6 +136,12 @@ fn walk_up(tree: SessionTree, id: String, acc: List(Entry)) -> List(Entry) {
 /// `/fork` (SPEC.md §4).
 pub fn set_leaf(tree: SessionTree, id: String) -> SessionTree {
   SessionTree(..tree, active_leaf: Some(id))
+}
+
+/// Point trunk (the working-dir branch) at a leaf — the conversation half of
+/// *adopt*. The caller restores the filesystem to that leaf's snapshot.
+pub fn set_trunk(tree: SessionTree, id: String) -> SessionTree {
+  SessionTree(..tree, trunk_leaf: Some(id))
 }
 
 /// Set (or clear, with "") a node's human label — used to name a branch by its
@@ -431,6 +444,7 @@ pub fn tree_to_json(tree: SessionTree) -> json.Json {
     #("id", json.string(tree.id)),
     #("project", json.string(tree.project)),
     #("active_leaf", json.nullable(tree.active_leaf, json.string)),
+    #("trunk_leaf", json.nullable(tree.trunk_leaf, json.string)),
     #("allow_domains", json.array(tree.allow_domains, json.string)),
     #("groups", json.array(tree.groups, json.string)),
     #("suggested", json.array(tree.suggested, json.string)),
@@ -446,6 +460,7 @@ type Meta {
     id: String,
     project: String,
     active_leaf: Option(String),
+    trunk_leaf: Option(String),
     allow_domains: List(String),
     groups: List(String),
     suggested: List(String),
@@ -457,6 +472,7 @@ fn meta_to_json(tree: SessionTree) -> json.Json {
     #("id", json.string(tree.id)),
     #("project", json.string(tree.project)),
     #("active_leaf", json.nullable(tree.active_leaf, json.string)),
+    #("trunk_leaf", json.nullable(tree.trunk_leaf, json.string)),
     #("allow_domains", json.array(tree.allow_domains, json.string)),
     #("groups", json.array(tree.groups, json.string)),
     #("suggested", json.array(tree.suggested, json.string)),
@@ -467,6 +483,13 @@ fn meta_decoder() -> decode.Decoder(Meta) {
   use id <- decode.field("id", decode.string)
   use project <- decode.field("project", decode.string)
   use active_leaf <- decode.field("active_leaf", decode.optional(decode.string))
+  // Legacy files predate the trunk pointer — default None; session_manager
+  // migrates it to active_leaf on load (they were in lockstep before).
+  use trunk_leaf <- decode.optional_field(
+    "trunk_leaf",
+    None,
+    decode.optional(decode.string),
+  )
   // Older session files predate the allowlist — default to empty.
   use allow_domains <- decode.optional_field(
     "allow_domains",
@@ -484,6 +507,7 @@ fn meta_decoder() -> decode.Decoder(Meta) {
     id: id,
     project: project,
     active_leaf: active_leaf,
+    trunk_leaf: trunk_leaf,
     allow_domains: allow_domains,
     groups: groups,
     suggested: suggested,
@@ -526,6 +550,7 @@ pub fn from_jsonl(contents: String) -> Result(SessionTree, String) {
         project: meta.project,
         entries: list.reverse(entries),
         active_leaf: meta.active_leaf,
+        trunk_leaf: meta.trunk_leaf,
         allow_domains: meta.allow_domains,
         groups: meta.groups,
         suggested: meta.suggested,
