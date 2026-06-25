@@ -5,6 +5,7 @@
 //// remote endpoint.
 
 import gleam/dynamic/decode
+import gleam/erlang/process
 import gleam/http.{Post}
 import gleam/http/request
 import gleam/http/response
@@ -68,12 +69,34 @@ pub fn complete_with(
     |> request.set_header("content-type", "application/json")
     |> request.set_body(body)
 
+  send_with_retry(req, 4)
+}
+
+/// A just-spawned worker can refuse the connection for a beat, and the bundled
+/// llama-server answers 503 while it loads the model — both transient and clear
+/// on their own. Retry a few times with a short pause before giving up, so a
+/// cold worker doesn't turn every failed step into "worker unavailable".
+fn send_with_retry(
+  req: request.Request(String),
+  attempts: Int,
+) -> Result(String, String) {
   case httpc.send(req) {
-    Error(e) -> Error("worker http error: " <> string.inspect(e))
     Ok(response.Response(status: 200, body: b, ..)) -> parse(b)
+    Error(_) if attempts > 1 -> retry_after(req, attempts)
+    Ok(response.Response(status: 503, ..)) if attempts > 1 ->
+      retry_after(req, attempts)
+    Error(e) -> Error("worker http error: " <> string.inspect(e))
     Ok(response.Response(status: code, body: b, ..)) ->
       Error("worker " <> int.to_string(code) <> ": " <> b)
   }
+}
+
+fn retry_after(
+  req: request.Request(String),
+  attempts: Int,
+) -> Result(String, String) {
+  process.sleep(500)
+  send_with_retry(req, attempts - 1)
 }
 
 fn msg(role: String, content: String) -> json.Json {
