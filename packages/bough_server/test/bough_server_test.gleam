@@ -3,13 +3,15 @@ import bough_core/nono.{Allow, AuditEvent, Deny, Group, Snapshot}
 import bough_core/session
 import bough_server/agent
 import bough_server/control
-import bough_server/credentials
 import bough_server/engine
 import bough_server/router
 import bough_server/json_value
 import bough_server/net_profile
 import bough_server/nono_bridge
+import bough_server/providers
+import bough_server/seatbelt
 import bough_server/snapshots
+import gleam/dict
 import gleam/json
 import gleam/list
 import gleam/option.{None, Some}
@@ -193,6 +195,8 @@ pub fn net_profile_unions_paths_test() {
       [],
       [],
       [],
+      [],
+      [],
     ))
   // Both path globs present under the one host, as endpoint rules.
   assert string.contains(j, "/v1/**")
@@ -218,6 +222,8 @@ pub fn net_profile_credentials_test() {
       [],
       [],
       [#("github_token", "GITHUB_TOKEN")],
+      [],
+      [],
     ))
   assert string.contains(j, "\"env_credentials\"")
   assert string.contains(j, "\"github_token\":\"GITHUB_TOKEN\"")
@@ -240,17 +246,17 @@ pub fn parse_credentials_test() {
 /// user's config). With `block`, the network section denies all outbound; the
 /// allowlist form is reserved for the net-gate-on path.
 pub fn net_profile_base_grants_test() {
-  let blocked = json.to_string(net_profile.build([], True, [], [], []))
+  let blocked = json.to_string(net_profile.build([], True, [], [], [], [], []))
   assert string.contains(blocked, "\"git_config\"")
   assert string.contains(blocked, "\"block\":true")
 
-  let open = json.to_string(net_profile.build([], False, [], [], []))
+  let open = json.to_string(net_profile.build([], False, [], [], [], [], []))
   assert string.contains(open, "\"git_config\"")
   assert string.contains(open, "allow_domain")
 
   // Session-enabled groups layer on top of the always-on git_config.
   let with_groups =
-    json.to_string(net_profile.build([], True, ["user_caches_macos"], [], []))
+    json.to_string(net_profile.build([], True, ["user_caches_macos"], [], [], [], []))
   assert string.contains(with_groups, "\"git_config\"")
   assert string.contains(with_groups, "\"user_caches_macos\"")
 }
@@ -259,30 +265,94 @@ pub fn net_profile_base_grants_test() {
 /// grants read and bypasses any deny group covering them (so a path under
 /// nono's locked `deny_credentials`, e.g. `~/.aws`, becomes readable).
 pub fn net_profile_credential_filesystem_test() {
-  let j = json.to_string(net_profile.build([], False, [], ["~/.aws"], []))
+  let j = json.to_string(net_profile.build([], False, [], ["~/.aws"], [], [], []))
   assert string.contains(j, "\"filesystem\"")
   assert string.contains(j, "\"read\":[\"~/.aws\"]")
   assert string.contains(j, "\"bypass_protection\":[\"~/.aws\"]")
   // No filesystem section when no credential paths are granted.
   assert !string.contains(
-    json.to_string(net_profile.build([], False, [], [], [])),
+    json.to_string(net_profile.build([], False, [], [], [], [], [])),
     "filesystem",
   )
 }
 
-/// A denied credential path resolves to its capability name (so the gate can
-/// offer it), and capability names partition into nono groups vs credentials.
-pub fn credentials_catalog_test() {
-  let home = "/Users/x"
-  assert credentials.for_paths(["/Users/x/.aws/config"], home) == ["aws"]
-  assert credentials.for_paths(["/Users/x/.config/gh/hosts.yml"], home)
-    == ["github"]
-  assert credentials.for_paths(["/Users/x/src/main.rs"], home) == []
+/// The Seatbelt profile is allow-default reads minus the credential denylist
+/// (~-expanded; absolute entries preserved) and deny-default writes except the
+/// workspace + allowlist.
+pub fn seatbelt_profile_test() {
+  let p = seatbelt.build("/work/space", "/Users/x")
+  assert string.contains(p, "(allow default)")
+  assert string.contains(p, "(deny file-read*")
+  assert string.contains(p, "(subpath \"/Users/x/.ssh\")")
+  assert string.contains(p, "(subpath \"/Users/x/Library/Keychains\")")
+  // absolute (non-~) denylist entry preserved verbatim
+  assert string.contains(p, "(subpath \"/Library/Keychains\")")
+  // write-confinement: deny by default, workspace allowed
+  assert string.contains(p, "(deny file-write*)")
+  assert string.contains(p, "(subpath \"/work/space\")")
+}
 
-  let #(groups, creds) =
-    credentials.partition(["git_config", "github", "rust_runtime"])
-  assert groups == ["rust_runtime", "git_config"]
-  assert list.map(creds, fn(c) { c.name }) == ["github"]
+/// `parse_env` reads KEY=VALUE lines, trims keys, and skips blanks/non-pairs.
+pub fn providers_parse_env_test() {
+  let kv = providers.parse_env("TOKEN=abc123\n\n  FOO =bar\nnotpair")
+  assert dict.get(kv, "TOKEN") == Ok("abc123")
+  assert dict.get(kv, "FOO") == Ok("bar")
+  assert dict.size(kv) == 2
+}
+
+/// An egress provider runs prepare, sets the secret in bough's env (so nono
+/// reads it outside the sandbox), and enables nono's managed `service` route —
+/// no env var is forwarded into the sandbox.
+pub fn providers_apply_egress_test() {
+  let p =
+    providers.Provider(
+      name: "ghx",
+      description: "",
+      allow: ["github.com", "api.github.com"],
+      reads: [],
+      prepare: "",
+      mode: providers.Egress,
+      service: "github",
+    )
+  let app =
+    providers.apply_list([p], fn(_cmd) { Ok("GITHUB_TOKEN=ghp_secret") }, fn(
+      _k,
+      _v,
+    ) {
+      Nil
+    })
+  assert app.services == ["github"]
+  assert list.contains(app.allow, "api.github.com")
+  assert app.env_allow == []
+}
+
+/// An aws (env) provider forwards the prepared KEY names into the sandbox via
+/// allow_vars and enables no managed route.
+pub fn providers_apply_env_test() {
+  let app =
+    providers.apply(
+      ["aws"],
+      fn(_cmd) { Ok("AWS_ACCESS_KEY_ID=AK\nAWS_SECRET_ACCESS_KEY=SK") },
+      fn(_k, _v) { Nil },
+    )
+  assert app.services == []
+  assert list.contains(app.env_allow, "AWS_ACCESS_KEY_ID")
+  assert list.contains(app.env_allow, "AWS_SECRET_ACCESS_KEY")
+  assert list.contains(app.allow, "sts.amazonaws.com")
+}
+
+/// A managed egress service renders nono's network.credentials; env-mode
+/// forwarding renders environment.allow_vars.
+pub fn net_profile_services_test() {
+  let j =
+    json.to_string(net_profile.build([], False, [], [], [], ["github"], []))
+  assert string.contains(j, "\"credentials\":[\"github\"]")
+
+  let e =
+    json.to_string(net_profile.build([], False, [], [], [], [], [
+      "AWS_ACCESS_KEY_ID",
+    ]))
+  assert string.contains(e, "\"allow_vars\":[\"AWS_ACCESS_KEY_ID\"]")
 }
 
 /// The capability suggester parses denied filesystem paths out of command

@@ -1,0 +1,105 @@
+//// Generate a macOS Seatbelt (`sandbox-exec`) profile that replaces nono's
+//// filesystem/process sandbox for code-mode `bash` (SPEC §6). macOS-only.
+////
+//// Policy: allow-default reads MINUS a curated credential/secret/private
+//// denylist (ported verbatim from nono's locked deny groups), and deny-default
+//// writes EXCEPT the workspace plus a curated allowlist (temp, caches,
+//// toolchain dirs). The network is intentionally NOT restricted here — egress
+//// is owned by the mitmproxy layer (a later phase); this module is the
+//// filesystem/process half only.
+
+import gleam/list
+import gleam/string
+import simplifile
+
+/// Credential / secret / private paths denied for reading — ported from nono's
+/// locked groups (deny_credentials, deny_keychains_macos, deny_browser_data,
+/// deny_shell_configs, deny_shell_history, deny_macos_private). `~` expands to
+/// `$HOME` at generation time; `/`-rooted entries are absolute.
+const deny_reads = [
+  // credentials
+  "~/.ssh", "~/.gnupg", "~/.aws", "~/.azure", "~/.config/gcloud", "~/.gcloud",
+  "~/.kube", "~/.docker", "~/.git-credentials", "~/.netrc", "~/.npmrc",
+  "~/.vault-token", "~/.credentials", "~/.secrets", "~/.keys", "~/.pki",
+  "~/.terraform.d", "~/.config/op", "~/.password-store", "~/.1password",
+  // keychains / password stores
+  "~/Library/Keychains", "/Library/Keychains",
+  "~/Library/Containers/com.1password.1password",
+  "~/Library/Group Containers/2BUA8C4S2C.com.1password",
+  // shell configs (may embed secrets) + history
+  "~/.zshrc", "~/.zshenv", "~/.zprofile", "~/.zlogin", "~/.zlogout", "~/.bashrc",
+  "~/.bash_profile", "~/.bash_login", "~/.bash_logout", "~/.profile",
+  "~/.config/fish", "~/.env", "~/.envrc", "~/.bash_history", "~/.zsh_history",
+  "~/.history", "~/.python_history",
+  // browser data
+  "~/Library/Application Support/1Password",
+  "~/Library/Application Support/Arc",
+  "~/Library/Application Support/BraveSoftware",
+  "~/Library/Application Support/Chromium",
+  "~/Library/Application Support/com.operasoftware.Opera",
+  "~/Library/Application Support/Firefox",
+  "~/Library/Application Support/Google/Chrome",
+  "~/Library/Application Support/Microsoft Edge",
+  "~/Library/Application Support/MobileSync",
+  "~/Library/Application Support/Vivaldi", "~/Library/Safari",
+  "~/Library/Containers/com.apple.Safari",
+  // macOS private data
+  "~/Library/Messages", "~/Library/Mail", "~/Library/Cookies",
+]
+
+/// Dirs outside the workspace that toolchains legitimately write to (caches,
+/// temp). Without these, cargo/npm/go/etc. break under write-confinement.
+const write_allow = [
+  "/private/tmp", "/private/var/folders", "/tmp", "~/.cache", "~/.cargo",
+  "~/.rustup", "~/.npm", "~/.node-gyp", "~/.gradle", "~/.m2", "~/go/pkg",
+  "~/.cocoapods", "~/Library/Caches", "~/.deno", "~/.bun",
+]
+
+/// Device files processes need to write (null sink, ptys, pipes).
+const dev_writes = "(literal \"/dev/null\") (literal \"/dev/zero\")"
+  <> " (literal \"/dev/random\") (literal \"/dev/urandom\")"
+  <> " (regex #\"^/dev/tty\") (regex #\"^/dev/fd/\") (regex #\"^/dev/stdout\")"
+
+/// Write the generated profile to `path`, returning it. `workspace` is the
+/// read-write root; `home` expands `~` in the policy lists.
+pub fn write(path: String, workspace: String, home: String) -> Result(String, Nil) {
+  case simplifile.write(path, build(workspace, home)) {
+    Ok(_) -> Ok(path)
+    Error(_) -> Error(Nil)
+  }
+}
+
+/// Pure: the Seatbelt profile text (SBPL).
+pub fn build(workspace: String, home: String) -> String {
+  let denies =
+    deny_reads
+    |> list.map(fn(p) { subpath(expand(p, home)) })
+    |> string.join("\n  ")
+  let allows =
+    [workspace, ..list.map(write_allow, fn(p) { expand(p, home) })]
+    |> list.map(subpath)
+    |> string.join("\n  ")
+  "(version 1)\n(allow default)\n\n"
+  <> ";; deny reads of credential/secret/private paths (ported from nono)\n"
+  <> "(deny file-read*\n  "
+  <> denies
+  <> ")\n\n"
+  <> ";; confine writes to the workspace + a curated allowlist\n"
+  <> "(deny file-write*)\n"
+  <> "(allow file-write*\n  "
+  <> allows
+  <> "\n  "
+  <> dev_writes
+  <> ")\n"
+}
+
+fn subpath(p: String) -> String {
+  "(subpath \"" <> p <> "\")"
+}
+
+fn expand(p: String, home: String) -> String {
+  case string.starts_with(p, "~") {
+    True -> home <> string.drop_start(p, 1)
+    False -> p
+  }
+}

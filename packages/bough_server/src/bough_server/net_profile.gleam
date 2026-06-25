@@ -23,8 +23,10 @@ import simplifile
 /// Write the profile for `rules` (and any injected `credentials`) to `path`,
 /// returning it. `block` denies the network entirely (net gate off); otherwise
 /// it's limited to `rules`. `groups` are the session's enabled capability groups,
-/// layered on the always-on `git_config`. Errors are non-fatal to the caller (it
-/// falls back to blocking the run).
+/// layered on the always-on `git_config`. `services` are nono's built-in
+/// managed-credential routes to enable (egress injection — the secret never
+/// enters the sandbox). Errors are non-fatal to the caller (it falls back to
+/// blocking the run).
 pub fn write(
   path: String,
   rules: List(String),
@@ -32,12 +34,22 @@ pub fn write(
   groups: List(String),
   reads: List(String),
   credentials: List(#(String, String)),
+  services: List(String),
+  env_allow: List(String),
 ) -> Result(String, Nil) {
   let _ = simplifile.create_directory_all(dirname(path))
   case
     simplifile.write(
       path,
-      json.to_string(build(rules, block, groups, reads, credentials)),
+      json.to_string(build(
+        rules,
+        block,
+        groups,
+        reads,
+        credentials,
+        services,
+        env_allow,
+      )),
     )
   {
     Ok(_) -> Ok(path)
@@ -60,6 +72,8 @@ pub fn build(
   groups: List(String),
   reads: List(String),
   credentials: List(#(String, String)),
+  services: List(String),
+  env_allow: List(String),
 ) -> json.Json {
   let include =
     ["git_config", ..groups]
@@ -73,17 +87,31 @@ pub fn build(
       ]),
     ),
     #("groups", json.object([#("include", json.array(include, json.string))])),
-    #("network", network(rules, block)),
+    // network.credentials (managed egress routes) nests under `network`.
+    #("network", network(rules, block, services)),
   ]
   let base = case reads {
     [] -> base
     paths -> list.append(base, [#("filesystem", filesystem(paths))])
   }
-  json.object(case credentials {
+  let base = case credentials {
     [] -> base
     creds ->
       list.append(base, [#("env_credentials", credentials_object(creds))])
-  })
+  }
+  // Forward env-mode vars into the sandbox (allow_vars). Managed egress routes
+  // keep their secret out of the sandbox at the proxy, so no deny is needed.
+  let base = case env_allow {
+    [] -> base
+    vars ->
+      list.append(base, [
+        #(
+          "environment",
+          json.object([#("allow_vars", json.array(vars, json.string))]),
+        ),
+      ])
+  }
+  json.object(base)
 }
 
 /// Grant read of `paths` and exempt them from any deny group (`bypass_protection`
@@ -100,15 +128,24 @@ fn filesystem(paths: List(String)) -> json.Json {
 /// The network section: blocked outright, or default-deny against the allow
 /// rules (the sentinel keeps the allowlist non-empty so filtering engages even
 /// when no host is approved yet).
-fn network(rules: List(String), block: Bool) -> json.Json {
+fn network(
+  rules: List(String),
+  block: Bool,
+  services: List(String),
+) -> json.Json {
+  let cred = case services {
+    [] -> []
+    _ -> [#("credentials", json.array(services, json.string))]
+  }
   case block {
-    True -> json.object([#("block", json.bool(True))])
+    True -> json.object([#("block", json.bool(True)), ..cred])
     False ->
       json.object([
         #(
           "allow_domain",
           json.preprocessed_array([json.string(sentinel), ..entries(rules)]),
         ),
+        ..cred
       ])
   }
 }

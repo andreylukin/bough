@@ -622,11 +622,11 @@ fn worker_decoding(base: engine.Config) -> #(Option(Float), Option(Float)) {
   )
 }
 
-/// The network leash is opt-in: with `BOUGH_NET=1`, the agent's commands get
-/// default-deny network with per-host approval; otherwise the network is fully
-/// blocked, as before.
+/// The network sandbox is always-on: every run gets default-deny egress with
+/// per-host approval — nothing leaves unless it's on the allowlist. `BOUGH_NET=0`
+/// is the escape hatch that fully blocks the network instead (no prompts).
 fn net_gate() -> Bool {
-  envoy.get("BOUGH_NET") |> result.is_ok
+  envoy.get("BOUGH_NET") != Ok("0")
 }
 
 /// Opt-in credential injection for sandboxed commands (SPEC §6.4): set

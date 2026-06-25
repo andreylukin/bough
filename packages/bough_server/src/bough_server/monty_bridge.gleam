@@ -83,7 +83,7 @@ fn run_bare(
   profile: Option(String),
 ) -> #(Int, String) {
   let profile_args = case profile {
-    Some(path) -> ["--nono-profile", path]
+    Some(path) -> ["--seatbelt-profile", path]
     None -> []
   }
   case

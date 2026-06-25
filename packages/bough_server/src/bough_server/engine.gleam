@@ -23,7 +23,6 @@ import bough_server/agent.{
 }
 import bough_server/clock
 import bough_server/control
-import bough_server/credentials
 import bough_server/integrity
 import bough_server/json_value.{type JsonValue}
 import bough_server/monty_bridge
@@ -31,6 +30,8 @@ import bough_server/net_profile
 import bough_server/nono_bridge
 import bough_server/prompts
 import bough_server/provider
+import bough_server/providers
+import bough_server/seatbelt
 import bough_server/skills
 import bough_server/tool_steps
 import bough_server/tools
@@ -43,6 +44,7 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
+import shellout
 import simplifile
 
 pub type Config {
@@ -188,6 +190,9 @@ type State {
     net_allow: List(String),
     // Session-enabled nono capability groups, layered into the run's profile.
     groups: List(String),
+    // Provider pieces (egress creds, env vars, allow hosts), prepared once at
+    // run start from the enabled providers in `groups`.
+    applied: providers.Applied,
     // Groups the worker suggested enabling after a denial this run (advisory).
     suggested: List(String),
     // Where the generated nono network profile for this run is written.
@@ -251,6 +256,7 @@ pub fn run_streaming(
       capabilities: capabilities_summary(config, net_allow, groups),
       net_allow: net_allow,
       groups: groups,
+      applied: providers.apply(groups, run_prepare, envoy.set),
       suggested: suggested,
       net_profile_path: dir <> "/net.json",
       activities: [],
@@ -711,14 +717,9 @@ fn candidate_groups(state: State, step: Step, result: Exec) -> List(String) {
   let targets =
     list.append(step_paths(step), denied_paths(result.output))
     |> list.unique
-  let home = envoy.get("HOME") |> result.unwrap("")
   let deterministic = case targets {
     [] -> []
-    _ ->
-      list.append(
-        nono_bridge.groups_for_paths(targets),
-        credentials.for_paths(targets, home),
-      )
+    _ -> nono_bridge.groups_for_paths(targets)
   }
   list.append(deterministic, suggester_worker(state, result, targets))
   |> list.unique
@@ -974,12 +975,18 @@ fn apply(state: State, step: Step) -> #(State, Exec) {
 /// egress events only on finalization (10+s later), so there's no timely,
 /// per-command signal to surface or gate on — they remain RUN-path features.
 fn exec_code(state: State, code: String) -> #(State, Exec) {
-  // Scope the sidecar's `bash` with the session profile (capability groups +
-  // net leash). Without it, enabling a group never reaches code-mode (SPEC §7).
-  let block = !state.config.net_gate
-  let profile = option.from_result(write_net_profile(state, block))
+  // Sandbox the sidecar's `bash` with a generated macOS Seatbelt profile (the
+  // filesystem half of the sandbox; egress is owned by the proxy layer).
+  let profile = option.from_result(write_seatbelt_profile(state))
   let #(exit, output) = monty_bridge.run_code(state.workspace, code, profile)
   #(bump(state), Exec(exit, output))
+}
+
+/// Write the run's Seatbelt profile (sibling of the net profile in the run dir).
+fn write_seatbelt_profile(state: State) -> Result(String, Nil) {
+  let path = string.replace(state.net_profile_path, "net.json", "sandbox.sb")
+  let home = envoy.get("HOME") |> result.unwrap("")
+  seatbelt.write(path, state.workspace, home)
 }
 
 /// Cap on the approve→retry loop for one command, so a never-matching rule
@@ -1396,15 +1403,15 @@ fn capabilities_summary(
     }
   }
 
-  // Enabled capabilities, with nono's (or the credential catalog's) descriptions.
+  // Enabled capabilities, with nono's (or a provider's) descriptions.
   let catalog = nono_bridge.list_groups()
   let group_lines =
     list.map(groups, fn(name) {
       case list.find(catalog, fn(g) { g.name == name }) {
         Ok(g) -> name <> " — " <> g.description
         Error(_) ->
-          case credentials.get(name) {
-            Ok(c) -> name <> " — " <> c.description
+          case providers.get(name) {
+            Ok(p) -> name <> " — " <> p.description
             Error(_) -> name
           }
       }
@@ -1414,29 +1421,18 @@ fn capabilities_summary(
     _ -> string.join(group_lines, "; ")
   }
 
-  // Granted credential capabilities open specific paths the blanket deny would
-  // otherwise cover — tell the model so it actually uses them (e.g. `gh`).
-  let #(_, creds) = credentials.partition(groups)
-  let creds_note = case creds {
-    [] -> ""
-    _ ->
-      " EXCEPTION: you have been granted these credential capabilities, so their paths ARE readable and usable: "
-      <> {
-        creds
-        |> list.map(fn(c) {
-          c.name <> " (" <> string.join(c.paths, ", ") <> ")"
-        })
-        |> string.join("; ")
-      }
-      <> case list.any(creds, fn(c) { c.name == "github" }) {
-        True ->
-          " — so `gh` (e.g. `gh pr create`) and HTTPS `git push` to github.com work."
-        False -> "."
-      }
+  // GitHub auth is injected at the network proxy (token never in the sandbox),
+  // but `gh` can't use it (Go ignores the proxy CA on macOS) — tell the model to
+  // reach for git + curl with the phantom token instead.
+  let active = list.filter_map(groups, providers.get)
+  let github_note = case list.any(active, fn(p) { p.name == "github" }) {
+    False -> ""
+    True ->
+      " GitHub auth is injected at the network proxy: $GITHUB_TOKEN in the sandbox is a PHANTOM that nono swaps for the real token on egress. Use git + curl, NOT `gh` (it won't trust the proxy CA here). git push: `git -c credential.helper='!f(){ echo username=x-access-token; echo password=$GITHUB_TOKEN; };f' push ...`. REST: `curl -H \"Authorization: Bearer $GITHUB_TOKEN\" https://api.github.com/...`."
   }
 
-  "\n\n# Capabilities this run\nYour actions run inside a nono sandbox with a fixed, known reach. Reason about it BEFORE acting; if a request needs access you don't have, say so plainly and propose the smallest change (a host to allowlist, a capability group to enable, or a step for the human to run outside the sandbox) instead of retrying.\n\n- Filesystem: the workspace is read-write, and the language-toolchain directories bough grants are read-only. The rest of $HOME is DENIED — credentials and keys (~/.ssh, ~/.aws, ~/.config, keychains, git signing keys) are not readable. Anything that needs them fails: a signed `git commit` (commit.gpgsign / SSH signing) and SSH-authenticated git will not work from here."
-  <> creds_note
+  "\n\n# Capabilities this run\nYour actions run inside a nono sandbox with a fixed, known reach. Reason about it BEFORE acting; if a request needs access you don't have, say so plainly and propose the smallest change (a host to allowlist, a capability to enable, or a step for the human to run outside the sandbox) instead of retrying.\n\n- Filesystem: the workspace is read-write, and the language-toolchain directories bough grants are read-only. The rest of $HOME is DENIED — credentials and keys (~/.ssh, ~/.aws, ~/.config, keychains, git signing keys) are not readable. A signed `git commit` (commit.gpgsign / SSH signing) and SSH-authenticated git will not work from here."
+  <> github_note
   <> "\n- Network: "
   <> network
   <> "\n- Capabilities enabled: "
@@ -1471,16 +1467,25 @@ fn sandboxed(
 /// Write the run's nono profile, then validate it against the installed nono so
 /// a malformed/drifted profile is caught here rather than failing the command
 /// opaquely (SPEC §6, §7). Either failure makes the caller block the net.
+/// Run a provider's `prepare` command outside the sandbox (bough's own process).
+fn run_prepare(cmd: String) -> Result(String, Nil) {
+  shellout.command("sh", ["-c", cmd], ".", []) |> result.replace_error(Nil)
+}
+
 fn write_net_profile(state: State, block: Bool) -> Result(String, Nil) {
-  // A capability name is either a nono group (→ groups.include) or a credential
-  // capability (→ filesystem read + bypass + its domains). Granting any
-  // credential also leashes the network to just those domains rather than
-  // blocking it outright, so the grant is actually usable.
-  let #(groups, creds) = credentials.partition(state.groups)
-  let reads = list.flat_map(creds, fn(c) { c.paths })
-  let cred_domains = list.flat_map(creds, fn(c) { c.domains })
-  let rules = list.unique(list.append(state.net_allow, cred_domains))
-  let block = block && creds == []
+  // A capability name is a nono group (→ groups.include), a credential
+  // capability (→ filesystem read + bypass + its domains), or a provider
+  // (→ egress creds / env vars / allow hosts, prepared into state.applied).
+  // Granting any of them leashes the network to its domains rather than
+  // blocking outright, so the grant is actually usable.
+  // Provider names aren't nono groups; keep them out of groups.include.
+  let groups =
+    list.filter(state.groups, fn(n) { providers.get(n) |> result.is_error })
+  let app = state.applied
+  let reads = app.reads
+  let rules = list.unique(list.append(state.net_allow, app.allow))
+  let block =
+    block && app.services == [] && app.env_allow == [] && app.allow == []
   use path <- result.try(net_profile.write(
     state.net_profile_path,
     rules,
@@ -1488,6 +1493,8 @@ fn write_net_profile(state: State, block: Bool) -> Result(String, Nil) {
     groups,
     reads,
     state.config.net_credentials,
+    app.services,
+    app.env_allow,
   ))
   nono_bridge.validate_profile(path)
   |> result.replace(path)
