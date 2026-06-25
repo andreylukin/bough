@@ -567,18 +567,45 @@ function renderStepList(box, steps) {
     // one (a live run still shows it's waiting; the rest are just noise).
     if (s.type === "text" && (s.text || "").includes(WAIT_LINE)
       && i !== steps.length - 1) continue;
+    // A review is a request + an outcome; when the model accepts immediately
+    // they land back-to-back, so collapse to just the outcome chip.
+    if (s.type === "review" && next && next.type === "review") continue;
+
+    let card = null, advance = 0;
     if (s.type === "call" && next && next.type === "exec") {
       // A `collect` is a non-blocking status probe, not workspace work — render
       // it as one quiet chip (id · status) so polling never grows into a wall
       // of cards. Everything else pairs into a full call+exec card.
-      const card = (s.verb || "").toUpperCase() === "COLLECT"
+      card = (s.verb || "").toUpperCase() === "COLLECT"
         ? collectChip(next) : mergedCard(s, next);
-      if (s._eid) card.dataset.eid = s._eid; // anchor for map jump-to
-      box.appendChild(card); i++; continue;
+      advance = 1; // consumed the exec
+    } else {
+      card = stepCard(s);
     }
-    const c = stepCard(s);
-    if (c) { if (s._eid) c.dataset.eid = s._eid; box.appendChild(c); }
+    if (card) {
+      // Fold a check that immediately follows onto this card as a ✓/✗ verdict,
+      // so a round's work and its acceptance check read as one block instead of
+      // a code→check ladder. (Only onto real cards, not chips.)
+      const after = steps[i + 1 + advance];
+      if (after && after.type === "check" && card.classList.contains("card")) {
+        attachCheck(card, after);
+        advance += 1;
+      }
+      if (s._eid) card.dataset.eid = s._eid; // anchor for map jump-to
+      box.appendChild(card);
+    }
+    i += advance;
   }
+}
+
+// A small ✓/✗ verdict pill on a card's header — the round's acceptance check,
+// folded onto the work that produced it. The check command's output is on hover.
+function attachCheck(card, check) {
+  const head = card.querySelector(".head");
+  if (!head) return;
+  const v = el("span", "checkmark " + (check.ok ? "ok" : "bad"), check.ok ? "✓ check" : "✗ check");
+  v.title = (check.digest && check.digest.trim()) ? cleanDigest(check.digest) : "acceptance check";
+  head.appendChild(v);
 }
 
 // A `collect` probe as a compact chip: subagent id + a one-word status, parsed

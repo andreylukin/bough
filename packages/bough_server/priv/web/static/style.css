@@ -210,6 +210,11 @@ body.left-collapsed.right-collapsed #layout { grid-template-columns: 0 1fr 0; }
 .exit { font-family: var(--mono); font-size: 9.5px; padding: 0 5px; border-radius: 4px; margin-left: auto; }
 .exit.ok { color: var(--leaf); background: rgba(116,196,128,0.12); }
 .exit.bad { color: var(--rust); background: rgba(206,111,87,0.14); }
+/* acceptance-check verdict, folded onto the card that produced it */
+.checkmark { flex: 0 0 auto; font-family: var(--mono); font-size: 9.5px; padding: 0 5px; border-radius: 4px; letter-spacing: 0.3px; cursor: help; }
+.head > .exit + .checkmark { margin-left: 6px; }
+.checkmark.ok { color: var(--leaf); background: rgba(116,196,128,0.12); }
+.checkmark.bad { color: var(--rust); background: rgba(206,111,87,0.14); }
 .card pre { margin: 5px 0 0; padding: 7px 9px; background: var(--ink); border-radius: 6px; overflow: auto; font-family: var(--mono); font-size: 11.5px; color: var(--lichen); max-height: 150px; line-height: 1.45; white-space: pre; }
 .card.plan { background: transparent; border: none; padding: 1px 0; color: var(--birch); max-width: 90%; width: auto; align-self: flex-start; cursor: default; }
 .card.plan:hover { border: none; }
