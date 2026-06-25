@@ -193,8 +193,14 @@ function activePath(tree) {
 
 function stepCard(step) {
   switch (step.type) {
+    case "text": {
+      const t = step.text || "";
+      // A delivered subagent result ("⟵ subagent: … Final output: …") is a big
+      // block — render it as a labeled card collapsed to its title by default.
+      if (t.trim().startsWith("⟵ subagent:")) return subagentReport(t);
+      return t.trim() ? el("div", "card plan prose", md(t)) : null;
+    }
     case "plan":
-    case "text":
       return step.text && step.text.trim()
         ? el("div", "card plan prose", md(step.text)) : null;
     case "call": {
@@ -551,6 +557,10 @@ function inspectNet(ev) {
 function renderStepList(box, steps) {
   for (let i = 0; i < steps.length; i++) {
     const s = steps[i], next = steps[i + 1];
+    // Drop repeated "waiting for subagents" status lines — keep only the last
+    // one (a live run still shows it's waiting; the rest are just noise).
+    if (s.type === "text" && (s.text || "").includes(WAIT_LINE)
+      && i !== steps.length - 1) continue;
     if (s.type === "call" && next && next.type === "exec") {
       // A `collect` is a non-blocking status probe, not workspace work — render
       // it as one quiet chip (id · status) so polling never grows into a wall
@@ -581,6 +591,34 @@ function collectChip(exec) {
     `<span class="ic">↳</span> collect <span class="arg">${esc(id)}</span> · ${status}`);
 }
 
+// A delivered subagent result as a labeled card, collapsed to its title by
+// default — the report body is often long, so it shouldn't dominate the
+// transcript. Click the header to expand it inline.
+function subagentReport(text) {
+  const nl = text.indexOf("\n");
+  const firstLine = (nl === -1 ? text : text.slice(0, nl));
+  const body = (nl === -1 ? "" : text.slice(nl + 1)).trim();
+  const m = firstLine.match(/Subagent "([^"]+)"/);
+  const title = m ? m[1] : "subagent";
+  const card = el("div", "card subreport collapsible collapsed");
+  const head = el("div", "head");
+  head.appendChild(el("span", "caret", "▸"));
+  head.appendChild(el("span", "verb subagent", "↩ subagent"));
+  head.appendChild(el("span", "arg", esc(title)));
+  card.appendChild(head);
+  if (body) card.appendChild(el("div", "subreport-body prose", md(body)));
+  head.addEventListener("click", () => {
+    head.querySelector(".caret").textContent =
+      card.classList.toggle("collapsed") ? "▸" : "▾";
+  });
+  return card;
+}
+
+// The harness re-emits "… waiting for subagents to report" each time it parks
+// to wait, so a multi-wave delegation stacks the same line many times. Keep it
+// only as the live trailing indicator.
+const WAIT_LINE = "waiting for subagents to report";
+
 // A call+exec pair as one clickable card: verb, arg, exit, and an output
 // preview. Click opens the drawer with the full program + full output.
 // `code` and `spawn` carry the bulkiest bodies (a whole program, a spawn
@@ -594,7 +632,10 @@ function mergedCard(call, exec) {
   const head = el("div", "head");
   head.appendChild(el("span", "verb " + verb, esc(call.verb)));
   head.appendChild(el("span", "arg", esc(call.arg || "")));
-  head.appendChild(el("span", "exit " + (ok ? "ok" : "bad"), "exit " + exec.exit));
+  // `spawn`/`tell` are async — there is no command exit code, so the "exit 0"
+  // badge is just misleading noise. Only show it for steps that actually ran.
+  if (verb !== "spawn" && verb !== "tell")
+    head.appendChild(el("span", "exit " + (ok ? "ok" : "bad"), "exit " + exec.exit));
   card.appendChild(head);
   const hasBody = exec.digest && exec.digest.trim();
   if (hasBody) card.appendChild(el("pre", "out", esc(cleanDigest(exec.digest))));
