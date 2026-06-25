@@ -175,6 +175,10 @@ button:disabled { opacity: 0.45; cursor: default; }
 .card pre { margin: 5px 0 0; padding: 7px 9px; background: var(--ink); border-radius: 6px; overflow: auto; font-family: var(--mono); font-size: 11.5px; color: var(--lichen); max-height: 150px; line-height: 1.45; white-space: pre; }
 .card.plan { background: transparent; border: none; padding: 1px 0; color: var(--birch); max-width: 90%; width: auto; align-self: flex-start; cursor: default; }
 .card.plan:hover { border: none; }
+/* collapsed code/spawn cards: header only until you click the caret */
+.card.collapsible > .head { cursor: pointer; }
+.card.collapsible.collapsed > pre { display: none; }
+.card .caret { font-size: 9px; color: var(--lichen-dim); width: 10px; flex: none; }
 
 /* small inline status markers (CHECK, review) — buds, not panes */
 .chip { align-self: flex-start; display: inline-flex; align-items: center; gap: 7px; width: auto; font-family: var(--mono); font-size: 11px; color: var(--lichen); padding: 1px 0; }

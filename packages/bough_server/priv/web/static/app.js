@@ -583,6 +583,10 @@ function collectChip(exec) {
 
 // A call+exec pair as one clickable card: verb, arg, exit, and an output
 // preview. Click opens the drawer with the full program + full output.
+// `code` and `spawn` carry the bulkiest bodies (a whole program, a spawn
+// blurb), so they collapse to just their header by default — click the head to
+// peek the output inline, click the output to open the full drawer.
+const COLLAPSE_VERBS = new Set(["code", "spawn"]);
 function mergedCard(call, exec) {
   const verb = (call.verb || "").toLowerCase();
   const ok = exec.exit === 0;
@@ -592,10 +596,23 @@ function mergedCard(call, exec) {
   head.appendChild(el("span", "arg", esc(call.arg || "")));
   head.appendChild(el("span", "exit " + (ok ? "ok" : "bad"), "exit " + exec.exit));
   card.appendChild(head);
-  if (exec.digest && exec.digest.trim())
-    card.appendChild(el("pre", "out", esc(cleanDigest(exec.digest))));
+  const hasBody = exec.digest && exec.digest.trim();
+  if (hasBody) card.appendChild(el("pre", "out", esc(cleanDigest(exec.digest))));
   card.onclick = () => inspectStep(call, exec);
+  if (hasBody && COLLAPSE_VERBS.has(verb)) makeCollapsible(card, head);
   return card;
+}
+
+// Collapse a card to its header by default; clicking the header toggles the
+// inline body (and is swallowed so it doesn't also open the drawer).
+function makeCollapsible(card, head) {
+  card.classList.add("collapsible", "collapsed");
+  const caret = el("span", "caret", "▸");
+  head.insertBefore(caret, head.firstChild);
+  head.addEventListener("click", (e) => {
+    e.stopPropagation();
+    caret.textContent = card.classList.toggle("collapsed") ? "▸" : "▾";
+  });
 }
 
 // ---- rendering: header + sidebar ----------------------------------------
