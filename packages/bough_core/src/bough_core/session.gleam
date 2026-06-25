@@ -97,6 +97,13 @@ pub fn append(tree: SessionTree, entry: Entry) -> SessionTree {
   )
 }
 
+/// Add an entry *without* moving the active leaf — for a background branch run,
+/// whose turns must land in the tree without yanking the view the human may
+/// have moved elsewhere. The caller decides whether to follow with `set_leaf`.
+pub fn add(tree: SessionTree, entry: Entry) -> SessionTree {
+  SessionTree(..tree, entries: [entry, ..tree.entries])
+}
+
 /// Direct children of a node (`None` = roots).
 pub fn children_of(tree: SessionTree, parent: Option(String)) -> List(Entry) {
   list.filter(tree.entries, fn(e) { e.parent_id == parent })

@@ -90,7 +90,7 @@ pub fn handle_request(req: Request) -> Response {
     ["session", id, "entry"], Post -> add_entry(req, id)
     ["session", id, "message"], Post -> send_message(req, id)
     ["session", id, "run"], Post -> start_run(req, id)
-    ["session", id, "run"], Get -> get_run(id)
+    ["session", id, "run"], Get -> get_run(req, id)
     ["session", id, "control"], Post -> control_run(req, id)
     ["session", id, "subagents"], Get -> subagents_of(id)
     ["session", id, "diff"], Get -> session_diff(id)
@@ -531,7 +531,8 @@ fn run_agent(tree: SessionTree, content: String) -> Response {
         }
         Ok(outcome) -> {
           let snap = capture_snapshot(tree.id, tree.project)
-          let tree = append_turn(tree, outcome, snap)
+          let #(tree, leaf) = append_turn(tree, outcome, snap, tree.active_leaf)
+          let tree = session.set_leaf(tree, leaf)
           case session_manager.save(tree) {
             Ok(_) ->
               created(
@@ -840,7 +841,11 @@ fn spawn_subagent(
               groups: list.unique(list.append(child.groups, outcome.groups)),
               suggested: outcome.suggested,
             )
-          let _ = session_manager.save(append_turn(child, outcome, None))
+          // A subagent is its own linear session, so follow the view onto each
+          // turn it completes.
+          let #(child, leaf) =
+            append_turn(child, outcome, None, child.active_leaf)
+          let _ = session_manager.save(session.set_leaf(child, leaf))
           run_store.write(
             child_id,
             "done",
@@ -1183,33 +1188,34 @@ fn graft_decoder() -> decode.Decoder(#(String, String)) {
 /// The supervisor's real tool_use/tool_result blocks don't survive the run, so
 /// without this the next turn can't see what it did (it would only replay its
 /// own prose); `history_of` folds the digest back into that turn's context.
+/// Append a completed turn's entries onto `anchor` (the run's own user entry),
+/// not the live `active_leaf` — so a concurrent branch run lands its turn on
+/// its own branch even if the human has navigated elsewhere. Adds without
+/// moving the view; returns the tree and the new assistant leaf id so the
+/// caller can advance trunk / follow the view as appropriate.
 fn append_turn(
   tree: SessionTree,
   outcome: agent.Outcome,
   snapshot_ref: Option(String),
-) -> SessionTree {
-  let tree =
-    list.fold(outcome.steps, tree, fn(tr, step) {
-      let entry =
-        make_entry(
-          session.ToolResult,
-          agent.step_json_string(step),
-          tr.active_leaf,
-        )
-      session.append(tr, entry)
+  anchor: Option(String),
+) -> #(SessionTree, String) {
+  let #(tree, parent) =
+    list.fold(outcome.steps, #(tree, anchor), fn(acc, step) {
+      let #(tr, p) = acc
+      let entry = make_entry(session.ToolResult, agent.step_json_string(step), p)
+      #(session.add(tr, entry), Some(entry.id))
     })
-  let tree = case actions_summary(outcome.steps) {
-    Some(summary) ->
-      session.append(
-        tree,
-        make_entry(session.System, summary, tree.active_leaf),
-      )
-    None -> tree
+  let #(tree, parent) = case actions_summary(outcome.steps) {
+    Some(summary) -> {
+      let entry = make_entry(session.System, summary, parent)
+      #(session.add(tree, entry), Some(entry.id))
+    }
+    None -> #(tree, parent)
   }
   let leaf =
     Entry(
       id: wisp.random_string(16),
-      parent_id: tree.active_leaf,
+      parent_id: parent,
       role: session.Assistant,
       content: outcome.text,
       snapshot_ref: snapshot_ref,
@@ -1217,7 +1223,7 @@ fn append_turn(
       timestamp: clock.now_ms(),
       grafted_from: None,
     )
-  session.append(tree, leaf)
+  #(session.add(tree, leaf), leaf.id)
 }
 
 /// Checkpoint the workspace after a top-level turn; `None` if snapshots are
@@ -1302,17 +1308,30 @@ fn launch_run(
       // materialized from that branch's snapshot, leaving trunk untouched.
       let on_trunk = tree.active_leaf == tree.trunk_leaf
       let branch_leaf = tree.active_leaf
-      case run_workspace(tree, on_trunk) {
+      let history = history_of(tree)
+      // The run's own anchor: a fresh user entry. Keying run state (and the
+      // worktree) by it — not the branch leaf — gives each run its own status
+      // slot and its own scratch dir, so two runs off the same branch don't
+      // collide.
+      let user = make_entry(session.User, content, branch_leaf)
+      let run_key = user.id
+      case run_workspace(tree, on_trunk, run_key, branch_leaf) {
         Error(m) -> json_error(m)
         Ok(workspace) -> {
-      let history = history_of(tree)
-      let user = make_entry(session.User, content, tree.active_leaf)
-      let tree = session.append(tree, user)
-      let _ = session_manager.save(tree)
+      // Append the user turn under the lock so a concurrent branch run can't
+      // clobber it; follow the view onto it because the human is looking here.
+      let _ =
+        session_lock.mutate(id, fn(fresh) {
+          let fresh = session.add(fresh, user)
+          case fresh.active_leaf == branch_leaf {
+            True -> session.set_leaf(fresh, run_key)
+            False -> fresh
+          }
+        })
 
       // Drop any stale approval so it can't leak into this fresh run.
       control.clear(id)
-      run_store.write(id, "running", [], "", 0, [])
+      run_store.write(run_key, "running", [], "", 0, [])
       let _ =
         process.spawn_unlinked(fn() {
           case
@@ -1324,7 +1343,7 @@ fn launch_run(
               history,
               content,
               fn(status, steps, context_tokens, net_events) {
-                run_store.write(id, status, steps, "", context_tokens, net_events)
+                run_store.write(run_key, status, steps, "", context_tokens, net_events)
               },
               fn() { await_decision(id, 0) },
               fn() { inbox_of(id) },
@@ -1336,28 +1355,6 @@ fn launch_run(
             )
           {
             Ok(outcome) -> {
-              // Persist hosts approved + groups suggested during the run. Re-read
-              // the live `groups` from disk so a group the human enabled while the
-              // run was in flight isn't clobbered by the run-start snapshot; drop
-              // any now-enabled group from the suggestions.
-              let disk_groups = case session_manager.load(id) {
-                Ok(latest) -> latest.groups
-                Error(_) -> tree.groups
-              }
-              // Union groups enabled at the gate during the run with any the
-              // human toggled via the picker mid-run.
-              let groups = list.unique(list.append(disk_groups, outcome.groups))
-              let suggested =
-                list.filter(outcome.suggested, fn(s) {
-                  !list.contains(groups, s)
-                })
-              let tree =
-                session.SessionTree(
-                  ..tree,
-                  groups: groups,
-                  allow_domains: outcome.net_allow,
-                  suggested: suggested,
-                )
               // Capture from the dir the run actually used: the project dir on
               // trunk, the branch worktree otherwise (committed through the
               // worktree's own HEAD so it never collides with trunk).
@@ -1366,21 +1363,43 @@ fn launch_run(
                 False ->
                   snapshots.capture_worktree(workspace) |> option.from_result
               }
-              let tree = append_turn(tree, outcome, snap)
-              // A trunk run advances trunk with the active branch; a branch run
-              // leaves trunk where it is and tears down its scratch worktree
-              // (the snapshot it committed survives in the object store).
-              let tree = case on_trunk, tree.active_leaf {
-                True, Some(leaf) -> session.set_trunk(tree, leaf)
-                _, _ -> tree
-              }
-              let _ = session_manager.save(tree)
-              case on_trunk, branch_leaf {
-                False, Some(leaf) -> snapshots.remove_worktree(id, leaf)
-                _, _ -> Nil
+              // Fold the turn into the freshest tree under the lock: build it on
+              // this run's anchor (not the live active_leaf, which the human may
+              // have moved), union the groups/allowlist the run earned, advance
+              // trunk only if this was the trunk run and trunk hasn't moved, and
+              // follow the view only if it's still parked on this branch's tip.
+              let _ =
+                session_lock.mutate(id, fn(fresh) {
+                  let groups =
+                    list.unique(list.append(fresh.groups, outcome.groups))
+                  let suggested =
+                    list.filter(outcome.suggested, fn(s) {
+                      !list.contains(groups, s)
+                    })
+                  let fresh =
+                    session.SessionTree(
+                      ..fresh,
+                      groups: groups,
+                      allow_domains: outcome.net_allow,
+                      suggested: suggested,
+                    )
+                  let #(fresh, newleaf) =
+                    append_turn(fresh, outcome, snap, Some(run_key))
+                  let fresh = case on_trunk && fresh.trunk_leaf == branch_leaf {
+                    True -> session.set_trunk(fresh, newleaf)
+                    False -> fresh
+                  }
+                  case fresh.active_leaf == Some(run_key) {
+                    True -> session.set_leaf(fresh, newleaf)
+                    False -> fresh
+                  }
+                })
+              case on_trunk {
+                False -> snapshots.remove_worktree(id, run_key)
+                True -> Nil
               }
               run_store.write(
-                id,
+                run_key,
                 "done",
                 outcome.steps,
                 outcome.text,
@@ -1388,7 +1407,8 @@ fn launch_run(
                 outcome.net_events,
               )
             }
-            Error(message) -> run_store.write(id, "error", [], message, 0, [])
+            Error(message) ->
+              run_store.write(run_key, "error", [], message, 0, [])
           }
         })
       wisp.json_response("{\"status\":\"started\"}", 202)
@@ -1399,16 +1419,22 @@ fn launch_run(
 }
 
 /// Pick the working directory for a run: the real project dir on trunk, or a
-/// fresh worktree materialized from the branch's snapshot otherwise.
-fn run_workspace(tree: SessionTree, on_trunk: Bool) -> Result(String, String) {
+/// fresh worktree (keyed by the run's anchor, so concurrent runs off one branch
+/// don't share a dir) materialized from the branch's snapshot.
+fn run_workspace(
+  tree: SessionTree,
+  on_trunk: Bool,
+  run_key: String,
+  branch_leaf: Option(String),
+) -> Result(String, String) {
   case on_trunk {
     True -> Ok(tree.project)
     False ->
-      case tree.active_leaf {
+      case branch_leaf {
         None -> Error("No branch selected to run.")
         Some(leaf) ->
           case session.nearest_snapshot(tree, leaf) {
-            Some(ref) -> snapshots.materialize_worktree(tree.id, leaf, ref)
+            Some(ref) -> snapshots.materialize_worktree(tree.id, run_key, ref)
             None ->
               Error(
                 "This branch has no snapshot to run from. Adopt it to trunk first, then run.",
@@ -1418,10 +1444,26 @@ fn run_workspace(tree: SessionTree, on_trunk: Bool) -> Result(String, String) {
   }
 }
 
-fn get_run(id: String) -> Response {
-  case run_store.read_raw(id) {
+/// Run progress. Top-level runs are keyed by their anchor (the branch's pending
+/// user-tip), so by default we resolve the viewed branch's run via active_leaf;
+/// `?key=<leaf>` polls a specific branch. Falls back to the session id, which
+/// is how subagent runs are keyed.
+fn get_run(req: Request, id: String) -> Response {
+  let resolved = case wisp.get_query(req) |> list.key_find("key") {
+    Ok(k) -> k
+    Error(_) ->
+      case session_manager.load(id) {
+        Ok(tree) -> option.unwrap(tree.active_leaf, id)
+        Error(_) -> id
+      }
+  }
+  case run_store.read_raw(resolved) {
     Ok(body) -> json_ok(body)
-    Error(_) -> json_ok("{\"status\":\"idle\",\"text\":\"\",\"steps\":[]}")
+    Error(_) ->
+      case run_store.read_raw(id) {
+        Ok(body) -> json_ok(body)
+        Error(_) -> json_ok("{\"status\":\"idle\",\"text\":\"\",\"steps\":[]}")
+      }
   }
 }
 
