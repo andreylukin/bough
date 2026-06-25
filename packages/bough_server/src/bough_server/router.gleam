@@ -21,6 +21,7 @@ import bough_server/engine
 import bough_server/json_value.{type JsonValue, JArray}
 import bough_server/net_profile
 import bough_server/packs
+import bough_server/providers
 import bough_server/nono_bridge
 import bough_server/provider
 import bough_server/run_store
@@ -219,10 +220,13 @@ fn set_session_groups(req: Request, id: String) -> Response {
       case session_manager.load(id) {
         Error(_) -> wisp.not_found()
         Ok(tree) -> {
+          // Enableable capabilities: nono's toggleable groups plus bough's
+          // providers (github/aws/…), which are gated the same way.
           let toggleable =
             nono_bridge.list_groups()
             |> list.filter(fn(g) { !g.locked })
             |> list.map(fn(g) { g.name })
+            |> list.append(list.map(providers.list(), fn(p) { p.name }))
           case list.all(names, fn(n) { list.contains(toggleable, n) }) {
             False -> wisp.bad_request("unknown or locked group")
             True -> {

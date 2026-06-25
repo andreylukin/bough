@@ -31,6 +31,7 @@ import bough_server/nono_bridge
 import bough_server/prompts
 import bough_server/provider
 import bough_server/providers
+import bough_server/proxy
 import bough_server/seatbelt
 import bough_server/skills
 import bough_server/tool_steps
@@ -40,6 +41,7 @@ import envoy
 import gleam/dict.{type Dict}
 import gleam/erlang/process
 import gleam/int
+import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
@@ -975,24 +977,71 @@ fn apply(state: State, step: Step) -> #(State, Exec) {
 /// egress events only on finalization (10+s later), so there's no timely,
 /// per-command signal to surface or gate on — they remain RUN-path features.
 fn exec_code(state: State, code: String) -> #(State, Exec) {
-  // Sandbox the sidecar's `bash` with a generated macOS Seatbelt profile. When a
-  // session mitmproxy is up, the profile locks egress to its loopback port and
-  // we point bash's clients at it (HTTPS_PROXY + the proxy CA, via env monty
-  // reads); otherwise network stays open (transitional, pre-proxy).
-  let port = proxy_port()
+  // Sandbox the sidecar's `bash` with a generated macOS Seatbelt profile, and
+  // bring up the session's mitmproxy (allowlist + credential injection). The
+  // profile locks egress to its loopback port and bash's clients point at it
+  // (HTTPS_PROXY + the proxy CA, via env monty reads). If the proxy can't start,
+  // `None` leaves the network open (transitional fallback).
+  let port = ensure_proxy(state)
   let profile = option.from_result(write_seatbelt_profile(state, port))
   set_bash_proxy(port)
   let #(exit, output) = monty_bridge.run_code(state.workspace, code, profile)
   #(bump(state), Exec(exit, output))
 }
 
-/// The session mitmproxy's loopback port, if one is running (Phase 3a: supplied
-/// via `BOUGH_MITM_PORT`; Phase 3b will manage it per session).
-fn proxy_port() -> Option(Int) {
-  case envoy.get("BOUGH_MITM_PORT") {
-    Ok(s) -> int.parse(s) |> option.from_result
-    Error(_) -> None
+/// Start (or reuse) the workspace's mitmproxy, configured from the session's
+/// allowlist + enabled providers. Returns its loopback port.
+fn ensure_proxy(state: State) -> Option(Int) {
+  let #(config, secrets) = proxy_inputs(state)
+  proxy.ensure(state.workspace, config, secrets) |> option.from_result
+}
+
+/// Build the proxy's config (`{allow, inject}`) and secret env from the session:
+/// the approved hosts plus any enabled provider's hosts/injection. (github is
+/// wired today; other providers generalize to more inject rules.)
+fn proxy_inputs(state: State) -> #(String, List(#(String, String))) {
+  let github = list.contains(state.groups, "github")
+  let gh_hosts = case github {
+    True -> ["github.com", "api.github.com", "codeload.github.com"]
+    False -> []
   }
+  let allow = list.unique(list.append(state.net_allow, gh_hosts))
+  let inject = case github {
+    False -> []
+    True -> [
+      json.object([
+        #("hosts", json.array(["api.github.com"], json.string)),
+        #("header", json.string("Authorization")),
+        #("format", json.string("Bearer {}")),
+        #("secret_env", json.string("BOUGH_SECRET_github")),
+      ]),
+      json.object([
+        #("hosts", json.array(["github.com", "codeload.github.com"], json.string)),
+        #("scheme", json.string("basic")),
+        #("user", json.string("x-access-token")),
+        #("secret_env", json.string("BOUGH_SECRET_github")),
+      ]),
+    ]
+  }
+  let config =
+    json.to_string(
+      json.object([
+        #("allow", json.array(allow, json.string)),
+        #("inject", json.preprocessed_array(inject)),
+      ]),
+    )
+  let secrets = case github, github_token() {
+    True, Ok(token) -> [#("BOUGH_SECRET_github", token)]
+    _, _ -> []
+  }
+  #(config, secrets)
+}
+
+/// The real GitHub token, read OUTSIDE the sandbox for proxy-side injection.
+fn github_token() -> Result(String, Nil) {
+  shellout.command("gh", ["auth", "token"], ".", [])
+  |> result.map(string.trim)
+  |> result.replace_error(Nil)
 }
 
 /// Tell monty (via its inherited env) to route `bash` egress through the proxy.

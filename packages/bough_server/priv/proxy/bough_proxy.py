@@ -34,19 +34,24 @@ from mitmproxy import http
 log = logging.getLogger("bough")
 
 
+_CACHE: dict = {"mtime": 0.0, "config": {}}
+
+
 def _load() -> dict:
+    """Read the session config, re-reading when the file changes so a session's
+    allowlist can be updated without restarting the proxy."""
     path = os.environ.get("BOUGH_PROXY_CONFIG", "")
     if not path or not os.path.exists(path):
         return {}
     try:
-        with open(path) as f:
-            return json.load(f)
+        mtime = os.path.getmtime(path)
+        if mtime != _CACHE["mtime"]:
+            with open(path) as f:
+                _CACHE["config"] = json.load(f)
+            _CACHE["mtime"] = mtime
     except (OSError, ValueError) as e:
         log.warning("bough: bad proxy config %s: %s", path, e)
-        return {}
-
-
-CONFIG = _load()
+    return _CACHE["config"]
 
 
 def _host_matches(host: str, patterns: list) -> bool:
@@ -57,9 +62,10 @@ def _host_matches(host: str, patterns: list) -> bool:
 
 
 def request(flow: http.HTTPFlow) -> None:
+    config = _load()
     host = flow.request.pretty_host
 
-    allow = CONFIG.get("allow") or []
+    allow = config.get("allow") or []
     if allow and not _host_matches(host, allow):
         log.info("bough: BLOCK %s (not in allowlist)", host)
         flow.response = http.Response.make(
@@ -68,7 +74,7 @@ def request(flow: http.HTTPFlow) -> None:
         )
         return
 
-    for rule in CONFIG.get("inject", []):
+    for rule in config.get("inject", []):
         if not _host_matches(host, rule.get("hosts", [])):
             continue
         secret = os.environ.get(rule.get("secret_env", ""), "")
