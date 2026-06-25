@@ -23,6 +23,7 @@ import bough_server/agent.{
 }
 import bough_server/clock
 import bough_server/control
+import bough_server/credentials
 import bough_server/integrity
 import bough_server/json_value.{type JsonValue}
 import bough_server/monty_bridge
@@ -710,9 +711,14 @@ fn candidate_groups(state: State, step: Step, result: Exec) -> List(String) {
   let targets =
     list.append(step_paths(step), denied_paths(result.output))
     |> list.unique
+  let home = envoy.get("HOME") |> result.unwrap("")
   let deterministic = case targets {
     [] -> []
-    _ -> nono_bridge.groups_for_paths(targets)
+    _ ->
+      list.append(
+        nono_bridge.groups_for_paths(targets),
+        credentials.for_paths(targets, home),
+      )
   }
   list.append(deterministic, suggester_worker(state, result, targets))
   |> list.unique
@@ -1390,13 +1396,17 @@ fn capabilities_summary(
     }
   }
 
-  // Enabled capability groups, with nono's own descriptions where available.
+  // Enabled capabilities, with nono's (or the credential catalog's) descriptions.
   let catalog = nono_bridge.list_groups()
   let group_lines =
     list.map(groups, fn(name) {
       case list.find(catalog, fn(g) { g.name == name }) {
         Ok(g) -> name <> " — " <> g.description
-        Error(_) -> name
+        Error(_) ->
+          case credentials.get(name) {
+            Ok(c) -> name <> " — " <> c.description
+            Error(_) -> name
+          }
       }
     })
   let groups_text = case group_lines {
@@ -1404,9 +1414,32 @@ fn capabilities_summary(
     _ -> string.join(group_lines, "; ")
   }
 
-  "\n\n# Capabilities this run\nYour actions run inside a nono sandbox with a fixed, known reach. Reason about it BEFORE acting; if a request needs access you don't have, say so plainly and propose the smallest change (a host to allowlist, a capability group to enable, or a step for the human to run outside the sandbox) instead of retrying.\n\n- Filesystem: the workspace is read-write, and the language-toolchain directories bough grants are read-only. The rest of $HOME is DENIED — credentials and keys (~/.ssh, ~/.aws, ~/.config, keychains, git signing keys) are not readable. Anything that needs them fails: a signed `git commit` (commit.gpgsign / SSH signing) and SSH-authenticated git will not work from here.\n- Network: "
+  // Granted credential capabilities open specific paths the blanket deny would
+  // otherwise cover — tell the model so it actually uses them (e.g. `gh`).
+  let #(_, creds) = credentials.partition(groups)
+  let creds_note = case creds {
+    [] -> ""
+    _ ->
+      " EXCEPTION: you have been granted these credential capabilities, so their paths ARE readable and usable: "
+      <> {
+        creds
+        |> list.map(fn(c) {
+          c.name <> " (" <> string.join(c.paths, ", ") <> ")"
+        })
+        |> string.join("; ")
+      }
+      <> case list.any(creds, fn(c) { c.name == "github" }) {
+        True ->
+          " — so `gh` (e.g. `gh pr create`) and HTTPS `git push` to github.com work."
+        False -> "."
+      }
+  }
+
+  "\n\n# Capabilities this run\nYour actions run inside a nono sandbox with a fixed, known reach. Reason about it BEFORE acting; if a request needs access you don't have, say so plainly and propose the smallest change (a host to allowlist, a capability group to enable, or a step for the human to run outside the sandbox) instead of retrying.\n\n- Filesystem: the workspace is read-write, and the language-toolchain directories bough grants are read-only. The rest of $HOME is DENIED — credentials and keys (~/.ssh, ~/.aws, ~/.config, keychains, git signing keys) are not readable. Anything that needs them fails: a signed `git commit` (commit.gpgsign / SSH signing) and SSH-authenticated git will not work from here."
+  <> creds_note
+  <> "\n- Network: "
   <> network
-  <> "\n- Capability groups enabled: "
+  <> "\n- Capabilities enabled: "
   <> groups_text
   <> "."
 }
@@ -1439,11 +1472,21 @@ fn sandboxed(
 /// a malformed/drifted profile is caught here rather than failing the command
 /// opaquely (SPEC §6, §7). Either failure makes the caller block the net.
 fn write_net_profile(state: State, block: Bool) -> Result(String, Nil) {
+  // A capability name is either a nono group (→ groups.include) or a credential
+  // capability (→ filesystem read + bypass + its domains). Granting any
+  // credential also leashes the network to just those domains rather than
+  // blocking it outright, so the grant is actually usable.
+  let #(groups, creds) = credentials.partition(state.groups)
+  let reads = list.flat_map(creds, fn(c) { c.paths })
+  let cred_domains = list.flat_map(creds, fn(c) { c.domains })
+  let rules = list.unique(list.append(state.net_allow, cred_domains))
+  let block = block && creds == []
   use path <- result.try(net_profile.write(
     state.net_profile_path,
-    state.net_allow,
+    rules,
     block,
-    state.groups,
+    groups,
+    reads,
     state.config.net_credentials,
   ))
   nono_bridge.validate_profile(path)

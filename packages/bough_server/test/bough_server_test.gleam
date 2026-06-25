@@ -3,6 +3,7 @@ import bough_core/nono.{Allow, AuditEvent, Deny, Group, Snapshot}
 import bough_core/session
 import bough_server/agent
 import bough_server/control
+import bough_server/credentials
 import bough_server/engine
 import bough_server/router
 import bough_server/json_value
@@ -10,6 +11,7 @@ import bough_server/net_profile
 import bough_server/nono_bridge
 import bough_server/snapshots
 import gleam/json
+import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
 import gleeunit
@@ -190,6 +192,7 @@ pub fn net_profile_unions_paths_test() {
       False,
       [],
       [],
+      [],
     ))
   // Both path globs present under the one host, as endpoint rules.
   assert string.contains(j, "/v1/**")
@@ -212,6 +215,7 @@ pub fn net_profile_credentials_test() {
     json.to_string(net_profile.build(
       [],
       True,
+      [],
       [],
       [#("github_token", "GITHUB_TOKEN")],
     ))
@@ -236,19 +240,49 @@ pub fn parse_credentials_test() {
 /// user's config). With `block`, the network section denies all outbound; the
 /// allowlist form is reserved for the net-gate-on path.
 pub fn net_profile_base_grants_test() {
-  let blocked = json.to_string(net_profile.build([], True, [], []))
+  let blocked = json.to_string(net_profile.build([], True, [], [], []))
   assert string.contains(blocked, "\"git_config\"")
   assert string.contains(blocked, "\"block\":true")
 
-  let open = json.to_string(net_profile.build([], False, [], []))
+  let open = json.to_string(net_profile.build([], False, [], [], []))
   assert string.contains(open, "\"git_config\"")
   assert string.contains(open, "allow_domain")
 
   // Session-enabled groups layer on top of the always-on git_config.
   let with_groups =
-    json.to_string(net_profile.build([], True, ["user_caches_macos"], []))
+    json.to_string(net_profile.build([], True, ["user_caches_macos"], [], []))
   assert string.contains(with_groups, "\"git_config\"")
   assert string.contains(with_groups, "\"user_caches_macos\"")
+}
+
+/// A credential capability's paths become a `filesystem` section that both
+/// grants read and bypasses any deny group covering them (so a path under
+/// nono's locked `deny_credentials`, e.g. `~/.aws`, becomes readable).
+pub fn net_profile_credential_filesystem_test() {
+  let j = json.to_string(net_profile.build([], False, [], ["~/.aws"], []))
+  assert string.contains(j, "\"filesystem\"")
+  assert string.contains(j, "\"read\":[\"~/.aws\"]")
+  assert string.contains(j, "\"bypass_protection\":[\"~/.aws\"]")
+  // No filesystem section when no credential paths are granted.
+  assert !string.contains(
+    json.to_string(net_profile.build([], False, [], [], [])),
+    "filesystem",
+  )
+}
+
+/// A denied credential path resolves to its capability name (so the gate can
+/// offer it), and capability names partition into nono groups vs credentials.
+pub fn credentials_catalog_test() {
+  let home = "/Users/x"
+  assert credentials.for_paths(["/Users/x/.aws/config"], home) == ["aws"]
+  assert credentials.for_paths(["/Users/x/.config/gh/hosts.yml"], home)
+    == ["github"]
+  assert credentials.for_paths(["/Users/x/src/main.rs"], home) == []
+
+  let #(groups, creds) =
+    credentials.partition(["git_config", "github", "rust_runtime"])
+  assert groups == ["rust_runtime", "git_config"]
+  assert list.map(creds, fn(c) { c.name }) == ["github"]
 }
 
 /// The capability suggester parses denied filesystem paths out of command

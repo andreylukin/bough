@@ -30,13 +30,14 @@ pub fn write(
   rules: List(String),
   block: Bool,
   groups: List(String),
+  reads: List(String),
   credentials: List(#(String, String)),
 ) -> Result(String, Nil) {
   let _ = simplifile.create_directory_all(dirname(path))
   case
     simplifile.write(
       path,
-      json.to_string(build(rules, block, groups, credentials)),
+      json.to_string(build(rules, block, groups, reads, credentials)),
     )
   {
     Ok(_) -> Ok(path)
@@ -57,6 +58,7 @@ pub fn build(
   rules: List(String),
   block: Bool,
   groups: List(String),
+  reads: List(String),
   credentials: List(#(String, String)),
 ) -> json.Json {
   let include =
@@ -73,11 +75,26 @@ pub fn build(
     #("groups", json.object([#("include", json.array(include, json.string))])),
     #("network", network(rules, block)),
   ]
+  let base = case reads {
+    [] -> base
+    paths -> list.append(base, [#("filesystem", filesystem(paths))])
+  }
   json.object(case credentials {
     [] -> base
     creds ->
       list.append(base, [#("env_credentials", credentials_object(creds))])
   })
+}
+
+/// Grant read of `paths` and exempt them from any deny group (`bypass_protection`
+/// only lifts the deny — the matching `read` entry is what actually grants
+/// access, so both are needed to read a path a required deny group covers, e.g.
+/// `~/.aws` under nono's locked `deny_credentials`).
+fn filesystem(paths: List(String)) -> json.Json {
+  json.object([
+    #("read", json.array(paths, json.string)),
+    #("bypass_protection", json.array(paths, json.string)),
+  ])
 }
 
 /// The network section: blocked outright, or default-deny against the allow
