@@ -72,6 +72,7 @@ const api = {
   stop: (id) => jpost(`/session/${id}/control`, { decision: "stop" }),
   fork: (id, entry_id) => jpost(`/session/${id}/fork`, { entry_id }),
   graft: (id, section_root, onto) => jpost(`/session/${id}/graft`, { section_root, onto }),
+  label: (id, entry_id, label) => jpost(`/session/${id}/label`, { entry_id, label }),
   subagents: (id) => jget(`/session/${id}/subagents`),
   diff: (id) => jget(`/session/${id}/diff`),
   files: (id) => jget(`/session/${id}/files`),
@@ -755,13 +756,15 @@ function renderSidebar() {
   // One row per branch (live leaf), nested under the session you're viewing, so
   // forked conversations show side by side. Click to switch the active branch.
   const branchRow = (b) => {
-    const r = el("div", "branch-item" + (b.active ? " active" : ""));
+    const r = el("div", "branch-item" + (b.active ? " active" : "") + (b.named ? " named" : ""));
     r.dataset.act = "switch-branch";
     r.dataset.leaf = b.leafId;
     r.innerHTML =
       `<span class="bconn">${b.active ? "●" : "○"}</span>` +
-      `<span class="bname">${esc(b.name)}</span>` +
+      `<span class="bname" title="double-click to rename">${esc(b.name)}</span>` +
       `<span class="bmeta">${b.turns}</span>`;
+    // Double-click the name to rename the branch inline (Enter saves, Esc cancels).
+    r.querySelector(".bname").ondblclick = (ev) => { ev.stopPropagation(); renameBranch(r, b); };
     return r;
   };
 
@@ -1033,7 +1036,8 @@ function treeBranches(tree) {
     while (cur) { turns++; cur = cur.parent ? vnodes.get(cur.parent) : null; }
     return {
       leafId: n.id,
-      name: clip(n.entry.content, 38) || "branch",
+      name: (n.entry.label || "").trim() || clip(n.entry.content, 38) || "branch",
+      named: !!(n.entry.label || "").trim(),
       turns,
       active: activeIds.has(n.id),
     };
@@ -1047,6 +1051,32 @@ function treeBranches(tree) {
 async function switchBranch(leafId) {
   if (!leafId || !state.tree || leafId === state.tree.active_leaf) return;
   await forkNode(leafId);
+}
+
+// Inline-rename a branch: swap its name for an input (Enter saves via the label
+// endpoint, Esc cancels). Matches the app's no-native-prompt style.
+function renameBranch(row, b) {
+  const span = row.querySelector(".bname");
+  const input = el("input", "bname-edit");
+  input.value = b.named ? b.name : "";
+  input.placeholder = "name this branch";
+  span.replaceWith(input);
+  input.focus(); input.select();
+  let done = false;
+  const finish = async (commit) => {
+    if (done) return; done = true;
+    if (commit) {
+      try { state.tree = await api.label(state.sessionId, b.leafId, input.value); }
+      catch (e) { toast(String(e.message || e), true); }
+    }
+    render();
+  };
+  input.onkeydown = (e) => {
+    if (e.key === "Enter") { e.preventDefault(); finish(true); }
+    else if (e.key === "Escape") { e.preventDefault(); finish(false); }
+  };
+  input.onblur = () => finish(true);
+  input.onclick = (e) => e.stopPropagation();
 }
 
 function layoutGraph(vchildren, tree) {

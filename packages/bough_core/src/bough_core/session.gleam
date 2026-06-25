@@ -131,6 +131,24 @@ pub fn set_leaf(tree: SessionTree, id: String) -> SessionTree {
   SessionTree(..tree, active_leaf: Some(id))
 }
 
+/// Set (or clear, with "") a node's human label — used to name a branch by its
+/// tip. Leaves the tree untouched if the id isn't found.
+pub fn set_label(tree: SessionTree, id: String, label: String) -> SessionTree {
+  let label = case string.trim(label) {
+    "" -> None
+    l -> Some(l)
+  }
+  SessionTree(
+    ..tree,
+    entries: list.map(tree.entries, fn(e) {
+      case e.id == id {
+        True -> Entry(..e, label: label)
+        False -> e
+      }
+    }),
+  )
+}
+
 /// The snapshot to restore when forking to node `id`: its own `snapshot_ref`, or
 /// the nearest ancestor's if it has none (only completed turns carry one). Used
 /// so a fork restores the filesystem to that node's state (SPEC.md §4.1).
