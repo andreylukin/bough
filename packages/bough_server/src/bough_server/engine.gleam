@@ -416,6 +416,58 @@ fn run_steps_round(
   parsed: tool_steps.Parsed,
   tool_id: String,
 ) -> #(State, Int) {
+  // A round whose steps are ALL `collect` (and nothing else) accomplishes
+  // nothing while children are still running — their output is delivered
+  // automatically. Treating it as a productive round is what lets the model
+  // busy-poll forever. Short-circuit it into the event-driven wait: answer the
+  // tool call once, then hold for the next real result instead of re-prompting.
+  case is_poll_round(parsed.steps) && state.subagents.pending() {
+    True -> hold_for_subagents(state, round, tool_id)
+    False -> run_steps_round_active(state, round, parsed, tool_id)
+  }
+}
+
+/// True when the batch is non-empty and every step is a `collect` — a pure
+/// status probe with no workspace effect.
+pub fn is_poll_round(steps: List(Step)) -> Bool {
+  !list.is_empty(steps)
+  && list.all(steps, fn(s) {
+    case s {
+      Collect(_, _) -> True
+      _ -> False
+    }
+  })
+}
+
+/// Answer a pure-poll round with one short note (no per-target "still running"
+/// cards) and fold into `settle_subagents`, which blocks on `wake` until a
+/// child reports. Converts the model's busy-wait into the intended async wait.
+fn hold_for_subagents(
+  state: State,
+  round: Int,
+  tool_id: String,
+) -> #(State, Int) {
+  let note =
+    "Subagents are still running. Their final output is delivered to you "
+    <> "automatically as a message when each finishes — you do not need to "
+    <> "`collect`. Holding for the next result."
+  let state =
+    push_message(
+      state,
+      provider.tool_result(state.config.provider, tool_id, note),
+    )
+  // `settle_subagents` adds its own "… waiting for subagents" activity, so no
+  // extra timeline noise here — and none of the loud cards a real `collect`
+  // would emit per target.
+  settle_subagents(state, round)
+}
+
+fn run_steps_round_active(
+  state: State,
+  round: Int,
+  parsed: tool_steps.Parsed,
+  tool_id: String,
+) -> #(State, Int) {
   // Plan-review gate (SPEC §5.4): pause a non-empty plan for human approval.
   case state.config.review && !list.is_empty(parsed.steps) {
     False -> execute_plan(state, round, parsed, tool_id)
