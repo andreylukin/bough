@@ -227,6 +227,10 @@ body.left-collapsed.right-collapsed #layout { grid-template-columns: 0 1fr 0; }
 .worker-body .wlabel { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.3px; color: var(--lichen-dim); text-transform: uppercase; margin: 6px 0 3px; }
 .worker-body .wlabel:first-child { margin-top: 0; }
 .tag.worker { font-family: var(--mono); font-weight: 600; font-size: 9.5px; padding: 0 5px; border-radius: 4px; background: rgba(226,160,63,0.14); color: var(--sap); letter-spacing: 0.4px; }
+.card.collapsible.collapsed > .step-body { display: none; }
+/* a step's body: the plan (program/content) the supervisor wrote, then output */
+.step-body .slabel { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.3px; color: var(--lichen-dim); text-transform: uppercase; margin: 7px 0 3px; }
+.step-body > .slabel:first-child { margin-top: 6px; }
 .card .caret { font-size: 9px; color: var(--lichen-dim); width: 10px; flex: none; }
 /* delivered subagent report: a labeled, collapsible block */
 .verb.subagent { color: var(--leaf); }

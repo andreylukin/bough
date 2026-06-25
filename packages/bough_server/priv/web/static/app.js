@@ -676,20 +676,45 @@ const WAIT_LINE = "waiting for subagents to report";
 // blurb), so they collapse to just their header by default — click the head to
 // peek the output inline, click the output to open the full drawer.
 const COLLAPSE_VERBS = new Set(["code", "spawn"]);
+// First non-blank line of a program/content, for the collapsed-card preview.
+function firstLine(s) {
+  const l = (s || "").split("\n").find((x) => x.trim());
+  return clip(l || "", 72);
+}
+// What the supervisor wrote for a step — the plan — labeled by verb. Just
+// `code` for now: its program is the plan and is otherwise only in the drawer.
+const PLAN_LABEL = { code: "program" };
 function mergedCard(call, exec) {
   const verb = (call.verb || "").toLowerCase();
   const ok = exec.exit === 0;
   const card = el("div", "card " + (ok ? "ok" : "bad"));
   const head = el("div", "head");
   head.appendChild(el("span", "verb " + verb, esc(call.verb)));
-  head.appendChild(el("span", "arg", esc(call.arg || "")));
+  // The program/content the supervisor planned (e.g. `code`'s body) — preview
+  // its first line in the header so a collapsed card still says what it does.
+  const detail = (call.detail || "").trim();
+  const planVerb = verb in PLAN_LABEL && verb !== "spawn";
+  head.appendChild(el("span", "arg", esc(call.arg || (planVerb ? firstLine(detail) : ""))));
   // `spawn`/`tell` are async — there is no command exit code, so the "exit 0"
   // badge is just misleading noise. Only show it for steps that actually ran.
   if (verb !== "spawn" && verb !== "tell")
     head.appendChild(el("span", "exit " + (ok ? "ok" : "bad"), "exit " + exec.exit));
   card.appendChild(head);
-  const hasBody = exec.digest && exec.digest.trim();
-  if (hasBody) card.appendChild(el("pre", "out", esc(cleanDigest(exec.digest))));
+  // Body: the plan (the program/content the supervisor wrote), then its output.
+  const out = exec.digest && exec.digest.trim() ? cleanDigest(exec.digest) : "";
+  const body = el("div", "step-body");
+  let hasBody = false;
+  if (detail && planVerb) {
+    body.appendChild(el("div", "slabel", PLAN_LABEL[verb] || "plan"));
+    body.appendChild(el("pre", "out", esc(detail)));
+    hasBody = true;
+  }
+  if (out) {
+    if (hasBody) body.appendChild(el("div", "slabel", "output"));
+    body.appendChild(el("pre", "out", esc(out)));
+    hasBody = true;
+  }
+  if (hasBody) card.appendChild(body);
   card.onclick = () => inspectStep(call, exec);
   if (hasBody && COLLAPSE_VERBS.has(verb)) makeCollapsible(card, head);
   return card;
