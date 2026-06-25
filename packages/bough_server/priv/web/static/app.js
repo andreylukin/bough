@@ -567,6 +567,9 @@ function renderStepList(box, steps) {
     // one (a live run still shows it's waiting; the rest are just noise).
     if (s.type === "text" && (s.text || "").includes(WAIT_LINE)
       && i !== steps.length - 1) continue;
+    // A review is a request + an outcome; when the model accepts immediately
+    // they land back-to-back, so collapse to just the outcome chip.
+    if (s.type === "review" && next && next.type === "review") continue;
 
     let card = null, advance = 0;
     if (s.type === "call" && next && next.type === "exec") {
