@@ -1913,7 +1913,7 @@ fn is_exec(s: Step) -> Bool {
 
 fn is_worker(s: Step) -> Bool {
   case s {
-    StepWorker(_, _) -> True
+    StepWorker(_, _, _) -> True
     _ -> False
   }
 }

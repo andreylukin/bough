@@ -239,12 +239,30 @@ function stepCard(step) {
       return card;
     }
     case "worker": {
-      const card = el("div", "card");
+      const ok = step.exit === 0;
+      const card = el("div", "card " + (ok ? "ok" : "bad"));
       const head = el("div", "head");
       head.appendChild(el("span", "tag worker", "worker fix"));
-      head.appendChild(el("span", "arg", esc(step.command || "")));
-      head.appendChild(el("span", "exit " + (step.exit === 0 ? "ok" : "bad"), "exit " + step.exit));
+      head.appendChild(el("span", "arg", esc(clip(step.command || "", 90))));
+      head.appendChild(el("span", "exit " + (ok ? "ok" : "bad"), "exit " + step.exit));
       card.appendChild(head);
+      // Collapsed body: the brief the supervisor handed the worker (the plan)
+      // and the fix it produced — so you can see what was asked, not just the
+      // resulting command.
+      const brief = (step.brief || "").trim();
+      if (brief || step.command) {
+        const body = el("div", "worker-body");
+        if (brief) {
+          body.appendChild(el("div", "wlabel", "plan from supervisor →"));
+          body.appendChild(el("pre", "out", esc(cleanDigest(brief))));
+        }
+        if (step.command) {
+          body.appendChild(el("div", "wlabel", "worker’s fix"));
+          body.appendChild(el("pre", "out", esc(step.command)));
+        }
+        card.appendChild(body);
+        makeCollapsible(card, head);
+      }
       return card;
     }
     case "check": {

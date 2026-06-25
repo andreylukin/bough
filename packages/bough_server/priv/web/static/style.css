@@ -221,6 +221,12 @@ body.left-collapsed.right-collapsed #layout { grid-template-columns: 0 1fr 0; }
 /* collapsed code/spawn cards: header only until you click the caret */
 .card.collapsible > .head { cursor: pointer; }
 .card.collapsible.collapsed > pre { display: none; }
+.card.collapsible.collapsed > .worker-body { display: none; }
+/* worker fix: the plan handed to the worker, then its fix */
+.worker-body { margin-top: 6px; }
+.worker-body .wlabel { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.3px; color: var(--lichen-dim); text-transform: uppercase; margin: 6px 0 3px; }
+.worker-body .wlabel:first-child { margin-top: 0; }
+.tag.worker { font-family: var(--mono); font-weight: 600; font-size: 9.5px; padding: 0 5px; border-radius: 4px; background: rgba(226,160,63,0.14); color: var(--sap); letter-spacing: 0.4px; }
 .card .caret { font-size: 9px; color: var(--lichen-dim); width: 10px; flex: none; }
 /* delivered subagent report: a labeled, collapsible block */
 .verb.subagent { color: var(--leaf); }
