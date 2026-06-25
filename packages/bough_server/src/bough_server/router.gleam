@@ -99,6 +99,7 @@ pub fn handle_request(req: Request) -> Response {
     ["session", id, "packs"], Post -> apply_packs(req, id)
     ["session", id, "fork"], Post -> fork_session(req, id)
     ["session", id, "graft"], Post -> graft_session(req, id)
+    ["session", id, "label"], Post -> label_node(req, id)
     _, _ -> wisp.not_found()
   }
 }
@@ -1073,6 +1074,31 @@ fn fork_session(req: Request, id: String) -> Response {
 fn fork_decoder() -> decode.Decoder(String) {
   use entry_id <- decode.field("entry_id", decode.string)
   decode.success(entry_id)
+}
+
+/// Name a node (a branch by its tip). Pure metadata — no filesystem touch.
+fn label_node(req: Request, id: String) -> Response {
+  use body <- wisp.require_json(req)
+  case decode.run(body, label_decoder()) {
+    Error(_) -> wisp.bad_request("expected {\"entry_id\": string, \"label\": string}")
+    Ok(#(entry_id, label)) ->
+      case session_manager.load(id) {
+        Error(_) -> wisp.not_found()
+        Ok(tree) -> {
+          let tree = session.set_label(tree, entry_id, label)
+          case session_manager.save(tree) {
+            Ok(_) -> json_ok(json.to_string(session.tree_to_json(tree)))
+            Error(_) -> wisp.internal_server_error()
+          }
+        }
+      }
+  }
+}
+
+fn label_decoder() -> decode.Decoder(#(String, String)) {
+  use entry_id <- decode.field("entry_id", decode.string)
+  use label <- decode.field("label", decode.string)
+  decode.success(#(entry_id, label))
 }
 
 /// Reattach the subtree rooted at `section_root` onto `onto` (SPEC.md §4.2). A
