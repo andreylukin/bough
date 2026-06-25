@@ -8,10 +8,12 @@ pub fn supervisor_system(
   workspace: String,
   instructions: Option(String),
   capabilities: String,
+  skills: String,
 ) -> String {
   base_supervisor_system(workspace)
   <> capabilities
   <> project_instructions(instructions)
+  <> skills
 }
 
 /// The workspace's AGENTS.md, appended to the system prompt as authoritative

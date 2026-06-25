@@ -26,6 +26,7 @@ import bough_server/provider
 import bough_server/run_store
 import bough_server/session_lock
 import bough_server/session_manager
+import bough_server/skills
 import bough_server/snapshots
 import bough_server/subagents
 import bough_server/workdiff
@@ -79,6 +80,7 @@ pub fn handle_request(req: Request) -> Response {
     ["config"], Get -> config()
     ["groups"], Get -> groups_catalog()
     ["groups", name], Get -> group_detail(name)
+    ["skills"], Get -> list_skills()
     ["packs"], Get -> list_packs()
     ["packs"], Post -> save_pack(req)
     ["packs", "draft"], Post -> draft_pack(req)
@@ -249,6 +251,11 @@ fn groups_req_decoder() -> decode.Decoder(List(String)) {
 
 fn list_packs() -> Response {
   json_ok(json.to_string(json.array(packs.list(), packs.to_json)))
+}
+
+/// GET `/skills`: the installed skills (name + description) under ~/.bough/skills.
+fn list_skills() -> Response {
+  json_ok(json.to_string(skills.to_json(skills.list())))
 }
 
 /// Upsert a pack (by name).
