@@ -182,6 +182,7 @@ button:disabled { opacity: 0.45; cursor: default; }
 .chip.ok { color: var(--leaf); } .chip.ok .ic { background: rgba(116,196,128,0.16); }
 .chip.bad { color: var(--rust); } .chip.bad .ic { background: rgba(206,111,87,0.16); }
 .chip.review { color: var(--sap); } .chip.review .ic { background: rgba(226,160,63,0.16); }
+.chip.collect .ic { background: rgba(120,160,140,0.16); } .chip.collect .arg { color: var(--lichen-dim); }
 .chip .note { color: var(--lichen-dim); font-family: var(--sans); }
 
 details.detail { margin-top: 3px; }

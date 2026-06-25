@@ -168,7 +168,6 @@ type State {
     context_tokens: Int,
     baseline: Dict(String, Int),
     bb_dir: String,
-    bb_idx: Int,
     check: Option(String),
     check_ok: Bool,
     reviewed: Bool,
@@ -238,7 +237,6 @@ pub fn run_streaming(
       context_tokens: 0,
       baseline: integrity.snapshot(workspace),
       bb_dir: dir,
-      bb_idx: 0,
       check: None,
       check_ok: False,
       reviewed: False,
@@ -1720,22 +1718,18 @@ fn bb_dir() -> String {
   home <> "/.bough/bb/" <> int.to_string(clock.now_ms())
 }
 
-/// Save full output to a numbered blackboard file when it exceeds its digest,
-/// returning a pointer suffix to append to the conversation (empty if inline).
+/// When output exceeds its digest, return a suffix telling the model the output
+/// was truncated and how to see more. It used to point at a blackboard file
+/// under ~/.bough — but read/code/bash are all sandboxed to the workspace, so
+/// the model could never open that path (it just burned steps on a guaranteed
+/// "outside the workspace" error). A re-query hint is honest and actionable.
 fn maybe_save(state: State, full: String, dig: String) -> #(State, String) {
   case string.length(full) > string.length(dig) {
     False -> #(state, "")
-    True -> {
-      let idx = state.bb_idx + 1
-      let _ = simplifile.create_directory_all(state.bb_dir)
-      let path = state.bb_dir <> "/out_" <> int.to_string(idx) <> ".txt"
-      case simplifile.write(path, full) {
-        Ok(_) -> #(
-          State(..state, bb_idx: idx),
-          "\n[full output saved: " <> path <> "]",
-        )
-        Error(_) -> #(state, "")
-      }
-    }
+    True -> #(
+      state,
+      "\n[output truncated to the digest above — re-run more narrowly "
+        <> "(grep, head, or a specific path) to see the rest]",
+    )
   }
 }

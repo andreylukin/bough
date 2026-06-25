@@ -199,6 +199,10 @@ function stepCard(step) {
         ? el("div", "card plan prose", md(step.text)) : null;
     case "call": {
       const verb = (step.verb || "").toLowerCase();
+      // A `collect` is a non-blocking status probe, not workspace work — its
+      // result is a one-line status, folded into the compact chip below. Drop
+      // the call card so polling never grows into a wall of cards.
+      if (verb === "collect") return null;
       const card = el("div", "card");
       const head = el("div", "head");
       head.appendChild(el("span", "verb " + verb, esc(step.verb)));
@@ -208,6 +212,8 @@ function stepCard(step) {
       return card;
     }
     case "exec": {
+      // A lone `collect` exec (unpaired) still renders as the quiet chip.
+      if ((step.verb || "").toUpperCase() === "COLLECT") return collectChip(step);
       const ok = step.exit === 0;
       const card = el("div", "card " + (ok ? "ok" : "bad"));
       const head = el("div", "head");
@@ -546,13 +552,33 @@ function renderStepList(box, steps) {
   for (let i = 0; i < steps.length; i++) {
     const s = steps[i], next = steps[i + 1];
     if (s.type === "call" && next && next.type === "exec") {
-      const card = mergedCard(s, next);
+      // A `collect` is a non-blocking status probe, not workspace work — render
+      // it as one quiet chip (id · status) so polling never grows into a wall
+      // of cards. Everything else pairs into a full call+exec card.
+      const card = (s.verb || "").toUpperCase() === "COLLECT"
+        ? collectChip(next) : mergedCard(s, next);
       if (s._eid) card.dataset.eid = s._eid; // anchor for map jump-to
       box.appendChild(card); i++; continue;
     }
     const c = stepCard(s);
     if (c) { if (s._eid) c.dataset.eid = s._eid; box.appendChild(c); }
   }
+}
+
+// A `collect` probe as a compact chip: subagent id + a one-word status, parsed
+// from the exec digest (running / finished / failed), instead of a full card
+// with the verbose "you don't need to wait" body.
+function collectChip(exec) {
+  const d = exec.digest || "";
+  let status = "checked", cls = "";
+  if (/is still running/.test(d)) status = "running";
+  else if (/has finished/.test(d)) status = "finished";
+  else if (/failed/.test(d)) { status = "failed"; cls = " bad"; }
+  else if (/No subagent/.test(d)) { status = "unknown id"; cls = " bad"; }
+  const m = d.match(/Subagent (\S+)/);
+  const id = m ? m[1] : "";
+  return el("div", "chip collect" + cls,
+    `<span class="ic">↳</span> collect <span class="arg">${esc(id)}</span> · ${status}`);
 }
 
 // A call+exec pair as one clickable card: verb, arg, exit, and an output
