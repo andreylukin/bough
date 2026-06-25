@@ -182,7 +182,25 @@ fn bash(cmd: &str, workspace: &str, profile: Option<&str>, inherit: bool) -> Str
             c
         }
     };
-    match command.current_dir(workspace).output() {
+    command.current_dir(workspace);
+    // Route egress through the session's mitmproxy when bough set one. The CA is
+    // the proxy's cert so curl/git/node trust the interception (gh needs the CA
+    // in the macOS keychain — Go ignores these env vars).
+    if let Ok(proxy) = env::var("BOUGH_BASH_PROXY") {
+        command
+            .env("HTTPS_PROXY", &proxy)
+            .env("HTTP_PROXY", &proxy)
+            .env("https_proxy", &proxy)
+            .env("http_proxy", &proxy);
+        if let Ok(ca) = env::var("BOUGH_BASH_PROXY_CA") {
+            command
+                .env("SSL_CERT_FILE", &ca)
+                .env("CURL_CA_BUNDLE", &ca)
+                .env("GIT_SSL_CAINFO", &ca)
+                .env("NODE_EXTRA_CA_CERTS", &ca);
+        }
+    }
+    match command.output() {
         Ok(o) => {
             let mut s = String::from_utf8_lossy(&o.stdout).into_owned();
             s.push_str(&String::from_utf8_lossy(&o.stderr));

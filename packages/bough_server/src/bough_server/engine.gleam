@@ -975,18 +975,47 @@ fn apply(state: State, step: Step) -> #(State, Exec) {
 /// egress events only on finalization (10+s later), so there's no timely,
 /// per-command signal to surface or gate on — they remain RUN-path features.
 fn exec_code(state: State, code: String) -> #(State, Exec) {
-  // Sandbox the sidecar's `bash` with a generated macOS Seatbelt profile (the
-  // filesystem half of the sandbox; egress is owned by the proxy layer).
-  let profile = option.from_result(write_seatbelt_profile(state))
+  // Sandbox the sidecar's `bash` with a generated macOS Seatbelt profile. When a
+  // session mitmproxy is up, the profile locks egress to its loopback port and
+  // we point bash's clients at it (HTTPS_PROXY + the proxy CA, via env monty
+  // reads); otherwise network stays open (transitional, pre-proxy).
+  let port = proxy_port()
+  let profile = option.from_result(write_seatbelt_profile(state, port))
+  set_bash_proxy(port)
   let #(exit, output) = monty_bridge.run_code(state.workspace, code, profile)
   #(bump(state), Exec(exit, output))
 }
 
+/// The session mitmproxy's loopback port, if one is running (Phase 3a: supplied
+/// via `BOUGH_MITM_PORT`; Phase 3b will manage it per session).
+fn proxy_port() -> Option(Int) {
+  case envoy.get("BOUGH_MITM_PORT") {
+    Ok(s) -> int.parse(s) |> option.from_result
+    Error(_) -> None
+  }
+}
+
+/// Tell monty (via its inherited env) to route `bash` egress through the proxy.
+fn set_bash_proxy(port: Option(Int)) -> Nil {
+  case port {
+    None -> Nil
+    Some(p) -> {
+      let home = envoy.get("HOME") |> result.unwrap("")
+      envoy.set("BOUGH_BASH_PROXY", "http://127.0.0.1:" <> int.to_string(p))
+      envoy.set("BOUGH_BASH_PROXY_CA", home <> "/.mitmproxy/mitmproxy-ca-cert.pem")
+      Nil
+    }
+  }
+}
+
 /// Write the run's Seatbelt profile (sibling of the net profile in the run dir).
-fn write_seatbelt_profile(state: State) -> Result(String, Nil) {
+fn write_seatbelt_profile(
+  state: State,
+  port: Option(Int),
+) -> Result(String, Nil) {
   let path = string.replace(state.net_profile_path, "net.json", "sandbox.sb")
   let home = envoy.get("HOME") |> result.unwrap("")
-  seatbelt.write(path, state.workspace, home)
+  seatbelt.write(path, state.workspace, home, port)
 }
 
 /// Cap on the approve→retry loop for one command, so a never-matching rule

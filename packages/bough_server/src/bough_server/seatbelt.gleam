@@ -8,7 +8,9 @@
 //// is owned by the mitmproxy layer (a later phase); this module is the
 //// filesystem/process half only.
 
+import gleam/int
 import gleam/list
+import gleam/option.{type Option, None, Some}
 import gleam/string
 import simplifile
 
@@ -61,16 +63,23 @@ const dev_writes = "(literal \"/dev/null\") (literal \"/dev/zero\")"
   <> " (regex #\"^/dev/tty\") (regex #\"^/dev/fd/\") (regex #\"^/dev/stdout\")"
 
 /// Write the generated profile to `path`, returning it. `workspace` is the
-/// read-write root; `home` expands `~` in the policy lists.
-pub fn write(path: String, workspace: String, home: String) -> Result(String, Nil) {
-  case simplifile.write(path, build(workspace, home)) {
+/// read-write root; `home` expands `~`. `proxy_port`, when set, locks egress to
+/// just that loopback port (the session's mitmproxy); `None` leaves network
+/// open (transitional).
+pub fn write(
+  path: String,
+  workspace: String,
+  home: String,
+  proxy_port: Option(Int),
+) -> Result(String, Nil) {
+  case simplifile.write(path, build(workspace, home, proxy_port)) {
     Ok(_) -> Ok(path)
     Error(_) -> Error(Nil)
   }
 }
 
 /// Pure: the Seatbelt profile text (SBPL).
-pub fn build(workspace: String, home: String) -> String {
+pub fn build(workspace: String, home: String, proxy_port: Option(Int)) -> String {
   let denies =
     deny_reads
     |> list.map(fn(p) { subpath(expand(p, home)) })
@@ -91,6 +100,22 @@ pub fn build(workspace: String, home: String) -> String {
   <> "\n  "
   <> dev_writes
   <> ")\n"
+  <> network(proxy_port)
+}
+
+/// Egress is owned by the session's mitmproxy: deny all network except the
+/// loopback proxy port (the agent reaches it via HTTPS_PROXY). `None` leaves
+/// the default (open) — used only in the transitional phase before the proxy.
+fn network(proxy_port: Option(Int)) -> String {
+  case proxy_port {
+    None -> ""
+    Some(port) ->
+      "\n;; egress only via the session mitmproxy on loopback\n"
+      <> "(deny network*)\n"
+      <> "(allow network-outbound (remote ip \"localhost:"
+      <> int.to_string(port)
+      <> "\"))\n"
+  }
 }
 
 fn subpath(p: String) -> String {
