@@ -757,14 +757,17 @@ function renderSidebar() {
   // One row per branch (live leaf), nested under the session you're viewing, so
   // forked conversations show side by side. Click to switch the active branch.
   const branchRow = (b) => {
-    const r = el("div", "branch-item" + (b.active ? " active" : "") + (b.named ? " named" : "") + (b.trunk ? " trunk" : ""));
+    const r = el("div", "branch-item" + (b.active ? " active" : "") + (b.named ? " named" : "") + (b.trunk ? " trunk" : "") + (b.running ? " running" : ""));
     r.dataset.act = "switch-branch";
     r.dataset.leaf = b.leafId;
     // The trunk branch is on disk; others get an "adopt" button to bring their
-    // files into the project dir (and become trunk).
-    const tail = b.trunk
-      ? `<span class="btrunk" title="the project dir reflects this branch">trunk</span>`
-      : `<button class="badopt" data-act="adopt-branch" data-leaf="${esc(b.leafId)}" title="restore the project dir to this branch and make it trunk">adopt</button>`;
+    // files into the project dir (and become trunk). A running branch shows a
+    // spinner instead (you can't adopt mid-run).
+    const tail = b.running
+      ? `<span class="bspin" title="running">◍</span>`
+      : b.trunk
+        ? `<span class="btrunk" title="the project dir reflects this branch">trunk</span>`
+        : `<button class="badopt" data-act="adopt-branch" data-leaf="${esc(b.leafId)}" title="restore the project dir to this branch and make it trunk">adopt</button>`;
     r.innerHTML =
       `<span class="bconn">${b.active ? "●" : "○"}</span>` +
       `<span class="bname" title="double-click to rename">${esc(b.name)}</span>` +
@@ -1047,10 +1050,19 @@ function treeBranches(tree) {
       turns,
       active: activeIds.has(n.id),
       trunk: n.id === tree.trunk_leaf,
+      // A pending user-entry tip means a run is in flight on this branch (the
+      // turn lands in the tree only on completion).
+      running: n.entry.role === "user",
     };
   });
   branches.sort((a, b) => (a.active === b.active ? 0 : a.active ? -1 : 1));
   return branches;
+}
+
+// True while any branch has a run in flight, so the poller keeps the sidebar
+// dots and the tree live even when you've navigated to an idle branch.
+function anyBranchRunning(tree) {
+  return treeBranches(tree).some((b) => b.running);
 }
 
 // Switch the active branch to a leaf — reuses fork (set active_leaf + restore
@@ -1811,7 +1823,14 @@ async function openSession(id) {
     state.subagents = await api.subagents(id).catch(() => []);
   } catch (e) { toast(String(e.message || e), true); return; }
   render();
-  if (state.run && ACTIVE.has(state.run.status)) startPoll();
+  ensurePoll();
+}
+
+// Keep the poller running while the viewed run is active OR any other branch is
+// running in the background (so its dot and its turn stay live).
+function ensurePoll() {
+  const viewed = state.run && ACTIVE.has(state.run.status);
+  if (viewed || anyBranchRunning(state.tree)) startPoll();
 }
 
 // Start a fresh session straight in a folder you already have — no form, since
@@ -1962,8 +1981,8 @@ async function forkNode(entryId) {
     state.tree = await api.fork(state.sessionId, entryId);
     state.run = await api.run(state.sessionId).catch(() => state.run);
     state.graftRoot = null;
-    toast("forked");
     render();
+    ensurePoll();
   } catch (e) { toast(String(e.message || e), true); }
 }
 
@@ -2065,15 +2084,20 @@ async function tick() {
   state.run = run;
   // Keep subagent statuses fresh while a run is in flight.
   state.subagents = await api.subagents(id).catch(() => state.subagents);
-  const done = !ACTIVE.has(run.status);
-  if (done) {
+  const viewedDone = !ACTIVE.has(run.status);
+  // Refresh the tree when the viewed run finishes OR while any other branch is
+  // still running, so its turn lands and the sidebar dots stay live. Keep
+  // polling until nothing anywhere is running.
+  let othersRunning = anyBranchRunning(state.tree);
+  if (viewedDone || othersRunning) {
     state.tree = await api.tree(id).catch(() => state.tree);
+    othersRunning = anyBranchRunning(state.tree);
     await loadSessions();
-    state.diff = null; // the run may have written files — reload Changes on next view
-    stopPoll();
+    state.diff = null; // a run may have written files — reload Changes on next view
   }
-  const sig = runSig(run, state.subagents);
-  if (done || sig !== state.lastSig) { state.lastSig = sig; render(); }
+  if (viewedDone && !othersRunning) stopPoll();
+  const sig = runSig(run, state.subagents) + "|" + (othersRunning ? "b" : "");
+  if (viewedDone || othersRunning || sig !== state.lastSig) { state.lastSig = sig; render(); }
 }
 
 // ---- collapsible side panes ----------------------------------------------
