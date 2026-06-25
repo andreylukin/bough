@@ -12,6 +12,7 @@ import gleam/dynamic/decode
 import gleam/json
 import gleam/list
 import gleam/result
+import gleam/string
 import simplifile
 
 pub type Sub {
@@ -38,6 +39,25 @@ pub fn list(parent_id: String) -> List(Sub) {
         Error(_) -> []
         Ok(body) ->
           json.parse(body, decode.list(sub_decoder())) |> result.unwrap([])
+      }
+  }
+}
+
+/// Every session id registered as a child of some parent. Used to keep spawned
+/// subagents out of the top-level session list — they're reachable through
+/// their parent's Subagents pane, not the main sidebar.
+pub fn child_ids() -> List(String) {
+  case dir() {
+    Error(_) -> []
+    Ok(d) ->
+      case simplifile.read_directory(d) {
+        Error(_) -> []
+        Ok(files) ->
+          files
+          |> list.filter(fn(f) { string.ends_with(f, ".json") })
+          |> list.flat_map(fn(f) {
+            list.map(list(string.drop_end(f, 5)), fn(s) { s.id })
+          })
       }
   }
 }

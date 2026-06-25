@@ -179,6 +179,10 @@ button:disabled { opacity: 0.45; cursor: default; }
 .card.collapsible > .head { cursor: pointer; }
 .card.collapsible.collapsed > pre { display: none; }
 .card .caret { font-size: 9px; color: var(--lichen-dim); width: 10px; flex: none; }
+/* delivered subagent report: a labeled, collapsible block */
+.verb.subagent { color: var(--leaf); }
+.card.subreport.collapsed > .subreport-body { display: none; }
+.subreport-body { margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--moss); }
 
 /* small inline status markers (CHECK, review) — buds, not panes */
 .chip { align-self: flex-start; display: inline-flex; align-items: center; gap: 7px; width: auto; font-family: var(--mono); font-size: 11px; color: var(--lichen); padding: 1px 0; }

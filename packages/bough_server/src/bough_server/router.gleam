@@ -1016,8 +1016,14 @@ fn oneline_clip(s: String, max: Int) -> String {
 
 fn list_sessions() -> Response {
   case session_manager.list() {
-    Ok(summaries) ->
-      json_ok(json.to_string(json.array(summaries, summary_to_json)))
+    Ok(summaries) -> {
+      // Spawned subagents are sessions too; keep them out of the top-level list
+      // (they live under their parent's Subagents pane) so delegating to a team
+      // doesn't flood the sidebar.
+      let children = subagents.child_ids()
+      let top = list.filter(summaries, fn(s) { !list.contains(children, s.id) })
+      json_ok(json.to_string(json.array(top, summary_to_json)))
+    }
     Error(_) -> wisp.internal_server_error()
   }
 }
