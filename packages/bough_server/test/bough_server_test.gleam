@@ -1,3 +1,4 @@
+import bough_core/artifact.{Code, Collect}
 import bough_core/nono.{Allow, AuditEvent, Deny, Group, Snapshot}
 import bough_core/session
 import bough_server/agent
@@ -259,6 +260,18 @@ pub fn denied_paths_test() {
     <> "cat: /etc/secret: Permission denied"
   assert engine.denied_paths(out) == ["/Users/x/Library", "/etc/secret"]
   assert engine.denied_paths("all good\nexit 0") == []
+}
+
+/// A round whose steps are ALL `collect` is a pure status poll — the harness
+/// holds for subagents instead of re-prompting the model, which is what stops
+/// the busy-wait. Any non-collect step (or an empty batch) makes it productive.
+pub fn is_poll_round_test() {
+  assert engine.is_poll_round([Collect("a", "id1")])
+  assert engine.is_poll_round([Collect("a", "id1"), Collect("b", "id2")])
+  assert engine.is_poll_round([]) == False
+  assert engine.is_poll_round([Collect("a", "id1"), Code("c", "print(1)")])
+    == False
+  assert engine.is_poll_round([Code("c", "print(1)")]) == False
 }
 
 /// The suggester maps the worker's free-text reply to known toggleable group
