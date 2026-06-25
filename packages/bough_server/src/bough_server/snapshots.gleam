@@ -54,6 +54,81 @@ pub fn restore(
   Ok(Nil)
 }
 
+/// The scratch working directory for running a branch in isolation, off the
+/// trunk project dir: `~/.bough/work/<session>/<leaf>`.
+pub fn worktree_path(session_id: String, leaf_id: String) -> String {
+  let home = envoy.get("HOME") |> result.unwrap("/tmp")
+  home <> "/.bough/work/" <> session_id <> "/" <> leaf_id
+}
+
+/// Materialize a branch's leaf snapshot into its own git worktree of the
+/// session's shadow repo, so a run can act on it without touching trunk. Returns
+/// the worktree path. Re-materializes a stale dir (worktree is scratch).
+pub fn materialize_worktree(
+  session_id: String,
+  leaf_id: String,
+  ref: String,
+) -> Result(String, String) {
+  use _ <- result.try(guard())
+  let gitdir = repo_path(session_id)
+  use _ <- result.try(case is_repo(gitdir) {
+    True -> Ok("")
+    False -> Error("no snapshot repo for session " <> session_id)
+  })
+  let path = worktree_path(session_id, leaf_id)
+  let _ = remove_worktree(session_id, leaf_id)
+  let _ = simplifile.create_directory_all(path)
+  use _ <- result.try(case
+    shellout.command(
+      "git",
+      ["--git-dir=" <> gitdir, "worktree", "add", "--detach", "-q", path, ref],
+      ".",
+      [],
+    )
+  {
+    Ok(_) -> Ok("")
+    Error(#(_, m)) -> Error(string.trim(m))
+  })
+  Ok(path)
+}
+
+/// Capture a branch worktree's current state as a snapshot, committing through
+/// the worktree's own index/HEAD (not the shared shadow HEAD), so it never
+/// collides with trunk. Returns the commit SHA.
+pub fn capture_worktree(workspace: String) -> Result(String, String) {
+  use _ <- result.try(guard())
+  use _ <- result.try(guard_workspace(workspace))
+  use _ <- result.try(git_c(workspace, ["add", "-A"]))
+  use _ <- result.try(git_c(workspace, [
+    "-c", "user.email=bough@local", "-c", "user.name=bough", "commit",
+    "--allow-empty", "--no-gpg-sign", "-q", "-m", "turn",
+  ]))
+  use sha <- result.try(git_c(workspace, ["rev-parse", "HEAD"]))
+  Ok(string.trim(sha))
+}
+
+/// Tear down a branch worktree (best-effort; scratch dir).
+pub fn remove_worktree(session_id: String, leaf_id: String) -> Nil {
+  let gitdir = repo_path(session_id)
+  let path = worktree_path(session_id, leaf_id)
+  let _ =
+    shellout.command(
+      "git",
+      ["--git-dir=" <> gitdir, "worktree", "remove", "--force", path],
+      ".",
+      [],
+    )
+  let _ = simplifile.delete(path)
+  Nil
+}
+
+fn git_c(workspace: String, args: List(String)) -> Result(String, String) {
+  case shellout.command("git", ["-C", workspace, ..args], workspace, []) {
+    Ok(out) -> Ok(out)
+    Error(#(_code, message)) -> Error(string.trim(message))
+  }
+}
+
 fn guard() -> Result(Nil, String) {
   case envoy.get("BOUGH_NO_SNAPSHOTS") {
     Ok(_) -> Error("snapshots disabled")

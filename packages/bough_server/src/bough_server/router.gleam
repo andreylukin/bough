@@ -100,6 +100,7 @@ pub fn handle_request(req: Request) -> Response {
     ["session", id, "fork"], Post -> fork_session(req, id)
     ["session", id, "graft"], Post -> graft_session(req, id)
     ["session", id, "label"], Post -> label_node(req, id)
+    ["session", id, "adopt"], Post -> adopt_branch(req, id)
     _, _ -> wisp.not_found()
   }
 }
@@ -1052,16 +1053,10 @@ fn fork_session(req: Request, id: String) -> Response {
       case session_manager.load(id) {
         Error(_) -> wisp.not_found()
         Ok(tree) -> {
+          // Switching what you *view* no longer rewrites the working tree — the
+          // project dir tracks `trunk_leaf`, not the viewed branch. Use `adopt`
+          // to bring a branch's files into trunk on purpose.
           let tree = session.set_leaf(tree, entry_id)
-          // Restore the filesystem to the forked node's checkpoint, so the
-          // working tree matches the branch point, not the latest turn.
-          case session.nearest_snapshot(tree, entry_id) {
-            Some(ref) -> {
-              let _ = snapshots.restore(tree.id, tree.project, ref)
-              Nil
-            }
-            None -> Nil
-          }
           case session_manager.save(tree) {
             Ok(_) -> json_ok(json.to_string(session.tree_to_json(tree)))
             Error(_) -> wisp.internal_server_error()
@@ -1074,6 +1069,34 @@ fn fork_session(req: Request, id: String) -> Response {
 fn fork_decoder() -> decode.Decoder(String) {
   use entry_id <- decode.field("entry_id", decode.string)
   decode.success(entry_id)
+}
+
+/// Adopt a branch as trunk: restore the project working dir to its snapshot and
+/// move the trunk pointer (and the view) to it. The explicit, opt-in version of
+/// what `fork` used to do silently on every switch.
+fn adopt_branch(req: Request, id: String) -> Response {
+  use body <- wisp.require_json(req)
+  case decode.run(body, fork_decoder()) {
+    Error(_) -> wisp.bad_request("expected {\"entry_id\": string}")
+    Ok(leaf) ->
+      case session_manager.load(id) {
+        Error(_) -> wisp.not_found()
+        Ok(tree) -> {
+          case session.nearest_snapshot(tree, leaf) {
+            Some(ref) -> {
+              let _ = snapshots.restore(tree.id, tree.project, ref)
+              Nil
+            }
+            None -> Nil
+          }
+          let tree = session.set_leaf(session.set_trunk(tree, leaf), leaf)
+          case session_manager.save(tree) {
+            Ok(_) -> json_ok(json.to_string(session.tree_to_json(tree)))
+            Error(_) -> wisp.internal_server_error()
+          }
+        }
+      }
+  }
 }
 
 /// Name a node (a branch by its tip). Pure metadata — no filesystem touch.
@@ -1271,6 +1294,14 @@ fn launch_run(
   case agent_setup() {
     Error(m) -> json_error(m)
     Ok(#(prov, api_key, model)) -> {
+      // A run on the trunk branch acts on the real project dir and advances
+      // trunk; a run on any other branch acts on an isolated worktree
+      // materialized from that branch's snapshot, leaving trunk untouched.
+      let on_trunk = tree.active_leaf == tree.trunk_leaf
+      let branch_leaf = tree.active_leaf
+      case run_workspace(tree, on_trunk) {
+        Error(m) -> json_error(m)
+        Ok(workspace) -> {
       let history = history_of(tree)
       let user = make_entry(session.User, content, tree.active_leaf)
       let tree = session.append(tree, user)
@@ -1285,7 +1316,7 @@ fn launch_run(
             engine.run_streaming(
               api_key,
               model,
-              tree.project,
+              workspace,
               engine_config(prov, review, net_gate()),
               history,
               content,
@@ -1295,7 +1326,7 @@ fn launch_run(
               fn() { await_decision(id, 0) },
               fn() { inbox_of(id) },
               fn() { control.stop_requested(id) },
-              subagents_for(id, prov, api_key, model, tree.project),
+              subagents_for(id, prov, api_key, model, workspace),
               tree.allow_domains,
               tree.groups,
               tree.suggested,
@@ -1324,8 +1355,27 @@ fn launch_run(
                   allow_domains: outcome.net_allow,
                   suggested: suggested,
                 )
-              let snap = capture_snapshot(id, tree.project)
-              let _ = session_manager.save(append_turn(tree, outcome, snap))
+              // Capture from the dir the run actually used: the project dir on
+              // trunk, the branch worktree otherwise (committed through the
+              // worktree's own HEAD so it never collides with trunk).
+              let snap = case on_trunk {
+                True -> capture_snapshot(id, workspace)
+                False ->
+                  snapshots.capture_worktree(workspace) |> option.from_result
+              }
+              let tree = append_turn(tree, outcome, snap)
+              // A trunk run advances trunk with the active branch; a branch run
+              // leaves trunk where it is and tears down its scratch worktree
+              // (the snapshot it committed survives in the object store).
+              let tree = case on_trunk, tree.active_leaf {
+                True, Some(leaf) -> session.set_trunk(tree, leaf)
+                _, _ -> tree
+              }
+              let _ = session_manager.save(tree)
+              case on_trunk, branch_leaf {
+                False, Some(leaf) -> snapshots.remove_worktree(id, leaf)
+                _, _ -> Nil
+              }
               run_store.write(
                 id,
                 "done",
@@ -1339,7 +1389,29 @@ fn launch_run(
           }
         })
       wisp.json_response("{\"status\":\"started\"}", 202)
+        }
+      }
     }
+  }
+}
+
+/// Pick the working directory for a run: the real project dir on trunk, or a
+/// fresh worktree materialized from the branch's snapshot otherwise.
+fn run_workspace(tree: SessionTree, on_trunk: Bool) -> Result(String, String) {
+  case on_trunk {
+    True -> Ok(tree.project)
+    False ->
+      case tree.active_leaf {
+        None -> Error("No branch selected to run.")
+        Some(leaf) ->
+          case session.nearest_snapshot(tree, leaf) {
+            Some(ref) -> snapshots.materialize_worktree(tree.id, leaf, ref)
+            None ->
+              Error(
+                "This branch has no snapshot to run from. Adopt it to trunk first, then run.",
+              )
+          }
+      }
   }
 }
 

@@ -8,6 +8,7 @@
 import bough_core/session.{type SessionTree, SessionTree}
 import envoy
 import gleam/int
+import gleam/option.{None, Some}
 import gleam/list
 import gleam/result
 import gleam/string
@@ -49,7 +50,13 @@ pub fn load(id: String) -> Result(SessionTree, StoreError) {
   use tree <- result.map(
     session.from_jsonl(contents) |> result.map_error(Corrupt),
   )
-  SessionTree(..tree, project: expand_home(tree.project))
+  // Legacy files predate the trunk pointer; before it, the working dir always
+  // tracked the active branch, so seed trunk = active_leaf on first load.
+  let trunk = case tree.trunk_leaf {
+    Some(_) -> tree.trunk_leaf
+    None -> tree.active_leaf
+  }
+  SessionTree(..tree, project: expand_home(tree.project), trunk_leaf: trunk)
 }
 
 /// The project path is the sandbox workspace, handed to the monty/nono sidecar
