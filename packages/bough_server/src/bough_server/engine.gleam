@@ -855,32 +855,23 @@ fn ensure_proxy(state: State) -> Option(Int) {
 /// wired today; other providers generalize to more inject rules.)
 fn proxy_inputs(state: State) -> #(String, List(#(String, String))) {
   let github = list.contains(state.groups, "github")
-  // Passthrough mode (opt-in: BOUGH_GITHUB_PASSTHROUGH=1) makes `gh` work — it
-  // won't trust our MITM CA. Only `api.github.com` (gh's REST/GraphQL endpoint)
-  // is tunnelled, so gh's Go client sees the real cert; its token rides in the
-  // sandbox env (see `sandbox_token_env`). git hosts (github.com/codeload) STAY
-  // on MITM injection so plain `git push/pull` still works with no token in the
-  // sandbox — and avoids a streaming-POST hang seen tunnelling git. Host-gating
-  // applies to all of them either way.
-  let passthrough = github && github_passthrough()
+  // `gh` is a Go binary that won't trust our MITM CA, so we tunnel ONLY
+  // `api.github.com` (gh's REST/GraphQL endpoint) — gh's client sees the real
+  // cert and authenticates with the token forwarded into the sandbox env (see
+  // `sandbox_token_env`). git hosts (github.com/codeload) STAY on MITM injection,
+  // so plain `git push/pull` works with no token in the sandbox (and avoids a
+  // streaming-POST hang seen when tunnelling git). Host-gating applies to all.
   let gh_hosts = case github {
     True -> ["github.com", "api.github.com", "codeload.github.com"]
     False -> []
   }
   let allow = list.unique(list.append(state.net_allow, gh_hosts))
-  let pass_hosts = case passthrough {
+  let pass_hosts = case github {
     True -> ["api.github.com"]
     False -> []
   }
-  // Bearer injection for the REST API (skipped when api.github.com is tunnelled),
-  // and basic-auth injection for git over HTTPS (always, so `git push` just works).
-  let api_inject =
-    json.object([
-      #("hosts", json.array(["api.github.com"], json.string)),
-      #("header", json.string("Authorization")),
-      #("format", json.string("Bearer {}")),
-      #("secret_env", json.string("BOUGH_SECRET_github")),
-    ])
+  // Basic-auth injection for git over HTTPS, so `git push` just works without the
+  // token in the sandbox. api.github.com isn't injected — it's tunnelled for gh.
   let git_inject =
     json.object([
       #("hosts", json.array(["github.com", "codeload.github.com"], json.string)),
@@ -888,10 +879,9 @@ fn proxy_inputs(state: State) -> #(String, List(#(String, String))) {
       #("user", json.string("x-access-token")),
       #("secret_env", json.string("BOUGH_SECRET_github")),
     ])
-  let inject = case github, passthrough {
-    True, False -> [api_inject, git_inject]
-    True, True -> [git_inject]
-    False, _ -> []
+  let inject = case github {
+    True -> [git_inject]
+    False -> []
   }
   let config =
     json.to_string(
@@ -901,8 +891,8 @@ fn proxy_inputs(state: State) -> #(String, List(#(String, String))) {
         #("inject", json.preprocessed_array(inject)),
       ]),
     )
-  // The proxy needs the secret in either mode (git injection is always on); the
-  // sandbox env additionally gets the token in passthrough mode for gh.
+  // The proxy gets the secret for git injection; the sandbox env additionally
+  // gets the token for gh (see `sandbox_token_env`).
   let secrets = case github, github_token() {
     True, Ok(token) -> [#("BOUGH_SECRET_github", token)]
     _, _ -> []
@@ -910,18 +900,12 @@ fn proxy_inputs(state: State) -> #(String, List(#(String, String))) {
   #(config, secrets)
 }
 
-/// Opt-in: route GitHub via TLS passthrough + token-in-sandbox so `gh` works,
-/// trading the "token never in the sandbox" guarantee for `gh` compatibility.
-fn github_passthrough() -> Bool {
-  envoy.get("BOUGH_GITHUB_PASSTHROUGH") |> result.unwrap("") == "1"
-}
-
-/// Env vars forwarded INTO the sandbox: the GitHub token when passthrough is on,
-/// so `gh`/`git` (talking to the real GitHub over the tunnel) can authenticate.
-/// Empty otherwise — the secure default keeps the token out of the sandbox.
+/// Env vars forwarded INTO the sandbox: the GitHub token when github is enabled,
+/// so `gh` (talking to the real GitHub over the api.github.com tunnel) can
+/// authenticate. git uses proxy-side injection instead, so this is only for gh.
 fn sandbox_token_env(state: State) -> List(#(String, String)) {
   let github = list.contains(state.groups, "github")
-  case github && github_passthrough(), github_token() {
+  case github, github_token() {
     True, Ok(token) -> [#("GH_TOKEN", token), #("GITHUB_TOKEN", token)]
     _, _ -> []
   }
@@ -1282,12 +1266,10 @@ fn capabilities_summary(
   // reach for git + curl with the phantom token instead.
   let active = list.filter_map(groups, providers.get)
   let github_enabled = list.any(active, fn(p) { p.name == "github" })
-  let github_note = case github_enabled, github_passthrough() {
-    False, _ -> ""
-    True, True ->
-      " GitHub auth: a real token is in your env (GH_TOKEN/GITHUB_TOKEN) and GitHub TLS is passed through, so `gh` works normally here — use `gh` (e.g. `gh pr create`, `gh api`), or `git push`/`git pull` (HTTPS) and `curl https://api.github.com/...`. Egress is still host-gated to GitHub."
-    True, False ->
-      " GitHub auth is injected at the network proxy on egress, so the token never enters the sandbox: just use ordinary `git push`/`git pull` (HTTPS) and `curl https://api.github.com/...` — the proxy adds the credentials. Use git + curl, NOT `gh` (Go ignores the proxy CA on macOS, so `gh` won't authenticate here)."
+  let github_note = case github_enabled {
+    False -> ""
+    True ->
+      " GitHub auth: a real token is in your env (GH_TOKEN/GITHUB_TOKEN) and the GitHub API (api.github.com) is tunnelled, so `gh` works normally — use `gh` (e.g. `gh pr create`, `gh api`). `git push`/`git pull` (HTTPS) also work (auth added at the proxy). Egress is host-gated to GitHub."
   }
   // The repo is on GitHub but the capability that reaches it is off: tell the
   // model to ask for the one toggle instead of giving up or hand-rolling a clone.

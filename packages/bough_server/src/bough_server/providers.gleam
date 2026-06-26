@@ -61,9 +61,9 @@ pub fn builtins() -> List(Provider) {
   [
     Provider(
       name: "github",
-      description: "GitHub git push + REST API (token injected on egress via the"
-        <> " mitmproxy; use git + curl. Set BOUGH_GITHUB_PASSTHROUGH=1 to instead"
-        <> " tunnel GitHub TLS + put the token in the sandbox so `gh` works)",
+      description: "GitHub git push + REST API. `gh` works (api.github.com is"
+        <> " tunnelled, token in the sandbox env); git push/pull use proxy-side"
+        <> " injection (no token in the sandbox). Egress host-gated to GitHub.",
       allow: ["github.com", "api.github.com"],
       reads: [],
       prepare: "echo GITHUB_TOKEN=$(gh auth token)",
