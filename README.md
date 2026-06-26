@@ -13,7 +13,7 @@
   <img src="assets/screenshots/hero.png" alt="bough in action" width="900">
 </p>
 
-bough runs a frontier model as a **supervisor** that plans by writing Python, which a deterministic harness executes inside a **kernel-enforced [nono](https://nono.sh) sandbox** (workspace-only filesystem, default-deny network, secrets blocked). Every turn is a node in a tree you can **fork** — restoring the conversation *and* the files. Written in **Gleam** (BEAM/OTP), served as a headless server with a no-build web UI.
+bough runs a frontier model as a **supervisor** that plans by writing Python, which a deterministic harness executes inside a **kernel-enforced sandbox** ([monty](https://github.com/pydantic/monty) code-mode confined by a macOS Seatbelt profile, with a per-session [mitmproxy](https://mitmproxy.org) egress filter) (workspace-only filesystem, default-deny network, secrets blocked). Every turn is a node in a tree you can **fork** — restoring the conversation *and* the files. Written in **Gleam** (BEAM/OTP), served as a headless server with a no-build web UI.
 
 ## Why bough
 
@@ -24,7 +24,7 @@ bough runs a frontier model as a **supervisor** that plans by writing Python, wh
 
 ## Install
 
-One line on a Mac — installs the toolchain (Gleam/Erlang, the `nono` sandbox, `llama.cpp` + the local worker model), clones bough, and builds it:
+One line on a Mac — installs the toolchain (Gleam/Erlang, `mitmproxy` for the egress filter, `llama.cpp` + the local worker model), clones bough, and builds it:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/andreylukin/bough/main/install.sh | bash
