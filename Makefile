@@ -1,7 +1,7 @@
 # bough monorepo. Gleam has no native workspace, so we drive each package.
-# Packages are wired via `path` dependencies (server + tui -> core).
+# Packages are wired via `path` dependencies (server -> core).
 
-PACKAGES := bough_core bough_server bough_tui
+PACKAGES := bough_core bough_server
 
 .PHONY: check test build sidecar clean serve $(addprefix check-,$(PACKAGES))
 

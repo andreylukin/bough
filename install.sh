@@ -130,12 +130,11 @@ $(info "bough is built at $SRC")
 Set your API key (add to ~/.zshrc to make it permanent):
     export ANTHROPIC_API_KEY=sk-ant-...
 
-Run it from anywhere (starts the server, then the TUI, cleans up on exit):
+Run it from anywhere (starts the server, opens the web UI, cleans up on exit):
     bough
 
-Or run the two processes by hand (two terminals):
-    cd "$SRC" && make serve                       # terminal 1: the server (127.0.0.1:4096)
-    cd "$SRC/packages/bough_tui" && gleam run      # terminal 2: the TUI client
+Or start the server by hand:
+    cd "$SRC" && make serve                       # the server + web UI (127.0.0.1:4096)
 
 The VibeThinker-3B worker is always on (local llama-server, no config needed).
 The supervisor acts via the bough-monty code-mode sandbox (set BOUGH_MONTY_BIN
