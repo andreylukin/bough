@@ -12,6 +12,14 @@ export function render() {
   renderSidebar();
   renderRight();
   renderTranscript();
+  renderRunControls();
+  if (state.mapOpen) renderMap(); // keep the map in sync with new turns/forks/grafts
+}
+
+// The run-dependent affordances (steering hint, Stop button, prompt placeholder).
+// These only toggle classes/attributes — no DOM wipe — so the poller can refresh
+// them every tick without making anything unclickable.
+export function renderRunControls() {
   if (!state.viewChildId) dropSubbarIfPresentWithoutChild();
   const composer = $("#composer");
   const steering = !state.viewChildId && state.run && ACTIVE.has(state.run.status);
@@ -22,7 +30,6 @@ export function render() {
   $("#prompt").placeholder = steering
     ? "Steer this run — type and Enter to inject…"
     : (state.viewChildId ? "Message this subagent…" : "Ask bough to do something…  (Enter to send, Shift+Enter for newline)");
-  if (state.mapOpen) renderMap(); // keep the map in sync with new turns/forks/grafts
 }
 
 export function dropSubbarIfPresentWithoutChild() { dropSubbar(); }

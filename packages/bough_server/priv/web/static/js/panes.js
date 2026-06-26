@@ -213,7 +213,9 @@ export function toggleProject(key) {
 
 // ---- rendering: right pane ----------------------------------------------
 
-export function renderRight() {
+// Tab badges only — cheap, no body wipe, so the poller can keep counts live
+// without clobbering whatever the user is clicking in the tab body.
+export function renderTabCounts() {
   const run = state.viewChildId ? state.childRun : state.run;
   const diffN = state.diff && state.tree && state.diff.sessionId === state.tree.id
     ? state.diff.files.length : 0;
@@ -232,6 +234,10 @@ export function renderRight() {
     b.innerHTML = esc(labels[t]) + (n ? ` <span class="tabct">${n}</span>` : "");
     b.classList.toggle("active", t === state.rightTab);
   });
+}
+
+export function renderRight() {
+  renderTabCounts();
   const body = $("#tabbody");
   body.innerHTML = "";
   if (!state.tree) { body.appendChild(el("div", "hint", "Open or create a session.")); return; }

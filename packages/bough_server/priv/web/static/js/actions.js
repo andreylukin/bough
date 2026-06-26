@@ -1,10 +1,12 @@
 import { api } from "./api.js";
 import { clearPastes, closePicker } from "./composer.js";
 import { el, esc, toast } from "./dom.js";
-import { anyBranchRunning } from "./graph.js";
-import { render } from "./main.js";
+import { anyBranchRunning, treeBranches } from "./graph.js";
+import { render, renderRunControls } from "./main.js";
+import { renderMap } from "./map.js";
+import { renderHeader, renderRight, renderSidebar, renderTabCounts } from "./panes.js";
 import { ACTIVE, state } from "./state.js";
-import { closeDrawer, dropSubbar, openDrawer } from "./transcript.js";
+import { closeDrawer, dropSubbar, openDrawer, renderTranscript } from "./transcript.js";
 
 export async function loadSessions() {
   try { state.sessions = await api.sessions(); } catch { state.sessions = []; }
@@ -16,7 +18,7 @@ export async function openSession(id) {
   closeNav(); // came from the sessions overlay on mobile — return to the transcript
   state.sessionId = id;
   state.viewChildId = null; state.childTree = null; state.childRun = null;
-  state.graftRoot = null; state.lastSig = null; state.diff = null; state.files = null;
+  state.graftRoot = null; state.paneSig = null; state.diff = null; state.files = null;
   closePicker(); clearPastes();
   try {
     state.tree = await api.tree(id);
@@ -98,7 +100,7 @@ export async function gateDecision(decision, message) {
     // Optimistic: flip to running so the spinner shows immediately.
     const run = state.viewChildId ? state.childRun : state.run;
     if (run) run.status = "running";
-    state.lastSig = null;
+    state.paneSig = null;
     render();
   } catch (e) { toast(String(e.message || e), true); }
 }
@@ -158,7 +160,7 @@ export async function openChild(id) {
   stopPoll();
   closeDrawer();
   state.viewChildId = id;
-  state.lastSig = null;
+  state.paneSig = null;
   try {
     state.childTree = await api.tree(id).catch(() => null);
     state.childRun = await api.run(id).catch(() => null);
@@ -179,8 +181,8 @@ export function startPoll() { stopPoll(); state.poll = setInterval(tick, 600); }
 
 export function stopPoll() { if (state.poll) { clearInterval(state.poll); state.poll = null; } }
 
-// A cheap fingerprint of everything the transcript/right pane draws, so a poll
-// that returns identical state doesn't rebuild the DOM (which caused flicker).
+// A cheap fingerprint of everything the transcript draws, so a poll that returns
+// identical state doesn't rebuild the DOM (which caused flicker).
 
 export function runSig(run, subs) {
   if (!run) return "none";
@@ -195,6 +197,60 @@ export function runSig(run, subs) {
   ].join("|");
 }
 
+// Per-pane fingerprints. The poller redraws ONLY the panes whose own data
+// changed, so a streaming transcript never wipes (and un-clicks) the sidebar,
+// the right pane, or the header the user is interacting with.
+function paneSigs() {
+  const run = state.viewChildId ? state.childRun : state.run;
+  const tree = state.tree;
+  const header = [
+    tree && tree.id, tree && tree.project, tree && tree.model,
+    run && run.status, run && run.context_tokens, state.reviewArmed,
+    state.config.model,
+  ].join("~");
+  const sessions = (state.sessions || []).map((s) => [s.id, s.title, s.turns, s.updated].join(",")).join(";");
+  const branches = treeBranches(tree).map((b) => [b.leafId, b.active, b.trunk, b.running, b.name, b.turns].join(",")).join(";");
+  const sidebar = [
+    state.filter, state.openProjects ? [...state.openProjects].sort().join(",") : "",
+    state.sessionId, sessions, branches,
+  ].join("~");
+  const tBox = state.viewChildId ? state.childTree : tree;
+  const transcript = [
+    state.viewChildId || "", runSig(run, state.subagents),
+    tBox && tBox.entries ? tBox.entries.length : 0,
+  ].join("~");
+  return { header, sidebar, transcript, right: rightSig(run, tree) };
+}
+
+// The right pane's signature tracks ONLY the active tab's data, so a background
+// change (e.g. the network feed growing while you're on the Tree tab) never
+// rebuilds — and un-clicks — the tab you're actually looking at.
+function rightSig(run, tree) {
+  const tab = state.rightTab;
+  let d = "";
+  if (tab === "tree") d = [tree && tree.entries && tree.entries.length, tree && tree.active_leaf, state.graftRoot, state.mapShowSuperseded].join(",");
+  else if (tab === "changes") d = String(state.diff && tree && state.diff.sessionId === tree.id ? state.diff.files.length : -1);
+  else if (tab === "network") d = String(run && run.network ? run.network.length : 0);
+  else if (tab === "caps") d = [tree && tree.groups && tree.groups.length, tree && tree.suggested && tree.suggested.length, state.capsFilter, JSON.stringify(state.capsOpen)].join(",");
+  else if (tab === "subagents") d = (state.subagents || []).map((s) => s.id + ":" + s.status).join(",") + "|" + state.showDoneSubs;
+  return tab + "~" + d;
+}
+
+// Poll-driven render: redraw each pane only when its fingerprint changed. The
+// run controls are class/attr toggles (no wipe) so they refresh every tick.
+function renderPoll() {
+  const sig = paneSigs();
+  const prev = state.paneSig || {};
+  if (sig.header !== prev.header) renderHeader();
+  if (sig.sidebar !== prev.sidebar) renderSidebar();
+  if (sig.right !== prev.right) renderRight();
+  else renderTabCounts(); // keep tab badges live without wiping the body
+  if (sig.transcript !== prev.transcript) renderTranscript();
+  renderRunControls();
+  if (state.mapOpen && (sig.transcript !== prev.transcript || sig.sidebar !== prev.sidebar)) renderMap();
+  state.paneSig = sig;
+}
+
 export async function tick() {
   const id = state.viewChildId || state.sessionId;
   if (!id) return stopPoll();
@@ -203,10 +259,8 @@ export async function tick() {
 
   if (state.viewChildId) {
     state.childRun = run;
-    const done = !ACTIVE.has(run.status);
-    if (done) { state.childTree = await api.tree(id).catch(() => state.childTree); stopPoll(); }
-    const sig = runSig(run, []) + "|c";
-    if (done || sig !== state.lastSig) { state.lastSig = sig; render(); }
+    if (!ACTIVE.has(run.status)) { state.childTree = await api.tree(id).catch(() => state.childTree); stopPoll(); }
+    renderPoll();
     return;
   }
 
@@ -225,8 +279,7 @@ export async function tick() {
     state.diff = null; // a run may have written files — reload Changes on next view
   }
   if (viewedDone && !othersRunning) stopPoll();
-  const sig = runSig(run, state.subagents) + "|" + (othersRunning ? "b" : "");
-  if (viewedDone || othersRunning || sig !== state.lastSig) { state.lastSig = sig; render(); }
+  renderPoll();
 }
 
 // ---- collapsible side panes ----------------------------------------------

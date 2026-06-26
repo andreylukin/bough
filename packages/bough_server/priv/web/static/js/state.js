@@ -30,7 +30,7 @@ export const state = {
   filter: "",            // sidebar search query
   openProjects: null,    // sidebar: which project groups are expanded (null = default)
   lastFocus: null,       // focus to restore when the drawer closes
-  lastSig: null,         // last rendered run signature (skip no-op re-renders)
+  paneSig: null,         // last rendered per-pane signatures (skip no-op re-renders)
 };
 
 // ---- API -----------------------------------------------------------------

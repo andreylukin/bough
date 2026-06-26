@@ -77,7 +77,7 @@ export async function submitComposer() {
     await api.startRun(state.sessionId, text, state.reviewArmed);
     state.tree = await api.tree(state.sessionId);
     state.run = { status: "running", steps: [], text: "", context_tokens: 0, network: [] };
-    state.lastSig = null;
+    state.paneSig = null;
     render();
     startPoll();
   } catch (e) { toast(String(e.message || e), true); }
