@@ -1,4 +1,4 @@
-import { forkNode, inspectGroup } from "./actions.js";
+import { forkNode } from "./actions.js";
 import { api } from "./api.js";
 import { $, cleanDigest, clip, el, esc, md, toast } from "./dom.js";
 import { activePath, onActivePath, stepLabel } from "./graph.js";
@@ -120,73 +120,10 @@ export function gateBar(run, sessionId) {
       `<button class="ghost" data-act="steer">Send guidance</button>` +
       `<button class="reject" data-act="reject-plan">Reject</button>`;
     bar.appendChild(row);
-  } else if (run.status === "awaiting_net" && tail.type === "net") {
-    bar.appendChild(el("h4", null, "🔌 Network — a sandboxed request was denied"));
-    bar.appendChild(el("pre", null, esc(tail.detail)));
-    const row = el("div", "row");
-    row.innerHTML =
-      `<button class="accept" data-act="allow">Allow host</button>` +
-      `<input type="text" data-role="steer" value="${esc(tail.rule || "")}" placeholder="path-glob rule…" />` +
-      `<button class="ghost" data-act="steer">Allow rule</button>` +
-      `<button class="reject" data-act="reject">Deny</button>`;
-    bar.appendChild(row);
-  } else if (run.status === "awaiting_group" && tail.type === "group") {
-    groupGate(bar, tail);
   } else {
     return null;
   }
   return bar;
-}
-
-// The capability gate: bough asks to grant filesystem access a step was denied.
-// Present each candidate group with its description and a click-through to its
-// exact paths, so granting access is an informed choice rather than approving an
-// opaque name.
-
-export function groupGate(bar, tail) {
-  bar.appendChild(el("h4", null, "🔑 Capability — a step needs access it doesn't have"));
-  bar.appendChild(el("div", "gate-lead",
-    `A sandboxed step was denied access to <code>${esc(tail.detail)}</code>. ` +
-    `Enabling a group below grants that access for this session, then bough retries the step.`));
-
-  ensureGroupsCatalog();
-  const byName = new Map((state.groupsCatalog || []).map((g) => [g.name, g]));
-  const names = (tail.groups || "").split(",").map((s) => s.trim()).filter(Boolean);
-
-  const list = el("div", "gate-groups");
-  for (const n of names) {
-    const g = byName.get(n);
-    const item = el("label", "gate-group");
-    const cb = el("input"); cb.type = "checkbox"; cb.checked = true; cb.dataset.group = n;
-    item.appendChild(cb);
-    const meta = el("div", "gg-meta");
-    meta.innerHTML = `<b>${esc(n)}</b>` +
-      (g && g.description ? `<div class="gg-desc">${esc(g.description)}</div>` : "");
-    item.appendChild(meta);
-    const inspect = el("button", "gg-inspect", "paths ›");
-    inspect.type = "button";
-    inspect.onclick = (e) => { e.preventDefault(); e.stopPropagation(); inspectGroup(n); };
-    item.appendChild(inspect);
-    list.appendChild(item);
-  }
-  bar.appendChild(list);
-
-  const row = el("div", "row");
-  row.innerHTML =
-    `<button class="accept" data-act="enable-groups">Enable &amp; retry</button>` +
-    `<button class="reject" data-act="reject">Reject</button>`;
-  bar.appendChild(row);
-}
-
-// Load the capability catalog once (for the gate's group descriptions), then
-// re-render so the descriptions appear.
-
-export function ensureGroupsCatalog() {
-  if ((state.groupsCatalog && state.groupsCatalog.length) || state._catalogLoading) return;
-  state._catalogLoading = true;
-  api.groupsCatalog()
-    .then((g) => { state.groupsCatalog = g; state._catalogLoading = false; render(); })
-    .catch(() => { state._catalogLoading = false; });
 }
 
 export function renderTranscript() {
