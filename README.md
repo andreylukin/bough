@@ -61,7 +61,7 @@ Point bough at a project and ask. A frontier model plans, the sandbox runs the w
 
 ## How it works
 
-- **Supervisor + worker.** A frontier model supervises; a local model (VibeThinker-3B, runs offline) patches trivial breakage for free.
+- **Supervisor + worker.** A frontier model supervises; a local model (Qwen2.5-Coder-3B-Instruct, runs offline) patches trivial breakage for free.
 - **Two sandboxes, one airlock.** [monty](https://github.com/pydantic/monty) (a Rust Python interpreter) confines the agent's program; a **macOS Seatbelt** profile confines the processes it launches — credentials/keys unreadable, writes confined to the workspace (+ toolchain caches).
 - **Owned, programmable egress.** Each session's outbound network is routed through a per-session [mitmproxy](https://mitmproxy.org) bough spawns: a default-deny host allowlist and credential injection you control in Python (`priv/proxy/bough_proxy.py`), so a secret is injected at the proxy and **never enters the sandbox**.
 - **Snapshots.** Each turn checkpoints the workspace to a per-session shadow git repo (never your project's `.git`); a fork restores it.

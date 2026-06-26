@@ -70,8 +70,8 @@ pub type Config {
     net_gate: Bool,
     /// Sampling for the worker's fix/suggestion calls. A fast instruct-coder
     /// worker (the default) wants a low temperature for deterministic fixes; a
-    /// reasoning worker (e.g. VibeThinker-3B) wants its documented decoding
-    /// (temperature 1.0, top_p 0.95) — lowering it degrades that model. `None`
+    /// reasoning worker wants its documented decoding
+    /// (e.g. temperature 1.0, top_p 0.95) — lowering it degrades that model. `None`
     /// leaves the field off so the server default applies.
     worker_temperature: Option(Float),
     worker_top_p: Option(Float),

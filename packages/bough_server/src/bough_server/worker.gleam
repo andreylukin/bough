@@ -28,9 +28,9 @@ pub fn complete(
   complete_with(base_url, model, system, user, max_tokens, None, None)
 }
 
-/// Like `complete`, but with explicit sampling. Reasoning-tuned workers (e.g.
-/// VibeThinker-3B) require their recommended decoding — temperature 1.0, top_p
-/// 0.95 — and lowering temperature degrades them; pass them here. `None` leaves
+/// Like `complete`, but with explicit sampling. Reasoning-tuned workers require
+/// their recommended decoding — often temperature 1.0, top_p 0.95 — and lowering
+/// temperature degrades them; pass them here. `None` leaves
 /// the field off so the server's default applies (matching `complete`).
 pub fn complete_with(
   base_url: String,

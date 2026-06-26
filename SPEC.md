@@ -34,7 +34,7 @@ sandbox — and a small local model patches trivial breakage for free (see §5).
 |------|----------|
 | Language / target | **Gleam on the BEAM** (Erlang/OTP). |
 | Agent | **Own supervisor-worker loop** (ReDACT-style, per `tent`), not a wrapper. Supervisor plans via plain-text artifacts; deterministic harness executes; local worker fixes. |
-| LLM providers | **Provider-agnostic core**, ship **Anthropic** (supervisor) first; **local `vibethinker-3b`** (arXiv:2606.16140) as the worker, served via a bundled `llama-server`. |
+| LLM providers | **Provider-agnostic core**, ship **Anthropic** (supervisor) first; **local `qwen2.5-coder-3b-instruct`** as the worker, served via a bundled `llama-server`. |
 | Sandbox | **macOS Seatbelt** (`sandbox-exec`) for filesystem/process confinement + a **per-workspace mitmproxy** for egress (see §6). |
 | Platform (v1) | **macOS only** (Seatbelt). |
 | History | **Session tree only** — pi-mono style (`id`/`parentId`, `/tree`, `/fork`, `/clone`). |
@@ -225,7 +225,7 @@ gated on a deterministic CHECK rather than the model's self-report.
   each one inside the Seatbelt sandbox, feeds every result back round by round in one
   continuous conversation, and gates completion. The only actor with side
   effects.
-- **Worker** (small local model, optional — `vibethinker-3b`, arXiv:2606.16140): when a
+- **Worker** (small local model, optional — `qwen2.5-coder-3b-instruct`): when a
   step fails, gets one shot at a single fix command through the same policy +
   sandbox path. Disable it (`worker: null`) to fall back to supervisor-only
   fixes.
@@ -237,7 +237,7 @@ actions. Each round it calls `run_steps` with an ordered batch whose primary
 action is `code`: a program run in a [monty](https://github.com/pydantic/monty)
 sandbox — a Rust Python interpreter that can touch nothing on the host except
 the host functions we hand it. This is "code-mode": the small worker-class model
-the harness is built around (VibeThinker-3B, §5.6) is far stronger writing a
+the harness is built around (Qwen2.5-Coder-3B-Instruct, §5.6) is far stronger writing a
 short program than threading a long sequence of JSON tool calls, so the program
 *is* the plan.
 
@@ -331,9 +331,9 @@ A `worker_runtime` module in `bough_server`, on first worker use:
 
 1. **Ensures the model is present** — downloads a quantized GGUF to
    `~/.bough/models/` (with a checksum) if absent. Default
-   `vibethinker-3b` at Q4 (arXiv:2606.16140 — a reasoning/coding SLM distilled
-   on Qwen2.5-Coder-3B, strong on LiveCodeBench/LeetCode): a worker fix is one
-   short command (~1500 output tokens), and at 3B the ~1.9 GB GGUF fits in
+   `qwen2.5-coder-3b-instruct` at Q4 (a fast instruct-coder SLM, strong on code
+   benchmarks): a worker fix is one
+   short command (~1500 output tokens), and at 3B the ~2 GB GGUF fits in
    2–3 GB and keeps fix latency low on this hardware. Its code strength is also
    why the agent's tools are expressed as Python run in a monty sandbox (§5.2).
 2. **Launches a bundled inference server** as an OTP-supervised external

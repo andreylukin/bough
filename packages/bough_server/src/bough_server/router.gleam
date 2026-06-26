@@ -57,7 +57,7 @@ const default_worker_port = 8080
 // The default worker model: Qwen2.5-Coder-3B, a fast instruct-coder. The
 // worker's job is a quick one-shot fix of a failed step, which a fast coder
 // does better (and far faster) than a long-chain-of-thought reasoning model;
-// experiments put reasoning SLMs (e.g. VibeThinker-3B) far behind here on
+// experiments put such reasoning SLMs far behind here on
 // execution latency. Override with BOUGH_WORKER_MODEL (and point
 // BOUGH_WORKER_URL / the GGUF at it). This label is sent to the
 // OpenAI-compatible endpoint; llama-server serves whatever GGUF it loaded.
@@ -660,7 +660,8 @@ fn max_rounds() -> Int {
   }
 }
 
-/// Engine config from the environment. The worker (VibeThinker-3B, SPEC.md §5.6)
+/// Engine config from the environment. The worker (Qwen2.5-Coder-3B-Instruct by
+/// default, SPEC.md §5.6)
 /// is always enabled: bough ensures a local llama-server is up and points the
 /// worker at it. Set `BOUGH_WORKER_URL` to use a remote endpoint instead
 /// (honored inside `worker_runtime.ensure`).
@@ -699,7 +700,7 @@ fn engine_config(
 
 /// Worker decoding from the environment, falling back to the defaults (suited to
 /// the fast-coder default worker). Set BOUGH_WORKER_TEMP / BOUGH_WORKER_TOP_P
-/// when swapping in a reasoning worker (e.g. VibeThinker-3B wants 1.0 / 0.95).
+/// when swapping in a reasoning worker (which typically wants ~1.0 / 0.95).
 fn worker_decoding(base: engine.Config) -> #(Option(Float), Option(Float)) {
   let parse = fn(name, fallback) {
     case envoy.get(name) {
