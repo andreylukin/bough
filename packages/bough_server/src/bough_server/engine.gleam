@@ -19,14 +19,13 @@ import bough_core/digest
 import bough_core/nono
 import bough_server/agent.{
   type Outcome, type Step as Activity, Outcome, StepAwait, StepCall, StepCheck,
-  StepExec, StepGroup, StepNet, StepPlan, StepReview, StepText, StepWorker,
+  StepExec, StepGroup, StepPlan, StepReview, StepText, StepWorker,
 }
 import bough_server/clock
 import bough_server/control
 import bough_server/integrity
 import bough_server/json_value.{type JsonValue}
 import bough_server/monty_bridge
-import bough_server/net_profile
 import bough_server/nono_bridge
 import bough_server/prompts
 import bough_server/provider
@@ -1069,154 +1068,12 @@ fn write_seatbelt_profile(
 
 /// Cap on the approve→retry loop for one command, so a never-matching rule
 /// can't spin forever.
-const net_max_retries = 6
 
+/// Run a one-off shell command (worker fix, CHECK) under the same Seatbelt +
+/// proxy sandbox as code-mode `bash`.
 fn exec_run(state: State, cmd: String) -> #(State, Exec) {
-  exec_run_net(state, cmd, 0)
-}
-
-/// Run a command in the sandbox. With the net gate on (SPEC §7), a denied
-/// request pauses for the human: approve at host or path-glob granularity and
-/// the command is retried with the new rule; deny and the failure stands.
-fn exec_run_net(state: State, cmd: String, tries: Int) -> #(State, Exec) {
-  let command = ["sh", "-c", cmd]
-  // Watermark the audit log before running so denial detection ignores prior
-  // runs of an identical command (and this command's own earlier retries).
-  let watermark = case state.config.net_gate {
-    True -> nono_bridge.session_watermark(command)
-    False -> ""
-  }
-  let #(code, out) = sandboxed(state, command, [])
-  let state = bump(state)
-  // One audit read serves both: record this run's egress for the network dock,
-  // and derive any denials to gate on. Off the net gate there is no audit
-  // session, so the feed stays empty (the policy is simply "net blocked").
-  let #(state, denials) = case state.config.net_gate {
-    False -> #(state, [])
-    True -> {
-      let events = net_events_for(command, watermark, 0)
-      let state =
-        State(..state, net_events: list.append(state.net_events, events))
-      #(state, denials_from(events))
-    }
-  }
-  case state.config.net_gate && tries < net_max_retries {
-    False -> #(state, Exec(code, out))
-    True ->
-      case denials {
-        [] -> #(state, Exec(code, out))
-        [denial, ..] ->
-          case net_decision(state, denial) {
-            // Denied (or no rule given): keep the failure for the supervisor.
-            Error(_) -> #(state, Exec(code, out))
-            // A new allow rule: add it (deduped) and retry so it can succeed.
-            Ok(rule) ->
-              exec_run_net(
-                State(..state, net_allow: add_rule(state.net_allow, rule)),
-                cmd,
-                tries + 1,
-              )
-          }
-      }
-  }
-}
-
-/// Add an allow rule (deduped). The generated nono profile groups rules by host
-/// and unions their endpoint globs (`net_profile`), so accumulating multiple
-/// path rules for one host widens access rather than replacing it.
-fn add_rule(rules: List(String), rule: String) -> List(String) {
-  case list.contains(rules, rule) {
-    True -> rules
-    False -> list.append(rules, [rule])
-  }
-}
-
-/// The egress events for the run just performed. Polls until the run's audit
-/// session appears (nono flushes it shortly after the command exits) so events
-/// aren't missed by reading too early; reads them only if the session had
-/// network activity. Bounded (~1s) — if the session never shows, assume none.
-fn net_events_for(
-  command: List(String),
-  watermark: String,
-  polls: Int,
-) -> List(nono.AuditEvent) {
-  case nono_bridge.find_session(command, watermark) {
-    Ok(#(session_id, net_count)) ->
-      case net_count > 0 {
-        True -> nono_bridge.audit_events(session_id) |> result.unwrap([])
-        False -> []
-      }
-    Error(_) ->
-      case polls >= 12 {
-        True -> []
-        False -> {
-          process.sleep(80)
-          net_events_for(command, watermark, polls + 1)
-        }
-      }
-  }
-}
-
-/// The distinct denied requests within a run's egress events — what the leash
-/// gates on. Mirrors `nono_bridge.denials_of` but over already-read events.
-fn denials_from(events: List(nono.AuditEvent)) -> List(nono_bridge.Denial) {
-  events
-  |> list.filter_map(fn(e) {
-    case e.decision {
-      nono.Deny ->
-        Ok(nono_bridge.Denial(host: e.host, method: e.method, path: e.path))
-      nono.Allow -> Error(Nil)
-    }
-  })
-  |> list.unique
-}
-
-/// Ask the human about a denied request; map their choice to an allow rule
-/// (`Ok`) or a denial (`Error`). `Allow` = the bare host; a typed `Steer`
-/// = that exact rule (a path-glob); an empty `Steer` = deny.
-fn net_decision(state: State, denial: nono_bridge.Denial) -> Result(String, Nil) {
-  case await_net(state, denial) {
-    control.Allow -> Ok(denial.host)
-    control.Steer(rule) ->
-      case string.trim(rule) {
-        "" -> Error(Nil)
-        r -> Ok(r)
-      }
-  }
-}
-
-/// Publish the denial with status "awaiting_net" and block on the human.
-fn await_net(state: State, denial: nono_bridge.Denial) -> control.Decision {
-  let step = StepNet(net_detail(denial), net_suggestion(denial))
-  let activities = [step, ..state.activities]
-  state.emit(
-    "awaiting_net",
-    list.reverse(activities),
-    state.context_tokens,
-    state.net_events,
-  )
-  state.await()
-}
-
-/// Human-readable denied request: "GET host/path" when intercepted, else "host".
-fn net_detail(denial: nono_bridge.Denial) -> String {
-  case denial.method, denial.path {
-    Some(m), Some(p) -> m <> " " <> denial.host <> p
-    _, _ -> denial.host
-  }
-}
-
-/// A suggested allow rule to pre-fill the path-glob option: the directory glob
-/// of the denied path when known, otherwise the bare host.
-fn net_suggestion(denial: nono_bridge.Denial) -> String {
-  case denial.path {
-    None -> denial.host
-    Some(p) -> {
-      let segs = string.split(p, "/")
-      let prefix = string.join(list.take(segs, list.length(segs) - 1), "/")
-      "https://" <> denial.host <> prefix <> "/**"
-    }
-  }
+  let #(code, out) = sandboxed(state, ["sh", "-c", cmd], [])
+  #(bump(state), Exec(code, out))
 }
 
 fn write_file(state: State, path: String, content: String) -> #(State, Exec) {
@@ -1518,65 +1375,54 @@ fn capabilities_summary(
   <> "."
 }
 
-/// Run a command in the sandbox under the run's nono profile (§7). The profile
-/// always grants read-only git config (so git steps don't abort, §5.6) and sets
-/// the network posture: blocked entirely with the net gate off (§5.2), or
-/// default-deny against the session allowlist with it on, so a denied request
-/// can be detected and surfaced for approval.
+/// Run a command under the run's Seatbelt sandbox + the session mitmproxy — the
+/// same filesystem/egress policy as code-mode `bash`. The proxy env is set only
+/// on the child (inline), so bough's own process is unaffected; the real exit
+/// code comes back via the shell.
 fn sandboxed(
   state: State,
   command: List(String),
-  reads: List(String),
+  _reads: List(String),
 ) -> #(Int, String) {
-  let block = !state.config.net_gate
-  case write_net_profile(state, block) {
-    Ok(path) -> nono_bridge.run_in_profile(state.workspace, path, reads, command)
-    // If the profile can't be written or doesn't validate, fail safe: block the
-    // network rather than run under a profile nono can't parse.
-    Error(_) ->
-      nono_bridge.run_result(
-        nono.Profile(state.workspace, [], True, False),
-        reads,
-        command,
-      )
+  let port = ensure_proxy(state)
+  let inner = case write_seatbelt_profile(state, port) {
+    Ok(profile) -> "sandbox-exec -f " <> shq(profile) <> " " <> join_args(command)
+    Error(_) -> join_args(command)
+  }
+  run_shell(state.workspace, proxy_env_prefix(port) <> inner)
+}
+
+/// Inline `KEY=val ` env so a sandboxed child routes through the proxy (and
+/// trusts its CA) without touching bough's own environment.
+fn proxy_env_prefix(port: Option(Int)) -> String {
+  case port {
+    None -> ""
+    Some(p) -> {
+      let url = "http://127.0.0.1:" <> int.to_string(p)
+      let ca = case envoy.get("HOME") {
+        Ok(home) -> home <> "/.mitmproxy/mitmproxy-ca-cert.pem"
+        Error(_) -> ""
+      }
+      "HTTPS_PROXY=" <> url <> " HTTP_PROXY=" <> url <> " SSL_CERT_FILE=" <> ca
+      <> " CURL_CA_BUNDLE=" <> ca <> " GIT_SSL_CAINFO=" <> ca <> " "
+    }
   }
 }
 
-/// Write the run's nono profile, then validate it against the installed nono so
-/// a malformed/drifted profile is caught here rather than failing the command
-/// opaquely (SPEC §6, §7). Either failure makes the caller block the net.
+fn join_args(command: List(String)) -> String {
+  command |> list.map(shq) |> string.join(" ")
+}
+
+fn run_shell(workspace: String, full: String) -> #(Int, String) {
+  case shellout.command("sh", ["-c", full], workspace, []) {
+    Ok(out) -> #(0, out)
+    Error(#(code, out)) -> #(code, out)
+  }
+}
+
 /// Run a provider's `prepare` command outside the sandbox (bough's own process).
 fn run_prepare(cmd: String) -> Result(String, Nil) {
   shellout.command("sh", ["-c", cmd], ".", []) |> result.replace_error(Nil)
-}
-
-fn write_net_profile(state: State, block: Bool) -> Result(String, Nil) {
-  // A capability name is a nono group (→ groups.include), a credential
-  // capability (→ filesystem read + bypass + its domains), or a provider
-  // (→ egress creds / env vars / allow hosts, prepared into state.applied).
-  // Granting any of them leashes the network to its domains rather than
-  // blocking outright, so the grant is actually usable.
-  // Provider names aren't nono groups; keep them out of groups.include.
-  let groups =
-    list.filter(state.groups, fn(n) { providers.get(n) |> result.is_error })
-  let app = state.applied
-  let reads = app.reads
-  let rules = list.unique(list.append(state.net_allow, app.allow))
-  let block =
-    block && app.services == [] && app.env_allow == [] && app.allow == []
-  use path <- result.try(net_profile.write(
-    state.net_profile_path,
-    rules,
-    block,
-    groups,
-    reads,
-    state.config.net_credentials,
-    app.services,
-    app.env_allow,
-  ))
-  nono_bridge.validate_profile(path)
-  |> result.replace(path)
-  |> result.replace_error(Nil)
 }
 
 /// Write `content` to `dest` through the nono sandbox, so the workspace boundary

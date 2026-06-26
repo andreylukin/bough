@@ -10,7 +10,6 @@
 //// success/failure in its JSON, so a Python error is never confused with a
 //// process failure.
 
-import bough_server/nono_bridge
 import envoy
 import gleam/dynamic/decode
 import gleam/json
@@ -24,60 +23,10 @@ import shellout
 /// exit-code-style pair (`0` on success, `1` on a Python/sidecar error) plus the
 /// captured stdout (or the error text), matching the engine's `Exec` shape.
 ///
-/// `BOUGH_MONTY_SANDBOXED=1` runs the *whole sidecar* inside one nono cell, so
-/// `read`/`write`/`edit` (in-process) and any `bash` child inherit the
-/// workspace + net + secret-deny policy at the kernel — closing the gap where
-/// only `bash` was sandboxed (SPEC §6). Default (unset) is the legacy path: the
-/// sidecar runs unsandboxed and only `bash` opens its own nono cell.
+/// The sidecar runs unsandboxed (trusted) with `read`/`write`/`edit` path-scoped
+/// in-process; its `bash` host function wraps each command in a macOS Seatbelt
+/// profile (`--seatbelt-profile`) for the filesystem sandbox.
 pub fn run_code(
-  workspace: String,
-  code: String,
-  profile: Option(String),
-) -> #(Int, String) {
-  case sandboxed() {
-    True -> run_sandboxed(workspace, code, profile)
-    False -> run_bare(workspace, code, profile)
-  }
-}
-
-fn sandboxed() -> Bool {
-  case envoy.get("BOUGH_MONTY_SANDBOXED") {
-    Ok("1") | Ok("true") -> True
-    _ -> False
-  }
-}
-
-/// Sandboxed: wrap the sidecar in one nono cell (via the shared `run_celled`
-/// arg builder) and tell it `--bash-inherit`, so `bash` is a plain child that
-/// inherits the cell rather than spawning its own.
-fn run_sandboxed(
-  workspace: String,
-  code: String,
-  profile: Option(String),
-) -> #(Int, String) {
-  let command = [
-    resolve_binary(binary_path()), "--workspace", workspace, "--bash-inherit",
-    "--code-str", code,
-  ]
-  let #(_exit, raw) = nono_bridge.run_celled(workspace, profile, [], command)
-  parse_result(raw)
-}
-
-/// nono can't exec a symlink as its target command (it tries to `nono learn` and
-/// runs nothing), so resolve to the real path. `make sidecar` installs the
-/// binary as an absolute one-level symlink under `~/.bough/bin`; `readlink`
-/// yields its target. A non-symlink (e.g. `BOUGH_MONTY_BIN`) returns nonzero, so
-/// fall back to the path as given.
-fn resolve_binary(path: String) -> String {
-  case shellout.command("readlink", [path], ".", []) {
-    Ok(target) -> string.trim(target)
-    Error(_) -> path
-  }
-}
-
-/// Legacy: exec the sidecar bare; its `bash` opens its own nono cell and
-/// `read`/`write`/`edit` are scoped lexically inside the unsandboxed sidecar.
-fn run_bare(
   workspace: String,
   code: String,
   profile: Option(String),
