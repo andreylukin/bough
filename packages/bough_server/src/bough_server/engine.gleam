@@ -898,15 +898,29 @@ fn proxy_inputs(state: State) -> #(String, List(#(String, String))) {
   #(config, secrets)
 }
 
-/// Env vars forwarded INTO the sandbox: the GitHub token when github is enabled,
-/// so `gh` (talking to the real GitHub over the api.github.com tunnel) can
-/// authenticate. git uses proxy-side injection instead, so this is only for gh.
-fn sandbox_token_env(state: State) -> List(#(String, String)) {
-  let github = list.contains(state.groups, "github")
-  case github, github_token() {
+/// Env vars forwarded INTO the sandbox so a tool can authenticate from its env:
+/// each enabled `Env`-mode provider's `prepare` output (run OUTSIDE the sandbox —
+/// e.g. `aws sts get-session-token` → AWS_* creds, or `echo KEY=$KEY`), plus the
+/// GitHub token for `gh` (github is a hybrid: git uses proxy-side injection, but
+/// gh needs the token in its env over the api.github.com tunnel).
+fn sandbox_env(state: State) -> List(#(String, String)) {
+  let enabled = list.filter_map(state.groups, providers.get)
+  let gh = case list.contains(state.groups, "github"), github_token() {
     True, Ok(token) -> [#("GH_TOKEN", token), #("GITHUB_TOKEN", token)]
     _, _ -> []
   }
+  let forwarded =
+    enabled
+    |> list.filter(fn(p) { p.mode == providers.Env })
+    |> list.flat_map(fn(p) { providers.prepared(p, run_prepare) |> dict.to_list })
+  list.append(gh, forwarded)
+}
+
+/// Run a provider's `prepare` OUTSIDE the sandbox (privileged setup in bough's
+/// own process), returning its stdout. Used to mint/forward credentials.
+fn run_prepare(cmd: String) -> Result(String, Nil) {
+  shellout.command("sh", ["-c", cmd], ".", [])
+  |> result.replace_error(Nil)
 }
 
 /// The real GitHub token, read OUTSIDE the sandbox for proxy-side injection.
@@ -930,7 +944,7 @@ fn bash_proxy_env(state: State, port: Option(Int)) -> List(#(String, String)) {
       ]
     }
   }
-  list.append(proxy, sandbox_token_env(state))
+  list.append(proxy, sandbox_env(state))
 }
 
 /// Write the run's Seatbelt profile (sibling of the net profile in the run dir).
@@ -1323,7 +1337,7 @@ fn proxy_env_prefix(state: State, port: Option(Int)) -> String {
   // In passthrough mode the GitHub token rides in the sandbox env (inline on the
   // child only, not bough's env); empty in the secure default.
   let token =
-    sandbox_token_env(state)
+    sandbox_env(state)
     |> list.map(fn(kv) { kv.0 <> "=" <> shq(kv.1) <> " " })
     |> string.concat
   proxy <> token
