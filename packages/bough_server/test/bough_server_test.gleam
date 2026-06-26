@@ -362,17 +362,6 @@ pub fn net_profile_services_test() {
   assert string.contains(e, "\"allow_vars\":[\"AWS_ACCESS_KEY_ID\"]")
 }
 
-/// The capability suggester parses denied filesystem paths out of command
-/// output (the part before the permission marker), and ignores clean output.
-pub fn denied_paths_test() {
-  let out =
-    "mkdir: /Users/x/Library: Operation not permitted\n"
-    <> "some other line\n"
-    <> "cat: /etc/secret: Permission denied"
-  assert engine.denied_paths(out) == ["/Users/x/Library", "/etc/secret"]
-  assert engine.denied_paths("all good\nexit 0") == []
-}
-
 /// A round whose steps are ALL `collect` is a pure status poll — the harness
 /// holds for subagents instead of re-prompting the model, which is what stops
 /// the busy-wait. Any non-collect step (or an empty batch) makes it productive.
@@ -383,20 +372,6 @@ pub fn is_poll_round_test() {
   assert engine.is_poll_round([Collect("a", "id1"), Code("c", "print(1)")])
     == False
   assert engine.is_poll_round([Code("c", "print(1)")]) == False
-}
-
-/// The suggester maps the worker's free-text reply to known toggleable group
-/// names (case-insensitive), dropping unknowns and "none".
-pub fn parse_suggested_test() {
-  let catalog = [
-    Group("user_caches_macos", "caches", "macos", False),
-    Group("rust_runtime", "rust", "cross-platform", False),
-  ]
-  assert engine.parse_suggested("user_caches_macos, rust_runtime", catalog)
-    == ["user_caches_macos", "rust_runtime"]
-  assert engine.parse_suggested("USER_CACHES_MACOS\nbogus\nnone", catalog)
-    == ["user_caches_macos"]
-  assert engine.parse_suggested("none", catalog) == []
 }
 
 fn count_occurrences(haystack: String, needle: String) -> Int {

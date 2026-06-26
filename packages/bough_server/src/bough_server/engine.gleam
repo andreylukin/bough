@@ -19,14 +19,13 @@ import bough_core/digest
 import bough_core/nono
 import bough_server/agent.{
   type Outcome, type Step as Activity, Outcome, StepAwait, StepCall, StepCheck,
-  StepExec, StepGroup, StepPlan, StepReview, StepText, StepWorker,
+  StepExec, StepPlan, StepReview, StepText, StepWorker,
 }
 import bough_server/clock
 import bough_server/control
 import bough_server/integrity
 import bough_server/json_value.{type JsonValue}
 import bough_server/monty_bridge
-import bough_server/nono_bridge
 import bough_server/prompts
 import bough_server/provider
 import bough_server/providers
@@ -646,244 +645,12 @@ fn exec_steps(
 /// command each, through the same sandbox path.
 fn apply_with_fixes(state: State, step: Step) -> #(State, Exec, Int) {
   let #(state, result) = apply(state, step)
-  // On a sandbox filesystem denial, pause for the human to enable a capability
-  // group that would grant the access, then retry the step (SPEC §7).
-  let #(state, result) = gate_groups(state, step, result, 0)
   case state.config.worker {
     None -> #(state, result, 0)
     Some(model) -> fix_loop(state, step, result, model, 0)
   }
 }
 
-/// Cap on the approve→retry loop for one step's group gate.
-const group_max_retries = 4
-
-/// When a step is denied filesystem access that an enableable group would grant,
-/// pause for the human (status "awaiting_group"): approve to enable the
-/// candidate group(s) — rebuilding the run's nono profile — and retry the step,
-/// or reject and keep the failure for the supervisor. A denial with no candidate
-/// group (e.g. a path outside any group's reach) is left to stand.
-fn gate_groups(
-  state: State,
-  step: Step,
-  result: Exec,
-  tries: Int,
-) -> #(State, Exec) {
-  case is_fs_denial(result) && tries < group_max_retries {
-    False -> #(state, result)
-    True ->
-      case candidate_groups(state, step, result) {
-        [] -> #(state, result)
-        candidates -> {
-          let enable = group_decision(state, step, result, candidates)
-          // Candidates the agent needed but the human didn't enable become
-          // advisory suggestions (persisted, surfaced as ✋ and the banner) so
-          // the ask isn't lost when the run moves on.
-          let unmet =
-            list.filter(candidates, fn(c) { !list.contains(enable, c) })
-          let state =
-            State(
-              ..state,
-              suggested: list.unique(list.append(state.suggested, unmet)),
-            )
-          case enable {
-            // Rejected (or no usable group named): the failure stands.
-            [] -> #(state, result)
-            _ -> {
-              let state =
-                State(..state, groups: list.unique(list.append(state.groups, enable)))
-              let #(state, result) = apply(state, step)
-              gate_groups(state, step, result, tries + 1)
-            }
-          }
-        }
-      }
-  }
-}
-
-/// True when a step's output carries a sandbox/OS filesystem-permission denial.
-/// Exit-agnostic on purpose: a code-mode step wraps the denied command in a
-/// monty program that itself exits 0 (the inner `bash()` failure lives only in
-/// the captured output), so keying on a non-zero exit would miss every denial on
-/// the default execution path. The denied-path→group match in `candidate_groups`
-/// is the filter that keeps a stray mention from opening a gate.
-fn is_fs_denial(result: Exec) -> Bool {
-  contains_any(result.output, denial_markers)
-}
-
-/// The toggleable capability groups that would grant the denied access: the
-/// deterministic path→group match, plus any the worker proposes, minus those
-/// already enabled.
-fn candidate_groups(state: State, step: Step, result: Exec) -> List(String) {
-  let targets =
-    list.append(step_paths(step), denied_paths(result.output))
-    |> list.unique
-  let deterministic = case targets {
-    [] -> []
-    _ -> nono_bridge.groups_for_paths(targets)
-  }
-  list.append(deterministic, suggester_worker(state, result, targets))
-  |> list.unique
-  |> list.filter(fn(g) { !list.contains(state.groups, g) })
-}
-
-/// Publish the gate with status "awaiting_group" and block on the human. Returns
-/// the group name(s) to enable: `Allow` enables every candidate; a non-empty
-/// `Steer` enables the named candidate(s) it lists; an empty `Steer` (reject)
-/// enables none.
-fn group_decision(
-  state: State,
-  _step: Step,
-  result: Exec,
-  candidates: List(String),
-) -> List(String) {
-  let detail = group_detail_text(result.output)
-  let step = StepGroup(detail, string.join(candidates, ", "))
-  let activities = [step, ..state.activities]
-  state.emit(
-    "awaiting_group",
-    list.reverse(activities),
-    state.context_tokens,
-    state.net_events,
-  )
-  case state.await() {
-    control.Allow -> candidates
-    control.Steer(message) -> {
-      let named =
-        message
-        |> string.replace("\n", ",")
-        |> string.split(",")
-        |> list.map(fn(s) { string.trim(string.lowercase(s)) })
-      list.filter(candidates, fn(c) { list.contains(named, string.lowercase(c)) })
-    }
-  }
-}
-
-/// The denied path(s) for the gate prompt — the distinct paths the denial named.
-fn group_detail_text(output: String) -> String {
-  case denied_paths(output) |> list.unique {
-    [] -> "a sandboxed step was denied filesystem access"
-    paths -> string.join(paths, ", ")
-  }
-}
-
-/// Signatures a sandbox/OS permission denial leaves in command output.
-const denial_markers = ["Operation not permitted", "Permission denied"]
-
-/// Ask the worker which available groups would resolve the denial. `[]` if the
-/// worker is disabled/unreachable or proposes nothing usable. Constrained to the
-/// toggleable catalog the human can actually enable.
-fn suggester_worker(state: State, result: Exec, paths: List(String)) -> List(String) {
-  case state.config.worker {
-    None -> []
-    Some(model) -> {
-      let catalog =
-        nono_bridge.list_groups()
-        |> list.filter(fn(g) { !g.locked && !list.contains(state.groups, g.name) })
-      let listing =
-        catalog
-        |> list.map(fn(g) { "- " <> g.name <> ": " <> g.description })
-        |> string.join("\n")
-      let prompt =
-        "DENIED PATHS: "
-        <> string.join(paths, ", ")
-        <> "\n\nOUTPUT:\n"
-        <> digest.digest(result.output, state.config.digest_limit)
-        <> "\n\nAVAILABLE GROUPS:\n"
-        <> listing
-      case
-        worker.complete_with(
-          state.config.worker_url,
-          model,
-          prompts.suggester_system,
-          prompt,
-          200,
-          state.config.worker_temperature,
-          state.config.worker_top_p,
-        )
-      {
-        Error(_) -> []
-        Ok(text) -> parse_suggested(text, catalog)
-      }
-    }
-  }
-}
-
-/// Parse the worker's comma/newline-separated reply into known toggleable group
-/// names (case-insensitive), dropping "none" and anything off the catalog.
-pub fn parse_suggested(text: String, catalog: List(nono.Group)) -> List(String) {
-  let names = list.map(catalog, fn(g) { g.name })
-  text
-  |> string.replace("\n", ",")
-  |> string.split(",")
-  |> list.map(fn(s) { string.trim(string.lowercase(s)) })
-  |> list.filter_map(fn(s) {
-    case list.find(names, fn(n) { string.lowercase(n) == s }) {
-      Ok(n) -> Ok(n)
-      Error(_) -> Error(Nil)
-    }
-  })
-}
-
-/// Filesystem paths named in denial lines like
-/// `mkdir: /Users/x/Library: Operation not permitted` — the text before the
-/// marker, last colon-separated token.
-pub fn denied_paths(output: String) -> List(String) {
-  output
-  |> string.split("\n")
-  |> list.filter_map(fn(line) {
-    case list.find(denial_markers, fn(m) { string.contains(line, m) }) {
-      Error(_) -> Error(Nil)
-      Ok(marker) ->
-        case string.split_once(line, ": " <> marker) {
-          Ok(#(before, _)) ->
-            case string.split(before, ": ") |> list.last {
-              Ok(path) ->
-                case string.starts_with(string.trim(path), "/") {
-                  True -> Ok(string.trim(path))
-                  False -> Error(Nil)
-                }
-              Error(_) -> Error(Nil)
-            }
-          Error(_) -> Error(Nil)
-        }
-    }
-  })
-  |> list.unique
-}
-
-fn contains_any(haystack: String, needles: List(String)) -> Bool {
-  list.any(needles, fn(n) { string.contains(haystack, n) })
-}
-
-/// The path(s) a step targets — the specific paths to map a denial against. For
-/// a RUN, the path-like tokens in its command; for WRITE/EDIT, the file.
-fn step_paths(step: Step) -> List(String) {
-  case step {
-    Run(_, cmd) -> paths_in(cmd)
-    Write(_, path, _) -> [path]
-    Edit(_, path, _, _) -> [path]
-    _ -> []
-  }
-}
-
-/// Whitespace tokens that look like filesystem paths (absolute, `~`, or
-/// `$HOME`-rooted), unquoted — a cheap way to recover what a command touched.
-fn paths_in(text: String) -> List(String) {
-  text
-  |> string.replace("\n", " ")
-  |> string.split(" ")
-  |> list.map(fn(t) {
-    t
-    |> string.replace("'", "")
-    |> string.replace("\"", "")
-  })
-  |> list.filter(fn(t) {
-    string.starts_with(t, "/")
-    || string.starts_with(t, "~")
-    || string.starts_with(t, "$HOME")
-  })
-}
 
 fn fix_loop(
   state: State,
@@ -1338,21 +1105,16 @@ fn capabilities_summary(
     }
   }
 
-  // Enabled capabilities, with nono's (or a provider's) descriptions.
-  let catalog = nono_bridge.list_groups()
+  // Enabled capabilities (providers), with their descriptions.
   let group_lines =
     list.map(groups, fn(name) {
-      case list.find(catalog, fn(g) { g.name == name }) {
-        Ok(g) -> name <> " — " <> g.description
-        Error(_) ->
-          case providers.get(name) {
-            Ok(p) -> name <> " — " <> p.description
-            Error(_) -> name
-          }
+      case providers.get(name) {
+        Ok(p) -> name <> " — " <> p.description
+        Error(_) -> name
       }
     })
   let groups_text = case group_lines {
-    [] -> "none beyond the locked defaults"
+    [] -> "none beyond the defaults"
     _ -> string.join(group_lines, "; ")
   }
 
