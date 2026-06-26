@@ -39,6 +39,7 @@ export const api = {
   subagents: (id) => jget(`/session/${id}/subagents`),
   diff: (id) => jget(`/session/${id}/diff`),
   files: (id) => jget(`/session/${id}/files`),
+  skills: () => jget("/skills"),
   groupsCatalog: () => jget("/groups"),
   groupDetail: (name) => jget(`/groups/${name}`),
   setGroups: (id, groups) => jpost(`/session/${id}/groups`, { groups }),

@@ -12,10 +12,11 @@ export const clampScale = (s) => Math.max(0.15, Math.min(2.6, s));
 export function openMap() {
   if (!state.tree) { toast("Open a session first.", true); return; }
   state.mapOpen = true;
-  state.mapView = null; // fit on first paint
   state.mapExpanded = new Set();
   renderMap();
-  requestAnimationFrame(fitMap); // fit needs the canvas laid out in the DOM
+  // Keep the camera you left when reopening within a session; only auto-fit when
+  // there's no camera yet (first open, or a freshly-opened session reset it).
+  if (!state.mapView) requestAnimationFrame(fitMap); // fit needs the canvas laid out
 }
 
 export function jumpToEntry(eid) {
@@ -145,7 +146,7 @@ export function renderMap() {
   const tree = state.tree;
 
   $("#mapview .map-title").textContent =
-    (tree.project || "").split("/").filter(Boolean).pop() + " · " + tree.entries.length + " nodes";
+    (tree.project || "").split("/").filter(Boolean).pop() + " · " + tree.entries.filter((e) => e.role === "user").length + " turns";
   $("#mapview .map-hint").innerHTML = state.graftRoot
     ? `grafting — click a parent for <b>${esc(clip(nodeLabel(state.graftRoot), 22))}</b>`
     : `drag to pan · scroll to zoom · click a turn to jump · a branch tip ● to switch · ▸ steps · ⑂ fork/graft`;

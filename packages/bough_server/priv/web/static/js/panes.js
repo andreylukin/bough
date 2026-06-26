@@ -1,4 +1,4 @@
-import { closeNav, forkNode, graftOnto, inspectGroup } from "./actions.js";
+import { closeNav, forkNode, graftOnto, inspectGroup, toggleGroup } from "./actions.js";
 import { api } from "./api.js";
 import { $, ago, clip, el, esc, humanTok, projBase, toast } from "./dom.js";
 import { branchOrder, nodeLabel, treeBranches, visibleGraph } from "./graph.js";
@@ -254,7 +254,7 @@ export function renderTree(body) {
     tb.innerHTML = `<span class="hint">graft: pick a parent for <b>${esc(clip(nodeLabel(state.graftRoot), 24))}</b></span>
       <button class="ghost" data-act="graft-cancel">cancel</button>`;
   } else {
-    tb.innerHTML = `<span class="hint">click ⑂ to fork a node, or graft a subtree</span>`;
+    tb.innerHTML = `<span class="hint">click a node to open it — fork or graft from there</span>`;
   }
   const mapBtn = el("button", "ghost map-open", "⤢ Map");
   mapBtn.title = "Open the 2-D session map";
@@ -445,7 +445,7 @@ export function renderNetwork(body) {
 
   if (net.length === 0) {
     body.appendChild(el("div", "hint", leashed
-      ? "No requests itemized yet. Egress the engine observes appears here; code-mode bash is policy-enforced but isn't streamed (nono flushes its audit on session close)."
+      ? "No requests itemized yet. Egress the engine observes appears here; code-mode bash is policy-enforced but isn't streamed (the mitmproxy flushes its audit when the run finalizes)."
       : "Nothing to itemize while the network is off."));
     return;
   }
@@ -745,8 +745,16 @@ export function capsSection(body, sec, enabled, suggested, forceOpen) {
       ? `<span class="locked">always on</span>`
       : (suggested.has(g.name) ? `<span class="suggested">suggested</span>` : "");
     name.innerHTML = `<b>${esc(g.name)}</b> ${tag}<div class="gdesc">${esc(clip(g.description, 84))}</div>`;
-    name.onclick = () => inspectGroup(g.name);
+    name.onclick = (e) => { e.stopPropagation(); inspectGroup(g.name); };
     row.appendChild(name);
+    // Clicking the row (anywhere but the name, which inspects) toggles the group —
+    // a bigger, less fiddly hit target than the checkbox alone.
+    if (!g.locked) {
+      row.style.cursor = "pointer";
+      // Skip the checkbox itself (it has its own toggle handler) to avoid a
+      // double-toggle; the name stops propagation above.
+      row.onclick = (e) => { if (e.target.tagName !== "INPUT") toggleGroup(g.name, !enabled.has(g.name)); };
+    }
     body.appendChild(row);
   }
 }

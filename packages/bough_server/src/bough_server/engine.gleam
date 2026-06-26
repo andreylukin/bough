@@ -1600,7 +1600,9 @@ fn bb_dir() -> String {
 /// the model could never open that path (it just burned steps on a guaranteed
 /// "outside the workspace" error). A re-query hint is honest and actionable.
 fn maybe_save(state: State, full: String, dig: String) -> #(State, String) {
-  case string.length(full) > string.length(dig) {
+  // Compare against the trimmed length: `digest` trims, so a short output with a
+  // trailing newline isn't actually truncated even though `full` is longer.
+  case string.length(string.trim(full)) > string.length(dig) {
     False -> #(state, "")
     True -> #(
       state,

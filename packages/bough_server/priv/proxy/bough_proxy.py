@@ -1,6 +1,6 @@
 """bough's mitmproxy addon — the programmable egress layer.
 
-Replaces nono's declarative network policy with code you can extend. Reads a
+A programmable egress policy you can extend in code. Reads a
 per-session config (path in BOUGH_PROXY_CONFIG) and, on every flow:
 
   * default-deny allowlist — a request to a host not on `allow` is blocked (403),

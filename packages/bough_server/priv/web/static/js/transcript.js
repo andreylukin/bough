@@ -197,6 +197,9 @@ export function renderConversation(box, tree, run) {
       const ans = (e.content || "").trim();
       steps = steps.filter((s) => !((s.type === "plan" || s.type === "text") && (s.text || "").trim() === ans));
       flush();
+      // Stopping a run before it produces prose commits an empty assistant entry;
+      // don't render it as a blank bubble.
+      if (ans === "") continue;
       const m = el("div", "msg assistant prose", md(e.content)); m.dataset.eid = e.id;
       stream.appendChild(m);
     }
@@ -387,7 +390,13 @@ export function attachCheck(card, check) {
   const head = card.querySelector(".head");
   if (!head) return;
   const v = el("span", "checkmark " + (check.ok ? "ok" : "bad"), check.ok ? "✓ check" : "✗ check");
-  v.title = (check.digest && check.digest.trim()) ? cleanDigest(check.digest) : "acceptance check";
+  // Spell out what the verdict means — a step's exit code is not the acceptance
+  // check, so "✗ check" alongside a successful command isn't a contradiction.
+  const label = check.ok
+    ? "acceptance check passed"
+    : "acceptance check did not pass (separate from a step's exit code)";
+  const detail = (check.digest && check.digest.trim()) ? "\n\n" + cleanDigest(check.digest) : "";
+  v.title = label + detail;
   head.appendChild(v);
 }
 

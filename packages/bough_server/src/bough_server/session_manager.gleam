@@ -131,7 +131,9 @@ fn summarize(tree: SessionTree) -> Summary {
     id: tree.id,
     project: tree.project,
     title: title,
-    turns: list.length(tree.entries),
+    // "Turns" = the conversation's user prompts, not every raw entry (tool steps
+    // included), so the sidebar count matches what a person counts as a turn.
+    turns: list.length(list.filter(tree.entries, fn(e) { e.role == session.User })),
     updated: updated,
   )
 }

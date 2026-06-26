@@ -122,21 +122,39 @@ export function treeBranches(tree) {
   const { vnodes, vchildren } = visibleGraph(tree, false);
   const activeIds = new Set(activePath(tree).map((e) => e.id));
   const leaves = [...vnodes.values()].filter((n) => !(vchildren.get(n.id) || []).length);
+  // "Trunk" = the branch whose files are on disk. If the stored trunk pointer
+  // isn't a current leaf (e.g. it was forked into an interior node), fall back to
+  // the active branch so exactly one branch is always marked — adopt re-pins it.
+  const trunkIsLeaf = leaves.some((n) => n.id === tree.trunk_leaf);
+  const trunkLeaf = trunkIsLeaf ? tree.trunk_leaf : tree.active_leaf;
   const branches = leaves.map((n) => {
+    // Count user prompts (= conversation turns), not every visible node, so the
+    // branch count agrees with the sidebar's "N turns".
     let turns = 0, cur = n;
-    while (cur) { turns++; cur = cur.parent ? vnodes.get(cur.parent) : null; }
+    while (cur) { if (cur.entry.role === "user") turns++; cur = cur.parent ? vnodes.get(cur.parent) : null; }
     return {
       leafId: n.id,
       name: (n.entry.label || "").trim() || clip(n.entry.content, 38) || "branch",
       named: !!(n.entry.label || "").trim(),
       turns,
       active: activeIds.has(n.id),
-      trunk: n.id === tree.trunk_leaf,
+      trunk: n.id === trunkLeaf,
       // A pending user-entry tip means a run is in flight on this branch (the
       // turn lands in the tree only on completion).
       running: n.entry.role === "user",
     };
   });
+  // Disambiguate auto-named branches that collide (same leaf content), so two
+  // rows aren't indistinguishable; explicitly-named branches are left alone.
+  const counts = {};
+  for (const b of branches) counts[b.name] = (counts[b.name] || 0) + 1;
+  const seen = {};
+  for (const b of branches) {
+    if (!b.named && counts[b.name] > 1) {
+      seen[b.name] = (seen[b.name] || 0) + 1;
+      b.name = `${b.name} (${seen[b.name]})`;
+    }
+  }
   branches.sort((a, b) => (a.active === b.active ? 0 : a.active ? -1 : 1));
   return branches;
 }

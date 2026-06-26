@@ -1,6 +1,6 @@
 import { startPoll } from "./actions.js";
 import { api } from "./api.js";
-import { $, el, esc, fmtBytes, toast } from "./dom.js";
+import { $, clip, el, esc, fmtBytes, toast } from "./dom.js";
 import { render } from "./main.js";
 import { ACTIVE, state } from "./state.js";
 import { openDrawer, preField } from "./transcript.js";
@@ -83,9 +83,28 @@ export async function submitComposer() {
   } catch (e) { toast(String(e.message || e), true); }
 }
 
-export const picker = { open: false, items: [], active: 0, at: -1 };
+export const picker = { open: false, items: [], active: 0, at: -1, mode: "file" };
 
 export const PICKER_MAX = 12;
+
+// Installed skills, fetched once for the "/" picker. A skill is pulled into a run
+// by typing `/<name>` in the message (see skills.gleam).
+let _skills = null;
+async function ensureSkills() {
+  if (_skills) return _skills;
+  try { const r = await api.skills(); _skills = Array.isArray(r) ? r : (r.skills || []); }
+  catch { _skills = []; }
+  return _skills;
+}
+
+// A "/command" the caret sits in: a slash at the very start of the message, then
+// the command name up to the caret. Anchored to start so it can't fire on paths.
+export function slashToken(ta) {
+  const before = ta.value.slice(0, ta.selectionStart);
+  const m = before.match(/^\/([\w-]*)$/);
+  if (!m) return null;
+  return { at: 0, query: m[1] };
+}
 
 export async function ensureFiles() {
   if (state.files && state.files.sessionId === state.sessionId) return state.files.list;
@@ -142,10 +161,28 @@ export function fuzzyFilter(query, files) {
 
 export async function refreshPicker() {
   const ta = $("#prompt");
+  // "/" at the start → skills picker; otherwise an "@token" → files picker.
+  if (slashToken(ta)) {
+    const skills = await ensureSkills();
+    const now = slashToken(ta); // may have changed while we awaited
+    if (!now) { closePicker(); return; }
+    const q = now.query.toLowerCase();
+    const items = skills
+      .filter((s) => s.name.toLowerCase().includes(q))
+      .slice(0, PICKER_MAX)
+      .map((s) => ({ skill: true, name: s.name, description: s.description || "" }));
+    if (items.length === 0) { closePicker(); return; }
+    picker.mode = "skill"; picker.items = items; picker.at = now.at;
+    picker.open = true;
+    picker.active = Math.min(picker.active, items.length - 1);
+    renderPicker(now.query);
+    return;
+  }
   if (!atToken(ta)) { closePicker(); return; }
   const files = await ensureFiles();
   const now = atToken(ta); // the token may have changed while we awaited
   if (!now) { closePicker(); return; }
+  picker.mode = "file";
   picker.items = fuzzyFilter(now.query, files);
   picker.at = now.at;
   if (picker.items.length === 0) { closePicker(); return; }
@@ -160,7 +197,10 @@ export function renderPicker(query) {
   picker.items.forEach((it, i) => {
     const row = el("div", "fp-item" + (i === picker.active ? " active" : ""));
     row.setAttribute("role", "option");
-    row.innerHTML = fpHighlight(it.path);
+    row.innerHTML = it.skill
+      ? `<span class="fp-base">/${esc(it.name)}</span>` +
+        (it.description ? `<span class="fp-dir"> — ${esc(clip(it.description, 56))}</span>` : "")
+      : fpHighlight(it.path);
     row.onmousedown = (e) => { e.preventDefault(); choosePicker(i); };
     box.appendChild(row);
   });
@@ -201,7 +241,7 @@ export function choosePicker(i) {
   const ta = $("#prompt");
   const before = ta.value.slice(0, picker.at);
   const after = ta.value.slice(ta.selectionStart);
-  const insert = it.path + " ";
+  const insert = (it.skill ? "/" + it.name : it.path) + " ";
   ta.value = before + insert + after;
   const caret = before.length + insert.length;
   ta.setSelectionRange(caret, caret);

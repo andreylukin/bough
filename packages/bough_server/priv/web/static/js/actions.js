@@ -18,7 +18,7 @@ export async function openSession(id) {
   closeNav(); // came from the sessions overlay on mobile — return to the transcript
   state.sessionId = id;
   state.viewChildId = null; state.childTree = null; state.childRun = null;
-  state.graftRoot = null; state.paneSig = null; state.diff = null; state.files = null;
+  state.graftRoot = null; state.paneSig = null; state.diff = null; state.files = null; state.mapView = null;
   closePicker(); clearPastes();
   try {
     state.tree = await api.tree(id);
@@ -121,7 +121,11 @@ export async function graftOnto(onto) {
     state.graftRoot = null;
     toast("grafted");
     render();
-  } catch (e) { toast("graft rejected (cycle or unknown node)", true); }
+  } catch (e) {
+    // Stay armed so the user can pick another parent; say so, since nothing
+    // visibly changed.
+    toast("graft rejected (cycle or unknown node) — still armed; pick another parent or Cancel", true);
+  }
 }
 
 export async function toggleGroup(name, on) {
