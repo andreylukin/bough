@@ -65,7 +65,7 @@ Point bough at a project and ask. A frontier model plans, the sandbox runs the w
 - **Two sandboxes, one airlock.** [monty](https://github.com/pydantic/monty) (a Rust Python interpreter) confines the agent's program; a **macOS Seatbelt** profile confines the processes it launches — credentials/keys unreadable, writes confined to the workspace (+ toolchain caches).
 - **Owned, programmable egress.** Each session's outbound network is routed through a per-session [mitmproxy](https://mitmproxy.org) bough spawns: a default-deny host allowlist and credential injection you control in Python (`priv/proxy/bough_proxy.py`), so a secret is injected at the proxy and **never enters the sandbox**.
 - **Snapshots.** Each turn checkpoints the workspace to a per-session shadow git repo (never your project's `.git`); a fork restores it.
-- **Headless server + thin clients.** One server (`packages/bough_server`) serves the web UI from `priv/web` and a JSON API; a legacy terminal client (`bough_tui`) drives the same API.
+- **Headless server + web UI.** One server (`packages/bough_server`) serves the web UI from `priv/web` and a JSON API.
 
 See **[SPEC.md](SPEC.md)** for the full design.
 
@@ -100,7 +100,6 @@ make serve    # run the server on 127.0.0.1:4096
 
 | Package | Role |
 |---|---|
-| [`bough_core`](packages/bough_core) | Shared, side-effect-free types & logic: session tree, provider interface, nono contract. |
-| [`bough_server`](packages/bough_server) | Headless server: supervisor-worker loop, nono bridge, HTTP API, web UI. |
-| [`bough_tui`](packages/bough_tui) | Legacy terminal client. |
+| [`bough_core`](packages/bough_core) | Shared, side-effect-free types & logic: session tree, provider interface, egress-event types. |
+| [`bough_server`](packages/bough_server) | Headless server: supervisor-worker loop, seatbelt + mitmproxy sandbox, HTTP API, web UI. |
 | [`sidecar`](sidecar) | `bough-monty`: the Rust code-mode interpreter. |

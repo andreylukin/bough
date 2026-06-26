@@ -592,7 +592,6 @@ fn engine_config(
     max_rounds: max_rounds(),
     review: review,
     net_gate: net_gate,
-    net_credentials: [],
     worker_temperature: worker_temp,
     worker_top_p: worker_top_p,
   )

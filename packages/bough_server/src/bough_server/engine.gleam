@@ -2,12 +2,12 @@
 ////
 //// One append-only conversation per task. Each user message starts a turn: the
 //// supervisor replies with prose and/or STEP artifacts, the harness (the only
-//// thing that executes) applies them inside the nono sandbox, feeds every
-//// result back, and gates completion on a deterministic CHECK plus an
-//// adversarial review. Ported from tent's `engine/mod.rs`.
+//// thing that executes) applies them inside the monty + Seatbelt sandbox, feeds
+//// every result back, and gates completion on a deterministic CHECK plus an
+//// adversarial review.
 ////
 //// Output reuses `agent.Step`/`agent.Outcome`/`agent.run_json`, but emits the
-//// loop's roles as phased events so the TUI can render each distinctly:
+//// loop's roles as phased events so the web client can render each distinctly:
 //// supervisor prose is `StepPlan`, a harness step is `StepCall` + `StepExec`
 //// (with exit code), a local-worker fix is `StepWorker`, and the guardrails are
 //// `StepCheck` and `StepReview`. Plain `StepText` is left for notices.
@@ -68,10 +68,6 @@ pub type Config {
     /// pauses for human approval — the network leash (SPEC §7). When false,
     /// commands run with the network blocked, as before.
     net_gate: Bool,
-    /// Credentials nono injects into sandboxed commands on egress (SPEC §6.4):
-    /// (credential_name, env_var) pairs declared in the generated profile so the
-    /// raw secret never enters the sandbox. Empty by default (opt-in).
-    net_credentials: List(#(String, String)),
     /// Sampling for the worker's fix/suggestion calls. A fast instruct-coder
     /// worker (the default) wants a low temperature for deterministic fixes; a
     /// reasoning worker (e.g. VibeThinker-3B) wants its documented decoding
@@ -121,7 +117,6 @@ pub fn default_config() -> Config {
     fix_attempts: 1,
     review: False,
     net_gate: False,
-    net_credentials: [],
     // Default worker is a fast instruct-coder: low temperature, deterministic.
     worker_temperature: Some(0.2),
     worker_top_p: None,
@@ -1092,16 +1087,16 @@ fn capabilities_summary(
   let network = case config.net_gate {
     // Fully blocked: no outbound connection succeeds.
     False ->
-      "blocked entirely — no outbound network. `git push`/`git fetch` over the network, package installs, and any remote fetch will fail."
-    // Default-deny against the session allowlist.
+      "blocked entirely — no outbound network. `git push`/`git fetch`, package installs, and any remote fetch will fail."
+    // Default-deny, routed through the session's filtering proxy.
     True -> {
       let hosts = case net_allow {
-        [] -> "(empty — nothing is allowed yet)"
+        [] -> "(none beyond what enabled capabilities grant)"
         _ -> string.join(net_allow, ", ")
       }
-      "default-deny against this run's allowlist: "
+      "routed through this session's filtering proxy, default-deny: only allowlisted hosts ("
       <> hosts
-      <> ". A connection to any other host is blocked and pauses for human approval — propose the host to add rather than retrying."
+      <> ") and the hosts your enabled capabilities grant are reachable; any other host is blocked."
     }
   }
 
@@ -1128,7 +1123,7 @@ fn capabilities_summary(
       " GitHub auth is injected at the network proxy: $GITHUB_TOKEN in the sandbox is a PHANTOM that nono swaps for the real token on egress. Use git + curl, NOT `gh` (it won't trust the proxy CA here). git push: `git -c credential.helper='!f(){ echo username=x-access-token; echo password=$GITHUB_TOKEN; };f' push ...`. REST: `curl -H \"Authorization: Bearer $GITHUB_TOKEN\" https://api.github.com/...`."
   }
 
-  "\n\n# Capabilities this run\nYour actions run inside a nono sandbox with a fixed, known reach. Reason about it BEFORE acting; if a request needs access you don't have, say so plainly and propose the smallest change (a host to allowlist, a capability to enable, or a step for the human to run outside the sandbox) instead of retrying.\n\n- Filesystem: the workspace is read-write, and the language-toolchain directories bough grants are read-only. The rest of $HOME is DENIED — credentials and keys (~/.ssh, ~/.aws, ~/.config, keychains, git signing keys) are not readable. A signed `git commit` (commit.gpgsign / SSH signing) and SSH-authenticated git will not work from here."
+  "\n\n# Capabilities this run\nYour actions run inside a monty + macOS Seatbelt sandbox with a fixed, known reach. Reason about it BEFORE acting; if a request needs access you don't have, say so plainly and propose the smallest change (a host to allowlist, a capability to enable, or a step for the human to run outside the sandbox) instead of retrying.\n\n- Filesystem: the workspace is read-write (plus toolchain caches like ~/.cargo, ~/.npm). The rest of $HOME is DENIED — credentials and keys (~/.ssh, ~/.aws, ~/.config, keychains, git signing keys) are not readable, and writes outside the workspace are denied. A signed `git commit` (commit.gpgsign / SSH signing) and SSH-authenticated git will not work from here."
   <> github_note
   <> "\n- Network: "
   <> network
