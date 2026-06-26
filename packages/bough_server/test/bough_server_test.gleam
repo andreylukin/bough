@@ -1,12 +1,11 @@
 import bough_core/artifact.{Code, Collect}
-import bough_core/nono.{Allow, AuditEvent, Deny, Group, Snapshot}
+import bough_core/nono.{Allow, AuditEvent, Deny, Snapshot}
 import bough_core/session
 import bough_server/agent
 import bough_server/control
 import bough_server/engine
 import bough_server/router
 import bough_server/json_value
-import bough_server/net_profile
 import bough_server/nono_bridge
 import bough_server/providers
 import bough_server/seatbelt
@@ -182,100 +181,6 @@ pub fn control_round_trip_test() {
   assert control.take(id) == Error(Nil)
 }
 
-/// The generated network profile groups rules by host: multiple path rules for
-/// one host union into one endpoints array; a bare host stays a plain string.
-pub fn net_profile_unions_paths_test() {
-  let j =
-    json.to_string(net_profile.build(
-      [
-        "https://api.foo.com/v1/**", "https://api.foo.com/v2/**",
-        "bare.example.com",
-      ],
-      False,
-      [],
-      [],
-      [],
-      [],
-      [],
-    ))
-  // Both path globs present under the one host, as endpoint rules.
-  assert string.contains(j, "/v1/**")
-  assert string.contains(j, "/v2/**")
-  assert string.contains(j, "\"domain\":\"api.foo.com\"")
-  // The bare host appears as a plain allowlist string (no endpoints object).
-  assert string.contains(j, "\"bare.example.com\"")
-  // One endpoints array for the host (i.e. unioned, not two domain objects).
-  assert count_occurrences(j, "\"domain\":\"api.foo.com\"") == 1
-  // The git_config group is always included so a sandboxed `git` can read its
-  // config; no env_credentials block when none are injected.
-  assert string.contains(j, "\"git_config\"")
-  assert !string.contains(j, "env_credentials")
-}
-
-/// Injected credentials become an `env_credentials` map (name -> env var) in
-/// the profile (SPEC §6.4).
-pub fn net_profile_credentials_test() {
-  let j =
-    json.to_string(net_profile.build(
-      [],
-      True,
-      [],
-      [],
-      [#("github_token", "GITHUB_TOKEN")],
-      [],
-      [],
-    ))
-  assert string.contains(j, "\"env_credentials\"")
-  assert string.contains(j, "\"github_token\":\"GITHUB_TOKEN\"")
-}
-
-/// The BOUGH_NET_CREDENTIALS spec parses `name=ENV` and bare `name` entries,
-/// trims blanks, and upper-cases the env var for bare names.
-pub fn parse_credentials_test() {
-  assert net_profile.parse_credentials(
-      "github_token=GH_PAT, anthropic_api_key, ",
-    )
-    == [
-      #("github_token", "GH_PAT"),
-      #("anthropic_api_key", "ANTHROPIC_API_KEY"),
-    ]
-  assert net_profile.parse_credentials("") == []
-}
-
-/// Every base profile grants the git_config group (so git steps can read the
-/// user's config). With `block`, the network section denies all outbound; the
-/// allowlist form is reserved for the net-gate-on path.
-pub fn net_profile_base_grants_test() {
-  let blocked = json.to_string(net_profile.build([], True, [], [], [], [], []))
-  assert string.contains(blocked, "\"git_config\"")
-  assert string.contains(blocked, "\"block\":true")
-
-  let open = json.to_string(net_profile.build([], False, [], [], [], [], []))
-  assert string.contains(open, "\"git_config\"")
-  assert string.contains(open, "allow_domain")
-
-  // Session-enabled groups layer on top of the always-on git_config.
-  let with_groups =
-    json.to_string(net_profile.build([], True, ["user_caches_macos"], [], [], [], []))
-  assert string.contains(with_groups, "\"git_config\"")
-  assert string.contains(with_groups, "\"user_caches_macos\"")
-}
-
-/// A credential capability's paths become a `filesystem` section that both
-/// grants read and bypasses any deny group covering them (so a path under
-/// nono's locked `deny_credentials`, e.g. `~/.aws`, becomes readable).
-pub fn net_profile_credential_filesystem_test() {
-  let j = json.to_string(net_profile.build([], False, [], ["~/.aws"], [], [], []))
-  assert string.contains(j, "\"filesystem\"")
-  assert string.contains(j, "\"read\":[\"~/.aws\"]")
-  assert string.contains(j, "\"bypass_protection\":[\"~/.aws\"]")
-  // No filesystem section when no credential paths are granted.
-  assert !string.contains(
-    json.to_string(net_profile.build([], False, [], [], [], [], [])),
-    "filesystem",
-  )
-}
-
 /// The Seatbelt profile is allow-default reads minus the credential denylist
 /// (~-expanded; absolute entries preserved) and deny-default writes except the
 /// workspace + allowlist.
@@ -348,20 +253,6 @@ pub fn providers_apply_env_test() {
   assert list.contains(app.allow, "sts.amazonaws.com")
 }
 
-/// A managed egress service renders nono's network.credentials; env-mode
-/// forwarding renders environment.allow_vars.
-pub fn net_profile_services_test() {
-  let j =
-    json.to_string(net_profile.build([], False, [], [], [], ["github"], []))
-  assert string.contains(j, "\"credentials\":[\"github\"]")
-
-  let e =
-    json.to_string(net_profile.build([], False, [], [], [], [], [
-      "AWS_ACCESS_KEY_ID",
-    ]))
-  assert string.contains(e, "\"allow_vars\":[\"AWS_ACCESS_KEY_ID\"]")
-}
-
 /// A round whose steps are ALL `collect` is a pure status poll — the harness
 /// holds for subagents instead of re-prompting the model, which is what stops
 /// the busy-wait. Any non-collect step (or an empty batch) makes it productive.
@@ -372,17 +263,6 @@ pub fn is_poll_round_test() {
   assert engine.is_poll_round([Collect("a", "id1"), Code("c", "print(1)")])
     == False
   assert engine.is_poll_round([Code("c", "print(1)")]) == False
-}
-
-fn count_occurrences(haystack: String, needle: String) -> Int {
-  list_length(string.split(haystack, needle)) - 1
-}
-
-fn list_length(l: List(a)) -> Int {
-  case l {
-    [] -> 0
-    [_, ..rest] -> 1 + list_length(rest)
-  }
 }
 
 /// The endpoint-deny reason yields method + path; a plain CONNECT deny yields
