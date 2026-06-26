@@ -2,12 +2,11 @@
 //// (workspace read/write, no network). File tools currently run in-process,
 //// scoped to the paths the model provides — sandboxing those is a follow-up.
 
-import bough_core/nono
 import bough_server/json_value.{type JsonValue}
-import bough_server/nono_bridge
 import gleam/json
 import gleam/list
 import gleam/string
+import shellout
 import simplifile
 
 /// Anthropic `tools` array describing the toolset to the model.
@@ -141,10 +140,11 @@ pub fn execute(name: String, input: JsonValue, workspace: String) -> String {
 fn run_bash(input: JsonValue, workspace: String) -> String {
   case json_value.string_field(input, "command") {
     Error(_) -> "error: missing 'command'"
-    Ok(command) -> {
-      let profile = nono.Profile(workspace, [], True, False)
-      nono_bridge.run(profile, ["sh", "-c", command])
-    }
+    Ok(command) ->
+      case shellout.command("sh", ["-c", command], workspace, []) {
+        Ok(out) -> out
+        Error(#(_, out)) -> out
+      }
   }
 }
 
