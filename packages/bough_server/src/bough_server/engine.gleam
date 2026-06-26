@@ -836,38 +836,47 @@ fn exec_code(state: State, code: String) -> #(State, Exec) {
   // profile locks egress to its loopback port and bash's clients point at it
   // (HTTPS_PROXY + the proxy CA, via env monty reads). If the proxy can't start,
   // `None` leaves the network open (transitional fallback).
-  let port = ensure_proxy(state)
+  let prep = provider_prep(state)
+  let port = ensure_proxy(state, prep)
   let profile = option.from_result(write_seatbelt_profile(state, port))
   let #(exit, output) =
-    monty_bridge.run_code(state.workspace, code, profile, bash_proxy_env(state, port))
+    monty_bridge.run_code(state.workspace, code, profile, bash_proxy_env(port, prep))
   #(bump(state), Exec(exit, output))
 }
 
 /// Start (or reuse) the workspace's mitmproxy, configured from the session's
 /// allowlist + enabled providers. Returns its loopback port.
-fn ensure_proxy(state: State) -> Option(Int) {
-  let #(config, secrets) = proxy_inputs(state)
+fn ensure_proxy(state: State, prep: ProviderPrep) -> Option(Int) {
+  let #(config, secrets) = proxy_inputs(state, prep)
   proxy.ensure(state.workspace, config, secrets) |> option.from_result
 }
 
 /// Build the proxy's config (`{allow, inject}`) and secret env from the session:
 /// the approved hosts plus any enabled provider's hosts/injection. (github is
 /// wired today; other providers generalize to more inject rules.)
-fn proxy_inputs(state: State) -> #(String, List(#(String, String))) {
+fn proxy_inputs(
+  state: State,
+  prep: ProviderPrep,
+) -> #(String, List(#(String, String))) {
   // Provider-driven: every enabled capability contributes the hosts it needs
   // (`allow`) and the hosts whose TLS must be tunnelled because the tool won't
   // trust our MITM CA (`passthrough`) — e.g. gh (api.github.com), restish
-  // (api.exa.ai), aws (SigV4). github additionally keeps a special git-credential
-  // injection (below) so plain git push/pull need no token in the sandbox.
+  // (api.exa.ai), aws (SigV4). `prep` adds hosts a provider discovered at
+  // runtime (e.g. a cluster API from a kubeconfig). github additionally keeps a
+  // special git-credential injection (below) so git push/pull need no token.
   let enabled = list.filter_map(state.groups, providers.get)
   let github = list.contains(state.groups, "github")
   let allow =
     list.unique(list.flatten([
       state.net_allow,
       list.flat_map(enabled, fn(p) { p.allow }),
+      prep.allow,
     ]))
   let pass_hosts =
-    list.unique(list.flat_map(enabled, fn(p) { p.passthrough }))
+    list.unique(list.flatten([
+      list.flat_map(enabled, fn(p) { p.passthrough }),
+      prep.passthrough,
+    ]))
   // Basic-auth injection for git over HTTPS, so `git push` just works without the
   // token in the sandbox. api.github.com isn't injected — it's tunnelled for gh.
   let git_inject =
@@ -898,22 +907,48 @@ fn proxy_inputs(state: State) -> #(String, List(#(String, String))) {
   #(config, secrets)
 }
 
-/// Env vars forwarded INTO the sandbox so a tool can authenticate from its env:
-/// each enabled `Env`-mode provider's `prepare` output (run OUTSIDE the sandbox —
-/// e.g. `aws sts get-session-token` → AWS_* creds, or `echo KEY=$KEY`), plus the
-/// GitHub token for `gh` (github is a hybrid: git uses proxy-side injection, but
-/// gh needs the token in its env over the api.github.com tunnel).
-fn sandbox_env(state: State) -> List(#(String, String)) {
-  let enabled = list.filter_map(state.groups, providers.get)
+/// The result of running enabled providers' `prepare` once per exec: hosts to
+/// add to the proxy (discovered at runtime — e.g. a cluster API server read from
+/// a kubeconfig) and credentials to forward into the sandbox env.
+type ProviderPrep {
+  ProviderPrep(
+    allow: List(String),
+    passthrough: List(String),
+    env: List(#(String, String)),
+  )
+}
+
+/// Run each enabled `Env`-mode provider's `prepare` ONCE (outside the sandbox)
+/// and route its `KEY=VALUE` output: the reserved `BOUGH_ALLOW` /
+/// `BOUGH_PASSTHROUGH` (comma-separated) are hosts to allow / TLS-tunnel,
+/// discovered at runtime; everything else is a credential forwarded into the
+/// sandbox env so a tool can authenticate from its environment. Plus the GitHub
+/// token for `gh` (hybrid — git uses proxy-side injection, gh needs it in env).
+fn provider_prep(state: State) -> ProviderPrep {
   let gh = case list.contains(state.groups, "github"), github_token() {
-    True, Ok(token) -> [#("GH_TOKEN", token), #("GITHUB_TOKEN", token)]
+    True, Ok(t) -> [#("GH_TOKEN", t), #("GITHUB_TOKEN", t)]
     _, _ -> []
   }
-  let forwarded =
-    enabled
-    |> list.filter(fn(p) { p.mode == providers.Env })
-    |> list.flat_map(fn(p) { providers.prepared(p, run_prepare) |> dict.to_list })
-  list.append(gh, forwarded)
+  state.groups
+  |> list.filter_map(providers.get)
+  |> list.filter(fn(p) { p.mode == providers.Env })
+  |> list.flat_map(fn(p) { providers.prepared(p, run_prepare) |> dict.to_list })
+  |> list.fold(ProviderPrep([], [], gh), fn(acc, pair) {
+    case pair.0 {
+      "BOUGH_ALLOW" ->
+        ProviderPrep(..acc, allow: list.append(acc.allow, split_hosts(pair.1)))
+      "BOUGH_PASSTHROUGH" ->
+        ProviderPrep(
+          ..acc,
+          passthrough: list.append(acc.passthrough, split_hosts(pair.1)),
+        )
+      _ -> ProviderPrep(..acc, env: list.append(acc.env, [pair]))
+    }
+  })
+}
+
+fn split_hosts(s: String) -> List(String) {
+  string.split(s, ",") |> list.map(string.trim) |> list.filter(fn(h) { h != "" })
 }
 
 /// Run a provider's `prepare` OUTSIDE the sandbox (privileged setup in bough's
@@ -933,7 +968,10 @@ fn github_token() -> Result(String, Nil) {
 /// The env that routes monty's `bash` through the proxy — passed per-invocation
 /// (not via bough's global env), so concurrent sessions on different ports can't
 /// clobber each other.
-fn bash_proxy_env(state: State, port: Option(Int)) -> List(#(String, String)) {
+fn bash_proxy_env(
+  port: Option(Int),
+  prep: ProviderPrep,
+) -> List(#(String, String)) {
   let proxy = case port {
     None -> []
     Some(p) -> {
@@ -944,7 +982,7 @@ fn bash_proxy_env(state: State, port: Option(Int)) -> List(#(String, String)) {
       ]
     }
   }
-  list.append(proxy, sandbox_env(state))
+  list.append(proxy, prep.env)
 }
 
 /// Write the run's Seatbelt profile (sibling of the net profile in the run dir).
@@ -1311,17 +1349,18 @@ fn sandboxed(
   command: List(String),
   _reads: List(String),
 ) -> #(Int, String) {
-  let port = ensure_proxy(state)
+  let prep = provider_prep(state)
+  let port = ensure_proxy(state, prep)
   let inner = case write_seatbelt_profile(state, port) {
     Ok(profile) -> "sandbox-exec -f " <> shq(profile) <> " " <> join_args(command)
     Error(_) -> join_args(command)
   }
-  run_shell(state.workspace, proxy_env_prefix(state, port) <> inner)
+  run_shell(state.workspace, proxy_env_prefix(port, prep) <> inner)
 }
 
 /// Inline `KEY=val ` env so a sandboxed child routes through the proxy (and
 /// trusts its CA) without touching bough's own environment.
-fn proxy_env_prefix(state: State, port: Option(Int)) -> String {
+fn proxy_env_prefix(port: Option(Int), prep: ProviderPrep) -> String {
   let proxy = case port {
     None -> ""
     Some(p) -> {
@@ -1334,13 +1373,13 @@ fn proxy_env_prefix(state: State, port: Option(Int)) -> String {
       <> " CURL_CA_BUNDLE=" <> ca <> " GIT_SSL_CAINFO=" <> ca <> " "
     }
   }
-  // In passthrough mode the GitHub token rides in the sandbox env (inline on the
-  // child only, not bough's env); empty in the secure default.
-  let token =
-    sandbox_env(state)
+  // Forwarded credentials ride in the sandbox env (inline on the child only, not
+  // bough's env); empty when no Env-mode capability is enabled.
+  let creds =
+    prep.env
     |> list.map(fn(kv) { kv.0 <> "=" <> shq(kv.1) <> " " })
     |> string.concat
-  proxy <> token
+  proxy <> creds
 }
 
 fn join_args(command: List(String)) -> String {
