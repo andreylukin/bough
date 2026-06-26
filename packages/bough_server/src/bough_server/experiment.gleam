@@ -25,7 +25,6 @@
 
 import bough_core/artifact
 import bough_core/digest
-import bough_core/nono
 import bough_server/agent.{
   type Step, StepCheck, StepExec, StepReview, StepText, StepWorker,
 }
@@ -33,7 +32,6 @@ import bough_server/anthropic
 import bough_server/clock
 import bough_server/engine
 import bough_server/monty_bridge
-import bough_server/nono_bridge
 import bough_server/provider
 import bough_server/tools
 import bough_server/worker
@@ -510,8 +508,10 @@ fn worker_loop(
                 False -> #(iter, execs, "no_command")
               }
             Some(cmd) -> {
-              let profile = nono.Profile(ws, [], True, False)
-              let out = nono_bridge.run(profile, ["sh", "-c", cmd])
+              let out = case shellout.command("sh", ["-c", cmd], ws, []) {
+                Ok(o) -> o
+                Error(#(_, o)) -> o
+              }
               let execs = execs + 1
               continue_or_finish(url, model, level, ws, task, user, iter, execs, cmd, out)
             }
@@ -1352,7 +1352,7 @@ fn apply_executor(
           case extract_program(text) {
             None -> #(0, "(no program)", "")
             Some(prog) -> {
-              let #(_exit, out) = monty_bridge.run_code(ws, prog, None)
+              let #(_exit, out) = monty_bridge.run_code(ws, prog, None, [])
               #(1, "monty program", out)
             }
           }
@@ -1434,7 +1434,10 @@ fn apply_op(ws: String, op: Op) -> String {
       }
     }
     OpRun(cmd) ->
-      nono_bridge.run(nono.Profile(ws, [], True, False), ["sh", "-c", cmd])
+      case shellout.command("sh", ["-c", cmd], ws, []) {
+        Ok(o) -> o
+        Error(#(_, o)) -> o
+      }
   }
 }
 

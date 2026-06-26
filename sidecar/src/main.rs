@@ -56,11 +56,10 @@ fn main() {
 }
 
 /// Minimal flag parsing — `--workspace <dir>` plus the program inline via
-/// `--code-str <program>` or from a file via `--code <file>`. `--nono-profile
-/// <path>` scopes legacy-mode `bash` (capability groups + net leash);
-/// `--bash-inherit` switches to sandboxed mode where the surrounding nono cell
-/// already confines everything, so `bash` runs as a plain subprocess that
-/// inherits it. We avoid a CLI crate to keep the binary tiny (monty's selling
+/// `--code-str <program>` or from a file via `--code <file>`. `--seatbelt-profile
+/// <path>` wraps `bash` in a macOS Seatbelt sandbox (filesystem policy);
+/// `--bash-inherit` runs `bash` as a plain subprocess (the sidecar is already
+/// sandboxed). We avoid a CLI crate to keep the binary tiny (monty's selling
 /// point is startup speed).
 fn parse_args() -> Result<(String, String, Option<String>, bool), String> {
     let mut workspace = String::new();
@@ -72,7 +71,7 @@ fn parse_args() -> Result<(String, String, Option<String>, bool), String> {
         match a.as_str() {
             "--workspace" => workspace = args.next().unwrap_or_default(),
             "--code-str" => code = Some(args.next().unwrap_or_default()),
-            "--nono-profile" => profile = args.next(),
+            "--seatbelt-profile" => profile = args.next(),
             "--bash-inherit" => bash_inherit = true,
             "--code" => {
                 let file = args.next().unwrap_or_default();
@@ -164,79 +163,51 @@ fn dispatch(name: &str, args: &[MontyObject], workspace: &str, profile: Option<&
 
 /// `bash(cmd) -> str`: run a shell command and return its combined output.
 ///
-/// Sandboxed mode (`inherit`): the whole sidecar already runs inside a nono
-/// cell, so a plain child process inherits the kernel sandbox (workspace +
-/// network + secret denies) automatically — no nested nono. Legacy mode: the
-/// sidecar is unsandboxed, so `bash` opens its own nono cell here.
+/// The shell child runs under a macOS Seatbelt profile (`sandbox-exec -f`) that
+/// bough generates per run — allow-default reads minus a credential denylist,
+/// deny-default writes except the workspace + allowlist (SPEC §6). Seatbelt's
+/// allow-default reads already cover toolchain PATH lookup, so no per-dir grants
+/// are needed. `inherit` (already-sandboxed sidecar) or a missing profile fall
+/// back to a plain child.
 fn bash(cmd: &str, workspace: &str, profile: Option<&str>, inherit: bool) -> String {
-    if inherit {
-        return match Command::new("sh").arg("-c").arg(cmd).current_dir(workspace).output() {
-            Ok(o) => {
-                let mut s = String::from_utf8_lossy(&o.stdout).into_owned();
-                s.push_str(&String::from_utf8_lossy(&o.stderr));
-                s
-            }
-            Err(e) => format!("error: could not run command: {e}"),
-        };
+    let mut command = match (inherit, profile) {
+        (false, Some(path)) => {
+            let mut c = Command::new("sandbox-exec");
+            c.arg("-f").arg(path).arg("sh").arg("-c").arg(cmd);
+            c
+        }
+        _ => {
+            let mut c = Command::new("sh");
+            c.arg("-c").arg(cmd);
+            c
+        }
+    };
+    command.current_dir(workspace);
+    // Route egress through the session's mitmproxy when bough set one. The CA is
+    // the proxy's cert so curl/git/node trust the interception (gh needs the CA
+    // in the macOS keychain — Go ignores these env vars).
+    if let Ok(proxy) = env::var("BOUGH_BASH_PROXY") {
+        command
+            .env("HTTPS_PROXY", &proxy)
+            .env("HTTP_PROXY", &proxy)
+            .env("https_proxy", &proxy)
+            .env("http_proxy", &proxy);
+        if let Ok(ca) = env::var("BOUGH_BASH_PROXY_CA") {
+            command
+                .env("SSL_CERT_FILE", &ca)
+                .env("CURL_CA_BUNDLE", &ca)
+                .env("GIT_SSL_CAINFO", &ca)
+                .env("NODE_EXTRA_CA_CERTS", &ca);
+        }
     }
-    let mut args: Vec<String> = vec![
-        "run".into(),
-        "-s".into(),
-        "--allow".into(),
-        workspace.into(),
-        "--allow-cwd".into(),
-        "--no-rollback".into(),
-    ];
-    // A session profile scopes the sandbox with the capability groups + network
-    // leash the human granted (SPEC §7). Without it `bash` only ever gets the
-    // workspace, so enabling a group would silently do nothing in code-mode.
-    if let Some(path) = profile {
-        args.push("--profile".into());
-        args.push(path.into());
-    }
-    // Read-only PATH access to the language toolchains so a sandboxed command
-    // can find cargo/go/node/etc. (mirrors nono_bridge.toolchain_reads — SPEC §6).
-    for dir in toolchain_reads() {
-        args.push("--read".into());
-        args.push(dir);
-    }
-    args.push("--".into());
-    args.extend(["sh".into(), "-c".into(), cmd.into()]);
-
-    match Command::new("nono").args(&args).current_dir(workspace).output() {
+    match command.output() {
         Ok(o) => {
             let mut s = String::from_utf8_lossy(&o.stdout).into_owned();
             s.push_str(&String::from_utf8_lossy(&o.stderr));
             s
         }
-        Err(e) => format!("error: could not launch nono: {e}"),
+        Err(e) => format!("error: could not run command: {e}"),
     }
-}
-
-/// Existing language-toolchain dirs under `$HOME` (cargo/go/pyenv/node/…) — read,
-/// not allow: enough for PATH lookup, no write access. Mirrors the Gleam
-/// `nono_bridge.toolchain_reads` so code-mode `bash` matches the old RUN path.
-fn toolchain_reads() -> Vec<String> {
-    const DIRS: [&str; 11] = [
-        ".cargo/bin",
-        "go/bin",
-        ".pyenv/shims",
-        ".pyenv/bin",
-        ".rbenv/shims",
-        ".rbenv/bin",
-        ".ghcup/bin",
-        ".nvm",
-        ".local/share/fnm",
-        ".local/share/pnpm",
-        ".local/bin",
-    ];
-    let Ok(home) = env::var("HOME") else {
-        return Vec::new();
-    };
-    DIRS.iter()
-        .map(|d| format!("{home}/{d}"))
-        .filter(|p| Path::new(p).is_dir())
-        .collect()
 }
 
 /// `read(path) -> str`: read a workspace file (path scoped to the workspace).

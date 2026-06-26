@@ -19,17 +19,18 @@ import bough_core/digest
 import bough_core/nono
 import bough_server/agent.{
   type Outcome, type Step as Activity, Outcome, StepAwait, StepCall, StepCheck,
-  StepExec, StepGroup, StepNet, StepPlan, StepReview, StepText, StepWorker,
+  StepExec, StepPlan, StepReview, StepText, StepWorker,
 }
 import bough_server/clock
 import bough_server/control
 import bough_server/integrity
 import bough_server/json_value.{type JsonValue}
 import bough_server/monty_bridge
-import bough_server/net_profile
-import bough_server/nono_bridge
 import bough_server/prompts
 import bough_server/provider
+import bough_server/providers
+import bough_server/proxy
+import bough_server/seatbelt
 import bough_server/skills
 import bough_server/tool_steps
 import bough_server/tools
@@ -38,10 +39,12 @@ import envoy
 import gleam/dict.{type Dict}
 import gleam/erlang/process
 import gleam/int
+import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
+import shellout
 import simplifile
 
 pub type Config {
@@ -185,7 +188,8 @@ type State {
     capabilities: String,
     // The network allowlist for sandboxed commands; grows as hosts are approved.
     net_allow: List(String),
-    // Session-enabled nono capability groups, layered into the run's profile.
+    // Session-enabled capabilities (providers), layered into the run's proxy
+    // config and seatbelt profile.
     groups: List(String),
     // Groups the worker suggested enabling after a denial this run (advisory).
     suggested: List(String),
@@ -638,244 +642,12 @@ fn exec_steps(
 /// command each, through the same sandbox path.
 fn apply_with_fixes(state: State, step: Step) -> #(State, Exec, Int) {
   let #(state, result) = apply(state, step)
-  // On a sandbox filesystem denial, pause for the human to enable a capability
-  // group that would grant the access, then retry the step (SPEC §7).
-  let #(state, result) = gate_groups(state, step, result, 0)
   case state.config.worker {
     None -> #(state, result, 0)
     Some(model) -> fix_loop(state, step, result, model, 0)
   }
 }
 
-/// Cap on the approve→retry loop for one step's group gate.
-const group_max_retries = 4
-
-/// When a step is denied filesystem access that an enableable group would grant,
-/// pause for the human (status "awaiting_group"): approve to enable the
-/// candidate group(s) — rebuilding the run's nono profile — and retry the step,
-/// or reject and keep the failure for the supervisor. A denial with no candidate
-/// group (e.g. a path outside any group's reach) is left to stand.
-fn gate_groups(
-  state: State,
-  step: Step,
-  result: Exec,
-  tries: Int,
-) -> #(State, Exec) {
-  case is_fs_denial(result) && tries < group_max_retries {
-    False -> #(state, result)
-    True ->
-      case candidate_groups(state, step, result) {
-        [] -> #(state, result)
-        candidates -> {
-          let enable = group_decision(state, step, result, candidates)
-          // Candidates the agent needed but the human didn't enable become
-          // advisory suggestions (persisted, surfaced as ✋ and the banner) so
-          // the ask isn't lost when the run moves on.
-          let unmet =
-            list.filter(candidates, fn(c) { !list.contains(enable, c) })
-          let state =
-            State(
-              ..state,
-              suggested: list.unique(list.append(state.suggested, unmet)),
-            )
-          case enable {
-            // Rejected (or no usable group named): the failure stands.
-            [] -> #(state, result)
-            _ -> {
-              let state =
-                State(..state, groups: list.unique(list.append(state.groups, enable)))
-              let #(state, result) = apply(state, step)
-              gate_groups(state, step, result, tries + 1)
-            }
-          }
-        }
-      }
-  }
-}
-
-/// True when a step's output carries a sandbox/OS filesystem-permission denial.
-/// Exit-agnostic on purpose: a code-mode step wraps the denied command in a
-/// monty program that itself exits 0 (the inner `bash()` failure lives only in
-/// the captured output), so keying on a non-zero exit would miss every denial on
-/// the default execution path. The denied-path→group match in `candidate_groups`
-/// is the filter that keeps a stray mention from opening a gate.
-fn is_fs_denial(result: Exec) -> Bool {
-  contains_any(result.output, denial_markers)
-}
-
-/// The toggleable capability groups that would grant the denied access: the
-/// deterministic path→group match, plus any the worker proposes, minus those
-/// already enabled.
-fn candidate_groups(state: State, step: Step, result: Exec) -> List(String) {
-  let targets =
-    list.append(step_paths(step), denied_paths(result.output))
-    |> list.unique
-  let deterministic = case targets {
-    [] -> []
-    _ -> nono_bridge.groups_for_paths(targets)
-  }
-  list.append(deterministic, suggester_worker(state, result, targets))
-  |> list.unique
-  |> list.filter(fn(g) { !list.contains(state.groups, g) })
-}
-
-/// Publish the gate with status "awaiting_group" and block on the human. Returns
-/// the group name(s) to enable: `Allow` enables every candidate; a non-empty
-/// `Steer` enables the named candidate(s) it lists; an empty `Steer` (reject)
-/// enables none.
-fn group_decision(
-  state: State,
-  _step: Step,
-  result: Exec,
-  candidates: List(String),
-) -> List(String) {
-  let detail = group_detail_text(result.output)
-  let step = StepGroup(detail, string.join(candidates, ", "))
-  let activities = [step, ..state.activities]
-  state.emit(
-    "awaiting_group",
-    list.reverse(activities),
-    state.context_tokens,
-    state.net_events,
-  )
-  case state.await() {
-    control.Allow -> candidates
-    control.Steer(message) -> {
-      let named =
-        message
-        |> string.replace("\n", ",")
-        |> string.split(",")
-        |> list.map(fn(s) { string.trim(string.lowercase(s)) })
-      list.filter(candidates, fn(c) { list.contains(named, string.lowercase(c)) })
-    }
-  }
-}
-
-/// The denied path(s) for the gate prompt — the distinct paths the denial named.
-fn group_detail_text(output: String) -> String {
-  case denied_paths(output) |> list.unique {
-    [] -> "a sandboxed step was denied filesystem access"
-    paths -> string.join(paths, ", ")
-  }
-}
-
-/// Signatures a sandbox/OS permission denial leaves in command output.
-const denial_markers = ["Operation not permitted", "Permission denied"]
-
-/// Ask the worker which available groups would resolve the denial. `[]` if the
-/// worker is disabled/unreachable or proposes nothing usable. Constrained to the
-/// toggleable catalog the human can actually enable.
-fn suggester_worker(state: State, result: Exec, paths: List(String)) -> List(String) {
-  case state.config.worker {
-    None -> []
-    Some(model) -> {
-      let catalog =
-        nono_bridge.list_groups()
-        |> list.filter(fn(g) { !g.locked && !list.contains(state.groups, g.name) })
-      let listing =
-        catalog
-        |> list.map(fn(g) { "- " <> g.name <> ": " <> g.description })
-        |> string.join("\n")
-      let prompt =
-        "DENIED PATHS: "
-        <> string.join(paths, ", ")
-        <> "\n\nOUTPUT:\n"
-        <> digest.digest(result.output, state.config.digest_limit)
-        <> "\n\nAVAILABLE GROUPS:\n"
-        <> listing
-      case
-        worker.complete_with(
-          state.config.worker_url,
-          model,
-          prompts.suggester_system,
-          prompt,
-          200,
-          state.config.worker_temperature,
-          state.config.worker_top_p,
-        )
-      {
-        Error(_) -> []
-        Ok(text) -> parse_suggested(text, catalog)
-      }
-    }
-  }
-}
-
-/// Parse the worker's comma/newline-separated reply into known toggleable group
-/// names (case-insensitive), dropping "none" and anything off the catalog.
-pub fn parse_suggested(text: String, catalog: List(nono.Group)) -> List(String) {
-  let names = list.map(catalog, fn(g) { g.name })
-  text
-  |> string.replace("\n", ",")
-  |> string.split(",")
-  |> list.map(fn(s) { string.trim(string.lowercase(s)) })
-  |> list.filter_map(fn(s) {
-    case list.find(names, fn(n) { string.lowercase(n) == s }) {
-      Ok(n) -> Ok(n)
-      Error(_) -> Error(Nil)
-    }
-  })
-}
-
-/// Filesystem paths named in denial lines like
-/// `mkdir: /Users/x/Library: Operation not permitted` — the text before the
-/// marker, last colon-separated token.
-pub fn denied_paths(output: String) -> List(String) {
-  output
-  |> string.split("\n")
-  |> list.filter_map(fn(line) {
-    case list.find(denial_markers, fn(m) { string.contains(line, m) }) {
-      Error(_) -> Error(Nil)
-      Ok(marker) ->
-        case string.split_once(line, ": " <> marker) {
-          Ok(#(before, _)) ->
-            case string.split(before, ": ") |> list.last {
-              Ok(path) ->
-                case string.starts_with(string.trim(path), "/") {
-                  True -> Ok(string.trim(path))
-                  False -> Error(Nil)
-                }
-              Error(_) -> Error(Nil)
-            }
-          Error(_) -> Error(Nil)
-        }
-    }
-  })
-  |> list.unique
-}
-
-fn contains_any(haystack: String, needles: List(String)) -> Bool {
-  list.any(needles, fn(n) { string.contains(haystack, n) })
-}
-
-/// The path(s) a step targets — the specific paths to map a denial against. For
-/// a RUN, the path-like tokens in its command; for WRITE/EDIT, the file.
-fn step_paths(step: Step) -> List(String) {
-  case step {
-    Run(_, cmd) -> paths_in(cmd)
-    Write(_, path, _) -> [path]
-    Edit(_, path, _, _) -> [path]
-    _ -> []
-  }
-}
-
-/// Whitespace tokens that look like filesystem paths (absolute, `~`, or
-/// `$HOME`-rooted), unquoted — a cheap way to recover what a command touched.
-fn paths_in(text: String) -> List(String) {
-  text
-  |> string.replace("\n", " ")
-  |> string.split(" ")
-  |> list.map(fn(t) {
-    t
-    |> string.replace("'", "")
-    |> string.replace("\"", "")
-  })
-  |> list.filter(fn(t) {
-    string.starts_with(t, "/")
-    || string.starts_with(t, "~")
-    || string.starts_with(t, "$HOME")
-  })
-}
 
 fn fix_loop(
   state: State,
@@ -968,164 +740,107 @@ fn apply(state: State, step: Step) -> #(State, Exec) {
 /// egress events only on finalization (10+s later), so there's no timely,
 /// per-command signal to surface or gate on — they remain RUN-path features.
 fn exec_code(state: State, code: String) -> #(State, Exec) {
-  // Scope the sidecar's `bash` with the session profile (capability groups +
-  // net leash). Without it, enabling a group never reaches code-mode (SPEC §7).
-  let block = !state.config.net_gate
-  let profile = option.from_result(write_net_profile(state, block))
-  let #(exit, output) = monty_bridge.run_code(state.workspace, code, profile)
+  // Sandbox the sidecar's `bash` with a generated macOS Seatbelt profile, and
+  // bring up the session's mitmproxy (allowlist + credential injection). The
+  // profile locks egress to its loopback port and bash's clients point at it
+  // (HTTPS_PROXY + the proxy CA, via env monty reads). If the proxy can't start,
+  // `None` leaves the network open (transitional fallback).
+  let port = ensure_proxy(state)
+  let profile = option.from_result(write_seatbelt_profile(state, port))
+  let #(exit, output) =
+    monty_bridge.run_code(state.workspace, code, profile, bash_proxy_env(port))
   #(bump(state), Exec(exit, output))
+}
+
+/// Start (or reuse) the workspace's mitmproxy, configured from the session's
+/// allowlist + enabled providers. Returns its loopback port.
+fn ensure_proxy(state: State) -> Option(Int) {
+  let #(config, secrets) = proxy_inputs(state)
+  proxy.ensure(state.workspace, config, secrets) |> option.from_result
+}
+
+/// Build the proxy's config (`{allow, inject}`) and secret env from the session:
+/// the approved hosts plus any enabled provider's hosts/injection. (github is
+/// wired today; other providers generalize to more inject rules.)
+fn proxy_inputs(state: State) -> #(String, List(#(String, String))) {
+  let github = list.contains(state.groups, "github")
+  let gh_hosts = case github {
+    True -> ["github.com", "api.github.com", "codeload.github.com"]
+    False -> []
+  }
+  let allow = list.unique(list.append(state.net_allow, gh_hosts))
+  let inject = case github {
+    False -> []
+    True -> [
+      json.object([
+        #("hosts", json.array(["api.github.com"], json.string)),
+        #("header", json.string("Authorization")),
+        #("format", json.string("Bearer {}")),
+        #("secret_env", json.string("BOUGH_SECRET_github")),
+      ]),
+      json.object([
+        #("hosts", json.array(["github.com", "codeload.github.com"], json.string)),
+        #("scheme", json.string("basic")),
+        #("user", json.string("x-access-token")),
+        #("secret_env", json.string("BOUGH_SECRET_github")),
+      ]),
+    ]
+  }
+  let config =
+    json.to_string(
+      json.object([
+        #("allow", json.array(allow, json.string)),
+        #("inject", json.preprocessed_array(inject)),
+      ]),
+    )
+  let secrets = case github, github_token() {
+    True, Ok(token) -> [#("BOUGH_SECRET_github", token)]
+    _, _ -> []
+  }
+  #(config, secrets)
+}
+
+/// The real GitHub token, read OUTSIDE the sandbox for proxy-side injection.
+fn github_token() -> Result(String, Nil) {
+  shellout.command("gh", ["auth", "token"], ".", [])
+  |> result.map(string.trim)
+  |> result.replace_error(Nil)
+}
+
+/// The env that routes monty's `bash` through the proxy — passed per-invocation
+/// (not via bough's global env), so concurrent sessions on different ports can't
+/// clobber each other.
+fn bash_proxy_env(port: Option(Int)) -> List(#(String, String)) {
+  case port {
+    None -> []
+    Some(p) -> {
+      let home = envoy.get("HOME") |> result.unwrap("")
+      [
+        #("BOUGH_BASH_PROXY", "http://127.0.0.1:" <> int.to_string(p)),
+        #("BOUGH_BASH_PROXY_CA", home <> "/.mitmproxy/mitmproxy-ca-cert.pem"),
+      ]
+    }
+  }
+}
+
+/// Write the run's Seatbelt profile (sibling of the net profile in the run dir).
+fn write_seatbelt_profile(
+  state: State,
+  port: Option(Int),
+) -> Result(String, Nil) {
+  let path = string.replace(state.net_profile_path, "net.json", "sandbox.sb")
+  let home = envoy.get("HOME") |> result.unwrap("")
+  seatbelt.write(path, state.workspace, home, port)
 }
 
 /// Cap on the approve→retry loop for one command, so a never-matching rule
 /// can't spin forever.
-const net_max_retries = 6
 
+/// Run a one-off shell command (worker fix, CHECK) under the same Seatbelt +
+/// proxy sandbox as code-mode `bash`.
 fn exec_run(state: State, cmd: String) -> #(State, Exec) {
-  exec_run_net(state, cmd, 0)
-}
-
-/// Run a command in the sandbox. With the net gate on (SPEC §7), a denied
-/// request pauses for the human: approve at host or path-glob granularity and
-/// the command is retried with the new rule; deny and the failure stands.
-fn exec_run_net(state: State, cmd: String, tries: Int) -> #(State, Exec) {
-  let command = ["sh", "-c", cmd]
-  // Watermark the audit log before running so denial detection ignores prior
-  // runs of an identical command (and this command's own earlier retries).
-  let watermark = case state.config.net_gate {
-    True -> nono_bridge.session_watermark(command)
-    False -> ""
-  }
-  let #(code, out) = sandboxed(state, command, [])
-  let state = bump(state)
-  // One audit read serves both: record this run's egress for the network dock,
-  // and derive any denials to gate on. Off the net gate there is no audit
-  // session, so the feed stays empty (the policy is simply "net blocked").
-  let #(state, denials) = case state.config.net_gate {
-    False -> #(state, [])
-    True -> {
-      let events = net_events_for(command, watermark, 0)
-      let state =
-        State(..state, net_events: list.append(state.net_events, events))
-      #(state, denials_from(events))
-    }
-  }
-  case state.config.net_gate && tries < net_max_retries {
-    False -> #(state, Exec(code, out))
-    True ->
-      case denials {
-        [] -> #(state, Exec(code, out))
-        [denial, ..] ->
-          case net_decision(state, denial) {
-            // Denied (or no rule given): keep the failure for the supervisor.
-            Error(_) -> #(state, Exec(code, out))
-            // A new allow rule: add it (deduped) and retry so it can succeed.
-            Ok(rule) ->
-              exec_run_net(
-                State(..state, net_allow: add_rule(state.net_allow, rule)),
-                cmd,
-                tries + 1,
-              )
-          }
-      }
-  }
-}
-
-/// Add an allow rule (deduped). The generated nono profile groups rules by host
-/// and unions their endpoint globs (`net_profile`), so accumulating multiple
-/// path rules for one host widens access rather than replacing it.
-fn add_rule(rules: List(String), rule: String) -> List(String) {
-  case list.contains(rules, rule) {
-    True -> rules
-    False -> list.append(rules, [rule])
-  }
-}
-
-/// The egress events for the run just performed. Polls until the run's audit
-/// session appears (nono flushes it shortly after the command exits) so events
-/// aren't missed by reading too early; reads them only if the session had
-/// network activity. Bounded (~1s) — if the session never shows, assume none.
-fn net_events_for(
-  command: List(String),
-  watermark: String,
-  polls: Int,
-) -> List(nono.AuditEvent) {
-  case nono_bridge.find_session(command, watermark) {
-    Ok(#(session_id, net_count)) ->
-      case net_count > 0 {
-        True -> nono_bridge.audit_events(session_id) |> result.unwrap([])
-        False -> []
-      }
-    Error(_) ->
-      case polls >= 12 {
-        True -> []
-        False -> {
-          process.sleep(80)
-          net_events_for(command, watermark, polls + 1)
-        }
-      }
-  }
-}
-
-/// The distinct denied requests within a run's egress events — what the leash
-/// gates on. Mirrors `nono_bridge.denials_of` but over already-read events.
-fn denials_from(events: List(nono.AuditEvent)) -> List(nono_bridge.Denial) {
-  events
-  |> list.filter_map(fn(e) {
-    case e.decision {
-      nono.Deny ->
-        Ok(nono_bridge.Denial(host: e.host, method: e.method, path: e.path))
-      nono.Allow -> Error(Nil)
-    }
-  })
-  |> list.unique
-}
-
-/// Ask the human about a denied request; map their choice to an allow rule
-/// (`Ok`) or a denial (`Error`). `Allow` = the bare host; a typed `Steer`
-/// = that exact rule (a path-glob); an empty `Steer` = deny.
-fn net_decision(state: State, denial: nono_bridge.Denial) -> Result(String, Nil) {
-  case await_net(state, denial) {
-    control.Allow -> Ok(denial.host)
-    control.Steer(rule) ->
-      case string.trim(rule) {
-        "" -> Error(Nil)
-        r -> Ok(r)
-      }
-  }
-}
-
-/// Publish the denial with status "awaiting_net" and block on the human.
-fn await_net(state: State, denial: nono_bridge.Denial) -> control.Decision {
-  let step = StepNet(net_detail(denial), net_suggestion(denial))
-  let activities = [step, ..state.activities]
-  state.emit(
-    "awaiting_net",
-    list.reverse(activities),
-    state.context_tokens,
-    state.net_events,
-  )
-  state.await()
-}
-
-/// Human-readable denied request: "GET host/path" when intercepted, else "host".
-fn net_detail(denial: nono_bridge.Denial) -> String {
-  case denial.method, denial.path {
-    Some(m), Some(p) -> m <> " " <> denial.host <> p
-    _, _ -> denial.host
-  }
-}
-
-/// A suggested allow rule to pre-fill the path-glob option: the directory glob
-/// of the denied path when known, otherwise the bare host.
-fn net_suggestion(denial: nono_bridge.Denial) -> String {
-  case denial.path {
-    None -> denial.host
-    Some(p) -> {
-      let segs = string.split(p, "/")
-      let prefix = string.join(list.take(segs, list.length(segs) - 1), "/")
-      "https://" <> denial.host <> prefix <> "/**"
-    }
-  }
+  let #(code, out) = sandboxed(state, ["sh", "-c", cmd], [])
+  #(bump(state), Exec(code, out))
 }
 
 fn write_file(state: State, path: String, content: String) -> #(State, Exec) {
@@ -1390,66 +1105,83 @@ fn capabilities_summary(
     }
   }
 
-  // Enabled capability groups, with nono's own descriptions where available.
-  let catalog = nono_bridge.list_groups()
+  // Enabled capabilities (providers), with their descriptions.
   let group_lines =
     list.map(groups, fn(name) {
-      case list.find(catalog, fn(g) { g.name == name }) {
-        Ok(g) -> name <> " — " <> g.description
+      case providers.get(name) {
+        Ok(p) -> name <> " — " <> p.description
         Error(_) -> name
       }
     })
   let groups_text = case group_lines {
-    [] -> "none beyond the locked defaults"
+    [] -> "none beyond the defaults"
     _ -> string.join(group_lines, "; ")
   }
 
-  "\n\n# Capabilities this run\nYour actions run inside a nono sandbox with a fixed, known reach. Reason about it BEFORE acting; if a request needs access you don't have, say so plainly and propose the smallest change (a host to allowlist, a capability group to enable, or a step for the human to run outside the sandbox) instead of retrying.\n\n- Filesystem: the workspace is read-write, and the language-toolchain directories bough grants are read-only. The rest of $HOME is DENIED — credentials and keys (~/.ssh, ~/.aws, ~/.config, keychains, git signing keys) are not readable. Anything that needs them fails: a signed `git commit` (commit.gpgsign / SSH signing) and SSH-authenticated git will not work from here.\n- Network: "
+  // GitHub auth is injected at the network proxy (token never in the sandbox),
+  // but `gh` can't use it (Go ignores the proxy CA on macOS) — tell the model to
+  // reach for git + curl with the phantom token instead.
+  let active = list.filter_map(groups, providers.get)
+  let github_note = case list.any(active, fn(p) { p.name == "github" }) {
+    False -> ""
+    True ->
+      " GitHub auth is injected at the network proxy: $GITHUB_TOKEN in the sandbox is a PHANTOM that nono swaps for the real token on egress. Use git + curl, NOT `gh` (it won't trust the proxy CA here). git push: `git -c credential.helper='!f(){ echo username=x-access-token; echo password=$GITHUB_TOKEN; };f' push ...`. REST: `curl -H \"Authorization: Bearer $GITHUB_TOKEN\" https://api.github.com/...`."
+  }
+
+  "\n\n# Capabilities this run\nYour actions run inside a nono sandbox with a fixed, known reach. Reason about it BEFORE acting; if a request needs access you don't have, say so plainly and propose the smallest change (a host to allowlist, a capability to enable, or a step for the human to run outside the sandbox) instead of retrying.\n\n- Filesystem: the workspace is read-write, and the language-toolchain directories bough grants are read-only. The rest of $HOME is DENIED — credentials and keys (~/.ssh, ~/.aws, ~/.config, keychains, git signing keys) are not readable. A signed `git commit` (commit.gpgsign / SSH signing) and SSH-authenticated git will not work from here."
+  <> github_note
+  <> "\n- Network: "
   <> network
-  <> "\n- Capability groups enabled: "
+  <> "\n- Capabilities enabled: "
   <> groups_text
   <> "."
 }
 
-/// Run a command in the sandbox under the run's nono profile (§7). The profile
-/// always grants read-only git config (so git steps don't abort, §5.6) and sets
-/// the network posture: blocked entirely with the net gate off (§5.2), or
-/// default-deny against the session allowlist with it on, so a denied request
-/// can be detected and surfaced for approval.
+/// Run a command under the run's Seatbelt sandbox + the session mitmproxy — the
+/// same filesystem/egress policy as code-mode `bash`. The proxy env is set only
+/// on the child (inline), so bough's own process is unaffected; the real exit
+/// code comes back via the shell.
 fn sandboxed(
   state: State,
   command: List(String),
-  reads: List(String),
+  _reads: List(String),
 ) -> #(Int, String) {
-  let block = !state.config.net_gate
-  case write_net_profile(state, block) {
-    Ok(path) -> nono_bridge.run_in_profile(state.workspace, path, reads, command)
-    // If the profile can't be written or doesn't validate, fail safe: block the
-    // network rather than run under a profile nono can't parse.
-    Error(_) ->
-      nono_bridge.run_result(
-        nono.Profile(state.workspace, [], True, False),
-        reads,
-        command,
-      )
+  let port = ensure_proxy(state)
+  let inner = case write_seatbelt_profile(state, port) {
+    Ok(profile) -> "sandbox-exec -f " <> shq(profile) <> " " <> join_args(command)
+    Error(_) -> join_args(command)
+  }
+  run_shell(state.workspace, proxy_env_prefix(port) <> inner)
+}
+
+/// Inline `KEY=val ` env so a sandboxed child routes through the proxy (and
+/// trusts its CA) without touching bough's own environment.
+fn proxy_env_prefix(port: Option(Int)) -> String {
+  case port {
+    None -> ""
+    Some(p) -> {
+      let url = "http://127.0.0.1:" <> int.to_string(p)
+      let ca = case envoy.get("HOME") {
+        Ok(home) -> home <> "/.mitmproxy/mitmproxy-ca-cert.pem"
+        Error(_) -> ""
+      }
+      "HTTPS_PROXY=" <> url <> " HTTP_PROXY=" <> url <> " SSL_CERT_FILE=" <> ca
+      <> " CURL_CA_BUNDLE=" <> ca <> " GIT_SSL_CAINFO=" <> ca <> " "
+    }
   }
 }
 
-/// Write the run's nono profile, then validate it against the installed nono so
-/// a malformed/drifted profile is caught here rather than failing the command
-/// opaquely (SPEC §6, §7). Either failure makes the caller block the net.
-fn write_net_profile(state: State, block: Bool) -> Result(String, Nil) {
-  use path <- result.try(net_profile.write(
-    state.net_profile_path,
-    state.net_allow,
-    block,
-    state.groups,
-    state.config.net_credentials,
-  ))
-  nono_bridge.validate_profile(path)
-  |> result.replace(path)
-  |> result.replace_error(Nil)
+fn join_args(command: List(String)) -> String {
+  command |> list.map(shq) |> string.join(" ")
 }
+
+fn run_shell(workspace: String, full: String) -> #(Int, String) {
+  case shellout.command("sh", ["-c", full], workspace, []) {
+    Ok(out) -> #(0, out)
+    Error(#(code, out)) -> #(code, out)
+  }
+}
+
 
 /// Write `content` to `dest` through the nono sandbox, so the workspace boundary
 /// is kernel-enforced — a path that escapes the workspace (including via a

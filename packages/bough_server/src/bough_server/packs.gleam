@@ -2,8 +2,7 @@
 //// allow-rules a human can apply to a session up front, instead of approving
 //// hosts and groups piecemeal. A pack composes with the existing profile
 //// pipeline — applying one just unions its `groups`/`allow` into the session,
-//// which `net_profile.build` already turns into a nono profile. Persisted as a
-//// JSON array at `~/.bough/packs.json`.
+//// Persisted as a JSON array at `~/.bough/packs.json`.
 
 import envoy
 import gleam/dynamic/decode
