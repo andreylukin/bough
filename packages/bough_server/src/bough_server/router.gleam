@@ -1505,9 +1505,12 @@ fn launch_run(
                     )
                   let #(fresh, newleaf) =
                     append_turn(fresh, outcome, snap, Some(run_key))
-                  let fresh = case on_trunk && fresh.trunk_leaf == branch_leaf {
-                    True -> session.set_trunk(fresh, newleaf)
-                    False -> fresh
+                  // A run in the project dir IS the trunk by definition (it wrote
+                  // those files), so advance trunk to the new leaf. This also
+                  // self-heals a stale trunk pointer after the fallback above.
+                  let fresh = case rundir {
+                    TrunkDir -> session.set_trunk(fresh, newleaf)
+                    _ -> fresh
                   }
                   case fresh.active_leaf == Some(run_key) {
                     True -> session.set_leaf(fresh, newleaf)
@@ -1581,9 +1584,12 @@ fn run_workspace(
                   |> result.map(fn(p) { #(p, ShadowWorktree) })
               }
             None ->
-              Error(
-                "This branch has no snapshot to run from. Adopt it to trunk first, then run.",
-              )
+              // No snapshot anywhere on this branch's lineage to materialize a
+              // worktree from (e.g. a read-only conversation, or a stale trunk
+              // pointer left the branch off-trunk). The project dir is the only
+              // filesystem state we have, so run there — equivalent to adopting
+              // this branch to trunk, which the completion advance then records.
+              Ok(#(tree.project, TrunkDir))
           }
       }
   }
