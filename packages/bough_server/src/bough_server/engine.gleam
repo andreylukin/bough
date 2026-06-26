@@ -188,11 +188,9 @@ type State {
     capabilities: String,
     // The network allowlist for sandboxed commands; grows as hosts are approved.
     net_allow: List(String),
-    // Session-enabled nono capability groups, layered into the run's profile.
+    // Session-enabled capabilities (providers), layered into the run's proxy
+    // config and seatbelt profile.
     groups: List(String),
-    // Provider pieces (egress creds, env vars, allow hosts), prepared once at
-    // run start from the enabled providers in `groups`.
-    applied: providers.Applied,
     // Groups the worker suggested enabling after a denial this run (advisory).
     suggested: List(String),
     // Where the generated nono network profile for this run is written.
@@ -256,7 +254,6 @@ pub fn run_streaming(
       capabilities: capabilities_summary(config, net_allow, groups),
       net_allow: net_allow,
       groups: groups,
-      applied: providers.apply(groups, run_prepare, envoy.set),
       suggested: suggested,
       net_profile_path: dir <> "/net.json",
       activities: [],
@@ -1182,10 +1179,6 @@ fn run_shell(workspace: String, full: String) -> #(Int, String) {
   }
 }
 
-/// Run a provider's `prepare` command outside the sandbox (bough's own process).
-fn run_prepare(cmd: String) -> Result(String, Nil) {
-  shellout.command("sh", ["-c", cmd], ".", []) |> result.replace_error(Nil)
-}
 
 /// Write `content` to `dest` through the nono sandbox, so the workspace boundary
 /// is kernel-enforced — a path that escapes the workspace (including via a

@@ -1,6 +1,7 @@
-//// Typed bridge to nono (https://nono.sh). These are pure data types describing
-//// the sandbox contract; `bough_server` turns them into `nono` CLI invocations
-//// and parses its audit/proxy output back into these shapes (SPEC.md §6, §7).
+//// Egress-event types for the network side pane (SPEC.md §7): an observed
+//// outbound request (allow/deny) the sandbox's proxy reports, parsed into these
+//// shapes for the run's network feed. (Named for historical reasons; bough's
+//// sandbox is now seatbelt + a filtering mitmproxy, not the nono CLI.)
 
 import gleam/option.{type Option}
 
@@ -9,32 +10,7 @@ pub type NetDecision {
   Deny
 }
 
-pub fn decision_from_string(s: String) -> Result(NetDecision, Nil) {
-  case s {
-    "allow" -> Ok(Allow)
-    "deny" -> Ok(Deny)
-    _ -> Error(Nil)
-  }
-}
-
-/// A single network rule. The default posture is deny; `allow_domains` in a
-/// `Profile` are the exceptions.
-pub type NetRule {
-  NetRule(host: String, decision: NetDecision)
-}
-
-/// The sandbox capability profile bough emits per session.
-pub type Profile {
-  Profile(
-    workspace: String,
-    allow_domains: List(String),
-    block_net: Bool,
-    rollback: Bool,
-  )
-}
-
-/// One observed egress event from nono's proxy audit log, parsed for the
-/// network side pane (SPEC.md §7). Mirrors a nono `network_events` entry.
+/// One observed egress event from the proxy audit log, for the network feed.
 pub type AuditEvent {
   AuditEvent(
     host: String,
@@ -45,38 +21,4 @@ pub type AuditEvent {
     reason: Option(String),
     timestamp: Int,
   )
-}
-
-/// A nono rollback snapshot reference recorded on a session node (SPEC.md §4.1).
-/// `session_id` is nono's rollback/audit session id; `reference` is the
-/// snapshot number within it.
-pub type Snapshot {
-  Snapshot(session_id: String, reference: String, created: Int)
-}
-
-/// Default-deny profile allowing only the workspace and the given domains.
-pub fn default_profile(workspace: String, allow: List(String)) -> Profile {
-  Profile(
-    workspace: workspace,
-    allow_domains: allow,
-    block_net: False,
-    rollback: True,
-  )
-}
-
-/// A nono policy group from the catalog (SPEC.md §7). `locked` is true for the
-/// groups nono always applies (the `required` denies + the default base) — the
-/// human can't turn those off; the rest are opt-in capability grants.
-pub type Group {
-  Group(name: String, description: String, platform: String, locked: Bool)
-}
-
-/// One path a group governs. `access` is "read" / "write" / "rw" / "deny".
-pub type GroupPath {
-  GroupPath(access: String, path: String)
-}
-
-/// A group's full contents: the paths it grants (or denies), for the inspector.
-pub type GroupDetail {
-  GroupDetail(name: String, description: String, paths: List(GroupPath))
 }
