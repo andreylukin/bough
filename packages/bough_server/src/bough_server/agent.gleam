@@ -1,8 +1,8 @@
 //// The agent's run vocabulary: the `Step`/`Outcome` types the supervisor-worker
 //// engine emits (SPEC §5), and their JSON serialization for the run store and
-//// the web/TUI clients. The loop itself lives in `engine`.
+//// the web client. The loop itself lives in `engine`.
 
-import bough_core/nono.{type AuditEvent, Allow}
+import bough_core/net_audit.{type AuditEvent, Allow}
 import gleam/json
 import gleam/list
 import gleam/option
@@ -11,8 +11,8 @@ pub type Step {
   StepText(text: String)
   StepToolCall(name: String, input: String)
   StepToolResult(name: String, output: String)
-  // Phased events from the supervisor-worker engine (SPEC §5), so the TUI can
-  // render each role distinctly instead of a flat tool stream.
+  // Phased events from the supervisor-worker engine (SPEC §5), so the web client
+  // can render each role distinctly instead of a flat tool stream.
   /// Supervisor prose (plans, narration).
   StepPlan(text: String)
   /// A harness step starting: the verb (RUN/WRITE/EDIT/READ/GREP), its arg
@@ -76,11 +76,11 @@ pub fn run_json(
 }
 
 /// One egress event serialized for the network dock. `decision` is "allow" or
-/// "deny"; `method`/`path`/`reason` are null when nono saw only the CONNECT.
+/// "deny"; `method`/`path`/`reason` are null when the mitmproxy saw only the CONNECT.
 pub fn audit_to_json(e: AuditEvent) -> json.Json {
   let decision = case e.decision {
     Allow -> "allow"
-    nono.Deny -> "deny"
+    net_audit.Deny -> "deny"
   }
   let opt = fn(o) {
     case o {
@@ -100,7 +100,7 @@ pub fn audit_to_json(e: AuditEvent) -> json.Json {
 }
 
 /// A step serialized to a compact JSON string — used to persist run activities
-/// as display-only `ToolResult` tree entries (same shape the TUI already
+/// as display-only `ToolResult` tree entries (same shape the web client already
 /// decodes for the live chat).
 pub fn step_json_string(step: Step) -> String {
   json.to_string(step_to_json(step))

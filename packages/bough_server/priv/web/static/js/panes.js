@@ -8,14 +8,13 @@ import { ACTIVE, state } from "./state.js";
 import { closeDrawer, inspectNet, inspectNode, openDrawer } from "./transcript.js";
 
 export function renderHeader() {
-  $("#model").textContent = state.config.provider
-    ? `${state.config.provider} · ${state.config.model}` : "";
+  renderModelPicker();
   const ctx = $("#ctx");
   if (!state.tree) { ctx.innerHTML = "no session"; }
   else {
     const st = state.run ? state.run.status : "idle";
     const cls = ACTIVE.has(st) ? (st === "running" ? "running" : "awaiting") : st;
-    const meter = contextMeter(state.run ? state.run.context_tokens : 0, state.config.model);
+    const meter = contextMeter(state.run ? state.run.context_tokens : 0, effectiveModel());
     const full = state.tree.project || "";
     const base = full.split("/").filter(Boolean).pop() || full;
     ctx.innerHTML =
@@ -25,6 +24,66 @@ export function renderHeader() {
       `<span class="badge ${cls}">${esc(st)}</span>${meter}`;
   }
   $("#review-toggle").checked = state.reviewArmed;
+}
+
+// The model this session's runs will use: its per-session override if pinned,
+// else the server's env default.
+export function effectiveModel() {
+  return (state.tree && state.tree.model) || state.config.model;
+}
+
+// Header model picker: pin the supervisor model (and its provider) for the open
+// session, spanning every provider, or fall back to the server default. With no
+// session open there's nothing to pin to, so it shows the default read-only.
+export function renderModelPicker() {
+  const box = $("#model");
+  box.innerHTML = "";
+  const def = state.models.default || { provider: state.config.provider, model: state.config.model };
+  if (!def.provider) return;
+  if (!state.tree) {
+    box.textContent = `${def.provider} · ${def.model}`;
+    return;
+  }
+  // "|"-joined provider/model identifies a selection; "" means inherit default.
+  const curP = state.tree.provider || "";
+  const curM = state.tree.model || "";
+  const curVal = curP && curM ? `${curP}|${curM}` : "";
+  const sel = el("select", "model-select");
+  sel.title = "Supervisor provider + model for this session";
+  sel.appendChild(option("", `${def.provider} · ${def.model} (default)`, !curVal));
+  let matched = false;
+  for (const g of (state.models.providers || [])) {
+    const grp = el("optgroup", "");
+    grp.label = g.provider;
+    for (const m of g.models) {
+      const v = `${g.provider}|${m}`;
+      const on = v === curVal;
+      matched = matched || on;
+      grp.appendChild(option(v, m, on));
+    }
+    sel.appendChild(grp);
+  }
+  // A pin that isn't in any provider's curated list still shows, selected.
+  if (curVal && !matched) sel.appendChild(option(curVal, `${curP} · ${curM}`, true));
+  sel.onchange = () => pickModel(sel.value);
+  box.appendChild(sel);
+}
+
+function option(value, label, selected) {
+  const o = el("option", "", esc(label));
+  o.value = value;
+  o.selected = selected;
+  return o;
+}
+
+async function pickModel(value) {
+  if (!state.sessionId) return;
+  const [provider, model] = value ? value.split("|") : [null, null];
+  try {
+    state.tree = await api.setModel(state.sessionId, provider, model);
+    toast(model ? `Model → ${provider} · ${model}` : "Model → default");
+    renderHeader();
+  } catch (e) { toast(String(e.message || e), true); }
 }
 
 // Context-window gauge: how full the model's context is after the last turn.

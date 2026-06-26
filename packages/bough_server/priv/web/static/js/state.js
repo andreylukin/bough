@@ -1,7 +1,8 @@
-export const ACTIVE = new Set(["running", "awaiting_plan", "awaiting_net", "awaiting_group"]);
+export const ACTIVE = new Set(["running", "awaiting_plan", "awaiting_net", "awaiting_group", "awaiting_capability"]);
 
 export const state = {
   config: { provider: "", model: "" },
+  models: { default: { provider: "", model: "" }, providers: [] }, // /models picker catalog
   sessions: [],
   sessionId: null,
   tree: null,            // { id, project, active_leaf, entries[], superseded[], groups[], suggested[] }

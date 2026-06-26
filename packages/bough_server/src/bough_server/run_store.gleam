@@ -3,7 +3,7 @@
 //// the file atomically (temp + rename) after each step; readers tolerate a
 //// missing file (idle).
 
-import bough_core/nono.{type AuditEvent}
+import bough_core/net_audit.{type AuditEvent}
 import bough_server/agent.{type Step}
 import envoy
 import gleam/dynamic/decode

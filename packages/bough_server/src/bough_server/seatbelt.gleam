@@ -1,8 +1,8 @@
-//// Generate a macOS Seatbelt (`sandbox-exec`) profile that replaces nono's
+//// Generate a macOS Seatbelt (`sandbox-exec`) profile that is bough's
 //// filesystem/process sandbox for code-mode `bash` (SPEC §6). macOS-only.
 ////
 //// Policy: allow-default reads MINUS a curated credential/secret/private
-//// denylist (ported verbatim from nono's locked deny groups), and deny-default
+//// denylist (ported verbatim from the prior sandbox's locked deny groups), and deny-default
 //// writes EXCEPT the workspace plus a curated allowlist (temp, caches,
 //// toolchain dirs). The network is intentionally NOT restricted here — egress
 //// is owned by the mitmproxy layer (a later phase); this module is the
@@ -15,8 +15,8 @@ import gleam/option.{type Option, None, Some}
 import gleam/string
 import simplifile
 
-/// Credential / secret / private paths denied for reading — ported from nono's
-/// locked groups (deny_credentials, deny_keychains_macos, deny_browser_data,
+/// Credential / secret / private paths denied for reading — ported from the
+/// prior sandbox's locked groups (deny_credentials, deny_keychains_macos, deny_browser_data,
 /// deny_shell_configs, deny_shell_history, deny_macos_private). `~` expands to
 /// `$HOME` at generation time; `/`-rooted entries are absolute.
 const deny_reads = [
@@ -79,14 +79,16 @@ pub fn write(
   workspace: String,
   home: String,
   proxy_port: Option(Int),
+  extra: List(String),
 ) -> Result(String, Nil) {
-  let extras = case envoy.get("BOUGH_WRITE_ALLOW") {
+  let env_extras = case envoy.get("BOUGH_WRITE_ALLOW") {
     Ok(s) ->
       string.split(s, ",")
       |> list.map(string.trim)
       |> list.filter(fn(d) { d != "" })
     Error(_) -> []
   }
+  let extras = list.append(extra, env_extras)
   case simplifile.write(path, build(workspace, home, proxy_port, extras)) {
     Ok(_) -> Ok(path)
     Error(_) -> Error(Nil)
@@ -111,7 +113,7 @@ pub fn build(
     |> list.map(subpath)
     |> string.join("\n  ")
   "(version 1)\n(allow default)\n\n"
-  <> ";; deny reads of credential/secret/private paths (ported from nono)\n"
+  <> ";; deny reads of credential/secret/private paths (ported from the prior sandbox)\n"
   <> "(deny file-read*\n  "
   <> denies
   <> ")\n\n"

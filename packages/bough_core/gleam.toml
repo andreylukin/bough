@@ -1,6 +1,6 @@
 name = "bough_core"
 version = "0.1.0"
-description = "Shared types and pure logic for bough: session tree, provider, tools, nono."
+description = "Shared types and pure logic for bough: session tree, provider, tools, network audit."
 
 # Fill out these fields if you intend to generate HTML documentation or publish
 # your project to the Hex package manager.

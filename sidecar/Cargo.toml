@@ -2,7 +2,7 @@
 name = "bough-monty"
 version = "0.1.0"
 edition = "2021"
-description = "bough's code-mode sidecar: runs agent-authored Python in a monty sandbox, exposing bash/read/write/edit as host functions (bash goes through nono)."
+description = "bough's code-mode sidecar: runs agent-authored Python in a monty sandbox, exposing bash/read/write/edit as host functions (bash goes through a macOS Seatbelt sandbox)."
 
 [[bin]]
 name = "bough-monty"

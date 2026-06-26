@@ -9,8 +9,8 @@
 #
 # What it does, idempotently:
 #   1. ensures Homebrew is present
-#   2. installs gleam (Erlang/OTP), nono (sandbox), llama.cpp (worker model),
-#      and rust (to build the monty code-mode sidecar)
+#   2. installs gleam (Erlang/OTP), mitmproxy (the sandbox's egress filter),
+#      llama.cpp (worker model), and rust (to build the monty code-mode sidecar)
 #   3. clones bough to $BOUGH_HOME (default ~/repos/bough) if not already here
 #   4. builds every package + the bough-monty sidecar
 #   5. prints how to run it and what to set
@@ -50,12 +50,14 @@ fi
 have brew || die "Homebrew install failed; install it manually from https://brew.sh"
 
 # 2. System dependencies ---------------------------------------------------
-deps=(gleam nono)
+deps=(gleam mitmproxy)
 [ "${BOUGH_NO_LLAMA:-0}" = "1" ] || deps+=(llama.cpp)
 [ "${BOUGH_NO_MONTY:-0}" = "1" ] || deps+=(rust)
 for d in "${deps[@]}"; do
-  # `gleam`, `nono`, etc.; llama.cpp's binary is `llama-server`, rust's is `cargo`.
+  # binary names differ from formula names: mitmproxy ships `mitmdump`,
+  # llama.cpp's is `llama-server`, rust's is `cargo`.
   bin="$d"
+  [ "$d" = "mitmproxy" ] && bin="mitmdump"
   [ "$d" = "llama.cpp" ] && bin="llama-server"
   [ "$d" = "rust" ] && bin="cargo"
   if have "$bin"; then

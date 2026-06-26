@@ -1,6 +1,6 @@
 //// bough server entry point.
 ////
-//// Owns all state: the agent loop and the session tree. Clients (TUI, web, …)
+//// Owns all state: the agent loop and the session tree. Clients (web, …)
 //// are thin and talk to it over HTTP + SSE (SPEC.md §3, §8). Boots a wisp/mist
 //// HTTP server with the JSON API and the web client.
 

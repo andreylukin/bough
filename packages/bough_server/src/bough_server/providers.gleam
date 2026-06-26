@@ -7,11 +7,11 @@
 //// prints `KEY=VALUE` lines; `mode` decides how the sandbox consumes them:
 ////
 ////   - "egress" — the secret (the `key` field, default `TOKEN`) is injected
-////       into outbound requests to `domain` via nono's `custom_credentials`
-////       reverse proxy. The secret NEVER enters the sandbox. For token/header
+////       into outbound requests to `domain` by the mitmproxy's managed-credential
+////       routes. The secret NEVER enters the sandbox. For token/header
 ////       auth: gh, GitHub git push, bearer-token APIs.
-////   - "env" — the `KEY=VALUE`s are forwarded into the sandbox env (nono
-////       `allow_vars`). For tools that must sign locally (AWS SigV4) — pair
+////   - "env" — the `KEY=VALUE`s are forwarded into the sandbox env. For tools
+////       that must sign locally (AWS SigV4) — pair
 ////       with short-lived, scoped creds so exposure is bounded.
 ////   - "none" — `prepare` only stood something up (e.g. `kubectl proxy`); the
 ////       sandbox just gets `allow`-listed access to the loopback endpoint.
@@ -47,10 +47,10 @@ pub type Provider {
     /// Shell run OUTSIDE the sandbox; prints `KEY=VALUE` lines.
     prepare: String,
     mode: Mode,
-    /// Egress: nono's built-in managed-credential service name (e.g. "github").
-    /// nono injects a phantom into the sandbox and swaps it for the real secret
-    /// on egress, so the secret never enters the sandbox. The `prepare` output
-    /// must set the env var nono's route reads (e.g. `GITHUB_TOKEN`).
+    /// Egress: the mitmproxy's managed-credential service name (e.g. "github").
+    /// The mitmproxy injects a phantom into the sandbox and swaps it for the real
+    /// secret on egress, so the secret never enters the sandbox. The `prepare`
+    /// output must set the env var the mitmproxy's route reads (e.g. `GITHUB_TOKEN`).
     service: String,
   )
 }
@@ -62,7 +62,7 @@ pub fn builtins() -> List(Provider) {
     Provider(
       name: "github",
       description: "GitHub git push + REST API (token injected on egress via"
-        <> " nono; use git + curl, not gh — Go ignores the proxy CA on macOS)",
+        <> " the mitmproxy; use git + curl, not gh — Go ignores the proxy CA on macOS)",
       allow: ["github.com", "api.github.com"],
       reads: [],
       prepare: "echo GITHUB_TOKEN=$(gh auth token)",
@@ -163,14 +163,14 @@ pub type Applied {
   Applied(
     allow: List(String),
     reads: List(String),
-    /// nono built-in managed-credential service names (network.credentials).
+    /// Managed-credential service names the mitmproxy injects on egress.
     services: List(String),
     env_allow: List(String),
   )
 }
 
 /// Run each enabled provider's `prepare` (outside the sandbox), stash any
-/// secrets in bough's process env via `setenv` so nono inherits them without
+/// secrets in bough's process env via `setenv` so the mitmproxy inherits them without
 /// writing them to disk, and return the profile pieces. `run`/`setenv` are
 /// injected so the wiring is testable without spawning shells or mutating env.
 pub fn apply(
@@ -202,8 +202,8 @@ pub fn apply_list(
         Applied(..acc, env_allow: list.append(acc.env_allow, dict.keys(kv)))
       }
       Egress -> {
-        // Set the real secret in bough's OWN env (nono reads it outside the
-        // sandbox); enabling the managed `service` makes nono inject a phantom
+        // Set the real secret in bough's OWN env (the mitmproxy reads it outside
+        // the sandbox); enabling the managed `service` makes the mitmproxy inject a phantom
         // into the sandbox and swap it on egress. The secret never enters.
         let kv = prepared(p, run)
         list.each(dict.to_list(kv), fn(pair) { setenv(pair.0, pair.1) })

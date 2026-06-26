@@ -76,6 +76,7 @@ pub fn handle_request(req: Request) -> Response {
     [], Get -> serve_index(web)
     ["health"], _ -> json_ok("{\"status\":\"ok\"}")
     ["config"], Get -> config()
+    ["models"], Get -> models()
     ["groups"], Get -> groups_catalog()
     ["groups", name], Get -> group_detail(name)
     ["skills"], Get -> list_skills()
@@ -97,6 +98,7 @@ pub fn handle_request(req: Request) -> Response {
     ["session", id, "files"], Get -> session_files(id)
     ["session", id, "groups"], Get -> get_session_groups(id)
     ["session", id, "groups"], Post -> set_session_groups(req, id)
+    ["session", id, "model"], Post -> set_session_model(req, id)
     ["session", id, "packs"], Post -> apply_packs(req, id)
     ["session", id, "fork"], Post -> fork_session(req, id)
     ["session", id, "graft"], Post -> graft_session(req, id)
@@ -151,6 +153,102 @@ fn config() -> Response {
       ]),
     ),
   )
+}
+
+/// The supervisor models the web picker offers, across every provider, so a
+/// session can pin any model (and its provider). `default` is the env-resolved
+/// provider+model; the active env model is merged into its provider's list so a
+/// custom BOUGH_MODEL always shows.
+fn models() -> Response {
+  let #(env_name, env_model) = resolved_model()
+  let groups =
+    list.map(all_providers(), fn(name) {
+      let base = provider_models(name)
+      let opts = case name == env_name && !list.contains(base, env_model) {
+        True -> [env_model, ..base]
+        False -> base
+      }
+      json.object([
+        #("provider", json.string(name)),
+        #("models", json.array(opts, json.string)),
+      ])
+    })
+  json_ok(
+    json.to_string(
+      json.object([
+        #(
+          "default",
+          json.object([
+            #("provider", json.string(env_name)),
+            #("model", json.string(env_model)),
+          ]),
+        ),
+        #("providers", json.preprocessed_array(groups)),
+      ]),
+    ),
+  )
+}
+
+/// The providers the picker spans. A session can pin a model from any of these;
+/// the run resolves that provider's API key at launch.
+fn all_providers() -> List(String) {
+  ["anthropic", "openrouter"]
+}
+
+/// The curated selectable models for a provider.
+fn provider_models(name: String) -> List(String) {
+  case name {
+    "anthropic" -> [
+      "claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001",
+    ]
+    _ -> [
+      "z-ai/glm-5.2", "z-ai/glm-4.6", "anthropic/claude-sonnet-4.6",
+      "openai/gpt-5", "google/gemini-2.5-pro",
+    ]
+  }
+}
+
+/// Set (or clear) a session's supervisor provider+model override.
+/// `{"provider": "...", "model": "<id>"}` pins this session's runs; either field
+/// null/"" reverts that session to the env default. Returns the updated tree.
+fn set_session_model(req: Request, id: String) -> Response {
+  use body <- wisp.require_json(req)
+  case decode.run(body, model_req_decoder()) {
+    Error(_) ->
+      wisp.bad_request("expected {\"provider\": string|null, \"model\": string|null}")
+    Ok(#(provider, model)) ->
+      case session_manager.load(id) {
+        Error(_) -> wisp.not_found()
+        Ok(tree) -> {
+          let blank = fn(o) {
+            case o {
+              Some("") -> None
+              other -> other
+            }
+          }
+          let tree =
+            session.SessionTree(
+              ..tree,
+              provider: blank(provider),
+              model: blank(model),
+            )
+          case session_manager.save(tree) {
+            Ok(_) -> json_ok(json.to_string(session.tree_to_json(tree)))
+            Error(_) -> wisp.internal_server_error()
+          }
+        }
+      }
+  }
+}
+
+fn model_req_decoder() -> decode.Decoder(#(Option(String), Option(String))) {
+  use provider <- decode.optional_field(
+    "provider",
+    None,
+    decode.optional(decode.string),
+  )
+  use model <- decode.field("model", decode.optional(decode.string))
+  decode.success(#(provider, model))
 }
 
 // --- Capability groups (SPEC §7) -----------------------------------------
@@ -514,7 +612,7 @@ fn run_agent(tree: SessionTree, content: String) -> Response {
   let user = make_entry(session.User, content, tree.active_leaf)
   let tree = session.append(tree, user)
 
-  case agent_setup() {
+  case agent_for_session(tree) {
     Error(m) -> json_error(m)
     Ok(#(prov, api_key, model)) -> {
       case
@@ -522,7 +620,7 @@ fn run_agent(tree: SessionTree, content: String) -> Response {
           api_key,
           model,
           tree.project,
-          engine_config(prov, False, False),
+          engine_config(prov, False, False, []),
           history,
           content,
           tree.groups,
@@ -570,6 +668,7 @@ fn engine_config(
   prov: provider.Provider,
   review: Bool,
   net_gate: Bool,
+  extra_writes: List(String),
 ) -> engine.Config {
   let base = engine.default_config()
   // If the worker server can't be brought up, disable the worker outright
@@ -594,6 +693,7 @@ fn engine_config(
     net_gate: net_gate,
     worker_temperature: worker_temp,
     worker_top_p: worker_top_p,
+    extra_writes: extra_writes,
   )
 }
 
@@ -641,27 +741,47 @@ fn resolved_model() -> #(String, String) {
   }
 }
 
-/// Pick the supervisor provider, API key, and model from the environment.
-/// Default is OpenRouter (OPENROUTER_API_KEY, model z-ai/glm-5.2);
-/// `BOUGH_PROVIDER=anthropic` uses Anthropic with ANTHROPIC_API_KEY.
-fn agent_setup() -> Result(#(provider.Provider, String, String), String) {
-  let #(name, model) = resolved_model()
+/// The provider type + API key (from the environment) for a provider name.
+/// `anthropic` → ANTHROPIC_API_KEY; anything else → OpenRouter / OPENROUTER_API_KEY.
+fn agent_creds(name: String) -> Result(#(provider.Provider, String), String) {
   case name {
     "anthropic" -> {
       use key <- result.try(
         envoy.get("ANTHROPIC_API_KEY")
         |> result.replace_error("ANTHROPIC_API_KEY is not set"),
       )
-      Ok(#(provider.Anthropic, key, model))
+      Ok(#(provider.Anthropic, key))
     }
     _ -> {
       use key <- result.try(
         envoy.get("OPENROUTER_API_KEY")
         |> result.replace_error("OPENROUTER_API_KEY is not set"),
       )
-      Ok(#(provider.OpenAICompat(openrouter_base), key, model))
+      Ok(#(provider.OpenAICompat(openrouter_base), key))
     }
   }
+}
+
+/// Pick the supervisor provider, API key, and model from the environment.
+/// Default is OpenRouter (OPENROUTER_API_KEY, model z-ai/glm-5.2);
+/// `BOUGH_PROVIDER=anthropic` uses Anthropic with ANTHROPIC_API_KEY.
+fn agent_setup() -> Result(#(provider.Provider, String, String), String) {
+  let #(name, model) = resolved_model()
+  use #(prov, key) <- result.try(agent_creds(name))
+  Ok(#(prov, key, model))
+}
+
+/// Like `agent_setup` but honoring a session's per-session provider+model pin
+/// (each falls back to the env default independently). The provider's API key is
+/// resolved from the environment for whichever provider the session selected.
+fn agent_for_session(
+  tree: SessionTree,
+) -> Result(#(provider.Provider, String, String), String) {
+  let #(env_name, env_model) = resolved_model()
+  let name = option.unwrap(tree.provider, env_name)
+  let model = option.unwrap(tree.model, env_model)
+  use #(prov, key) <- result.try(agent_creds(name))
+  Ok(#(prov, key, model))
 }
 
 /// Block the running engine until the human resolves a paused plan, polling the
@@ -805,7 +925,7 @@ fn spawn_subagent(
           api_key,
           model,
           workspace,
-          engine_config(prov, False, False),
+          engine_config(prov, False, False, []),
           [],
           task,
           fn(status, steps, context_tokens, net_events) {
@@ -1166,7 +1286,7 @@ fn graft_decoder() -> decode.Decoder(#(String, String)) {
 }
 
 /// Append a completed turn to the tree: each run activity becomes a
-/// display-only `ToolResult` entry (content = step JSON, the shape the TUI
+/// display-only `ToolResult` entry (content = step JSON, the shape the web client
 /// decodes for the live chat), chained in order, ending in the `Assistant` text
 /// entry as the new leaf. `ToolResult` entries are skipped by `history_of`, so
 /// the conversation replayed to the model is unchanged. The assistant leaf
@@ -1289,7 +1409,7 @@ fn launch_run(
   content: String,
   review: Bool,
 ) -> Response {
-  case agent_setup() {
+  case agent_for_session(tree) {
     Error(m) -> json_error(m)
     Ok(#(prov, api_key, model)) -> {
       // A run on the trunk branch acts on the real project dir and advances
@@ -1306,7 +1426,13 @@ fn launch_run(
       let run_key = user.id
       case run_workspace(tree, on_trunk, run_key, branch_leaf) {
         Error(m) -> json_error(m)
-        Ok(workspace) -> {
+        Ok(#(workspace, rundir)) -> {
+          // A branch run on a real-repo worktree needs sandbox write access to
+          // the project's shared `.git` for in-worktree commit/push.
+          let extra_writes = case rundir {
+            RealWorktree(_) -> [tree.project <> "/.git"]
+            _ -> []
+          }
       // Append the user turn under the lock so a concurrent branch run can't
       // clobber it; follow the view onto it because the human is looking here.
       let _ =
@@ -1328,7 +1454,7 @@ fn launch_run(
               api_key,
               model,
               workspace,
-              engine_config(prov, review, net_gate()),
+              engine_config(prov, review, net_gate(), extra_writes),
               history,
               content,
               fn(status, steps, context_tokens, net_events) {
@@ -1345,11 +1471,15 @@ fn launch_run(
           {
             Ok(outcome) -> {
               // Capture from the dir the run actually used: the project dir on
-              // trunk, the branch worktree otherwise (committed through the
-              // worktree's own HEAD so it never collides with trunk).
-              let snap = case on_trunk {
-                True -> capture_snapshot(id, workspace)
-                False ->
+              // trunk, else the branch worktree — a real-repo worktree snapshots
+              // to the shadow repo (not the user's history), a shadow worktree
+              // through its own HEAD; both keep clear of trunk.
+              let snap = case rundir {
+                TrunkDir -> capture_snapshot(id, workspace)
+                RealWorktree(base) ->
+                  snapshots.capture_real_worktree(id, workspace, base)
+                  |> option.from_result
+                ShadowWorktree ->
                   snapshots.capture_worktree(workspace) |> option.from_result
               }
               // Fold the turn into the freshest tree under the lock: build it on
@@ -1383,9 +1513,11 @@ fn launch_run(
                     False -> fresh
                   }
                 })
-              case on_trunk {
-                False -> snapshots.remove_worktree(id, run_key)
-                True -> Nil
+              case rundir {
+                TrunkDir -> Nil
+                RealWorktree(_) ->
+                  snapshots.remove_real_worktree(tree.project, id, run_key)
+                ShadowWorktree -> snapshots.remove_worktree(id, run_key)
               }
               run_store.write(
                 run_key,
@@ -1407,6 +1539,16 @@ fn launch_run(
   }
 }
 
+/// How a run's working dir was set up — drives capture/cleanup and the sandbox
+/// write grant. Trunk acts on the real project dir; a branch on a git project
+/// gets a worktree of the REAL repo (so git push/pull work) with the branch's
+/// snapshot overlaid; a non-git project falls back to a shadow worktree.
+type RunDir {
+  TrunkDir
+  RealWorktree(base_ref: String)
+  ShadowWorktree
+}
+
 /// Pick the working directory for a run: the real project dir on trunk, or a
 /// fresh worktree (keyed by the run's anchor, so concurrent runs off one branch
 /// don't share a dir) materialized from the branch's snapshot.
@@ -1415,15 +1557,28 @@ fn run_workspace(
   on_trunk: Bool,
   run_key: String,
   branch_leaf: Option(String),
-) -> Result(String, String) {
+) -> Result(#(String, RunDir), String) {
   case on_trunk {
-    True -> Ok(tree.project)
+    True -> Ok(#(tree.project, TrunkDir))
     False ->
       case branch_leaf {
         None -> Error("No branch selected to run.")
         Some(leaf) ->
           case session.nearest_snapshot(tree, leaf) {
-            Some(ref) -> snapshots.materialize_worktree(tree.id, run_key, ref)
+            Some(ref) ->
+              case snapshots.is_git_repo(tree.project) {
+                True ->
+                  snapshots.materialize_real_worktree(
+                    tree.project,
+                    tree.id,
+                    run_key,
+                    ref,
+                  )
+                  |> result.map(fn(p) { #(p, RealWorktree(ref)) })
+                False ->
+                  snapshots.materialize_worktree(tree.id, run_key, ref)
+                  |> result.map(fn(p) { #(p, ShadowWorktree) })
+              }
             None ->
               Error(
                 "This branch has no snapshot to run from. Adopt it to trunk first, then run.",

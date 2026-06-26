@@ -68,7 +68,7 @@ pub fn load(id: String) -> Result(SessionTree, StoreError) {
   SessionTree(..tree, project: expand_home(tree.project), trunk_leaf: trunk)
 }
 
-/// The project path is the sandbox workspace, handed to the monty/nono sidecar
+/// The project path is the sandbox workspace, handed to the monty/seatbelt sidecar
 /// as an argv/cwd string — which, unlike a shell, never expands a leading `~`
 /// or `$HOME`. Normalize on load so every consumer (run, diff, snapshots) sees
 /// an absolute path the sandbox can actually find, whatever the user typed.

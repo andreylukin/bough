@@ -1,4 +1,4 @@
-//// The tools the agent may call inside the nono sandbox (SPEC.md §5).
+//// The tools the agent may call inside the sandbox (SPEC.md §5).
 
 pub type Tool {
   Bash

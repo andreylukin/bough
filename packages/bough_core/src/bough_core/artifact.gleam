@@ -21,7 +21,8 @@ pub type Step {
   /// Run agent-authored Python in the monty sandbox (SPEC §5.2) — the
   /// supervisor's primary way to act. The program calls the host functions
   /// `bash`/`read`/`write`/`edit`; monty confines the code and `bash` goes
-  /// through nono. Supersedes the per-action `Run`/`Write`/`Edit`/`Read`/`Grep`
+  /// through the seatbelt sandbox. Supersedes the per-action
+  /// `Run`/`Write`/`Edit`/`Read`/`Grep`
   /// verbs (still parsed for back-compat and used by harness-internal fixes).
   Code(title: String, code: String)
   Run(title: String, cmd: String)
@@ -46,6 +47,11 @@ pub type Step {
   Tell(title: String, target: String, message: String)
   /// Wait for a running subagent (by id) to finish and read back its result.
   Collect(title: String, target: String)
+  /// Request a capability that is currently off (e.g. "github"). The harness
+  /// pauses the run for one-click human approval; on approval the capability is
+  /// enabled live (proxy allowlist + credential injection) and the rest of the
+  /// batch runs with it. The way to obtain access mid-run instead of giving up.
+  Request(title: String, capability: String)
 }
 
 pub type Artifacts {
@@ -70,6 +76,7 @@ pub fn step_title(step: Step) -> String {
     Spawn(title, ..) -> title
     Tell(title, ..) -> title
     Collect(title, ..) -> title
+    Request(title, ..) -> title
   }
 }
 

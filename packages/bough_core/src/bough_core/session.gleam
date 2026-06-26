@@ -26,7 +26,7 @@ pub type Role {
 
 /// One node in the session tree.
 ///
-/// `snapshot_ref`, when present, points at a nono rollback snapshot captured
+/// `snapshot_ref`, when present, points at a filesystem rollback snapshot captured
 /// for this node — that is what lets a fork restore the filesystem, not just
 /// the chat (SPEC.md §4.1).
 ///
@@ -61,7 +61,7 @@ pub type SessionTree {
     /// Hosts the human has approved for the agent's sandboxed commands — the
     /// network allowlist, which grows as requests are approved (SPEC.md §7).
     allow_domains: List(String),
-    /// nono capability groups the human has enabled for this session, layered
+    /// Sandbox capability groups the human has enabled for this session, layered
     /// into the sandbox profile on top of the always-on base (SPEC.md §7).
     groups: List(String),
     /// Capability groups the worker has *suggested* enabling after a sandbox
@@ -71,6 +71,13 @@ pub type SessionTree {
     /// Each records which original nodes it superseded; that's what marks them
     /// hidden in the default view without ever deleting a line.
     grafts: List(GraftEvent),
+    /// A per-session supervisor-provider override (e.g. "anthropic",
+    /// "openrouter"). `None` falls back to the server's env default. Set in
+    /// lockstep with `model` by the picker — a chosen model carries its provider.
+    provider: Option(String),
+    /// A per-session supervisor-model override. `None` falls back to the
+    /// server's env default; `Some(id)` pins this session's runs to that model.
+    model: Option(String),
   )
 }
 
@@ -85,6 +92,8 @@ pub fn new(id: String, project: String) -> SessionTree {
     groups: [],
     suggested: [],
     grafts: [],
+    provider: None,
+    model: None,
   )
 }
 
@@ -455,6 +464,8 @@ pub fn tree_to_json(tree: SessionTree) -> json.Json {
     #("allow_domains", json.array(tree.allow_domains, json.string)),
     #("groups", json.array(tree.groups, json.string)),
     #("suggested", json.array(tree.suggested, json.string)),
+    #("provider", json.nullable(tree.provider, json.string)),
+    #("model", json.nullable(tree.model, json.string)),
     #("entries", json.array(list.reverse(tree.entries), entry_to_json)),
     #("grafts", json.array(list.reverse(tree.grafts), graft_event_to_json)),
   ])
@@ -471,6 +482,8 @@ type Meta {
     allow_domains: List(String),
     groups: List(String),
     suggested: List(String),
+    provider: Option(String),
+    model: Option(String),
   )
 }
 
@@ -483,6 +496,8 @@ fn meta_to_json(tree: SessionTree) -> json.Json {
     #("allow_domains", json.array(tree.allow_domains, json.string)),
     #("groups", json.array(tree.groups, json.string)),
     #("suggested", json.array(tree.suggested, json.string)),
+    #("provider", json.nullable(tree.provider, json.string)),
+    #("model", json.nullable(tree.model, json.string)),
   ])
 }
 
@@ -510,6 +525,17 @@ fn meta_decoder() -> decode.Decoder(Meta) {
     [],
     decode.list(decode.string),
   )
+  // Older session files predate the per-session provider/model override.
+  use provider <- decode.optional_field(
+    "provider",
+    None,
+    decode.optional(decode.string),
+  )
+  use model <- decode.optional_field(
+    "model",
+    None,
+    decode.optional(decode.string),
+  )
   decode.success(Meta(
     id: id,
     project: project,
@@ -518,6 +544,8 @@ fn meta_decoder() -> decode.Decoder(Meta) {
     allow_domains: allow_domains,
     groups: groups,
     suggested: suggested,
+    provider: provider,
+    model: model,
   ))
 }
 
@@ -562,6 +590,8 @@ pub fn from_jsonl(contents: String) -> Result(SessionTree, String) {
         groups: meta.groups,
         suggested: meta.suggested,
         grafts: list.reverse(grafts),
+        provider: meta.provider,
+        model: meta.model,
       ))
     }
   }

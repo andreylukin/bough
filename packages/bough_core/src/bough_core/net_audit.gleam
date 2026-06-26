@@ -1,7 +1,6 @@
 //// Egress-event types for the network side pane (SPEC.md §7): an observed
 //// outbound request (allow/deny) the sandbox's proxy reports, parsed into these
-//// shapes for the run's network feed. (Named for historical reasons; bough's
-//// sandbox is now seatbelt + a filtering mitmproxy, not the nono CLI.)
+//// shapes for the run's network feed.
 
 import gleam/option.{type Option}
 

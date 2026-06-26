@@ -143,6 +143,7 @@ export async function boot() {
   applyPanes();
   wire();
   try { state.config = await api.config(); } catch {}
+  try { state.models = await api.models(); } catch {}
   await loadSessions();
   if (state.sessions.length > 0) await openSession(state.sessions[0].id);
   else render();

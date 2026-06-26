@@ -1,9 +1,10 @@
 //// Bridge to the `bough-monty` code-mode sidecar (SPEC.md §5.2). The supervisor
 //// emits a Python program per round; this runs it inside a monty sandbox where
 //// the only doors out are the host functions `bash`/`read`/`write`/`edit`
-//// (`bash` shells through nono). The sidecar is a Rust binary embedding the
-//// monty interpreter — the BEAM can't host monty in-process, so bough drives it
-//// the same way it drives nono: one execve per round via `shellout`.
+//// (`bash` shells through the seatbelt sandbox). The sidecar is a Rust binary
+//// embedding the monty interpreter — the BEAM can't host monty in-process, so
+//// bough drives it the same way it drives the sandbox: one execve per round via
+//// `shellout`.
 ////
 //// The program travels as a single argv element (`--code-str`), so there is no
 //// shell and nothing to escape. The sidecar always exits 0 and reports
@@ -83,8 +84,8 @@ fn parse_result(raw: String) -> #(Int, String) {
   }
 }
 
-/// The sidecar emits its result as a single JSON line. When wrapped in nono the
-/// output can be flanked by nono's banner/audit chatter, so pick the lone line
+/// The sidecar emits its result as a single JSON line. When wrapped in the
+/// sandbox the output can be flanked by banner/audit chatter, so pick the lone line
 /// that is a JSON object rather than trusting the whole capture.
 fn result_line(raw: String) -> String {
   raw

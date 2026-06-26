@@ -23,6 +23,8 @@ export async function jdel(path) {
 
 export const api = {
   config: () => jget("/config"),
+  models: () => jget("/models"),
+  setModel: (id, provider, model) => jpost(`/session/${id}/model`, { provider, model }),
   sessions: () => jget("/sessions"),
   createSession: (project) => jpost("/session", { project }),
   tree: (id) => jget(`/session/${id}`),

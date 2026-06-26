@@ -1,4 +1,4 @@
-import bough_core/artifact.{Code, Collect, Run, Spawn, Tell, Write}
+import bough_core/artifact.{Code, Collect, Request, Run, Spawn, Tell, Write}
 import bough_server/json_value.{JArray, JBool, JObject, JString}
 import bough_server/tool_steps.{Parsed}
 import gleam/option.{None, Some}
@@ -47,6 +47,32 @@ pub fn parses_a_code_action_test() {
     ])
   assert tool_steps.parse(input)
     == Ok(Parsed([Code("inspect", "print(read('a.txt'))")], None, False))
+}
+
+pub fn parses_a_request_action_test() {
+  let input =
+    JObject([
+      #("steps", JArray([
+        step([
+          #("action", JString("request")),
+          #("title", JString("enable github to push")),
+          #("capability", JString("github")),
+        ]),
+      ])),
+    ])
+  assert tool_steps.parse(input)
+    == Ok(Parsed([Request("enable github to push", "github")], None, False))
+}
+
+pub fn request_without_capability_is_an_error_test() {
+  let input =
+    JObject([
+      #("steps", JArray([
+        step([#("action", JString("request")), #("title", JString("x"))]),
+      ])),
+    ])
+  assert tool_steps.parse(input)
+    == Error("step 1 (request): missing \"capability\"")
 }
 
 pub fn code_without_code_is_an_error_test() {
@@ -154,7 +180,7 @@ pub fn unknown_action_is_an_error_test() {
       ])),
     ])
   assert tool_steps.parse(input)
-    == Error("step 1: unknown action \"frobnicate\" (use code/spawn/tell/collect)")
+    == Error("step 1: unknown action \"frobnicate\" (use code/spawn/tell/collect/request)")
 }
 
 pub fn missing_steps_array_is_an_error_test() {

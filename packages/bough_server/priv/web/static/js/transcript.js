@@ -120,6 +120,15 @@ export function gateBar(run, sessionId) {
       `<button class="ghost" data-act="steer">Send guidance</button>` +
       `<button class="reject" data-act="reject-plan">Reject</button>`;
     bar.appendChild(row);
+  } else if (run.status === "awaiting_capability" && tail.type === "await") {
+    bar.appendChild(el("h4", null, "⏸ Enable capability — the agent needs access to continue"));
+    bar.appendChild(el("pre", null,
+      `${esc(tail.plan)} — grants this run the capability's hosts + credential injection (token stays out of the sandbox).`));
+    const row = el("div", "row");
+    row.innerHTML =
+      `<button class="accept" data-act="allow">Enable “${esc(tail.plan)}”</button>` +
+      `<button class="reject" data-act="reject">Deny</button>`;
+    bar.appendChild(row);
   } else {
     return null;
   }
@@ -218,7 +227,7 @@ export function renderConversation(box, tree, run) {
 }
 
 export function growthLabel(status) {
-  return { running: "growing…", awaiting_plan: "waiting for you", awaiting_net: "waiting for you", awaiting_group: "waiting for you" }[status] || status + "…";
+  return { running: "growing…", awaiting_plan: "waiting for you", awaiting_net: "waiting for you", awaiting_group: "waiting for you", awaiting_capability: "waiting for you" }[status] || status + "…";
 }
 
 // ---- inspector drawer ----------------------------------------------------

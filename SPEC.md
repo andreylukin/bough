@@ -1,8 +1,8 @@
 # bough — Specification
 
 > A sandboxed coding agent with branchable history. Written in Gleam, sandboxed by
-> nono, structured like opencode (server + clients), with closedshell-style live
-> network visibility.
+> macOS Seatbelt + a per-workspace mitmproxy, structured like opencode (server +
+> clients), with closedshell-style live network visibility.
 
 **Status:** draft v0.1 — derived from interview on 2026-06-16.
 
@@ -15,14 +15,15 @@
 - **A bough is a branch.** History is a tree; you can fork any earlier point and
   grow a new branch — *and* the filesystem forks with it.
 - **It's safe to leave it growing.** Every agent runs under a kernel-enforced
-  [nono](https://nono.sh) sandbox: network allowlist + atomic filesystem
-  snapshots + tamper-evident audit. You can detach, walk away, and reattach.
+  macOS Seatbelt sandbox + a per-workspace mitmproxy: workspace-write
+  confinement + a default-deny egress allowlist + git-based filesystem snapshots
+  + an egress audit feed. You can detach, walk away, and reattach.
 
 It is *not* a wrapper around an existing agent (like closedshell wraps `claude`).
 bough implements its own agent loop — and that loop is **supervisor-worker**
 (the ReDACT idea, proven in [tent](https://github.com/andreylukin/tent)): a
 hosted frontier model **plans and writes** but never touches the machine; a
-deterministic harness is the **only** thing that executes — inside the nono
+deterministic harness is the **only** thing that executes — inside the Seatbelt
 sandbox — and a small local model patches trivial breakage for free (see §5).
 
 ---
@@ -34,12 +35,12 @@ sandbox — and a small local model patches trivial breakage for free (see §5).
 | Language / target | **Gleam on the BEAM** (Erlang/OTP). |
 | Agent | **Own supervisor-worker loop** (ReDACT-style, per `tent`), not a wrapper. Supervisor plans via plain-text artifacts; deterministic harness executes; local worker fixes. |
 | LLM providers | **Provider-agnostic core**, ship **Anthropic** (supervisor) first; **local `vibethinker-3b`** (arXiv:2606.16140) as the worker, served via a bundled `llama-server`. |
-| nono coupling | **Deep integration** (see §6 for what that means given no BEAM SDK). |
-| Platform (v1) | **macOS only** (Seatbelt via nono). |
+| Sandbox | **macOS Seatbelt** (`sandbox-exec`) for filesystem/process confinement + a **per-workspace mitmproxy** for egress (see §6). |
+| Platform (v1) | **macOS only** (Seatbelt). |
 | History | **Session tree only** — pi-mono style (`id`/`parentId`, `/tree`, `/fork`, `/clone`). |
 | Branch scope | **Conversation + filesystem snapshot.** Forking restores chat *and* files. |
 | Net rule control | **Recommended:** observe live, "disallow" forks a stricter branch (see §7). |
-| Agent actions (v1) | **Code-mode**: the supervisor writes Python run in a **monty** sandbox (§5.2), calling host functions `bash`/`read`/`write`/`edit`, plus a `### CHECK`. `bash` goes through the nono allowlist; web fetch is just `bash("curl …")`. |
+| Agent actions (v1) | **Code-mode**: the supervisor writes Python run in a **monty** sandbox (§5.2), calling host functions `bash`/`read`/`write`/`edit`, plus a `### CHECK`. `bash` runs under the Seatbelt profile with egress via the mitmproxy allowlist; web fetch is just `bash("curl …")`. |
 | TUI | Chat pane + live **network side pane**; session tree as an overlay. |
 | Service model | **opencode-style**: headless server + thin clients, OpenAPI spec. |
 | v1 milestone | **Thin vertical slice** — whole pipe end-to-end (see §10). |
@@ -50,8 +51,8 @@ sandbox — and a small local model patches trivial breakage for free (see §5).
 
 Following opencode's split: a long-lived **headless server** owns all state and
 the agent loop; **clients** (TUI first) are thin and talk to it over HTTP + a
-streaming channel. This pairs with nono's detached-session model: the server can
-keep agents running while no client is attached.
+streaming channel. The server owns each session's sandbox and mitmproxy
+lifecycle, so it can keep agents running while no client is attached.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -60,17 +61,17 @@ keep agents running while no client is attached.
 │  HTTP + SSE API  ──  OpenAPI 3.1 spec  (for SDKs/clients)    │
 │        │                                                      │
 │  ┌─────┴───────┐   ┌──────────────┐   ┌──────────────────┐  │
-│  │ Session     │   │ Supervisor-  │   │ nono supervisor  │  │
+│  │ Session     │   │ Supervisor-  │   │ Seatbelt + mitm  │  │
 │  │ tree store  │   │ worker loop  │   │ bridge           │  │
-│  │ (JSONL)     │   │ (per session)│   │ ps/attach/audit/ │  │
-│  │             │   │ + harness    │   │ rollback/policy  │  │
+│  │ (JSONL)     │   │ (per session)│   │ profile/egress/  │  │
+│  │             │   │ + harness    │   │ audit/snapshot   │  │
 │  └─────────────┘   └──────┬───────┘   └────────┬─────────┘  │
 └───────────────────────────┼────────────────────┼────────────┘
                             │ executes steps      │ launches + observes
                     ┌───────┴────────┐    ┌───────┴──────────────┐
-                    │ nono sandbox   │    │ nono proxy + audit   │
-                    │ (Seatbelt):    │    │ (unsandboxed parent) │
-                    │ bash, fs, etc. │    │ net allowlist, snaps │
+                    │ Seatbelt cell  │    │ mitmproxy + audit    │
+                    │ (sandbox-exec):│    │ (per workspace)      │
+                    │ bash, fs, etc. │    │ egress allow, inject │
                     └────────────────┘    └──────────────────────┘
 
    clients ── TUI (v1) ── [web / desktop / IDE plugin later] ── via API
@@ -105,11 +106,13 @@ Operations (exposed as API verbs and TUI commands):
 ### 4.1 Branch = conversation + filesystem
 
 This is bough's differentiator over pi-mono. Each node *may* carry a
-`snapshotRef` pointing at a nono rollback snapshot (content-addressable, SHA-256
-dedup, APFS `clonefile` COW — cheap on macOS).
+`snapshotRef` — a commit SHA in a per-session **shadow git repo** under
+`~/.bough/snapshots/<id>` whose work-tree is the workspace (content-addressed,
+deduped across turns, and never touching the user's own `.git`).
 
-- Before each agent turn that can write files, the server requests a nono
-  snapshot and records its ref on the resulting node.
+- Before each agent turn that can write files, the server captures the workspace
+  into the shadow repo (`add -A` + `commit`) and records the commit SHA on the
+  resulting node.
 - `fork`/`tree`-jump to a node **restores that node's snapshot** before
   continuing, so the agent resumes against the exact filesystem state of that
   point — not just the chat.
@@ -199,8 +202,8 @@ dim as superseded. API: `POST /session/:id/graft` `{sectionRoot, onto}`.
 
 bough's agent is a **supervisor-worker** loop (the ReDACT idea, as proven in
 `tent`): the hosted frontier model **plans and writes** but never executes; a
-deterministic harness is the **only** thing that runs anything — inside the nono
-sandbox — and a small **local** model absorbs trivial breakage for free.
+deterministic harness is the **only** thing that runs anything — inside the
+Seatbelt sandbox — and a small **local** model absorbs trivial breakage for free.
 Measured against the same model running a full agentic tool-use loop on the same
 tasks, the architecture is roughly **2× cheaper, 2× faster, and ~20× fewer
 tokens**.
@@ -219,7 +222,7 @@ gated on a deterministic CHECK rather than the model's self-report.
   plans in prose and emits `### STEP` artifacts plus a `### CHECK`. Has no way to
   touch the machine.
 - **Harness** (the bough server, deterministic): parses the artifacts, executes
-  each one inside the nono sandbox, feeds every result back round by round in one
+  each one inside the Seatbelt sandbox, feeds every result back round by round in one
   continuous conversation, and gates completion. The only actor with side
   effects.
 - **Worker** (small local model, optional — `vibethinker-3b`, arXiv:2606.16140): when a
@@ -250,23 +253,28 @@ The host functions are the entire capability surface:
 Alongside `code`, the batch may carry `spawn`/`tell`/`collect` (the subagent
 protocol, §5) and a `### CHECK` — a command that exits 0 **iff** the task's
 literal acceptance criteria hold. There is no separate `webfetch` tool — an
-allowed fetch is just `bash("curl …")` through the nono net allowlist (§7).
+allowed fetch is just `bash("curl …")` through the mitmproxy egress allowlist (§7).
 
 **Two nested sandboxes** (the seam with §6): monty is a *language/capability*
 sandbox confining the agent's Python (no `import os`, no sockets, resource
-limits); `bash` — the one door that runs native processes — opens into a *nono*
-cell (kernel-enforced workspace + network allowlist). monty replaces the
-tool-dispatch layer; nono stays exactly where it was, behind `bash`. The
-interpreter lives in a small Rust sidecar (`bough-monty`, driven over `shellout`
-like nono — the BEAM can't host monty in-process); the typed `RUN`/`WRITE`/…
-verbs remain inside the harness for the worker's fix commands and the CHECK.
+limits); `bash` — the one door that runs native processes — opens into a
+*Seatbelt* cell (kernel-enforced workspace-write confinement) whose egress is
+locked to the session's mitmproxy (default-deny allowlist). monty replaces the
+tool-dispatch layer; the Seatbelt + mitmproxy layer stays exactly where it was,
+behind `bash`. The interpreter lives in a small Rust sidecar (`bough-monty`,
+driven over `shellout` — the BEAM can't host monty in-process); its `bash` host
+function wraps each command in the generated Seatbelt profile
+(`--seatbelt-profile`), and the typed `RUN`/`WRITE`/… verbs remain inside the
+harness for the worker's fix commands and the CHECK.
 
 **Honest limit:** `read`/`write`/`edit` run as trusted host code *inside* the
-sidecar (path-scoped to the workspace there), and `bash` runs nono *inside* the
-sidecar too — so the engine's live net gate and egress feed (§7) don't observe
-code-mode `bash`. nono still enforces default-deny network; bough just loses the
-interactive approve-and-retry loop for it. Routing host calls back through the
-engine (to restore that) is a deferred option (§11).
+sidecar (path-scoped to the workspace there), and `bash` runs under Seatbelt
+*inside* the sidecar too — so the engine's live net gate and egress feed (§7)
+don't observe code-mode `bash` in real time: the mitmproxy flushes a session's
+audited egress events only on finalization. Seatbelt + the mitmproxy still
+enforce workspace confinement and default-deny egress; bough just loses the
+interactive approve-and-retry loop for code-mode `bash`. Routing host calls back
+through the engine (to restore that) is a deferred option (§11).
 
 ### 5.3 How a turn works
 
@@ -316,8 +324,8 @@ steps it did emit.
 The BEAM can't run tensor inference itself, so "the worker runs as part of
 bough" means **bough owns and supervises a small inference runtime as a child
 process** — not that you install and babysit a separate Ollama daemon. It is the
-same pattern bough already uses for nono (§6): an external process driven via
-`shellout` with its lifecycle under an OTP supervisor.
+same pattern bough already uses for the sandbox sidecar and mitmproxy (§6): an
+external process driven via `shellout` with its lifecycle managed by the server.
 
 A `worker_runtime` module in `bough_server`, on first worker use:
 
@@ -353,46 +361,60 @@ OpenAI-compatible API if you would rather not run anything locally.
 
 ---
 
-## 6. nono integration ("deep") — and its honest limits
+## 6. Sandbox: Seatbelt + mitmproxy — and its honest limits
 
-nono ships a CLI + Rust/Go/Python/TS SDKs, **but no Erlang/BEAM SDK**. So "deep
-integration" from Gleam means, in priority order:
+bough owns its sandbox end to end, in two complementary layers that bracket every
+native process the agent runs (code-mode `bash`, `RUN`, the worker's fix command,
+the CHECK). macOS-only by design.
 
-1. **Drive the CLI / session runtime.** Launch agents via `nono run`
-   (supervised, `--detached` for background sessions). Manage lifecycle with
-   `nono ps / attach / inspect / stop / prune`.
-2. **Consume nono's audit + proxy event stream** for the network side pane and
-   the audit view (the proxy audit log + session audit events).
-3. **Use rollback** (`nono run --rollback`, `nono rollback list/restore`) as the
-   snapshot backend for §4.1.
-4. **Use credential injection** so API keys (Anthropic, etc.) never enter the
-   sandbox — the proxy injects them on egress. *(Implemented: opt-in via
-   `BOUGH_NET_CREDENTIALS`; declared as `env_credentials` in the generated
-   profile — `net_profile`.)*
-5. **(Later, optional) Rustler NIF over `nono-core`** if CLI-level coupling
-   proves too coarse for live policy control.
+**Layer 1 — macOS Seatbelt (filesystem/process).** `seatbelt.gleam` generates an
+SBPL profile per run, written to `sandbox.sb`, and the `bough-monty` sidecar
+wraps each `bash` command in it via `--seatbelt-profile` (`monty_bridge.gleam`).
+The policy:
 
-**Capability profile:** bough generates a nono capability profile/manifest per
-session — allow the workspace dir (plus read-only access to the language
-toolchains under `$HOME` and nono's `git_config` group, so sandboxed
-`RUN`/`CHECK` can use git/cargo/go/node), set the network allowlist (default-deny
-+ explicitly approved hosts), block everything else. The generated profile is
-run through `nono profile validate` before use (`nono_bridge.validate_profile`),
-so schema drift fails safe (the run blocks the network) instead of nono rejecting
-it opaquely. Network denials are read from nono's structured audit JSON
-(method/path fields) rather than parsing its prose deny reasons.
+1. **Reads:** allow-default *minus* a curated credential/secret/private denylist —
+   `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gcloud`, keychains, browser data,
+   shell configs/history, `~/Library/Mail|Messages`, etc. So toolchains can read
+   what they need, but keys and secrets are unreadable.
+2. **Writes:** deny-default *except* the workspace plus a curated allowlist of
+   dirs toolchains legitimately write to (temp, `~/.cache`, `~/.cargo`, `~/.npm`,
+   `~/go`, …) and a few device files. Extend at runtime with `BOUGH_WRITE_ALLOW`.
+3. **Network:** denied at the kernel except the loopback port of the session's
+   mitmproxy — so the only way out is through Layer 2.
 
-**monty + nono — two rings, one airlock.** With code-mode (§5.2) there are now
-two sandboxes at different layers. monty confines the *agent's Python* (a
-language/capability ring: the program reaches the host only through the host
-functions we register). nono confines the *native processes* that Python's
-`bash` launches (a kernel ring: workspace + network allowlist + audit). They are
-orthogonal and complementary — monty has no visibility into a subprocess once it
-shells out (nono's job), and nono can't do per-call in-language capability gating
-(monty's job). They meet at exactly one point: `bash`, the only host function
-that runs native code, opens into a nono cell. The `bough-monty` sidecar is the
-trusted broker between the two untrusted zones (the agent's Python and the shell
-command). Because the sidecar runs nono itself, code-mode `bash` is outside the
+**Layer 2 — per-workspace mitmproxy (egress).** `proxy.gleam` runs a `mitmdump`
+with the `bough_proxy` addon, one per workspace, state under
+`~/.bough/proxy/<key>/` (config + pid + log) on a stable loopback port; it is
+reused while alive and swept at server start. The sandbox reaches it via
+`HTTPS_PROXY` + the proxy CA (env the sidecar passes to `bash`). The addon:
+
+- **Default-deny egress allowlist.** Its `config.json` (`{allow, inject}`) lists
+  the approved hosts; everything else is refused. The config is re-read on mtime
+  change, so an approved host takes effect on the next command without a restart.
+- **Managed-credential injection (`providers.gleam`).** For a provider in
+  `egress` mode (e.g. `github`), the real secret is set in **bough's own env**
+  (never the sandbox); the addon injects a phantom into the sandbox and swaps it
+  for the real secret on egress, so API keys never enter the sandbox. `env`-mode
+  providers forward scoped, short-lived creds into the sandbox env instead (for
+  tools that must sign locally, e.g. AWS SigV4); `none`-mode just stands up a
+  loopback endpoint and allowlists it.
+- **Audit feed.** Allow/deny egress events become `net_audit.AuditEvent`s
+  (host, port, method, path, decision, reason, timestamp) for the network side
+  pane (§7).
+
+**Two rings, one airlock.** With code-mode (§5.2) there are now sandboxes at two
+layers. monty confines the *agent's Python* (a language/capability ring: the
+program reaches the host only through the host functions we register). Seatbelt +
+the mitmproxy confine the *native processes* that Python's `bash` launches (a
+kernel ring: workspace-write confinement + a default-deny egress allowlist +
+audit). They are orthogonal and complementary — monty has no visibility into a
+subprocess once it shells out (Seatbelt's job), and Seatbelt can't do per-call
+in-language capability gating (monty's job). They meet at exactly one point:
+`bash`, the only host function that runs native code, opens into a Seatbelt cell
+whose egress goes through the mitmproxy. The `bough-monty` sidecar is the trusted
+broker between the two untrusted zones (the agent's Python and the shell
+command). Because the sidecar applies Seatbelt itself and the mitmproxy only
+flushes its audited events on finalization, code-mode `bash` is outside the
 engine's live net gate — see the honest limit in §5.2.
 
 ---
@@ -402,31 +424,35 @@ engine's live net gate — see the honest limit in §5.2.
 Goal (from closedshell): a live side pane showing what the agent is reaching out
 to, with the ability to tighten rules.
 
-**Reality of nono:** its network layer is a *static allowlist* — the CONNECT
-tunnel validates the host against the allowlist and either relays or returns
-`403`. It exposes a **proxy audit log** of egress events, but no documented
-runtime "hold-and-ask" or live allowlist mutation.
+**Reality of the mitmproxy:** its egress layer is an allowlist — the addon checks
+each request's host against `config.json`'s `allow` and either relays it
+(injecting any managed credential) or refuses. It emits an **audit feed** of
+egress events, and re-reads its config on mtime change so the allowlist can grow
+between commands.
 
-**Recommended v1 design** (works *within* nono's model and exploits bough's
-snapshot branching):
+**Recommended v1 design** (works *within* the mitmproxy's model and exploits
+bough's snapshot branching):
 
-- **Observe:** the side pane streams nono's proxy audit events — host, method,
-  path, allow/deny, timestamp — parsed into readable actions.
+- **Observe:** the side pane streams the mitmproxy's audit events — host, port,
+  method, path, allow/deny, timestamp (`net_audit.AuditEvent`) — parsed into
+  readable actions.
 - **Disallow = fork a stricter branch.** When you reject a host in the side
-  pane, bough rewrites the session's capability profile with the new `forbid`,
-  then **forks from the snapshot just before the offending turn** and re-runs
-  under the tighter policy. Because branches are cheap (COW snapshots), "tighten
+  pane, bough rewrites the session's egress allowlist without it, then **forks
+  from the snapshot just before the offending turn** and re-runs under the
+  tighter policy. Because branches are cheap (shadow-git snapshots), "tighten
   and replay" is the natural undo — the offending egress never has to have
   happened on the branch you keep.
 - **Default-deny posture:** start every session with an allowlist of only the
-  provider endpoint(s); unknown hosts are blocked by nono and surface in the
-  pane as denied attempts to optionally promote.
+  provider endpoint(s); unknown hosts are refused by the mitmproxy and surface in
+  the pane as denied attempts to optionally promote.
 
-**Flagged risk / upstream dependency:** true *interactive* "pause the connection
-and ask" (closedshell's hold) is not available through nono today. If we want it
-without restarting, options are (a) request a control IPC / runtime-mutable
-allowlist from nono upstream, or (b) layer bough's own hold-and-ask proxy in
-front of nono (nono still provides kernel enforcement). **Deferred past v1.**
+**Flagged limit:** true *interactive* "pause the connection and ask" (closedshell's
+hold) is not wired today — the addon decides each request against the current
+allowlist rather than blocking on a human, and for code-mode `bash` the audit
+events only flush on finalization (§5.2), so there is no timely per-command
+signal to gate on. Adding a hold-and-ask control channel to the addon (so a
+pending request can wait on the side pane) is the natural extension.
+**Deferred past v1.**
 
 ---
 
@@ -466,18 +492,20 @@ and isolate behind a thin rendering module so it can be swapped.
 Done when, end to end:
 
 1. `bough` starts a server + TUI client. → *verify:* TUI connects over the API.
-2. A session launches its agent under a nono sandbox (workspace allowed, network
-   default-deny except the LLM provider). → *verify:* `nono ps` shows the
-   session; an off-allowlist `RUN` fetch is blocked and shows in the side pane.
+2. A session launches its agent under the Seatbelt sandbox + mitmproxy (workspace
+   writable, egress default-deny except the LLM provider). → *verify:* the
+   generated `sandbox.sb` profile is applied (a write outside the workspace is
+   denied); an off-allowlist `RUN` fetch is blocked and shows in the side pane.
 3. The supervisor-worker loop runs: the Anthropic supervisor emits
    `STEP`/`RUN`/`WRITE`/`EDIT` artifacts plus a `### CHECK`; the harness executes
    each step in the sandbox, the local worker patches a failed step, and `DONE`
    is gated on the CHECK passing plus an adversarial review. → *verify:* a task
    that edits a file and runs a command finishes only after its CHECK exits 0.
-4. The network side pane streams real nono proxy audit events live. → *verify:*
+4. The network side pane streams real mitmproxy audit events live. → *verify:*
    an allowed and a denied request both appear correctly.
-5. A write-turn creates a nono rollback snapshot recorded on the session node.
-   → *verify:* snapshot ref present; `nono rollback list` shows it.
+5. A write-turn captures a shadow-git snapshot recorded on the session node.
+   → *verify:* snapshot ref (commit SHA) present; `git --git-dir=~/.bough/snapshots/<id>
+   log` shows it.
 6. `fork` from an earlier node restores that node's snapshot and continues.
    → *verify:* files on disk match the forked node's state, not the latest.
 7. Session tree persists to JSONL and reloads via `resume`. → *verify:* restart
@@ -493,9 +521,11 @@ auth hardening beyond basic.
 
 - Snapshot cadence vs. cost: snapshot every write-turn, or only at branch points?
 - Restore semantics vs. a user's live edits in the working tree (warn? stash?).
-- Does nono expose proxy audit events as a tail-able stream/socket, or only as a
-  post-hoc log file? Determines how "live" the side pane can be without polling.
-- Exact nono profile/manifest schema bough should emit per session.
+- Can the mitmproxy addon stream audit events live (a tail-able socket/IPC)
+  rather than flushing on finalization? Determines how "live" the side pane can
+  be for code-mode `bash` without polling (see §5.2 honest limit).
+- The exact Seatbelt profile + mitmproxy allowlist bough should emit per session
+  (which toolchain dirs are read/write by default).
 - Streaming transport: SSE vs. WebSocket for bidirectional client control.
 - Worker runtime: resolved to a bough-supervised inference server (§5.6); still
   open — pick the bundled engine (`llama-server` vs. `llamafile` vs. MLX), and

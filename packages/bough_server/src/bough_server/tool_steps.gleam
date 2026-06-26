@@ -5,7 +5,7 @@
 //// tool_result for the model to correct.
 
 import bough_core/artifact.{
-  type Step, Code, Collect, Edit, Grep, Read, Run, Spawn, Tell, Write,
+  type Step, Code, Collect, Edit, Grep, Read, Request, Run, Spawn, Tell, Write,
 }
 import bough_server/json_value.{type JsonValue, JArray, JBool, JString}
 import gleam/int
@@ -110,12 +110,16 @@ fn parse_step(s: JsonValue, idx: Int) -> Result(Step, String) {
       use target <- result.try(nonblank(s, "target", at, "collect"))
       Ok(Collect(title, target))
     }
+    "request" -> {
+      use capability <- result.try(nonblank(s, "capability", at, "request"))
+      Ok(Request(title, capability))
+    }
     other ->
       Error(
         at
         <> ": unknown action \""
         <> other
-        <> "\" (use code/spawn/tell/collect)",
+        <> "\" (use code/spawn/tell/collect/request)",
       )
   }
 }

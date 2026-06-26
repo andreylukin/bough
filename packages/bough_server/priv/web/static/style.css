@@ -74,6 +74,15 @@ button:disabled { opacity: 0.45; cursor: default; }
 .review-toggle { display: flex; align-items: center; gap: 7px; color: var(--lichen); font-size: 12px; user-select: none; cursor: pointer; }
 .review-toggle input { accent-color: var(--sap); }
 .model { color: var(--lichen-dim); font-size: 11px; font-family: var(--mono); }
+.model-select {
+  color: var(--lichen-dim); font-size: 11px; font-family: var(--mono);
+  background: transparent; border: 1px solid transparent; border-radius: 6px;
+  padding: 2px 4px; max-width: 240px; cursor: pointer;
+}
+.model-select:hover { border-color: var(--moss); color: var(--lichen); }
+.model-select:focus { outline: none; border-color: var(--sap); color: var(--lichen); }
+.model-select option { background: var(--bark); color: var(--lichen); }
+.model-select optgroup { background: var(--bark); color: var(--lichen-dim); font-style: normal; }
 
 /* ---- layout ---- */
 #layout { flex: 1; display: grid; grid-template-columns: 244px 1fr 360px; min-height: 0; }

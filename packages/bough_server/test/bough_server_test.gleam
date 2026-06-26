@@ -144,8 +144,9 @@ pub fn providers_parse_env_test() {
   assert dict.size(kv) == 2
 }
 
-/// An egress provider runs prepare, sets the secret in bough's env (so nono
-/// reads it outside the sandbox), and enables nono's managed `service` route —
+/// An egress provider runs prepare, sets the secret in bough's env (so the
+/// mitmproxy reads it outside the sandbox), and enables the mitmproxy's managed
+/// `service` route —
 /// no env var is forwarded into the sandbox.
 pub fn providers_apply_egress_test() {
   let p =

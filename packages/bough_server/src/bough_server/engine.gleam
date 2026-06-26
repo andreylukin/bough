@@ -13,10 +13,10 @@
 //// `StepCheck` and `StepReview`. Plain `StepText` is left for notices.
 
 import bough_core/artifact.{
-  type Step, Code, Collect, Edit, Grep, Read, Run, Spawn, Tell, Write,
+  type Step, Code, Collect, Edit, Grep, Read, Request, Run, Spawn, Tell, Write,
 }
 import bough_core/digest
-import bough_core/nono
+import bough_core/net_audit
 import bough_server/agent.{
   type Outcome, type Step as Activity, Outcome, StepAwait, StepCall, StepCheck,
   StepExec, StepPlan, StepReview, StepText, StepWorker,
@@ -75,6 +75,11 @@ pub type Config {
     /// leaves the field off so the server default applies.
     worker_temperature: Option(Float),
     worker_top_p: Option(Float),
+    /// Extra directories the sandbox may write to, beyond the workspace + the
+    /// built-in toolchain allowlist. A branch run on a real-repo worktree adds
+    /// the project's `.git` here so in-worktree `git commit`/`push` can write the
+    /// shared object store. Empty for trunk runs.
+    extra_writes: List(String),
   )
 }
 
@@ -120,6 +125,7 @@ pub fn default_config() -> Config {
     // Default worker is a fast instruct-coder: low temperature, deterministic.
     worker_temperature: Some(0.2),
     worker_top_p: None,
+    extra_writes: [],
   )
 }
 
@@ -140,7 +146,7 @@ type State {
     // Publishes the run's status + full activity list + context tokens after
     // each new activity. Status is "running", or "awaiting_plan" while a plan
     // is paused at the review gate.
-    emit: fn(String, List(Activity), Int, List(nono.AuditEvent)) -> Nil,
+    emit: fn(String, List(Activity), Int, List(net_audit.AuditEvent)) -> Nil,
     // Blocks until the human resolves a paused plan (review gate). Supplied by
     // the caller; the engine only calls it when `config.review` is on.
     await: fn() -> control.Decision,
@@ -188,13 +194,13 @@ type State {
     groups: List(String),
     // Groups the worker suggested enabling after a denial this run (advisory).
     suggested: List(String),
-    // Where the generated nono network profile for this run is written.
+    // Where the generated mitmproxy network profile for this run is written.
     net_profile_path: String,
     // activities newest-first; reversed on emit/return
     activities: List(Activity),
     // Egress events the sandbox observed this run, oldest first — published to
     // the network dock with every emit (SPEC §7).
-    net_events: List(nono.AuditEvent),
+    net_events: List(net_audit.AuditEvent),
   )
 }
 
@@ -209,7 +215,7 @@ pub fn run_streaming(
   config: Config,
   history: List(#(String, String)),
   user_prompt: String,
-  emit: fn(String, List(Activity), Int, List(nono.AuditEvent)) -> Nil,
+  emit: fn(String, List(Activity), Int, List(net_audit.AuditEvent)) -> Nil,
   await: fn() -> control.Decision,
   inbox: fn() -> Option(String),
   stopped: fn() -> Bool,
@@ -246,7 +252,12 @@ pub fn run_streaming(
       steps_done: 0,
       instructions: read_agents_md(workspace),
       skills: skills.active_for(user_prompt),
-      capabilities: capabilities_summary(config, net_allow, groups),
+      capabilities: capabilities_summary(
+        config,
+        net_allow,
+        groups,
+        github_origin(workspace),
+      ),
       net_allow: net_allow,
       groups: groups,
       suggested: suggested,
@@ -520,6 +531,72 @@ fn plan_summary(steps: List(Step)) -> String {
   |> string.join("\n")
 }
 
+/// Handle a `request` step: enable a capability mid-run with one-click human
+/// approval. Already-enabled is a no-op note; an unknown name is rejected. On
+/// approval the capability joins `state.groups` — so the next sandboxed command
+/// gets it (the proxy re-reads the allowlist + injection each exec) and it
+/// persists via the run's outcome — and a visible activity records it.
+fn request_capability(state: State, capability: String) -> #(State, String) {
+  case list.contains(state.groups, capability) {
+    True -> #(state, "Capability '" <> capability <> "' is already enabled.")
+    False ->
+      case providers.get(capability) {
+        Error(_) -> #(
+          state,
+          "No such capability '"
+            <> capability
+            <> "'. Available: "
+            <> string.join(list.map(providers.list(), fn(p) { p.name }), ", ")
+            <> ".",
+        )
+        Ok(_) ->
+          case await_capability(state, capability) {
+            control.Allow -> {
+              let state = State(..state, groups: [capability, ..state.groups])
+              let state =
+                emit_activity(state, StepReview("enabled capability: " <> capability))
+              #(
+                state,
+                "Capability '"
+                  <> capability
+                  <> "' was enabled by the human. Its hosts are now reachable and"
+                  <> " credentials are injected at the proxy — proceed (e.g. retry the"
+                  <> " git/network step).",
+              )
+            }
+            control.Steer(msg) -> {
+              let why = case string.trim(msg) {
+                "" -> ""
+                m -> " They said: " <> m
+              }
+              #(
+                state,
+                "The human DECLINED to enable '"
+                  <> capability
+                  <> "'."
+                  <> why
+                  <> " Do not retry it; explain plainly what you can't do without it.",
+              )
+            }
+          }
+      }
+  }
+}
+
+/// Publish the capability request with status "awaiting_capability" and block on
+/// the caller's `await` until the human approves or declines. The await marker
+/// is transient (mirrors `await_plan`) — not kept in the persisted activities.
+fn await_capability(state: State, capability: String) -> control.Decision {
+  let activities = [StepAwait(capability), ..state.activities]
+  state.emit(
+    "awaiting_capability",
+    list.reverse(activities),
+    state.context_tokens,
+    state.net_events,
+  )
+  state.await()
+}
+
 fn execute_plan(
   state: State,
   round: Int,
@@ -599,15 +676,33 @@ fn exec_steps(
     [step, ..rest] ->
       case budget_left(state) {
         False -> #(state, fb_rev)
-        True -> {
-          let title = artifact.step_title(step)
-          let verb = step_verb(step)
-          let state =
-            emit_activity(
-              state,
-              StepCall(verb, step_arg(step), step_full(step)),
-            )
-          let #(state, result, fixes) = apply_with_fixes(state, step)
+        // A `request` step gates on the human (inline capability approval), not
+        // the sandbox — handle it off the normal call/exec path.
+        True ->
+          case step {
+            Request(_, capability) -> {
+              let #(state, fb) = request_capability(state, capability)
+              exec_steps(state, rest, idx + 1, [fb, ..fb_rev])
+            }
+            _ -> exec_one(state, step, rest, idx, fb_rev)
+          }
+      }
+  }
+}
+
+/// Run one ordinary (sandbox-bound) step and recurse.
+fn exec_one(
+  state: State,
+  step: Step,
+  rest: List(Step),
+  idx: Int,
+  fb_rev: List(String),
+) -> #(State, List(String)) {
+  let title = artifact.step_title(step)
+  let verb = step_verb(step)
+  let state =
+    emit_activity(state, StepCall(verb, step_arg(step), step_full(step)))
+  let #(state, result, fixes) = apply_with_fixes(state, step)
           let dig = digest.digest(result.output, state.config.digest_limit)
           let #(state, pointer) = maybe_save(state, result.output, dig)
           let state =
@@ -627,10 +722,7 @@ fn exec_steps(
             <> "\n"
             <> dig
             <> pointer
-          exec_steps(state, rest, idx + 1, [fb, ..fb_rev])
-        }
-      }
-  }
+  exec_steps(state, rest, idx + 1, [fb, ..fb_rev])
 }
 
 /// Apply one step; on failure, give the worker `fix_attempts` shots at one fix
@@ -724,15 +816,19 @@ fn apply(state: State, step: Step) -> #(State, Exec) {
       bump(state),
       Exec(0, state.subagents.collect(target)),
     )
+    // Intercepted in exec_steps (it gates on the human, not the sandbox); this
+    // arm only keeps the match total.
+    Request(_, capability) -> #(state, Exec(0, "requested " <> capability))
   }
 }
 
 /// Run a Python program in the monty sandbox (SPEC §5.2) — the supervisor's
-/// primary action. The program's `bash` calls go through nono *inside* the
-/// sidecar; the engine scopes them with the session profile (capability groups +
-/// net leash), so the policy is enforced. The live egress feed and the
-/// net-approval gate do NOT cover code-mode: nono flushes a session's audited
-/// egress events only on finalization (10+s later), so there's no timely,
+/// primary action. The program's `bash` calls go through the seatbelt sandbox
+/// *inside* the sidecar; the engine scopes them with the session profile
+/// (capability groups + net leash), so the policy is enforced. The live egress
+/// feed and the net-approval gate do NOT cover code-mode: the mitmproxy flushes
+/// a session's audited egress events only on finalization (10+s later), so
+/// there's no timely,
 /// per-command signal to surface or gate on — they remain RUN-path features.
 fn exec_code(state: State, code: String) -> #(State, Exec) {
   // Sandbox the sidecar's `bash` with a generated macOS Seatbelt profile, and
@@ -825,7 +921,7 @@ fn write_seatbelt_profile(
 ) -> Result(String, Nil) {
   let path = string.replace(state.net_profile_path, "net.json", "sandbox.sb")
   let home = envoy.get("HOME") |> result.unwrap("")
-  seatbelt.write(path, state.workspace, home, port)
+  seatbelt.write(path, state.workspace, home, port, state.config.extra_writes)
 }
 
 /// Cap on the approve→retry loop for one command, so a never-matching rule
@@ -1074,6 +1170,22 @@ fn read_agents_md(workspace: String) -> Option(String) {
   |> option.from_result
 }
 
+/// True if the workspace's git `origin` points at GitHub — so the capabilities
+/// summary can flag that network git needs the `github` capability enabled.
+fn github_origin(workspace: String) -> Bool {
+  case
+    shellout.command(
+      "git",
+      ["-C", workspace, "remote", "get-url", "origin"],
+      workspace,
+      [],
+    )
+  {
+    Ok(url) -> string.contains(string.lowercase(url), "github.com")
+    Error(_) -> False
+  }
+}
+
 /// A plain-language description of this run's sandbox reach, injected into the
 /// supervisor's system prompt (SPEC §7). The point is that the supervisor can
 /// predict what will fail — a signed commit, an SSH push, a fetch to a host
@@ -1083,6 +1195,7 @@ fn capabilities_summary(
   config: Config,
   net_allow: List(String),
   groups: List(String),
+  github_origin: Bool,
 ) -> String {
   let network = case config.net_gate {
     // Fully blocked: no outbound connection succeeds.
@@ -1113,23 +1226,47 @@ fn capabilities_summary(
     _ -> string.join(group_lines, "; ")
   }
 
+  // Capabilities that exist but are OFF — so the model knows what it can ask for
+  // via a `request` step, not just what's already on.
+  let off = list.filter(providers.list(), fn(p) { !list.contains(groups, p.name) })
+  let requestable = case off {
+    [] -> ""
+    _ ->
+      "\n- Requestable (currently OFF — emit a `request` step to enable inline): "
+      <> string.join(
+        list.map(off, fn(p) { p.name <> " — " <> p.description }),
+        "; ",
+      )
+      <> "."
+  }
+
   // GitHub auth is injected at the network proxy (token never in the sandbox),
   // but `gh` can't use it (Go ignores the proxy CA on macOS) — tell the model to
   // reach for git + curl with the phantom token instead.
   let active = list.filter_map(groups, providers.get)
-  let github_note = case list.any(active, fn(p) { p.name == "github" }) {
+  let github_enabled = list.any(active, fn(p) { p.name == "github" })
+  let github_note = case github_enabled {
     False -> ""
     True ->
-      " GitHub auth is injected at the network proxy: $GITHUB_TOKEN in the sandbox is a PHANTOM that nono swaps for the real token on egress. Use git + curl, NOT `gh` (it won't trust the proxy CA here). git push: `git -c credential.helper='!f(){ echo username=x-access-token; echo password=$GITHUB_TOKEN; };f' push ...`. REST: `curl -H \"Authorization: Bearer $GITHUB_TOKEN\" https://api.github.com/...`."
+      " GitHub auth is injected at the network proxy on egress, so the token never enters the sandbox: just use ordinary `git push`/`git pull` (HTTPS) and `curl https://api.github.com/...` — the proxy adds the credentials. Use git + curl, NOT `gh` (Go ignores the proxy CA on macOS, so `gh` won't authenticate here)."
+  }
+  // The repo is on GitHub but the capability that reaches it is off: tell the
+  // model to ask for the one toggle instead of giving up or hand-rolling a clone.
+  let github_off_note = case github_origin && !github_enabled {
+    False -> ""
+    True ->
+      " NOTE: this repo's `origin` is on GitHub, but the `github` capability is OFF — network git (push/pull/fetch/clone) and the GitHub API are BLOCKED here, and no token is available. Do NOT attempt a manual clone/push workaround; it cannot reach GitHub. Instead emit a `request` step with capability \"github\" (put it before the steps that need it, in the same batch): the human approves inline, then the rest of the batch runs with github enabled — token injected at the proxy, never in the sandbox."
   }
 
   "\n\n# Capabilities this run\nYour actions run inside a monty + macOS Seatbelt sandbox with a fixed, known reach. Reason about it BEFORE acting; if a request needs access you don't have, say so plainly and propose the smallest change (a host to allowlist, a capability to enable, or a step for the human to run outside the sandbox) instead of retrying.\n\n- Filesystem: the workspace is read-write (plus toolchain caches like ~/.cargo, ~/.npm). The rest of $HOME is DENIED — credentials and keys (~/.ssh, ~/.aws, ~/.config, keychains, git signing keys) are not readable, and writes outside the workspace are denied. A signed `git commit` (commit.gpgsign / SSH signing) and SSH-authenticated git will not work from here."
   <> github_note
+  <> github_off_note
   <> "\n- Network: "
   <> network
   <> "\n- Capabilities enabled: "
   <> groups_text
   <> "."
+  <> requestable
 }
 
 /// Run a command under the run's Seatbelt sandbox + the session mitmproxy — the
@@ -1178,7 +1315,7 @@ fn run_shell(workspace: String, full: String) -> #(Int, String) {
 }
 
 
-/// Write `content` to `dest` through the nono sandbox, so the workspace boundary
+/// Write `content` to `dest` through the seatbelt sandbox, so the workspace boundary
 /// is kernel-enforced — a path that escapes the workspace (including via a
 /// symlink) is denied, matching how run/read/grep are confined. The content is
 /// staged in bough's own dir and granted to the sandbox read-only, so it never
@@ -1392,6 +1529,7 @@ fn step_detail(step: Step) -> String {
     Spawn(title, _) -> "SPAWN " <> title
     Tell(_, target, _) -> "TELL " <> target
     Collect(_, target) -> "COLLECT " <> target
+    Request(_, capability) -> "REQUEST " <> capability
   }
 }
 
@@ -1407,6 +1545,7 @@ fn step_verb(step: Step) -> String {
     Spawn(_, _) -> "SPAWN"
     Tell(_, _, _) -> "TELL"
     Collect(_, _) -> "COLLECT"
+    Request(_, _) -> "REQUEST"
   }
 }
 
@@ -1420,6 +1559,7 @@ fn step_full(step: Step) -> String {
     Edit(_, _, find, replace) ->
       "── find ──\n" <> find <> "\n── replace ──\n" <> replace
     Spawn(_, task) -> task
+    Request(_, capability) -> capability
     _ -> ""
   }
 }
@@ -1436,6 +1576,7 @@ fn step_arg(step: Step) -> String {
     Spawn(title, _) -> title
     Tell(_, target, _) -> target
     Collect(_, target) -> target
+    Request(_, capability) -> capability
   }
 }
 

@@ -7,16 +7,16 @@
 //! we hand it — so the agent's only doors out are the four functions below.
 //!
 //! Two sandboxes meet here (SPEC.md §6): monty confines the agent-authored
-//! Python (no imports of the OS, no sockets, resource-limited), and nono
-//! confines what the *process* can touch at the kernel level. There are two
-//! enforcement layouts:
+//! Python (no imports of the OS, no sockets, resource-limited), and a macOS
+//! Seatbelt profile confines what the *process* can touch at the kernel level.
+//! There are two enforcement layouts:
 //!
 //!   * Sandboxed (`--bash-inherit`, driven by `BOUGH_MONTY_SANDBOXED=1`): the
-//!     whole sidecar already runs inside one nono cell, so `read`/`write`/`edit`
+//!     whole sidecar already runs inside one Seatbelt sandbox, so `read`/`write`/`edit`
 //!     (in-process) *and* any `bash` child inherit the workspace + network +
-//!     secret-deny policy. `bash` is then a plain subprocess — no nested nono.
-//!   * Legacy: the sidecar runs unsandboxed, only `bash` opens its own nono
-//!     cell, and `read`/`write`/`edit` are scoped lexically by `resolve()` here
+//!     secret-deny policy. `bash` is then a plain subprocess — no nested sandbox.
+//!   * Legacy: the sidecar runs unsandboxed, only `bash` opens its own Seatbelt
+//!     sandbox, and `read`/`write`/`edit` are scoped lexically by `resolve()` here
 //!     (weaker — not symlink-aware).
 //!
 //! Protocol (one shot per invocation, driven by `monty_bridge.gleam`):
@@ -264,7 +264,7 @@ fn edit(path: &str, old: &str, new: &str, workspace: &str) -> String {
 
 /// Resolve a (relative or absolute) path against the workspace and reject
 /// anything that escapes it. Since read/write/edit run as trusted host code
-/// outside nono, this lexical check is what keeps monty's confinement honest.
+/// outside the Seatbelt sandbox, this lexical check is what keeps monty's confinement honest.
 fn resolve(path: &str, workspace: &str) -> Result<PathBuf, String> {
     let raw = Path::new(path);
     let joined = if raw.is_absolute() {
