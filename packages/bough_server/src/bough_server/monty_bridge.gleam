@@ -30,17 +30,24 @@ pub fn run_code(
   workspace: String,
   code: String,
   profile: Option(String),
+  env: List(#(String, String)),
 ) -> #(Int, String) {
   let profile_args = case profile {
     Some(path) -> ["--seatbelt-profile", path]
     None -> []
+  }
+  // Pass the proxy env per-invocation (not via bough's global env) so concurrent
+  // sessions on different proxy ports can't clobber each other.
+  let opts = case env {
+    [] -> []
+    _ -> [shellout.SetEnvironment(env)]
   }
   case
     shellout.command(
       binary_path(),
       list.append(["--workspace", workspace, "--code-str", code], profile_args),
       workspace,
-      [],
+      opts,
     )
   {
     Ok(out) -> parse_result(out)

@@ -35,7 +35,10 @@ pub fn ensure(
 
 /// Stop the proxy for `workspace` (best-effort).
 pub fn stop(workspace: String) -> Nil {
-  let dir = key_dir(workspace)
+  stop_dir(key_dir(workspace))
+}
+
+fn stop_dir(dir: String) -> Nil {
   case simplifile.read(dir <> "/pid") {
     Ok(pid) -> {
       let _ = shellout.command("kill", [string.trim(pid)], ".", [])
@@ -43,6 +46,24 @@ pub fn stop(workspace: String) -> Nil {
     }
     Error(_) -> Nil
   }
+}
+
+/// Sweep any proxies left over from a previous bough process (crash or restart):
+/// kill each tracked pid and clear the state dir. Call once at server start —
+/// fresh runs re-spawn their proxies on demand, so nothing should still be live.
+pub fn cleanup_all() -> Nil {
+  let root = root_dir()
+  case simplifile.read_directory(root) {
+    Ok(keys) -> list.each(keys, fn(k) { stop_dir(root <> "/" <> k) })
+    Error(_) -> Nil
+  }
+  let _ = simplifile.delete(root)
+  Nil
+}
+
+fn root_dir() -> String {
+  let home = envoy.get("HOME") |> result.unwrap("/tmp")
+  home <> "/.bough/proxy"
 }
 
 fn start(
@@ -93,8 +114,7 @@ fn addon_path() -> String {
 }
 
 fn key_dir(workspace: String) -> String {
-  let home = envoy.get("HOME") |> result.unwrap("/tmp")
-  home <> "/.bough/proxy/" <> int.to_string(hash(workspace))
+  root_dir() <> "/" <> int.to_string(hash(workspace))
 }
 
 /// A stable loopback port per workspace (9000–9999).

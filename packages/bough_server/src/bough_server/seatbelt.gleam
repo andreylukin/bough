@@ -8,6 +8,7 @@
 //// is owned by the mitmproxy layer (a later phase); this module is the
 //// filesystem/process half only.
 
+import envoy
 import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
@@ -50,11 +51,18 @@ const deny_reads = [
 ]
 
 /// Dirs outside the workspace that toolchains legitimately write to (caches,
-/// temp). Without these, cargo/npm/go/etc. break under write-confinement.
+/// temp, per-language stores). Without these, cargo/npm/go/etc. break under
+/// write-confinement. Extend at runtime with `BOUGH_WRITE_ALLOW` (comma-sep)
+/// when a build needs a dir not listed here.
 const write_allow = [
-  "/private/tmp", "/private/var/folders", "/tmp", "~/.cache", "~/.cargo",
-  "~/.rustup", "~/.npm", "~/.node-gyp", "~/.gradle", "~/.m2", "~/go/pkg",
-  "~/.cocoapods", "~/Library/Caches", "~/.deno", "~/.bun",
+  // temp
+  "/private/tmp", "/private/var/folders", "/tmp",
+  // XDG + generic caches
+  "~/.cache", "~/.local/share", "~/.local/state", "~/Library/Caches",
+  // rust / node / python / go / ruby / java / .net toolchains
+  "~/.cargo", "~/.rustup", "~/.npm", "~/.node-gyp", "~/.yarn", "~/.pnpm-store",
+  "~/.deno", "~/.bun", "~/go", "~/.gem", "~/.bundle", "~/.gradle", "~/.m2",
+  "~/.ivy2", "~/.sbt", "~/.nuget", "~/.dotnet", "~/.cocoapods",
 ]
 
 /// Device files processes need to write (null sink, ptys, pipes).
@@ -72,20 +80,34 @@ pub fn write(
   home: String,
   proxy_port: Option(Int),
 ) -> Result(String, Nil) {
-  case simplifile.write(path, build(workspace, home, proxy_port)) {
+  let extras = case envoy.get("BOUGH_WRITE_ALLOW") {
+    Ok(s) ->
+      string.split(s, ",")
+      |> list.map(string.trim)
+      |> list.filter(fn(d) { d != "" })
+    Error(_) -> []
+  }
+  case simplifile.write(path, build(workspace, home, proxy_port, extras)) {
     Ok(_) -> Ok(path)
     Error(_) -> Error(Nil)
   }
 }
 
-/// Pure: the Seatbelt profile text (SBPL).
-pub fn build(workspace: String, home: String, proxy_port: Option(Int)) -> String {
+/// Pure: the Seatbelt profile text (SBPL). `extras` are additional write-allowed
+/// dirs (from `BOUGH_WRITE_ALLOW`).
+pub fn build(
+  workspace: String,
+  home: String,
+  proxy_port: Option(Int),
+  extras: List(String),
+) -> String {
   let denies =
     deny_reads
     |> list.map(fn(p) { subpath(expand(p, home)) })
     |> string.join("\n  ")
   let allows =
-    [workspace, ..list.map(write_allow, fn(p) { expand(p, home) })]
+    [workspace, ..list.append(write_allow, extras)]
+    |> list.map(fn(p) { expand(p, home) })
     |> list.map(subpath)
     |> string.join("\n  ")
   "(version 1)\n(allow default)\n\n"

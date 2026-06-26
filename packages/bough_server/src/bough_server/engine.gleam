@@ -747,8 +747,8 @@ fn exec_code(state: State, code: String) -> #(State, Exec) {
   // `None` leaves the network open (transitional fallback).
   let port = ensure_proxy(state)
   let profile = option.from_result(write_seatbelt_profile(state, port))
-  set_bash_proxy(port)
-  let #(exit, output) = monty_bridge.run_code(state.workspace, code, profile)
+  let #(exit, output) =
+    monty_bridge.run_code(state.workspace, code, profile, bash_proxy_env(port))
   #(bump(state), Exec(exit, output))
 }
 
@@ -807,15 +807,18 @@ fn github_token() -> Result(String, Nil) {
   |> result.replace_error(Nil)
 }
 
-/// Tell monty (via its inherited env) to route `bash` egress through the proxy.
-fn set_bash_proxy(port: Option(Int)) -> Nil {
+/// The env that routes monty's `bash` through the proxy — passed per-invocation
+/// (not via bough's global env), so concurrent sessions on different ports can't
+/// clobber each other.
+fn bash_proxy_env(port: Option(Int)) -> List(#(String, String)) {
   case port {
-    None -> Nil
+    None -> []
     Some(p) -> {
       let home = envoy.get("HOME") |> result.unwrap("")
-      envoy.set("BOUGH_BASH_PROXY", "http://127.0.0.1:" <> int.to_string(p))
-      envoy.set("BOUGH_BASH_PROXY_CA", home <> "/.mitmproxy/mitmproxy-ca-cert.pem")
-      Nil
+      [
+        #("BOUGH_BASH_PROXY", "http://127.0.0.1:" <> int.to_string(p)),
+        #("BOUGH_BASH_PROXY_CA", home <> "/.mitmproxy/mitmproxy-ca-cert.pem"),
+      ]
     }
   }
 }

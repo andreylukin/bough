@@ -1352,7 +1352,7 @@ fn apply_executor(
           case extract_program(text) {
             None -> #(0, "(no program)", "")
             Some(prog) -> {
-              let #(_exit, out) = monty_bridge.run_code(ws, prog, None)
+              let #(_exit, out) = monty_bridge.run_code(ws, prog, None, [])
               #(1, "monty program", out)
             }
           }

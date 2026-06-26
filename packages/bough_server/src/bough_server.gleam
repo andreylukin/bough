@@ -1,10 +1,10 @@
 //// bough server entry point.
 ////
-//// Owns all state: the agent loop, the session tree, and nono supervision.
-//// Clients (TUI, web, …) are thin and talk to it over HTTP + SSE (SPEC.md §3,
-//// §8). The slice boots a wisp/mist HTTP server with `/`, `/health`, `/doc`;
-//// session supervision and the agent loop land next (SPEC.md §10).
+//// Owns all state: the agent loop and the session tree. Clients (TUI, web, …)
+//// are thin and talk to it over HTTP + SSE (SPEC.md §3, §8). Boots a wisp/mist
+//// HTTP server with the JSON API and the web client.
 
+import bough_server/proxy
 import bough_server/router
 import envoy
 import gleam/erlang/process
@@ -27,6 +27,8 @@ pub fn main() -> Nil {
 
 pub fn serve(port: Int) -> Nil {
   wisp.configure_logger()
+  // Sweep any per-session mitmproxies left running by a previous bough process.
+  proxy.cleanup_all()
   let secret_key_base = wisp.random_string(64)
 
   let assert Ok(_) =

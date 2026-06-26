@@ -62,11 +62,31 @@ Point bough at a project and ask. A frontier model plans, the sandbox runs the w
 ## How it works
 
 - **Supervisor + worker.** A frontier model supervises; a local model (VibeThinker-3B, runs offline) patches trivial breakage for free.
-- **Two sandboxes, one airlock.** [monty](https://github.com/pydantic/monty) (a Rust Python interpreter) confines the agent's program; **nono** confines the processes it launches — kernel-enforced workspace + network allowlist, inherited by every child.
+- **Two sandboxes, one airlock.** [monty](https://github.com/pydantic/monty) (a Rust Python interpreter) confines the agent's program; a **macOS Seatbelt** profile confines the processes it launches — credentials/keys unreadable, writes confined to the workspace (+ toolchain caches).
+- **Owned, programmable egress.** Each session's outbound network is routed through a per-session [mitmproxy](https://mitmproxy.org) bough spawns: a default-deny host allowlist and credential injection you control in Python (`priv/proxy/bough_proxy.py`), so a secret is injected at the proxy and **never enters the sandbox**.
 - **Snapshots.** Each turn checkpoints the workspace to a per-session shadow git repo (never your project's `.git`); a fork restores it.
 - **Headless server + thin clients.** One server (`packages/bough_server`) serves the web UI from `priv/web` and a JSON API; a legacy terminal client (`bough_tui`) drives the same API.
 
 See **[SPEC.md](SPEC.md)** for the full design.
+
+## Network & credentials (macOS)
+
+The sandbox is seatbelt (filesystem) + a per-session mitmproxy (egress). To let the agent authenticate to a service without the token ever entering the sandbox, enable a **provider** (e.g. `github`) on the session — bough reads the token outside the sandbox (`gh auth token`) and the proxy injects it into matching requests.
+
+For TLS interception to work, the sandboxed clients must trust the proxy's CA — a **one-time** setup:
+
+```bash
+brew install mitmproxy
+mitmdump --version >/dev/null   # generates ~/.mitmproxy/mitmproxy-ca-cert.pem on first run
+# trust it for your login (no sudo, no prompt):
+security add-trusted-cert -r trustRoot \
+  -k ~/Library/Keychains/login.keychain-db \
+  ~/.mitmproxy/mitmproxy-ca-cert.pem
+```
+
+`curl`/`git` work through the proxy via the CA env bough sets; `gh` works once the CA is in the keychain (Go ignores `SSL_CERT_FILE` on macOS). Remove the trust with `security delete-certificate -c mitmproxy ~/Library/Keychains/login.keychain-db`.
+
+If a build needs to write to a dir outside the workspace and toolchain caches, add it with `BOUGH_WRITE_ALLOW=/path/a,/path/b`.
 
 ## Develop
 

@@ -117,7 +117,7 @@ pub fn control_round_trip_test() {
 /// (~-expanded; absolute entries preserved) and deny-default writes except the
 /// workspace + allowlist.
 pub fn seatbelt_profile_test() {
-  let p = seatbelt.build("/work/space", "/Users/x", None)
+  let p = seatbelt.build("/work/space", "/Users/x", None, [])
   assert string.contains(p, "(allow default)")
   assert string.contains(p, "(deny file-read*")
   assert string.contains(p, "(subpath \"/Users/x/.ssh\")")
@@ -131,7 +131,7 @@ pub fn seatbelt_profile_test() {
   assert !string.contains(p, "(deny network*)")
 
   // with a proxy port, egress is locked to that loopback port
-  let locked = seatbelt.build("/work/space", "/Users/x", Some(8080))
+  let locked = seatbelt.build("/work/space", "/Users/x", Some(8080), [])
   assert string.contains(locked, "(deny network*)")
   assert string.contains(locked, "(remote ip \"localhost:8080\")")
 }
