@@ -1,18 +1,25 @@
 """bough's mitmproxy addon — the programmable egress layer.
 
 A programmable egress policy you can extend in code. Reads a
-per-session config (path in BOUGH_PROXY_CONFIG) and, on every flow:
+per-session config (path in BOUGH_PROXY_CONFIG) and gates every connection:
 
-  * default-deny allowlist — a request to a host not on `allow` is blocked (403),
-    so egress is gated at L7 (method/path-aware if you extend it here);
-  * credential injection — for hosts matching an `inject` rule, the real secret
-    (read from this process's env, OUTSIDE the sandbox) is written into the auth
-    header, so the sandboxed agent never holds it;
+  * default-deny allowlist — a CONNECT (or plain request) to a host not on
+    `allow` is blocked (403). Enforced at the CONNECT/host layer so it covers
+    passthrough hosts too, and again at L7 for hosts we decrypt;
+  * passthrough — hosts on `passthrough` are tunnelled WITHOUT interception, so
+    a client that won't trust our CA (e.g. `gh`, a Go binary that ignores
+    SSL_CERT_FILE on macOS) talks straight to the real server with its real
+    cert. Still host-gated by the allowlist; we just can't see inside the TLS,
+    so credentials for these hosts must travel in the sandbox env, not injected;
+  * credential injection — for decrypted hosts matching an `inject` rule, the
+    real secret (read from this process's env, OUTSIDE the sandbox) is written
+    into the auth header, so the sandboxed agent never holds it;
   * sniffing — every decision is logged for visibility.
 
 Config shape (JSON):
   {
     "allow": ["api.github.com", "github.com"],
+    "passthrough": ["api.github.com", "github.com"],
     "inject": [
       {"hosts": ["api.github.com"], "header": "Authorization",
        "format": "Bearer {}", "secret_env": "BOUGH_SECRET_github"},
@@ -29,7 +36,7 @@ import json
 import logging
 import os
 
-from mitmproxy import http
+from mitmproxy import http, tls
 
 log = logging.getLogger("bough")
 
@@ -61,12 +68,45 @@ def _host_matches(host: str, patterns: list) -> bool:
     return False
 
 
+def _blocked(host: str, config: dict) -> bool:
+    """True if `host` is not permitted by the allowlist (empty = allow all)."""
+    allow = config.get("allow") or []
+    return bool(allow) and not _host_matches(host, allow)
+
+
+def http_connect(flow: http.HTTPFlow) -> None:
+    """Gate the CONNECT before any bytes flow. This is the only gate passthrough
+    hosts get (we never decrypt them), so the allowlist is enforced here at the
+    host level for every HTTPS connection, intercepted or not."""
+    config = _load()
+    host = flow.request.host
+    if _blocked(host, config):
+        log.info("bough: BLOCK CONNECT %s (not in allowlist)", host)
+        flow.response = http.Response.make(
+            403, b"blocked by bough egress policy\n",
+            {"Content-Type": "text/plain"},
+        )
+    else:
+        log.info("bough: ALLOW CONNECT %s", host)
+
+
+def tls_clienthello(data: tls.ClientHelloData) -> None:
+    """Tunnel `passthrough` hosts as-is (no interception), so a client that won't
+    trust our CA reaches the real server. Host-gating already happened in
+    http_connect; we just decline to decrypt."""
+    config = _load()
+    passthrough = config.get("passthrough") or []
+    sni = data.client_hello.sni or ""
+    if sni and _host_matches(sni, passthrough):
+        log.info("bough: PASSTHROUGH %s (not intercepted)", sni)
+        data.ignore_connection = True
+
+
 def request(flow: http.HTTPFlow) -> None:
     config = _load()
     host = flow.request.pretty_host
 
-    allow = config.get("allow") or []
-    if allow and not _host_matches(host, allow):
+    if _blocked(host, config):
         log.info("bough: BLOCK %s (not in allowlist)", host)
         flow.response = http.Response.make(
             403, b"blocked by bough egress policy\n",

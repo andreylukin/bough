@@ -61,8 +61,9 @@ pub fn builtins() -> List(Provider) {
   [
     Provider(
       name: "github",
-      description: "GitHub git push + REST API (token injected on egress via"
-        <> " the mitmproxy; use git + curl, not gh — Go ignores the proxy CA on macOS)",
+      description: "GitHub git push + REST API (token injected on egress via the"
+        <> " mitmproxy; use git + curl. Set BOUGH_GITHUB_PASSTHROUGH=1 to instead"
+        <> " tunnel GitHub TLS + put the token in the sandbox so `gh` works)",
       allow: ["github.com", "api.github.com"],
       reads: [],
       prepare: "echo GITHUB_TOKEN=$(gh auth token)",
