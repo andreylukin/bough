@@ -19,19 +19,16 @@
 #   BOUGH_HOME       where to clone if not run from a checkout (default ~/repos/bough)
 #   BOUGH_REPO       git URL to clone (default https://github.com/andreylukin/bough.git)
 #   BOUGH_NO_LLAMA=1 skip the (large) llama.cpp install; supervisor-only fixes still work
-#   BOUGH_NO_MODEL=1 skip the worker model download (~1.9 GB)
-#   BOUGH_MODEL_URL  override the GGUF download URL (default: VibeThinker-3B q4_k_m)
+#   BOUGH_NO_MODEL=1 skip the worker model download (~2 GB)
+#   BOUGH_MODEL_URL  override the GGUF download URL (default: Qwen2.5-Coder-3B-Instruct q4_k_m)
 #   BOUGH_NO_MONTY=1 skip the rust toolchain + bough-monty sidecar build (no code-mode)
 
 set -euo pipefail
 
 BOUGH_HOME="${BOUGH_HOME:-$HOME/repos/bough}"
 BOUGH_REPO="${BOUGH_REPO:-https://github.com/andreylukin/bough.git}"
-# Default worker model — VibeThinker-3B (arXiv:2606.16140), a reasoning/coding
-# SLM built on Qwen2.5-Coder-3B. Filename must match worker_runtime.gleam's
-# default_gguf so bough finds it at ~/.bough/models/ without any env vars.
-BOUGH_MODEL_FILE="vibethinker-3b-q4_k_m.gguf"
-BOUGH_MODEL_URL="${BOUGH_MODEL_URL:-https://huggingface.co/oussaber/VibeThinker-3B-Q4_K_M-GGUF/resolve/main/${BOUGH_MODEL_FILE}}"
+# The worker model (file + URL) lives in scripts/worker-model.sh, sourced once
+# the checkout is in place (step 5), so it can never drift from the engine.
 
 info() { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m==>\033[0m %s\n' "$*" >&2; }
@@ -102,20 +99,14 @@ info "building all packages (+ the bough-monty code-mode sidecar)"
 make -C "$SRC" build
 
 # 5. Worker model ----------------------------------------------------------
+# shellcheck source=scripts/worker-model.sh
+. "$SRC/scripts/worker-model.sh"
 if [ "${BOUGH_NO_MODEL:-0}" = "1" ]; then
   info "skipping worker model download (BOUGH_NO_MODEL=1)"
 else
-  model_dir="$HOME/.bough/models"
-  model_path="$model_dir/$BOUGH_MODEL_FILE"
-  if [ -f "$model_path" ]; then
-    info "worker model already present at $model_path"
-  else
-    info "downloading worker model (~1.9 GB) to $model_path"
-    mkdir -p "$model_dir"
-    # -C - resumes a partial download so a re-run after an interruption continues.
-    curl -fSL -C - -o "$model_path" "$BOUGH_MODEL_URL" \
-      || die "model download failed; re-run install.sh to resume, or set BOUGH_NO_MODEL=1 to skip"
-  fi
+  prune_stale_worker_models   # drop any pre-Qwen GGUF a prior install left behind
+  ensure_worker_model \
+    || die "model download failed; re-run install.sh to resume, or set BOUGH_NO_MODEL=1 to skip"
 fi
 
 # 6. Put `bough` on PATH ---------------------------------------------------
@@ -138,7 +129,7 @@ Run it from anywhere (starts the server, opens the web UI, cleans up on exit):
 Or start the server by hand:
     cd "$SRC" && make serve                       # the server + web UI (127.0.0.1:4096)
 
-The VibeThinker-3B worker is always on (local llama-server, no config needed).
+The Qwen2.5-Coder-3B-Instruct worker is always on (local llama-server, no config needed).
 The supervisor acts via the bough-monty code-mode sandbox (set BOUGH_MONTY_BIN
 to override the binary). Optional knobs: BOUGH_MODEL, BOUGH_PROVIDER,
 BOUGH_MAX_TURNS — see README.md.

@@ -3,7 +3,8 @@
 #   bough          start the server, wait for health, then open the web UI
 #                  in your browser (the server runs in the foreground; Ctrl-C
 #                  stops it)
-#   bough update   pull the latest version from git and rebuild in place
+#   bough update   pull the latest version from git, rebuild, and reconcile the
+#                  worker model (fetch the current GGUF, drop superseded ones)
 
 set -euo pipefail
 
@@ -27,13 +28,24 @@ case "${1:-}" in
       exit 1
     fi
     make -C "$ROOT" build
+    # Reconcile the worker model: drop any superseded GGUF (e.g. machines that
+    # installed the old VibeThinker file) and fetch the current one if missing,
+    # so the engine's default_gguf is actually on disk. BOUGH_NO_MODEL=1 skips.
+    # shellcheck source=scripts/worker-model.sh
+    . "$ROOT/scripts/worker-model.sh"
+    if [ "${BOUGH_NO_MODEL:-0}" = "1" ]; then
+      echo "==> skipping worker model check (BOUGH_NO_MODEL=1)"
+    else
+      prune_stale_worker_models
+      ensure_worker_model || { echo "error: worker model download failed; re-run 'bough update' to resume." >&2; exit 1; }
+    fi
     echo "bough updated to $(git -C "$ROOT" rev-parse --short HEAD) ($branch)."
     exit 0
     ;;
   -h | --help)
     echo "usage: bough [update]"
     echo "  (no args)  start the server and open the web UI"
-    echo "  update     pull the latest version from git and rebuild"
+    echo "  update     pull the latest, rebuild, and reconcile the worker model"
     exit 0
     ;;
   "") ;;
