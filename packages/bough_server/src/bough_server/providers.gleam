@@ -41,6 +41,11 @@ pub type Provider {
     description: String,
     /// Hosts this provider needs the network sandbox to allow.
     allow: List(String),
+    /// Hosts to TLS-passthrough (tunnel, not MITM) because the tool's client
+    /// won't trust our CA — e.g. Go CLIs (gh, kubectl) and locally-signed
+    /// requests (aws SigV4). Still host-gated; creds for these must reach the
+    /// tool via the sandbox (env or a readable config), not proxy injection.
+    passthrough: List(String),
     /// Filesystem paths the tool needs to read (e.g. its config dir). Granted
     /// via the same read + bypass carve-out as credential capabilities.
     reads: List(String),
@@ -64,16 +69,29 @@ pub fn builtins() -> List(Provider) {
       description: "GitHub git push + REST API. `gh` works (api.github.com is"
         <> " tunnelled, token in the sandbox env); git push/pull use proxy-side"
         <> " injection (no token in the sandbox). Egress host-gated to GitHub.",
-      allow: ["github.com", "api.github.com"],
+      allow: ["github.com", "api.github.com", "codeload.github.com"],
+      passthrough: ["api.github.com"],
       reads: [],
       prepare: "echo GITHUB_TOKEN=$(gh auth token)",
       mode: Egress,
       service: "github",
     ),
     Provider(
+      name: "exa",
+      description: "Exa web search via `restish exa ...` (search/answer/contents)."
+        <> " api.exa.ai is tunnelled; restish reads its key from its own config.",
+      allow: ["api.exa.ai", "raw.githubusercontent.com"],
+      passthrough: ["api.exa.ai", "raw.githubusercontent.com"],
+      reads: [],
+      prepare: "",
+      mode: EndpointOnly,
+      service: "",
+    ),
+    Provider(
       name: "aws",
       description: "AWS CLI via short-lived STS creds (signs locally)",
       allow: ["sts.amazonaws.com"],
+      passthrough: ["sts.amazonaws.com"],
       reads: [],
       prepare: "aws sts get-session-token --output text"
         <> " --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]'"
@@ -85,6 +103,7 @@ pub fn builtins() -> List(Provider) {
       name: "kube",
       description: "kubectl via a local kubectl proxy (creds stay outside)",
       allow: ["127.0.0.1:8001"],
+      passthrough: [],
       reads: [],
       prepare: "kubectl proxy --port=8001 >/dev/null 2>&1 &",
       mode: EndpointOnly,
@@ -245,6 +264,11 @@ pub fn decoder() -> decode.Decoder(Provider) {
   use name <- decode.field("name", decode.string)
   use description <- decode.optional_field("description", "", decode.string)
   use allow <- decode.optional_field("allow", [], decode.list(decode.string))
+  use passthrough <- decode.optional_field(
+    "passthrough",
+    [],
+    decode.list(decode.string),
+  )
   use reads <- decode.optional_field("reads", [], decode.list(decode.string))
   use prepare <- decode.optional_field("prepare", "", decode.string)
   use mode <- decode.optional_field("mode", EndpointOnly, mode_decoder())
@@ -253,6 +277,7 @@ pub fn decoder() -> decode.Decoder(Provider) {
     name:,
     description:,
     allow:,
+    passthrough:,
     reads:,
     prepare:,
     mode:,

@@ -854,22 +854,20 @@ fn ensure_proxy(state: State) -> Option(Int) {
 /// the approved hosts plus any enabled provider's hosts/injection. (github is
 /// wired today; other providers generalize to more inject rules.)
 fn proxy_inputs(state: State) -> #(String, List(#(String, String))) {
+  // Provider-driven: every enabled capability contributes the hosts it needs
+  // (`allow`) and the hosts whose TLS must be tunnelled because the tool won't
+  // trust our MITM CA (`passthrough`) — e.g. gh (api.github.com), restish
+  // (api.exa.ai), aws (SigV4). github additionally keeps a special git-credential
+  // injection (below) so plain git push/pull need no token in the sandbox.
+  let enabled = list.filter_map(state.groups, providers.get)
   let github = list.contains(state.groups, "github")
-  // `gh` is a Go binary that won't trust our MITM CA, so we tunnel ONLY
-  // `api.github.com` (gh's REST/GraphQL endpoint) — gh's client sees the real
-  // cert and authenticates with the token forwarded into the sandbox env (see
-  // `sandbox_token_env`). git hosts (github.com/codeload) STAY on MITM injection,
-  // so plain `git push/pull` works with no token in the sandbox (and avoids a
-  // streaming-POST hang seen when tunnelling git). Host-gating applies to all.
-  let gh_hosts = case github {
-    True -> ["github.com", "api.github.com", "codeload.github.com"]
-    False -> []
-  }
-  let allow = list.unique(list.append(state.net_allow, gh_hosts))
-  let pass_hosts = case github {
-    True -> ["api.github.com"]
-    False -> []
-  }
+  let allow =
+    list.unique(list.flatten([
+      state.net_allow,
+      list.flat_map(enabled, fn(p) { p.allow }),
+    ]))
+  let pass_hosts =
+    list.unique(list.flat_map(enabled, fn(p) { p.passthrough }))
   // Basic-auth injection for git over HTTPS, so `git push` just works without the
   // token in the sandbox. api.github.com isn't injected — it's tunnelled for gh.
   let git_inject =

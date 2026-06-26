@@ -154,6 +154,7 @@ pub fn providers_apply_egress_test() {
       name: "ghx",
       description: "",
       allow: ["github.com", "api.github.com"],
+      passthrough: [],
       reads: [],
       prepare: "",
       mode: providers.Egress,
