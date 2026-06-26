@@ -12,17 +12,14 @@
 //// The message/fork/events routes (agent loop, SSE) land next (SPEC.md §10).
 
 import bough_core
-import bough_core/nono
 import bough_core/session.{type Entry, type SessionTree, Entry}
 import bough_server/agent
 import bough_server/clock
 import bough_server/control
 import bough_server/engine
 import bough_server/json_value.{type JsonValue, JArray}
-import bough_server/net_profile
 import bough_server/packs
 import bough_server/providers
-import bough_server/nono_bridge
 import bough_server/provider
 import bough_server/run_store
 import bough_server/session_lock
@@ -158,35 +155,40 @@ fn config() -> Response {
 
 // --- Capability groups (SPEC §7) -----------------------------------------
 
-/// The nono policy-group catalog for this host (name, description, locked).
+/// The capability catalog: bough's providers (github/aws/…) a session can
+/// enable. Keeps the `{name, description, platform, locked}` shape the web
+/// client expects.
 fn groups_catalog() -> Response {
-  json_ok(json.to_string(json.array(nono_bridge.list_groups(), group_to_json)))
+  json_ok(
+    json.to_string(
+      json.array(providers.list(), fn(p) {
+        json.object([
+          #("name", json.string(p.name)),
+          #("description", json.string(p.description)),
+          #("platform", json.string("")),
+          #("locked", json.bool(False)),
+        ])
+      }),
+    ),
+  )
 }
 
-fn group_to_json(g: nono.Group) -> json.Json {
-  json.object([
-    #("name", json.string(g.name)),
-    #("description", json.string(g.description)),
-    #("platform", json.string(g.platform)),
-    #("locked", json.bool(g.locked)),
-  ])
-}
-
-/// The full contents (granted/denied paths) of one group, for the inspector.
+/// One provider's detail for the inspector: its description + the hosts it
+/// allows (shown in the paths list as network grants).
 fn group_detail(name: String) -> Response {
-  case nono_bridge.group_detail(name) {
-    Ok(d) ->
+  case providers.get(name) {
+    Ok(p) ->
       json_ok(
         json.to_string(
           json.object([
-            #("name", json.string(d.name)),
-            #("description", json.string(d.description)),
+            #("name", json.string(p.name)),
+            #("description", json.string(p.description)),
             #(
               "paths",
-              json.array(d.paths, fn(p) {
+              json.array(p.allow, fn(host) {
                 json.object([
-                  #("access", json.string(p.access)),
-                  #("path", json.string(p.path)),
+                  #("access", json.string("network")),
+                  #("path", json.string(host)),
                 ])
               }),
             ),
@@ -220,15 +222,10 @@ fn set_session_groups(req: Request, id: String) -> Response {
       case session_manager.load(id) {
         Error(_) -> wisp.not_found()
         Ok(tree) -> {
-          // Enableable capabilities: nono's toggleable groups plus bough's
-          // providers (github/aws/…), which are gated the same way.
-          let toggleable =
-            nono_bridge.list_groups()
-            |> list.filter(fn(g) { !g.locked })
-            |> list.map(fn(g) { g.name })
-            |> list.append(list.map(providers.list(), fn(p) { p.name }))
+          // Enableable capabilities: bough's providers (github/aws/…).
+          let toggleable = list.map(providers.list(), fn(p) { p.name })
           case list.all(names, fn(n) { list.contains(toggleable, n) }) {
-            False -> wisp.bad_request("unknown or locked group")
+            False -> wisp.bad_request("unknown capability")
             True -> {
               // Enabling a group clears it from the advisory suggestions.
               let suggested =
@@ -297,10 +294,7 @@ fn apply_packs(req: Request, id: String) -> Response {
         Error(_) -> wisp.not_found()
         Ok(tree) -> {
           let chosen = list.filter_map(names, packs.get)
-          let toggleable =
-            nono_bridge.list_groups()
-            |> list.filter(fn(g) { !g.locked })
-            |> list.map(fn(g) { g.name })
+          let toggleable = list.map(providers.list(), fn(p) { p.name })
           let groups =
             list.fold(chosen, tree.groups, fn(acc, p) {
               list.append(acc, p.groups)
@@ -346,16 +340,14 @@ fn draft_pack(req: Request) -> Response {
       case agent_setup() {
         Error(m) -> json_error(m)
         Ok(#(prov, key, model)) -> {
-          let catalog =
-            nono_bridge.list_groups() |> list.filter(fn(g) { !g.locked })
           let listing =
-            catalog
-            |> list.map(fn(g) { "- " <> g.name <> ": " <> g.description })
+            providers.list()
+            |> list.map(fn(p) { "- " <> p.name <> ": " <> p.description })
             |> string.join("\n")
           let user =
             "Work to be sandboxed:\n"
             <> description
-            <> "\n\nAvailable capability groups (choose only from these exact names; pick none if filesystem access beyond the workspace isn't needed):\n"
+            <> "\n\nAvailable capabilities (choose only from these exact names; pick none if no extra access is needed):\n"
             <> listing
           case
             provider.complete(
@@ -373,7 +365,7 @@ fn draft_pack(req: Request) -> Response {
             Ok(resp) ->
               case resp.tool_uses {
                 [tu, ..] -> {
-                  let names = list.map(catalog, fn(g) { g.name })
+                  let names = list.map(providers.list(), fn(p) { p.name })
                   let groups =
                     string_list(tu.input, "groups")
                     |> list.filter(fn(g) { list.contains(names, g) })
@@ -600,7 +592,7 @@ fn engine_config(
     max_rounds: max_rounds(),
     review: review,
     net_gate: net_gate,
-    net_credentials: net_credentials(),
+    net_credentials: [],
     worker_temperature: worker_temp,
     worker_top_p: worker_top_p,
   )
@@ -631,19 +623,6 @@ fn worker_decoding(base: engine.Config) -> #(Option(Float), Option(Float)) {
 /// is the escape hatch that fully blocks the network instead (no prompts).
 fn net_gate() -> Bool {
   envoy.get("BOUGH_NET") != Ok("0")
-}
-
-/// Opt-in credential injection for sandboxed commands (SPEC §6.4): set
-/// `BOUGH_NET_CREDENTIALS` to a comma-separated list of `name=ENV_VAR` (or bare
-/// `name`). Only entries whose env var is actually set are declared, so the
-/// generated profile never references a missing credential.
-fn net_credentials() -> List(#(String, String)) {
-  case envoy.get("BOUGH_NET_CREDENTIALS") {
-    Error(_) -> []
-    Ok(spec) ->
-      net_profile.parse_credentials(spec)
-      |> list.filter(fn(c) { envoy.get(c.1) |> result.is_ok })
-  }
 }
 
 /// The resolved supervisor provider name and model from the environment
