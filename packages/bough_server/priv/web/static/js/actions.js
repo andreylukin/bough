@@ -1,10 +1,10 @@
 import { api } from "./api.js";
 import { clearPastes, closePicker } from "./composer.js";
 import { el, esc, toast } from "./dom.js";
-import { anyBranchRunning, treeBranches } from "./graph.js";
+import { anyBranchRunning, leafContaining, onActivePath, treeBranches } from "./graph.js";
 import { render, renderRunControls } from "./main.js";
-import { renderMap } from "./map.js";
-import { renderHeader, renderRight, renderSidebar, renderTabCounts } from "./panes.js";
+import { jumpToEntry, renderMap } from "./map.js";
+import { renderHeader, renderRight, renderSidebar, renderTabCounts, switchBranch } from "./panes.js";
 import { ACTIVE, state } from "./state.js";
 import { closeDrawer, dropSubbar, openDrawer, renderTranscript } from "./transcript.js";
 
@@ -12,21 +12,69 @@ export async function loadSessions() {
   try { state.sessions = await api.sessions(); } catch { state.sessions = []; }
 }
 
-export async function openSession(id) {
+// A session link is `sessionId:nodeId` — the session plus a node to focus on.
+// The bare `sessionId` (no colon) is still accepted. Node ids never contain a
+// colon, so splitting on the first one is unambiguous.
+export function parseSessionLink(raw) {
+  const s = String(raw || "");
+  const i = s.indexOf(":");
+  return i === -1 ? { id: s, node: null } : { id: s.slice(0, i), node: s.slice(i + 1) };
+}
+
+// Build a link to a node in the current session: `sessionId:nodeId` (or the bare
+// session id when there's no node). The inverse of parseSessionLink.
+export function sessionLink(node) {
+  const sid = state.sessionId || (state.tree && state.tree.id) || "";
+  return node ? `${sid}:${node}` : sid;
+}
+
+export async function openSession(raw) {
+  const { id, node } = parseSessionLink(raw);
   stopPoll();
   closeDrawer();
   closeNav(); // came from the sessions overlay on mobile — return to the transcript
   state.sessionId = id;
   state.viewChildId = null; state.childTree = null; state.childRun = null;
   state.graftRoot = null; state.paneSig = null; state.diff = null; state.files = null; state.mapView = null;
+  state.editingEid = null;
   closePicker(); clearPastes();
   try {
     state.tree = await api.tree(id);
     state.run = await api.run(id).catch(() => null);
     state.subagents = await api.subagents(id).catch(() => []);
   } catch (e) { toast(String(e.message || e), true); return; }
+  // Reflect the open session in the URL so it's a shareable deep link. A node
+  // link keeps the node; a plain open points at the current branch tip.
+  syncSessionHash(node || state.tree.active_leaf);
   render();
   ensurePoll();
+  if (node) focusNode(node);
+}
+
+// Bring `nid` into view: scroll+flash it if it's on the active branch, otherwise
+// switch to a branch that contains it first.
+export async function focusNode(nid) {
+  if (!state.tree || !state.tree.entries.some((e) => e.id === nid)) {
+    toast("That turn isn't in this session.", true);
+    return;
+  }
+  if (onActivePath(nid)) { jumpToEntry(nid); return; }
+  const leaf = leafContaining(state.tree, nid);
+  if (leaf && leaf !== state.tree.active_leaf) await switchBranch(leaf);
+  jumpToEntry(nid);
+}
+
+// Write the current session (and optional focus node) to the URL hash without
+// firing a navigation — `replaceState` doesn't emit `hashchange`, so this won't
+// loop back through the hashchange handler.
+export function syncSessionHash(node) {
+  const want = node ? `${state.sessionId}:${node}` : state.sessionId;
+  if (sessionHash() !== want) history.replaceState(null, "", "#" + want);
+}
+
+export function sessionHash() {
+  try { return decodeURIComponent((location.hash || "").replace(/^#/, "")); }
+  catch { return (location.hash || "").replace(/^#/, ""); }
 }
 
 // Keep the poller running while the viewed run is active OR any other branch is

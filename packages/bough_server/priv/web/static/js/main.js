@@ -1,6 +1,6 @@
-import { applyPanes, backToParent, closeNav, gateDecision, loadSessions, newSession, newSessionInProject, openChild, openSession, stopRun, toggleGroup, togglePane } from "./actions.js";
+import { applyPanes, backToParent, closeNav, gateDecision, loadSessions, newSession, newSessionInProject, openChild, openSession, sessionHash, stopRun, toggleGroup, togglePane } from "./actions.js";
 import { api } from "./api.js";
-import { choosePicker, closePicker, movePicker, onPaste, picker, previewPaste, refreshPicker, removePaste, submitComposer } from "./composer.js";
+import { cancelEdit, choosePicker, closePicker, movePicker, onPaste, picker, previewPaste, refreshPicker, removePaste, renderEditBanner, submitComposer } from "./composer.js";
 import { $, copyText, toast } from "./dom.js";
 import { closeMap, renderMap } from "./map.js";
 import { adoptBranch, applyPack, deletePackByName, draftPackFlow, refreshDiff, refreshPacks, renderHeader, renderRight, renderSidebar, savePackCurrent, switchBranch, toggleProject } from "./panes.js";
@@ -13,6 +13,7 @@ export function render() {
   renderRight();
   renderTranscript();
   renderRunControls();
+  renderEditBanner(); // reflect (or clear) any in-progress edit & resend
   if (state.mapOpen) renderMap(); // keep the map in sync with new turns/forks/grafts
 }
 
@@ -87,7 +88,7 @@ export function wire() {
       return inp ? inp.value : "";
     };
     switch (act) {
-      case "copy-id": copyText(id, "Session id copied"); break;
+      case "copy-id": copyText(id, "Link copied"); break;
       case "stop-run": stopRun(); break;
       case "toggle-project": toggleProject(t.dataset.proj); break;
       case "new-in-project": newSessionInProject(t.dataset.proj); break;
@@ -102,6 +103,7 @@ export function wire() {
       case "back-parent": backToParent(); break;
       case "graft-cancel": state.graftRoot = null; renderRight(); break;
       case "diff-refresh": state.diff = null; refreshDiff(); break;
+      case "edit-cancel": cancelEdit(); break;
       case "paste-remove": removePaste(id); break;
       case "paste-preview": previewPaste(id); break;
       case "toggle-done-subs": state.showDoneSubs = !state.showDoneSubs; renderRight(); break;
@@ -140,6 +142,7 @@ export function wire() {
     if (e.key !== "Escape") return;
     if ($("#drawer.open")) closeDrawer();
     else if (state.mapOpen) closeMap();
+    else if (state.editingEid) cancelEdit();
     else closeNav();
   });
 }
@@ -152,8 +155,17 @@ export async function boot() {
   try { state.config = await api.config(); } catch {}
   try { state.models = await api.models(); } catch {}
   await loadSessions();
-  if (state.sessions.length > 0) await openSession(state.sessions[0].id);
-  else render();
+  // A deep link in the URL (#sessionId or #sessionId:nodeId) wins; otherwise
+  // fall back to the most recent session. We update the hash with replaceState
+  // (which doesn't emit hashchange), so events here are only real navigation —
+  // back/forward or a hand-edited URL — and always warrant a (re)open.
+  window.addEventListener("hashchange", () => { const h = sessionHash(); if (h) openSession(h); });
+  const hash = sessionHash();
+  if (hash) await openSession(hash);
+  // A stale/invalid hash leaves no tree loaded — fall back to the latest session
+  // so a bad deep link never strands you on a blank screen.
+  if (!state.tree && state.sessions.length > 0) await openSession(state.sessions[0].id);
+  else if (!state.tree) render();
 }
 
 boot();

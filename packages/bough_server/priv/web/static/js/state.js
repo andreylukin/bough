@@ -14,6 +14,7 @@ export const state = {
   diff: null,            // { sessionId, git, files[], patch } — lazy-loaded Changes tab
   files: null,           // { sessionId, list[] } — workspace files for the "@" picker
   pastes: [],            // large clipboard pastes collapsed into chips, expanded on send
+  editingEid: null,      // a past user entry loaded into the composer to edit & resend (branches)
   groupsCatalog: [],
   packs: [],
   rightTab: "tree",

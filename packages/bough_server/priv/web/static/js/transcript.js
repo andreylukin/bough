@@ -1,6 +1,7 @@
-import { forkNode } from "./actions.js";
+import { forkNode, sessionLink } from "./actions.js";
 import { api } from "./api.js";
-import { $, cleanDigest, clip, el, esc, md, toast } from "./dom.js";
+import { beginEdit } from "./composer.js";
+import { $, cleanDigest, clip, copyText, el, esc, md, toast } from "./dom.js";
 import { activePath, onActivePath, stepLabel } from "./graph.js";
 import { render } from "./main.js";
 import { closeMap, jumpToEntry, renderMap } from "./map.js";
@@ -168,6 +169,15 @@ export function cleanupSubbar(bar) {
 
 export function dropSubbar() { if (_subbar) { _subbar.remove(); _subbar = null; } }
 
+// A hover affordance on a turn that copies a link to it — `sessionId:nodeId`,
+// which openSession resolves to jump+highlight this exact turn.
+export function linkBtn(eid) {
+  const b = el("button", "msg-link", "⧉ link");
+  b.title = "Copy a link to this turn";
+  b.onclick = (ev) => { ev.stopPropagation(); copyText(sessionLink(eid), "Link copied"); };
+  return b;
+}
+
 export function renderConversation(box, tree, run) {
   const path = activePath(tree);
   if (path.length === 0 && (!run || run.status === "idle")) {
@@ -189,6 +199,15 @@ export function renderConversation(box, tree, run) {
     } else if (e.role === "user") {
       flush();
       const m = el("div", "msg user", esc(e.content)); m.dataset.eid = e.id;
+      // Edit & resend: revise any of your messages to branch a new line of
+      // history. (Not on the subagent transcript — branching is a main-tree op.)
+      if (!state.viewChildId) {
+        const ed = el("button", "msg-edit", "✎ edit");
+        ed.title = "Edit & resend — branches a new line of history";
+        ed.onclick = (ev) => { ev.stopPropagation(); beginEdit(e); };
+        m.appendChild(ed);
+        m.appendChild(linkBtn(e.id));
+      }
       stream.appendChild(m);
     } else if (e.role === "assistant") {
       // Guard against an older bug where the final reply was also stored as a
@@ -201,6 +220,7 @@ export function renderConversation(box, tree, run) {
       // don't render it as a blank bubble.
       if (ans === "") continue;
       const m = el("div", "msg assistant prose", md(e.content)); m.dataset.eid = e.id;
+      if (!state.viewChildId) m.appendChild(linkBtn(e.id));
       stream.appendChild(m);
     }
     // system digests are hidden and do NOT flush: a digest always sits right
@@ -314,6 +334,10 @@ export function inspectNode(node) {
   const content = node.role === "tool_result" ? stepLabel(node.content) : node.content;
   body.appendChild(preField("content", content));
   const acts = el("div", "drawer-actions");
+  const copy = el("button", "ghost", "⧉ Copy link");
+  copy.title = "Copy a link to this node — sessionId:nodeId";
+  copy.onclick = () => copyText(sessionLink(node.id), "Link copied");
+  acts.appendChild(copy);
   if (onActivePath(node.id)) {
     const jump = el("button", "ghost", "↡ Jump to in transcript");
     jump.onclick = () => { closeDrawer(); jumpToEntry(node.id); };

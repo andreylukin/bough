@@ -59,6 +59,25 @@ export async function submitComposer() {
   if (!text || !state.sessionId) return;
   const clear = () => { ta.value = ""; clearPastes(); closePicker(); };
 
+  // Editing a past message → branch at its parent and resend there, so the
+  // revised turn grows a new line of history beside the original (the files
+  // fork along with it, exactly like "Branch off this step").
+  if (state.editingEid && !state.viewChildId) {
+    const parent = parentOf(state.editingEid);
+    if (parent === null) { toast("Can't find that message to branch from.", true); return; }
+    state.editingEid = null; clear(); renderEditBanner();
+    try {
+      await api.fork(state.sessionId, parent); // "" forks to the root
+      await api.startRun(state.sessionId, text, state.reviewArmed);
+      state.tree = await api.tree(state.sessionId);
+      state.run = { status: "running", steps: [], text: "", context_tokens: 0, network: [] };
+      state.paneSig = null;
+      render();
+      startPoll();
+    } catch (e) { toast(String(e.message || e), true); }
+    return;
+  }
+
   // Steering a subagent.
   if (state.viewChildId) {
     try { await api.control(state.viewChildId, "steer", text); clear(); toast("sent to subagent"); }
@@ -81,6 +100,45 @@ export async function submitComposer() {
     render();
     startPoll();
   } catch (e) { toast(String(e.message || e), true); }
+}
+
+// ---- edit & resend a past user message -----------------------------------
+// Load one of your earlier messages into the composer to revise it; sending
+// then branches at that message's parent (see submitComposer). Map-selecting a
+// "you" node does the same, so the two entry points share one mechanism.
+
+export function parentOf(eid) {
+  const e = ((state.tree && state.tree.entries) || []).find((x) => x.id === eid);
+  return e ? (e.parent_id || "") : null; // "" = root (a first message)
+}
+
+export function beginEdit(entry) {
+  if (!entry || entry.role !== "user") return;
+  state.editingEid = entry.id;
+  const ta = $("#prompt");
+  ta.value = entry.content || "";
+  clearPastes();
+  renderEditBanner();
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+}
+
+export function cancelEdit() {
+  if (!state.editingEid) return;
+  state.editingEid = null;
+  $("#prompt").value = "";
+  renderEditBanner();
+}
+
+export function renderEditBanner() {
+  const box = $("#editbar");
+  if (!box) return;
+  if (!state.editingEid) { box.hidden = true; box.innerHTML = ""; return; }
+  box.hidden = false;
+  box.innerHTML =
+    `<span class="eb-ic">⑂</span>` +
+    `<span class="eb-label">Editing your message — Send branches a new line of history</span>` +
+    `<button type="button" class="eb-x" data-act="edit-cancel" title="Cancel edit (keep the original)">✕</button>`;
 }
 
 export const picker = { open: false, items: [], active: 0, at: -1, mode: "file" };

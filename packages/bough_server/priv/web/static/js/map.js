@@ -1,4 +1,5 @@
 import { forkNode, graftOnto } from "./actions.js";
+import { beginEdit } from "./composer.js";
 import { $, clip, el, esc, toast } from "./dom.js";
 import { activePath, layoutGraph, nodeLabel, turnStepRows, visibleGraph } from "./graph.js";
 import { switchBranch } from "./panes.js";
@@ -218,8 +219,11 @@ export function renderMap() {
     }
 
     node.onclick = async () => {
-      if (state.graftRoot && state.graftRoot !== id) graftOnto(id);
-      else if (activeIds.has(id)) jumpToEntry(id);
+      if (state.graftRoot && state.graftRoot !== id) { graftOnto(id); return; }
+      // Selecting one of your messages loads it into the composer to edit &
+      // resend (sending then branches a new line of history).
+      if (e.role === "user") { beginEdit(e); closeMap(); return; }
+      if (activeIds.has(id)) jumpToEntry(id);
       // A branch tip off the active path: single-click switches to it (parity
       // with the sidebar). Interior off-path nodes still open the inspector.
       else if (isTip) { await switchBranch(id); closeMap(); }

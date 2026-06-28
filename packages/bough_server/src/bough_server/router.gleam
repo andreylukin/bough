@@ -1174,7 +1174,13 @@ fn fork_session(req: Request, id: String) -> Response {
           // Switching what you *view* no longer rewrites the working tree — the
           // project dir tracks `trunk_leaf`, not the viewed branch. Use `adopt`
           // to bring a branch's files into trunk on purpose.
-          let tree = session.set_leaf(tree, entry_id)
+          // An empty entry_id forks to the conversation root (active_leaf None),
+          // so the next run grows a fresh branch from the beginning — used when
+          // resending an edited *first* message.
+          let tree = case entry_id {
+            "" -> session.SessionTree(..tree, active_leaf: None)
+            _ -> session.set_leaf(tree, entry_id)
+          }
           case session_manager.save(tree) {
             Ok(_) -> json_ok(json.to_string(session.tree_to_json(tree)))
             Error(_) -> wisp.internal_server_error()
@@ -1566,7 +1572,10 @@ fn run_workspace(
     True -> Ok(#(tree.project, TrunkDir))
     False ->
       case branch_leaf {
-        None -> Error("No branch selected to run.")
+        // A run anchored at the conversation root (resending an edited first
+        // message on a fresh branch) has no snapshot to materialize from — run
+        // in the project dir, like the no-snapshot fallback below.
+        None -> Ok(#(tree.project, TrunkDir))
         Some(leaf) ->
           case session.nearest_snapshot(tree, leaf) {
             Some(ref) ->

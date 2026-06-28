@@ -20,6 +20,26 @@ export const parseStep = (content) => { try { return JSON.parse(content); } catc
 
 export function onActivePath(eid) { return activePath(state.tree).some((e) => e.id === eid); }
 
+// The id of a branch tip (leaf) that has `nid` somewhere on its path to the
+// root — i.e. switching the active leaf to it makes `nid` visible in the
+// transcript. Used to resolve a `sessionId:nodeId` link to a node on another
+// branch. Returns null if `nid` isn't in the tree.
+export function leafContaining(tree, nid) {
+  if (!tree || !tree.entries) return null;
+  const byId = new Map(tree.entries.map((e) => [e.id, e]));
+  if (!byId.has(nid)) return null;
+  const hasChild = new Set(tree.entries.map((e) => e.parent_id).filter(Boolean));
+  const leaves = tree.entries.filter((e) => !hasChild.has(e.id));
+  for (const lf of leaves) {
+    let cur = byId.get(lf.id);
+    while (cur) {
+      if (cur.id === nid) return lf.id;
+      cur = cur.parent_id ? byId.get(cur.parent_id) : null;
+    }
+  }
+  return nid; // nid is itself a leaf (or only off-path ancestor) — focus it directly
+}
+
 // The tool-call rows shown when a turn is expanded — mirroring what the
 // transcript actually renders (call+exec merged, empty/duplicate plans dropped)
 // so every row's `eid` matches a real `[data-eid]` anchor to jump to.

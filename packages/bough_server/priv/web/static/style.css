@@ -179,9 +179,19 @@ body.left-collapsed.right-collapsed #layout { grid-template-columns: 0 1fr 0; }
 .stream > .card.plan::before, .stream > .msg.assistant::before { top: 9px; border-color: var(--moss); background: var(--lichen-dim); }
 
 /* messages */
-.msg.user { align-self: flex-end; background: var(--bark-2); color: var(--birch); padding: 9px 13px; border-radius: 12px 12px 3px 12px; white-space: pre-wrap; max-width: 78%; border: 1px solid var(--moss); }
+.msg.user { position: relative; align-self: flex-end; background: var(--bark-2); color: var(--birch); padding: 9px 13px; border-radius: 12px 12px 3px 12px; white-space: pre-wrap; max-width: 78%; border: 1px solid var(--moss); }
 .msg.user::before { display: none; }
 .msg.assistant { align-self: flex-start; max-width: 92%; }
+
+/* edit & resend: a hover affordance on your messages */
+.msg-edit { position: absolute; top: -10px; left: -10px; display: none; align-items: center; gap: 3px; background: var(--bark-2); border: 1px solid var(--moss); color: var(--lichen); border-radius: 7px; padding: 2px 6px; font-size: 11px; font-family: var(--mono); cursor: pointer; }
+.msg.user:hover .msg-edit { display: inline-flex; }
+.msg-edit:hover { color: var(--birch); border-color: var(--leaf); }
+
+/* copy a link (sessionId:nodeId) to a turn — hover affordance, top-right */
+.msg-link { position: absolute; top: -10px; right: -10px; display: none; align-items: center; gap: 3px; background: var(--bark-2); border: 1px solid var(--moss); color: var(--lichen); border-radius: 7px; padding: 2px 6px; font-size: 11px; font-family: var(--mono); cursor: pointer; }
+.msg:hover .msg-link { display: inline-flex; }
+.msg-link:hover { color: var(--birch); border-color: var(--leaf); }
 
 /* markdown prose */
 .prose { color: var(--birch); }
@@ -298,6 +308,14 @@ details.detail[open] summary::before { content: '▾'; }
 /* Collapsed large pastes, shown as chips above the composer */
 #attachments { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 18px 0; }
 #attachments[hidden] { display: none; }
+
+/* edit & resend banner (above the composer) */
+#editbar { display: flex; align-items: center; gap: 8px; padding: 10px 18px 0; }
+#editbar[hidden] { display: none; }
+#editbar .eb-ic { color: var(--leaf); font-family: var(--mono); font-size: 12px; }
+#editbar .eb-label { color: var(--lichen); font-size: 12px; }
+#editbar .eb-x { margin-left: auto; background: transparent; border: none; color: var(--lichen-dim); padding: 0 2px; font-size: 12px; line-height: 1; cursor: pointer; }
+#editbar .eb-x:hover { color: var(--rust); }
 .paste-chip { display: inline-flex; align-items: center; gap: 8px; background: var(--bark-2); border: 1px solid var(--moss); border-radius: 8px; padding: 5px 7px 5px 10px; font-size: 12px; }
 .paste-chip .pc-ic { color: var(--leaf); font-family: var(--mono); font-size: 12px; }
 .paste-chip .pc-label { color: var(--lichen); cursor: pointer; font-family: var(--mono); }

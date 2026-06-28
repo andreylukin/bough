@@ -1,4 +1,4 @@
-import { closeNav, forkNode, graftOnto, inspectGroup, toggleGroup } from "./actions.js";
+import { closeNav, forkNode, graftOnto, inspectGroup, sessionLink, toggleGroup } from "./actions.js";
 import { api } from "./api.js";
 import { $, ago, clip, el, esc, humanTok, projBase, toast } from "./dom.js";
 import { branchOrder, nodeLabel, treeBranches, visibleGraph } from "./graph.js";
@@ -19,8 +19,8 @@ export function renderHeader() {
     const base = full.split("/").filter(Boolean).pop() || full;
     ctx.innerHTML =
       `<span class="proj" title="${esc(full)}">${esc(base)}</span> ` +
-      `<span class="sid" data-act="copy-id" data-id="${esc(state.tree.id)}" ` +
-      `title="Click to copy session id">${esc(state.tree.id)}</span> ` +
+      `<span class="sid" data-act="copy-id" data-id="${esc(sessionLink(state.tree.active_leaf))}" ` +
+      `title="Click to copy a link to the current turn">${esc(state.tree.id)}</span> ` +
       `<span class="badge ${cls}">${esc(st)}</span>${meter}`;
   }
   $("#review-toggle").checked = state.reviewArmed;
