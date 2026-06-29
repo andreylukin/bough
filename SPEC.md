@@ -227,8 +227,11 @@ gated on a deterministic CHECK rather than the model's self-report.
   effects.
 - **Worker** (small local model, optional — `qwen2.5-coder-3b-instruct`): when a
   step fails, gets one shot at a single fix command through the same policy +
-  sandbox path. Disable it (`worker: null`) to fall back to supervisor-only
-  fixes.
+  sandbox path. It is also the executor for a `delegate` action (§5.2): the
+  supervisor hands it a small, dictated, checkable unit and the harness iterates
+  it best-of-N against the unit's own `check`, deferring back to the supervisor
+  (the frontier tier) if it can't pass. Disable it (`worker: null`) to fall back
+  to supervisor-only work.
 
 ### 5.2 Action model — code-mode in a monty sandbox
 
@@ -250,7 +253,8 @@ The host functions are the entire capability surface:
 | `write(path, content)` | create/replace a file wholesale |
 | `edit(path, old, new)` | surgical replace of one exact, unique occurrence |
 
-Alongside `code`, the batch may carry `spawn`/`tell`/`collect` (the subagent
+Alongside `code`, the batch may carry `delegate` (hand a small, checkable unit to
+the local worker — §5.1, §5.6), `spawn`/`tell`/`collect` (the subagent
 protocol, §5) and a `### CHECK` — a command that exits 0 **iff** the task's
 literal acceptance criteria hold. There is no separate `webfetch` tool — an
 allowed fetch is just `bash("curl …")` through the mitmproxy egress allowlist (§7).

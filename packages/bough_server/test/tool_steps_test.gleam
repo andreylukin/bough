@@ -1,4 +1,6 @@
-import bough_core/artifact.{Code, Collect, Request, Run, Spawn, Tell, Write}
+import bough_core/artifact.{
+  Code, Collect, Delegate, Request, Run, Spawn, Tell, Write,
+}
 import bough_server/json_value.{JArray, JBool, JObject, JString}
 import bough_server/tool_steps.{Parsed}
 import gleam/option.{None, Some}
@@ -114,6 +116,46 @@ pub fn spawn_without_task_is_an_error_test() {
   assert tool_steps.parse(input) == Error("step 1 (spawn): missing \"task\"")
 }
 
+pub fn parses_a_delegate_action_test() {
+  let input =
+    JObject([
+      #("steps", JArray([
+        step([
+          #("action", JString("delegate")),
+          #("title", JString("fix factorial")),
+          #("task", JString("In math.py make factorial(0) return 1.")),
+          #("check", JString("python3 -c 'import math; assert math.factorial(0)==1'")),
+        ]),
+      ])),
+    ])
+  assert tool_steps.parse(input)
+    == Ok(Parsed(
+      [
+        Delegate(
+          "fix factorial",
+          "In math.py make factorial(0) return 1.",
+          "python3 -c 'import math; assert math.factorial(0)==1'",
+        ),
+      ],
+      None,
+      False,
+    ))
+}
+
+pub fn delegate_without_check_is_an_error_test() {
+  let input =
+    JObject([
+      #("steps", JArray([
+        step([
+          #("action", JString("delegate")),
+          #("title", JString("x")),
+          #("task", JString("do a thing")),
+        ]),
+      ])),
+    ])
+  assert tool_steps.parse(input) == Error("step 1 (delegate): missing \"check\"")
+}
+
 pub fn parses_tell_and_collect_test() {
   let input =
     JObject([
@@ -180,7 +222,9 @@ pub fn unknown_action_is_an_error_test() {
       ])),
     ])
   assert tool_steps.parse(input)
-    == Error("step 1: unknown action \"frobnicate\" (use code/spawn/tell/collect/request)")
+    == Error(
+      "step 1: unknown action \"frobnicate\" (use code/delegate/spawn/tell/collect/request)",
+    )
 }
 
 pub fn missing_steps_array_is_an_error_test() {

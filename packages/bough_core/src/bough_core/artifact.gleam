@@ -42,6 +42,13 @@ pub type Step {
   /// use `Tell`/`Collect` to communicate with it. The human can also jump into
   /// it to watch and message it.
   Spawn(title: String, task: String)
+  /// Delegate a self-contained, verifiable unit to the local worker (SPEC §5.6):
+  /// `task` is a dictated brief (location + target behavior + example), `check`
+  /// is a shell command that exits 0 iff the unit is done — the deterministic
+  /// gate. The harness runs the worker best-of-N against the primitives surface
+  /// (write/edit/sh), keeping the first sample whose `check` passes; if none do,
+  /// it hands the failure back so the supervisor (the frontier tier) takes over.
+  Delegate(title: String, task: String, check: String)
   /// Send a message (context, a correction, more info) to a running subagent,
   /// addressed by the id `Spawn` returned. Delivered at the subagent's next round.
   Tell(title: String, target: String, message: String)
@@ -74,6 +81,7 @@ pub fn step_title(step: Step) -> String {
     Read(title, ..) -> title
     Grep(title, ..) -> title
     Spawn(title, ..) -> title
+    Delegate(title, ..) -> title
     Tell(title, ..) -> title
     Collect(title, ..) -> title
     Request(title, ..) -> title

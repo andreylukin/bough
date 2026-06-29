@@ -8,7 +8,7 @@ import gleam/json
 pub const run_steps_name = "run_steps"
 
 pub fn run_steps_description() -> String {
-  "The ONLY way to act on the workspace: an ordered batch of typed actions the harness runs in sequence, returning each action's exit code and an output digest, then re-running your `check`. Actions: `code` (your primary action — Python in a monty sandbox with host functions bash/read/write/edit; inspect, edit, run, and verify in one program), `spawn`/`tell`/`collect` (delegate to and coordinate concurrent subagents), and `request` (ask the human to enable a capability that's currently off, e.g. github). Batch related work into as few `code` actions as you can and make exactly one call per turn — you get every result back at once."
+  "The ONLY way to act on the workspace: an ordered batch of typed actions the harness runs in sequence, returning each action's exit code and an output digest, then re-running your `check`. Actions: `code` (your primary action — Python in a monty sandbox with host functions bash/read/write/edit; inspect, edit, run, and verify in one program), `delegate` (hand a small, self-contained, checkable unit to the fast local worker — see its field), `spawn`/`tell`/`collect` (delegate to and coordinate concurrent subagents), and `request` (ask the human to enable a capability that's currently off, e.g. github). Batch related work into as few `code` actions as you can and make exactly one call per turn — you get every result back at once."
 }
 
 /// The JSON Schema for the tool's input (the object passed as `input_schema` /
@@ -27,12 +27,13 @@ pub fn run_steps_schema() -> json.Json {
         #("action", json.object([
           #("type", json.string("string")),
           #("description", json.string("Which action this step performs.")),
-          #("enum", json.array(["code", "spawn", "tell", "collect", "request"], json.string)),
+          #("enum", json.array(["code", "delegate", "spawn", "tell", "collect", "request"], json.string)),
         ])),
         #("title", str("Short human-readable title for this step.")),
+        #("check", str("For action=delegate: a shell command that exits 0 iff this unit's acceptance criteria hold — the deterministic gate the worker is iterated against (distinct from the round-level `check`). Required for delegate.")),
         #("capability", str("The capability to request (action=request) when one you need is OFF — e.g. \"github\" for network git/API. The run pauses for one-click human approval; once granted, later steps in this same batch run with it enabled. Use this instead of giving up or hand-rolling a workaround.")),
         #("code", str("Python program run in the monty sandbox (action=code). Call the host functions bash(cmd)->str, read(path)->str, write(path, content), edit(path, old, new), and print() what you find. A monty Python subset: stdlib only (no third-party imports), and no class or match statements yet.")),
-        #("task", str("Self-contained instructions for a subagent (action=spawn). Spawning is asynchronous: the subagent runs concurrently and the step returns its id.")),
+        #("task", str("Self-contained instructions for the worker (action=delegate) or a subagent (action=spawn). For delegate: dictate the WHERE (exact file/location) and the target behavior with a concrete example — the worker applies write/edit/sh primitives and is iterated against your `check`. For spawn it runs concurrently and the step returns its id.")),
         #("target", str("The subagent id (returned by an earlier spawn) to message (action=tell) or check the status of (action=collect). collect does NOT block — a finished subagent's output is delivered to you automatically.")),
         #("message", str("Context, info, or a correction to send the target subagent (action=tell). Delivered at its next round.")),
       ])),

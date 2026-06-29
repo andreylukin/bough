@@ -13,7 +13,8 @@
 //// `StepCheck` and `StepReview`. Plain `StepText` is left for notices.
 
 import bough_core/artifact.{
-  type Step, Code, Collect, Edit, Grep, Read, Request, Run, Spawn, Tell, Write,
+  type Step, Code, Collect, Delegate, Edit, Grep, Read, Request, Run, Spawn,
+  Tell, Write,
 }
 import bough_core/digest
 import bough_core/net_audit
@@ -60,6 +61,15 @@ pub type Config {
     max_steps: Int,
     digest_limit: Int,
     fix_attempts: Int,
+    /// Token budget for a worker call (fix command or a delegated unit). Caps a
+    /// reasoning worker's chain-of-thought so it defers fast instead of grinding
+    /// a long local CoT — the latency-tail lever.
+    worker_max_tokens: Int,
+    /// Best-of-N samples for a `delegate` unit: on a CHECK miss the worker is
+    /// resampled (fresh shot) before the supervisor backstops. The 3B has high
+    /// per-shot variance and a resample is ~100× cheaper than escalating, so a
+    /// second sample lifts the local hit-rate at ~no cost to the common case.
+    delegate_samples: Int,
     /// When true, each non-empty plan pauses for human approval before the
     /// harness runs it (the plan-review gate, SPEC §5.4).
     review: Bool,
@@ -120,6 +130,8 @@ pub fn default_config() -> Config {
     max_steps: 120,
     digest_limit: 1500,
     fix_attempts: 1,
+    worker_max_tokens: 1500,
+    delegate_samples: 2,
     review: False,
     net_gate: False,
     // Default worker is a fast instruct-coder: low temperature, deterministic.
@@ -684,6 +696,12 @@ fn exec_steps(
               let #(state, fb) = request_capability(state, capability)
               exec_steps(state, rest, idx + 1, [fb, ..fb_rev])
             }
+            // A delegated unit runs the worker best-of-N against its own check,
+            // off the normal call/exec path (its own ladder, not a sandbox step).
+            Delegate(title, task, check) -> {
+              let #(state, fb) = run_delegate(state, title, task, check, idx)
+              exec_steps(state, rest, idx + 1, [fb, ..fb_rev])
+            }
             _ -> exec_one(state, step, rest, idx, fb_rev)
           }
       }
@@ -763,7 +781,7 @@ fn fix_loop(
           model,
           prompts.worker_system,
           prompt,
-          1500,
+          state.config.worker_max_tokens,
           state.config.worker_temperature,
           state.config.worker_top_p,
         )
@@ -819,6 +837,199 @@ fn apply(state: State, step: Step) -> #(State, Exec) {
     // Intercepted in exec_steps (it gates on the human, not the sandbox); this
     // arm only keeps the match total.
     Request(_, capability) -> #(state, Exec(0, "requested " <> capability))
+    // Also intercepted in exec_steps (runs its own worker ladder); kept total.
+    Delegate(_, _, _) -> #(state, Exec(0, "delegated"))
+  }
+}
+
+// --- Delegate: worker runs a verifiable unit, best-of-N, CHECK-gated --------
+
+/// Run a delegated unit (SPEC §5.6): the worker applies write/edit/sh primitives
+/// to satisfy `task`, and the harness re-runs `check` after each sample. Best-
+/// of-N (config.delegate_samples) harvests the small worker's per-shot variance
+/// cheaply; the first sample whose check passes wins. If none do, the failure is
+/// handed back so the supervisor — the frontier tier — takes over.
+fn run_delegate(
+  state: State,
+  title: String,
+  task: String,
+  check: String,
+  idx: Int,
+) -> #(State, String) {
+  let head = "### DELEGATE " <> int.to_string(idx) <> ": " <> title <> "\n"
+  case state.config.worker {
+    None -> #(
+      state,
+      head <> "✗ no worker configured — handle this unit yourself.",
+    )
+    Some(model) -> delegate_attempt(state, head, task, check, model, 1)
+  }
+}
+
+fn delegate_attempt(
+  state: State,
+  head: String,
+  task: String,
+  check: String,
+  model: String,
+  attempt: Int,
+) -> #(State, String) {
+  case budget_left(state) {
+    False -> #(state, head <> "✗ budget exhausted before the worker passed.")
+    True ->
+      case
+        worker.complete_with(
+          state.config.worker_url,
+          model,
+          prompts.worker_exec_system,
+          task,
+          state.config.worker_max_tokens,
+          state.config.worker_temperature,
+          state.config.worker_top_p,
+        )
+      {
+        Error(e) -> #(notice(state, "worker unavailable: " <> e), head <> "✗ worker unavailable: " <> e)
+        Ok(text) -> {
+          let #(state, applied) = apply_worker_ops(state, parse_worker_ops(text))
+          let #(code, cout) = sandboxed(state, ["sh", "-c", check], [])
+          let state = bump(state)
+          let state = emit_activity(state, StepWorker(task, applied, code))
+          case code == 0 {
+            True -> #(
+              state,
+              head
+                <> "✓ worker passed the check after "
+                <> int.to_string(attempt)
+                <> " sample(s) — "
+                <> applied,
+            )
+            False ->
+              case attempt >= state.config.delegate_samples {
+                True -> #(
+                  state,
+                  head
+                    <> "✗ worker did not pass the check after "
+                    <> int.to_string(attempt)
+                    <> " sample(s). Last check output:\n"
+                    <> digest.digest(cout, state.config.digest_limit)
+                    <> "\nTake over: inspect and fix it yourself, or re-delegate with a sharper brief.",
+                )
+                False ->
+                  delegate_attempt(state, head, task, check, model, attempt + 1)
+              }
+          }
+        }
+      }
+  }
+}
+
+/// The worker's fenced primitives, applied in order. Returns the updated state
+/// and a one-line summary of what ran (for the activity feed and feedback).
+fn apply_worker_ops(state: State, ops: List(WorkerOp)) -> #(State, String) {
+  case ops {
+    [] -> #(state, "(worker produced no actionable block)")
+    _ -> {
+      let #(state, labels_rev) =
+        list.fold(ops, #(state, []), fn(acc, op) {
+          let #(st, labels) = acc
+          let #(st, label) = case op {
+            WWrite(path, content) -> {
+              let #(st, _) = write_file(st, path, content)
+              #(st, "write " <> path)
+            }
+            WEdit(path, search, replace) -> {
+              let #(st, _) = edit_file(st, path, search, replace)
+              #(st, "edit " <> path)
+            }
+            WRun(cmd) -> {
+              let #(st, _) = exec_run(st, cmd)
+              #(st, "sh " <> cmd)
+            }
+          }
+          #(st, [label, ..labels])
+        })
+      #(state, string.join(list.reverse(labels_rev), "; "))
+    }
+  }
+}
+
+pub type WorkerOp {
+  WWrite(path: String, content: String)
+  WEdit(path: String, search: String, replace: String)
+  WRun(cmd: String)
+}
+
+/// Parse the worker's fenced blocks into ops, keyed by the info string after the
+/// opening fence: `write <path>`, `edit <path>` (git-conflict SEARCH/REPLACE), or
+/// `sh`/`bash`/`shell`. Anything else is dropped. Public for tests.
+pub fn parse_worker_ops(text: String) -> List(WorkerOp) {
+  worker_fences(text)
+  |> list.filter_map(fn(block) {
+    let #(info, body) = block
+    let tokens =
+      string.split(string.trim(info), " ") |> list.filter(fn(t) { t != "" })
+    case tokens {
+      ["write", path, ..] -> Ok(WWrite(path, strip_trailing_nl(body)))
+      ["edit", path, ..] ->
+        case parse_search_replace(body) {
+          Ok(#(s, r)) -> Ok(WEdit(path, s, r))
+          Error(_) -> Error(Nil)
+        }
+      ["sh", ..] | ["bash", ..] | ["shell", ..] -> Ok(WRun(string.trim(body)))
+      _ -> Error(Nil)
+    }
+  })
+}
+
+/// Odd-indexed segments of a ```-split are fence interiors; the first line is the
+/// info string, the rest the body.
+fn worker_fences(text: String) -> List(#(String, String)) {
+  string.split(text, "```")
+  |> list.index_map(fn(tok, i) { #(i, tok) })
+  |> list.filter(fn(p) { p.0 - p.0 / 2 * 2 == 1 })
+  |> list.map(fn(p) {
+    case string.split_once(p.1, "\n") {
+      Ok(#(info, body)) -> #(info, body)
+      Error(_) -> #(p.1, "")
+    }
+  })
+}
+
+fn strip_trailing_nl(s: String) -> String {
+  case string.ends_with(s, "\n") {
+    True -> strip_trailing_nl(string.drop_end(s, 1))
+    False -> s
+  }
+}
+
+/// Pull SEARCH/REPLACE out of a git-conflict-marked edit body.
+fn parse_search_replace(body: String) -> Result(#(String, String), Nil) {
+  let #(_sec, srev, rrev) =
+    list.fold(string.split(body, "\n"), #("pre", [], []), fn(acc, line) {
+      let #(sec, sr, rr) = acc
+      let t = string.trim_start(line)
+      case
+        string.starts_with(t, "<<<<<<<"),
+        string.starts_with(t, "======="),
+        string.starts_with(t, ">>>>>>>")
+      {
+        True, _, _ -> #("search", sr, rr)
+        _, True, _ -> #("replace", sr, rr)
+        _, _, True -> #("post", sr, rr)
+        _, _, _ ->
+          case sec {
+            "search" -> #(sec, [line, ..sr], rr)
+            "replace" -> #(sec, sr, [line, ..rr])
+            _ -> #(sec, sr, rr)
+          }
+      }
+    })
+  case srev {
+    [] -> Error(Nil)
+    _ -> Ok(#(
+      string.join(list.reverse(srev), "\n"),
+      string.join(list.reverse(rrev), "\n"),
+    ))
   }
 }
 
@@ -1606,6 +1817,7 @@ fn step_detail(step: Step) -> String {
     Read(_, path, _) -> "READ " <> path
     Grep(_, pattern) -> "GREP " <> pattern
     Spawn(title, _) -> "SPAWN " <> title
+    Delegate(title, _, _) -> "DELEGATE " <> title
     Tell(_, target, _) -> "TELL " <> target
     Collect(_, target) -> "COLLECT " <> target
     Request(_, capability) -> "REQUEST " <> capability
@@ -1622,6 +1834,7 @@ fn step_verb(step: Step) -> String {
     Read(_, _, _) -> "READ"
     Grep(_, _) -> "GREP"
     Spawn(_, _) -> "SPAWN"
+    Delegate(_, _, _) -> "DELEGATE"
     Tell(_, _, _) -> "TELL"
     Collect(_, _) -> "COLLECT"
     Request(_, _) -> "REQUEST"
@@ -1638,6 +1851,7 @@ fn step_full(step: Step) -> String {
     Edit(_, _, find, replace) ->
       "── find ──\n" <> find <> "\n── replace ──\n" <> replace
     Spawn(_, task) -> task
+    Delegate(_, task, check) -> task <> "\n── check ──\n" <> check
     Request(_, capability) -> capability
     _ -> ""
   }
@@ -1653,6 +1867,7 @@ fn step_arg(step: Step) -> String {
     Read(_, path, _) -> path
     Grep(_, pattern) -> pattern
     Spawn(title, _) -> title
+    Delegate(title, _, _) -> title
     Tell(_, target, _) -> target
     Collect(_, target) -> target
     Request(_, capability) -> capability

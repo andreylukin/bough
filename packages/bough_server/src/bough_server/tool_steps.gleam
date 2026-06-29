@@ -5,7 +5,8 @@
 //// tool_result for the model to correct.
 
 import bough_core/artifact.{
-  type Step, Code, Collect, Edit, Grep, Read, Request, Run, Spawn, Tell, Write,
+  type Step, Code, Collect, Delegate, Edit, Grep, Read, Request, Run, Spawn,
+  Tell, Write,
 }
 import bough_server/json_value.{type JsonValue, JArray, JBool, JString}
 import gleam/int
@@ -101,6 +102,11 @@ fn parse_step(s: JsonValue, idx: Int) -> Result(Step, String) {
       field(s, "task")
       |> result.map(Spawn(title, _))
       |> result.replace_error(at <> " (spawn): missing \"task\"")
+    "delegate" -> {
+      use task <- result.try(req(s, "task", at, "delegate"))
+      use check <- result.try(nonblank(s, "check", at, "delegate"))
+      Ok(Delegate(title, task, check))
+    }
     "tell" -> {
       use target <- result.try(nonblank(s, "target", at, "tell"))
       use message <- result.try(req(s, "message", at, "tell"))
@@ -119,7 +125,7 @@ fn parse_step(s: JsonValue, idx: Int) -> Result(Step, String) {
         at
         <> ": unknown action \""
         <> other
-        <> "\" (use code/spawn/tell/collect/request)",
+        <> "\" (use code/delegate/spawn/tell/collect/request)",
       )
   }
 }
