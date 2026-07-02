@@ -293,13 +293,10 @@ const events: Handler = (req, ctx) => {
 
 // ---- net: rail, holds, bundles ---------------------------------------------
 
-// Claw Patrol gateway status for the Network rail. Claw Patrol owns the audit feed and
-// human approvals on its own dashboard; bough surfaces state + links there.
+// Native egress-proxy status for the Network rail. The feed + approvals live here in
+// bough (see /net/requests, /net/policy) — there is no external dashboard.
 const netStatus: Handler = (_req, ctx) =>
-  json(
-    ctx.gateway?.status() ??
-      { enabled: false, available: false, running: false, external: false, dashboardUrl: "" },
-  );
+  json(ctx.gateway?.status() ?? { enabled: false, running: false, proxyUrl: "", caPath: "" });
 
 // The editable rule set (allow/deny/hold config) the gate compiles + enforces.
 const getPolicy: Handler = (_req, ctx) => json(loadConfig(ctx.netDir));
@@ -358,8 +355,10 @@ const installBundleH: Handler = async (req, ctx, params) => {
       : undefined) ?? {};
   try {
     const result = ctx.netDir
-      ? await installBundle(m, rawParams, ctx.netDir)
-      : await installBundle(m, rawParams);
+      ? installBundle(m, rawParams, ctx.netDir)
+      : installBundle(m, rawParams);
+    // The bundle merged into the rule set — hot-swap the live gate so it takes effect now.
+    ctx.gate?.setPolicy(toPolicy(loadConfig(ctx.netDir)));
     return json(result);
   } catch (e) {
     if (e instanceof InstallError) return json({ error: e.message, detail: e.detail }, 400);

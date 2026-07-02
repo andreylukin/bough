@@ -137,7 +137,7 @@ export class ProxyServer {
       const url = safeUrl(creq.url);
       this.#handle(creq, cres, url?.hostname ?? stripPort(creq.headers.host), false);
     });
-    this.#proxy.on("connect", (req: http.IncomingMessage, socket: net.Socket) => {
+    this.#proxy.on("connect", (_req: http.IncomingMessage, socket: net.Socket) => {
       socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
       // Hand the raw tunnel to the TLS terminator; it emits secureConnection → mitmHttp.
       this.#mitm.emit("connection", socket);

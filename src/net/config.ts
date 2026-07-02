@@ -32,6 +32,8 @@ export const NetConfig = z.object({
   allowVerbs: z.array(z.string()).default([]),
   denyVerbs: z.array(z.string()).default([]),
   holdVerbs: z.array(z.string()).default([]),
+  /** Names of policy bundles merged into this config (metadata; drives `installed` in the UI). */
+  bundles: z.array(z.string()).default([]),
 });
 export type NetConfig = z.infer<typeof NetConfig>;
 

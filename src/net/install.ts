@@ -1,25 +1,22 @@
 /**
  * Bundle install — the `bough net add <bundle>` backend. Takes a bundle + the params
- * the Driver filled in on Screen 5, and:
+ * the operator filled in, and:
  *   1. resolves + type-checks params against the manifest (required, defaults),
- *   2. renders the bundle's HCL fragment and composes it into a full gateway policy
- *      (hcl.ts → text the Claw Patrol gateway loads),
- *   3. validates offline by running the bundle's own fixtures through policy.ts (the
- *      runtime mirror of the HCL rules) — this is the `clawpatrol test` regression the
- *      design calls for, minus a live gateway,
- *   4. persists the rendered HCL to the net config dir (~/.bough/net/<name>.hcl).
+ *   2. renders the bundle's NetConfig contribution (hosts + verb rules),
+ *   3. validates offline by running the bundle's fixtures through policy.ts (the same
+ *      brain the gate enforces) against a read-only policy of the contributed hosts,
+ *   4. merges the contribution into the persisted rule set (config.ts) and records the
+ *      bundle as installed.
  *
- * Fixture validation covers https-host bundles (the shipped `github`): the derived
- * policy allows the fragment's hosts and runs read-only unless the bundle exposes a
- * truthy `allowWrites` param. Bundles that gate other protocols extend the derivation.
+ * Fully native: no HCL, no external binary. The gate hot-swaps from the merged config
+ * (the server handler calls setPolicy after install).
  */
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { defaultGateway, type HclPolicy, renderHcl } from "./hcl.ts";
-import { clawpatrolTest } from "./clawpatrol.ts";
+import { mkdirSync } from "node:fs";
 import { decide, policy as makePolicy, type Request } from "./policy.ts";
-import type { BundleFixture, BundleManifest, BundleParam } from "./bundles.ts";
+import { loadConfig, type NetConfig, saveConfig } from "./config.ts";
+import type { BundleContribution, BundleFixture, BundleManifest, BundleParam } from "./bundles.ts";
 
 export interface FixtureResult {
   name: string;
@@ -31,7 +28,7 @@ export interface FixtureResult {
 export interface InstallResult {
   name: string;
   params: Record<string, unknown>;
-  hcl: string;
+  contribution: BundleContribution;
   fixtures: FixtureResult[];
   ok: boolean;
 }
@@ -52,9 +49,9 @@ export function netDir(): string {
   return dir;
 }
 
-/** True if a bundle's rendered policy is already on disk. */
+/** True if a bundle has been merged into the persisted rule set. */
 export function isInstalled(name: string, dir = netDir()): boolean {
-  return existsSync(join(dir, `${name}.hcl`));
+  return loadConfig(dir).bundles.includes(name);
 }
 
 // ---- param resolution ------------------------------------------------------
@@ -83,7 +80,10 @@ function resolveParam(p: BundleParam, raw: Record<string, unknown>): unknown {
   }
 }
 
-function resolveParams(manifest: BundleManifest, raw: Record<string, unknown>): Record<string, unknown> {
+function resolveParams(
+  manifest: BundleManifest,
+  raw: Record<string, unknown>,
+): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const p of manifest.params) {
     const v = resolveParam(p, raw);
@@ -92,7 +92,7 @@ function resolveParams(manifest: BundleManifest, raw: Record<string, unknown>): 
   return out;
 }
 
-// ---- offline fixture validation (policy.ts mirror) -------------------------
+// ---- offline fixture validation (policy.ts) --------------------------------
 
 function fixtureRequest(f: BundleFixture): Request {
   const http = (f.action.http ?? {}) as {
@@ -110,14 +110,19 @@ function fixtureRequest(f: BundleFixture): Request {
   };
 }
 
-function runFixtures(
-  manifest: BundleManifest,
-  params: Record<string, unknown>,
-  hosts: string[],
-): FixtureResult[] {
+/**
+ * Run the bundle's fixtures against a read-only policy of its verb rules. The host layer
+ * is left open (empty allowHosts = sniff-only) on purpose: fixtures validate the ACTION
+ * gating (read/write/hold classification + verb overrides), not host-allowlist membership
+ * — which lets a bundle installed for a custom host still validate its fixtures.
+ */
+function runFixtures(manifest: BundleManifest, contribution: BundleContribution): FixtureResult[] {
   const pol = makePolicy({
-    allowHosts: new Set(hosts),
-    mode: params.allowWrites ? "all" : "read_only",
+    k8sHosts: new Set(contribution.k8sHosts ?? []),
+    mode: "read_only",
+    allowVerbs: new Set(contribution.allowVerbs ?? []),
+    denyVerbs: new Set(contribution.denyVerbs ?? []),
+    holdVerbs: new Set(contribution.holdVerbs ?? []),
   });
   return manifest.fixtures.map((f) => {
     const got = decide(fixtureRequest(f), pol).verdict;
@@ -125,57 +130,49 @@ function runFixtures(
   });
 }
 
-// ---- compose + validate + persist ------------------------------------------
+// ---- compose + validate + merge --------------------------------------------
 
-/** Resolve params, render HCL, and run fixtures — no disk writes. */
+/** Resolve params, render the contribution, and run fixtures — no disk writes. */
 export function validateInstall(
   manifest: BundleManifest,
   rawParams: Record<string, unknown> = {},
 ): InstallResult {
   const params = resolveParams(manifest, rawParams);
-  const fragment = manifest.render(params);
-  const hosts = fragment.endpoints.flatMap((e) => e.hosts ?? (e.host ? [e.host] : []));
-
-  const policy: HclPolicy = {
-    gateway: defaultGateway(),
-    credentials: fragment.credentials,
-    endpoints: fragment.endpoints,
-    rules: fragment.rules,
-    profiles: [{
-      name: "default",
-      credentials: fragment.credentials.map((c) => `${c.type}.${c.name}`),
-    }],
-  };
-  const hcl = renderHcl(policy);
-  const fixtures = runFixtures(manifest, params, hosts);
-  return { name: manifest.name, params, hcl, fixtures, ok: fixtures.every((f) => f.ok) };
+  const contribution = manifest.render(params);
+  const fixtures = runFixtures(manifest, contribution);
+  return { name: manifest.name, params, contribution, fixtures, ok: fixtures.every((f) => f.ok) };
 }
 
-/**
- * Validate then persist the rendered HCL. Throws InstallError if fixtures fail —
- * first against the offline policy.ts mirror, then (when the binary is installed)
- * against the REAL `clawpatrol validate` + `clawpatrol test`, which is the
- * authoritative regression: the same compiler the gateway loads the policy with.
- */
-export async function installBundle(
+/** Union two string lists, order-stable, deduped. */
+function union(a: string[], b: string[] = []): string[] {
+  return [...new Set([...a, ...b])];
+}
+
+/** Merge a bundle's contribution into the persisted rule set + record it as installed. */
+function mergeIntoConfig(name: string, c: BundleContribution, dir: string): NetConfig {
+  const cfg = loadConfig(dir);
+  return saveConfig({
+    ...cfg,
+    allowHosts: union(cfg.allowHosts, c.allowHosts),
+    denyHosts: union(cfg.denyHosts, c.denyHosts),
+    k8sHosts: union(cfg.k8sHosts, c.k8sHosts),
+    allowVerbs: union(cfg.allowVerbs, c.allowVerbs),
+    denyVerbs: union(cfg.denyVerbs, c.denyVerbs),
+    holdVerbs: union(cfg.holdVerbs, c.holdVerbs),
+    bundles: union(cfg.bundles, [name]),
+  }, dir);
+}
+
+/** Validate then merge the bundle into the live rule set. Throws InstallError if fixtures fail. */
+export function installBundle(
   manifest: BundleManifest,
   rawParams: Record<string, unknown> = {},
   dir = netDir(),
-): Promise<InstallResult> {
+): InstallResult {
   const result = validateInstall(manifest, rawParams);
   if (!result.ok) {
     throw new InstallError("bundle fixtures failed validation", result.fixtures);
   }
-  const real = await clawpatrolTest(result.hcl, manifest.fixtures);
-  if (real.ran && !real.ok) {
-    throw new InstallError("clawpatrol rejected the rendered policy", real.output);
-  }
-  if (real.flaky) {
-    console.warn(
-      `clawpatrol verdict for ${manifest.name} was unstable across runs (upstream ` +
-        "rule-order nondeterminism — see net/clawpatrol.ts); passed on retry.",
-    );
-  }
-  writeFileSync(join(dir, `${manifest.name}.hcl`), result.hcl);
+  mergeIntoConfig(manifest.name, result.contribution, dir);
   return result;
 }
