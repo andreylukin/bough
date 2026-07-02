@@ -21,9 +21,9 @@ import { recoverOrphanedTurns } from "../supervisor/turns.ts";
 
 const db = openDb();
 recoverOrphanedTurns(db, bus);
-const gateway = new ClawpatrolGateway();
+const gateway = new ClawpatrolGateway({ db, bus });
 setActiveGateway(gateway);
 await gateway.start();
 
 // No port: the desktop webview binds Deno.serve to the port it opened and loads "/".
-Deno.serve(createHandler({ db, bus, gateway }));
+Deno.serve(createHandler({ db, bus, gateway, gate: gateway.gate }));

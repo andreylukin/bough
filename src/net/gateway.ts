@@ -1,204 +1,109 @@
 /**
- * The Claw Patrol gateway bough runs and supervises. This is the "full dependency"
- * seam: instead of reimplementing the firewall in TypeScript, bough composes a gateway
- * config from its installed policy bundles, boots the real `clawpatrol gateway`, and
- * routes every sandboxed shell command through `clawpatrol run` so egress is captured,
- * gated, and credential-injected by Claw Patrol at L3.
+ * The egress firewall bough runs in-process — native Claw Patrol. It owns a MITM
+ * certificate authority (ca.ts), the policy gate (gate.ts), and the intercepting proxy
+ * (proxy.ts), and it hands the sandbox exec path the env that routes commands through
+ * the proxy and trusts its CA. No Go binary, no WireGuard, no external dashboard: the
+ * audit feed + human approvals live on bough's own /net/requests + Network rail.
  *
- * Opt-in: enabled only when BOUGH_CLAWPATROL=1, because routing traffic through the
- * gateway requires a one-time device onboarding that bough can't do headlessly —
- * `clawpatrol join <dashboard-url>` (registers a WireGuard peer, gets approved on the
- * dashboard, assigns a profile, installs the CA). Until that join is done, Claw Patrol
- * captures traffic but has nowhere to route it; enabling the flag before joining will
- * break egress rather than gate it. With the flag off, bough runs exactly as before.
- *
- * The gateway owns the audit feed and human approvals on its own dashboard (there is no
- * programmatic approver/events API), so bough links operators to it rather than
- * mirroring it — see GET /net/status and the web Network rail.
+ * Opt-in for now (BOUGH_CLAWPATROL=1). The default flips to on once the approval UI can
+ * clear held requests (until then a fail-closed default could wedge a turn with no way
+ * to unblock it). With the flag off, the proxy never starts and exec runs unrouted.
  */
-import { join } from "node:path";
-import { homedir } from "node:os";
-import { defaultGateway, type HclEndpoint, type HclPolicy, type HclRule, renderHcl } from "./hcl.ts";
-import { getBundle, listBundles } from "./bundles.ts";
-import { isInstalled, netDir } from "./install.ts";
-import { clawpatrolAvailable } from "./clawpatrol.ts";
+import { caEnv, CertAuthority } from "./ca.ts";
+import { ProxyServer } from "./proxy.ts";
+import { createGate, type Gate } from "./gate.ts";
+import { type Policy, policy } from "./policy.ts";
+import type { Db } from "../db/db.ts";
+import type { Bus } from "../bus.ts";
 
-const DASHBOARD = () => Deno.env.get("BOUGH_CLAWPATROL_DASHBOARD") ?? "127.0.0.1:8090";
-
-/** Whether bough should run and route through Claw Patrol (opt-in — see module docs). */
+/** Whether bough should run the egress proxy (opt-in — see module docs). */
 export function clawpatrolEnabled(): boolean {
   return Deno.env.get("BOUGH_CLAWPATROL") === "1";
 }
 
-/** The clawpatrol binary (BOUGH_CLAWPATROL_BIN overrides). */
-function bin(): string {
-  return Deno.env.get("BOUGH_CLAWPATROL_BIN") ?? "clawpatrol";
-}
-
 /**
- * True when this machine already has a Claw Patrol client joined to a reachable
- * gateway (Clawpatrol.app or a prior `clawpatrol join`). In that case bough must NOT
- * spawn its own gateway — it would fight the existing one for the WireGuard port — it
- * routes through the existing gateway via `clawpatrol run`.
+ * The default enforced policy until the rule-set editor persists one (Phase 5). Host-open
+ * (nothing breaks on an unknown host) but read-only: reads pass, writes are blocked and
+ * surface in the rail. Fail-closed host/hold posture arrives with the config layer.
  */
-export function existingGatewayReachable(): boolean {
-  try {
-    const out = new Deno.Command(bin(), { args: ["status"], stdout: "piped", stderr: "null" })
-      .outputSync();
-    return new TextDecoder().decode(out.stdout).includes("gateway reachable");
-  } catch {
-    return false;
-  }
-}
-
-/**
- * CA-trust env for sandboxed commands, so TLS clients trust the gateway's MITM CA
- * (the gateway terminates TLS to gate + inject). Empty when the CA isn't present.
- * Mirrors `clawpatrol env`'s exports; keyed to ~/.clawpatrol/ca.crt.
- */
-export function clawpatrolCaEnv(): Record<string, string> {
-  const ca = join(homedir(), ".clawpatrol", "ca.crt");
-  try {
-    Deno.statSync(ca);
-  } catch {
-    return {};
-  }
-  return {
-    SSL_CERT_FILE: ca,
-    NODE_EXTRA_CA_CERTS: ca,
-    REQUESTS_CA_BUNDLE: ca,
-    CURL_CA_BUNDLE: ca,
-    GIT_SSL_CAINFO: ca,
-    DENO_CERT: ca,
-    PIP_CERT: ca,
-    AWS_CA_BUNDLE: ca,
-  };
-}
-
-/**
- * Compose one gateway HCL from every installed bundle's fragment plus a single gateway
- * block. Bundles render from their defaults here; per-install params are a follow-up
- * (the shipped `github` bundle's defaults are read-allowed / write-gated).
- */
-export function composeGatewayHcl(stateDir: string): string {
-  const endpoints: HclEndpoint[] = [];
-  const rules: HclRule[] = [];
-  const credentials: HclPolicy["credentials"] = [];
-  for (const manifest of listBundles()) {
-    if (!isInstalled(manifest.name)) continue;
-    const bundle = getBundle(manifest.name);
-    if (!bundle) continue;
-    const defaults: Record<string, unknown> = {};
-    for (const p of bundle.params) if (p.default !== undefined) defaults[p.name] = p.default;
-    const frag = bundle.render(defaults);
-    endpoints.push(...frag.endpoints);
-    rules.push(...frag.rules);
-    credentials.push(...frag.credentials);
-  }
-  const dash = DASHBOARD();
-  const policy: HclPolicy = {
-    gateway: defaultGateway({
-      dashboardListen: dash,
-      publicUrl: `http://${dash}`,
-      stateDir,
-    }),
-    credentials,
-    endpoints,
-    rules,
-    profiles: [],
-  };
-  return renderHcl(policy);
+export function defaultPolicy(): Policy {
+  return policy({ mode: "read_only" });
 }
 
 export interface GatewayStatus {
   enabled: boolean;
-  available: boolean; // clawpatrol binary present
-  running: boolean; // routing is active (own gateway healthy, or an existing one reachable)
-  external: boolean; // using a pre-existing gateway (Clawpatrol.app) rather than bough's own
-  dashboardUrl: string;
+  running: boolean;
+  proxyUrl: string;
+  caPath: string;
 }
 
-/** Supervises the `clawpatrol gateway` child process for the server's lifetime. */
+/** Owns the CA + gate + proxy for the server's lifetime. */
 export class ClawpatrolGateway {
-  #child?: Deno.ChildProcess;
+  #db: Db;
+  #bus: Bus;
+  #ca?: CertAuthority;
+  #gate?: Gate;
+  #proxy?: ProxyServer;
   #running = false;
-  #external = false;
-  #dir: string;
 
-  constructor(dir = join(netDir(), "gateway")) {
-    this.#dir = dir;
+  constructor(cfg: { db: Db; bus: Bus }) {
+    this.#db = cfg.db;
+    this.#bus = cfg.bus;
+  }
+
+  /** The gate the server puts on AppCtx so the approval endpoints share it with the proxy. */
+  get gate(): Gate | undefined {
+    return this.#gate;
   }
 
   status(): GatewayStatus {
     return {
       enabled: clawpatrolEnabled(),
-      available: clawpatrolAvailable(),
       running: this.#running,
-      external: this.#external,
-      dashboardUrl: this.#external ? "" : `http://${DASHBOARD()}`,
+      proxyUrl: this.#proxy?.url ?? "",
+      caPath: this.#ca?.caCertPath ?? "",
     };
   }
 
-  /**
-   * Route through Claw Patrol: if the machine already has a joined gateway
-   * (Clawpatrol.app), use it — do NOT spawn our own (they'd fight for the WG port).
-   * Otherwise render a config from bough's bundles and boot a gateway here.
-   */
+  /** Boot the CA, gate, and proxy when enabled. No-op (exec runs unrouted) when off. */
   async start(): Promise<void> {
     if (!clawpatrolEnabled()) return;
-    if (!clawpatrolAvailable()) {
-      console.warn("[clawpatrol] BOUGH_CLAWPATROL=1 but the clawpatrol binary isn't on PATH — egress is NOT gated");
-      return;
-    }
-    if (existingGatewayReachable()) {
-      this.#external = true;
-      this.#running = true;
-      console.log("[clawpatrol] using the existing joined gateway (Clawpatrol.app) — routing sandbox egress through it");
-      return;
-    }
-    await Deno.mkdir(this.#dir, { recursive: true });
-    const cfgPath = join(this.#dir, "gateway.hcl");
-    await Deno.writeTextFile(cfgPath, composeGatewayHcl(join(this.#dir, "state")));
-
-    const args = ["gateway", cfgPath];
-    const pw = Deno.env.get("BOUGH_CLAWPATROL_DASHBOARD_PW");
-    if (pw) args.splice(1, 0, "--set-dashboard-password", pw);
-    // Inherit stderr so gateway logs surface in bough's console; piping without
-    // draining would buffer-block the child once the pipe fills.
-    this.#child = new Deno.Command(bin(), { args, stdout: "null", stderr: "inherit" }).spawn();
-
-    if (await this.#waitHealthy()) {
-      this.#running = true;
-      console.log(`[clawpatrol] gateway up — dashboard ${this.status().dashboardUrl}`);
-      console.log("[clawpatrol] first run: `clawpatrol join " + this.status().dashboardUrl +
-        "` on this machine to route traffic (registers the device + installs the CA)");
-    } else {
-      console.warn("[clawpatrol] gateway did not become healthy — egress is NOT gated");
-    }
+    this.#ca = CertAuthority.load();
+    this.#gate = createGate({ db: this.#db, bus: this.#bus, policy: defaultPolicy() });
+    const gate = this.#gate;
+    this.#proxy = new ProxyServer({
+      ca: this.#ca,
+      gate: (req, opts) => gate.gate(req, opts),
+    });
+    await this.#proxy.start();
+    this.#running = true;
+    console.log(`[clawpatrol] native egress proxy on ${this.#proxy.url}`);
+    console.log(`[clawpatrol] sandbox clients trust the MITM CA at ${this.#ca.caCertPath}`);
   }
 
   async stop(): Promise<void> {
     this.#running = false;
-    if (!this.#child) return;
-    try {
-      this.#child.kill("SIGTERM");
-      await this.#child.status;
-    } catch { /* already gone */ }
-    this.#child = undefined;
+    await this.#proxy?.stop();
+    this.#proxy = undefined;
   }
 
-  /** Poll the dashboard until it answers (up to ~8s). */
-  async #waitHealthy(): Promise<boolean> {
-    const url = this.status().dashboardUrl;
-    for (let i = 0; i < 16; i++) {
-      await new Promise((r) => setTimeout(r, 500));
-      try {
-        const res = await fetch(url, { signal: AbortSignal.timeout(1000) });
-        await res.body?.cancel();
-        return true;
-      } catch { /* not up yet */ }
-    }
-    return false;
+  /**
+   * Env for a sandboxed command: point its HTTP(S) client at the proxy and trust the
+   * MITM CA. NO_PROXY keeps loopback (bough's own server, and the proxy itself) direct
+   * so requests don't loop. Empty when the proxy isn't running (exec runs unrouted).
+   */
+  env(): Record<string, string> {
+    if (!this.#running || !this.#proxy || !this.#ca) return {};
+    const url = this.#proxy.url;
+    return {
+      HTTP_PROXY: url,
+      HTTPS_PROXY: url,
+      http_proxy: url,
+      https_proxy: url,
+      NO_PROXY: "localhost,127.0.0.1",
+      no_proxy: "localhost,127.0.0.1",
+      ...caEnv(this.#ca.caCertPath),
+    };
   }
 }
 
@@ -212,13 +117,7 @@ export function activeGateway(): ClawpatrolGateway | undefined {
   return active;
 }
 
-/**
- * The argv prefix that routes a command through the gateway, or [] when not routing.
- * `clawpatrol run -- <cmd>` puts the command's process tree behind Claw Patrol's L3
- * capture. Only prefixes when the gateway is healthy — otherwise commands run unrouted
- * (fail-open) so a misconfigured install doesn't wedge every turn.
- */
-export function clawpatrolRunPrefix(gateway = active): string[] {
-  if (!gateway || !gateway.status().running) return [];
-  return [bin(), "run", "--"];
+/** The sandbox-exec env from the active gateway; empty when the proxy isn't running. */
+export function clawpatrolEnv(): Record<string, string> {
+  return active?.env() ?? {};
 }

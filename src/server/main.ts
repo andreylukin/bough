@@ -15,15 +15,15 @@ const db = openDb();
 // finish its pending message so the UI doesn't show a turn stuck forever.
 const orphaned = recoverOrphanedTurns(db, bus);
 if (orphaned > 0) console.log(`recovered ${orphaned} orphaned turn(s)`);
-// Claw Patrol is the egress firewall (opt-in via BOUGH_CLAWPATROL=1): bough routes
-// sandboxed commands through it (its own gateway, or an existing Clawpatrol.app).
-const gateway = new ClawpatrolGateway();
+// Claw Patrol is bough's native egress firewall (opt-in via BOUGH_CLAWPATROL=1): it
+// runs an in-process intercepting proxy and routes sandboxed commands through it.
+const gateway = new ClawpatrolGateway({ db, bus });
 setActiveGateway(gateway);
 await gateway.start();
 globalThis.addEventListener("unload", () => void gateway.stop());
 const password = Deno.env.get("BOUGH_PASSWORD");
 if (password) console.log("auth: password required (BOUGH_PASSWORD is set)");
-const handler = createHandler({ db, bus, gateway, password });
+const handler = createHandler({ db, bus, gateway, gate: gateway.gate, password });
 
 // Deno.serve defaults to 0.0.0.0 — only take the LAN-visible bind when a password
 // guards it. BOUGH_HOST overrides either way.
