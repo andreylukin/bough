@@ -22,6 +22,8 @@ async function tempGitRepo(): Promise<string> {
     "user.email=t@t",
     "-c",
     "user.name=t",
+    "-c",
+    "commit.gpgsign=false",
     "commit",
     "-qm",
     "init",
@@ -138,6 +140,40 @@ Deno.test({
       assertEquals((await jj.diff(repo, "s1")).files.map((f) => f.path), ["next.txt"]);
       assertEquals(await jj.ensureWorkspace(repo, "s1"), "bough/s1");
       assertEquals((await jj.diff(repo, "s1")).files.map((f) => f.path), ["next.txt"]);
+    } finally {
+      await Deno.remove(repo, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  // Regression: diff() of a session whose bookmark no longer resolves to a revision
+  // (abandoned/pruned change, or a stale colocated-git bookmark) must degrade to an
+  // empty diff, not throw "Revision `bough/<id>` doesn't exist". This was surfacing
+  // in the Changes rail as "changes: jj diff failed for <id>".
+  name: "jj: diff of a vanished session bookmark returns empty, not an error",
+  ignore: !jjAvailable,
+  fn: async () => {
+    const repo = await tempGitRepo();
+    try {
+      await jj.ensureWorkspace(repo, "gone");
+      // A resolvable session diffs fine (empty change, no files).
+      assertEquals((await jj.diff(repo, "gone")).files.length, 0);
+
+      // Delete the bookmark so `bough/gone` no longer resolves as a revision —
+      // the exact state that produced the reported error.
+      await sh("jj", [
+        "--no-pager",
+        "--color=never",
+        "bookmark",
+        "delete",
+        "bough/gone",
+      ], repo);
+
+      // diff() must not throw; it returns an empty jj diff.
+      const d = await jj.diff(repo, "gone");
+      assertEquals(d.source, "jj");
+      assertEquals(d.files.length, 0);
     } finally {
       await Deno.remove(repo, { recursive: true });
     }

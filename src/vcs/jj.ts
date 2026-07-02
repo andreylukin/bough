@@ -104,6 +104,27 @@ async function bookmarkExists(repo: string, name: string): Promise<boolean> {
 }
 
 /**
+ * True if `rev` resolves to a commit. A bookmark's NAME can linger in some listings
+ * while no longer resolving as a revision — e.g. its change was abandoned (jj prunes
+ * empty leaf changes and drops the bookmark) or a colocated git import left it stale.
+ * We check resolvability directly instead of trusting the name list, so a diff of a
+ * vanished session degrades to "no changes" rather than throwing "revision doesn't exist".
+ */
+async function revResolves(repo: string, rev: string): Promise<boolean> {
+  const r = await run("jj", [
+    "--no-pager",
+    "--color=never",
+    "log",
+    "--no-graph",
+    "-r",
+    rev,
+    "-T",
+    "commit_id.short()",
+  ], repo);
+  return r.ok && r.stdout.trim().length > 0;
+}
+
+/**
  * Ensure a session's jj workspace exists and the working copy is editing it.
  * Idempotent: resuming an existing session switches to its change; a new session
  * branches a fresh change off `base`. Returns the bookmark name.
@@ -163,10 +184,19 @@ export async function snapshot(repo: string): Promise<string> {
 /**
  * The structured diff of a session's change vs. where it branched
  * (`jj diff --git -r <bookmark>`). Snapshots first so on-disk edits are included.
+ * If the session's bookmark no longer resolves to a revision (abandoned/pruned change),
+ * returns an empty diff instead of throwing.
  */
 export async function diff(repo: string, sessionId: string): Promise<Diff> {
   await snapshot(repo);
-  const out = await jj(repo, ["diff", "--git", "-r", bookmarkFor(sessionId)]);
+  const bookmark = bookmarkFor(sessionId);
+  // The session's change may have been abandoned/pruned (bookmark gone stale). Treat
+  // an unresolvable revision as an empty diff — there is genuinely nothing to review —
+  // rather than surfacing jj's "revision doesn't exist" as a failure.
+  if (!(await revResolves(repo, bookmark))) {
+    return { source: "jj", files: [] };
+  }
+  const out = await jj(repo, ["diff", "--git", "-r", bookmark]);
   return { source: "jj", files: parseGitDiff(out) };
 }
 
