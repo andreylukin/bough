@@ -25,6 +25,7 @@ import { fork, ForkBody, ForkError } from "../fork.ts";
 import type { Gate } from "../net/gate.ts";
 import type { NetStore } from "../db/net.ts";
 import { getBundle, listBundles, type BundleManifest } from "../net/bundles.ts";
+import type { ClawpatrolGateway } from "../net/gateway.ts";
 import { installBundle, InstallError, isInstalled } from "../net/install.ts";
 import { defaultWebDir, serveWeb } from "./static.ts";
 import { createAuth } from "./auth.ts";
@@ -38,6 +39,8 @@ export interface AppCtx {
   bus: Bus;
   netStore: NetStore;
   gate: Gate;
+  /** The Claw Patrol gateway bough supervises; absent in tests. */
+  gateway?: ClawpatrolGateway;
   /** Net config dir override (tests); undefined = ~/.bough/net. */
   netDir?: string;
   /** Built web UI dir override (tests/packaging); undefined = web/dist. */
@@ -278,6 +281,14 @@ const events: Handler = (req, ctx) => {
 
 // ---- net: rail, holds, bundles ---------------------------------------------
 
+// Claw Patrol gateway status for the Network rail: whether it's enabled, the binary is
+// present, the gateway is healthy, and where its dashboard lives (audit + approvals).
+const netStatus: Handler = (_req, ctx) =>
+  json(
+    ctx.gateway?.status() ??
+      { enabled: false, available: false, running: false, dashboardUrl: "" },
+  );
+
 // Recent NetRequest rows for the Network rail (optionally per-session).
 const netRequests: Handler = (req, ctx) => {
   const sessionId = new URL(req.url).searchParams.get("sessionId") ?? undefined;
@@ -354,6 +365,7 @@ const routes: Route[] = [
   // until the connection closes (cloudflared#1449) but stream POST bodies live. The
   // web client always uses POST; GET stays for curl and local tools.
   { method: "POST", pattern: new URLPattern({ pathname: "/events" }), handler: events },
+  { method: "GET", pattern: new URLPattern({ pathname: "/net/status" }), handler: netStatus },
   { method: "GET", pattern: new URLPattern({ pathname: "/net/requests" }), handler: netRequests },
   { method: "POST", pattern: new URLPattern({ pathname: "/net/requests/:id/allow" }), handler: resolveHold(true) },
   { method: "POST", pattern: new URLPattern({ pathname: "/net/requests/:id/deny" }), handler: resolveHold(false) },

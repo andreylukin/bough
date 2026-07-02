@@ -1,6 +1,7 @@
 /** Run a shell command in the session workspace, capturing combined output. */
 import { z } from "zod/v4";
 import { wrap } from "../sandbox/seatbelt.ts";
+import { clawpatrolRunPrefix } from "../net/gateway.ts";
 import type { ToolDef, ToolRunCtx } from "./types.ts";
 
 const schema = z.object({
@@ -28,6 +29,9 @@ export const bash: ToolDef = {
     if (ctx.sandbox && Deno.build.os === "darwin" && Deno.env.get("BOUGH_NO_SANDBOX") !== "1") {
       argv = wrap(argv, { workspace: ctx.workspace, allowWrite: [ctx.sandbox.sessionDir] });
     }
+    // Route egress through Claw Patrol when the gateway is running (opt-in). Seatbelt
+    // still confines the filesystem; `clawpatrol run` captures the network at L3.
+    argv = [...clawpatrolRunPrefix(), ...argv];
     const cmd = new Deno.Command(argv[0], {
       args: argv.slice(1),
       cwd: ctx.workspace,

@@ -28,9 +28,9 @@ export interface ClawpatrolResult {
   flaky?: boolean;
 }
 
-/** The binary to run; BOUGH_CLAWPATROL overrides (tests / custom installs). */
+/** The binary to run; BOUGH_CLAWPATROL_BIN overrides (tests / custom installs). */
 function bin(): string {
-  return Deno.env.get("BOUGH_CLAWPATROL") ?? "clawpatrol";
+  return Deno.env.get("BOUGH_CLAWPATROL_BIN") ?? "clawpatrol";
 }
 
 export function clawpatrolAvailable(): boolean {

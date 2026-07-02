@@ -5,6 +5,7 @@
 import { defaultDbPath, openDb } from "../db/db.ts";
 import { openNetStore } from "../db/net.ts";
 import { createGate } from "../net/gate.ts";
+import { ClawpatrolGateway, setActiveGateway } from "../net/gateway.ts";
 import { bus } from "../bus.ts";
 import { createHandler } from "./app.ts";
 import { recoverOrphanedTurns } from "../supervisor/turns.ts";
@@ -19,9 +20,15 @@ if (orphaned > 0) console.log(`recovered ${orphaned} orphaned turn(s)`);
 // net_events shares the DB file via its own connection (see db/net.ts).
 const netStore = openNetStore(defaultDbPath());
 const gate = createGate({ netStore, bus });
+// Claw Patrol is the real egress firewall (opt-in via BOUGH_CLAWPATROL=1): bough boots
+// and supervises its gateway, and bash.ts routes sandboxed commands through it.
+const gateway = new ClawpatrolGateway();
+setActiveGateway(gateway);
+await gateway.start();
+globalThis.addEventListener("unload", () => void gateway.stop());
 const password = Deno.env.get("BOUGH_PASSWORD");
 if (password) console.log("auth: password required (BOUGH_PASSWORD is set)");
-const handler = createHandler({ db, bus, netStore, gate, password });
+const handler = createHandler({ db, bus, netStore, gate, gateway, password });
 
 // Deno.serve defaults to 0.0.0.0 — only take the LAN-visible bind when a password
 // guards it. BOUGH_HOST overrides either way.

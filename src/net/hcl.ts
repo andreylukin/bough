@@ -17,6 +17,11 @@ import type { Verdict } from "./policy.ts";
 export interface HclWireguard {
   subnetCidr: string;
   endpoint: string;
+  // The actual UDP bind. Defaults to 51820 upstream, which collides with an
+  // installed Clawpatrol.app system extension — bough pins a free port here.
+  listenPort?: number;
+  // The 127.0.0.1 TCP landing pad host-local clients dial (default 8443 upstream).
+  hostLoopbackPort?: number;
 }
 
 export interface HclGateway {
@@ -81,6 +86,8 @@ function renderGateway(g: HclGateway): string {
     `    subnet_cidr = ${q(g.wireguard.subnetCidr)}`,
     // single-host loopback needs an explicit endpoint (spike gotcha).
     `    endpoint    = ${q(g.wireguard.endpoint)}`,
+    ...(g.wireguard.listenPort ? [`    listen_port = ${g.wireguard.listenPort}`] : []),
+    ...(g.wireguard.hostLoopbackPort ? [`    host_loopback_port = ${g.wireguard.hostLoopbackPort}`] : []),
     "  }",
     "}",
   ].join("\n");
@@ -132,13 +139,22 @@ export function renderHcl(p: HclPolicy): string {
   return blocks.join("\n\n") + "\n";
 }
 
-/** Sensible gateway defaults for single-host loopback (the spike's values). */
+/**
+ * Gateway defaults for bough's single-host loopback deployment. Ports are chosen
+ * to avoid two known collisions on the dev box: :8080 (bough's llama-server) and
+ * :51820 (an installed Clawpatrol.app system extension's WireGuard).
+ */
 export function defaultGateway(overrides: Partial<HclGateway> = {}): HclGateway {
   return {
-    dashboardListen: "127.0.0.1:8081",
+    dashboardListen: "127.0.0.1:8090",
     stateDir: "state",
-    publicUrl: "http://127.0.0.1:8081",
-    wireguard: { subnetCidr: "10.55.0.0/24", endpoint: "127.0.0.1:51820" },
+    publicUrl: "http://127.0.0.1:8090",
+    wireguard: {
+      subnetCidr: "10.55.0.0/24",
+      endpoint: "127.0.0.1:51999",
+      listenPort: 51999,
+      hostLoopbackPort: 8453,
+    },
     ...overrides,
   };
 }
