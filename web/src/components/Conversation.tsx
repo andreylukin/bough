@@ -482,6 +482,121 @@ function TurnView({
   );
 }
 
+// Staged messages waiting for the current turn to finish. Each row is editable
+// inline (click ✎) and removable (✕) before it's sent.
+function QueuedList(
+  { queued, onRemove, onEdit }: {
+    queued: string[];
+    onRemove?: (i: number) => void;
+    onEdit?: (i: number, text: string) => void;
+  },
+) {
+  const [editing, setEditing] = useState<number | null>(null);
+  const [draft, setDraft] = useState("");
+  return (
+    <div
+      style={{
+        flex: "none",
+        borderTop: `1px solid ${c.border}`,
+        background: c.panel,
+        padding: "10px 24px 0",
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+      }}
+    >
+      <div style={{ fontSize: 10, letterSpacing: ".12em", color: c.amber, fontWeight: 600 }}>
+        QUEUED · {queued.length} — sends when this turn finishes
+      </div>
+      {queued.map((text, i) => (
+        <div
+          key={i}
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 8,
+            background: c.panel3,
+            border: `1px solid ${c.border2}`,
+            borderRadius: 8,
+            padding: "7px 10px",
+          }}
+        >
+          {editing === i
+            ? (
+              <>
+                <textarea
+                  autoFocus
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      const t = draft.trim();
+                      if (t) onEdit?.(i, t);
+                      setEditing(null);
+                    } else if (e.key === "Escape") {
+                      setEditing(null);
+                    }
+                  }}
+                  rows={1}
+                  style={{
+                    flex: 1,
+                    resize: "none",
+                    border: "none",
+                    outline: "none",
+                    background: "transparent",
+                    color: c.text,
+                    fontFamily: sans,
+                    fontSize: 13.5,
+                    lineHeight: 1.5,
+                  }}
+                />
+                <button
+                  onClick={() => {
+                    const t = draft.trim();
+                    if (t) onEdit?.(i, t);
+                    setEditing(null);
+                  }}
+                  style={{ fontSize: 11, color: c.green }}
+                >
+                  save
+                </button>
+              </>
+            )
+            : (
+              <>
+                <span style={{ flex: 1, fontSize: 13.5, color: c.text2, whiteSpace: "pre-wrap", lineHeight: 1.5 }}>
+                  {text}
+                </span>
+                {onEdit && (
+                  <button
+                    onClick={() => {
+                      setDraft(text);
+                      setEditing(i);
+                    }}
+                    title="Edit this queued message"
+                    style={{ fontSize: 12, color: c.muted2, flex: "none" }}
+                  >
+                    ✎
+                  </button>
+                )}
+                {onRemove && (
+                  <button
+                    onClick={() => onRemove(i)}
+                    title="Remove from queue"
+                    style={{ fontSize: 12, color: c.muted2, flex: "none" }}
+                  >
+                    ✕
+                  </button>
+                )}
+              </>
+            )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function Conversation({
   thread,
   streaming,
@@ -495,6 +610,9 @@ export function Conversation({
   onSearchFiles,
   onForkEdit,
   onCompact,
+  queued = [],
+  onRemoveQueued,
+  onEditQueued,
   disabled,
 }: {
   thread: Message[];
@@ -514,6 +632,10 @@ export function Conversation({
   onCompact?: (fromId: string, toId: string) => void;
   // Fuzzy workspace file search for @ references; absent → no autocomplete.
   onSearchFiles?: (q: string) => Promise<string[]>;
+  // Messages staged while a turn runs — shown above the composer, editable/removable.
+  queued?: string[];
+  onRemoveQueued?: (i: number) => void;
+  onEditQueued?: (i: number, text: string) => void;
   disabled: boolean;
 }) {
   const activityFor = (id: string) => activity.find((a) => a.messageId === id);
@@ -741,6 +863,9 @@ export function Conversation({
         ))}
       </div>
 
+      {queued.length > 0 && (
+        <QueuedList queued={queued} onRemove={onRemoveQueued} onEdit={onEditQueued} />
+      )}
       <div
         className="conv-composer"
         style={{

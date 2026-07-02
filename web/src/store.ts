@@ -24,6 +24,11 @@ export interface Store {
   notice: string | null;
   // Token usage for the open session (context meter); zeroed on session switch.
   usage: Usage;
+  // Messages typed while a turn was running — staged, not yet sent. Editable/removable
+  // until the turn finishes, then flushed. Cleared on session switch.
+  queued: string[];
+  removeQueued: (i: number) => void;
+  editQueued: (i: number, text: string) => void;
   open: (id: string) => Promise<void>;
   newSession: (workspace?: string) => Promise<Session>;
   send: (text: string) => Promise<void>;
@@ -52,10 +57,15 @@ export function useStore(): Store {
   const [changes, setChanges] = useState<WireDiff[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [usage, setUsage] = useState<Usage>({ contextTokens: 0, outputTokens: 0 });
+  const [queued, setQueued] = useState<string[]>([]);
 
   // currentId in a ref so the event handler (stable) can filter without re-subscribing.
   const currentRef = useRef<string | null>(null);
   currentRef.current = currentId;
+
+  // busy in a ref so `send` (a stable callback) can decide to stage vs. post without
+  // re-subscribing. Set from the derived `busy` during render, below.
+  const busyRef = useRef(false);
 
   // The held request, in a ref so resolvePending reads it without a fresh closure.
   const pendingRef = useRef<NetRequest | null>(null);
@@ -96,6 +106,7 @@ export function useStore(): Store {
     setCurrentId(id);
     setStreaming({});
     setChanges([]);
+    setQueued([]); // staged messages belong to the session they were typed in
     // Opening a session is "seeing" it — the attention dot comes off.
     setSessions((prev) => prev.map((s) => (s.id === id && s.unseen ? { ...s, unseen: false } : s)));
     const { session, thread, usage } = await api.getSession(id);
@@ -153,10 +164,23 @@ export function useStore(): Store {
     return s;
   }, [open]);
 
+  // Sending while a turn runs stages the message locally (visible, editable, removable)
+  // instead of posting it; the flush effect below sends staged messages once idle.
   const send = useCallback(async (text: string) => {
     const id = currentRef.current;
     if (!id) return;
+    if (busyRef.current) {
+      setQueued((q) => [...q, text]);
+      return;
+    }
     await api.postMessage(id, text);
+  }, []);
+
+  const removeQueued = useCallback((i: number) => {
+    setQueued((q) => q.filter((_, idx) => idx !== i));
+  }, []);
+  const editQueued = useCallback((i: number, text: string) => {
+    setQueued((q) => q.map((t, idx) => (idx === i ? text : t)));
   }, []);
 
   const interrupt = useCallback(() => {
@@ -315,6 +339,17 @@ export function useStore(): Store {
 
   // A turn is running for the open session while any of its messages is pending.
   const busy = thread.some((m) => m.pending);
+  busyRef.current = busy;
+
+  // Flush staged messages once the turn finishes: post them all (the server queues
+  // rapid posts into a single follow-up turn). Guard on currentId so a switch mid-turn
+  // doesn't send them to the wrong session (open() already clears the queue).
+  useEffect(() => {
+    if (busy || queued.length === 0 || !currentId) return;
+    const toSend = queued;
+    setQueued([]);
+    for (const text of toSend) api.postMessage(currentId, text).catch(() => {});
+  }, [busy, queued, currentId]);
 
   return {
     sessions,
@@ -329,6 +364,9 @@ export function useStore(): Store {
     changes,
     notice,
     usage,
+    queued,
+    removeQueued,
+    editQueued,
     open,
     newSession,
     send,

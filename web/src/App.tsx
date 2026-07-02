@@ -199,6 +199,9 @@ function LiveApp() {
         onForkEdit={(id, text) => store.fork(id, text)}
         onCompact={(fromId, toId, sessionId) => store.compact(fromId, toId, sessionId)}
         onDismissNotice={store.dismissNotice}
+        queued={store.queued}
+        onRemoveQueued={store.removeQueued}
+        onEditQueued={store.editQueued}
       />
       <CommandPalette
         open={paletteOpen}
@@ -261,6 +264,9 @@ function Window({
   onForkEdit,
   onCompact,
   onDismissNotice,
+  queued = [],
+  onRemoveQueued,
+  onEditQueued,
 }: {
   live: boolean;
   connected: boolean;
@@ -299,6 +305,9 @@ function Window({
   onForkEdit?: (messageId: string, text: string) => void;
   onCompact?: (fromId: string, toId: string, sessionId?: string) => void;
   onDismissNotice?: () => void;
+  queued?: string[];
+  onRemoveQueued?: (i: number) => void;
+  onEditQueued?: (i: number, text: string) => void;
 }) {
   const init = readHash();
   const [view, setView] = useState<View>(init.view);
@@ -462,6 +471,9 @@ function Window({
                 onSearchFiles={onSearchFiles}
                 onForkEdit={onForkEdit}
                 onCompact={onCompact}
+                queued={queued}
+                onRemoveQueued={onRemoveQueued}
+                onEditQueued={onEditQueued}
                 disabled={false}
               />
             </div>
