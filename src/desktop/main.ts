@@ -1,5 +1,5 @@
 /**
- * `deno desktop` entrypoint — packages bough-next as a native app: the UI renders in the
+ * `deno desktop` entrypoint — packages bough as a native app: the UI renders in the
  * OS webview (WebKit on macOS), the backend runs in this same Deno process, and the whole
  * thing compiles to one binary via `deno task desktop:build`.
  *

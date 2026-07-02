@@ -1,5 +1,5 @@
 /**
- * Expose the local bough-next server on a temporary public HTTPS URL via a Cloudflare
+ * Expose the local bough server on a temporary public HTTPS URL via a Cloudflare
  * quick tunnel (needs `cloudflared`, e.g. `brew install cloudflared`). For using bough
  * from a phone while the server runs on this machine.
  *

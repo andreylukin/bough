@@ -1,4 +1,4 @@
-# Packaging bough-next as a desktop app
+# Packaging bough as a desktop app
 
 **Spike verdict: `deno desktop` works for this app.** Build succeeds and produces a
 codesigned native bundle; no fallback needed. The browser path stays available as a

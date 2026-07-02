@@ -27,7 +27,6 @@ bough runs a frontier model as a **supervisor** that plans by writing code, whic
 Requires [Deno](https://deno.com). From the repo root:
 
 ```bash
-cd bough-next
 export ANTHROPIC_API_KEY=sk-ant-...
 deno task dev                          # serves http://127.0.0.1:4321
 ```
@@ -67,10 +66,9 @@ Point a session at a repo and ask. The supervisor plans, the sandbox runs the wo
 ## Develop
 
 ```bash
-cd bough-next
 deno task test     # unit + integration tests
 deno task check    # typecheck
 cd web && npm run build   # rebuild the web UI (server serves web/dist)
 ```
 
-`make serve` / `make test` / `make check` at the root are shorthands for the same.
+`make serve` / `make test` / `make check` are shorthands for the same.

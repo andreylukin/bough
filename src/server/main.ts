@@ -29,5 +29,5 @@ const hostname = Deno.env.get("BOUGH_HOST") ?? (password ? "0.0.0.0" : "127.0.0.
 Deno.serve({
   port: PORT,
   hostname,
-  onListen: ({ hostname, port }) => console.log(`bough-next listening on ${hostname}:${port}`),
+  onListen: ({ hostname, port }) => console.log(`bough listening on ${hostname}:${port}`),
 }, handler);

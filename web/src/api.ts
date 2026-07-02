@@ -1,4 +1,4 @@
-// Thin REST client over the bough-next backend. Paths are proxied to :4321 in dev.
+// Thin REST client over the bough backend. Paths are proxied to :4321 in dev.
 import type { BundleSummary, ChangeSource, Message, NetRequest, Session, WireDiff } from "./types";
 
 async function j<T>(res: Response): Promise<T> {

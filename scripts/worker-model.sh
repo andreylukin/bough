@@ -2,7 +2,7 @@
 # Canonical worker model. Source this and call ensure_worker_model to fetch the
 # GGUF the engine loads:  . scripts/worker-model.sh && ensure_worker_model
 #
-# WORKER_MODEL_FILE *must* equal DEFAULT_GGUF in bough-next/src/worker/runtime.ts,
+# WORKER_MODEL_FILE *must* equal DEFAULT_GGUF in src/worker/runtime.ts,
 # otherwise the download lands under a name the worker never looks for (its actual
 # default stays missing and the worker fails to start). Keep them in sync.
 

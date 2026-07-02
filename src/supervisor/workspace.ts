@@ -14,7 +14,7 @@
  *      installed, not a repo mid-op) are non-fatal: the turn still runs sandboxed,
  *      just without snapshot tracking.
  *
- * The clonefile snapshot dir (BOUGH_SNAPSHOT_BASE override, else ~/.bough-next/…) is
+ * The clonefile snapshot dir (BOUGH_SNAPSHOT_BASE override, else ~/.bough/…) is
  * always created and handed back so bash can be granted write access to it.
  */
 import type { Db } from "../db/db.ts";

@@ -1,5 +1,5 @@
 {
-  "name": "bough-next",
+  "name": "bough",
   "version": "0.0.0",
   "exports": "./src/server/main.ts",
   "tasks": {
