@@ -1,5 +1,5 @@
 /**
- * `run_steps` — the supervisor's ONLY tool (SPEC.md §5): one JavaScript program per
+ * `run_steps` — the supervisor's ONLY tool: one JavaScript program per
  * round, executed by the deterministic harness in a sealed V8 sandbox (harness/vm.ts).
  * The supervisor plans and writes; it never touches the machine. The program's whole
  * capability surface is the four host functions, which run here on the host through

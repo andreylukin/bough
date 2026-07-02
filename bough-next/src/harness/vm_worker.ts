@@ -1,7 +1,7 @@
 /// <reference no-default-lib="true" />
 /// <reference lib="deno.worker" />
 /**
- * The sandbox side of the code-mode VM (SPEC.md §5.2, V8 edition): this module runs
+ * The sandbox side of the code-mode VM: this module runs
  * as a Deno Worker with `permissions: "none"` — its V8 isolate can touch nothing on
  * the host. The four host functions (bash/read/write/edit) are the entire capability
  * surface, bridged to the main process over postMessage; everything else (fs, net,

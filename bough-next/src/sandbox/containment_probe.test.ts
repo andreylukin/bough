@@ -1,17 +1,15 @@
 /**
  * Containment probes for the Seatbelt filesystem sandbox — the load-bearing test:
- * run escape attempts inside a `wrap()`-ed subprocess and assert each is DENIED.
- * Ported in spirit from the old sandbox's `containment_probe.sh`
- * (packages/bough_server/priv/proxy): same assert-blocked-or-fail structure and
- * the same "positive control" guard so a sandbox that trivially breaks all I/O
+ * run escape attempts inside a `wrap()`-ed subprocess and assert each is DENIED,
+ * with a "positive control" guard so a sandbox that trivially breaks all I/O
  * can't false-pass every deny.
  *
- * Scope note: `containment_probe.sh` is entirely NETWORK probes (direct HTTPS,
- * raw TCP, UDP DNS, cloud-metadata SSRF, no-proxy egress). Those belong to the
- * Claw Patrol egress layer (`src/net/**`), NOT to Seatbelt — Seatbelt does not
- * restrict the network here. This file therefore covers the filesystem/process
- * half: write-confinement (deny-write outside the workspace) and read-confinement
- * (the credential/secret read denylist). The network probes should be ported
+ * Scope note: network probes (direct HTTPS, raw TCP, UDP DNS, cloud-metadata
+ * SSRF, no-proxy egress) belong to the Claw Patrol egress layer (`src/net/**`),
+ * NOT to Seatbelt — Seatbelt does not restrict the network here. This file
+ * therefore covers the filesystem/process half: write-confinement (deny-write
+ * outside the workspace) and read-confinement (the credential/secret read
+ * denylist). The network probes should be ported
  * against Claw Patrol as its own containment test.
  *
  * Safety: probes never target real credential files. Write-escapes use unique

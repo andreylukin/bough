@@ -5,8 +5,8 @@
  * connected UI re-renders the sidebar entry. Failures are silent — a session that
  * keeps its placeholder is annoying, not broken.
  *
- * The task runs on bough's LOCAL worker (llama-server + Qwen2.5-Coder-3B, same
- * runtime contract as the Gleam bough — see worker/runtime.ts): a title is exactly
+ * The task runs on bough's LOCAL worker (llama-server + Qwen2.5-Coder-3B — see
+ * worker/runtime.ts): a title is exactly
  * the kind of small self-contained unit the worker exists for. Per the worker
  * experiments, local tiers need a frontier backstop — if the local path fails, a
  * small Anthropic model finishes the job.

@@ -29,7 +29,7 @@ const cmd = new Deno.Command(argv[0], { args: argv.slice(1), cwd: workspace, ...
 - The profile is **deny-write except workspace + a curated toolchain allowlist**
   (caches, `/private/tmp`, `~/.cargo`, `~/.npm`, …) and **allow-read except a
   credential/secret denylist** (`~/.ssh`, `~/.aws`, keychains, shell rc/history, browser
-  data). Ported verbatim from the Gleam `seatbelt.gleam`.
+  data).
 - **Network is intentionally NOT restricted here** — egress is owned by the Claw
   Patrol layer (`src/net/**`). This module is the filesystem/process half only.
 - The profile travels inline (`sandbox-exec -p <profile>`), so there's no temp file

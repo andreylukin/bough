@@ -4,7 +4,7 @@ import { buildProfile, wrap } from "./seatbelt.ts";
 const GOLDEN = `(version 1)
 (allow default)
 
-;; deny reads of credential/secret/private paths (ported from the Gleam sandbox)
+;; deny reads of credential/secret/private paths
 (deny file-read*
   (subpath "/home/u/.ssh")
   (subpath "/home/u/.gnupg")

@@ -1,19 +1,17 @@
 /**
- * Local worker runtime — the bough-next port of the Gleam worker_runtime (SPEC.md
- * §5.6): "the worker runs as part of bough" means bough owns and supervises a small
- * inference server as a child process, not a separate daemon. This launches
- * `llama-server` over the shared GGUF and hands callers a localhost
- * OpenAI-compatible endpoint.
+ * Local worker runtime — the worker runs as part of bough: bough owns and supervises
+ * a small inference server as a child process, not a separate daemon. This launches
+ * `llama-server` over the shared GGUF (fetched by scripts/worker-model.sh) and hands
+ * callers a localhost OpenAI-compatible endpoint.
  *
- * The env contract and model directory are IDENTICAL to the Gleam bough, so one
- * install (and one running llama-server) serves both apps:
+ * Env contract:
  *   BOUGH_WORKER_URL       escape hatch — any endpoint, returned untouched
  *   BOUGH_WORKER_PORT      local port (default 8080)
  *   BOUGH_WORKER_GGUF      model filename under ~/.bough/models
  *   BOUGH_WORKER_GGUF_URL  where to download the GGUF if missing (else error)
  *   BOUGH_LLAMA_SERVER     llama-server binary (default: from PATH)
  *
- * Deferred, as in the Gleam version: graceful shutdown / supervised restart. The
+ * Deferred: graceful shutdown / supervised restart. The
  * child is spawned detached and lives past this process.
  */
 import { join } from "node:path";

@@ -2,8 +2,7 @@
  * macOS Seatbelt (`sandbox-exec`) profile generation for bough's filesystem
  * sandbox. Every shelled subprocess runs wrapped in this profile: reads are
  * allow-default MINUS a curated credential/secret denylist, and writes are
- * deny-default EXCEPT the workspace plus a curated toolchain allowlist. Ported
- * from the Gleam `seatbelt.gleam` (packages/bough_server) — same deny/allow groups.
+ * deny-default EXCEPT the workspace plus a curated toolchain allowlist.
  *
  * Scope is filesystem + process only. Network egress is intentionally NOT
  * restricted here; that is owned by the Claw Patrol layer (see docs). Kept pure
@@ -11,15 +10,14 @@
  * golden-tests, `wrap` just prepends the `sandbox-exec` argv.
  *
  * macOS-only. `sandbox-exec` is deprecated-but-present on current macOS and is
- * the same primitive the old sandbox and Chromium rely on.
+ * the same primitive Chromium relies on.
  */
 
 const SANDBOX_EXEC = "/usr/bin/sandbox-exec";
 
 /**
- * Credential / secret / private paths denied for reading. Ported verbatim from
- * the Gleam profile's locked deny groups. `~` expands to `home` at build time;
- * `/`-rooted entries are absolute.
+ * Credential / secret / private paths denied for reading — a locked deny group.
+ * `~` expands to `home` at build time; `/`-rooted entries are absolute.
  */
 const DENY_READS = [
   // credentials
@@ -88,7 +86,7 @@ const DENY_READS = [
 /**
  * Dirs outside the workspace that toolchains legitimately write to (caches, temp,
  * per-language stores). Without these, cargo/npm/go/etc. break under
- * write-confinement. Ported from the Gleam allowlist.
+ * write-confinement.
  */
 const WRITE_ALLOW = [
   // temp
@@ -178,7 +176,7 @@ export function buildProfile(opts: SandboxOptions & { home: string }): string {
     "(version 1)",
     "(allow default)",
     "",
-    ";; deny reads of credential/secret/private paths (ported from the Gleam sandbox)",
+    ";; deny reads of credential/secret/private paths",
     `(deny file-read*\n  ${denies})`,
     "",
     ";; confine writes to the workspace + a curated allowlist",

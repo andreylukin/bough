@@ -1,7 +1,7 @@
 /**
  * Request classifier + egress policy decision — the runtime brain of the net
- * gate. Ported from the spike's `policy.py` (bough_server/priv/proxy), kept pure
- * and dependency-free so it unit-tests without a gateway or a network.
+ * gate. Kept pure and dependency-free so it unit-tests without a gateway or a
+ * network.
  *
  * Scope: we only READ requests to gate them (allow/deny/hold) — we never modify
  * them, so AWS SigV4 signatures stay valid. Credential injection is a separate

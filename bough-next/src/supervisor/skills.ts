@@ -1,5 +1,5 @@
 /**
- * Skills — the bough-next port of the Gleam `skills.gleam`: named, reusable
+ * Skills: named, reusable
  * instruction bundles the human pulls into a run by typing `/<name>` in their
  * message (e.g. `/commit tidy this up`). A skill is a folder
  * `~/.bough/skills/<name>/SKILL.md` with YAML-ish frontmatter (`name`,
@@ -7,8 +7,7 @@
  * installed skill, the harness appends that skill's body to the supervisor's
  * system prompt for the run (see turn.ts).
  *
- * The directory is shared with the Gleam bough — one skill install serves both.
- * Override with BOUGH_SKILLS_DIR (tests).
+ * Override the directory with BOUGH_SKILLS_DIR (tests).
  */
 import { join } from "node:path";
 import { homedir } from "node:os";

@@ -1,6 +1,5 @@
 /**
- * The worker provider — the bough-next port of the Gleam `worker.gleam` (SPEC.md
- * §5.1, §5.5): a small local model given one self-contained task as a single
+ * The worker provider: a small local model given one self-contained task as a single
  * system+user exchange. Just the OpenAI-compatible `/v1/chat/completions` shape,
  * the same contract whether it's served by bough's own `llama-server`, a
  * llamafile, or a remote endpoint.

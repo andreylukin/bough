@@ -1,6 +1,5 @@
 /**
- * The host side of the code-mode VM (SPEC.md §5.2, V8 edition — monty's role in the
- * Gleam bough). Each supervisor round is one JavaScript program executed in a fresh
+ * The host side of the code-mode VM. Each supervisor round is one JavaScript program executed in a fresh
  * Deno Worker with `permissions: "none"`: an isolated V8 heap that cannot reach the
  * filesystem, network, env, or Deno APIs. The ONLY capabilities are the async host
  * functions we bridge in — and those run here on the host, where the real tool
