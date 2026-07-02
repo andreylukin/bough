@@ -23,6 +23,7 @@
  *   - any tool_use without a matching tool_result (e.g. a crash mid-tool) gets a
  *     synthetic error tool_result so the history stays valid for the API.
  */
+import { join } from "node:path";
 import type { Db } from "./db/db.ts";
 import type { Bus } from "./bus.ts";
 import type { Message, Part } from "./schema/parts.ts";
@@ -34,7 +35,7 @@ import {
   type ToolRunCtx,
 } from "./tools/mod.ts";
 import {
-  anthropicClient,
+  clientFor,
   type LlmClient,
   type LlmContentBlock,
   type LlmMessage,
@@ -67,10 +68,35 @@ class InterruptedError extends Error {
   }
 }
 
-/** The model turns run on. Env-overridable; surfaced to the UI via GET /config. */
+/**
+ * The model turns run on. Starts from BOUGH_MODEL (else the default) and can be
+ * changed at runtime via PATCH /config — new turns pick up the change. Anthropic
+ * ids ("claude-…") route to the Anthropic client; a provider-prefixed id
+ * ("anthropic/…", "openai/…") routes to OpenRouter (see llm.clientFor).
+ */
+let currentModel = Deno.env.get("BOUGH_MODEL") ?? "claude-opus-4-8";
+
 export function activeModel(): string {
-  return Deno.env.get("BOUGH_MODEL") ?? "claude-opus-4-8";
+  return currentModel;
 }
+
+export function setActiveModel(model: string): void {
+  currentModel = model;
+}
+
+/**
+ * Models offered in the picker. Anthropic ids go direct; the `openrouter/…` ids
+ * route through OpenRouter (need OPENROUTER_API_KEY). Not exhaustive — the composer
+ * accepts any id, this is just the quick-switch menu.
+ */
+export const MODELS: { id: string; label: string; provider: "anthropic" | "openrouter" }[] = [
+  { id: "claude-opus-4-8", label: "Opus 4.8", provider: "anthropic" },
+  { id: "claude-fable-5", label: "Fable 5", provider: "anthropic" },
+  { id: "claude-sonnet-5", label: "Sonnet 5", provider: "anthropic" },
+  { id: "claude-haiku-4-5", label: "Haiku 4.5", provider: "anthropic" },
+  { id: "openai/gpt-5", label: "GPT-5 (OpenRouter)", provider: "openrouter" },
+  { id: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro (OpenRouter)", provider: "openrouter" },
+];
 
 const MAX_ITERATIONS = 25;
 const MAX_TOKENS = 64_000;
@@ -91,6 +117,21 @@ const SYSTEM = [
   "re-runs the committed check and accepts done only if it passes.",
   "For pure questions or conversation, answer in plain text without calling run_steps.",
 ].join(" ");
+
+/** Read the workspace AGENTS.md (capped) as a system-prompt section, or null if absent. */
+async function readAgentsFile(cwd: string): Promise<string | null> {
+  try {
+    const text = await Deno.readTextFile(join(cwd, "AGENTS.md"));
+    if (!text.trim()) return null;
+    // Cap so a huge file can't crowd out the task; the model can read the rest itself.
+    const body = text.length > 12_000 ? text.slice(0, 12_000) + "\n…(truncated)" : text;
+    return "\n\n# Project rules (AGENTS.md)\nThe workspace root has an AGENTS.md — treat it " +
+      "as authoritative for build/test commands, conventions, and what \"done\" means:\n\n" +
+      body.trim();
+  } catch {
+    return null;
+  }
+}
 
 /** Kick off the supervisor turn for `sessionId`. Returns the placeholder message. */
 export function runTurn(ctx: TurnCtx, sessionId: string): Message {
@@ -121,9 +162,15 @@ export function beginTurn(ctx: TurnCtx, sessionId: string): { message: Message; 
     console.error("turn runner crashed:", err);
   }).finally(() => {
     if (running.get(sessionId) === controller) running.delete(sessionId);
+    // Drain a message queued while this turn ran: run one follow-up turn, which
+    // sees every queued user message since the last supervisor reply.
+    if (queued.delete(sessionId)) beginTurn(ctx, sessionId);
   });
   return { message, done };
 }
+
+/** Sessions with a user message queued while a turn was in flight (see startUserTurn). */
+const queued = new Set<string>();
 
 /** Live turns by session, for interruption. One turn per session at a time. */
 const running = new Map<string, AbortController>();
@@ -167,6 +214,12 @@ export function startUserTurn(
   ctx.bus.publish({ type: "message.started", sessionId, data: userMessage });
   // Fire-and-forget: name an untitled session from its first message (title worker).
   maybeAutoTitle({ db: ctx.db, bus: ctx.bus, titler: ctx.titler }, sessionId, text);
+  // One turn per session: if one is already running, the message is persisted and shown
+  // now, and a single follow-up turn drains the queue when the current one finishes.
+  if (isTurnRunning(sessionId)) {
+    queued.add(sessionId);
+    return { userMessage, done: Promise.resolve() };
+  }
   const { done } = beginTurn(ctx, sessionId);
   return { userMessage, done };
 }
@@ -175,9 +228,12 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
   const { db, bus } = ctx;
   const sessionId = message.sessionId;
   const messageId = message.id;
-  const llm = ctx.llm ?? anthropicClient();
-  const tools = ctx.tools ?? defaultTools;
   const model = ctx.model ?? activeModel();
+  const llm = ctx.llm ?? clientFor(model);
+  const tools = ctx.tools ?? defaultTools;
+  // Newest round's input_tokens ≈ the live context size; output accumulates.
+  let contextTokens = 0;
+  let outputTokens = 0;
 
   const turn = startTurn(db, sessionId, messageId);
   const parts: Part[] = [];
@@ -201,9 +257,12 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     // Inline any @path references in the triggering message so the model sees the
     // file content, not just the name. Only for workspace sessions (files exist).
     if (prepared.sandboxed) inlineFileReferences(messages, prepared.cwd);
+    // Project rules: an AGENTS.md at the workspace root is authoritative for build/test
+    // commands, conventions, and what "done" means — inject it into the system prompt.
+    const agents = prepared.sandboxed ? await readAgentsFile(prepared.cwd) : null;
     // Skills: `/name` in the triggering user message pulls that skill's
     // instructions into the system prompt for this run (supervisor/skills.ts).
-    const system = SYSTEM + activeFor(lastUserText(db, sessionId));
+    const system = SYSTEM + (agents ?? "") + activeFor(lastUserText(db, sessionId));
     const toolDefs = tools.map((t) => ({
       name: t.name,
       description: t.description,
@@ -217,6 +276,11 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
         (delta) => bus.publish({ type: "message.delta", sessionId, data: { messageId, delta } }),
         signal,
       );
+
+      if (result.usage) {
+        contextTokens = result.usage.inputTokens; // last round = current context size
+        outputTokens += result.usage.outputTokens;
+      }
 
       const assistant: LlmContentBlock[] = [];
       for (const block of result.content) {
@@ -278,6 +342,17 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     bus.publish({ type: "message.part", sessionId, data: { messageId, part: note } });
     bus.publish({ type: "message.finished", sessionId, data: { messageId } });
   } finally {
+    // Persist token usage for the context meter and announce it (usage.updated).
+    // contextTokens stays 0 for a stream that errored before its first usage report.
+    if (contextTokens > 0 || outputTokens > 0) {
+      const prev = db.sessionUsage(sessionId);
+      db.setSessionUsage(sessionId, contextTokens, prev.outputTokens + outputTokens);
+      bus.publish({
+        type: "usage.updated",
+        sessionId,
+        data: { sessionId, contextTokens, outputTokens: prev.outputTokens + outputTokens },
+      });
+    }
     // A workspace session may have new file edits after the turn — nudge the Changes
     // rail to refetch. Only workspace-backed sessions have anything to show.
     if (db.getSessionRuntime(sessionId).workspace) {

@@ -2,12 +2,110 @@
 // right-aligned run status. In live mode the status derives from real state (SSE
 // connection); the sandbox-snapshot / agent chips are hidden until their backends exist,
 // rather than showing invented values. Mock mode keeps the fuller design-review chrome.
+import { useEffect, useRef, useState } from "react";
 import { c, mono } from "../theme";
+import type { ModelOption } from "../api";
 import { CopyId, Dot, Logo } from "./ui";
 
 function Light() {
   return <span style={{ width: 12, height: 12, borderRadius: "50%", background: "#3a414c" }} />;
 }
+
+// "12.3k" / "512" — compact token counts for the context meter.
+function fmtTokens(n: number): string {
+  if (n >= 1000) return `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k`;
+  return String(n);
+}
+
+// Model name + click-to-switch menu. Falls back to a static label when no models/handler.
+function ModelPicker({ model, models, onSetModel }: {
+  model: string;
+  models?: ModelOption[];
+  onSetModel?: (m: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  const short = model.replace(/^claude-/, "");
+  const label = models?.find((m) => m.id === model)?.label ?? short;
+  const clickable = !!(models?.length && onSetModel);
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        onClick={clickable ? () => setOpen((v) => !v) : undefined}
+        title={clickable ? "Switch model" : model}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
+          fontFamily: mono,
+          fontSize: 11.5,
+          color: c.muted,
+          cursor: clickable ? "pointer" : "default",
+        }}
+      >
+        <span style={{ color: c.green }}>◇</span> {label}
+        {clickable && <span style={{ color: c.muted2, fontSize: 9 }}>▾</span>}
+      </button>
+      {open && models && (
+        <div
+          style={{
+            position: "absolute",
+            top: "100%",
+            right: 0,
+            marginTop: 6,
+            minWidth: 220,
+            background: c.panel2,
+            border: `1px solid ${c.border}`,
+            borderRadius: 9,
+            boxShadow: "0 16px 40px rgba(0,0,0,.4)",
+            padding: 5,
+            zIndex: 30,
+          }}
+        >
+          {models.map((m) => (
+            <button
+              key={m.id}
+              onClick={() => {
+                onSetModel?.(m.id);
+                setOpen(false);
+              }}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
+                width: "100%",
+                textAlign: "left",
+                padding: "7px 10px",
+                borderRadius: 6,
+                fontSize: 12,
+                color: m.id === model ? c.text : c.muted,
+                background: m.id === model ? c.panelInset : "transparent",
+              }}
+            >
+              <span>{m.label}</span>
+              {m.id === model && <span style={{ color: c.green }}>✓</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// A ~200k context budget for the meter; the exact window varies by model but this
+// is a stable yardstick for "how full is the conversation".
+const CONTEXT_BUDGET = 200_000;
 
 export function TitleBar({
   branch = "main · migrate-auth",
@@ -15,6 +113,9 @@ export function TitleBar({
   live = false,
   connected = false,
   model,
+  models,
+  usage,
+  onSetModel,
   workspace,
   sessionId,
 }: {
@@ -24,21 +125,31 @@ export function TitleBar({
   connected?: boolean;
   // Live-mode glanceables: the model turns run on, and the repo this session edits.
   model?: string;
+  models?: ModelOption[];
+  usage?: { contextTokens: number; outputTokens: number };
+  onSetModel?: (model: string) => void;
   workspace?: string | null;
   // When set, a copy chip next to the branch chip copies this head's session id.
   sessionId?: string | null;
 }) {
-  // "claude-opus-4-8" → "opus-4-8": the family+version is what you glance for.
-  const shortModel = model ? model.replace(/^claude-/, "") : "";
   const repo = workspace ? workspace.replace(/\/+$/, "").split("/").pop() : null;
-  // In live mode, surface the model, the workspace, and the event-stream link.
+  const ctxPct = usage ? Math.min(100, Math.round((usage.contextTokens / CONTEXT_BUDGET) * 100)) : 0;
+  const ctxColor = ctxPct >= 85 ? c.red : ctxPct >= 60 ? c.amber : c.green;
+  // In live mode, surface the model, the context meter, and the event-stream link.
   const liveRight = (
     <div style={{ display: "flex", alignItems: "center", gap: 16, fontFamily: mono, fontSize: 11.5, color: c.muted2 }}>
-      {shortModel && (
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color: c.muted }}>
-          <span style={{ color: c.green }}>◇</span> {shortModel}
+      {usage && usage.contextTokens > 0 && (
+        <span
+          title={`context ${usage.contextTokens.toLocaleString()} tokens · ${usage.outputTokens.toLocaleString()} output this session`}
+          style={{ display: "inline-flex", alignItems: "center", gap: 7, color: c.muted }}
+        >
+          <span style={{ width: 44, height: 5, borderRadius: 3, background: c.panelInset, overflow: "hidden", display: "inline-block" }}>
+            <span style={{ display: "block", height: "100%", width: `${ctxPct}%`, background: ctxColor }} />
+          </span>
+          {fmtTokens(usage.contextTokens)}
         </span>
       )}
+      {model && <ModelPicker model={model} models={models} onSetModel={onSetModel} />}
       <span style={{ display: "flex", alignItems: "center", gap: 6, color: c.muted }}>
         <Dot color={connected ? c.green : c.muted2} pulse={connected} />
         {connected ? "connected" : "reconnecting…"}

@@ -23,12 +23,24 @@ Deno.test("listSkills reads frontmatter descriptions; loadBody strips frontmatte
   withSkillsDir((dir) => {
     install(dir, "commit", "make a tidy commit", "Stage and commit with a conventional message.");
     install(dir, "review", "review the diff", "Read the diff and comment.");
-    assertEquals(listSkills(), [
+    // Installed skills, minus the always-present builtins (e.g. /init).
+    const installed = listSkills().filter((s) => s.name !== "init");
+    assertEquals(installed, [
       { name: "commit", description: "make a tidy commit" },
       { name: "review", description: "review the diff" },
     ]);
     assertEquals(loadBody("commit"), "Stage and commit with a conventional message.\n");
   });
+});
+
+Deno.test("the /init builtin is available without an install", () => {
+  Deno.env.set("BOUGH_SKILLS_DIR", "/nonexistent-bough-skills");
+  try {
+    assertEquals(listSkills().map((s) => s.name), ["init"]);
+    assertStringIncludes(activeFor("/init"), "AGENTS.md");
+  } finally {
+    Deno.env.delete("BOUGH_SKILLS_DIR");
+  }
 });
 
 Deno.test("activeFor injects only /named skills at word boundaries", () => {
@@ -45,10 +57,10 @@ Deno.test("activeFor injects only /named skills at word boundaries", () => {
   });
 });
 
-Deno.test("no skills dir → everything degrades to empty", () => {
+Deno.test("no skills dir → only builtins remain; unknown /names inject nothing", () => {
   Deno.env.set("BOUGH_SKILLS_DIR", "/nonexistent-bough-skills");
   try {
-    assertEquals(listSkills(), []);
+    assertEquals(listSkills().map((s) => s.name), ["init"]);
     assertEquals(activeFor("/anything at all"), "");
   } finally {
     Deno.env.delete("BOUGH_SKILLS_DIR");

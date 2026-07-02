@@ -30,7 +30,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   base        TEXT,                   -- persisted jj/git base commit, captured on the first turn
   origin_id         TEXT,             -- lineage: session this fork/compaction branched from (null for root/plain)
   origin_message_id TEXT,             -- lineage: the fork-at message / compaction span-end message
-  archived_at INTEGER                 -- soft delete: archived sessions leave the sidebar, rows stay
+  archived_at INTEGER,                -- soft delete: archived sessions leave the sidebar, rows stay
+  context_tokens INTEGER,             -- last turn's prompt size (context meter)
+  output_tokens  INTEGER              -- cumulative output tokens across the session
 );
 CREATE TABLE IF NOT EXISTS messages (
   id          TEXT PRIMARY KEY,
@@ -181,6 +183,8 @@ export class Db {
         "origin_id TEXT",
         "origin_message_id TEXT",
         "archived_at INTEGER",
+        "context_tokens INTEGER",
+        "output_tokens INTEGER",
       ]
     ) {
       try {
@@ -250,6 +254,20 @@ export class Db {
       .prepare(`SELECT * FROM sessions WHERE archived_at IS NULL ORDER BY created_at DESC`)
       .all() as SessionRow[];
     return rows.map(toSession);
+  }
+
+  /** Token usage for the context meter: last turn's prompt size + cumulative output. */
+  setSessionUsage(id: string, contextTokens: number, outputTokens: number): void {
+    this.#db
+      .prepare(`UPDATE sessions SET context_tokens = ?, output_tokens = ? WHERE id = ?`)
+      .run(contextTokens, outputTokens, id);
+  }
+
+  sessionUsage(id: string): { contextTokens: number; outputTokens: number } {
+    const r = this.#db
+      .prepare(`SELECT context_tokens, output_tokens FROM sessions WHERE id = ?`)
+      .get(id) as { context_tokens: number | null; output_tokens: number | null } | undefined;
+    return { contextTokens: r?.context_tokens ?? 0, outputTokens: r?.output_tokens ?? 0 };
   }
 
   /** Sessions with a turn in flight (any message still pending) — sidebar busy dots. */

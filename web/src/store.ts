@@ -1,7 +1,7 @@
 // App state + event reduction. Holds the session list, the open thread, per-message
 // streaming buffers, and the network feed. Everything the UI renders derives from here.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, readBranch } from "./api";
+import { api, readBranch, type Usage } from "./api";
 import { useEvents } from "./useEvents";
 import type { BoughEvent, ChangeSource, Message, NetRequest, Part, Session, WireDiff } from "./types";
 
@@ -22,6 +22,8 @@ export interface Store {
   changes: WireDiff[];
   // A transient message to surface (e.g. a fork/compact 400); null when clear.
   notice: string | null;
+  // Token usage for the open session (context meter); zeroed on session switch.
+  usage: Usage;
   open: (id: string) => Promise<void>;
   newSession: (workspace?: string) => Promise<Session>;
   send: (text: string) => Promise<void>;
@@ -49,6 +51,7 @@ export function useStore(): Store {
   const [pending, setPending] = useState<NetRequest | null>(null);
   const [changes, setChanges] = useState<WireDiff[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
+  const [usage, setUsage] = useState<Usage>({ contextTokens: 0, outputTokens: 0 });
 
   // currentId in a ref so the event handler (stable) can filter without re-subscribing.
   const currentRef = useRef<string | null>(null);
@@ -95,9 +98,10 @@ export function useStore(): Store {
     setChanges([]);
     // Opening a session is "seeing" it — the attention dot comes off.
     setSessions((prev) => prev.map((s) => (s.id === id && s.unseen ? { ...s, unseen: false } : s)));
-    const { session, thread } = await api.getSession(id);
+    const { session, thread, usage } = await api.getSession(id);
     setSession(session);
     setThread(thread);
+    setUsage(usage);
     refreshChanges(id);
   }, [refreshChanges]);
 
@@ -269,6 +273,13 @@ export function useStore(): Store {
         if (sessionId === currentRef.current) refreshChangesRef.current(sessionId);
         break;
       }
+      case "usage.updated": {
+        const u = ev.data as { sessionId: string; contextTokens: number; outputTokens: number };
+        if (u.sessionId === currentRef.current) {
+          setUsage({ contextTokens: u.contextTokens, outputTokens: u.outputTokens });
+        }
+        break;
+      }
       default:
         // Unknown event types are ignored (rendered defensively elsewhere).
         break;
@@ -284,9 +295,10 @@ export function useStore(): Store {
     const id = currentRef.current;
     if (!id) return;
     try {
-      const { session, thread } = await api.getSession(id);
+      const { session, thread, usage } = await api.getSession(id);
       setSession(session);
       setThread(thread);
+      setUsage(usage);
       setStreaming({});
       refreshChangesRef.current(id);
     } catch {
@@ -316,6 +328,7 @@ export function useStore(): Store {
     pending,
     changes,
     notice,
+    usage,
     open,
     newSession,
     send,

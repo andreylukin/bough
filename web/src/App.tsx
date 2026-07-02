@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { c } from "./theme";
 import * as mock from "./mock";
-import { api } from "./api";
+import { api, type ModelOption } from "./api";
 import { useStore } from "./store";
 import { bundleFromSummary, diffsToFiles, headGroupsFromSessions, outlineFromThread } from "./live";
 import type { HeadGroup } from "./live";
@@ -85,13 +85,17 @@ function LiveApp() {
   const store = useStore();
   const [bundles, setBundles] = useState<Bundle[]>([]);
   const [model, setModel] = useState("");
+  const [models, setModels] = useState<ModelOption[]>([]);
   const [paletteOpen, setPaletteOpen] = useState(false);
   // Bumping this asks the LeftRail to open its new-session form (from the palette).
   const [newSessionSignal, setNewSessionSignal] = useState(0);
   const bootstrapped = useRef(false);
 
   useEffect(() => {
-    api.config().then((c) => setModel(c.model)).catch(() => {});
+    api.config().then((c) => {
+      setModel(c.model);
+      setModels(c.models);
+    }).catch(() => {});
   }, []);
 
   // ⌘K / ⌘P (and ctrl variants) toggle the command palette — the keyboard spine.
@@ -176,6 +180,9 @@ function LiveApp() {
         notice={store.notice}
         busy={store.busy}
         model={model}
+        models={models}
+        usage={store.usage}
+        onSetModel={(m) => api.setModel(m).then((r) => setModel(r.model)).catch(() => {})}
         workspace={store.session?.workspace ?? null}
         newSessionSignal={newSessionSignal}
         onSend={onSend}
@@ -235,6 +242,9 @@ function Window({
   notice,
   busy = false,
   model,
+  models,
+  usage,
+  onSetModel,
   workspace,
   onSend,
   onInterrupt,
@@ -270,6 +280,9 @@ function Window({
   notice?: string | null;
   busy?: boolean;
   model?: string;
+  models?: ModelOption[];
+  usage?: { contextTokens: number; outputTokens: number };
+  onSetModel?: (model: string) => void;
   workspace?: string | null;
   onSend: (text: string, branch: boolean) => void;
   onInterrupt?: () => void;
@@ -404,7 +417,7 @@ function Window({
               onRail={() => setRightOpen(true)}
             />
           )
-          : <TitleBar branch={title} live={live} connected={connected} model={model} workspace={workspace} sessionId={currentId} />}
+          : <TitleBar branch={title} live={live} connected={connected} model={model} models={models} usage={usage} onSetModel={onSetModel} workspace={workspace} sessionId={currentId} />}
         <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
           {!mobile && leftRail}
 
