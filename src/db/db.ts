@@ -11,7 +11,7 @@
  * Drizzle would. Net/snapshot owners extend the minimal columns here later.
  *
  * Storage: JSON columns for message `parts`; booleans as 0/1; timestamps as epoch ms.
- * DB file at ~/.bough-next/bough.db, overridable via BOUGH_DB (":memory:" for tests).
+ * DB file at ~/.bough/bough.db, overridable via BOUGH_DB (":memory:" for tests).
  */
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
@@ -382,11 +382,11 @@ export class Db {
   }
 }
 
-/** Resolve the DB path: BOUGH_DB override, else ~/.bough-next/bough.db (dir created). */
+/** Resolve the DB path: BOUGH_DB override, else ~/.bough/bough.db (dir created). */
 export function defaultDbPath(): string {
   const override = Deno.env.get("BOUGH_DB");
   if (override) return override;
-  const dir = join(homedir(), ".bough-next");
+  const dir = join(homedir(), ".bough");
   mkdirSync(dir, { recursive: true });
   return join(dir, "bough.db");
 }

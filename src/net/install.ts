@@ -7,7 +7,7 @@
  *   3. validates offline by running the bundle's own fixtures through policy.ts (the
  *      runtime mirror of the HCL rules) — this is the `clawpatrol test` regression the
  *      design calls for, minus a live gateway,
- *   4. persists the rendered HCL to the net config dir (~/.bough-next/net/<name>.hcl).
+ *   4. persists the rendered HCL to the net config dir (~/.bough/net/<name>.hcl).
  *
  * Fixture validation covers https-host bundles (the shipped `github`): the derived
  * policy allows the fragment's hosts and runs read-only unless the bundle exposes a
@@ -44,10 +44,10 @@ export class InstallError extends Error {
   }
 }
 
-/** The net config dir. BOUGH_NET_DIR overrides (tests); else ~/.bough-next/net. */
+/** The net config dir. BOUGH_NET_DIR overrides (tests); else ~/.bough/net. */
 export function netDir(): string {
   const override = Deno.env.get("BOUGH_NET_DIR");
-  const dir = override ?? join(homedir(), ".bough-next", "net");
+  const dir = override ?? join(homedir(), ".bough", "net");
   mkdirSync(dir, { recursive: true });
   return dir;
 }

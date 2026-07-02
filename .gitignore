@@ -1,7 +1,7 @@
-# bough-next (Deno) local artifacts
-bough-next/node_modules/
-bough-next/web/dist/
-bough-next/bough.app/
+# local artifacts
+node_modules/
+web/dist/
+bough.app/
 
 # OS
 .DS_Store

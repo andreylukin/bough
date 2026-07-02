@@ -37,7 +37,7 @@ function contentType(path: string): string {
   return (dot >= 0 && MIME[path.slice(dot).toLowerCase()]) || "application/octet-stream";
 }
 
-/** The build output dir, resolved relative to this module: bough-next/web/dist. */
+/** The build output dir, resolved relative to this module: web/dist. */
 export function defaultWebDir(): string {
   return fileURLToPath(new URL("../../web/dist", import.meta.url));
 }

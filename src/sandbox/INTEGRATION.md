@@ -75,7 +75,7 @@ await applyBack(sessionId, approvedPaths); // copy approved clones back over ori
 
 - **`sessionDir(sessionId)` must be in the seatbelt `allowWrite` list** (seam #1) so the
   sandboxed agent can write the clones. This is the one cross-module dependency.
-- Default snapshot root is `~/.bough-next/snapshots/<sessionId>`; pass a `base` arg to
+- Default snapshot root is `~/.bough/snapshots/<sessionId>`; pass a `base` arg to
   override (tests do, to avoid touching real config).
 - `applyBack` clones approved files back (`cp -c`) and honors deletions (a file the agent
   removed from the clone is removed from the original).

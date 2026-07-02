@@ -38,9 +38,9 @@ export interface AppCtx {
   bus: Bus;
   netStore: NetStore;
   gate: Gate;
-  /** Net config dir override (tests); undefined = ~/.bough-next/net. */
+  /** Net config dir override (tests); undefined = ~/.bough/net. */
   netDir?: string;
-  /** Built web UI dir override (tests/packaging); undefined = bough-next/web/dist. */
+  /** Built web UI dir override (tests/packaging); undefined = web/dist. */
   webDir?: string;
   /** LLM client for compaction/turns; injected for tests, else the real Anthropic client. */
   llm?: LlmClient;

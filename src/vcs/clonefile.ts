@@ -19,11 +19,11 @@ import type { Diff } from "../schema/changes.ts";
 
 const MANIFEST = ".bough-manifest.json";
 
-/** Default snapshots root: `~/.bough-next/snapshots`. */
+/** Default snapshots root: `~/.bough/snapshots`. */
 export function snapshotBase(): string {
   const home = Deno.env.get("HOME");
   if (!home) throw new Error("clonefile: no $HOME");
-  return `${home}/.bough-next/snapshots`;
+  return `${home}/.bough/snapshots`;
 }
 
 /** The dir holding one session's clones. `base` overrides the default root (tests). */
