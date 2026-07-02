@@ -1,9 +1,9 @@
 // App state + event reduction. Holds the session list, the open thread, per-message
 // streaming buffers, and the network feed. Everything the UI renders derives from here.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, readBranch, type Usage } from "./api";
+import { api, readBranch, type NetStatus, type Usage } from "./api";
 import { useEvents } from "./useEvents";
-import type { BoughEvent, ChangeSource, Message, NetRequest, Part, Session, WireDiff } from "./types";
+import type { BoughEvent, ChangeSource, Message, Part, Session, WireDiff } from "./types";
 
 export interface Store {
   sessions: Session[];
@@ -16,8 +16,7 @@ export interface Store {
   connected: boolean;
   // A turn is streaming for the open session (any of its messages still pending).
   busy: boolean;
-  net: NetRequest[];
-  pending: NetRequest | null;
+  netStatus: NetStatus;
   // Review payloads for the open session (0..2: jj repo + clonefile config).
   changes: WireDiff[];
   // A transient message to surface (e.g. a fork/compact 400); null when clear.
@@ -34,9 +33,8 @@ export interface Store {
   send: (text: string) => Promise<void>;
   interrupt: () => void;
   archive: (id: string) => void;
-  resolvePending: (approve: boolean) => void;
   reload: () => Promise<void>;
-  refreshNet: () => Promise<void>;
+  refreshNetStatus: () => Promise<void>;
   applyChanges: (source: ChangeSource, paths: string[]) => void;
   revertChanges: () => void;
   fork: (atMessageId: string, editedText?: string) => void;
@@ -52,8 +50,13 @@ export function useStore(): Store {
   const [session, setSession] = useState<Session | null>(null);
   const [thread, setThread] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState<Record<string, string>>({});
-  const [net, setNet] = useState<NetRequest[]>([]);
-  const [pending, setPending] = useState<NetRequest | null>(null);
+  const [netStatus, setNetStatus] = useState<NetStatus>({
+    enabled: false,
+    available: false,
+    running: false,
+    external: false,
+    dashboardUrl: "",
+  });
   const [changes, setChanges] = useState<WireDiff[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [usage, setUsage] = useState<Usage>({ contextTokens: 0, outputTokens: 0 });
@@ -67,10 +70,6 @@ export function useStore(): Store {
   // re-subscribing. Set from the derived `busy` during render, below.
   const busyRef = useRef(false);
 
-  // The held request, in a ref so resolvePending reads it without a fresh closure.
-  const pendingRef = useRef<NetRequest | null>(null);
-  pendingRef.current = pending;
-
   // refreshChanges in a ref so the stable event handler can call the latest one.
   const refreshChangesRef = useRef<(id: string | null) => void>(() => {});
 
@@ -80,13 +79,10 @@ export function useStore(): Store {
     setSessions((prev) => s.map((n) => ({ ...n, unseen: prev.find((p) => p.id === n.id)?.unseen })));
   }, []);
 
-  // Rebuild the net rail from the server, then live-update from `net.request` events.
-  // Global (no session filter) so the feed shows every gated request; the newest
-  // pending row, if any, surfaces as the hold-and-ask card.
-  const refreshNet = useCallback(async () => {
-    const rows = await api.netRequests();
-    setNet(rows);
-    setPending(rows.find((r) => r.verdict === "pending") ?? null);
+  // Claw Patrol gateway status for the Network rail (bough runs the firewall; the live
+  // feed + approvals are on Claw Patrol's dashboard).
+  const refreshNetStatus = useCallback(async () => {
+    setNetStatus(await api.netStatus());
   }, []);
 
   // Review payloads for the open session. Refetched on `changes.updated` (after a
@@ -195,19 +191,6 @@ export function useStore(): Store {
     api.archiveSession(id).catch(() => {});
   }, []);
 
-  const resolvePending = useCallback((approve: boolean) => {
-    const req = pendingRef.current;
-    // Clear the card optimistically; the gate re-emits the row with its final verdict,
-    // which the `net.request` handler reconciles by id.
-    setPending(null);
-    if (!req) return;
-    (approve ? api.allowRequest(req.id) : api.denyRequest(req.id)).catch(() => {
-      // The hold may have already resolved/expired server-side (404). Re-sync so the
-      // rail reflects the true state rather than a stale card.
-      refreshNet();
-    });
-  }, [refreshNet]);
-
   const onEvent = useCallback((ev: BoughEvent) => {
     switch (ev.type) {
       case "session.created": {
@@ -280,18 +263,6 @@ export function useStore(): Store {
         });
         break;
       }
-      case "net.request": {
-        const r = ev.data as NetRequest;
-        // Upsert by id: a held request is emitted twice (pending, then resolved), so the
-        // row must update in place rather than duplicate.
-        setNet((prev) => [r, ...prev.filter((x) => x.id !== r.id)].slice(0, 100));
-        setPending((cur) => {
-          if (r.verdict === "pending") return r;
-          if (cur && cur.id === r.id) return null; // this hold just resolved
-          return cur;
-        });
-        break;
-      }
       case "changes.updated": {
         const { sessionId } = ev.data as { sessionId: string };
         if (sessionId === currentRef.current) refreshChangesRef.current(sessionId);
@@ -315,7 +286,7 @@ export function useStore(): Store {
   // dropped — their deltas are lost anyway; the refetched thread has the real parts.
   const resync = useCallback(async () => {
     reload().catch(() => {});
-    refreshNet().catch(() => {});
+    refreshNetStatus().catch(() => {});
     const id = currentRef.current;
     if (!id) return;
     try {
@@ -328,14 +299,14 @@ export function useStore(): Store {
     } catch {
       // server unreachable — the next reconnect will resync again
     }
-  }, [reload, refreshNet]);
+  }, [reload, refreshNetStatus]);
 
   const connected = useEvents(onEvent, resync);
 
   useEffect(() => {
     reload();
-    refreshNet();
-  }, [reload, refreshNet]);
+    refreshNetStatus();
+  }, [reload, refreshNetStatus]);
 
   // A turn is running for the open session while any of its messages is pending.
   const busy = thread.some((m) => m.pending);
@@ -359,8 +330,7 @@ export function useStore(): Store {
     streaming,
     connected,
     busy,
-    net,
-    pending,
+    netStatus,
     changes,
     notice,
     usage,
@@ -372,9 +342,8 @@ export function useStore(): Store {
     send,
     interrupt,
     archive,
-    resolvePending,
     reload,
-    refreshNet,
+    refreshNetStatus,
     applyChanges,
     revertChanges,
     fork,

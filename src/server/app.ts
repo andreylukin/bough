@@ -22,8 +22,6 @@ import { UNTITLED } from "../supervisor/title.ts";
 import { listSkills } from "../supervisor/skills.ts";
 import { searchWorkspaceFiles } from "./files.ts";
 import { fork, ForkBody, ForkError } from "../fork.ts";
-import type { Gate } from "../net/gate.ts";
-import type { NetStore } from "../db/net.ts";
 import { getBundle, listBundles, type BundleManifest } from "../net/bundles.ts";
 import type { ClawpatrolGateway } from "../net/gateway.ts";
 import { installBundle, InstallError, isInstalled } from "../net/install.ts";
@@ -37,8 +35,6 @@ import { ChangesApplyBody, ChangesRevertBody } from "../schema/changes.ts";
 export interface AppCtx {
   db: Db;
   bus: Bus;
-  netStore: NetStore;
-  gate: Gate;
   /** The Claw Patrol gateway bough supervises; absent in tests. */
   gateway?: ClawpatrolGateway;
   /** Net config dir override (tests); undefined = ~/.bough/net. */
@@ -281,26 +277,13 @@ const events: Handler = (req, ctx) => {
 
 // ---- net: rail, holds, bundles ---------------------------------------------
 
-// Claw Patrol gateway status for the Network rail: whether it's enabled, the binary is
-// present, the gateway is healthy, and where its dashboard lives (audit + approvals).
+// Claw Patrol gateway status for the Network rail. Claw Patrol owns the audit feed and
+// human approvals on its own dashboard; bough surfaces state + links there.
 const netStatus: Handler = (_req, ctx) =>
   json(
     ctx.gateway?.status() ??
-      { enabled: false, available: false, running: false, dashboardUrl: "" },
+      { enabled: false, available: false, running: false, external: false, dashboardUrl: "" },
   );
-
-// Recent NetRequest rows for the Network rail (optionally per-session).
-const netRequests: Handler = (req, ctx) => {
-  const sessionId = new URL(req.url).searchParams.get("sessionId") ?? undefined;
-  return json(ctx.netStore.recent(sessionId));
-};
-
-// Resolve a held request: the gate's awaiting Promise settles and the row/event flip
-// to allowed|denied. 404 if the id isn't currently held (already resolved / unknown).
-const resolveHold = (approve: boolean): Handler => (_req, ctx, params) =>
-  ctx.gate.resolveHold(params.id, approve)
-    ? json({ ok: true, id: params.id, verdict: approve ? "allowed" : "denied" })
-    : error(404, "no request awaiting approval for that id");
 
 function bundleSummary(m: BundleManifest, dir: string | undefined) {
   return {
@@ -366,9 +349,6 @@ const routes: Route[] = [
   // web client always uses POST; GET stays for curl and local tools.
   { method: "POST", pattern: new URLPattern({ pathname: "/events" }), handler: events },
   { method: "GET", pattern: new URLPattern({ pathname: "/net/status" }), handler: netStatus },
-  { method: "GET", pattern: new URLPattern({ pathname: "/net/requests" }), handler: netRequests },
-  { method: "POST", pattern: new URLPattern({ pathname: "/net/requests/:id/allow" }), handler: resolveHold(true) },
-  { method: "POST", pattern: new URLPattern({ pathname: "/net/requests/:id/deny" }), handler: resolveHold(false) },
   { method: "GET", pattern: new URLPattern({ pathname: "/net/bundles" }), handler: listBundlesH },
   { method: "GET", pattern: new URLPattern({ pathname: "/net/bundles/:name" }), handler: getBundleH },
   { method: "POST", pattern: new URLPattern({ pathname: "/net/bundles/:name/install" }), handler: installBundleH },

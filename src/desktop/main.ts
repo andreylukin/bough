@@ -13,17 +13,17 @@
  * Experimental: deno desktop is experimental in 2.9. Fallback if it regresses is
  * `deno task dev` + a browser at :4321 (byte-identical handler). See docs/deno-desktop.md.
  */
-import { defaultDbPath, openDb } from "../db/db.ts";
-import { openNetStore } from "../db/net.ts";
-import { createGate } from "../net/gate.ts";
+import { openDb } from "../db/db.ts";
+import { ClawpatrolGateway, setActiveGateway } from "../net/gateway.ts";
 import { bus } from "../bus.ts";
 import { createHandler } from "../server/app.ts";
 import { recoverOrphanedTurns } from "../supervisor/turns.ts";
 
 const db = openDb();
 recoverOrphanedTurns(db, bus);
-const netStore = openNetStore(defaultDbPath());
-const gate = createGate({ netStore, bus });
+const gateway = new ClawpatrolGateway();
+setActiveGateway(gateway);
+await gateway.start();
 
 // No port: the desktop webview binds Deno.serve to the port it opened and loads "/".
-Deno.serve(createHandler({ db, bus, netStore, gate }));
+Deno.serve(createHandler({ db, bus, gateway }));

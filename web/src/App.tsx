@@ -13,7 +13,7 @@ import { useStore } from "./store";
 import { bundleFromSummary, diffsToFiles, headGroupsFromSessions, outlineFromThread } from "./live";
 import type { HeadGroup } from "./live";
 import type { Bundle, ActivityGroup, DiffFile, OutlineNode } from "./mock";
-import type { ChangeSource, Message, NetRequest, Session } from "./types";
+import type { ChangeSource, Message, Session } from "./types";
 import { Conversation } from "./components/Conversation";
 import { DiffViewer } from "./components/DiffViewer";
 import { LeftRail } from "./components/LeftRail";
@@ -50,7 +50,6 @@ export default function App() {
 
 // ---- mock path (default; no backend needed) -------------------------------
 function MockApp() {
-  const [pending, setPending] = useState<NetRequest | null>(mock.pending);
   return (
     <Window
       live={false}
@@ -63,14 +62,11 @@ function MockApp() {
       thread={mock.thread}
       streaming={{}}
       activity={mock.activity}
-      net={mock.net}
-      pending={pending}
-      gateLabel="github bundle"
+      netStatus={{ enabled: true, available: true, running: true, external: false, dashboardUrl: "http://127.0.0.1:8090" }}
       diffs={mock.diffs}
       bundles={mock.bundles}
       notice={null}
       onSend={() => {}}
-      onResolve={() => setPending(null)}
       onSelectHead={() => {}}
       onInstallBundle={() => {}}
       onApplyFile={() => {}}
@@ -138,9 +134,6 @@ function LiveApp() {
   );
 
   const diffs = diffsToFiles(store.changes);
-  // The gate label = the installed bundle name(s); falls back when nothing's installed.
-  const installed = bundles.filter((b) => b.state === "installed").map((b) => b.name);
-  const gateLabel = installed.length ? installed.join(", ") : "no gate";
 
   // Apply all: one call per snapshot source, with that source's file paths.
   const onApplyAll = () => {
@@ -172,9 +165,7 @@ function LiveApp() {
         thread={store.thread}
         streaming={store.streaming}
         activity={[]}
-        net={store.net}
-        pending={store.pending}
-        gateLabel={gateLabel}
+        netStatus={store.netStatus}
         diffs={diffs}
         bundles={bundles}
         notice={store.notice}
@@ -188,7 +179,6 @@ function LiveApp() {
         onSend={onSend}
         onInterrupt={store.interrupt}
         onSearchFiles={(q) => (store.currentId ? api.searchFiles(store.currentId, q) : Promise.resolve([]))}
-        onResolve={(a) => store.resolvePending(a)}
         onSelectHead={(id) => store.open(id)}
         onInstallBundle={onInstallBundle}
         onApplyFile={(f) => f.source && store.applyChanges(f.source, [f.path])}
@@ -237,9 +227,7 @@ function Window({
   thread,
   streaming,
   activity,
-  net,
-  pending,
-  gateLabel,
+  netStatus,
   diffs,
   bundles,
   notice,
@@ -252,7 +240,6 @@ function Window({
   onSend,
   onInterrupt,
   onSearchFiles,
-  onResolve,
   onSelectHead,
   onInstallBundle,
   onApplyFile,
@@ -278,9 +265,7 @@ function Window({
   thread: Message[];
   streaming: Record<string, string>;
   activity: ActivityGroup[];
-  net: NetRequest[];
-  pending: NetRequest | null;
-  gateLabel: string;
+  netStatus: import("./api").NetStatus;
   diffs: DiffFile[];
   bundles: Bundle[];
   notice?: string | null;
@@ -293,7 +278,6 @@ function Window({
   onSend: (text: string, branch: boolean) => void;
   onInterrupt?: () => void;
   onSearchFiles?: (q: string) => Promise<string[]>;
-  onResolve: (approve: boolean) => void;
   onSelectHead: (id: string) => void;
   onInstallBundle: (id: string) => void;
   onApplyFile: (file: DiffFile) => void;
@@ -369,7 +353,7 @@ function Window({
     );
 
   const showDiff = tab === "changes" && !!diffFile;
-  const dimConversation = tab === "network" && wide && !!pending;
+  const dimConversation = false;
 
   const leftRail = (
     <LeftRail
@@ -394,16 +378,13 @@ function Window({
       onTab={openTab}
       wide={wide}
       onToggleWide={mobile ? undefined : () => setWide((w) => !w)}
-      net={net}
-      pending={pending}
-      gateLabel={gateLabel}
+      netStatus={netStatus}
       diffs={diffs}
       selectedFile={diffFile?.path ?? null}
       onSelectFile={(p) => {
         setSelectedFile(p);
         setRightOpen(false);
       }}
-      onResolve={onResolve}
       onApplyAll={onApplyAll}
       onRevert={onRevert}
     />
@@ -420,7 +401,7 @@ function Window({
               live={live}
               busy={busy}
               attentionCount={sessions.filter((s) => s.unseen).length}
-              pendingCount={pending ? 1 : 0}
+              pendingCount={0}
               onBack={showDiff ? () => openTab("network") : undefined}
               onMenu={() => setLeftOpen(true)}
               onRail={() => setRightOpen(true)}

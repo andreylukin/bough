@@ -1,14 +1,11 @@
 import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
 import { Db } from "../db/db.ts";
 import { Bus } from "../bus.ts";
-import { NetStore } from "../db/net.ts";
-import { createGate } from "../net/gate.ts";
 import { type AppCtx, createHandler } from "./app.ts";
 
 function ctx(password?: string): AppCtx {
   const bus = new Bus();
-  const netStore = new NetStore(":memory:");
-  return { db: new Db(":memory:"), bus, netStore, gate: createGate({ netStore, bus }), password };
+  return { db: new Db(":memory:"), bus, password };
 }
 
 const req = (method: string, path: string, init?: RequestInit) =>

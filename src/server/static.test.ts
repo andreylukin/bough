@@ -2,8 +2,6 @@ import { assert, assertEquals } from "jsr:@std/assert@1";
 import { join } from "node:path";
 import { Db } from "../db/db.ts";
 import { Bus } from "../bus.ts";
-import { NetStore } from "../db/net.ts";
-import { createGate } from "../net/gate.ts";
 import { serveWeb } from "./static.ts";
 import { createHandler, type AppCtx } from "./app.ts";
 
@@ -17,8 +15,7 @@ async function fakeDist(): Promise<string> {
 
 function ctx(webDir: string): AppCtx {
   const bus = new Bus();
-  const netStore = new NetStore(":memory:");
-  return { db: new Db(":memory:"), bus, netStore, gate: createGate({ netStore, bus }), webDir };
+  return { db: new Db(":memory:"), bus, webDir };
 }
 
 const get = (path: string) => new Request("http://x" + path);

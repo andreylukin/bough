@@ -1,5 +1,5 @@
 // Thin REST client over the bough backend. Paths are proxied to :4321 in dev.
-import type { BundleSummary, ChangeSource, Message, NetRequest, Session, WireDiff } from "./types";
+import type { BundleSummary, ChangeSource, Message, Session, WireDiff } from "./types";
 
 async function j<T>(res: Response): Promise<T> {
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
@@ -14,6 +14,13 @@ export interface ModelOption {
 export interface Usage {
   contextTokens: number;
   outputTokens: number;
+}
+export interface NetStatus {
+  enabled: boolean;
+  available: boolean;
+  running: boolean;
+  external: boolean;
+  dashboardUrl: string;
 }
 
 export const api = {
@@ -66,16 +73,10 @@ export const api = {
       .then(j<{ files: string[] }>)
       .then((r) => r.files),
 
-  // ---- network rail --------------------------------------------------------
-  // Backfill the feed; live updates arrive as `net.request` events over /events.
-  netRequests: (sessionId?: string) =>
-    fetch("/net/requests" + (sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : "")).then(
-      j<NetRequest[]>
-    ),
-
-  // Resolve a held request; the gate re-emits it with the final verdict.
-  allowRequest: (id: string) => fetch(`/net/requests/${id}/allow`, { method: "POST" }),
-  denyRequest: (id: string) => fetch(`/net/requests/${id}/deny`, { method: "POST" }),
+  // ---- network: Claw Patrol status -----------------------------------------
+  // bough runs Claw Patrol as the egress firewall; the live feed + human approvals
+  // live on Claw Patrol's own dashboard (linked from the Network rail).
+  netStatus: () => fetch("/net/status").then(j<NetStatus>),
 
   // ---- policy bundles ------------------------------------------------------
   listBundles: () => fetch("/net/bundles").then(j<BundleSummary[]>),

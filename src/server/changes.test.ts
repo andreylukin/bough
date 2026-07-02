@@ -1,8 +1,6 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { Db } from "../db/db.ts";
 import { Bus } from "../bus.ts";
-import { NetStore } from "../db/net.ts";
-import { createGate } from "../net/gate.ts";
 import * as jj from "../vcs/jj.ts";
 import * as clonefile from "../vcs/clonefile.ts";
 import { createHandler, type AppCtx } from "./app.ts";
@@ -11,12 +9,9 @@ import type { Diff } from "../schema/changes.ts";
 
 function ctx(opts: { snapshotBase?: string } = {}): AppCtx {
   const bus = new Bus();
-  const netStore = new NetStore(":memory:");
   return {
     db: new Db(":memory:"),
     bus,
-    netStore,
-    gate: createGate({ netStore, bus }),
     snapshotBase: opts.snapshotBase,
   };
 }

@@ -2,9 +2,9 @@
 // approvals) and Changes (the run's file manifest). Pending pulses the green/amber
 // accent; nothing else competes. The Network panel has a compact form (main window)
 // and a wide, focused form (screen 3) with filters and a detailed hold card.
-import { c, mono, sans } from "../theme";
+import { c, mono } from "../theme";
 import type { DiffFile } from "../mock";
-import type { NetRequest } from "../types";
+import type { NetStatus } from "../api";
 import { Chip, Dot } from "./ui";
 
 export type RailTab = "network" | "changes";
@@ -82,242 +82,46 @@ function TabHeader({
   );
 }
 
-function verbTint(verb?: string) {
-  const v = (verb ?? "").toUpperCase();
-  if (v.startsWith("DEL")) return { bg: "rgba(226,119,110,.14)", fg: c.red };
-  return { bg: c.panelInset, fg: c.muted };
-}
-
-function PendingCard({
-  req,
-  wide,
-  onResolve,
-}: {
-  req: NetRequest;
-  wide: boolean;
-  onResolve: (approve: boolean) => void;
-}) {
+// The Network rail is now a thin status surface for Claw Patrol — bough runs the
+// firewall but Claw Patrol owns the live feed and human approvals on its dashboard.
+function NetworkPanel({ status, wide }: { status: NetStatus; wide: boolean }) {
+  const dotColor = status.running ? c.green : status.enabled ? c.amber : c.muted2;
+  const line = !status.enabled
+    ? "Egress gating is off. Start bough with BOUGH_CLAWPATROL=1 to route sandbox traffic through Claw Patrol."
+    : !status.available
+    ? "clawpatrol binary not found on PATH — egress is NOT gated."
+    : status.running && status.external
+    ? "Routing sandbox egress through the existing Claw Patrol client (Clawpatrol.app). Audit + approvals live in the Claw Patrol dashboard."
+    : status.running
+    ? "Claw Patrol gateway is up. Sandbox egress routes through it; audit + approvals are on its dashboard."
+    : "Claw Patrol gateway not reachable — routing is off (fail-open). Run `clawpatrol join` on this machine to onboard it.";
   return (
-    <div
-      className="pulse-amber"
-      style={{
-        border: `1px solid ${c.amber}`,
-        borderRadius: 11,
-        background: "rgba(217,180,95,.07)",
-        padding: wide ? 15 : 13,
-        marginBottom: wide ? 20 : 18,
-        position: "relative",
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: wide ? 11 : 9 }}>
-        <span style={{ fontSize: 10, letterSpacing: ".14em", color: c.amber, fontWeight: 600 }}>⏸ HOLD &amp; ASK</span>
-        {wide && <span style={{ fontFamily: mono, fontSize: 10.5, color: c.muted2 }}>waiting 00:14</span>}
+    <div style={{ flex: 1, overflowY: "auto", padding: wide ? "15px" : "14px 13px", minHeight: 0, display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <Dot color={dotColor} pulse={status.running} />
+        <span style={{ fontFamily: mono, fontSize: 12, color: c.text }}>Claw Patrol</span>
+        <span style={{ fontFamily: mono, fontSize: 10.5, color: c.muted2 }}>
+          {status.running ? (status.external ? "clawpatrol.app" : "gateway up") : status.enabled ? "off" : "disabled"}
+        </span>
       </div>
-      {wide ? (
-        <>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 9 }}>
-            <span
-              style={{
-                fontFamily: mono,
-                fontSize: 10.5,
-                fontWeight: 600,
-                padding: "2px 7px",
-                borderRadius: 5,
-                background: "rgba(226,119,110,.15)",
-                color: c.red,
-              }}
-            >
-              {req.verb ?? "REQ"}
-            </span>
-            <span style={{ fontFamily: mono, fontSize: 12.5, color: c.text }}>{req.host}</span>
-          </div>
-          <div
-            style={{
-              fontFamily: mono,
-              fontSize: 12,
-              color: c.text2,
-              background: c.panel,
-              border: `1px solid ${c.border2}`,
-              borderRadius: 7,
-              padding: "8px 10px",
-              marginBottom: 11,
-            }}
-          >
-            {req.action}
-          </div>
-        </>
-      ) : (
-        <>
-          <div style={{ fontFamily: mono, fontSize: 12, color: c.text, marginBottom: 4 }}>{req.host}</div>
-          <div style={{ fontFamily: mono, fontSize: 12.5, color: c.red, marginBottom: 8 }}>{req.action}</div>
-        </>
-      )}
-      <div style={{ fontSize: 11.5, color: c.muted, lineHeight: 1.55, marginBottom: wide ? 14 : 12 }}>
-        {req.reason}{" "}
-        {req.requestedBy && (
-          <>
-            Requested by worker <span style={{ fontFamily: mono }}>{req.requestedBy}</span>.
-          </>
-        )}
-      </div>
-      <div style={{ display: "flex", gap: 8, marginBottom: wide ? 9 : 0 }}>
-        <button
-          onClick={() => onResolve(false)}
-          style={{
-            flex: 1,
-            textAlign: "center",
-            padding: wide ? 8 : 7,
-            border: `1px solid ${wide ? c.red : c.hairline}`,
-            color: c.red,
-            borderRadius: 8,
-            fontSize: wide ? 12.5 : 12,
-            fontWeight: 500,
-          }}
+      <p style={{ fontSize: 12.5, color: c.muted, lineHeight: 1.55, margin: 0 }}>{line}</p>
+      {status.running && !status.external && status.dashboardUrl && (
+        <a
+          href={status.dashboardUrl}
+          target="_blank"
+          rel="noreferrer"
+          style={{ fontSize: 12, color: c.green, textDecoration: "none", border: `1px solid ${c.border2}`, borderRadius: 6, padding: "6px 11px", alignSelf: "flex-start" }}
         >
-          Deny
-        </button>
-        <button
-          onClick={() => onResolve(true)}
-          style={{
-            flex: 1,
-            textAlign: "center",
-            padding: wide ? 8 : 7,
-            borderRadius: 8,
-            background: c.green,
-            color: c.bg,
-            fontSize: wide ? 12.5 : 12,
-            fontWeight: 600,
-          }}
-        >
-          Approve once
-        </button>
-      </div>
-      {wide && (
-        <div style={{ textAlign: "center", fontSize: 11, color: c.muted2 }}>
-          or <span style={{ color: c.muted, textDecoration: "underline" }}>always allow deletes on octo/*</span>
-        </div>
+          Open Claw Patrol dashboard ↗
+        </a>
       )}
-    </div>
-  );
-}
-
-function FeedRow({ r }: { r: NetRequest }) {
-  const denied = r.verdict === "denied";
-  const tint = verbTint(r.verb);
-  const rel = (() => {
-    const s = Math.round((Date.now() - r.ts) / 1000);
-    return s <= 0 ? "now" : `${s}s`;
-  })();
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-        padding: "8px 6px",
-        borderBottom: `1px solid ${c.border3}`,
-      }}
-    >
-      <span style={{ color: denied ? c.red : c.green }}>{denied ? "✗" : "✓"}</span>
-      <span
-        style={{
-          fontSize: 9.5,
-          fontWeight: 600,
-          padding: "1px 5px",
-          borderRadius: 4,
-          background: tint.bg,
-          color: tint.fg,
-        }}
+      <button
+        onClick={() => (location.hash = "bundles")}
+        title="Configure the policy bundles that shape the gateway"
+        style={{ display: "inline-flex", alignItems: "center", gap: 7, fontFamily: mono, fontSize: 11.5, color: c.muted, background: "none", border: `1px solid ${c.border2}`, borderRadius: 6, padding: "5px 10px", cursor: "pointer", alignSelf: "flex-start" }}
       >
-        {(r.verb ?? "").toUpperCase() || "—"}
-      </span>
-      <div style={{ minWidth: 0, flex: 1 }}>
-        <div style={{ color: c.text2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-          {r.host}
-        </div>
-        <div style={{ color: denied ? c.red : c.muted2, fontSize: 10 }}>{r.action}</div>
-      </div>
-      <span style={{ color: c.muted2 }}>{rel}</span>
-    </div>
-  );
-}
-
-function NetworkPanel({
-  net,
-  pending,
-  wide,
-  gateLabel,
-  onResolve,
-}: {
-  net: NetRequest[];
-  pending: NetRequest | null;
-  wide: boolean;
-  gateLabel: string;
-  onResolve: (approve: boolean) => void;
-}) {
-  const allowed = net.filter((n) => n.verdict === "allowed").length;
-  const denied = net.filter((n) => n.verdict === "denied").length;
-  return (
-    <div style={{ flex: 1, overflowY: "auto", padding: wide ? "15px" : "14px 13px", minHeight: 0, display: "flex", flexDirection: "column" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: wide ? 12 : 14 }}>
-        <button
-          onClick={() => (location.hash = "bundles")}
-          title="Configure gate bundles"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 7,
-            fontFamily: mono,
-            fontSize: 11.5,
-            color: c.muted,
-            background: "none",
-            border: `1px solid ${c.border2}`,
-            borderRadius: 6,
-            padding: "3px 9px",
-            cursor: "pointer",
-          }}
-        >
-          <Dot /> gate · {gateLabel}
-        </button>
-        {wide && (
-          <span style={{ fontFamily: mono, fontSize: 11, color: c.muted2 }}>
-            {`${allowed} allowed · ${denied} denied`}
-          </span>
-        )}
-      </div>
-
-      {wide && (
-        <div style={{ display: "flex", gap: 6, marginBottom: 16, fontSize: 11.5 }}>
-          <span style={{ padding: "4px 11px", borderRadius: 6, background: "#262b32", color: c.text }}>All</span>
-          <span style={{ padding: "4px 11px", borderRadius: 6, color: c.muted2, border: `1px solid ${c.border2}` }}>Allowed</span>
-          <span style={{ padding: "4px 11px", borderRadius: 6, color: c.muted2, border: `1px solid ${c.border2}` }}>Denied</span>
-          <span style={{ padding: "4px 11px", borderRadius: 6, color: c.amber, border: "1px solid rgba(217,180,95,.4)" }}>
-            Pending · {pending ? 1 : 0}
-          </span>
-        </div>
-      )}
-
-      {pending && <PendingCard req={pending} wide={wide} onResolve={onResolve} />}
-
-      <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 11 }}>
-        <span style={{ fontFamily: mono, fontSize: 11, color: c.muted2 }}>LIVE FEED</span>
-        {wide && (
-          <>
-            <span style={{ width: 6, height: 6, borderRadius: "50%", background: c.green, marginLeft: 2 }} />
-            <span style={{ fontSize: 10.5, color: c.green }}>streaming</span>
-          </>
-        )}
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", fontFamily: mono, fontSize: 11 }}>
-        {net.map((r) => (
-          <FeedRow key={r.id} r={r} />
-        ))}
-        {net.length === 0 && (
-          <span style={{ fontFamily: sans, fontSize: 12, color: c.muted2, lineHeight: 1.5 }}>
-            No requests yet. Traffic appears here once the gate is capturing egress.
-          </span>
-        )}
-      </div>
+        ⚙ Policy bundles
+      </button>
     </div>
   );
 }
@@ -447,13 +251,10 @@ export function RightRail({
   onTab,
   wide = false,
   onToggleWide,
-  net,
-  pending,
-  gateLabel = "gate",
+  netStatus,
   diffs,
   selectedFile,
   onSelectFile,
-  onResolve,
   onApplyAll,
   onRevert,
 }: {
@@ -461,13 +262,10 @@ export function RightRail({
   onTab: (t: RailTab) => void;
   wide?: boolean;
   onToggleWide?: () => void;
-  net: NetRequest[];
-  pending: NetRequest | null;
-  gateLabel?: string;
+  netStatus: NetStatus;
   diffs: DiffFile[];
   selectedFile: string | null;
   onSelectFile: (path: string) => void;
-  onResolve: (approve: boolean) => void;
   onApplyAll: () => void;
   onRevert: () => void;
 }) {
@@ -489,13 +287,13 @@ export function RightRail({
         tab={tab}
         onTab={onTab}
         changesCount={diffs.length}
-        pendingCount={pending ? 1 : 0}
+        pendingCount={0}
         padY={wide ? 2 : 0}
         wide={wide}
         onToggleWide={onToggleWide}
       />
       {tab === "network" ? (
-        <NetworkPanel net={net} pending={pending} wide={wide} gateLabel={gateLabel} onResolve={onResolve} />
+        <NetworkPanel status={netStatus} wide={wide} />
       ) : (
         <ChangesPanel diffs={diffs} selected={selectedFile} onSelect={onSelectFile} onApplyAll={onApplyAll} onRevert={onRevert} />
       )}

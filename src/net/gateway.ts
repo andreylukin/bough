@@ -36,6 +36,46 @@ function bin(): string {
 }
 
 /**
+ * True when this machine already has a Claw Patrol client joined to a reachable
+ * gateway (Clawpatrol.app or a prior `clawpatrol join`). In that case bough must NOT
+ * spawn its own gateway — it would fight the existing one for the WireGuard port — it
+ * routes through the existing gateway via `clawpatrol run`.
+ */
+export function existingGatewayReachable(): boolean {
+  try {
+    const out = new Deno.Command(bin(), { args: ["status"], stdout: "piped", stderr: "null" })
+      .outputSync();
+    return new TextDecoder().decode(out.stdout).includes("gateway reachable");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * CA-trust env for sandboxed commands, so TLS clients trust the gateway's MITM CA
+ * (the gateway terminates TLS to gate + inject). Empty when the CA isn't present.
+ * Mirrors `clawpatrol env`'s exports; keyed to ~/.clawpatrol/ca.crt.
+ */
+export function clawpatrolCaEnv(): Record<string, string> {
+  const ca = join(homedir(), ".clawpatrol", "ca.crt");
+  try {
+    Deno.statSync(ca);
+  } catch {
+    return {};
+  }
+  return {
+    SSL_CERT_FILE: ca,
+    NODE_EXTRA_CA_CERTS: ca,
+    REQUESTS_CA_BUNDLE: ca,
+    CURL_CA_BUNDLE: ca,
+    GIT_SSL_CAINFO: ca,
+    DENO_CERT: ca,
+    PIP_CERT: ca,
+    AWS_CA_BUNDLE: ca,
+  };
+}
+
+/**
  * Compose one gateway HCL from every installed bundle's fragment plus a single gateway
  * block. Bundles render from their defaults here; per-install params are a follow-up
  * (the shipped `github` bundle's defaults are read-allowed / write-gated).
@@ -73,7 +113,8 @@ export function composeGatewayHcl(stateDir: string): string {
 export interface GatewayStatus {
   enabled: boolean;
   available: boolean; // clawpatrol binary present
-  running: boolean; // gateway child is up and healthy
+  running: boolean; // routing is active (own gateway healthy, or an existing one reachable)
+  external: boolean; // using a pre-existing gateway (Clawpatrol.app) rather than bough's own
   dashboardUrl: string;
 }
 
@@ -81,6 +122,7 @@ export interface GatewayStatus {
 export class ClawpatrolGateway {
   #child?: Deno.ChildProcess;
   #running = false;
+  #external = false;
   #dir: string;
 
   constructor(dir = join(netDir(), "gateway")) {
@@ -92,15 +134,26 @@ export class ClawpatrolGateway {
       enabled: clawpatrolEnabled(),
       available: clawpatrolAvailable(),
       running: this.#running,
-      dashboardUrl: `http://${DASHBOARD()}`,
+      external: this.#external,
+      dashboardUrl: this.#external ? "" : `http://${DASHBOARD()}`,
     };
   }
 
-  /** Render the config, spawn the gateway, and wait for its dashboard to answer. */
+  /**
+   * Route through Claw Patrol: if the machine already has a joined gateway
+   * (Clawpatrol.app), use it — do NOT spawn our own (they'd fight for the WG port).
+   * Otherwise render a config from bough's bundles and boot a gateway here.
+   */
   async start(): Promise<void> {
     if (!clawpatrolEnabled()) return;
     if (!clawpatrolAvailable()) {
       console.warn("[clawpatrol] BOUGH_CLAWPATROL=1 but the clawpatrol binary isn't on PATH — egress is NOT gated");
+      return;
+    }
+    if (existingGatewayReachable()) {
+      this.#external = true;
+      this.#running = true;
+      console.log("[clawpatrol] using the existing joined gateway (Clawpatrol.app) — routing sandbox egress through it");
       return;
     }
     await Deno.mkdir(this.#dir, { recursive: true });
