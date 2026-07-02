@@ -22,7 +22,8 @@ import { UNTITLED } from "../supervisor/title.ts";
 import { listSkills } from "../supervisor/skills.ts";
 import { searchWorkspaceFiles } from "./files.ts";
 import { fork, ForkBody, ForkError } from "../fork.ts";
-import { getBundle, listBundles, type BundleManifest } from "../net/bundles.ts";
+import { type BundleManifest, getBundle, listBundles } from "../net/bundles.ts";
+import type { Gate } from "../net/gate.ts";
 import type { ClawpatrolGateway } from "../net/gateway.ts";
 import { installBundle, InstallError, isInstalled } from "../net/install.ts";
 import { defaultWebDir, serveWeb } from "./static.ts";
@@ -35,6 +36,8 @@ import { ChangesApplyBody, ChangesRevertBody } from "../schema/changes.ts";
 export interface AppCtx {
   db: Db;
   bus: Bus;
+  /** The egress gate the native proxy calls; owns hold-and-ask. Absent in tests that don't gate. */
+  gate?: Gate;
   /** The Claw Patrol gateway bough supervises; absent in tests. */
   gateway?: ClawpatrolGateway;
   /** Net config dir override (tests); undefined = ~/.bough/net. */
@@ -51,7 +54,11 @@ export interface AppCtx {
   password?: string;
 }
 
-type Handler = (req: Request, ctx: AppCtx, params: Record<string, string>) => Response | Promise<Response>;
+type Handler = (
+  req: Request,
+  ctx: AppCtx,
+  params: Record<string, string>,
+) => Response | Promise<Response>;
 type Route = { method: string; pattern: URLPattern; handler: Handler };
 
 const CORS = {
@@ -141,7 +148,11 @@ const createSession: Handler = async (req, ctx) => {
 const getSession: Handler = (_req, ctx, params) => {
   const session = ctx.db.getSession(params.id);
   if (!session) return error(404, "session not found");
-  return json({ session, thread: ctx.db.threadFor(session.id), usage: ctx.db.sessionUsage(session.id) });
+  return json({
+    session,
+    thread: ctx.db.threadFor(session.id),
+    usage: ctx.db.sessionUsage(session.id),
+  });
 };
 
 const postMessage: Handler = async (req, ctx, params) => {
@@ -160,7 +171,11 @@ const postMessage: Handler = async (req, ctx, params) => {
 const archiveSession: Handler = (_req, ctx, params) => {
   if (!ctx.db.getSession(params.id)) return error(404, "session not found");
   ctx.db.archiveSession(params.id);
-  ctx.bus.publish({ type: "session.archived", sessionId: params.id, data: { sessionId: params.id } });
+  ctx.bus.publish({
+    type: "session.archived",
+    sessionId: params.id,
+    data: { sessionId: params.id },
+  });
   return json({ ok: true });
 };
 
@@ -285,6 +300,19 @@ const netStatus: Handler = (_req, ctx) =>
       { enabled: false, available: false, running: false, external: false, dashboardUrl: "" },
   );
 
+// Recent NetRequest rows for the Network rail (optionally per-session).
+const netRequests: Handler = (req, ctx) => {
+  const sessionId = new URL(req.url).searchParams.get("sessionId") ?? undefined;
+  return json(ctx.db.recentNetEvents(sessionId));
+};
+
+// Resolve a held request: the gate's awaiting Promise settles and the row/event flip
+// to allowed|denied. 404 if the id isn't currently held (already resolved / unknown).
+const resolveHold = (approve: boolean): Handler => (_req, ctx, params) =>
+  ctx.gate?.resolveHold(params.id, approve)
+    ? json({ ok: true, id: params.id, verdict: approve ? "allowed" : "denied" })
+    : error(404, "no request awaiting approval for that id");
+
 function bundleSummary(m: BundleManifest, dir: string | undefined) {
   return {
     name: m.name,
@@ -310,9 +338,10 @@ const installBundleH: Handler = async (req, ctx, params) => {
   const m = getBundle(params.name);
   if (!m) return error(404, "bundle not found");
   const body = await req.json().catch(() => ({}));
-  const rawParams = (body && typeof body === "object" && "params" in body
-    ? (body as { params?: Record<string, unknown> }).params
-    : undefined) ?? {};
+  const rawParams =
+    (body && typeof body === "object" && "params" in body
+      ? (body as { params?: Record<string, unknown> }).params
+      : undefined) ?? {};
   try {
     const result = ctx.netDir
       ? await installBundle(m, rawParams, ctx.netDir)
@@ -334,24 +363,79 @@ const routes: Route[] = [
   { method: "GET", pattern: new URLPattern({ pathname: "/sessions" }), handler: listSessions },
   { method: "POST", pattern: new URLPattern({ pathname: "/sessions" }), handler: createSession },
   { method: "GET", pattern: new URLPattern({ pathname: "/sessions/:id" }), handler: getSession },
-  { method: "POST", pattern: new URLPattern({ pathname: "/sessions/:id/messages" }), handler: postMessage },
-  { method: "POST", pattern: new URLPattern({ pathname: "/sessions/:id/archive" }), handler: archiveSession },
-  { method: "POST", pattern: new URLPattern({ pathname: "/sessions/:id/interrupt" }), handler: interruptSession },
-  { method: "POST", pattern: new URLPattern({ pathname: "/sessions/:id/compact" }), handler: compactSession },
-  { method: "POST", pattern: new URLPattern({ pathname: "/sessions/:id/fork" }), handler: forkSession },
-  { method: "GET", pattern: new URLPattern({ pathname: "/sessions/:id/files" }), handler: searchFiles },
-  { method: "GET", pattern: new URLPattern({ pathname: "/sessions/:id/changes" }), handler: getChanges },
-  { method: "POST", pattern: new URLPattern({ pathname: "/sessions/:id/changes/apply" }), handler: applyChangesH },
-  { method: "POST", pattern: new URLPattern({ pathname: "/sessions/:id/changes/revert" }), handler: revertChangesH },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/sessions/:id/messages" }),
+    handler: postMessage,
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/sessions/:id/archive" }),
+    handler: archiveSession,
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/sessions/:id/interrupt" }),
+    handler: interruptSession,
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/sessions/:id/compact" }),
+    handler: compactSession,
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/sessions/:id/fork" }),
+    handler: forkSession,
+  },
+  {
+    method: "GET",
+    pattern: new URLPattern({ pathname: "/sessions/:id/files" }),
+    handler: searchFiles,
+  },
+  {
+    method: "GET",
+    pattern: new URLPattern({ pathname: "/sessions/:id/changes" }),
+    handler: getChanges,
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/sessions/:id/changes/apply" }),
+    handler: applyChangesH,
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/sessions/:id/changes/revert" }),
+    handler: revertChangesH,
+  },
   { method: "GET", pattern: new URLPattern({ pathname: "/events" }), handler: events },
   // POST variant for tunneled use: Cloudflare quick tunnels buffer GET event-streams
   // until the connection closes (cloudflared#1449) but stream POST bodies live. The
   // web client always uses POST; GET stays for curl and local tools.
   { method: "POST", pattern: new URLPattern({ pathname: "/events" }), handler: events },
   { method: "GET", pattern: new URLPattern({ pathname: "/net/status" }), handler: netStatus },
+  { method: "GET", pattern: new URLPattern({ pathname: "/net/requests" }), handler: netRequests },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/net/requests/:id/allow" }),
+    handler: resolveHold(true),
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/net/requests/:id/deny" }),
+    handler: resolveHold(false),
+  },
   { method: "GET", pattern: new URLPattern({ pathname: "/net/bundles" }), handler: listBundlesH },
-  { method: "GET", pattern: new URLPattern({ pathname: "/net/bundles/:name" }), handler: getBundleH },
-  { method: "POST", pattern: new URLPattern({ pathname: "/net/bundles/:name/install" }), handler: installBundleH },
+  {
+    method: "GET",
+    pattern: new URLPattern({ pathname: "/net/bundles/:name" }),
+    handler: getBundleH,
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/net/bundles/:name/install" }),
+    handler: installBundleH,
+  },
 ];
 
 /** Build the fetch handler bound to a ctx (used by main.ts and by tests). */

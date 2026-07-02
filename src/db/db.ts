@@ -380,10 +380,16 @@ export class Db {
 
   // net_events --------------------------------------------------------------
 
+  /**
+   * Upsert (by id) one net-gate decision. A held request is written twice — first
+   * `pending`, then resolved to allowed/denied — so INSERT OR REPLACE keeps the row
+   * at its latest verdict, which is what the rail and approval card render.
+   */
   recordNetEvent(sessionId: string | undefined, r: NetRequest): void {
     this.#db
       .prepare(
-        `INSERT INTO net_events (id, session_id, host, verb, action, verdict, reason, requested_by, ts)
+        `INSERT OR REPLACE INTO net_events
+           (id, session_id, host, verb, action, verdict, reason, requested_by, ts)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
@@ -398,6 +404,45 @@ export class Db {
         r.ts,
       );
   }
+
+  /** Recent net-gate decisions, newest first; filtered by session when given. */
+  recentNetEvents(sessionId?: string, limit = 100): NetRequest[] {
+    const rows = (sessionId
+      ? this.#db
+        .prepare(
+          `SELECT * FROM net_events WHERE session_id = ? ORDER BY ts DESC, rowid DESC LIMIT ?`,
+        )
+        .all(sessionId, limit)
+      : this.#db
+        .prepare(`SELECT * FROM net_events ORDER BY ts DESC, rowid DESC LIMIT ?`)
+        .all(limit)) as NetEventRow[];
+    return rows.map(toNetRequest);
+  }
+}
+
+type NetEventRow = {
+  id: string;
+  host: string;
+  verb: string | null;
+  action: string;
+  verdict: string;
+  reason: string | null;
+  requested_by: string | null;
+  ts: number;
+};
+
+function toNetRequest(r: NetEventRow): NetRequest {
+  const out: NetRequest = {
+    id: r.id,
+    host: r.host,
+    action: r.action,
+    verdict: r.verdict as NetRequest["verdict"],
+    ts: r.ts,
+  };
+  if (r.verb != null) out.verb = r.verb;
+  if (r.reason != null) out.reason = r.reason;
+  if (r.requested_by != null) out.requestedBy = r.requested_by;
+  return out;
 }
 
 /** Resolve the DB path: BOUGH_DB override, else ~/.bough/bough.db (dir created). */
