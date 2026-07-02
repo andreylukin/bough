@@ -13,7 +13,7 @@ import { useStore } from "./store";
 import { bundleFromSummary, diffsToFiles, headGroupsFromSessions, outlineFromThread } from "./live";
 import type { HeadGroup } from "./live";
 import type { Bundle, ActivityGroup, DiffFile, OutlineNode } from "./mock";
-import type { ChangeSource, Message, Session } from "./types";
+import type { ChangeSource, Message, NetRequest, Session } from "./types";
 import { Conversation } from "./components/Conversation";
 import { DiffViewer } from "./components/DiffViewer";
 import { LeftRail } from "./components/LeftRail";
@@ -62,7 +62,21 @@ function MockApp() {
       thread={mock.thread}
       streaming={{}}
       activity={mock.activity}
-      netStatus={{ enabled: true, available: true, running: true, external: false, dashboardUrl: "http://127.0.0.1:8090" }}
+      netStatus={{ enabled: true, running: true, proxyUrl: "http://127.0.0.1:50051", caPath: "~/.bough/net/ca/ca.crt" }}
+      net={mock.net}
+      pending={mock.pending}
+      onResolve={() => {}}
+      policy={{
+        mode: "review",
+        allowHosts: ["api.github.com", "registry.npmjs.org"],
+        denyHosts: [],
+        hostMiss: "hold",
+        k8sHosts: [],
+        allowVerbs: [],
+        denyVerbs: [],
+        holdVerbs: [],
+      }}
+      onSavePolicy={() => {}}
       diffs={mock.diffs}
       bundles={mock.bundles}
       notice={null}
@@ -166,6 +180,11 @@ function LiveApp() {
         streaming={store.streaming}
         activity={[]}
         netStatus={store.netStatus}
+        net={store.net}
+        pending={store.pending}
+        onResolve={store.resolvePending}
+        policy={store.policy}
+        onSavePolicy={store.savePolicy}
         diffs={diffs}
         bundles={bundles}
         notice={store.notice}
@@ -228,6 +247,11 @@ function Window({
   streaming,
   activity,
   netStatus,
+  net,
+  pending,
+  onResolve,
+  policy,
+  onSavePolicy,
   diffs,
   bundles,
   notice,
@@ -266,6 +290,11 @@ function Window({
   streaming: Record<string, string>;
   activity: ActivityGroup[];
   netStatus: import("./api").NetStatus;
+  net: NetRequest[];
+  pending: NetRequest | null;
+  onResolve: (approve: boolean) => void;
+  policy: import("./api").NetConfig | null;
+  onSavePolicy: (cfg: import("./api").NetConfig) => void;
   diffs: DiffFile[];
   bundles: Bundle[];
   notice?: string | null;
@@ -379,6 +408,11 @@ function Window({
       wide={wide}
       onToggleWide={mobile ? undefined : () => setWide((w) => !w)}
       netStatus={netStatus}
+      net={net}
+      pending={pending}
+      onResolve={onResolve}
+      policy={policy}
+      onSavePolicy={onSavePolicy}
       diffs={diffs}
       selectedFile={diffFile?.path ?? null}
       onSelectFile={(p) => {
@@ -401,7 +435,7 @@ function Window({
               live={live}
               busy={busy}
               attentionCount={sessions.filter((s) => s.unseen).length}
-              pendingCount={0}
+              pendingCount={pending ? 1 : 0}
               onBack={showDiff ? () => openTab("network") : undefined}
               onMenu={() => setLeftOpen(true)}
               onRail={() => setRightOpen(true)}

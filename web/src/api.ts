@@ -1,5 +1,5 @@
 // Thin REST client over the bough backend. Paths are proxied to :4321 in dev.
-import type { BundleSummary, ChangeSource, Message, Session, WireDiff } from "./types";
+import type { BundleSummary, ChangeSource, Message, NetRequest, Session, WireDiff } from "./types";
 
 async function j<T>(res: Response): Promise<T> {
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
@@ -17,10 +17,22 @@ export interface Usage {
 }
 export interface NetStatus {
   enabled: boolean;
-  available: boolean;
   running: boolean;
-  external: boolean;
-  dashboardUrl: string;
+  proxyUrl: string;
+  caPath: string;
+}
+
+// The editable rule set (mirrors src/net/config.ts NetConfig).
+export type Verdict = "allow" | "deny" | "hold";
+export interface NetConfig {
+  mode: "read_only" | "review" | "all";
+  allowHosts: string[];
+  denyHosts: string[];
+  hostMiss: Verdict;
+  k8sHosts: string[];
+  allowVerbs: string[];
+  denyVerbs: string[];
+  holdVerbs: string[];
 }
 
 export const api = {
@@ -73,10 +85,29 @@ export const api = {
       .then(j<{ files: string[] }>)
       .then((r) => r.files),
 
-  // ---- network: Claw Patrol status -----------------------------------------
-  // bough runs Claw Patrol as the egress firewall; the live feed + human approvals
-  // live on Claw Patrol's own dashboard (linked from the Network rail).
+  // ---- network: native Claw Patrol firewall --------------------------------
+  // bough runs the egress proxy in-process; the live feed + human approvals + the
+  // rule set all live here in bough's own UI.
   netStatus: () => fetch("/net/status").then(j<NetStatus>),
+
+  // Backfill the feed; live updates arrive as `net.request` events over /events.
+  netRequests: (sessionId?: string) =>
+    fetch("/net/requests" + (sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : "")).then(
+      j<NetRequest[]>,
+    ),
+
+  // Resolve a held request; the gate re-emits it with the final verdict.
+  allowRequest: (id: string) => fetch(`/net/requests/${id}/allow`, { method: "POST" }),
+  denyRequest: (id: string) => fetch(`/net/requests/${id}/deny`, { method: "POST" }),
+
+  // The editable allow/deny/hold rule set. PUT hot-swaps the live gate.
+  getPolicy: () => fetch("/net/policy").then(j<NetConfig>),
+  putPolicy: (cfg: NetConfig) =>
+    fetch("/net/policy", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(cfg),
+    }).then(j<NetConfig>),
 
   // ---- policy bundles ------------------------------------------------------
   listBundles: () => fetch("/net/bundles").then(j<BundleSummary[]>),
