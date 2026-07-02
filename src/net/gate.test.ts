@@ -1,16 +1,16 @@
 import { assertEquals } from "jsr:@std/assert@1";
 import { Bus } from "../bus.ts";
-import { NetStore } from "../db/net.ts";
+import { Db } from "../db/db.ts";
 import { createGate } from "./gate.ts";
 import { policy } from "./policy.ts";
 import type { BoughEvent, NetRequest } from "../schema/parts.ts";
 
 function harness(pol = policy()) {
   const bus = new Bus();
-  const netStore = new NetStore(":memory:");
+  const db = new Db(":memory:");
   const events: BoughEvent[] = [];
   bus.subscribe((e) => events.push(e));
-  return { gate: createGate({ netStore, bus, policy: pol }), netStore, events };
+  return { gate: createGate({ db, bus, policy: pol }), db, events };
 }
 
 const ghGet = { host: "api.github.com", method: "GET", path: "/user" };
@@ -28,7 +28,7 @@ Deno.test("gate: read is allowed, persisted, and emitted as net.request", async 
   assertEquals(nr.host, "api.github.com");
   assertEquals(nr.requestedBy, "worker");
 
-  const recent = h.netStore.recent("s1");
+  const recent = h.db.recentNetEvents("s1");
   assertEquals(recent.map((r) => r.verdict), ["allowed"]);
 });
 
@@ -56,7 +56,7 @@ Deno.test("gate: hold parks until approved, then flips to allowed", async () => 
   assertEquals((h.events[1].data as NetRequest).id, first.id);
   assertEquals((h.events[1].data as NetRequest).verdict, "allowed");
   assertEquals(h.gate.pending, 0);
-  assertEquals(h.netStore.recent("s1").length, 1); // upsert, not a second row
+  assertEquals(h.db.recentNetEvents("s1").length, 1); // upsert, not a second row
 });
 
 Deno.test("gate: hold denied flips to denied; unknown id is a no-op", async () => {
@@ -68,4 +68,11 @@ Deno.test("gate: hold denied flips to denied; unknown id is a no-op", async () =
   assertEquals(h.gate.resolveHold(id, false), true);
   assertEquals((await pending).verdict, "deny");
   assertEquals((h.events[1].data as NetRequest).verdict, "denied");
+});
+
+Deno.test("gate: setPolicy swaps enforcement for the next request", async () => {
+  const h = harness(); // read_only default → write denied
+  assertEquals((await h.gate.gate(ghDelete)).verdict, "deny");
+  h.gate.setPolicy(policy({ mode: "all" }));
+  assertEquals((await h.gate.gate(ghDelete)).verdict, "allow");
 });

@@ -1,16 +1,15 @@
 /**
- * Policy bundles — installable, publishable Claw Patrol policy fragments for a
- * service or tool (design doc: "Policy bundles"). A bundle is an HCL template +
- * manifest: typed params, a description, required credential handles, and test
- * fixtures. `bough net add <bundle>` surfaces params as a form, calls `render()`,
- * composes the fragment into the gateway HCL, and runs `clawpatrol test` against
- * the fixtures before hot-reloading.
+ * Policy bundles — installable, curated rule-set presets for a service or tool. A
+ * bundle is a manifest (typed params, description, credential handles, test fixtures)
+ * plus a `render()` that produces a NetConfig contribution: the hosts to trust and any
+ * explicit verb rules. `bough net add <bundle>` surfaces params as a form, renders the
+ * contribution, validates it against the bundle's fixtures (policy.ts), and merges it
+ * into the live rule set (config.ts) — the gate hot-swaps.
  *
  * This file is the interface + one worked example (`github`). Other bundles
  * (`aws-readonly`, `kubernetes-prod`, ...) implement the same shape.
  */
 
-import type { HclCredential, HclEndpoint, HclRule } from "./hcl.ts";
 import type { Verdict } from "./policy.ts";
 
 export type ParamType = "string" | "host" | "hostList" | "bool";
@@ -23,25 +22,28 @@ export interface BundleParam {
   default?: string | string[] | boolean;
 }
 
-/** A credential the bundle needs; the value is injected by the gateway, never held by the agent. */
+/** A credential the bundle needs; the value is injected by the proxy, never held by the agent. */
 export interface BundleCred {
   handle: string; // e.g. "github_pat"
   type: string; // e.g. "bearer_token"
   description: string;
 }
 
-/** One offline regression case, matching Claw Patrol's `clawpatrol test` fixture JSON. */
+/** One offline regression case: an action and the verdict the composed policy must give it. */
 export interface BundleFixture {
   name: string;
   action: Record<string, unknown>; // { host, http|k8s|sql: {...} }
   expect: { verdict: Verdict; rule?: string; endpoint?: string };
 }
 
-/** The HCL fragment a bundle contributes, composed into the full gateway policy. */
-export interface BundleFragment {
-  credentials: HclCredential[];
-  endpoints: HclEndpoint[];
-  rules: HclRule[];
+/** What a bundle contributes to the rule set — merged (deduped) into the persisted NetConfig. */
+export interface BundleContribution {
+  allowHosts?: string[];
+  denyHosts?: string[];
+  k8sHosts?: string[];
+  allowVerbs?: string[];
+  denyVerbs?: string[];
+  holdVerbs?: string[];
 }
 
 export interface BundleManifest {
@@ -51,22 +53,22 @@ export interface BundleManifest {
   params: BundleParam[];
   credentials: BundleCred[];
   fixtures: BundleFixture[];
-  /** Compose this bundle's HCL from resolved params. */
-  render(params: Record<string, unknown>): BundleFragment;
+  /** Compose this bundle's rule-set contribution from resolved params. */
+  render(params: Record<string, unknown>): BundleContribution;
 }
 
 // ---- example bundle: github -------------------------------------------------
 
 /**
- * GitHub: REST gated by method, GraphQL gated by the operation in the body (gh
- * sends most commands as POST /graphql, so method alone can't tell read from
- * write). First-match wins, so the graphql rules precede the REST rules. Mirrors
- * the spike's `github-*` rules and policy.ts's `classifyGithub`.
+ * GitHub: trust the API host so reads pass and writes are gated by the active mode
+ * (review holds them, read_only denies them — the classifier splits GitHub read/write,
+ * incl. GraphQL by peeking for a `mutation`). Adds an explicit hold on graphql mutations
+ * so they always surface for approval, even under mode "all".
  */
 export const githubBundle: BundleManifest = {
   name: "github",
-  version: "0.1.0",
-  description: "Gate gh/GitHub API: reads allowed, writes reviewed (deny by default).",
+  version: "0.2.0",
+  description: "Trust the GitHub API: reads pass, writes gated, graphql mutations held.",
   params: [
     {
       name: "host",
@@ -75,39 +77,40 @@ export const githubBundle: BundleManifest = {
       required: false,
       default: "api.github.com",
     },
-    {
-      name: "allowWrites",
-      description: "Permit REST/GraphQL writes instead of denying them.",
-      type: "bool",
-      required: false,
-      default: false,
-    },
   ],
   credentials: [
     {
       handle: "github_pat",
       type: "bearer_token",
-      description: "GitHub personal-access / OAuth token, stamped on the wire by the gateway.",
+      description: "GitHub personal-access / OAuth token, stamped on the wire by the proxy.",
     },
   ],
   fixtures: [
     {
       name: "gh-get",
       action: { host: "api.github.com", http: { method: "GET", path: "/user", headers: {} } },
-      expect: { verdict: "allow", rule: "github-rest-reads", endpoint: "https.github" },
+      expect: { verdict: "allow" },
     },
     {
       name: "gh-delete",
-      action: { host: "api.github.com", http: { method: "DELETE", path: "/repos/o/r", headers: {} } },
-      expect: { verdict: "deny", rule: "github-rest-writes", endpoint: "https.github" },
+      action: {
+        host: "api.github.com",
+        http: { method: "DELETE", path: "/repos/o/r", headers: {} },
+      },
+      expect: { verdict: "deny" },
     },
     {
       name: "gh-graphql-query",
       action: {
         host: "api.github.com",
-        http: { method: "POST", path: "/graphql", headers: {}, body: '{"query":"query { viewer { login } }"}' },
+        http: {
+          method: "POST",
+          path: "/graphql",
+          headers: {},
+          body: '{"query":"query { viewer { login } }"}',
+        },
       },
-      expect: { verdict: "allow", rule: "github-graphql-query", endpoint: "https.github" },
+      expect: { verdict: "allow" },
     },
     {
       name: "gh-graphql-mutation",
@@ -120,43 +123,14 @@ export const githubBundle: BundleManifest = {
           body: '{"query":"mutation { mergePullRequest(input:{}) { clientMutationId } }"}',
         },
       },
-      expect: { verdict: "deny", rule: "github-graphql-mutation", endpoint: "https.github" },
+      expect: { verdict: "hold" },
     },
   ],
   render(params) {
     const host = (params.host as string) ?? "api.github.com";
-    const writeVerdict: Verdict = params.allowWrites ? "allow" : "deny";
     return {
-      credentials: [{ type: "bearer_token", name: "github_pat", endpoint: "https.github" }],
-      endpoints: [{ kind: "https", name: "github", hosts: [host] }],
-      rules: [
-        {
-          name: "github-graphql-mutation",
-          endpoint: "https.github",
-          condition: "http.path == '/graphql' && http.body_json.query.startsWith('mutation')",
-          verdict: writeVerdict,
-          reason: "graphql mutation blocked",
-        },
-        {
-          name: "github-graphql-query",
-          endpoint: "https.github",
-          condition: "http.path == '/graphql'",
-          verdict: "allow",
-        },
-        {
-          name: "github-rest-reads",
-          endpoint: "https.github",
-          condition: "http.method in ['GET', 'HEAD']",
-          verdict: "allow",
-        },
-        {
-          name: "github-rest-writes",
-          endpoint: "https.github",
-          condition: "http.method in ['POST', 'PATCH', 'PUT', 'DELETE']",
-          verdict: writeVerdict,
-          reason: "REST writes go through PR review",
-        },
-      ],
+      allowHosts: [host],
+      holdVerbs: ["graphql:mutation"],
     };
   },
 };

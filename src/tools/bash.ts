@@ -1,6 +1,7 @@
 /** Run a shell command in the session workspace, capturing combined output. */
 import { z } from "zod/v4";
 import { wrap } from "../sandbox/seatbelt.ts";
+import { clawpatrolEnv } from "../net/gateway.ts";
 import type { ToolDef, ToolRunCtx } from "./types.ts";
 
 const schema = z.object({
@@ -28,9 +29,14 @@ export const bash: ToolDef = {
     if (ctx.sandbox && Deno.build.os === "darwin" && Deno.env.get("BOUGH_NO_SANDBOX") !== "1") {
       argv = wrap(argv, { workspace: ctx.workspace, allowWrite: [ctx.sandbox.sessionDir] });
     }
+    // Route egress through Claw Patrol when the proxy is running (opt-in). Seatbelt
+    // still confines the filesystem; the proxy env points the command's HTTP(S) client
+    // at the intercepting proxy and trusts its MITM CA. Empty when the proxy is off.
+    const netEnv = clawpatrolEnv();
     const cmd = new Deno.Command(argv[0], {
       args: argv.slice(1),
       cwd: ctx.workspace,
+      env: Object.keys(netEnv).length ? netEnv : undefined,
       stdout: "piped",
       stderr: "piped",
       signal: AbortSignal.timeout(timeout_ms ?? 120_000),

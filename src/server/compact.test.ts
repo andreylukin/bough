@@ -1,8 +1,6 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { Db } from "../db/db.ts";
 import { Bus } from "../bus.ts";
-import { NetStore } from "../db/net.ts";
-import { createGate } from "../net/gate.ts";
 import { createHandler, type AppCtx } from "./app.ts";
 import type { BoughEvent, Message, Role, Session } from "../schema/parts.ts";
 import type { LlmClient, LlmParams } from "../supervisor/llm.ts";
@@ -24,8 +22,7 @@ function fakeLlm(summary: string): { client: LlmClient; prompts: string[] } {
 
 function ctx(llm?: LlmClient): AppCtx {
   const bus = new Bus();
-  const netStore = new NetStore(":memory:");
-  return { db: new Db(":memory:"), bus, netStore, gate: createGate({ netStore, bus }), llm };
+  return { db: new Db(":memory:"), bus, llm };
 }
 
 function seedMessage(db: Db, sessionId: string, id: string, role: Role, text: string, createdAt: number) {

@@ -15,6 +15,25 @@ export interface Usage {
   contextTokens: number;
   outputTokens: number;
 }
+export interface NetStatus {
+  enabled: boolean;
+  running: boolean;
+  proxyUrl: string;
+  caPath: string;
+}
+
+// The editable rule set (mirrors src/net/config.ts NetConfig).
+export type Verdict = "allow" | "deny" | "hold";
+export interface NetConfig {
+  mode: "read_only" | "review" | "all";
+  allowHosts: string[];
+  denyHosts: string[];
+  hostMiss: Verdict;
+  k8sHosts: string[];
+  allowVerbs: string[];
+  denyVerbs: string[];
+  holdVerbs: string[];
+}
 
 export const api = {
   config: () => fetch("/config").then(j<{ model: string; models: ModelOption[] }>),
@@ -66,16 +85,29 @@ export const api = {
       .then(j<{ files: string[] }>)
       .then((r) => r.files),
 
-  // ---- network rail --------------------------------------------------------
+  // ---- network: native Claw Patrol firewall --------------------------------
+  // bough runs the egress proxy in-process; the live feed + human approvals + the
+  // rule set all live here in bough's own UI.
+  netStatus: () => fetch("/net/status").then(j<NetStatus>),
+
   // Backfill the feed; live updates arrive as `net.request` events over /events.
   netRequests: (sessionId?: string) =>
     fetch("/net/requests" + (sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : "")).then(
-      j<NetRequest[]>
+      j<NetRequest[]>,
     ),
 
   // Resolve a held request; the gate re-emits it with the final verdict.
   allowRequest: (id: string) => fetch(`/net/requests/${id}/allow`, { method: "POST" }),
   denyRequest: (id: string) => fetch(`/net/requests/${id}/deny`, { method: "POST" }),
+
+  // The editable allow/deny/hold rule set. PUT hot-swaps the live gate.
+  getPolicy: () => fetch("/net/policy").then(j<NetConfig>),
+  putPolicy: (cfg: NetConfig) =>
+    fetch("/net/policy", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(cfg),
+    }).then(j<NetConfig>),
 
   // ---- policy bundles ------------------------------------------------------
   listBundles: () => fetch("/net/bundles").then(j<BundleSummary[]>),

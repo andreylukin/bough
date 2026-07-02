@@ -1,9 +1,10 @@
 // Right context rail. Two tabs share it — Network (live Claw Patrol feed + pending
-// approvals) and Changes (the run's file manifest). Pending pulses the green/amber
-// accent; nothing else competes. The Network panel has a compact form (main window)
-// and a wide, focused form (screen 3) with filters and a detailed hold card.
-import { c, mono, sans } from "../theme";
+// approvals + the rule editor) and Changes (the run's file manifest). Pending pulses
+// the amber accent; nothing else competes.
+import { useState } from "react";
+import { c, mono } from "../theme";
 import type { DiffFile } from "../mock";
+import type { NetConfig, NetStatus } from "../api";
 import type { NetRequest } from "../types";
 import { Chip, Dot } from "./ui";
 
@@ -82,241 +83,221 @@ function TabHeader({
   );
 }
 
-function verbTint(verb?: string) {
-  const v = (verb ?? "").toUpperCase();
-  if (v.startsWith("DEL")) return { bg: "rgba(226,119,110,.14)", fg: c.red };
-  return { bg: c.panelInset, fg: c.muted };
+const VERDICT_TINT: Record<NetRequest["verdict"], string> = {
+  allowed: c.green,
+  denied: c.red,
+  pending: c.amber,
+};
+
+// One row in the live egress feed.
+function FeedRow({ r }: { r: NetRequest }) {
+  return (
+    <div style={{ display: "flex", gap: 8, padding: "7px 2px", borderBottom: `1px solid ${c.border}`, fontFamily: mono, fontSize: 11 }}>
+      <span style={{ color: VERDICT_TINT[r.verdict], width: 8, flex: "none" }}>●</span>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ color: c.text2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          <span style={{ color: c.muted2 }}>{r.verb ?? ""}</span> {r.host}
+        </div>
+        <div style={{ color: c.muted2, fontSize: 10, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {r.action}
+          {r.reason ? ` — ${r.reason}` : ""}
+        </div>
+      </div>
+    </div>
+  );
 }
 
-function PendingCard({
-  req,
-  wide,
-  onResolve,
-}: {
-  req: NetRequest;
-  wide: boolean;
-  onResolve: (approve: boolean) => void;
-}) {
+// The hold-and-ask card: a request parked on the wire until the operator decides.
+function HoldCard({ req, onResolve }: { req: NetRequest; onResolve: (approve: boolean) => void }) {
   return (
-    <div
-      className="pulse-amber"
-      style={{
-        border: `1px solid ${c.amber}`,
-        borderRadius: 11,
-        background: "rgba(217,180,95,.07)",
-        padding: wide ? 15 : 13,
-        marginBottom: wide ? 20 : 18,
-        position: "relative",
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: wide ? 11 : 9 }}>
-        <span style={{ fontSize: 10, letterSpacing: ".14em", color: c.amber, fontWeight: 600 }}>⏸ HOLD &amp; ASK</span>
-        {wide && <span style={{ fontFamily: mono, fontSize: 10.5, color: c.muted2 }}>waiting 00:14</span>}
+    <div style={{ border: `1px solid ${c.amber}`, borderRadius: 8, padding: 12, display: "flex", flexDirection: "column", gap: 8, background: "rgba(217,180,95,.06)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+        <Dot color={c.amber} pulse />
+        <span style={{ fontFamily: mono, fontSize: 12, color: c.text }}>Approval needed</span>
       </div>
-      {wide ? (
-        <>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 9 }}>
-            <span
-              style={{
-                fontFamily: mono,
-                fontSize: 10.5,
-                fontWeight: 600,
-                padding: "2px 7px",
-                borderRadius: 5,
-                background: "rgba(226,119,110,.15)",
-                color: c.red,
-              }}
-            >
-              {req.verb ?? "REQ"}
-            </span>
-            <span style={{ fontFamily: mono, fontSize: 12.5, color: c.text }}>{req.host}</span>
-          </div>
-          <div
-            style={{
-              fontFamily: mono,
-              fontSize: 12,
-              color: c.text2,
-              background: c.panel,
-              border: `1px solid ${c.border2}`,
-              borderRadius: 7,
-              padding: "8px 10px",
-              marginBottom: 11,
-            }}
-          >
-            {req.action}
-          </div>
-        </>
-      ) : (
-        <>
-          <div style={{ fontFamily: mono, fontSize: 12, color: c.text, marginBottom: 4 }}>{req.host}</div>
-          <div style={{ fontFamily: mono, fontSize: 12.5, color: c.red, marginBottom: 8 }}>{req.action}</div>
-        </>
-      )}
-      <div style={{ fontSize: 11.5, color: c.muted, lineHeight: 1.55, marginBottom: wide ? 14 : 12 }}>
-        {req.reason}{" "}
-        {req.requestedBy && (
-          <>
-            Requested by worker <span style={{ fontFamily: mono }}>{req.requestedBy}</span>.
-          </>
-        )}
+      <div style={{ fontFamily: mono, fontSize: 11.5, color: c.text2 }}>
+        <span style={{ color: c.muted2 }}>{req.verb ?? ""}</span> {req.host}
       </div>
-      <div style={{ display: "flex", gap: 8, marginBottom: wide ? 9 : 0 }}>
+      <div style={{ fontFamily: mono, fontSize: 11, color: c.muted }}>{req.action}</div>
+      {req.reason && <p style={{ fontSize: 12, color: c.muted, lineHeight: 1.5, margin: 0 }}>{req.reason}</p>}
+      <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
+        <button
+          onClick={() => onResolve(true)}
+          style={{ flex: 1, fontSize: 12, fontWeight: 600, color: c.bg, background: c.green, borderRadius: 6, padding: "6px 0" }}
+        >
+          Approve
+        </button>
         <button
           onClick={() => onResolve(false)}
-          style={{
-            flex: 1,
-            textAlign: "center",
-            padding: wide ? 8 : 7,
-            border: `1px solid ${wide ? c.red : c.hairline}`,
-            color: c.red,
-            borderRadius: 8,
-            fontSize: wide ? 12.5 : 12,
-            fontWeight: 500,
-          }}
+          style={{ flex: 1, fontSize: 12, color: c.red, border: `1px solid ${c.border2}`, borderRadius: 6, padding: "6px 0" }}
         >
           Deny
         </button>
-        <button
-          onClick={() => onResolve(true)}
-          style={{
-            flex: 1,
-            textAlign: "center",
-            padding: wide ? 8 : 7,
-            borderRadius: 8,
-            background: c.green,
-            color: c.bg,
-            fontSize: wide ? 12.5 : 12,
-            fontWeight: 600,
-          }}
-        >
-          Approve once
-        </button>
       </div>
-      {wide && (
-        <div style={{ textAlign: "center", fontSize: 11, color: c.muted2 }}>
-          or <span style={{ color: c.muted, textDecoration: "underline" }}>always allow deletes on octo/*</span>
-        </div>
-      )}
     </div>
   );
 }
 
-function FeedRow({ r }: { r: NetRequest }) {
-  const denied = r.verdict === "denied";
-  const tint = verbTint(r.verb);
-  const rel = (() => {
-    const s = Math.round((Date.now() - r.ts) / 1000);
-    return s <= 0 ? "now" : `${s}s`;
-  })();
+// A 2- or 3-way segmented control for a policy enum.
+function Segmented<T extends string>(
+  { value, options, onChange }: { value: T; options: readonly T[]; onChange: (v: T) => void },
+) {
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-        padding: "8px 6px",
-        borderBottom: `1px solid ${c.border3}`,
-      }}
-    >
-      <span style={{ color: denied ? c.red : c.green }}>{denied ? "✗" : "✓"}</span>
-      <span
+    <div style={{ display: "flex", gap: 4 }}>
+      {options.map((o) => {
+        const on = o === value;
+        return (
+          <button
+            key={o}
+            onClick={() => onChange(o)}
+            style={{
+              flex: 1,
+              fontFamily: mono,
+              fontSize: 11,
+              padding: "5px 0",
+              borderRadius: 6,
+              color: on ? c.bg : c.muted,
+              fontWeight: on ? 600 : 400,
+              background: on ? c.green : "transparent",
+              border: `1px solid ${on ? c.green : c.border2}`,
+            }}
+          >
+            {o}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function ListField(
+  { label, value, onChange }: { label: string; value: string; onChange: (v: string) => void },
+) {
+  return (
+    <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <span style={{ fontFamily: mono, fontSize: 10, letterSpacing: ".08em", color: c.muted2 }}>{label}</span>
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        spellCheck={false}
+        rows={value.split("\n").length + 1}
         style={{
-          fontSize: 9.5,
-          fontWeight: 600,
-          padding: "1px 5px",
-          borderRadius: 4,
-          background: tint.bg,
-          color: tint.fg,
+          fontFamily: mono,
+          fontSize: 11,
+          color: c.text2,
+          background: c.panelInset,
+          border: `1px solid ${c.border}`,
+          borderRadius: 6,
+          padding: "6px 8px",
+          resize: "vertical",
+          minHeight: 30,
         }}
-      >
-        {(r.verb ?? "").toUpperCase() || "—"}
-      </span>
-      <div style={{ minWidth: 0, flex: 1 }}>
-        <div style={{ color: c.text2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-          {r.host}
-        </div>
-        <div style={{ color: denied ? c.red : c.muted2, fontSize: 10 }}>{r.action}</div>
+      />
+    </label>
+  );
+}
+
+const toLines = (xs: string[]) => xs.join("\n");
+const fromLines = (s: string) => s.split("\n").map((x) => x.trim()).filter(Boolean);
+
+// The rule editor — the configurable allow/deny/hold sets. Local edit state seeds from
+// the live policy; Save PUTs it (the gate hot-swaps, no restart).
+function RuleEditor({ policy, onSave }: { policy: NetConfig; onSave: (cfg: NetConfig) => void }) {
+  const [mode, setMode] = useState(policy.mode);
+  const [hostMiss, setHostMiss] = useState(policy.hostMiss);
+  const [allowHosts, setAllowHosts] = useState(toLines(policy.allowHosts));
+  const [denyHosts, setDenyHosts] = useState(toLines(policy.denyHosts));
+  const [holdVerbs, setHoldVerbs] = useState(toLines(policy.holdVerbs));
+  const [denyVerbs, setDenyVerbs] = useState(toLines(policy.denyVerbs));
+  const [allowVerbs, setAllowVerbs] = useState(toLines(policy.allowVerbs));
+
+  const save = () =>
+    onSave({
+      ...policy,
+      mode,
+      hostMiss,
+      allowHosts: fromLines(allowHosts),
+      denyHosts: fromLines(denyHosts),
+      holdVerbs: fromLines(holdVerbs),
+      denyVerbs: fromLines(denyVerbs),
+      allowVerbs: fromLines(allowVerbs),
+    });
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12, border: `1px solid ${c.border}`, borderRadius: 8, padding: 12 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+        <span style={{ fontFamily: mono, fontSize: 10, letterSpacing: ".08em", color: c.muted2 }}>MODE · allowed hosts</span>
+        <Segmented value={mode} options={["read_only", "review", "all"] as const} onChange={setMode} />
       </div>
-      <span style={{ color: c.muted2 }}>{rel}</span>
+      <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+        <span style={{ fontFamily: mono, fontSize: 10, letterSpacing: ".08em", color: c.muted2 }}>OFF-ALLOWLIST HOST</span>
+        <Segmented value={hostMiss} options={["allow", "deny", "hold"] as const} onChange={setHostMiss} />
+      </div>
+      <ListField label="ALLOW HOSTS" value={allowHosts} onChange={setAllowHosts} />
+      <ListField label="DENY HOSTS" value={denyHosts} onChange={setDenyHosts} />
+      <ListField label="HOLD VERBS" value={holdVerbs} onChange={setHoldVerbs} />
+      <ListField label="DENY VERBS" value={denyVerbs} onChange={setDenyVerbs} />
+      <ListField label="ALLOW VERBS" value={allowVerbs} onChange={setAllowVerbs} />
+      <button
+        onClick={save}
+        style={{ fontSize: 12, fontWeight: 600, color: c.bg, background: c.green, borderRadius: 6, padding: "7px 0" }}
+      >
+        Save rules
+      </button>
     </div>
   );
 }
 
-function NetworkPanel({
-  net,
-  pending,
-  wide,
-  gateLabel,
-  onResolve,
-}: {
-  net: NetRequest[];
-  pending: NetRequest | null;
-  wide: boolean;
-  gateLabel: string;
-  onResolve: (approve: boolean) => void;
-}) {
-  const allowed = net.filter((n) => n.verdict === "allowed").length;
-  const denied = net.filter((n) => n.verdict === "denied").length;
+// bough runs the egress firewall in-process: this panel shows its status, the live
+// feed, the hold-and-ask cards, and the editable rule set.
+function NetworkPanel(
+  { status, net, pending, onResolve, policy, onSavePolicy, wide }: {
+    status: NetStatus;
+    net: NetRequest[];
+    pending: NetRequest | null;
+    onResolve: (approve: boolean) => void;
+    policy: NetConfig | null;
+    onSavePolicy: (cfg: NetConfig) => void;
+    wide: boolean;
+  },
+) {
+  const [editing, setEditing] = useState(false);
+  const dotColor = status.running ? c.green : status.enabled ? c.amber : c.muted2;
+  const statusLabel = status.running ? "proxy up" : status.enabled ? "starting" : "off";
   return (
-    <div style={{ flex: 1, overflowY: "auto", padding: wide ? "15px" : "14px 13px", minHeight: 0, display: "flex", flexDirection: "column" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: wide ? 12 : 14 }}>
+    <div style={{ flex: 1, overflowY: "auto", padding: wide ? "15px" : "14px 13px", minHeight: 0, display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <Dot color={dotColor} pulse={status.running} />
+        <span style={{ fontFamily: mono, fontSize: 12, color: c.text }}>Claw Patrol</span>
+        <span style={{ fontFamily: mono, fontSize: 10.5, color: c.muted2 }}>{statusLabel}</span>
         <button
-          onClick={() => (location.hash = "bundles")}
-          title="Configure gate bundles"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 7,
-            fontFamily: mono,
-            fontSize: 11.5,
-            color: c.muted,
-            background: "none",
-            border: `1px solid ${c.border2}`,
-            borderRadius: 6,
-            padding: "3px 9px",
-            cursor: "pointer",
-          }}
+          onClick={() => setEditing((e) => !e)}
+          title="Edit the allow/deny/hold rule set"
+          style={{ marginLeft: "auto", fontFamily: mono, fontSize: 11, color: editing ? c.green : c.muted, background: "none", border: `1px solid ${c.border2}`, borderRadius: 6, padding: "3px 9px" }}
         >
-          <Dot /> gate · {gateLabel}
+          ⚙ Rules
         </button>
-        {wide && (
-          <span style={{ fontFamily: mono, fontSize: 11, color: c.muted2 }}>
-            {`${allowed} allowed · ${denied} denied`}
-          </span>
-        )}
       </div>
 
-      {wide && (
-        <div style={{ display: "flex", gap: 6, marginBottom: 16, fontSize: 11.5 }}>
-          <span style={{ padding: "4px 11px", borderRadius: 6, background: "#262b32", color: c.text }}>All</span>
-          <span style={{ padding: "4px 11px", borderRadius: 6, color: c.muted2, border: `1px solid ${c.border2}` }}>Allowed</span>
-          <span style={{ padding: "4px 11px", borderRadius: 6, color: c.muted2, border: `1px solid ${c.border2}` }}>Denied</span>
-          <span style={{ padding: "4px 11px", borderRadius: 6, color: c.amber, border: "1px solid rgba(217,180,95,.4)" }}>
-            Pending · {pending ? 1 : 0}
-          </span>
-        </div>
+      {!status.enabled && (
+        <p style={{ fontSize: 12.5, color: c.muted, lineHeight: 1.55, margin: 0 }}>
+          Egress gating is off. Start bough with <code style={{ fontFamily: mono, color: c.text2 }}>BOUGH_CLAWPATROL=1</code> to route sandbox traffic through the in-process proxy.
+        </p>
       )}
 
-      {pending && <PendingCard req={pending} wide={wide} onResolve={onResolve} />}
+      {pending && <HoldCard req={pending} onResolve={onResolve} />}
 
-      <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 11 }}>
-        <span style={{ fontFamily: mono, fontSize: 11, color: c.muted2 }}>LIVE FEED</span>
-        {wide && (
-          <>
-            <span style={{ width: 6, height: 6, borderRadius: "50%", background: c.green, marginLeft: 2 }} />
-            <span style={{ fontSize: 10.5, color: c.green }}>streaming</span>
-          </>
-        )}
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", fontFamily: mono, fontSize: 11 }}>
-        {net.map((r) => (
-          <FeedRow key={r.id} r={r} />
-        ))}
-        {net.length === 0 && (
-          <span style={{ fontFamily: sans, fontSize: 12, color: c.muted2, lineHeight: 1.5 }}>
-            No requests yet. Traffic appears here once the gate is capturing egress.
-          </span>
-        )}
+      {editing && (policy
+        ? <RuleEditor policy={policy} onSave={(cfg) => onSavePolicy(cfg)} />
+        : <p style={{ fontSize: 12, color: c.muted2, margin: 0 }}>Loading rules…</p>)}
+
+      <div style={{ display: "flex", flexDirection: "column" }}>
+        <span style={{ fontFamily: mono, fontSize: 10, letterSpacing: ".1em", color: c.muted2, margin: "0 0 4px 2px" }}>
+          FEED {net.length > 0 && <Chip>{net.length}</Chip>}
+        </span>
+        {net.length === 0
+          ? <div style={{ fontSize: 12, color: c.muted2, padding: "8px 2px" }}>No egress yet. Gated requests from sandbox commands appear here.</div>
+          : net.map((r) => <FeedRow key={r.id} r={r} />)}
       </div>
     </div>
   );
@@ -447,13 +428,15 @@ export function RightRail({
   onTab,
   wide = false,
   onToggleWide,
+  netStatus,
   net,
   pending,
-  gateLabel = "gate",
+  onResolve,
+  policy,
+  onSavePolicy,
   diffs,
   selectedFile,
   onSelectFile,
-  onResolve,
   onApplyAll,
   onRevert,
 }: {
@@ -461,13 +444,15 @@ export function RightRail({
   onTab: (t: RailTab) => void;
   wide?: boolean;
   onToggleWide?: () => void;
+  netStatus: NetStatus;
   net: NetRequest[];
   pending: NetRequest | null;
-  gateLabel?: string;
+  onResolve: (approve: boolean) => void;
+  policy: NetConfig | null;
+  onSavePolicy: (cfg: NetConfig) => void;
   diffs: DiffFile[];
   selectedFile: string | null;
   onSelectFile: (path: string) => void;
-  onResolve: (approve: boolean) => void;
   onApplyAll: () => void;
   onRevert: () => void;
 }) {
@@ -495,7 +480,15 @@ export function RightRail({
         onToggleWide={onToggleWide}
       />
       {tab === "network" ? (
-        <NetworkPanel net={net} pending={pending} wide={wide} gateLabel={gateLabel} onResolve={onResolve} />
+        <NetworkPanel
+          status={netStatus}
+          net={net}
+          pending={pending}
+          onResolve={onResolve}
+          policy={policy}
+          onSavePolicy={onSavePolicy}
+          wide={wide}
+        />
       ) : (
         <ChangesPanel diffs={diffs} selected={selectedFile} onSelect={onSelectFile} onApplyAll={onApplyAll} onRevert={onRevert} />
       )}

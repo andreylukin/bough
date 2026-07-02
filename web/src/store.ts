@@ -1,7 +1,7 @@
 // App state + event reduction. Holds the session list, the open thread, per-message
 // streaming buffers, and the network feed. Everything the UI renders derives from here.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, readBranch, type Usage } from "./api";
+import { api, type NetConfig, type NetStatus, readBranch, type Usage } from "./api";
 import { useEvents } from "./useEvents";
 import type { BoughEvent, ChangeSource, Message, NetRequest, Part, Session, WireDiff } from "./types";
 
@@ -16,8 +16,12 @@ export interface Store {
   connected: boolean;
   // A turn is streaming for the open session (any of its messages still pending).
   busy: boolean;
+  netStatus: NetStatus;
+  // The live egress feed (newest first) and the current hold awaiting approval, if any.
   net: NetRequest[];
   pending: NetRequest | null;
+  // The editable rule set; null until loaded.
+  policy: NetConfig | null;
   // Review payloads for the open session (0..2: jj repo + clonefile config).
   changes: WireDiff[];
   // A transient message to surface (e.g. a fork/compact 400); null when clear.
@@ -35,8 +39,9 @@ export interface Store {
   interrupt: () => void;
   archive: (id: string) => void;
   resolvePending: (approve: boolean) => void;
+  savePolicy: (cfg: NetConfig) => Promise<void>;
   reload: () => Promise<void>;
-  refreshNet: () => Promise<void>;
+  refreshNetStatus: () => Promise<void>;
   applyChanges: (source: ChangeSource, paths: string[]) => void;
   revertChanges: () => void;
   fork: (atMessageId: string, editedText?: string) => void;
@@ -52,8 +57,15 @@ export function useStore(): Store {
   const [session, setSession] = useState<Session | null>(null);
   const [thread, setThread] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState<Record<string, string>>({});
+  const [netStatus, setNetStatus] = useState<NetStatus>({
+    enabled: false,
+    running: false,
+    proxyUrl: "",
+    caPath: "",
+  });
   const [net, setNet] = useState<NetRequest[]>([]);
   const [pending, setPending] = useState<NetRequest | null>(null);
+  const [policy, setPolicy] = useState<NetConfig | null>(null);
   const [changes, setChanges] = useState<WireDiff[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [usage, setUsage] = useState<Usage>({ contextTokens: 0, outputTokens: 0 });
@@ -80,6 +92,11 @@ export function useStore(): Store {
     setSessions((prev) => s.map((n) => ({ ...n, unseen: prev.find((p) => p.id === n.id)?.unseen })));
   }, []);
 
+  // Proxy status for the Network rail (bough runs the firewall in-process).
+  const refreshNetStatus = useCallback(async () => {
+    setNetStatus(await api.netStatus());
+  }, []);
+
   // Rebuild the net rail from the server, then live-update from `net.request` events.
   // Global (no session filter) so the feed shows every gated request; the newest
   // pending row, if any, surfaces as the hold-and-ask card.
@@ -88,6 +105,37 @@ export function useStore(): Store {
     setNet(rows);
     setPending(rows.find((r) => r.verdict === "pending") ?? null);
   }, []);
+
+  const refreshPolicy = useCallback(async () => {
+    try {
+      setPolicy(await api.getPolicy());
+    } catch {
+      setPolicy(null);
+    }
+  }, []);
+
+  const resolvePending = useCallback((approve: boolean) => {
+    const req = pendingRef.current;
+    // Clear the card optimistically; the gate re-emits the row with its final verdict,
+    // which the `net.request` handler reconciles by id.
+    setPending(null);
+    if (!req) return;
+    (approve ? api.allowRequest(req.id) : api.denyRequest(req.id)).catch(() => {
+      // The hold may have already resolved/expired server-side (404). Re-sync so the
+      // rail reflects the true state rather than a stale card.
+      refreshNet();
+    });
+  }, [refreshNet]);
+
+  // Persist a new rule set; PUT hot-swaps the live gate. Optimistic, then reconcile.
+  const savePolicy = useCallback(async (cfg: NetConfig) => {
+    setPolicy(cfg);
+    try {
+      setPolicy(await api.putPolicy(cfg));
+    } catch {
+      refreshPolicy();
+    }
+  }, [refreshPolicy]);
 
   // Review payloads for the open session. Refetched on `changes.updated` (after a
   // workspace turn finishes, or after apply/revert).
@@ -194,19 +242,6 @@ export function useStore(): Store {
   const archive = useCallback((id: string) => {
     api.archiveSession(id).catch(() => {});
   }, []);
-
-  const resolvePending = useCallback((approve: boolean) => {
-    const req = pendingRef.current;
-    // Clear the card optimistically; the gate re-emits the row with its final verdict,
-    // which the `net.request` handler reconciles by id.
-    setPending(null);
-    if (!req) return;
-    (approve ? api.allowRequest(req.id) : api.denyRequest(req.id)).catch(() => {
-      // The hold may have already resolved/expired server-side (404). Re-sync so the
-      // rail reflects the true state rather than a stale card.
-      refreshNet();
-    });
-  }, [refreshNet]);
 
   const onEvent = useCallback((ev: BoughEvent) => {
     switch (ev.type) {
@@ -315,7 +350,9 @@ export function useStore(): Store {
   // dropped — their deltas are lost anyway; the refetched thread has the real parts.
   const resync = useCallback(async () => {
     reload().catch(() => {});
+    refreshNetStatus().catch(() => {});
     refreshNet().catch(() => {});
+    refreshPolicy().catch(() => {});
     const id = currentRef.current;
     if (!id) return;
     try {
@@ -328,14 +365,16 @@ export function useStore(): Store {
     } catch {
       // server unreachable — the next reconnect will resync again
     }
-  }, [reload, refreshNet]);
+  }, [reload, refreshNetStatus, refreshNet, refreshPolicy]);
 
   const connected = useEvents(onEvent, resync);
 
   useEffect(() => {
     reload();
+    refreshNetStatus();
     refreshNet();
-  }, [reload, refreshNet]);
+    refreshPolicy();
+  }, [reload, refreshNetStatus, refreshNet, refreshPolicy]);
 
   // A turn is running for the open session while any of its messages is pending.
   const busy = thread.some((m) => m.pending);
@@ -359,8 +398,10 @@ export function useStore(): Store {
     streaming,
     connected,
     busy,
+    netStatus,
     net,
     pending,
+    policy,
     changes,
     notice,
     usage,
@@ -373,8 +414,9 @@ export function useStore(): Store {
     interrupt,
     archive,
     resolvePending,
+    savePolicy,
     reload,
-    refreshNet,
+    refreshNetStatus,
     applyChanges,
     revertChanges,
     fork,

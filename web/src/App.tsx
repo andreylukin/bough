@@ -50,7 +50,6 @@ export default function App() {
 
 // ---- mock path (default; no backend needed) -------------------------------
 function MockApp() {
-  const [pending, setPending] = useState<NetRequest | null>(mock.pending);
   return (
     <Window
       live={false}
@@ -63,14 +62,25 @@ function MockApp() {
       thread={mock.thread}
       streaming={{}}
       activity={mock.activity}
+      netStatus={{ enabled: true, running: true, proxyUrl: "http://127.0.0.1:50051", caPath: "~/.bough/net/ca/ca.crt" }}
       net={mock.net}
-      pending={pending}
-      gateLabel="github bundle"
+      pending={mock.pending}
+      onResolve={() => {}}
+      policy={{
+        mode: "review",
+        allowHosts: ["api.github.com", "registry.npmjs.org"],
+        denyHosts: [],
+        hostMiss: "hold",
+        k8sHosts: [],
+        allowVerbs: [],
+        denyVerbs: [],
+        holdVerbs: [],
+      }}
+      onSavePolicy={() => {}}
       diffs={mock.diffs}
       bundles={mock.bundles}
       notice={null}
       onSend={() => {}}
-      onResolve={() => setPending(null)}
       onSelectHead={() => {}}
       onInstallBundle={() => {}}
       onApplyFile={() => {}}
@@ -138,9 +148,6 @@ function LiveApp() {
   );
 
   const diffs = diffsToFiles(store.changes);
-  // The gate label = the installed bundle name(s); falls back when nothing's installed.
-  const installed = bundles.filter((b) => b.state === "installed").map((b) => b.name);
-  const gateLabel = installed.length ? installed.join(", ") : "no gate";
 
   // Apply all: one call per snapshot source, with that source's file paths.
   const onApplyAll = () => {
@@ -172,9 +179,12 @@ function LiveApp() {
         thread={store.thread}
         streaming={store.streaming}
         activity={[]}
+        netStatus={store.netStatus}
         net={store.net}
         pending={store.pending}
-        gateLabel={gateLabel}
+        onResolve={store.resolvePending}
+        policy={store.policy}
+        onSavePolicy={store.savePolicy}
         diffs={diffs}
         bundles={bundles}
         notice={store.notice}
@@ -188,7 +198,6 @@ function LiveApp() {
         onSend={onSend}
         onInterrupt={store.interrupt}
         onSearchFiles={(q) => (store.currentId ? api.searchFiles(store.currentId, q) : Promise.resolve([]))}
-        onResolve={(a) => store.resolvePending(a)}
         onSelectHead={(id) => store.open(id)}
         onInstallBundle={onInstallBundle}
         onApplyFile={(f) => f.source && store.applyChanges(f.source, [f.path])}
@@ -237,9 +246,12 @@ function Window({
   thread,
   streaming,
   activity,
+  netStatus,
   net,
   pending,
-  gateLabel,
+  onResolve,
+  policy,
+  onSavePolicy,
   diffs,
   bundles,
   notice,
@@ -252,7 +264,6 @@ function Window({
   onSend,
   onInterrupt,
   onSearchFiles,
-  onResolve,
   onSelectHead,
   onInstallBundle,
   onApplyFile,
@@ -278,9 +289,12 @@ function Window({
   thread: Message[];
   streaming: Record<string, string>;
   activity: ActivityGroup[];
+  netStatus: import("./api").NetStatus;
   net: NetRequest[];
   pending: NetRequest | null;
-  gateLabel: string;
+  onResolve: (approve: boolean) => void;
+  policy: import("./api").NetConfig | null;
+  onSavePolicy: (cfg: import("./api").NetConfig) => void;
   diffs: DiffFile[];
   bundles: Bundle[];
   notice?: string | null;
@@ -293,7 +307,6 @@ function Window({
   onSend: (text: string, branch: boolean) => void;
   onInterrupt?: () => void;
   onSearchFiles?: (q: string) => Promise<string[]>;
-  onResolve: (approve: boolean) => void;
   onSelectHead: (id: string) => void;
   onInstallBundle: (id: string) => void;
   onApplyFile: (file: DiffFile) => void;
@@ -369,7 +382,7 @@ function Window({
     );
 
   const showDiff = tab === "changes" && !!diffFile;
-  const dimConversation = tab === "network" && wide && !!pending;
+  const dimConversation = false;
 
   const leftRail = (
     <LeftRail
@@ -394,16 +407,18 @@ function Window({
       onTab={openTab}
       wide={wide}
       onToggleWide={mobile ? undefined : () => setWide((w) => !w)}
+      netStatus={netStatus}
       net={net}
       pending={pending}
-      gateLabel={gateLabel}
+      onResolve={onResolve}
+      policy={policy}
+      onSavePolicy={onSavePolicy}
       diffs={diffs}
       selectedFile={diffFile?.path ?? null}
       onSelectFile={(p) => {
         setSelectedFile(p);
         setRightOpen(false);
       }}
-      onResolve={onResolve}
       onApplyAll={onApplyAll}
       onRevert={onRevert}
     />
