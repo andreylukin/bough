@@ -89,16 +89,17 @@ Deno.test("changes endpoints 404 on unknown session; revert 400 without a jj wor
   assertEquals((await h(jsonReq("GET", "/sessions/nope/changes"))).status, 404);
   assertEquals((await h(jsonReq("POST", "/sessions/nope/changes/apply", { source: "jj", paths: [] }))).status, 404);
   assertEquals((await h(jsonReq("POST", "/sessions/nope/changes/revert", {}))).status, 404);
-  // a real session with no jj workspace can't be reverted
+  // a real session with no jj workspace can't be reverted — or jj-applied
   const s = await (await h(jsonReq("POST", "/sessions", { title: "s" }))).json() as Session;
   assertEquals((await h(jsonReq("POST", `/sessions/${s.id}/changes/revert`, {}))).status, 400);
+  assertEquals((await h(jsonReq("POST", `/sessions/${s.id}/changes/apply`, { source: "jj", paths: [] }))).status, 400);
   c.db.close();
 });
 
 // ---- jj-backed changes (self-skips without jj) -----------------------------
 
 Deno.test({
-  name: "changes: jj workspace diff, apply (no-op), revert (whole-change)",
+  name: "changes: jj apply accepts the change — files stay, the rail clears",
   ignore: !jjAvailable,
   fn: async () => {
     const repo = await tempGitRepo();
@@ -118,18 +119,50 @@ Deno.test({
       assertEquals(diffs[0].source, "jj");
       assertEquals(diffs[0].files.map((f) => f.path), ["new.txt"]);
 
-      // apply jj = acceptance no-op (file still there), emits changes.updated
+      // apply = accept & advance: file stays on disk, the session diff resets to
+      // empty (the change is sealed, the bookmark moved to a fresh child), and
+      // changes.updated is emitted so the rail refetches.
       const applied = await h(jsonReq("POST", `/sessions/${s.id}/changes/apply`, { source: "jj", paths: ["new.txt"] }));
       assertEquals(applied.status, 200);
       assert(await Deno.stat(`${repo}/new.txt`).then(() => true).catch(() => false));
+      const after = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as { diffs: Diff[] };
+      assertEquals(after.diffs[0]?.files ?? [], []);
+      assert(events.some((e) => e.type === "changes.updated" && e.sessionId === s.id));
 
-      // revert = whole-change undo: file gone, diff empty, changes.updated emitted
+      // post-accept edits diff cleanly on top — only the new work shows
+      await Deno.writeTextFile(`${repo}/next.txt`, "more\n");
+      const d2 = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as { diffs: Diff[] };
+      assertEquals(d2.diffs[0].files.map((f) => f.path), ["next.txt"]);
+    } finally {
+      await Deno.remove(repo, { recursive: true });
+      c.db.close();
+    }
+  },
+});
+
+Deno.test({
+  name: "changes: jj revert (whole-change) undoes the session's edit",
+  ignore: !jjAvailable,
+  fn: async () => {
+    const repo = await tempGitRepo();
+    const c = ctx();
+    const h = createHandler(c);
+    try {
+      const s = await (await h(jsonReq("POST", "/sessions", { title: "s", workspace: repo }))).json() as Session;
+      await jj.ensureWorkspace(repo, s.id);
+      await Deno.writeTextFile(`${repo}/new.txt`, "hi\n");
+
+      const events: BoughEvent[] = [];
+      c.bus.subscribe((e) => events.push(e));
+
+      // reading the diff snapshots the edit; revert then undoes it whole-change
+      const { diffs } = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as { diffs: Diff[] };
+      assertEquals(diffs[0].files.map((f) => f.path), ["new.txt"]);
       const reverted = await h(jsonReq("POST", `/sessions/${s.id}/changes/revert`, {}));
       assertEquals(reverted.status, 200);
       assertEquals(await Deno.stat(`${repo}/new.txt`).then(() => true).catch(() => false), false);
       const after = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as { diffs: Diff[] };
       assertEquals(after.diffs[0]?.files ?? [], []);
-
       assert(events.some((e) => e.type === "changes.updated" && e.sessionId === s.id));
     } finally {
       await Deno.remove(repo, { recursive: true });

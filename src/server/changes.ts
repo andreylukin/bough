@@ -11,8 +11,10 @@
  * Apply / revert semantics (v1, per INTEGRATION §4):
  *   - clonefile apply → copy the approved originals back (applyBack). This is the real
  *     mutation for config edits.
- *   - jj apply → NO-OP acceptance: the working tree already holds the change, so there
- *     is nothing to move; apply just marks it reviewed.
+ *   - jj apply → accept & advance: seal the session's change as a finished commit and
+ *     move the bookmark to a new empty child (jj.accept). The edits stay on disk and
+ *     the change-vs-parent diff resets, so the rail clears. Whole-change — `paths` is
+ *     accepted but informational.
  *   - jj revert → whole-change: `jj undo` (undo the most recent jj operation on the
  *     workspace). Per-path revert is deferred — `paths` is accepted but ignored — so
  *     revert immediately after review, before other jj ops intervene.
@@ -89,7 +91,7 @@ export async function sessionChanges(db: Db, sessionId: string, opts: ChangesOpt
   return diffs;
 }
 
-/** Apply reviewed changes. clonefile copies approved originals back; jj is a no-op. */
+/** Apply reviewed changes. clonefile copies approved originals back; jj accepts the change. */
 export async function applyChanges(
   db: Db,
   sessionId: string,
@@ -98,8 +100,13 @@ export async function applyChanges(
 ): Promise<void> {
   if (body.source === "clonefile") {
     await clonefile.applyBack(sessionId, body.paths, snapBase(opts));
+    return;
   }
-  // jj: acceptance only — the working tree already holds the change.
+  // jj: accept & advance — seal the change and move the bookmark to a fresh empty
+  // child, so the rail clears and later edits diff cleanly on top (whole-change v1).
+  const repo = await hasJjWorkspace(db, sessionId);
+  if (!repo) throw new ChangesError(400, "no jj workspace to apply");
+  await jj.accept(repo, sessionId);
 }
 
 /** Revert a jj-workspace session (whole-change `jj undo`). Throws if there's no repo. */

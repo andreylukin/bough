@@ -170,6 +170,20 @@ export async function diff(repo: string, sessionId: string): Promise<Diff> {
   return { source: "jj", files: parseGitDiff(out) };
 }
 
+/**
+ * Accept a session's reviewed change: seal it as a finished commit and advance the
+ * session bookmark onto a new empty child (`jj new <bookmark>` + `bookmark move`).
+ * The accepted work stays on disk — it's the new working copy's parent — and the
+ * session's change-vs-parent diff resets to empty, so the Changes rail clears.
+ * Whole-change in v1; snapshots first so on-disk edits are folded in before sealing.
+ */
+export async function accept(repo: string, sessionId: string): Promise<void> {
+  await snapshot(repo);
+  const name = bookmarkFor(sessionId);
+  await jj(repo, ["new", name]);
+  await jj(repo, ["bookmark", "move", name, "--to", "@"]);
+}
+
 /** One entry in the operation log — the unit of undo/restore. */
 export interface Operation {
   id: string;
