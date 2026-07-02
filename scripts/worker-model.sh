@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Canonical worker model — sourced by install.sh and `bough update` so the file
-# the installer fetches always matches what the engine loads.
+# Canonical worker model. Source this and call ensure_worker_model to fetch the
+# GGUF the engine loads:  . scripts/worker-model.sh && ensure_worker_model
 #
-# WORKER_MODEL_FILE *must* equal worker_runtime.gleam's `default_gguf`, otherwise
-# the download lands under a name the worker never looks for (its actual default
-# stays missing and the worker fails to start). Keep them in sync.
+# WORKER_MODEL_FILE *must* equal DEFAULT_GGUF in bough-next/src/worker/runtime.ts,
+# otherwise the download lands under a name the worker never looks for (its actual
+# default stays missing and the worker fails to start). Keep them in sync.
 
 # Qwen2.5-Coder-3B-Instruct, Q4_K_M (~2 GB). Override the URL with BOUGH_MODEL_URL.
 WORKER_MODEL_FILE="qwen2.5-coder-3b-instruct-q4_k_m.gguf"

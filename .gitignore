@@ -1,21 +1,7 @@
-# Gleam / Erlang build artifacts
-build/
-*.beam
-*.ez
-erl_crash.dump
-
-# Keep manifest.toml (lockfiles) committed.
-
-# Rust (bough-monty code-mode sidecar) build artifacts. Cargo.lock is kept.
-sidecar/target/
-
-# OS
-.DS_Store
-
 # bough-next (Deno) local artifacts
 bough-next/node_modules/
 bough-next/web/dist/
 bough-next/bough.app/
 
-# Lustre build cache (legacy web client experiments)
-.lustre/
+# OS
+.DS_Store
