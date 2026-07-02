@@ -6,8 +6,26 @@ async function j<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export interface ModelOption {
+  id: string;
+  label: string;
+  provider: "anthropic" | "openrouter";
+}
+export interface Usage {
+  contextTokens: number;
+  outputTokens: number;
+}
+
 export const api = {
-  config: () => fetch("/config").then(j<{ model: string }>),
+  config: () => fetch("/config").then(j<{ model: string; models: ModelOption[] }>),
+
+  // Switch the model new turns run on.
+  setModel: (model: string) =>
+    fetch("/config", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model }),
+    }).then(j<{ model: string }>),
 
   listSessions: () => fetch("/sessions").then(j<Session[]>),
 
@@ -26,7 +44,7 @@ export const api = {
     }).then(j<Session>),
 
   getSession: (id: string) =>
-    fetch(`/sessions/${id}`).then(j<{ session: Session; thread: Message[] }>),
+    fetch(`/sessions/${id}`).then(j<{ session: Session; thread: Message[]; usage: Usage }>),
 
   // Fire-and-forget: the turn streams back over /events.
   postMessage: (id: string, text: string) =>

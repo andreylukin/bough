@@ -16,7 +16,7 @@
 import { CreateSessionBody, PostMessageBody, type Session } from "../schema/parts.ts";
 import type { Db } from "../db/db.ts";
 import type { Bus, Listener } from "../bus.ts";
-import { activeModel, interruptTurn, startUserTurn } from "../turn.ts";
+import { activeModel, interruptTurn, MODELS, setActiveModel, startUserTurn } from "../turn.ts";
 import { normalizeWorkspace, workspaceProblem } from "../supervisor/workspace.ts";
 import { UNTITLED } from "../supervisor/title.ts";
 import { listSkills } from "../supervisor/skills.ts";
@@ -57,7 +57,7 @@ type Route = { method: string; pattern: URLPattern; handler: Handler };
 
 const CORS = {
   "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET, POST, OPTIONS",
+  "access-control-allow-methods": "GET, POST, PATCH, OPTIONS",
   "access-control-allow-headers": "content-type",
 };
 
@@ -74,7 +74,18 @@ function error(status: number, message: string): Response {
 
 // ---- handlers --------------------------------------------------------------
 
-const getConfig: Handler = () => json({ model: activeModel() });
+const getConfig: Handler = () => json({ model: activeModel(), models: MODELS });
+
+// Switch the model new turns run on. Any id is accepted (the picker lists a curated
+// subset); a provider-prefixed id routes to OpenRouter (see turn.ts / llm.ts).
+const patchConfig: Handler = async (req) => {
+  const body = await req.json().catch(() => null) as { model?: unknown } | null;
+  if (!body || typeof body.model !== "string" || !body.model.trim()) {
+    return error(400, "invalid body: { model: string } required");
+  }
+  setActiveModel(body.model.trim());
+  return json({ model: activeModel() });
+};
 
 // Installed skills (name + description) for composer autocomplete / discovery.
 const getSkills: Handler = () => json({ skills: listSkills() });
@@ -131,7 +142,7 @@ const createSession: Handler = async (req, ctx) => {
 const getSession: Handler = (_req, ctx, params) => {
   const session = ctx.db.getSession(params.id);
   if (!session) return error(404, "session not found");
-  return json({ session, thread: ctx.db.threadFor(session.id) });
+  return json({ session, thread: ctx.db.threadFor(session.id), usage: ctx.db.sessionUsage(session.id) });
 };
 
 const postMessage: Handler = async (req, ctx, params) => {
@@ -324,6 +335,7 @@ const installBundleH: Handler = async (req, ctx, params) => {
 // Matched on pathname only (URLPattern rejects an init object + base together).
 const routes: Route[] = [
   { method: "GET", pattern: new URLPattern({ pathname: "/config" }), handler: getConfig },
+  { method: "PATCH", pattern: new URLPattern({ pathname: "/config" }), handler: patchConfig },
   { method: "GET", pattern: new URLPattern({ pathname: "/skills" }), handler: getSkills },
   { method: "GET", pattern: new URLPattern({ pathname: "/sessions" }), handler: listSessions },
   { method: "POST", pattern: new URLPattern({ pathname: "/sessions" }), handler: createSession },

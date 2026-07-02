@@ -21,21 +21,41 @@ function dir(): string {
   return Deno.env.get("BOUGH_SKILLS_DIR") ?? join(homedir(), ".bough", "skills");
 }
 
+/**
+ * Skills shipped with bough, available without an install. `/init` mirrors opencode's:
+ * analyze the project and write an authoritative AGENTS.md (which future turns then load
+ * automatically — see turn.ts readAgentsFile).
+ */
+const BUILTINS: Record<string, Skill & { body: string }> = {
+  init: {
+    name: "init",
+    description: "Analyze the project and write an AGENTS.md at its root",
+    body: [
+      "Analyze this workspace and write a concise `AGENTS.md` at the repo root that a coding",
+      "agent can treat as authoritative. Include: the build / test / lint / run commands (read",
+      "them from package.json, deno.json, Makefile, etc. — don't invent), the project layout in",
+      "a sentence or two, key conventions to follow, and what \"done\" means (which check must",
+      "pass). Keep it tight — a page, not an essay. If an AGENTS.md already exists, update it",
+      "rather than replacing it wholesale. Verify the commands you list actually exist.",
+    ].join(" "),
+  },
+};
+
 function skillFile(name: string): string {
   return join(dir(), name, "SKILL.md");
 }
 
-/** Installed skills (name + one-line description), for discovery/UI. */
+/** Installed skills (name + one-line description) plus builtins, for discovery/UI. */
 export function listSkills(): Skill[] {
+  const skills: Skill[] = Object.values(BUILTINS).map((b) => ({ name: b.name, description: b.description }));
   let entries: Deno.DirEntry[];
   try {
     entries = [...Deno.readDirSync(dir())];
   } catch {
-    return [];
+    entries = [];
   }
-  const skills: Skill[] = [];
   for (const e of entries) {
-    if (!e.isDirectory) continue;
+    if (!e.isDirectory || e.name in BUILTINS) continue;
     try {
       const text = Deno.readTextFileSync(skillFile(e.name));
       skills.push({ name: e.name, description: descriptionOf(text) });
@@ -46,8 +66,9 @@ export function listSkills(): Skill[] {
   return skills.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** The markdown body of a skill (instructions), frontmatter stripped. */
+/** The markdown body of a skill (instructions), frontmatter stripped. Builtins first. */
 export function loadBody(name: string): string | null {
+  if (name in BUILTINS) return BUILTINS[name].body;
   try {
     return stripFrontmatter(Deno.readTextFileSync(skillFile(name)));
   } catch {

@@ -1,4 +1,4 @@
-import { assertEquals } from "jsr:@std/assert@1";
+import { assert, assertEquals } from "jsr:@std/assert@1";
 import { Db } from "../db/db.ts";
 import { Bus } from "../bus.ts";
 import { NetStore } from "../db/net.ts";
@@ -18,6 +18,33 @@ const req = (method: string, path: string, body?: unknown) =>
     headers: body ? { "content-type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
   });
+
+Deno.test("GET /config lists models; PATCH /config switches the active model", async () => {
+  const c = ctx();
+  const h = createHandler(c);
+
+  const cfg = await (await h(req("GET", "/config"))).json() as { model: string; models: { id: string }[] };
+  assertEquals(cfg.model, "claude-opus-4-8");
+  assert(cfg.models.some((m) => m.id === "claude-opus-4-8"));
+
+  const patched = await h(req("PATCH", "/config", { model: "claude-haiku-4-5" }));
+  assertEquals((await patched.json() as { model: string }).model, "claude-haiku-4-5");
+  assertEquals((await (await h(req("GET", "/config"))).json() as { model: string }).model, "claude-haiku-4-5");
+
+  assertEquals((await h(req("PATCH", "/config", { model: "" }))).status, 400);
+  // Restore so later tests see the default.
+  await h(req("PATCH", "/config", { model: "claude-opus-4-8" }));
+  c.db.close();
+});
+
+Deno.test("GET /sessions/:id includes token usage (zero before any turn)", async () => {
+  const c = ctx();
+  const h = createHandler(c);
+  const s = await (await h(req("POST", "/sessions", { title: "u" }))).json() as Session;
+  const got = await (await h(req("GET", `/sessions/${s.id}`))).json() as { usage: { contextTokens: number; outputTokens: number } };
+  assertEquals(got.usage, { contextTokens: 0, outputTokens: 0 });
+  c.db.close();
+});
 
 Deno.test("POST /sessions creates and GET /sessions lists it", async () => {
   const c = ctx();
