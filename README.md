@@ -13,7 +13,7 @@
   <img src="assets/screenshots/hero.png" alt="bough in action" width="900">
 </p>
 
-bough runs a frontier model as a **supervisor** that plans by writing Python, which a deterministic harness executes inside a **kernel-enforced sandbox** — a [monty](https://github.com/pydantic/monty) Python interpreter plus a **macOS Seatbelt** profile and a per-session [mitmproxy](https://mitmproxy.org) (workspace-only filesystem, default-deny network, secrets blocked). Every turn is a node in a tree you can **fork** — restoring the conversation *and* the files. Written in **Gleam** (BEAM/OTP), served as a headless server with a no-build web UI.
+bough runs a frontier model as a **supervisor** that plans by writing Python, which a deterministic harness executes inside a **kernel-enforced sandbox** — a [monty](https://github.com/pydantic/monty) Python interpreter plus a **macOS Seatbelt** profile and a per-session [mitmproxy](https://mitmproxy.org) (workspace-only filesystem, default-deny network, secrets blocked). Every turn is a node in a tree you can **fork** — restoring the conversation *and* the files. The active implementation is **TypeScript on Deno** ([`bough-next/`](bough-next)) — a headless server with a React web UI; the original **Gleam** (BEAM/OTP) implementation lives in [`packages/`](packages).
 
 ## Why bough
 
@@ -22,22 +22,24 @@ bough runs a frontier model as a **supervisor** that plans by writing Python, wh
 - 🐍 **Code-mode.** The supervisor writes a small Python program each turn (`bash`/`read`/`write`/`edit`) instead of one-shot tool calls — loops, composition, real control flow.
 - ✅ **Deterministic done.** A turn is only "done" when a `CHECK` command exits 0 *and* an adversarial review passes — not when the model says so.
 
-## Install
+## Run
 
-One line on a Mac — installs the toolchain (Gleam/Erlang, `mitmproxy` for the egress sandbox, `llama.cpp` + the local worker model), clones bough, and builds it:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/andreylukin/bough/main/install.sh | bash
-```
-
-Then set a key and go:
+The active implementation is [`bough-next/`](bough-next) (Deno + TypeScript). Requires [Deno](https://deno.com):
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...    # or OPENROUTER_API_KEY + BOUGH_PROVIDER=openrouter
-bough                                   # starts the server and opens http://127.0.0.1:4096
+cd bough-next
+export ANTHROPIC_API_KEY=sk-ant-...
+deno task dev                          # serves http://127.0.0.1:4321
 ```
 
-`bough update` pulls and rebuilds in place. The installer is idempotent.
+To drive it from a phone, set a password (auth on, LAN bind) and open a tunnel:
+
+```bash
+BOUGH_PASSWORD=... deno task dev       # terminal 1
+deno task tunnel                       # terminal 2 — prints a public trycloudflare URL
+```
+
+The original Gleam implementation remains in [`packages/`](packages) (installable via `install.sh`, served with `make serve-legacy`); its web UI is retired in favor of bough-next's.
 
 ## Use it
 
@@ -93,10 +95,12 @@ If a build needs to write to a dir outside the workspace and toolchain caches, a
 Requires Gleam (`brew install gleam`) and, for the code-mode sidecar, Rust (`brew install rust`).
 
 ```bash
-make check    # type-check all packages
-make test     # run all tests
-make serve    # run the server on 127.0.0.1:4096
+make serve    # run bough-next on 127.0.0.1:4321 (the happy path)
+make check    # type-check the Gleam packages
+make test     # run the Gleam package tests
 ```
+
+For bough-next itself: `deno task test` / `deno task check` in [`bough-next/`](bough-next).
 
 | Package | Role |
 |---|---|

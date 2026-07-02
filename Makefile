@@ -3,7 +3,7 @@
 
 PACKAGES := bough_core bough_server
 
-.PHONY: check test build sidecar clean serve $(addprefix check-,$(PACKAGES))
+.PHONY: check test build sidecar clean serve serve-legacy $(addprefix check-,$(PACKAGES))
 
 check: ## Type-check every package
 	@for p in $(PACKAGES); do echo "== check $$p =="; (cd packages/$$p && gleam check) || exit 1; done
@@ -30,6 +30,11 @@ test: ## Run tests for every package
 clean: ## Remove build artifacts
 	@for p in $(PACKAGES); do rm -rf packages/$$p/build; done
 
-# Run the server on 127.0.0.1:4096 (SPEC.md §10)
+# The happy path: run bough-next (Deno) on 127.0.0.1:4321
 serve:
+	cd bough-next && deno task dev
+
+# Legacy Gleam server on 127.0.0.1:4096 (SPEC.md §10). Its web UI is retired —
+# the API still serves, but point a browser at bough-next instead.
+serve-legacy:
 	cd packages/bough_server && gleam run
