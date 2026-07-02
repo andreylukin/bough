@@ -12,22 +12,13 @@
 import { caEnv, CertAuthority } from "./ca.ts";
 import { ProxyServer } from "./proxy.ts";
 import { createGate, type Gate } from "./gate.ts";
-import { type Policy, policy } from "./policy.ts";
+import { loadConfig, toPolicy } from "./config.ts";
 import type { Db } from "../db/db.ts";
 import type { Bus } from "../bus.ts";
 
 /** Whether bough should run the egress proxy (opt-in — see module docs). */
 export function clawpatrolEnabled(): boolean {
   return Deno.env.get("BOUGH_CLAWPATROL") === "1";
-}
-
-/**
- * The default enforced policy until the rule-set editor persists one (Phase 5). Host-open
- * (nothing breaks on an unknown host) but read-only: reads pass, writes are blocked and
- * surface in the rail. Fail-closed host/hold posture arrives with the config layer.
- */
-export function defaultPolicy(): Policy {
-  return policy({ mode: "read_only" });
 }
 
 export interface GatewayStatus {
@@ -69,7 +60,7 @@ export class ClawpatrolGateway {
   async start(): Promise<void> {
     if (!clawpatrolEnabled()) return;
     this.#ca = CertAuthority.load();
-    this.#gate = createGate({ db: this.#db, bus: this.#bus, policy: defaultPolicy() });
+    this.#gate = createGate({ db: this.#db, bus: this.#bus, policy: toPolicy(loadConfig()) });
     const gate = this.#gate;
     this.#proxy = new ProxyServer({
       ca: this.#ca,

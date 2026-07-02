@@ -32,8 +32,21 @@ export type Kind = typeof READ | typeof WRITE | typeof UNKNOWN;
 
 /** AWS operation-name prefixes that are read-only (case-insensitive). */
 const AWS_READ_PREFIXES = [
-  "describe", "list", "get", "head", "lookup", "search", "query", "scan",
-  "batchget", "select", "estimate", "preview", "validate", "check", "view",
+  "describe",
+  "list",
+  "get",
+  "head",
+  "lookup",
+  "search",
+  "query",
+  "scan",
+  "batchget",
+  "select",
+  "estimate",
+  "preview",
+  "validate",
+  "check",
+  "view",
 ];
 
 /** A provider-agnostic view of one outbound request, built by the gateway addon. */
@@ -60,24 +73,33 @@ export interface Decision {
 }
 
 /**
- * Egress policy. `allowHosts` gates at the host layer (empty = allow all hosts,
- * sniff-only). `mode` gates at the action layer: "read_only" permits reads and
- * blocks writes; "all" permits any action on an allowed host. `allowVerbs` /
- * `denyVerbs` / `holdVerbs` are explicit per-action overrides (deny > hold > allow).
+ * Egress policy — the compiled runtime form the rule-set editor produces (see
+ * config.ts). Host layer: `denyHosts` win outright; `allowHosts` is the allowlist
+ * (empty = allow all hosts, sniff-only); a host that misses a non-empty allowlist
+ * gets `hostMiss` (deny to fail closed, or hold to ask). Action layer: `mode` is the
+ * baseline for allowed hosts — "read_only" permits reads and blocks writes; "review"
+ * permits reads and HOLDS writes/unknown for approval; "all" permits anything.
+ * `allowVerbs` / `denyVerbs` / `holdVerbs` are explicit per-action overrides
+ * (deny > hold > allow).
  */
 export interface Policy {
   allowHosts: Set<string>;
+  denyHosts: Set<string>;
+  /** Verdict when `allowHosts` is non-empty and the host isn't in it. Default "deny". */
+  hostMiss: Verdict;
   k8sHosts: Set<string>;
-  mode: "read_only" | "all";
+  mode: "read_only" | "review" | "all";
   allowVerbs: Set<string>;
   denyVerbs: Set<string>;
   holdVerbs: Set<string>;
 }
 
-/** Build a Policy with the same defaults as policy.py's dataclass. */
+/** Build a Policy; unset fields default to the fail-closed-lite baseline (host-open, read-only). */
 export function policy(p: Partial<Policy> = {}): Policy {
   return {
     allowHosts: p.allowHosts ?? new Set(),
+    denyHosts: p.denyHosts ?? new Set(),
+    hostMiss: p.hostMiss ?? "deny",
     k8sHosts: p.k8sHosts ?? new Set(),
     mode: p.mode ?? "read_only",
     allowVerbs: p.allowVerbs ?? new Set(),
@@ -194,12 +216,18 @@ export function classify(req: Request, k8sHosts: Iterable<string> = []): Action 
 
 export function decide(req: Request, pol: Policy): Decision {
   const host = req.host.toLowerCase();
+  const unknownAction = { service: "?", verb: "?", kind: UNKNOWN } as const;
+
+  if (hostMatches(host, pol.denyHosts)) {
+    return { verdict: "deny", reason: `host ${host} explicitly denied`, action: unknownAction };
+  }
   if (pol.allowHosts.size > 0 && !hostMatches(host, pol.allowHosts)) {
-    return {
-      verdict: "deny",
-      reason: `host ${host} not in allowlist`,
-      action: { service: "?", verb: "?", kind: UNKNOWN },
-    };
+    const reason = pol.hostMiss === "hold"
+      ? `host ${host} not in allowlist — approval needed`
+      : pol.hostMiss === "allow"
+      ? `host ${host} not in allowlist — allowed`
+      : `host ${host} not in allowlist`;
+    return { verdict: pol.hostMiss, reason, action: unknownAction };
   }
 
   const action = classify(req, pol.k8sHosts);
@@ -219,10 +247,18 @@ export function decide(req: Request, pol: Policy): Decision {
     return { verdict: "allow", reason: "host allowed; mode=all", action };
   }
 
-  // mode == "read_only": reads pass, writes blocked, unknown fails closed.
+  // reads pass in every gated mode.
   if (action.kind === READ) {
     return { verdict: "allow", reason: `read action ${action.verb}`, action };
   }
+
+  // mode == "review": writes and unknowns are held for human approval.
+  if (pol.mode === "review") {
+    const what = action.kind === WRITE ? "write" : "unknown";
+    return { verdict: "hold", reason: `${what} action ${action.verb} needs approval`, action };
+  }
+
+  // mode == "read_only": writes blocked, unknown fails closed.
   if (action.kind === WRITE) {
     return {
       verdict: "deny",
@@ -230,9 +266,5 @@ export function decide(req: Request, pol: Policy): Decision {
       action,
     };
   }
-  return {
-    verdict: "deny",
-    reason: `unknown action ${action.verb} blocked (fail closed)`,
-    action,
-  };
+  return { verdict: "deny", reason: `unknown action ${action.verb} blocked (fail closed)`, action };
 }

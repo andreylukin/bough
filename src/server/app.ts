@@ -26,6 +26,7 @@ import { type BundleManifest, getBundle, listBundles } from "../net/bundles.ts";
 import type { Gate } from "../net/gate.ts";
 import type { ClawpatrolGateway } from "../net/gateway.ts";
 import { installBundle, InstallError, isInstalled } from "../net/install.ts";
+import { loadConfig, NetConfig, saveConfig, toPolicy } from "../net/config.ts";
 import { defaultWebDir, serveWeb } from "./static.ts";
 import { createAuth } from "./auth.ts";
 import { compact, CompactBody, CompactError } from "../compact.ts";
@@ -63,7 +64,7 @@ type Route = { method: string; pattern: URLPattern; handler: Handler };
 
 const CORS = {
   "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET, POST, PATCH, OPTIONS",
+  "access-control-allow-methods": "GET, POST, PATCH, PUT, OPTIONS",
   "access-control-allow-headers": "content-type",
 };
 
@@ -300,6 +301,19 @@ const netStatus: Handler = (_req, ctx) =>
       { enabled: false, available: false, running: false, external: false, dashboardUrl: "" },
   );
 
+// The editable rule set (allow/deny/hold config) the gate compiles + enforces.
+const getPolicy: Handler = (_req, ctx) => json(loadConfig(ctx.netDir));
+
+// Persist a new rule set and hot-swap the live gate so it takes effect on the next
+// request — no restart. Rejects a malformed body with the Zod message.
+const putPolicy: Handler = async (req, ctx) => {
+  const parsed = NetConfig.safeParse(await req.json().catch(() => null));
+  if (!parsed.success) return error(400, "invalid policy: " + parsed.error.message);
+  const saved = saveConfig(parsed.data, ctx.netDir);
+  ctx.gate?.setPolicy(toPolicy(saved));
+  return json(saved);
+};
+
 // Recent NetRequest rows for the Network rail (optionally per-session).
 const netRequests: Handler = (req, ctx) => {
   const sessionId = new URL(req.url).searchParams.get("sessionId") ?? undefined;
@@ -414,6 +428,8 @@ const routes: Route[] = [
   // web client always uses POST; GET stays for curl and local tools.
   { method: "POST", pattern: new URLPattern({ pathname: "/events" }), handler: events },
   { method: "GET", pattern: new URLPattern({ pathname: "/net/status" }), handler: netStatus },
+  { method: "GET", pattern: new URLPattern({ pathname: "/net/policy" }), handler: getPolicy },
+  { method: "PUT", pattern: new URLPattern({ pathname: "/net/policy" }), handler: putPolicy },
   { method: "GET", pattern: new URLPattern({ pathname: "/net/requests" }), handler: netRequests },
   {
     method: "POST",
