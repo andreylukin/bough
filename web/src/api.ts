@@ -127,7 +127,8 @@ export const api = {
   getChanges: (sessionId: string) =>
     fetch(`/sessions/${sessionId}/changes`).then(j<{ diffs: WireDiff[] }>),
 
-  // Apply reviewed files. clonefile copies originals back; jj apply is acceptance (no-op).
+  // Apply reviewed files. clonefile copies originals back; jj accepts the whole change
+  // (seals it and advances the session bookmark, so the refetched diff comes back empty).
   applyChanges: (sessionId: string, source: ChangeSource, paths: string[]) =>
     fetch(`/sessions/${sessionId}/changes/apply`, {
       method: "POST",

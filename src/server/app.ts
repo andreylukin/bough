@@ -230,7 +230,12 @@ const applyChangesH: Handler = async (req, ctx, params) => {
   if (!ctx.db.getSession(params.id)) return error(404, "session not found");
   const parsed = ChangesApplyBody.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return error(400, "invalid body: " + parsed.error.message);
-  await applyChanges(ctx.db, params.id, parsed.data, { snapshotBase: ctx.snapshotBase });
+  try {
+    await applyChanges(ctx.db, params.id, parsed.data, { snapshotBase: ctx.snapshotBase });
+  } catch (e) {
+    if (e instanceof ChangesError) return error(e.status, e.message);
+    throw e;
+  }
   emitChangesUpdated(ctx, params.id);
   return json({ ok: true, source: parsed.data.source, applied: parsed.data.paths });
 };

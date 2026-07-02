@@ -117,6 +117,34 @@ Deno.test({
 });
 
 Deno.test({
+  name: "jj: accept seals the change — edits stay on disk, session diff resets",
+  ignore: !jjAvailable,
+  fn: async () => {
+    const repo = await tempGitRepo();
+    try {
+      await jj.ensureWorkspace(repo, "s1");
+      await Deno.writeTextFile(`${repo}/hello.txt`, "from-s1\n");
+      assertEquals((await jj.diff(repo, "s1")).files.length, 1);
+
+      await jj.accept(repo, "s1");
+
+      // The accepted edit is still on disk, but the session's change-vs-parent
+      // diff is empty — the bookmark now sits on a fresh child of the sealed commit.
+      assertEquals(await Deno.readTextFile(`${repo}/hello.txt`), "from-s1\n");
+      assertEquals((await jj.diff(repo, "s1")).files.length, 0);
+
+      // Post-accept work diffs alone, and resume still lands on the session change.
+      await Deno.writeTextFile(`${repo}/next.txt`, "more\n");
+      assertEquals((await jj.diff(repo, "s1")).files.map((f) => f.path), ["next.txt"]);
+      assertEquals(await jj.ensureWorkspace(repo, "s1"), "bough/s1");
+      assertEquals((await jj.diff(repo, "s1")).files.map((f) => f.path), ["next.txt"]);
+    } finally {
+      await Deno.remove(repo, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
   // Regression: a session opened on a repo with uncommitted + untracked changes
   // must NOT wipe them. `ensureWorkspace` used to `jj new <HEAD>`, resetting the
   // working copy to the committed tree and deleting in-progress work.

@@ -44,8 +44,9 @@ export type Diff = z.infer<typeof Diff>;
 
 /**
  * Apply reviewed changes. For `clonefile`, `paths` are the original absolute paths to
- * copy back over. For `jj`, apply is acceptance — the working tree already holds the
- * changes — so `paths` is informational and no files move (see the Changes API).
+ * copy back over. For `jj`, apply accepts the whole change — seals it as a finished
+ * commit and advances the session bookmark — so `paths` is informational (v1 has no
+ * per-path jj apply; see the Changes API).
  */
 export const ChangesApplyBody = z.object({
   source: z.enum(["jj", "clonefile"]),

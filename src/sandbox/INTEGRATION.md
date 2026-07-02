@@ -92,8 +92,9 @@ Hunk     = { header: string, lines: string[] }   // "@@ … @@" + body lines wit
 ```
 
 Both sources produce byte-identical structure via `parseGitDiff()`. The UI's Changes rail
-renders a `Diff` and calls the matching apply path per file/hunk: jj → `undo`/`restore`,
-clonefile → `applyBack(sessionId, approvedPaths)`. Renames surface as delete + add
+renders a `Diff` and calls the matching apply/revert path: jj apply → `accept` (seal the
+change, advance the session bookmark — whole-change in v1), jj revert → `undo`,
+clonefile apply → `applyBack(sessionId, approvedPaths)`. Renames surface as delete + add
 (git default without `-M`); binary/empty files yield a `FileDiff` with no hunks.
 
 ## Permissions
