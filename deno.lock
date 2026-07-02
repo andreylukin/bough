@@ -5,6 +5,7 @@
     "jsr:@std/internal@^1.0.12": "1.0.14",
     "npm:@anthropic-ai/sdk@0.68.0": "0.68.0_zod@3.25.76",
     "npm:drizzle-orm@0.36.4": "0.36.4",
+    "npm:node-forge@1.4.0": "1.4.0",
     "npm:zod@3.25.76": "3.25.76"
   },
   "jsr": {
@@ -43,6 +44,9 @@
         "ts-algebra"
       ]
     },
+    "node-forge@1.4.0": {
+      "integrity": "sha512-LarFH0+6VfriEhqMMcLX2F7SwSXeWwnEAJEsYm5QKWchiVYVvJyV9v7UDvUv+w5HO23ZpQTXDv/GxdDdMyOuoQ=="
+    },
     "ts-algebra@2.0.0": {
       "integrity": "sha512-FPAhNPFMrkwz76P7cdjdmiShwMynZYN6SgOujD1urY4oNm80Ou9oMdmbR45LotcKOXoy7wSmHkRFE6Mxbrhefw=="
     },
@@ -54,6 +58,7 @@
     "dependencies": [
       "npm:@anthropic-ai/sdk@0.68.0",
       "npm:drizzle-orm@0.36.4",
+      "npm:node-forge@1.4.0",
       "npm:zod@3.25.76"
     ]
   }

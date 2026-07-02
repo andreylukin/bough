@@ -14,7 +14,8 @@
     "zod": "npm:zod@3.25.76",
     "zod/v4": "npm:zod@3.25.76/v4",
     "@anthropic-ai/sdk": "npm:@anthropic-ai/sdk@0.68.0",
-    "drizzle-orm": "npm:drizzle-orm@0.36.4"
+    "drizzle-orm": "npm:drizzle-orm@0.36.4",
+    "node-forge": "npm:node-forge@1.4.0"
   },
   "nodeModulesDir": "auto",
   "unstable": ["worker-options"],
