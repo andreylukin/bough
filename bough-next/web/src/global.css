@@ -1,0 +1,122 @@
+:root {
+  color-scheme: dark;
+}
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  margin: 0;
+  background: #0e1013;
+  color: #e7e9ed;
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #333a44;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+}
+textarea {
+  font: inherit;
+}
+
+/* the live turn / running worker pulse */
+@keyframes boughPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 3px rgba(78, 201, 143, 0.18);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(78, 201, 143, 0.05);
+  }
+}
+@keyframes boughPulseAmber {
+  0%,
+  100% {
+    box-shadow: 0 0 0 3px rgba(217, 180, 95, 0.16);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(217, 180, 95, 0.04);
+  }
+}
+.pulse-green {
+  animation: boughPulse 1.8s ease-in-out infinite;
+}
+.pulse-amber {
+  animation: boughPulseAmber 1.6s ease-in-out infinite;
+}
+
+/* Phone layout (matches useIsMobile's breakpoint). The app styles inline, so these
+   overrides are the one place CSS wins: tighter conversation padding, a keyboard-safe
+   composer, and ≥16px inputs (below that iOS zooms the page on focus). */
+@media (max-width: 700px) {
+  .conv-scroll {
+    padding: 18px 16px !important;
+  }
+  .conv-composer {
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom)) !important;
+  }
+  textarea,
+  input {
+    font-size: 16px !important;
+  }
+  /* keyboard-shortcut hints are noise without a keyboard */
+  .conv-hints {
+    visibility: hidden;
+  }
+  /* finger-sized send/stop and per-turn actions */
+  .conv-send {
+    width: 40px !important;
+    height: 40px !important;
+    border-radius: 10px !important;
+  }
+  .turn-action {
+    padding: 5px 11px !important;
+    font-size: 12px !important;
+  }
+  /* bundle browser: three desktop columns become a vertical stack */
+  .bundles-body {
+    flex-direction: column !important;
+    overflow-y: auto;
+  }
+  .bundles-side {
+    display: none;
+  }
+  .bundles-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .bundles-detail {
+    width: 100% !important;
+    border-left: none !important;
+    border-top: 1px solid #262b32;
+  }
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(-24px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}

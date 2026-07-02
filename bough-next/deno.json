@@ -1,0 +1,30 @@
+{
+  "name": "bough-next",
+  "version": "0.0.0",
+  "exports": "./src/server/main.ts",
+  "tasks": {
+    "dev": "deno run --watch --allow-net --allow-env --allow-read --allow-write --allow-ffi --allow-sys --allow-run src/server/main.ts",
+    "test": "deno test --allow-net --allow-env --allow-read --allow-write --allow-ffi --allow-sys --allow-run",
+    "check": "deno check src/**/*.ts",
+    "tunnel": "deno run --allow-net --allow-env --allow-run=cloudflared scripts/tunnel.ts",
+    "desktop": "deno desktop --allow-net --allow-env --allow-read --allow-write --allow-ffi --allow-sys --allow-run src/desktop/main.ts",
+    "desktop:build": "deno desktop --output bough.app --include web/dist --allow-net --allow-env --allow-read --allow-write --allow-ffi --allow-sys --allow-run src/desktop/main.ts"
+  },
+  "imports": {
+    "zod": "npm:zod@3.25.76",
+    "zod/v4": "npm:zod@3.25.76/v4",
+    "@anthropic-ai/sdk": "npm:@anthropic-ai/sdk@0.68.0",
+    "drizzle-orm": "npm:drizzle-orm@0.36.4"
+  },
+  "nodeModulesDir": "auto",
+  "unstable": ["worker-options"],
+  "fmt": {
+    "lineWidth": 100,
+    "semiColons": true
+  },
+  "lint": {
+    "rules": {
+      "tags": ["recommended"]
+    }
+  }
+}
