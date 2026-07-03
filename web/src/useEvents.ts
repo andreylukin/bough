@@ -21,6 +21,7 @@ const KNOWN_TYPES = new Set([
   "message.delta",
   "message.part",
   "message.finished",
+  "net.request",
   "changes.updated",
   "usage.updated",
   "worker.step",
