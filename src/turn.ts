@@ -98,7 +98,6 @@ export const MODELS: { id: string; label: string; provider: "anthropic" | "openr
   { id: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro (OpenRouter)", provider: "openrouter" },
 ];
 
-const MAX_ITERATIONS = 25;
 const MAX_TOKENS = 64_000;
 // Code-mode (SPEC §5): the supervisor plans and writes; the harness is the only
 // executor. One program per round, CHECK-gated completion.
@@ -269,7 +268,9 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       inputSchema: jsonSchema(t),
     }));
 
-    for (let round = 0; round < MAX_ITERATIONS; round++) {
+    // Unbounded on purpose: the loop ends when the model stops asking for tools or
+    // the CHECK gate accepts done; interruptTurn is the user's brake on a runaway.
+    for (let round = 0;; round++) {
       if (signal?.aborted) throw new InterruptedError();
       const result = await llm.run(
         { model, system, maxTokens: MAX_TOKENS, messages, tools: toolDefs },
