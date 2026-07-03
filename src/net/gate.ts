@@ -23,6 +23,7 @@ import {
   policy as makePolicy,
   type Request,
 } from "./policy.ts";
+import type { ExtensionHost } from "./extensions.ts";
 import type { Db } from "../db/db.ts";
 import type { Bus } from "../bus.ts";
 import type { NetRequest } from "../schema/parts.ts";
@@ -50,17 +51,21 @@ export class Gate {
   #resolve?: (sessionId?: string) => Policy;
   /** Compiled-policy cache keyed by sessionId; cleared whenever any rule set changes. */
   #cache = new Map<string, Policy>();
+  /** Programmable guards (extensions.ts); a guard verdict overrides the static one. */
+  #extensions?: ExtensionHost;
 
   constructor(cfg: {
     policy: Policy;
     db: Db;
     bus: Bus;
     resolve?: (sessionId?: string) => Policy;
+    extensions?: ExtensionHost;
   }) {
     this.#policy = cfg.policy;
     this.#db = cfg.db;
     this.#bus = cfg.bus;
     this.#resolve = cfg.resolve;
+    this.#extensions = cfg.extensions;
   }
 
   /** Number of requests currently awaiting human approval (introspection/tests). */
@@ -95,8 +100,18 @@ export class Gate {
    * immediate; a hold resolves when approved or denied via resolveHold
    * (POST /net/requests/:id/{allow,deny}).
    */
-  gate(req: Request, opts: GateOpts = {}): Promise<Decision> {
-    const decision = decide(req, this.#policyFor(opts.sessionId));
+  async gate(req: Request, opts: GateOpts = {}): Promise<Decision> {
+    let decision = decide(req, this.#policyFor(opts.sessionId));
+    // Programmable guards see the request + the static decision; the first guard
+    // verdict overrides it (a broken/slow guard falls through inside the host).
+    // No-extensions stays fully synchronous up to the hold registration, so a
+    // caller can observe `pending` right after calling gate().
+    const override = this.#extensions
+      ? await this.#extensions.gate(req, decision, opts.sessionId)
+      : undefined;
+    if (override) {
+      decision = { verdict: override.verdict, reason: override.reason, action: decision.action };
+    }
     const record: NetRequest = {
       id: crypto.randomUUID(),
       sessionId: opts.sessionId,
@@ -110,7 +125,7 @@ export class Gate {
     };
     this.#emit(record, opts.sessionId);
 
-    if (decision.verdict !== "hold") return Promise.resolve(decision);
+    if (decision.verdict !== "hold") return decision;
 
     // Hold: park the caller until a human resolves this id.
     return new Promise<boolean>((resolve) => {
@@ -144,12 +159,19 @@ export class Gate {
 
 /** Build a Gate with the given policy (default: host-open, read-only — see policy.ts). */
 export function createGate(
-  cfg: { db: Db; bus: Bus; policy?: Policy; resolve?: (sessionId?: string) => Policy },
+  cfg: {
+    db: Db;
+    bus: Bus;
+    policy?: Policy;
+    resolve?: (sessionId?: string) => Policy;
+    extensions?: ExtensionHost;
+  },
 ): Gate {
   return new Gate({
     policy: cfg.policy ?? makePolicy(),
     db: cfg.db,
     bus: cfg.bus,
     resolve: cfg.resolve,
+    extensions: cfg.extensions,
   });
 }

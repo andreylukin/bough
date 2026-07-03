@@ -116,7 +116,7 @@ function header(req: Request, name: string): string | undefined {
   return undefined;
 }
 
-function bodyText(req: Request): string {
+export function bodyText(req: Request): string {
   const b = req.body;
   if (b == null) return "";
   if (typeof b === "string") return b;

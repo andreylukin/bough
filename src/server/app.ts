@@ -368,6 +368,12 @@ const suggestPolicyH: Handler = async (req, ctx) => {
   }
 };
 
+// Programmable guards: list what's loaded (incl. broken files) and hot-reload the
+// extensions dir after editing a guard — no server restart.
+const listExtensionsH: Handler = (_req, ctx) => json(ctx.gateway?.listExtensions() ?? []);
+const reloadExtensionsH: Handler = async (_req, ctx) =>
+  json(await (ctx.gateway?.reloadExtensions() ?? Promise.resolve([])));
+
 // Remove a branch's override so it inherits again (no-op if it had none).
 const deletePolicy: Handler = (req, ctx) => {
   const sessionId = new URL(req.url).searchParams.get("session");
@@ -500,6 +506,16 @@ const routes: Route[] = [
     method: "POST",
     pattern: new URLPattern({ pathname: "/net/policy/suggest" }),
     handler: suggestPolicyH,
+  },
+  {
+    method: "GET",
+    pattern: new URLPattern({ pathname: "/net/extensions" }),
+    handler: listExtensionsH,
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/net/extensions/reload" }),
+    handler: reloadExtensionsH,
   },
   { method: "GET", pattern: new URLPattern({ pathname: "/net/requests" }), handler: netRequests },
   {

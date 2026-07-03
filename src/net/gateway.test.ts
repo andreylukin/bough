@@ -16,7 +16,7 @@ async function withGateway(
   const db = new Db(":memory:");
   const gateway = new ClawpatrolGateway({ db, bus });
   try {
-    gateway.start();
+    await gateway.start();
     await fn(gateway, bus);
   } finally {
     await gateway.stop();
@@ -70,7 +70,7 @@ Deno.test("gateway: disabled flag means no listeners and empty env", async () =>
   Deno.env.delete("BOUGH_CLAWPATROL");
   try {
     const gateway = new ClawpatrolGateway({ db: new Db(":memory:"), bus: new Bus() });
-    gateway.start();
+    await gateway.start();
     assertEquals(await gateway.envFor("s1"), {});
     assertEquals(gateway.status().running, false);
     await gateway.stop();

@@ -21,6 +21,7 @@
 import { caEnv, CertAuthority } from "./ca.ts";
 import { ProxyServer } from "./proxy.ts";
 import { createGate, type Gate } from "./gate.ts";
+import { ExtensionHost, type ExtensionInfo } from "./extensions.ts";
 import { loadConfig, resolveConfig, toPolicy } from "./config.ts";
 import type { Db } from "../db/db.ts";
 import type { Bus } from "../bus.ts";
@@ -44,6 +45,7 @@ export class ClawpatrolGateway {
   #bus: Bus;
   #ca?: CertAuthority;
   #gate?: Gate;
+  #extensions?: ExtensionHost;
   // Live listeners keyed by sessionId ("" = a caller with no session, e.g. tests).
   #proxies = new Map<string, ProxyServer>();
   // In-flight starts, so concurrent tool calls in one turn share one listener.
@@ -70,10 +72,22 @@ export class ClawpatrolGateway {
     };
   }
 
-  /** Boot the CA and gate when enabled; listeners start lazily per session. */
-  start(): void {
+  /** Reloadable programmable guards; see /net/extensions endpoints. */
+  async reloadExtensions(): Promise<ExtensionInfo[]> {
+    await this.#extensions?.load();
+    return this.#extensions?.list() ?? [];
+  }
+
+  listExtensions(): ExtensionInfo[] {
+    return this.#extensions?.list() ?? [];
+  }
+
+  /** Boot the CA, gate, and extensions when enabled; listeners start lazily per session. */
+  async start(): Promise<void> {
     if (!clawpatrolEnabled()) return;
     this.#ca = CertAuthority.load();
+    this.#extensions = new ExtensionHost(this.#db);
+    await this.#extensions.load();
     this.#gate = createGate({
       db: this.#db,
       bus: this.#bus,
@@ -81,6 +95,7 @@ export class ClawpatrolGateway {
       // Branch policy: a session's own net_policies row, else the nearest
       // ancestor's, else the global rule set (config.ts resolveConfig).
       resolve: (sessionId) => toPolicy(resolveConfig(this.#db, sessionId).config),
+      extensions: this.#extensions,
     });
     // Reap a session's listener when its turn ends; the next turn re-acquires one.
     this.#unsubscribe = this.#bus.subscribe((e) => {
