@@ -265,6 +265,25 @@ export function LeftRail({
   onArchiveHead?: (id: string) => void;
 }) {
   const [creating, setCreating] = useState(false);
+  const [expandedHeadIds, setExpandedHeadIds] = useState<Set<string>>(new Set());
+  
+  // Auto-collapse finished heads (subagent branches that are no longer busy)
+  useEffect(() => {
+    setExpandedHeadIds((prev) => {
+      const next = new Set(prev);
+      let changed = false;
+      // Remove heads that are finished (not busy) from the expanded set
+      for (const headId of next) {
+        const head = groups.flatMap((g) => g.heads).find((h) => h.id === headId);
+        if (head && !head.busy) {
+          next.delete(headId);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [groups]);
+  
   useEffect(() => {
     if (openFormSignal) setCreating(true);
   }, [openFormSignal]);
@@ -358,14 +377,28 @@ export function LeftRail({
               onNewInGroup={onCreateSession && (() => onCreateSession(g.workspace ?? ""))}
             />
             <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-              {g.heads.map((h) => (
-                <HeadCard
-                  key={h.id}
-                  head={h}
-                  onClick={() => onSelectHead(h.id)}
-                  onArchive={onArchiveHead && (() => onArchiveHead(h.id))}
-                />
-              ))}
+              {g.heads
+                .filter((h) => expandedHeadIds.has(h.id) || h.busy)
+                .map((h) => (
+                  <HeadCard
+                    key={h.id}
+                    head={h}
+                    onClick={() => {
+                      onSelectHead(h.id);
+                      // Toggle expansion when clicking
+                      setExpandedHeadIds((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(h.id)) {
+                          next.delete(h.id);
+                        } else {
+                          next.add(h.id);
+                        }
+                        return next;
+                      });
+                    }}
+                    onArchive={onArchiveHead && (() => onArchiveHead(h.id))}
+                  />
+                ))}
             </div>
           </div>
         ))}
