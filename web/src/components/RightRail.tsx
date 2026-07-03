@@ -1,10 +1,10 @@
 // Right context rail. Two tabs share it — Network (live Claw Patrol feed + pending
 // approvals + the rule editor) and Changes (the run's file manifest). Pending pulses
 // the amber accent; nothing else competes.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { c, mono } from "../theme";
 import type { DiffFile } from "../mock";
-import { api, type NetConfig, type NetStatus, type PolicySource } from "../api";
+import { api, type ExtensionInfo, type NetConfig, type NetStatus, type PolicySource } from "../api";
 import type { NetRequest } from "../types";
 import { Chip, Dot } from "./ui";
 
@@ -125,10 +125,12 @@ function FeedRow(
 
 // The hold-and-ask card: a request parked on the wire until the operator decides.
 function HoldCard(
-  { req, onResolve, onRefine }: {
+  { req, onResolve, onRefine, queued = 0 }: {
     req: NetRequest;
     onResolve: (approve: boolean) => void;
     onRefine?: () => void;
+    /** Additional holds waiting behind this one. */
+    queued?: number;
   },
 ) {
   return (
@@ -136,6 +138,9 @@ function HoldCard(
       <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
         <Dot color={c.amber} pulse />
         <span style={{ fontFamily: mono, fontSize: 12, color: c.text }}>Approval needed</span>
+        {queued > 0 && (
+          <span style={{ fontFamily: mono, fontSize: 10.5, color: c.amber }}>+{queued} waiting</span>
+        )}
         {onRefine && (
           <button
             onClick={onRefine}
@@ -360,13 +365,120 @@ function SuggestBox(
   );
 }
 
+// Programmable guards: the mitmproxy-addon layer. Lists loaded + broken extensions,
+// scaffolds a starter file with one click, and hot-reloads after you edit — so a
+// rule the static config can't express (cross-request invariants, out-of-band API
+// checks) is a short TypeScript file, not a code change.
+function ExtensionsPanel() {
+  const [dir, setDir] = useState("");
+  const [exts, setExts] = useState<ExtensionInfo[] | null>(null);
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const refresh = async () => {
+    try {
+      const { dir, extensions } = await api.listExtensions();
+      setDir(dir);
+      setExts(extensions);
+    } catch {
+      setExts([]);
+    }
+  };
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  const create = async () => {
+    if (!name.trim() || busy) return;
+    setBusy(true);
+    setErr(null);
+    setMsg(null);
+    try {
+      const { path, extensions } = await api.createExtension(name.trim());
+      setExts(extensions);
+      setName("");
+      setMsg(`Created ${path} — edit it, then Reload.`);
+    } catch (e) {
+      setErr((e as Error).message || "could not create");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const reload = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      setExts((await api.reloadExtensions()).extensions);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontFamily: mono, fontSize: 10, letterSpacing: ".1em", color: c.muted2 }}>
+          EXTENSIONS {exts && exts.length > 0 && <Chip>{exts.length}</Chip>}
+        </span>
+        <button
+          onClick={reload}
+          disabled={busy}
+          title="Re-load the extensions dir after editing a guard (no restart)"
+          style={{ marginLeft: "auto", fontFamily: mono, fontSize: 10.5, color: c.muted, background: "none", border: `1px solid ${c.border2}`, borderRadius: 6, padding: "2px 8px" }}
+        >
+          ↻ Reload
+        </button>
+      </div>
+      <p style={{ fontSize: 11.5, color: c.muted, lineHeight: 1.5, margin: 0 }}>
+        Guards run in the gate path with the full request and can make their own API
+        calls — for rules the config can't express (e.g. only merge a PR whose branch
+        this session created).
+      </p>
+      {exts?.map((e) => (
+        <div key={e.file} style={{ display: "flex", flexDirection: "column", gap: 2, borderLeft: `2px solid ${e.error ? c.red : c.green}`, paddingLeft: 8 }}>
+          <span style={{ fontFamily: mono, fontSize: 11.5, color: c.text2 }}>{e.name}</span>
+          <span style={{ fontFamily: mono, fontSize: 10, color: c.muted2, wordBreak: "break-all" }}>{e.file}</span>
+          {e.error && <span style={{ fontFamily: mono, fontSize: 10.5, color: c.red }}>{e.error}</span>}
+        </div>
+      ))}
+      {exts && exts.length === 0 && (
+        <div style={{ fontSize: 11.5, color: c.muted2 }}>
+          No extensions yet.{dir ? ` They live in ${dir}` : ""}
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 6 }}>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && create()}
+          placeholder="new guard name (e.g. gh-merge-guard)"
+          style={{ flex: 1, fontFamily: mono, fontSize: 11, color: c.text2, background: c.bg, border: `1px solid ${c.border2}`, borderRadius: 6, padding: "4px 8px" }}
+        />
+        <button
+          onClick={create}
+          disabled={busy || !name.trim()}
+          title="Write a runnable starter guard you can edit, then Reload"
+          style={{ fontFamily: mono, fontSize: 10.5, color: busy ? c.muted2 : c.green, background: "none", border: `1px solid ${c.border2}`, borderRadius: 6, padding: "3px 10px", whiteSpace: "nowrap" }}
+        >
+          + New
+        </button>
+      </div>
+      {msg && <span style={{ fontSize: 10.5, color: c.green, wordBreak: "break-all" }}>{msg}</span>}
+      {err && <span style={{ fontSize: 10.5, color: c.red }}>{err}</span>}
+    </div>
+  );
+}
+
 // bough runs the egress firewall in-process: this panel shows its status, the live
 // feed, the hold-and-ask cards, and the editable rule set.
 function NetworkPanel(
-  { status, net, pending, onResolve, policy, policySource, onSavePolicy, onOverridePolicy, onClearPolicyOverride, sessionOpen, sessionId, wide }: {
+  { status, net, pending, pendingCount = 0, onResolve, policy, policySource, onSavePolicy, onOverridePolicy, onClearPolicyOverride, sessionOpen, sessionId, wide }: {
     status: NetStatus;
     net: NetRequest[];
     pending: NetRequest | null;
+    pendingCount?: number;
     onResolve: (approve: boolean) => void;
     policy: NetConfig | null;
     policySource: PolicySource | null;
@@ -431,7 +543,14 @@ function NetworkPanel(
         </p>
       )}
 
-      {pending && <HoldCard req={pending} onResolve={onResolve} onRefine={() => setEditing(true)} />}
+      {pending && (
+        <HoldCard
+          req={pending}
+          queued={Math.max(0, pendingCount - 1)}
+          onResolve={onResolve}
+          onRefine={() => setEditing(true)}
+        />
+      )}
 
       {editing && (policy
         ? (
@@ -505,6 +624,12 @@ function NetworkPanel(
             <FeedRow key={r.id} r={r} selected={sel.has(r.id)} onToggle={() => toggleSel(r.id)} />
           ))}
       </div>
+
+      {status.enabled && (
+        <div style={{ borderTop: `1px solid ${c.border}`, paddingTop: 12 }}>
+          <ExtensionsPanel />
+        </div>
+      )}
     </div>
   );
 }
@@ -555,12 +680,16 @@ function ChangesPanel({
   onSelect,
   onApplyAll,
   onRevert,
+  onAdopt,
 }: {
   diffs: DiffFile[];
   selected: string | null;
   onSelect: (path: string) => void;
   onApplyAll: () => void;
   onRevert: () => void;
+  // Present only when the open session is a subagent branch: squash its changes
+  // into the spawner's workspace.
+  onAdopt?: () => void;
 }) {
   const totAdd = diffs.reduce((a, f) => a + f.added, 0);
   const totRem = diffs.reduce((a, f) => a + f.removed, 0);
@@ -571,6 +700,12 @@ function ChangesPanel({
         <div style={{ fontSize: 12.5, color: c.muted2, lineHeight: 1.55 }}>
           No changes staged. When a turn edits files in the session workspace, they land here
           for review — nothing is written back until you apply.
+          {onAdopt && (
+            <>
+              {" "}This is a subagent branch: when it has changes, adopt them into its
+              parent from here.
+            </>
+          )}
         </div>
       </div>
     );
@@ -595,6 +730,15 @@ function ChangesPanel({
           {(!grouped || hasRepo) && (
             <button onClick={onRevert} style={{ fontSize: 11, color: c.muted, padding: "4px 9px", border: `1px solid ${c.border}`, borderRadius: 6 }}>
               Revert
+            </button>
+          )}
+          {onAdopt && (
+            <button
+              onClick={onAdopt}
+              title="Squash this subagent branch's changes into its parent session's workspace"
+              style={{ fontSize: 11, color: c.green, fontWeight: 600, padding: "4px 10px", borderRadius: 6, border: `1px solid ${c.green}` }}
+            >
+              ◆ Adopt into parent
             </button>
           )}
           <button onClick={onApplyAll} style={{ fontSize: 11, color: c.bg, fontWeight: 600, padding: "4px 10px", borderRadius: 6, background: c.green }}>
@@ -637,6 +781,7 @@ export function RightRail({
   netStatus,
   net,
   pending,
+  pendingCount,
   onResolve,
   policy,
   policySource,
@@ -650,6 +795,7 @@ export function RightRail({
   onSelectFile,
   onApplyAll,
   onRevert,
+  onAdopt,
 }: {
   tab: RailTab;
   onTab: (t: RailTab) => void;
@@ -658,6 +804,8 @@ export function RightRail({
   netStatus: NetStatus;
   net: NetRequest[];
   pending: NetRequest | null;
+  /** Total holds waiting (shown one at a time); default derives from `pending`. */
+  pendingCount?: number;
   onResolve: (approve: boolean) => void;
   policy: NetConfig | null;
   policySource?: PolicySource | null;
@@ -673,6 +821,8 @@ export function RightRail({
   onSelectFile: (path: string) => void;
   onApplyAll: () => void;
   onRevert: () => void;
+  // Present only for subagent branches (see ChangesPanel).
+  onAdopt?: () => void;
 }) {
   return (
     <div
@@ -692,7 +842,7 @@ export function RightRail({
         tab={tab}
         onTab={onTab}
         changesCount={diffs.length}
-        pendingCount={pending ? 1 : 0}
+        pendingCount={pendingCount ?? (pending ? 1 : 0)}
         padY={wide ? 2 : 0}
         wide={wide}
         onToggleWide={onToggleWide}
@@ -702,6 +852,7 @@ export function RightRail({
           status={netStatus}
           net={net}
           pending={pending}
+          pendingCount={pendingCount ?? (pending ? 1 : 0)}
           onResolve={onResolve}
           policy={policy}
           policySource={policySource ?? null}
@@ -713,7 +864,7 @@ export function RightRail({
           wide={wide}
         />
       ) : (
-        <ChangesPanel diffs={diffs} selected={selectedFile} onSelect={onSelectFile} onApplyAll={onApplyAll} onRevert={onRevert} />
+        <ChangesPanel diffs={diffs} selected={selectedFile} onSelect={onSelectFile} onApplyAll={onApplyAll} onRevert={onRevert} onAdopt={onAdopt} />
       )}
     </div>
   );

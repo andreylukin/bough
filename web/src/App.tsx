@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { c } from "./theme";
 import * as mock from "./mock";
-import { api, type ModelOption } from "./api";
+import { api, type ModelOption, type SkillInfo } from "./api";
 import { useStore } from "./store";
 import { bundleFromSummary, diffsToFiles, headGroupsFromSessions, outlineFromThread } from "./live";
 import type { HeadGroup } from "./live";
@@ -96,6 +96,7 @@ function LiveApp() {
   const [bundles, setBundles] = useState<Bundle[]>([]);
   const [model, setModel] = useState("");
   const [models, setModels] = useState<ModelOption[]>([]);
+  const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [paletteOpen, setPaletteOpen] = useState(false);
   // Bumping this asks the LeftRail to open its new-session form (from the palette).
   const [newSessionSignal, setNewSessionSignal] = useState(0);
@@ -106,6 +107,7 @@ function LiveApp() {
       setModel(c.model);
       setModels(c.models);
     }).catch(() => {});
+    api.skills().then(setSkills).catch(() => {});
   }, []);
 
   // ⌘K / ⌘P (and ctrl variants) toggle the command palette — the keyboard spine.
@@ -129,6 +131,9 @@ function LiveApp() {
       const list = await api.listSessions();
       const target = list[0] ?? (await api.createSession({ title: "main" }));
       await store.open(target.id);
+      // Background subagents in flight → orient on the map (the agent overview),
+      // not wherever the last thread happened to be.
+      if (list.some((s) => s.kind === "subagent" && s.busy)) location.hash = "map";
     })().catch(() => {});
   }, [store]);
 
@@ -182,6 +187,7 @@ function LiveApp() {
         netStatus={store.netStatus}
         net={store.net}
         pending={store.pending}
+        pendingCount={store.pendingCount}
         onResolve={store.resolvePending}
         policy={store.policy}
         policySource={store.policySource}
@@ -201,11 +207,13 @@ function LiveApp() {
         onSend={onSend}
         onInterrupt={store.interrupt}
         onSearchFiles={(q) => (store.currentId ? api.searchFiles(store.currentId, q) : Promise.resolve([]))}
+        skills={skills}
         onSelectHead={(id) => store.open(id)}
         onInstallBundle={onInstallBundle}
         onApplyFile={(f) => f.source && store.applyChanges(f.source, [f.path])}
         onApplyAll={onApplyAll}
         onRevert={() => store.revertChanges()}
+        onAdopt={store.adopt}
         onCreateSession={(workspace) => store.newSession(workspace || undefined)}
         onArchiveHead={(id) => store.archive(id)}
         onForkEdit={(id, text) => store.fork(id, text)}
@@ -252,6 +260,7 @@ function Window({
   netStatus,
   net,
   pending,
+  pendingCount,
   onResolve,
   policy,
   policySource,
@@ -270,11 +279,13 @@ function Window({
   onSend,
   onInterrupt,
   onSearchFiles,
+  skills,
   onSelectHead,
   onInstallBundle,
   onApplyFile,
   onApplyAll,
   onRevert,
+  onAdopt,
   onCreateSession,
   onArchiveHead,
   newSessionSignal,
@@ -298,6 +309,7 @@ function Window({
   netStatus: import("./api").NetStatus;
   net: NetRequest[];
   pending: NetRequest | null;
+  pendingCount?: number;
   onResolve: (approve: boolean) => void;
   policy: import("./api").NetConfig | null;
   policySource?: import("./api").PolicySource | null;
@@ -316,11 +328,14 @@ function Window({
   onSend: (text: string, branch: boolean) => void;
   onInterrupt?: () => void;
   onSearchFiles?: (q: string) => Promise<string[]>;
+  skills?: SkillInfo[];
   onSelectHead: (id: string) => void;
   onInstallBundle: (id: string) => void;
   onApplyFile: (file: DiffFile) => void;
   onApplyAll: () => void;
   onRevert: () => void;
+  // Adopt the open subagent branch's changes into its spawner (see RightRail).
+  onAdopt?: () => void;
   onCreateSession?: (workspace: string) => void;
   onArchiveHead?: (id: string) => void;
   newSessionSignal?: number;
@@ -336,6 +351,10 @@ function Window({
   const [tab, setTab] = useState<RailTab>(init.tab);
   const [wide, setWide] = useState(init.wide);
   const [selectedFile, setSelectedFile] = useState<string | null>(init.file);
+  // Subagent glanceables: is the open session a subagent branch (adopt affordance,
+  // role label), and how many subagents are running right now (title-bar badge).
+  const currentIsSubagent = sessions.find((s) => s.id === currentId)?.kind === "subagent";
+  const subagentsRunning = sessions.filter((s) => s.kind === "subagent" && s.busy).length;
   // Phone layout: the rails leave the flow and become tap-to-open drawers.
   const mobile = useIsMobile();
   const [leftOpen, setLeftOpen] = useState(false);
@@ -419,6 +438,7 @@ function Window({
       netStatus={netStatus}
       net={net}
       pending={pending}
+      pendingCount={pendingCount}
       onResolve={onResolve}
       policy={policy}
       policySource={policySource}
@@ -428,6 +448,7 @@ function Window({
       sessionOpen={currentId !== null}
       sessionId={currentId}
       diffs={diffs}
+      onAdopt={currentIsSubagent ? onAdopt : undefined}
       selectedFile={diffFile?.path ?? null}
       onSelectFile={(p) => {
         setSelectedFile(p);
@@ -449,13 +470,27 @@ function Window({
               live={live}
               busy={busy}
               attentionCount={sessions.filter((s) => s.unseen).length}
-              pendingCount={pending ? 1 : 0}
+              pendingCount={pendingCount ?? (pending ? 1 : 0)}
               onBack={showDiff ? () => openTab("network") : undefined}
               onMenu={() => setLeftOpen(true)}
               onRail={() => setRightOpen(true)}
             />
           )
-          : <TitleBar branch={title} live={live} connected={connected} model={model} models={models} usage={usage} onSetModel={onSetModel} workspace={workspace} sessionId={currentId} />}
+          : (
+            <TitleBar
+              branch={title}
+              live={live}
+              connected={connected}
+              model={model}
+              models={models}
+              usage={usage}
+              onSetModel={onSetModel}
+              workspace={workspace}
+              sessionId={currentId}
+              subagentsRunning={subagentsRunning}
+              onShowMap={() => (location.hash = "map")}
+            />
+          )}
         <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
           {!mobile && leftRail}
 
@@ -492,12 +527,16 @@ function Window({
                 streaming={streaming}
                 focusKey={currentId}
                 activity={activity}
+                subagents={sessions.filter((s) => s.kind === "subagent")}
+                onOpenSession={onSelectHead}
+                subagentThread={currentIsSubagent}
                 dimmed={dimConversation}
                 canBranch={live}
                 busy={busy}
                 onSend={onSend}
                 onInterrupt={onInterrupt}
                 onSearchFiles={onSearchFiles}
+                skills={skills}
                 onForkEdit={onForkEdit}
                 onCompact={onCompact}
                 queued={queued}

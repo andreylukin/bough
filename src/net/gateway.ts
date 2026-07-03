@@ -21,7 +21,7 @@
 import { caEnv, CertAuthority } from "./ca.ts";
 import { ProxyServer } from "./proxy.ts";
 import { createGate, type Gate } from "./gate.ts";
-import { ExtensionHost, type ExtensionInfo } from "./extensions.ts";
+import { ExtensionHost, extensionsDir, type ExtensionInfo } from "./extensions.ts";
 import { loadConfig, resolveConfig, toPolicy } from "./config.ts";
 import type { Db } from "../db/db.ts";
 import type { Bus } from "../bus.ts";
@@ -78,8 +78,16 @@ export class ClawpatrolGateway {
     return this.#extensions?.list() ?? [];
   }
 
-  listExtensions(): ExtensionInfo[] {
-    return this.#extensions?.list() ?? [];
+  listExtensions(): { dir: string; extensions: ExtensionInfo[] } {
+    return { dir: extensionsDir(), extensions: this.#extensions?.list() ?? [] };
+  }
+
+  /** Scaffold a starter guard, load it, and return its path + the fresh list. */
+  async createExtension(name: string): Promise<{ path: string; extensions: ExtensionInfo[] }> {
+    if (!this.#extensions) throw new Error("Claw Patrol is off");
+    const { path } = this.#extensions.scaffold(name);
+    await this.#extensions.load();
+    return { path, extensions: this.#extensions.list() };
   }
 
   /** Boot the CA, gate, and extensions when enabled; listeners start lazily per session. */

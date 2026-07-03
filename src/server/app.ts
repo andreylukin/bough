@@ -371,11 +371,23 @@ const suggestPolicyH: Handler = async (req, ctx) => {
   }
 };
 
-// Programmable guards: list what's loaded (incl. broken files) and hot-reload the
-// extensions dir after editing a guard — no server restart.
-const listExtensionsH: Handler = (_req, ctx) => json(ctx.gateway?.listExtensions() ?? []);
+// Programmable guards: list what's loaded (+ the dir they live in), hot-reload after
+// an edit, and scaffold a starter file — all without a server restart.
+const listExtensionsH: Handler = (_req, ctx) =>
+  json(ctx.gateway?.listExtensions() ?? { dir: "", extensions: [] });
 const reloadExtensionsH: Handler = async (_req, ctx) =>
-  json(await (ctx.gateway?.reloadExtensions() ?? Promise.resolve([])));
+  json({ extensions: await (ctx.gateway?.reloadExtensions() ?? Promise.resolve([])) });
+const createExtensionH: Handler = async (req, ctx) => {
+  if (!ctx.gateway) return error(400, "Claw Patrol is off");
+  const body = await req.json().catch(() => null) as { name?: string } | null;
+  const name = body?.name?.trim();
+  if (!name) return error(400, "name is required");
+  try {
+    return json(await ctx.gateway.createExtension(name));
+  } catch (e) {
+    return error(409, (e as Error).message);
+  }
+};
 
 // Remove a branch's override so it inherits again (no-op if it had none).
 const deletePolicy: Handler = (req, ctx) => {
@@ -534,6 +546,11 @@ const routes: Route[] = [
     method: "POST",
     pattern: new URLPattern({ pathname: "/net/extensions/reload" }),
     handler: reloadExtensionsH,
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/net/extensions" }),
+    handler: createExtensionH,
   },
   { method: "GET", pattern: new URLPattern({ pathname: "/net/requests" }), handler: netRequests },
   {

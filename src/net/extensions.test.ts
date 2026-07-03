@@ -152,3 +152,31 @@ Deno.test("gh-merge-guard example: merge allowed only for a session-created bran
   const stranger = await host.gate(mergeMine, staticDecision(mergeMine), "s2");
   assertEquals(stranger?.verdict, "hold");
 });
+
+Deno.test("scaffold: writes a runnable guard, loads it, refuses to clobber", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "bough-ext-scaffold-" });
+  try {
+    const host = new ExtensionHost(new Db(":memory:"));
+    const { path } = host.scaffold("No Force Push!", dir); // slugified
+    assertStringIncludes(path, "no-force-push.ts");
+    const src = await Deno.readTextFile(path);
+    assertStringIncludes(src, 'export const name = "No Force Push!"');
+    assertStringIncludes(src, "export function gate(");
+
+    // it loads cleanly (passes everything until edited)
+    await host.load(dir);
+    assertEquals(host.list().find((i) => i.error), undefined);
+    assertEquals(await host.gate(ghGet, staticDecision(ghGet)), undefined);
+
+    // second scaffold of the same name refuses rather than clobbering an edit
+    let threw = false;
+    try {
+      host.scaffold("no-force-push", dir);
+    } catch {
+      threw = true;
+    }
+    assertEquals(threw, true);
+  } finally {
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+});

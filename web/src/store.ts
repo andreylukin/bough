@@ -20,6 +20,8 @@ export interface Store {
   // The live egress feed (newest first) and the current hold awaiting approval, if any.
   net: NetRequest[];
   pending: NetRequest | null;
+  // How many holds are waiting in total (the card shows them one at a time).
+  pendingCount: number;
   // The editable rule set (the open branch's effective one); null until loaded.
   policy: NetConfig | null;
   // Where that rule set came from: this branch / inherited ancestor / global.
@@ -52,6 +54,8 @@ export interface Store {
   // sessionId defaults to the open session (conversation compact); the map passes an
   // explicit head so a span on any lane compacts the right session.
   compact: (fromMessageId: string, toMessageId: string, sessionId?: string) => void;
+  // Adopt the OPEN subagent session's changes into its spawner's workspace.
+  adopt: () => void;
   dismissNotice: () => void;
 }
 
@@ -68,7 +72,10 @@ export function useStore(): Store {
     caPath: "",
   });
   const [net, setNet] = useState<NetRequest[]>([]);
-  const [pending, setPending] = useState<NetRequest | null>(null);
+  // ALL holds awaiting approval, oldest first — the card shows the head and the
+  // next one surfaces automatically when it resolves (no refresh needed).
+  const [pendings, setPendings] = useState<NetRequest[]>([]);
+  const pending = pendings[0] ?? null;
   const [policy, setPolicy] = useState<NetConfig | null>(null);
   const [policySource, setPolicySource] = useState<PolicySource | null>(null);
   const [changes, setChanges] = useState<WireDiff[]>([]);
@@ -115,7 +122,7 @@ export function useStore(): Store {
     const id = sessionId ?? currentRef.current;
     const all = await api.netRequests();
     setNet(id ? await api.netRequests(id) : all);
-    setPending(all.find((r) => r.verdict === "pending") ?? null);
+    setPendings(all.filter((r) => r.verdict === "pending").reverse()); // oldest first
   }, []);
 
   // The rule set shown is the OPEN SESSION's effective one (own override, else the
@@ -140,9 +147,9 @@ export function useStore(): Store {
 
   const resolvePending = useCallback((approve: boolean) => {
     const req = pendingRef.current;
-    // Clear the card optimistically; the gate re-emits the row with its final verdict,
-    // which the `net.request` handler reconciles by id.
-    setPending(null);
+    // Drop this card optimistically — the NEXT parked hold (if any) surfaces right
+    // away; the gate re-emits the row with its final verdict, reconciled by id.
+    setPendings((prev) => prev.filter((p) => p.id !== req?.id));
     if (!req) return;
     (approve ? api.allowRequest(req.id) : api.denyRequest(req.id)).catch(() => {
       // The hold may have already resolved/expired server-side (404). Re-sync so the
@@ -263,6 +270,16 @@ export function useStore(): Store {
       .catch((e: Error) => setNotice(e.message));
   }, [open]);
 
+  const adopt = useCallback(() => {
+    const id = currentRef.current;
+    if (!id) return;
+    api
+      .adopt(id)
+      // The changes.updated events refresh both rails; the notice confirms the squash.
+      .then(({ message }) => setNotice(message))
+      .catch((e: Error) => setNotice(`adopt failed: ${e.message}`));
+  }, []);
+
   const dismissNotice = useCallback(() => setNotice(null), []);
 
   const newSession = useCallback(async (workspace?: string) => {
@@ -377,6 +394,17 @@ export function useStore(): Store {
         });
         break;
       }
+      case "turn.finished": {
+        // How the turn ended (done/error/interrupted) — drives ✓/✗ status affixes.
+        const { sessionId, status } = ev.data as {
+          sessionId: string;
+          status: Session["lastTurnStatus"];
+        };
+        setSessions((prev) =>
+          prev.map((s) => (s.id === sessionId ? { ...s, lastTurnStatus: status } : s))
+        );
+        break;
+      }
       case "net.request": {
         const r = ev.data as NetRequest;
         // Upsert by id: a held request is emitted twice (pending, then resolved), so the
@@ -386,10 +414,14 @@ export function useStore(): Store {
         if (!openId || r.sessionId === openId) {
           setNet((prev) => [r, ...prev.filter((x) => x.id !== r.id)].slice(0, 100));
         }
-        setPending((cur) => {
-          if (r.verdict === "pending") return r;
-          if (cur && cur.id === r.id) return null; // this hold just resolved
-          return cur;
+        setPendings((prev) => {
+          if (r.verdict === "pending") {
+            // enqueue (or refresh in place) — never displace the card being shown
+            return prev.some((p) => p.id === r.id)
+              ? prev.map((p) => (p.id === r.id ? r : p))
+              : [...prev, r];
+          }
+          return prev.filter((p) => p.id !== r.id); // resolved/expired → next surfaces
         });
         break;
       }
@@ -467,6 +499,7 @@ export function useStore(): Store {
     netStatus,
     net,
     pending,
+    pendingCount: pendings.length,
     policy,
     policySource,
     changes,
@@ -490,6 +523,7 @@ export function useStore(): Store {
     revertChanges,
     fork,
     compact,
+    adopt,
     dismissNotice,
   };
 }

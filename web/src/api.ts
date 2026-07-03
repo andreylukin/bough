@@ -15,6 +15,10 @@ export interface Usage {
   contextTokens: number;
   outputTokens: number;
 }
+export interface SkillInfo {
+  name: string;
+  description: string;
+}
 export interface NetStatus {
   enabled: boolean;
   running: boolean;
@@ -27,6 +31,13 @@ export interface NetStatus {
 export interface PolicySource {
   scope: "session" | "inherited" | "global";
   sessionId?: string;
+}
+
+/** A loaded (or broken) policy extension (mirrors src/net/extensions.ts). */
+export interface ExtensionInfo {
+  name: string;
+  file: string;
+  error?: string;
 }
 
 // The editable rule set (mirrors src/net/config.ts NetConfig).
@@ -86,6 +97,9 @@ export const api = {
   // Soft-delete: the session leaves the sidebar; its thread and lineage remain.
   archiveSession: (id: string) => fetch(`/sessions/${id}/archive`, { method: "POST" }),
 
+  // Installed skills (name + description) for the composer's / autocomplete.
+  skills: () => fetch("/skills").then(j<{ skills: SkillInfo[] }>).then((r) => r.skills),
+
   // Workspace file search for the composer's @ autocomplete.
   searchFiles: (id: string, q: string) =>
     fetch(`/sessions/${id}/files?q=${encodeURIComponent(q)}`)
@@ -130,6 +144,20 @@ export const api = {
     }).then(j<{ config: NetConfig; source: PolicySource }>),
   deleteSessionPolicy: (sessionId: string) =>
     fetch(`/net/policy?session=${encodeURIComponent(sessionId)}`, { method: "DELETE" }),
+
+  // ---- policy extensions (programmable guards) -----------------------------
+  listExtensions: () =>
+    fetch("/net/extensions").then(j<{ dir: string; extensions: ExtensionInfo[] }>),
+  reloadExtensions: () =>
+    fetch("/net/extensions/reload", { method: "POST" }).then(
+      j<{ extensions: ExtensionInfo[] }>,
+    ),
+  createExtension: (name: string) =>
+    fetch("/net/extensions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name }),
+    }).then(j<{ path: string; extensions: ExtensionInfo[] }>),
 
   // AI-drafted rules: intent in, proposed config + rationale out. Nothing is
   // enforced until the user reviews the draft in the editor and saves it.
@@ -180,6 +208,11 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({}),
     }),
+
+  // Adopt a subagent's branch: squash its changes into its spawner's workspace.
+  // 400 (with the server message) for non-subagents or branches with no workspace.
+  adopt: (sessionId: string) =>
+    fetch(`/sessions/${sessionId}/adopt`, { method: "POST" }).then(j<{ message: string }>),
 
   // ---- branching -----------------------------------------------------------
   // Fork at one of the session's OWN turns. With editedText → edit & resend (runs a

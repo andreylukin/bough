@@ -33,7 +33,7 @@
  */
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { bodyText, type Decision, type Request, type Verdict } from "./policy.ts";
 import { netDir } from "./install.ts";
 import type { Db } from "../db/db.ts";
@@ -80,6 +80,35 @@ export function extensionsDir(dir = netDir()): string {
   return join(dir, "extensions");
 }
 
+/** Slugify a display name into a safe filename stem. */
+function slug(name: string): string {
+  return name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") ||
+    "guard";
+}
+
+/** A runnable starter guard, ready to edit. Denies nothing until you fill it in. */
+export function scaffoldSource(name: string): string {
+  return `/**
+ * ${name} — a Claw Patrol policy extension (guard).
+ * Runs in the gate path with the FULL decrypted request. Return a verdict to
+ * override the static rule set, or undefined to pass. Edit, then hit Reload.
+ *
+ * ctx: { sessionId, action, decision, state (DB-backed KV), fetch (server-side,
+ *        uncredentialed-by-sandbox), bodyText }
+ */
+export const name = ${JSON.stringify(name)};
+
+// deno-lint-ignore no-explicit-any
+export function gate(req: { host: string; method: string; path: string }, ctx: any) {
+  // Example: hold any write to example.com for approval.
+  // if (req.host === "example.com" && req.method !== "GET") {
+  //   return { verdict: "hold", reason: "${name}: writes to example.com need approval" };
+  // }
+  return undefined; // pass — the static rule set decides
+}
+`;
+}
+
 export class ExtensionHost {
   #db: Db;
   #guards: Guard[] = [];
@@ -99,6 +128,18 @@ export class ExtensionHost {
       ...this.#guards.map((g) => ({ name: g.name, file: g.file ?? "" })),
       ...this.#errors,
     ];
+  }
+
+  /**
+   * Write a starter guard file and (re)load. Returns its path. Refuses to clobber
+   * an existing file. Creates the extensions dir on first use.
+   */
+  scaffold(name: string, dir = extensionsDir()): { path: string } {
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, `${slug(name)}.ts`);
+    if (existsSync(path)) throw new Error(`an extension file already exists at ${path}`);
+    writeFileSync(path, scaffoldSource(name));
+    return { path };
   }
 
   /** Register an in-process guard (tests, built-ins). */
