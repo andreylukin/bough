@@ -4,7 +4,7 @@
 import { useState } from "react";
 import { c, mono } from "../theme";
 import type { DiffFile } from "../mock";
-import type { NetConfig, NetStatus, PolicySource } from "../api";
+import { api, type NetConfig, type NetStatus, type PolicySource } from "../api";
 import type { NetRequest } from "../types";
 import { Chip, Dot } from "./ui";
 
@@ -108,12 +108,27 @@ function FeedRow({ r }: { r: NetRequest }) {
 }
 
 // The hold-and-ask card: a request parked on the wire until the operator decides.
-function HoldCard({ req, onResolve }: { req: NetRequest; onResolve: (approve: boolean) => void }) {
+function HoldCard(
+  { req, onResolve, onRefine }: {
+    req: NetRequest;
+    onResolve: (approve: boolean) => void;
+    onRefine?: () => void;
+  },
+) {
   return (
     <div style={{ border: `1px solid ${c.amber}`, borderRadius: 8, padding: 12, display: "flex", flexDirection: "column", gap: 8, background: "rgba(217,180,95,.06)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
         <Dot color={c.amber} pulse />
         <span style={{ fontFamily: mono, fontSize: 12, color: c.text }}>Approval needed</span>
+        {onRefine && (
+          <button
+            onClick={onRefine}
+            title="Open the rule editor and draft a refinement with AI — this request rides along as context"
+            style={{ marginLeft: "auto", fontFamily: mono, fontSize: 10.5, color: c.muted, background: "none", border: `1px solid ${c.border2}`, borderRadius: 6, padding: "2px 8px" }}
+          >
+            ✨ refine rules
+          </button>
+        )}
       </div>
       <div style={{ fontFamily: mono, fontSize: 11.5, color: c.text2 }}>
         <span style={{ color: c.muted2 }}>{req.verb ?? ""}</span> {req.host}
@@ -281,10 +296,58 @@ function ScopeBar(
   );
 }
 
+// Plain-language rule drafting: describe the task ("research chocolate shops with
+// exa"), the model proposes a least-privilege config, and the draft lands in the
+// editor below for review — Save is what makes it live. When a hold is pending it
+// rides along as context, so "let this one through but keep writes held" works.
+function SuggestBox(
+  { sessionId, onDraft }: {
+    sessionId: string | null;
+    onDraft: (d: { config: NetConfig; rationale: string }) => void;
+  },
+) {
+  const [prompt, setPrompt] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const go = async () => {
+    if (!prompt.trim() || busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      onDraft(await api.suggestPolicy(prompt, sessionId));
+    } catch (e) {
+      setErr((e as Error).message || "suggestion failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <textarea
+        value={prompt}
+        onChange={(e) => setPrompt(e.target.value)}
+        rows={2}
+        placeholder="Describe the task (e.g. research chocolate shops in Boston with exa) or a refinement (allow this, but hold GraphQL mutations)…"
+        style={{ fontFamily: mono, fontSize: 11.5, color: c.text2, background: c.bg, border: `1px solid ${c.border2}`, borderRadius: 6, padding: "6px 8px", resize: "vertical" }}
+      />
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <button
+          onClick={go}
+          disabled={busy || !prompt.trim()}
+          style={{ fontFamily: mono, fontSize: 11, color: busy ? c.muted2 : c.green, background: "none", border: `1px solid ${c.border2}`, borderRadius: 6, padding: "3px 10px" }}
+        >
+          {busy ? "drafting…" : "✨ Draft rules with AI"}
+        </button>
+        {err && <span style={{ fontSize: 11, color: c.red }}>{err}</span>}
+      </div>
+    </div>
+  );
+}
+
 // bough runs the egress firewall in-process: this panel shows its status, the live
 // feed, the hold-and-ask cards, and the editable rule set.
 function NetworkPanel(
-  { status, net, pending, onResolve, policy, policySource, onSavePolicy, onOverridePolicy, onClearPolicyOverride, sessionOpen, wide }: {
+  { status, net, pending, onResolve, policy, policySource, onSavePolicy, onOverridePolicy, onClearPolicyOverride, sessionOpen, sessionId, wide }: {
     status: NetStatus;
     net: NetRequest[];
     pending: NetRequest | null;
@@ -295,10 +358,13 @@ function NetworkPanel(
     onOverridePolicy: () => void;
     onClearPolicyOverride: () => void;
     sessionOpen: boolean;
+    sessionId: string | null;
     wide: boolean;
   },
 ) {
   const [editing, setEditing] = useState(false);
+  // An AI draft awaiting review; seeds the editor until saved or discarded.
+  const [draft, setDraft] = useState<{ config: NetConfig; rationale: string; n: number } | null>(null);
   const dotColor = status.running ? c.green : status.enabled ? c.amber : c.muted2;
   const statusLabel = status.running ? "proxy up" : status.enabled ? "starting" : "off";
   return (
@@ -322,7 +388,7 @@ function NetworkPanel(
         </p>
       )}
 
-      {pending && <HoldCard req={pending} onResolve={onResolve} />}
+      {pending && <HoldCard req={pending} onResolve={onResolve} onRefine={() => setEditing(true)} />}
 
       {editing && (policy
         ? (
@@ -334,11 +400,33 @@ function NetworkPanel(
                 onClear={onClearPolicyOverride}
               />
             )}
+            <SuggestBox
+              sessionId={sessionId}
+              onDraft={(d) => setDraft((prev) => ({ ...d, n: (prev?.n ?? 0) + 1 }))}
+            />
+            {draft && (
+              <div style={{ border: `1px solid ${c.border2}`, borderRadius: 6, padding: "8px 10px", display: "flex", flexDirection: "column", gap: 5 }}>
+                <span style={{ fontFamily: mono, fontSize: 10.5, color: c.green }}>
+                  AI draft — review below, then Save rules to apply
+                </span>
+                <p style={{ fontSize: 12, color: c.muted, lineHeight: 1.5, margin: 0 }}>{draft.rationale}</p>
+                <button
+                  onClick={() => setDraft(null)}
+                  style={{ alignSelf: "flex-start", fontFamily: mono, fontSize: 10.5, color: c.muted2, background: "none", border: "none", padding: 0, textDecoration: "underline" }}
+                >
+                  discard draft
+                </button>
+              </div>
+            )}
             <RuleEditor
-              // Re-seed the editor's local state when the scope flips (override/clear).
-              key={`${policySource?.scope ?? "global"}:${policySource?.sessionId ?? ""}`}
-              policy={policy}
-              onSave={(cfg) => onSavePolicy(cfg)}
+              // Re-seed the editor's local state when the scope flips or a new AI
+              // draft arrives (override/clear/draft all change the key).
+              key={`${policySource?.scope ?? "global"}:${policySource?.sessionId ?? ""}:d${draft?.n ?? 0}`}
+              policy={draft?.config ?? policy}
+              onSave={(cfg) => {
+                setDraft(null);
+                onSavePolicy(cfg);
+              }}
             />
           </div>
         )
@@ -491,6 +579,7 @@ export function RightRail({
   onOverridePolicy,
   onClearPolicyOverride,
   sessionOpen = false,
+  sessionId = null,
   diffs,
   selectedFile,
   onSelectFile,
@@ -512,6 +601,8 @@ export function RightRail({
   onClearPolicyOverride?: () => void;
   /** True when a session is open — enables the branch-scope controls. */
   sessionOpen?: boolean;
+  /** The open session, for branch-scoped AI rule drafting. */
+  sessionId?: string | null;
   diffs: DiffFile[];
   selectedFile: string | null;
   onSelectFile: (path: string) => void;
@@ -553,6 +644,7 @@ export function RightRail({
           onOverridePolicy={onOverridePolicy ?? (() => {})}
           onClearPolicyOverride={onClearPolicyOverride ?? (() => {})}
           sessionOpen={sessionOpen}
+          sessionId={sessionId}
           wide={wide}
         />
       ) : (

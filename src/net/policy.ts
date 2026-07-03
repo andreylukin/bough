@@ -176,25 +176,36 @@ export function classifyK8s(req: Request): Action {
   return { service: "k8s", verb: `${verb} ${resource}`, kind };
 }
 
-export function classifyGithub(req: Request): Action {
-  const path = req.path.split("?")[0];
-  if (path.replace(/\/+$/, "").endsWith("/graphql")) {
-    let text = bodyText(req);
-    try {
-      const obj = JSON.parse(text);
-      if (obj && typeof obj === "object" && typeof obj.query === "string") text = obj.query;
-    } catch {
-      // not JSON; fall back to the raw body text
-    }
-    // Coarse: a top-level `mutation` keyword means a write. Real gating would
-    // tokenise the query; this is enough to split reads from writes.
-    const isWrite = /\bmutation\b/.test(text);
-    return {
-      service: "github",
-      verb: isWrite ? "graphql:mutation" : "graphql:query",
-      kind: isWrite ? WRITE : READ,
-    };
+/**
+ * GraphQL on ANY host: a path ending in /graphql gets operation-level verbs
+ * (graphql:query | graphql:mutation) by peeking at the decrypted body — the MITM
+ * proxy hands us the plaintext. Detection is path-based on purpose: sniffing bodies
+ * for a top-level "query" field would misfire on ordinary search APIs.
+ */
+export function classifyGraphql(req: Request): Action | undefined {
+  const path = req.path.split("?")[0].replace(/\/+$/, "");
+  if (!path.endsWith("/graphql")) return undefined;
+  let text = bodyText(req);
+  try {
+    const obj = JSON.parse(text);
+    if (obj && typeof obj === "object" && typeof obj.query === "string") text = obj.query;
+  } catch {
+    // not JSON; fall back to the raw body text
   }
+  // Coarse: a top-level `mutation` keyword means a write. Real gating would
+  // tokenise the query; this is enough to split reads from writes.
+  const isWrite = /\bmutation\b/.test(text);
+  return {
+    service: "graphql",
+    verb: isWrite ? "graphql:mutation" : "graphql:query",
+    kind: isWrite ? WRITE : READ,
+  };
+}
+
+export function classifyGithub(req: Request): Action {
+  const gql = classifyGraphql(req);
+  if (gql) return { ...gql, service: "github" };
+  const path = req.path.split("?")[0];
   const verb = req.method.toUpperCase();
   const kind: Kind = verb === "GET" || verb === "HEAD" ? READ : WRITE;
   return { service: "github", verb: `${verb} ${path}`, kind };
@@ -205,7 +216,7 @@ export function classify(req: Request, k8sHosts: Iterable<string> = []): Action 
   if (hostMatches(host, k8sHosts)) return classifyK8s(req);
   if (host === "amazonaws.com" || host.endsWith(".amazonaws.com")) return classifyAws(req);
   if (host === "github.com" || host.endsWith(".github.com")) return classifyGithub(req);
-  return {
+  return classifyGraphql(req) ?? {
     service: "other",
     verb: `${req.method.toUpperCase()} ${req.path.split("?")[0]}`,
     kind: UNKNOWN,

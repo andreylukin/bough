@@ -140,3 +140,23 @@ Deno.test("resolveConfig: nearest override shadows a farther one; corrupt rows a
     assertEquals(r.source, { scope: "inherited", sessionId: "root" });
   });
 });
+
+Deno.test("generic-host GraphQL classifies by operation, so verb rules gate it", async () => {
+  await withDir((dir) => {
+    const cfg = saveConfig(
+      NetConfig.parse({
+        mode: "all",
+        allowHosts: ["api.monarchmoney.com"],
+        holdVerbs: ["graphql:mutation"],
+      }),
+      dir,
+    );
+    const pol = toPolicy(cfg);
+    const q = { host: "api.monarchmoney.com", method: "POST", path: "/graphql", body: JSON.stringify({ query: "query { accounts { id } }" }) };
+    const m = { ...q, body: JSON.stringify({ query: "mutation { deleteAccount(id: 1) }" }) };
+    assertEquals(decide(q, pol).verdict, "allow");
+    assertEquals(decide(q, pol).action.verb, "graphql:query");
+    assertEquals(decide(m, pol).verdict, "hold");
+    assertEquals(decide(m, pol).action.verb, "graphql:mutation");
+  });
+});

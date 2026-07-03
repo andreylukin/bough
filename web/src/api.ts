@@ -131,6 +131,15 @@ export const api = {
   deleteSessionPolicy: (sessionId: string) =>
     fetch(`/net/policy?session=${encodeURIComponent(sessionId)}`, { method: "DELETE" }),
 
+  // AI-drafted rules: intent in, proposed config + rationale out. Nothing is
+  // enforced until the user reviews the draft in the editor and saves it.
+  suggestPolicy: (prompt: string, sessionId?: string | null) =>
+    fetch("/net/policy/suggest", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prompt, sessionId: sessionId ?? undefined }),
+    }).then(j<{ config: NetConfig; rationale: string }>),
+
   // ---- policy bundles ------------------------------------------------------
   listBundles: () => fetch("/net/bundles").then(j<BundleSummary[]>),
 

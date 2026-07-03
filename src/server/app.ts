@@ -27,6 +27,8 @@ import type { Gate } from "../net/gate.ts";
 import type { ClawpatrolGateway } from "../net/gateway.ts";
 import { installBundle, InstallError, isInstalled } from "../net/install.ts";
 import { loadConfig, NetConfig, resolveConfig, saveConfig, toPolicy } from "../net/config.ts";
+import { suggestPolicy } from "../net/suggest.ts";
+import { clientFor } from "../supervisor/llm.ts";
 import { defaultWebDir, serveWeb } from "./static.ts";
 import { createAuth } from "./auth.ts";
 import { compact, CompactBody, CompactError } from "../compact.ts";
@@ -332,6 +334,30 @@ const putPolicy: Handler = async (req, ctx) => {
   return json(saved);
 };
 
+// Draft a rule set with the model: intent in, proposed NetConfig + rationale out.
+// Nothing is enforced here — the proposal lands in the rule editor for review, and
+// only the user's Save (PUT /net/policy) makes it live. With ?session semantics in
+// the body, the proposal starts from that branch's effective config and sees its
+// recent egress (including any pending hold) as context.
+const suggestPolicyH: Handler = async (req, ctx) => {
+  const body = await req.json().catch(() => null) as
+    | { prompt?: string; sessionId?: string }
+    | null;
+  const intent = body?.prompt?.trim();
+  if (!intent) return error(400, "prompt is required");
+  const sessionId = body?.sessionId ?? undefined;
+  const base = sessionId
+    ? resolveConfig(ctx.db, sessionId, ctx.netDir).config
+    : loadConfig(ctx.netDir);
+  const recent = ctx.db.recentNetEvents(sessionId, 20);
+  const llm = ctx.llm ?? clientFor(activeModel());
+  try {
+    return json(await suggestPolicy({ llm, model: activeModel(), intent, base, recent }));
+  } catch (e) {
+    return error(502, (e as Error).message);
+  }
+};
+
 // Remove a branch's override so it inherits again (no-op if it had none).
 const deletePolicy: Handler = (req, ctx) => {
   const sessionId = new URL(req.url).searchParams.get("session");
@@ -460,6 +486,11 @@ const routes: Route[] = [
   { method: "GET", pattern: new URLPattern({ pathname: "/net/policy" }), handler: getPolicy },
   { method: "PUT", pattern: new URLPattern({ pathname: "/net/policy" }), handler: putPolicy },
   { method: "DELETE", pattern: new URLPattern({ pathname: "/net/policy" }), handler: deletePolicy },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/net/policy/suggest" }),
+    handler: suggestPolicyH,
+  },
   { method: "GET", pattern: new URLPattern({ pathname: "/net/requests" }), handler: netRequests },
   {
     method: "POST",

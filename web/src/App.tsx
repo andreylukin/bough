@@ -426,6 +426,7 @@ function Window({
       onOverridePolicy={onOverridePolicy}
       onClearPolicyOverride={onClearPolicyOverride}
       sessionOpen={currentId !== null}
+      sessionId={currentId}
       diffs={diffs}
       selectedFile={diffFile?.path ?? null}
       onSelectFile={(p) => {
