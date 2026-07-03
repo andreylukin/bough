@@ -434,6 +434,17 @@ export class Db {
       );
   }
 
+  /** Specific net-gate rows by id (order preserved); unknown ids are skipped. */
+  netEventsByIds(ids: string[]): NetRequest[] {
+    if (ids.length === 0) return [];
+    const marks = ids.map(() => "?").join(",");
+    const rows = this.#db
+      .prepare(`SELECT * FROM net_events WHERE id IN (${marks})`)
+      .all(...ids) as NetEventRow[];
+    const byId = new Map(rows.map((r) => [r.id, toNetRequest(r)]));
+    return ids.map((id) => byId.get(id)).filter((r): r is NetRequest => r !== undefined);
+  }
+
   /** Recent net-gate decisions, newest first; filtered by session when given. */
   recentNetEvents(sessionId?: string, limit = 100): NetRequest[] {
     const rows = (sessionId

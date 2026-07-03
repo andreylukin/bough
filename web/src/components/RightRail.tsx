@@ -90,9 +90,25 @@ const VERDICT_TINT: Record<NetRequest["verdict"], string> = {
 };
 
 // One row in the live egress feed.
-function FeedRow({ r }: { r: NetRequest }) {
+function FeedRow(
+  { r, selected, onToggle }: { r: NetRequest; selected?: boolean; onToggle?: () => void },
+) {
   return (
-    <div style={{ display: "flex", gap: 8, padding: "7px 2px", borderBottom: `1px solid ${c.border}`, fontFamily: mono, fontSize: 11 }}>
+    <div
+      onClick={onToggle}
+      title={onToggle ? "Click to select for grouping into rules" : undefined}
+      style={{
+        display: "flex",
+        gap: 8,
+        padding: "7px 2px",
+        borderBottom: `1px solid ${c.border}`,
+        fontFamily: mono,
+        fontSize: 11,
+        cursor: onToggle ? "pointer" : undefined,
+        background: selected ? "rgba(93,196,124,.08)" : undefined,
+        borderLeft: selected ? `2px solid ${c.green}` : "2px solid transparent",
+      }}
+    >
       <span style={{ color: VERDICT_TINT[r.verdict], width: 8, flex: "none" }}>●</span>
       <div style={{ minWidth: 0, flex: 1 }}>
         <div style={{ color: c.text2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -365,6 +381,33 @@ function NetworkPanel(
   const [editing, setEditing] = useState(false);
   // An AI draft awaiting review; seeds the editor until saved or discarded.
   const [draft, setDraft] = useState<{ config: NetConfig; rationale: string; n: number } | null>(null);
+  // Feed rows picked for grouping into rules.
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [grouping, setGrouping] = useState(false);
+  const [groupErr, setGroupErr] = useState<string | null>(null);
+  const toggleSel = (id: string) =>
+    setSel((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  // Fold the selected requests into a drafted rule set; the draft opens in the editor.
+  const group = async () => {
+    if (sel.size === 0 || grouping) return;
+    setGrouping(true);
+    setGroupErr(null);
+    try {
+      const d = await api.suggestPolicy("", sessionId, [...sel]);
+      setDraft((prev) => ({ ...d, n: (prev?.n ?? 0) + 1 }));
+      setEditing(true);
+      setSel(new Set());
+    } catch (e) {
+      setGroupErr((e as Error).message || "grouping failed");
+    } finally {
+      setGrouping(false);
+    }
+  };
   const dotColor = status.running ? c.green : status.enabled ? c.amber : c.muted2;
   const statusLabel = status.running ? "proxy up" : status.enabled ? "starting" : "off";
   return (
@@ -436,9 +479,31 @@ function NetworkPanel(
         <span style={{ fontFamily: mono, fontSize: 10, letterSpacing: ".1em", color: c.muted2, margin: "0 0 4px 2px" }}>
           FEED {net.length > 0 && <Chip>{net.length}</Chip>}
         </span>
+        {sel.size > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 2px 7px" }}>
+            <span style={{ fontFamily: mono, fontSize: 10.5, color: c.green }}>{sel.size} selected</span>
+            <button
+              onClick={group}
+              disabled={grouping}
+              title="Draft rules that cover the selected requests; review the draft in the editor before saving"
+              style={{ fontFamily: mono, fontSize: 10.5, color: grouping ? c.muted2 : c.green, background: "none", border: `1px solid ${c.border2}`, borderRadius: 6, padding: "2px 8px" }}
+            >
+              {grouping ? "grouping…" : "✨ Group into rules"}
+            </button>
+            <button
+              onClick={() => setSel(new Set())}
+              style={{ fontFamily: mono, fontSize: 10.5, color: c.muted2, background: "none", border: "none", padding: 0, textDecoration: "underline" }}
+            >
+              clear
+            </button>
+            {groupErr && <span style={{ fontSize: 10.5, color: c.red }}>{groupErr}</span>}
+          </div>
+        )}
         {net.length === 0
           ? <div style={{ fontSize: 12, color: c.muted2, padding: "8px 2px" }}>No egress yet. Gated requests from sandbox commands appear here.</div>
-          : net.map((r) => <FeedRow key={r.id} r={r} />)}
+          : net.map((r) => (
+            <FeedRow key={r.id} r={r} selected={sel.has(r.id)} onToggle={() => toggleSel(r.id)} />
+          ))}
       </div>
     </div>
   );

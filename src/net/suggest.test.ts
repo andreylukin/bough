@@ -73,3 +73,23 @@ Deno.test("suggestPolicy: two bad answers reject", async () => {
     "no valid suggestion",
   );
 });
+
+Deno.test("suggestPolicy: selected requests get their own must-cover section", async () => {
+  const llm = fakeLlm([good]);
+  await suggestPolicy({
+    llm,
+    model: "m",
+    intent: "group these",
+    base: defaultConfig(),
+    selected: [
+      { id: "a", host: "registry.npmjs.org", action: "GET /react", verdict: "allowed", ts: 1 },
+      { id: "b", host: "api.exa.ai", action: "POST /search", verdict: "allowed", ts: 2 },
+    ],
+    recent: [{ id: "c", host: "evil.example.com", action: "GET /", verdict: "denied", ts: 3 }],
+  });
+  const sent = (llm.calls[0].messages[0].content[0] as { text: string }).text;
+  assertStringIncludes(sent, "SELECTED REQUESTS");
+  assertStringIncludes(sent, "registry.npmjs.org");
+  // ambient recent traffic still rides along, in its own section after selected
+  assertEquals(sent.indexOf("SELECTED REQUESTS") < sent.indexOf("RECENT REQUESTS"), true);
+});

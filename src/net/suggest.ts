@@ -69,9 +69,20 @@ export async function suggestPolicy(opts: {
   base: NetConfig;
   /** The branch's recent egress, newest (incl. any pending hold) first. */
   recent?: NetRequest[];
+  /**
+   * Requests the user hand-picked from the feed to be grouped into rules. When set,
+   * the proposal must cover exactly these (hosts/verbs generalized sensibly), with
+   * `recent` demoted to ambient context.
+   */
+  selected?: NetRequest[];
 }): Promise<Suggestion> {
   const context = [
     `BASE CONFIG:\n${JSON.stringify(opts.base, null, 2)}`,
+    opts.selected?.length
+      ? `SELECTED REQUESTS (group exactly these into rules — generalize hosts/verbs only as far as the pattern they form):\n${
+        requestLines(opts.selected)
+      }`
+      : "",
     opts.recent?.length
       ? `RECENT REQUESTS (newest first; PENDING rows are awaiting approval right now):\n${
         requestLines(opts.recent)

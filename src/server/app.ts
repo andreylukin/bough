@@ -341,10 +341,18 @@ const putPolicy: Handler = async (req, ctx) => {
 // recent egress (including any pending hold) as context.
 const suggestPolicyH: Handler = async (req, ctx) => {
   const body = await req.json().catch(() => null) as
-    | { prompt?: string; sessionId?: string }
+    | { prompt?: string; sessionId?: string; requestIds?: string[] }
     | null;
-  const intent = body?.prompt?.trim();
-  if (!intent) return error(400, "prompt is required");
+  const selected = Array.isArray(body?.requestIds) && body.requestIds.length
+    ? ctx.db.netEventsByIds(body.requestIds.filter((id) => typeof id === "string"))
+    : undefined;
+  // Grouping feed rows into rules needs no prose — a sensible default intent kicks in.
+  const intent = body?.prompt?.trim() ||
+    (selected?.length
+      ? "Group the selected requests into rules that allow this kind of traffic, " +
+        "generalizing no further than the pattern they form. Keep everything else as strict as the base config."
+      : "");
+  if (!intent) return error(400, "prompt or requestIds required");
   const sessionId = body?.sessionId ?? undefined;
   const base = sessionId
     ? resolveConfig(ctx.db, sessionId, ctx.netDir).config
@@ -352,7 +360,9 @@ const suggestPolicyH: Handler = async (req, ctx) => {
   const recent = ctx.db.recentNetEvents(sessionId, 20);
   const llm = ctx.llm ?? clientFor(activeModel());
   try {
-    return json(await suggestPolicy({ llm, model: activeModel(), intent, base, recent }));
+    return json(
+      await suggestPolicy({ llm, model: activeModel(), intent, base, recent, selected }),
+    );
   } catch (e) {
     return error(502, (e as Error).message);
   }

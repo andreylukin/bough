@@ -133,11 +133,17 @@ export const api = {
 
   // AI-drafted rules: intent in, proposed config + rationale out. Nothing is
   // enforced until the user reviews the draft in the editor and saves it.
-  suggestPolicy: (prompt: string, sessionId?: string | null) =>
+  // requestIds = feed rows to group into rules; prompt may be empty then (the
+  // server supplies a sensible default grouping instruction).
+  suggestPolicy: (prompt: string, sessionId?: string | null, requestIds?: string[]) =>
     fetch("/net/policy/suggest", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ prompt, sessionId: sessionId ?? undefined }),
+      body: JSON.stringify({
+        prompt,
+        sessionId: sessionId ?? undefined,
+        requestIds: requestIds?.length ? requestIds : undefined,
+      }),
     }).then(j<{ config: NetConfig; rationale: string }>),
 
   // ---- policy bundles ------------------------------------------------------
