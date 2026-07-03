@@ -97,9 +97,14 @@ export class ClawpatrolGateway {
       resolve: (sessionId) => toPolicy(resolveConfig(this.#db, sessionId).config),
       extensions: this.#extensions,
     });
-    // Reap a session's listener when its turn ends; the next turn re-acquires one.
+    // When a session's turn ends: expire any holds it left parked (an interrupted
+    // turn's command dies but its gate hold would otherwise pend forever), then
+    // reap its listener; the next turn re-acquires one.
     this.#unsubscribe = this.#bus.subscribe((e) => {
-      if (e.type === "turn.finished" && e.sessionId) void this.release(e.sessionId);
+      if (e.type === "turn.finished" && e.sessionId) {
+        this.#gate?.expireHolds(e.sessionId, "expired — turn ended before approval");
+        void this.release(e.sessionId);
+      }
     });
     this.#running = true;
     console.log(`[clawpatrol] native egress gateway up (per-session listeners)`);

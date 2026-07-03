@@ -475,6 +475,18 @@ export class Db {
     return ids.map((id) => byId.get(id)).filter((r): r is NetRequest => r !== undefined);
   }
 
+  /**
+   * Flip every still-`pending` net event to denied (boot sweep): no hold survives a
+   * restart, so a pending row at startup is an orphan that would otherwise show an
+   * unanswerable approval card forever. Returns how many were swept.
+   */
+  expirePendingNetEvents(reason: string): number {
+    const out = this.#db
+      .prepare(`UPDATE net_events SET verdict = 'denied', reason = ? WHERE verdict = 'pending'`)
+      .run(reason);
+    return Number(out.changes);
+  }
+
   /** Recent net-gate decisions, newest first; filtered by session when given. */
   recentNetEvents(sessionId?: string, limit = 100): NetRequest[] {
     const rows = (sessionId

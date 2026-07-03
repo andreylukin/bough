@@ -78,3 +78,20 @@ Deno.test("gateway: disabled flag means no listeners and empty env", async () =>
     if (prev) Deno.env.set("BOUGH_CLAWPATROL", prev);
   }
 });
+
+Deno.test("gateway: turn.finished expires the session's parked holds", async () => {
+  await withGateway(async (g, bus) => {
+    await g.envFor("sH"); // gate is up
+    const parked = g.gate!.gate(
+      { host: "nowhere.example.com", method: "POST", path: "/x" },
+      { sessionId: "sH" },
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    assertEquals(g.gate!.pending, 1);
+
+    bus.publish({ type: "turn.finished", sessionId: "sH", data: { status: "interrupted" } });
+    const decision = await parked;
+    assertEquals(decision.verdict, "deny");
+    assertEquals(g.gate!.pending, 0);
+  });
+});

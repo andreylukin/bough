@@ -95,3 +95,41 @@ Deno.test("gate: per-session resolver applies different policies by branch", asy
   gate.invalidate();
   assertEquals((await gate.gate(ghGet, { sessionId: "free" })).verdict, "allow");
 });
+
+Deno.test("gate: expireHolds denies a session's parked holds; others untouched", async () => {
+  const h = harness(policy({ mode: "review" }));
+  const p1 = h.gate.gate(ghDelete, { sessionId: "s1" });
+  const p2 = h.gate.gate(ghDelete, { sessionId: "s2" });
+  await new Promise((r) => setTimeout(r, 0));
+  assertEquals(h.gate.pending, 2);
+
+  assertEquals(h.gate.expireHolds("s1", "expired — turn ended before approval"), 1);
+  const d1 = await p1;
+  assertEquals(d1.verdict, "deny");
+  assertEquals(d1.reason, "expired — turn ended before approval");
+  assertEquals(h.gate.pending, 1);
+  // the row flipped to denied with the expiry reason (not "denied by human")
+  const row = h.db.recentNetEvents("s1")[0];
+  assertEquals(row.verdict, "denied");
+  assertEquals(row.reason, "expired — turn ended before approval");
+
+  // undefined session = sweep everything (shutdown)
+  assertEquals(h.gate.expireHolds(undefined, "bye"), 1);
+  assertEquals((await p2).verdict, "deny");
+});
+
+Deno.test("db: expirePendingNetEvents sweeps orphaned pending rows", () => {
+  const h = harness();
+  h.db.recordNetEvent("sX", {
+    id: "stale1",
+    host: "api.exa.ai",
+    action: "POST /search",
+    verdict: "pending",
+    ts: 1,
+  });
+  assertEquals(h.db.expirePendingNetEvents("expired — server restarted"), 1);
+  assertEquals(h.db.expirePendingNetEvents("expired — server restarted"), 0);
+  const row = h.db.recentNetEvents("sX")[0];
+  assertEquals(row.verdict, "denied");
+  assertEquals(row.reason, "expired — server restarted");
+});

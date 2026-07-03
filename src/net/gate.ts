@@ -38,8 +38,9 @@ export interface GateOpts {
 }
 
 interface Hold {
-  resolve: (approve: boolean) => void;
+  resolve: (out: { approve: boolean; reason?: string }) => void;
   request: NetRequest;
+  sessionId?: string;
 }
 
 export class Gate {
@@ -127,13 +128,15 @@ export class Gate {
 
     if (decision.verdict !== "hold") return decision;
 
-    // Hold: park the caller until a human resolves this id.
-    return new Promise<boolean>((resolve) => {
-      this.#holds.set(record.id, { resolve, request: record });
-    }).then((approve) => {
+    // Hold: park the caller until a human resolves this id (or the turn dies and
+    // expiry sweeps it — see expireHolds).
+    const held = decision;
+    return new Promise<{ approve: boolean; reason?: string }>((resolve) => {
+      this.#holds.set(record.id, { resolve, request: record, sessionId: opts.sessionId });
+    }).then(({ approve, reason }) => {
       const final: Decision = approve
-        ? { verdict: "allow", reason: "approved by human", action: decision.action }
-        : { verdict: "deny", reason: "denied by human", action: decision.action };
+        ? { verdict: "allow", reason: reason ?? "approved by human", action: held.action }
+        : { verdict: "deny", reason: reason ?? "denied by human", action: held.action };
       this.#emit(
         { ...record, verdict: WIRE[final.verdict], reason: final.reason, ts: Date.now() },
         opts.sessionId,
@@ -147,8 +150,24 @@ export class Gate {
     const hold = this.#holds.get(id);
     if (!hold) return false;
     this.#holds.delete(id);
-    hold.resolve(approve);
+    hold.resolve({ approve });
     return true;
+  }
+
+  /**
+   * Deny-and-clear parked holds whose turn is gone — for one session, or all of
+   * them (sessionId undefined). Without this, an interrupted turn leaves its hold
+   * pending forever and the approval card haunts every session. Returns the count.
+   */
+  expireHolds(sessionId: string | undefined, reason: string): number {
+    let n = 0;
+    for (const [id, hold] of [...this.#holds]) {
+      if (sessionId !== undefined && hold.sessionId !== sessionId) continue;
+      this.#holds.delete(id);
+      hold.resolve({ approve: false, reason });
+      n++;
+    }
+    return n;
   }
 
   #emit(record: NetRequest, sessionId?: string): void {

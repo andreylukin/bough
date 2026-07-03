@@ -15,6 +15,10 @@ const db = openDb();
 // finish its pending message so the UI doesn't show a turn stuck forever.
 const orphaned = recoverOrphanedTurns(db, bus);
 if (orphaned > 0) console.log(`recovered ${orphaned} orphaned turn(s)`);
+// Same idea for the net gate: no hold survives a restart, so a `pending` row at
+// startup is an orphan whose approval card would otherwise haunt every session.
+const swept = db.expirePendingNetEvents("expired — server restarted before approval");
+if (swept > 0) console.log(`swept ${swept} orphaned pending net request(s)`);
 // Claw Patrol is bough's native egress firewall (opt-in via BOUGH_CLAWPATROL=1): it
 // runs an in-process intercepting proxy and routes sandboxed commands through it.
 const gateway = new ClawpatrolGateway({ db, bus });

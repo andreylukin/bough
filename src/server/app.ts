@@ -173,6 +173,9 @@ const postMessage: Handler = async (req, ctx, params) => {
 // resolving their ancestor chains). The event lets every open UI drop it live.
 const archiveSession: Handler = (_req, ctx, params) => {
   if (!ctx.db.getSession(params.id)) return error(404, "session not found");
+  // Deleting a conversation stops its work: interrupt any running turn first, which
+  // also expires its parked net holds and reaps its proxy (gateway's turn.finished).
+  interruptTurn(params.id);
   ctx.db.archiveSession(params.id);
   ctx.bus.publish({
     type: "session.archived",
@@ -390,11 +393,26 @@ const netRequests: Handler = (req, ctx) => {
 };
 
 // Resolve a held request: the gate's awaiting Promise settles and the row/event flip
-// to allowed|denied. 404 if the id isn't currently held (already resolved / unknown).
-const resolveHold = (approve: boolean): Handler => (_req, ctx, params) =>
-  ctx.gate?.resolveHold(params.id, approve)
-    ? json({ ok: true, id: params.id, verdict: approve ? "allowed" : "denied" })
-    : error(404, "no request awaiting approval for that id");
+// to allowed|denied. A `pending` row with no live hold behind it (stale — its turn or
+// server died) is healed in place instead of 404-looping the approval card forever.
+const resolveHold = (approve: boolean): Handler => (_req, ctx, params) => {
+  if (ctx.gate?.resolveHold(params.id, approve)) {
+    return json({ ok: true, id: params.id, verdict: approve ? "allowed" : "denied" });
+  }
+  const row = ctx.db.netEventsByIds([params.id])[0];
+  if (row?.verdict === "pending") {
+    const healed = {
+      ...row,
+      verdict: "denied" as const,
+      reason: "expired — request was no longer waiting",
+      ts: Date.now(),
+    };
+    ctx.db.recordNetEvent(row.sessionId, healed);
+    ctx.bus.publish({ type: "net.request", sessionId: row.sessionId, data: healed });
+    return json({ ok: true, id: params.id, verdict: "denied", stale: true });
+  }
+  return error(404, "no request awaiting approval for that id");
+};
 
 function bundleSummary(m: BundleManifest, dir: string | undefined) {
   return {
