@@ -1,0 +1,258 @@
+#!/usr/bin/env bash
+# bough server manager: start | kill | restart | update | status | logs | run
+# Runs the server as a launchd user service (starts at login, restarts on crash).
+# There is no file watcher: editing code in the repo never restarts the server —
+# changes only land on an explicit `bough restart` or `bough update`. Sources
+# ~/.bough/env for ANTHROPIC_API_KEY / BOUGH_* settings. Installed onto PATH as
+# a symlink by scripts/setup.sh.
+set -euo pipefail
+
+# Resolve the repo root through the ~/.local/bin symlink (bash 3.2 compatible).
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+ROOT="$(cd "$(dirname "$SOURCE")/.." && pwd)"
+
+BOUGH_HOME="$HOME/.bough"
+LOG_FILE="$BOUGH_HOME/server.log"
+ENV_FILE="$BOUGH_HOME/env"
+LABEL="com.bough.server"
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+DOMAIN="gui/$(id -u)"
+
+mkdir -p "$BOUGH_HOME"
+if [ -f "$ENV_FILE" ]; then
+  set -a
+  # shellcheck source=/dev/null
+  . "$ENV_FILE"
+  set +a
+fi
+PORT="${BOUGH_PORT:-4321}"
+
+# Always exits 0: with pipefail, lsof's exit 1 on "no listener" would otherwise
+# propagate through bare assignments and trip errexit.
+server_pid() {
+  lsof -ti "tcp:$PORT" -sTCP:LISTEN 2>/dev/null | head -n1
+  return 0
+}
+
+service_loaded() {
+  launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1
+}
+
+# Up = any HTTP answer on the port (200 without auth, 401 with).
+is_up() {
+  curl -sf -o /dev/null -m 2 "http://127.0.0.1:$PORT/sessions" ||
+    [ "$(curl -s -o /dev/null -m 2 -w '%{http_code}' "http://127.0.0.1:$PORT/sessions")" = 401 ]
+}
+
+write_plist() {
+  mkdir -p "$HOME/Library/LaunchAgents"
+  # KeepAlive on SuccessfulExit=false: relaunch after a crash, stay down after a
+  # clean exit (so a missing API key doesn't loop). No WatchPaths — on purpose.
+  cat > "$PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>$ROOT/scripts/bough</string>
+    <string>run</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>StandardOutPath</key><string>$LOG_FILE</string>
+  <key>StandardErrorPath</key><string>$LOG_FILE</string>
+</dict>
+</plist>
+EOF
+}
+
+wait_up() {
+  local i
+  for i in $(seq 1 30); do
+    if is_up; then
+      echo "up (pid $(server_pid)) — http://127.0.0.1:$PORT"
+      [ -n "${BOUGH_PASSWORD:-}" ] && echo "auth: password required (LAN bind)"
+      return 0
+    fi
+    sleep 0.5
+  done
+  echo "error: server did not answer on port $PORT within 15s — last log lines:" >&2
+  tail -n 20 "$LOG_FILE" >&2 2>/dev/null
+  return 1
+}
+
+# What launchd executes (also handy for a manual foreground run). launchd starts
+# with a bare environment, so put Homebrew on PATH for deno/git/jj/llama-server.
+cmd_run() {
+  export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+  if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+    # Exit 0 so launchd doesn't relaunch-loop while the machine is unconfigured.
+    echo "ANTHROPIC_API_KEY is not set — put it in $ENV_FILE; not starting"
+    exit 0
+  fi
+  if [ ! -f "$ROOT/web/dist/index.html" ]; then
+    echo "web/dist is missing — run scripts/setup.sh (or: cd web && npm run build); not starting"
+    exit 0
+  fi
+  cd "$ROOT"
+  exec deno run --allow-net --allow-env --allow-read --allow-write \
+    --allow-ffi --allow-sys --allow-run src/server/main.ts
+}
+
+cmd_start() {
+  if is_up; then
+    local note=""
+    service_loaded || note=" (not the launchd service — a dev/foreground run?)"
+    echo "already running (pid $(server_pid)) on http://127.0.0.1:$PORT$note"
+    return 0
+  fi
+  if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+    echo "error: ANTHROPIC_API_KEY is not set — put it in $ENV_FILE" >&2
+    exit 1
+  fi
+  if [ ! -f "$ROOT/web/dist/index.html" ]; then
+    echo "error: web/dist is missing — run scripts/setup.sh (or: cd web && npm run build)" >&2
+    exit 1
+  fi
+
+  write_plist
+  echo "starting bough service on port $PORT (logs: $LOG_FILE)"
+  launchctl enable "$DOMAIN/$LABEL" 2>/dev/null || true
+  if service_loaded; then
+    launchctl kickstart "$DOMAIN/$LABEL"
+  else
+    launchctl bootstrap "$DOMAIN" "$PLIST"
+  fi
+  wait_up
+}
+
+cmd_kill() {
+  if service_loaded; then
+    echo "stopping service"
+    # disable makes the stop stick across logins (start re-enables). bootout can
+    # report non-zero while the teardown is still in flight — the wait loop below
+    # is the real confirmation.
+    launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
+    launchctl disable "$DOMAIN/$LABEL" 2>/dev/null || true
+    local i
+    for i in $(seq 1 20); do
+      [ -z "$(server_pid)" ] && break
+      sleep 0.5
+    done
+  fi
+  # Anything still holding the port was started outside launchd (e.g. deno task dev).
+  local pid
+  pid="$(server_pid)"
+  if [ -n "$pid" ]; then
+    echo "killing non-service listener (pid $pid)"
+    kill "$pid" 2>/dev/null || true
+    local i
+    for i in $(seq 1 20); do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.5
+    done
+    kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
+  fi
+  echo "stopped"
+}
+
+cmd_restart() {
+  if service_loaded; then
+    echo "restarting service"
+    launchctl kickstart -k "$DOMAIN/$LABEL"
+    wait_up
+  else
+    cmd_start
+  fi
+}
+
+cmd_update() {
+  # Untracked files are fine (live runs drop scratch in the repo root); only
+  # modified/staged files block the fast-forward.
+  if git -C "$ROOT" status --porcelain | grep -qv '^??'; then
+    echo "error: working tree has uncommitted changes — commit or stash before updating" >&2
+    exit 1
+  fi
+
+  local was_running=""
+  is_up && was_running=1
+
+  echo "==> fetching origin/main"
+  git -C "$ROOT" fetch origin main
+  # Detached HEAD (e.g. jj-colocated checkout) can't fast-forward — move to main first.
+  if ! git -C "$ROOT" symbolic-ref -q HEAD >/dev/null; then
+    git -C "$ROOT" checkout -q main 2>/dev/null || git -C "$ROOT" checkout -qb main origin/main
+  fi
+  git -C "$ROOT" merge --ff-only origin/main
+  echo "==> now at $(git -C "$ROOT" log -1 --format='%h %s')"
+
+  echo "==> rebuilding web UI"
+  (cd "$ROOT/web" && npm install && npm run build)
+  echo "==> refreshing Deno dependencies"
+  (cd "$ROOT" && deno install)
+
+  # shellcheck source=/dev/null
+  . "$ROOT/scripts/worker-model.sh"
+  ensure_worker_model || echo "warning: worker model download failed — re-run update to resume" >&2
+  prune_stale_worker_models
+
+  if [ -n "$was_running" ]; then
+    echo "==> restarting server"
+    cmd_restart
+  else
+    echo "updated — start with: bough start"
+  fi
+}
+
+cmd_status() {
+  local svc="not installed"
+  if service_loaded; then
+    svc="loaded"
+  elif [ -f "$PLIST" ]; then
+    svc="installed, not loaded"
+  fi
+  local pid
+  pid="$(server_pid)"
+  if [ -z "$pid" ]; then
+    echo "not running (service: $svc)"
+    return 1
+  fi
+  if is_up; then
+    echo "running (pid $pid) — http://127.0.0.1:$PORT (service: $svc)"
+  else
+    echo "process alive (pid $pid) but not answering on port $PORT — check $LOG_FILE"
+    return 1
+  fi
+}
+
+cmd_logs() {
+  [ -f "$LOG_FILE" ] || { echo "no log file yet at $LOG_FILE" >&2; exit 1; }
+  tail -n 50 -f "$LOG_FILE"
+}
+
+case "${1:-}" in
+  start) cmd_start ;;
+  kill | stop) cmd_kill ;;
+  restart) cmd_restart ;;
+  update) cmd_update ;;
+  status) cmd_status ;;
+  logs) cmd_logs ;;
+  run) cmd_run ;;
+  *)
+    echo "usage: bough {start|kill|restart|update|status|logs|run}" >&2
+    echo "  start    install + start the launchd service (auto-starts at login)" >&2
+    echo "  kill     stop the service and keep it stopped (across logins)" >&2
+    echo "  restart  pick up code changes explicitly" >&2
+    echo "  update   fast-forward to origin/main, rebuild, restart" >&2
+    echo "  run      run the server in the foreground (what launchd executes)" >&2
+    exit 1
+    ;;
+esac
