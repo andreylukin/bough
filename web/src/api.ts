@@ -18,8 +18,15 @@ export interface Usage {
 export interface NetStatus {
   enabled: boolean;
   running: boolean;
-  proxyUrl: string;
+  /** Live per-session proxy listeners (each branch gets its own port). */
+  listeners: number;
   caPath: string;
+}
+
+/** Where a branch's effective rule set came from (mirrors src/net/config.ts). */
+export interface PolicySource {
+  scope: "session" | "inherited" | "global";
+  sessionId?: string;
 }
 
 // The editable rule set (mirrors src/net/config.ts NetConfig).
@@ -108,6 +115,21 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(cfg),
     }).then(j<NetConfig>),
+
+  // Branch-scoped rules: GET resolves the session's effective config + its source
+  // (own override / inherited from an ancestor / global); PUT writes the branch's
+  // override row; DELETE removes it so the branch inherits again.
+  getSessionPolicy: (sessionId: string) =>
+    fetch(`/net/policy?session=${encodeURIComponent(sessionId)}`)
+      .then(j<{ config: NetConfig; source: PolicySource }>),
+  putSessionPolicy: (sessionId: string, cfg: NetConfig) =>
+    fetch(`/net/policy?session=${encodeURIComponent(sessionId)}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(cfg),
+    }).then(j<{ config: NetConfig; source: PolicySource }>),
+  deleteSessionPolicy: (sessionId: string) =>
+    fetch(`/net/policy?session=${encodeURIComponent(sessionId)}`, { method: "DELETE" }),
 
   // ---- policy bundles ------------------------------------------------------
   listBundles: () => fetch("/net/bundles").then(j<BundleSummary[]>),

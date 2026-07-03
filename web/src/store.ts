@@ -1,7 +1,7 @@
 // App state + event reduction. Holds the session list, the open thread, per-message
 // streaming buffers, and the network feed. Everything the UI renders derives from here.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type NetConfig, type NetStatus, readBranch, type Usage } from "./api";
+import { api, type NetConfig, type NetStatus, type PolicySource, readBranch, type Usage } from "./api";
 import { useEvents } from "./useEvents";
 import type { BoughEvent, ChangeSource, Message, NetRequest, Part, Session, WireDiff } from "./types";
 
@@ -20,8 +20,10 @@ export interface Store {
   // The live egress feed (newest first) and the current hold awaiting approval, if any.
   net: NetRequest[];
   pending: NetRequest | null;
-  // The editable rule set; null until loaded.
+  // The editable rule set (the open branch's effective one); null until loaded.
   policy: NetConfig | null;
+  // Where that rule set came from: this branch / inherited ancestor / global.
+  policySource: PolicySource | null;
   // Review payloads for the open session (0..2: jj repo + clonefile config).
   changes: WireDiff[];
   // A transient message to surface (e.g. a fork/compact 400); null when clear.
@@ -40,6 +42,8 @@ export interface Store {
   archive: (id: string) => void;
   resolvePending: (approve: boolean) => void;
   savePolicy: (cfg: NetConfig) => Promise<void>;
+  overridePolicy: () => Promise<void>;
+  clearPolicyOverride: () => Promise<void>;
   reload: () => Promise<void>;
   refreshNetStatus: () => Promise<void>;
   applyChanges: (source: ChangeSource, paths: string[]) => void;
@@ -60,12 +64,13 @@ export function useStore(): Store {
   const [netStatus, setNetStatus] = useState<NetStatus>({
     enabled: false,
     running: false,
-    proxyUrl: "",
+    listeners: 0,
     caPath: "",
   });
   const [net, setNet] = useState<NetRequest[]>([]);
   const [pending, setPending] = useState<NetRequest | null>(null);
   const [policy, setPolicy] = useState<NetConfig | null>(null);
+  const [policySource, setPolicySource] = useState<PolicySource | null>(null);
   const [changes, setChanges] = useState<WireDiff[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [usage, setUsage] = useState<Usage>({ contextTokens: 0, outputTokens: 0 });
@@ -74,6 +79,10 @@ export function useStore(): Store {
   // currentId in a ref so the event handler (stable) can filter without re-subscribing.
   const currentRef = useRef<string | null>(null);
   currentRef.current = currentId;
+  const policyRef = useRef<NetConfig | null>(null);
+  policyRef.current = policy;
+  const policySourceRef = useRef<PolicySource | null>(null);
+  policySourceRef.current = policySource;
 
   // busy in a ref so `send` (a stable callback) can decide to stage vs. post without
   // re-subscribing. Set from the derived `busy` during render, below.
@@ -98,19 +107,34 @@ export function useStore(): Store {
   }, []);
 
   // Rebuild the net rail from the server, then live-update from `net.request` events.
-  // Global (no session filter) so the feed shows every gated request; the newest
-  // pending row, if any, surfaces as the hold-and-ask card.
-  const refreshNet = useCallback(async () => {
-    const rows = await api.netRequests();
-    setNet(rows);
-    setPending(rows.find((r) => r.verdict === "pending") ?? null);
+  // The FEED is the open branch's egress only (a fresh session starts blank); with no
+  // session open it falls back to the global feed. The hold-and-ask card stays GLOBAL:
+  // a pending hold wedges its branch's turn wherever it is, and this UI is the only
+  // place to release it.
+  const refreshNet = useCallback(async (sessionId?: string) => {
+    const id = sessionId ?? currentRef.current;
+    const all = await api.netRequests();
+    setNet(id ? await api.netRequests(id) : all);
+    setPending(all.find((r) => r.verdict === "pending") ?? null);
   }, []);
 
-  const refreshPolicy = useCallback(async () => {
+  // The rule set shown is the OPEN SESSION's effective one (own override, else the
+  // nearest ancestor's, else global) so the rail reflects what its egress actually
+  // gets. With no session open it falls back to the global rule set.
+  const refreshPolicy = useCallback(async (sessionId?: string) => {
+    const id = sessionId ?? currentRef.current;
     try {
-      setPolicy(await api.getPolicy());
+      if (id) {
+        const { config, source } = await api.getSessionPolicy(id);
+        setPolicy(config);
+        setPolicySource(source);
+      } else {
+        setPolicy(await api.getPolicy());
+        setPolicySource({ scope: "global" });
+      }
     } catch {
       setPolicy(null);
+      setPolicySource(null);
     }
   }, []);
 
@@ -128,11 +152,47 @@ export function useStore(): Store {
   }, [refreshNet]);
 
   // Persist a new rule set; PUT hot-swaps the live gate. Optimistic, then reconcile.
+  // Saves to the scope in effect: a branch that owns an override keeps editing its
+  // override; a branch on inherited/global rules edits the global set (creating an
+  // override is the explicit overridePolicy action below).
   const savePolicy = useCallback(async (cfg: NetConfig) => {
+    const id = currentRef.current;
+    const toBranch = id && policySourceRef.current?.scope === "session";
     setPolicy(cfg);
     try {
-      setPolicy(await api.putPolicy(cfg));
+      if (toBranch) {
+        const { config, source } = await api.putSessionPolicy(id, cfg);
+        setPolicy(config);
+        setPolicySource(source);
+      } else {
+        setPolicy(await api.putPolicy(cfg));
+      }
     } catch {
+      refreshPolicy();
+    }
+  }, [refreshPolicy]);
+
+  // Pin the open branch to its current effective rules (copy-on-write override).
+  const overridePolicy = useCallback(async () => {
+    const id = currentRef.current;
+    const cfg = policyRef.current;
+    if (!id || !cfg) return;
+    try {
+      const { config, source } = await api.putSessionPolicy(id, cfg);
+      setPolicy(config);
+      setPolicySource(source);
+    } catch {
+      refreshPolicy();
+    }
+  }, [refreshPolicy]);
+
+  // Drop the open branch's override so it inherits again.
+  const clearPolicyOverride = useCallback(async () => {
+    const id = currentRef.current;
+    if (!id) return;
+    try {
+      await api.deleteSessionPolicy(id);
+    } finally {
       refreshPolicy();
     }
   }, [refreshPolicy]);
@@ -162,7 +222,9 @@ export function useStore(): Store {
     setThread(thread);
     setUsage(usage);
     refreshChanges(id);
-  }, [refreshChanges]);
+    refreshPolicy(id); // the rail shows this branch's effective rules
+    refreshNet(id); // …and this branch's egress feed, not other sessions' history
+  }, [refreshChanges, refreshPolicy, refreshNet]);
 
   const applyChanges = useCallback((source: ChangeSource, paths: string[]) => {
     const id = currentRef.current;
@@ -318,8 +380,12 @@ export function useStore(): Store {
       case "net.request": {
         const r = ev.data as NetRequest;
         // Upsert by id: a held request is emitted twice (pending, then resolved), so the
-        // row must update in place rather than duplicate.
-        setNet((prev) => [r, ...prev.filter((x) => x.id !== r.id)].slice(0, 100));
+        // row must update in place rather than duplicate. Only the open branch's rows
+        // land in the feed; the pending card below stays global (see refreshNet).
+        const openId = currentRef.current;
+        if (!openId || r.sessionId === openId) {
+          setNet((prev) => [r, ...prev.filter((x) => x.id !== r.id)].slice(0, 100));
+        }
         setPending((cur) => {
           if (r.verdict === "pending") return r;
           if (cur && cur.id === r.id) return null; // this hold just resolved
@@ -402,6 +468,7 @@ export function useStore(): Store {
     net,
     pending,
     policy,
+    policySource,
     changes,
     notice,
     usage,
@@ -415,6 +482,8 @@ export function useStore(): Store {
     archive,
     resolvePending,
     savePolicy,
+    overridePolicy,
+    clearPolicyOverride,
     reload,
     refreshNetStatus,
     applyChanges,

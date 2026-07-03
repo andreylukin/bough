@@ -31,8 +31,9 @@ export const bash: ToolDef = {
     }
     // Route egress through Claw Patrol when the proxy is running (opt-in). Seatbelt
     // still confines the filesystem; the proxy env points the command's HTTP(S) client
-    // at the intercepting proxy and trusts its MITM CA. Empty when the proxy is off.
-    const netEnv = clawpatrolEnv();
+    // at THIS SESSION's intercepting proxy (per-branch policy + attribution) and
+    // trusts its MITM CA. Empty when the proxy is off.
+    const netEnv = await clawpatrolEnv(ctx.sessionId);
     const cmd = new Deno.Command(argv[0], {
       args: argv.slice(1),
       cwd: ctx.workspace,

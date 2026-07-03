@@ -1,18 +1,27 @@
 /**
  * The egress firewall bough runs in-process — native Claw Patrol. It owns a MITM
- * certificate authority (ca.ts), the policy gate (gate.ts), and the intercepting proxy
- * (proxy.ts), and it hands the sandbox exec path the env that routes commands through
- * the proxy and trusts its CA. No Go binary, no WireGuard, no external dashboard: the
- * audit feed + human approvals live on bough's own /net/requests + Network rail.
+ * certificate authority (ca.ts), the policy gate (gate.ts), and one intercepting proxy
+ * (proxy.ts) PER SESSION, and it hands the sandbox exec path the env that routes
+ * commands through their session's proxy and trusts the shared CA. No Go binary, no
+ * WireGuard, no external dashboard: the audit feed + human approvals live on bough's
+ * own /net/requests + Network rail.
+ *
+ * Per-session listeners are how egress gets attributed and policied by branch: the
+ * proxy can only tell sessions apart by something on the wire, and the listening port
+ * is that signal. Listeners are spun up lazily on a session's first sandboxed exec and
+ * reaped on its turn.finished (commands only run inside turns; a held request keeps
+ * its turn alive because the tool call is blocked on the gate). A process backgrounded
+ * from a turn (`foo &`) loses its proxy when the turn ends — the next turn gets a
+ * fresh one.
  *
  * Opt-in for now (BOUGH_CLAWPATROL=1). The default flips to on once the approval UI can
  * clear held requests (until then a fail-closed default could wedge a turn with no way
- * to unblock it). With the flag off, the proxy never starts and exec runs unrouted.
+ * to unblock it). With the flag off, no proxy ever starts and exec runs unrouted.
  */
 import { caEnv, CertAuthority } from "./ca.ts";
 import { ProxyServer } from "./proxy.ts";
 import { createGate, type Gate } from "./gate.ts";
-import { loadConfig, toPolicy } from "./config.ts";
+import { loadConfig, resolveConfig, toPolicy } from "./config.ts";
 import type { Db } from "../db/db.ts";
 import type { Bus } from "../bus.ts";
 
@@ -24,18 +33,23 @@ export function clawpatrolEnabled(): boolean {
 export interface GatewayStatus {
   enabled: boolean;
   running: boolean;
-  proxyUrl: string;
+  /** Live per-session listeners (informational; each session gets its own port). */
+  listeners: number;
   caPath: string;
 }
 
-/** Owns the CA + gate + proxy for the server's lifetime. */
+/** Owns the CA + gate + per-session proxies for the server's lifetime. */
 export class ClawpatrolGateway {
   #db: Db;
   #bus: Bus;
   #ca?: CertAuthority;
   #gate?: Gate;
-  #proxy?: ProxyServer;
+  // Live listeners keyed by sessionId ("" = a caller with no session, e.g. tests).
+  #proxies = new Map<string, ProxyServer>();
+  // In-flight starts, so concurrent tool calls in one turn share one listener.
+  #starting = new Map<string, Promise<ProxyServer>>();
   #running = false;
+  #unsubscribe?: () => void;
 
   constructor(cfg: { db: Db; bus: Bus }) {
     this.#db = cfg.db;
@@ -51,41 +65,81 @@ export class ClawpatrolGateway {
     return {
       enabled: clawpatrolEnabled(),
       running: this.#running,
-      proxyUrl: this.#proxy?.url ?? "",
+      listeners: this.#proxies.size,
       caPath: this.#ca?.caCertPath ?? "",
     };
   }
 
-  /** Boot the CA, gate, and proxy when enabled. No-op (exec runs unrouted) when off. */
-  async start(): Promise<void> {
+  /** Boot the CA and gate when enabled; listeners start lazily per session. */
+  start(): void {
     if (!clawpatrolEnabled()) return;
     this.#ca = CertAuthority.load();
-    this.#gate = createGate({ db: this.#db, bus: this.#bus, policy: toPolicy(loadConfig()) });
-    const gate = this.#gate;
-    this.#proxy = new ProxyServer({
-      ca: this.#ca,
-      gate: (req, opts) => gate.gate(req, opts),
+    this.#gate = createGate({
+      db: this.#db,
+      bus: this.#bus,
+      policy: toPolicy(loadConfig()),
+      // Branch policy: a session's own net_policies row, else the nearest
+      // ancestor's, else the global rule set (config.ts resolveConfig).
+      resolve: (sessionId) => toPolicy(resolveConfig(this.#db, sessionId).config),
     });
-    await this.#proxy.start();
+    // Reap a session's listener when its turn ends; the next turn re-acquires one.
+    this.#unsubscribe = this.#bus.subscribe((e) => {
+      if (e.type === "turn.finished" && e.sessionId) void this.release(e.sessionId);
+    });
     this.#running = true;
-    console.log(`[clawpatrol] native egress proxy on ${this.#proxy.url}`);
+    console.log(`[clawpatrol] native egress gateway up (per-session listeners)`);
     console.log(`[clawpatrol] sandbox clients trust the MITM CA at ${this.#ca.caCertPath}`);
   }
 
   async stop(): Promise<void> {
     this.#running = false;
-    await this.#proxy?.stop();
-    this.#proxy = undefined;
+    this.#unsubscribe?.();
+    this.#unsubscribe = undefined;
+    const live = [...this.#proxies.values()];
+    this.#proxies.clear();
+    await Promise.all(live.map((p) => p.stop()));
+  }
+
+  /** The session's live proxy, starting one if needed. */
+  #acquire(key: string): Promise<ProxyServer> {
+    const live = this.#proxies.get(key);
+    if (live) return Promise.resolve(live);
+    let starting = this.#starting.get(key);
+    if (!starting) {
+      const gate = this.#gate!;
+      const proxy = new ProxyServer({
+        ca: this.#ca!,
+        gate: (req, opts) => gate.gate(req, opts),
+        sessionId: key || undefined,
+      });
+      starting = proxy.start().then(() => {
+        this.#starting.delete(key);
+        this.#proxies.set(key, proxy);
+        return proxy;
+      });
+      this.#starting.set(key, starting);
+    }
+    return starting;
+  }
+
+  /** Stop and forget a session's listener (turn ended / session archived). */
+  async release(sessionId: string): Promise<void> {
+    await this.#starting.get(sessionId)?.catch(() => {});
+    const proxy = this.#proxies.get(sessionId);
+    if (!proxy) return;
+    this.#proxies.delete(sessionId);
+    await proxy.stop();
   }
 
   /**
-   * Env for a sandboxed command: point its HTTP(S) client at the proxy and trust the
-   * MITM CA. NO_PROXY keeps loopback (bough's own server, and the proxy itself) direct
-   * so requests don't loop. Empty when the proxy isn't running (exec runs unrouted).
+   * Env for a sandboxed command: point its HTTP(S) client at ITS SESSION's proxy and
+   * trust the MITM CA. NO_PROXY keeps loopback (bough's own server, and the proxy
+   * itself) direct so requests don't loop. Empty when the gateway isn't running.
    */
-  env(): Record<string, string> {
-    if (!this.#running || !this.#proxy || !this.#ca) return {};
-    const url = this.#proxy.url;
+  async envFor(sessionId?: string): Promise<Record<string, string>> {
+    if (!this.#running || !this.#ca || !this.#gate) return {};
+    const proxy = await this.#acquire(sessionId ?? "");
+    const url = proxy.url;
     return {
       HTTP_PROXY: url,
       HTTPS_PROXY: url,
@@ -109,6 +163,6 @@ export function activeGateway(): ClawpatrolGateway | undefined {
 }
 
 /** The sandbox-exec env from the active gateway; empty when the proxy isn't running. */
-export function clawpatrolEnv(): Record<string, string> {
-  return active?.env() ?? {};
+export function clawpatrolEnv(sessionId?: string): Promise<Record<string, string>> {
+  return active?.envFor(sessionId) ?? Promise.resolve({});
 }

@@ -4,7 +4,7 @@
 import { useState } from "react";
 import { c, mono } from "../theme";
 import type { DiffFile } from "../mock";
-import type { NetConfig, NetStatus } from "../api";
+import type { NetConfig, NetStatus, PolicySource } from "../api";
 import type { NetRequest } from "../types";
 import { Chip, Dot } from "./ui";
 
@@ -248,16 +248,53 @@ function RuleEditor({ policy, onSave }: { policy: NetConfig; onSave: (cfg: NetCo
   );
 }
 
+// Where the shown rules come from, plus the copy-on-write override controls. Only
+// rendered when a session is open (global-only view has nothing to scope).
+function ScopeBar(
+  { source, onOverride, onClear }: {
+    source: PolicySource;
+    onOverride: () => void;
+    onClear: () => void;
+  },
+) {
+  const owned = source.scope === "session";
+  const label = owned
+    ? "rules: this branch"
+    : source.scope === "inherited"
+    ? `rules: inherited from ${source.sessionId?.slice(0, 8)}`
+    : "rules: global";
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <span style={{ fontFamily: mono, fontSize: 10.5, color: owned ? c.green : c.muted2 }}>
+        {label}
+      </span>
+      <button
+        onClick={owned ? onClear : onOverride}
+        title={owned
+          ? "Drop this branch's override; it inherits its ancestor's / the global rules again"
+          : "Pin this branch to its own copy of these rules; edits then apply to this branch only"}
+        style={{ marginLeft: "auto", fontFamily: mono, fontSize: 10.5, color: c.muted, background: "none", border: `1px solid ${c.border2}`, borderRadius: 6, padding: "2px 8px" }}
+      >
+        {owned ? "remove override" : "override for this branch"}
+      </button>
+    </div>
+  );
+}
+
 // bough runs the egress firewall in-process: this panel shows its status, the live
 // feed, the hold-and-ask cards, and the editable rule set.
 function NetworkPanel(
-  { status, net, pending, onResolve, policy, onSavePolicy, wide }: {
+  { status, net, pending, onResolve, policy, policySource, onSavePolicy, onOverridePolicy, onClearPolicyOverride, sessionOpen, wide }: {
     status: NetStatus;
     net: NetRequest[];
     pending: NetRequest | null;
     onResolve: (approve: boolean) => void;
     policy: NetConfig | null;
+    policySource: PolicySource | null;
     onSavePolicy: (cfg: NetConfig) => void;
+    onOverridePolicy: () => void;
+    onClearPolicyOverride: () => void;
+    sessionOpen: boolean;
     wide: boolean;
   },
 ) {
@@ -288,7 +325,23 @@ function NetworkPanel(
       {pending && <HoldCard req={pending} onResolve={onResolve} />}
 
       {editing && (policy
-        ? <RuleEditor policy={policy} onSave={(cfg) => onSavePolicy(cfg)} />
+        ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {sessionOpen && policySource && (
+              <ScopeBar
+                source={policySource}
+                onOverride={onOverridePolicy}
+                onClear={onClearPolicyOverride}
+              />
+            )}
+            <RuleEditor
+              // Re-seed the editor's local state when the scope flips (override/clear).
+              key={`${policySource?.scope ?? "global"}:${policySource?.sessionId ?? ""}`}
+              policy={policy}
+              onSave={(cfg) => onSavePolicy(cfg)}
+            />
+          </div>
+        )
         : <p style={{ fontSize: 12, color: c.muted2, margin: 0 }}>Loading rules…</p>)}
 
       <div style={{ display: "flex", flexDirection: "column" }}>
@@ -433,7 +486,11 @@ export function RightRail({
   pending,
   onResolve,
   policy,
+  policySource,
   onSavePolicy,
+  onOverridePolicy,
+  onClearPolicyOverride,
+  sessionOpen = false,
   diffs,
   selectedFile,
   onSelectFile,
@@ -449,7 +506,12 @@ export function RightRail({
   pending: NetRequest | null;
   onResolve: (approve: boolean) => void;
   policy: NetConfig | null;
+  policySource?: PolicySource | null;
   onSavePolicy: (cfg: NetConfig) => void;
+  onOverridePolicy?: () => void;
+  onClearPolicyOverride?: () => void;
+  /** True when a session is open — enables the branch-scope controls. */
+  sessionOpen?: boolean;
   diffs: DiffFile[];
   selectedFile: string | null;
   onSelectFile: (path: string) => void;
@@ -486,7 +548,11 @@ export function RightRail({
           pending={pending}
           onResolve={onResolve}
           policy={policy}
+          policySource={policySource ?? null}
           onSavePolicy={onSavePolicy}
+          onOverridePolicy={onOverridePolicy ?? (() => {})}
+          onClearPolicyOverride={onClearPolicyOverride ?? (() => {})}
+          sessionOpen={sessionOpen}
           wide={wide}
         />
       ) : (

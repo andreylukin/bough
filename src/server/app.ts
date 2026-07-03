@@ -26,7 +26,7 @@ import { type BundleManifest, getBundle, listBundles } from "../net/bundles.ts";
 import type { Gate } from "../net/gate.ts";
 import type { ClawpatrolGateway } from "../net/gateway.ts";
 import { installBundle, InstallError, isInstalled } from "../net/install.ts";
-import { loadConfig, NetConfig, saveConfig, toPolicy } from "../net/config.ts";
+import { loadConfig, NetConfig, resolveConfig, saveConfig, toPolicy } from "../net/config.ts";
 import { defaultWebDir, serveWeb } from "./static.ts";
 import { createAuth } from "./auth.ts";
 import { compact, CompactBody, CompactError } from "../compact.ts";
@@ -301,19 +301,44 @@ const events: Handler = (req, ctx) => {
 // Native egress-proxy status for the Network rail. The feed + approvals live here in
 // bough (see /net/requests, /net/policy) — there is no external dashboard.
 const netStatus: Handler = (_req, ctx) =>
-  json(ctx.gateway?.status() ?? { enabled: false, running: false, proxyUrl: "", caPath: "" });
+  json(ctx.gateway?.status() ?? { enabled: false, running: false, listeners: 0, caPath: "" });
 
 // The editable rule set (allow/deny/hold config) the gate compiles + enforces.
-const getPolicy: Handler = (_req, ctx) => json(loadConfig(ctx.netDir));
+// ?session=<id> scopes to that branch: GET returns its effective config plus where it
+// came from (own override / inherited from an ancestor / global); PUT writes the
+// branch's override row; DELETE removes it (reverting to inheritance). Without the
+// param, GET/PUT read and write the global rule set as before.
+const getPolicy: Handler = (req, ctx) => {
+  const sessionId = new URL(req.url).searchParams.get("session") ?? undefined;
+  if (!sessionId) return json(loadConfig(ctx.netDir));
+  const { config, source } = resolveConfig(ctx.db, sessionId, ctx.netDir);
+  return json({ config, source });
+};
 
 // Persist a new rule set and hot-swap the live gate so it takes effect on the next
 // request — no restart. Rejects a malformed body with the Zod message.
 const putPolicy: Handler = async (req, ctx) => {
+  const sessionId = new URL(req.url).searchParams.get("session") ?? undefined;
   const parsed = NetConfig.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return error(400, "invalid policy: " + parsed.error.message);
+  if (sessionId) {
+    if (!ctx.db.getSession(sessionId)) return error(404, "unknown session");
+    ctx.db.setNetPolicy(sessionId, JSON.stringify(parsed.data));
+    ctx.gate?.invalidate();
+    return json({ config: parsed.data, source: { scope: "session", sessionId } });
+  }
   const saved = saveConfig(parsed.data, ctx.netDir);
   ctx.gate?.setPolicy(toPolicy(saved));
   return json(saved);
+};
+
+// Remove a branch's override so it inherits again (no-op if it had none).
+const deletePolicy: Handler = (req, ctx) => {
+  const sessionId = new URL(req.url).searchParams.get("session");
+  if (!sessionId) return error(400, "?session= is required (the global rule set can't be deleted)");
+  ctx.db.deleteNetPolicy(sessionId);
+  ctx.gate?.invalidate();
+  return json({ ok: true });
 };
 
 // Recent NetRequest rows for the Network rail (optionally per-session).
@@ -434,6 +459,7 @@ const routes: Route[] = [
   { method: "GET", pattern: new URLPattern({ pathname: "/net/status" }), handler: netStatus },
   { method: "GET", pattern: new URLPattern({ pathname: "/net/policy" }), handler: getPolicy },
   { method: "PUT", pattern: new URLPattern({ pathname: "/net/policy" }), handler: putPolicy },
+  { method: "DELETE", pattern: new URLPattern({ pathname: "/net/policy" }), handler: deletePolicy },
   { method: "GET", pattern: new URLPattern({ pathname: "/net/requests" }), handler: netRequests },
   {
     method: "POST",

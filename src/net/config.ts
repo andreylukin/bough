@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { type Policy, policy } from "./policy.ts";
 import { netDir } from "./install.ts";
+import type { Db } from "../db/db.ts";
 
 const Verdict = z.enum(["allow", "deny", "hold"]);
 
@@ -88,6 +89,40 @@ export function saveConfig(cfg: NetConfig, dir = netDir()): NetConfig {
   const parsed = NetConfig.parse(cfg);
   writeFileSync(configPath(dir), JSON.stringify(parsed, null, 2));
   return parsed;
+}
+
+/** Where a session's effective config came from (the rule editor shows this). */
+export interface PolicySource {
+  scope: "session" | "inherited" | "global";
+  /** For "session"/"inherited": the session whose net_policies row supplied the config. */
+  sessionId?: string;
+}
+
+/**
+ * The effective config for a session: its own net_policies row, else the nearest
+ * ancestor's (sessions form a tree — forks and subagents inherit their branch's
+ * rules), else the global policy.json. A corrupt row is skipped, not fatal.
+ */
+export function resolveConfig(
+  db: Db,
+  sessionId: string | undefined,
+  dir = netDir(),
+): { config: NetConfig; source: PolicySource } {
+  if (sessionId) {
+    const chain = db.ancestorChain(sessionId); // root first; walk self → root
+    for (let i = chain.length - 1; i >= 0; i--) {
+      const raw = db.getNetPolicy(chain[i].id);
+      if (raw === undefined) continue;
+      try {
+        const config = NetConfig.parse(JSON.parse(raw));
+        const scope = chain[i].id === sessionId ? "session" as const : "inherited" as const;
+        return { config, source: { scope, sessionId: chain[i].id } };
+      } catch {
+        // corrupt override — ignore it and keep walking up
+      }
+    }
+  }
+  return { config: loadConfig(dir), source: { scope: "global" } };
 }
 
 /** Compile the editable config into the runtime Policy the gate enforces. */

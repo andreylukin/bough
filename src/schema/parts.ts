@@ -85,6 +85,8 @@ export type Session = z.infer<typeof Session>;
 // the net gate owner emits these as `net.request` events.
 export const NetRequest = z.object({
   id: z.string(),
+  /** Branch that owns this egress; absent for pre-attribution rows. */
+  sessionId: z.string().optional(),
   host: z.string(),
   verb: z.string().optional(),
   action: z.string(),

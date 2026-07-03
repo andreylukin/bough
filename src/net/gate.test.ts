@@ -76,3 +76,22 @@ Deno.test("gate: setPolicy swaps enforcement for the next request", async () => 
   h.gate.setPolicy(policy({ mode: "all" }));
   assertEquals((await h.gate.gate(ghDelete)).verdict, "allow");
 });
+
+Deno.test("gate: per-session resolver applies different policies by branch", async () => {
+  const bus = new Bus();
+  const db = new Db(":memory:");
+  const open = policy(); // host-open, read-only default
+  const deny = policy({ denyHosts: new Set(["api.github.com"]) });
+  const gate = createGate({
+    db,
+    bus,
+    resolve: (sessionId) => (sessionId === "locked" ? deny : open),
+  });
+
+  assertEquals((await gate.gate(ghGet, { sessionId: "free" })).verdict, "allow");
+  assertEquals((await gate.gate(ghGet, { sessionId: "locked" })).verdict, "deny");
+
+  // invalidate() drops the cache so a changed rule set takes effect next request.
+  gate.invalidate();
+  assertEquals((await gate.gate(ghGet, { sessionId: "free" })).verdict, "allow");
+});

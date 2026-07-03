@@ -62,7 +62,7 @@ function MockApp() {
       thread={mock.thread}
       streaming={{}}
       activity={mock.activity}
-      netStatus={{ enabled: true, running: true, proxyUrl: "http://127.0.0.1:50051", caPath: "~/.bough/net/ca/ca.crt" }}
+      netStatus={{ enabled: true, running: true, listeners: 1, caPath: "~/.bough/net/ca/ca.crt" }}
       net={mock.net}
       pending={mock.pending}
       onResolve={() => {}}
@@ -184,7 +184,10 @@ function LiveApp() {
         pending={store.pending}
         onResolve={store.resolvePending}
         policy={store.policy}
+        policySource={store.policySource}
         onSavePolicy={store.savePolicy}
+        onOverridePolicy={store.overridePolicy}
+        onClearPolicyOverride={store.clearPolicyOverride}
         diffs={diffs}
         bundles={bundles}
         notice={store.notice}
@@ -251,7 +254,10 @@ function Window({
   pending,
   onResolve,
   policy,
+  policySource,
   onSavePolicy,
+  onOverridePolicy,
+  onClearPolicyOverride,
   diffs,
   bundles,
   notice,
@@ -294,7 +300,10 @@ function Window({
   pending: NetRequest | null;
   onResolve: (approve: boolean) => void;
   policy: import("./api").NetConfig | null;
+  policySource?: import("./api").PolicySource | null;
   onSavePolicy: (cfg: import("./api").NetConfig) => void;
+  onOverridePolicy?: () => void;
+  onClearPolicyOverride?: () => void;
   diffs: DiffFile[];
   bundles: Bundle[];
   notice?: string | null;
@@ -412,7 +421,11 @@ function Window({
       pending={pending}
       onResolve={onResolve}
       policy={policy}
+      policySource={policySource}
       onSavePolicy={onSavePolicy}
+      onOverridePolicy={onOverridePolicy}
+      onClearPolicyOverride={onClearPolicyOverride}
+      sessionOpen={currentId !== null}
       diffs={diffs}
       selectedFile={diffFile?.path ?? null}
       onSelectFile={(p) => {

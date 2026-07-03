@@ -14,6 +14,8 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 export interface ToolRunCtx {
   /** Absolute path the tool runs against (cwd for bash, root for file paths). */
   workspace: string;
+  /** Session this turn belongs to — keys egress to its Claw Patrol listener + policy. */
+  sessionId?: string;
   /**
    * When set, the turn is sandboxed: bash wraps its argv in the Seatbelt profile
    * (darwin), and the in-process file tools may also write under `sessionDir` (the

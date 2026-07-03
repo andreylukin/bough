@@ -46,11 +46,21 @@ export class Gate {
   #db: Db;
   #bus: Bus;
   #holds = new Map<string, Hold>();
+  /** Per-session policy lookup (branch overrides). Absent = #policy for everyone. */
+  #resolve?: (sessionId?: string) => Policy;
+  /** Compiled-policy cache keyed by sessionId; cleared whenever any rule set changes. */
+  #cache = new Map<string, Policy>();
 
-  constructor(cfg: { policy: Policy; db: Db; bus: Bus }) {
+  constructor(cfg: {
+    policy: Policy;
+    db: Db;
+    bus: Bus;
+    resolve?: (sessionId?: string) => Policy;
+  }) {
     this.#policy = cfg.policy;
     this.#db = cfg.db;
     this.#bus = cfg.bus;
+    this.#resolve = cfg.resolve;
   }
 
   /** Number of requests currently awaiting human approval (introspection/tests). */
@@ -61,6 +71,23 @@ export class Gate {
   /** Swap the enforced policy (rule-set editor). Affects the next request; in-flight holds keep theirs. */
   setPolicy(policy: Policy): void {
     this.#policy = policy;
+    this.#cache.clear();
+  }
+
+  /** Drop cached compiled policies after a per-session rule edit (PUT/DELETE with ?session=). */
+  invalidate(): void {
+    this.#cache.clear();
+  }
+
+  #policyFor(sessionId?: string): Policy {
+    if (!this.#resolve) return this.#policy;
+    const key = sessionId ?? "";
+    let p = this.#cache.get(key);
+    if (!p) {
+      p = this.#resolve(sessionId);
+      this.#cache.set(key, p);
+    }
+    return p;
   }
 
   /**
@@ -69,9 +96,10 @@ export class Gate {
    * (POST /net/requests/:id/{allow,deny}).
    */
   gate(req: Request, opts: GateOpts = {}): Promise<Decision> {
-    const decision = decide(req, this.#policy);
+    const decision = decide(req, this.#policyFor(opts.sessionId));
     const record: NetRequest = {
       id: crypto.randomUUID(),
+      sessionId: opts.sessionId,
       host: req.host,
       verb: req.method,
       action: decision.action.verb,
@@ -115,6 +143,13 @@ export class Gate {
 }
 
 /** Build a Gate with the given policy (default: host-open, read-only — see policy.ts). */
-export function createGate(cfg: { db: Db; bus: Bus; policy?: Policy }): Gate {
-  return new Gate({ policy: cfg.policy ?? makePolicy(), db: cfg.db, bus: cfg.bus });
+export function createGate(
+  cfg: { db: Db; bus: Bus; policy?: Policy; resolve?: (sessionId?: string) => Policy },
+): Gate {
+  return new Gate({
+    policy: cfg.policy ?? makePolicy(),
+    db: cfg.db,
+    bus: cfg.bus,
+    resolve: cfg.resolve,
+  });
 }

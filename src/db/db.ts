@@ -55,6 +55,13 @@ CREATE TABLE IF NOT EXISTS net_events (
   requested_by TEXT,
   ts           INTEGER NOT NULL
 );
+-- Per-session egress policy overrides (Claw Patrol). A session with no row inherits
+-- the nearest ancestor's row, falling back to the global ~/.bough/net/policy.json.
+CREATE TABLE IF NOT EXISTS net_policies (
+  session_id  TEXT PRIMARY KEY REFERENCES sessions(id),
+  config      TEXT NOT NULL,          -- JSON NetConfig
+  updated_at  INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS snapshots (
   id          TEXT PRIMARY KEY,
   session_id  TEXT NOT NULL REFERENCES sessions(id),
@@ -378,6 +385,28 @@ export class Db {
     return rows.map(toTurn);
   }
 
+  // net_policies ------------------------------------------------------------
+
+  /** The raw NetConfig JSON overriding the policy for this session, if any. */
+  getNetPolicy(sessionId: string): string | undefined {
+    const row = this.#db
+      .prepare(`SELECT config FROM net_policies WHERE session_id = ?`)
+      .get(sessionId) as { config: string } | undefined;
+    return row?.config;
+  }
+
+  setNetPolicy(sessionId: string, config: string): void {
+    this.#db
+      .prepare(
+        `INSERT OR REPLACE INTO net_policies (session_id, config, updated_at) VALUES (?, ?, ?)`,
+      )
+      .run(sessionId, config, Date.now());
+  }
+
+  deleteNetPolicy(sessionId: string): void {
+    this.#db.prepare(`DELETE FROM net_policies WHERE session_id = ?`).run(sessionId);
+  }
+
   // net_events --------------------------------------------------------------
 
   /**
@@ -422,6 +451,7 @@ export class Db {
 
 type NetEventRow = {
   id: string;
+  session_id: string | null;
   host: string;
   verb: string | null;
   action: string;
@@ -439,6 +469,7 @@ function toNetRequest(r: NetEventRow): NetRequest {
     verdict: r.verdict as NetRequest["verdict"],
     ts: r.ts,
   };
+  if (r.session_id != null) out.sessionId = r.session_id;
   if (r.verb != null) out.verb = r.verb;
   if (r.reason != null) out.reason = r.reason;
   if (r.requested_by != null) out.requestedBy = r.requested_by;

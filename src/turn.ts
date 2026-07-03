@@ -247,6 +247,7 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     const prepared = await prepareWorkspace(db, sessionId, ctx.workspace);
     const toolCtx: ToolRunCtx = {
       workspace: prepared.cwd,
+      sessionId,
       sandbox: prepared.sandboxed ? { sessionDir: prepared.sessionDir } : undefined,
       // Per-turn harness state: run_steps commits the CHECK here (SPEC §5 gating).
       turn: {},

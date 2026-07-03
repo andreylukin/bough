@@ -53,6 +53,8 @@ export interface BoughEvent {
 // `net.request` events with (at least) this shape; rendered defensively until then.
 export interface NetRequest {
   id: string;
+  /** Branch that owns this egress; absent for pre-attribution rows. */
+  sessionId?: string;
   host: string;
   verb?: string;
   action: string;
