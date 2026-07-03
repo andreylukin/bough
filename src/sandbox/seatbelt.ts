@@ -4,10 +4,15 @@
  * allow-default MINUS a curated credential/secret denylist, and writes are
  * deny-default EXCEPT the workspace plus a curated toolchain allowlist.
  *
- * Scope is filesystem + process only. Network egress is intentionally NOT
- * restricted here; that is owned by the Claw Patrol layer (see docs). Kept pure
- * and dependency-light: `buildProfile` is a deterministic string function that
- * golden-tests, `wrap` just prepends the `sandbox-exec` argv.
+ * Filesystem + process are always confined. Network egress is confined too when
+ * `confineNetwork` is set (Claw Patrol is running): all network is denied except
+ * loopback, so the ONLY route off the machine is the local proxy. This closes the
+ * env-var bypass — a subprocess that unsets `http_proxy` or passes `--noproxy "*"`
+ * hits a dead socket at the kernel, not the open internet. With the flag off
+ * (proxy not running) network stays open, matching the opt-in gating posture.
+ *
+ * Kept pure and dependency-light: `buildProfile` is a deterministic string function
+ * that golden-tests, `wrap` just prepends the `sandbox-exec` argv.
  *
  * macOS-only. `sandbox-exec` is deprecated-but-present on current macOS and is
  * the same primitive Chromium relies on.
@@ -139,6 +144,12 @@ export interface SandboxOptions {
   allowWrite?: string[];
   /** Extra read-denied paths beyond the credential denylist. */
   denyRead?: string[];
+  /**
+   * Deny all network egress except loopback, making the local proxy the only route
+   * off the machine (set when Claw Patrol is running). Kills the `--noproxy` /
+   * `env -u http_proxy` bypass at the kernel. Off = network unrestricted.
+   */
+  confineNetwork?: boolean;
 }
 
 function resolveHome(home?: string): string {
@@ -162,7 +173,7 @@ function subpath(p: string): string {
  * the extra lists — golden-tested. Pure: no env reads (pass `home` explicitly).
  */
 export function buildProfile(opts: SandboxOptions & { home: string }): string {
-  const { workspace, home, allowWrite = [], denyRead = [] } = opts;
+  const { workspace, home, allowWrite = [], denyRead = [], confineNetwork = false } = opts;
 
   const denies = [...DENY_READS, ...denyRead]
     .map((p) => subpath(expand(p, home)))
@@ -172,7 +183,7 @@ export function buildProfile(opts: SandboxOptions & { home: string }): string {
     .map((p) => subpath(expand(p, home)))
     .join("\n  ");
 
-  return [
+  const parts = [
     "(version 1)",
     "(allow default)",
     "",
@@ -182,8 +193,22 @@ export function buildProfile(opts: SandboxOptions & { home: string }): string {
     ";; confine writes to the workspace + a curated allowlist",
     "(deny file-write*)",
     `(allow file-write*\n  ${allows}\n  ${DEV_WRITES})`,
-    "",
-  ].join("\n");
+  ];
+
+  // Loopback-only egress: the local proxy is the sole route out, and any other
+  // outbound socket (direct-to-internet bypass) is denied by the kernel. Unix
+  // sockets stay open (local IPC, not egress); loopback bind allows dev servers.
+  if (confineNetwork) {
+    parts.push(
+      "",
+      ";; loopback-only egress — the local Claw Patrol proxy is the only way out",
+      "(deny network*)",
+      '(allow network-outbound (remote ip "localhost:*") (remote unix-socket))',
+      '(allow network-bind (local ip "localhost:*"))',
+    );
+  }
+  parts.push("");
+  return parts.join("\n");
 }
 
 /** Canonical path (resolving symlinks), or the input unchanged if it doesn't exist. */

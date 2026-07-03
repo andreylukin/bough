@@ -22,18 +22,23 @@ export const bash: ToolDef = {
   schema,
   async run(input: unknown, ctx: ToolRunCtx): Promise<string> {
     const { command, timeout_ms } = input as z.infer<typeof schema>;
-    // Wrap the shell in the Seatbelt profile when sandboxed (darwin only). The
-    // profile confines writes to the workspace + the session snapshot dir; on other
-    // platforms we run the command unwrapped (the FS sandbox is macOS-only).
+    // Route egress through Claw Patrol when the proxy is running (opt-in). The proxy
+    // env points the command's HTTP(S) client at THIS SESSION's intercepting proxy
+    // (per-branch policy + attribution) and trusts its MITM CA. Empty when off.
+    const netEnv = await clawpatrolEnv(ctx.sessionId);
+    // Wrap the shell in the Seatbelt profile when sandboxed (darwin only). The profile
+    // confines writes to the workspace + the session snapshot dir. When the proxy is
+    // running we ALSO confine network to loopback, so the proxy is the only egress
+    // route — a subprocess can't `--noproxy`/`env -u http_proxy` its way to the open
+    // internet. On other platforms we run unwrapped (the sandbox is macOS-only).
     let argv = ["/bin/sh", "-c", command];
     if (ctx.sandbox && Deno.build.os === "darwin" && Deno.env.get("BOUGH_NO_SANDBOX") !== "1") {
-      argv = wrap(argv, { workspace: ctx.workspace, allowWrite: [ctx.sandbox.sessionDir] });
+      argv = wrap(argv, {
+        workspace: ctx.workspace,
+        allowWrite: [ctx.sandbox.sessionDir],
+        confineNetwork: Object.keys(netEnv).length > 0,
+      });
     }
-    // Route egress through Claw Patrol when the proxy is running (opt-in). Seatbelt
-    // still confines the filesystem; the proxy env points the command's HTTP(S) client
-    // at THIS SESSION's intercepting proxy (per-branch policy + attribution) and
-    // trusts its MITM CA. Empty when the proxy is off.
-    const netEnv = await clawpatrolEnv(ctx.sessionId);
     const cmd = new Deno.Command(argv[0], {
       args: argv.slice(1),
       cwd: ctx.workspace,
