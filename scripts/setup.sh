@@ -103,3 +103,4 @@ echo
 echo "setup complete. Next:"
 echo "  1. put your ANTHROPIC_API_KEY in $ENV_FILE"
 echo "  2. bough start"
+echo "(or run 'bough setup' — it walks both steps interactively)"

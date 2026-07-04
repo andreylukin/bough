@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bough server manager: start | kill | restart | update | status | logs | run
+# bough server manager: setup | start | kill | restart | update | status | logs | run
 # Runs the server as a launchd user service (starts at login, restarts on crash).
 # There is no file watcher: editing code in the repo never restarts the server —
 # changes only land on an explicit `bough restart` or `bough update`. Sources
@@ -212,6 +212,74 @@ cmd_update() {
   fi
 }
 
+# Set KEY=VALUE in the env file: replace the existing line (even a commented-out
+# template line like "# KEY=…"), else append. Values are written verbatim.
+env_set() {
+  local k="$1" v="$2" tmp replaced=""
+  tmp="$(mktemp)"
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      "$k="* | "# $k="* | "#$k="*)
+        if [ -z "$replaced" ]; then
+          echo "$k=$v"
+          replaced=1
+        else
+          echo "$line"
+        fi
+        ;;
+      *) echo "$line" ;;
+    esac
+  done < "$ENV_FILE" > "$tmp"
+  [ -n "$replaced" ] || echo "$k=$v" >> "$tmp"
+  mv "$tmp" "$ENV_FILE"
+  chmod 600 "$ENV_FILE"
+}
+
+# One command from fresh clone to running server: install deps + build
+# (scripts/setup.sh, idempotent), then fill in the env interactively (API key,
+# Claw Patrol opt-in) and start the launchd service. Safe to re-run any time —
+# it never overwrites values that are already set.
+cmd_setup() {
+  bash "$ROOT/scripts/setup.sh"
+
+  # setup.sh may have just created the env template — (re)load it.
+  if [ -f "$ENV_FILE" ]; then
+    set -a
+    # shellcheck source=/dev/null
+    . "$ENV_FILE"
+    set +a
+  fi
+
+  if [ -t 0 ]; then
+    if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+      printf "ANTHROPIC_API_KEY (input hidden; empty to skip): "
+      local key
+      read -rs key
+      echo
+      if [ -n "$key" ]; then
+        env_set ANTHROPIC_API_KEY "$key"
+        ANTHROPIC_API_KEY="$key"
+      fi
+    fi
+    if ! grep -q '^BOUGH_CLAWPATROL=1' "$ENV_FILE"; then
+      printf "enable Claw Patrol (egress firewall: approvals, rules, plugins)? [y/N] "
+      local cp
+      read -r cp
+      case "$cp" in
+        y | Y) env_set BOUGH_CLAWPATROL 1 && export BOUGH_CLAWPATROL=1 ;;
+      esac
+    fi
+  fi
+
+  if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+    echo
+    echo "no API key configured — put ANTHROPIC_API_KEY in $ENV_FILE, then: bough start"
+    return 0
+  fi
+  echo
+  cmd_start
+}
+
 cmd_status() {
   local svc="not installed"
   if service_loaded; then
@@ -239,6 +307,7 @@ cmd_logs() {
 }
 
 case "${1:-}" in
+  setup) cmd_setup ;;
   start) cmd_start ;;
   kill | stop) cmd_kill ;;
   restart) cmd_restart ;;
@@ -247,7 +316,8 @@ case "${1:-}" in
   logs) cmd_logs ;;
   run) cmd_run ;;
   *)
-    echo "usage: bough {start|kill|restart|update|status|logs|run}" >&2
+    echo "usage: bough {setup|start|kill|restart|update|status|logs|run}" >&2
+    echo "  setup    fresh clone → running: install deps, build, configure env, start" >&2
     echo "  start    install + start the launchd service (auto-starts at login)" >&2
     echo "  kill     stop the service and keep it stopped (across logins)" >&2
     echo "  restart  pick up code changes explicitly" >&2

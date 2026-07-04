@@ -27,7 +27,7 @@ bough runs a frontier model as a **supervisor** that plans by writing code, whic
 On a fresh Mac, bootstrap everything (Homebrew packages, web build, worker model, the `bough` CLI) and run the server as a launchd user service — it starts at login and relaunches after a crash, but never watches files: editing the repo doesn't touch the running server until you explicitly restart.
 
 ```bash
-scripts/setup.sh                       # one-time; then put ANTHROPIC_API_KEY in ~/.bough/env
+scripts/bough setup                    # one-time: deps + web build + env (prompts for the key) + start
 bough start                            # serves http://127.0.0.1:4321 (logs: ~/.bough/server.log)
 bough kill | restart | status | logs   # manage the service (kill sticks across logins)
 bough update                           # fast-forward to origin/main, rebuild, restart
