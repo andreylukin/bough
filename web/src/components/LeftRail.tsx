@@ -469,25 +469,40 @@ export function LeftRail({
         />
       )}
 
-      <div style={{ flex: 1, overflowY: "auto", padding: "14px 12px", minHeight: 0 }}>
+      {/* CURRENT THREAD — capped with its own scroll so a long thread never buries
+          the heads list below it. Only shown when there's an outline to draw. */}
+      {outline.length > 0 && (
         <div
           style={{
-            fontSize: 10.5,
-            letterSpacing: ".12em",
-            color: c.green,
-            fontWeight: 600,
-            marginBottom: 11,
+            flex: "none",
+            maxHeight: "38%",
+            overflowY: "auto",
+            padding: "14px 12px 10px",
+            borderBottom: `1px solid ${c.border}`,
           }}
         >
-          CURRENT THREAD
+          <div
+            style={{
+              fontSize: 10.5,
+              letterSpacing: ".12em",
+              color: c.green,
+              fontWeight: 600,
+              marginBottom: 11,
+            }}
+          >
+            CURRENT THREAD
+          </div>
+          <div style={{ position: "relative", paddingLeft: 16 }}>
+            <div style={{ position: "absolute", left: 4, top: 6, bottom: 6, width: 1.5, background: c.border }} />
+            {outline.map((n, i) => (
+              <OutlineRow key={i} node={n} last={i === outline.length - 1} />
+            ))}
+          </div>
         </div>
-        <div style={{ position: "relative", paddingLeft: 16, marginBottom: 20 }}>
-          <div style={{ position: "absolute", left: 4, top: 6, bottom: 6, width: 1.5, background: c.border }} />
-          {outline.map((n, i) => (
-            <OutlineRow key={i} node={n} last={i === outline.length - 1} />
-          ))}
-        </div>
+      )}
 
+      {/* Heads list — its own scroll region. */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "14px 12px", minHeight: 0 }}>
         {groups.map((g, i) => (
           <div key={g.key} style={{ marginBottom: i === groups.length - 1 ? 0 : 18 }}>
             <GroupHeader

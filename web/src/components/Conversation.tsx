@@ -897,18 +897,27 @@ export function Conversation({
     resetCompact();
   }
 
-  // Stick to the newest turn as it streams — but ONLY if the reader is already at
-  // the bottom. Otherwise scrolling up to re-read gets yanked back down by every
-  // streamed delta, which reads as "I can't scroll". `atBottom` is sampled before
-  // the DOM paints so a just-arrived delta doesn't itself count as "scrolled up".
-  const atBottom = useRef(true);
+  // Stick to the newest turn as it streams — but release the instant the reader
+  // scrolls UP, so mid-stream reading isn't yanked back down. Direction-based, not a
+  // distance threshold: any upward move disengages follow (a small trackpad nudge
+  // during a fast stream was getting overridden by the next delta); returning near
+  // the bottom re-engages. Programmatic pins only move DOWN, so they never disengage.
+  const follow = useRef(true);
+  const lastTop = useRef(0);
   const onScroll = () => {
     const el = scrollRef.current;
-    if (el) atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    if (!el) return;
+    const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (el.scrollTop < lastTop.current - 1) follow.current = false; // user scrolled up
+    else if (dist < 40) follow.current = true; // back at the bottom
+    lastTop.current = el.scrollTop;
   };
   useEffect(() => {
     const el = scrollRef.current;
-    if (el && atBottom.current) el.scrollTop = el.scrollHeight;
+    if (el && follow.current) {
+      el.scrollTop = el.scrollHeight;
+      lastTop.current = el.scrollTop;
+    }
   }, [thread, streaming]);
 
   function submit(branch: boolean) {
