@@ -118,6 +118,8 @@ export function TitleBar({
   onSetModel,
   workspace,
   sessionId,
+  subagentsRunning = 0,
+  onShowMap,
 }: {
   branch?: string;
   right?: React.ReactNode;
@@ -131,6 +133,10 @@ export function TitleBar({
   workspace?: string | null;
   // When set, a copy chip next to the branch chip copies this head's session id.
   sessionId?: string | null;
+  // Background subagents with a turn in flight, across ALL sessions — the badge
+  // keeps delegated work visible from anywhere. Click-through opens the map.
+  subagentsRunning?: number;
+  onShowMap?: () => void;
 }) {
   const repo = workspace ? workspace.replace(/\/+$/, "").split("/").pop() : null;
   const ctxPct = usage ? Math.min(100, Math.round((usage.contextTokens / CONTEXT_BUDGET) * 100)) : 0;
@@ -138,6 +144,34 @@ export function TitleBar({
   // In live mode, surface the model, the context meter, and the event-stream link.
   const liveRight = (
     <div style={{ display: "flex", alignItems: "center", gap: 16, fontFamily: mono, fontSize: 11.5, color: c.muted2 }}>
+      {subagentsRunning > 0 && (
+        <button
+          onClick={onShowMap}
+          title={`${subagentsRunning} subagent${subagentsRunning === 1 ? "" : "s"} running — open the map`}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "2px 9px",
+            borderRadius: 6,
+            border: `1px solid ${c.border2}`,
+            color: c.amber,
+            fontFamily: mono,
+            fontSize: 11,
+          }}
+        >
+          <span
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: "50%",
+              background: c.amber,
+              animation: "boughPulse 1s steps(2) infinite",
+            }}
+          />
+          ◆ {subagentsRunning} running
+        </button>
+      )}
       {usage && usage.contextTokens > 0 && (
         <span
           title={`context ${usage.contextTokens.toLocaleString()} tokens · ${usage.outputTokens.toLocaleString()} output this session`}

@@ -25,8 +25,12 @@ Deno.test("edit_file replaces a unique match and rejects ambiguous or missing on
   const { dir, ctx } = await tmp();
   try {
     await writeFile.run({ path: "a.txt", content: "one two two" }, ctx);
-    await assertRejects(() => editFile.run({ path: "a.txt", old_string: "two", new_string: "x" }, ctx));
-    await assertRejects(() => editFile.run({ path: "a.txt", old_string: "zzz", new_string: "x" }, ctx));
+    await assertRejects(() =>
+      editFile.run({ path: "a.txt", old_string: "two", new_string: "x" }, ctx)
+    );
+    await assertRejects(() =>
+      editFile.run({ path: "a.txt", old_string: "zzz", new_string: "x" }, ctx)
+    );
     await editFile.run({ path: "a.txt", old_string: "one two two", new_string: "done" }, ctx);
     assertEquals(await readFile.run({ path: "a.txt" }, ctx), "done");
   } finally {
@@ -35,7 +39,11 @@ Deno.test("edit_file replaces a unique match and rejects ambiguous or missing on
 });
 
 Deno.test("jsonSchema emits a draft-7 object schema with required fields", () => {
-  const schema = jsonSchema(writeFile) as { type: string; required: string[]; properties: Record<string, unknown> };
+  const schema = jsonSchema(writeFile) as {
+    type: string;
+    required: string[];
+    properties: Record<string, unknown>;
+  };
   assertEquals(schema.type, "object");
   assertEquals(schema.required.sort(), ["content", "path"]);
 });
@@ -48,7 +56,10 @@ Deno.test("file tools reject paths that escape the workspace", async () => {
     // With a sandbox handle, the snapshot dir is also writable.
     const snap = `${dir}-snap`;
     await Deno.mkdir(snap, { recursive: true });
-    await writeFile.run({ path: `${snap}/ok.txt`, content: "y" }, { workspace: dir, sandbox: { sessionDir: snap } });
+    await writeFile.run({ path: `${snap}/ok.txt`, content: "y" }, {
+      workspace: dir,
+      sandbox: { sessionDir: snap },
+    });
     assertEquals(await Deno.readTextFile(`${snap}/ok.txt`), "y");
     await Deno.remove(snap, { recursive: true });
   } finally {
@@ -97,4 +108,24 @@ Deno.test({
       await Deno.remove(escape).catch(() => {});
     }
   },
+});
+
+Deno.test("bash: the turn's interrupt signal kills the child process", async () => {
+  const workspace = await Deno.makeTempDir({ prefix: "bough-bash-int-" });
+  try {
+    const controller = new AbortController();
+    const started = Date.now();
+    const run = bash.run({ command: "sleep 30" }, { workspace, signal: controller.signal });
+    setTimeout(() => controller.abort(), 100);
+    let msg = "";
+    try {
+      await run;
+    } catch (e) {
+      msg = (e as Error).message;
+    }
+    if (!msg.includes("turn interrupted")) throw new Error(`unexpected: "${msg}"`);
+    if (Date.now() - started > 10_000) throw new Error("child was not killed promptly");
+  } finally {
+    await Deno.remove(workspace, { recursive: true }).catch(() => {});
+  }
 });

@@ -9,6 +9,7 @@ const kindGlyph: Record<Session["kind"], string> = {
   fork: "↩",
   worker: "◇",
   compaction: "⊟",
+  subagent: "◆",
 };
 
 function relTime(ms: number): string {
@@ -19,6 +20,12 @@ function relTime(ms: number): string {
   return `${Math.round(m / 60)}h`;
 }
 
+/** A finished-badly last turn (crash or user stop) — the red-✗ affix states. */
+export function turnFailed(s: Session): boolean {
+  return s.lastTurnStatus === "error" || s.lastTurnStatus === "interrupted" ||
+    s.lastTurnStatus === "orphaned";
+}
+
 /** Sessions → the switchable heads list. The open session is the active head. */
 export function headsFromSessions(sessions: Session[], currentId: string | null): Head[] {
   return sessions.map((s) => ({
@@ -27,7 +34,7 @@ export function headsFromSessions(sessions: Session[], currentId: string | null)
     label: s.title,
     meta: `${s.kind} · ${relTime(s.createdAt)}`,
     active: s.id === currentId,
-    status: s.id === currentId ? "running" : "idle",
+    status: s.busy ? "running" : turnFailed(s) ? "failed" : s.id === currentId ? "running" : "idle",
     busy: s.busy,
     unseen: s.unseen,
   }));
@@ -42,22 +49,57 @@ export interface HeadGroup {
   heads: Head[];
 }
 
-/** Sessions → sidebar groups by workspace dir; groups and heads sort newest-first. */
+/**
+ * Sessions → sidebar groups. Sessions branched from a living session (originId, with
+ * parentId as fallback) nest as that head's `children` instead of appearing top-level,
+ * so a burst of subagents folds under its spawner — and groups key off the lineage
+ * top's workspace, so subagent jj-workspace dirs (~/.bough/workspaces/<uuid>) never
+ * become groups of their own. Groups and heads sort newest-first; a group's recency
+ * includes its nested children, so fresh subagent work bubbles its repo up.
+ */
 export function headGroupsFromSessions(sessions: Session[], currentId: string | null): HeadGroup[] {
-  const byWorkspace = new Map<string, Session[]>();
+  const byId = new Map(sessions.map((s) => [s.id, s]));
+  // The living session this one branched from, if any (archived origins → top-level).
+  const lineageParent = (s: Session): Session | undefined => {
+    const pid = s.originId ?? s.parentId;
+    return pid ? byId.get(pid) : undefined;
+  };
+
+  const childrenOf = new Map<string, Session[]>();
+  const tops: Session[] = [];
   for (const s of sessions) {
+    const p = lineageParent(s);
+    if (p) childrenOf.set(p.id, [...(childrenOf.get(p.id) ?? []), s]);
+    else tops.push(s);
+  }
+
+  const toHead = (s: Session, seen: Set<string>): Head => {
+    seen.add(s.id); // cycle guard — lineage data is append-only, but stay safe
+    const kids = (childrenOf.get(s.id) ?? [])
+      .filter((k) => !seen.has(k.id))
+      .sort((a, b) => b.createdAt - a.createdAt);
+    return {
+      ...headsFromSessions([s], currentId)[0],
+      ...(kids.length ? { children: kids.map((k) => toHead(k, seen)) } : {}),
+    };
+  };
+  const subtreeLatest = (s: Session): number =>
+    Math.max(s.createdAt, ...(childrenOf.get(s.id) ?? []).map(subtreeLatest));
+
+  const byWorkspace = new Map<string, Session[]>();
+  for (const s of tops) {
     const key = s.workspace ?? "";
     byWorkspace.set(key, [...(byWorkspace.get(key) ?? []), s]);
   }
   return [...byWorkspace.entries()]
     .map(([key, group]) => {
-      const sorted = [...group].sort((a, b) => b.createdAt - a.createdAt);
+      const sorted = [...group].sort((a, b) => subtreeLatest(b) - subtreeLatest(a));
       return {
         key,
         label: key ? key.replace(/\/+$/, "").split("/").pop() || key : "chat",
         workspace: key || null,
-        heads: headsFromSessions(sorted, currentId),
-        latest: sorted[0]?.createdAt ?? 0,
+        heads: sorted.map((s) => toHead(s, new Set())),
+        latest: sorted[0] ? subtreeLatest(sorted[0]) : 0,
       };
     })
     .sort((a, b) => b.latest - a.latest)
@@ -71,7 +113,7 @@ export function outlineFromThread(thread: Message[]): OutlineNode[] {
       const text = m.parts.find((p) => p.type === "text");
       const label = text && "text" in text ? text.text.split("\n")[0].slice(0, 42) : m.role;
       if (!label) return null;
-      return { label, state: m.pending ? "running" : "done" };
+      return { label, state: m.pending ? "running" : "done", role: m.role };
     })
     .filter((n): n is OutlineNode => n !== null);
 }

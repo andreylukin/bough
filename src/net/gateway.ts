@@ -21,7 +21,7 @@
 import { caEnv, CertAuthority } from "./ca.ts";
 import { ProxyServer } from "./proxy.ts";
 import { createGate, type Gate } from "./gate.ts";
-import { ExtensionHost, extensionsDir, type ExtensionInfo } from "./extensions.ts";
+import { PluginHost, type PluginInfo } from "./plugins.ts";
 import { loadConfig, resolveConfig, toPolicy } from "./config.ts";
 import type { Db } from "../db/db.ts";
 import type { Bus } from "../bus.ts";
@@ -45,7 +45,7 @@ export class ClawpatrolGateway {
   #bus: Bus;
   #ca?: CertAuthority;
   #gate?: Gate;
-  #extensions?: ExtensionHost;
+  #plugins?: PluginHost;
   // Live listeners keyed by sessionId ("" = a caller with no session, e.g. tests).
   #proxies = new Map<string, ProxyServer>();
   // In-flight starts, so concurrent tool calls in one turn share one listener.
@@ -72,30 +72,42 @@ export class ClawpatrolGateway {
     };
   }
 
-  /** Reloadable programmable guards; see /net/extensions endpoints. */
-  async reloadExtensions(): Promise<ExtensionInfo[]> {
-    await this.#extensions?.load();
-    return this.#extensions?.list() ?? [];
+  /** Classifier plugins; see /net/plugins endpoints. */
+  listPlugins(): { dir: string; plugins: PluginInfo[] } {
+    return { dir: this.#plugins?.dir ?? "", plugins: this.#plugins?.list() ?? [] };
   }
 
-  listExtensions(): { dir: string; extensions: ExtensionInfo[] } {
-    return { dir: extensionsDir(), extensions: this.#extensions?.list() ?? [] };
+  async reloadPlugins(): Promise<PluginInfo[]> {
+    await this.#plugins?.load();
+    return this.#plugins?.list() ?? [];
   }
 
-  /** Scaffold a starter guard, load it, and return its path + the fresh list. */
-  async createExtension(name: string): Promise<{ path: string; extensions: ExtensionInfo[] }> {
-    if (!this.#extensions) throw new Error("Claw Patrol is off");
-    const { path } = this.#extensions.scaffold(name);
-    await this.#extensions.load();
-    return { path, extensions: this.#extensions.list() };
+  /** Scaffold a starter plugin file; the loader picks it up immediately. */
+  async createPlugin(name: string): Promise<{ path: string; plugins: PluginInfo[] }> {
+    if (!this.#plugins) throw new Error("Claw Patrol is off");
+    const { path } = await this.#plugins.scaffold(name);
+    return { path, plugins: this.#plugins.list() };
   }
 
-  /** Boot the CA, gate, and extensions when enabled; listeners start lazily per session. */
+  /** Install a drafted declarative spec into the library (validated + fixture-checked before disk). */
+  async installPlugin(spec: unknown): Promise<{ path: string; plugins: PluginInfo[] }> {
+    if (!this.#plugins) throw new Error("Claw Patrol is off");
+    const { path } = await this.#plugins.install(spec);
+    return { path, plugins: this.#plugins.list() };
+  }
+
+  /** True when the library has a loaded plugin by this name (enable-target check). */
+  hasPlugin(name: string): boolean {
+    return this.#plugins?.list().some((p) => p.name === name && p.status === "loaded") ?? false;
+  }
+
+  /** Boot the CA, gate, and plugins when enabled; listeners start lazily per session. */
   async start(): Promise<void> {
     if (!clawpatrolEnabled()) return;
     this.#ca = CertAuthority.load();
-    this.#extensions = new ExtensionHost(this.#db);
-    await this.#extensions.load();
+    this.#plugins = new PluginHost();
+    await this.#plugins.load();
+    const plugins = this.#plugins;
     this.#gate = createGate({
       db: this.#db,
       bus: this.#bus,
@@ -103,7 +115,13 @@ export class ClawpatrolGateway {
       // Branch policy: a session's own net_policies row, else the nearest
       // ancestor's, else the global rule set (config.ts resolveConfig).
       resolve: (sessionId) => toPolicy(resolveConfig(this.#db, sessionId).config),
-      extensions: this.#extensions,
+      // The runtime join: the branch's effective activations (inherited like every
+      // other rule) select from the plugin library. Resolved per request, so
+      // enable/disable edits and per-activation TTLs apply on the next gate().
+      classifiers: (sessionId) =>
+        plugins.activeFor(resolveConfig(this.#db, sessionId).config.plugins),
+      guards: (sessionId) =>
+        plugins.activeGuardsFor(resolveConfig(this.#db, sessionId).config.plugins),
     });
     // When a session's turn ends: expire any holds it left parked (an interrupted
     // turn's command dies but its gate hold would otherwise pend forever), then
@@ -175,6 +193,9 @@ export class ClawpatrolGateway {
       https_proxy: url,
       NO_PROXY: "localhost,127.0.0.1",
       no_proxy: "localhost,127.0.0.1",
+      // The owning branch, so in-session tooling (e.g. the /net-plugin skill) can
+      // scope its API calls (?session=$BOUGH_SESSION) without guessing.
+      ...(sessionId ? { BOUGH_SESSION: sessionId } : {}),
       ...caEnv(this.#ca.caCertPath),
     };
   }

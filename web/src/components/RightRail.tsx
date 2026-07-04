@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import { c, mono } from "../theme";
 import type { DiffFile } from "../mock";
-import { api, type ExtensionInfo, type NetConfig, type NetStatus, type PolicySource } from "../api";
+import { api, type NetConfig, type NetStatus, type OpRule, type PluginActivation, type PluginInfo, type PolicySource } from "../api";
 import type { NetRequest } from "../types";
 import { Chip, Dot } from "./ui";
 
@@ -365,52 +365,96 @@ function SuggestBox(
   );
 }
 
-// Programmable guards: the mitmproxy-addon layer. Lists loaded + broken extensions,
-// scaffolds a starter file with one click, and hot-reloads after you edit — so a
-// rule the static config can't express (cross-request invariants, out-of-band API
-// checks) is a short TypeScript file, not a code change.
-function ExtensionsPanel() {
+const KIND_TINT: Record<OpRule["kind"], string> = {
+  read: c.green,
+  write: c.amber,
+  unknown: c.muted2,
+};
+
+// A plugin's declarative classifier table, rendered as data — match → kind (→ verb).
+function OpsTable({ ops }: { ops: OpRule[] }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+      {ops.map((op, i) => (
+        <div key={i} style={{ display: "flex", gap: 8, fontFamily: mono, fontSize: 10.5 }}>
+          <span style={{ color: c.text2, whiteSpace: "nowrap" }}>{op.match}</span>
+          <span style={{ color: KIND_TINT[op.kind] }}>{op.kind}</span>
+          {op.verb && <span style={{ color: c.muted2 }}>→ {op.verb}</span>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Classifier plugins: teach the gate one provider's verb vocabulary so DESTRUCTIVE
+// operations can be held/denied per-op while reads flow. Files are a shared LIBRARY;
+// what this panel toggles is the open branch's ACTIVATIONS (inherited by its
+// children), each with its own optional TTL — so one plugin can run open-ended here
+// and lapse after 2h elsewhere. Creation stays skill-first: /net-plugin drafts,
+// installs, and live-tests against real traffic.
+function PluginsPanel({ sessionId, activations, onPolicyChanged }: {
+  sessionId: string | null;
+  activations: PluginActivation[];
+  onPolicyChanged: () => void;
+}) {
   const [dir, setDir] = useState("");
-  const [exts, setExts] = useState<ExtensionInfo[] | null>(null);
-  const [name, setName] = useState("");
+  const [plugins, setPlugins] = useState<PluginInfo[] | null>(null);
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // Per-plugin TTL choice for the NEXT enable ("" = no expiry).
+  const [ttls, setTtls] = useState<Record<string, string>>({});
+  // Cards are collapsed to one row by default — the library grows; details on demand.
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const toggleOpen = (name: string) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
 
   const refresh = async () => {
     try {
-      const { dir, extensions } = await api.listExtensions();
+      const { dir, plugins } = await api.listPlugins();
       setDir(dir);
-      setExts(extensions);
+      setPlugins(plugins);
     } catch {
-      setExts([]);
+      setPlugins([]);
     }
   };
   useEffect(() => {
     refresh();
   }, []);
 
-  const create = async () => {
-    if (!name.trim() || busy) return;
-    setBusy(true);
-    setErr(null);
-    setMsg(null);
-    try {
-      const { path, extensions } = await api.createExtension(name.trim());
-      setExts(extensions);
-      setName("");
-      setMsg(`Created ${path} — edit it, then Reload.`);
-    } catch (e) {
-      setErr((e as Error).message || "could not create");
-    } finally {
-      setBusy(false);
-    }
-  };
   const reload = async () => {
     setBusy(true);
     setErr(null);
     try {
-      setExts((await api.reloadExtensions()).extensions);
+      setPlugins((await api.reloadPlugins()).plugins);
+    } catch (e) {
+      setErr((e as Error).message || "reload failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openInEditor = async (name: string) => {
+    setErr(null);
+    try {
+      await api.openPlugin(name);
+    } catch (e) {
+      setErr((e as Error).message || "could not open editor");
+    }
+  };
+
+  const toggle = async (name: string, on: boolean) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.setPlugin(name, on, sessionId, on ? ttls[name] || undefined : undefined);
+      onPolicyChanged(); // the branch's policy row changed server-side — re-sync
+    } catch (e) {
+      setErr((e as Error).message || "toggle failed");
     } finally {
       setBusy(false);
     }
@@ -420,53 +464,119 @@ function ExtensionsPanel() {
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span style={{ fontFamily: mono, fontSize: 10, letterSpacing: ".1em", color: c.muted2 }}>
-          EXTENSIONS {exts && exts.length > 0 && <Chip>{exts.length}</Chip>}
+          PLUGINS {plugins && plugins.length > 0 && <Chip>{plugins.length}</Chip>}
         </span>
         <button
           onClick={reload}
           disabled={busy}
-          title="Re-load the extensions dir after editing a guard (no restart)"
+          title="Re-load the plugins dir after editing a file (no restart)"
           style={{ marginLeft: "auto", fontFamily: mono, fontSize: 10.5, color: c.muted, background: "none", border: `1px solid ${c.border2}`, borderRadius: 6, padding: "2px 8px" }}
         >
           ↻ Reload
         </button>
       </div>
       <p style={{ fontSize: 11.5, color: c.muted, lineHeight: 1.5, margin: 0 }}>
-        Guards run in the gate path with the full request and can make their own API
-        calls — for rules the config can't express (e.g. only merge a PR whose branch
-        this session created).
+        A plugin maps one provider's API onto verbs the rule set can gate, so specific
+        destructive operations are held or denied while reads flow. Expired plugins stop
+        gating and their hosts fail closed again.
       </p>
-      {exts?.map((e) => (
-        <div key={e.file} style={{ display: "flex", flexDirection: "column", gap: 2, borderLeft: `2px solid ${e.error ? c.red : c.green}`, paddingLeft: 8 }}>
-          <span style={{ fontFamily: mono, fontSize: 11.5, color: c.text2 }}>{e.name}</span>
-          <span style={{ fontFamily: mono, fontSize: 10, color: c.muted2, wordBreak: "break-all" }}>{e.file}</span>
-          {e.error && <span style={{ fontFamily: mono, fontSize: 10.5, color: c.red }}>{e.error}</span>}
-        </div>
-      ))}
-      {exts && exts.length === 0 && (
+      {plugins?.map((p) => {
+        const act = activations.find((a) => a.name === p.name);
+        const expired = act?.expires !== undefined && Date.parse(act.expires) <= Date.now();
+        const on = !!act && !expired;
+        const tint = p.status === "error" ? c.red : on ? c.green : expired ? c.amber : c.muted2;
+        const opened = open.has(p.name);
+        return (
+          <div key={p.file} style={{ display: "flex", flexDirection: "column", gap: 3, borderLeft: `2px solid ${tint}`, paddingLeft: 8 }}>
+            <div
+              onClick={() => toggleOpen(p.name)}
+              title={opened ? "Collapse" : "Show hosts + ops table"}
+              style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}
+            >
+              <span style={{ fontFamily: mono, fontSize: 9, color: c.muted2, width: 8, flex: "none" }}>
+                {opened ? "▾" : "▸"}
+              </span>
+              <span style={{ fontFamily: mono, fontSize: 11.5, color: c.text2 }}>{p.name}</span>
+              {p.status === "error"
+                ? <span style={{ fontFamily: mono, color: c.red, fontSize: 10 }}>broken</span>
+                : (
+                  <span style={{ fontFamily: mono, color: tint, fontSize: 10 }}>
+                    {on
+                      ? act?.expires ? `on · until ${new Date(act.expires).toLocaleTimeString()}` : "on"
+                      : expired
+                      ? `expired ${new Date(act!.expires!).toLocaleTimeString()}`
+                      : "off"}
+                  </span>
+                )}
+              {p.status !== "error" && (
+                <span
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ marginLeft: "auto", display: "flex", gap: 5, alignItems: "center" }}
+                >
+                  {!on && (
+                    <select
+                      value={ttls[p.name] ?? ""}
+                      onChange={(e) => setTtls((prev) => ({ ...prev, [p.name]: e.target.value }))}
+                      title="TTL for THIS activation only — the same plugin can run with a different one elsewhere"
+                      style={{ fontFamily: mono, fontSize: 10, color: c.text2, background: c.bg, border: `1px solid ${c.border2}`, borderRadius: 6, padding: "2px 4px" }}
+                    >
+                      <option value="">no expiry</option>
+                      <option value="2h">2h</option>
+                      <option value="24h">24h</option>
+                      <option value="7d">7d</option>
+                    </select>
+                  )}
+                  <button
+                    onClick={() => toggle(p.name, !on)}
+                    disabled={busy}
+                    title={on
+                      ? "Turn this plugin off for this branch (its hosts fail closed again)"
+                      : "Turn this plugin on for this branch (children inherit it)"}
+                    style={{ fontFamily: mono, fontSize: 10.5, color: busy ? c.muted2 : on ? c.red : c.green, background: "none", border: `1px solid ${c.border2}`, borderRadius: 6, padding: "2px 8px" }}
+                  >
+                    {on ? "Disable" : "Enable"}
+                  </button>
+                </span>
+              )}
+            </div>
+            {opened && (
+              <>
+                <span style={{ fontFamily: mono, fontSize: 10, color: c.muted2, wordBreak: "break-all" }}>
+                  {p.hosts.join(", ")}
+                  {p.hasClassify ? " · +classify()" : ""}
+                  {p.hasGate ? " · +gate()" : ""}
+                </span>
+                {p.description && (
+                  <span style={{ fontSize: 10.5, color: c.muted }}>{p.description}</span>
+                )}
+                {p.ops && <OpsTable ops={p.ops} />}
+                {p.error && <span style={{ fontFamily: mono, fontSize: 10.5, color: c.red }}>{p.error}</span>}
+                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <button
+                    onClick={() => openInEditor(p.name)}
+                    title="Open this plugin's definition in your editor (BOUGH_EDITOR, else the OS text editor); hit Reload after saving"
+                    style={{ fontFamily: mono, fontSize: 10.5, color: c.green, background: "none", border: `1px solid ${c.border2}`, borderRadius: 6, padding: "2px 8px", whiteSpace: "nowrap", flex: "none" }}
+                  >
+                    ✎ Edit
+                  </button>
+                  <span style={{ fontFamily: mono, fontSize: 9.5, color: c.muted2, wordBreak: "break-all" }}>{p.file}</span>
+                </span>
+              </>
+            )}
+          </div>
+        );
+      })}
+      {plugins && plugins.length === 0 && (
         <div style={{ fontSize: 11.5, color: c.muted2 }}>
-          No extensions yet.{dir ? ` They live in ${dir}` : ""}
+          No plugins yet.{dir ? ` They live in ${dir}.` : ""}
         </div>
       )}
-      <div style={{ display: "flex", gap: 6 }}>
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && create()}
-          placeholder="new guard name (e.g. gh-merge-guard)"
-          style={{ flex: 1, fontFamily: mono, fontSize: 11, color: c.text2, background: c.bg, border: `1px solid ${c.border2}`, borderRadius: 6, padding: "4px 8px" }}
-        />
-        <button
-          onClick={create}
-          disabled={busy || !name.trim()}
-          title="Write a runnable starter guard you can edit, then Reload"
-          style={{ fontFamily: mono, fontSize: 10.5, color: busy ? c.muted2 : c.green, background: "none", border: `1px solid ${c.border2}`, borderRadius: 6, padding: "3px 10px", whiteSpace: "nowrap" }}
-        >
-          + New
-        </button>
+      <div style={{ fontSize: 11, color: c.muted2 }}>
+        Create one by typing <span style={{ fontFamily: mono, color: c.green }}>/net-plugin</span>{" "}
+        in the composer — the agent drafts the table, installs it, and live-tests the
+        verdicts against real traffic.
       </div>
-      {msg && <span style={{ fontSize: 10.5, color: c.green, wordBreak: "break-all" }}>{msg}</span>}
-      {err && <span style={{ fontSize: 10.5, color: c.red }}>{err}</span>}
+      {err && <span style={{ fontSize: 10.5, color: c.red, wordBreak: "break-all" }}>{err}</span>}
     </div>
   );
 }
@@ -474,7 +584,7 @@ function ExtensionsPanel() {
 // bough runs the egress firewall in-process: this panel shows its status, the live
 // feed, the hold-and-ask cards, and the editable rule set.
 function NetworkPanel(
-  { status, net, pending, pendingCount = 0, onResolve, policy, policySource, onSavePolicy, onOverridePolicy, onClearPolicyOverride, sessionOpen, sessionId, wide }: {
+  { status, net, pending, pendingCount = 0, onResolve, policy, policySource, onSavePolicy, onOverridePolicy, onClearPolicyOverride, onPolicyChanged, sessionOpen, sessionId, wide }: {
     status: NetStatus;
     net: NetRequest[];
     pending: NetRequest | null;
@@ -485,6 +595,7 @@ function NetworkPanel(
     onSavePolicy: (cfg: NetConfig) => void;
     onOverridePolicy: () => void;
     onClearPolicyOverride: () => void;
+    onPolicyChanged: () => void;
     sessionOpen: boolean;
     sessionId: string | null;
     wide: boolean;
@@ -627,7 +738,7 @@ function NetworkPanel(
 
       {status.enabled && (
         <div style={{ borderTop: `1px solid ${c.border}`, paddingTop: 12 }}>
-          <ExtensionsPanel />
+          <PluginsPanel sessionId={sessionId} activations={policy?.plugins ?? []} onPolicyChanged={onPolicyChanged} />
         </div>
       )}
     </div>
@@ -788,6 +899,7 @@ export function RightRail({
   onSavePolicy,
   onOverridePolicy,
   onClearPolicyOverride,
+  onPolicyChanged,
   sessionOpen = false,
   sessionId = null,
   diffs,
@@ -812,6 +924,8 @@ export function RightRail({
   onSavePolicy: (cfg: NetConfig) => void;
   onOverridePolicy?: () => void;
   onClearPolicyOverride?: () => void;
+  /** Called after a plugin enable/disable changed the rules server-side. */
+  onPolicyChanged?: () => void;
   /** True when a session is open — enables the branch-scope controls. */
   sessionOpen?: boolean;
   /** The open session, for branch-scoped AI rule drafting. */
@@ -859,6 +973,7 @@ export function RightRail({
           onSavePolicy={onSavePolicy}
           onOverridePolicy={onOverridePolicy ?? (() => {})}
           onClearPolicyOverride={onClearPolicyOverride ?? (() => {})}
+          onPolicyChanged={onPolicyChanged ?? (() => {})}
           sessionOpen={sessionOpen}
           sessionId={sessionId}
           wide={wide}

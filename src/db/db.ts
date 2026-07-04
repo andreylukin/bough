@@ -62,15 +62,6 @@ CREATE TABLE IF NOT EXISTS net_policies (
   config      TEXT NOT NULL,          -- JSON NetConfig
   updated_at  INTEGER NOT NULL
 );
--- Persistent KV for net policy extensions (src/net/extensions.ts), scoped by
--- extension name so guards keep cross-request facts across server restarts.
-CREATE TABLE IF NOT EXISTS net_ext_state (
-  ext         TEXT NOT NULL,
-  key         TEXT NOT NULL,
-  value       TEXT NOT NULL,          -- JSON
-  updated_at  INTEGER NOT NULL,
-  PRIMARY KEY (ext, key)
-);
 CREATE TABLE IF NOT EXISTS snapshots (
   id          TEXT PRIMARY KEY,
   session_id  TEXT NOT NULL REFERENCES sessions(id),
@@ -380,6 +371,26 @@ export class Db {
       .run(patch.status ?? cur.status, patch.step ?? cur.step, Date.now(), id);
   }
 
+  /**
+   * Latest turn status per session (SQLite bare-column-with-MAX picks the row of
+   * the max). Sessions that never ran a turn are absent. Feeds the sidebar/map
+   * status affixes via GET /sessions.
+   */
+  latestTurnStatuses(): Map<string, TurnStatus> {
+    const rows = this.#db
+      .prepare(`SELECT session_id, status, MAX(updated_at) FROM turns GROUP BY session_id`)
+      .all() as { session_id: string; status: string }[];
+    return new Map(rows.map((r) => [r.session_id, r.status as TurnStatus]));
+  }
+
+  /** The turn that produced a given supervisor message (latest row wins). */
+  turnForMessage(messageId: string): Turn | undefined {
+    const r = this.#db
+      .prepare(`SELECT * FROM turns WHERE message_id = ? ORDER BY updated_at DESC LIMIT 1`)
+      .get(messageId) as TurnRow | undefined;
+    return r && toTurn(r);
+  }
+
   getTurn(id: string): Turn | undefined {
     const r = this.#db.prepare(`SELECT * FROM turns WHERE id = ?`).get(id) as
       | TurnRow
@@ -414,27 +425,6 @@ export class Db {
 
   deleteNetPolicy(sessionId: string): void {
     this.#db.prepare(`DELETE FROM net_policies WHERE session_id = ?`).run(sessionId);
-  }
-
-  // net_ext_state -----------------------------------------------------------
-
-  getExtState(ext: string, key: string): string | undefined {
-    const row = this.#db
-      .prepare(`SELECT value FROM net_ext_state WHERE ext = ? AND key = ?`)
-      .get(ext, key) as { value: string } | undefined;
-    return row?.value;
-  }
-
-  setExtState(ext: string, key: string, value: string): void {
-    this.#db
-      .prepare(
-        `INSERT OR REPLACE INTO net_ext_state (ext, key, value, updated_at) VALUES (?, ?, ?, ?)`,
-      )
-      .run(ext, key, value, Date.now());
-  }
-
-  deleteExtState(ext: string, key: string): void {
-    this.#db.prepare(`DELETE FROM net_ext_state WHERE ext = ? AND key = ?`).run(ext, key);
   }
 
   // net_events --------------------------------------------------------------

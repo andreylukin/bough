@@ -23,8 +23,8 @@ Deno.test("listSkills reads frontmatter descriptions; loadBody strips frontmatte
   withSkillsDir((dir) => {
     install(dir, "commit", "make a tidy commit", "Stage and commit with a conventional message.");
     install(dir, "review", "review the diff", "Read the diff and comment.");
-    // Installed skills, minus the always-present builtins (e.g. /init).
-    const installed = listSkills().filter((s) => s.name !== "init");
+    // Installed skills, minus the always-present builtins (e.g. /init, /net-plugin).
+    const installed = listSkills().filter((s) => s.name !== "init" && s.name !== "net-plugin");
     assertEquals(installed, [
       { name: "commit", description: "make a tidy commit" },
       { name: "review", description: "review the diff" },
@@ -33,11 +33,14 @@ Deno.test("listSkills reads frontmatter descriptions; loadBody strips frontmatte
   });
 });
 
-Deno.test("the /init builtin is available without an install", () => {
+Deno.test("the builtins are available without an install", () => {
   Deno.env.set("BOUGH_SKILLS_DIR", "/nonexistent-bough-skills");
   try {
-    assertEquals(listSkills().map((s) => s.name), ["init"]);
+    assertEquals(listSkills().map((s) => s.name), ["init", "net-plugin"]);
     assertStringIncludes(activeFor("/init"), "AGENTS.md");
+    const plugin = activeFor("/net-plugin gate stripe refunds");
+    assertStringIncludes(plugin, "net/plugins/install");
+    assertStringIncludes(plugin, "Live-test");
   } finally {
     Deno.env.delete("BOUGH_SKILLS_DIR");
   }
@@ -60,7 +63,7 @@ Deno.test("activeFor injects only /named skills at word boundaries", () => {
 Deno.test("no skills dir → only builtins remain; unknown /names inject nothing", () => {
   Deno.env.set("BOUGH_SKILLS_DIR", "/nonexistent-bough-skills");
   try {
-    assertEquals(listSkills().map((s) => s.name), ["init"]);
+    assertEquals(listSkills().map((s) => s.name), ["init", "net-plugin"]);
     assertEquals(activeFor("/anything at all"), "");
   } finally {
     Deno.env.delete("BOUGH_SKILLS_DIR");

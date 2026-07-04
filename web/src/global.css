@@ -110,6 +110,11 @@ textarea {
   }
 }
 
+/* agent-reply markdown: quiet list markers (::marker can't be styled inline) */
+.md-list li::marker {
+  color: #9aa1ac;
+}
+
 @keyframes slideIn {
   from {
     transform: translateX(-24px);

@@ -35,8 +35,18 @@ export const NetConfig = z.object({
   holdVerbs: z.array(z.string()).default([]),
   /** Names of policy bundles merged into this config (metadata; drives `installed` in the UI). */
   bundles: z.array(z.string()).default([]),
+  /**
+   * Classifier-plugin activations. Plugin FILES (~/.bough/net/plugins/) are a global
+   * library; a plugin only gates where an activation names it — globally here, or per
+   * branch via a session's net_policies override (inherited down the session tree
+   * like every other field). `expires` is per-activation, so the same plugin can run
+   * open-ended in one branch and lapse after 2h in another. An expired or missing
+   * activation drops the classifier and the host fails closed again.
+   */
+  plugins: z.array(z.object({ name: z.string(), expires: z.string().optional() })).default([]),
 });
 export type NetConfig = z.infer<typeof NetConfig>;
+export type PluginActivation = NetConfig["plugins"][number];
 
 /** A curated read-mostly dev allowlist (GitHub + the major package registries). Fully user-editable. */
 const SEED_HOSTS = [
@@ -123,6 +133,29 @@ export function resolveConfig(
     }
   }
   return { config: loadConfig(dir), source: { scope: "global" } };
+}
+
+/**
+ * Turn a plugin activation on (upsert; `expires` undefined = open-ended) or off for
+ * one scope. Global scope edits policy.json; session scope writes the branch's
+ * net_policies override seeded from its EFFECTIVE config — the same copy-on-write
+ * move as the rule editor's override flow, so children keep inheriting it.
+ */
+export function setPluginActivation(
+  db: Db,
+  sessionId: string | undefined,
+  name: string,
+  on: boolean,
+  expires?: string,
+  dir = netDir(),
+): NetConfig {
+  const config = sessionId ? resolveConfig(db, sessionId, dir).config : loadConfig(dir);
+  const plugins = config.plugins.filter((p) => p.name !== name);
+  if (on) plugins.push({ name, ...(expires ? { expires } : {}) });
+  const next = { ...config, plugins };
+  if (sessionId) db.setNetPolicy(sessionId, JSON.stringify(next));
+  else saveConfig(next, dir);
+  return next;
 }
 
 /** Compile the editable config into the runtime Policy the gate enforces. */

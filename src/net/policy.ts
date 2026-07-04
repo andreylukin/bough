@@ -59,11 +59,24 @@ export interface Request {
 }
 
 export interface Action {
-  /** "aws:ec2", "k8s", "github", "other". */
+  /** "aws:ec2", "k8s", "github", a plugin name, "other". */
   service: string;
   /** e.g. "TerminateInstances", "DELETE /api/v1/pods/x", "graphql:mutation". */
   verb: string;
   kind: Kind;
+}
+
+/**
+ * A pluggable classifier — how plugins (plugins.ts) teach the gate a provider's
+ * verb vocabulary. `classify` is consulted only for hosts matching `hosts`
+ * (exact or "*.suffix") and must be synchronous and pure — it runs on the gate's
+ * hot path. Returning undefined falls through to the next matching classifier,
+ * then the built-ins.
+ */
+export interface Classifier {
+  name: string;
+  hosts: string[];
+  classify(req: Request): Action | undefined;
 }
 
 export interface Decision {
@@ -123,7 +136,7 @@ export function bodyText(req: Request): string {
   return new TextDecoder().decode(b);
 }
 
-function hostMatches(host: string, patterns: Iterable<string>): boolean {
+export function hostMatches(host: string, patterns: Iterable<string>): boolean {
   for (const p of patterns) {
     if (host === p || (p.startsWith("*.") && host.endsWith(p.slice(1)))) return true;
   }
@@ -211,8 +224,21 @@ export function classifyGithub(req: Request): Action {
   return { service: "github", verb: `${verb} ${path}`, kind };
 }
 
-export function classify(req: Request, k8sHosts: Iterable<string> = []): Action {
+export function classify(
+  req: Request,
+  k8sHosts: Iterable<string> = [],
+  plugins: readonly Classifier[] = [],
+): Action {
   const host = req.host.toLowerCase();
+  // Plugins outrank built-ins so an operator can sharpen (or replace) the stock
+  // classification for a host. First match in load order wins; undefined falls
+  // through — so a failed-to-load plugin leaves its hosts on the built-in chain,
+  // where anything unrecognised classifies UNKNOWN and fails closed in decide().
+  for (const p of plugins) {
+    if (!hostMatches(host, p.hosts)) continue;
+    const action = p.classify(req);
+    if (action) return action;
+  }
   if (hostMatches(host, k8sHosts)) return classifyK8s(req);
   if (host === "amazonaws.com" || host.endsWith(".amazonaws.com")) return classifyAws(req);
   if (host === "github.com" || host.endsWith(".github.com")) return classifyGithub(req);
@@ -225,14 +251,24 @@ export function classify(req: Request, k8sHosts: Iterable<string> = []): Action 
 
 // ---- decision --------------------------------------------------------------
 
-export function decide(req: Request, pol: Policy): Decision {
+export function decide(
+  req: Request,
+  pol: Policy,
+  plugins: readonly Classifier[] = [],
+): Decision {
   const host = req.host.toLowerCase();
   const unknownAction = { service: "?", verb: "?", kind: UNKNOWN } as const;
 
   if (hostMatches(host, pol.denyHosts)) {
     return { verdict: "deny", reason: `host ${host} explicitly denied`, action: unknownAction };
   }
-  if (pol.allowHosts.size > 0 && !hostMatches(host, pol.allowHosts)) {
+  // A host claimed by an ACTIVE plugin skips the allowlist gate: enabling the plugin
+  // for this scope IS the trust decision for its hosts, and it's stricter than a bare
+  // allowHosts entry — the plugin's table classifies every request, unmatched ops are
+  // UNKNOWN (deny/hold by mode), and when the activation expires the hostMiss gate
+  // below takes over again. denyHosts still wins outright (above).
+  const pluginClaimed = plugins.some((p) => hostMatches(host, p.hosts));
+  if (!pluginClaimed && pol.allowHosts.size > 0 && !hostMatches(host, pol.allowHosts)) {
     const reason = pol.hostMiss === "hold"
       ? `host ${host} not in allowlist — approval needed`
       : pol.hostMiss === "allow"
@@ -241,7 +277,7 @@ export function decide(req: Request, pol: Policy): Decision {
     return { verdict: pol.hostMiss, reason, action: unknownAction };
   }
 
-  const action = classify(req, pol.k8sHosts);
+  const action = classify(req, pol.k8sHosts, plugins);
 
   // Explicit per-verb overrides. Deny wins over hold wins over allow.
   if (pol.denyVerbs.has(action.verb)) {

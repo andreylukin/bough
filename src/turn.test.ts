@@ -53,7 +53,9 @@ function finalMessage(db: Db, id: string): Message {
 
 function eventTypes(events: BoughEvent[], id: string): string[] {
   return events
-    .filter((e) => (e.data as { messageId?: string }).messageId === id || (e.data as Message).id === id)
+    .filter((e) =>
+      (e.data as { messageId?: string }).messageId === id || (e.data as Message).id === id
+    )
     .map((e) => e.type);
 }
 
@@ -61,7 +63,10 @@ function eventTypes(events: BoughEvent[], id: string): string[] {
 
 Deno.test("text-only turn streams, persists a text part, and finishes", async () => {
   const { db, bus, events, sessionId } = seed();
-  const llm = fakeLlm([{ content: [{ type: "text", text: "hello world" }], stopReason: "end_turn" }]);
+  const llm = fakeLlm([{
+    content: [{ type: "text", text: "hello world" }],
+    stopReason: "end_turn",
+  }]);
   const ctx: TurnCtx = { db, bus, llm, tools: [] };
 
   const { message, done } = beginTurn(ctx, sessionId);
@@ -71,11 +76,16 @@ Deno.test("text-only turn streams, persists a text part, and finishes", async ()
   assertEquals(final.pending, false);
   assertEquals(final.parts, [{ type: "text", text: "hello world" }] as Part[]);
 
-  const deltas = events.filter((e) => e.type === "message.delta").map((e) => (e.data as { delta: string }).delta);
+  const deltas = events.filter((e) => e.type === "message.delta").map((e) =>
+    (e.data as { delta: string }).delta
+  );
   assertEquals(deltas.join(""), "hello world");
   const types = eventTypes(events, message.id);
   assertEquals(types.includes("message.started"), true);
   assertEquals(types.includes("message.finished"), true);
+  // turn.finished carries how the turn ended (feeds the UI's status affixes).
+  const finished = events.find((e) => e.type === "turn.finished");
+  assertEquals((finished?.data as { status: string }).status, "done");
   assertEquals(db.turnsByStatus("done").length, 1);
 });
 
@@ -125,7 +135,10 @@ Deno.test("tool-call turn runs a tool, appends the result, and loops to completi
     },
   };
   const llm = fakeLlm([
-    { content: [{ type: "tool_use", id: "t1", name: "bash", input: { command: "echo hi" } }], stopReason: "tool_use" },
+    {
+      content: [{ type: "tool_use", id: "t1", name: "bash", input: { command: "echo hi" } }],
+      stopReason: "tool_use",
+    },
     { content: [{ type: "text", text: "done" }], stopReason: "end_turn" },
   ]);
   const ctx: TurnCtx = { db, bus, llm, tools: [fakeBash] };
@@ -144,7 +157,9 @@ Deno.test("tool-call turn runs a tool, appends the result, and loops to completi
 
   // Round 2 saw the assistant tool_use and the user tool_result we fed back.
   const round2 = llm.calls[1].messages;
-  const assistant = round2.find((m: LlmMessage) => m.role === "assistant" && m.content.some((b) => b.type === "tool_use"));
+  const assistant = round2.find((m: LlmMessage) =>
+    m.role === "assistant" && m.content.some((b) => b.type === "tool_use")
+  );
   const results = round2.find((m: LlmMessage) => m.content.some((b) => b.type === "tool_result"));
   assertExists(assistant);
   assertExists(results);
@@ -207,7 +222,10 @@ Deno.test("a tool that throws yields an error tool_result but the turn continues
   await done;
 
   const final = finalMessage(db, message.id);
-  const result = final.parts.find((p) => p.type === "tool_result") as { output: string; isError: boolean };
+  const result = final.parts.find((p) => p.type === "tool_result") as {
+    output: string;
+    isError: boolean;
+  };
   assertEquals(result.isError, true);
   assertStringIncludes(result.output, "nope");
   assertEquals(db.turnsByStatus("done").length, 1);
@@ -248,7 +266,9 @@ Deno.test("history from a prior turn is replayed as assistant + tool_result mess
   assertExists(assistant);
   assertEquals(assistant.content.some((b) => b.type === "reasoning"), false);
   assertEquals(assistant.content.some((b) => b.type === "tool_use"), true);
-  const toolResultMsg = history.find((m) => m.role === "user" && m.content.some((b) => b.type === "tool_result"));
+  const toolResultMsg = history.find((m) =>
+    m.role === "user" && m.content.some((b) => b.type === "tool_result")
+  );
   assertExists(toolResultMsg);
 });
 
@@ -299,7 +319,14 @@ Deno.test("recoverOrphanedTurns orphans a stranded turn and finishes its message
     pending: true,
     createdAt: 5,
   });
-  db.createTurn({ id: "turn1", sessionId, messageId: "sup1", status: "running", step: "round:1", updatedAt: 6 });
+  db.createTurn({
+    id: "turn1",
+    sessionId,
+    messageId: "sup1",
+    status: "running",
+    step: "round:1",
+    updatedAt: 6,
+  });
 
   const recovered = recoverOrphanedTurns(db, bus);
 
@@ -309,4 +336,34 @@ Deno.test("recoverOrphanedTurns orphans a stranded turn and finishes its message
   assertEquals(msg.pending, false);
   assertStringIncludes((msg.parts.at(-1) as { text: string }).text, "Interrupted");
   assertEquals(eventTypes(events, "sup1").includes("message.finished"), true);
+});
+
+Deno.test("interrupt reaches INTO a running tool via ctx.signal (stop means stop)", async () => {
+  const { db, bus, sessionId } = seed();
+  // A tool that only finishes when the turn's signal aborts — a stand-in for a
+  // long-running run_steps program / bash child observing ctx.signal.
+  const longTool: ToolDef = {
+    name: "long",
+    description: "runs until interrupted",
+    schema: z.object({}),
+    run: (_input, ctx?: ToolRunCtx) =>
+      new Promise<string>((_resolve, reject) => {
+        ctx?.signal?.addEventListener(
+          "abort",
+          () => reject(new Error("killed: turn interrupted")),
+          { once: true },
+        );
+      }),
+  };
+  const llm = fakeLlm([
+    { content: [{ type: "tool_use", id: "t1", name: "long", input: {} }], stopReason: "tool_use" },
+  ]);
+  const { message, done } = beginTurn({ db, bus, llm, tools: [longTool] }, sessionId);
+  await new Promise((r) => setTimeout(r, 10)); // let the tool start
+  assertEquals(interruptTurn(sessionId), true);
+  await done; // resolves because the tool observed the signal — no hang
+  const final = finalMessage(db, message.id);
+  assertEquals(final.pending, false);
+  assertStringIncludes((final.parts.at(-1) as { text: string }).text, "Stopped");
+  assertEquals(db.turnsByStatus("interrupted").length, 1);
 });

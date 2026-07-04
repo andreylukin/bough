@@ -24,6 +24,15 @@ Deno.test("Message round-trips", () => {
     createdAt: 123,
   };
   assertEquals(Message.parse(m), m);
+  const note: TMessage = {
+    id: "m2",
+    sessionId: "s1",
+    role: "system",
+    parts: [{ type: "text", text: "[subagent finished] …" }],
+    pending: false,
+    createdAt: 124,
+  };
+  assertEquals(Message.parse(note), note);
 });
 
 Deno.test("Session round-trips with nullable parent", () => {
@@ -31,6 +40,16 @@ Deno.test("Session round-trips with nullable parent", () => {
   assertEquals(Session.parse(s), s);
   const fork: TSession = { id: "s2", parentId: "s1", title: "fork", kind: "fork", createdAt: 2 };
   assertEquals(Session.parse(fork), fork);
+  const sub: TSession = {
+    id: "s3",
+    parentId: null,
+    title: "subagent",
+    kind: "subagent",
+    createdAt: 3,
+    originId: "s1",
+    originMessageId: "m1",
+  };
+  assertEquals(Session.parse(sub), sub);
 });
 
 Deno.test("BoughEvent + NetRequest round-trip", () => {

@@ -24,6 +24,10 @@ export const DONE_ACCEPTED = "[done] accepted";
 /** Appears when `done` was requested but the committed check failed. */
 export const DONE_REJECTED = "[done] rejected";
 
+// A program that can call agent() blocks on whole subagent turns — give it a far
+// larger wall-clock budget than the plain 3-minute program cap in harness/vm.ts.
+const DELEGATING_TIMEOUT_MS = 45 * 60_000;
+
 const schema = z.object({
   code: z.string().describe(
     "One JavaScript program for this round. It runs in a sealed V8 sandbox; the entire " +
@@ -59,13 +63,27 @@ export const runSteps: ToolDef = {
     const { code, check, done } = input as z.infer<typeof schema>;
     if (check && ctx.turn) ctx.turn.check = check;
 
-    const result = await runProgram(code, {
-      bash: (command) => bash.run({ command }, ctx),
-      read: (path) => readFile.run({ path }, ctx),
-      write: (path, content) => writeFile.run({ path, content }, ctx),
-      edit: (path, old_string, new_string) =>
-        editFile.run({ path, old_string, new_string }, ctx),
-    });
+    const result = await runProgram(
+      code,
+      {
+        bash: (command) => bash.run({ command }, ctx),
+        read: (path) => readFile.run({ path }, ctx),
+        write: (path, content) => writeFile.run({ path, content }, ctx),
+        edit: (path, old_string, new_string) => editFile.run({ path, old_string, new_string }, ctx),
+        // Delegation (present only when the turn runner allows it): agent()/join() can
+        // block on whole subagent turns, so the program gets a far larger wall-clock budget.
+        ...(ctx.delegate
+          ? {
+            agent: async (task: string) => JSON.stringify(await ctx.delegate!.run(task)),
+            spawn: async (task: string) => JSON.stringify(await ctx.delegate!.spawn(task)),
+            join: async (sessionId: string) => JSON.stringify(await ctx.delegate!.join(sessionId)),
+            adopt: (sessionId: string) => ctx.delegate!.adopt(sessionId),
+          }
+          : {}),
+      },
+      ctx.delegate ? DELEGATING_TIMEOUT_MS : undefined,
+      ctx.signal,
+    );
 
     const out: string[] = [];
     if (result.logs.length) out.push(result.logs.join("\n"));

@@ -3,7 +3,8 @@
 // collapsed groups. The live turn streams in from the delta buffer.
 import { useEffect, useRef, useState } from "react";
 import { c, mono, sans } from "../theme";
-import type { Message, Part } from "../types";
+import { useIsMobile } from "../useIsMobile";
+import type { Message, Part, Session } from "../types";
 import type { ActivityGroup, WorkerActivity } from "../mock";
 import { CopyId, Kbd } from "./ui";
 import { Markdown } from "./Markdown";
@@ -12,6 +13,7 @@ const roleLabel: Record<string, { text: string; color: string }> = {
   user: { text: "YOU", color: c.muted2 },
   supervisor: { text: "BOUGH · supervisor", color: c.green },
   worker: { text: "◇ worker", color: c.muted },
+  system: { text: "◆ SYSTEM", color: c.muted },
 };
 
 function clip(s: string, max: number): string {
@@ -286,10 +288,94 @@ function ActivityView({ group }: { group: ActivityGroup }) {
   );
 }
 
+// Subagent branches spawned by this turn (matched on originMessageId): one card per
+// branch, pulsing while it runs, click-through to open its session on the map/thread.
+// `column` renders the side-rail variant (vertical stack beside the turn's prose);
+// without it the cards flow inline under the turn (mobile fallback).
+function SubagentChips({ subs, onOpen, column = false }: {
+  subs: Session[];
+  onOpen?: (id: string) => void;
+  column?: boolean;
+}) {
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  
+  // Auto-collapse finished subagents (remove from expanded set when busy → false)
+  useEffect(() => {
+    setExpandedIds(prev => {
+      const next = new Set(prev);
+      subs.forEach(s => {
+        if (!s.busy && next.has(s.id)) {
+          next.delete(s.id);
+        }
+      });
+      return next.size === prev.size ? prev : next;
+    });
+  }, [subs]);
+  
+  const visibleSubs = subs.filter(s => expandedIds.has(s.id) || s.busy);
+  
+  return (
+    <div
+      style={column
+        ? { display: "flex", flexDirection: "column", gap: 7 }
+        : { display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}
+    >
+      {column && (
+        <div style={{ fontSize: 10, letterSpacing: ".12em", color: c.muted2, fontWeight: 600 }}>
+          ◆ BRANCHES
+        </div>
+      )}
+      {visibleSubs.map((s) => (
+        <button
+          key={s.id}
+          onClick={() => onOpen?.(s.id)}
+          title="open this subagent's branch"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 7,
+            padding: "5px 11px",
+            borderRadius: 8,
+            border: `1px solid ${c.border2}`,
+            background: c.panel3,
+            color: c.text2,
+            fontSize: 12,
+            fontFamily: mono,
+            cursor: "pointer",
+            ...(column ? { width: "100%", textAlign: "left" as const } : {}),
+          }}
+        >
+          <span
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: "50%",
+              flex: "none",
+              background: s.busy ? c.amber : c.green,
+              animation: s.busy ? "boughPulse 1s steps(2) infinite" : undefined,
+            }}
+          />
+          <span
+            style={column
+              ? { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }
+              : undefined}
+          >
+            ◆ {s.title.replace(/^subagent · /, "")}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function TurnView({
   msg,
   live,
   activity,
+  subagents = [],
+  onOpenSession,
+  subagentThread = false,
+  chipsAside = false,
   editable,
   onEdit,
   compacting,
@@ -299,13 +385,23 @@ function TurnView({
   msg: Message;
   live?: string;
   activity?: ActivityGroup;
+  subagents?: Session[];
+  onOpenSession?: (id: string) => void;
+  subagentThread?: boolean;
+  // Wide screens park the subagent cards in a sticky column beside the turn's prose;
+  // on phones they fall back to flowing under it.
+  chipsAside?: boolean;
   editable: boolean;
   onEdit: (id: string, text: string) => void;
   compacting: boolean;
   inSpan: boolean;
   onPick: (id: string) => void;
 }) {
-  const label = roleLabel[msg.role] ?? roleLabel.worker;
+  // Inside a subagent's own thread its replies are the subagent speaking, not the
+  // supervisor — mislabeling was genuinely disorienting in user testing.
+  const label = msg.role === "supervisor" && subagentThread
+    ? { text: "◆ BOUGH · subagent", color: c.green }
+    : roleLabel[msg.role] ?? roleLabel.worker;
   const isUser = msg.role === "user";
   // Parts render IN ORDER (text → tools → text …), not flattened by type — flattening
   // glues prose from different rounds together and buries tool activity at the bottom.
@@ -430,7 +526,8 @@ function TurnView({
           </div>
         )
         : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 640 }}>
+          <div style={{ display: "flex", gap: 18, alignItems: "flex-start" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 640, flex: "0 1 640px", minWidth: 0 }}>
             {segments.map((seg, i) => {
               if (seg.kind === "reasoning") {
                 return (
@@ -458,7 +555,7 @@ function TurnView({
             })}
             {(!!live || showCursor) && (
               <div style={{ fontSize: 14.5, lineHeight: 1.65, color: c.text2 }}>
-                {live && <Markdown text={live} />}
+                {live && <Markdown text={live} streaming />}
                 {showCursor && (
                   <span
                     style={{
@@ -476,7 +573,16 @@ function TurnView({
               </div>
             )}
           </div>
+          {chipsAside && subagents.length > 0 && (
+            // Sticky within the conversation scroll: the cards ride alongside a long
+            // streaming turn instead of sinking to its bottom edge.
+            <div style={{ flex: "0 0 178px", minWidth: 0, position: "sticky", top: 6 }}>
+              <SubagentChips column subs={subagents} onOpen={onOpenSession} />
+            </div>
+          )}
+          </div>
         )}
+      {!chipsAside && subagents.length > 0 && <SubagentChips subs={subagents} onOpen={onOpenSession} />}
       {activity && <ActivityView group={activity} />}
     </div>
   );
@@ -601,6 +707,9 @@ export function Conversation({
   thread,
   streaming,
   activity = [],
+  subagents = [],
+  onOpenSession,
+  subagentThread = false,
   dimmed = false,
   canBranch = false,
   busy = false,
@@ -610,6 +719,7 @@ export function Conversation({
   onSearchFiles,
   onForkEdit,
   onCompact,
+  skills = [],
   queued = [],
   onRemoveQueued,
   onEditQueued,
@@ -621,6 +731,11 @@ export function Conversation({
   // immediately after creating/switching a session.
   focusKey?: string | null;
   activity?: ActivityGroup[];
+  // Subagent sessions (kind "subagent") for chip rendering under their spawning turn.
+  subagents?: Session[];
+  onOpenSession?: (id: string) => void;
+  // The open session IS a subagent — its replies label as "◆ subagent", not supervisor.
+  subagentThread?: boolean;
   dimmed?: boolean;
   // Live mode exposes fork/compact; mock leaves them off (the affordances are inert there).
   canBranch?: boolean;
@@ -632,6 +747,8 @@ export function Conversation({
   onCompact?: (fromId: string, toId: string) => void;
   // Fuzzy workspace file search for @ references; absent → no autocomplete.
   onSearchFiles?: (q: string) => Promise<string[]>;
+  // Installed skills for / references; absent/empty → no autocomplete.
+  skills?: { name: string; description: string }[];
   // Messages staged while a turn runs — shown above the composer, editable/removable.
   queued?: string[];
   onRemoveQueued?: (i: number) => void;
@@ -639,6 +756,8 @@ export function Conversation({
   disabled: boolean;
 }) {
   const activityFor = (id: string) => activity.find((a) => a.messageId === id);
+  // Wide screens park subagent cards in a sticky side column; phones flow them inline.
+  const chipsAside = !useIsMobile();
   const [text, setText] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -647,6 +766,34 @@ export function Conversation({
   useEffect(() => {
     taRef.current?.focus();
   }, [focusKey]);
+
+  // Large pastes become a "[Pasted content #N]" marker + chip instead of flooding
+  // the textarea; markers expand back to the full text on send.
+  const [pastes, setPastes] = useState<{ n: number; text: string }[]>([]);
+  const pasteSeq = useRef(1);
+  const pasteMarker = (n: number) => `[Pasted content #${n}]`;
+
+  function onPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const pasted = e.clipboardData.getData("text/plain");
+    if (pasted.length <= 1000 && pasted.split("\n").length <= 10) return;
+    e.preventDefault();
+    const n = pasteSeq.current++;
+    setPastes((p) => [...p, { n, text: pasted }]);
+    const ta = e.currentTarget;
+    const start = ta.selectionStart;
+    const marker = pasteMarker(n);
+    const next = text.slice(0, start) + marker + text.slice(ta.selectionEnd);
+    setText(next);
+    requestAnimationFrame(() => {
+      ta.selectionStart = ta.selectionEnd = start + marker.length;
+    });
+  }
+
+  function removePaste(n: number) {
+    setPastes((p) => p.filter((x) => x.n !== n));
+    setText((t) => t.split(pasteMarker(n)).join(""));
+    taRef.current?.focus();
+  }
 
   // @ file autocomplete: the trailing `@token` before the cursor drives a search.
   const [fileMatches, setFileMatches] = useState<string[]>([]);
@@ -677,6 +824,39 @@ export function Conversation({
     setText(next);
     setFileMatches([]);
     // Restore focus + caret after the inserted path.
+    requestAnimationFrame(() => {
+      if (ta) {
+        ta.focus();
+        ta.selectionStart = ta.selectionEnd = before.length;
+      }
+    });
+  }
+
+  // / skill autocomplete: same UX as @, against the (small, prefetched) skill list.
+  const [skillMatches, setSkillMatches] = useState<{ name: string; description: string }[]>([]);
+  const [skillActive, setSkillActive] = useState(0);
+  const slashMenuOpen = skillMatches.length > 0;
+
+  // Parse a trailing `/token` (no spaces) at the cursor and filter the skill list.
+  function refreshSlashMenu(value: string, caret: number) {
+    if (skills.length === 0) return;
+    const m = /(^|\s)\/([\w-]*)$/.exec(value.slice(0, caret));
+    if (!m) {
+      setSkillMatches([]);
+      return;
+    }
+    const q = m[2].toLowerCase();
+    setSkillMatches(skills.filter((s) => s.name.toLowerCase().includes(q)));
+    setSkillActive(0);
+  }
+
+  function pickSkill(name: string) {
+    const ta = taRef.current;
+    const caret = ta ? ta.selectionStart : text.length;
+    const before = text.slice(0, caret).replace(/\/([\w-]*)$/, `/${name} `);
+    const next = before + text.slice(caret);
+    setText(next);
+    setSkillMatches([]);
     requestAnimationFrame(() => {
       if (ta) {
         ta.focus();
@@ -732,10 +912,13 @@ export function Conversation({
   }, [thread, streaming]);
 
   function submit(branch: boolean) {
-    const t = text.trim();
+    let t = text.trim();
     if (!t || disabled) return;
+    // Expand paste markers to their full text; a hand-deleted marker drops its paste.
+    for (const p of pastes) t = t.split(pasteMarker(p.n)).join(p.text);
     onSend(t, branch);
     setText("");
+    setPastes([]);
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -756,6 +939,25 @@ export function Conversation({
       if (e.key === "Escape") {
         e.preventDefault();
         return setFileMatches([]);
+      }
+    }
+    // The / skill menu mirrors it exactly (the two are mutually exclusive by token).
+    if (slashMenuOpen) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        return setSkillActive((a) => Math.min(a + 1, skillMatches.length - 1));
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        return setSkillActive((a) => Math.max(a - 1, 0));
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        return pickSkill(skillMatches[skillActive].name);
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        return setSkillMatches([]);
       }
     }
     // Esc stops a running turn (matches the leading TUI agents).
@@ -854,6 +1056,10 @@ export function Conversation({
             msg={m}
             live={streaming[m.id]}
             activity={activityFor(m.id)}
+            subagents={subagents.filter((s) => s.originMessageId === m.id)}
+            onOpenSession={onOpenSession}
+            subagentThread={subagentThread}
+            chipsAside={chipsAside}
             editable={canBranch && !!onForkEdit && m.role === "user"}
             onEdit={(id, t) => onForkEdit?.(id, t)}
             compacting={compacting}
@@ -921,6 +1127,61 @@ export function Conversation({
             ))}
           </div>
         )}
+        {slashMenuOpen && (
+          <div
+            style={{
+              position: "absolute",
+              left: 24,
+              right: 24,
+              bottom: "100%",
+              marginBottom: 6,
+              maxHeight: 220,
+              overflowY: "auto",
+              background: c.panel2,
+              border: `1px solid ${c.border}`,
+              borderRadius: 10,
+              boxShadow: "0 16px 40px rgba(0,0,0,.4)",
+              padding: 5,
+              zIndex: 20,
+            }}
+          >
+            {skillMatches.map((s, i) => (
+              <div
+                key={s.name}
+                onMouseEnter={() => setSkillActive(i)}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  pickSkill(s.name);
+                }}
+                style={{
+                  display: "flex",
+                  alignItems: "baseline",
+                  gap: 10,
+                  padding: "7px 10px",
+                  borderRadius: 6,
+                  background: i === skillActive ? c.panelInset : "transparent",
+                  fontSize: 12,
+                  cursor: "pointer",
+                }}
+              >
+                <span style={{ fontFamily: mono, color: i === skillActive ? c.text : c.text2, flexShrink: 0 }}>
+                  <span style={{ color: c.green }}>/</span>
+                  {s.name}
+                </span>
+                <span
+                  style={{
+                    color: c.muted2,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {s.description}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
         <div
           style={{
             border: `1px solid ${c.border}`,
@@ -935,8 +1196,10 @@ export function Conversation({
             onChange={(e) => {
               setText(e.target.value);
               refreshAtMenu(e.target.value, e.target.selectionStart);
+              refreshSlashMenu(e.target.value, e.target.selectionStart);
             }}
             onKeyDown={onKeyDown}
+            onPaste={onPaste}
             placeholder="Message bough…  @ to reference a file"
             rows={1}
             disabled={disabled}
@@ -954,6 +1217,37 @@ export function Conversation({
               maxHeight: 160,
             }}
           />
+          {pastes.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+              {pastes.map((p) => (
+                <span
+                  key={p.n}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 7,
+                    fontFamily: mono,
+                    fontSize: 11,
+                    color: c.muted,
+                    background: c.panelInset,
+                    border: `1px solid ${c.border3}`,
+                    borderRadius: 6,
+                    padding: "3px 8px",
+                  }}
+                >
+                  ⎘ Pasted content #{p.n} ·{" "}
+                  {p.text.includes("\n") ? `${p.text.split("\n").length} lines` : `${(p.text.length / 1000).toFixed(1)}k chars`}
+                  <button
+                    onClick={() => removePaste(p.n)}
+                    title="Remove pasted content"
+                    style={{ color: c.muted2, fontSize: 13, padding: 0, lineHeight: 1 }}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
           <div
             style={{
               display: "flex",

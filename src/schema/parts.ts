@@ -17,10 +17,12 @@ import { z } from "zod";
 
 // ---- roles & kinds ---------------------------------------------------------
 
-export const Role = z.enum(["user", "supervisor", "worker"]);
+// "system" = harness-injected notes (e.g. a background subagent's finished report);
+// they render distinctly in the UI and replay to the model as user-side text.
+export const Role = z.enum(["user", "supervisor", "worker", "system"]);
 export type Role = z.infer<typeof Role>;
 
-export const SessionKind = z.enum(["root", "fork", "worker", "compaction"]);
+export const SessionKind = z.enum(["root", "fork", "worker", "compaction", "subagent"]);
 export type SessionKind = z.infer<typeof SessionKind>;
 
 // ---- parts -----------------------------------------------------------------

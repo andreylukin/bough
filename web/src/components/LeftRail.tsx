@@ -9,8 +9,18 @@ import { c, mono } from "../theme";
 import type { Head, OutlineNode } from "../mock";
 import type { HeadGroup } from "../live";
 
+// The current-thread outline is multicolor by speaker: your turns are blue,
+// the AI's turns (supervisor / worker) are green, system notes stay neutral.
+const roleColor: Record<NonNullable<OutlineNode["role"]>, string> = {
+  user: c.blue,
+  supervisor: c.green,
+  worker: c.green,
+  system: c.muted2,
+};
+
 function OutlineRow({ node, last }: { node: OutlineNode; last: boolean }) {
   const running = node.state === "running";
+  const dot = node.role ? roleColor[node.role] : node.state === "done" ? c.green : c.hairline;
   return (
     <div style={{ position: "relative", marginBottom: last ? 0 : 13 }}>
       {running ? (
@@ -24,7 +34,7 @@ function OutlineRow({ node, last }: { node: OutlineNode; last: boolean }) {
             height: 9,
             borderRadius: "50%",
             background: c.panel,
-            border: `2px solid ${c.green}`,
+            border: `2px solid ${dot}`,
           }}
         />
       ) : (
@@ -36,7 +46,7 @@ function OutlineRow({ node, last }: { node: OutlineNode; last: boolean }) {
             width: 7,
             height: 7,
             borderRadius: "50%",
-            background: node.state === "done" ? c.green : c.hairline,
+            background: dot,
           }}
         />
       )}
@@ -107,6 +117,15 @@ function HeadCard(
                 }}
               />
             )
+            : head.status === "failed"
+            ? (
+              <span
+                title="last turn failed or was stopped"
+                style={{ flex: "none", color: c.red, fontSize: 10, marginLeft: "auto" }}
+              >
+                ✗
+              </span>
+            )
             : head.unseen
             ? (
               <span
@@ -156,6 +175,95 @@ function HeadCard(
   );
 }
 
+// Recursive checks over a head's nested branches (children of children included).
+function anyHead(heads: Head[] | undefined, pred: (h: Head) => boolean): boolean {
+  return (heads ?? []).some((h) => pred(h) || anyHead(h.children, pred));
+}
+
+// One head plus its branched-off sessions (forks/compactions/subagents), folded
+// behind a toggle so a burst of subagents doesn't swamp the rail. Collapsed by
+// default; auto-expands while the open session is inside, and the toggle carries
+// the busy pulse / unseen dot so hidden activity stays visible.
+function HeadNode(
+  { head, onSelectHead, onArchiveHead }: {
+    head: Head;
+    onSelectHead: (id: string) => void;
+    onArchiveHead?: (id: string) => void;
+  },
+) {
+  const kids = head.children ?? [];
+  const [open, setOpen] = useState(false);
+  const activeInside = anyHead(kids, (h) => !!h.active);
+  useEffect(() => {
+    if (activeInside) setOpen(true);
+  }, [activeInside]);
+  const busyInside = anyHead(kids, (h) => !!h.busy);
+  const unseenInside = anyHead(kids, (h) => !!h.unseen);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+      <HeadCard
+        head={head}
+        onClick={() => onSelectHead(head.id)}
+        onArchive={onArchiveHead && (() => onArchiveHead(head.id))}
+      />
+      {kids.length > 0 && (
+        <button
+          onClick={() => setOpen((o) => !o)}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            marginLeft: 10,
+            padding: "2px 4px",
+            fontSize: 10.5,
+            fontFamily: mono,
+            color: c.muted2,
+            textAlign: "left",
+          }}
+        >
+          <span>{open ? "▾" : "▸"}</span>
+          {kids.length} {kids.length === 1 ? "branch" : "branches"}
+          {busyInside && (
+            <span
+              className="pulse-green"
+              title="a turn is running in a branch"
+              style={{
+                width: 7,
+                height: 7,
+                borderRadius: "50%",
+                background: c.panel,
+                border: `2px solid ${c.green}`,
+              }}
+            />
+          )}
+          {!open && !busyInside && unseenInside && (
+            <span
+              title="a branch finished — take a look"
+              style={{ width: 7, height: 7, borderRadius: "50%", background: c.green }}
+            />
+          )}
+        </button>
+      )}
+      {open && kids.length > 0 && (
+        <div
+          style={{
+            marginLeft: 10,
+            paddingLeft: 8,
+            borderLeft: `1px solid ${c.border2}`,
+            display: "flex",
+            flexDirection: "column",
+            gap: 5,
+          }}
+        >
+          {kids.map((k) => (
+            <HeadNode key={k.id} head={k} onSelectHead={onSelectHead} onArchiveHead={onArchiveHead} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function NewSessionForm({ onCreate }: { onCreate: (workspace: string) => void }) {
   const [workspace, setWorkspace] = useState("");
   const submit = () => onCreate(workspace.trim());
@@ -200,14 +308,24 @@ function NewSessionForm({ onCreate }: { onCreate: (workspace: string) => void })
   );
 }
 
-function GroupHeader({ group, onNewInGroup }: { group: HeadGroup; onNewInGroup?: () => void }) {
+function GroupHeader(
+  { group, expanded, onToggle, onNewInGroup }: {
+    group: HeadGroup;
+    expanded: boolean;
+    onToggle: () => void;
+    onNewInGroup?: () => void;
+  },
+) {
   return (
     <div
+      onClick={onToggle}
+      title={expanded ? "Collapse this directory" : "Show this directory's sessions"}
       style={{
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
         marginBottom: 8,
+        cursor: "pointer",
       }}
     >
       <span
@@ -223,11 +341,17 @@ function GroupHeader({ group, onNewInGroup }: { group: HeadGroup; onNewInGroup?:
           whiteSpace: "nowrap",
         }}
       >
+        <span style={{ display: "inline-block", width: 12, fontSize: 9 }}>
+          {expanded ? "▾" : "▸"}
+        </span>
         {group.label} · {group.heads.length}
       </span>
       {onNewInGroup && (
         <button
-          onClick={onNewInGroup}
+          onClick={(e) => {
+            e.stopPropagation();
+            onNewInGroup();
+          }}
           title={group.workspace ? `New session in ${group.workspace}` : "New chat session"}
           style={{
             flex: "none",
@@ -265,25 +389,19 @@ export function LeftRail({
   onArchiveHead?: (id: string) => void;
 }) {
   const [creating, setCreating] = useState(false);
-  const [expandedHeadIds, setExpandedHeadIds] = useState<Set<string>>(new Set());
-  
-  // Auto-collapse finished heads (subagent branches that are no longer busy)
-  useEffect(() => {
-    setExpandedHeadIds((prev) => {
+  // Directory groups are collapsed by default (there can be dozens of heads). A
+  // collapsed group still surfaces heads that are busy, active, or have live work
+  // in their nested branches — the click target for reopening is the header itself.
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const toggleGroup = (key: string) =>
+    setExpandedGroups((prev) => {
       const next = new Set(prev);
-      let changed = false;
-      // Remove heads that are finished (not busy) from the expanded set
-      for (const headId of next) {
-        const head = groups.flatMap((g) => g.heads).find((h) => h.id === headId);
-        if (head && !head.busy) {
-          next.delete(headId);
-          changed = true;
-        }
-      }
-      return changed ? next : prev;
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
     });
-  }, [groups]);
-  
+  const alive = (h: Head): boolean =>
+    !!h.busy || !!h.active || anyHead(h.children, (k) => !!k.busy || !!k.active);
   useEffect(() => {
     if (openFormSignal) setCreating(true);
   }, [openFormSignal]);
@@ -374,29 +492,19 @@ export function LeftRail({
           <div key={g.key} style={{ marginBottom: i === groups.length - 1 ? 0 : 18 }}>
             <GroupHeader
               group={g}
+              expanded={expandedGroups.has(g.key)}
+              onToggle={() => toggleGroup(g.key)}
               onNewInGroup={onCreateSession && (() => onCreateSession(g.workspace ?? ""))}
             />
             <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
               {g.heads
-                .filter((h) => expandedHeadIds.has(h.id) || h.busy)
+                .filter((h) => expandedGroups.has(g.key) || alive(h))
                 .map((h) => (
-                  <HeadCard
+                  <HeadNode
                     key={h.id}
                     head={h}
-                    onClick={() => {
-                      onSelectHead(h.id);
-                      // Toggle expansion when clicking
-                      setExpandedHeadIds((prev) => {
-                        const next = new Set(prev);
-                        if (next.has(h.id)) {
-                          next.delete(h.id);
-                        } else {
-                          next.add(h.id);
-                        }
-                        return next;
-                      });
-                    }}
-                    onArchive={onArchiveHead && (() => onArchiveHead(h.id))}
+                    onSelectHead={onSelectHead}
+                    onArchiveHead={onArchiveHead}
                   />
                 ))}
             </div>

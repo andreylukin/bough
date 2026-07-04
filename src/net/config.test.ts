@@ -5,6 +5,7 @@ import {
   NetConfig,
   resolveConfig,
   saveConfig,
+  setPluginActivation,
   toPolicy,
 } from "./config.ts";
 import { decide } from "./policy.ts";
@@ -152,11 +153,55 @@ Deno.test("generic-host GraphQL classifies by operation, so verb rules gate it",
       dir,
     );
     const pol = toPolicy(cfg);
-    const q = { host: "api.monarchmoney.com", method: "POST", path: "/graphql", body: JSON.stringify({ query: "query { accounts { id } }" }) };
+    const q = {
+      host: "api.monarchmoney.com",
+      method: "POST",
+      path: "/graphql",
+      body: JSON.stringify({ query: "query { accounts { id } }" }),
+    };
     const m = { ...q, body: JSON.stringify({ query: "mutation { deleteAccount(id: 1) }" }) };
     assertEquals(decide(q, pol).verdict, "allow");
     assertEquals(decide(q, pol).action.verb, "graphql:query");
     assertEquals(decide(m, pol).verdict, "hold");
     assertEquals(decide(m, pol).action.verb, "graphql:mutation");
+  });
+});
+
+Deno.test("setPluginActivation: global upsert/replace/remove", async () => {
+  await withDir((dir) => {
+    const db = new Db(":memory:");
+    setPluginActivation(db, undefined, "stripe", true, "2030-01-01T00:00:00Z", dir);
+    assertEquals(loadConfig(dir).plugins, [{ name: "stripe", expires: "2030-01-01T00:00:00Z" }]);
+
+    // re-enable replaces (here: drops the expiry), never duplicates
+    setPluginActivation(db, undefined, "stripe", true, undefined, dir);
+    assertEquals(loadConfig(dir).plugins, [{ name: "stripe" }]);
+
+    setPluginActivation(db, undefined, "stripe", false, undefined, dir);
+    assertEquals(loadConfig(dir).plugins, []);
+  });
+});
+
+Deno.test("setPluginActivation: per-branch copy-on-write, inherited, independent TTLs", async () => {
+  await withDir((dir) => {
+    const db = treeDb();
+    // child gets a 2h-style activation; grandchild inherits it
+    setPluginActivation(db, "child", "stripe", true, "2030-01-01T00:00:00Z", dir);
+    assertEquals(resolveConfig(db, "grandchild", dir).config.plugins, [
+      { name: "stripe", expires: "2030-01-01T00:00:00Z" },
+    ]);
+    // root (another branch) can run the SAME plugin open-ended, independently
+    setPluginActivation(db, "root", "stripe", true, undefined, dir);
+    assertEquals(resolveConfig(db, "root", dir).config.plugins, [{ name: "stripe" }]);
+    // child's own row shadows root's, so child keeps its expiring activation
+    assertEquals(resolveConfig(db, "child", dir).config.plugins, [
+      { name: "stripe", expires: "2030-01-01T00:00:00Z" },
+    ]);
+    // grandchild opts out without touching its ancestors (copy-on-write override)
+    setPluginActivation(db, "grandchild", "stripe", false, undefined, dir);
+    assertEquals(resolveConfig(db, "grandchild", dir).config.plugins, []);
+    assertEquals(resolveConfig(db, "child", dir).config.plugins.length, 1);
+    // the global rule set never saw any of it
+    assertEquals(loadConfig(dir).plugins, []);
   });
 });

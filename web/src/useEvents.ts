@@ -21,11 +21,11 @@ const KNOWN_TYPES = new Set([
   "message.delta",
   "message.part",
   "message.finished",
-  "turn.finished", // session status affixes (✓/✗); else stale until refresh
-  "net.request", // live egress feed + hold-and-ask cards; else the rail needs a refresh
+  "turn.finished",
   "changes.updated",
   "usage.updated",
   "worker.step",
+  "net.request", // live egress feed + hold-and-ask cards; else the rail needs a refresh
 ]);
 
 const RETRY_MS = 2000;

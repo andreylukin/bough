@@ -71,3 +71,26 @@ Deno.test("runaway program is terminated at the timeout", async () => {
   assertEquals(res.ok, false);
   assertStringIncludes(res.error ?? "", "timed out");
 });
+
+Deno.test("interrupt: aborting the signal terminates an in-flight program promptly", async () => {
+  const controller = new AbortController();
+  // A host fn that never resolves — the program is stuck awaiting it, like a long
+  // bash command; only the interrupt can end this before the wall-clock timeout.
+  const stuck = hosts({ bash: () => new Promise<string>(() => {}) });
+  const started = Date.now();
+  const resultP = runProgram('await bash("sleep forever");', stuck, 60_000, controller.signal);
+  setTimeout(() => controller.abort(), 50);
+  const result = await resultP;
+  assertEquals(result.ok, false);
+  assertStringIncludes(result.error!, "interrupted");
+  assertEquals(Date.now() - started < 5_000, true);
+});
+
+Deno.test("interrupt: an already-aborted signal refuses to run the program at all", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  const h = hosts();
+  const result = await runProgram('await bash("x");', h, 60_000, controller.signal);
+  assertEquals(result.ok, false);
+  assertEquals(h.calls, []);
+});

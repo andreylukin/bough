@@ -172,6 +172,74 @@ export async function forkSession(
   return to;
 }
 
+/** jj workspace name for a session's dedicated working copy (subagents). */
+export function workspaceNameFor(sessionId: string): string {
+  return "bough-" + sessionId;
+}
+
+/**
+ * Give a session its own jj workspace — a second working copy of the same repo at
+ * `dir`, branched off `baseBookmark`'s tip. This is the multi-working-copy analogue
+ * of forkSession: the repo's default working copy stays untouched, so sessions run
+ * in parallel without fighting over one checkout. The new workspace's working-copy
+ * change starts as a child of the base (inheriting its work) and gets the session's
+ * bookmark. Idempotent: an existing workspace dir is reused as-is.
+ */
+export async function addWorkspace(
+  repo: string,
+  sessionId: string,
+  dir: string,
+  baseBookmark: string,
+): Promise<string> {
+  await ensureRepo(repo);
+  if (await isColocated(dir)) return dir; // already added (dir has .jj)
+  await jj(repo, ["workspace", "add", "--name", workspaceNameFor(sessionId), "-r", baseBookmark, dir]);
+  await jj(dir, ["bookmark", "create", bookmarkFor(sessionId), "-r", "@"]);
+  return dir;
+}
+
+/**
+ * Refresh a workspace whose working copy went stale (its change was rebased or
+ * amended from another workspace — e.g. adoptChanges rewrote the spawner's change
+ * under a subagent). Safe to call when not stale; failures are swallowed because
+ * staleness is the only condition this repairs.
+ */
+export async function updateStale(dir: string): Promise<void> {
+  try {
+    await jj(dir, ["workspace", "update-stale"]);
+  } catch {
+    // not a workspace / nothing stale — nothing to repair
+  }
+}
+
+/**
+ * Adopt a subagent session's work into its spawner: move the subagent change's diff
+ * into the spawner's change (`jj squash --from --into`). Both working copies are
+ * snapshotted first so on-disk edits are included; the squash runs in the spawner's
+ * workspace (`repo`) so its checkout is updated in place rather than marked stale.
+ * `--keep-emptied` keeps the subagent's emptied change and bookmark alive, so its
+ * branch stays on the map and remains continuable.
+ */
+export async function adoptChanges(
+  repo: string,
+  subagentDir: string,
+  fromSessionId: string,
+  intoSessionId: string,
+): Promise<void> {
+  await snapshot(subagentDir);
+  await snapshot(repo);
+  await jj(repo, [
+    "squash",
+    "--from",
+    bookmarkFor(fromSessionId),
+    "--into",
+    bookmarkFor(intoSessionId),
+    "--keep-emptied",
+    "--use-destination-message",
+  ]);
+  await updateStale(subagentDir);
+}
+
 /**
  * Force a working-copy snapshot. jj snapshots on any command, so a bare `jj st`
  * is the explicit "capture what's on disk now" touch (e.g. before reading a diff

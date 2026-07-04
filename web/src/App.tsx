@@ -194,6 +194,7 @@ function LiveApp() {
         onSavePolicy={store.savePolicy}
         onOverridePolicy={store.overridePolicy}
         onClearPolicyOverride={store.clearPolicyOverride}
+        onPolicyChanged={store.refreshPolicy}
         diffs={diffs}
         bundles={bundles}
         notice={store.notice}
@@ -267,6 +268,7 @@ function Window({
   onSavePolicy,
   onOverridePolicy,
   onClearPolicyOverride,
+  onPolicyChanged,
   diffs,
   bundles,
   notice,
@@ -316,6 +318,7 @@ function Window({
   onSavePolicy: (cfg: import("./api").NetConfig) => void;
   onOverridePolicy?: () => void;
   onClearPolicyOverride?: () => void;
+  onPolicyChanged?: () => void;
   diffs: DiffFile[];
   bundles: Bundle[];
   notice?: string | null;
@@ -445,6 +448,7 @@ function Window({
       onSavePolicy={onSavePolicy}
       onOverridePolicy={onOverridePolicy}
       onClearPolicyOverride={onClearPolicyOverride}
+      onPolicyChanged={onPolicyChanged}
       sessionOpen={currentId !== null}
       sessionId={currentId}
       diffs={diffs}

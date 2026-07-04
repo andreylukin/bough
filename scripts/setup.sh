@@ -39,6 +39,25 @@ else
   echo "==> all packages already installed"
 fi
 
+# Claw Patrol's MITM proxy needs Deno >= 2.9 (server-side TLS handshake + SNI
+# callback in node:tls). An older brew deno silently breaks the egress gate.
+deno_ver="$(deno --version | head -1 | awk '{print $2}')"
+if [ "$(printf '%s\n' "2.9.0" "$deno_ver" | sort -V | head -1)" != "2.9.0" ]; then
+  echo "==> deno $deno_ver is too old for the egress proxy — upgrading"
+  brew upgrade deno
+  deno_ver="$(deno --version | head -1 | awk '{print $2}')"
+  if [ "$(printf '%s\n' "2.9.0" "$deno_ver" | sort -V | head -1)" != "2.9.0" ]; then
+    echo "error: need deno >= 2.9, have $deno_ver" >&2
+    exit 1
+  fi
+fi
+
+# The plugin panel's "✎ Edit" button opens definitions in Zed. Optional but nice.
+if ! command -v zed >/dev/null; then
+  echo "warning: zed CLI not found — the Plugins panel's Edit button opens files in Zed." >&2
+  echo "  Install Zed (brew install --cask zed), then run 'zed: install CLI' inside it." >&2
+fi
+
 echo "==> building web UI (server serves web/dist)"
 (cd "$ROOT/web" && npm ci && npm run build)
 
@@ -71,10 +90,11 @@ if [ ! -f "$ENV_FILE" ]; then
   cat > "$ENV_FILE" <<'EOF'
 # Environment for the bough server, sourced by `bough start` / the launchd service.
 ANTHROPIC_API_KEY=
+# OPENROUTER_API_KEY=      # only for the OpenRouter entries in the model picker
 # BOUGH_PASSWORD=          # set to enable auth + LAN bind (needed for tunnel)
 # BOUGH_PORT=4321
 # BOUGH_HOST=
-# BOUGH_CLAWPATROL=1       # opt-in native egress firewall
+# BOUGH_CLAWPATROL=1       # opt-in native egress firewall (plugins, holds, rules)
 EOF
   chmod 600 "$ENV_FILE"
 fi

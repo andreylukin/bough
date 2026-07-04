@@ -1,8 +1,13 @@
-// Minimal markdown for agent replies — headings, bold, inline code, fenced code
-// blocks, lists, links. Deliberately small (no dep, no HTML passthrough): agent
-// text is untrusted, so everything renders as React text nodes. Tuned to the
-// bough look: quiet type shifts, mono code on a panel inset, no extra color.
+// Markdown for agent replies via react-markdown + remark-gfm — headings, lists,
+// tables, code, links. No HTML passthrough: agent text is untrusted, and
+// react-markdown renders everything as React nodes (raw HTML is dropped, URLs
+// sanitized). While a turn streams, remend repairs unterminated constructs
+// (dangling **bold**, open fences) so partial markdown doesn't flash as syntax.
+// Styled to the bough look: quiet type shifts, mono code on a panel inset.
 import React from "react";
+import ReactMarkdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
+import remend from "remend";
 import { c, mono } from "../theme";
 
 const codeBlock: React.CSSProperties = {
@@ -28,87 +33,81 @@ const inlineCode: React.CSSProperties = {
   padding: "1px 5px",
 };
 
-/** Bold / `code` / [link](url) within one line. */
-function renderInline(text: string, key: number): React.ReactNode {
-  const out: React.ReactNode[] = [];
-  // Tokenize: `code` first (protects its contents), then **bold**, then links.
-  const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\[[^\]]+\]\((https?:\/\/[^\s)]+)\))/g;
-  let last = 0;
-  let m: RegExpExecArray | null;
-  let i = 0;
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > last) out.push(text.slice(last, m.index));
-    if (m[1]) out.push(<code key={i++} style={inlineCode}>{m[1].slice(1, -1)}</code>);
-    else if (m[2]) out.push(<strong key={i++} style={{ color: c.text, fontWeight: 600 }}>{m[2].slice(2, -2)}</strong>);
-    else if (m[3] && m[4]) {
-      const label = m[3].slice(1, m[3].indexOf("]"));
-      out.push(
-        <a key={i++} href={m[4]} target="_blank" rel="noreferrer" style={{ color: c.green, textDecoration: "none", borderBottom: `1px solid ${c.border}` }}>
-          {label}
-        </a>,
-      );
-    }
-    last = m.index + m[0].length;
-  }
-  if (last < text.length) out.push(text.slice(last));
-  return <React.Fragment key={key}>{out}</React.Fragment>;
+const cellBase: React.CSSProperties = {
+  padding: "5px 10px",
+  textAlign: "left",
+  verticalAlign: "top",
+};
+
+// Distinguishes fenced blocks (code inside pre) from inline `code`.
+const InPre = React.createContext(false);
+
+function heading(size: number) {
+  return ({ children }: { children?: React.ReactNode }) => (
+    <div style={{ fontWeight: 600, color: c.text, fontSize: size, margin: "14px 0 4px" }}>{children}</div>
+  );
 }
 
-/** Block-level pass: fences, headings, list items, paragraphs. */
-export function Markdown({ text }: { text: string }) {
-  const blocks: React.ReactNode[] = [];
-  const lines = text.split("\n");
-  let i = 0;
-  let key = 0;
-  while (i < lines.length) {
-    const line = lines[i];
-    if (line.trimStart().startsWith("```")) {
-      // Fenced code: collect to the closing fence (or end — streaming may not
-      // have delivered it yet; render what's there).
-      const buf: string[] = [];
-      i++;
-      while (i < lines.length && !lines[i].trimStart().startsWith("```")) buf.push(lines[i++]);
-      i++; // skip closing fence if present
-      blocks.push(<pre key={key++} style={codeBlock}>{buf.join("\n")}</pre>);
-      continue;
-    }
-    const h = /^(#{1,4})\s+(.*)$/.exec(line);
-    if (h) {
-      const depth = h[1].length;
-      blocks.push(
-        <div
-          key={key++}
-          style={{
-            fontWeight: 600,
-            color: c.text,
-            fontSize: depth <= 2 ? 15.5 : 14.5,
-            margin: "14px 0 4px",
-          }}
-        >
-          {renderInline(h[2], 0)}
-        </div>,
-      );
-      i++;
-      continue;
-    }
-    const li = /^(\s*)([-*]|\d+\.)\s+(.*)$/.exec(line);
-    if (li) {
-      blocks.push(
-        <div key={key++} style={{ display: "flex", gap: 8, padding: "1px 0", marginLeft: li[1].length ? 16 : 0 }}>
-          <span style={{ color: c.muted, flexShrink: 0 }}>{li[2] === "-" || li[2] === "*" ? "·" : li[2]}</span>
-          <span>{renderInline(li[3], 0)}</span>
-        </div>,
-      );
-      i++;
-      continue;
-    }
-    if (line.trim() === "") {
-      blocks.push(<div key={key++} style={{ height: 8 }} />);
-      i++;
-      continue;
-    }
-    blocks.push(<div key={key++}>{renderInline(line, 0)}</div>);
-    i++;
-  }
-  return <>{blocks}</>;
-}
+const components: Components = {
+  h1: heading(15.5),
+  h2: heading(15.5),
+  h3: heading(14.5),
+  h4: heading(14.5),
+  h5: heading(14.5),
+  h6: heading(14.5),
+  p: ({ children }) => <div style={{ margin: "8px 0" }}>{children}</div>,
+  a: ({ href, children }) => (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      style={{ color: c.green, textDecoration: "none", borderBottom: `1px solid ${c.border}` }}
+    >
+      {children}
+    </a>
+  ),
+  strong: ({ children }) => <strong style={{ color: c.text, fontWeight: 600 }}>{children}</strong>,
+  ul: ({ children }) => <ul className="md-list" style={{ margin: "4px 0", paddingLeft: 22 }}>{children}</ul>,
+  ol: ({ children }) => <ol className="md-list" style={{ margin: "4px 0", paddingLeft: 22 }}>{children}</ol>,
+  li: ({ children }) => <li style={{ padding: "1px 0" }}>{children}</li>,
+  blockquote: ({ children }) => (
+    <blockquote style={{ margin: "8px 0", paddingLeft: 12, borderLeft: `2px solid ${c.border}`, color: c.muted }}>
+      {children}
+    </blockquote>
+  ),
+  hr: () => <hr style={{ border: "none", borderTop: `1px solid ${c.border2}`, margin: "12px 0" }} />,
+  pre: ({ children }) => (
+    <pre style={codeBlock}>
+      <InPre.Provider value={true}>{children}</InPre.Provider>
+    </pre>
+  ),
+  code: function MdCode({ children }) {
+    const inPre = React.useContext(InPre);
+    return inPre ? <code>{children}</code> : <code style={inlineCode}>{children}</code>;
+  },
+  table: ({ children }) => (
+    <div style={{ overflowX: "auto", margin: "8px 0" }}>
+      <table style={{ borderCollapse: "collapse", fontSize: 13.5, lineHeight: 1.5 }}>{children}</table>
+    </div>
+  ),
+  th: ({ children, style }) => (
+    <th style={{ ...cellBase, ...style, color: c.text, fontWeight: 600, borderBottom: `1px solid ${c.border}` }}>
+      {children}
+    </th>
+  ),
+  td: ({ children, style }) => (
+    <td style={{ ...cellBase, ...style, color: c.text2, borderBottom: `1px solid ${c.border3}` }}>{children}</td>
+  ),
+  // GFM task-list checkboxes
+  input: ({ checked }) => (
+    <input type="checkbox" checked={!!checked} readOnly style={{ accentColor: c.green, marginRight: 6 }} />
+  ),
+};
+
+export const Markdown = React.memo(function Markdown({ text, streaming }: { text: string; streaming?: boolean }) {
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      {streaming ? remend(text) : text}
+    </ReactMarkdown>
+  );
+});

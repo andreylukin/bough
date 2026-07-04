@@ -239,3 +239,44 @@ Deno.test("POST /events streams the same event feed", async () => {
   await server.shutdown();
   c.db.close();
 });
+
+Deno.test("POST /sessions/:id/adopt guards: 404 unknown, 400 non-subagent / no workspace", async () => {
+  const c = ctx();
+  const h = createHandler(c);
+
+  assertEquals((await h(req("POST", "/sessions/nope/adopt"))).status, 404);
+
+  // A root session is not adoptable.
+  const root = await (await h(req("POST", "/sessions", { title: "r" }))).json() as Session;
+  assertEquals((await h(req("POST", `/sessions/${root.id}/adopt`))).status, 400);
+
+  // A subagent with no branched workspace (chat-only spawn) is 400 with a message.
+  c.db.createSession({
+    id: "sub1",
+    parentId: null,
+    title: "sub",
+    kind: "subagent",
+    createdAt: 1,
+    originId: root.id,
+    originMessageId: "m1",
+  });
+  const res = await h(req("POST", "/sessions/sub1/adopt"));
+  assertEquals(res.status, 400);
+  assert(((await res.json()) as { error: string }).error.includes("no branched workspace"));
+  c.db.close();
+});
+
+Deno.test("GET /sessions carries lastTurnStatus once a session has run a turn", async () => {
+  const c = ctx();
+  const h = createHandler(c);
+  const s = await (await h(req("POST", "/sessions", { title: "t" }))).json() as Session;
+
+  let list = await (await h(req("GET", "/sessions"))).json() as (Session & { lastTurnStatus?: string })[];
+  assertEquals(list.find((x) => x.id === s.id)?.lastTurnStatus, undefined);
+
+  c.db.createMessage({ id: "m1", sessionId: s.id, role: "supervisor", parts: [], pending: false, createdAt: 2 });
+  c.db.createTurn({ id: "t1", sessionId: s.id, messageId: "m1", status: "error", step: "x", updatedAt: 3 });
+  list = await (await h(req("GET", "/sessions"))).json() as (Session & { lastTurnStatus?: string })[];
+  assertEquals(list.find((x) => x.id === s.id)?.lastTurnStatus, "error");
+  c.db.close();
+});

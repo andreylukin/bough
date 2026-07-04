@@ -181,6 +181,61 @@ Deno.test({
 });
 
 Deno.test({
+  // Subagents: each gets its own jj workspace (a second working copy) branched off
+  // the spawner's tip, edits in parallel without touching the spawner's checkout,
+  // and adoptChanges squashes its diff back into the spawner's change.
+  name: "jj: addWorkspace isolates a subagent; adoptChanges squashes back",
+  ignore: !jjAvailable,
+  fn: async () => {
+    const repo = await tempGitRepo();
+    const subDir = await Deno.makeTempDir({ prefix: "jjtest-ws-" });
+    try {
+      // Spawner session with in-progress work.
+      await jj.ensureWorkspace(repo, "spawner");
+      await Deno.writeTextFile(`${repo}/spawner.txt`, "spawner-work\n");
+
+      // Subagent workspace branches off the spawner's tip into its own dir.
+      // (jj workspace add wants the destination to not exist yet.)
+      await Deno.remove(subDir);
+      await jj.addWorkspace(repo, "sub", subDir, jj.bookmarkFor("spawner"));
+
+      // The subagent sees the spawner's work and adds its own.
+      assertEquals(await Deno.readTextFile(`${subDir}/spawner.txt`), "spawner-work\n");
+      await Deno.writeTextFile(`${subDir}/sub.txt`, "sub-work\n");
+
+      // Its diff (vs the spawner tip it branched from) is just its own edit,
+      // and the spawner's checkout is untouched by it.
+      assertEquals((await jj.diff(subDir, "sub")).files.map((f) => f.path), ["sub.txt"]);
+      let spawnerHasSub = true;
+      try {
+        await Deno.stat(`${repo}/sub.txt`);
+      } catch {
+        spawnerHasSub = false;
+      }
+      assertEquals(spawnerHasSub, false);
+
+      // addWorkspace is idempotent on an existing dir.
+      await jj.addWorkspace(repo, "sub", subDir, jj.bookmarkFor("spawner"));
+
+      // Adopt: the subagent's edit lands in the spawner's change and on its disk;
+      // the subagent's change empties but stays continuable (bookmark alive).
+      await jj.adoptChanges(repo, subDir, "sub", "spawner");
+      assertEquals(await Deno.readTextFile(`${repo}/sub.txt`), "sub-work\n");
+      const spawnerDiff = await jj.diff(repo, "spawner");
+      assertEquals(spawnerDiff.files.map((f) => f.path).sort(), ["spawner.txt", "sub.txt"]);
+      assertEquals((await jj.diff(subDir, "sub")).files.length, 0);
+
+      // The subagent workspace still works after adoption (not stale, can edit on).
+      await Deno.writeTextFile(`${subDir}/more.txt`, "follow-up\n");
+      assertEquals((await jj.diff(subDir, "sub")).files.map((f) => f.path), ["more.txt"]);
+    } finally {
+      await Deno.remove(repo, { recursive: true });
+      await Deno.remove(subDir, { recursive: true }).catch(() => {});
+    }
+  },
+});
+
+Deno.test({
   // Regression: a session opened on a repo with uncommitted + untracked changes
   // must NOT wipe them. `ensureWorkspace` used to `jj new <HEAD>`, resetting the
   // working copy to the committed tree and deleting in-progress work.

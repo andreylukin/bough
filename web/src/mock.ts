@@ -19,12 +19,17 @@ export interface Head {
   busy?: boolean;
   // A turn finished while the session wasn't open — the card shows a solid dot.
   unseen?: boolean;
+  // Sessions branched from this one (forks/compactions/subagents, via originId) —
+  // the sidebar nests them under this head behind a collapsible toggle.
+  children?: Head[];
 }
 
 export interface OutlineNode {
   label: string;
   state: "done" | "running" | "todo";
   note?: string; // trailing "✓" etc.
+  // Who spoke this turn — drives the outline dot's color (you vs. the AI).
+  role?: "user" | "supervisor" | "worker" | "system";
 }
 
 export interface WorkerActivity {
@@ -124,11 +129,11 @@ export const heads: Head[] = [
 ];
 
 export const outline: OutlineNode[] = [
-  { label: "Task — migrate auth → v2", state: "done" },
-  { label: "Plan · 5 steps", state: "done" },
-  { label: "Encoder updated", state: "done", note: "✓" },
-  { label: "Middleware updated", state: "done", note: "✓" },
-  { label: "Test suite — running", state: "running" },
+  { label: "Task — migrate auth → v2", state: "done", role: "user" },
+  { label: "Plan · 5 steps", state: "done", role: "supervisor" },
+  { label: "Encoder updated", state: "done", note: "✓", role: "worker" },
+  { label: "Middleware updated", state: "done", note: "✓", role: "worker" },
+  { label: "Test suite — running", state: "running", role: "supervisor" },
 ];
 
 export const sessions: Session[] = heads.map((h) => ({

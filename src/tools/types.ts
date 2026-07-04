@@ -17,6 +17,13 @@ export interface ToolRunCtx {
   /** Session this turn belongs to — keys egress to its Claw Patrol listener + policy. */
   sessionId?: string;
   /**
+   * The turn's interrupt signal. Long-running tools MUST observe it so the user's
+   * stop button stops the actual work, not just the model stream: bash kills its
+   * child process, run_steps terminates the in-flight program's worker. Absent in
+   * contexts with no live turn (tests, one-off calls).
+   */
+  signal?: AbortSignal;
+  /**
    * When set, the turn is sandboxed: bash wraps its argv in the Seatbelt profile
    * (darwin), and the in-process file tools may also write under `sessionDir` (the
    * clonefile snapshot dir). Absent for tests and non-sandboxed runs.
@@ -28,6 +35,21 @@ export interface ToolRunCtx {
    * accepting `done`. Absent for tools that don't participate in gating.
    */
   turn?: { check?: string };
+  /**
+   * Delegation, wired by the turn runner for sessions allowed to spawn (absent in
+   * subagent turns — depth is 1). Each subagent is a fresh session on its own
+   * workspace branch. `run` blocks to completion; `spawn` starts one in the
+   * background and returns its handle immediately (its finished report is delivered
+   * to the session as a system note unless `join`ed first); `join` waits for a
+   * background subagent's result in-band; `adopt` squashes a subagent's changes
+   * back into this session's workspace.
+   */
+  delegate?: {
+    run: (task: string) => Promise<unknown>;
+    spawn: (task: string) => Promise<unknown>;
+    join: (subagentSessionId: string) => Promise<unknown>;
+    adopt: (subagentSessionId: string) => Promise<string>;
+  };
 }
 
 /**

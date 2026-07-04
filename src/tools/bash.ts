@@ -39,21 +39,29 @@ export const bash: ToolDef = {
         confineNetwork: Object.keys(netEnv).length > 0,
       });
     }
+    // The child dies on whichever fires first: the per-command timeout, or the
+    // turn's interrupt (ctx.signal) — the user's stop button must kill the actual
+    // process, not leave it running to completion in the background.
+    const timeout = AbortSignal.timeout(timeout_ms ?? 120_000);
     const cmd = new Deno.Command(argv[0], {
       args: argv.slice(1),
       cwd: ctx.workspace,
       env: Object.keys(netEnv).length ? netEnv : undefined,
       stdout: "piped",
       stderr: "piped",
-      signal: AbortSignal.timeout(timeout_ms ?? 120_000),
+      signal: ctx.signal ? AbortSignal.any([timeout, ctx.signal]) : timeout,
     });
     let out: Deno.CommandOutput;
     try {
       out = await cmd.output();
     } catch (e) {
-      // AbortSignal timeout or spawn failure surfaces here.
+      // Timeout, interrupt, or spawn failure surfaces here.
+      if (ctx.signal?.aborted) throw new Error("command killed: turn interrupted");
       throw new Error(`command did not complete: ${(e as Error).message}`);
     }
+    // An abort can also surface as a normal completion carrying the kill status —
+    // report the interrupt explicitly either way.
+    if (ctx.signal?.aborted) throw new Error("command killed: turn interrupted");
     const dec = new TextDecoder();
     const chunks: string[] = [];
     const stdout = dec.decode(out.stdout).trimEnd();

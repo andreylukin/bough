@@ -46,6 +46,9 @@ export interface Store {
   savePolicy: (cfg: NetConfig) => Promise<void>;
   overridePolicy: () => Promise<void>;
   clearPolicyOverride: () => Promise<void>;
+  // Re-fetch the open branch's effective rules (e.g. after a plugin enable/disable
+  // changed the row server-side, so a later rule-editor save doesn't clobber it).
+  refreshPolicy: (sessionId?: string) => Promise<void>;
   reload: () => Promise<void>;
   refreshNetStatus: () => Promise<void>;
   applyChanges: (source: ChangeSource, paths: string[]) => void;
@@ -517,6 +520,7 @@ export function useStore(): Store {
     savePolicy,
     overridePolicy,
     clearPolicyOverride,
+    refreshPolicy,
     reload,
     refreshNetStatus,
     applyChanges,

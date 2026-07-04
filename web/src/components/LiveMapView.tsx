@@ -9,6 +9,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { c, mono } from "../theme";
 import { api } from "../api";
+import { turnFailed } from "../live";
 import type { Message, Session } from "../types";
 import { TitleBar } from "./TitleBar";
 
@@ -17,12 +18,14 @@ const kindGlyph: Record<Session["kind"], string> = {
   fork: "↩",
   worker: "◇",
   compaction: "⊟",
+  subagent: "◆",
 };
 const kindColor: Record<Session["kind"], string> = {
   root: c.green,
   fork: c.muted2,
   worker: c.muted2,
   compaction: c.amber,
+  subagent: c.muted2,
 };
 
 const LANE_H = 78;
@@ -326,7 +329,22 @@ export function LiveMapView({
                         }}
                       >
                         <span style={{ color: kindColor[s.kind], flex: "none" }}>{kindGlyph[s.kind]}</span>
-                        <span style={{ fontSize: 12, color: current ? c.text : c.muted, overflow: "hidden", textOverflow: "ellipsis" }}>{s.title}</span>
+                        <span style={{ fontSize: 12, color: current ? c.text : c.muted, overflow: "hidden", textOverflow: "ellipsis", flex: 1, minWidth: 0 }}>{s.title}</span>
+                        {/* State affix: the map must show not just structure but STATE —
+                            running pulse, done ✓, failed ✗ (subagent lanes especially). */}
+                        {s.busy
+                          ? (
+                            <span
+                              className="pulse-amber"
+                              title="a turn is running"
+                              style={{ width: 8, height: 8, borderRadius: "50%", background: c.amber, flex: "none" }}
+                            />
+                          )
+                          : turnFailed(s)
+                          ? <span title="last turn failed or was stopped" style={{ color: c.red, fontSize: 10, flex: "none" }}>✗</span>
+                          : s.lastTurnStatus === "done"
+                          ? <span title="last turn finished" style={{ color: c.green, fontSize: 10, flex: "none" }}>✓</span>
+                          : null}
                       </button>
 
                       {/* turn dots */}

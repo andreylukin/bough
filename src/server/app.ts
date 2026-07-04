@@ -26,12 +26,21 @@ import { type BundleManifest, getBundle, listBundles } from "../net/bundles.ts";
 import type { Gate } from "../net/gate.ts";
 import type { ClawpatrolGateway } from "../net/gateway.ts";
 import { installBundle, InstallError, isInstalled } from "../net/install.ts";
-import { loadConfig, NetConfig, resolveConfig, saveConfig, toPolicy } from "../net/config.ts";
+import {
+  loadConfig,
+  NetConfig,
+  resolveConfig,
+  saveConfig,
+  setPluginActivation,
+  toPolicy,
+} from "../net/config.ts";
+import { ttlToExpires } from "../net/plugins.ts";
 import { suggestPolicy } from "../net/suggest.ts";
 import { clientFor } from "../supervisor/llm.ts";
 import { defaultWebDir, serveWeb } from "./static.ts";
 import { createAuth } from "./auth.ts";
 import { compact, CompactBody, CompactError } from "../compact.ts";
+import { adoptSubagent } from "../subagent.ts";
 import type { LlmClient } from "../supervisor/llm.ts";
 import { applyChanges, ChangesError, revertChanges, sessionChanges } from "./changes.ts";
 import { ChangesApplyBody, ChangesRevertBody } from "../schema/changes.ts";
@@ -113,7 +122,14 @@ const searchFiles: Handler = async (req, ctx, params) => {
 // glance; the UI keeps it live from message.started/finished events after this read.
 const listSessions: Handler = (_req, ctx) => {
   const busy = ctx.db.busySessionIds();
-  return json(ctx.db.listSessions().map((s) => ({ ...s, busy: busy.has(s.id) })));
+  const statuses = ctx.db.latestTurnStatuses();
+  return json(
+    ctx.db.listSessions().map((s) => ({
+      ...s,
+      busy: busy.has(s.id),
+      ...(statuses.has(s.id) ? { lastTurnStatus: statuses.get(s.id) } : {}),
+    })),
+  );
 };
 
 const createSession: Handler = async (req, ctx) => {
@@ -203,6 +219,22 @@ const compactSession: Handler = async (req, ctx, params) => {
   } catch (e) {
     if (e instanceof CompactError) return error(e.status, e.message);
     throw e;
+  }
+};
+
+// Adopt a subagent's branch: squash its jj change into its spawner's workspace —
+// the UI affordance mirroring the supervisor program's adopt() host function.
+const adoptSession: Handler = async (_req, ctx, params) => {
+  const session = ctx.db.getSession(params.id);
+  if (!session) return error(404, "session not found");
+  if (session.kind !== "subagent" || !session.originId) {
+    return error(400, "not a subagent session");
+  }
+  try {
+    const message = await adoptSubagent(ctx, session.originId, session.id);
+    return json({ message });
+  } catch (e) {
+    return error(400, (e as Error).message);
   }
 };
 
@@ -363,29 +395,95 @@ const suggestPolicyH: Handler = async (req, ctx) => {
   const recent = ctx.db.recentNetEvents(sessionId, 20);
   const llm = ctx.llm ?? clientFor(activeModel());
   try {
-    return json(
-      await suggestPolicy({ llm, model: activeModel(), intent, base, recent, selected }),
-    );
+    const suggestion = await suggestPolicy({
+      llm,
+      model: activeModel(),
+      intent,
+      base,
+      recent,
+      selected,
+    });
+    // Plugin activations are managed by their own enable/disable flow — a drafted
+    // rule set must never silently drop (or invent) them, so pin the base's.
+    suggestion.config.plugins = base.plugins;
+    return json(suggestion);
   } catch (e) {
     return error(502, (e as Error).message);
   }
 };
 
-// Programmable guards: list what's loaded (+ the dir they live in), hot-reload after
-// an edit, and scaffold a starter file — all without a server restart.
-const listExtensionsH: Handler = (_req, ctx) =>
-  json(ctx.gateway?.listExtensions() ?? { dir: "", extensions: [] });
-const reloadExtensionsH: Handler = async (_req, ctx) =>
-  json({ extensions: await (ctx.gateway?.reloadExtensions() ?? Promise.resolve([])) });
-const createExtensionH: Handler = async (req, ctx) => {
+// Open a plugin's definition file in Zed on the machine bough runs on.
+// Fire-and-forget: zed detaches, we only report spawn failures. Works for broken
+// plugins too (their list entry is the filename).
+const openPluginH: Handler = (_req, ctx, params) => {
+  if (!ctx.gateway) return error(400, "Claw Patrol is off");
+  const plugin = ctx.gateway.listPlugins().plugins.find((p) => p.name === params.name);
+  if (!plugin) return error(404, `no plugin named "${params.name}"`);
+  const argv = ["zed", plugin.file];
+  try {
+    new Deno.Command(argv[0], { args: argv.slice(1), stdout: "null", stderr: "null" }).spawn()
+      .unref();
+    return json({ ok: true, file: plugin.file });
+  } catch (e) {
+    return error(500, `could not launch editor: ${(e as Error).message}`);
+  }
+};
+
+// Classifier plugins: list (the UI renders each ops table), hot-reload, scaffold a
+// starter file, and install a declarative spec. Creation is skill-first: the
+// /net-plugin builtin has the in-session agent draft the spec, install it here,
+// and live-test the classifications against real traffic.
+const listPluginsH: Handler = (_req, ctx) =>
+  json(ctx.gateway?.listPlugins() ?? { dir: "", plugins: [] });
+const reloadPluginsH: Handler = async (_req, ctx) =>
+  json({ plugins: await (ctx.gateway?.reloadPlugins() ?? Promise.resolve([])) });
+const createPluginH: Handler = async (req, ctx) => {
   if (!ctx.gateway) return error(400, "Claw Patrol is off");
   const body = await req.json().catch(() => null) as { name?: string } | null;
   const name = body?.name?.trim();
   if (!name) return error(400, "name is required");
   try {
-    return json(await ctx.gateway.createExtension(name));
+    return json(await ctx.gateway.createPlugin(name));
   } catch (e) {
     return error(409, (e as Error).message);
+  }
+};
+
+// Install a declarative spec into the plugin LIBRARY (the /net-plugin skill's path).
+// The spec is validated and its fixtures re-run before anything touches disk. The
+// file gates nothing by itself — turn it on per scope via /net/plugins/:name/enable.
+const installPluginH: Handler = async (req, ctx) => {
+  if (!ctx.gateway) return error(400, "Claw Patrol is off");
+  const body = await req.json().catch(() => null) as { plugin?: unknown } | null;
+  if (!body?.plugin) return error(400, "plugin spec is required");
+  try {
+    return json(await ctx.gateway.installPlugin(body.plugin));
+  } catch (e) {
+    return error(400, (e as Error).message);
+  }
+};
+
+// Turn a library plugin on/off for one scope: ?session=<id> targets that branch
+// (copy-on-write override, inherited by its children), no param targets the global
+// rule set. Enable takes an optional per-activation `ttl` ("90m" | "2h" | "7d") —
+// the same plugin can run open-ended in one branch and lapse on schedule in another.
+const setPluginH = (on: boolean): Handler => async (req, ctx, params) => {
+  if (!ctx.gateway) return error(400, "Claw Patrol is off");
+  const sessionId = new URL(req.url).searchParams.get("session") ?? undefined;
+  if (sessionId && !ctx.db.getSession(sessionId)) return error(404, "unknown session");
+  if (on && !ctx.gateway.hasPlugin(params.name)) {
+    return error(400, `no loaded plugin named "${params.name}" — install it first`);
+  }
+  const body = await req.json().catch(() => null) as { ttl?: string } | null;
+  try {
+    const expires = on && body?.ttl?.trim() ? ttlToExpires(body.ttl.trim()) : undefined;
+    const config = setPluginActivation(ctx.db, sessionId, params.name, on, expires, ctx.netDir);
+    // The session row (or policy.json) changed under the gate — refresh either way.
+    if (sessionId) ctx.gate?.invalidate();
+    else ctx.gate?.setPolicy(toPolicy(config));
+    return json({ config, scope: sessionId ? { sessionId } : "global" });
+  } catch (e) {
+    return error(400, (e as Error).message);
   }
 };
 
@@ -504,6 +602,11 @@ const routes: Route[] = [
     handler: forkSession,
   },
   {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/sessions/:id/adopt" }),
+    handler: adoptSession,
+  },
+  {
     method: "GET",
     pattern: new URLPattern({ pathname: "/sessions/:id/files" }),
     handler: searchFiles,
@@ -537,20 +640,36 @@ const routes: Route[] = [
     pattern: new URLPattern({ pathname: "/net/policy/suggest" }),
     handler: suggestPolicyH,
   },
+  { method: "GET", pattern: new URLPattern({ pathname: "/net/plugins" }), handler: listPluginsH },
   {
-    method: "GET",
-    pattern: new URLPattern({ pathname: "/net/extensions" }),
-    handler: listExtensionsH,
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/net/plugins/reload" }),
+    handler: reloadPluginsH,
   },
   {
     method: "POST",
-    pattern: new URLPattern({ pathname: "/net/extensions/reload" }),
-    handler: reloadExtensionsH,
+    pattern: new URLPattern({ pathname: "/net/plugins/:name/open" }),
+    handler: openPluginH,
   },
   {
     method: "POST",
-    pattern: new URLPattern({ pathname: "/net/extensions" }),
-    handler: createExtensionH,
+    pattern: new URLPattern({ pathname: "/net/plugins" }),
+    handler: createPluginH,
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/net/plugins/install" }),
+    handler: installPluginH,
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/net/plugins/:name/enable" }),
+    handler: setPluginH(true),
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/net/plugins/:name/disable" }),
+    handler: setPluginH(false),
   },
   { method: "GET", pattern: new URLPattern({ pathname: "/net/requests" }), handler: netRequests },
   {

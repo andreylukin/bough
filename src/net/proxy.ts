@@ -156,6 +156,9 @@ export class ProxyServer {
     host: string,
     secure: boolean,
   ): Promise<void> {
+    // A client that vanishes mid-exchange (timeout, ^C) must never take the proxy
+    // down with an unhandled 'error' from its dead socket.
+    cres.on("error", () => {});
     let body: Uint8Array;
     try {
       body = await readBody(creq);
@@ -185,6 +188,12 @@ export class ProxyServer {
       this.#deny(cres, decision.reason);
       return;
     }
+    // A hold can resolve long after the requester gave up (curl --max-time while the
+    // approval card sat unanswered). Forwarding then would fire the side effect into
+    // the void and write the response to a dead socket — skip; the approval released
+    // THIS request, and this request no longer has a client. (Check the response
+    // side only: creq.destroyed is routinely true once the body was fully read.)
+    if (cres.destroyed || cres.writableEnded) return;
     this.#forward(creq, cres, host, secure, body);
   }
 
@@ -219,6 +228,10 @@ export class ProxyServer {
         headers,
       },
       (ores: http.IncomingMessage) => {
+        if (cres.destroyed) {
+          ores.destroy();
+          return;
+        }
         cres.writeHead(ores.statusCode ?? 502, ores.headers);
         ores.pipe(cres);
       },

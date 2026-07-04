@@ -14,7 +14,7 @@
  *   worker → main  {type:"done", logs} | {type:"error", message, logs}
  */
 
-type HostName = "bash" | "read" | "write" | "edit";
+type HostName = "bash" | "read" | "write" | "edit" | "agent" | "spawn" | "join" | "adopt";
 
 const pending = new Map<number, { resolve: (v: string) => void; reject: (e: Error) => void }>();
 let seq = 0;
@@ -49,11 +49,29 @@ async function run(code: string): Promise<void> {
   const write = (path: string, content: string) => hostCall("write", [path, content]);
   const edit = (path: string, oldText: string, newText: string) =>
     hostCall("edit", [path, oldText, newText]);
+  // Delegation: the host sends subagent results/handles as JSON (postMessage stays
+  // string-only); parse them back so the program gets real objects. Sessions that
+  // may not delegate have no bridged fn — the call rejects as "unknown host function".
+  const agent = async (task: string) => JSON.parse(await hostCall("agent", [task]));
+  const spawn = async (task: string) => JSON.parse(await hostCall("spawn", [task]));
+  const join = async (sessionId: string) => JSON.parse(await hostCall("join", [sessionId]));
+  const adopt = (sessionId: string) => hostCall("adopt", [sessionId]);
 
   // deno-lint-ignore no-explicit-any
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as any;
-  const program = new AsyncFunction("bash", "read", "write", "edit", "console", code);
-  await program(bash, read, write, edit, sandboxConsole);
+  const program = new AsyncFunction(
+    "bash",
+    "read",
+    "write",
+    "edit",
+    "agent",
+    "spawn",
+    "join",
+    "adopt",
+    "console",
+    code,
+  );
+  await program(bash, read, write, edit, agent, spawn, join, adopt, sandboxConsole);
 }
 
 self.onmessage = (e: MessageEvent) => {

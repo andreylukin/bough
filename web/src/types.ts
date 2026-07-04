@@ -1,5 +1,5 @@
 // Mirrors the backend contract in src/schema/parts.ts.
-export type Role = "user" | "supervisor" | "worker";
+export type Role = "user" | "supervisor" | "worker" | "system";
 
 export type Part =
   | { type: "text"; text: string }
@@ -16,7 +16,7 @@ export interface Message {
   createdAt: number;
 }
 
-export type SessionKind = "root" | "fork" | "worker" | "compaction";
+export type SessionKind = "root" | "fork" | "worker" | "compaction" | "subagent";
 
 export interface Session {
   id: string;
@@ -35,6 +35,9 @@ export interface Session {
   // A turn is in flight (server-computed on GET /sessions; kept live from
   // message.started/finished events in the store).
   busy?: boolean;
+  // How the most recent turn ended (server-computed; kept live via turn.finished).
+  // Absent if the session never ran a turn. Drives ✓/✗ status affixes.
+  lastTurnStatus?: "running" | "done" | "error" | "orphaned" | "interrupted";
   // Client-only: a turn finished while this session wasn't open — needs a look.
   // Set by the store on message.finished, cleared when the session is opened.
   unseen?: boolean;

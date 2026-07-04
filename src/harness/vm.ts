@@ -15,6 +15,16 @@ export interface HostFns {
   read(path: string): Promise<string>;
   write(path: string, content: string): Promise<string>;
   edit(path: string, oldText: string, newText: string): Promise<string>;
+  /**
+   * Delegation, bridged only for sessions that may spawn (run_steps wires them from
+   * ToolRunCtx). `agent` (blocking result), `spawn` (background handle) and `join`
+   * (await a background subagent) return JSON — the worker side parses it back into
+   * an object; the string keeps the postMessage protocol string-only.
+   */
+  agent?(task: string): Promise<string>;
+  spawn?(task: string): Promise<string>;
+  join?(sessionId: string): Promise<string>;
+  adopt?(sessionId: string): Promise<string>;
 }
 
 export interface ProgramResult {
@@ -27,11 +37,17 @@ export interface ProgramResult {
 
 const DEFAULT_TIMEOUT_MS = 180_000;
 
-/** Run one supervisor program in a sealed V8 isolate with the given host functions. */
+/**
+ * Run one supervisor program in a sealed V8 isolate with the given host functions.
+ * `signal` (the turn's interrupt) terminates the worker mid-program — host functions
+ * already in flight are expected to observe the same signal and die on their own
+ * (bash kills its child process).
+ */
 export function runProgram(
   code: string,
   host: HostFns,
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<ProgramResult> {
   const worker = new Worker(new URL("./vm_worker.ts", import.meta.url).href, {
     type: "module",
@@ -40,10 +56,12 @@ export function runProgram(
 
   return new Promise<ProgramResult>((resolve) => {
     let settled = false;
+    const onAbort = () => finish({ ok: false, logs: [], error: "program interrupted by the user" });
     const finish = (result: ProgramResult) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
       worker.terminate();
       resolve(result);
     };
@@ -52,6 +70,8 @@ export function runProgram(
       () => finish({ ok: false, logs: [], error: `program timed out after ${timeoutMs}ms` }),
       timeoutMs,
     );
+    if (signal?.aborted) return onAbort();
+    signal?.addEventListener("abort", onAbort, { once: true });
 
     worker.onmessage = async (e: MessageEvent) => {
       const msg = e.data as

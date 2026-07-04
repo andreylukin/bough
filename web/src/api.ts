@@ -33,10 +33,24 @@ export interface PolicySource {
   sessionId?: string;
 }
 
-/** A loaded (or broken) policy extension (mirrors src/net/extensions.ts). */
-export interface ExtensionInfo {
+// Classifier plugins (mirror src/net/plugins.ts). The declarative `ops` table is
+// what the UI renders — a plugin is data first, code only as an escape hatch.
+// Creation happens via the /net-plugin skill, not this client.
+export interface OpRule {
+  match: string;
+  kind: "read" | "write" | "unknown";
+  verb?: string;
+}
+export interface PluginInfo {
   name: string;
   file: string;
+  description?: string;
+  hosts: string[];
+  ops?: OpRule[];
+  hasClassify: boolean;
+  hasGate: boolean;
+  fixtures: number;
+  status: "loaded" | "error";
   error?: string;
 }
 
@@ -51,6 +65,12 @@ export interface NetConfig {
   allowVerbs: string[];
   denyVerbs: string[];
   holdVerbs: string[];
+  /** Per-scope plugin activations; the TTL rides on the activation, not the file. */
+  plugins?: PluginActivation[];
+}
+export interface PluginActivation {
+  name: string;
+  expires?: string;
 }
 
 export const api = {
@@ -145,19 +165,32 @@ export const api = {
   deleteSessionPolicy: (sessionId: string) =>
     fetch(`/net/policy?session=${encodeURIComponent(sessionId)}`, { method: "DELETE" }),
 
-  // ---- policy extensions (programmable guards) -----------------------------
-  listExtensions: () =>
-    fetch("/net/extensions").then(j<{ dir: string; extensions: ExtensionInfo[] }>),
-  reloadExtensions: () =>
-    fetch("/net/extensions/reload", { method: "POST" }).then(
-      j<{ extensions: ExtensionInfo[] }>,
+  // ---- classifier plugins (library + per-scope activation; creation via /net-plugin)
+  listPlugins: () => fetch("/net/plugins").then(j<{ dir: string; plugins: PluginInfo[] }>),
+  reloadPlugins: () =>
+    fetch("/net/plugins/reload", { method: "POST" }).then(j<{ plugins: PluginInfo[] }>),
+  // Open the plugin's definition file in an editor on the bough host (BOUGH_EDITOR,
+  // else the OS text-mode opener).
+  openPlugin: (name: string) =>
+    fetch(`/net/plugins/${encodeURIComponent(name)}/open`, { method: "POST" }).then(
+      j<{ ok: boolean; file: string }>,
     ),
-  createExtension: (name: string) =>
-    fetch("/net/extensions", {
+  // Turn a library plugin on/off for a branch (or globally with no sessionId). The
+  // optional ttl ("90m" | "2h" | "7d") expires just THIS activation.
+  setPlugin: (name: string, on: boolean, sessionId?: string | null, ttl?: string) => {
+    const q = sessionId ? `?session=${encodeURIComponent(sessionId)}` : "";
+    return fetch(`/net/plugins/${encodeURIComponent(name)}/${on ? "enable" : "disable"}${q}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name }),
-    }).then(j<{ path: string; extensions: ExtensionInfo[] }>),
+      body: JSON.stringify(ttl ? { ttl } : {}),
+    }).then(async (res) => {
+      if (!res.ok) {
+        const body = await res.json().catch(() => null) as { error?: string } | null;
+        throw new Error(body?.error || `${res.status} ${res.statusText}`);
+      }
+      return res.json() as Promise<{ config: NetConfig }>;
+    });
+  },
 
   // AI-drafted rules: intent in, proposed config + rationale out. Nothing is
   // enforced until the user reviews the draft in the editor and saves it.

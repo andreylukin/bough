@@ -41,6 +41,7 @@ import {
   type LlmMessage,
 } from "./supervisor/llm.ts";
 import { checkpoint, finishTurn, startTurn } from "./supervisor/turns.ts";
+import { adoptSubagent, joinSubagent, runSubagent, spawnSubagentDetached } from "./subagent.ts";
 import { maybeAutoTitle, type Titler } from "./supervisor/title.ts";
 import { activeFor } from "./supervisor/skills.ts";
 import { prepareWorkspace } from "./supervisor/workspace.ts";
@@ -96,6 +97,7 @@ export const MODELS: { id: string; label: string; provider: "anthropic" | "openr
   { id: "claude-haiku-4-5", label: "Haiku 4.5", provider: "anthropic" },
   { id: "openai/gpt-5", label: "GPT-5 (OpenRouter)", provider: "openrouter" },
   { id: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro (OpenRouter)", provider: "openrouter" },
+  { id: "z-ai/glm-5.2", label: "GLM 5.2 (OpenRouter)", provider: "openrouter" },
 ];
 
 const MAX_TOKENS = 64_000;
@@ -117,6 +119,41 @@ const SYSTEM = [
   "For pure questions or conversation, answer in plain text without calling run_steps.",
 ].join(" ");
 
+// Delegation section, appended only for sessions that may spawn (not subagents).
+const SYSTEM_DELEGATION = " " + [
+  "More host functions enable delegation to subagents — separate sessions, each working",
+  "on its own branched copy of the workspace. await spawn(task) starts one in the",
+  "BACKGROUND and returns {sessionId, title} immediately: keep working, or end your turn —",
+  "when it finishes, its report arrives as a [subagent finished] system message and wakes",
+  "you if you're idle. await join(sessionId) instead waits for a background subagent and",
+  "returns its full result in-band. await agent(task) is the blocking shorthand",
+  "(spawn+join): it runs the task to completion and returns {sessionId, ok, checkPassed,",
+  "report, changedFiles}. Subagents start with NO context beyond the task string: include",
+  "every relevant path, constraint, and acceptance criterion in it. Their file changes",
+  "stay on their own branch — call await adopt(sessionId) to merge a subagent's changes",
+  "into your workspace, or leave the branch for the user to review. Prefer spawn for",
+  "long tasks so you stay responsive; run independent blocking subtasks concurrently with",
+  "Promise.all. Subagents cannot spawn further agents. Delegate only genuinely separable",
+  "work; do small things yourself.",
+].join(" ");
+
+/**
+ * A system-prompt section listing this session's background subagents that are
+ * still running, so the model stays aware of in-flight delegated work across
+ * turns — it can join() one or simply not re-delegate the same task. Empty when
+ * nothing is running.
+ */
+function runningSubagentsNote(db: Db, sessionId: string): string {
+  const running = db.listSessions().filter((s) =>
+    s.kind === "subagent" && s.originId === sessionId && isTurnRunning(s.id)
+  );
+  if (running.length === 0) return "";
+  return "\n\n# Background subagents currently running\n" +
+    running.map((s) =>
+      `- "${s.title}" (${s.id}) — join("${s.id}") to wait for its result, or end your turn and its report will arrive as a system note.`
+    ).join("\n");
+}
+
 /** Read the workspace AGENTS.md (capped) as a system-prompt section, or null if absent. */
 async function readAgentsFile(cwd: string): Promise<string | null> {
   try {
@@ -125,7 +162,7 @@ async function readAgentsFile(cwd: string): Promise<string | null> {
     // Cap so a huge file can't crowd out the task; the model can read the rest itself.
     const body = text.length > 12_000 ? text.slice(0, 12_000) + "\n…(truncated)" : text;
     return "\n\n# Project rules (AGENTS.md)\nThe workspace root has an AGENTS.md — treat it " +
-      "as authoritative for build/test commands, conventions, and what \"done\" means:\n\n" +
+      'as authoritative for build/test commands, conventions, and what "done" means:\n\n' +
       body.trim();
   } catch {
     return null;
@@ -141,7 +178,10 @@ export function runTurn(ctx: TurnCtx, sessionId: string): Message {
  * Like runTurn, but also hands back the promise that resolves when the turn is
  * fully done. runTurn discards it (fire-and-forget for the 202 path); tests await it.
  */
-export function beginTurn(ctx: TurnCtx, sessionId: string): { message: Message; done: Promise<void> } {
+export function beginTurn(
+  ctx: TurnCtx,
+  sessionId: string,
+): { message: Message; done: Promise<void> } {
   const message: Message = {
     id: crypto.randomUUID(),
     sessionId,
@@ -223,6 +263,26 @@ export function startUserTurn(
   return { userMessage, done };
 }
 
+/**
+ * Deliver a harness note (role "system") to a session and make sure a turn sees it:
+ * starts one if the session is idle, else the queued-drain follow-up picks it up.
+ * This is how a background subagent's finished report wakes its spawner.
+ */
+export function postSystemNote(ctx: TurnCtx, sessionId: string, text: string): void {
+  const msg: Message = {
+    id: crypto.randomUUID(),
+    sessionId,
+    role: "system",
+    parts: [{ type: "text", text }],
+    pending: false,
+    createdAt: Date.now(),
+  };
+  ctx.db.createMessage(msg);
+  ctx.bus.publish({ type: "message.started", sessionId, data: msg });
+  if (isTurnRunning(sessionId)) queued.add(sessionId);
+  else beginTurn(ctx, sessionId);
+}
+
 async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Promise<void> {
   const { db, bus } = ctx;
   const sessionId = message.sessionId;
@@ -248,10 +308,26 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     const toolCtx: ToolRunCtx = {
       workspace: prepared.cwd,
       sessionId,
+      // Interrupt reaches INTO a running tool: run_steps terminates its program's
+      // worker and bash kills its child — stop means stop, not "after this step".
+      signal,
       sandbox: prepared.sandboxed ? { sessionDir: prepared.sessionDir } : undefined,
       // Per-turn harness state: run_steps commits the CHECK here (SPEC §5 gating).
       turn: {},
     };
+    // Delegation (depth 1): subagent turns don't get a delegate, so their programs
+    // have no agent/spawn/join/adopt host functions and the prompt never mentions them.
+    const session = db.getSession(sessionId);
+    const mayDelegate = session !== undefined && session.kind !== "subagent";
+    if (mayDelegate) {
+      const sctx = { spawnerId: sessionId, spawnerMessageId: messageId, model, signal };
+      toolCtx.delegate = {
+        run: (task) => runSubagent(ctx, sctx, task),
+        spawn: (task) => spawnSubagentDetached(ctx, sctx, task),
+        join: (subId) => joinSubagent(sctx, subId),
+        adopt: (subId) => adoptSubagent(ctx, sessionId, subId),
+      };
+    }
 
     const messages = buildHistory(db, sessionId, messageId);
     // Inline any @path references in the triggering message so the model sees the
@@ -262,7 +338,9 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     const agents = prepared.sandboxed ? await readAgentsFile(prepared.cwd) : null;
     // Skills: `/name` in the triggering user message pulls that skill's
     // instructions into the system prompt for this run (supervisor/skills.ts).
-    const system = SYSTEM + (agents ?? "") + activeFor(lastUserText(db, sessionId));
+    const system = SYSTEM + (mayDelegate ? SYSTEM_DELEGATION : "") +
+      (mayDelegate ? runningSubagentsNote(db, sessionId) : "") + (agents ?? "") +
+      activeFor(lastUserText(db, sessionId));
     const toolDefs = tools.map((t) => ({
       name: t.name,
       description: t.description,
@@ -330,6 +408,7 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     db.updateMessage(messageId, parts, false);
     finishTurn(db, turn.id, "done");
     bus.publish({ type: "message.finished", sessionId, data: { messageId } });
+    bus.publish({ type: "turn.finished", sessionId, data: { sessionId, status: "done" } });
   } catch (err) {
     // An interrupt (explicit abort, or the SDK's abort error) ends the turn
     // cleanly with a marker, not a failure — the user asked it to stop.
@@ -340,9 +419,11 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       : { type: "text", text: `⚠︎ Turn failed: ${(err as Error).message}` };
     parts.push(note);
     db.updateMessage(messageId, parts, false);
-    finishTurn(db, turn.id, interrupted ? "interrupted" : "error");
+    const status = interrupted ? "interrupted" : "error";
+    finishTurn(db, turn.id, status);
     bus.publish({ type: "message.part", sessionId, data: { messageId, part: note } });
     bus.publish({ type: "message.finished", sessionId, data: { messageId } });
+    bus.publish({ type: "turn.finished", sessionId, data: { sessionId, status } });
   } finally {
     // Persist token usage for the context meter and announce it (usage.updated).
     // contextTokens stays 0 for a stream that errored before its first usage report.
@@ -422,7 +503,9 @@ function inlineFileReferences(messages: LlmMessage[], workspace: string): void {
 }
 
 function toLlmMessages(m: Message): LlmMessage[] {
-  if (m.role === "user") {
+  // System notes (harness-injected, e.g. subagent reports) replay as user-side text:
+  // they are input TO the model, never words it said.
+  if (m.role === "user" || m.role === "system") {
     const content: LlmContentBlock[] = m.parts
       .filter((p) => p.type === "text")
       .map((p) => ({ type: "text", text: (p as { text: string }).text }));

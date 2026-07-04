@@ -17,13 +17,14 @@
  * editor takes effect on the next request without a restart.
  */
 import {
+  type Classifier,
   decide,
   type Decision,
   type Policy,
   policy as makePolicy,
   type Request,
 } from "./policy.ts";
-import type { ExtensionHost } from "./extensions.ts";
+import { type PluginGuard, type RunGuardOpts, runGuards } from "./plugins.ts";
 import type { Db } from "../db/db.ts";
 import type { Bus } from "../bus.ts";
 import type { NetRequest } from "../schema/parts.ts";
@@ -52,21 +53,32 @@ export class Gate {
   #resolve?: (sessionId?: string) => Policy;
   /** Compiled-policy cache keyed by sessionId; cleared whenever any rule set changes. */
   #cache = new Map<string, Policy>();
-  /** Programmable guards (extensions.ts); a guard verdict overrides the static one. */
-  #extensions?: ExtensionHost;
+  /**
+   * Live plugin classifiers for the session that owns the request (activation is
+   * per-branch — plugins.ts activeFor). Read per request so hot-reload, activation
+   * edits, and per-activation TTL apply on the next gate() without invalidation.
+   */
+  #classifiers?: (sessionId?: string) => readonly Classifier[];
+  /** Contextual plugin gate() hooks for the owning session (plugins.ts runGuards). */
+  #guards?: (sessionId?: string) => readonly PluginGuard[];
+  #guardOpts: RunGuardOpts;
 
   constructor(cfg: {
     policy: Policy;
     db: Db;
     bus: Bus;
     resolve?: (sessionId?: string) => Policy;
-    extensions?: ExtensionHost;
+    classifiers?: (sessionId?: string) => readonly Classifier[];
+    guards?: (sessionId?: string) => readonly PluginGuard[];
+    guardOpts?: RunGuardOpts;
   }) {
     this.#policy = cfg.policy;
     this.#db = cfg.db;
     this.#bus = cfg.bus;
     this.#resolve = cfg.resolve;
-    this.#extensions = cfg.extensions;
+    this.#classifiers = cfg.classifiers;
+    this.#guards = cfg.guards;
+    this.#guardOpts = cfg.guardOpts ?? {};
   }
 
   /** Number of requests currently awaiting human approval (introspection/tests). */
@@ -102,16 +114,20 @@ export class Gate {
    * (POST /net/requests/:id/{allow,deny}).
    */
   async gate(req: Request, opts: GateOpts = {}): Promise<Decision> {
-    let decision = decide(req, this.#policyFor(opts.sessionId));
-    // Programmable guards see the request + the static decision; the first guard
-    // verdict overrides it (a broken/slow guard falls through inside the host).
-    // No-extensions stays fully synchronous up to the hold registration, so a
-    // caller can observe `pending` right after calling gate().
-    const override = this.#extensions
-      ? await this.#extensions.gate(req, decision, opts.sessionId)
-      : undefined;
-    if (override) {
-      decision = { verdict: override.verdict, reason: override.reason, action: decision.action };
+    let decision = decide(
+      req,
+      this.#policyFor(opts.sessionId),
+      this.#classifiers?.(opts.sessionId) ?? [],
+    );
+    // Contextual layer: an active plugin's gate() may override the static verdict
+    // for its own hosts (out-of-band checks — see plugins.ts). Errors/timeouts fall
+    // through inside runGuards, so the static posture always stands as the floor.
+    const guards = this.#guards?.(opts.sessionId) ?? [];
+    if (guards.length) {
+      const override = await runGuards(guards, req, decision, opts.sessionId, this.#guardOpts);
+      if (override) {
+        decision = { verdict: override.verdict, reason: override.reason, action: decision.action };
+      }
     }
     const record: NetRequest = {
       id: crypto.randomUUID(),
@@ -183,7 +199,9 @@ export function createGate(
     bus: Bus;
     policy?: Policy;
     resolve?: (sessionId?: string) => Policy;
-    extensions?: ExtensionHost;
+    classifiers?: (sessionId?: string) => readonly Classifier[];
+    guards?: (sessionId?: string) => readonly PluginGuard[];
+    guardOpts?: RunGuardOpts;
   },
 ): Gate {
   return new Gate({
@@ -191,6 +209,8 @@ export function createGate(
     db: cfg.db,
     bus: cfg.bus,
     resolve: cfg.resolve,
-    extensions: cfg.extensions,
+    classifiers: cfg.classifiers,
+    guards: cfg.guards,
+    guardOpts: cfg.guardOpts,
   });
 }
