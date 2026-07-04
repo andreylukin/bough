@@ -47,8 +47,10 @@ const DENY_READS = [
   "~/.password-store",
   "~/.1password",
   // keychains / password stores
-  "~/Library/Keychains",
-  "/Library/Keychains",
+  // NOTE: ~/Library/Keychains + /Library/Keychains are deliberately NOT denied so the
+  // agent's git/gh can read GitHub credentials to push (osxkeychain helper + gh token).
+  // Tradeoff: the whole login keychain is readable in-sandbox; egress stays gated by
+  // Claw Patrol, which is the backstop against exfiltration.
   "~/Library/Containers/com.1password.1password",
   "~/Library/Group Containers/2BUA8C4S2C.com.1password",
   // shell configs (may embed secrets) + history
