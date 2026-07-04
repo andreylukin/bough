@@ -23,11 +23,12 @@ if ! command -v git >/dev/null; then
   exit 1
 fi
 
-# deno: runtime. node: builds web/. jj: workspace snapshots. llama.cpp: local
-# worker (llama-server). cloudflared: `deno task tunnel` for phone access.
+# node: builds web/. jj: workspace snapshots. llama.cpp: local worker (llama-server).
+# cloudflared: `deno task tunnel` for phone access. (deno has its own block below —
+# it needs a version floor, and may already be on PATH from the deno.land installer.)
 echo "==> checking Homebrew packages"
-brew_bins=(deno node jj llama-server cloudflared)
-brew_pkgs=(deno node jj llama.cpp cloudflared)
+brew_bins=(node jj llama-server cloudflared)
+brew_pkgs=(node jj llama.cpp cloudflared)
 missing=()
 for i in "${!brew_bins[@]}"; do
   command -v "${brew_bins[$i]}" >/dev/null || missing+=("${brew_pkgs[$i]}")
@@ -39,17 +40,30 @@ else
   echo "==> all packages already installed"
 fi
 
-# Claw Patrol's MITM proxy needs Deno >= 2.9 (server-side TLS handshake + SNI
-# callback in node:tls). An older brew deno silently breaks the egress gate.
-deno_ver="$(deno --version | head -1 | awk '{print $2}')"
-if [ "$(printf '%s\n' "2.9.0" "$deno_ver" | sort -V | head -1)" != "2.9.0" ]; then
-  echo "==> deno $deno_ver is too old for the egress proxy — upgrading"
+# Deno >= 2.9 via Homebrew. Claw Patrol's MITM proxy needs the server-side TLS
+# handshake + SNI callback that landed in node:tls in 2.9; anything older silently
+# breaks the egress gate. We install/upgrade through brew even when an older deno is
+# already on PATH from the deno.land installer (brew upgrade would fail on that one).
+deno_ok() {
+  command -v deno >/dev/null || return 1
+  local v
+  v="$(deno --version | head -1 | awk '{print $2}')"
+  [ "$(printf '%s\n' "2.9.0" "$v" | sort -V | head -1)" = "2.9.0" ]
+}
+if deno_ok; then
+  echo "==> deno $(deno --version | head -1 | awk '{print $2}') ok"
+elif brew list --formula deno >/dev/null 2>&1; then
+  echo "==> upgrading deno via brew"
   brew upgrade deno
-  deno_ver="$(deno --version | head -1 | awk '{print $2}')"
-  if [ "$(printf '%s\n' "2.9.0" "$deno_ver" | sort -V | head -1)" != "2.9.0" ]; then
-    echo "error: need deno >= 2.9, have $deno_ver" >&2
-    exit 1
-  fi
+else
+  echo "==> installing deno via brew"
+  brew install deno
+fi
+if ! deno_ok; then
+  echo "error: need deno >= 2.9 on PATH — have '$(command -v deno || echo none)'." >&2
+  echo "  A non-brew deno (e.g. ~/.deno/bin) may be shadowing brew's; fix your PATH so" >&2
+  echo "  $(brew --prefix)/bin comes first, or remove the old deno." >&2
+  exit 1
 fi
 
 # The plugin panel's "✎ Edit" button opens definitions in Zed. Optional but nice.
