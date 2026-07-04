@@ -89,36 +89,115 @@ const VERDICT_TINT: Record<NetRequest["verdict"], string> = {
   pending: c.amber,
 };
 
-// One row in the live egress feed.
-function FeedRow(
-  { r, selected, onToggle }: { r: NetRequest; selected?: boolean; onToggle?: () => void },
+// A run of identical egress (same host + verb + action + verdict), folded into one
+// feed row so a busy loop doesn't flood the panel. rep = newest; ids = every member.
+interface FeedGroup {
+  key: string;
+  rep: NetRequest;
+  ids: string[];
+  count: number;
+  firstTs: number;
+  lastTs: number;
+}
+
+// Fold newest-first `net` into groups, preserving newest-first group order.
+function groupFeed(net: NetRequest[]): FeedGroup[] {
+  const by = new Map<string, FeedGroup>();
+  const order: string[] = [];
+  for (const r of net) {
+    const key = `${r.host}|${r.verb ?? ""}|${r.action}|${r.verdict}`;
+    let g = by.get(key);
+    if (!g) {
+      g = { key, rep: r, ids: [], count: 0, firstTs: r.ts, lastTs: r.ts };
+      by.set(key, g);
+      order.push(key);
+    }
+    g.ids.push(r.id);
+    g.count++;
+    g.firstTs = Math.min(g.firstTs, r.ts);
+    g.lastTs = Math.max(g.lastTs, r.ts);
+  }
+  return order.map((k) => by.get(k)!);
+}
+
+function relTime(ts: number, now = Date.now()): string {
+  const s = Math.max(0, Math.round((now - ts) / 1000));
+  if (s < 5) return "just now";
+  if (s < 60) return `${s}s ago`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.round(h / 24)}d ago`;
+}
+
+function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div style={{ display: "flex", gap: 8, fontFamily: mono, fontSize: 10.5 }}>
+      <span style={{ color: c.muted2, width: 66, flex: "none" }}>{label}</span>
+      <span style={{ color: c.text2, minWidth: 0, wordBreak: "break-all" }}>{value}</span>
+    </div>
+  );
+}
+
+// One feed row = one group. Click the body to analyze (expand full detail); the
+// checkbox selects the whole group (all member ids) for AI rule-drafting.
+function FeedGroupRow(
+  { g, selected, onSelect }: { g: FeedGroup; selected: boolean; onSelect: () => void },
 ) {
+  const [open, setOpen] = useState(false);
+  const r = g.rep;
+  const tint = VERDICT_TINT[r.verdict];
   return (
     <div
-      onClick={onToggle}
-      title={onToggle ? "Click to select for grouping into rules" : undefined}
       style={{
-        display: "flex",
-        gap: 8,
-        padding: "7px 2px",
         borderBottom: `1px solid ${c.border}`,
-        fontFamily: mono,
-        fontSize: 11,
-        cursor: onToggle ? "pointer" : undefined,
-        background: selected ? "rgba(93,196,124,.08)" : undefined,
+        background: selected ? "rgba(93,196,124,.08)" : open ? c.panelInset : undefined,
         borderLeft: selected ? `2px solid ${c.green}` : "2px solid transparent",
       }}
     >
-      <span style={{ color: VERDICT_TINT[r.verdict], width: 8, flex: "none" }}>●</span>
-      <div style={{ minWidth: 0, flex: 1 }}>
-        <div style={{ color: c.text2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-          <span style={{ color: c.muted2 }}>{r.verb ?? ""}</span> {r.host}
-        </div>
-        <div style={{ color: c.muted2, fontSize: 10, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-          {r.action}
-          {r.reason ? ` — ${r.reason}` : ""}
+      <div style={{ display: "flex", gap: 8, padding: "7px 2px", fontFamily: mono, fontSize: 11 }}>
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={onSelect}
+          onClick={(e) => e.stopPropagation()}
+          title="Select this group for ✨ Group into rules"
+          style={{ flex: "none", accentColor: c.green, marginTop: 2, cursor: "pointer" }}
+        />
+        <div
+          onClick={() => setOpen((o) => !o)}
+          title={open ? "Collapse" : "Click to analyze this request"}
+          style={{ minWidth: 0, flex: 1, cursor: "pointer" }}
+        >
+          <div style={{ color: c.text2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            <span style={{ color: tint, marginRight: 5 }}>●</span>
+            <span style={{ color: c.muted2 }}>{r.verb ?? ""}</span> {r.host}
+            {g.count > 1 && <span style={{ color: c.muted2 }}>{"  "}×{g.count}</span>}
+          </div>
+          <div style={{ color: c.muted2, fontSize: 10, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {r.action}
+            {r.reason ? ` — ${r.reason}` : ""}
+          </div>
         </div>
       </div>
+      {open && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 3, padding: "2px 2px 9px 24px" }}>
+          <DetailRow label="verdict" value={<span style={{ color: tint }}>{r.verdict}</span>} />
+          <DetailRow label="host" value={r.host} />
+          <DetailRow label="method" value={r.verb ?? "—"} />
+          <DetailRow label="action" value={r.action} />
+          {r.reason && <DetailRow label="reason" value={r.reason} />}
+          {r.requestedBy && <DetailRow label="by" value={r.requestedBy} />}
+          <DetailRow
+            label={g.count > 1 ? "seen" : "at"}
+            value={g.count > 1
+              ? `${g.count}× · ${relTime(g.firstTs)} → ${relTime(g.lastTs)}`
+              : relTime(r.ts)}
+          />
+          {r.sessionId && <DetailRow label="session" value={r.sessionId.slice(0, 8)} />}
+        </div>
+      )}
     </div>
   );
 }
@@ -657,11 +736,16 @@ function NetworkPanel(
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [grouping, setGrouping] = useState(false);
   const [groupErr, setGroupErr] = useState<string | null>(null);
-  const toggleSel = (id: string) =>
+  const groups = groupFeed(net);
+  // A group is "selected" when all its member ids are; toggling flips the whole group.
+  const toggleGroup = (g: FeedGroup) =>
     setSel((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      const all = g.ids.every((id) => next.has(id));
+      for (const id of g.ids) {
+        if (all) next.delete(id);
+        else next.add(id);
+      }
       return next;
     });
   // Fold the selected requests into a drafted rule set; the draft opens in the editor.
@@ -758,9 +842,9 @@ function NetworkPanel(
         )
         : <p style={{ fontSize: 12, color: c.muted2, margin: 0 }}>Loading rules…</p>)}
 
-      <div style={{ display: "flex", flexDirection: "column" }}>
+      <div style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
         <span style={{ fontFamily: mono, fontSize: 10, letterSpacing: ".1em", color: c.muted2, margin: "0 0 4px 2px" }}>
-          FEED {net.length > 0 && <Chip>{net.length}</Chip>}
+          FEED {net.length > 0 && <Chip>{groups.length}{groups.length !== net.length ? ` / ${net.length}` : ""}</Chip>}
         </span>
         {sel.size > 0 && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 2px 7px" }}>
@@ -784,9 +868,20 @@ function NetworkPanel(
         )}
         {net.length === 0
           ? <div style={{ fontSize: 12, color: c.muted2, padding: "8px 2px" }}>No egress yet. Gated requests from sandbox commands appear here.</div>
-          : net.map((r) => (
-            <FeedRow key={r.id} r={r} selected={sel.has(r.id)} onToggle={() => toggleSel(r.id)} />
-          ))}
+          : (
+            // Its own scroll so a long feed doesn't push the rule editor / plugins
+            // off-screen — identical requests fold into one row (× count).
+            <div style={{ maxHeight: wide ? 460 : 320, overflowY: "auto" }}>
+              {groups.map((g) => (
+                <FeedGroupRow
+                  key={g.key}
+                  g={g}
+                  selected={g.ids.every((id) => sel.has(id))}
+                  onSelect={() => toggleGroup(g)}
+                />
+              ))}
+            </div>
+          )}
       </div>
 
       {status.enabled && (
