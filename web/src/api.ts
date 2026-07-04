@@ -25,6 +25,10 @@ export interface NetStatus {
   /** Live per-session proxy listeners (each branch gets its own port). */
   listeners: number;
   caPath: string;
+  /** macOS: is bough's CA keychain-trusted? Go tools (gh) need it. undefined = n/a. */
+  caTrusted?: boolean;
+  /** One-time command to trust the CA, shown when caTrusted is false. */
+  caTrustCommand?: string;
 }
 
 /** Where a branch's effective rule set came from (mirrors src/net/config.ts). */
@@ -130,6 +134,8 @@ export const api = {
   // bough runs the egress proxy in-process; the live feed + human approvals + the
   // rule set all live here in bough's own UI.
   netStatus: () => fetch("/net/status").then(j<NetStatus>),
+  // Re-check keychain trust after the operator runs the trust command.
+  recheckCa: () => fetch("/net/ca/recheck", { method: "POST" }).then(j<NetStatus>),
 
   // Backfill the feed; live updates arrive as `net.request` events over /events.
   netRequests: (sessionId?: string) =>

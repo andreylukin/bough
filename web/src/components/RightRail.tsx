@@ -174,6 +174,55 @@ function HoldCard(
   );
 }
 
+// One-time macOS keychain-trust nudge. Sandboxed curl/git trust the MITM CA via env
+// vars, but Go tools (gh, some kubectl auth plugins) consult the system keychain and
+// won't work through the proxy until the CA is trusted there. Shows the exact command
+// (copyable) and a re-check that clears the card once it's done — no restart needed.
+function CaTrustHint({ command }: { command: string }) {
+  const [done, setDone] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [checking, setChecking] = useState(false);
+  if (done) return null;
+  const recheck = async () => {
+    setChecking(true);
+    try {
+      const s = await api.recheckCa();
+      if (s.caTrusted) setDone(true);
+    } finally {
+      setChecking(false);
+    }
+  };
+  return (
+    <div style={{ border: `1px solid ${c.border2}`, borderRadius: 8, padding: 12, display: "flex", flexDirection: "column", gap: 8, background: c.panelInset }}>
+      <div style={{ fontFamily: mono, fontSize: 11.5, color: c.text2 }}>⚿ Trust the CA for Go tools</div>
+      <p style={{ fontSize: 11.5, color: c.muted, lineHeight: 1.5, margin: 0 }}>
+        Sandboxed curl/git already trust bough's CA. Go tools like <code style={{ fontFamily: mono, color: c.text2 }}>gh</code> and some kubectl auth plugins consult the macOS keychain instead — run this once so they work through Claw Patrol:
+      </p>
+      <code
+        onClick={() => {
+          navigator.clipboard?.writeText(command);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1200);
+        }}
+        title="Click to copy"
+        style={{ fontFamily: mono, fontSize: 10.5, color: c.text2, background: c.bg, border: `1px solid ${c.border2}`, borderRadius: 6, padding: "6px 8px", wordBreak: "break-all", cursor: "pointer" }}
+      >
+        {command}
+      </code>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <button
+          onClick={recheck}
+          disabled={checking}
+          style={{ fontFamily: mono, fontSize: 10.5, color: checking ? c.muted2 : c.green, background: "none", border: `1px solid ${c.border2}`, borderRadius: 6, padding: "3px 10px" }}
+        >
+          {checking ? "checking…" : "I've run it — re-check"}
+        </button>
+        {copied && <span style={{ fontSize: 10.5, color: c.green }}>copied</span>}
+      </div>
+    </div>
+  );
+}
+
 // A 2- or 3-way segmented control for a policy enum.
 function Segmented<T extends string>(
   { value, options, onChange }: { value: T; options: readonly T[]; onChange: (v: T) => void },
@@ -652,6 +701,10 @@ function NetworkPanel(
         <p style={{ fontSize: 12.5, color: c.muted, lineHeight: 1.55, margin: 0 }}>
           Egress gating is off. Start bough with <code style={{ fontFamily: mono, color: c.text2 }}>BOUGH_CLAWPATROL=1</code> to route sandbox traffic through the in-process proxy.
         </p>
+      )}
+
+      {status.running && status.caTrusted === false && status.caTrustCommand && (
+        <CaTrustHint command={status.caTrustCommand} />
       )}
 
       {pending && (

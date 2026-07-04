@@ -31,7 +31,7 @@ function originHttp(bodyText: string) {
     res.end(bodyText);
   });
   const ready = new Promise<number>((r) =>
-    server.listen(0, "127.0.0.1", () => r((server.address() as net.AddressInfo).port))
+    server.listen(0, "localhost", () => r((server.address() as net.AddressInfo).port))
   );
   return { server, hits, ready };
 }
@@ -143,5 +143,92 @@ Deno.test("CONNECT MITM: terminates TLS, the gate sees the decrypted POST body, 
     assertStringIncludes(responseText, "graphql mutation blocked");
   } finally {
     await proxy.stop();
+  }
+});
+
+/** CONNECT host:port through the proxy, TLS-trust `downstreamCaPem`, GET / → body. */
+function connectMitmGet(
+  proxyPort: number,
+  host: string,
+  targetPort: number,
+  downstreamCaPem: string,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const raw = net.connect(proxyPort, "127.0.0.1", () => {
+      raw.write(`CONNECT ${host}:${targetPort} HTTP/1.1\r\nHost: ${host}:${targetPort}\r\n\r\n`);
+    });
+    let acked = false;
+    raw.on("data", (d: Uint8Array) => {
+      if (acked) return;
+      acked = true;
+      const t = tls.connect(
+        { socket: raw, servername: host, ca: [downstreamCaPem] },
+        () => t.write(`GET / HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`),
+      );
+      let buf = "";
+      t.on("data", (b: Uint8Array) => (buf += new TextDecoder().decode(b)));
+      t.on("close", () => resolve(buf));
+      t.on("error", reject);
+      void d;
+    });
+    raw.on("error", reject);
+  });
+}
+
+/** A TLS "EKS API server" using `serverCa`'s leaf for 127.0.0.1; replies with a fixed body. */
+function fakeEks(serverCa: CertAuthority) {
+  const leaf = serverCa.leafFor("localhost");
+  const server = tls.createServer({ key: leaf.key, cert: leaf.cert }, (sock: tls.TLSSocket) => {
+    let got = false;
+    sock.on("data", () => {
+      if (got) return;
+      got = true;
+      sock.write(
+        "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 9\r\nConnection: close\r\n\r\nfrom-eks!",
+      );
+    });
+    sock.on("error", () => {});
+  });
+  const ready = new Promise<number>((r) =>
+    server.listen(0, "localhost", () => r((server.address() as net.AddressInfo).port))
+  );
+  return { server, ready };
+}
+
+Deno.test("MITM upstream CA: re-originates to a private-CA server (fake EKS) on its own port", async () => {
+  const ca = await makeCA(); // bough's MITM CA — trusted DOWNSTREAM by the client
+  const clusterCa = await makeCA(); // the cluster's private CA — server is signed by it
+  const eks = fakeEks(clusterCa);
+  const eport = await eks.ready;
+  const proxy = new ProxyServer({
+    ca,
+    gate: () => Promise.resolve(allow()),
+    upstreamCa: new Map([["localhost", clusterCa.caCertPem]]), // trust the cluster UPSTREAM
+  });
+  await proxy.start();
+  try {
+    const body = await connectMitmGet(proxy.port, "localhost", eport, ca.caCertPem);
+    assertStringIncludes(body, "200 OK");
+    assertStringIncludes(body, "from-eks!"); // proxy trusted the private cluster cert
+  } finally {
+    await proxy.stop();
+    eks.server.close();
+  }
+});
+
+Deno.test("MITM upstream CA: without the cluster CA, re-origination fails closed (502)", async () => {
+  const ca = await makeCA();
+  const clusterCa = await makeCA();
+  const eks = fakeEks(clusterCa);
+  const eport = await eks.ready;
+  const proxy = new ProxyServer({ ca, gate: () => Promise.resolve(allow()) }); // no upstreamCa
+  await proxy.start();
+  try {
+    const body = await connectMitmGet(proxy.port, "localhost", eport, ca.caCertPem);
+    assertStringIncludes(body, "502"); // proxy won't trust the unknown cluster cert
+    assertStringIncludes(body, "Claw Patrol: upstream error");
+  } finally {
+    await proxy.stop();
+    eks.server.close();
   }
 });

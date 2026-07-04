@@ -340,6 +340,15 @@ const events: Handler = (req, ctx) => {
 const netStatus: Handler = (_req, ctx) =>
   json(ctx.gateway?.status() ?? { enabled: false, running: false, listeners: 0, caPath: "" });
 
+// Re-run the macOS keychain-trust check after the operator runs the trust command,
+// so the CA hint clears without a server restart.
+const recheckCaH: Handler = async (_req, ctx) => {
+  await ctx.gateway?.refreshCaTrust();
+  return json(
+    ctx.gateway?.status() ?? { enabled: false, running: false, listeners: 0, caPath: "" },
+  );
+};
+
 // The editable rule set (allow/deny/hold config) the gate compiles + enforces.
 // ?session=<id> scopes to that branch: GET returns its effective config plus where it
 // came from (own override / inherited from an ancestor / global); PUT writes the
@@ -632,6 +641,11 @@ const routes: Route[] = [
   // web client always uses POST; GET stays for curl and local tools.
   { method: "POST", pattern: new URLPattern({ pathname: "/events" }), handler: events },
   { method: "GET", pattern: new URLPattern({ pathname: "/net/status" }), handler: netStatus },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/net/ca/recheck" }),
+    handler: recheckCaH,
+  },
   { method: "GET", pattern: new URLPattern({ pathname: "/net/policy" }), handler: getPolicy },
   { method: "PUT", pattern: new URLPattern({ pathname: "/net/policy" }), handler: putPolicy },
   { method: "DELETE", pattern: new URLPattern({ pathname: "/net/policy" }), handler: deletePolicy },

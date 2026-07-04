@@ -22,6 +22,8 @@ import { caEnv, CertAuthority } from "./ca.ts";
 import { ProxyServer } from "./proxy.ts";
 import { createGate, type Gate } from "./gate.ts";
 import { PluginHost, type PluginInfo } from "./plugins.ts";
+import { caTrustCommand, isCaTrusted } from "./catrust.ts";
+import { augmentCloudPolicy, type KubeSetup, setupKube } from "./cloud.ts";
 import { loadConfig, resolveConfig, toPolicy } from "./config.ts";
 import type { Db } from "../db/db.ts";
 import type { Bus } from "../bus.ts";
@@ -37,6 +39,13 @@ export interface GatewayStatus {
   /** Live per-session listeners (informational; each session gets its own port). */
   listeners: number;
   caPath: string;
+  /**
+   * macOS: whether bough's CA is keychain-trusted. Go tools (gh, some kubectl auth
+   * plugins) ignore the CA env var and need this. undefined until first checked /
+   * when the proxy is off. `caTrustCommand` is the one-time fix to show when false.
+   */
+  caTrusted?: boolean;
+  caTrustCommand?: string;
 }
 
 /** Owns the CA + gate + per-session proxies for the server's lifetime. */
@@ -46,6 +55,9 @@ export class ClawpatrolGateway {
   #ca?: CertAuthority;
   #gate?: Gate;
   #plugins?: PluginHost;
+  #caTrusted?: boolean;
+  // kubectl integration: rewritten kubeconfig + per-cluster upstream CA (cloud.ts).
+  #kube?: KubeSetup;
   // Live listeners keyed by sessionId ("" = a caller with no session, e.g. tests).
   #proxies = new Map<string, ProxyServer>();
   // In-flight starts, so concurrent tool calls in one turn share one listener.
@@ -64,12 +76,23 @@ export class ClawpatrolGateway {
   }
 
   status(): GatewayStatus {
+    const caPath = this.#ca?.caCertPath ?? "";
     return {
       enabled: clawpatrolEnabled(),
       running: this.#running,
       listeners: this.#proxies.size,
-      caPath: this.#ca?.caCertPath ?? "",
+      caPath,
+      ...(this.#running && caPath
+        ? { caTrusted: this.#caTrusted, caTrustCommand: caTrustCommand(caPath) }
+        : {}),
     };
+  }
+
+  /** Re-check keychain trust (memoized; the UI hint clears once you run the command). */
+  async refreshCaTrust(): Promise<boolean | undefined> {
+    if (!this.#running || !this.#ca) return undefined;
+    this.#caTrusted = await isCaTrusted(this.#ca.caCertPath);
+    return this.#caTrusted;
   }
 
   /** Classifier plugins; see /net/plugins endpoints. */
@@ -108,13 +131,31 @@ export class ClawpatrolGateway {
     this.#plugins = new PluginHost();
     await this.#plugins.load();
     const plugins = this.#plugins;
+    // kubectl: rewrite the operator's kubeconfig so the sandbox trusts bough's CA,
+    // and learn each cluster's real CA for upstream trust (cloud.ts). aws needs no
+    // rewrite — AWS_CA_BUNDLE (ca.caEnv) + public roots cover it.
+    this.#kube = setupKube(this.#ca.caCertPem);
+    const kubeHosts = this.#kube?.hosts ?? [];
+    if (this.#kube) {
+      console.log(`[clawpatrol] kubectl: ${kubeHosts.length} cluster host(s) trusted + gated`);
+      if (this.#kube.clientCertUsers.length) {
+        console.warn(
+          `[clawpatrol] kubeconfig users on client-cert auth won't work through the ` +
+            `proxy (mTLS can't survive MITM): ${this.#kube.clientCertUsers.join(", ")}`,
+        );
+      }
+    }
+    // Trust + classify the cloud CLI hosts (k8s clusters + *.amazonaws.com) on every
+    // compiled policy, so reads flow and only writes gate — see cloud.augmentCloudPolicy.
+    const compile = (sessionId?: string) =>
+      augmentCloudPolicy(toPolicy(resolveConfig(this.#db, sessionId).config), kubeHosts);
     this.#gate = createGate({
       db: this.#db,
       bus: this.#bus,
-      policy: toPolicy(loadConfig()),
+      policy: augmentCloudPolicy(toPolicy(loadConfig()), kubeHosts),
       // Branch policy: a session's own net_policies row, else the nearest
       // ancestor's, else the global rule set (config.ts resolveConfig).
-      resolve: (sessionId) => toPolicy(resolveConfig(this.#db, sessionId).config),
+      resolve: compile,
       // The runtime join: the branch's effective activations (inherited like every
       // other rule) select from the plugin library. Resolved per request, so
       // enable/disable edits and per-activation TTLs apply on the next gate().
@@ -133,6 +174,7 @@ export class ClawpatrolGateway {
       }
     });
     this.#running = true;
+    void this.refreshCaTrust(); // warm the keychain-trust hint (non-blocking)
     console.log(`[clawpatrol] native egress gateway up (per-session listeners)`);
     console.log(`[clawpatrol] sandbox clients trust the MITM CA at ${this.#ca.caCertPath}`);
   }
@@ -157,6 +199,9 @@ export class ClawpatrolGateway {
         ca: this.#ca!,
         gate: (req, opts) => gate.gate(req, opts),
         sessionId: key || undefined,
+        // Trust each k8s cluster's private CA when re-originating (EKS serving certs
+        // aren't public-rooted). Empty/absent for everyone else = default trust.
+        upstreamCa: this.#kube?.upstreamCa,
       });
       starting = proxy.start().then(() => {
         this.#starting.delete(key);
@@ -196,6 +241,9 @@ export class ClawpatrolGateway {
       // The owning branch, so in-session tooling (e.g. the /net-plugin skill) can
       // scope its API calls (?session=$BOUGH_SESSION) without guessing.
       ...(sessionId ? { BOUGH_SESSION: sessionId } : {}),
+      // kubectl reads clusters from KUBECONFIG; point it at the CA-rewritten copy so
+      // it trusts the proxy's leaf. Absent when there's no kubeconfig to rewrite.
+      ...(this.#kube ? { KUBECONFIG: this.#kube.configPath } : {}),
       ...caEnv(this.#ca.caCertPath),
     };
   }

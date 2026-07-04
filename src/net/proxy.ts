@@ -46,6 +46,14 @@ export interface ProxyOptions {
   credentials?: CredentialRule[];
   /** Tag events with the session that owns this egress (single-session servers). */
   sessionId?: string;
+  /**
+   * Extra CA (PEM) to trust when RE-ORIGINATING to a given host, keyed by exact host.
+   * Needed for upstreams whose serving cert is signed by a PRIVATE CA the system
+   * store lacks — a k8s API server (EKS uses the cluster CA, not a public root). AWS
+   * and most APIs use public roots and need no entry. Without a match, default
+   * (public) trust applies; we never disable verification.
+   */
+  upstreamCa?: Map<string, string>;
 }
 
 const HOP_BY_HOP = new Set([
@@ -112,9 +120,14 @@ export class ProxyServer {
     // whose SNI servername is the real origin host we terminated for.
     this.#mitmHttp = http.createServer((creq, cres) => {
       // deno-lint-ignore no-explicit-any
-      const servername = (creq.socket as any).servername as string | undefined;
+      const sock = creq.socket as any;
+      const servername = sock.servername as string | undefined;
       const host = servername || stripPort(creq.headers.host);
-      this.#handle(creq, cres, host, true);
+      // The CONNECT target port, stashed on the raw socket before TLS termination
+      // (below), so MITM'd HTTPS re-originates to the real port — 443 for EKS, but
+      // 6443 for self-managed k8s, etc. Falls back to 443 if the link is missing.
+      const port = (sock._parent?.__cpTargetPort as number | undefined) ?? 443;
+      this.#handle(creq, cres, host, true, port);
     });
 
     this.#mitm = tls.createServer({
@@ -137,7 +150,14 @@ export class ProxyServer {
       const url = safeUrl(creq.url);
       this.#handle(creq, cres, url?.hostname ?? stripPort(creq.headers.host), false);
     });
-    this.#proxy.on("connect", (_req: http.IncomingMessage, socket: net.Socket) => {
+    this.#proxy.on("connect", (req: http.IncomingMessage, socket: net.Socket) => {
+      // Remember the CONNECT target port so #forward can re-originate to it (the SNI
+      // host we terminate for carries no port). Read back via the TLS socket's parent.
+      const port = Number(req.url?.split(":")[1]);
+      if (Number.isFinite(port)) {
+        // deno-lint-ignore no-explicit-any
+        (socket as any).__cpTargetPort = port;
+      }
       socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
       // Hand the raw tunnel to the TLS terminator; it emits secureConnection → mitmHttp.
       this.#mitm.emit("connection", socket);
@@ -155,6 +175,7 @@ export class ProxyServer {
     cres: http.ServerResponse,
     host: string,
     secure: boolean,
+    port?: number,
   ): Promise<void> {
     // A client that vanishes mid-exchange (timeout, ^C) must never take the proxy
     // down with an unhandled 'error' from its dead socket.
@@ -194,7 +215,7 @@ export class ProxyServer {
     // THIS request, and this request no longer has a client. (Check the response
     // side only: creq.destroyed is routinely true once the body was fully read.)
     if (cres.destroyed || cres.writableEnded) return;
-    this.#forward(creq, cres, host, secure, body);
+    this.#forward(creq, cres, host, secure, body, port);
   }
 
   /** Re-originate the request to the real host and stream the response back. */
@@ -204,6 +225,7 @@ export class ProxyServer {
     host: string,
     secure: boolean,
     body: Uint8Array,
+    port?: number,
   ): void {
     const headers: Record<string, string> = {};
     for (const [k, v] of Object.entries(flatHeaders(creq.headers))) {
@@ -218,14 +240,18 @@ export class ProxyServer {
     const path = u?.pathname ?? creq.url ?? "/";
     const search = u?.search ?? "";
     const client = secure ? https : http;
+    // Private-CA upstreams (a k8s API server) need their cluster CA added to trust;
+    // everything else keeps default public-root verification (never disabled).
+    const extraCa = secure ? this.#opts.upstreamCa?.get(host) : undefined;
     const oreq = client.request(
       {
         host,
         servername: secure ? host : undefined,
-        port: secure ? 443 : (Number(u?.port) || 80),
+        port: secure ? (port ?? 443) : (Number(u?.port) || 80),
         method: creq.method,
         path: secure ? (creq.url ?? "/") : path + search,
         headers,
+        ...(extraCa ? { ca: [tls.rootCertificates.join("\n"), extraCa].join("\n") } : {}),
       },
       (ores: http.IncomingMessage) => {
         if (cres.destroyed) {

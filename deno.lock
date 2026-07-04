@@ -3,6 +3,7 @@
   "specifiers": {
     "jsr:@std/assert@1": "1.0.19",
     "jsr:@std/internal@^1.0.12": "1.0.14",
+    "jsr:@std/yaml@1": "1.1.2",
     "npm:@anthropic-ai/sdk@0.68.0": "0.68.0_zod@3.25.76",
     "npm:drizzle-orm@0.36.4": "0.36.4",
     "npm:node-forge@1.4.0": "1.4.0",
@@ -17,6 +18,9 @@
     },
     "@std/internal@1.0.14": {
       "integrity": "291516b3d4c35024d6ffbc0a9df5bf4c64116e05b50012cf846710152d2ffdf7"
+    },
+    "@std/yaml@1.1.2": {
+      "integrity": "de612653c036749ba2044165e316f52412b0f0698afffb7ee80b5331d6d2abae"
     }
   },
   "npm": {
@@ -56,6 +60,7 @@
   },
   "workspace": {
     "dependencies": [
+      "jsr:@std/yaml@1",
       "npm:@anthropic-ai/sdk@0.68.0",
       "npm:drizzle-orm@0.36.4",
       "npm:node-forge@1.4.0",
