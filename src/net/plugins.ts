@@ -310,6 +310,61 @@ export function scaffoldSpec(name: string): PluginSpec {
   };
 }
 
+// ---- synthesize from observed traffic ------------------------------------------
+
+/** One feed row's worth of what we need to build an op from. */
+export interface RequestSample {
+  host: string;
+  verb?: string;
+  action: string;
+}
+
+/** A plugin name from a host: "api.stripe.com" → "stripe", "sts.us-east-2.amazonaws.com" → "amazonaws". */
+function nameFromHost(host: string): string {
+  const parts = host.toLowerCase().replace(/^api\./, "").split(".");
+  // second-level label (skip the TLD): stripe.com→stripe, foo.eks.amazonaws.com→amazonaws
+  const label = parts.length >= 2 ? parts[parts.length - 2] : parts[0];
+  return slug(label);
+}
+
+/**
+ * Build a classifier plugin from selected feed requests — the "group into plugin"
+ * path. Deterministic (no model): each distinct action becomes an op row, keyed by
+ * the request's method + path when the action is "METHOD /path", else a method
+ * catch-all. GET/HEAD classify read, everything else write (edit the rendered file
+ * to name destructive verbs / generalize globs). Fixtures echo the real requests so
+ * the plugin validates on load. `hosts` covers every distinct host in the selection.
+ */
+export function specFromRequests(samples: RequestSample[]): PluginSpec {
+  if (samples.length === 0) throw new Error("no requests to build a plugin from");
+  const hosts = [...new Set(samples.map((s) => s.host.toLowerCase()))];
+  const ops = new Map<string, OpRule>();
+  const fixtures = new Map<string, PluginFixture>();
+
+  for (const s of samples) {
+    const m = /^([A-Za-z]+)\s+(\/\S*)$/.exec(s.action);
+    const method = (m?.[1] ?? s.verb ?? "GET").toUpperCase();
+    const path = m?.[2] ?? "*";
+    const kind: OpRule["kind"] = method === "GET" || method === "HEAD" ? "read" : "write";
+    const match = `${method} ${path}`;
+    if (ops.has(match)) continue;
+    ops.set(match, { match, kind });
+    // A fixture path that actually satisfies the glob (turn any "*" into a literal).
+    const fixturePath = path === "*" ? "/probe" : path.replace(/\*/g, "x");
+    fixtures.set(match, { req: { method, path: fixturePath }, expect: { kind } });
+  }
+
+  return {
+    meta: {
+      name: nameFromHost(hosts[0]),
+      description: `Generated from ${samples.length} request(s) to ${hosts.join(", ")}.`,
+      hosts,
+    },
+    ops: [...ops.values()],
+    fixtures: [...fixtures.values()],
+  };
+}
+
 // ---- host --------------------------------------------------------------------
 
 /** Slugify a display name into a safe filename stem / plugin name. */
@@ -428,8 +483,14 @@ export class PluginHost {
    * touching disk if the spec is malformed or its fixtures fail. Activation (and its
    * TTL) is a separate, per-scope step — see config.ts setPluginActivation.
    */
-  async install(raw: unknown): Promise<{ path: string }> {
+  async install(
+    raw: unknown,
+    opts: { uniqueName?: boolean } = {},
+  ): Promise<{ path: string; name: string }> {
     const spec = PluginSpec.parse(raw);
+    // "Group into plugin" re-runs would collide on the host-derived name; dedupe it
+    // (stripe, stripe-2, …) instead of erroring, so the button is idempotent-ish.
+    if (opts.uniqueName) spec.meta.name = this.freshName(spec.meta.name);
     const failures = runFixtures(
       buildClassifier(spec.meta.name, spec.meta.hosts, spec.ops),
       spec.meta.hosts,
@@ -440,7 +501,16 @@ export class PluginHost {
     mkdirSync(this.#dir, { recursive: true });
     writeFileSync(path, renderModule(spec));
     await this.load();
-    return { path };
+    return { path, name: spec.meta.name };
+  }
+
+  /** A plugin name whose <name>.ts file doesn't exist yet (base, base-2, base-3, …). */
+  freshName(base: string): string {
+    if (!existsSync(join(this.#dir, `${base}.ts`))) return base;
+    for (let n = 2;; n++) {
+      const cand = `${base}-${n}`;
+      if (!existsSync(join(this.#dir, `${cand}.ts`))) return cand;
+    }
   }
 
   #freshPath(stem: string): string {

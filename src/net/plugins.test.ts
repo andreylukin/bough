@@ -8,6 +8,7 @@ import {
   renderModule,
   runFixtures,
   runGuards,
+  specFromRequests,
   ttlToExpires,
 } from "./plugins.ts";
 import { decide, policy, type Request } from "./policy.ts";
@@ -428,4 +429,39 @@ Deno.test("gate integration: guard override rides through Gate.gate()", async ()
   assertEquals(out.verdict, "allow");
   assertEquals(out.reason, "young enough");
   assertEquals(db.recentNetEvents("s1")[0].verdict, "allowed");
+});
+
+// ---- group-into-plugin (specFromRequests) --------------------------------------
+
+Deno.test("specFromRequests: distinct actions → op rows; reads vs writes; fixtures valid", () => {
+  const spec = specFromRequests([
+    { host: "api.stripe.com", verb: "GET", action: "GET /v1/charges" },
+    { host: "api.stripe.com", verb: "GET", action: "GET /v1/charges" }, // dup collapses
+    { host: "api.stripe.com", verb: "POST", action: "POST /v1/refunds" },
+    { host: "api.stripe.com", verb: "DELETE", action: "DELETE /v1/customers/cus_9" },
+  ]);
+  assertEquals(spec.meta.name, "stripe"); // from the host
+  assertEquals(spec.meta.hosts, ["api.stripe.com"]);
+  assertEquals(spec.ops, [
+    { match: "GET /v1/charges", kind: "read" },
+    { match: "POST /v1/refunds", kind: "write" },
+    { match: "DELETE /v1/customers/cus_9", kind: "write" },
+  ]);
+  // the generated fixtures must pass against the generated table (install invariant)
+  const c = buildClassifier(spec.meta.name, spec.meta.hosts, spec.ops);
+  assertEquals(runFixtures(c, spec.meta.hosts, spec.fixtures), []);
+});
+
+Deno.test("specFromRequests: multiple hosts covered; classified verbs fall back to a method catch-all", () => {
+  const spec = specFromRequests([
+    { host: "sts.us-east-2.amazonaws.com", verb: "POST", action: "GetCallerIdentity" },
+    { host: "s3.amazonaws.com", verb: "GET", action: "GET /bucket/key" },
+  ]);
+  assertEquals(spec.meta.name, "amazonaws");
+  assertEquals(spec.meta.hosts, ["sts.us-east-2.amazonaws.com", "s3.amazonaws.com"]);
+  // "GetCallerIdentity" isn't "METHOD /path" → method catch-all "POST *"
+  assertEquals(spec.ops[0], { match: "POST *", kind: "write" });
+  assertEquals(spec.ops[1], { match: "GET /bucket/key", kind: "read" });
+  const c = buildClassifier(spec.meta.name, spec.meta.hosts, spec.ops);
+  assertEquals(runFixtures(c, spec.meta.hosts, spec.fixtures), []);
 });

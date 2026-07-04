@@ -181,6 +181,20 @@ export const api = {
     fetch(`/net/plugins/${encodeURIComponent(name)}/open`, { method: "POST" }).then(
       j<{ ok: boolean; file: string }>,
     ),
+  // Synthesize a plugin from selected feed requests, install + enable it for the
+  // branch. Returns the new plugin name + refreshed list.
+  pluginFromRequests: (requestIds: string[], sessionId?: string | null) =>
+    fetch("/net/plugins/from-requests", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ requestIds, sessionId: sessionId ?? undefined }),
+    }).then(async (res) => {
+      if (!res.ok) {
+        const b = await res.json().catch(() => null) as { error?: string } | null;
+        throw new Error(b?.error || `${res.status} ${res.statusText}`);
+      }
+      return res.json() as Promise<{ name: string; plugins: PluginInfo[] }>;
+    }),
   // Turn a library plugin on/off for a branch (or globally with no sessionId). The
   // optional ttl ("90m" | "2h" | "7d") expires just THIS activation.
   setPlugin: (name: string, on: boolean, sessionId?: string | null, ttl?: string) => {

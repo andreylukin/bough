@@ -141,7 +141,7 @@ function DetailRow({ label, value }: { label: string; value: React.ReactNode }) 
 }
 
 // One feed row = one group. Click the body to analyze (expand full detail); the
-// checkbox selects the whole group (all member ids) for AI rule-drafting.
+// checkbox selects the whole group (all member ids) for ✨ Group into plugin.
 function FeedGroupRow(
   { g, selected, onSelect }: { g: FeedGroup; selected: boolean; onSelect: () => void },
 ) {
@@ -162,7 +162,7 @@ function FeedGroupRow(
           checked={selected}
           onChange={onSelect}
           onClick={(e) => e.stopPropagation()}
-          title="Select this group for ✨ Group into rules"
+          title="Select this group for ✨ Group into plugin"
           style={{ flex: "none", accentColor: c.green, marginTop: 2, cursor: "pointer" }}
         />
         <div
@@ -520,10 +520,11 @@ function OpsTable({ ops }: { ops: OpRule[] }) {
 // children), each with its own optional TTL — so one plugin can run open-ended here
 // and lapse after 2h elsewhere. Creation stays skill-first: /net-plugin drafts,
 // installs, and live-tests against real traffic.
-function PluginsPanel({ sessionId, activations, onPolicyChanged }: {
+function PluginsPanel({ sessionId, activations, onPolicyChanged, reloadSignal = 0 }: {
   sessionId: string | null;
   activations: PluginActivation[];
   onPolicyChanged: () => void;
+  reloadSignal?: number;
 }) {
   const [dir, setDir] = useState("");
   const [plugins, setPlugins] = useState<PluginInfo[] | null>(null);
@@ -552,7 +553,7 @@ function PluginsPanel({ sessionId, activations, onPolicyChanged }: {
   };
   useEffect(() => {
     refresh();
-  }, []);
+  }, [reloadSignal]); // re-fetch after a "group into plugin" installs a new one
 
   const reload = async () => {
     setBusy(true);
@@ -748,18 +749,23 @@ function NetworkPanel(
       }
       return next;
     });
-  // Fold the selected requests into a drafted rule set; the draft opens in the editor.
+  // Synthesize a classifier plugin from the selected requests, install + enable it
+  // for this branch. It appears in the Plugins panel below, ready to edit (✎ Edit).
+  const [pluginReload, setPluginReload] = useState(0);
+  const [groupMsg, setGroupMsg] = useState<string | null>(null);
   const group = async () => {
     if (sel.size === 0 || grouping) return;
     setGrouping(true);
     setGroupErr(null);
+    setGroupMsg(null);
     try {
-      const d = await api.suggestPolicy("", sessionId, [...sel]);
-      setDraft((prev) => ({ ...d, n: (prev?.n ?? 0) + 1 }));
-      setEditing(true);
+      const { name } = await api.pluginFromRequests([...sel], sessionId);
       setSel(new Set());
+      setPluginReload((n) => n + 1); // refresh the Plugins panel's library
+      onPolicyChanged(); // pick up the new activation
+      setGroupMsg(`Created & enabled plugin “${name}” — edit it below.`);
     } catch (e) {
-      setGroupErr((e as Error).message || "grouping failed");
+      setGroupErr((e as Error).message || "could not create plugin");
     } finally {
       setGrouping(false);
     }
@@ -852,10 +858,10 @@ function NetworkPanel(
             <button
               onClick={group}
               disabled={grouping}
-              title="Draft rules that cover the selected requests; review the draft in the editor before saving"
+              title="Build a classifier plugin from the selected requests, install + enable it for this branch"
               style={{ fontFamily: mono, fontSize: 10.5, color: grouping ? c.muted2 : c.green, background: "none", border: `1px solid ${c.border2}`, borderRadius: 6, padding: "2px 8px" }}
             >
-              {grouping ? "grouping…" : "✨ Group into rules"}
+              {grouping ? "creating…" : "✨ Group into plugin"}
             </button>
             <button
               onClick={() => setSel(new Set())}
@@ -865,6 +871,11 @@ function NetworkPanel(
             </button>
             {groupErr && <span style={{ fontSize: 10.5, color: c.red }}>{groupErr}</span>}
           </div>
+        )}
+        {groupMsg && (
+          <span style={{ fontFamily: mono, fontSize: 10.5, color: c.green, padding: "0 2px 6px" }}>
+            {groupMsg}
+          </span>
         )}
         {net.length === 0
           ? <div style={{ fontSize: 12, color: c.muted2, padding: "8px 2px" }}>No egress yet. Gated requests from sandbox commands appear here.</div>
@@ -886,7 +897,7 @@ function NetworkPanel(
 
       {status.enabled && (
         <div style={{ borderTop: `1px solid ${c.border}`, paddingTop: 12 }}>
-          <PluginsPanel sessionId={sessionId} activations={policy?.plugins ?? []} onPolicyChanged={onPolicyChanged} />
+          <PluginsPanel sessionId={sessionId} activations={policy?.plugins ?? []} onPolicyChanged={onPolicyChanged} reloadSignal={pluginReload} />
         </div>
       )}
     </div>

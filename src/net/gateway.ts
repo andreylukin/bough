@@ -21,7 +21,7 @@
 import { caEnv, CertAuthority } from "./ca.ts";
 import { ProxyServer } from "./proxy.ts";
 import { createGate, type Gate } from "./gate.ts";
-import { PluginHost, type PluginInfo } from "./plugins.ts";
+import { PluginHost, type PluginInfo, type RequestSample, specFromRequests } from "./plugins.ts";
 import { caTrustCommand, isCaTrusted } from "./catrust.ts";
 import { augmentCloudPolicy, type KubeSetup, setupKube } from "./cloud.ts";
 import { loadConfig, resolveConfig, toPolicy } from "./config.ts";
@@ -117,6 +117,24 @@ export class ClawpatrolGateway {
     if (!this.#plugins) throw new Error("Claw Patrol is off");
     const { path } = await this.#plugins.install(spec);
     return { path, plugins: this.#plugins.list() };
+  }
+
+  /**
+   * Build a plugin from selected feed requests, install it (unique name), and enable
+   * it for `sessionId` (or globally) so it gates immediately. Returns the new name.
+   */
+  async pluginFromRequests(
+    samples: RequestSample[],
+    sessionId: string | undefined,
+    activate: (name: string) => void,
+  ): Promise<{ name: string; path: string; plugins: PluginInfo[] }> {
+    if (!this.#plugins) throw new Error("Claw Patrol is off");
+    const { path, name } = await this.#plugins.install(specFromRequests(samples), {
+      uniqueName: true,
+    });
+    activate(name);
+    void sessionId;
+    return { name, path, plugins: this.#plugins.list() };
   }
 
   /** True when the library has a loaded plugin by this name (enable-target check). */

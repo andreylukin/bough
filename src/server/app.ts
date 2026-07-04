@@ -472,6 +472,36 @@ const installPluginH: Handler = async (req, ctx) => {
   }
 };
 
+// "Group into plugin": synthesize a classifier plugin from selected feed requests,
+// install it to the library, and enable it for the calling branch (?session=) so it
+// gates immediately. Deterministic — each distinct action becomes an op row. The
+// user refines the rendered file (✎ Edit) and re-checks fixtures on Reload.
+const pluginFromRequestsH: Handler = async (req, ctx) => {
+  if (!ctx.gateway) return error(400, "Claw Patrol is off");
+  const body = await req.json().catch(() => null) as
+    | { requestIds?: string[]; sessionId?: string }
+    | null;
+  const ids = (body?.requestIds ?? []).filter((id) => typeof id === "string");
+  if (ids.length === 0) return error(400, "requestIds required");
+  const samples = ctx.db.netEventsByIds(ids).map((r) => ({
+    host: r.host,
+    verb: r.verb,
+    action: r.action,
+  }));
+  if (samples.length === 0) return error(404, "none of those requests were found");
+  const sessionId = body?.sessionId ?? undefined;
+  if (sessionId && !ctx.db.getSession(sessionId)) return error(404, "unknown session");
+  try {
+    const result = await ctx.gateway.pluginFromRequests(samples, sessionId, (name) => {
+      setPluginActivation(ctx.db, sessionId, name, true, undefined, ctx.netDir);
+      ctx.gate?.invalidate();
+    });
+    return json({ ...result, scope: sessionId ? { sessionId } : "global" });
+  } catch (e) {
+    return error(400, (e as Error).message);
+  }
+};
+
 // Turn a library plugin on/off for one scope: ?session=<id> targets that branch
 // (copy-on-write override, inherited by its children), no param targets the global
 // rule set. Enable takes an optional per-activation `ttl` ("90m" | "2h" | "7d") —
@@ -674,6 +704,11 @@ const routes: Route[] = [
     method: "POST",
     pattern: new URLPattern({ pathname: "/net/plugins/install" }),
     handler: installPluginH,
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/net/plugins/from-requests" }),
+    handler: pluginFromRequestsH,
   },
   {
     method: "POST",
