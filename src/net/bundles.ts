@@ -10,7 +10,7 @@
  * (`aws-readonly`, `kubernetes-prod`, ...) implement the same shape.
  */
 
-import type { Verdict } from "./policy.ts";
+import type { Rule, Verdict } from "./policy.ts";
 
 export type ParamType = "string" | "host" | "hostList" | "bool";
 
@@ -41,6 +41,8 @@ export interface BundleContribution {
   allowHosts?: string[];
   denyHosts?: string[];
   k8sHosts?: string[];
+  /** Condition rules (policy.ts Rule) — merged by name, bundle order preserved. */
+  rules?: Rule[];
   allowVerbs?: string[];
   denyVerbs?: string[];
   holdVerbs?: string[];
@@ -62,12 +64,12 @@ export interface BundleManifest {
 /**
  * GitHub: trust the API host so reads pass and writes are gated by the active mode
  * (review holds them, read_only denies them — the classifier splits GitHub read/write,
- * incl. GraphQL by peeking for a `mutation`). Adds an explicit hold on graphql mutations
- * so they always surface for approval, even under mode "all".
+ * incl. GraphQL by peeking for a `mutation`). Contributes a condition RULE holding
+ * graphql mutations so they always surface for approval, even under mode "all".
  */
 export const githubBundle: BundleManifest = {
   name: "github",
-  version: "0.2.0",
+  version: "0.3.0",
   description: "Trust the GitHub API: reads pass, writes gated, graphql mutations held.",
   params: [
     {
@@ -123,14 +125,23 @@ export const githubBundle: BundleManifest = {
           body: '{"query":"mutation { mergePullRequest(input:{}) { clientMutationId } }"}',
         },
       },
-      expect: { verdict: "hold" },
+      expect: { verdict: "hold", rule: "github-graphql-mutation" },
     },
   ],
   render(params) {
     const host = (params.host as string) ?? "api.github.com";
     return {
       allowHosts: [host],
-      holdVerbs: ["graphql:mutation"],
+      // No hosts scope — like the holdVerbs entry it replaces, this holds graphql
+      // mutations wherever they're classified (the GHES host param included).
+      rules: [
+        {
+          name: "github-graphql-mutation",
+          condition: "action.verb == 'graphql:mutation'",
+          verdict: "hold",
+          reason: "graphql mutation needs approval",
+        },
+      ],
     };
   },
 };

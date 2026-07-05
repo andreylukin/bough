@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS net_events (
   verdict      TEXT NOT NULL,
   reason       TEXT,
   requested_by TEXT,
+  fields       TEXT,                   -- JSON facet fields (classifier's parsed view)
   ts           INTEGER NOT NULL
 );
 -- Per-session egress policy overrides (Claw Patrol). A session with no row inherits
@@ -199,6 +200,11 @@ export class Db {
       } catch {
         // column already exists
       }
+    }
+    try {
+      this.#db.exec(`ALTER TABLE net_events ADD COLUMN fields TEXT`);
+    } catch {
+      // column already exists
     }
   }
 
@@ -438,8 +444,8 @@ export class Db {
     this.#db
       .prepare(
         `INSERT OR REPLACE INTO net_events
-           (id, session_id, host, verb, action, verdict, reason, requested_by, ts)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (id, session_id, host, verb, action, verdict, reason, requested_by, fields, ts)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         r.id,
@@ -450,6 +456,7 @@ export class Db {
         r.verdict,
         r.reason ?? null,
         r.requestedBy ?? null,
+        r.fields ? JSON.stringify(r.fields) : null,
         r.ts,
       );
   }
@@ -501,6 +508,7 @@ type NetEventRow = {
   verdict: string;
   reason: string | null;
   requested_by: string | null;
+  fields: string | null;
   ts: number;
 };
 
@@ -516,6 +524,13 @@ function toNetRequest(r: NetEventRow): NetRequest {
   if (r.verb != null) out.verb = r.verb;
   if (r.reason != null) out.reason = r.reason;
   if (r.requested_by != null) out.requestedBy = r.requested_by;
+  if (r.fields != null) {
+    try {
+      out.fields = JSON.parse(r.fields);
+    } catch {
+      // corrupt fields blob — drop it, the row still renders
+    }
+  }
   return out;
 }
 

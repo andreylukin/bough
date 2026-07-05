@@ -6,15 +6,16 @@ import {
   PluginHost,
   type PluginSpec,
   renderModule,
+  runApprover,
   runFixtures,
-  runGuards,
   specFromRequests,
   ttlToExpires,
 } from "./plugins.ts";
-import { decide, policy, type Request } from "./policy.ts";
+import { compileRule, decide, policy, type Request } from "./policy.ts";
 import { createGate } from "./gate.ts";
 import { Bus } from "../bus.ts";
 import { Db } from "../db/db.ts";
+import type { NetRequest } from "../schema/parts.ts";
 
 const stripeSpec: PluginSpec = {
   meta: {
@@ -314,7 +315,7 @@ Deno.test("plugin hosts skip the allowlist gate while active; hostMiss returns o
 
 // ---- contextual gate() ----------------------------------------------------------
 
-Deno.test("gate(): loader accepts it, activeGuardsFor exposes it, host-scoped override wins", async () => {
+Deno.test("gate(): loader accepts it, activeGuardsFor exposes it, runApprover consults it", async () => {
   const dir = await Deno.makeTempDir({ prefix: "bough-plug-gate-" });
   try {
     await Deno.writeTextFile(
@@ -328,12 +329,11 @@ Deno.test("gate(): loader accepts it, activeGuardsFor exposes it, host-scoped ov
          { req: { method: "DELETE", path: "/k" }, expect: { verb: "aged:delete" } },
        ];
        export async function gate(req, ctx) {
-         if (req.method !== "DELETE") return;
          const res = await ctx.fetch("https://" + req.host + req.path, { method: "HEAD" });
          const age = Date.now() - Date.parse(res.headers.get("last-modified"));
          return age < 3_600_000
            ? { verdict: "allow", reason: "young object" }
-           : { verdict: "hold", reason: "old object" };
+           : { verdict: "deny", reason: "old object" };
        }`,
     );
     const host = new PluginHost(dir);
@@ -355,28 +355,16 @@ Deno.test("gate(): loader accepts it, activeGuardsFor exposes it, host-scoped ov
     const decision = decide(del, policy({ mode: "review" }), host.activeFor([{ name: "aged" }]));
     assertEquals(decision.verdict, "hold"); // static: write in review
 
-    const young = await runGuards(guards, del, decision, "s1", { fetchImpl: freshFetch });
-    assertEquals(young, { verdict: "allow", reason: "young object", by: "aged" });
-    const old = await runGuards(guards, del, decision, "s1", { fetchImpl: staleFetch });
-    assertEquals(old?.verdict, "hold");
-
-    // a GET passes through (gate returns undefined) and other hosts are never consulted
-    const get: Request = { host: "b.s3.amazonaws.com", method: "GET", path: "/k" };
-    assertEquals(
-      await runGuards(guards, get, decision, "s1", { fetchImpl: staleFetch }),
-      undefined,
-    );
-    const other: Request = { host: "api.github.com", method: "DELETE", path: "/k" };
-    assertEquals(
-      await runGuards(guards, other, decision, "s1", { fetchImpl: staleFetch }),
-      undefined,
-    );
+    const young = await runApprover(guards[0], del, decision, "s1", { fetchImpl: freshFetch });
+    assertEquals(young, { verdict: "allow", reason: "young object" });
+    const old = await runApprover(guards[0], del, decision, "s1", { fetchImpl: staleFetch });
+    assertEquals(old, { verdict: "deny", reason: "old object" });
   } finally {
     await Deno.remove(dir, { recursive: true }).catch(() => {});
   }
 });
 
-Deno.test("gate(): throw and timeout fall through — the static verdict stands", async () => {
+Deno.test("runApprover: throw and timeout return undefined (chain fails closed)", async () => {
   const thrower: PluginGuard = {
     name: "boom",
     hosts: ["h.example"],
@@ -389,25 +377,13 @@ Deno.test("gate(): throw and timeout fall through — the static verdict stands"
     hosts: ["h.example"],
     gate: () => new Promise(() => {}),
   };
-  const after: PluginGuard = {
-    name: "after",
-    hosts: ["h.example"],
-    gate: () => ({ verdict: "deny", reason: "after speaks" }),
-  };
   const req: Request = { host: "h.example", method: "DELETE", path: "/x" };
   const decision = decide(req, policy({ mode: "review" }));
-  const out = await runGuards([thrower, hanger, after], req, decision, undefined, {
-    timeoutMs: 30,
-  });
-  assertEquals(out, { verdict: "deny", reason: "after speaks", by: "after" });
-  // all guards broken → undefined → caller keeps the static decision
-  assertEquals(
-    await runGuards([thrower, hanger], req, decision, undefined, { timeoutMs: 30 }),
-    undefined,
-  );
+  assertEquals(await runApprover(thrower, req, decision, undefined, { timeoutMs: 30 }), undefined);
+  assertEquals(await runApprover(hanger, req, decision, undefined, { timeoutMs: 30 }), undefined);
 });
 
-Deno.test("gate integration: guard override rides through Gate.gate()", async () => {
+Deno.test("approve chain: plugin approver allows → request flows without a human", async () => {
   const db = new Db(":memory:");
   const guard: PluginGuard = {
     name: "ager",
@@ -418,7 +394,17 @@ Deno.test("gate integration: guard override rides through Gate.gate()", async ()
   const gate = createGate({
     db,
     bus: new Bus(),
-    policy: policy({ mode: "review" }),
+    policy: policy({
+      mode: "review",
+      rules: [
+        compileRule({
+          name: "gated-delete",
+          hosts: ["api.stripe.com"],
+          condition: "action.verb == 'stripe:delete-customer'",
+          approve: ["plugin:ager"],
+        }),
+      ],
+    }),
     classifiers: () => [stripeClassifier()],
     guards: () => [guard],
   });
@@ -429,6 +415,79 @@ Deno.test("gate integration: guard override rides through Gate.gate()", async ()
   assertEquals(out.verdict, "allow");
   assertEquals(out.reason, "young enough");
   assertEquals(db.recentNetEvents("s1")[0].verdict, "allowed");
+});
+
+Deno.test("approve chain: abstain, inactive plugin, and unclaimed host all deny", async () => {
+  const db = new Db(":memory:");
+  const abstainer: PluginGuard = {
+    name: "ager",
+    hosts: ["api.stripe.com"],
+    gate: () => undefined,
+  };
+  const mkGate = (guards: PluginGuard[], approve: string[]) =>
+    createGate({
+      db,
+      bus: new Bus(),
+      policy: policy({
+        mode: "review",
+        rules: [compileRule({ name: "gated", condition: "http.method == 'DELETE'", approve })],
+      }),
+      guards: () => guards,
+    });
+  const del: Request = { host: "api.stripe.com", method: "DELETE", path: "/v1/customers/c" };
+
+  // abstain (undefined) is NOT an allow
+  const d1 = await mkGate([abstainer], ["plugin:ager"]).gate(del);
+  assertEquals(d1.verdict, "deny");
+  assertStringIncludes(d1.reason, "did not allow");
+  // approver named by the rule isn't active
+  const d2 = await mkGate([], ["plugin:ager"]).gate(del);
+  assertEquals(d2.verdict, "deny");
+  assertStringIncludes(d2.reason, "not active");
+  // request host outside the plugin's claim
+  const d3 = await mkGate([abstainer], ["plugin:ager"]).gate({ ...del, host: "other.example" });
+  assertEquals(d3.verdict, "deny");
+  assertStringIncludes(d3.reason, "does not claim host");
+});
+
+Deno.test("approve chain: plugin screens, then human confirms — both must allow", async () => {
+  const db = new Db(":memory:");
+  const bus = new Bus();
+  const events: NetRequest[] = [];
+  bus.subscribe((e) => {
+    if (e.type === "net.request") events.push(e.data as NetRequest);
+  });
+  const screen: PluginGuard = {
+    name: "screen",
+    hosts: ["api.stripe.com"],
+    gate: () => ({ verdict: "allow", reason: "screened ok" }),
+  };
+  const gate = createGate({
+    db,
+    bus,
+    policy: policy({
+      mode: "review",
+      rules: [
+        compileRule({
+          name: "two-step",
+          condition: "http.method == 'DELETE'",
+          approve: ["plugin:screen", "human"],
+        }),
+      ],
+    }),
+    guards: () => [screen],
+  });
+  const pending = gate.gate(
+    { host: "api.stripe.com", method: "DELETE", path: "/v1/customers/c" },
+    { sessionId: "s1" },
+  );
+  // the plugin step runs first; then the request parks for the human
+  await new Promise((r) => setTimeout(r, 0));
+  assertEquals(gate.pending, 1);
+  assertEquals(gate.resolveHold(events[0].id, true), true);
+  const out = await pending;
+  assertEquals(out.verdict, "allow");
+  assertStringIncludes(out.reason, "approved by chain");
 });
 
 // ---- group-into-plugin (specFromRequests) --------------------------------------
@@ -464,4 +523,86 @@ Deno.test("specFromRequests: multiple hosts covered; classified verbs fall back 
   assertEquals(spec.ops[1], { match: "GET /bucket/key", kind: "read" });
   const c = buildClassifier(spec.meta.name, spec.meta.hosts, spec.ops);
   assertEquals(runFixtures(c, spec.meta.hosts, spec.fixtures), []);
+});
+
+Deno.test("extract: facet fields join the action; a throw drops fields, never the verdict", () => {
+  const c = buildClassifier(
+    "exa",
+    ["api.exa.ai"],
+    [{ match: "POST /search", kind: "read" }],
+    undefined,
+    (req) => {
+      if (req.path === "/boom") throw new Error("bug");
+      return { endpoint: req.path.split("/")[1] ?? "" };
+    },
+  );
+  const search = c.classify({ host: "api.exa.ai", method: "POST", path: "/search" })!;
+  assertEquals(search.facet, { name: "exa", fields: { endpoint: "search" } });
+  // extract() throwing only loses the facet — classification stands
+  const boom = c.classify({ host: "api.exa.ai", method: "POST", path: "/boom" })!;
+  assertEquals(boom.kind, "unknown"); // unmatched op row
+  assertEquals(boom.facet, undefined);
+});
+
+Deno.test("extract: rules can condition on a plugin's facet fields", () => {
+  const c = buildClassifier(
+    "exa",
+    ["api.exa.ai"],
+    [{ match: "POST *", kind: "read" }],
+    undefined,
+    (req) => ({ endpoint: req.path.split("/")[1] ?? "" }),
+  );
+  const pol = policy({
+    mode: "all",
+    rules: [
+      compileRule({
+        name: "hold-research",
+        condition: "has(exa.endpoint) && exa.endpoint == 'research'",
+        verdict: "hold",
+      }),
+    ],
+  });
+  const research: Request = { host: "api.exa.ai", method: "POST", path: "/research/v0/tasks" };
+  const search: Request = { host: "api.exa.ai", method: "POST", path: "/search" };
+  assertEquals(decide(research, pol, [c]).verdict, "hold");
+  assertEquals(decide(search, pol, [c]).verdict, "allow");
+});
+
+Deno.test("loader: extract() is validated and surfaces in list()", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "bough-plug-" });
+  try {
+    await Deno.writeTextFile(
+      join(dir, "faceted.ts"),
+      `export const meta = { name: "faceted", hosts: ["f.example"] };
+export const ops = [{ match: "GET *", kind: "read" }];
+export function extract(req) { return { p: req.path }; }
+export const fixtures = [{ req: { method: "GET", path: "/x" }, expect: { kind: "read" } }];
+`,
+    );
+    await Deno.writeTextFile(
+      join(dir, "bad-extract.ts"),
+      `export const meta = { name: "bad-extract", hosts: ["b.example"] };
+export const ops = [{ match: "GET *", kind: "read" }];
+export const extract = 42;
+export const fixtures = [{ req: { method: "GET", path: "/x" }, expect: { kind: "read" } }];
+`,
+    );
+    const host = new PluginHost(dir);
+    await host.load();
+    const infos = host.list();
+    const ok = infos.find((p) => p.name === "faceted")!;
+    assertEquals(ok.status, "loaded");
+    assertEquals(ok.hasExtract, true);
+    const bad = infos.find((p) => p.name === "bad-extract.ts")!;
+    assertEquals(bad.status, "error");
+    assertStringIncludes(bad.error ?? "", "extract must be a function");
+    // the loaded classifier publishes the facet
+    const [c] = host.activeFor([{ name: "faceted" }]);
+    assertEquals(
+      c.classify({ host: "f.example", method: "GET", path: "/x" })!.facet,
+      { name: "faceted", fields: { p: "/x" } },
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
 });

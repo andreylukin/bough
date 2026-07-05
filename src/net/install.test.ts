@@ -9,7 +9,7 @@ Deno.test("validateInstall: github default contributes the host and passes its f
   assertEquals(r.fixtures.length, 4);
   assert(r.fixtures.every((f) => f.ok));
   assertEquals(r.contribution.allowHosts, ["api.github.com"]);
-  assert(r.contribution.holdVerbs?.includes("graphql:mutation"));
+  assert(r.contribution.rules?.some((rule) => rule.name === "github-graphql-mutation"));
 });
 
 Deno.test("validateInstall: wrong param type throws InstallError", () => {
@@ -30,13 +30,14 @@ Deno.test("installBundle: merges into the rule set and marks installed", async (
 
     const cfg = loadConfig(dir);
     assert(cfg.allowHosts.includes("api.github.com"));
-    assert(cfg.holdVerbs.includes("graphql:mutation"));
+    assert(cfg.rules.some((rule) => rule.name === "github-graphql-mutation"));
     assertEquals(cfg.bundles, ["github"]);
 
-    // Idempotent: re-installing doesn't duplicate hosts/verbs/bundle names.
+    // Idempotent: re-installing doesn't duplicate hosts/rules/bundle names.
     installBundle(githubBundle, {}, dir);
     const again = loadConfig(dir);
     assertEquals(again.allowHosts.filter((h) => h === "api.github.com").length, 1);
+    assertEquals(again.rules.filter((rule) => rule.name === "github-graphql-mutation").length, 1);
     assertEquals(again.bundles, ["github"]);
   } finally {
     await Deno.remove(dir, { recursive: true });

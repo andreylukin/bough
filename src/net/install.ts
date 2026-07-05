@@ -14,7 +14,7 @@
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { mkdirSync } from "node:fs";
-import { decide, policy as makePolicy, type Request } from "./policy.ts";
+import { compileRule, decide, policy as makePolicy, type Request, type Rule } from "./policy.ts";
 import { loadConfig, type NetConfig, saveConfig } from "./config.ts";
 import type { BundleContribution, BundleFixture, BundleManifest, BundleParam } from "./bundles.ts";
 
@@ -120,13 +120,20 @@ function runFixtures(manifest: BundleManifest, contribution: BundleContribution)
   const pol = makePolicy({
     k8sHosts: new Set(contribution.k8sHosts ?? []),
     mode: "read_only",
+    rules: (contribution.rules ?? []).map(compileRule),
     allowVerbs: new Set(contribution.allowVerbs ?? []),
     denyVerbs: new Set(contribution.denyVerbs ?? []),
     holdVerbs: new Set(contribution.holdVerbs ?? []),
   });
   return manifest.fixtures.map((f) => {
-    const got = decide(fixtureRequest(f), pol).verdict;
-    return { name: f.name, ok: got === f.expect.verdict, expected: f.expect.verdict, got };
+    const got = decide(fixtureRequest(f), pol);
+    const ruleOk = f.expect.rule === undefined || got.rule === f.expect.rule;
+    return {
+      name: f.name,
+      ok: got.verdict === f.expect.verdict && ruleOk,
+      expected: f.expect.rule ? `${f.expect.verdict} (rule ${f.expect.rule})` : f.expect.verdict,
+      got: got.rule ? `${got.verdict} (rule ${got.rule})` : got.verdict,
+    };
   });
 }
 
@@ -148,6 +155,15 @@ function union(a: string[], b: string[] = []): string[] {
   return [...new Set([...a, ...b])];
 }
 
+/** Merge rules by name: a re-installed bundle's rule replaces its previous version in place. */
+function mergeRules(existing: NetConfig["rules"], contributed: Rule[] = []): NetConfig["rules"] {
+  const incoming = new Map(contributed.map((r) => [r.name, r]));
+  const merged = existing.map((r) => incoming.get(r.name) ?? r);
+  const known = new Set(existing.map((r) => r.name));
+  merged.push(...contributed.filter((r) => !known.has(r.name)));
+  return merged;
+}
+
 /** Merge a bundle's contribution into the persisted rule set + record it as installed. */
 function mergeIntoConfig(name: string, c: BundleContribution, dir: string): NetConfig {
   const cfg = loadConfig(dir);
@@ -156,6 +172,7 @@ function mergeIntoConfig(name: string, c: BundleContribution, dir: string): NetC
     allowHosts: union(cfg.allowHosts, c.allowHosts),
     denyHosts: union(cfg.denyHosts, c.denyHosts),
     k8sHosts: union(cfg.k8sHosts, c.k8sHosts),
+    rules: mergeRules(cfg.rules, c.rules),
     allowVerbs: union(cfg.allowVerbs, c.allowVerbs),
     denyVerbs: union(cfg.denyVerbs, c.denyVerbs),
     holdVerbs: union(cfg.holdVerbs, c.holdVerbs),

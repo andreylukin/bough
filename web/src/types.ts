@@ -64,6 +64,8 @@ export interface NetRequest {
   verdict: "allowed" | "denied" | "pending";
   reason?: string;
   requestedBy?: string;
+  /** Facet fields — the classifier's parsed view (e.g. k8s resource/namespace). */
+  fields?: Record<string, unknown>;
   ts: number;
 }
 

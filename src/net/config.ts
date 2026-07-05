@@ -12,11 +12,41 @@
 import { z } from "zod/v4";
 import { join } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { type Policy, policy } from "./policy.ts";
+import { compileRule, type Policy, policy } from "./policy.ts";
+import { compile } from "./expr.ts";
 import { netDir } from "./install.ts";
 import type { Db } from "../db/db.ts";
 
 const Verdict = z.enum(["allow", "deny", "hold"]);
+
+/**
+ * One condition rule (see policy.ts Rule). The zod parse COMPILES the condition, so
+ * a malformed expression is rejected at edit time (PUT /net/policy → 400) and a
+ * corrupt persisted rule makes loadConfig fall back to the default posture — a bad
+ * rule never reaches the gate half-working.
+ */
+export const RuleConfig = z.object({
+  name: z.string().min(1),
+  hosts: z.array(z.string().min(1)).optional(),
+  condition: z.string().min(1).superRefine((src, ctx) => {
+    try {
+      compile(src);
+    } catch (e) {
+      ctx.addIssue(`condition does not compile: ${(e as Error).message}`);
+    }
+  }),
+  verdict: Verdict.optional(),
+  /** Ordered approver chain — every entry must allow. Mutually exclusive with verdict. */
+  approve: z.array(z.string().regex(/^(human|plugin:[a-z0-9][a-z0-9-]*)$/)).optional(),
+  reason: z.string().optional(),
+}).superRefine((r, ctx) => {
+  const hasVerdict = r.verdict !== undefined;
+  const hasApprove = (r.approve?.length ?? 0) > 0;
+  if (hasVerdict === hasApprove) {
+    ctx.addIssue("a rule needs exactly one of verdict or approve");
+  }
+});
+export type RuleConfig = z.infer<typeof RuleConfig>;
 
 export const NetConfig = z.object({
   /** Baseline action gate for allowed hosts: read_only (writes deny) | review (writes hold) | all. */
@@ -29,6 +59,12 @@ export const NetConfig = z.object({
   hostMiss: Verdict.default("hold"),
   /** API-server hosts classified as kubernetes (verb = HTTP method). */
   k8sHosts: z.array(z.string()).default([]),
+  /**
+   * Condition rules — ordered, first match wins, evaluated before the verb lists and
+   * mode baseline. The sharp layer: conditions (expr.ts) over facet fields, verdicts
+   * or approver chains. Unevaluable conditions fail closed in decide().
+   */
+  rules: z.array(RuleConfig).default([]),
   /** Explicit per-action overrides by classified verb (e.g. "DELETE /repos/o/r", "graphql:mutation"). */
   allowVerbs: z.array(z.string()).default([]),
   denyVerbs: z.array(z.string()).default([]),
@@ -166,6 +202,7 @@ export function toPolicy(cfg: NetConfig): Policy {
     hostMiss: cfg.hostMiss,
     k8sHosts: new Set(cfg.k8sHosts),
     mode: cfg.mode,
+    rules: cfg.rules.map(compileRule),
     allowVerbs: new Set(cfg.allowVerbs),
     denyVerbs: new Set(cfg.denyVerbs),
     holdVerbs: new Set(cfg.holdVerbs),

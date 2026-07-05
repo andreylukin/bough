@@ -140,6 +140,26 @@ function DetailRow({ label, value }: { label: string; value: React.ReactNode }) 
   );
 }
 
+// Facet fields (the classifier's parsed view — k8s resource/namespace, a plugin's
+// extract() output) rendered as key=value chips.
+function FieldChips({ fields }: { fields: Record<string, unknown> }) {
+  const entries = Object.entries(fields).filter(([, v]) => v !== "" && v != null);
+  if (entries.length === 0) return null;
+  return (
+    <span style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+      {entries.map(([k, v]) => (
+        <span
+          key={k}
+          style={{ border: `1px solid ${c.border2}`, borderRadius: 5, padding: "0 5px", whiteSpace: "nowrap" }}
+        >
+          <span style={{ color: c.muted2 }}>{k}=</span>
+          {String(v)}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 // One feed row = one group. Click the body to analyze (expand full detail); the
 // checkbox selects the whole group (all member ids) for ✨ Group into plugin.
 function FeedGroupRow(
@@ -188,6 +208,9 @@ function FeedGroupRow(
           <DetailRow label="method" value={r.verb ?? "—"} />
           <DetailRow label="action" value={r.action} />
           {r.reason && <DetailRow label="reason" value={r.reason} />}
+          {r.fields && Object.keys(r.fields).length > 0 && (
+            <DetailRow label="facets" value={<FieldChips fields={r.fields} />} />
+          )}
           {r.requestedBy && <DetailRow label="by" value={r.requestedBy} />}
           <DetailRow
             label={g.count > 1 ? "seen" : "at"}
@@ -234,6 +257,11 @@ function HoldCard(
         <span style={{ color: c.muted2 }}>{req.verb ?? ""}</span> {req.host}
       </div>
       <div style={{ fontFamily: mono, fontSize: 11, color: c.muted }}>{req.action}</div>
+      {req.fields && Object.keys(req.fields).length > 0 && (
+        <div style={{ fontFamily: mono, fontSize: 10.5, color: c.text2 }}>
+          <FieldChips fields={req.fields} />
+        </div>
+      )}
       {req.reason && <p style={{ fontSize: 12, color: c.muted, lineHeight: 1.5, margin: 0 }}>{req.reason}</p>}
       <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
         <button

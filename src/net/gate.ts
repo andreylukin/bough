@@ -5,26 +5,36 @@
  * (if held) block until a human resolves it.
  *
  *   gate(req) ──decide──▶ allow/deny  → persist+emit, resolve immediately
- *                     └─▶ hold        → persist+emit (verdict "pending"),
- *                                       await POST /net/requests/:id/{allow,deny},
+ *                     └─▶ hold        → persist+emit (verdict "pending"), run the
+ *                                       APPROVER CHAIN — every approver must allow —
  *                                       re-emit with the final verdict, resolve allow/deny
  *
- * The awaited Promise is the "hold-and-ask" gate: the proxy is literally paused on the
- * wire until the operator approves, so nothing egresses without a say. Wire verdicts map
- * to the UI's NetRequest: allow→allowed, deny→denied, hold→pending. Persistence + emit go
- * through Db + Bus so a reconnecting UI can rebuild the rail from /net/requests and
- * live-update from /events. The policy is swappable at runtime (setPolicy) so the rule-set
- * editor takes effect on the next request without a restart.
+ * A held decision carries its approver chain (decision.approve, from a matched rule;
+ * default ["human"]). Approvers run in order and EACH must allow:
+ *   - "human"          — park until POST /net/requests/:id/{allow,deny} (the classic
+ *                        hold-and-ask; the proxy is literally paused on the wire);
+ *   - "plugin:<name>"  — the named plugin's gate() hook, consulted as an approver
+ *                        (plugins.ts runApprover). Fail-closed: only an explicit
+ *                        allow passes — deny, abstain, throw, timeout, an inactive
+ *                        plugin, or a host outside the plugin's claim all deny.
+ * Plugins never override the rule set on their own — a rule must route to them
+ * (upstream Claw Patrol's "plugins must not decide" principle).
+ *
+ * Wire verdicts map to the UI's NetRequest: allow→allowed, deny→denied, hold→pending.
+ * Persistence + emit go through Db + Bus so a reconnecting UI can rebuild the rail from
+ * /net/requests and live-update from /events. The policy is swappable at runtime
+ * (setPolicy) so the rule-set editor takes effect on the next request without a restart.
  */
 import {
   type Classifier,
   decide,
   type Decision,
+  hostMatches,
   type Policy,
   policy as makePolicy,
   type Request,
 } from "./policy.ts";
-import { type PluginGuard, type RunGuardOpts, runGuards } from "./plugins.ts";
+import { type PluginGuard, runApprover, type RunGuardOpts } from "./plugins.ts";
 import type { Db } from "../db/db.ts";
 import type { Bus } from "../bus.ts";
 import type { NetRequest } from "../schema/parts.ts";
@@ -59,7 +69,7 @@ export class Gate {
    * edits, and per-activation TTL apply on the next gate() without invalidation.
    */
   #classifiers?: (sessionId?: string) => readonly Classifier[];
-  /** Contextual plugin gate() hooks for the owning session (plugins.ts runGuards). */
+  /** Plugin gate() hooks for the owning session — approve-chain lookup (#runChain). */
   #guards?: (sessionId?: string) => readonly PluginGuard[];
   #guardOpts: RunGuardOpts;
 
@@ -114,21 +124,11 @@ export class Gate {
    * (POST /net/requests/:id/{allow,deny}).
    */
   async gate(req: Request, opts: GateOpts = {}): Promise<Decision> {
-    let decision = decide(
+    const decision = decide(
       req,
       this.#policyFor(opts.sessionId),
       this.#classifiers?.(opts.sessionId) ?? [],
     );
-    // Contextual layer: an active plugin's gate() may override the static verdict
-    // for its own hosts (out-of-band checks — see plugins.ts). Errors/timeouts fall
-    // through inside runGuards, so the static posture always stands as the floor.
-    const guards = this.#guards?.(opts.sessionId) ?? [];
-    if (guards.length) {
-      const override = await runGuards(guards, req, decision, opts.sessionId, this.#guardOpts);
-      if (override) {
-        decision = { verdict: override.verdict, reason: override.reason, action: decision.action };
-      }
-    }
     const record: NetRequest = {
       id: crypto.randomUUID(),
       sessionId: opts.sessionId,
@@ -138,27 +138,84 @@ export class Gate {
       verdict: WIRE[decision.verdict],
       reason: decision.reason,
       requestedBy: opts.requestedBy,
+      fields: decision.action.facet?.fields,
       ts: Date.now(),
     };
     this.#emit(record, opts.sessionId);
 
     if (decision.verdict !== "hold") return decision;
 
-    // Hold: park the caller until a human resolves this id (or the turn dies and
-    // expiry sweeps it — see expireHolds).
-    const held = decision;
-    return new Promise<{ approve: boolean; reason?: string }>((resolve) => {
-      this.#holds.set(record.id, { resolve, request: record, sessionId: opts.sessionId });
-    }).then(({ approve, reason }) => {
-      const final: Decision = approve
-        ? { verdict: "allow", reason: reason ?? "approved by human", action: held.action }
-        : { verdict: "deny", reason: reason ?? "denied by human", action: held.action };
-      this.#emit(
-        { ...record, verdict: WIRE[final.verdict], reason: final.reason, ts: Date.now() },
-        opts.sessionId,
-      );
-      return final;
-    });
+    // Hold: run the approver chain (default: a human), then re-emit the final verdict
+    // on the same id so the approval card updates in place.
+    const final = await this.#runChain(decision, record, req, opts.sessionId);
+    this.#emit(
+      { ...record, verdict: WIRE[final.verdict], reason: final.reason, ts: Date.now() },
+      opts.sessionId,
+    );
+    return final;
+  }
+
+  /**
+   * Run a held decision's approver chain in order; EVERY approver must allow.
+   * "human" parks the caller until resolveHold (or expireHolds sweeps it); a
+   * "plugin:<name>" approver is the plugin's gate() hook, and anything short of an
+   * explicit allow — deny, abstain, throw, timeout, plugin not active for this scope,
+   * host outside the plugin's claim — denies. Fail-closed all the way down.
+   */
+  async #runChain(
+    decision: Decision,
+    record: NetRequest,
+    req: Request,
+    sessionId?: string,
+  ): Promise<Decision> {
+    const { action } = decision;
+    const chain = decision.approve ?? ["human"];
+    // Single approver: its own reason reads best. A longer chain: name every step.
+    const solo = chain.length === 1;
+    let allowReason = solo && chain[0] === "human"
+      ? "approved by human"
+      : `approved by chain: ${chain.join(" → ")}`;
+    for (const approver of chain) {
+      if (approver === "human") {
+        const { approve, reason } = await new Promise<{ approve: boolean; reason?: string }>(
+          (resolve) => {
+            this.#holds.set(record.id, { resolve, request: record, sessionId });
+          },
+        );
+        if (!approve) return { verdict: "deny", reason: reason ?? "denied by human", action };
+        if (solo && reason) allowReason = reason;
+        continue;
+      }
+      if (!approver.startsWith("plugin:")) {
+        return { verdict: "deny", reason: `unknown approver ${approver} — failing closed`, action };
+      }
+      const name = approver.slice("plugin:".length);
+      const guard = (this.#guards?.(sessionId) ?? []).find((g) => g.name === name);
+      if (!guard) {
+        return {
+          verdict: "deny",
+          reason: `approver ${approver} is not active for this scope — failing closed`,
+          action,
+        };
+      }
+      if (!hostMatches(req.host.toLowerCase(), guard.hosts)) {
+        return {
+          verdict: "deny",
+          reason: `approver ${approver} does not claim host ${req.host} — failing closed`,
+          action,
+        };
+      }
+      const out = await runApprover(guard, req, decision, sessionId, this.#guardOpts);
+      if (out?.verdict !== "allow") {
+        return {
+          verdict: "deny",
+          reason: out?.reason ?? `approver ${approver} did not allow — failing closed`,
+          action,
+        };
+      }
+      if (solo && out.reason) allowReason = out.reason;
+    }
+    return { verdict: "allow", reason: allowReason, action };
   }
 
   /** Resolve a held request. Returns false if the id isn't awaiting approval. */

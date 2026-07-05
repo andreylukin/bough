@@ -23,6 +23,8 @@
  * yields the exact allow/deny outcomes policy.py did (see test_policy.ts).
  */
 
+import { compile, type ExprEnv, ExprError } from "./expr.ts";
+
 export type Verdict = "allow" | "deny" | "hold";
 
 export const READ = "read";
@@ -64,6 +66,13 @@ export interface Action {
   /** e.g. "TerminateInstances", "DELETE /api/v1/pods/x", "graphql:mutation". */
   verb: string;
   kind: Kind;
+  /**
+   * Facet payload — the classifier's PARSED view of the request, published into the
+   * rule env under `facet.name` so conditions can match on typed fields
+   * (`k8s.resource == 'secrets'`) instead of re-parsing paths. The built-in `http`
+   * facet is always in the env; this is the provider-specific one.
+   */
+  facet?: { name: string; fields: Record<string, unknown> };
 }
 
 /**
@@ -83,6 +92,98 @@ export interface Decision {
   verdict: Verdict;
   reason: string;
   action: Action;
+  /**
+   * Set when a matched rule routes through an approver chain instead of a static
+   * verdict: the ordered approvers ("human", "plugin:<name>") that must EACH allow.
+   * The verdict is "hold" while the chain runs — the gate (gate.ts) executes it.
+   */
+  approve?: string[];
+  /** Name of the rule that decided, when one matched. */
+  rule?: string;
+}
+
+// ---- condition rules ---------------------------------------------------------
+
+/**
+ * One operator-authored rule: a condition (expr.ts) over the facet env, scoped to
+ * hosts, with a static verdict OR an approver chain. First matching rule wins —
+ * upstream Claw Patrol semantics — and rules outrank the coarser verb lists and mode
+ * baseline in decide(). An unevaluable condition fails closed (deny).
+ */
+export interface Rule {
+  name: string;
+  /** Hosts the rule applies to (exact or "*.suffix"). Absent/empty = every host. */
+  hosts?: string[];
+  condition: string;
+  verdict?: Verdict;
+  /** Approver chain, e.g. ["plugin:s3-age-check", "human"]. Mutually exclusive with verdict. */
+  approve?: string[];
+  reason?: string;
+}
+
+export interface CompiledRule extends Rule {
+  test(env: ExprEnv): boolean;
+}
+
+/** Compile a rule's condition (throws ExprError on a malformed expression). */
+export function compileRule(rule: Rule): CompiledRule {
+  const expr = compile(rule.condition);
+  return { ...rule, test: (env) => expr.test(env) };
+}
+
+/**
+ * The env a rule condition evaluates against. Always present: `http` (the built-in
+ * facet — method, path, query, headers, body, body_json) and `action` (the classified
+ * {service, verb, kind}). The classifier's provider facet (k8s, graphql, aws:*, a
+ * plugin's) joins under its own name. `body_json` parses lazily and THROWS on
+ * non-JSON, which fails the condition closed — guard with has() or a path check.
+ */
+export function ruleEnv(req: Request, action: Action): ExprEnv {
+  const http: Record<string, unknown> = {
+    method: req.method.toUpperCase(),
+    path: req.path.split("?")[0],
+    query: queryMap(req.path),
+    headers: lowerKeys(req.headers ?? {}),
+    body: bodyText(req),
+    get body_json(): unknown {
+      const text = bodyText(req);
+      try {
+        return JSON.parse(text);
+      } catch {
+        throw new ExprError("body is not JSON");
+      }
+    },
+  };
+  const env: ExprEnv = {
+    http,
+    action: { service: action.service, verb: action.verb, kind: action.kind },
+  };
+  if (action.facet) env[action.facet.name] = action.facet.fields;
+  return env;
+}
+
+function lowerKeys(headers: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(headers)) out[k.toLowerCase()] = v;
+  return out;
+}
+
+/** Query string → map of first values (multi-valued keys keep the first). */
+function queryMap(path: string): Record<string, string> {
+  const q = path.indexOf("?");
+  if (q < 0) return {};
+  const out: Record<string, string> = {};
+  for (const pair of path.slice(q + 1).split("&")) {
+    const eq = pair.indexOf("=");
+    if (eq < 0) continue;
+    try {
+      const k = decodeURIComponent(pair.slice(0, eq));
+      if (!(k in out)) out[k] = decodeURIComponent(pair.slice(eq + 1).replace(/\+/g, " "));
+    } catch {
+      // undecodable pair — skip it
+    }
+  }
+  return out;
 }
 
 /**
@@ -102,6 +203,8 @@ export interface Policy {
   hostMiss: Verdict;
   k8sHosts: Set<string>;
   mode: "read_only" | "review" | "all";
+  /** Condition rules — evaluated first (ordered, first match wins) for allowed hosts. */
+  rules: CompiledRule[];
   allowVerbs: Set<string>;
   denyVerbs: Set<string>;
   holdVerbs: Set<string>;
@@ -115,6 +218,7 @@ export function policy(p: Partial<Policy> = {}): Policy {
     hostMiss: p.hostMiss ?? "deny",
     k8sHosts: p.k8sHosts ?? new Set(),
     mode: p.mode ?? "read_only",
+    rules: p.rules ?? [],
     allowVerbs: p.allowVerbs ?? new Set(),
     denyVerbs: p.denyVerbs ?? new Set(),
     holdVerbs: p.holdVerbs ?? new Set(),
@@ -167,15 +271,47 @@ export function classifyAws(req: Request): Action {
   const target = header(req, "X-Amz-Target");
   if (target) {
     const op = target.split(".").pop()!;
-    return { service, verb: op, kind: awsKind(op) };
+    return { service, verb: op, kind: awsKind(op), facet: { name: "aws", fields: { op } } };
   }
   // query protocol: Action= in the body, else in the path's query string.
   const qs = req.path.includes("?") ? req.path.split("?").slice(1).join("?") : "";
   for (const source of [bodyText(req), qs]) {
     const action = firstQueryValue(source, "Action");
-    if (action) return { service, verb: action, kind: awsKind(action) };
+    if (action) {
+      return {
+        service,
+        verb: action,
+        kind: awsKind(action),
+        facet: { name: "aws", fields: { op: action } },
+      };
+    }
   }
   return { service, verb: "?", kind: UNKNOWN };
+}
+
+/**
+ * Best-effort parse of a k8s API path into the (verb, resource, namespace, name)
+ * tuple the `k8s` facet exposes to rules — same field names upstream Claw Patrol
+ * uses (`k8s.resource == 'pods/exec'`). Subresources join with "/".
+ */
+function k8sFields(method: string, path: string): Record<string, unknown> {
+  const parts = path.split("?")[0].split("/").filter(Boolean);
+  let i = 0;
+  if (parts[0] === "api") i = 2; // /api/v1/...
+  else if (parts[0] === "apis") i = 3; // /apis/<group>/<version>/...
+  let namespace = "";
+  if (parts[i] === "namespaces" && parts[i + 1]) {
+    namespace = parts[i + 1];
+    i += 2;
+  }
+  const resource = parts[i] ?? "";
+  const name = parts[i + 1] ?? "";
+  const sub = parts.slice(i + 2).join("/");
+  const verb = method === "GET"
+    ? (name ? "get" : "list")
+    : { POST: "create", PUT: "update", PATCH: "patch", DELETE: "delete", HEAD: "get" }[method] ??
+      method.toLowerCase();
+  return { verb, resource: sub ? `${resource}/${sub}` : resource, namespace, name };
 }
 
 export function classifyK8s(req: Request): Action {
@@ -186,7 +322,12 @@ export function classifyK8s(req: Request): Action {
     ? WRITE
     : UNKNOWN;
   const resource = req.path.split("?")[0];
-  return { service: "k8s", verb: `${verb} ${resource}`, kind };
+  return {
+    service: "k8s",
+    verb: `${verb} ${resource}`,
+    kind,
+    facet: { name: "k8s", fields: k8sFields(verb, req.path) },
+  };
 }
 
 /**
@@ -212,6 +353,7 @@ export function classifyGraphql(req: Request): Action | undefined {
     service: "graphql",
     verb: isWrite ? "graphql:mutation" : "graphql:query",
     kind: isWrite ? WRITE : READ,
+    facet: { name: "graphql", fields: { operation: isWrite ? "mutation" : "query" } },
   };
 }
 
@@ -278,6 +420,43 @@ export function decide(
   }
 
   const action = classify(req, pol.k8sHosts, plugins);
+
+  // Condition rules — the sharpest layer, ordered, first match wins (upstream Claw
+  // Patrol semantics). A rule whose condition can't evaluate DENIES (fail closed):
+  // an unevaluable condition must never fall through to a looser layer.
+  const env = ruleEnv(req, action);
+  for (const rule of pol.rules) {
+    if (rule.hosts?.length && !hostMatches(host, rule.hosts)) continue;
+    let matched: boolean;
+    try {
+      matched = rule.test(env);
+    } catch (e) {
+      return {
+        verdict: "deny",
+        reason: `rule ${rule.name}: condition unevaluable (${
+          (e as Error).message
+        }) — failing closed`,
+        action,
+        rule: rule.name,
+      };
+    }
+    if (!matched) continue;
+    if (rule.approve?.length) {
+      return {
+        verdict: "hold",
+        reason: rule.reason ?? `rule ${rule.name}: approval required`,
+        action,
+        approve: rule.approve,
+        rule: rule.name,
+      };
+    }
+    return {
+      verdict: rule.verdict!,
+      reason: rule.reason ?? `rule ${rule.name} matched`,
+      action,
+      rule: rule.name,
+    };
+  }
 
   // Explicit per-verb overrides. Deny wins over hold wins over allow.
   if (pol.denyVerbs.has(action.verb)) {

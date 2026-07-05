@@ -306,6 +306,21 @@ cmd_logs() {
   tail -n 50 -f "$LOG_FILE"
 }
 
+# Claw Patrol offline checks. `net validate` runs the same load path the server
+# does (policy.json + the plugin library) and reports every problem loudly.
+cmd_net() {
+  case "${1:-}" in
+    validate)
+      cd "$ROOT"
+      exec deno run --allow-read --allow-write --allow-env --allow-sys src/net/validate.ts
+      ;;
+    *)
+      echo "usage: bough net validate" >&2
+      exit 1
+      ;;
+  esac
+}
+
 case "${1:-}" in
   setup) cmd_setup ;;
   start) cmd_start ;;
@@ -315,14 +330,19 @@ case "${1:-}" in
   status) cmd_status ;;
   logs) cmd_logs ;;
   run) cmd_run ;;
+  net)
+    shift
+    cmd_net "$@"
+    ;;
   *)
-    echo "usage: bough {setup|start|kill|restart|update|status|logs|run}" >&2
+    echo "usage: bough {setup|start|kill|restart|update|status|logs|run|net}" >&2
     echo "  setup    fresh clone → running: install deps, build, configure env, start" >&2
     echo "  start    install + start the launchd service (auto-starts at login)" >&2
     echo "  kill     stop the service and keep it stopped (across logins)" >&2
     echo "  restart  pick up code changes explicitly" >&2
     echo "  update   fast-forward to origin/main, rebuild, restart" >&2
     echo "  run      run the server in the foreground (what launchd executes)" >&2
+    echo "  net      Claw Patrol checks: 'bough net validate' verifies policy + plugins" >&2
     exit 1
     ;;
 esac

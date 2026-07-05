@@ -6,6 +6,7 @@
  *   export const meta = { name, description, hosts, expires? };  // expires = ISO TTL
  *   export const ops = [ { match: "POST /v1/refunds*", kind: "write", verb: "stripe:refund" } ];
  *   export function classify(req) { ... }   // escape hatch; optional when ops exists
+ *   export function extract(req) { ... }    // optional facet fields for rule conditions
  *   export const fixtures = [ { req, expect } ];  // REQUIRED — run before it gates
  *
  * The declarative `ops` table is the primary form: first match wins, the UI renders
@@ -14,15 +15,21 @@
  * tokenizing GraphQL); when both exist, classify() runs first and undefined falls to
  * the table.
  *
- * `gate()` is the CONTEXTUAL layer — for verdicts the request's shape can't decide
- * ("delete is fine only if the resource is <1h old"). It runs in the gate path after
- * the static decision, only for requests to this plugin's hosts, and may be async:
- * ctx.fetch egresses DIRECTLY from the server process (no proxy → no gate recursion,
- * and it may use standing that the sandbox never gets), so it can make an
- * out-of-band check request — e.g. HEAD the object and read Last-Modified — while
- * the gated request sits parked. Returning {verdict, reason} overrides the static
- * decision; undefined passes. A throw or timeout falls through — the static posture
- * still gates, so a broken gate() can never open the firewall.
+ * `extract()` is the plugin's FACET: parsed fields it publishes into the rule env
+ * under the plugin's name, so rule conditions can match on them ("exa.endpoint ==
+ * 'research'") the way built-in facets work (http, k8s — see policy.ts ruleEnv). It
+ * must be pure/synchronous; a throw drops the fields for that request (classification
+ * stands — facets add precision, never gating).
+ *
+ * `gate()` is the plugin's APPROVER hook — for verdicts the request's shape can't
+ * decide ("delete is fine only if the resource is <1h old"). Plugins never override
+ * the rule set on their own: a rule routes to the hook by naming it in an approver
+ * chain (config.ts rules — approve: ["plugin:<name>", "human"]), and the gate consults
+ * it while the held request sits parked. It may be async: ctx.fetch egresses DIRECTLY
+ * from the server process (no proxy → no gate recursion, and it may use standing that
+ * the sandbox never gets), so it can make an out-of-band check request — e.g. HEAD the
+ * object and read Last-Modified. Approver semantics are fail-closed: only an explicit
+ * {verdict: "allow"} passes; deny, undefined, a throw, or a timeout all DENY.
  *
  * Plugin FILES are a global library; they gate nothing by themselves. A plugin is
  * turned ON per scope by an ACTIVATION entry in the rule set (NetConfig.plugins —
@@ -39,7 +46,9 @@
  *     chain, where unrecognised traffic is UNKNOWN;
  *   - an expired or missing activation drops the classifier lazily on the next
  *     request — expiry can only REMOVE precision/permissiveness, never add it;
- *   - a classify() that throws yields UNKNOWN for that request, not fall-through.
+ *   - a classify() that throws yields UNKNOWN for that request, not fall-through;
+ *   - a gate() consulted as an approver passes only on an explicit allow — anything
+ *     else (including the plugin being inactive for the scope) denies.
  *
  * TRUST MODEL: plugin files are the operator's own code and
  * run in the server process. The declarative draft/install path never executes model
@@ -54,7 +63,6 @@ import {
   type Action,
   type Classifier,
   type Decision,
-  hostMatches,
   type Kind,
   type Request,
   UNKNOWN,
@@ -123,7 +131,7 @@ export interface GuardCtx {
 export type GuardResult = { verdict: Verdict; reason?: string } | undefined;
 export type GuardFn = (req: Request, ctx: GuardCtx) => GuardResult | Promise<GuardResult>;
 
-/** A live gate() the Gate consults for requests to the plugin's hosts. */
+/** A live gate() hook an approve chain can name ("plugin:<name>" — see gate.ts). */
 export interface PluginGuard {
   name: string;
   hosts: string[];
@@ -141,6 +149,8 @@ export interface PluginInfo {
   hasClassify: boolean;
   /** True when the module exports a contextual gate(). */
   hasGate: boolean;
+  /** True when the module exports an extract() facet. */
+  hasExtract: boolean;
   fixtures: number;
   status: "loaded" | "error";
   error?: string;
@@ -151,6 +161,7 @@ interface Loaded {
   file: string;
   ops?: OpRule[];
   hasClassify: boolean;
+  hasExtract: boolean;
   fixtures: number;
   classifier: Classifier;
   gate?: GuardFn;
@@ -188,13 +199,28 @@ function compileOps(ops: OpRule[]): CompiledOp[] {
  * plugin owns its hosts). A classify()-only plugin returning undefined falls through
  * to the built-in chain, mirroring classifyGraphql.
  */
+export type ExtractFn = (req: Request) => Record<string, unknown> | undefined;
+
 export function buildClassifier(
   name: string,
   hosts: string[],
   ops?: OpRule[],
   custom?: (req: Request) => Action | undefined,
+  extract?: ExtractFn,
 ): Classifier {
   const compiled = ops ? compileOps(ops) : undefined;
+  // The plugin's facet: extract() fields join the action under the plugin's name so
+  // rules can condition on them. A throw only drops the fields — never the verdict.
+  const withFacet = (action: Action, req: Request): Action => {
+    if (!extract || action.facet) return action;
+    try {
+      const fields = extract(req);
+      return fields ? { ...action, facet: { name, fields } } : action;
+    } catch (e) {
+      console.error(`[clawpatrol] plugin ${name} extract() threw: ${(e as Error).message}`);
+      return action;
+    }
+  };
   return {
     name,
     hosts,
@@ -204,7 +230,7 @@ export function buildClassifier(
       if (custom) {
         try {
           const out = custom(req);
-          if (out) return out;
+          if (out) return withFacet(out, req);
         } catch (e) {
           console.error(`[clawpatrol] plugin ${name} classify() threw: ${(e as Error).message}`);
           return { service: name, verb: `${method} ${path}`, kind: UNKNOWN };
@@ -214,9 +240,12 @@ export function buildClassifier(
       for (const op of compiled) {
         if (op.method !== "*" && op.method !== method) continue;
         if (!op.path.test(path)) continue;
-        return { service: name, verb: op.verb ?? `${method} ${path}`, kind: op.kind };
+        return withFacet(
+          { service: name, verb: op.verb ?? `${method} ${path}`, kind: op.kind },
+          req,
+        );
       }
-      return { service: name, verb: `${method} ${path}`, kind: UNKNOWN };
+      return withFacet({ service: name, verb: `${method} ${path}`, kind: UNKNOWN }, req);
     },
   };
 }
@@ -396,6 +425,7 @@ export class PluginHost {
         ops: p.ops,
         hasClassify: p.hasClassify,
         hasGate: p.gate !== undefined,
+        hasExtract: p.hasExtract,
         fixtures: p.fixtures,
         status: "loaded",
       })),
@@ -451,6 +481,7 @@ export class PluginHost {
           hosts: [],
           hasClassify: false,
           hasGate: false,
+          hasExtract: false,
           fixtures: 0,
           status: "error",
           error: (e as Error).message,
@@ -534,12 +565,16 @@ export class PluginHost {
     if (gateFn !== undefined && typeof gateFn !== "function") {
       throw new Error("gate must be a function");
     }
+    const extract = mod.extract as ExtractFn | undefined;
+    if (extract !== undefined && typeof extract !== "function") {
+      throw new Error("extract must be a function");
+    }
     if (!ops && !custom) throw new Error("plugin must export an ops table and/or classify()");
     if (!Array.isArray(mod.fixtures) || mod.fixtures.length === 0) {
       throw new Error("plugin must export at least one fixture — fixtures gate loading");
     }
     const fixtures = z.array(PluginFixture).parse(mod.fixtures);
-    const classifier = buildClassifier(meta.name, meta.hosts, ops, custom);
+    const classifier = buildClassifier(meta.name, meta.hosts, ops, custom, extract);
     const failures = runFixtures(classifier, meta.hosts, fixtures);
     if (failures.length) throw new Error(`fixtures failed: ${failures.join("; ")}`);
     return {
@@ -547,6 +582,7 @@ export class PluginHost {
       file,
       ops,
       hasClassify: custom !== undefined,
+      hasExtract: extract !== undefined,
       fixtures: fixtures.length,
       classifier,
       gate: gateFn,
@@ -566,47 +602,36 @@ export interface RunGuardOpts {
 }
 
 /**
- * Run the gate() hooks whose plugin claims this request's host; the FIRST verdict
- * wins and overrides the static decision. undefined from everyone = the static rule
- * set stands. A throw or timeout logs and falls through — a broken or hanging gate()
- * can never open the firewall, only leave the static posture in charge.
+ * Consult ONE plugin's gate() hook as an approver (gate.ts #runChain). Returns the
+ * hook's result; a throw or timeout logs and returns undefined, which the chain
+ * treats as not-allowing — a broken or hanging gate() can never open the firewall.
  */
-export async function runGuards(
-  guards: readonly PluginGuard[],
+export async function runApprover(
+  guard: PluginGuard,
   req: Request,
   decision: Decision,
   sessionId?: string,
   opts: RunGuardOpts = {},
-): Promise<{ verdict: Verdict; reason: string; by: string } | undefined> {
-  const host = req.host.toLowerCase();
-  for (const g of guards) {
-    if (!hostMatches(host, g.hosts)) continue;
-    const ctx: GuardCtx = {
-      sessionId,
-      action: decision.action,
-      decision,
-      fetch: opts.fetchImpl ?? globalThis.fetch,
-    };
-    try {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const out = await Promise.race([
-        Promise.resolve(g.gate(req, ctx)),
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(
-            () => reject(new Error("gate timed out")),
-            opts.timeoutMs ?? GUARD_TIMEOUT_MS,
-          );
-        }),
-      ]).finally(() => clearTimeout(timer));
-      if (out === undefined) continue;
-      return {
-        verdict: out.verdict,
-        reason: out.reason ?? `plugin ${g.name} gate: ${out.verdict}`,
-        by: g.name,
-      };
-    } catch (e) {
-      console.error(`[clawpatrol] plugin ${g.name} gate() errored: ${(e as Error).message}`);
-    }
+): Promise<GuardResult> {
+  const ctx: GuardCtx = {
+    sessionId,
+    action: decision.action,
+    decision,
+    fetch: opts.fetchImpl ?? globalThis.fetch,
+  };
+  try {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    return await Promise.race([
+      Promise.resolve(guard.gate(req, ctx)),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("gate timed out")),
+          opts.timeoutMs ?? GUARD_TIMEOUT_MS,
+        );
+      }),
+    ]).finally(() => clearTimeout(timer));
+  } catch (e) {
+    console.error(`[clawpatrol] plugin ${guard.name} gate() errored: ${(e as Error).message}`);
+    return undefined;
   }
-  return undefined;
 }
