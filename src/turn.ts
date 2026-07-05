@@ -154,6 +154,17 @@ function runningSubagentsNote(db: Db, sessionId: string): string {
     ).join("\n");
 }
 
+/**
+ * Tell the model where its tools actually operate. Without this it has zero cwd
+ * information and tends to invent a container layout (`cd /workspace || cd /home`),
+ * walking itself out of the real project.
+ */
+function workspaceNote(cwd: string): string {
+  return `\n\n# Workspace\nbash starts in ${cwd} and relative file paths resolve ` +
+    "against it. If that directory is a repo, it is the repo the user means — work on " +
+    "it in place.";
+}
+
 /** Read the workspace AGENTS.md (capped) as a system-prompt section, or null if absent. */
 async function readAgentsFile(cwd: string): Promise<string | null> {
   try {
@@ -358,7 +369,8 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     // Skills: `/name` in the triggering user message pulls that skill's
     // instructions into the system prompt for this run (supervisor/skills.ts).
     const system = SYSTEM + (mayDelegate ? SYSTEM_DELEGATION : "") +
-      (mayDelegate ? runningSubagentsNote(db, sessionId) : "") + (agents ?? "") +
+      (mayDelegate ? runningSubagentsNote(db, sessionId) : "") +
+      workspaceNote(prepared.cwd) + (agents ?? "") +
       activeFor(lastUserText(db, sessionId));
     const toolDefs = tools.map((t) => ({
       name: t.name,
