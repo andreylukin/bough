@@ -202,7 +202,13 @@ export interface Policy {
   /** Verdict when `allowHosts` is non-empty and the host isn't in it. Default "deny". */
   hostMiss: Verdict;
   k8sHosts: Set<string>;
-  mode: "read_only" | "review" | "all";
+  /**
+   * "read_only" | "review" | "all" gate the ACTION layer for allowed hosts. "yolo"
+   * turns enforcement off entirely — every request (even denyHosts) is allowed, but
+   * still classified, logged, and shadow-evaluated so the feed shows what the rule
+   * set WOULD have done. Interception (MITM, credential injection) is unchanged.
+   */
+  mode: "read_only" | "review" | "all" | "yolo";
   /** Condition rules — evaluated first (ordered, first match wins) for allowed hosts. */
   rules: CompiledRule[];
   allowVerbs: Set<string>;
@@ -398,6 +404,22 @@ export function decide(
   pol: Policy,
   plugins: readonly Classifier[] = [],
 ): Decision {
+  // mode "yolo": nothing is gated — allow everything, log everything. The full rule
+  // set still runs in SHADOW (as "review") so classification, facets, and plugin
+  // verbs land on the feed row, with a "would have held/denied" reason where the
+  // gated posture disagrees. Holds can't happen, so a yolo branch never parks a turn.
+  if (pol.mode === "yolo") {
+    const shadow = decide(req, { ...pol, mode: "review" }, plugins);
+    return {
+      verdict: "allow",
+      reason: shadow.verdict === "allow"
+        ? shadow.reason
+        : `yolo — would have ${shadow.verdict === "hold" ? "held" : "denied"}: ${shadow.reason}`,
+      action: shadow.action,
+      rule: shadow.rule,
+    };
+  }
+
   const host = req.host.toLowerCase();
   const unknownAction = { service: "?", verb: "?", kind: UNKNOWN } as const;
 

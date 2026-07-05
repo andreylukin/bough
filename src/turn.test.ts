@@ -416,3 +416,70 @@ Deno.test("interrupt reaches INTO a running tool via ctx.signal (stop means stop
   assertStringIncludes((final.parts.at(-1) as { text: string }).text, "Stopped");
   assertEquals(db.turnsByStatus("interrupted").length, 1);
 });
+
+Deno.test("mcp end-to-end: /skill grant connects the server, prompts tools, bridges mcp()", async () => {
+  if ((await Deno.permissions.query({ name: "run" })).state !== "granted") return;
+  const skillsDir = Deno.makeTempDirSync({ prefix: "bough-skills-" });
+  const mcpDir = Deno.makeTempDirSync({ prefix: "bough-mcp-" });
+  Deno.env.set("BOUGH_SKILLS_DIR", skillsDir);
+  Deno.env.set("BOUGH_BUNDLED_SKILLS_DIR", "/nonexistent-bough-bundled");
+  Deno.env.set("BOUGH_MCP_DIR", mcpDir);
+  try {
+    // a skill that grants the fixture server, and a registry that defines it
+    Deno.mkdirSync(`${skillsDir}/browse`, { recursive: true });
+    Deno.writeTextFileSync(
+      `${skillsDir}/browse/SKILL.md`,
+      "---\nname: browse\ndescription: echo things\nmcp: echo\n---\n\nUse the echo tool.\n",
+    );
+    const fixture = new URL("./mcp/testdata/echo_server.ts", import.meta.url).pathname;
+    const { saveRegistry } = await import("./mcp/config.ts");
+    saveRegistry({
+      servers: {
+        echo: { command: Deno.execPath(), args: ["run", "--quiet", "--no-config", fixture] },
+      },
+    });
+
+    const { db, bus, sessionId } = seed();
+    db.createMessage({
+      id: "u2",
+      sessionId,
+      role: "user",
+      parts: [{ type: "text", text: "/browse round-trip the fixture" }],
+      pending: false,
+      createdAt: 3,
+    });
+    const llm = fakeLlm([
+      {
+        content: [{
+          type: "tool_use",
+          id: "t1",
+          name: "run_steps",
+          input: {
+            code: 'console.log("mcp says:", (await mcp("echo", "echo", {text: "e2e"})).echoed);',
+          },
+        }],
+        stopReason: "tool_use",
+      },
+      { content: [{ type: "text", text: "done" }], stopReason: "end_turn" },
+    ]);
+    const ctx: TurnCtx = { db, bus, llm, workspace: Deno.makeTempDirSync() };
+
+    const { message, done } = beginTurn(ctx, sessionId);
+    await done;
+
+    // the system prompt carried the catalog, and the program's call round-tripped
+    const system = llm.calls[0].system ?? "";
+    assertStringIncludes(system, "# MCP tools");
+    assertStringIncludes(system, 'server "echo" (3 tools):');
+    assertStringIncludes(system, "Active skill: /browse");
+    const final = finalMessage(db, message.id);
+    const result = final.parts.find((p) => p.type === "tool_result") as { output: string };
+    assertStringIncludes(result.output, "mcp says: e2e");
+  } finally {
+    const { mcpManager } = await import("./mcp/manager.ts");
+    await mcpManager().dropAll();
+    Deno.env.delete("BOUGH_SKILLS_DIR");
+    Deno.env.delete("BOUGH_BUNDLED_SKILLS_DIR");
+    Deno.env.delete("BOUGH_MCP_DIR");
+  }
+});

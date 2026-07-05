@@ -165,3 +165,41 @@ Deno.test("NetConfig: rules round-trip and bad conditions are rejected at parse"
   // approver names are validated
   assertThrows(() => RuleConfig.parse({ name: "r", condition: "true", approve: ["robot"] }));
 });
+
+Deno.test("yolo: everything allowed — denyHosts, writes, rules all shadow-logged", () => {
+  const pol = policy({
+    mode: "yolo",
+    denyHosts: new Set(["evil.example"]),
+    rules: [
+      compileRule({ name: "no-del", condition: "http.method == 'DELETE'", verdict: "deny" }),
+    ],
+  });
+  // denied host: allowed, reason names the shadow verdict
+  const blocked = decide(get("evil.example", "/x"), pol);
+  assertEquals(blocked.verdict, "allow");
+  assert(blocked.reason.includes("would have denied"));
+  // rule hit: allowed, rule name still attributed
+  const del = decide({ host: "api.example", method: "DELETE", path: "/y" }, pol);
+  assertEquals(del.verdict, "allow");
+  assert(del.reason.includes("would have denied"));
+  assertEquals(del.rule, "no-del");
+  // review-would-hold write: allowed with "would have held"
+  const held = decide(post("api.example", "/y"), pol);
+  assertEquals(held.verdict, "allow");
+  assert(held.reason.includes("would have held"));
+  // a plain read keeps its normal reason (shadow agreed)
+  const read = decide(get("api.github.com", "/user"), pol);
+  assertEquals(read.verdict, "allow");
+  assertEquals(read.reason, "read action GET /user");
+});
+
+Deno.test("yolo: classification and facets still land on the decision", () => {
+  const pol = policy({ mode: "yolo", k8sHosts: new Set(["k8s.example"]) });
+  const d = decide(
+    { host: "k8s.example", method: "POST", path: "/api/v1/namespaces/prod/pods/web-1/exec" },
+    pol,
+  );
+  assertEquals(d.verdict, "allow");
+  assertEquals(d.action.service, "k8s");
+  assertEquals(d.action.facet?.fields.resource, "pods/exec");
+});

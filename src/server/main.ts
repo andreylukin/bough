@@ -4,6 +4,7 @@
  */
 import { openDb } from "../db/db.ts";
 import { ClawpatrolGateway, setActiveGateway } from "../net/gateway.ts";
+import { mcpManager } from "../mcp/manager.ts";
 import { bus } from "../bus.ts";
 import { createHandler } from "./app.ts";
 import { recoverOrphanedTurns } from "../supervisor/turns.ts";
@@ -25,6 +26,8 @@ const gateway = new ClawpatrolGateway({ db, bus });
 setActiveGateway(gateway);
 await gateway.start();
 globalThis.addEventListener("unload", () => void gateway.stop());
+// MCP server children (mcp/manager.ts) get an orderly SIGTERM on shutdown.
+globalThis.addEventListener("unload", () => void mcpManager().dropAll());
 const password = Deno.env.get("BOUGH_PASSWORD");
 if (password) console.log("auth: password required (BOUGH_PASSWORD is set)");
 const handler = createHandler({ db, bus, gateway, gate: gateway.gate, password });

@@ -50,6 +50,26 @@ Deno.test("session lineage: origin fields round-trip; absent stays undefined", (
   db.close();
 });
 
+Deno.test("treeUsage sums the subagent subtree only (forks excluded, archived included)", () => {
+  const db = mkDb();
+  db.createSession(session("root", null, "root", 1));
+  db.createSession({ ...session("sub", null, "subagent", 2), originId: "root", originMessageId: "m1" });
+  db.createSession({ ...session("grand", null, "subagent", 3), originId: "sub", originMessageId: "m2" });
+  db.createSession({ ...session("fork", null, "fork", 4), originId: "root", originMessageId: "m3" });
+  db.setSessionUsage("root", 10_000, 100, 1_000);
+  db.setSessionUsage("sub", 5_000, 200, 2_000);
+  db.setSessionUsage("grand", 2_000, 400, 4_000);
+  db.setSessionUsage("fork", 9_000, 999, 9_999); // fork lineage — NOT part of the cost tree
+  db.archiveSession("grand"); // archived descendants still cost money
+
+  assertEquals(db.treeUsage("root"), { inputTokens: 7_000, outputTokens: 700, sessions: 2 });
+  assertEquals(db.treeUsage("sub"), { inputTokens: 6_000, outputTokens: 600, sessions: 1 });
+  assertEquals(db.treeUsage("grand"), { inputTokens: 4_000, outputTokens: 400, sessions: 0 });
+  // sessionUsage round-trips the cumulative input column alongside the old fields.
+  assertEquals(db.sessionUsage("root"), { contextTokens: 10_000, outputTokens: 100, inputTokens: 1_000 });
+  db.close();
+});
+
 Deno.test("message CRUD preserves parts + pending", () => {
   const db = mkDb();
   db.createSession(session("s", null, "root", 1));

@@ -193,6 +193,11 @@ export async function addWorkspace(
 ): Promise<string> {
   await ensureRepo(repo);
   if (await isColocated(dir)) return dir; // already added (dir has .jj)
+  // An op from a sibling workspace (a concurrent spawn's snapshot, an adopt) can
+  // rewrite this workspace's working-copy commit, leaving it stale — jj then
+  // refuses to snapshot and `workspace add` fails, killing the spawn. Repair
+  // first; a no-op when the working copy is fresh.
+  await updateStale(repo);
   await jj(repo, ["workspace", "add", "--name", workspaceNameFor(sessionId), "-r", baseBookmark, dir]);
   await jj(dir, ["bookmark", "create", bookmarkFor(sessionId), "-r", "@"]);
   return dir;

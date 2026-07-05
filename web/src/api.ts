@@ -10,10 +10,16 @@ export interface ModelOption {
   id: string;
   label: string;
   provider: "anthropic" | "openrouter";
+  /** USD per million tokens (input/output); absent when the price is unknown. */
+  pricing?: { in: number; out: number };
 }
 export interface Usage {
   contextTokens: number;
   outputTokens: number;
+  /** Cumulative input tokens across the session (cost accounting). */
+  inputTokens: number;
+  /** Rollup over this session plus its whole subagent subtree. */
+  tree?: { inputTokens: number; outputTokens: number; sessions: number };
 }
 export interface SkillInfo {
   name: string;
@@ -61,7 +67,10 @@ export interface PluginInfo {
 // The editable rule set (mirrors src/net/config.ts NetConfig).
 export type Verdict = "allow" | "deny" | "hold";
 export interface NetConfig {
-  mode: "read_only" | "review" | "all";
+  /** "yolo" = enforcement off, log-only with shadow verdicts (the red button). */
+  mode: "read_only" | "review" | "all" | "yolo";
+  /** Set while mode is "yolo": the mode the toggle restores when flipped off. */
+  prevMode?: "read_only" | "review" | "all";
   allowHosts: string[];
   denyHosts: string[];
   hostMiss: Verdict;
@@ -79,6 +88,23 @@ export interface PluginActivation {
 
 export const api = {
   config: () => fetch("/config").then(j<{ model: string; models: ModelOption[] }>),
+
+  // The saved UI theme (null = default palette). Applied as CSS-variable
+  // overrides at boot; created via the /theme skill or the composer's picker.
+  theme: () =>
+    fetch("/theme").then(
+      j<{
+        theme: { name: string; colors: Record<string, string> } | null;
+        defaults: Record<string, string>;
+      }>,
+    ),
+  setTheme: (theme: { name: string; colors: Record<string, string> }) =>
+    fetch("/theme", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(theme),
+    }),
+  clearTheme: () => fetch("/theme", { method: "DELETE" }),
 
   // Switch the model new turns run on.
   setModel: (model: string) =>
@@ -170,6 +196,15 @@ export const api = {
     }).then(j<{ config: NetConfig; source: PolicySource }>),
   deleteSessionPolicy: (sessionId: string) =>
     fetch(`/net/policy?session=${encodeURIComponent(sessionId)}`, { method: "DELETE" }),
+
+  // Flip YOLO (log-only, no gating) for a branch — or globally with sessionId null.
+  // Toggling off restores the scope's pre-yolo mode.
+  setYolo: (sessionId: string | null, on: boolean) =>
+    fetch(`/net/yolo${sessionId ? `?session=${encodeURIComponent(sessionId)}` : ""}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ on }),
+    }).then(j<{ config: NetConfig }>),
 
   // ---- classifier plugins (library + per-scope activation; creation via /net-plugin)
   listPlugins: () => fetch("/net/plugins").then(j<{ dir: string; plugins: PluginInfo[] }>),
@@ -269,24 +304,41 @@ export const api = {
 
   // ---- branching -----------------------------------------------------------
   // Fork at one of the session's OWN turns. With editedText → edit & resend (runs a
-  // turn); without → a plain branch point. 400 (with the server message) for an
-  // inherited turn or a non-user edit target.
-  fork: (sessionId: string, body: { atMessageId: string; editedText?: string }) =>
+  // turn); without → a plain branch point. With atPart → cut INSIDE the turn (keep
+  // parts[0..atPart], e.g. up to a failed tool call), editedText then being a NEW
+  // user message after the cut. 400 (with the server message) for an inherited turn
+  // or a non-user edit target.
+  fork: (sessionId: string, body: { atMessageId: string; atPart?: number; editedText?: string }) =>
     fetch(`/sessions/${sessionId}/fork`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     }),
 
-  // Compact a span of the session's OWN turns onto a new summary branch. 400 for a span
-  // that reaches into ancestor history.
-  compact: (sessionId: string, body: { fromMessageId: string; toMessageId: string }) =>
+  // Compact picked OWN turns onto a new summary branch — each contiguous run of
+  // picked turns collapses to one summary; a pick's `parts` narrows what the
+  // summarizer sees. 400 for a selection that reaches into ancestor history.
+  compact: (sessionId: string, body: { picks: TurnPick[] }) =>
     fetch(`/sessions/${sessionId}/compact`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     }),
+
+  // Copy picked thread turns (own or inherited) verbatim into a fresh root
+  // conversation that keeps the source's workspace. A pick's `parts` copies just
+  // those sections of the turn.
+  extract: (sessionId: string, body: { picks: TurnPick[] }) =>
+    fetch(`/sessions/${sessionId}/extract`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }),
 };
+
+// One picked turn for compact/extract: the whole message, or — with `parts` —
+// just those sections (indexes into the message's parts array).
+export type TurnPick = { messageId: string; parts?: number[] };
 
 // Read {session} from a fork/compact response, or throw the server's error message so
 // the UI can surface the "…the ancestor session instead" 400 gracefully.

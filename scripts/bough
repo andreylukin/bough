@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bough server manager: setup | start | kill | restart | update | status | logs | run
+# bough server manager: setup | start | kill | restart | update | status | logs | run | net | desktop
 # Runs the server as a launchd user service (starts at login, restarts on crash).
 # There is no file watcher: editing code in the repo never restarts the server —
 # changes only land on an explicit `bough restart` or `bough update`. Sources
@@ -175,24 +175,58 @@ cmd_restart() {
 }
 
 cmd_update() {
-  # Untracked files are fine (live runs drop scratch in the repo root); only
-  # modified/staged files block the fast-forward.
-  if git -C "$ROOT" status --porcelain | grep -qv '^??'; then
-    echo "error: working tree has uncommitted changes — commit or stash before updating" >&2
-    exit 1
-  fi
+  echo "==> fetching origin/main"
+  git -C "$ROOT" fetch origin main
 
   local was_running=""
   is_up && was_running=1
 
-  echo "==> fetching origin/main"
-  git -C "$ROOT" fetch origin main
-  # Detached HEAD (e.g. jj-colocated checkout) can't fast-forward — move to main first.
-  if ! git -C "$ROOT" symbolic-ref -q HEAD >/dev/null; then
+  if ! git -C "$ROOT" merge-base --is-ancestor HEAD origin/main; then
+    # Dev checkout: HEAD sits on a jj snapshot chain carrying unshipped work,
+    # and main's commits are shipped FROM this tree — there is nothing to pull
+    # into it (a tree-level merge just re-collides with its own shipped
+    # history). Leave git alone; rebuild and restart from the tree as-is.
+    echo "==> dev checkout (unshipped snapshot work) — skipping git update, rebuilding from the tree"
+  else
+    # Consumer checkout: fast-forward to the new main, carrying uncommitted
+    # changes over as a patch — no `git stash`, whose push/pop fails messily
+    # against jj's index snapshots in a colocated repo. Lock files stay out of
+    # the patch (npm install / deno install below regenerate them); untracked
+    # files pass through untouched.
+    local patch added=""
+    patch="$BOUGH_HOME/update-carry-$(date +%Y%m%d-%H%M%S).patch"
+    git -C "$ROOT" diff --binary HEAD -- . \
+      ':(exclude)deno.lock' ':(exclude)web/package-lock.json' > "$patch"
+    if [ -s "$patch" ]; then
+      echo "==> carrying uncommitted changes over the update ($patch)"
+      # Uncommitted added files are new-file hunks in the patch and must be off
+      # disk for the re-apply (git apply refuses to create over an existing file).
+      added="$(git -C "$ROOT" status --porcelain | grep -E '^(A.|.A)' | cut -c4- || true)"
+    else
+      rm -f "$patch"
+      patch=""
+    fi
+    git -C "$ROOT" reset -q
+    git -C "$ROOT" checkout -q HEAD -- .
+    if [ -n "$added" ]; then
+      printf '%s\n' "$added" | while IFS= read -r f; do rm -f "$ROOT/$f"; done
+    fi
+
     git -C "$ROOT" checkout -q main 2>/dev/null || git -C "$ROOT" checkout -qb main origin/main
+    git -C "$ROOT" merge --ff-only origin/main
+    echo "==> now at $(git -C "$ROOT" log -1 --format='%h %s')"
+
+    if [ -n "$patch" ]; then
+      echo "==> re-applying carried changes"
+      if git -C "$ROOT" apply --3way "$patch"; then
+        rm -f "$patch"
+      else
+        echo "error: local changes did not re-apply cleanly — patch kept at $patch" >&2
+        echo "fix by hand (files may have conflict markers), then: bough restart" >&2
+        exit 1
+      fi
+    fi
   fi
-  git -C "$ROOT" merge --ff-only origin/main
-  echo "==> now at $(git -C "$ROOT" log -1 --format='%h %s')"
 
   echo "==> rebuilding web UI"
   (cd "$ROOT/web" && npm install && npm run build)
@@ -306,6 +340,53 @@ cmd_logs() {
   tail -n 50 -f "$LOG_FILE"
 }
 
+# Desktop app (deno desktop wraps the same server in a native WebKit window).
+# `install` compiles into a temp dir — never the repo root, where jj's
+# auto-snapshots would pick up the .app — then swaps it into /Applications.
+# The entrypoint loads ~/.bough/env itself, so Finder launches work.
+APP="/Applications/bough.app"
+
+cmd_desktop() {
+  case "${1:-run}" in
+    run)
+      cd "$ROOT"
+      exec deno task desktop
+      ;;
+    install | restart)
+      echo "==> building web UI"
+      (cd "$ROOT/web" && npm run build)
+      echo "==> compiling bough.app"
+      local build_dir
+      build_dir="$(mktemp -d)"
+      (cd "$ROOT" && deno desktop --output "$build_dir/bough.app" --include web/dist \
+        --allow-net --allow-env --allow-read --allow-write \
+        --allow-ffi --allow-sys --allow-run src/desktop/main.ts)
+      if pgrep -qf "$APP/Contents/MacOS/" 2>/dev/null; then
+        echo "==> quitting running app"
+        osascript -e 'tell application "bough" to quit' 2>/dev/null ||
+          pkill -f "$APP/Contents/MacOS/" || true
+        local i
+        for i in $(seq 1 20); do
+          pgrep -qf "$APP/Contents/MacOS/" 2>/dev/null || break
+          sleep 0.5
+        done
+      fi
+      rm -rf "$APP"
+      mv "$build_dir/bough.app" "$APP"
+      rmdir "$build_dir"
+      echo "==> launching $APP"
+      open "$APP"
+      ;;
+    *)
+      echo "usage: bough desktop [run|install|restart]" >&2
+      echo "  run      native window in dev mode (serves web/dist from disk)" >&2
+      echo "  install  build web UI, compile bough.app, install to /Applications, launch" >&2
+      echo "  restart  rebuild + reinstall + relaunch (needed to pick up any code change)" >&2
+      exit 1
+      ;;
+  esac
+}
+
 # Claw Patrol offline checks. `net validate` runs the same load path the server
 # does (policy.json + the plugin library) and reports every problem loudly.
 cmd_net() {
@@ -334,8 +415,12 @@ case "${1:-}" in
     shift
     cmd_net "$@"
     ;;
+  desktop)
+    shift
+    cmd_desktop "$@"
+    ;;
   *)
-    echo "usage: bough {setup|start|kill|restart|update|status|logs|run|net}" >&2
+    echo "usage: bough {setup|start|kill|restart|update|status|logs|run|net|desktop}" >&2
     echo "  setup    fresh clone → running: install deps, build, configure env, start" >&2
     echo "  start    install + start the launchd service (auto-starts at login)" >&2
     echo "  kill     stop the service and keep it stopped (across logins)" >&2
@@ -343,6 +428,7 @@ case "${1:-}" in
     echo "  update   fast-forward to origin/main, rebuild, restart" >&2
     echo "  run      run the server in the foreground (what launchd executes)" >&2
     echo "  net      Claw Patrol checks: 'bough net validate' verifies policy + plugins" >&2
+    echo "  desktop  native app: 'bough desktop [run|install|restart]'" >&2
     exit 1
     ;;
 esac

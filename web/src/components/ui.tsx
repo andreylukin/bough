@@ -1,7 +1,7 @@
 // Small shared primitives used across the surfaces.
 import { useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { c, mono } from "../theme";
+import { c, alpha, mono } from "../theme";
 
 async function copyText(s: string): Promise<void> {
   try {
@@ -92,7 +92,7 @@ export function Dot({ color = c.green, pulse = false }: { color?: string; pulse?
         flex: "none",
         boxShadow: pulse
           ? undefined
-          : `0 0 0 3px ${amber ? "rgba(217,180,95,.16)" : "rgba(78,201,143,.18)"}`,
+          : `0 0 0 3px ${amber ? alpha(c.amber, 16) : alpha(c.green, 18)}`,
       }}
     />
   );
@@ -130,7 +130,7 @@ export function Chip({ children, style }: { children: ReactNode; style?: CSSProp
       style={{
         fontFamily: mono,
         fontSize: 10,
-        background: "#262b32",
+        background: c.border2,
         borderRadius: 4,
         padding: "1px 5px",
         color: c.muted,
@@ -145,7 +145,7 @@ export function Chip({ children, style }: { children: ReactNode; style?: CSSProp
 export const Kbd = ({ children }: { children: ReactNode }) => (
   <kbd
     style={{
-      background: "#262b32",
+      background: c.border2,
       border: `1px solid ${c.hairline}`,
       borderRadius: 4,
       padding: "1px 6px",

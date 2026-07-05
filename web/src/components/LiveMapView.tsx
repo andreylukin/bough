@@ -7,8 +7,8 @@
 //
 // The mock map (MapView) stays for design review; this renders in live mode.
 import { useEffect, useMemo, useState } from "react";
-import { c, mono } from "../theme";
-import { api } from "../api";
+import { c, alpha, mono } from "../theme";
+import { api, type TurnPick } from "../api";
 import { turnFailed } from "../live";
 import type { Message, Session } from "../types";
 import { TitleBar } from "./TitleBar";
@@ -56,7 +56,7 @@ export function LiveMapView({
   sessions: Session[];
   currentId: string | null;
   onJump: (sessionId: string) => void;
-  onCompact: (sessionId: string, fromId: string, toId: string) => void;
+  onCompact: (sessionId: string, picks: TurnPick[]) => void;
   onClose: () => void;
 }) {
   const [threads, setThreads] = useState<Record<string, Message[]>>({});
@@ -187,9 +187,10 @@ export function LiveMapView({
     const turns = threads[sel.sessionId] ?? [];
     const a = turns.findIndex((m) => m.id === sel.from);
     const b = sel.to ? turns.findIndex((m) => m.id === sel.to) : a;
-    const from = turns[Math.min(a, b)].id;
-    const to = turns[Math.max(a, b)].id;
-    onCompact(sel.sessionId, from, to);
+    // The map keeps its simple first/last span picker; expand it to the whole-turn
+    // picks the compact API takes (the conversation view offers per-section selection).
+    const picks = turns.slice(Math.min(a, b), Math.max(a, b) + 1).map((m) => ({ messageId: m.id }));
+    onCompact(sel.sessionId, picks);
     setCompacting(false);
     setSel(null);
   }
@@ -234,7 +235,7 @@ export function LiveMapView({
                   <button
                     onClick={confirmCompact}
                     disabled={selCount === 0}
-                    style={{ fontSize: 12, fontWeight: 600, color: selCount ? c.panel : c.muted2, background: selCount ? c.amber : "#262b32", borderRadius: 7, padding: "5px 11px" }}
+                    style={{ fontSize: 12, fontWeight: 600, color: selCount ? c.panel : c.muted2, background: selCount ? c.amber : c.border2, borderRadius: 7, padding: "5px 11px" }}
                   >
                     ⊟ Compact → branch
                   </button>
@@ -252,7 +253,7 @@ export function LiveMapView({
                   <button
                     key={z}
                     onClick={() => { setZoomKey(z); setNudge(1); }}
-                    style={{ padding: "5px 11px", color: z === zoomKey ? c.text : c.muted2, background: z === zoomKey ? "#262b32" : "transparent", borderLeft: i ? `1px solid ${c.border}` : "none" }}
+                    style={{ padding: "5px 11px", color: z === zoomKey ? c.text : c.muted2, background: z === zoomKey ? c.border2 : "transparent", borderLeft: i ? `1px solid ${c.border}` : "none" }}
                   >
                     {z}
                   </button>
@@ -268,7 +269,7 @@ export function LiveMapView({
           </div>
 
           {/* scroll = pan; the inner canvas is CSS-scaled = zoom */}
-          <div style={{ flex: 1, overflow: "auto", minHeight: 0, backgroundImage: "radial-gradient(circle,#1c2026 1px,transparent 1px)", backgroundSize: "26px 26px" }}>
+          <div style={{ flex: 1, overflow: "auto", minHeight: 0, backgroundImage: `radial-gradient(circle,${c.border3} 1px,transparent 1px)`, backgroundSize: "26px 26px" }}>
             <div style={{ width: canvasW * scale, height: canvasH * scale }}>
               <div style={{ width: canvasW, height: canvasH, transform: `scale(${scale})`, transformOrigin: "top left", position: "relative" }}>
                 {/* Lineage edges: from the origin turn's dot to the branched head. Uses
@@ -369,7 +370,7 @@ export function LiveMapView({
                                   flex: "none",
                                   background: selected ? c.amber : current && isLast ? c.green : c.panelInset,
                                   border: selected ? `2px solid ${c.amber}` : `2px solid ${dotColor(m)}`,
-                                  boxShadow: selected ? `0 0 0 3px rgba(217,180,95,.2)` : undefined,
+                                  boxShadow: selected ? `0 0 0 3px ${alpha(c.amber, 20)}` : undefined,
                                   cursor: "pointer",
                                 }}
                               />

@@ -8,7 +8,7 @@ import type { ModelOption } from "../api";
 import { CopyId, Dot, Logo } from "./ui";
 
 function Light() {
-  return <span style={{ width: 12, height: 12, borderRadius: "50%", background: "#3a414c" }} />;
+  return <span style={{ width: 12, height: 12, borderRadius: "50%", background: c.hairline }} />;
 }
 
 // "12.3k" / "512" — compact token counts for the context meter.
@@ -128,7 +128,12 @@ export function TitleBar({
   // Live-mode glanceables: the model turns run on, and the repo this session edits.
   model?: string;
   models?: ModelOption[];
-  usage?: { contextTokens: number; outputTokens: number };
+  usage?: {
+    contextTokens: number;
+    outputTokens: number;
+    inputTokens?: number;
+    tree?: { inputTokens: number; outputTokens: number; sessions: number };
+  };
   onSetModel?: (model: string) => void;
   workspace?: string | null;
   // When set, a copy chip next to the branch chip copies this head's session id.
@@ -141,6 +146,16 @@ export function TitleBar({
   const repo = workspace ? workspace.replace(/\/+$/, "").split("/").pop() : null;
   const ctxPct = usage ? Math.min(100, Math.round((usage.contextTokens / CONTEXT_BUDGET) * 100)) : 0;
   const ctxColor = ctxPct >= 85 ? c.red : ctxPct >= 60 ? c.amber : c.green;
+  // Estimated spend for this session PLUS its subagent subtree, at the active
+  // model's rates. An estimate: sessions can switch models mid-flight and cache
+  // reads are billed cheaper — this is the honest order of magnitude, not a bill.
+  const pricing = models?.find((m) => m.id === model)?.pricing;
+  const tree = usage?.tree ?? (usage
+    ? { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens, sessions: 0 }
+    : undefined);
+  const cost = pricing && tree
+    ? (tree.inputTokens * pricing.in + tree.outputTokens * pricing.out) / 1_000_000
+    : undefined;
   // In live mode, surface the model, the context meter, and the event-stream link.
   const liveRight = (
     <div style={{ display: "flex", alignItems: "center", gap: 16, fontFamily: mono, fontSize: 11.5, color: c.muted2 }}>
@@ -181,6 +196,19 @@ export function TitleBar({
             <span style={{ display: "block", height: "100%", width: `${ctxPct}%`, background: ctxColor }} />
           </span>
           {fmtTokens(usage.contextTokens)}
+        </span>
+      )}
+      {cost !== undefined && cost > 0 && tree && (
+        <span
+          title={[
+            `~$${cost.toFixed(2)} estimated at ${model} rates`,
+            `${tree.inputTokens.toLocaleString()} in · ${tree.outputTokens.toLocaleString()} out`,
+            tree.sessions > 0 ? `across this session + ${tree.sessions} subagent branch${tree.sessions === 1 ? "" : "es"}` : "this session",
+          ].join("\n")}
+          style={{ color: c.muted }}
+        >
+          ~${cost < 0.01 ? "0.01" : cost.toFixed(2)}
+          {tree.sessions > 0 && <span style={{ color: c.muted2 }}> ·◆{tree.sessions}</span>}
         </span>
       )}
       {model && <ModelPicker model={model} models={models} onSetModel={onSetModel} />}

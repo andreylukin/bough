@@ -9,6 +9,7 @@ export default defineConfig({
     proxy: {
       "/health": "http://localhost:4321",
       "/sessions": "http://localhost:4321",
+      "/theme": "http://localhost:4321",
       "/events": {
         target: "http://localhost:4321",
         // SSE is a long-lived stream — don't let the proxy buffer or time it out.

@@ -80,6 +80,52 @@ Deno.test("fork with-edit: edited user message lands and a turn runs on the fork
   c.db.close();
 });
 
+Deno.test("fork atPart: cut after a failed tool result, explain, and a turn runs from there", async () => {
+  const c = ctx(fakeLlm("TRYING-ANOTHER-WAY"));
+  const s: Session = { id: "S", parentId: null, title: "root", kind: "root", createdAt: 1 };
+  c.db.createSession(s);
+  seed(c.db, "S", "m1", "user", "do the thing", 10);
+  // A supervisor turn: plan, a failed tool exchange, then it barreled on (parts 0..3).
+  c.db.createMessage({
+    id: "m2",
+    sessionId: "S",
+    role: "supervisor",
+    parts: [
+      { type: "text", text: "I'll try approach A" },
+      { type: "tool_call", id: "t1", name: "bash", input: { command: "approach-a" } },
+      { type: "tool_result", callId: "t1", output: "boom: approach A failed", isError: true },
+      { type: "text", text: "kept going anyway" },
+    ],
+    pending: false,
+    createdAt: 11,
+  });
+
+  // Cut right after the failed tool result (part 2) and explain.
+  const { session, done } = fork(c, "S", {
+    atMessageId: "m2",
+    atPart: 2,
+    editedText: "don't try it that way — approach A can't work here, use B",
+  });
+  await done;
+
+  const thread = c.db.threadFor(session.id);
+  // Prefix, the truncated supervisor turn (cut point included, later parts gone),
+  // the correction, and the fresh turn's reply.
+  assertEquals(thread.map((m) => m.role), ["user", "supervisor", "user", "supervisor"]);
+  assertEquals(thread[1].parts, [
+    { type: "text", text: "I'll try approach A" },
+    { type: "tool_call", id: "t1", name: "bash", input: { command: "approach-a" } },
+    { type: "tool_result", callId: "t1", output: "boom: approach A failed", isError: true },
+  ]);
+  assertEquals(texts(thread).slice(2), [
+    ["user", "don't try it that way — approach A can't work here, use B"],
+    ["supervisor", "TRYING-ANOTHER-WAY"],
+  ]);
+  // Original untouched — m2 still has all 4 parts.
+  assertEquals(c.db.getMessage("m2")!.parts.length, 4);
+  c.db.close();
+});
+
 Deno.test("fork errors: ancestor msg, non-user edit target, unknown ids, unknown session", async () => {
   const c = ctx(fakeLlm("x"));
   // root R (r1) → child S (s1)
@@ -92,8 +138,12 @@ Deno.test("fork errors: ancestor msg, non-user edit target, unknown ids, unknown
 
   // ancestor message (r1 belongs to R, not S's own)
   assertEquals((await h(post("/sessions/S/fork", { atMessageId: "r1" }))).status, 400);
-  // editing a supervisor message
+  // editing a supervisor message (without an atPart cut)
   assertEquals((await h(post("/sessions/S/fork", { atMessageId: "s2", editedText: "no" }))).status, 400);
+  // …but WITH atPart the text is a new user message after the cut, not an edit — allowed
+  assertEquals((await h(post("/sessions/S/fork", { atMessageId: "s2", atPart: 0, editedText: "use B" }))).status, 200);
+  // atPart beyond the message's parts
+  assertEquals((await h(post("/sessions/S/fork", { atMessageId: "s2", atPart: 9 }))).status, 400);
   // unknown message id
   assertEquals((await h(post("/sessions/S/fork", { atMessageId: "zzz" }))).status, 400);
   // unknown session

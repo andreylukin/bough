@@ -17,6 +17,12 @@
  *     only replace a user message (editing a supervisor turn is 400).
  *   - Without `editedText`: also copy atMessageId itself — a plain branch point left
  *     ready for new input, no turn run.
+ *   - With `atPart`: cut INSIDE the at-message — copy it truncated to parts[0..atPart]
+ *     (e.g. history up to a failed tool result) as the branch's last seeded message.
+ *     Here `editedText` is a NEW user message appended after the cut (any at-message
+ *     role), the "don't try it that way" move; without it, a plain branch point.
+ *     Replay already tolerates a cut that strands a tool_call: turn.ts synthesizes an
+ *     "(interrupted)" tool_result for any call left without one.
  *
  * Note: the fork carries the *conversation* prefix; the jj file base is the shared
  * parent's tip (#9), so file edits made by the copied prefix turns are not replayed —
@@ -29,6 +35,8 @@ import { startUserTurn, type TurnCtx } from "./turn.ts";
 
 export const ForkBody = z.object({
   atMessageId: z.string(),
+  /** Cut inside the at-message: keep parts[0..atPart] of it (see module doc). */
+  atPart: z.number().int().nonnegative().optional(),
   editedText: z.string().optional(),
 });
 export type ForkBody = z.infer<typeof ForkBody>;
@@ -61,8 +69,13 @@ export function fork(ctx: TurnCtx, sessionId: string, body: ForkBody): ForkResul
     );
   }
   const edited = body.editedText !== undefined;
-  if (edited && own[atIdx].role !== "user") {
+  // Without atPart, editedText REPLACES the at-message, which only makes sense for a
+  // user turn. With atPart it's a fresh user message after the cut — any role works.
+  if (edited && body.atPart === undefined && own[atIdx].role !== "user") {
     throw new ForkError(400, "editedText can only replace a user message");
+  }
+  if (body.atPart !== undefined && body.atPart >= own[atIdx].parts.length) {
+    throw new ForkError(400, "atPart out of range for the at-message");
   }
 
   const seeder = openBranch(ctx, {
@@ -76,6 +89,18 @@ export function fork(ctx: TurnCtx, sessionId: string, body: ForkBody): ForkResul
 
   // Copy the prefix strictly before the fork point.
   for (const m of own.slice(0, atIdx)) seeder.copy(m);
+
+  if (body.atPart !== undefined) {
+    // Mid-message cut: the at-message survives truncated to the cut point — history
+    // up to (say) a failed tool result — then the user's correction, if any, runs.
+    const at = own[atIdx];
+    seeder.copy({ ...at, parts: at.parts.slice(0, body.atPart + 1) });
+    if (edited) {
+      const { done } = startUserTurn(ctx, seeder.session.id, body.editedText!);
+      return { session: seeder.session, done };
+    }
+    return { session: seeder.session };
+  }
 
   if (edited) {
     // Edit & resend: the new user message + a real turn, via the shared path.

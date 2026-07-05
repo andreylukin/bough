@@ -11,6 +11,7 @@
     "desktop:build": "deno desktop --output bough.app --include web/dist --allow-net --allow-env --allow-read --allow-write --allow-ffi --allow-sys --allow-run src/desktop/main.ts"
   },
   "imports": {
+    "@modelcontextprotocol/sdk": "npm:@modelcontextprotocol/sdk@1.29.0",
     "zod": "npm:zod@3.25.76",
     "zod/v4": "npm:zod@3.25.76/v4",
     "@anthropic-ai/sdk": "npm:@anthropic-ai/sdk@0.68.0",

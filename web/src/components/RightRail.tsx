@@ -2,7 +2,7 @@
 // approvals + the rule editor) and Changes (the run's file manifest). Pending pulses
 // the amber accent; nothing else competes.
 import { useEffect, useState } from "react";
-import { c, mono } from "../theme";
+import { c, alpha, mono } from "../theme";
 import type { DiffFile } from "../mock";
 import { api, type NetConfig, type NetStatus, type OpRule, type PluginActivation, type PluginInfo, type PolicySource } from "../api";
 import type { NetRequest } from "../types";
@@ -63,7 +63,7 @@ function TabHeader({
         <>
           Network{" "}
           {pendingCount > 0 ? (
-            <Chip style={{ background: "rgba(217,180,95,.18)", color: c.amber }}>{pendingCount}</Chip>
+            <Chip style={{ background: alpha(c.amber, 18), color: c.amber }}>{pendingCount}</Chip>
           ) : (
             <Dot />
           )}
@@ -172,7 +172,7 @@ function FeedGroupRow(
     <div
       style={{
         borderBottom: `1px solid ${c.border}`,
-        background: selected ? "rgba(93,196,124,.08)" : open ? c.panelInset : undefined,
+        background: selected ? alpha(c.green, 8) : open ? c.panelInset : undefined,
         borderLeft: selected ? `2px solid ${c.green}` : "2px solid transparent",
       }}
     >
@@ -236,7 +236,7 @@ function HoldCard(
   },
 ) {
   return (
-    <div style={{ border: `1px solid ${c.amber}`, borderRadius: 8, padding: 12, display: "flex", flexDirection: "column", gap: 8, background: "rgba(217,180,95,.06)" }}>
+    <div style={{ border: `1px solid ${c.amber}`, borderRadius: 8, padding: 12, display: "flex", flexDirection: "column", gap: 8, background: alpha(c.amber, 6) }}>
       <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
         <Dot color={c.amber} pulse />
         <span style={{ fontFamily: mono, fontSize: 12, color: c.text }}>Approval needed</span>
@@ -419,7 +419,7 @@ function RuleEditor({ policy, onSave }: { policy: NetConfig; onSave: (cfg: NetCo
     <div style={{ display: "flex", flexDirection: "column", gap: 12, border: `1px solid ${c.border}`, borderRadius: 8, padding: 12 }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
         <span style={{ fontFamily: mono, fontSize: 10, letterSpacing: ".08em", color: c.muted2 }}>MODE · allowed hosts</span>
-        <Segmented value={mode} options={["read_only", "review", "all"] as const} onChange={setMode} />
+        <Segmented value={mode} options={["read_only", "review", "all", "yolo"] as const} onChange={setMode} />
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
         <span style={{ fontFamily: mono, fontSize: 10, letterSpacing: ".08em", color: c.muted2 }}>OFF-ALLOWLIST HOST</span>
@@ -800,6 +800,20 @@ function NetworkPanel(
   };
   const dotColor = status.running ? c.green : status.enabled ? c.amber : c.muted2;
   const statusLabel = status.running ? "proxy up" : status.enabled ? "starting" : "off";
+  // YOLO: this branch's enforcement is off — everything flows, the feed logs shadow
+  // verdicts. Session-scoped: the toggle writes/updates the branch's policy override.
+  const yolo = policy?.mode === "yolo";
+  const [yoloBusy, setYoloBusy] = useState(false);
+  const toggleYolo = async () => {
+    if (!sessionId || yoloBusy) return;
+    setYoloBusy(true);
+    try {
+      await api.setYolo(sessionId, !yolo);
+      onPolicyChanged(); // refetch the effective config; the button re-derives from it
+    } finally {
+      setYoloBusy(false);
+    }
+  };
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: wide ? "15px" : "14px 13px", minHeight: 0, display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -813,7 +827,40 @@ function NetworkPanel(
         >
           ⚙ Rules
         </button>
+        {sessionOpen && sessionId && policy && (
+          <button
+            onClick={toggleYolo}
+            disabled={yoloBusy}
+            title={yolo
+              ? "YOLO is ON for this branch — nothing is gated, the feed logs what would have been held or denied. Click to restore gating."
+              : "Run this branch ungated: log every request, limit nothing. Toggle off to restore."}
+            style={{
+              fontFamily: mono,
+              fontSize: 11,
+              fontWeight: 700,
+              letterSpacing: ".06em",
+              color: yolo ? c.bg : c.red,
+              background: yolo ? c.red : "none",
+              border: `1px solid ${c.red}`,
+              borderRadius: 6,
+              padding: "3px 9px",
+              opacity: yoloBusy ? 0.6 : 1,
+              cursor: "pointer",
+            }}
+          >
+            YOLO
+          </button>
+        )}
       </div>
+
+      {yolo && (
+        <div style={{ display: "flex", alignItems: "center", gap: 7, border: `1px solid ${c.red}`, borderRadius: 8, padding: "7px 10px", background: alpha(c.red, 7) }}>
+          <Dot color={c.red} pulse />
+          <span style={{ fontSize: 12, color: c.red, lineHeight: 1.45 }}>
+            YOLO — this branch is ungated. Every request flows; rows below show what the rules would have held or denied.
+          </span>
+        </div>
+      )}
 
       {!status.enabled && (
         <p style={{ fontSize: 12.5, color: c.muted, lineHeight: 1.55, margin: 0 }}>

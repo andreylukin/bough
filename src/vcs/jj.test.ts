@@ -236,6 +236,54 @@ Deno.test({
 });
 
 Deno.test({
+  // Regression: an op from a sibling workspace (concurrent subagent spawn, adopt)
+  // can rewrite the spawner workspace's working-copy commit, leaving it stale —
+  // `jj workspace add` then refuses ("The working copy is stale") and the subagent
+  // spawn fails. addWorkspace must repair the staleness before branching.
+  name: "jj: addWorkspace repairs a stale spawner working copy",
+  ignore: !jjAvailable,
+  fn: async () => {
+    const repo = await tempGitRepo();
+    const dir1 = await Deno.makeTempDir({ prefix: "jjtest-ws-" });
+    const dir2 = await Deno.makeTempDir({ prefix: "jjtest-ws-" });
+    try {
+      await jj.ensureWorkspace(repo, "spawner");
+      await Deno.remove(dir1);
+      await jj.addWorkspace(repo, "sub1", dir1, jj.bookmarkFor("spawner"));
+
+      // Rewrite the spawner's working-copy change (tree included) from the
+      // sibling workspace — the spawner's checkout is now stale (the state the
+      // incident hit). A message-only rewrite isn't enough: jj reconciles those
+      // silently; staleness needs the tree to have changed under the workspace.
+      await Deno.writeTextFile(`${dir1}/sub1.txt`, "sub1-work\n");
+      await sh("jj", [
+        "--no-pager",
+        "--color=never",
+        "--config",
+        "user.name=t",
+        "--config",
+        "user.email=t@t",
+        "squash",
+        "--from",
+        jj.bookmarkFor("sub1"),
+        "--into",
+        jj.bookmarkFor("spawner"),
+        "--use-destination-message",
+      ], dir1);
+
+      // Previously threw: jj workspace add failed (1): The working copy is stale.
+      await Deno.remove(dir2);
+      await jj.addWorkspace(repo, "sub2", dir2, jj.bookmarkFor("spawner"));
+      assertEquals(await Deno.readTextFile(`${dir2}/README.md`), "base\n");
+    } finally {
+      await Deno.remove(repo, { recursive: true });
+      await Deno.remove(dir1, { recursive: true }).catch(() => {});
+      await Deno.remove(dir2, { recursive: true }).catch(() => {});
+    }
+  },
+});
+
+Deno.test({
   // Regression: a session opened on a repo with uncommitted + untracked changes
   // must NOT wipe them. `ensureWorkspace` used to `jj new <HEAD>`, resetting the
   // working copy to the committed tree and deleting in-progress work.

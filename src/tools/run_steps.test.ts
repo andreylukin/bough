@@ -48,3 +48,48 @@ Deno.test("program errors surface in the output without killing the round", asyn
   assertStringIncludes(out, "[program error]");
   assertStringIncludes(out, "boom");
 });
+
+Deno.test("mcp() bridges into the program when granted; absent otherwise", async () => {
+  const calls: unknown[] = [];
+  const c: ToolRunCtx = {
+    ...ctx(),
+    mcp: {
+      call: (server, tool, args) => {
+        calls.push([server, tool, args]);
+        if (tool === "denied") return Promise.reject(new Error("blocked by Claw Patrol"));
+        return Promise.resolve({ echoed: args });
+      },
+    },
+  };
+  const out = await runSteps.run(
+    {
+      code: `const res = await mcp("echo", "echo", {text: "hi"});
+             console.log("got", res.echoed.text);
+             try { await mcp("echo", "denied", {}); } catch (e) { console.log("err:", e.message); }`,
+    },
+    c,
+  );
+  assertStringIncludes(out, "got hi");
+  assertStringIncludes(out, "err:");
+  assertStringIncludes(out, "blocked by Claw Patrol");
+  assertEquals(calls[0], ["echo", "echo", { text: "hi" }]);
+
+  // No grant → no host function; the call rejects inside the program.
+  const bare = await runSteps.run(
+    {
+      code:
+        `try { await mcp("echo", "echo", {}); } catch (e) { console.log("no fn:", e.message); }`,
+    },
+    ctx(),
+  );
+  assertStringIncludes(bare, "unknown host function: mcp");
+});
+
+Deno.test("mcp() string results round-trip too", async () => {
+  const c: ToolRunCtx = { ...ctx(), mcp: { call: () => Promise.resolve("plain text") } };
+  const out = await runSteps.run(
+    { code: `console.log(typeof await mcp("s", "t"), await mcp("s", "t", {}));` },
+    c,
+  );
+  assertStringIncludes(out, "string plain text");
+});

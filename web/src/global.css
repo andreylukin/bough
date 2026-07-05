@@ -1,5 +1,26 @@
 :root {
   color-scheme: dark;
+  /* Default palette. web/src/theme.ts reads these as var(--bough-*); a saved
+     theme (server /theme) overrides them at runtime via applyTheme(). Keep in
+     sync with THEME_DEFAULTS in src/server/theme.ts. */
+  --bough-bg: #0e1013;
+  --bough-panel: #14161a;
+  --bough-panel2: #161a1f;
+  --bough-panel3: #191c21;
+  --bough-panelInset: #1f2329;
+  --bough-canvas: #111318;
+  --bough-border: #2b3038;
+  --bough-border2: #23272e;
+  --bough-border3: #1c2026;
+  --bough-hairline: #3a414c;
+  --bough-text: #e7e9ed;
+  --bough-text2: #c9cdd4;
+  --bough-muted: #9aa1ac;
+  --bough-muted2: #656c77;
+  --bough-green: #4ec98f;
+  --bough-amber: #d9b45f;
+  --bough-red: #e2776e;
+  --bough-blue: #5c88c9;
 }
 * {
   box-sizing: border-box;
@@ -11,8 +32,8 @@ body,
 }
 body {
   margin: 0;
-  background: #0e1013;
-  color: #e7e9ed;
+  background: var(--bough-bg);
+  color: var(--bough-text);
   font-family: "IBM Plex Sans", system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
@@ -21,7 +42,7 @@ body {
   height: 8px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #333a44;
+  background: var(--bough-hairline);
   border-radius: 4px;
 }
 ::-webkit-scrollbar-track {
@@ -42,19 +63,19 @@ textarea {
 @keyframes boughPulse {
   0%,
   100% {
-    box-shadow: 0 0 0 3px rgba(78, 201, 143, 0.18);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--bough-green) 18%, transparent);
   }
   50% {
-    box-shadow: 0 0 0 5px rgba(78, 201, 143, 0.05);
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--bough-green) 5%, transparent);
   }
 }
 @keyframes boughPulseAmber {
   0%,
   100% {
-    box-shadow: 0 0 0 3px rgba(217, 180, 95, 0.16);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--bough-amber) 16%, transparent);
   }
   50% {
-    box-shadow: 0 0 0 5px rgba(217, 180, 95, 0.04);
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--bough-amber) 4%, transparent);
   }
 }
 .pulse-green {
@@ -62,6 +83,16 @@ textarea {
 }
 .pulse-amber {
   animation: boughPulseAmber 1.6s ease-in-out infinite;
+}
+
+/* Per-section ⑂ branch affordance: hidden until its section is hovered. */
+.seg-branch {
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.seg-wrap:hover .seg-branch,
+.seg-branch:focus-visible {
+  opacity: 1;
 }
 
 /* Phone layout (matches useIsMobile's breakpoint). The app styles inline, so these
@@ -92,6 +123,10 @@ textarea {
     padding: 5px 11px !important;
     font-size: 12px !important;
   }
+  /* no hover on touch — the section branch buttons stay visible */
+  .seg-branch {
+    opacity: 1;
+  }
   /* bundle browser: three desktop columns become a vertical stack */
   .bundles-body {
     flex-direction: column !important;
@@ -106,13 +141,13 @@ textarea {
   .bundles-detail {
     width: 100% !important;
     border-left: none !important;
-    border-top: 1px solid #262b32;
+    border-top: 1px solid var(--bough-border2);
   }
 }
 
 /* agent-reply markdown: quiet list markers (::marker can't be styled inline) */
 .md-list li::marker {
-  color: #9aa1ac;
+  color: var(--bough-muted);
 }
 
 @keyframes slideIn {

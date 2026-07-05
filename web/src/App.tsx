@@ -6,9 +6,9 @@
 // against :4321). Flip with VITE_MOCK=false. The Changes tab stays on mock diffs until
 // the Diff schema lands; everything else in LiveApp is real.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { c } from "./theme";
+import { c, alpha } from "./theme";
 import * as mock from "./mock";
-import { api, type ModelOption, type SkillInfo } from "./api";
+import { api, type ModelOption, type SkillInfo, type TurnPick } from "./api";
 import { useStore } from "./store";
 import { bundleFromSummary, diffsToFiles, headGroupsFromSessions, outlineFromThread } from "./live";
 import type { HeadGroup } from "./live";
@@ -221,7 +221,9 @@ function LiveApp() {
         onCreateSession={(workspace) => store.newSession(workspace || undefined)}
         onArchiveHead={(id) => store.archive(id)}
         onForkEdit={(id, text) => store.fork(id, text)}
-        onCompact={(fromId, toId, sessionId) => store.compact(fromId, toId, sessionId)}
+        onBranchAt={(id, partIdx, text) => store.fork(id, text, partIdx)}
+        onCompact={(picks, sessionId) => store.compact(picks, sessionId)}
+        onExtract={(picks) => store.extract(picks)}
         onDismissNotice={store.dismissNotice}
         queued={store.queued}
         onRemoveQueued={store.removeQueued}
@@ -295,7 +297,9 @@ function Window({
   onArchiveHead,
   newSessionSignal,
   onForkEdit,
+  onBranchAt,
   onCompact,
+  onExtract,
   onDismissNotice,
   queued = [],
   onRemoveQueued,
@@ -328,7 +332,7 @@ function Window({
   busy?: boolean;
   model?: string;
   models?: ModelOption[];
-  usage?: { contextTokens: number; outputTokens: number };
+  usage?: import("./api").Usage;
   onSetModel?: (model: string) => void;
   workspace?: string | null;
   onSend: (text: string, branch: boolean) => void;
@@ -346,7 +350,11 @@ function Window({
   onArchiveHead?: (id: string) => void;
   newSessionSignal?: number;
   onForkEdit?: (messageId: string, text: string) => void;
-  onCompact?: (fromId: string, toId: string, sessionId?: string) => void;
+  // Branch from inside a turn: keep parts[0..partIdx], then send `text` as the
+  // correction ("don't try it that way") on the new branch.
+  onBranchAt?: (messageId: string, partIdx: number, text: string) => void;
+  onCompact?: (picks: TurnPick[], sessionId?: string) => void;
+  onExtract?: (picks: TurnPick[]) => void;
   onDismissNotice?: () => void;
   queued?: string[];
   onRemoveQueued?: (i: number) => void;
@@ -400,7 +408,7 @@ function Window({
               onSelectHead(id);
               location.hash = "main";
             }}
-            onCompact={(sessionId, fromId, toId) => onCompact?.(fromId, toId, sessionId)}
+            onCompact={(sessionId, picks) => onCompact?.(picks, sessionId)}
             onClose={() => (location.hash = "main")}
           />
         ) : (
@@ -519,7 +527,7 @@ function Window({
                     alignItems: "center",
                     gap: 10,
                     padding: "9px 34px",
-                    background: "rgba(226,119,110,.10)",
+                    background: alpha(c.red, 10),
                     borderBottom: `1px solid ${c.border}`,
                     color: c.red,
                     fontSize: 12.5,
@@ -545,7 +553,10 @@ function Window({
                 onSearchFiles={onSearchFiles}
                 skills={skills}
                 onForkEdit={onForkEdit}
+                onBranchAt={onBranchAt}
                 onCompact={onCompact}
+                onExtract={onExtract}
+                sessionId={currentId}
                 queued={queued}
                 onRemoveQueued={onRemoveQueued}
                 onEditQueued={onEditQueued}

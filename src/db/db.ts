@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   origin_message_id TEXT,             -- lineage: the fork-at message / compaction span-end message
   archived_at INTEGER,                -- soft delete: archived sessions leave the sidebar, rows stay
   context_tokens INTEGER,             -- last turn's prompt size (context meter)
-  output_tokens  INTEGER              -- cumulative output tokens across the session
+  output_tokens  INTEGER,             -- cumulative output tokens across the session
+  input_tokens   INTEGER              -- cumulative input tokens across the session (cost)
 );
 CREATE TABLE IF NOT EXISTS messages (
   id          TEXT PRIMARY KEY,
@@ -193,6 +194,7 @@ export class Db {
         "archived_at INTEGER",
         "context_tokens INTEGER",
         "output_tokens INTEGER",
+        "input_tokens INTEGER",
       ]
     ) {
       try {
@@ -269,18 +271,61 @@ export class Db {
     return rows.map(toSession);
   }
 
-  /** Token usage for the context meter: last turn's prompt size + cumulative output. */
-  setSessionUsage(id: string, contextTokens: number, outputTokens: number): void {
+  /**
+   * Token usage: last turn's prompt size (context meter) + cumulative output and
+   * cumulative input across the session (cost accounting — input dominates cost
+   * because every round re-sends the whole thread).
+   */
+  setSessionUsage(
+    id: string,
+    contextTokens: number,
+    outputTokens: number,
+    inputTokens: number,
+  ): void {
     this.#db
-      .prepare(`UPDATE sessions SET context_tokens = ?, output_tokens = ? WHERE id = ?`)
-      .run(contextTokens, outputTokens, id);
+      .prepare(
+        `UPDATE sessions SET context_tokens = ?, output_tokens = ?, input_tokens = ? WHERE id = ?`,
+      )
+      .run(contextTokens, outputTokens, inputTokens, id);
   }
 
-  sessionUsage(id: string): { contextTokens: number; outputTokens: number } {
+  sessionUsage(id: string): { contextTokens: number; outputTokens: number; inputTokens: number } {
     const r = this.#db
-      .prepare(`SELECT context_tokens, output_tokens FROM sessions WHERE id = ?`)
-      .get(id) as { context_tokens: number | null; output_tokens: number | null } | undefined;
-    return { contextTokens: r?.context_tokens ?? 0, outputTokens: r?.output_tokens ?? 0 };
+      .prepare(`SELECT context_tokens, output_tokens, input_tokens FROM sessions WHERE id = ?`)
+      .get(id) as {
+        context_tokens: number | null;
+        output_tokens: number | null;
+        input_tokens: number | null;
+      } | undefined;
+    return {
+      contextTokens: r?.context_tokens ?? 0,
+      outputTokens: r?.output_tokens ?? 0,
+      inputTokens: r?.input_tokens ?? 0,
+    };
+  }
+
+  /**
+   * Cumulative usage for a session PLUS its whole subagent subtree (cost rollup).
+   * Follows origin_id but only through kind='subagent' rows, so forks/compactions
+   * don't count into a session's spend. Includes archived descendants — they cost
+   * money too. `sessions` = descendant count (0 for a leaf).
+   */
+  treeUsage(id: string): { inputTokens: number; outputTokens: number; sessions: number } {
+    const r = this.#db
+      .prepare(
+        `WITH RECURSIVE tree(id) AS (
+           SELECT id FROM sessions WHERE id = ?
+           UNION ALL
+           SELECT s.id FROM sessions s JOIN tree t ON s.origin_id = t.id
+           WHERE s.kind = 'subagent'
+         )
+         SELECT COUNT(*) - 1 AS descendants,
+                COALESCE(SUM(input_tokens), 0) AS input,
+                COALESCE(SUM(output_tokens), 0) AS output
+         FROM sessions WHERE id IN (SELECT id FROM tree)`,
+      )
+      .get(id) as { descendants: number; input: number; output: number };
+    return { inputTokens: r.input, outputTokens: r.output, sessions: r.descendants };
   }
 
   /** Sessions with a turn in flight (any message still pending) — sidebar busy dots. */

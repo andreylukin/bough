@@ -49,8 +49,14 @@ export const RuleConfig = z.object({
 export type RuleConfig = z.infer<typeof RuleConfig>;
 
 export const NetConfig = z.object({
-  /** Baseline action gate for allowed hosts: read_only (writes deny) | review (writes hold) | all. */
-  mode: z.enum(["read_only", "review", "all"]).default("review"),
+  /**
+   * Baseline action gate for allowed hosts: read_only (writes deny) | review (writes
+   * hold) | all — or "yolo": enforcement off, log-only with shadow verdicts (see
+   * policy.ts decide). Toggle yolo per scope with setYolo (the UI's red button).
+   */
+  mode: z.enum(["read_only", "review", "all", "yolo"]).default("review"),
+  /** Set while mode is "yolo": the mode the toggle restores when flipped off. */
+  prevMode: z.enum(["read_only", "review", "all"]).optional(),
   /** Trusted hosts. A request to a host NOT here gets `hostMiss`. Empty = every host allowed (sniff-only). */
   allowHosts: z.array(z.string()).default([]),
   /** Hosts denied outright (win over allowHosts). */
@@ -189,6 +195,34 @@ export function setPluginActivation(
   const plugins = config.plugins.filter((p) => p.name !== name);
   if (on) plugins.push({ name, ...(expires ? { expires } : {}) });
   const next = { ...config, plugins };
+  if (sessionId) db.setNetPolicy(sessionId, JSON.stringify(next));
+  else saveConfig(next, dir);
+  return next;
+}
+
+/**
+ * Flip YOLO (log-only, no gating) on/off for one scope — the red button's backend.
+ * Same copy-on-write move as setPluginActivation: session scope writes the branch's
+ * net_policies override seeded from its EFFECTIVE config (children inherit it),
+ * global scope edits policy.json. The pre-yolo mode rides along as `prevMode` so
+ * flipping off restores exactly what the scope ran before. Idempotent both ways.
+ */
+export function setYolo(
+  db: Db,
+  sessionId: string | undefined,
+  on: boolean,
+  dir = netDir(),
+): NetConfig {
+  const config = sessionId ? resolveConfig(db, sessionId, dir).config : loadConfig(dir);
+  let next: NetConfig;
+  if (on) {
+    if (config.mode === "yolo") return config;
+    next = { ...config, mode: "yolo", prevMode: config.mode };
+  } else {
+    if (config.mode !== "yolo") return config;
+    const { prevMode: _dropped, ...rest } = config;
+    next = { ...rest, mode: config.prevMode ?? "review" };
+  }
   if (sessionId) db.setNetPolicy(sessionId, JSON.stringify(next));
   else saveConfig(next, dir);
   return next;

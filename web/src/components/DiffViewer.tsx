@@ -1,20 +1,20 @@
 // Center pane when the Changes tab is focused (screen 4). Renders the selected file's
 // hunks with jj/clonefile review affordances: applied hunks collapse to a quiet ✓,
 // pending hunks offer Skip / Apply hunk; the header applies the whole file.
-import { c, mono } from "../theme";
+import { c, mix, alpha, mono } from "../theme";
 import type { DiffFile, DiffLine, Hunk } from "../mock";
 
 const num = (n?: number) => (n === undefined ? "" : String(n));
 
 function Line({ line }: { line: DiffLine }) {
   const bg =
-    line.kind === "+" ? "rgba(78,201,143,.11)" : line.kind === "-" ? "rgba(226,119,110,.11)" : "transparent";
-  const sign = line.kind === "+" ? c.green : line.kind === "-" ? c.red : "#3f4650";
-  const textColor = line.kind === "+" ? "#9fd3b6" : line.kind === "-" ? "#d99a95" : "#8b929c";
+    line.kind === "+" ? alpha(c.green, 11) : line.kind === "-" ? alpha(c.red, 11) : "transparent";
+  const sign = line.kind === "+" ? c.green : line.kind === "-" ? c.red : c.hairline;
+  const textColor = line.kind === "+" ? mix(c.green, c.text, 62) : line.kind === "-" ? mix(c.red, c.text, 62) : c.muted;
   return (
     <div style={{ display: "flex", background: bg }}>
-      <span style={{ width: 42, textAlign: "right", paddingRight: 10, color: "#3f4650" }}>{num(line.oldNo)}</span>
-      <span style={{ width: 42, textAlign: "right", paddingRight: 10, color: "#4a7a5e" }}>{num(line.newNo)}</span>
+      <span style={{ width: 42, textAlign: "right", paddingRight: 10, color: c.hairline }}>{num(line.oldNo)}</span>
+      <span style={{ width: 42, textAlign: "right", paddingRight: 10, color: mix(c.green, c.bg, 62) }}>{num(line.newNo)}</span>
       <span style={{ width: 20, color: sign }}>{line.kind === " " ? " " : line.kind}</span>
       <span style={{ color: textColor, whiteSpace: "pre" }}>{line.text}</span>
     </div>
@@ -41,7 +41,7 @@ function HunkView({
           alignItems: "center",
           justifyContent: "space-between",
           padding: "7px 16px 7px 20px",
-          background: "#15181d",
+          background: c.panel,
           borderTop: `1px solid ${c.border2}`,
           borderBottom: `1px solid ${c.border2}`,
         }}
@@ -57,7 +57,7 @@ function HunkView({
               color: c.green,
               padding: "3px 9px",
               borderRadius: 6,
-              background: "rgba(78,201,143,.12)",
+              background: alpha(c.green, 12),
             }}
           >
             ✓ applied
@@ -77,7 +77,7 @@ function HunkView({
                 fontSize: 11,
                 color: c.green,
                 padding: "3px 11px",
-                border: "1px solid rgba(78,201,143,.45)",
+                border: `1px solid ${alpha(c.green, 45)}`,
                 borderRadius: 6,
               }}
             >
@@ -131,7 +131,7 @@ export function DiffViewer({
                   fontWeight: 600,
                   padding: "2px 7px",
                   borderRadius: 5,
-                  background: "rgba(217,180,95,.15)",
+                  background: alpha(c.amber, 15),
                   color: c.amber,
                 }}
               >

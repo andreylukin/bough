@@ -272,25 +272,175 @@ Deno.test("join() claims a background result in-band — no wake note is posted"
   assertEquals(db.messagesFor(spawner.id).some((m) => m.role === "system"), false);
 });
 
-Deno.test("subagents cannot spawn subagents (no agent() host function at depth 1)", async () => {
-  const db = new Db(":memory:");
-  const bus = new Bus();
+/** Seed a subagent chain root → sub1 (→ sub2), returning nothing; ids are fixed. */
+function seedChain(db: Db, depth: 1 | 2): void {
+  db.createSession({ id: "root", parentId: null, title: "root", kind: "root", createdAt: 1 });
   db.createSession({
     id: "sub1",
     parentId: null,
     title: "subagent",
     kind: "subagent",
-    createdAt: 1,
-    originId: "elsewhere",
+    createdAt: 2,
+    originId: "root",
     originMessageId: "m0",
   });
+  if (depth === 2) {
+    db.createSession({
+      id: "sub2",
+      parentId: null,
+      title: "nested subagent",
+      kind: "subagent",
+      createdAt: 3,
+      originId: "sub1",
+      originMessageId: "m1",
+    });
+  }
+}
+
+Deno.test("a subagent can agent() one level down; the nested branch points back at it", async () => {
+  const db = new Db(":memory:");
+  const bus = new Bus();
+  seedChain(db, 1);
   db.createMessage({
     id: "u1",
     sessionId: "sub1",
     role: "user",
+    parts: [{ type: "text", text: "delegate a piece" }],
+    pending: false,
+    createdAt: 3,
+  });
+  const llm = dispatchLlm({
+    "delegate a piece": [
+      program(`const r = await agent("nested task"); console.log("GOT:" + r.report + "|" + r.ok);`),
+      textRound("nested delegation worked"),
+    ],
+    "nested task": [textRound("hello from depth 2")],
+  });
+  const ctx: TurnCtx = { db, bus, llm, tools: defaultTools, titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)) };
+
+  const { message, done } = beginTurn(ctx, "sub1");
+  await done;
+
+  assertStringIncludes(lastToolResult(db.getMessage(message.id)!), "GOT:hello from depth 2|true");
+  const nested = db.listSessions().find((s) => s.kind === "subagent" && s.originId === "sub1");
+  assertExists(nested);
+  assertEquals(nested.originMessageId, message.id);
+});
+
+Deno.test("subagents get blocking delegation only (no spawn/join host functions)", async () => {
+  const db = new Db(":memory:");
+  const bus = new Bus();
+  seedChain(db, 1);
+  db.createMessage({
+    id: "u1",
+    sessionId: "sub1",
+    role: "user",
+    parts: [{ type: "text", text: "try to spawn" }],
+    pending: false,
+    createdAt: 3,
+  });
+  const llm = dispatchLlm({
+    "try to spawn": [
+      program(`const h = await spawn("detached"); console.log(h);`),
+      textRound("could not"),
+    ],
+  });
+  const ctx: TurnCtx = { db, bus, llm, tools: defaultTools, titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)) };
+
+  const { message, done } = beginTurn(ctx, "sub1");
+  await done;
+
+  assertStringIncludes(lastToolResult(db.getMessage(message.id)!), "unknown host function: spawn");
+  assertEquals(db.listSessions().filter((s) => s.kind === "subagent").length, 1);
+});
+
+Deno.test("spawn cap: the 9th spawn from one turn fails; the model sees the error", async () => {
+  const db = new Db(":memory:");
+  const bus = new Bus();
+  const spawner = seed(db);
+  const llm = dispatchLlm({
+    "hi": [
+      program(
+        `for (let i = 0; i < 9; i++) {
+           try { await agent("cap task " + i); } catch (e) { console.log("REFUSED at " + i + ": " + e.message); }
+         }`,
+      ),
+      textRound("done"),
+    ],
+    "cap task": [
+      textRound("ok"),
+      textRound("ok"),
+      textRound("ok"),
+      textRound("ok"),
+      textRound("ok"),
+      textRound("ok"),
+      textRound("ok"),
+      textRound("ok"),
+    ],
+  });
+  const ctx: TurnCtx = { db, bus, llm, tools: defaultTools, titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)) };
+
+  const { message, done } = beginTurn(ctx, spawner.id);
+  await done;
+
+  const out = lastToolResult(db.getMessage(message.id)!);
+  assertStringIncludes(out, "REFUSED at 8: spawn cap reached");
+  assertEquals(db.listSessions().filter((s) => s.kind === "subagent").length, 8);
+});
+
+Deno.test("concurrency cap: a 5th parallel spawn is refused while 4 run", async () => {
+  const db = new Db(":memory:");
+  const bus = new Bus();
+  const spawner = seed(db);
+  // Four subagents block on a gate; the 5th spawn must be refused, then the gate
+  // opens and the four finish normally.
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  const gated = () => async () => {
+    await gate;
+    return textRound("finished");
+  };
+  const llm = dispatchLlm({
+    "hi": [
+      program(
+        `const four = [0, 1, 2, 3].map((i) => agent("parallel task " + i));
+         await new Promise((r) => setTimeout(r, 200)); // let all four start
+         try { await agent("one too many"); } catch (e) { console.log("REFUSED: " + e.message); }
+         console.log("release");
+         await bash("true"); // reach the host boundary so the log flushes deterministically
+         await Promise.all(four);
+         console.log("ALL DONE");`,
+      ),
+      textRound("done"),
+    ],
+    "parallel task": [gated(), gated(), gated(), gated()],
+  });
+  const ctx: TurnCtx = { db, bus, llm, tools: defaultTools, titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)) };
+
+  const { message, done } = beginTurn(ctx, spawner.id);
+  // Wait for the refusal, then let the four gated subagents finish.
+  await until(() => db.listSessions().filter((s) => s.kind === "subagent").length === 4);
+  await new Promise((r) => setTimeout(r, 300));
+  release();
+  await done;
+
+  const out = lastToolResult(db.getMessage(message.id)!);
+  assertStringIncludes(out, "REFUSED: subagent concurrency cap reached");
+  assertStringIncludes(out, "ALL DONE");
+  assertEquals(db.listSessions().filter((s) => s.kind === "subagent").length, 4);
+});
+
+Deno.test("delegation stops at the depth cap (no agent() host function at depth 2)", async () => {
+  const db = new Db(":memory:");
+  const bus = new Bus();
+  seedChain(db, 2);
+  db.createMessage({
+    id: "u1",
+    sessionId: "sub2",
+    role: "user",
     parts: [{ type: "text", text: "try to delegate" }],
     pending: false,
-    createdAt: 2,
+    createdAt: 4,
   });
   const llm = dispatchLlm({
     "try to delegate": [
@@ -300,12 +450,11 @@ Deno.test("subagents cannot spawn subagents (no agent() host function at depth 1
   });
   const ctx: TurnCtx = { db, bus, llm, tools: defaultTools, titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)) };
 
-  const { message, done } = beginTurn(ctx, "sub1");
+  const { message, done } = beginTurn(ctx, "sub2");
   await done;
 
-  const final = db.getMessage(message.id)!;
-  assertStringIncludes(lastToolResult(final), "unknown host function: agent");
-  assertEquals(db.listSessions().filter((s) => s.kind === "subagent").length, 1);
+  assertStringIncludes(lastToolResult(db.getMessage(message.id)!), "unknown host function: agent");
+  assertEquals(db.listSessions().filter((s) => s.kind === "subagent").length, 2);
 });
 
 Deno.test({
@@ -360,6 +509,85 @@ Deno.test({
       const spawnerDiff = await jj.diff(repo, spawner.id);
       assert(spawnerDiff.files.some((f) => f.path === "sub.txt"));
       // The subagent branch emptied but survives — continuable, not consumed.
+      assertEquals((await jj.diff(subDir, sub.id)).files.length, 0);
+    } finally {
+      if (prevSub === undefined) Deno.env.delete("BOUGH_SUBAGENT_BASE");
+      else Deno.env.set("BOUGH_SUBAGENT_BASE", prevSub);
+      if (prevSnap === undefined) Deno.env.delete("BOUGH_SNAPSHOT_BASE");
+      else Deno.env.set("BOUGH_SNAPSHOT_BASE", prevSnap);
+      await Deno.remove(repo, { recursive: true }).catch(() => {});
+      await Deno.remove(subBase, { recursive: true }).catch(() => {});
+      await Deno.remove(snapBase, { recursive: true }).catch(() => {});
+    }
+  },
+});
+
+Deno.test({
+  // The nested adopt chain: a subagent's workspace dir is a jj workspace WITHOUT
+  // .git, so this also covers the isolation check accepting .jj — a grandchild must
+  // get its own branched dir, not run on the subagent's working copy.
+  name: "nested repo delegation: grandchild works its own branch; adopts chain upward",
+  ignore: !jjAvailable,
+  fn: async () => {
+    const repo = await tempGitRepo();
+    const subBase = await Deno.makeTempDir({ prefix: "subagent-ws-" });
+    const snapBase = await Deno.makeTempDir({ prefix: "subagent-snap-" });
+    const prevSub = Deno.env.get("BOUGH_SUBAGENT_BASE");
+    const prevSnap = Deno.env.get("BOUGH_SNAPSHOT_BASE");
+    Deno.env.set("BOUGH_SUBAGENT_BASE", subBase);
+    Deno.env.set("BOUGH_SNAPSHOT_BASE", snapBase);
+    const db = new Db(":memory:");
+    const bus = new Bus();
+    try {
+      const spawner = seed(db, repo);
+      const llm = dispatchLlm({
+        "hi": [
+          program(
+            `const r = await agent("orchestrate: have nested.txt created");
+             console.log("subchanged:" + JSON.stringify(r.changedFiles));
+             console.log(await adopt(r.sessionId));`,
+          ),
+          textRound("all adopted"),
+        ],
+        "orchestrate": [
+          program(
+            `const g = await agent("write nested.txt containing from-nested");
+             console.log("grandchild:" + JSON.stringify(g.changedFiles));
+             console.log(await adopt(g.sessionId));`,
+            { done: true },
+          ),
+        ],
+        "write nested.txt": [
+          program(`await write("nested.txt", "from-nested\\n"); console.log("wrote");`, {
+            done: true,
+          }),
+        ],
+      });
+      const ctx: TurnCtx = { db, bus, llm, tools: defaultTools, titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)) };
+
+      const { message, done } = beginTurn(ctx, spawner.id);
+      await done;
+
+      const out = lastToolResult(db.getMessage(message.id)!);
+      // The grandchild's work rode the adopt chain: grandchild → subagent → spawner.
+      assertStringIncludes(out, 'subchanged:["nested.txt"]');
+      assertStringIncludes(out, "adopted");
+      assertEquals(await Deno.readTextFile(`${repo}/nested.txt`), "from-nested\n");
+
+      // Three tiers of sessions; the grandchild's lineage points at the subagent.
+      const subs = db.listSessions().filter((s) => s.kind === "subagent");
+      assertEquals(subs.length, 2);
+      const sub = subs.find((s) => s.originId === spawner.id)!;
+      const grandchild = subs.find((s) => s.originId === sub.id)!;
+      assertExists(grandchild);
+
+      // The grandchild ran in its OWN branched dir, distinct from the subagent's.
+      const subDir = db.getSessionRuntime(sub.id).workspace!;
+      const grandDir = db.getSessionRuntime(grandchild.id).workspace!;
+      assert(grandDir.startsWith(subBase), `grandchild dir ${grandDir} outside ${subBase}`);
+      assert(grandDir !== subDir, "grandchild shared the subagent's working copy");
+      // Both branches emptied by their adoptions but survive — still continuable.
+      assertEquals((await jj.diff(grandDir, grandchild.id)).files.length, 0);
       assertEquals((await jj.diff(subDir, sub.id)).files.length, 0);
     } finally {
       if (prevSub === undefined) Deno.env.delete("BOUGH_SUBAGENT_BASE");

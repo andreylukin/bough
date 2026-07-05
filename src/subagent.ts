@@ -26,7 +26,7 @@ import { join as joinPath } from "node:path";
 import { homedir } from "node:os";
 import type { Db } from "./db/db.ts";
 import { openBranch } from "./branch.ts";
-import { beginTurn, interruptTurn, postSystemNote, type TurnCtx } from "./turn.ts";
+import { beginTurn, interruptTurn, isTurnRunning, postSystemNote, type TurnCtx } from "./turn.ts";
 import { DONE_ACCEPTED } from "./tools/mod.ts";
 import { maybeAutoTitle, UNTITLED } from "./supervisor/title.ts";
 import { normalizeWorkspace } from "./supervisor/workspace.ts";
@@ -63,6 +63,66 @@ export interface SubagentHandle {
 
 /** Wall-clock cap per subagent turn; overrun interrupts it (result reports ok:false). */
 const TURN_TIMEOUT_MS = 15 * 60_000;
+
+/**
+ * Nesting cap: sessions at depth < MAX may delegate, so a root (0) spawns subagents
+ * (1) which spawn nested subagents (2), and depth 2 is terminal. Subagent turns get
+ * BLOCKING delegation only (agent/adopt, no spawn/join): a detached child would
+ * outlive the turn whose report already went upward, mutating a branch the spawner
+ * believes is final.
+ */
+export const MAX_SUBAGENT_DEPTH = 2;
+
+/** Delegation depth: 0 for a non-subagent session, else 1 + its origin's depth. */
+export function subagentDepth(db: Db, sessionId: string): number {
+  let depth = 0;
+  let cur = db.getSession(sessionId);
+  // Lineage is set once at spawn so cycles can't happen; cap hops anyway.
+  while (cur?.kind === "subagent" && depth < 16) {
+    depth++;
+    cur = cur.originId ? db.getSession(cur.originId) : undefined;
+  }
+  return depth;
+}
+
+/**
+ * Width caps — the depth cap alone doesn't bound fan-out. Both refuse the spawn
+ * with an error the model reads and adapts to; neither interrupts running work.
+ *   - MAX_TREE_CONCURRENT: subagent turns running at once across the whole tree.
+ *   - MAX_SPAWNS_PER_TURN: total spawns from one spawning turn (message), so a
+ *     loop can't fork unbounded even sequentially.
+ */
+export const MAX_TREE_CONCURRENT = 4;
+export const MAX_SPAWNS_PER_TURN = 8;
+
+/** The top session of a subagent tree (a non-subagent, or an orphaned lineage tip). */
+function treeRootOf(db: Db, sessionId: string): string {
+  let id = sessionId;
+  let cur = db.getSession(id);
+  for (let hops = 0; cur?.kind === "subagent" && cur.originId && hops < 16; hops++) {
+    const origin = db.getSession(cur.originId);
+    if (!origin) break;
+    id = origin.id;
+    cur = origin;
+  }
+  return id;
+}
+
+/** How many subagents in `rootId`'s tree currently have a turn in flight. */
+function runningInTree(db: Db, rootId: string): number {
+  const all = db.listSessions().filter((s) => s.kind === "subagent");
+  let running = 0;
+  const frontier = [rootId];
+  while (frontier.length) {
+    const id = frontier.pop()!;
+    for (const s of all) {
+      if (s.originId !== id) continue;
+      if (isTurnRunning(s.id)) running++;
+      frontier.push(s.id);
+    }
+  }
+  return running;
+}
 
 /**
  * Background subagents by session id: join() claims the result in-band; otherwise
@@ -147,7 +207,27 @@ async function launch(
   }
   const spawner = db.getSession(spawn.spawnerId);
   if (!spawner) throw new Error("spawner session not found");
-  if (spawner.kind === "subagent") throw new Error("subagents cannot spawn subagents");
+  // Defense in depth: the turn runner already withholds delegation at the cap.
+  if (subagentDepth(db, spawn.spawnerId) >= MAX_SUBAGENT_DEPTH) {
+    throw new Error(`subagent depth limit (${MAX_SUBAGENT_DEPTH}) reached`);
+  }
+  // Width caps: bound concurrency across the tree and total spawns per turn.
+  const spawnedThisTurn = db.listSessions().filter((s) =>
+    s.kind === "subagent" && s.originMessageId === spawn.spawnerMessageId
+  ).length;
+  if (spawnedThisTurn >= MAX_SPAWNS_PER_TURN) {
+    throw new Error(
+      `spawn cap reached: this turn already spawned ${MAX_SPAWNS_PER_TURN} subagents — ` +
+        `do the remaining work yourself or continue in a later turn`,
+    );
+  }
+  const running = runningInTree(db, treeRootOf(db, spawn.spawnerId));
+  if (running >= MAX_TREE_CONCURRENT) {
+    throw new Error(
+      `subagent concurrency cap reached (${running} running in this tree, max ${MAX_TREE_CONCURRENT}) — ` +
+        `wait for or join() running subagents before spawning more`,
+    );
+  }
 
   const explicit = explicitWorkspace(ctx, spawn.spawnerId);
   // Mirrors prepareWorkspace's sandbox rule: only an explicit workspace (and no
@@ -155,7 +235,11 @@ async function launch(
   // gets an isolated jj workspace of its own.
   const sandboxed = ctx.workspace === undefined && explicit !== undefined &&
     Deno.env.get("BOUGH_NO_SANDBOX") !== "1";
-  const isRepo = sandboxed && (await pathExists(joinPath(explicit!, ".git")));
+  // A subagent's own workspace dir is a jj workspace WITHOUT .git — accept both, or
+  // a nested spawn would silently run unisolated on its spawner's working copy.
+  const isRepo = sandboxed &&
+    (await pathExists(joinPath(explicit!, ".git")) ||
+      await pathExists(joinPath(explicit!, ".jj")));
 
   const seeder = openBranch({ db, bus }, {
     parentId: null, // fresh context: the task text is the subagent's whole briefing

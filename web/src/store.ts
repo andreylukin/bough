@@ -1,7 +1,7 @@
 // App state + event reduction. Holds the session list, the open thread, per-message
 // streaming buffers, and the network feed. Everything the UI renders derives from here.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type NetConfig, type NetStatus, type PolicySource, readBranch, type Usage } from "./api";
+import { api, type NetConfig, type NetStatus, type PolicySource, readBranch, type TurnPick, type Usage } from "./api";
 import { useEvents } from "./useEvents";
 import type { BoughEvent, ChangeSource, Message, NetRequest, Part, Session, WireDiff } from "./types";
 
@@ -54,10 +54,15 @@ export interface Store {
   refreshNetStatus: () => Promise<void>;
   applyChanges: (source: ChangeSource, paths: string[]) => void;
   revertChanges: () => void;
-  fork: (atMessageId: string, editedText?: string) => void;
+  // atPart cuts inside the turn (keep parts[0..atPart]); editedText then runs a
+  // turn from a new user message after the cut ("don't try it that way").
+  fork: (atMessageId: string, editedText?: string, atPart?: number) => void;
   // sessionId defaults to the open session (conversation compact); the map passes an
-  // explicit head so a span on any lane compacts the right session.
-  compact: (fromMessageId: string, toMessageId: string, sessionId?: string) => void;
+  // explicit head so a selection on any lane compacts the right session.
+  compact: (picks: TurnPick[], sessionId?: string) => void;
+  // Copy the picked thread turns (or sections of them) into a fresh conversation
+  // and open it.
+  extract: (picks: TurnPick[]) => void;
   // Adopt the OPEN subagent session's changes into its spawner's workspace.
   adopt: () => void;
   dismissNotice: () => void;
@@ -84,7 +89,7 @@ export function useStore(): Store {
   const [policySource, setPolicySource] = useState<PolicySource | null>(null);
   const [changes, setChanges] = useState<WireDiff[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
-  const [usage, setUsage] = useState<Usage>({ contextTokens: 0, outputTokens: 0 });
+  const [usage, setUsage] = useState<Usage>({ contextTokens: 0, outputTokens: 0, inputTokens: 0 });
   const [queued, setQueued] = useState<string[]>([]);
 
   // currentId in a ref so the event handler (stable) can filter without re-subscribing.
@@ -253,10 +258,14 @@ export function useStore(): Store {
   // Fork/compact branch off the CURRENT session; the new session arrives via
   // session.created (→ heads) and we open it. A 400 (e.g. an inherited turn) surfaces
   // as a notice rather than a silent no-op.
-  const fork = useCallback((atMessageId: string, editedText?: string) => {
+  const fork = useCallback((atMessageId: string, editedText?: string, atPart?: number) => {
     const id = currentRef.current;
     if (!id) return;
-    const body = editedText !== undefined ? { atMessageId, editedText } : { atMessageId };
+    const body = {
+      atMessageId,
+      ...(editedText !== undefined ? { editedText } : {}),
+      ...(atPart !== undefined ? { atPart } : {}),
+    };
     api
       .fork(id, body)
       .then(readBranch)
@@ -264,11 +273,21 @@ export function useStore(): Store {
       .catch((e: Error) => setNotice(e.message));
   }, [open]);
 
-  const compact = useCallback((fromMessageId: string, toMessageId: string, sessionId?: string) => {
+  const compact = useCallback((picks: TurnPick[], sessionId?: string) => {
     const id = sessionId ?? currentRef.current;
     if (!id) return;
     api
-      .compact(id, { fromMessageId, toMessageId })
+      .compact(id, { picks })
+      .then(readBranch)
+      .then((s) => open(s.id))
+      .catch((e: Error) => setNotice(e.message));
+  }, [open]);
+
+  const extract = useCallback((picks: TurnPick[]) => {
+    const id = currentRef.current;
+    if (!id) return;
+    api
+      .extract(id, { picks })
       .then(readBranch)
       .then((s) => open(s.id))
       .catch((e: Error) => setNotice(e.message));
@@ -437,9 +456,14 @@ export function useStore(): Store {
         break;
       }
       case "usage.updated": {
-        const u = ev.data as { sessionId: string; contextTokens: number; outputTokens: number };
+        const u = ev.data as { sessionId: string } & Usage;
         if (u.sessionId === currentRef.current) {
-          setUsage({ contextTokens: u.contextTokens, outputTokens: u.outputTokens });
+          setUsage({
+            contextTokens: u.contextTokens,
+            outputTokens: u.outputTokens,
+            inputTokens: u.inputTokens ?? 0,
+            tree: u.tree,
+          });
         }
         break;
       }
@@ -530,6 +554,7 @@ export function useStore(): Store {
     revertChanges,
     fork,
     compact,
+    extract,
     adopt,
     dismissNotice,
   };

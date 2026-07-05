@@ -41,10 +41,22 @@ import {
   type LlmMessage,
 } from "./supervisor/llm.ts";
 import { checkpoint, finishTurn, startTurn } from "./supervisor/turns.ts";
-import { adoptSubagent, joinSubagent, runSubagent, spawnSubagentDetached } from "./subagent.ts";
+import {
+  adoptSubagent,
+  joinSubagent,
+  MAX_SPAWNS_PER_TURN,
+  MAX_SUBAGENT_DEPTH,
+  MAX_TREE_CONCURRENT,
+  runSubagent,
+  spawnSubagentDetached,
+  subagentDepth,
+} from "./subagent.ts";
 import { maybeAutoTitle, type Titler } from "./supervisor/title.ts";
-import { activeFor } from "./supervisor/skills.ts";
+import { activeSkills } from "./supervisor/skills.ts";
 import { prepareWorkspace } from "./supervisor/workspace.ts";
+import { activationsFor } from "./mcp/config.ts";
+import { mcpManager } from "./mcp/manager.ts";
+import { mcpSection } from "./mcp/prompt.ts";
 import { expandFileReferences } from "./server/files.ts";
 
 export interface TurnCtx {
@@ -90,11 +102,17 @@ export function setActiveModel(model: string): void {
  * route through OpenRouter (need OPENROUTER_API_KEY). Not exhaustive — the composer
  * accepts any id, this is just the quick-switch menu.
  */
-export const MODELS: { id: string; label: string; provider: "anthropic" | "openrouter" }[] = [
-  { id: "claude-opus-4-8", label: "Opus 4.8", provider: "anthropic" },
-  { id: "claude-fable-5", label: "Fable 5", provider: "anthropic" },
-  { id: "claude-sonnet-5", label: "Sonnet 5", provider: "anthropic" },
-  { id: "claude-haiku-4-5", label: "Haiku 4.5", provider: "anthropic" },
+export const MODELS: {
+  id: string;
+  label: string;
+  provider: "anthropic" | "openrouter";
+  /** USD per million tokens (input/output) — drives the UI's cost estimate. */
+  pricing?: { in: number; out: number };
+}[] = [
+  { id: "claude-opus-4-8", label: "Opus 4.8", provider: "anthropic", pricing: { in: 5, out: 25 } },
+  { id: "claude-fable-5", label: "Fable 5", provider: "anthropic", pricing: { in: 10, out: 50 } },
+  { id: "claude-sonnet-5", label: "Sonnet 5", provider: "anthropic", pricing: { in: 3, out: 15 } },
+  { id: "claude-haiku-4-5", label: "Haiku 4.5", provider: "anthropic", pricing: { in: 1, out: 5 } },
   { id: "openai/gpt-5", label: "GPT-5 (OpenRouter)", provider: "openrouter" },
   { id: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro (OpenRouter)", provider: "openrouter" },
   { id: "z-ai/glm-5.2", label: "GLM 5.2 (OpenRouter)", provider: "openrouter" },
@@ -117,6 +135,11 @@ const SYSTEM = [
   "acceptance criteria hold. Set `done: true` when the work is complete — the harness",
   "re-runs the committed check and accepts done only if it passes.",
   "For pure questions or conversation, answer in plain text without calling run_steps.",
+  "Text output renders in a compact chat UI: minimize output tokens while keeping",
+  "accuracy. Answer in fewer than 4 lines unless the user asks for detail; one-word",
+  'answers are fine. No preamble or postamble — never open with "Here is..." or',
+  '"Based on...", and after finishing work report the outcome in a few short lines',
+  "(what changed, whether the check passed), not a narration of every step.",
 ].join(" ");
 
 // Delegation section, appended only for sessions that may spawn (not subagents).
@@ -133,8 +156,34 @@ const SYSTEM_DELEGATION = " " + [
   "stay on their own branch — call await adopt(sessionId) to merge a subagent's changes",
   "into your workspace, or leave the branch for the user to review. Prefer spawn for",
   "long tasks so you stay responsive; run independent blocking subtasks concurrently with",
-  "Promise.all. Subagents cannot spawn further agents. Delegate only genuinely separable",
-  "work; do small things yourself.",
+  "Promise.all. Subagents can delegate one level further themselves (blocking only).",
+  `Caps: at most ${MAX_SPAWNS_PER_TURN} spawns per turn and ${MAX_TREE_CONCURRENT} subagents`,
+  "running at once across the whole tree — a spawn beyond a cap fails with an error,",
+  "so plan batches accordingly.",
+  "Delegate only genuinely separable work; do small things yourself.",
+].join(" ");
+
+// Appended for every subagent turn: its final text is the report consumed by the
+// spawner, so cap it — verbose reports bloat the parent's context.
+const SYSTEM_SUBAGENT = " " + [
+  "You are a subagent: your final text is the report returned to your spawner, not a",
+  "user-facing message. Keep it to what the spawner needs — outcome, files changed,",
+  "check status, and any surprises — in a few short lines.",
+].join(" ");
+
+// Reduced delegation section for subagent turns: blocking only. A detached spawn
+// could outlive this turn and mutate the branch after its report went upward.
+const SYSTEM_DELEGATION_NESTED = " " + [
+  "More host functions enable delegation: await agent(task) runs a nested subagent to",
+  "completion on its own branched copy of this workspace and returns {sessionId, ok,",
+  "checkPassed, report, changedFiles}. Nested subagents start with NO context beyond the",
+  "task string — include every relevant path, constraint, and acceptance criterion in",
+  "it — and cannot delegate further. Their file changes stay on their own branch: call",
+  "await adopt(sessionId) to merge them into your workspace so they are part of your",
+  "result. Run independent blocking subtasks concurrently with Promise.all. Caps: at",
+  `most ${MAX_SPAWNS_PER_TURN} spawns per turn and ${MAX_TREE_CONCURRENT} subagents running`,
+  "at once across the whole tree — a spawn beyond a cap fails with an error. Delegate",
+  "only genuinely separable work; do small things yourself.",
 ].join(" ");
 
 /**
@@ -315,9 +364,11 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
   const model = ctx.model ?? activeModel();
   const llm = ctx.llm ?? clientFor(model);
   const tools = ctx.tools ?? defaultTools;
-  // Newest round's input_tokens ≈ the live context size; output accumulates.
+  // Newest round's input_tokens ≈ the live context size; output accumulates, and
+  // input accumulates too (cost: every round re-sends the whole thread).
   let contextTokens = 0;
   let outputTokens = 0;
+  let inputTokens = 0;
 
   const turn = startTurn(db, sessionId, messageId);
   const parts: Part[] = [];
@@ -340,17 +391,23 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       // Per-turn harness state: run_steps commits the CHECK here (SPEC §5 gating).
       turn: {},
     };
-    // Delegation (depth 1): subagent turns don't get a delegate, so their programs
-    // have no agent/spawn/join/adopt host functions and the prompt never mentions them.
+    // Delegation, allowed below the depth cap. Subagent turns get BLOCKING
+    // delegation only (agent/adopt): a detached spawn would outlive the turn whose
+    // report already went upward. At the cap there's no delegate at all, so those
+    // programs have no delegation host functions and the prompt never mentions them.
     const session = db.getSession(sessionId);
-    const mayDelegate = session !== undefined && session.kind !== "subagent";
+    const isSub = session?.kind === "subagent";
+    const mayDelegate = session !== undefined &&
+      subagentDepth(db, sessionId) < MAX_SUBAGENT_DEPTH;
     if (mayDelegate) {
       const sctx = { spawnerId: sessionId, spawnerMessageId: messageId, model, signal };
       toolCtx.delegate = {
         run: (task) => runSubagent(ctx, sctx, task),
-        spawn: (task) => spawnSubagentDetached(ctx, sctx, task),
-        join: (subId) => joinSubagent(sctx, subId),
         adopt: (subId) => adoptSubagent(ctx, sessionId, subId),
+        ...(isSub ? {} : {
+          spawn: (task) => spawnSubagentDetached(ctx, sctx, task),
+          join: (subId) => joinSubagent(sctx, subId),
+        }),
       };
     }
 
@@ -367,11 +424,39 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     // commands, conventions, and what "done" means — inject it into the system prompt.
     const agents = prepared.sandboxed ? await readAgentsFile(prepared.cwd) : null;
     // Skills: `/name` in the triggering user message pulls that skill's
-    // instructions into the system prompt for this run (supervisor/skills.ts).
-    const system = SYSTEM + (mayDelegate ? SYSTEM_DELEGATION : "") +
-      (mayDelegate ? runningSubagentsNote(db, sessionId) : "") +
+    // instructions into the system prompt for this run (supervisor/skills.ts) and
+    // names the MCP servers the invocation grants.
+    const skills = activeSkills(lastUserText(db, sessionId));
+    // MCP: the turn's grant = the invoked skills' servers + the session's manual
+    // activations (/mcp enable). Connect them now so the prompt can list real tools;
+    // a server that fails to connect is named UNAVAILABLE instead of vanishing.
+    // Subagent turns get no MCP (their task string is not a human grant).
+    let mcpNote = "";
+    if (!isSub) {
+      const granted = new Set([...skills.servers, ...activationsFor(sessionId)]);
+      if (granted.size > 0) {
+        const catalog = await mcpManager().ensure(sessionId, [...granted].sort(), {
+          workspace: prepared.cwd,
+          sandbox: toolCtx.sandbox,
+        });
+        mcpNote = mcpSection(catalog);
+        const usable = new Set(catalog.filter((c) => !c.error).map((c) => c.name));
+        if (usable.size > 0) {
+          toolCtx.mcp = {
+            call: (server, tool, args) =>
+              usable.has(server)
+                ? mcpManager().call(sessionId, server, tool, args)
+                : Promise.reject(new Error(`mcp server "${server}" is not granted for this turn`)),
+          };
+        }
+      }
+    }
+    const system = SYSTEM +
+      (isSub ? SYSTEM_SUBAGENT : "") +
+      (mayDelegate ? (isSub ? SYSTEM_DELEGATION_NESTED : SYSTEM_DELEGATION) : "") +
+      (mayDelegate && !isSub ? runningSubagentsNote(db, sessionId) : "") +
       workspaceNote(prepared.cwd) + (agents ?? "") +
-      activeFor(lastUserText(db, sessionId));
+      mcpNote + skills.sections;
     const toolDefs = tools.map((t) => ({
       name: t.name,
       description: t.description,
@@ -395,6 +480,7 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       if (result.usage) {
         contextTokens = result.usage.inputTokens; // last round = current context size
         outputTokens += result.usage.outputTokens;
+        inputTokens += result.usage.inputTokens;
       }
 
       const assistant: LlmContentBlock[] = [];
@@ -464,12 +550,30 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     // contextTokens stays 0 for a stream that errored before its first usage report.
     if (contextTokens > 0 || outputTokens > 0) {
       const prev = db.sessionUsage(sessionId);
-      db.setSessionUsage(sessionId, contextTokens, prev.outputTokens + outputTokens);
+      const totals = {
+        outputTokens: prev.outputTokens + outputTokens,
+        inputTokens: prev.inputTokens + inputTokens,
+      };
+      db.setSessionUsage(sessionId, contextTokens, totals.outputTokens, totals.inputTokens);
       bus.publish({
         type: "usage.updated",
         sessionId,
-        data: { sessionId, contextTokens, outputTokens: prev.outputTokens + outputTokens },
+        data: { sessionId, contextTokens, ...totals, tree: db.treeUsage(sessionId) },
       });
+      // Cost rolls up the origin chain: nudge each ancestor with its refreshed tree
+      // total, so the root's spend moves when a subagent (at any depth) burns tokens.
+      for (
+        let cur = db.getSession(sessionId);
+        cur?.kind === "subagent" && cur.originId;
+        cur = db.getSession(cur.originId)
+      ) {
+        const u = db.sessionUsage(cur.originId);
+        bus.publish({
+          type: "usage.updated",
+          sessionId: cur.originId,
+          data: { sessionId: cur.originId, ...u, tree: db.treeUsage(cur.originId) },
+        });
+      }
     }
     // A workspace session may have new file edits after the turn — nudge the Changes
     // rail to refetch. Only workspace-backed sessions have anything to show.

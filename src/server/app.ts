@@ -32,18 +32,29 @@ import {
   resolveConfig,
   saveConfig,
   setPluginActivation,
+  setYolo,
   toPolicy,
 } from "../net/config.ts";
 import { ttlToExpires } from "../net/plugins.ts";
 import { suggestPolicy } from "../net/suggest.ts";
+import {
+  activationsFor as mcpActivationsFor,
+  loadRegistry as loadMcpRegistry,
+  saveRegistry as saveMcpRegistry,
+  setActivation as setMcpActivation,
+} from "../mcp/config.ts";
+import { mcpManager } from "../mcp/manager.ts";
+import { beginAuth, clearAuth, completeAuth, hasTokens } from "../mcp/oauth.ts";
 import { clientFor } from "../supervisor/llm.ts";
 import { defaultWebDir, serveWeb } from "./static.ts";
 import { createAuth } from "./auth.ts";
 import { compact, CompactBody, CompactError } from "../compact.ts";
+import { extract, ExtractBody, ExtractError } from "../extract.ts";
 import { adoptSubagent } from "../subagent.ts";
 import type { LlmClient } from "../supervisor/llm.ts";
 import { applyChanges, ChangesError, revertChanges, sessionChanges } from "./changes.ts";
 import { ChangesApplyBody, ChangesRevertBody } from "../schema/changes.ts";
+import { clearTheme, loadTheme, saveTheme, Theme, THEME_DEFAULTS, THEME_TOKENS } from "./theme.ts";
 
 export interface AppCtx {
   db: Db;
@@ -54,6 +65,8 @@ export interface AppCtx {
   gateway?: ClawpatrolGateway;
   /** Net config dir override (tests); undefined = ~/.bough/net. */
   netDir?: string;
+  /** Theme storage dir override (tests); undefined = ~/.bough. */
+  themeDir?: string;
   /** Built web UI dir override (tests/packaging); undefined = web/dist. */
   webDir?: string;
   /** LLM client for compaction/turns; injected for tests, else the real Anthropic client. */
@@ -75,7 +88,7 @@ type Route = { method: string; pattern: URLPattern; handler: Handler };
 
 const CORS = {
   "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET, POST, PATCH, PUT, OPTIONS",
+  "access-control-allow-methods": "GET, POST, PATCH, PUT, DELETE, OPTIONS",
   "access-control-allow-headers": "content-type",
 };
 
@@ -170,7 +183,7 @@ const getSession: Handler = (_req, ctx, params) => {
   return json({
     session,
     thread: ctx.db.threadFor(session.id),
-    usage: ctx.db.sessionUsage(session.id),
+    usage: { ...ctx.db.sessionUsage(session.id), tree: ctx.db.treeUsage(session.id) },
   });
 };
 
@@ -209,7 +222,8 @@ const interruptSession: Handler = (_req, ctx, params) => {
   return json({ ok: true, interrupted: stopped });
 };
 
-// Compaction-as-a-branch: summarize a span onto a new compaction session (see compact.ts).
+// Compaction-as-a-branch: summarize selected turns onto a new compaction session
+// (see compact.ts).
 const compactSession: Handler = async (req, ctx, params) => {
   const parsed = CompactBody.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return error(400, "invalid body: " + parsed.error.message);
@@ -218,6 +232,20 @@ const compactSession: Handler = async (req, ctx, params) => {
     return json({ session });
   } catch (e) {
     if (e instanceof CompactError) return error(e.status, e.message);
+    throw e;
+  }
+};
+
+// Extract-to-conversation: copy picked thread messages into a fresh root session
+// (see extract.ts).
+const extractSession: Handler = async (req, ctx, params) => {
+  const parsed = ExtractBody.safeParse(await req.json().catch(() => null));
+  if (!parsed.success) return error(400, "invalid body: " + parsed.error.message);
+  try {
+    const session = extract(ctx, params.id, parsed.data);
+    return json({ session });
+  } catch (e) {
+    if (e instanceof ExtractError) return error(e.status, e.message);
     throw e;
   }
 };
@@ -331,6 +359,25 @@ const events: Handler = (req, ctx) => {
       ...CORS,
     },
   });
+};
+
+// ---- theme -------------------------------------------------------------------
+
+// The UI palette. GET returns the stored theme (null = default) plus the token
+// contract + default values so clients and the /theme skill can ground edits.
+// PUT validates and persists ~/.bough/theme.json; DELETE reverts to the default.
+const getTheme: Handler = (_req, ctx) =>
+  json({ theme: loadTheme(ctx.themeDir), tokens: THEME_TOKENS, defaults: THEME_DEFAULTS });
+
+const putTheme: Handler = async (req, ctx) => {
+  const parsed = Theme.safeParse(await req.json().catch(() => null));
+  if (!parsed.success) return error(400, "invalid theme: " + parsed.error.message);
+  return json({ theme: saveTheme(parsed.data, ctx.themeDir) });
+};
+
+const deleteTheme: Handler = (_req, ctx) => {
+  clearTheme(ctx.themeDir);
+  return json({ theme: null });
 };
 
 // ---- net: rail, holds, bundles ---------------------------------------------
@@ -526,6 +573,139 @@ const setPluginH = (on: boolean): Handler => async (req, ctx, params) => {
   }
 };
 
+// MCP servers: the registry (~/.bough/mcp/servers.json), this session's live
+// connections, and manual activations. Management is skill-first — the /mcp builtin
+// drives these over loopback. Registering grants nothing by itself: a skill's `mcp:`
+// frontmatter or an enable is what connects a server to a turn (turn.ts), and every
+// call is gated through Claw Patrol before the server sees it (mcp/gate.ts).
+const getMcpServers: Handler = (req, ctx) => {
+  const sessionId = new URL(req.url).searchParams.get("session") ?? undefined;
+  if (sessionId && !ctx.db.getSession(sessionId)) return error(404, "unknown session");
+  const registry = loadMcpRegistry();
+  // Remote (url) servers carry OAuth state so /mcp status can say "not authorized".
+  const auth = Object.fromEntries(
+    Object.entries(registry.servers)
+      .filter(([, cfg]) => cfg.url)
+      .map(([name]) => [name, { authorized: hasTokens(name) }]),
+  );
+  return json({
+    registry,
+    auth,
+    active: mcpActivationsFor(sessionId),
+    connections: mcpManager().statuses(sessionId),
+  });
+};
+
+// Replace the whole registry (GET → edit → PUT, like /net/policy). Live connections
+// are dropped so a changed entry can't keep serving; granting turns reconnect fresh.
+const putMcpServers: Handler = async (req) => {
+  const body = await req.json().catch(() => null);
+  if (!body) return error(400, 'body must be the registry JSON: {"servers":{…}}');
+  try {
+    const registry = saveMcpRegistry(body);
+    await mcpManager().dropAll();
+    return json({ registry });
+  } catch (e) {
+    return error(400, (e as Error).message);
+  }
+};
+
+const restartMcpServer: Handler = async (req, ctx, params) => {
+  const sessionId = new URL(req.url).searchParams.get("session");
+  if (!sessionId) return error(400, "restart is per-session — pass ?session=");
+  if (!ctx.db.getSession(sessionId)) return error(404, "unknown session");
+  try {
+    return json({ status: await mcpManager().restart(sessionId, params.name) });
+  } catch (e) {
+    return error(400, (e as Error).message);
+  }
+};
+
+// OAuth for remote (url) servers. Start: discovery + dynamic registration + PKCE
+// happen server-side (mcp/oauth.ts); "redirect" hands back the URL the human must
+// open — the /mcp skill (or UI) shows it. The browser lands on GET
+// /mcp/oauth/callback below, which validates the state nonce and exchanges the
+// code. Tokens live in ~/.bough/mcp/tokens/<name>.json and reach the remote
+// transport only.
+const startMcpAuth: Handler = async (_req, _ctx, params) => {
+  const cfg = loadMcpRegistry().servers[params.name];
+  if (!cfg) return error(400, `no registered mcp server named "${params.name}"`);
+  if (!cfg.url) return error(400, `"${params.name}" is a stdio server — no OAuth involved`);
+  try {
+    return json(await beginAuth(params.name, cfg.url));
+  } catch (e) {
+    return error(400, (e as Error).message);
+  }
+};
+
+const deleteMcpAuth: Handler = async (_req, _ctx, params) => {
+  clearAuth(params.name);
+  await mcpManager().dropServer(params.name);
+  return json({ authorized: false });
+};
+
+// Where the authorization server sends the user's browser back. HTML because a
+// human is looking at it; the state nonce (minted by our own provider) is what
+// authenticates the flow. On success the tab is done — tokens are stored and the
+// next granting turn connects.
+const mcpOauthCallback: Handler = async (req) => {
+  const q = new URL(req.url).searchParams;
+  const page = (status: number, body: string) =>
+    new Response(
+      `<!doctype html><meta charset="utf-8"><title>bough</title>` +
+        `<body style="font-family:system-ui;max-width:32rem;margin:4rem auto">${body}</body>`,
+      { status, headers: { "content-type": "text/html" } },
+    );
+  const err = q.get("error");
+  if (err) {
+    return page(
+      400,
+      `<h2>Authorization failed</h2><p>${err}: ${q.get("error_description") ?? ""}</p>`,
+    );
+  }
+  const code = q.get("code");
+  const state = q.get("state");
+  if (!code || !state) return page(400, "<h2>Missing code or state</h2>");
+  try {
+    const server = await completeAuth(
+      state,
+      code,
+      (name) => loadMcpRegistry().servers[name]?.url,
+    );
+    return page(
+      200,
+      `<h2>bough is connected to "${server}"</h2><p>You can close this tab and return to bough.</p>`,
+    );
+  } catch (e) {
+    return page(400, `<h2>Authorization failed</h2><p>${(e as Error).message}</p>`);
+  }
+};
+
+// Manual activation for a scope (?session=<id>, or global without it) — the grant
+// path that doesn't require authoring a skill; it still enters through the
+// human-typed /mcp invocation. Enable takes an optional ttl ("90m" | "2h" | "7d");
+// a lapsed activation fails closed. Servers connect at turn start, so an enable
+// takes effect on the session's next turn.
+const setMcpServer = (on: boolean): Handler => async (req, ctx, params) => {
+  const sessionId = new URL(req.url).searchParams.get("session") ?? undefined;
+  if (sessionId && !ctx.db.getSession(sessionId)) return error(404, "unknown session");
+  if (on && !loadMcpRegistry().servers[params.name]) {
+    return error(400, `no registered mcp server named "${params.name}" — PUT /mcp/servers first`);
+  }
+  const body = await req.json().catch(() => null) as { ttl?: string } | null;
+  try {
+    const expires = on && body?.ttl?.trim() ? ttlToExpires(body.ttl.trim()) : undefined;
+    setMcpActivation(sessionId, params.name, on, expires);
+    if (!on && sessionId) await mcpManager().drop(sessionId, params.name);
+    return json({
+      active: mcpActivationsFor(sessionId),
+      scope: sessionId ? { sessionId } : "global",
+    });
+  } catch (e) {
+    return error(400, (e as Error).message);
+  }
+};
+
 // Remove a branch's override so it inherits again (no-op if it had none).
 const deletePolicy: Handler = (req, ctx) => {
   const sessionId = new URL(req.url).searchParams.get("session");
@@ -533,6 +713,21 @@ const deletePolicy: Handler = (req, ctx) => {
   ctx.db.deleteNetPolicy(sessionId);
   ctx.gate?.invalidate();
   return json({ ok: true });
+};
+
+// Flip YOLO (log-only, no gating) for one scope — the Network rail's red button.
+// ?session=<id> targets that branch (copy-on-write override, inherited by children);
+// no param targets the global rule set. Toggling off restores the pre-yolo mode.
+const setYoloH: Handler = async (req, ctx) => {
+  if (!ctx.gateway) return error(400, "Claw Patrol is off");
+  const sessionId = new URL(req.url).searchParams.get("session") ?? undefined;
+  if (sessionId && !ctx.db.getSession(sessionId)) return error(404, "unknown session");
+  const body = await req.json().catch(() => null) as { on?: boolean } | null;
+  if (typeof body?.on !== "boolean") return error(400, "body {on: boolean} required");
+  const config = setYolo(ctx.db, sessionId, body.on, ctx.netDir);
+  if (sessionId) ctx.gate?.invalidate();
+  else ctx.gate?.setPolicy(toPolicy(config));
+  return json({ config, scope: sessionId ? { sessionId } : "global" });
 };
 
 // Recent NetRequest rows for the Network rail (optionally per-session).
@@ -612,6 +807,9 @@ const routes: Route[] = [
   { method: "GET", pattern: new URLPattern({ pathname: "/config" }), handler: getConfig },
   { method: "PATCH", pattern: new URLPattern({ pathname: "/config" }), handler: patchConfig },
   { method: "GET", pattern: new URLPattern({ pathname: "/skills" }), handler: getSkills },
+  { method: "GET", pattern: new URLPattern({ pathname: "/theme" }), handler: getTheme },
+  { method: "PUT", pattern: new URLPattern({ pathname: "/theme" }), handler: putTheme },
+  { method: "DELETE", pattern: new URLPattern({ pathname: "/theme" }), handler: deleteTheme },
   { method: "GET", pattern: new URLPattern({ pathname: "/sessions" }), handler: listSessions },
   { method: "POST", pattern: new URLPattern({ pathname: "/sessions" }), handler: createSession },
   { method: "GET", pattern: new URLPattern({ pathname: "/sessions/:id" }), handler: getSession },
@@ -634,6 +832,11 @@ const routes: Route[] = [
     method: "POST",
     pattern: new URLPattern({ pathname: "/sessions/:id/compact" }),
     handler: compactSession,
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/sessions/:id/extract" }),
+    handler: extractSession,
   },
   {
     method: "POST",
@@ -679,6 +882,7 @@ const routes: Route[] = [
   { method: "GET", pattern: new URLPattern({ pathname: "/net/policy" }), handler: getPolicy },
   { method: "PUT", pattern: new URLPattern({ pathname: "/net/policy" }), handler: putPolicy },
   { method: "DELETE", pattern: new URLPattern({ pathname: "/net/policy" }), handler: deletePolicy },
+  { method: "POST", pattern: new URLPattern({ pathname: "/net/yolo" }), handler: setYoloH },
   {
     method: "POST",
     pattern: new URLPattern({ pathname: "/net/policy/suggest" }),
@@ -719,6 +923,38 @@ const routes: Route[] = [
     method: "POST",
     pattern: new URLPattern({ pathname: "/net/plugins/:name/disable" }),
     handler: setPluginH(false),
+  },
+  { method: "GET", pattern: new URLPattern({ pathname: "/mcp/servers" }), handler: getMcpServers },
+  { method: "PUT", pattern: new URLPattern({ pathname: "/mcp/servers" }), handler: putMcpServers },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/mcp/servers/:name/restart" }),
+    handler: restartMcpServer,
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/mcp/servers/:name/enable" }),
+    handler: setMcpServer(true),
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/mcp/servers/:name/disable" }),
+    handler: setMcpServer(false),
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/mcp/servers/:name/auth" }),
+    handler: startMcpAuth,
+  },
+  {
+    method: "DELETE",
+    pattern: new URLPattern({ pathname: "/mcp/servers/:name/auth" }),
+    handler: deleteMcpAuth,
+  },
+  {
+    method: "GET",
+    pattern: new URLPattern({ pathname: "/mcp/oauth/callback" }),
+    handler: mcpOauthCallback,
   },
   { method: "GET", pattern: new URLPattern({ pathname: "/net/requests" }), handler: netRequests },
   {

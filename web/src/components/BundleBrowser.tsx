@@ -2,7 +2,7 @@
 // browsed like packages (publisher, version, verified signature, install count).
 // Selecting one renders its typed parameters as a safe form — never hand-edited HCL.
 import { useState } from "react";
-import { c, mono } from "../theme";
+import { c, alpha, mono } from "../theme";
 import { bundles as mockBundles, type Bundle, type BundleParam } from "../mock";
 import { TitleBar } from "./TitleBar";
 
@@ -33,7 +33,7 @@ function Field({ p }: { p: BundleParam }) {
           <label style={{ display: "block", fontSize: 12, color: c.text2, marginBottom: 7 }}>{p.label}</label>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, fontFamily: mono, fontSize: 11 }}>
             {p.selected?.map((v) => (
-              <span key={v} style={{ padding: "4px 10px", borderRadius: 6, background: "rgba(78,201,143,.14)", color: c.green, border: "1px solid rgba(78,201,143,.4)" }}>
+              <span key={v} style={{ padding: "4px 10px", borderRadius: 6, background: alpha(c.green, 14), color: c.green, border: `1px solid ${alpha(c.green, 40)}` }}>
                 {v} ✕
               </span>
             ))}
@@ -47,7 +47,7 @@ function Field({ p }: { p: BundleParam }) {
       );
     case "toggle":
       return (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 12px", border: `1px solid ${c.border2}`, borderRadius: 9, background: "#181b20" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 12px", border: `1px solid ${c.border2}`, borderRadius: 9, background: c.panel3 }}>
           <div>
             <div style={{ fontSize: 12, color: c.text }}>{p.label}</div>
             <div style={{ fontSize: 10.5, color: c.muted2 }}>{p.hint}</div>
@@ -79,7 +79,7 @@ function BundleCard({ b, selected, onSelect }: { b: Bundle; selected: boolean; o
         textAlign: "left",
         border: selected ? `1px solid ${c.green}` : `1px solid ${c.border2}`,
         borderRadius: 11,
-        background: selected ? "rgba(78,201,143,.05)" : "#181b20",
+        background: selected ? alpha(c.green, 5) : c.panel3,
         padding: 14,
       }}
     >

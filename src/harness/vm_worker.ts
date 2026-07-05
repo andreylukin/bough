@@ -14,7 +14,16 @@
  *   worker → main  {type:"done", logs} | {type:"error", message, logs}
  */
 
-type HostName = "bash" | "read" | "write" | "edit" | "agent" | "spawn" | "join" | "adopt";
+type HostName =
+  | "bash"
+  | "read"
+  | "write"
+  | "edit"
+  | "agent"
+  | "spawn"
+  | "join"
+  | "adopt"
+  | "mcp";
 
 const pending = new Map<number, { resolve: (v: string) => void; reject: (e: Error) => void }>();
 let seq = 0;
@@ -56,6 +65,10 @@ async function run(code: string): Promise<void> {
   const spawn = async (task: string) => JSON.parse(await hostCall("spawn", [task]));
   const join = async (sessionId: string) => JSON.parse(await hostCall("join", [sessionId]));
   const adopt = (sessionId: string) => hostCall("adopt", [sessionId]);
+  // MCP: args out and result back both travel as JSON (string-only protocol).
+  // Turns without granted servers have no bridged fn — the call rejects.
+  const mcp = async (server: string, tool: string, args?: unknown) =>
+    JSON.parse(await hostCall("mcp", [server, tool, JSON.stringify(args ?? {})]));
 
   // deno-lint-ignore no-explicit-any
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as any;
@@ -68,10 +81,11 @@ async function run(code: string): Promise<void> {
     "spawn",
     "join",
     "adopt",
+    "mcp",
     "console",
     code,
   );
-  await program(bash, read, write, edit, agent, spawn, join, adopt, sandboxConsole);
+  await program(bash, read, write, edit, agent, spawn, join, adopt, mcp, sandboxConsole);
 }
 
 self.onmessage = (e: MessageEvent) => {

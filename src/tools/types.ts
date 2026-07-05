@@ -36,19 +36,31 @@ export interface ToolRunCtx {
    */
   turn?: { check?: string };
   /**
-   * Delegation, wired by the turn runner for sessions allowed to spawn (absent in
-   * subagent turns — depth is 1). Each subagent is a fresh session on its own
-   * workspace branch. `run` blocks to completion; `spawn` starts one in the
-   * background and returns its handle immediately (its finished report is delivered
-   * to the session as a system note unless `join`ed first); `join` waits for a
-   * background subagent's result in-band; `adopt` squashes a subagent's changes
-   * back into this session's workspace.
+   * Delegation, wired by the turn runner for sessions below the depth cap (absent
+   * at MAX_SUBAGENT_DEPTH). Each subagent is a fresh session on its own workspace
+   * branch. `run` blocks to completion; `spawn` starts one in the background and
+   * returns its handle immediately (its finished report is delivered to the session
+   * as a system note unless `join`ed first); `join` waits for a background
+   * subagent's result in-band; `adopt` squashes a subagent's changes back into this
+   * session's workspace. Subagent turns get blocking delegation only: `spawn`/`join`
+   * are absent because a detached child would outlive the turn whose report was
+   * already delivered upward.
    */
   delegate?: {
     run: (task: string) => Promise<unknown>;
-    spawn: (task: string) => Promise<unknown>;
-    join: (subagentSessionId: string) => Promise<unknown>;
+    spawn?: (task: string) => Promise<unknown>;
+    join?: (subagentSessionId: string) => Promise<unknown>;
     adopt: (subagentSessionId: string) => Promise<string>;
+  };
+  /**
+   * MCP tool calls, wired by the turn runner when the triggering message's skills
+   * (or the session's manual activations) granted servers. `call` runs the
+   * session's Claw Patrol gate BEFORE the server sees the call — a deny rejects
+   * with the policy reason, a hold blocks on human approval — and rejects for
+   * servers outside the turn's grant. Absent = the program has no mcp().
+   */
+  mcp?: {
+    call: (server: string, tool: string, args: unknown) => Promise<unknown>;
   };
 }
 

@@ -71,17 +71,36 @@ export const runSteps: ToolDef = {
         write: (path, content) => writeFile.run({ path, content }, ctx),
         edit: (path, old_string, new_string) => editFile.run({ path, old_string, new_string }, ctx),
         // Delegation (present only when the turn runner allows it): agent()/join() can
-        // block on whole subagent turns, so the program gets a far larger wall-clock budget.
+        // block on whole subagent turns, so the program gets a far larger wall-clock
+        // budget. spawn/join are absent in subagent turns (blocking delegation only).
         ...(ctx.delegate
           ? {
             agent: async (task: string) => JSON.stringify(await ctx.delegate!.run(task)),
-            spawn: async (task: string) => JSON.stringify(await ctx.delegate!.spawn(task)),
-            join: async (sessionId: string) => JSON.stringify(await ctx.delegate!.join(sessionId)),
             adopt: (sessionId: string) => ctx.delegate!.adopt(sessionId),
+            ...(ctx.delegate.spawn
+              ? { spawn: async (task: string) => JSON.stringify(await ctx.delegate!.spawn!(task)) }
+              : {}),
+            ...(ctx.delegate.join
+              ? {
+                join: async (sessionId: string) =>
+                  JSON.stringify(await ctx.delegate!.join!(sessionId)),
+              }
+              : {}),
+          }
+          : {}),
+        // MCP (wired only for turns whose skills/activations granted servers): the
+        // JSON round-trip keeps the postMessage protocol string-only, like agent().
+        ...(ctx.mcp
+          ? {
+            mcp: async (server: string, tool: string, argsJson: string) =>
+              JSON.stringify(await ctx.mcp!.call(server, tool, JSON.parse(argsJson))) ??
+                "null",
           }
           : {}),
       },
-      ctx.delegate ? DELEGATING_TIMEOUT_MS : undefined,
+      // agent() blocks on whole subagent turns; a held mcp() call blocks on a human
+      // approval — both need far more wall-clock than the plain 3-minute cap.
+      ctx.delegate || ctx.mcp ? DELEGATING_TIMEOUT_MS : undefined,
       ctx.signal,
     );
 

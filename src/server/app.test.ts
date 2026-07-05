@@ -1,7 +1,7 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { Db } from "../db/db.ts";
 import { Bus } from "../bus.ts";
-import { createHandler, type AppCtx } from "./app.ts";
+import { type AppCtx, createHandler } from "./app.ts";
 import type { Message, Session } from "../schema/parts.ts";
 
 function ctx(): AppCtx {
@@ -20,13 +20,19 @@ Deno.test("GET /config lists models; PATCH /config switches the active model", a
   const c = ctx();
   const h = createHandler(c);
 
-  const cfg = await (await h(req("GET", "/config"))).json() as { model: string; models: { id: string }[] };
+  const cfg = await (await h(req("GET", "/config"))).json() as {
+    model: string;
+    models: { id: string }[];
+  };
   assertEquals(cfg.model, "claude-opus-4-8");
   assert(cfg.models.some((m) => m.id === "claude-opus-4-8"));
 
   const patched = await h(req("PATCH", "/config", { model: "claude-haiku-4-5" }));
   assertEquals((await patched.json() as { model: string }).model, "claude-haiku-4-5");
-  assertEquals((await (await h(req("GET", "/config"))).json() as { model: string }).model, "claude-haiku-4-5");
+  assertEquals(
+    (await (await h(req("GET", "/config"))).json() as { model: string }).model,
+    "claude-haiku-4-5",
+  );
 
   assertEquals((await h(req("PATCH", "/config", { model: "" }))).status, 400);
   // Restore so later tests see the default.
@@ -38,8 +44,20 @@ Deno.test("GET /sessions/:id includes token usage (zero before any turn)", async
   const c = ctx();
   const h = createHandler(c);
   const s = await (await h(req("POST", "/sessions", { title: "u" }))).json() as Session;
-  const got = await (await h(req("GET", `/sessions/${s.id}`))).json() as { usage: { contextTokens: number; outputTokens: number } };
-  assertEquals(got.usage, { contextTokens: 0, outputTokens: 0 });
+  const got = await (await h(req("GET", `/sessions/${s.id}`))).json() as {
+    usage: {
+      contextTokens: number;
+      outputTokens: number;
+      inputTokens: number;
+      tree: { inputTokens: number; outputTokens: number; sessions: number };
+    };
+  };
+  assertEquals(got.usage, {
+    contextTokens: 0,
+    outputTokens: 0,
+    inputTokens: 0,
+    tree: { inputTokens: 0, outputTokens: 0, sessions: 0 },
+  });
   c.db.close();
 });
 
@@ -62,7 +80,8 @@ Deno.test("POST /sessions with parentId defaults kind=fork; unknown parent → 4
   const h = createHandler(c);
   const root = await (await h(req("POST", "/sessions", { title: "r" }))).json() as Session;
 
-  const fork = await (await h(req("POST", "/sessions", { title: "f", parentId: root.id }))).json() as Session;
+  const fork = await (await h(req("POST", "/sessions", { title: "f", parentId: root.id })))
+    .json() as Session;
   assertEquals(fork.kind, "fork");
   assertEquals(fork.parentId, root.id);
 
@@ -91,7 +110,8 @@ Deno.test("GET /sessions/:id returns session + thread-through-parents; 404 unkno
   const h = createHandler(c);
   const root = await (await h(req("POST", "/sessions", { title: "r" }))).json() as Session;
   await h(req("POST", `/sessions/${root.id}/messages`, { text: "hi from user" }));
-  const fork = await (await h(req("POST", "/sessions", { title: "f", parentId: root.id }))).json() as Session;
+  const fork = await (await h(req("POST", "/sessions", { title: "f", parentId: root.id })))
+    .json() as Session;
 
   const res = await h(req("GET", `/sessions/${fork.id}`));
   const { session, thread } = await res.json() as { session: Session; thread: Message[] };
@@ -271,12 +291,144 @@ Deno.test("GET /sessions carries lastTurnStatus once a session has run a turn", 
   const h = createHandler(c);
   const s = await (await h(req("POST", "/sessions", { title: "t" }))).json() as Session;
 
-  let list = await (await h(req("GET", "/sessions"))).json() as (Session & { lastTurnStatus?: string })[];
+  let list = await (await h(req("GET", "/sessions")))
+    .json() as (Session & { lastTurnStatus?: string })[];
   assertEquals(list.find((x) => x.id === s.id)?.lastTurnStatus, undefined);
 
-  c.db.createMessage({ id: "m1", sessionId: s.id, role: "supervisor", parts: [], pending: false, createdAt: 2 });
-  c.db.createTurn({ id: "t1", sessionId: s.id, messageId: "m1", status: "error", step: "x", updatedAt: 3 });
-  list = await (await h(req("GET", "/sessions"))).json() as (Session & { lastTurnStatus?: string })[];
+  c.db.createMessage({
+    id: "m1",
+    sessionId: s.id,
+    role: "supervisor",
+    parts: [],
+    pending: false,
+    createdAt: 2,
+  });
+  c.db.createTurn({
+    id: "t1",
+    sessionId: s.id,
+    messageId: "m1",
+    status: "error",
+    step: "x",
+    updatedAt: 3,
+  });
+  list = await (await h(req("GET", "/sessions")))
+    .json() as (Session & { lastTurnStatus?: string })[];
   assertEquals(list.find((x) => x.id === s.id)?.lastTurnStatus, "error");
   c.db.close();
+});
+
+Deno.test("theme: PUT round-trips, 400 on bad color, DELETE reverts to default", async () => {
+  const dir = Deno.makeTempDirSync();
+  const c = { ...ctx(), themeDir: dir };
+  const h = createHandler(c);
+
+  // Nothing saved yet: default palette, contract exposed.
+  const empty = await (await h(req("GET", "/theme"))).json() as {
+    theme: unknown;
+    tokens: string[];
+    defaults: Record<string, string>;
+  };
+  assertEquals(empty.theme, null);
+  assert(empty.tokens.includes("green"));
+  assertEquals(empty.defaults.bg, "#0e1013");
+
+  // Save a partial theme and read it back.
+  const theme = { name: "Rosé Pine", colors: { bg: "#191724", green: "#9ccfd8" } };
+  const put = await h(req("PUT", "/theme", theme));
+  assertEquals(put.status, 200);
+  const got = await (await h(req("GET", "/theme"))).json() as { theme: typeof theme };
+  assertEquals(got.theme, theme);
+
+  // Non-hex color and unknown token shape are rejected.
+  assertEquals((await h(req("PUT", "/theme", { name: "x", colors: { bg: "red" } }))).status, 400);
+  assertEquals((await h(req("PUT", "/theme", { colors: {} }))).status, 400); // name required
+
+  // DELETE reverts to the default palette.
+  assertEquals((await h(req("DELETE", "/theme"))).status, 200);
+  const cleared = await (await h(req("GET", "/theme"))).json() as { theme: unknown };
+  assertEquals(cleared.theme, null);
+  c.db.close();
+});
+
+Deno.test("mcp: registry round-trips, enable/disable manage activations, guards hold", async () => {
+  const dir = Deno.makeTempDirSync({ prefix: "bough-mcp-app-" });
+  Deno.env.set("BOUGH_MCP_DIR", dir);
+  const c = ctx();
+  const h = createHandler(c);
+  try {
+    // empty registry, nothing active, nothing connected
+    const empty = await (await h(req("GET", "/mcp/servers"))).json() as {
+      registry: { servers: Record<string, unknown> };
+      auth: Record<string, unknown>;
+      active: string[];
+      connections: unknown[];
+    };
+    assertEquals(empty, { registry: { servers: {} }, auth: {}, active: [], connections: [] });
+
+    // PUT validates: bad shape 400, good shape persists
+    assertEquals((await h(req("PUT", "/mcp/servers", { servers: { bad: {} } }))).status, 400);
+    const put = await h(req("PUT", "/mcp/servers", {
+      servers: { echo: { command: "deno", args: ["run", "srv.ts"] } },
+    }));
+    assertEquals(put.status, 200);
+
+    // enable requires a registered name; unknown session 404s
+    assertEquals((await h(req("POST", "/mcp/servers/ghost/enable"))).status, 400);
+    assertEquals((await h(req("POST", "/mcp/servers/echo/enable?session=nope"))).status, 404);
+
+    const s = await (await h(req("POST", "/sessions", { title: "m" }))).json() as Session;
+    await h(req("POST", `/mcp/servers/echo/enable?session=${s.id}`));
+    const active = await (await h(req("GET", `/mcp/servers?session=${s.id}`))).json() as {
+      active: string[];
+    };
+    assertEquals(active.active, ["echo"]);
+    // scoped to that session; disable clears it
+    const other = await (await h(req("GET", "/mcp/servers"))).json() as { active: string[] };
+    assertEquals(other.active, []);
+    await h(req("POST", `/mcp/servers/echo/disable?session=${s.id}`));
+    const after = await (await h(req("GET", `/mcp/servers?session=${s.id}`))).json() as {
+      active: string[];
+    };
+    assertEquals(after.active, []);
+
+    // restart needs a session and a live connection
+    assertEquals((await h(req("POST", "/mcp/servers/echo/restart"))).status, 400);
+    assertEquals((await h(req("POST", `/mcp/servers/echo/restart?session=${s.id}`))).status, 400);
+  } finally {
+    Deno.env.delete("BOUGH_MCP_DIR");
+    c.db.close();
+  }
+});
+
+Deno.test("mcp oauth: auth endpoint guards; callback validates state", async () => {
+  const dir = Deno.makeTempDirSync({ prefix: "bough-mcp-oauth-app-" });
+  Deno.env.set("BOUGH_MCP_DIR", dir);
+  const c = ctx();
+  const h = createHandler(c);
+  try {
+    await h(req("PUT", "/mcp/servers", {
+      servers: {
+        stdio: { command: "deno" },
+        remote: { url: "https://example.invalid/mcp" },
+      },
+    }));
+    // auth is for remote servers only; unknown name 400s
+    assertEquals((await h(req("POST", "/mcp/servers/ghost/auth"))).status, 400);
+    assertEquals((await h(req("POST", "/mcp/servers/stdio/auth"))).status, 400);
+    // remote servers surface their auth state on GET
+    const got = await (await h(req("GET", "/mcp/servers"))).json() as {
+      auth: Record<string, { authorized: boolean }>;
+    };
+    assertEquals(got.auth, { remote: { authorized: false } });
+    // callback rejects a flow bough never started, as HTML for the human
+    const cb = await h(req("GET", "/mcp/oauth/callback?code=x&state=remote.forged"));
+    assertEquals(cb.status, 400);
+    assert((await cb.text()).includes("state mismatch"));
+    assertEquals((await h(req("GET", "/mcp/oauth/callback"))).status, 400);
+    // logout is idempotent
+    assertEquals((await h(req("DELETE", "/mcp/servers/remote/auth"))).status, 200);
+  } finally {
+    Deno.env.delete("BOUGH_MCP_DIR");
+    c.db.close();
+  }
 });

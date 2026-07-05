@@ -2,9 +2,10 @@
 // supervisor turns render as prose; worker sub-agents and tool calls fold into quiet
 // collapsed groups. The live turn streams in from the delta buffer.
 import { useEffect, useRef, useState } from "react";
-import { c, mono, sans } from "../theme";
+import { applyTheme, c, alpha, mono, sans, THEME_PRESETS, type ThemePreset } from "../theme";
 import { useIsMobile } from "../useIsMobile";
 import type { Message, Part, Session } from "../types";
+import { api, type TurnPick } from "../api";
 import type { ActivityGroup, WorkerActivity } from "../mock";
 import { CopyId, Kbd } from "./ui";
 import { Markdown } from "./Markdown";
@@ -20,7 +21,14 @@ function clip(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) + `\n… (${s.length - max} more chars)` : s;
 }
 
-function ToolGroup({ parts }: { parts: Part[] }) {
+function ToolGroup(
+  { parts, onBranch }: {
+    parts: Part[];
+    // Branch from a specific call: receives the position (within `parts`) of the
+    // call's result — history keeps everything up to and including it.
+    onBranch?: (partPos: number) => void;
+  },
+) {
   const [open, setOpen] = useState(false);
   const calls = parts.filter((p) => p.type === "tool_call") as Extract<Part, { type: "tool_call" }>[];
   const results = new Map(
@@ -89,12 +97,35 @@ function ToolGroup({ parts }: { parts: Part[] }) {
             : [];
           return (
             <div key={call.id} style={{ borderTop: `1px solid ${c.border3}`, padding: "8px 13px" }}>
-              <div style={{ color: c.muted }}>
+              <div style={{ color: c.muted, display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ color: c.green }}>◇</span> {call.name}
                 {res && (
-                  <span style={{ color: res.isError ? c.red : c.green, marginLeft: 8 }}>
+                  <span style={{ color: res.isError ? c.red : c.green }}>
                     {res.isError ? "✗ error" : "✓ done"}
                   </span>
+                )}
+                {onBranch && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const callPos = parts.indexOf(call);
+                      const resPos = parts.findIndex(
+                        (p) => p.type === "tool_result" && p.callId === call.id,
+                      );
+                      onBranch(resPos >= 0 ? resPos : callPos);
+                    }}
+                    title="Branch here: keep history up to this call's result, then explain what to do differently"
+                    style={{
+                      marginLeft: "auto",
+                      fontSize: 10.5,
+                      color: c.muted2,
+                      border: `1px solid ${c.border3}`,
+                      borderRadius: 5,
+                      padding: "0 6px",
+                    }}
+                  >
+                    ⑂ branch
+                  </button>
                 )}
               </div>
               {meta.length > 0 && (
@@ -151,23 +182,27 @@ function ToolGroup({ parts }: { parts: Part[] }) {
 }
 
 type Segment =
-  | { kind: "text"; text: string }
-  | { kind: "reasoning"; text: string }
-  | { kind: "tools"; parts: Part[] };
+  | { kind: "text"; text: string; idxs: number[] }
+  | { kind: "reasoning"; text: string; idxs: number[] }
+  | { kind: "tools"; parts: Part[]; idxs: number[] };
 
 // Group a turn's parts into renderable segments, preserving their order. Consecutive
 // tool_call/tool_result parts fold into one collapsible ToolGroup between prose blocks.
+// Each segment carries the part indexes it covers, so selection mode can address
+// sections of a turn (e.g. its prose without the tool calls) when building picks.
 function segmentParts(parts: Part[]): Segment[] {
   const segs: Segment[] = [];
-  for (const p of parts) {
-    if (p.type === "text") segs.push({ kind: "text", text: p.text });
-    else if (p.type === "reasoning") segs.push({ kind: "reasoning", text: p.text });
+  parts.forEach((p, i) => {
+    if (p.type === "text") segs.push({ kind: "text", text: p.text, idxs: [i] });
+    else if (p.type === "reasoning") segs.push({ kind: "reasoning", text: p.text, idxs: [i] });
     else {
       const last = segs[segs.length - 1];
-      if (last?.kind === "tools") last.parts.push(p);
-      else segs.push({ kind: "tools", parts: [p] });
+      if (last?.kind === "tools") {
+        last.parts.push(p);
+        last.idxs.push(i);
+      } else segs.push({ kind: "tools", parts: [p], idxs: [i] });
     }
-  }
+  });
   return segs;
 }
 
@@ -203,7 +238,7 @@ function WorkerGroup({ workers }: { workers: WorkerActivity[] }) {
           padding: "9px 13px",
           width: "100%",
           textAlign: "left",
-          background: "#181b20",
+          background: c.panel3,
           fontSize: 12,
           color: c.muted,
           borderBottom: open ? `1px solid ${c.border2}` : "none",
@@ -378,9 +413,11 @@ function TurnView({
   chipsAside = false,
   editable,
   onEdit,
-  compacting,
-  inSpan,
+  selecting,
+  selectedParts,
   onPick,
+  onPickParts,
+  onBranchAt,
 }: {
   msg: Message;
   live?: string;
@@ -393,9 +430,15 @@ function TurnView({
   chipsAside?: boolean;
   editable: boolean;
   onEdit: (id: string, text: string) => void;
-  compacting: boolean;
-  inSpan: boolean;
-  onPick: (id: string) => void;
+  selecting: boolean;
+  // Part indexes of this turn currently picked; undefined/empty = not picked.
+  selectedParts?: Set<number>;
+  onPick: (id: string, shift: boolean) => void;
+  // Toggle one section (a segment's part indexes) in/out of the selection.
+  onPickParts: (id: string, idxs: number[]) => void;
+  // Branch from inside this turn: keep parts[0..partIdx], send `text` as the
+  // correction on the new branch ("don't try it that way").
+  onBranchAt?: (partIdx: number, text: string) => void;
 }) {
   // Inside a subagent's own thread its replies are the subagent speaking, not the
   // supervisor — mislabeling was genuinely disorienting in user testing.
@@ -414,6 +457,20 @@ function TurnView({
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
+
+  // Branch-from-inside-the-turn: which segment the cut sits after (composer anchor)
+  // and the part index history keeps up to. Set by a segment's ⑂ or a tool call's.
+  const [branchAt, setBranchAt] = useState<{ seg: number; cut: number } | null>(null);
+  const [branchDraft, setBranchDraft] = useState("");
+  const branchable = !!onBranchAt && !isUser && !msg.pending && !selecting;
+
+  function confirmBranch() {
+    const t = branchDraft.trim();
+    if (!t || !branchAt || !onBranchAt) return;
+    onBranchAt(branchAt.cut, t);
+    setBranchAt(null);
+    setBranchDraft("");
+  }
 
   // Edit-to-fork mode: replace the turn's text and re-send on a new branch.
   if (editing) {
@@ -464,18 +521,26 @@ function TurnView({
     );
   }
 
+  const selected = (selectedParts?.size ?? 0) > 0;
+  // Some (not all) of the turn's parts picked — the border goes dashed as a cue.
+  const partial = selected && selectedParts!.size < msg.parts.length;
+
   return (
     <div
-      onClick={compacting ? () => onPick(msg.id) : undefined}
+      onClick={selecting ? (e) => onPick(msg.id, e.shiftKey) : undefined}
       style={{
         marginBottom: 24,
         position: "relative",
-        cursor: compacting ? "pointer" : undefined,
+        cursor: selecting ? "pointer" : undefined,
         borderRadius: 9,
-        padding: compacting ? "8px 10px" : undefined,
-        margin: compacting ? "0 -10px 16px" : undefined,
-        border: compacting ? `1px solid ${inSpan ? c.amber : "transparent"}` : undefined,
-        background: inSpan ? "rgba(217,180,95,.08)" : undefined,
+        padding: selecting ? "8px 10px" : undefined,
+        margin: selecting ? "0 -10px 16px" : undefined,
+        border: selecting
+          ? `1px ${partial ? "dashed" : "solid"} ${selected ? c.amber : "transparent"}`
+          : undefined,
+        background: selected ? alpha(c.amber, 8) : undefined,
+        // Shift-click extends the selection; without this the browser also selects text.
+        userSelect: selecting ? "none" : undefined,
       }}
     >
       <div
@@ -491,12 +556,12 @@ function TurnView({
         }}
       >
         {label.text}
-        {!compacting && (
+        {!selecting && (
           // session/turn address — each turn carries its HOME session id, so on a fork
           // this points at the ancestor head an inherited turn actually lives in.
           <CopyId value={`${msg.sessionId}/${msg.id}`} title="Copy session/turn id" />
         )}
-        {editable && !compacting && (
+        {editable && !selecting && (
           <button
             onClick={() => {
               setDraft(body);
@@ -529,10 +594,9 @@ function TurnView({
           <div style={{ display: "flex", gap: 18, alignItems: "flex-start" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 640, flex: "0 1 640px", minWidth: 0 }}>
             {segments.map((seg, i) => {
-              if (seg.kind === "reasoning") {
-                return (
+              const body = seg.kind === "reasoning"
+                ? (
                   <div
-                    key={i}
                     style={{
                       fontSize: 13,
                       lineHeight: 1.55,
@@ -544,12 +608,147 @@ function TurnView({
                   >
                     {seg.text}
                   </div>
+                )
+                : seg.kind === "tools"
+                ? (
+                  <ToolGroup
+                    parts={seg.parts}
+                    // Per-call ⑂ inside the expanded group: cut after that call's result.
+                    onBranch={branchable
+                      ? (pos) => {
+                        setBranchAt({ seg: i, cut: seg.idxs[pos] });
+                        setBranchDraft("");
+                      }
+                      : undefined}
+                  />
+                )
+                : (
+                  <div style={{ fontSize: 14.5, lineHeight: 1.65, color: c.text2 }}>
+                    <Markdown text={seg.text} />
+                  </div>
+                );
+              if (!selecting) {
+                return (
+                  <div key={i} className="seg-wrap" style={{ position: "relative" }}>
+                    {body}
+                    {branchable && (
+                      // Hover affordance: cut after this whole section.
+                      <button
+                        className="seg-branch"
+                        onClick={() => {
+                          setBranchAt({ seg: i, cut: seg.idxs[seg.idxs.length - 1] });
+                          setBranchDraft("");
+                        }}
+                        title="Branch here: keep history up to this section, then explain what to do differently"
+                        style={{
+                          position: "absolute",
+                          top: 0,
+                          right: 0,
+                          fontSize: 10.5,
+                          color: c.muted2,
+                          background: c.panel,
+                          border: `1px solid ${c.border2}`,
+                          borderRadius: 5,
+                          padding: "1px 7px",
+                        }}
+                      >
+                        ⑂ branch
+                      </button>
+                    )}
+                    {branchAt?.seg === i && (
+                      <div style={{ marginTop: 10, maxWidth: 640 }}>
+                        <div
+                          style={{
+                            fontSize: 10.5,
+                            letterSpacing: ".14em",
+                            color: c.amber,
+                            fontWeight: 600,
+                            marginBottom: 6,
+                          }}
+                        >
+                          ⑂ BRANCH HERE — history keeps everything above this point
+                        </div>
+                        <textarea
+                          autoFocus
+                          value={branchDraft}
+                          onChange={(e) => setBranchDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && !e.shiftKey) {
+                              e.preventDefault();
+                              confirmBranch();
+                            } else if (e.key === "Escape") setBranchAt(null);
+                          }}
+                          placeholder="Don't try it that way — explain what to do instead…"
+                          style={{
+                            width: "100%",
+                            minHeight: 54,
+                            resize: "vertical",
+                            background: c.panel3,
+                            border: `1px solid ${c.amber}`,
+                            borderRadius: 9,
+                            padding: "10px 12px",
+                            color: c.text,
+                            fontFamily: sans,
+                            fontSize: 14,
+                            lineHeight: 1.6,
+                            outline: "none",
+                          }}
+                        />
+                        <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                          <button
+                            onClick={confirmBranch}
+                            style={{
+                              fontSize: 12,
+                              fontWeight: 600,
+                              color: c.bg,
+                              background: c.green,
+                              borderRadius: 7,
+                              padding: "6px 12px",
+                            }}
+                          >
+                            ⑂ Branch &amp; send
+                          </button>
+                          <button
+                            onClick={() => setBranchAt(null)}
+                            style={{
+                              fontSize: 12,
+                              color: c.muted,
+                              border: `1px solid ${c.border}`,
+                              borderRadius: 7,
+                              padding: "6px 12px",
+                            }}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 );
               }
-              if (seg.kind === "tools") return <ToolGroup key={i} parts={seg.parts} />;
+              // Selection mode: each section is its own toggle, so a pick can be
+              // "this turn minus its tool calls". Clicking a section of an unpicked
+              // turn starts a partial pick; unpicked sections of a picked turn dim.
+              const on = selectedParts !== undefined && seg.idxs.every((x) => selectedParts.has(x));
               return (
-                <div key={i} style={{ fontSize: 14.5, lineHeight: 1.65, color: c.text2 }}>
-                  <Markdown text={seg.text} />
+                <div
+                  key={i}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onPickParts(msg.id, seg.idxs);
+                  }}
+                  title={on ? "Click to exclude this section" : "Click to include this section"}
+                  style={{
+                    cursor: "pointer",
+                    borderRadius: 7,
+                    padding: "4px 6px",
+                    margin: "-4px -6px",
+                    border: `1px dashed ${on ? c.amber : c.border2}`,
+                    background: on ? alpha(c.amber, 10) : undefined,
+                    opacity: selected && !on ? 0.45 : 1,
+                  }}
+                >
+                  {body}
                 </div>
               );
             })}
@@ -718,7 +917,10 @@ export function Conversation({
   onInterrupt,
   onSearchFiles,
   onForkEdit,
+  onBranchAt,
   onCompact,
+  onExtract,
+  sessionId,
   skills = [],
   queued = [],
   onRemoveQueued,
@@ -744,7 +946,16 @@ export function Conversation({
   onSend: (text: string, branch: boolean) => void;
   onInterrupt?: () => void;
   onForkEdit?: (messageId: string, text: string) => void;
-  onCompact?: (fromId: string, toId: string) => void;
+  // Branch from inside a turn (⑂ on a section / tool call): keep parts[0..partIdx],
+  // then send `text` as the correction on the new branch.
+  onBranchAt?: (messageId: string, partIdx: number, text: string) => void;
+  // Compact the picked turns/sections (session's OWN turns only) onto a summary branch.
+  onCompact?: (picks: TurnPick[]) => void;
+  // Copy the picked turns/sections (ancestors allowed) into a fresh conversation.
+  onExtract?: (picks: TurnPick[]) => void;
+  // The open session's id — marks which thread messages are its own (vs inherited),
+  // gating the compact action on selections the server would reject.
+  sessionId?: string | null;
   // Fuzzy workspace file search for @ references; absent → no autocomplete.
   onSearchFiles?: (q: string) => Promise<string[]>;
   // Installed skills for / references; absent/empty → no autocomplete.
@@ -857,6 +1068,7 @@ export function Conversation({
     const next = before + text.slice(caret);
     setText(next);
     setSkillMatches([]);
+    refreshThemeMenu(next, before.length); // "/theme " hands off to the preset picker
     requestAnimationFrame(() => {
       if (ta) {
         ta.focus();
@@ -865,36 +1077,131 @@ export function Conversation({
     });
   }
 
-  // Compact span selection: two clicked turns define an inclusive range to summarise.
-  const [compacting, setCompacting] = useState(false);
-  const [pickA, setPickA] = useState<string | null>(null);
-  const [pickB, setPickB] = useState<string | null>(null);
+  // /theme picker: once the trailing token is exactly "/theme " (the skill pick or a
+  // typed space), the slash menu hands off to a preset picker. Selecting applies the
+  // palette immediately (PUT /theme + live CSS-variable swap) — no model turn. Free
+  // text after "/theme" closes the picker and goes to the model (the /theme skill).
+  const [themeMenu, setThemeMenu] = useState<
+    { active: number; current: string | null; defaults?: Record<string, string> } | null
+  >(null);
+  const themeEntries: (ThemePreset | { name: "Default"; colors: null })[] = [
+    { name: "Default", colors: null },
+    ...THEME_PRESETS,
+  ];
+
+  function refreshThemeMenu(value: string, caret: number) {
+    const open = /(^|\s)\/theme\s+$/.test(value.slice(0, caret));
+    if (!open) {
+      setThemeMenu(null);
+      return;
+    }
+    if (themeMenu) return; // already open — keep the active row
+    setThemeMenu({ active: 0, current: null });
+    // Mark the saved theme's row + get true default swatches (best-effort;
+    // the picker works without either).
+    api.theme()
+      .then((r) =>
+        setThemeMenu((m) => (m ? { ...m, current: r.theme?.name ?? null, defaults: r.defaults } : m))
+      )
+      .catch(() => {});
+  }
+
+  function pickTheme(entry: ThemePreset | { name: "Default"; colors: null }) {
+    (entry.colors === null ? api.clearTheme() : api.setTheme(entry as ThemePreset)).catch(() => {});
+    applyTheme(entry.colors);
+    const ta = taRef.current;
+    const caret = ta ? ta.selectionStart : text.length;
+    const before = text.slice(0, caret).replace(/\/theme\s+$/, "");
+    setText(before + text.slice(caret));
+    setThemeMenu(null);
+    requestAnimationFrame(() => {
+      if (ta) {
+        ta.focus();
+        ta.selectionStart = ta.selectionEnd = before.length;
+      }
+    });
+  }
+
+  // Turn multi-selection: click toggles a whole turn; shift-click extends from the
+  // last clicked turn; clicking a SECTION inside a turn (a prose block or tool group)
+  // toggles just that section, so a pick can be "this turn minus its tool calls".
+  // Feeds both actions — compact-to-branch (summarize the picked content in place)
+  // and extract-to-conversation (copy it into a fresh conversation). State maps
+  // messageId → the set of picked part indexes (a full set = the whole turn).
+  const [selecting, setSelecting] = useState(false);
+  const [picked, setPicked] = useState<Map<string, Set<number>>>(new Map());
+  const lastPick = useRef<string | null>(null);
 
   const idxOf = (id: string | null) => (id ? thread.findIndex((m) => m.id === id) : -1);
-  const a = idxOf(pickA);
-  const b = idxOf(pickB);
-  const lo = a >= 0 && b >= 0 ? Math.min(a, b) : a;
-  const hi = a >= 0 && b >= 0 ? Math.max(a, b) : a;
-  const spanCount = lo >= 0 && hi >= 0 ? hi - lo + 1 : 0;
+  const allIdxs = (m: Message) => new Set(m.parts.map((_, i) => i));
+  const pickedCount = picked.size;
+  const partialCount = thread.filter((m) => {
+    const set = picked.get(m.id);
+    return set !== undefined && set.size < m.parts.length;
+  }).length;
+  // Compact is limited to the session's OWN turns (the server 400s a selection that
+  // reaches into ancestor history); extract has no such constraint.
+  const pickedOwn = !sessionId ||
+    thread.every((m) => !picked.has(m.id) || m.sessionId === sessionId);
 
-  const inSpan = (i: number) => lo >= 0 && i >= lo && i <= hi;
-
-  function pick(id: string) {
-    if (!pickA) return setPickA(id);
-    if (!pickB) return setPickB(id);
-    // Third click restarts the selection.
-    setPickA(id);
-    setPickB(null);
+  function pick(id: string, shift: boolean) {
+    setPicked((prev) => {
+      const next = new Map(prev);
+      const a = idxOf(lastPick.current);
+      const b = idxOf(id);
+      if (shift && a >= 0 && b >= 0) {
+        for (let i = Math.min(a, b); i <= Math.max(a, b); i++) {
+          if (thread[i].parts.length) next.set(thread[i].id, allIdxs(thread[i]));
+        }
+      } else if (next.has(id)) next.delete(id);
+      else {
+        const m = thread[idxOf(id)];
+        if (m?.parts.length) next.set(id, allIdxs(m));
+      }
+      return next;
+    });
+    lastPick.current = id;
   }
-  function resetCompact() {
-    setCompacting(false);
-    setPickA(null);
-    setPickB(null);
+  function pickSection(id: string, idxs: number[]) {
+    setPicked((prev) => {
+      const next = new Map(prev);
+      const set = new Set(next.get(id) ?? []);
+      const on = idxs.every((i) => set.has(i));
+      for (const i of idxs) {
+        if (on) set.delete(i);
+        else set.add(i);
+      }
+      if (set.size === 0) next.delete(id);
+      else next.set(id, set);
+      return next;
+    });
+    lastPick.current = id;
+  }
+  function resetSelect() {
+    setSelecting(false);
+    setPicked(new Map());
+    lastPick.current = null;
+  }
+  /** The selection as API picks, in thread order (click order shouldn't matter). */
+  function buildPicks(): TurnPick[] {
+    return thread
+      .filter((m) => picked.has(m.id))
+      .map((m) => {
+        const set = picked.get(m.id)!;
+        return set.size >= m.parts.length
+          ? { messageId: m.id }
+          : { messageId: m.id, parts: [...set].sort((x, y) => x - y) };
+      });
   }
   function confirmCompact() {
-    if (lo < 0 || hi < 0 || !onCompact) return;
-    onCompact(thread[lo].id, thread[hi].id);
-    resetCompact();
+    if (pickedCount === 0 || !pickedOwn || !onCompact) return;
+    onCompact(buildPicks());
+    resetSelect();
+  }
+  function confirmExtract() {
+    if (pickedCount === 0 || !onExtract) return;
+    onExtract(buildPicks());
+    resetSelect();
   }
 
   // Stick to the newest turn as it streams — but release the instant the reader
@@ -931,6 +1238,25 @@ export function Conversation({
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    // The /theme picker, when open, owns arrows / enter / esc.
+    if (themeMenu) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        return setThemeMenu((m) => m && { ...m, active: Math.min(m.active + 1, themeEntries.length - 1) });
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        return setThemeMenu((m) => m && { ...m, active: Math.max(m.active - 1, 0) });
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        return pickTheme(themeEntries[themeMenu.active]);
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        return setThemeMenu(null);
+      }
+    }
     // The @ file menu, when open, owns arrows / enter / esc.
     if (atMenuOpen) {
       if (e.key === "ArrowDown") {
@@ -995,7 +1321,7 @@ export function Conversation({
         background: c.panel,
       }}
     >
-      {canBranch && onCompact && thread.length > 0 && (
+      {canBranch && (onCompact || onExtract) && thread.length > 0 && (
         <div
           style={{
             flex: "none",
@@ -1004,24 +1330,56 @@ export function Conversation({
             gap: 12,
             padding: "8px 34px",
             borderBottom: `1px solid ${c.border}`,
-            background: compacting ? "rgba(217,180,95,.06)" : c.panel,
+            background: selecting ? alpha(c.amber, 6) : c.panel,
             fontSize: 12,
           }}
         >
-          {compacting ? (
+          {selecting ? (
             <>
               <span style={{ color: c.amber }}>
-                {spanCount > 0 ? `${spanCount} turn${spanCount === 1 ? "" : "s"} selected` : "Click the first and last turn to compact"}
+                {pickedCount > 0
+                  ? `${pickedCount} turn${pickedCount === 1 ? "" : "s"} selected` +
+                    (partialCount > 0 ? ` · ${partialCount} partial` : "")
+                  : "Click turns to select · shift-click for a range · click a section to include/exclude it"}
               </span>
               <div style={{ flex: 1 }} />
-              <button
-                onClick={confirmCompact}
-                disabled={spanCount === 0}
-                style={{ fontSize: 12, fontWeight: 600, color: spanCount ? c.bg : c.muted2, background: spanCount ? c.amber : "#262b32", borderRadius: 7, padding: "5px 11px" }}
-              >
-                ⊟ Compact → branch
-              </button>
-              <button onClick={resetCompact} style={{ fontSize: 12, color: c.muted, border: `1px solid ${c.border}`, borderRadius: 7, padding: "5px 11px" }}>
+              {onCompact && (
+                <button
+                  onClick={confirmCompact}
+                  disabled={pickedCount === 0 || !pickedOwn}
+                  title={!pickedOwn
+                    ? "Selection includes inherited turns — compact only works on this session's own turns"
+                    : "Summarize the selected turns in place on a new branch"}
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: pickedCount && pickedOwn ? c.bg : c.muted2,
+                    background: pickedCount && pickedOwn ? c.amber : c.border2,
+                    borderRadius: 7,
+                    padding: "5px 11px",
+                  }}
+                >
+                  ⊟ Compact → branch
+                </button>
+              )}
+              {onExtract && (
+                <button
+                  onClick={confirmExtract}
+                  disabled={pickedCount === 0}
+                  title="Copy the selected turns into a fresh conversation"
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: pickedCount ? c.bg : c.muted2,
+                    background: pickedCount ? c.green : c.border2,
+                    borderRadius: 7,
+                    padding: "5px 11px",
+                  }}
+                >
+                  ⧉ New conversation
+                </button>
+              )}
+              <button onClick={resetSelect} style={{ fontSize: 12, color: c.muted, border: `1px solid ${c.border}`, borderRadius: 7, padding: "5px 11px" }}>
                 Cancel
               </button>
             </>
@@ -1030,10 +1388,11 @@ export function Conversation({
               <span style={{ color: c.muted2, fontFamily: mono, fontSize: 11 }}>current thread</span>
               <div style={{ flex: 1 }} />
               <button
-                onClick={() => setCompacting(true)}
+                onClick={() => setSelecting(true)}
+                title="Select turns to compact into a summary or extract into a new conversation"
                 style={{ fontSize: 12, color: c.muted, border: `1px solid ${c.border}`, borderRadius: 7, padding: "5px 11px" }}
               >
-                ⊟ Compact a span
+                ⊟ Select turns
               </button>
             </>
           )}
@@ -1059,7 +1418,7 @@ export function Conversation({
             network, and stages every change for your review.
           </div>
         )}
-        {thread.map((m, i) => (
+        {thread.map((m) => (
           <TurnView
             key={m.id}
             msg={m}
@@ -1071,9 +1430,13 @@ export function Conversation({
             chipsAside={chipsAside}
             editable={canBranch && !!onForkEdit && m.role === "user"}
             onEdit={(id, t) => onForkEdit?.(id, t)}
-            compacting={compacting}
-            inSpan={inSpan(i)}
+            selecting={selecting}
+            selectedParts={picked.get(m.id)}
             onPick={pick}
+            onPickParts={pickSection}
+            onBranchAt={canBranch && onBranchAt
+              ? (partIdx, text) => onBranchAt(m.id, partIdx, text)
+              : undefined}
           />
         ))}
       </div>
@@ -1191,6 +1554,76 @@ export function Conversation({
             ))}
           </div>
         )}
+        {themeMenu && (
+          <div
+            style={{
+              position: "absolute",
+              left: 24,
+              right: 24,
+              bottom: "100%",
+              marginBottom: 6,
+              maxHeight: 220,
+              overflowY: "auto",
+              background: c.panel2,
+              border: `1px solid ${c.border}`,
+              borderRadius: 10,
+              boxShadow: "0 16px 40px rgba(0,0,0,.4)",
+              padding: 5,
+              zIndex: 20,
+            }}
+          >
+            {themeEntries.map((t, i) => {
+              const active = i === themeMenu.active;
+              const current = themeMenu.current === null ? t.colors === null : themeMenu.current === t.name;
+              // Default's swatches come from the server's true defaults — the live
+              // var() values would show the ACTIVE theme, not the default palette.
+              const swatch = (key: string) =>
+                t.colors?.[key] ?? themeMenu.defaults?.[key] ?? (c as Record<string, string>)[key];
+              return (
+                <div
+                  key={t.name}
+                  onMouseEnter={() => setThemeMenu((m) => m && { ...m, active: i })}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    pickTheme(t);
+                  }}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    padding: "7px 10px",
+                    borderRadius: 6,
+                    background: active ? c.panelInset : "transparent",
+                    fontSize: 12,
+                    cursor: "pointer",
+                  }}
+                >
+                  <span style={{ display: "flex", gap: 3, flexShrink: 0 }}>
+                    {["bg", "panel3", "text", "green", "amber", "red"].map((key) => (
+                      <span
+                        key={key}
+                        style={{
+                          width: 11,
+                          height: 11,
+                          borderRadius: "50%",
+                          background: swatch(key),
+                          border: `1px solid ${c.hairline}`,
+                        }}
+                      />
+                    ))}
+                  </span>
+                  <span style={{ color: active ? c.text : c.text2 }}>{t.name}</span>
+                  {current && <span style={{ color: c.green }}>✓ current</span>}
+                  <span style={{ flex: 1 }} />
+                  {t.colors === null && <span style={{ color: c.muted2 }}>bough's own palette</span>}
+                </div>
+              );
+            })}
+            <div style={{ padding: "6px 10px", fontSize: 11, color: c.muted2 }}>
+              ↵ apply · esc dismiss · or keep typing to describe a custom theme for the model
+            </div>
+          </div>
+        )}
         <div
           style={{
             border: `1px solid ${c.border}`,
@@ -1206,6 +1639,7 @@ export function Conversation({
               setText(e.target.value);
               refreshAtMenu(e.target.value, e.target.selectionStart);
               refreshSlashMenu(e.target.value, e.target.selectionStart);
+              refreshThemeMenu(e.target.value, e.target.selectionStart);
             }}
             onKeyDown={onKeyDown}
             onPaste={onPaste}
@@ -1355,7 +1789,7 @@ export function Conversation({
                     width: 30,
                     height: 30,
                     borderRadius: 8,
-                    background: text.trim() ? c.green : "#262b32",
+                    background: text.trim() ? c.green : c.border2,
                     color: text.trim() ? c.bg : c.muted,
                     display: "flex",
                     alignItems: "center",

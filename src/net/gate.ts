@@ -46,6 +46,12 @@ export interface GateOpts {
   sessionId?: string;
   /** Who made the request — a tool name, "worker", etc. */
   requestedBy?: string;
+  /**
+   * Extra classifiers consulted BEFORE the session's plugin classifiers — how a
+   * non-HTTP caller (mcp/gate.ts) teaches decide() its pseudo-request vocabulary.
+   * A claimed host also skips the allowlist gate, same as an active plugin's.
+   */
+  classifiers?: readonly Classifier[];
 }
 
 interface Hold {
@@ -127,7 +133,7 @@ export class Gate {
     const decision = decide(
       req,
       this.#policyFor(opts.sessionId),
-      this.#classifiers?.(opts.sessionId) ?? [],
+      [...(opts.classifiers ?? []), ...(this.#classifiers?.(opts.sessionId) ?? [])],
     );
     const record: NetRequest = {
       id: crypto.randomUUID(),

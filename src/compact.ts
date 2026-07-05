@@ -12,13 +12,19 @@
  *   the compaction session's own messages reconstruct the thread with the span swapped
  *   for the summary. The original session is never mutated.
  *
- * v1 span semantics (documented constraint, per the "align spans with what the
+ * Selection semantics (documented constraint, per the "align spans with what the
  * parent-chain expresses cleanly" allowance):
- *   - `fromMessageId` and `toMessageId` must both be the target session's OWN messages
- *     (messagesFor(id)), not messages inherited from an ancestor. A span that reaches
- *     into ancestor history is rejected 400 — compact the ancestor session instead.
- *   - `from` must not come after `to` (a single-message span, from == to, is allowed).
- *   - "turns" in the title = the number of messages in the span (v1 counts messages).
+ *   - `picks` selects any subset of the target session's OWN messages (messagesFor(id)),
+ *     not messages inherited from an ancestor. A selection that reaches into ancestor
+ *     history is rejected 400 — compact the ancestor session instead.
+ *   - The selection need not be contiguous: each maximal run of adjacent selected
+ *     messages collapses to ONE summary in place; unselected messages are copied
+ *     verbatim around the summaries, preserving thread order.
+ *   - A pick may carry `parts` (indexes into the message's parts) to narrow what the
+ *     summarizer SEES — e.g. a turn's prose without its tool calls. The message is
+ *     still wholly replaced by the summary: compaction shrinks, so unpicked parts
+ *     drop rather than being kept verbatim.
+ *   - "turns" in the title = the number of picked messages (v1 counts messages).
  *
  * Events: emits session.created for the new branch and message.started for each seeded
  * message (summary + copies), so the UI's existing reducers pick it up with no changes.
@@ -28,11 +34,11 @@ import type { Db } from "./db/db.ts";
 import type { Bus } from "./bus.ts";
 import type { Message, Part, Session } from "./schema/parts.ts";
 import { anthropicClient, type LlmClient } from "./supervisor/llm.ts";
-import { openBranch } from "./branch.ts";
+import { mergePicks, openBranch, PartPick, pickParts } from "./branch.ts";
 
 export const CompactBody = z.object({
-  fromMessageId: z.string(),
-  toMessageId: z.string(),
+  /** The session's OWN messages to compact; each contiguous run becomes one summary. */
+  picks: z.array(PartPick).min(1),
   instructions: z.string().optional(),
 });
 export type CompactBody = z.infer<typeof CompactBody>;
@@ -105,8 +111,9 @@ async function summarize(ctx: CompactCtx, span: Message[], instructions?: string
 }
 
 /**
- * Compact [fromMessageId..toMessageId] of `sessionId` onto a new compaction branch and
- * return the new session. Throws CompactError (400/404) on invalid input.
+ * Compact the selected messages of `sessionId` onto a new compaction branch and return
+ * the new session. Each contiguous run of selected messages is replaced in place by one
+ * summary; everything unselected is copied verbatim. Throws CompactError (400/404).
  */
 export async function compact(ctx: CompactCtx, sessionId: string, args: CompactBody): Promise<Session> {
   const session = ctx.db.getSession(sessionId);
@@ -114,31 +121,58 @@ export async function compact(ctx: CompactCtx, sessionId: string, args: CompactB
 
   const own = ctx.db.messagesFor(sessionId);
   const index = new Map(own.map((m, i) => [m.id, i]));
-  const fromIdx = index.get(args.fromMessageId);
-  const toIdx = index.get(args.toMessageId);
-  if (fromIdx === undefined || toIdx === undefined) {
-    throw new CompactError(
-      400,
-      "span endpoints must be messages of this session (v1 spans can't reach into ancestor history)",
-    );
+  // The picked messages in thread order, each narrowed to its picked parts — the
+  // narrowed view is what the summarizer sees; the whole message is still replaced.
+  const picked = [...mergePicks(args.picks)]
+    .map(([id, sel]) => {
+      const i = index.get(id);
+      if (i === undefined) {
+        throw new CompactError(
+          400,
+          "picks must be messages of this session (v1 selections can't reach into ancestor history)",
+        );
+      }
+      const parts = pickParts(own[i], sel);
+      if (parts === undefined) {
+        throw new CompactError(400, `part index out of range for message ${id}`);
+      }
+      return { idx: i, view: { ...own[i], parts } };
+    })
+    .sort((a, b) => a.idx - b.idx);
+
+  // Maximal runs of adjacent selected indices; each run collapses to one summary.
+  const runs: { start: number; end: number; span: Message[] }[] = [];
+  for (const p of picked) {
+    const last = runs.at(-1);
+    if (last && p.idx === last.end + 1) {
+      last.end = p.idx;
+      last.span.push(p.view);
+    } else runs.push({ start: p.idx, end: p.idx, span: [p.view] });
   }
-  if (fromIdx > toIdx) throw new CompactError(400, "invalid span: from is after to");
+  const summaries = await Promise.all(
+    runs.map((r) => summarize(ctx, r.span, args.instructions)),
+  );
 
-  const span = own.slice(fromIdx, toIdx + 1);
-  const summaryText = await summarize(ctx, span, args.instructions);
-
-  // Branch a sibling of the target and seed it: pre-span copies, the summary, post-span
-  // copies. The shared ancestors come from thread-through-parents (see branch.ts).
+  // Branch a sibling of the target and seed it: copies of unselected messages with each
+  // run swapped for its summary, in thread order. The shared ancestors come from
+  // thread-through-parents (see branch.ts).
   const seeder = openBranch(ctx, {
     parentId: session.parentId,
-    title: `compacted · ${span.length} turns`,
+    title: `compacted · ${picked.length} turns`,
     kind: "compaction",
     originId: session.id, // lineage: the compacted session…
-    originMessageId: args.toMessageId, // …and the span-end message
+    originMessageId: own[picked[picked.length - 1].idx].id, // …and the last picked message
   });
-  for (const m of own.slice(0, fromIdx)) seeder.copy(m);
-  seeder.add("supervisor", [{ type: "text", text: summaryText }]);
-  for (const m of own.slice(toIdx + 1)) seeder.copy(m);
+  let run = 0;
+  for (let i = 0; i < own.length; i++) {
+    if (run < runs.length && i === runs[run].start) {
+      seeder.add("supervisor", [{ type: "text", text: summaries[run] }]);
+      i = runs[run].end; // skip the rest of the run (loop's i++ lands on end+1)
+      run++;
+    } else {
+      seeder.copy(own[i]);
+    }
+  }
 
   return seeder.session;
 }

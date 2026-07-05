@@ -14,9 +14,52 @@
  * advance an artificial clock, so a real turn started afterwards (its message stamped
  * with a later/equal Date.now() and a higher rowid) always sorts after the seed.
  */
+import { z } from "zod";
 import type { Db } from "./db/db.ts";
 import type { Bus } from "./bus.ts";
 import type { Message, Part, Session, SessionKind } from "./schema/parts.ts";
+
+/**
+ * One picked message for a selection-driven branch op (compact/extract): the whole
+ * message, or — when `parts` is set — just those sections of it. Part indexes point
+ * into the message's parts array, so the UI can offer "this turn minus its tool
+ * calls" and the server stays agnostic about part types.
+ */
+export const PartPick = z.object({
+  messageId: z.string(),
+  parts: z.array(z.number().int().nonnegative()).min(1).optional(),
+});
+export type PartPick = z.infer<typeof PartPick>;
+
+/**
+ * Merge duplicate picks by message: a whole-message pick wins over a partial one;
+ * partial picks union their indexes (sorted). null = the whole message.
+ */
+export function mergePicks(picks: PartPick[]): Map<string, number[] | null> {
+  const merged = new Map<string, Set<number> | null>();
+  for (const p of picks) {
+    if (!p.parts) {
+      merged.set(p.messageId, null);
+      continue;
+    }
+    const cur = merged.get(p.messageId);
+    if (cur === null) continue; // already picked whole
+    const set = cur ?? new Set<number>();
+    for (const i of p.parts) set.add(i);
+    merged.set(p.messageId, set);
+  }
+  return new Map([...merged].map(([id, s]) => [id, s ? [...s].sort((a, b) => a - b) : null]));
+}
+
+/**
+ * A message's parts narrowed to the picked indexes (null = all of them), or
+ * undefined when an index is out of range — the caller turns that into its 400.
+ */
+export function pickParts(m: Message, indexes: number[] | null): Part[] | undefined {
+  if (indexes === null) return m.parts;
+  if (indexes.some((i) => i >= m.parts.length)) return undefined;
+  return indexes.map((i) => m.parts[i]);
+}
 
 export interface BranchCtx {
   db: Db;

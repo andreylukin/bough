@@ -14,7 +14,7 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { c, mono } from "../theme";
+import { c, alpha, mono } from "../theme";
 import { mapEdges, mapNodes, type MapNode } from "../mock";
 import { TitleBar } from "./TitleBar";
 
@@ -41,7 +41,7 @@ function TurnNode({ data }: NodeProps) {
             width: 34,
             height: 22,
             borderRadius: 6,
-            background: "rgba(217,180,95,.10)",
+            background: alpha(c.amber, 10),
             border: `1.5px dashed ${c.amber}`,
             display: "flex",
             alignItems: "center",
@@ -148,7 +148,7 @@ function MapCanvas() {
       panOnScroll
       zoomOnScroll
     >
-      <Background variant={BackgroundVariant.Dots} gap={26} size={1} color="#1c2026" />
+      <Background variant={BackgroundVariant.Dots} gap={26} size={1} color={c.border3} />
     </ReactFlow>
   );
 }
@@ -199,7 +199,7 @@ export function MapView({ onClose }: { onClose: () => void }) {
               top: 0,
               bottom: 0,
               width: 3,
-              background: "linear-gradient(180deg,rgba(78,201,143,0),rgba(78,201,143,.35),rgba(78,201,143,0))",
+              background: `linear-gradient(180deg,${alpha(c.green, 0)},${alpha(c.green, 35)},${alpha(c.green, 0)})`,
               zIndex: 5,
             }}
           />
@@ -227,7 +227,7 @@ export function MapView({ onClose }: { onClose: () => void }) {
                     style={{
                       padding: "5px 11px",
                       color: z === zoom ? c.text : c.muted2,
-                      background: z === zoom ? "#262b32" : "transparent",
+                      background: z === zoom ? c.border2 : "transparent",
                       borderLeft: z !== "Tree" ? `1px solid ${c.border}` : "none",
                     }}
                   >

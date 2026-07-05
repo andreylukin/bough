@@ -6,6 +6,7 @@ import {
   resolveConfig,
   saveConfig,
   setPluginActivation,
+  setYolo,
   toPolicy,
 } from "./config.ts";
 import { decide } from "./policy.ts";
@@ -203,5 +204,34 @@ Deno.test("setPluginActivation: per-branch copy-on-write, inherited, independent
     assertEquals(resolveConfig(db, "child", dir).config.plugins.length, 1);
     // the global rule set never saw any of it
     assertEquals(loadConfig(dir).plugins, []);
+  });
+});
+
+Deno.test("setYolo: toggle on/off restores the pre-yolo mode, per scope", async () => {
+  await withDir((dir) => {
+    const db = treeDb();
+    // global: review → yolo → back to review, prevMode cleaned up
+    const on = setYolo(db, undefined, true, dir);
+    assertEquals(on.mode, "yolo");
+    assertEquals(on.prevMode, "review");
+    const off = setYolo(db, undefined, false, dir);
+    assertEquals(off.mode, "review");
+    assertEquals(off.prevMode, undefined);
+
+    // per-branch: child had a custom "all" override; yolo round-trips it
+    setPluginActivation(db, "child", "stripe", true, undefined, dir); // creates the override row
+    const cfg = resolveConfig(db, "child", dir).config;
+    db.setNetPolicy("child", JSON.stringify({ ...cfg, mode: "all" }));
+    setYolo(db, "child", true, dir);
+    assertEquals(resolveConfig(db, "child", dir).config.mode, "yolo");
+    // children inherit the yolo override; the global set is untouched
+    assertEquals(resolveConfig(db, "grandchild", dir).config.mode, "yolo");
+    assertEquals(loadConfig(dir).mode, "review");
+    setYolo(db, "child", false, dir);
+    const restored = resolveConfig(db, "child", dir).config;
+    assertEquals(restored.mode, "all");
+    assertEquals(restored.prevMode, undefined);
+    // idempotent both directions
+    assertEquals(setYolo(db, "child", false, dir).mode, "all");
   });
 });

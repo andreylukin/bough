@@ -75,7 +75,10 @@ export function createAuth(password: string | undefined): Auth {
     let supplied = "";
     if (type.includes("application/json")) {
       const body = await req.json().catch(() => null);
-      if (body && typeof body === "object" && typeof (body as { password?: unknown }).password === "string") {
+      if (
+        body && typeof body === "object" &&
+        typeof (body as { password?: unknown }).password === "string"
+      ) {
         supplied = (body as { password: string }).password;
       }
     } else {
@@ -112,6 +115,10 @@ export function createAuth(password: string | undefined): Auth {
       if (!password) return null;
       const { pathname } = new URL(req.url);
       if (req.method === "POST" && pathname === "/auth/login") return login(req);
+      // The OAuth redirect arrives from the authorization server via the user's
+      // browser, which may not carry a bough session cookie. The handler's own
+      // state check (mcp/oauth.ts) authenticates the flow.
+      if (req.method === "GET" && pathname === "/mcp/oauth/callback") return null;
       const token = cookieToken(req);
       if (token && sessions.has(token)) return null;
       // Browser navigation → the login page; anything else (API, assets) → 401 JSON.

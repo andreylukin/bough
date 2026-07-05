@@ -2,23 +2,44 @@
  * Skills: named, reusable
  * instruction bundles the human pulls into a run by typing `/<name>` in their
  * message (e.g. `/commit tidy this up`). A skill is a folder
- * `~/.bough/skills/<name>/SKILL.md` with YAML-ish frontmatter (`name`,
- * `description`) and a markdown body of instructions. When a message names an
- * installed skill, the harness appends that skill's body to the supervisor's
- * system prompt for the run (see turn.ts).
+ * `<dir>/<name>/SKILL.md` with YAML-ish frontmatter (`name`, `description`, and
+ * optionally `mcp:` — a comma list of MCP server names the skill needs) and
+ * a markdown body of instructions. When a message names an installed skill, the
+ * harness appends that skill's body to the supervisor's system prompt for the
+ * run and connects its MCP servers (see turn.ts). Three sources, first name wins:
+ *   1. BUILTINS — inline in this file;
+ *   2. bundled — the repo's skills/ dir (ships with bough; `deno desktop`
+ *      packaging must --include it);
+ *   3. installed — ~/.bough/skills (the user's own).
+ * `${SKILL_DIR}` in a file-based skill body resolves to the skill's folder, so
+ * instructions can reference helper scripts that live next to the SKILL.md.
  *
- * Override the directory with BOUGH_SKILLS_DIR (tests).
+ * Overrides: BOUGH_SKILLS_DIR (installed dir, tests), BOUGH_BUNDLED_SKILLS_DIR
+ * (bundled dir, tests/packaging).
  */
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 
 export interface Skill {
   name: string;
   description: string;
+  /**
+   * MCP servers (registry names — see mcp/config.ts) this skill needs. Invoking
+   * the skill is what grants them for the turn: the turn runner connects each
+   * one, injects its tool catalog, and bridges the mcp() host function.
+   */
+  mcp?: string[];
 }
 
 function dir(): string {
   return Deno.env.get("BOUGH_SKILLS_DIR") ?? join(homedir(), ".bough", "skills");
+}
+
+/** The repo's skills/ dir — skills that ship with bough as files, not code. */
+function bundledDir(): string {
+  return Deno.env.get("BOUGH_BUNDLED_SKILLS_DIR") ??
+    join(dirname(fileURLToPath(import.meta.url)), "..", "..", "skills");
 }
 
 /**
@@ -103,56 +124,132 @@ of mode, merge it into the branch's holdVerbs/denyVerbs (same GET → edit → P
 Show the ops table, each probe with its verb + verdict, the plugin file path, and the expiry
 if one was set.`,
   },
+  mcp: {
+    name: "mcp",
+    description: "Manage this session's MCP servers: status, restart, enable/disable, register",
+    body: `Manage MCP servers for this session via the bough API at
+http://127.0.0.1:\${BOUGH_PORT:-4321} (loopback is reachable from your shell and bypasses
+the egress proxy). $BOUGH_SESSION in your shell env is this session's id; carry
+?session=$BOUGH_SESSION on every call below and omit it ONLY when the user explicitly
+wants the global scope. Do what the user's message asks — status / restart / enable /
+disable / register — nothing more.
+
+## 1. Ground first
+\`curl -s "localhost:4321/mcp/servers?session=$BOUGH_SESSION"\` returns {registry,
+connections, active}: the configured servers, this session's live connections
+(alive, toolCount, stderrTail when something wrote to stderr), and which server
+names are manually enabled for this scope.
+
+## 2. Act
+- status: nothing more to do — report step 1.
+- restart <name>: POST "/mcp/servers/<name>/restart?session=$BOUGH_SESSION" — drops the
+  session's connection, respawns the server, and returns the fresh status. Only works
+  for a currently-connected server; a server that merely isn't connected yet just
+  connects on the next turn that grants it.
+- enable <name>: POST "/mcp/servers/<name>/enable?session=$BOUGH_SESSION", with body
+  {"ttl":"2h"} only when the user wants the grant to expire ("90m" | "2h" | "7d"
+  forms; a lapsed grant fails closed). The server's tools connect at the START of a
+  turn, so the grant takes effect on the next turn, not this one.
+- disable <name>: POST "/mcp/servers/<name>/disable?session=$BOUGH_SESSION" — removes
+  the activation and drops any live connection.
+- register a server: GET /mcp/servers, edit the registry, PUT the whole thing back to
+  /mcp/servers as {"servers":{...}}. Entry shape for stdio:
+  {"command":"npx","args":["-y","--prefer-offline","some-mcp"],"env":{"TOKEN":"\${SOME_VAR}"}}
+  — env values may reference \${VAR} from bough's own environment (that is where
+  secrets belong; they reach the server child only). Node-based servers also want
+  "NODE_USE_ENV_PROXY":"1" so their fetch respects the egress proxy. Entry shape for
+  a remote server: {"url":"https://mcp.example.com/mcp"} (needs auth, below). A 400
+  names the problem — fix and re-PUT. Registering grants nothing by itself: a
+  skill's \`mcp:\` frontmatter or an enable is what connects it.
+- auth <name> (remote servers): POST "/mcp/servers/<name>/auth". If it answers
+  {"status":"authorized"}, tokens are already valid — say so. If it answers
+  {"status":"redirect","authorizationUrl":...}, SHOW the human that URL and tell
+  them to open it and approve access; the browser lands back on bough's own
+  /mcp/oauth/callback, which stores the tokens. Then re-GET /mcp/servers until
+  auth.<name>.authorized is true (poll a few times with sleep 2). The connection
+  itself happens at the next granting turn.
+- logout <name>: DELETE "/mcp/servers/<name>/auth" — forgets tokens and drops the
+  server's connections everywhere; the next use needs auth again.
+
+## 3. Prove and report
+Re-GET /mcp/servers and report the resulting state: each relevant server, its enabled
+scope(s) and expiry, authorized flag for remote servers, connection alive/tool count,
+and the stderrTail if it is failing.`,
+  },
 };
 
-function skillFile(name: string): string {
-  return join(dir(), name, "SKILL.md");
+/** Bundled first, then installed — matching the name-resolution order in loadBody. */
+function skillDirs(name: string): string[] {
+  return [join(bundledDir(), name), join(dir(), name)];
 }
 
-/** Installed skills (name + one-line description) plus builtins, for discovery/UI. */
-export function listSkills(): Skill[] {
-  const skills: Skill[] = Object.values(BUILTINS).map((b) => ({
-    name: b.name,
-    description: b.description,
-  }));
+/** Bundled + installed skills from one source dir; helper for listSkills. */
+function listDir(root: string, taken: Set<string>, out: Skill[]): void {
   let entries: Deno.DirEntry[];
   try {
-    entries = [...Deno.readDirSync(dir())];
+    entries = [...Deno.readDirSync(root)];
   } catch {
-    entries = [];
+    return;
   }
   for (const e of entries) {
-    if (!e.isDirectory || e.name in BUILTINS) continue;
+    if (!e.isDirectory || taken.has(e.name)) continue;
     try {
-      const text = Deno.readTextFileSync(skillFile(e.name));
-      skills.push({ name: e.name, description: descriptionOf(text) });
+      const text = Deno.readTextFileSync(join(root, e.name, "SKILL.md"));
+      const mcp = mcpOf(text);
+      out.push({ name: e.name, description: descriptionOf(text), ...(mcp.length ? { mcp } : {}) });
+      taken.add(e.name);
     } catch {
       // folder without a SKILL.md — not a skill
     }
   }
+}
+
+/** All skills (builtins + bundled + installed; first name wins), for discovery/UI. */
+export function listSkills(): Skill[] {
+  const skills: Skill[] = Object.values(BUILTINS).map((b) => ({
+    name: b.name,
+    description: b.description,
+    ...(b.mcp?.length ? { mcp: b.mcp } : {}),
+  }));
+  const taken = new Set(Object.keys(BUILTINS));
+  listDir(bundledDir(), taken, skills);
+  listDir(dir(), taken, skills);
   return skills.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** The markdown body of a skill (instructions), frontmatter stripped. Builtins first. */
+/**
+ * The markdown body of a skill (instructions), frontmatter stripped. Resolution
+ * order: builtins, bundled, installed. `${SKILL_DIR}` in a file-based body is
+ * replaced with the skill's folder so instructions can point at helper scripts
+ * that live next to the SKILL.md regardless of the session's workspace.
+ */
 export function loadBody(name: string): string | null {
   if (name in BUILTINS) return BUILTINS[name].body;
-  try {
-    return stripFrontmatter(Deno.readTextFileSync(skillFile(name)));
-  } catch {
-    return null;
+  for (const folder of skillDirs(name)) {
+    try {
+      const text = Deno.readTextFileSync(join(folder, "SKILL.md"));
+      return stripFrontmatter(text).replaceAll("${SKILL_DIR}", folder);
+    } catch {
+      // not in this source — try the next
+    }
   }
+  return null;
 }
 
 /**
- * The supervisor-prompt section for every installed skill the message invokes via
- * `/<name>`. Empty when none are named (or installed).
+ * Everything the message's `/<name>` invocations activate: the prompt sections for
+ * each named skill, and the union of their `mcp:` server references (the turn
+ * runner connects those and bridges the mcp() host function — the skill invocation
+ * IS the capability grant). Empty when none are named (or installed).
  */
-export function activeFor(message: string): string {
+export function activeSkills(message: string): { sections: string; servers: string[] } {
   const sections: string[] = [];
+  const servers = new Set<string>();
   for (const skill of listSkills()) {
     if (!mentions(message, skill.name)) continue;
     const body = loadBody(skill.name);
     if (body === null) continue;
+    for (const server of skill.mcp ?? []) servers.add(server);
     sections.push(
       `\n\n# Active skill: /${skill.name}\n` +
         `The human invoked the \`/${skill.name}\` skill for this task. Follow its ` +
@@ -161,13 +258,29 @@ export function activeFor(message: string): string {
         body.trim(),
     );
   }
-  return sections.join("");
+  return { sections: sections.join(""), servers: [...servers] };
+}
+
+/** The supervisor-prompt sections alone (see activeSkills). */
+export function activeFor(message: string): string {
+  return activeSkills(message).sections;
 }
 
 /** True when `message` contains the token `/<name>` at a word boundary. */
 function mentions(message: string, name: string): boolean {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(^|\\s)/${escaped}(\\s|$)`).test(message);
+}
+
+/** `mcp:` from the frontmatter as a list — "chrome-devtools, linear" forms. */
+function mcpOf(text: string): string[] {
+  for (const line of frontmatterLines(text)) {
+    const idx = line.indexOf(":");
+    if (idx > 0 && line.slice(0, idx).trim() === "mcp") {
+      return line.slice(idx + 1).split(",").map((s) => s.trim()).filter(Boolean);
+    }
+  }
+  return [];
 }
 
 /** `description:` from the frontmatter, or "" if absent. */

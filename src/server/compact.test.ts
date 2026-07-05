@@ -59,7 +59,7 @@ Deno.test("compact: mid-thread span replaced by summary; original untouched", as
   const events: BoughEvent[] = [];
   c.bus.subscribe((e) => events.push(e));
 
-  const res = await h(post("/sessions/S/compact", { fromMessageId: "m2", toMessageId: "m4" }));
+  const res = await h(post("/sessions/S/compact", { picks: [{ messageId: "m2" }, { messageId: "m3" }, { messageId: "m4" }] }));
   assertEquals(res.status, 200);
   const { session } = await res.json() as { session: Session };
   assertEquals(session.kind, "compaction");
@@ -100,28 +100,96 @@ Deno.test("compact: mid-thread span replaced by summary; original untouched", as
   c.db.close();
 });
 
-Deno.test("compact: single-message span (from == to) is allowed", async () => {
+Deno.test("compact: single-message selection is allowed", async () => {
   const c = ctx(fakeLlm("S").client);
   seedThread(c.db);
   const h = createHandler(c);
-  const res = await h(post("/sessions/S/compact", { fromMessageId: "m3", toMessageId: "m3" }));
+  const res = await h(post("/sessions/S/compact", { picks: [{ messageId: "m3" }] }));
   assertEquals(res.status, 200);
   const { session } = await res.json() as { session: Session };
   assertEquals(session.title, "compacted · 1 turns");
   c.db.close();
 });
 
-Deno.test("compact: invalid spans and unknown ids error cleanly", async () => {
+Deno.test("compact: a non-contiguous selection summarizes each run in place", async () => {
+  const fake = fakeLlm("RUN-SUMMARY");
+  const c = ctx(fake.client);
+  seedThread(c.db);
+  const h = createHandler(c);
+
+  // Select m2 and m4 but NOT m3 (order shouldn't matter): two runs, two summaries.
+  const res = await h(post("/sessions/S/compact", { picks: [{ messageId: "m4" }, { messageId: "m2" }] }));
+  assertEquals(res.status, 200);
+  const { session } = await res.json() as { session: Session };
+  assertEquals(session.title, "compacted · 2 turns");
+  assertEquals(session.originMessageId, "m4"); // last selected in thread order
+
+  // One prompt per run, each carrying only its own run's messages.
+  assertEquals(fake.prompts.length, 2);
+  assert(fake.prompts[0].includes("working on it") && !fake.prompts[0].includes("did X"));
+  assert(fake.prompts[1].includes("did X") && !fake.prompts[1].includes("working on it"));
+
+  // Unselected messages survive verbatim between the summaries, in thread order.
+  const branch = await (await h(get(`/sessions/${session.id}`))).json() as { thread: Message[] };
+  assertEquals(
+    branch.thread.map((m) => m.parts.map((p) => (p.type === "text" ? p.text : "")).join("")),
+    ["hello", "RUN-SUMMARY", "do X", "RUN-SUMMARY", "thanks"],
+  );
+  c.db.close();
+});
+
+Deno.test("compact: a partial pick narrows what the summarizer sees; the message is still replaced", async () => {
+  const fake = fakeLlm("PROSE-ONLY-SUMMARY");
+  const c = ctx(fake.client);
+  const s: Session = { id: "S", parentId: null, title: "root", kind: "root", createdAt: 1 };
+  c.db.createSession(s);
+  seedMessage(c.db, "S", "m1", "user", "hello", 10);
+  // A supervisor turn with prose + a noisy tool exchange (part indexes 0..2).
+  c.db.createMessage({
+    id: "m2",
+    sessionId: "S",
+    role: "supervisor",
+    parts: [
+      { type: "text", text: "the interesting conclusion" },
+      { type: "tool_call", id: "t1", name: "bash", input: { command: "noisy tool spam" } },
+      { type: "tool_result", callId: "t1", output: "giant tool output", isError: false },
+    ],
+    pending: false,
+    createdAt: 11,
+  });
+  const h = createHandler(c);
+
+  // Pick m2 but only its prose part — the tool call/result stay out of the prompt.
+  const res = await h(post("/sessions/S/compact", { picks: [{ messageId: "m2", parts: [0] }] }));
+  assertEquals(res.status, 200);
+  const { session } = await res.json() as { session: Session };
+  assert(fake.prompts[0].includes("the interesting conclusion"));
+  assert(!fake.prompts[0].includes("noisy tool spam"));
+  assert(!fake.prompts[0].includes("giant tool output"));
+
+  // The whole message is consumed by the summary — unpicked parts drop (compaction shrinks).
+  const branch = await (await h(get(`/sessions/${session.id}`))).json() as { thread: Message[] };
+  assertEquals(
+    branch.thread.map((m) => m.parts.map((p) => (p.type === "text" ? p.text : `[${p.type}]`)).join("|")),
+    ["hello", "PROSE-ONLY-SUMMARY"],
+  );
+
+  // An out-of-range part index errors cleanly.
+  assertEquals((await h(post("/sessions/S/compact", { picks: [{ messageId: "m2", parts: [9] }] }))).status, 400);
+  c.db.close();
+});
+
+Deno.test("compact: invalid selections and unknown ids error cleanly", async () => {
   const c = ctx(fakeLlm("S").client);
   seedThread(c.db);
   const h = createHandler(c);
 
-  // from after to
-  assertEquals((await h(post("/sessions/S/compact", { fromMessageId: "m4", toMessageId: "m2" }))).status, 400);
   // unknown message id
-  assertEquals((await h(post("/sessions/S/compact", { fromMessageId: "m2", toMessageId: "zzz" }))).status, 400);
+  assertEquals((await h(post("/sessions/S/compact", { picks: [{ messageId: "m2" }, { messageId: "zzz" }] }))).status, 400);
+  // empty selection
+  assertEquals((await h(post("/sessions/S/compact", { picks: [] }))).status, 400);
   // unknown session
-  assertEquals((await h(post("/sessions/missing/compact", { fromMessageId: "m2", toMessageId: "m4" }))).status, 404);
+  assertEquals((await h(post("/sessions/missing/compact", { picks: [{ messageId: "m2" }] }))).status, 404);
   // malformed body
   assertEquals((await h(post("/sessions/S/compact", { nope: 1 }))).status, 400);
   c.db.close();
@@ -137,7 +205,7 @@ Deno.test("compact: a forked child span compacts as a sibling under the shared p
   seedMessage(c.db, "S", "s2", "supervisor", "child msg 2", 21);
   const h = createHandler(c);
 
-  const { session } = await (await h(post("/sessions/S/compact", { fromMessageId: "s1", toMessageId: "s2" })))
+  const { session } = await (await h(post("/sessions/S/compact", { picks: [{ messageId: "s1" }, { messageId: "s2" }] })))
     .json() as { session: Session };
   assertEquals(session.parentId, "R"); // sibling of S, under the shared parent R
 

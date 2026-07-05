@@ -25,6 +25,11 @@ export interface HostFns {
   spawn?(task: string): Promise<string>;
   join?(sessionId: string): Promise<string>;
   adopt?(sessionId: string): Promise<string>;
+  /**
+   * MCP tool call (bridged only for turns granted servers): args travel in as JSON
+   * and the result returns as JSON — the worker side parses both ends.
+   */
+  mcp?(server: string, tool: string, argsJson: string): Promise<string>;
 }
 
 export interface ProgramResult {
