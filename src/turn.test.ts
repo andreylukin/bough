@@ -5,7 +5,7 @@ import { Bus } from "./bus.ts";
 import type { BoughEvent, Message, Part, Session } from "./schema/parts.ts";
 import type { LlmClient, LlmMessage, LlmParams, LlmResult } from "./supervisor/llm.ts";
 import type { ToolDef, ToolRunCtx } from "./tools/mod.ts";
-import { beginTurn, interruptTurn, isTurnRunning, type TurnCtx } from "./turn.ts";
+import { beginTurn, interruptTurn, isTurnRunning, startUserTurn, type TurnCtx } from "./turn.ts";
 import { recoverOrphanedTurns } from "./supervisor/turns.ts";
 
 // ---- harness ---------------------------------------------------------------
@@ -229,6 +229,55 @@ Deno.test("a tool that throws yields an error tool_result but the turn continues
   assertEquals(result.isError, true);
   assertStringIncludes(result.output, "nope");
   assertEquals(db.turnsByStatus("done").length, 1);
+});
+
+Deno.test("a mid-turn user message steers: the turn yields at the round boundary and a follow-up answers it", async () => {
+  const { db, bus, sessionId } = seed();
+  const llm = fakeLlm([
+    // Round 1 asks for a tool and would keep looping (stopReason tool_use)…
+    { content: [{ type: "tool_use", id: "t1", name: "poke", input: {} }], stopReason: "tool_use" },
+    // …but the steered message ends the turn at the boundary; this round is the follow-up's.
+    { content: [{ type: "text", text: "doing Y" }], stopReason: "end_turn" },
+  ]);
+  const ctx: TurnCtx = { db, bus, llm, tools: [] };
+  const poke: ToolDef = {
+    name: "poke",
+    description: "posts a user message while the turn runs",
+    schema: z.object({}),
+    run: () => {
+      // Simulate POST /messages landing mid-turn.
+      startUserTurn(ctx, sessionId, "actually, do Y instead");
+      return Promise.resolve("ok");
+    },
+  };
+  ctx.tools = [poke];
+
+  const { message, done } = beginTurn(ctx, sessionId);
+  await done;
+  // The follow-up turn starts from the first turn's drain — wait for it to finish.
+  while (isTurnRunning(sessionId)) await new Promise((r) => setTimeout(r, 1));
+
+  // First turn stopped after its tool round — no second LLM call of its own.
+  const first = finalMessage(db, message.id);
+  assertEquals(first.pending, false);
+  assertEquals(first.parts, [
+    { type: "tool_call", id: "t1", name: "poke", input: {} },
+    { type: "tool_result", callId: "t1", output: "ok", isError: false },
+  ] as Part[]);
+  assertEquals(db.turnsByStatus("done").length, 2);
+
+  // Exactly one call per turn; the follow-up saw the steered message and the
+  // first turn's replayed tool work.
+  assertEquals(llm.calls.length, 2);
+  const followUp = JSON.stringify(llm.calls[1].messages);
+  assertStringIncludes(followUp, "actually, do Y instead");
+  assertStringIncludes(followUp, "tool_use");
+
+  // The follow-up's reply landed as the thread's last message.
+  const last = db.threadFor(sessionId).at(-1);
+  assertExists(last);
+  assertEquals(last.role, "supervisor");
+  assertEquals(last.parts, [{ type: "text", text: "doing Y" }] as Part[]);
 });
 
 Deno.test("history from a prior turn is replayed as assistant + tool_result messages", async () => {

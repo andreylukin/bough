@@ -39,7 +39,8 @@ export interface Store {
   editQueued: (i: number, text: string) => void;
   open: (id: string) => Promise<void>;
   newSession: (workspace?: string) => Promise<Session>;
-  send: (text: string) => Promise<void>;
+  /** Post a message. While busy: posts immediately (steer) unless queue=true (stage until idle). */
+  send: (text: string, queue?: boolean) => Promise<void>;
   interrupt: () => void;
   archive: (id: string) => void;
   resolvePending: (approve: boolean) => void;
@@ -294,12 +295,14 @@ export function useStore(): Store {
     return s;
   }, [open]);
 
-  // Sending while a turn runs stages the message locally (visible, editable, removable)
-  // instead of posting it; the flush effect below sends staged messages once idle.
-  const send = useCallback(async (text: string) => {
+  // Sending while a turn runs STEERS by default: the message posts immediately and
+  // the server yields the live turn at its next round boundary to answer it. With
+  // queue=true it instead stages locally (visible, editable, removable); the flush
+  // effect below sends staged messages once idle.
+  const send = useCallback(async (text: string, queue = false) => {
     const id = currentRef.current;
     if (!id) return;
-    if (busyRef.current) {
+    if (busyRef.current && queue) {
       setQueued((q) => [...q, text]);
       return;
     }

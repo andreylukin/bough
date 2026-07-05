@@ -162,10 +162,13 @@ function LiveApp() {
     }
   };
 
-  // "branch here" (composer ⌥↵): fork from the last user turn, resending with this text —
-  // a variation from the same point that preserves the current head. No user turn → send.
-  const onSend = (text: string, branch: boolean) => {
-    if (!branch) return void store.send(text);
+  // Composer submit. While a turn runs: ↵ steers (posts now, the live turn yields at
+  // its next round boundary) and ⌥↵ queues (stages until the turn finishes). While
+  // idle: ⌥↵ is "branch here" — fork from the last user turn, resending with this
+  // text, a variation from the same point that preserves the current head.
+  const onSend = (text: string, alt: boolean) => {
+    if (store.busy) return void store.send(text, alt);
+    if (!alt) return void store.send(text);
     const lastUser = [...store.thread].reverse().find((m) => m.role === "user");
     if (lastUser) store.fork(lastUser.id, text);
     else store.send(text);

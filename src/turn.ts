@@ -202,7 +202,9 @@ export function beginTurn(
   }).finally(() => {
     if (running.get(sessionId) === controller) running.delete(sessionId);
     // Drain a message queued while this turn ran: run one follow-up turn, which
-    // sees every queued user message since the last supervisor reply.
+    // sees every queued user message since the last supervisor reply. A steered
+    // message rides the same drain — its flag just ended the loop early.
+    steering.delete(sessionId);
     if (queued.delete(sessionId)) beginTurn(ctx, sessionId);
   });
   return { message, done };
@@ -210,6 +212,15 @@ export function beginTurn(
 
 /** Sessions with a user message queued while a turn was in flight (see startUserTurn). */
 const queued = new Set<string>();
+
+/**
+ * Sessions whose in-flight turn should yield at the next round boundary because a
+ * user message steered in mid-turn (see startUserTurn). The current LLM round and
+ * its tools finish normally — nothing is killed — then the loop stops instead of
+ * asking the model for another round, and the queued-drain follow-up turn runs
+ * immediately with the new message in history. Steer = the queue, minus the wait.
+ */
+const steering = new Set<string>();
 
 /** Live turns by session, for interruption. One turn per session at a time. */
 const running = new Map<string, AbortController>();
@@ -253,10 +264,13 @@ export function startUserTurn(
   ctx.bus.publish({ type: "message.started", sessionId, data: userMessage });
   // Fire-and-forget: name an untitled session from its first message (title worker).
   maybeAutoTitle({ db: ctx.db, bus: ctx.bus, titler: ctx.titler }, sessionId, text);
-  // One turn per session: if one is already running, the message is persisted and shown
-  // now, and a single follow-up turn drains the queue when the current one finishes.
+  // One turn per session: if one is already running, the message is persisted and
+  // shown now, and it STEERS — the live turn yields at its next round boundary and
+  // the follow-up turn (which sees this message) starts immediately. Clients that
+  // want plain queueing hold the message until the turn finishes (the web UI does).
   if (isTurnRunning(sessionId)) {
     queued.add(sessionId);
+    steering.add(sessionId);
     return { userMessage, done: Promise.resolve() };
   }
   const { done } = beginTurn(ctx, sessionId);
@@ -330,6 +344,11 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     }
 
     const messages = buildHistory(db, sessionId, messageId);
+    // Anything queued/steered before this point is already in the history we just
+    // built — clear the flags so it isn't re-delivered by a spurious follow-up
+    // turn or an instant yield below.
+    queued.delete(sessionId);
+    steering.delete(sessionId);
     // Inline any @path references in the triggering message so the model sees the
     // file content, not just the name. Only for workspace sessions (files exist).
     if (prepared.sandboxed) inlineFileReferences(messages, prepared.cwd);
@@ -351,6 +370,10 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     // the CHECK gate accepts done; interruptTurn is the user's brake on a runaway.
     for (let round = 0;; round++) {
       if (signal?.aborted) throw new InterruptedError();
+      // A user message steered in mid-turn: yield here (a clean round boundary —
+      // every tool_use already has its tool_result) and let the follow-up turn
+      // continue with the new message in history.
+      if (steering.has(sessionId)) break;
       const result = await llm.run(
         { model, system, maxTokens: MAX_TOKENS, messages, tools: toolDefs },
         (delta) => bus.publish({ type: "message.delta", sessionId, data: { messageId, delta } }),

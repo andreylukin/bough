@@ -1278,9 +1278,17 @@ export function Conversation({
             >
               {busy
                 ? (
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                    <Kbd>esc</Kbd> stop
-                  </span>
+                  <>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      <Kbd>↵</Kbd> steer now
+                    </span>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      <Kbd>⌥↵</Kbd> queue
+                    </span>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      <Kbd>esc</Kbd> stop
+                    </span>
+                  </>
                 )
                 : (
                   <>
@@ -1296,25 +1304,47 @@ export function Conversation({
             </div>
             {busy && onInterrupt
               ? (
-                <button
-                  onClick={onInterrupt}
-                  className="conv-send"
-                  title="Stop the running turn (esc)"
-                  style={{
-                    width: 30,
-                    height: 30,
-                    borderRadius: 8,
-                    background: c.panelInset,
-                    border: `1px solid ${c.border}`,
-                    color: c.red,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: 12,
-                  }}
-                >
-                  ■
-                </button>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  {text.trim() && (
+                    <button
+                      onClick={() => submit(false)}
+                      className="conv-send"
+                      title="Steer: send now, the running turn picks it up (↵)"
+                      style={{
+                        width: 30,
+                        height: 30,
+                        borderRadius: 8,
+                        background: c.green,
+                        color: c.bg,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: 15,
+                      }}
+                    >
+                      ↑
+                    </button>
+                  )}
+                  <button
+                    onClick={onInterrupt}
+                    className="conv-send"
+                    title="Stop the running turn (esc)"
+                    style={{
+                      width: 30,
+                      height: 30,
+                      borderRadius: 8,
+                      background: c.panelInset,
+                      border: `1px solid ${c.border}`,
+                      color: c.red,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: 12,
+                    }}
+                  >
+                    ■
+                  </button>
+                </div>
               )
               : (
                 <button
