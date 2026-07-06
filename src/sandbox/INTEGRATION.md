@@ -38,15 +38,27 @@ const cmd = new Deno.Command(argv[0], { args: argv.slice(1), cwd: workspace, ...
 
 ## 2. jj — session lifecycle for repo work
 
-One jj bookmark per session (`bough/<sessionId>`), colocated with the existing git repo.
+One jj bookmark per session (`bough/<sessionId>`). jj state placement depends on the
+repo (decided by `prepareRepo` in `src/supervisor/workspace.ts`):
+
+- **External (default for plain git repos):** jj never touches the repo. The store
+  lives under `~/.bough/jj/<repo>-<hash>` (`jj git init --git-repo`), and each session
+  runs in its own jj workspace under `~/.bough/workspaces/<sessionId>`, branched off a
+  captured snapshot of the repo's working tree (uncommitted + untracked included). The
+  user's checkout — HEAD, branch, index, `git status` — is never modified; session tips
+  are exported as `bough/<id>` git branches so plain git can still see them.
+- **Colocated (legacy):** repos that already carry `.jj` next to `.git` (a checkout
+  the user deliberately runs jj in, e.g. bough's own dev repo) keep the in-place model:
+  sessions share the primary checkout and `jj new` moves it onto the session's change.
 
 | Session event | Call |
 |---|---|
-| session created (root) | `ensureWorkspace(repo, sessionId, base?)` — new change off git HEAD (or `base`) |
-| session resumed | `ensureWorkspace(repo, sessionId)` — idempotent; switches the working copy to it |
-| session forked | `forkSession(repo, fromId, toId)` — new change off the source tip, then diverges |
-| render Changes tab | `diff(repo, sessionId)` → `Diff` (source: `"jj"`) |
-| revert | `undo(repo)` (last op) or `operations(repo)` + `restore(repo, opId)` |
+| session created (root, external) | `createSessionWorkspace(repo, sessionId)` — isolated working copy off a working-tree snapshot |
+| session created (root, colocated) | `ensureWorkspace(repo, sessionId, base?)` — new change off the working-copy snapshot |
+| session resumed | external: `updateStale(dir)`; colocated: `ensureWorkspace` (idempotent) |
+| session forked | external: `addWorkspace(parentDir, toId, dir, bookmark)`; colocated: `forkSession(repo, fromId, toId)` |
+| render Changes tab | `diff(dir, sessionId)` → `Diff` (source: `"jj"`) |
+| revert | `undo(dir)` (last op) or `operations(dir)` + `restore(dir, opId)` |
 
 - `base` is the commit a new session branches from. The `sessions` row is the natural
   home for it (store the repo's HEAD at attach time and pass it back on resume/fork);

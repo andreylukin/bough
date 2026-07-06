@@ -283,6 +283,148 @@ Deno.test({
   },
 });
 
+/** Set env vars for the duration of `fn`, restoring previous values after. */
+async function withEnv(vars: Record<string, string>, fn: () => Promise<void>): Promise<void> {
+  const prev = new Map<string, string | undefined>();
+  for (const [k, v] of Object.entries(vars)) {
+    prev.set(k, Deno.env.get(k));
+    Deno.env.set(k, v);
+  }
+  try {
+    await fn();
+  } finally {
+    for (const [k, v] of prev) {
+      if (v === undefined) Deno.env.delete(k);
+      else Deno.env.set(k, v);
+    }
+  }
+}
+
+async function gitOut(repo: string, args: string[]): Promise<string> {
+  const { code, stdout, stderr } = await new Deno.Command("git", {
+    args,
+    cwd: repo,
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  if (code !== 0) throw new Error(`git ${args.join(" ")}: ${new TextDecoder().decode(stderr)}`);
+  return new TextDecoder().decode(stdout).trim();
+}
+
+async function exists(p: string): Promise<boolean> {
+  try {
+    await Deno.stat(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Temp roots for the external store + session workspaces, cleaned up by the caller. */
+async function tempExternalBases(): Promise<{ jjBase: string; wsBase: string }> {
+  return {
+    jjBase: await Deno.makeTempDir({ prefix: "jjtest-store-" }),
+    wsBase: await Deno.makeTempDir({ prefix: "jjtest-wsroot-" }),
+  };
+}
+
+Deno.test({
+  // External mode: a session on a plain git repo gets its own working copy and the
+  // repo itself is never touched — no .jj, HEAD stays on its branch, git status is
+  // unchanged, and the agent's edits never appear in the user's checkout.
+  name: "jj: createSessionWorkspace keeps the user's repo pristine",
+  ignore: !jjAvailable,
+  fn: async () => {
+    const repo = await tempGitRepo();
+    const { jjBase, wsBase } = await tempExternalBases();
+    try {
+      await withEnv({ BOUGH_JJ_BASE: jjBase, BOUGH_SUBAGENT_BASE: wsBase }, async () => {
+        // Dirty the repo the way a real checkout is dirty: an uncommitted edit to
+        // a tracked file and an untracked new file.
+        await Deno.writeTextFile(`${repo}/README.md`, "base\nlocal edit\n");
+        await Deno.writeTextFile(`${repo}/untracked.ts`, "export const x = 1;\n");
+        const headRefBefore = await gitOut(repo, ["symbolic-ref", "HEAD"]);
+        const statusBefore = await gitOut(repo, ["status", "--porcelain"]);
+
+        const dir = await jj.createSessionWorkspace(repo, "s1");
+        assertEquals(dir, jj.workspaceDirFor("s1"));
+
+        // The repo is pristine: no .jj, same branch checkout, same dirty status.
+        assertEquals(await exists(`${repo}/.jj`), false);
+        assertEquals(await gitOut(repo, ["symbolic-ref", "HEAD"]), headRefBefore);
+        assertEquals(await gitOut(repo, ["status", "--porcelain"]), statusBefore);
+        assertEquals(await Deno.readTextFile(`${repo}/README.md`), "base\nlocal edit\n");
+
+        // The workspace captured the working tree, dirty edit + untracked included.
+        assertEquals(await Deno.readTextFile(`${dir}/README.md`), "base\nlocal edit\n");
+        assertEquals(await Deno.readTextFile(`${dir}/untracked.ts`), "export const x = 1;\n");
+
+        // The session diff starts empty; an agent edit shows up alone and never
+        // lands in the user's checkout.
+        assertEquals((await jj.diff(dir, "s1")).files.length, 0);
+        await Deno.writeTextFile(`${dir}/agent.txt`, "agent-work\n");
+        assertEquals((await jj.diff(dir, "s1")).files.map((f) => f.path), ["agent.txt"]);
+        assertEquals(await exists(`${repo}/agent.txt`), false);
+
+        // The session tip is reachable from plain git as branch bough/s1, rooted
+        // at the repo's HEAD (via the base snapshot commit).
+        const head = await gitOut(repo, ["rev-parse", "HEAD"]);
+        assertEquals(await gitOut(repo, ["merge-base", "bough/s1", "HEAD"]), head);
+
+        // accept seals the change in the isolated workspace; work stays on disk.
+        await jj.accept(dir, "s1");
+        assertEquals((await jj.diff(dir, "s1")).files.length, 0);
+        assertEquals(await Deno.readTextFile(`${dir}/agent.txt`), "agent-work\n");
+
+        // Idempotent: a resume reuses the same workspace.
+        assertEquals(await jj.createSessionWorkspace(repo, "s1"), dir);
+      });
+    } finally {
+      await Deno.remove(repo, { recursive: true });
+      await Deno.remove(jjBase, { recursive: true }).catch(() => {});
+      await Deno.remove(wsBase, { recursive: true }).catch(() => {});
+    }
+  },
+});
+
+Deno.test({
+  // External mode on a clean repo bases the session directly off HEAD (no snapshot
+  // commit), and forking branches a second workspace off the session's tip.
+  name: "jj: createSessionWorkspace clean-repo base + fork via addWorkspace",
+  ignore: !jjAvailable,
+  fn: async () => {
+    const repo = await tempGitRepo();
+    const { jjBase, wsBase } = await tempExternalBases();
+    try {
+      await withEnv({ BOUGH_JJ_BASE: jjBase, BOUGH_SUBAGENT_BASE: wsBase }, async () => {
+        const dir1 = await jj.createSessionWorkspace(repo, "c1");
+        // Clean tree → the session change's parent IS the repo's HEAD commit.
+        const head = await gitOut(repo, ["rev-parse", "HEAD"]);
+        assertEquals(await gitOut(repo, ["rev-parse", "bough/c1^"]), head);
+
+        // Session work, snapshotted via diff.
+        await Deno.writeTextFile(`${dir1}/one.txt`, "c1-work\n");
+        assertEquals((await jj.diff(dir1, "c1")).files.map((f) => f.path), ["one.txt"]);
+
+        // Fork: a new workspace branched off c1's tip inherits its work, then
+        // diverges — and still nothing touches the repo checkout.
+        const dir2 = jj.workspaceDirFor("c2");
+        await jj.addWorkspace(dir1, "c2", dir2, jj.bookmarkFor("c1"));
+        assertEquals(await Deno.readTextFile(`${dir2}/one.txt`), "c1-work\n");
+        await Deno.writeTextFile(`${dir2}/two.txt`, "c2-work\n");
+        assertEquals((await jj.diff(dir2, "c2")).files.map((f) => f.path), ["two.txt"]);
+        assertEquals((await jj.diff(dir1, "c1")).files.map((f) => f.path), ["one.txt"]);
+        assertEquals(await exists(`${repo}/.jj`), false);
+        assertEquals(await exists(`${repo}/one.txt`), false);
+      });
+    } finally {
+      await Deno.remove(repo, { recursive: true });
+      await Deno.remove(jjBase, { recursive: true }).catch(() => {});
+      await Deno.remove(wsBase, { recursive: true }).catch(() => {});
+    }
+  },
+});
+
 Deno.test({
   // Regression: a session opened on a repo with uncommitted + untracked changes
   // must NOT wipe them. `ensureWorkspace` used to `jj new <HEAD>`, resetting the

@@ -2,7 +2,8 @@
  * Subagents — delegation as tree branches. A subagent is a real session (kind
  * "subagent") spawned mid-turn by a supervisor program via the delegation host
  * functions: it gets a fresh, task-only thread (parentId null — deliberately NO
- * inherited context; the task text is the whole briefing), lineage pointers back to
+ * inherited context; the task text is the whole briefing, though the spawning
+ * turn's MCP grant carries over — see TurnCtx.mcpGrant), lineage pointers back to
  * the spawning turn (originId/originMessageId — exactly what the heads map draws
  * connectors from), and its own jj workspace branched off the spawner's tip so
  * parallel subagents never fight over one working copy.
@@ -23,7 +24,6 @@
  * and a bookmark, "continue off of it" needs nothing new: open it and send a message.
  */
 import { join as joinPath } from "node:path";
-import { homedir } from "node:os";
 import type { Db } from "./db/db.ts";
 import { openBranch } from "./branch.ts";
 import { beginTurn, interruptTurn, isTurnRunning, postSystemNote, type TurnCtx } from "./turn.ts";
@@ -136,11 +136,6 @@ const detached = new Map<string, {
   claimed: boolean;
 }>();
 
-/** Root dir holding subagent jj workspaces (their isolated working copies). */
-function workspaceRoot(): string {
-  return Deno.env.get("BOUGH_SUBAGENT_BASE") ?? joinPath(homedir(), ".bough", "workspaces");
-}
-
 async function pathExists(p: string): Promise<boolean> {
   try {
     await Deno.stat(p);
@@ -212,9 +207,10 @@ async function launch(
     throw new Error(`subagent depth limit (${MAX_SUBAGENT_DEPTH}) reached`);
   }
   // Width caps: bound concurrency across the tree and total spawns per turn.
-  const spawnedThisTurn = db.listSessions().filter((s) =>
-    s.kind === "subagent" && s.originMessageId === spawn.spawnerMessageId
-  ).length;
+  const spawnedThisTurn =
+    db.listSessions().filter((s) =>
+      s.kind === "subagent" && s.originMessageId === spawn.spawnerMessageId
+    ).length;
   if (spawnedThisTurn >= MAX_SPAWNS_PER_TURN) {
     throw new Error(
       `spawn cap reached: this turn already spawned ${MAX_SPAWNS_PER_TURN} subagents — ` +
@@ -257,8 +253,8 @@ async function launch(
   let subDir: string | undefined;
   if (isRepo) {
     try {
-      const dir = joinPath(workspaceRoot(), session.id);
-      await Deno.mkdir(workspaceRoot(), { recursive: true });
+      const dir = jj.workspaceDirFor(session.id);
+      await Deno.mkdir(jj.workspacesRoot(), { recursive: true });
       await jj.addWorkspace(explicit!, session.id, dir, jj.bookmarkFor(spawn.spawnerId));
       db.setSessionWorkspace(session.id, dir);
       const updated = db.getSession(session.id)!;
@@ -268,7 +264,11 @@ async function launch(
       // Without an isolated working copy the subagent would race the spawner's
       // checkout — fail the spawn instead of running unisolated.
       db.archiveSession(session.id);
-      bus.publish({ type: "session.archived", sessionId: session.id, data: { sessionId: session.id } });
+      bus.publish({
+        type: "session.archived",
+        sessionId: session.id,
+        data: { sessionId: session.id },
+      });
       throw new Error(`could not branch a workspace for the subagent: ${(e as Error).message}`);
     }
   }

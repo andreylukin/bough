@@ -13,6 +13,8 @@ import type { LlmClient, LlmParams, LlmResult } from "./supervisor/llm.ts";
 import { defaultTools } from "./tools/mod.ts";
 import { beginTurn, startUserTurn, type TurnCtx } from "./turn.ts";
 import * as jj from "./vcs/jj.ts";
+import { saveRegistry, setActivation } from "./mcp/config.ts";
+import { mcpManager } from "./mcp/manager.ts";
 
 // ---- harness ---------------------------------------------------------------
 
@@ -30,7 +32,9 @@ function dispatchLlm(scripts: Record<string, ScriptedRound[]>): LlmClient {
     async run(params: LlmParams, onText: (d: string) => void): Promise<LlmResult> {
       const text = [...params.messages].reverse()
         .filter((m) => m.role === "user")
-        .map((m) => (m.content.find((b) => b.type === "text") as { text?: string } | undefined)?.text)
+        .map((m) =>
+          (m.content.find((b) => b.type === "text") as { text?: string } | undefined)?.text
+        )
         .find((t) => t !== undefined) ?? "";
       const key = Object.keys(scripts).find((k) => text.startsWith(k));
       if (!key) throw new Error(`no script for thread starting with: ${text.slice(0, 60)}`);
@@ -155,7 +159,13 @@ Deno.test("agent() spawns a subagent branch and the program receives its report"
     ],
     "say hello": [textRound("hello from sub")],
   });
-  const ctx: TurnCtx = { db, bus, llm, tools: defaultTools, titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)) };
+  const ctx: TurnCtx = {
+    db,
+    bus,
+    llm,
+    tools: defaultTools,
+    titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)),
+  };
 
   const { message, done } = beginTurn(ctx, spawner.id);
   await done;
@@ -192,7 +202,9 @@ Deno.test("spawn() is non-blocking: the spawner's turn ends, the finished report
   const gate = new Promise<void>((r) => (releaseSub = r));
   const llm = dispatchLlm({
     "hi": [
-      program(`const h = await spawn("background research"); console.log("spawned:" + (h.sessionId ? "yes" : "no"));`),
+      program(
+        `const h = await spawn("background research"); console.log("spawned:" + (h.sessionId ? "yes" : "no"));`,
+      ),
       textRound("turn over, working on other things"),
     ],
     "background research": [
@@ -203,7 +215,13 @@ Deno.test("spawn() is non-blocking: the spawner's turn ends, the finished report
     ],
     "[subagent finished]": [textRound("noted the findings")],
   });
-  const ctx: TurnCtx = { db, bus, llm, tools: defaultTools, titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)) };
+  const ctx: TurnCtx = {
+    db,
+    bus,
+    llm,
+    tools: defaultTools,
+    titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)),
+  };
 
   const { message, done } = beginTurn(ctx, spawner.id);
   await done;
@@ -258,7 +276,13 @@ Deno.test("join() claims a background result in-band — no wake note is posted"
       },
     ],
   });
-  const ctx: TurnCtx = { db, bus, llm, tools: defaultTools, titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)) };
+  const ctx: TurnCtx = {
+    db,
+    bus,
+    llm,
+    tools: defaultTools,
+    titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)),
+  };
 
   const { message, done } = beginTurn(ctx, spawner.id);
   // Give the program time to reach join() (claim registered), then finish the sub.
@@ -316,7 +340,13 @@ Deno.test("a subagent can agent() one level down; the nested branch points back 
     ],
     "nested task": [textRound("hello from depth 2")],
   });
-  const ctx: TurnCtx = { db, bus, llm, tools: defaultTools, titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)) };
+  const ctx: TurnCtx = {
+    db,
+    bus,
+    llm,
+    tools: defaultTools,
+    titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)),
+  };
 
   const { message, done } = beginTurn(ctx, "sub1");
   await done;
@@ -345,7 +375,13 @@ Deno.test("subagents get blocking delegation only (no spawn/join host functions)
       textRound("could not"),
     ],
   });
-  const ctx: TurnCtx = { db, bus, llm, tools: defaultTools, titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)) };
+  const ctx: TurnCtx = {
+    db,
+    bus,
+    llm,
+    tools: defaultTools,
+    titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)),
+  };
 
   const { message, done } = beginTurn(ctx, "sub1");
   await done;
@@ -378,7 +414,13 @@ Deno.test("spawn cap: the 9th spawn from one turn fails; the model sees the erro
       textRound("ok"),
     ],
   });
-  const ctx: TurnCtx = { db, bus, llm, tools: defaultTools, titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)) };
+  const ctx: TurnCtx = {
+    db,
+    bus,
+    llm,
+    tools: defaultTools,
+    titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)),
+  };
 
   const { message, done } = beginTurn(ctx, spawner.id);
   await done;
@@ -415,7 +457,13 @@ Deno.test("concurrency cap: a 5th parallel spawn is refused while 4 run", async 
     ],
     "parallel task": [gated(), gated(), gated(), gated()],
   });
-  const ctx: TurnCtx = { db, bus, llm, tools: defaultTools, titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)) };
+  const ctx: TurnCtx = {
+    db,
+    bus,
+    llm,
+    tools: defaultTools,
+    titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)),
+  };
 
   const { message, done } = beginTurn(ctx, spawner.id);
   // Wait for the refusal, then let the four gated subagents finish.
@@ -448,7 +496,13 @@ Deno.test("delegation stops at the depth cap (no agent() host function at depth 
       textRound("could not"),
     ],
   });
-  const ctx: TurnCtx = { db, bus, llm, tools: defaultTools, titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)) };
+  const ctx: TurnCtx = {
+    db,
+    bus,
+    llm,
+    tools: defaultTools,
+    titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)),
+  };
 
   const { message, done } = beginTurn(ctx, "sub2");
   await done;
@@ -464,10 +518,13 @@ Deno.test({
     const repo = await tempGitRepo();
     const subBase = await Deno.makeTempDir({ prefix: "subagent-ws-" });
     const snapBase = await Deno.makeTempDir({ prefix: "subagent-snap-" });
+    const jjBase = await Deno.makeTempDir({ prefix: "subagent-jj-" });
     const prevSub = Deno.env.get("BOUGH_SUBAGENT_BASE");
     const prevSnap = Deno.env.get("BOUGH_SNAPSHOT_BASE");
+    const prevJj = Deno.env.get("BOUGH_JJ_BASE");
     Deno.env.set("BOUGH_SUBAGENT_BASE", subBase);
     Deno.env.set("BOUGH_SNAPSHOT_BASE", snapBase);
+    Deno.env.set("BOUGH_JJ_BASE", jjBase);
     const db = new Db(":memory:");
     const bus = new Bus();
     try {
@@ -485,7 +542,13 @@ Deno.test({
           program(`await write("sub.txt", "from-sub\\n"); console.log("wrote");`, { done: true }),
         ],
       });
-      const ctx: TurnCtx = { db, bus, llm, tools: defaultTools, titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)) };
+      const ctx: TurnCtx = {
+        db,
+        bus,
+        llm,
+        tools: defaultTools,
+        titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)),
+      };
 
       const { message, done } = beginTurn(ctx, spawner.id);
       await done;
@@ -504,10 +567,23 @@ Deno.test({
       assert(subDir.startsWith(subBase), `subagent dir ${subDir} outside ${subBase}`);
       assertEquals(await Deno.readTextFile(`${subDir}/sub.txt`), "from-sub\n");
 
-      // Adoption landed the file in the spawner's workspace and its jj change.
-      assertEquals(await Deno.readTextFile(`${repo}/sub.txt`), "from-sub\n");
-      const spawnerDiff = await jj.diff(repo, spawner.id);
+      // Adoption landed the file in the spawner's own working copy and jj change.
+      // External mode: the spawner itself was relocated off the repo checkout, so
+      // the user's repo stays pristine — no .jj, no adopted files.
+      const spawnerDir = db.getSessionRuntime(spawner.id).workspace!;
+      assert(spawnerDir !== repo, "spawner should run in its own working copy");
+      assertEquals(await Deno.readTextFile(`${spawnerDir}/sub.txt`), "from-sub\n");
+      const spawnerDiff = await jj.diff(spawnerDir, spawner.id);
       assert(spawnerDiff.files.some((f) => f.path === "sub.txt"));
+      for (const leaked of [".jj", "sub.txt"]) {
+        let inRepo = true;
+        try {
+          await Deno.stat(`${repo}/${leaked}`);
+        } catch {
+          inRepo = false;
+        }
+        assertEquals(inRepo, false, `${leaked} leaked into the repo checkout`);
+      }
       // The subagent branch emptied but survives — continuable, not consumed.
       assertEquals((await jj.diff(subDir, sub.id)).files.length, 0);
     } finally {
@@ -515,9 +591,12 @@ Deno.test({
       else Deno.env.set("BOUGH_SUBAGENT_BASE", prevSub);
       if (prevSnap === undefined) Deno.env.delete("BOUGH_SNAPSHOT_BASE");
       else Deno.env.set("BOUGH_SNAPSHOT_BASE", prevSnap);
+      if (prevJj === undefined) Deno.env.delete("BOUGH_JJ_BASE");
+      else Deno.env.set("BOUGH_JJ_BASE", prevJj);
       await Deno.remove(repo, { recursive: true }).catch(() => {});
       await Deno.remove(subBase, { recursive: true }).catch(() => {});
       await Deno.remove(snapBase, { recursive: true }).catch(() => {});
+      await Deno.remove(jjBase, { recursive: true }).catch(() => {});
     }
   },
 });
@@ -532,10 +611,13 @@ Deno.test({
     const repo = await tempGitRepo();
     const subBase = await Deno.makeTempDir({ prefix: "subagent-ws-" });
     const snapBase = await Deno.makeTempDir({ prefix: "subagent-snap-" });
+    const jjBase = await Deno.makeTempDir({ prefix: "subagent-jj-" });
     const prevSub = Deno.env.get("BOUGH_SUBAGENT_BASE");
     const prevSnap = Deno.env.get("BOUGH_SNAPSHOT_BASE");
+    const prevJj = Deno.env.get("BOUGH_JJ_BASE");
     Deno.env.set("BOUGH_SUBAGENT_BASE", subBase);
     Deno.env.set("BOUGH_SNAPSHOT_BASE", snapBase);
+    Deno.env.set("BOUGH_JJ_BASE", jjBase);
     const db = new Db(":memory:");
     const bus = new Bus();
     try {
@@ -563,16 +645,24 @@ Deno.test({
           }),
         ],
       });
-      const ctx: TurnCtx = { db, bus, llm, tools: defaultTools, titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)) };
+      const ctx: TurnCtx = {
+        db,
+        bus,
+        llm,
+        tools: defaultTools,
+        titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)),
+      };
 
       const { message, done } = beginTurn(ctx, spawner.id);
       await done;
 
       const out = lastToolResult(db.getMessage(message.id)!);
-      // The grandchild's work rode the adopt chain: grandchild → subagent → spawner.
+      // The grandchild's work rode the adopt chain: grandchild → subagent → spawner
+      // (whose working copy is its own relocated dir, not the repo checkout).
       assertStringIncludes(out, 'subchanged:["nested.txt"]');
       assertStringIncludes(out, "adopted");
-      assertEquals(await Deno.readTextFile(`${repo}/nested.txt`), "from-nested\n");
+      const spawnerDir = db.getSessionRuntime(spawner.id).workspace!;
+      assertEquals(await Deno.readTextFile(`${spawnerDir}/nested.txt`), "from-nested\n");
 
       // Three tiers of sessions; the grandchild's lineage points at the subagent.
       const subs = db.listSessions().filter((s) => s.kind === "subagent");
@@ -594,9 +684,12 @@ Deno.test({
       else Deno.env.set("BOUGH_SUBAGENT_BASE", prevSub);
       if (prevSnap === undefined) Deno.env.delete("BOUGH_SNAPSHOT_BASE");
       else Deno.env.set("BOUGH_SNAPSHOT_BASE", prevSnap);
+      if (prevJj === undefined) Deno.env.delete("BOUGH_JJ_BASE");
+      else Deno.env.set("BOUGH_JJ_BASE", prevJj);
       await Deno.remove(repo, { recursive: true }).catch(() => {});
       await Deno.remove(subBase, { recursive: true }).catch(() => {});
       await Deno.remove(snapBase, { recursive: true }).catch(() => {});
+      await Deno.remove(jjBase, { recursive: true }).catch(() => {});
     }
   },
 });
@@ -611,10 +704,13 @@ Deno.test({
     const repo = await tempGitRepo();
     const subBase = await Deno.makeTempDir({ prefix: "subagent-ws-" });
     const snapBase = await Deno.makeTempDir({ prefix: "subagent-snap-" });
+    const jjBase = await Deno.makeTempDir({ prefix: "subagent-jj-" });
     const prevSub = Deno.env.get("BOUGH_SUBAGENT_BASE");
     const prevSnap = Deno.env.get("BOUGH_SNAPSHOT_BASE");
+    const prevJj = Deno.env.get("BOUGH_JJ_BASE");
     Deno.env.set("BOUGH_SUBAGENT_BASE", subBase);
     Deno.env.set("BOUGH_SNAPSHOT_BASE", snapBase);
+    Deno.env.set("BOUGH_JJ_BASE", jjBase);
     const db = new Db(":memory:");
     const bus = new Bus();
     try {
@@ -631,7 +727,13 @@ Deno.test({
           program(`await write("more.txt", "v2\\n"); console.log("ok");`, { done: true }),
         ],
       });
-      const ctx: TurnCtx = { db, bus, llm, tools: defaultTools, titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)) };
+      const ctx: TurnCtx = {
+        db,
+        bus,
+        llm,
+        tools: defaultTools,
+        titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)),
+      };
 
       const { done } = beginTurn(ctx, spawner.id);
       await done;
@@ -661,9 +763,12 @@ Deno.test({
       else Deno.env.set("BOUGH_SUBAGENT_BASE", prevSub);
       if (prevSnap === undefined) Deno.env.delete("BOUGH_SNAPSHOT_BASE");
       else Deno.env.set("BOUGH_SNAPSHOT_BASE", prevSnap);
+      if (prevJj === undefined) Deno.env.delete("BOUGH_JJ_BASE");
+      else Deno.env.set("BOUGH_JJ_BASE", prevJj);
       await Deno.remove(repo, { recursive: true }).catch(() => {});
       await Deno.remove(subBase, { recursive: true }).catch(() => {});
       await Deno.remove(snapBase, { recursive: true }).catch(() => {});
+      await Deno.remove(jjBase, { recursive: true }).catch(() => {});
     }
   },
 });
@@ -675,10 +780,13 @@ Deno.test({
     const repo = await tempGitRepo();
     const subBase = await Deno.makeTempDir({ prefix: "subagent-ws-" });
     const snapBase = await Deno.makeTempDir({ prefix: "subagent-snap-" });
+    const jjBase = await Deno.makeTempDir({ prefix: "subagent-jj-" });
     const prevSub = Deno.env.get("BOUGH_SUBAGENT_BASE");
     const prevSnap = Deno.env.get("BOUGH_SNAPSHOT_BASE");
+    const prevJj = Deno.env.get("BOUGH_JJ_BASE");
     Deno.env.set("BOUGH_SUBAGENT_BASE", subBase);
     Deno.env.set("BOUGH_SNAPSHOT_BASE", snapBase);
+    Deno.env.set("BOUGH_JJ_BASE", jjBase);
     const db = new Db(":memory:");
     const bus = new Bus();
     try {
@@ -701,7 +809,13 @@ Deno.test({
           program(`await write("b.txt", "beta\\n"); console.log("ok");`, { done: true }),
         ],
       });
-      const ctx: TurnCtx = { db, bus, llm, tools: defaultTools, titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)) };
+      const ctx: TurnCtx = {
+        db,
+        bus,
+        llm,
+        tools: defaultTools,
+        titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)),
+      };
 
       const { message, done } = beginTurn(ctx, spawner.id);
       await done;
@@ -730,9 +844,72 @@ Deno.test({
       else Deno.env.set("BOUGH_SUBAGENT_BASE", prevSub);
       if (prevSnap === undefined) Deno.env.delete("BOUGH_SNAPSHOT_BASE");
       else Deno.env.set("BOUGH_SNAPSHOT_BASE", prevSnap);
+      if (prevJj === undefined) Deno.env.delete("BOUGH_JJ_BASE");
+      else Deno.env.set("BOUGH_JJ_BASE", prevJj);
       await Deno.remove(repo, { recursive: true }).catch(() => {});
       await Deno.remove(subBase, { recursive: true }).catch(() => {});
       await Deno.remove(snapBase, { recursive: true }).catch(() => {});
+      await Deno.remove(jjBase, { recursive: true }).catch(() => {});
+    }
+  },
+});
+
+Deno.test({
+  // MCP inheritance: the spawning turn's grant (here a manual activation for the
+  // spawner session) carries over to the subagent turn — its program gets a working
+  // mcp() bridged to the same servers, connected under the SUBAGENT's session id.
+  name: "subagent turns inherit the spawner's MCP grant",
+  fn: async () => {
+    if ((await Deno.permissions.query({ name: "run" })).state !== "granted") return;
+    const mcpDir = await Deno.makeTempDir({ prefix: "subagent-mcp-" });
+    const prevMcp = Deno.env.get("BOUGH_MCP_DIR");
+    Deno.env.set("BOUGH_MCP_DIR", mcpDir);
+    const db = new Db(":memory:");
+    const bus = new Bus();
+    try {
+      const fixture = new URL("./mcp/testdata/echo_server.ts", import.meta.url).pathname;
+      saveRegistry({
+        servers: {
+          echo: { command: Deno.execPath(), args: ["run", "--quiet", "--no-config", fixture] },
+        },
+      });
+      const spawner = seed(db);
+      setActivation(spawner.id, "echo", true);
+      const llm = dispatchLlm({
+        "hi": [
+          program(`const r = await agent("probe the echo server"); console.log("sub-ok:" + r.ok);`),
+          textRound("delegated"),
+        ],
+        "probe the echo server": [
+          program(
+            `const out = await mcp("echo", "echo", { text: "from-sub" });
+             console.log("MCP:" + JSON.stringify(out));`,
+            { done: true },
+          ),
+        ],
+      });
+      const ctx: TurnCtx = {
+        db,
+        bus,
+        llm,
+        tools: defaultTools,
+        titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)),
+      };
+
+      const { message, done } = beginTurn(ctx, spawner.id);
+      await done;
+
+      // The subagent's turn completed with a working mcp() …
+      assertStringIncludes(lastToolResult(db.getMessage(message.id)!), "sub-ok:true");
+      // …and its program's output shows the real round-trip through the server.
+      const sub = db.listSessions().find((s) => s.kind === "subagent")!;
+      const subReply = db.messagesFor(sub.id).find((m) => m.role === "supervisor")!;
+      assertStringIncludes(lastToolResult(subReply), 'MCP:{"echoed":"from-sub"}');
+    } finally {
+      await mcpManager().dropAll();
+      if (prevMcp === undefined) Deno.env.delete("BOUGH_MCP_DIR");
+      else Deno.env.set("BOUGH_MCP_DIR", prevMcp);
+      await Deno.remove(mcpDir, { recursive: true }).catch(() => {});
     }
   },
 });

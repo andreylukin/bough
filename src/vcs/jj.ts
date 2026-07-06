@@ -5,17 +5,26 @@
  * session forks the bookmark, and every jj command auto-snapshots the working
  * copy so nothing is ever lost (the op log is the undo history).
  *
- * Model:
- *   - We run jj colocated with git (`jj git init --colocate`), so the git repo and
- *     its history are untouched and any tool that reads git keeps working.
+ * Model (shared by both modes below):
  *   - A session's edits land on one jj change bookmarked `bough/<sessionId>`. jj
  *     amends that change on every snapshot, and the bookmark follows it — so the
  *     bookmark always points at the session's current tip.
- *   - A new session branches off the repo's git HEAD (or a caller-supplied base),
- *     giving it an isolated change. `forkSession` branches a new change off the
- *     source session's tip, so the fork inherits the source's work then diverges.
  *   - `diff(session)` is the change-vs-parent diff (`jj diff --git -r <bookmark>`),
  *     i.e. exactly what that session changed since it branched.
+ *
+ * Two placements of jj state, decided per repo by the workspace supervisor:
+ *   - External (the default for plain git repos): jj is kept OUT of the repo
+ *     entirely. The jj store lives under `~/.bough/jj/<repo>-<hash>` backed by the
+ *     repo's .git (`jj git init --git-repo`), and every session gets its own jj
+ *     workspace (a second working copy) under `~/.bough/workspaces/<sessionId>`,
+ *     branched off a captured snapshot of the repo's working tree. The user's
+ *     checkout — HEAD, branch, index, tree, `git status` — is never modified; the
+ *     only visible trace is a `bough/<sessionId>` git branch (kept fresh via
+ *     `jj git export`) so session work stays reachable from plain git.
+ *   - Colocated (legacy; only for repos that already have `.jj` alongside `.git`,
+ *     e.g. a checkout the user deliberately runs jj in): sessions share the
+ *     primary checkout, `jj new` moves it onto the session's change, and git HEAD
+ *     rides along detached. Never initiated on new repos anymore.
  *
  * Shelling out: every call uses `--no-pager` and `--color=never` for stable,
  * parseable output, and pins `user.name`/`user.email` via `--config` so jj works
@@ -42,10 +51,16 @@ interface RunResult {
   stderr: string;
 }
 
-async function run(bin: string, args: string[], cwd: string): Promise<RunResult> {
+async function run(
+  bin: string,
+  args: string[],
+  cwd: string,
+  env?: Record<string, string>,
+): Promise<RunResult> {
   const cmd = new Deno.Command(bin, {
     args,
     cwd,
+    env,
     stdout: "piped",
     stderr: "piped",
   });
@@ -75,6 +90,19 @@ async function jj(repo: string, args: string[]): Promise<string> {
   return r.stdout;
 }
 
+/** Run a git subcommand in `repo`; throws on non-zero exit with stderr attached. */
+async function git(
+  repo: string,
+  args: string[],
+  env?: Record<string, string>,
+): Promise<string> {
+  const r = await run("git", args, repo, env);
+  if (!r.ok) {
+    throw new Error(`git ${args.join(" ")} failed (${r.code}): ${r.stderr.trim()}`);
+  }
+  return r.stdout;
+}
+
 /** `jj --version` (or throws if jj isn't installed). Callers use this to gate on install. */
 export async function version(): Promise<string> {
   const r = await run("jj", ["--version"], Deno.cwd());
@@ -82,19 +110,155 @@ export async function version(): Promise<string> {
   return r.stdout.trim();
 }
 
-async function isColocated(repo: string): Promise<boolean> {
+/** True if `dir` is a jj repo or workspace (has a `.jj` dir). */
+async function hasJjDir(dir: string): Promise<boolean> {
   try {
-    const info = await Deno.stat(`${repo}/.jj`);
+    const info = await Deno.stat(`${dir}/.jj`);
     return info.isDirectory;
   } catch {
     return false;
   }
 }
 
-/** Initialise jj colocated with the existing git repo, once. No-op if already done. */
+/**
+ * Initialise jj colocated with the existing git repo, once. No-op if already done.
+ * Legacy: only `ensureWorkspace` (in-place sessions on already-colocated repos and
+ * tests) still calls this — new repos get an external store via `ensureStore`.
+ */
 export async function ensureRepo(repo: string): Promise<void> {
-  if (await isColocated(repo)) return;
+  if (await hasJjDir(repo)) return;
   await jj(repo, ["git", "init", "--colocate"]);
+}
+
+/** Root for external jj stores: `$BOUGH_JJ_BASE` or `~/.bough/jj`. */
+export function storeBase(): string {
+  const env = Deno.env.get("BOUGH_JJ_BASE");
+  if (env) return env;
+  const home = Deno.env.get("HOME");
+  if (!home) throw new Error("jj: no $HOME");
+  return `${home}/.bough/jj`;
+}
+
+/**
+ * Root for per-session jj workspaces (isolated working copies), shared by root
+ * sessions and subagents: `$BOUGH_SUBAGENT_BASE` or `~/.bough/workspaces`.
+ */
+export function workspacesRoot(): string {
+  const env = Deno.env.get("BOUGH_SUBAGENT_BASE");
+  if (env) return env;
+  const home = Deno.env.get("HOME");
+  if (!home) throw new Error("jj: no $HOME");
+  return `${home}/.bough/workspaces`;
+}
+
+/** A session's own working-copy dir under `workspacesRoot()`. */
+export function workspaceDirFor(sessionId: string): string {
+  return `${workspacesRoot()}/${sessionId}`;
+}
+
+/** External store dir for a repo: `<storeBase>/<name>-<hash>`, stable per canonical path. */
+export async function storeDirFor(repo: string): Promise<string> {
+  const real = await Deno.realPath(repo);
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(real));
+  const hex = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, 12);
+  const name = real.split("/").filter(Boolean).pop() ?? "repo";
+  return `${storeBase()}/${name}-${hex}`;
+}
+
+/**
+ * Ensure the external jj store for `repo` exists: a jj repo under `storeBase()`
+ * backed by the repo's .git (`jj git init --git-repo`). The repo itself gains no
+ * `.jj` dir and its HEAD/tree are never touched; jj state lives entirely outside.
+ * Losing an init race to a concurrently starting session is fine.
+ */
+export async function ensureStore(repo: string): Promise<string> {
+  const store = await storeDirFor(repo);
+  if (await hasJjDir(store)) return store;
+  await Deno.mkdir(store, { recursive: true });
+  try {
+    await jj(store, ["git", "init", `--git-repo=${repo}`]);
+  } catch (e) {
+    if (!(await hasJjDir(store))) throw e; // a concurrent session won the init
+  }
+  return store;
+}
+
+/**
+ * Capture the repo's working tree (tracked edits + untracked files, .gitignore
+ * respected) as a git commit without touching the repo's index, HEAD, or tree: a
+ * throwaway GIT_INDEX_FILE stages everything, write-tree/commit-tree seal it. A
+ * clean tree returns HEAD itself. Works on an unborn HEAD (parentless commit).
+ */
+async function captureBase(repo: string): Promise<string> {
+  const headR = await run("git", ["rev-parse", "--verify", "-q", "HEAD"], repo);
+  const head = headR.ok ? headR.stdout.trim() : null;
+  const idx = await Deno.makeTempFile({ prefix: "bough-git-index-" });
+  try {
+    const env = { GIT_INDEX_FILE: idx };
+    await git(repo, head ? ["read-tree", "HEAD"] : ["read-tree", "--empty"], env);
+    await git(repo, ["add", "-A"], env);
+    const tree = (await git(repo, ["write-tree"], env)).trim();
+    if (head && tree === (await git(repo, ["rev-parse", "HEAD^{tree}"])).trim()) {
+      return head;
+    }
+    const args = [
+      "-c",
+      `user.name=${JJ_USER}`,
+      "-c",
+      `user.email=${JJ_EMAIL}`,
+      "commit-tree",
+      "-m",
+      "bough: session base (working-tree snapshot)",
+    ];
+    if (head) args.push("-p", "HEAD");
+    args.push(tree);
+    return (await git(repo, args, env)).trim();
+  } finally {
+    await Deno.remove(idx).catch(() => {});
+  }
+}
+
+/**
+ * Create a root session's isolated working copy for a plain git repo, keeping jj
+ * out of the repo entirely. The working tree (including uncommitted and untracked
+ * files) is captured as a base commit, published as the git branch
+ * `bough/<sessionId>` so jj can import it, and the session's jj workspace is
+ * branched off it under `workspacesRoot()`. The repo's checkout is never
+ * modified; the branch is the only visible trace, and `exportRefs` keeps it on
+ * the session's tip so `git diff main bough/<id>` works from the user's checkout.
+ * Idempotent: an existing workspace dir is reused as-is.
+ */
+export async function createSessionWorkspace(repo: string, sessionId: string): Promise<string> {
+  const dir = workspaceDirFor(sessionId);
+  if (await hasJjDir(dir)) return dir;
+  const store = await ensureStore(repo);
+  const base = await captureBase(repo);
+  const name = bookmarkFor(sessionId);
+  await git(repo, ["update-ref", `refs/heads/${name}`, base]);
+  await jj(store, ["git", "import"]);
+  await updateStale(store);
+  await Deno.mkdir(workspacesRoot(), { recursive: true });
+  await jj(store, ["workspace", "add", "--name", workspaceNameFor(sessionId), "-r", name, dir]);
+  // The imported bookmark sits on the base commit; move it onto the workspace's
+  // fresh working-copy change so diff/accept see change-vs-parent as usual.
+  await jj(dir, ["bookmark", "move", name, "--to", "@"]);
+  await exportRefs(dir);
+  return dir;
+}
+
+/**
+ * Push jj bookmarks out to git branches (`jj git export`) so session tips stay
+ * reachable as `bough/<id>` refs from the user's checkout. Best-effort: export is
+ * visibility, not correctness, and must never fail the operation that ran it.
+ */
+export async function exportRefs(dir: string): Promise<void> {
+  try {
+    await jj(dir, ["git", "export"]);
+  } catch {
+    // visibility only
+  }
 }
 
 /** True if a bookmark with this exact name exists. */
@@ -184,6 +348,10 @@ export function workspaceNameFor(sessionId: string): string {
  * in parallel without fighting over one checkout. The new workspace's working-copy
  * change starts as a child of the base (inheriting its work) and gets the session's
  * bookmark. Idempotent: an existing workspace dir is reused as-is.
+ *
+ * `repo` must already carry jj state (a colocated checkout, another session's
+ * workspace dir, or an external store) — this never initialises jj into a plain
+ * git repo; a spawn from an un-tracked repo fails instead of colocating it.
  */
 export async function addWorkspace(
   repo: string,
@@ -191,14 +359,21 @@ export async function addWorkspace(
   dir: string,
   baseBookmark: string,
 ): Promise<string> {
-  await ensureRepo(repo);
-  if (await isColocated(dir)) return dir; // already added (dir has .jj)
+  if (await hasJjDir(dir)) return dir; // already added (dir has .jj)
   // An op from a sibling workspace (a concurrent spawn's snapshot, an adopt) can
   // rewrite this workspace's working-copy commit, leaving it stale — jj then
   // refuses to snapshot and `workspace add` fails, killing the spawn. Repair
   // first; a no-op when the working copy is fresh.
   await updateStale(repo);
-  await jj(repo, ["workspace", "add", "--name", workspaceNameFor(sessionId), "-r", baseBookmark, dir]);
+  await jj(repo, [
+    "workspace",
+    "add",
+    "--name",
+    workspaceNameFor(sessionId),
+    "-r",
+    baseBookmark,
+    dir,
+  ]);
   await jj(dir, ["bookmark", "create", bookmarkFor(sessionId), "-r", "@"]);
   return dir;
 }
@@ -262,6 +437,9 @@ export async function snapshot(repo: string): Promise<string> {
  */
 export async function diff(repo: string, sessionId: string): Promise<Diff> {
   await snapshot(repo);
+  // Keep the session's git ref on its tip whenever someone looks at the diff, so
+  // external-store sessions stay reachable from plain git (no-op when unchanged).
+  await exportRefs(repo);
   const bookmark = bookmarkFor(sessionId);
   // The session's change may have been abandoned/pruned (bookmark gone stale). Treat
   // an unresolvable revision as an empty diff — there is genuinely nothing to review —
@@ -285,6 +463,7 @@ export async function accept(repo: string, sessionId: string): Promise<void> {
   const name = bookmarkFor(sessionId);
   await jj(repo, ["new", name]);
   await jj(repo, ["bookmark", "move", name, "--to", "@"]);
+  await exportRefs(repo);
 }
 
 /** One entry in the operation log — the unit of undo/restore. */
