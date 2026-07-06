@@ -24,10 +24,15 @@ bough runs a frontier model as a **supervisor** that plans by writing code. A de
 
 ## Run
 
-`scripts/bough setup` bootstraps a fresh Mac (deps, web build, worker model, the `bough` CLI) and installs the server as a launchd user service: starts at login, relaunches on crash, never watches files — editing the repo doesn't touch the running server until you restart.
+macOS only — the sandbox is Seatbelt-based. On a fresh machine, one line clones bough to `~/bough` (override with `BOUGH_DIR`) and runs the full setup: deps, web build, worker model, API-key prompt, launchd service.
 
 ```bash
-scripts/bough setup                    # one-time: deps + web build + env (prompts for the key) + start
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/andreylukin/bough/main/install.sh)"
+```
+
+From an existing checkout the same setup is `scripts/bough setup`. The service starts at login and relaunches on crash, but never watches files — edits don't touch the running server until you restart. Manage it with:
+
+```bash
 bough start                            # serves http://127.0.0.1:4321 (logs: ~/.bough/server.log)
 bough kill | restart | status | logs   # manage the service (kill sticks across logins)
 bough update                           # fast-forward to origin/main, rebuild, restart
