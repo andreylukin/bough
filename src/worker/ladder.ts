@@ -52,10 +52,15 @@ export function backstopModel(): string {
   return Deno.env.get("BOUGH_WORKER_BACKSTOP") ?? "claude-haiku-4-5";
 }
 
+// Prompt shape follows the small-model evidence: positive requirements instead of
+// prohibitions (negations show inverse scaling in small models), rules-only (few-shot
+// hurts tiny-model generality), and the self-contained contract stated up front so
+// the worker never treats discovery as its job.
 const SYSTEM = [
-  "You are a code-editing worker. You get ONE small task with everything you need:",
-  "location, desired behavior, and how it will be checked. Act using ONLY fenced",
-  "blocks, applied in order:",
+  "You are a code-editing worker. You get ONE small task that already contains",
+  "everything you need: the file, the exact change or desired behavior, and how it",
+  "will be checked. There is nothing to search for or explore — act directly on",
+  "what the task states, using ONLY fenced blocks, applied in order:",
   "",
   "```write <path>",
   "<the file's entire new content>",
@@ -73,8 +78,14 @@ const SYSTEM = [
   "<one shell command>",
   "```",
   "",
-  "Prefer edit for surgical changes and write for small files. Do not explain,",
-  "do not add prose outside blocks, do not invent files the task didn't mention.",
+  "Rules:",
+  "- Touch ONLY the file(s) the task names; a correct reply is usually a single",
+  "  edit block.",
+  "- Prefer edit for surgical changes; use write only for a new or whole small file.",
+  "- Use sh only when the task itself requires running a command (e.g. mkdir).",
+  "  Verification runs for you afterward — searching or re-reading files is never",
+  "  your job.",
+  "- Reply with fenced blocks only, nothing else.",
 ].join("\n");
 
 /**
@@ -158,6 +169,34 @@ export function parseOps(reply: string): Op[] {
   return ops;
 }
 
+/**
+ * Discovery/search commands the worker never needs — the unit is self-contained by
+ * contract. Rejected deterministically (capability restriction beats prompt policing
+ * in 3B models); the error string feeds the best-of-2 retry as corrective signal.
+ */
+const SH_DISCOVERY = new Set([
+  "grep",
+  "rg",
+  "find",
+  "cat",
+  "ls",
+  "head",
+  "tail",
+  "tree",
+  "ag",
+  "awk",
+  "sed",
+]);
+
+/** First discovery command across pipe/chain segments, or null when clean. */
+export function deniedShCommand(command: string): string | null {
+  for (const segment of command.split(/\||&&|;|\n/)) {
+    const word = segment.trim().split(/\s+/)[0];
+    if (word && SH_DISCOVERY.has(word)) return word;
+  }
+  return null;
+}
+
 /** Apply ops through the confined tools. Returns an error description, or null. */
 async function applyOps(reply: string, ctx: ToolRunCtx, touched: string[]): Promise<string | null> {
   const ops = parseOps(reply);
@@ -176,6 +215,11 @@ async function applyOps(reply: string, ctx: ToolRunCtx, touched: string[]): Prom
         await editFile.run({ path: op.arg, old_string: parts[0], new_string: parts[1] }, ctx);
         touched.push(op.arg);
       } else {
+        const denied = deniedShCommand(op.body.trim());
+        if (denied) {
+          return `sh op rejected: '${denied}' is a discovery command — the task is ` +
+            "self-contained; act on the named files with edit/write blocks";
+        }
         const out = await bash.run({ command: op.body.trim() }, ctx);
         const exit = exitCodeOf(out);
         if (exit !== 0) return `sh op failed (exit ${exit}): ${out.slice(0, 500)}`;

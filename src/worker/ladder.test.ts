@@ -1,5 +1,5 @@
 import { assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
-import { parseOps, runUnit } from "./ladder.ts";
+import { deniedShCommand, parseOps, runUnit } from "./ladder.ts";
 import type { ToolRunCtx } from "../tools/types.ts";
 
 async function tmpCtx(): Promise<ToolRunCtx> {
@@ -129,6 +129,28 @@ Deno.test("runUnit: edit op applies through edit_file, sh op runs", async () => 
   );
   assertEquals(result.solved, true);
   assertEquals(await Deno.readTextFile(`${ctx.workspace}/code.py`), "def f():\n    return 2\n");
+});
+
+Deno.test("deniedShCommand flags discovery commands, including chained segments", () => {
+  assertEquals(deniedShCommand("grep -r TODO ."), "grep");
+  assertEquals(deniedShCommand("touch a && cat b"), "cat");
+  assertEquals(deniedShCommand("echo x | sed s/x/y/"), "sed");
+  assertEquals(deniedShCommand("mkdir -p x/y"), null);
+  assertEquals(deniedShCommand("touch ran.marker"), null);
+});
+
+Deno.test("runUnit: sh discovery command is rejected with a corrective report", async () => {
+  const ctx = await tmpCtx();
+  Deno.env.set("BOUGH_WORKER_LOCAL_ONLY", "1");
+  try {
+    const result = await runUnit("do the thing", "true", ctx, {
+      worker: () => Promise.resolve("```sh\ngrep -r TODO .\n```"),
+    });
+    assertEquals(result.solved, false);
+    assertStringIncludes(result.report, "sh op rejected");
+  } finally {
+    Deno.env.delete("BOUGH_WORKER_LOCAL_ONLY");
+  }
 });
 
 Deno.test("runUnit: a reply with no ops reports it and fails closed", async () => {

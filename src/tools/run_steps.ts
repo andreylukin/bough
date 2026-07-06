@@ -38,7 +38,8 @@ const schema = z.object({
       "— plus any delegation (agent/spawn/join/adopt) and mcp(server, tool, args) host " +
       "functions your system prompt grants. worker() hands one SMALL, self-contained, " +
       "verifiable edit to a fast local model: instruction must dictate file + exact change " +
-      "(or file + behavior + example), check is a shell command that exits 0 iff the change " +
+      "(or file + behavior + example) and name every file the unit touches — the worker " +
+      "cannot search; check is a shell command that exits 0 iff the change " +
       "is correct; returns JSON {solved, tier, attempts, touched, report}. Use it for " +
       "mechanical single-file changes you can specify precisely; do anything ambiguous or " +
       "multi-file yourself. Use console.log(...) to see " +
