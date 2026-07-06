@@ -46,6 +46,10 @@ const DENY_READS = [
   "~/.config/op",
   "~/.password-store",
   "~/.1password",
+  // bough's own secrets: MCP OAuth tokens and the env file ${VAR} expansion reads —
+  // both reach server child processes / the host only, never the sandbox.
+  "~/.bough/mcp/tokens",
+  "~/.bough/env",
   // keychains / password stores
   // NOTE: ~/Library/Keychains + /Library/Keychains are deliberately NOT denied so the
   // agent's git/gh can read GitHub credentials to push (osxkeychain helper + gh token).

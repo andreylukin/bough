@@ -73,11 +73,41 @@ export function loadRegistry(): Registry {
   return parsed.success ? parsed.data : { servers: {} };
 }
 
+/** Parse with a human-readable failure — these messages surface as 400 bodies in
+ * the /mcp skill's shell output and the UI's inline error, not in logs. */
+function parseReadable<T>(schema: z.ZodType<T>, raw: unknown): T {
+  const r = schema.safeParse(raw);
+  if (!r.success) throw new Error(z.prettifyError(r.error));
+  return r.data;
+}
+
 /** Validate and persist the registry. Throws on an invalid shape (PUT → 400). */
 export function saveRegistry(raw: unknown): Registry {
-  const reg = Registry.parse(raw);
+  const reg = parseReadable(Registry, raw);
   writeJson(join(mcpDir(), "servers.json"), reg);
   return reg;
+}
+
+/**
+ * Add or replace ONE server entry. Throws on a bad name or entry shape — the
+ * per-server PUT exists so callers never have to round-trip the whole registry
+ * (a read-modify-write in shell is where secrets and sibling entries get mangled).
+ */
+export function upsertServer(name: string, raw: unknown): Registry {
+  if (!NAME_RE.test(name)) throw new Error("server names are lowercase slugs");
+  const reg = loadRegistry();
+  reg.servers[name] = parseReadable(ServerConfig, raw);
+  writeJson(join(mcpDir(), "servers.json"), reg);
+  return reg;
+}
+
+/** Remove one server entry. Returns false when the name wasn't registered. */
+export function removeServer(name: string): boolean {
+  const reg = loadRegistry();
+  if (!(name in reg.servers)) return false;
+  delete reg.servers[name];
+  writeJson(join(mcpDir(), "servers.json"), reg);
+  return true;
 }
 
 /**

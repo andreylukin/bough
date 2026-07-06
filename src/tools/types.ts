@@ -63,6 +63,12 @@ export interface ToolRunCtx {
   mcp?: {
     call: (server: string, tool: string, args: unknown) => Promise<unknown>;
   };
+  /**
+   * MCP management state for the session (registry, auth, activations, live
+   * connections — mcp/status.ts). Read-only and set for every supervisor turn:
+   * status is not a capability grant, tool calls still require `mcp`.
+   */
+  mcpStatus?: () => Promise<unknown>;
 }
 
 /**

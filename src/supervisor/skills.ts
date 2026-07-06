@@ -126,55 +126,67 @@ if one was set.`,
   },
   mcp: {
     name: "mcp",
-    description: "Manage this session's MCP servers: status, restart, enable/disable, register",
+    description: "Manage this session's MCP servers: status, register, enable/disable, prove they run",
     body: `Manage MCP servers for this session via the bough API at
 http://127.0.0.1:\${BOUGH_PORT:-4321} (loopback is reachable from your shell and bypasses
 the egress proxy). $BOUGH_SESSION in your shell env is this session's id; carry
 ?session=$BOUGH_SESSION on every call below and omit it ONLY when the user explicitly
-wants the global scope. Do what the user's message asks — status / restart / enable /
-disable / register — nothing more.
+wants the global scope. Do what the user's message asks — status / register / enable /
+disable / restart / auth — and ALWAYS finish with step 3: a setup you didn't prove
+running is not done. Never read ~/.bough/mcp/tokens or paste its contents anywhere.
 
 ## 1. Ground first
-\`curl -s "localhost:4321/mcp/servers?session=$BOUGH_SESSION"\` returns {registry,
-connections, active}: the configured servers, this session's live connections
-(alive, toolCount, stderrTail when something wrote to stderr), and which server
-names are manually enabled for this scope.
+\`await mcpStatus()\` (host function, always available) returns {registry, auth, active,
+connections}: the configured servers, OAuth state for remote ones, which names are
+enabled for this scope, and live connections (alive, toolCount, stderrTail when
+something wrote to stderr). The same JSON is at GET /mcp/servers?session=$BOUGH_SESSION
+if you need it from the shell.
 
 ## 2. Act
-- status: nothing more to do — report step 1.
-- restart <name>: POST "/mcp/servers/<name>/restart?session=$BOUGH_SESSION" — drops the
-  session's connection, respawns the server, and returns the fresh status. Only works
-  for a currently-connected server; a server that merely isn't connected yet just
-  connects on the next turn that grants it.
-- enable <name>: POST "/mcp/servers/<name>/enable?session=$BOUGH_SESSION", with body
-  {"ttl":"2h"} only when the user wants the grant to expire ("90m" | "2h" | "7d"
-  forms; a lapsed grant fails closed). The server's tools connect at the START of a
-  turn, so the grant takes effect on the next turn, not this one.
+- status: nothing more to do — skip to step 3's report using what you have.
+- register / update ONE server: PUT "/mcp/servers/<name>" with just that entry —
+  never round-trip the whole registry. Stdio shape:
+  \`curl -s -X PUT localhost:4321/mcp/servers/<name> -H 'content-type: application/json'
+  -d '{"command":"npx","args":["-y","--prefer-offline","some-mcp"],"env":{"TOKEN":"\${SOME_VAR}"}}'\`
+  — env values may reference \${VAR} from bough's own environment (that is where
+  secrets belong; they reach the server child only — never put a literal secret in the
+  entry). Node-based servers also want "NODE_USE_ENV_PROXY":"1" so their fetch
+  respects the egress proxy. Remote shape: '{"url":"https://mcp.example.com/mcp"}'
+  (then auth, below). A 400 names the problem — fix and re-PUT. Registering grants
+  nothing by itself: enable (or a skill's \`mcp:\` frontmatter) is what grants.
+- unregister: DELETE "/mcp/servers/<name>" — removes the entry and its connections.
+- enable <name>: POST "/mcp/servers/<name>/enable?session=$BOUGH_SESSION", body
+  {"ttl":"2h"} only when the user wants expiry ("90m" | "2h" | "7d" forms; a lapsed
+  grant fails closed). The mcp() host function appears at the START of the next turn,
+  but you can and must still verify the server NOW — step 3.
 - disable <name>: POST "/mcp/servers/<name>/disable?session=$BOUGH_SESSION" — removes
   the activation and drops any live connection.
-- register a server: GET /mcp/servers, edit the registry, PUT the whole thing back to
-  /mcp/servers as {"servers":{...}}. Entry shape for stdio:
-  {"command":"npx","args":["-y","--prefer-offline","some-mcp"],"env":{"TOKEN":"\${SOME_VAR}"}}
-  — env values may reference \${VAR} from bough's own environment (that is where
-  secrets belong; they reach the server child only). Node-based servers also want
-  "NODE_USE_ENV_PROXY":"1" so their fetch respects the egress proxy. Entry shape for
-  a remote server: {"url":"https://mcp.example.com/mcp"} (needs auth, below). A 400
-  names the problem — fix and re-PUT. Registering grants nothing by itself: a
-  skill's \`mcp:\` frontmatter or an enable is what connects it.
-- auth <name> (remote servers): POST "/mcp/servers/<name>/auth". If it answers
-  {"status":"authorized"}, tokens are already valid — say so. If it answers
-  {"status":"redirect","authorizationUrl":...}, SHOW the human that URL and tell
-  them to open it and approve access; the browser lands back on bough's own
-  /mcp/oauth/callback, which stores the tokens. Then re-GET /mcp/servers until
-  auth.<name>.authorized is true (poll a few times with sleep 2). The connection
-  itself happens at the next granting turn.
+- restart <name>: POST "/mcp/servers/<name>/restart?session=$BOUGH_SESSION" — drops and
+  respawns a currently-connected server. For a server that isn't connected, use
+  /connect (step 3) instead.
+- auth <name> (remote servers): POST "/mcp/servers/<name>/auth". {"status":"authorized"}
+  → tokens already valid, say so. {"status":"redirect","authorizationUrl":...} → SHOW
+  the human that URL and tell them to open it and approve; the browser lands on bough's
+  /mcp/oauth/callback, which stores the tokens. Poll GET /mcp/servers (sleep 2 between
+  tries) until auth.<name>.authorized is true, then step 3.
 - logout <name>: DELETE "/mcp/servers/<name>/auth" — forgets tokens and drops the
   server's connections everywhere; the next use needs auth again.
 
-## 3. Prove and report
-Re-GET /mcp/servers and report the resulting state: each relevant server, its enabled
-scope(s) and expiry, authorized flag for remote servers, connection alive/tool count,
-and the stderrTail if it is failing.`,
+## 3. Prove it runs — this is the point; never skip it
+POST "/mcp/servers/<name>/connect?session=$BOUGH_SESSION" connects (or reuses) the
+server for THIS session right now, under the same sandbox/proxy confinement a turn
+uses, and returns {connected, status, tools}. connected:false comes with the error and
+stderrTail — a typo'd command, missing binary, or unset \${VAR} surfaces HERE, not on
+some later turn. Fix the entry, re-PUT, re-connect until it lists tools.
+Do NOT call the server's tools from your shell to test it: tool calls belong to the
+mcp() host function, which appears next turn and passes the egress gate (write-kind
+tools may park on human approval — expected, not an error).
+
+## 4. Report
+Report each relevant server: registered command/url, enabled scope(s) + expiry,
+authorized flag for remote ones, and the proof — connected with N tools (name a few),
+or the exact failure line from stderrTail. If you enabled a server this turn, say its
+mcp() tools become callable on the next message.`,
   },
 };
 

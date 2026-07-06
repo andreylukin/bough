@@ -35,7 +35,8 @@ const schema = z.object({
     "One JavaScript program for this round. It runs in a sealed V8 sandbox; the core " +
       "capability surface is five async host functions: bash(cmd), read(path), " +
       "write(path, content), edit(path, oldText, newText), and worker(instruction, check) " +
-      "— plus any delegation (agent/spawn/join/adopt) and mcp(server, tool, args) host " +
+      "— plus mcpStatus() (always available: this session's MCP management state) and any " +
+      "delegation (agent/spawn/join/adopt) and mcp(server, tool, args) host " +
       "functions your system prompt grants. worker() hands one SMALL, self-contained, " +
       "verifiable edit to a fast local model: instruction must dictate file + exact change " +
       "(or file + behavior + example), name every file the unit touches, and quote the " +
@@ -111,6 +112,10 @@ export const runSteps: ToolDef = {
               JSON.stringify(await ctx.mcp!.call(server, tool, JSON.parse(argsJson))) ??
                 "null",
           }
+          : {}),
+        // MCP management state — read-only, wired for every supervisor turn.
+        ...(ctx.mcpStatus
+          ? { mcpStatus: async () => JSON.stringify(await ctx.mcpStatus!()) }
           : {}),
       },
       // agent() blocks on whole subagent turns; a held mcp() call blocks on a human

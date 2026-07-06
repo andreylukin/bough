@@ -213,6 +213,9 @@ work:
 | endpoint | effect |
 |---|---|
 | `GET /mcp/servers?session=` | registry + per-session status: connected / error (with last error), tool count, activation source (which skill, or manual), uptime |
+| `PUT /mcp/servers/:name` | register/update ONE entry (validated) without round-tripping the registry; drops only that server's connections |
+| `DELETE /mcp/servers/:name` | unregister one entry and drop its connections |
+| `POST /mcp/servers/:name/connect?session=` | connect (or reuse) NOW under the turn's real confinement and return `{connected, status, tools}` — the skill's same-turn "prove it runs" step; not a grant (mcp() still enters at turn start) |
 | `POST /mcp/servers/:name/restart?session=` | drop the `(session, server)` connection — kill the stdio child / close the transport — reconnect, re-run `tools/list`, return the new status |
 | `POST /mcp/servers/:name/enable?session=` | manual per-session activation, body `{"ttl":"2h"}` optional — exact parity with plugin activations (lapses fail closed) |
 | `POST /mcp/servers/:name/disable?session=` | drop the activation and the connection |

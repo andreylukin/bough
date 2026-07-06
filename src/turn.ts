@@ -57,6 +57,7 @@ import { prepareWorkspace } from "./supervisor/workspace.ts";
 import { activationsFor } from "./mcp/config.ts";
 import { mcpManager } from "./mcp/manager.ts";
 import { mcpSection } from "./mcp/prompt.ts";
+import { mcpStatusFor } from "./mcp/status.ts";
 import { expandFileReferences } from "./server/files.ts";
 
 export interface TurnCtx {
@@ -139,6 +140,13 @@ const SYSTEM = [
   "(agent/spawn/join/adopt) and await mcp(server, tool, args) for MCP tools, whose",
   "connected servers and calling convention appear in a '# MCP tools' section. A host",
   "function exists ONLY when this prompt grants it — never guess at others.",
+  "One host function is always available: await mcpStatus() returns this session's",
+  "MCP management state {registry, auth, active, connections}. MCP servers are",
+  "managed through bough itself, NOT through other tools' config files. Answer any",
+  "MCP question from a FRESH mcpStatus() call, never from conversation memory —",
+  "registry entries, grants, and connections change between turns (UI toggles, other",
+  "sessions, TTL lapses). For changes (register/enable/auth) tell the human to type",
+  "/mcp instead of improvising.",
   "console.log(...) is how you see anything — print what the next round needs.",
   "Write one program per round covering inspect → change → verify; prefer one",
   "substantial program over many tiny rounds.",
@@ -409,6 +417,10 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       sandbox: prepared.sandboxed ? { sessionDir: prepared.sessionDir } : undefined,
       // Per-turn harness state: run_steps commits the CHECK here (SPEC §5 gating).
       turn: {},
+      // Management-plane visibility, always on: the program can ask what MCP state
+      // this session sees without shelling curl at the loopback API. Read-only —
+      // tool calls still enter through the granted mcp() bridge below.
+      mcpStatus: () => Promise.resolve(mcpStatusFor(sessionId)),
     };
     // Delegation, allowed below the depth cap. Subagent turns get BLOCKING
     // delegation only (agent/adopt): a detached spawn would outlive the turn whose

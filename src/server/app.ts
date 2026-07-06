@@ -17,7 +17,7 @@ import { CreateSessionBody, PostMessageBody, type Session } from "../schema/part
 import type { Db } from "../db/db.ts";
 import type { Bus, Listener } from "../bus.ts";
 import { activeModel, interruptTurn, MODELS, setActiveModel, startUserTurn } from "../turn.ts";
-import { normalizeWorkspace, workspaceProblem } from "../supervisor/workspace.ts";
+import { normalizeWorkspace, prepareWorkspace, workspaceProblem } from "../supervisor/workspace.ts";
 import { UNTITLED } from "../supervisor/title.ts";
 import { listSkills } from "../supervisor/skills.ts";
 import { searchWorkspaceFiles } from "./files.ts";
@@ -40,11 +40,14 @@ import { suggestPolicy } from "../net/suggest.ts";
 import {
   activationsFor as mcpActivationsFor,
   loadRegistry as loadMcpRegistry,
+  removeServer as removeMcpServer,
   saveRegistry as saveMcpRegistry,
   setActivation as setMcpActivation,
+  upsertServer as upsertMcpServer,
 } from "../mcp/config.ts";
 import { mcpManager } from "../mcp/manager.ts";
-import { beginAuth, clearAuth, completeAuth, hasTokens } from "../mcp/oauth.ts";
+import { mcpStatusFor } from "../mcp/status.ts";
+import { beginAuth, clearAuth, completeAuth } from "../mcp/oauth.ts";
 import { clientFor } from "../supervisor/llm.ts";
 import { defaultWebDir, serveWeb } from "./static.ts";
 import { createAuth } from "./auth.ts";
@@ -600,30 +603,80 @@ const setPluginH = (on: boolean): Handler => async (req, ctx, params) => {
 const getMcpServers: Handler = (req, ctx) => {
   const sessionId = new URL(req.url).searchParams.get("session") ?? undefined;
   if (sessionId && !ctx.db.getSession(sessionId)) return error(404, "unknown session");
-  const registry = loadMcpRegistry();
-  // Remote (url) servers carry OAuth state so /mcp status can say "not authorized".
-  const auth = Object.fromEntries(
-    Object.entries(registry.servers)
-      .filter(([, cfg]) => cfg.url)
-      .map(([name]) => [name, { authorized: hasTokens(name) }]),
-  );
-  return json({
-    registry,
-    auth,
-    active: mcpActivationsFor(sessionId),
-    connections: mcpManager().statuses(sessionId),
-  });
+  return json(mcpStatusFor(sessionId));
 };
 
-// Replace the whole registry (GET → edit → PUT, like /net/policy). Live connections
-// are dropped so a changed entry can't keep serving; granting turns reconnect fresh.
+// Replace the whole registry (GET → edit → PUT, like /net/policy). Only servers
+// whose entry changed or vanished lose their live connections — a bulk edit must
+// not reset every session's unrelated servers; granting turns reconnect fresh.
 const putMcpServers: Handler = async (req) => {
   const body = await req.json().catch(() => null);
   if (!body) return error(400, 'body must be the registry JSON: {"servers":{…}}');
   try {
+    const before = loadMcpRegistry().servers;
     const registry = saveMcpRegistry(body);
-    await mcpManager().dropAll();
+    const touched = [...new Set([...Object.keys(before), ...Object.keys(registry.servers)])]
+      .filter((name) => JSON.stringify(before[name]) !== JSON.stringify(registry.servers[name]));
+    for (const name of touched) await mcpManager().dropServer(name);
     return json({ registry });
+  } catch (e) {
+    return error(400, (e as Error).message);
+  }
+};
+
+// Register or update ONE server without round-tripping the registry — the shape
+// the /mcp skill uses, so a registration can't mangle sibling entries (or their
+// ${VAR} secret references) in a shell read-modify-write.
+const putMcpServer: Handler = async (req, _ctx, params) => {
+  const body = await req.json().catch(() => null);
+  if (!body) return error(400, 'body must be one server entry: {"command":…} or {"url":…}');
+  try {
+    const registry = upsertMcpServer(params.name, body);
+    await mcpManager().dropServer(params.name); // a changed entry can't keep serving
+    return json({ registry });
+  } catch (e) {
+    return error(400, (e as Error).message);
+  }
+};
+
+const deleteMcpServer: Handler = async (_req, _ctx, params) => {
+  if (!removeMcpServer(params.name)) {
+    return error(404, `no registered mcp server named "${params.name}"`);
+  }
+  await mcpManager().dropServer(params.name);
+  return json({ removed: params.name });
+};
+
+// Connect (or reuse) one server for a session RIGHT NOW and report its catalog —
+// the validation primitive behind the /mcp skill's "prove it" step. Without this,
+// a registration or enable could only be tested by starting another turn; a typo'd
+// command surfaced a turn later as UNAVAILABLE. Connecting is not a grant: the
+// turn's mcp() bridge still comes only from skills/activations at turn start.
+const connectMcpServer: Handler = async (req, ctx, params) => {
+  const sessionId = new URL(req.url).searchParams.get("session");
+  if (!sessionId) return error(400, "connect is per-session — pass ?session=");
+  if (!ctx.db.getSession(sessionId)) return error(404, "unknown session");
+  if (!loadMcpRegistry().servers[params.name]) {
+    return error(400, `no registered mcp server named "${params.name}" — register it first`);
+  }
+  try {
+    // Same spawn context a turn would use (workspace cwd + snapshot dir), so the
+    // probe exercises the REAL seatbelt/proxy confinement, not a lenient variant.
+    const prepared = await prepareWorkspace(ctx.db, sessionId);
+    const [catalog] = await mcpManager().ensure(sessionId, [params.name], {
+      workspace: prepared.cwd,
+      sandbox: prepared.sandboxed ? { sessionDir: prepared.sessionDir } : undefined,
+    });
+    if (catalog.error) return json({ server: params.name, connected: false, error: catalog.error });
+    return json({
+      server: params.name,
+      connected: true,
+      status: mcpManager().statuses(sessionId).find((s) => s.server === params.name),
+      tools: catalog.tools.map((t) => ({
+        name: t.name,
+        description: (t.description ?? "").split("\n")[0].trim(),
+      })),
+    });
   } catch (e) {
     return error(400, (e as Error).message);
   }
@@ -950,6 +1003,21 @@ const routes: Route[] = [
   },
   { method: "GET", pattern: new URLPattern({ pathname: "/mcp/servers" }), handler: getMcpServers },
   { method: "PUT", pattern: new URLPattern({ pathname: "/mcp/servers" }), handler: putMcpServers },
+  {
+    method: "PUT",
+    pattern: new URLPattern({ pathname: "/mcp/servers/:name" }),
+    handler: putMcpServer,
+  },
+  {
+    method: "DELETE",
+    pattern: new URLPattern({ pathname: "/mcp/servers/:name" }),
+    handler: deleteMcpServer,
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/mcp/servers/:name/connect" }),
+    handler: connectMcpServer,
+  },
   {
     method: "POST",
     pattern: new URLPattern({ pathname: "/mcp/servers/:name/restart" }),

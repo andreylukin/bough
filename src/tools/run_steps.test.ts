@@ -85,6 +85,26 @@ Deno.test("mcp() bridges into the program when granted; absent otherwise", async
   assertStringIncludes(bare, "unknown host function: mcp");
 });
 
+Deno.test("mcpStatus() bridges the management state as a parsed object", async () => {
+  const c: ToolRunCtx = {
+    ...ctx(),
+    mcpStatus: () =>
+      Promise.resolve({ registry: { servers: {} }, auth: {}, active: ["exa"], connections: [] }),
+  };
+  const out = await runSteps.run(
+    { code: `const s = await mcpStatus(); console.log("active:", s.active.join(","));` },
+    c,
+  );
+  assertStringIncludes(out, "active: exa");
+
+  // Not wired (e.g. a bare test ctx) → the call rejects like any unknown host fn.
+  const bare = await runSteps.run(
+    { code: `try { await mcpStatus(); } catch (e) { console.log("no fn:", e.message); }` },
+    ctx(),
+  );
+  assertStringIncludes(bare, "unknown host function: mcpStatus");
+});
+
 Deno.test("mcp() string results round-trip too", async () => {
   const c: ToolRunCtx = { ...ctx(), mcp: { call: () => Promise.resolve("plain text") } };
   const out = await runSteps.run(

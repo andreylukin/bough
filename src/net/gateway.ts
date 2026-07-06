@@ -263,6 +263,10 @@ export class ClawpatrolGateway {
       // The owning branch, so in-session tooling (e.g. the /net-plugin skill) can
       // scope its API calls (?session=$BOUGH_SESSION) without guessing.
       ...(sessionId ? { BOUGH_SESSION: sessionId } : {}),
+      // The bough API port, always set so instructions can say $BOUGH_PORT — the
+      // ${BOUGH_PORT:-4321} shell-default form breaks inside the JS template
+      // literals run_steps programs are written in.
+      BOUGH_PORT: Deno.env.get("BOUGH_PORT") ?? "4321",
       // kubectl reads clusters from KUBECONFIG; point it at the CA-rewritten copy so
       // it trusts the proxy's leaf. Absent when there's no kubeconfig to rewrite.
       ...(this.#kube ? { KUBECONFIG: this.#kube.configPath } : {}),

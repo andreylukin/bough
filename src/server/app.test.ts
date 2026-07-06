@@ -404,6 +404,76 @@ Deno.test("mcp: registry round-trips, enable/disable manage activations, guards 
   }
 });
 
+Deno.test("mcp: per-server PUT/DELETE, connect-now proves a server runs", async () => {
+  const dir = Deno.makeTempDirSync({ prefix: "bough-mcp-app2-" });
+  Deno.env.set("BOUGH_MCP_DIR", dir);
+  const c = ctx();
+  const h = createHandler(c);
+  const fixture = new URL("../mcp/testdata/echo_server.ts", import.meta.url).pathname;
+  try {
+    // per-server PUT validates and leaves siblings alone
+    assertEquals((await h(req("PUT", "/mcp/servers/bad name", { command: "x" }))).status, 400);
+    assertEquals((await h(req("PUT", "/mcp/servers/other", {}))).status, 400);
+    await h(req("PUT", "/mcp/servers/other", { command: "sleep", args: ["1"] }));
+    const put = await h(req("PUT", "/mcp/servers/echo", {
+      command: Deno.execPath(),
+      args: ["run", "--quiet", "--no-config", fixture],
+    }));
+    assertEquals(put.status, 200);
+    const reg = await (await h(req("GET", "/mcp/servers"))).json() as {
+      registry: { servers: Record<string, unknown> };
+    };
+    assertEquals(Object.keys(reg.registry.servers).sort(), ["echo", "other"]);
+
+    // connect guards: session required/known, name registered
+    const s = await (await h(req("POST", "/sessions", { title: "m" }))).json() as Session;
+    assertEquals((await h(req("POST", "/mcp/servers/echo/connect"))).status, 400);
+    assertEquals((await h(req("POST", "/mcp/servers/echo/connect?session=nope"))).status, 404);
+    assertEquals(
+      (await h(req("POST", `/mcp/servers/ghost/connect?session=${s.id}`))).status,
+      400,
+    );
+
+    if ((await Deno.permissions.query({ name: "run" })).state === "granted") {
+      // connect-now spawns the server and reports its catalog — the proof step
+      const conn = await (await h(req("POST", `/mcp/servers/echo/connect?session=${s.id}`)))
+        .json() as { connected: boolean; tools: { name: string }[] };
+      assertEquals(conn.connected, true);
+      assertEquals(conn.tools.map((t) => t.name), ["echo", "scream", "boom"]);
+
+      // whole-registry PUT with echo unchanged keeps its connection alive
+      const full = await (await h(req("GET", "/mcp/servers"))).json() as {
+        registry: { servers: Record<string, unknown> };
+      };
+      await h(req("PUT", "/mcp/servers", full.registry));
+      const kept = await (await h(req("GET", `/mcp/servers?session=${s.id}`))).json() as {
+        connections: { server: string; alive: boolean }[];
+      };
+      assertEquals(kept.connections.map((x) => [x.server, x.alive]), [["echo", true]]);
+
+      // per-server PUT of a CHANGED entry drops its connection
+      await h(req("PUT", "/mcp/servers/echo", {
+        command: Deno.execPath(),
+        args: ["run", "--quiet", "--no-config", fixture],
+        env: { CHANGED: "1" },
+      }));
+      const dropped = await (await h(req("GET", `/mcp/servers?session=${s.id}`))).json() as {
+        connections: unknown[];
+      };
+      assertEquals(dropped.connections, []);
+    }
+
+    // DELETE unregisters; repeat 404s
+    assertEquals((await h(req("DELETE", "/mcp/servers/echo"))).status, 200);
+    assertEquals((await h(req("DELETE", "/mcp/servers/echo"))).status, 404);
+  } finally {
+    const { mcpManager } = await import("../mcp/manager.ts");
+    await mcpManager().dropAll();
+    Deno.env.delete("BOUGH_MCP_DIR");
+    c.db.close();
+  }
+});
+
 Deno.test("mcp oauth: auth endpoint guards; callback validates state", async () => {
   const dir = Deno.makeTempDirSync({ prefix: "bough-mcp-oauth-app-" });
   Deno.env.set("BOUGH_MCP_DIR", dir);

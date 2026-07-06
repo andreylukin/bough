@@ -35,6 +35,12 @@ export interface HostFns {
    * and the result returns as JSON — the worker side parses both ends.
    */
   mcp?(server: string, tool: string, argsJson: string): Promise<string>;
+  /**
+   * MCP management state for the session (registry/auth/active/connections) as
+   * JSON. Read-only and always bridged for supervisor turns — status is not a
+   * capability grant; calling tools still requires mcp().
+   */
+  mcpStatus?(): Promise<string>;
 }
 
 export interface ProgramResult {

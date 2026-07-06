@@ -1,5 +1,13 @@
 import { assertEquals, assertThrows } from "jsr:@std/assert@1";
-import { activationsFor, expandEnv, loadRegistry, saveRegistry, setActivation } from "./config.ts";
+import {
+  activationsFor,
+  expandEnv,
+  loadRegistry,
+  removeServer,
+  saveRegistry,
+  setActivation,
+  upsertServer,
+} from "./config.ts";
 
 function withMcpDir(fn: () => void) {
   const dir = Deno.makeTempDirSync({ prefix: "bough-mcp-" });
@@ -25,6 +33,26 @@ Deno.test("registry: empty when absent, round-trips, rejects bad shapes", () => 
     assertThrows(() => saveRegistry({ servers: { bad: { command: "x", url: "https://y" } } }));
     // names are lowercase slugs
     assertThrows(() => saveRegistry({ servers: { "Bad Name": { command: "x" } } }));
+  });
+});
+
+Deno.test("upsertServer adds/replaces one entry without touching siblings; removeServer deletes", () => {
+  withMcpDir(() => {
+    saveRegistry({ servers: { exa: { command: "npx", args: ["exa-mcp"] } } });
+    upsertServer("echo", { command: "deno", args: ["run", "srv.ts"] });
+    assertEquals(Object.keys(loadRegistry().servers).sort(), ["echo", "exa"]);
+    assertEquals(loadRegistry().servers.exa.args, ["exa-mcp"]); // sibling untouched
+
+    upsertServer("echo", { url: "https://mcp.example.com/mcp" });
+    assertEquals(loadRegistry().servers.echo.url, "https://mcp.example.com/mcp");
+
+    assertThrows(() => upsertServer("Bad Name", { command: "x" }));
+    assertThrows(() => upsertServer("bad", {})); // one of command|url
+    assertThrows(() => upsertServer("bad", { command: "x", url: "https://y" }));
+
+    assertEquals(removeServer("echo"), true);
+    assertEquals(removeServer("echo"), false);
+    assertEquals(Object.keys(loadRegistry().servers), ["exa"]);
   });
 });
 

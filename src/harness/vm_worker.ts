@@ -24,7 +24,8 @@ type HostName =
   | "spawn"
   | "join"
   | "adopt"
-  | "mcp";
+  | "mcp"
+  | "mcpStatus";
 
 const pending = new Map<number, { resolve: (v: string) => void; reject: (e: Error) => void }>();
 let seq = 0;
@@ -73,6 +74,8 @@ async function run(code: string): Promise<void> {
   // Turns without granted servers have no bridged fn — the call rejects.
   const mcp = async (server: string, tool: string, args?: unknown) =>
     JSON.parse(await hostCall("mcp", [server, tool, JSON.stringify(args ?? {})]));
+  // MCP management state (registry/auth/active/connections) — read-only, always on.
+  const mcpStatus = async () => JSON.parse(await hostCall("mcpStatus", []));
 
   // deno-lint-ignore no-explicit-any
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as any;
@@ -87,10 +90,24 @@ async function run(code: string): Promise<void> {
     "join",
     "adopt",
     "mcp",
+    "mcpStatus",
     "console",
     code,
   );
-  await program(bash, read, write, edit, worker, agent, spawn, join, adopt, mcp, sandboxConsole);
+  await program(
+    bash,
+    read,
+    write,
+    edit,
+    worker,
+    agent,
+    spawn,
+    join,
+    adopt,
+    mcp,
+    mcpStatus,
+    sandboxConsole,
+  );
 }
 
 self.onmessage = (e: MessageEvent) => {
