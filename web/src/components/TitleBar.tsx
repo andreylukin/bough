@@ -1,4 +1,4 @@
-// macOS-style titlebar: traffic lights, the bough mark, the active branch chip, and a
+// macOS-style titlebar: the bough mark, the active branch chip, and a
 // right-aligned run status. In live mode the status derives from real state (SSE
 // connection); the sandbox-snapshot / agent chips are hidden until their backends exist,
 // rather than showing invented values. Mock mode keeps the fuller design-review chrome.
@@ -6,10 +6,6 @@ import { useEffect, useRef, useState } from "react";
 import { c, mono } from "../theme";
 import type { ModelOption } from "../api";
 import { CopyId, Dot, Logo } from "./ui";
-
-function Light() {
-  return <span style={{ width: 12, height: 12, borderRadius: "50%", background: c.hairline }} />;
-}
 
 // "12.3k" / "512" — compact token counts for the context meter.
 function fmtTokens(n: number): string {
@@ -231,12 +227,7 @@ export function TitleBar({
         gap: 16,
       }}
     >
-      <div style={{ display: "flex", gap: 8 }}>
-        <Light />
-        <Light />
-        <Light />
-      </div>
-      <div style={{ marginLeft: 8, display: "flex", alignItems: "center" }}>
+      <div style={{ display: "flex", alignItems: "center" }}>
         <Logo size={16} />
       </div>
       <span style={{ fontWeight: 600, fontSize: 14 }}>bough</span>
