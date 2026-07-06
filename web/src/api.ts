@@ -85,6 +85,36 @@ export interface NetConfig {
   /** Per-scope plugin activations; the TTL rides on the activation, not the file. */
   plugins?: PluginActivation[];
 }
+// MCP management state (mirrors src/mcp/status.ts). env values are ${VAR}
+// references, never expanded secrets.
+export interface McpServerEntry {
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+}
+export interface McpConnStatus {
+  server: string;
+  sessionId: string;
+  alive: boolean;
+  toolCount: number;
+  lastUsed: number;
+  stderrTail?: string;
+}
+export interface McpStatus {
+  registry: { servers: Record<string, McpServerEntry> };
+  auth: Record<string, { authorized: boolean }>;
+  active: string[];
+  connections: McpConnStatus[];
+}
+export interface McpConnectResult {
+  server: string;
+  connected: boolean;
+  error?: string;
+  status?: McpConnStatus;
+  tools?: { name: string; description: string }[];
+}
+
 export interface PluginActivation {
   name: string;
   expires?: string;
@@ -250,6 +280,46 @@ export const api = {
       return res.json() as Promise<{ config: NetConfig }>;
     });
   },
+
+  // ---- MCP servers (registry is global; activation + connections are per-session;
+  // registration stays skill-first via /mcp — this client reads, toggles, proves)
+  mcpStatus: (sessionId?: string | null) => {
+    const q = sessionId ? `?session=${encodeURIComponent(sessionId)}` : "";
+    return fetch(`/mcp/servers${q}`).then(j<McpStatus>);
+  },
+  setMcpServer: (name: string, on: boolean, sessionId?: string | null, ttl?: string) => {
+    const q = sessionId ? `?session=${encodeURIComponent(sessionId)}` : "";
+    return fetch(`/mcp/servers/${encodeURIComponent(name)}/${on ? "enable" : "disable"}${q}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(ttl ? { ttl } : {}),
+    }).then(j<{ active: string[] }>);
+  },
+  // Register or update ONE server entry (validated server-side; drops that
+  // server's live connections so a changed command can't keep serving).
+  putMcpServer: (name: string, entry: McpServerEntry) =>
+    fetch(`/mcp/servers/${encodeURIComponent(name)}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(entry),
+    }).then(async (res) => {
+      if (!res.ok) {
+        const body = await res.json().catch(() => null) as { error?: string } | null;
+        throw new Error(body?.error || `${res.status} ${res.statusText}`);
+      }
+      return res.json() as Promise<{ registry: McpStatus["registry"] }>;
+    }),
+  // Connect the server for this session RIGHT NOW and return its tool catalog (or
+  // the failure + stderr) — the same-turn proof the /mcp skill uses.
+  connectMcpServer: (name: string, sessionId: string) =>
+    fetch(
+      `/mcp/servers/${encodeURIComponent(name)}/connect?session=${encodeURIComponent(sessionId)}`,
+      { method: "POST" },
+    ).then(j<McpConnectResult>),
+  // OAuth for remote servers: "redirect" hands back the URL the human must open.
+  startMcpAuth: (name: string) =>
+    fetch(`/mcp/servers/${encodeURIComponent(name)}/auth`, { method: "POST" })
+      .then(j<{ status: "authorized" } | { status: "redirect"; authorizationUrl: string }>),
 
   // AI-drafted rules: intent in, proposed config + rationale out. Nothing is
   // enforced until the user reviews the draft in the editor and saves it.

@@ -41,6 +41,7 @@ function readHash(): { view: View; tab: RailTab; wide: boolean; file: string | n
   if (h === "bundles") return { view: "bundles", tab: "network", wide: false, file: null };
   if (h === "changes") return { view: "main", tab: "changes", wide: false, file: "auth/token.js" };
   if (h === "network") return { view: "main", tab: "network", wide: true, file: null };
+  if (h === "mcp") return { view: "main", tab: "mcp", wide: false, file: null };
   return { view: "main", tab: "network", wide: false, file: null };
 }
 

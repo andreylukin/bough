@@ -1,14 +1,15 @@
-// Right context rail. Two tabs share it — Network (live Claw Patrol feed + pending
-// approvals + the rule editor) and Changes (the run's file manifest). Pending pulses
-// the amber accent; nothing else competes.
+// Right context rail. Three tabs share it — Network (live Claw Patrol feed + pending
+// approvals + the rule editor), Changes (the run's file manifest), and MCP (server
+// registry, branch grants, connect-proof). Pending pulses the amber accent; nothing
+// else competes.
 import { useEffect, useState } from "react";
 import { c, alpha, mono } from "../theme";
 import type { DiffFile } from "../mock";
-import { api, type NetConfig, type NetStatus, type OpRule, type PluginActivation, type PluginInfo, type PolicySource } from "../api";
+import { api, type McpConnectResult, type McpServerEntry, type McpStatus, type NetConfig, type NetStatus, type OpRule, type PluginActivation, type PluginInfo, type PolicySource } from "../api";
 import type { NetRequest } from "../types";
 import { Chip, Dot } from "./ui";
 
-export type RailTab = "network" | "changes";
+export type RailTab = "network" | "changes" | "mcp";
 
 function TabHeader({
   tab,
@@ -70,6 +71,7 @@ function TabHeader({
         </>
       )}
       {item("changes", <>Changes {changesCount > 0 && <Chip>{changesCount}</Chip>}</>)}
+      {item("mcp", <>MCP</>)}
       {onToggleWide && (
         <button
           onClick={onToggleWide}
@@ -745,6 +747,337 @@ function PluginsPanel({ sessionId, activations, onPolicyChanged, reloadSignal = 
   );
 }
 
+// Split an edited command line into argv, honoring '…' and "…" quoting so paths
+// with spaces survive the round-trip back into {command, args}.
+function splitCommandLine(s: string): string[] {
+  const out: string[] = [];
+  const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(s))) out.push(m[1] ?? m[2] ?? m[3]);
+  return out;
+}
+
+// MCP servers: the global registry with this branch's activations, live
+// connections, and OAuth state. Reading and toggling live here; "Test" proves a
+// server actually runs (spawns it under the session's confinement and lists its
+// tools); the command/url line is click-to-edit and saves through the per-server
+// PUT (validated server-side, connections dropped so the old process can't keep
+// serving). Creating NEW entries stays skill-first via /mcp.
+function McpPanel({ sessionId }: { sessionId: string | null }) {
+  const [status, setStatus] = useState<McpStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [ttls, setTtls] = useState<Record<string, string>>({});
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  // Per-server outcome of the last "Test": tools on success, error text on failure.
+  const [proofs, setProofs] = useState<Record<string, McpConnectResult>>({});
+  // Remote-server auth handoff: the URL the human must open, per server.
+  const [authUrls, setAuthUrls] = useState<Record<string, string>>({});
+  // Click-to-edit draft of one server's command line (stdio) or url (remote).
+  const [editing, setEditing] = useState<{ name: string; text: string } | null>(null);
+
+  const refresh = async () => {
+    try {
+      setStatus(await api.mcpStatus(sessionId));
+      setErr(null);
+    } catch (e) {
+      setErr((e as Error).message || "failed to load MCP state");
+    }
+  };
+  useEffect(() => {
+    refresh();
+  }, [sessionId]);
+
+  const toggleOpen = (name: string) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+
+  const toggle = async (name: string, on: boolean) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.setMcpServer(name, on, sessionId, on ? ttls[name] || undefined : undefined);
+      await refresh();
+    } catch (e) {
+      setErr((e as Error).message || "toggle failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const test = async (name: string) => {
+    if (!sessionId) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await api.connectMcpServer(name, sessionId);
+      setProofs((prev) => ({ ...prev, [name]: res }));
+      await refresh();
+    } catch (e) {
+      setProofs((prev) => ({
+        ...prev,
+        [name]: { server: name, connected: false, error: (e as Error).message },
+      }));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveEdit = async (name: string, cfg: McpServerEntry) => {
+    if (!editing || editing.name !== name) return;
+    const text = editing.text.trim();
+    setBusy(true);
+    setErr(null);
+    try {
+      // Same transport kind as before; env survives untouched. An empty line, a
+      // bad url, etc. come back as the server's 400 message — the draft stays
+      // open so the user can fix it.
+      const entry = cfg.url
+        ? { url: text, env: cfg.env ?? {} }
+        : (() => {
+          const argv = splitCommandLine(text);
+          return { command: argv[0] ?? "", args: argv.slice(1), env: cfg.env ?? {} };
+        })();
+      await api.putMcpServer(name, entry);
+      setEditing(null);
+      // The old process was dropped server-side; the last proof is stale now.
+      setProofs((prev) => {
+        const next = { ...prev };
+        delete next[name];
+        return next;
+      });
+      await refresh();
+    } catch (e) {
+      setErr((e as Error).message || "save failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const authorize = async (name: string) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await api.startMcpAuth(name);
+      if (res.status === "authorized") await refresh();
+      else {
+        setAuthUrls((prev) => ({ ...prev, [name]: res.authorizationUrl }));
+        window.open(res.authorizationUrl, "_blank");
+      }
+    } catch (e) {
+      setErr((e as Error).message || "auth failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const servers = Object.entries(status?.registry.servers ?? {});
+  return (
+    <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "12px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontFamily: mono, fontSize: 10, letterSpacing: ".1em", color: c.muted2 }}>
+          SERVERS {servers.length > 0 && <Chip>{servers.length}</Chip>}
+        </span>
+        <button
+          onClick={refresh}
+          disabled={busy}
+          title="Re-read the registry, activations, and live connections"
+          style={{ marginLeft: "auto", fontFamily: mono, fontSize: 10.5, color: c.muted, background: "none", border: `1px solid ${c.border2}`, borderRadius: 6, padding: "2px 8px" }}
+        >
+          ↻ Refresh
+        </button>
+      </div>
+      <p style={{ fontSize: 11.5, color: c.muted, lineHeight: 1.5, margin: 0 }}>
+        MCP servers are defined once in a global registry; enabling one grants its tools
+        to this branch's turns. Every tool call still passes the egress gate. Test spawns
+        the server now and lists its tools — proof it runs before a turn depends on it.
+      </p>
+      {servers.map(([name, cfg]) => {
+        const conn = status?.connections.find((x) => x.server === name);
+        const on = status?.active.includes(name) ?? false;
+        const remote = !!cfg.url;
+        const authorized = !remote || (status?.auth[name]?.authorized ?? false);
+        const proof = proofs[name];
+        const tint = conn?.alive ? c.green : on ? c.amber : c.muted2;
+        const opened = open.has(name);
+        const transport = remote ? cfg.url : [cfg.command, ...(cfg.args ?? [])].join(" ");
+        return (
+          <div key={name} style={{ display: "flex", flexDirection: "column", gap: 3, borderLeft: `2px solid ${tint}`, paddingLeft: 8 }}>
+            <div
+              onClick={() => toggleOpen(name)}
+              title={opened ? "Collapse" : "Show transport, auth, and last test"}
+              style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}
+            >
+              <span style={{ fontFamily: mono, fontSize: 9, color: c.muted2, width: 8, flex: "none" }}>
+                {opened ? "▾" : "▸"}
+              </span>
+              <span style={{ fontFamily: mono, fontSize: 11.5, color: c.text2 }}>{name}</span>
+              <span style={{ fontFamily: mono, fontSize: 10, color: tint }}>
+                {conn?.alive
+                  ? `connected · ${conn.toolCount} tools`
+                  : on
+                  ? "enabled · connects next turn"
+                  : remote && !authorized
+                  ? "not authorized"
+                  : "off"}
+              </span>
+              <span
+                onClick={(e) => e.stopPropagation()}
+                style={{ marginLeft: "auto", display: "flex", gap: 5, alignItems: "center" }}
+              >
+                {!on && (
+                  <select
+                    value={ttls[name] ?? ""}
+                    onChange={(e) => setTtls((prev) => ({ ...prev, [name]: e.target.value }))}
+                    title="TTL for THIS activation only — a lapsed grant fails closed"
+                    style={{ fontFamily: mono, fontSize: 10, color: c.text2, background: c.bg, border: `1px solid ${c.border2}`, borderRadius: 6, padding: "2px 4px" }}
+                  >
+                    <option value="">no expiry</option>
+                    <option value="2h">2h</option>
+                    <option value="24h">24h</option>
+                    <option value="7d">7d</option>
+                  </select>
+                )}
+                <button
+                  onClick={() => toggle(name, !on)}
+                  disabled={busy || !sessionId}
+                  title={on
+                    ? "Remove this branch's grant and drop the connection"
+                    : "Grant this server's tools to this branch (mcp() appears next turn)"}
+                  style={{ fontFamily: mono, fontSize: 10.5, color: busy ? c.muted2 : on ? c.red : c.green, background: "none", border: `1px solid ${c.border2}`, borderRadius: 6, padding: "2px 8px" }}
+                >
+                  {on ? "Disable" : "Enable"}
+                </button>
+              </span>
+            </div>
+            {opened && (
+              <>
+                {editing?.name === name
+                  ? (
+                    <span style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      <textarea
+                        value={editing.text}
+                        onChange={(e) => setEditing({ name, text: e.target.value })}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault();
+                            saveEdit(name, cfg);
+                          }
+                          if (e.key === "Escape") setEditing(null);
+                        }}
+                        rows={2}
+                        autoFocus
+                        spellCheck={false}
+                        style={{ fontFamily: mono, fontSize: 10.5, color: c.text, background: c.bg, border: `1px solid ${c.border2}`, borderRadius: 6, padding: "4px 6px", resize: "vertical", width: "100%" }}
+                      />
+                      <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <button
+                          onClick={() => saveEdit(name, cfg)}
+                          disabled={busy}
+                          title={remote
+                            ? "Save the new URL (existing connections drop; re-Test after)"
+                            : "Save the new command (quotes keep spaces together; env is untouched; existing connections drop — re-Test after)"}
+                          style={{ fontFamily: mono, fontSize: 10.5, color: c.green, background: "none", border: `1px solid ${c.border2}`, borderRadius: 6, padding: "2px 8px" }}
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => setEditing(null)}
+                          style={{ fontFamily: mono, fontSize: 10.5, color: c.muted, background: "none", border: `1px solid ${c.border2}`, borderRadius: 6, padding: "2px 8px" }}
+                        >
+                          Cancel
+                        </button>
+                        <span style={{ fontSize: 9.5, color: c.muted2 }}>↵ save · esc cancel</span>
+                      </span>
+                    </span>
+                  )
+                  : (
+                    <span
+                      onClick={() => setEditing({ name, text: transport ?? "" })}
+                      title={remote ? "Click to edit the URL" : "Click to edit the command"}
+                      style={{ fontFamily: mono, fontSize: 10, color: c.muted2, wordBreak: "break-all", cursor: "text" }}
+                    >
+                      {transport} <span style={{ color: c.muted2, opacity: .7 }}>✎</span>
+                    </span>
+                  )}
+                {remote && (
+                  <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ fontFamily: mono, fontSize: 10, color: authorized ? c.green : c.amber }}>
+                      {authorized ? "authorized" : "needs OAuth"}
+                    </span>
+                    {!authorized && (
+                      <button
+                        onClick={() => authorize(name)}
+                        disabled={busy}
+                        title="Start the OAuth flow — approve in the browser tab, then Refresh"
+                        style={{ fontFamily: mono, fontSize: 10.5, color: c.green, background: "none", border: `1px solid ${c.border2}`, borderRadius: 6, padding: "2px 8px" }}
+                      >
+                        Authorize
+                      </button>
+                    )}
+                    {authUrls[name] && !authorized && (
+                      <a href={authUrls[name]} target="_blank" rel="noreferrer" style={{ fontSize: 10.5, color: c.blue }}>
+                        approval link
+                      </a>
+                    )}
+                  </span>
+                )}
+                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <button
+                    onClick={() => test(name)}
+                    disabled={busy || !sessionId || (remote && !authorized)}
+                    title="Spawn/connect the server for this branch NOW and list its tools"
+                    style={{ fontFamily: mono, fontSize: 10.5, color: c.green, background: "none", border: `1px solid ${c.border2}`, borderRadius: 6, padding: "2px 8px", flex: "none" }}
+                  >
+                    ▸ Test
+                  </button>
+                  {proof && (proof.connected
+                    ? (
+                      <span style={{ fontSize: 10.5, color: c.muted, wordBreak: "break-word" }}>
+                        <span style={{ color: c.green, fontFamily: mono }}>runs</span>
+                        {" · "}
+                        {(proof.tools ?? []).map((t) => t.name).join(", ")}
+                      </span>
+                    )
+                    : (
+                      <span style={{ fontFamily: mono, fontSize: 10.5, color: c.red, wordBreak: "break-all" }}>
+                        {proof.error || "failed"}
+                      </span>
+                    ))}
+                </span>
+                {conn?.stderrTail && (
+                  <pre style={{ fontFamily: mono, fontSize: 9.5, color: c.muted2, margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 96, overflowY: "auto" }}>
+                    {conn.stderrTail}
+                  </pre>
+                )}
+              </>
+            )}
+          </div>
+        );
+      })}
+      {status && servers.length === 0 && (
+        <div style={{ fontSize: 11.5, color: c.muted2 }}>
+          No servers registered yet.
+        </div>
+      )}
+      <div style={{ fontSize: 11, color: c.muted2 }}>
+        Register or debug one by typing <span style={{ fontFamily: mono, color: c.green }}>/mcp</span>{" "}
+        in the composer — the agent writes the entry, enables it, and proves it runs.
+      </div>
+      {!sessionId && (
+        <div style={{ fontSize: 11, color: c.muted2 }}>
+          Open a session to enable or test servers for a branch.
+        </div>
+      )}
+      {err && <span style={{ fontSize: 10.5, color: c.red, wordBreak: "break-all" }}>{err}</span>}
+    </div>
+  );
+}
+
 // bough runs the egress firewall in-process: this panel shows its status, the live
 // feed, the hold-and-ask cards, and the editable rule set.
 function NetworkPanel(
@@ -1219,6 +1552,8 @@ export function RightRail({
           sessionId={sessionId}
           wide={wide}
         />
+      ) : tab === "mcp" ? (
+        <McpPanel sessionId={sessionId} />
       ) : (
         <ChangesPanel diffs={diffs} selected={selectedFile} onSelect={onSelectFile} onApplyAll={onApplyAll} onRevert={onRevert} onAdopt={onAdopt} />
       )}
