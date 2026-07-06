@@ -1,9 +1,10 @@
 /**
  * The delegation ladder — a small, self-contained, VERIFIABLE unit of work runs on
  * the local worker instead of costing frontier tokens. The supervisor dictates the
- * unit ReDAct-style (location + behavior + example — specificity is safely better)
- * and commits a CHECK; completion is decided by the check's exit code, never
- * self-reported.
+ * unit (location + behavior + example — specificity is safely better; the
+ * descriptive-instruction / edit-sketch pattern, cf. CanItEdit and cascaded code
+ * editing) and commits a CHECK; completion is decided by the check's exit code,
+ * never self-reported.
  *
  * Ladder shape (the benchmarked one): tier1 = local worker one-shot; on CHECK fail
  * a single fresh sample (best-of-2 harvests the 3B's per-shot variance ~100× cheaper
