@@ -71,6 +71,13 @@ export interface TurnCtx {
   /** Tool cwd; defaults to BOUGH_WORKSPACE or the process cwd. */
   workspace?: string;
   model?: string;
+  /**
+   * MCP servers inherited from a spawning turn. A subagent turn connects these in
+   * addition to its own skills/activations — the human's grant to the spawner
+   * extends to the subagents doing parts of that same granted work. Captured at
+   * spawn time, so a later manual continuation of the subagent doesn't inherit.
+   */
+  mcpGrant?: string[];
 }
 
 /** Thrown to unwind the turn loop when the user interrupts. */
@@ -125,9 +132,13 @@ const SYSTEM = [
   "You are bough, a coding agent. You act ONLY through the run_steps tool: each call",
   "carries one JavaScript program that a deterministic harness executes in a sealed V8",
   "sandbox — you never touch the machine directly.",
-  "Inside the program the entire capability surface is four async host functions:",
+  "Inside the program the core capability surface is four async host functions:",
   "await bash(cmd) — shell in the sandboxed workspace, returns combined output;",
   "await read(path); await write(path, content); await edit(path, oldText, newText).",
+  "Later sections of this prompt may grant more host functions — delegation",
+  "(agent/spawn/join/adopt) and await mcp(server, tool, args) for MCP tools, whose",
+  "connected servers and calling convention appear in a '# MCP tools' section. A host",
+  "function exists ONLY when this prompt grants it — never guess at others.",
   "console.log(...) is how you see anything — print what the next round needs.",
   "Write one program per round covering inspect → change → verify; prefer one",
   "substantial program over many tiny rounds.",
@@ -152,7 +163,10 @@ const SYSTEM_DELEGATION = " " + [
   "returns its full result in-band. await agent(task) is the blocking shorthand",
   "(spawn+join): it runs the task to completion and returns {sessionId, ok, checkPassed,",
   "report, changedFiles}. Subagents start with NO context beyond the task string: include",
-  "every relevant path, constraint, and acceptance criterion in it. Their file changes",
+  "every relevant path, constraint, and acceptance criterion in it. They DO inherit this",
+  "turn's MCP servers — a subagent's program can call the same mcp() tools (each call",
+  "still passes the egress gate), so delegating MCP-dependent work is fine; name the",
+  "server and tool in the task. Their file changes",
   "stay on their own branch — call await adopt(sessionId) to merge a subagent's changes",
   "into your workspace, or leave the branch for the user to review. Prefer spawn for",
   "long tasks so you stay responsive; run independent blocking subtasks concurrently with",
@@ -178,7 +192,8 @@ const SYSTEM_DELEGATION_NESTED = " " + [
   "completion on its own branched copy of this workspace and returns {sessionId, ok,",
   "checkPassed, report, changedFiles}. Nested subagents start with NO context beyond the",
   "task string — include every relevant path, constraint, and acceptance criterion in",
-  "it — and cannot delegate further. Their file changes stay on their own branch: call",
+  "it — and cannot delegate further. They inherit this turn's MCP servers (their",
+  "programs can call the same mcp() tools). Their file changes stay on their own branch: call",
   "await adopt(sessionId) to merge them into your workspace so they are part of your",
   "result. Run independent blocking subtasks concurrently with Promise.all. Caps: at",
   `most ${MAX_SPAWNS_PER_TURN} spawns per turn and ${MAX_TREE_CONCURRENT} subagents running`,
@@ -397,15 +412,27 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     // programs have no delegation host functions and the prompt never mentions them.
     const session = db.getSession(sessionId);
     const isSub = session?.kind === "subagent";
+    // Skills: `/name` in the triggering user message pulls that skill's
+    // instructions into the system prompt for this run (supervisor/skills.ts) and
+    // names the MCP servers the invocation grants.
+    const skills = activeSkills(lastUserText(db, sessionId));
+    // The turn's MCP grant: the invoked skills' servers + the session's manual
+    // activations (/mcp enable) + servers inherited from the spawning turn (a
+    // subagent doing part of granted work keeps the grant).
+    const grantedMcp = [
+      ...new Set([...skills.servers, ...activationsFor(sessionId), ...(ctx.mcpGrant ?? [])]),
+    ].sort();
     const mayDelegate = session !== undefined &&
       subagentDepth(db, sessionId) < MAX_SUBAGENT_DEPTH;
     if (mayDelegate) {
       const sctx = { spawnerId: sessionId, spawnerMessageId: messageId, model, signal };
+      // Subagents inherit this turn's MCP grant (captured now, not at call time).
+      const subCtx: TurnCtx = { ...ctx, mcpGrant: grantedMcp };
       toolCtx.delegate = {
-        run: (task) => runSubagent(ctx, sctx, task),
+        run: (task) => runSubagent(subCtx, sctx, task),
         adopt: (subId) => adoptSubagent(ctx, sessionId, subId),
         ...(isSub ? {} : {
-          spawn: (task) => spawnSubagentDetached(ctx, sctx, task),
+          spawn: (task) => spawnSubagentDetached(subCtx, sctx, task),
           join: (subId) => joinSubagent(sctx, subId),
         }),
       };
@@ -423,32 +450,26 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     // Project rules: an AGENTS.md at the workspace root is authoritative for build/test
     // commands, conventions, and what "done" means — inject it into the system prompt.
     const agents = prepared.sandboxed ? await readAgentsFile(prepared.cwd) : null;
-    // Skills: `/name` in the triggering user message pulls that skill's
-    // instructions into the system prompt for this run (supervisor/skills.ts) and
-    // names the MCP servers the invocation grants.
-    const skills = activeSkills(lastUserText(db, sessionId));
-    // MCP: the turn's grant = the invoked skills' servers + the session's manual
-    // activations (/mcp enable). Connect them now so the prompt can list real tools;
-    // a server that fails to connect is named UNAVAILABLE instead of vanishing.
-    // Subagent turns get no MCP (their task string is not a human grant).
+    // MCP: connect the turn's granted servers (grantedMcp, resolved above) so the
+    // prompt can list real tools; a server that fails to connect is named
+    // UNAVAILABLE instead of vanishing. Subagent turns connect their inherited
+    // grant here too — under their own session id, so gating and workspace stay
+    // scoped to the subagent.
     let mcpNote = "";
-    if (!isSub) {
-      const granted = new Set([...skills.servers, ...activationsFor(sessionId)]);
-      if (granted.size > 0) {
-        const catalog = await mcpManager().ensure(sessionId, [...granted].sort(), {
-          workspace: prepared.cwd,
-          sandbox: toolCtx.sandbox,
-        });
-        mcpNote = mcpSection(catalog);
-        const usable = new Set(catalog.filter((c) => !c.error).map((c) => c.name));
-        if (usable.size > 0) {
-          toolCtx.mcp = {
-            call: (server, tool, args) =>
-              usable.has(server)
-                ? mcpManager().call(sessionId, server, tool, args)
-                : Promise.reject(new Error(`mcp server "${server}" is not granted for this turn`)),
-          };
-        }
+    if (grantedMcp.length > 0) {
+      const catalog = await mcpManager().ensure(sessionId, grantedMcp, {
+        workspace: prepared.cwd,
+        sandbox: toolCtx.sandbox,
+      });
+      mcpNote = mcpSection(catalog);
+      const usable = new Set(catalog.filter((c) => !c.error).map((c) => c.name));
+      if (usable.size > 0) {
+        toolCtx.mcp = {
+          call: (server, tool, args) =>
+            usable.has(server)
+              ? mcpManager().call(sessionId, server, tool, args)
+              : Promise.reject(new Error(`mcp server "${server}" is not granted for this turn`)),
+        };
       }
     }
     const system = SYSTEM +

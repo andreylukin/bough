@@ -30,9 +30,11 @@ const DELEGATING_TIMEOUT_MS = 45 * 60_000;
 
 const schema = z.object({
   code: z.string().describe(
-    "One JavaScript program for this round. It runs in a sealed V8 sandbox; the entire " +
+    "One JavaScript program for this round. It runs in a sealed V8 sandbox; the core " +
       "capability surface is four async host functions: bash(cmd), read(path), " +
-      "write(path, content), edit(path, oldText, newText). Use console.log(...) to see " +
+      "write(path, content), edit(path, oldText, newText) — plus any delegation " +
+      "(agent/spawn/join/adopt) and mcp(server, tool, args) host functions your system " +
+      "prompt grants. Use console.log(...) to see " +
       "anything — printed output is returned to you. Cover inspect → change → verify in " +
       "one program.",
   ),
@@ -56,7 +58,8 @@ function exitCodeOf(bashOutput: string): number {
 export const runSteps: ToolDef = {
   name: "run_steps",
   description:
-    "Execute one JavaScript program in the sealed sandbox (host functions: bash/read/write/edit), " +
+    "Execute one JavaScript program in the sealed sandbox (host functions: bash/read/write/edit, " +
+    "plus delegation and mcp() when granted), " +
     "optionally committing a `check` command and/or requesting `done`. This is your only way to act.",
   schema,
   async run(input: unknown, ctx: ToolRunCtx): Promise<string> {

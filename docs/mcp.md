@@ -42,8 +42,9 @@ Goals (v1):
   skills' references.
 
 Non-goals (v1): MCP resources/prompts (tools only), OAuth'd remote servers, bough
-acting as an MCP server, exposing MCP to subagent turns (same depth-1 posture as
-delegation — revisit).
+acting as an MCP server. Subagent turns inherit the spawning turn's grant (captured
+at spawn) and connect the servers under their own session id, so gating and
+workspace stay scoped per subagent.
 
 ## Server registry
 
@@ -307,8 +308,10 @@ call-layer gate with its own direct egress — but it's the backstop, not the bo
 - ~~Should a session be able to activate a server without a skill?~~ Resolved:
   `/mcp enable <name>` (see the `/mcp` builtin) — manual, per-session, optionally
   TTL'd, still entered through an explicit human `/` invocation.
-- Subagents: task strings can't invoke skills today, so subagent turns get no MCP.
-  Fine for v1; revisit if delegated tasks need browser/CRM access.
+- ~~Subagents: task strings can't invoke skills today, so subagent turns get no
+  MCP.~~ Resolved: subagent turns inherit the spawning turn's MCP grant, captured
+  at spawn time (`TurnCtx.mcpGrant`) — a later manual continuation of the subagent
+  does not inherit. Servers connect under the subagent's own session id.
 - Per-skill server definitions (an `mcp.json` inside the skill folder) would make
   skills self-contained/shareable; deferred to keep one registry and one secrets
   story.

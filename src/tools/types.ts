@@ -53,8 +53,9 @@ export interface ToolRunCtx {
     adopt: (subagentSessionId: string) => Promise<string>;
   };
   /**
-   * MCP tool calls, wired by the turn runner when the triggering message's skills
-   * (or the session's manual activations) granted servers. `call` runs the
+   * MCP tool calls, wired by the turn runner when the triggering message's skills,
+   * the session's manual activations, or a spawning turn's inherited grant
+   * (subagents) granted servers. `call` runs the
    * session's Claw Patrol gate BEFORE the server sees the call — a deny rejects
    * with the policy reason, a hold blocks on human approval — and rejects for
    * servers outside the turn's grant. Absent = the program has no mcp().
