@@ -16,6 +16,11 @@ export interface HostFns {
   write(path: string, content: string): Promise<string>;
   edit(path: string, oldText: string, newText: string): Promise<string>;
   /**
+   * One delegated verifiable unit on the local-worker ladder (worker/ladder.ts).
+   * Returns the UnitResult as JSON — string-only protocol, like agent().
+   */
+  worker?(instruction: string, check: string): Promise<string>;
+  /**
    * Delegation, bridged only for sessions that may spawn (run_steps wires them from
    * ToolRunCtx). `agent` (blocking result), `spawn` (background handle) and `join`
    * (await a background subagent) return JSON — the worker side parses it back into
