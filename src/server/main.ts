@@ -8,6 +8,8 @@ import { mcpManager } from "../mcp/manager.ts";
 import { bus } from "../bus.ts";
 import { createHandler } from "./app.ts";
 import { recoverOrphanedTurns } from "../supervisor/turns.ts";
+import { watchActivity } from "../worker/activity.ts";
+import { workerTitle } from "../supervisor/title.ts";
 
 const PORT = Number(Deno.env.get("BOUGH_PORT") ?? 4321);
 
@@ -28,9 +30,19 @@ await gateway.start();
 globalThis.addEventListener("unload", () => void gateway.stop());
 // MCP server children (mcp/manager.ts) get an orderly SIGTERM on shutdown.
 globalThis.addEventListener("unload", () => void mcpManager().dropAll());
+// Live-map blurbs: the local worker narrates each session's current program round
+// as ephemeral session.activity events (production wiring only — tests stay hermetic).
+watchActivity(bus);
 const password = Deno.env.get("BOUGH_PASSWORD");
 if (password) console.log("auth: password required (BOUGH_PASSWORD is set)");
-const handler = createHandler({ db, bus, gateway, gate: gateway.gate, password });
+const handler = createHandler({
+  db,
+  bus,
+  gateway,
+  gate: gateway.gate,
+  password,
+  retitler: workerTitle,
+});
 
 // Deno.serve defaults to 0.0.0.0 — only take the LAN-visible bind when a password
 // guards it. BOUGH_HOST overrides either way.

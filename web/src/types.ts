@@ -72,6 +72,8 @@ export interface NetRequest {
   requestedBy?: string;
   /** Facet fields — the classifier's parsed view (e.g. k8s resource/namespace). */
   fields?: Record<string, unknown>;
+  /** Local-worker one-liner ("Creates a fork of repo X") — advisory, may lag. */
+  annotation?: string;
   ts: number;
 }
 

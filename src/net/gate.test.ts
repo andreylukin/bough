@@ -118,6 +118,60 @@ Deno.test("gate: expireHolds denies a session's parked holds; others untouched",
   assertEquals((await p2).verdict, "deny");
 });
 
+Deno.test("gate: annotator re-emits the parked card with the one-liner", async () => {
+  const bus = new Bus();
+  const db = new Db(":memory:");
+  const events: BoughEvent[] = [];
+  bus.subscribe((e) => events.push(e));
+  let annotate!: (s: string | null) => void;
+  const gate = createGate({
+    db,
+    bus,
+    policy: policy({ holdVerbs: new Set(["GET /user"]) }),
+    annotator: () => new Promise((r) => (annotate = r)),
+  });
+  const pending = gate.gate(ghGet, { sessionId: "s1" });
+  await new Promise((r) => setTimeout(r, 0));
+  assertEquals(events.length, 1); // parked, no annotation yet
+
+  annotate("Reads the authenticated GitHub user profile");
+  await new Promise((r) => setTimeout(r, 0));
+  assertEquals(events.length, 2); // re-emitted in place, still pending
+  const annotated = events[1].data as NetRequest;
+  assertEquals(annotated.id, (events[0].data as NetRequest).id);
+  assertEquals(annotated.verdict, "pending");
+  assertEquals(annotated.annotation, "Reads the authenticated GitHub user profile");
+
+  gate.resolveHold(annotated.id, true);
+  await pending;
+  // The final verdict keeps the annotation.
+  assertEquals((events[2].data as NetRequest).verdict, "allowed");
+  assertEquals((events[2].data as NetRequest).annotation, annotated.annotation);
+});
+
+Deno.test("gate: a late annotation after resolution is dropped, not re-emitted", async () => {
+  const bus = new Bus();
+  const db = new Db(":memory:");
+  const events: BoughEvent[] = [];
+  bus.subscribe((e) => events.push(e));
+  let annotate!: (s: string | null) => void;
+  const gate = createGate({
+    db,
+    bus,
+    policy: policy({ holdVerbs: new Set(["GET /user"]) }),
+    annotator: () => new Promise((r) => (annotate = r)),
+  });
+  const pending = gate.gate(ghGet, { sessionId: "s1" });
+  await new Promise((r) => setTimeout(r, 0));
+  gate.resolveHold((events[0].data as NetRequest).id, false);
+  await pending;
+  assertEquals(events.length, 2); // pending, denied
+
+  annotate("too late");
+  await new Promise((r) => setTimeout(r, 0));
+  assertEquals(events.length, 2); // no pending regression after the final verdict
+});
+
 Deno.test("db: expirePendingNetEvents sweeps orphaned pending rows", () => {
   const h = harness();
   h.db.recordNetEvent("sX", {

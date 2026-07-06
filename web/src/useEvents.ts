@@ -26,6 +26,7 @@ const KNOWN_TYPES = new Set([
   "usage.updated",
   "worker.step",
   "net.request", // live egress feed + hold-and-ask cards; else the rail needs a refresh
+  "session.activity", // local-worker blurb of what a session is doing (live map)
 ]);
 
 const RETRY_MS = 2000;

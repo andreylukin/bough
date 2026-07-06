@@ -49,6 +49,11 @@ export interface CompactCtx {
   /** Injected for tests; defaults to the real Anthropic client. */
   llm?: LlmClient;
   model?: string;
+  /**
+   * Optional retitler for the compaction branch (production: the local title
+   * worker, wired in server main). Absent = keep the deterministic title.
+   */
+  retitler?: (text: string) => Promise<string | null>;
 }
 
 /** 400 for a bad span, 404 for an unknown session/message. */
@@ -172,6 +177,21 @@ export async function compact(ctx: CompactCtx, sessionId: string, args: CompactB
     } else {
       seeder.copy(own[i]);
     }
+  }
+
+  // Fire-and-forget: name the branch from its first summary (local title worker).
+  // The deterministic placeholder stays if the worker is cold or the user renamed.
+  if (ctx.retitler) {
+    const branchId = seeder.session.id;
+    const placeholder = seeder.session.title;
+    ctx.retitler(summaries[0]).then((t) => {
+      if (!t || ctx.db.getSession(branchId)?.title !== placeholder) return;
+      ctx.db.setSessionTitle(branchId, `${t} · compacted ${picked.length}`);
+      const updated = ctx.db.getSession(branchId);
+      if (updated) {
+        ctx.bus.publish({ type: "session.updated", sessionId: branchId, data: updated });
+      }
+    }).catch(() => {});
   }
 
   return seeder.session;

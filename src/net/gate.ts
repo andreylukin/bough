@@ -78,6 +78,11 @@ export class Gate {
   /** Plugin gate() hooks for the owning session — approve-chain lookup (#runChain). */
   #guards?: (sessionId?: string) => readonly PluginGuard[];
   #guardOpts: RunGuardOpts;
+  /**
+   * Advisory one-liner for held requests (production: the local worker —
+   * worker/annotate.ts). Absent = no annotations; nothing gates on it.
+   */
+  #annotator?: (record: NetRequest) => Promise<string | null>;
 
   constructor(cfg: {
     policy: Policy;
@@ -87,6 +92,7 @@ export class Gate {
     classifiers?: (sessionId?: string) => readonly Classifier[];
     guards?: (sessionId?: string) => readonly PluginGuard[];
     guardOpts?: RunGuardOpts;
+    annotator?: (record: NetRequest) => Promise<string | null>;
   }) {
     this.#policy = cfg.policy;
     this.#db = cfg.db;
@@ -95,6 +101,7 @@ export class Gate {
     this.#classifiers = cfg.classifiers;
     this.#guards = cfg.guards;
     this.#guardOpts = cfg.guardOpts ?? {};
+    this.#annotator = cfg.annotator;
   }
 
   /** Number of requests currently awaiting human approval (introspection/tests). */
@@ -151,6 +158,8 @@ export class Gate {
 
     if (decision.verdict !== "hold") return decision;
 
+    // Fire-and-forget: annotate the parked request while the human looks at it.
+    this.#annotate(record, opts.sessionId);
     // Hold: run the approver chain (default: a human), then re-emit the final verdict
     // on the same id so the approval card updates in place.
     const final = await this.#runChain(decision, record, req, opts.sessionId);
@@ -249,6 +258,21 @@ export class Gate {
     return n;
   }
 
+  /**
+   * Ask the annotator for a one-liner and re-emit the held card with it. Mutating
+   * `record` lets a late annotation still ride out on the final-verdict re-emit
+   * (same object); the in-place pending re-emit happens only while the hold is
+   * still parked, so an annotation can never regress a decided card.
+   */
+  #annotate(record: NetRequest, sessionId?: string): void {
+    if (!this.#annotator) return;
+    this.#annotator(record).then((summary) => {
+      if (!summary) return;
+      record.annotation = summary;
+      if (this.#holds.has(record.id)) this.#emit({ ...record }, sessionId);
+    }).catch(() => {});
+  }
+
   #emit(record: NetRequest, sessionId?: string): void {
     this.#db.recordNetEvent(sessionId, record);
     this.#bus.publish({ type: "net.request", sessionId, data: record });
@@ -265,6 +289,7 @@ export function createGate(
     classifiers?: (sessionId?: string) => readonly Classifier[];
     guards?: (sessionId?: string) => readonly PluginGuard[];
     guardOpts?: RunGuardOpts;
+    annotator?: (record: NetRequest) => Promise<string | null>;
   },
 ): Gate {
   return new Gate({
@@ -275,5 +300,6 @@ export function createGate(
     classifiers: cfg.classifiers,
     guards: cfg.guards,
     guardOpts: cfg.guardOpts,
+    annotator: cfg.annotator,
   });
 }

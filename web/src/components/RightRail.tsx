@@ -208,6 +208,7 @@ function FeedGroupRow(
           <DetailRow label="method" value={r.verb ?? "—"} />
           <DetailRow label="action" value={r.action} />
           {r.reason && <DetailRow label="reason" value={r.reason} />}
+          {r.annotation && <DetailRow label="summary" value={r.annotation} />}
           {r.fields && Object.keys(r.fields).length > 0 && (
             <DetailRow label="facets" value={<FieldChips fields={r.fields} />} />
           )}
@@ -257,6 +258,12 @@ function HoldCard(
         <span style={{ color: c.muted2 }}>{req.verb ?? ""}</span> {req.host}
       </div>
       <div style={{ fontFamily: mono, fontSize: 11, color: c.muted }}>{req.action}</div>
+      {/* Local-worker one-liner: what this request actually does (advisory). */}
+      {req.annotation && (
+        <p style={{ fontSize: 12, color: c.text2, fontStyle: "italic", lineHeight: 1.5, margin: 0 }}>
+          {req.annotation}
+        </p>
+      )}
       {req.fields && Object.keys(req.fields).length > 0 && (
         <div style={{ fontFamily: mono, fontSize: 10.5, color: c.text2 }}>
           <FieldChips fields={req.fields} />

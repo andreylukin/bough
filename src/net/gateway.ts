@@ -27,6 +27,7 @@ import { augmentCloudPolicy, type KubeSetup, setupKube } from "./cloud.ts";
 import { loadConfig, resolveConfig, toPolicy } from "./config.ts";
 import type { Db } from "../db/db.ts";
 import type { Bus } from "../bus.ts";
+import { annotateNet } from "../worker/annotate.ts";
 
 /** Whether bough should run the egress proxy (opt-in — see module docs). */
 export function clawpatrolEnabled(): boolean {
@@ -181,6 +182,9 @@ export class ClawpatrolGateway {
         plugins.activeFor(resolveConfig(this.#db, sessionId).config.plugins),
       guards: (sessionId) =>
         plugins.activeGuardsFor(resolveConfig(this.#db, sessionId).config.plugins),
+      // Held requests get a local-worker one-liner on the approval card. Wired
+      // here (production only) so gate tests stay hermetic.
+      annotator: annotateNet,
     });
     // When a session's turn ends: expire any holds it left parked (an interrupted
     // turn's command dies but its gate hold would otherwise pend forever), then

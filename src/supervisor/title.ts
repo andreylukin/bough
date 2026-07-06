@@ -76,8 +76,22 @@ async function defaultTitler(text: string): Promise<string> {
       temperature: 0.2,
     });
   } catch (err) {
+    // Privacy tier: local-only mode never backstops to a remote API.
+    if (Deno.env.get("BOUGH_WORKER_LOCAL_ONLY") === "1") throw err;
     console.warn("local title worker unavailable, falling back:", (err as Error).message);
     return await backstopTitle(text);
+  }
+}
+
+/**
+ * One-shot titling for non-session callers (compaction branches): sanitized,
+ * null on any failure. Same ladder as session titles.
+ */
+export async function workerTitle(text: string): Promise<string | null> {
+  try {
+    return sanitize(await defaultTitler(text.slice(0, 2000))) || null;
+  } catch {
+    return null;
   }
 }
 

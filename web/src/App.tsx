@@ -187,6 +187,7 @@ function LiveApp() {
         thread={store.thread}
         streaming={store.streaming}
         activity={[]}
+        blurbs={store.blurbs}
         netStatus={store.netStatus}
         net={store.net}
         pending={store.pending}
@@ -263,6 +264,7 @@ function Window({
   thread,
   streaming,
   activity,
+  blurbs = {},
   netStatus,
   net,
   pending,
@@ -315,6 +317,8 @@ function Window({
   thread: Message[];
   streaming: Record<string, string>;
   activity: ActivityGroup[];
+  /** Local-worker per-session activity blurbs (live map lanes). */
+  blurbs?: Record<string, { text: string; ts: number }>;
   netStatus: import("./api").NetStatus;
   net: NetRequest[];
   pending: NetRequest | null;
@@ -404,6 +408,7 @@ function Window({
           <LiveMapView
             sessions={sessions}
             currentId={currentId}
+            blurbs={blurbs}
             onJump={(id) => {
               onSelectHead(id);
               location.hash = "main";

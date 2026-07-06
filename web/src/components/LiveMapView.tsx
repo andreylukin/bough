@@ -50,12 +50,15 @@ function dotColor(m: Message): string {
 export function LiveMapView({
   sessions,
   currentId,
+  blurbs = {},
   onJump,
   onCompact,
   onClose,
 }: {
   sessions: Session[];
   currentId: string | null;
+  /** Latest local-worker blurb per session — "what is this lane doing right now". */
+  blurbs?: Record<string, { text: string; ts: number }>;
   onJump: (sessionId: string) => void;
   onCompact: (sessionId: string, picks: TurnPick[]) => void;
   onClose: () => void;
@@ -339,7 +342,15 @@ export function LiveMapView({
                         }}
                       >
                         <span style={{ color: kindColor[s.kind], flex: "none" }}>{kindGlyph[s.kind]}</span>
-                        <span style={{ fontSize: 12, color: current ? c.text : c.muted, overflow: "hidden", textOverflow: "ellipsis", flex: 1, minWidth: 0 }}>{s.title}</span>
+                        <span style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, overflow: "hidden" }}>
+                          <span style={{ fontSize: 12, color: current ? c.text : c.muted, overflow: "hidden", textOverflow: "ellipsis" }}>{s.title}</span>
+                          {/* Present-tense blurb while a turn runs (local worker; advisory). */}
+                          {s.busy && blurbs[s.id] && (
+                            <span style={{ fontSize: 10, fontStyle: "italic", color: c.muted2, overflow: "hidden", textOverflow: "ellipsis" }}>
+                              {blurbs[s.id].text}
+                            </span>
+                          )}
+                        </span>
                         {/* State affix: the map must show not just structure but STATE —
                             running pulse, done ✓, failed ✗ (subagent lanes especially). */}
                         {s.busy

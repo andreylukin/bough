@@ -16,6 +16,8 @@ export interface Store {
   connected: boolean;
   // A turn is streaming for the open session (any of its messages still pending).
   busy: boolean;
+  // Latest local-worker blurb per session ("running the tests") — live map lanes.
+  blurbs: Record<string, { text: string; ts: number }>;
   netStatus: NetStatus;
   // The live egress feed (newest first) and the current hold awaiting approval, if any.
   net: NetRequest[];
@@ -91,6 +93,8 @@ export function useStore(): Store {
   const [notice, setNotice] = useState<string | null>(null);
   const [usage, setUsage] = useState<Usage>({ contextTokens: 0, outputTokens: 0, inputTokens: 0 });
   const [queued, setQueued] = useState<string[]>([]);
+  // Latest local-worker activity blurb per session (ephemeral; live map only).
+  const [activity, setActivity] = useState<Record<string, { text: string; ts: number }>>({});
 
   // currentId in a ref so the event handler (stable) can filter without re-subscribing.
   const currentRef = useRef<string | null>(null);
@@ -430,6 +434,14 @@ export function useStore(): Store {
         );
         break;
       }
+      case "session.activity": {
+        // What a session's current program round is doing (local-worker blurb).
+        if (!ev.sessionId) break;
+        const { text, ts } = ev.data as { text: string; ts: number };
+        const sessionId = ev.sessionId;
+        setActivity((prev) => ({ ...prev, [sessionId]: { text, ts } }));
+        break;
+      }
       case "net.request": {
         const r = ev.data as NetRequest;
         // Upsert by id: a held request is emitted twice (pending, then resolved), so the
@@ -544,6 +556,7 @@ export function useStore(): Store {
     streaming,
     connected,
     busy,
+    blurbs: activity,
     netStatus,
     net,
     pending,

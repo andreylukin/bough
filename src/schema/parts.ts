@@ -105,6 +105,8 @@ export const NetRequest = z.object({
   requestedBy: z.string().optional(),
   /** Facet fields — the classifier's parsed view (e.g. k8s resource/namespace). */
   fields: z.record(z.string(), z.unknown()).optional(),
+  /** Local-worker one-liner ("Creates a fork of repo X") — advisory, may lag. */
+  annotation: z.string().optional(),
   ts: z.number(),
 });
 export type NetRequest = z.infer<typeof NetRequest>;
