@@ -78,6 +78,14 @@ export const Session = z.object({
   // message. Root/plain sessions omit them. Gives the map real lineage edges.
   originId: z.string().nullish(),
   originMessageId: z.string().nullish(),
+  // Prompt-cache visibility (additive; stamped after each turn's last LLM round).
+  // contextTokens = that round's full prompt size; cachedTokens = the share of it
+  // served from / written to the provider's prompt cache; lastLlmAt = when the round
+  // finished. The UI derives warm/cold from lastLlmAt + the provider TTL (~5 min,
+  // sliding) — cache state is a time-decaying property, so it's computed client-side.
+  contextTokens: z.number().nullish(),
+  cachedTokens: z.number().nullish(),
+  lastLlmAt: z.number().nullish(),
 });
 export type Session = z.infer<typeof Session>;
 

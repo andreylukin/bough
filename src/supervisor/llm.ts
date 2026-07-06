@@ -47,6 +47,10 @@ export interface LlmParams {
 export interface LlmUsage {
   inputTokens: number;
   outputTokens: number;
+  /** Prompt tokens served from the provider's prompt cache this round. */
+  cacheReadTokens?: number;
+  /** Prompt tokens newly written to the cache this round. */
+  cacheCreationTokens?: number;
 }
 
 export interface LlmResult {
@@ -103,11 +107,24 @@ export function anthropicClient(): LlmClient {
   const client = new Anthropic();
   return {
     async run(params, onText, signal) {
+      // Prompt caching (5-minute sliding TTL, refreshed free on every hit):
+      //   - breakpoint on the system block caches tools + system together;
+      //   - breakpoint on the final block of the final message extends the cached
+      //     prefix each round (the API reuses the longest previously cached prefix).
+      const messages = params.messages.map(toApiMessage);
+      const lastContent = messages.at(-1)?.content;
+      if (Array.isArray(lastContent) && lastContent.length > 0) {
+        (lastContent[lastContent.length - 1] as { cache_control?: unknown }).cache_control = {
+          type: "ephemeral",
+        };
+      }
       const stream = client.messages.stream({
         model: params.model,
         max_tokens: params.maxTokens,
-        system: params.system,
-        messages: params.messages.map(toApiMessage),
+        system: params.system
+          ? [{ type: "text", text: params.system, cache_control: { type: "ephemeral" } }]
+          : undefined,
+        messages,
         tools: params.tools.map((t) => ({
           name: t.name,
           description: t.description,
@@ -126,6 +143,8 @@ export function anthropicClient(): LlmClient {
           (final.usage.cache_read_input_tokens ?? 0) +
           (final.usage.cache_creation_input_tokens ?? 0),
         outputTokens: final.usage.output_tokens,
+        cacheReadTokens: final.usage.cache_read_input_tokens ?? 0,
+        cacheCreationTokens: final.usage.cache_creation_input_tokens ?? 0,
       };
       return { content, stopReason: final.stop_reason ?? "end_turn", usage };
     },
@@ -229,7 +248,11 @@ export function openrouterClient(): LlmClient {
           if (data === "[DONE]") continue;
           let chunk: {
             choices?: { delta?: { content?: string; tool_calls?: OpenAIToolCall[] }; finish_reason?: string }[];
-            usage?: { prompt_tokens?: number; completion_tokens?: number };
+            usage?: {
+              prompt_tokens?: number;
+              completion_tokens?: number;
+              prompt_tokens_details?: { cached_tokens?: number };
+            };
           };
           try {
             chunk = JSON.parse(data);
@@ -240,6 +263,8 @@ export function openrouterClient(): LlmClient {
             usage = {
               inputTokens: chunk.usage.prompt_tokens ?? 0,
               outputTokens: chunk.usage.completion_tokens ?? 0,
+              // OpenRouter relays the upstream provider's cache hits (OpenAI-shape).
+              cacheReadTokens: chunk.usage.prompt_tokens_details?.cached_tokens ?? 0,
             };
           }
           const choice = chunk.choices?.[0];

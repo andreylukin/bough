@@ -20,6 +20,10 @@ export interface Usage {
   inputTokens: number;
   /** Rollup over this session plus its whole subagent subtree. */
   tree?: { inputTokens: number; outputTokens: number; sessions: number };
+  /** Last LLM round: prompt tokens read from / written to the provider cache. */
+  cachedTokens?: number;
+  /** Epoch ms the last LLM round finished (cache-warmth clock). */
+  lastLlmAt?: number | null;
 }
 export interface SkillInfo {
   name: string;

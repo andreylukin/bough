@@ -48,6 +48,9 @@ Deno.test("Session round-trips with nullable parent", () => {
     createdAt: 3,
     originId: "s1",
     originMessageId: "m1",
+    contextTokens: 12000,
+    cachedTokens: 11000,
+    lastLlmAt: 4,
   };
   assertEquals(Session.parse(sub), sub);
 });

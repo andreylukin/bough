@@ -19,6 +19,11 @@ export interface Head {
   busy?: boolean;
   // A turn finished while the session wasn't open — the card shows a solid dot.
   unseen?: boolean;
+  // Epoch ms of the session's last LLM round — the prompt-cache warmth clock. The
+  // card shows a decaying ⚡ countdown while now − cacheAt < the provider cache TTL.
+  cacheAt?: number;
+  // cachedTokens / contextTokens of that round (0..1) — the prompt's cached share.
+  cacheShare?: number;
   // Sessions branched from this one (forks/compactions/subagents, via originId) —
   // the sidebar nests them under this head behind a collapsible toggle.
   children?: Head[];

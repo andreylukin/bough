@@ -66,7 +66,13 @@ Deno.test("treeUsage sums the subagent subtree only (forks excluded, archived in
   assertEquals(db.treeUsage("sub"), { inputTokens: 6_000, outputTokens: 600, sessions: 1 });
   assertEquals(db.treeUsage("grand"), { inputTokens: 4_000, outputTokens: 400, sessions: 0 });
   // sessionUsage round-trips the cumulative input column alongside the old fields.
-  assertEquals(db.sessionUsage("root"), { contextTokens: 10_000, outputTokens: 100, inputTokens: 1_000 });
+  assertEquals(db.sessionUsage("root"), {
+    contextTokens: 10_000,
+    outputTokens: 100,
+    inputTokens: 1_000,
+    cachedTokens: 0,
+    lastLlmAt: null,
+  });
   db.close();
 });
 

@@ -38,6 +38,12 @@ export interface Session {
   // How the most recent turn ended (server-computed; kept live via turn.finished).
   // Absent if the session never ran a turn. Drives ✓/✗ status affixes.
   lastTurnStatus?: "running" | "done" | "error" | "orphaned" | "interrupted";
+  // Prompt-cache visibility (mirrors schema/parts.ts): last prompt size, the share
+  // of it in the provider's prompt cache, and when the last LLM round finished.
+  // Warm/cold is derived client-side from lastLlmAt + the ~5-min sliding TTL.
+  contextTokens?: number | null;
+  cachedTokens?: number | null;
+  lastLlmAt?: number | null;
   // Client-only: a turn finished while this session wasn't open — needs a look.
   // Set by the store on message.finished, cleared when the session is opened.
   unseen?: boolean;

@@ -7,7 +7,8 @@
 import { useEffect, useState } from "react";
 import { c, mono } from "../theme";
 import type { Head, OutlineNode } from "../mock";
-import type { HeadGroup } from "../live";
+import { cacheRemainingMs, fmtWarmth, type HeadGroup } from "../live";
+import { useNow } from "../useNow";
 
 // The current-thread outline is multicolor by speaker: your turns are blue,
 // the AI's turns (supervisor / worker) are green, system notes stay neutral.
@@ -64,6 +65,13 @@ function HeadCard(
   { head, onClick, onArchive }: { head: Head; onClick: () => void; onArchive?: () => void },
 ) {
   const [hover, setHover] = useState(false);
+  const now = useNow();
+  // Prompt-cache warmth: the provider keeps this thread's prefix hot for ~5 min
+  // after its last request (refreshed on every hit). Warm = the next message is
+  // cheap/fast. Deliberately calm: just a ⚡ glyph that fades away when cold —
+  // the remaining time lives in the hover tooltip, never as a visible countdown.
+  const cacheMs = cacheRemainingMs({ lastLlmAt: head.cacheAt ?? null, busy: head.busy }, now);
+  const cachePct = head.cacheShare != null ? `${Math.round(head.cacheShare * 100)}%` : null;
   const dashed = head.status === "compacted";
   const glyphColor =
     head.glyph === "⎇" ? c.green : head.glyph === "⊟" ? c.amber : c.muted2;
@@ -142,7 +150,33 @@ function HeadCard(
             )
             : null}
         </div>
-        <div style={{ fontFamily: mono, fontSize: 10.5, color: c.muted2, marginTop: 3 }}>{head.meta}</div>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            fontFamily: mono,
+            fontSize: 10.5,
+            color: c.muted2,
+            marginTop: 3,
+          }}
+        >
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {head.meta}
+          </span>
+          {cacheMs > 0 && (
+            <span
+              title={head.busy
+                ? "prompt cache warm — being refreshed by the running turn"
+                : `prompt cache warm${
+                  cachePct ? ` — ${cachePct} of the context is cached` : ""
+                } · ${fmtWarmth(cacheMs)} left; sending a message refreshes it`}
+              style={{ marginLeft: "auto", flex: "none", color: c.green, opacity: 0.75 }}
+            >
+              ⚡
+            </span>
+          )}
+        </div>
       </button>
       {onArchive && (hover || noHover) && (
         <button

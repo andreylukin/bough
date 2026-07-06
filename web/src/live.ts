@@ -26,6 +26,26 @@ export function turnFailed(s: Session): boolean {
     s.lastTurnStatus === "orphaned";
 }
 
+// ---- prompt-cache warmth ----------------------------------------------------
+// Anthropic's prompt cache holds a request's prefix for 5 minutes, and every hit
+// refreshes the window for free (OpenAI/OpenRouter behave comparably: ~5-10 min of
+// inactivity). So "is this conversation cached?" is a time-decaying property: the
+// whole thread is warm for TTL after its last LLM round, then goes cold together.
+export const CACHE_TTL_MS = 5 * 60_000;
+
+/** ms of cache warmth left (0 = cold). A busy session is pinned warm — each round refreshes. */
+export function cacheRemainingMs(s: Pick<Session, "lastLlmAt" | "busy">, now: number): number {
+  if (s.busy) return CACHE_TTL_MS;
+  if (!s.lastLlmAt) return 0;
+  return Math.max(0, s.lastLlmAt + CACHE_TTL_MS - now);
+}
+
+/** Warmth left as a calm approximation for hover text: "~4 min" / "under a minute". */
+export function fmtWarmth(ms: number): string {
+  const min = Math.round(ms / 60_000);
+  return min < 1 ? "under a minute" : `~${min} min`;
+}
+
 /** Sessions → the switchable heads list. The open session is the active head. */
 export function headsFromSessions(sessions: Session[], currentId: string | null): Head[] {
   return sessions.map((s) => ({
@@ -37,6 +57,10 @@ export function headsFromSessions(sessions: Session[], currentId: string | null)
     status: s.busy ? "running" : turnFailed(s) ? "failed" : s.id === currentId ? "running" : "idle",
     busy: s.busy,
     unseen: s.unseen,
+    ...(s.lastLlmAt ? { cacheAt: s.lastLlmAt } : {}),
+    ...(s.cachedTokens && s.contextTokens
+      ? { cacheShare: Math.min(1, s.cachedTokens / s.contextTokens) }
+      : {}),
   }));
 }
 

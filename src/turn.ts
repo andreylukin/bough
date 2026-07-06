@@ -384,6 +384,10 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
   let contextTokens = 0;
   let outputTokens = 0;
   let inputTokens = 0;
+  // Last round's cached prompt share + finish time — the cache-warmth clock the
+  // tree view decays against (Anthropic's 5-min sliding TTL starts here).
+  let cachedTokens = 0;
+  let lastLlmAt = 0;
 
   const turn = startTurn(db, sessionId, messageId);
   const parts: Part[] = [];
@@ -502,6 +506,9 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
         contextTokens = result.usage.inputTokens; // last round = current context size
         outputTokens += result.usage.outputTokens;
         inputTokens += result.usage.inputTokens;
+        cachedTokens = (result.usage.cacheReadTokens ?? 0) +
+          (result.usage.cacheCreationTokens ?? 0);
+        lastLlmAt = Date.now();
       }
 
       const assistant: LlmContentBlock[] = [];
@@ -576,10 +583,17 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
         inputTokens: prev.inputTokens + inputTokens,
       };
       db.setSessionUsage(sessionId, contextTokens, totals.outputTokens, totals.inputTokens);
+      if (lastLlmAt > 0) db.setSessionCache(sessionId, cachedTokens, lastLlmAt);
       bus.publish({
         type: "usage.updated",
         sessionId,
-        data: { sessionId, contextTokens, ...totals, tree: db.treeUsage(sessionId) },
+        data: {
+          sessionId,
+          contextTokens,
+          ...totals,
+          tree: db.treeUsage(sessionId),
+          ...(lastLlmAt > 0 ? { cachedTokens, lastLlmAt } : {}),
+        },
       });
       // Cost rolls up the origin chain: nudge each ancestor with its refreshed tree
       // total, so the root's spend moves when a subagent (at any depth) burns tokens.

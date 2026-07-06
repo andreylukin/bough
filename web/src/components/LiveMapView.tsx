@@ -9,7 +9,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { c, alpha, mono } from "../theme";
 import { api, type TurnPick } from "../api";
-import { turnFailed } from "../live";
+import { cacheRemainingMs, fmtWarmth, turnFailed } from "../live";
+import { useNow } from "../useNow";
 import type { Message, Session } from "../types";
 import { TitleBar } from "./TitleBar";
 
@@ -66,6 +67,8 @@ export function LiveMapView({
 
   const [compacting, setCompacting] = useState(false);
   const [sel, setSel] = useState<{ sessionId: string; from: string; to?: string } | null>(null);
+  // 1 Hz clock for the prompt-cache warmth decay (⚡ countdowns, warm dot tint).
+  const now = useNow();
 
   // Fetch each head's OWN turns (thread filtered to messages the session owns). Lazy on
   // the session set; a small cache keyed by id avoids refetching unchanged heads.
@@ -308,6 +311,12 @@ export function LiveMapView({
                 {lanes.map((l) => {
                   const s = l.session;
                   const current = s.id === currentId;
+                  // Prompt-cache warmth: after a request, the whole thread prefix sits in
+                  // the provider cache for ~5 min (sliding). While warm, the turns that
+                  // were part of the last prompt render green-filled; they gray out
+                  // together when the TTL lapses.
+                  const cacheMs = cacheRemainingMs(s, now);
+                  const warm = cacheMs > 0;
                   const x = laneX(l);
                   return (
                     <div key={s.id} style={{ position: "absolute", left: x, top: l.y, display: "flex", alignItems: "center", gap: 10, whiteSpace: "nowrap" }}>
@@ -356,19 +365,22 @@ export function LiveMapView({
                         {l.turns.map((m, i) => {
                           const selected = inSel(s.id, i);
                           const isLast = i === l.turns.length - 1;
+                          // Part of the prompt the last request cached (busy lanes: the
+                          // in-flight request is re-caching everything persisted so far).
+                          const cached = warm && m.createdAt <= (s.lastLlmAt ?? now);
                           return (
                             <div key={m.id} style={{ display: "flex", alignItems: "center" }}>
-                              {i > 0 && <div style={{ width: TURN_W - 14, height: 2, background: current ? c.green : c.border }} />}
+                              {i > 0 && <div style={{ width: TURN_W - 14, height: 2, background: current ? c.green : cached ? alpha(c.green, 45) : c.border }} />}
                               <button
                                 onClick={(e) => { e.stopPropagation(); clickTurn(s.id, m.id); }}
-                                title={m.role + ": " + m.parts.map((p) => ("text" in p ? p.text : "")).join(" ").slice(0, 60)}
+                                title={m.role + ": " + m.parts.map((p) => ("text" in p ? p.text : "")).join(" ").slice(0, 60) + (cached ? " · in prompt cache" : "")}
                                 className={m.pending ? "pulse-amber" : undefined}
                                 style={{
                                   width: current && isLast ? 15 : 12,
                                   height: current && isLast ? 15 : 12,
                                   borderRadius: "50%",
                                   flex: "none",
-                                  background: selected ? c.amber : current && isLast ? c.green : c.panelInset,
+                                  background: selected ? c.amber : current && isLast ? c.green : cached ? alpha(c.green, 26) : c.panelInset,
                                   border: selected ? `2px solid ${c.amber}` : `2px solid ${dotColor(m)}`,
                                   boxShadow: selected ? `0 0 0 3px ${alpha(c.amber, 20)}` : undefined,
                                   cursor: "pointer",
@@ -379,6 +391,24 @@ export function LiveMapView({
                         })}
                         {current && l.turns.length > 0 && (
                           <span style={{ marginLeft: 8, fontFamily: mono, fontSize: 10.5, color: c.green }}>head</span>
+                        )}
+                        {warm && l.turns.length > 0 && (
+                          <span
+                            title={s.busy
+                              ? "prompt cache warm — being refreshed by the running turn"
+                              : `prompt cache warm — this thread's prefix stays cached ${
+                                fmtWarmth(cacheMs)
+                              } longer; a new message refreshes it (provider TTL ~5 min, sliding)`}
+                            style={{
+                              marginLeft: 8,
+                              fontFamily: mono,
+                              fontSize: 10.5,
+                              color: c.green,
+                              opacity: 0.75,
+                            }}
+                          >
+                            ⚡
+                          </span>
                         )}
                       </div>
                     </div>

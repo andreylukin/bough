@@ -33,7 +33,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   archived_at INTEGER,                -- soft delete: archived sessions leave the sidebar, rows stay
   context_tokens INTEGER,             -- last turn's prompt size (context meter)
   output_tokens  INTEGER,             -- cumulative output tokens across the session
-  input_tokens   INTEGER              -- cumulative input tokens across the session (cost)
+  input_tokens   INTEGER,             -- cumulative input tokens across the session (cost)
+  cached_tokens  INTEGER,             -- last LLM round: prompt tokens read from / written to the provider cache
+  last_llm_at    INTEGER              -- epoch ms the last LLM round finished (cache-warmth clock)
 );
 CREATE TABLE IF NOT EXISTS messages (
   id          TEXT PRIMARY KEY,
@@ -96,6 +98,9 @@ type SessionRow = {
   base: string | null;
   origin_id: string | null;
   origin_message_id: string | null;
+  context_tokens: number | null;
+  cached_tokens: number | null;
+  last_llm_at: number | null;
 };
 
 /**
@@ -156,6 +161,11 @@ function toSession(r: SessionRow): Session {
     ...(r.workspace ? { workspace: r.workspace } : {}),
     ...(r.origin_id ? { originId: r.origin_id } : {}),
     ...(r.origin_message_id ? { originMessageId: r.origin_message_id } : {}),
+    // Prompt-cache visibility: last prompt size, its cached share, and when the
+    // last LLM round finished (the client derives warm/cold from this + the TTL).
+    ...(r.context_tokens != null ? { contextTokens: r.context_tokens } : {}),
+    ...(r.cached_tokens != null ? { cachedTokens: r.cached_tokens } : {}),
+    ...(r.last_llm_at != null ? { lastLlmAt: r.last_llm_at } : {}),
   };
 }
 
@@ -195,6 +205,8 @@ export class Db {
         "context_tokens INTEGER",
         "output_tokens INTEGER",
         "input_tokens INTEGER",
+        "cached_tokens INTEGER",
+        "last_llm_at INTEGER",
       ]
     ) {
       try {
@@ -289,18 +301,38 @@ export class Db {
       .run(contextTokens, outputTokens, inputTokens, id);
   }
 
-  sessionUsage(id: string): { contextTokens: number; outputTokens: number; inputTokens: number } {
+  /** Last LLM round's cache stats: cached prompt share + finish time (warmth clock). */
+  setSessionCache(id: string, cachedTokens: number, lastLlmAt: number): void {
+    this.#db
+      .prepare(`UPDATE sessions SET cached_tokens = ?, last_llm_at = ? WHERE id = ?`)
+      .run(cachedTokens, lastLlmAt, id);
+  }
+
+  sessionUsage(id: string): {
+    contextTokens: number;
+    outputTokens: number;
+    inputTokens: number;
+    cachedTokens: number;
+    lastLlmAt: number | null;
+  } {
     const r = this.#db
-      .prepare(`SELECT context_tokens, output_tokens, input_tokens FROM sessions WHERE id = ?`)
+      .prepare(
+        `SELECT context_tokens, output_tokens, input_tokens, cached_tokens, last_llm_at
+         FROM sessions WHERE id = ?`,
+      )
       .get(id) as {
         context_tokens: number | null;
         output_tokens: number | null;
         input_tokens: number | null;
+        cached_tokens: number | null;
+        last_llm_at: number | null;
       } | undefined;
     return {
       contextTokens: r?.context_tokens ?? 0,
       outputTokens: r?.output_tokens ?? 0,
       inputTokens: r?.input_tokens ?? 0,
+      cachedTokens: r?.cached_tokens ?? 0,
+      lastLlmAt: r?.last_llm_at ?? null,
     };
   }
 

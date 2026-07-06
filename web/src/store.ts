@@ -457,6 +457,24 @@ export function useStore(): Store {
       }
       case "usage.updated": {
         const u = ev.data as { sessionId: string } & Usage;
+        // Cache warmth: stamp the session row so the tree views (sidebar/map) start
+        // their ⚡ countdown the moment a turn's last LLM round lands — no refetch.
+        // Ancestor-rollup republishes carry that ancestor's own persisted fields, so
+        // only patch when the payload actually has a timestamp.
+        if (u.lastLlmAt) {
+          setSessions((prev) =>
+            prev.map((s) =>
+              s.id === u.sessionId
+                ? {
+                  ...s,
+                  contextTokens: u.contextTokens,
+                  cachedTokens: u.cachedTokens ?? 0,
+                  lastLlmAt: u.lastLlmAt,
+                }
+                : s
+            )
+          );
+        }
         if (u.sessionId === currentRef.current) {
           setUsage({
             contextTokens: u.contextTokens,

@@ -49,6 +49,8 @@ Deno.test("GET /sessions/:id includes token usage (zero before any turn)", async
       contextTokens: number;
       outputTokens: number;
       inputTokens: number;
+      cachedTokens: number;
+      lastLlmAt: number | null;
       tree: { inputTokens: number; outputTokens: number; sessions: number };
     };
   };
@@ -56,6 +58,8 @@ Deno.test("GET /sessions/:id includes token usage (zero before any turn)", async
     contextTokens: 0,
     outputTokens: 0,
     inputTokens: 0,
+    cachedTokens: 0,
+    lastLlmAt: null,
     tree: { inputTokens: 0, outputTokens: 0, sessions: 0 },
   });
   c.db.close();
