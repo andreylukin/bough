@@ -49,6 +49,7 @@ import { clientFor } from "../supervisor/llm.ts";
 import { defaultWebDir, serveWeb } from "./static.ts";
 import { createAuth } from "./auth.ts";
 import { compact, CompactBody, CompactError } from "../compact.ts";
+import { type Embedder, recall } from "../recall.ts";
 import { extract, ExtractBody, ExtractError } from "../extract.ts";
 import { adoptSubagent } from "../subagent.ts";
 import type { LlmClient } from "../supervisor/llm.ts";
@@ -77,6 +78,10 @@ export interface AppCtx {
   snapshotBase?: string;
   /** When set, every request requires a login session (see auth.ts). From BOUGH_PASSWORD. */
   password?: string;
+  /** Retitler for compaction branches (production: local title worker); absent in tests. */
+  retitler?: (text: string) => Promise<string | null>;
+  /** Embedder override for /recall (tests); defaults to the local embedding server. */
+  embedder?: Embedder;
 }
 
 type Handler = (
@@ -106,6 +111,20 @@ function error(status: number, message: string): Response {
 // ---- handlers --------------------------------------------------------------
 
 const getConfig: Handler = () => json({ model: activeModel(), models: MODELS });
+
+// Recall: semantic search over the whole session forest via the LOCAL embedder
+// (recall.ts) — lazily indexes a batch of new messages on each call.
+const recallSearch: Handler = async (req, ctx) => {
+  const q = new URL(req.url).searchParams.get("q")?.trim();
+  if (!q) return error(400, "q required");
+  const rawK = Number(new URL(req.url).searchParams.get("k") ?? "8");
+  const k = Number.isFinite(rawK) ? Math.min(Math.max(1, rawK), 50) : 8;
+  try {
+    return json(await recall(ctx.db, q, k, ctx.embedder));
+  } catch (e) {
+    return error(503, `recall unavailable: ${(e as Error).message}`);
+  }
+};
 
 // Switch the model new turns run on. Any id is accepted (the picker lists a curated
 // subset); a provider-prefixed id routes to OpenRouter (see turn.ts / llm.ts).
@@ -832,6 +851,11 @@ const routes: Route[] = [
     method: "POST",
     pattern: new URLPattern({ pathname: "/sessions/:id/compact" }),
     handler: compactSession,
+  },
+  {
+    method: "GET",
+    pattern: new URLPattern({ pathname: "/recall" }),
+    handler: recallSearch,
   },
   {
     method: "POST",

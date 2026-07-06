@@ -84,6 +84,15 @@ CREATE TABLE IF NOT EXISTS turns (
   updated_at  INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS turns_status ON turns(status);
+-- Message embeddings for recall search (local embedder — see recall.ts). Vectors are
+-- unit-normalized Float32 blobs; dim=0 marks a message with nothing to embed so the
+-- indexer doesn't retry it forever.
+CREATE TABLE IF NOT EXISTS message_embeddings (
+  message_id  TEXT PRIMARY KEY REFERENCES messages(id),
+  session_id  TEXT NOT NULL,
+  dim         INTEGER NOT NULL,
+  vector      BLOB
+);
 `;
 
 // ---- row <-> domain mapping ------------------------------------------------
@@ -431,6 +440,48 @@ export class Db {
    */
   threadFor(id: string): Message[] {
     return this.ancestorChain(id).flatMap((s) => this.messagesFor(s.id));
+  }
+
+  // message embeddings (recall search) ----------------------------------------
+
+  /** Newest messages with no embedding row yet — the lazy indexer's work queue. */
+  messagesToEmbed(limit: number): Message[] {
+    const rows = this.#db
+      .prepare(
+        `SELECT m.* FROM messages m
+           LEFT JOIN message_embeddings e ON e.message_id = m.id
+         WHERE e.message_id IS NULL AND m.pending = 0
+         ORDER BY m.created_at DESC LIMIT ?`,
+      )
+      .all(limit) as MessageRow[];
+    return rows.map(toMessage);
+  }
+
+  /** Store a message's unit vector; null marks "nothing to embed — don't retry". */
+  putEmbedding(messageId: string, sessionId: string, vector: Float32Array | null): void {
+    this.#db
+      .prepare(
+        `INSERT OR REPLACE INTO message_embeddings (message_id, session_id, dim, vector)
+         VALUES (?, ?, ?, ?)`,
+      )
+      .run(
+        messageId,
+        sessionId,
+        vector?.length ?? 0,
+        vector ? new Uint8Array(vector.buffer, vector.byteOffset, vector.byteLength) : null,
+      );
+  }
+
+  /** Every stored vector (dim>0 rows only), for the in-process cosine scan. */
+  allEmbeddings(): { messageId: string; sessionId: string; vector: Float32Array }[] {
+    const rows = this.#db
+      .prepare(`SELECT message_id, session_id, dim, vector FROM message_embeddings WHERE dim > 0`)
+      .all() as { message_id: string; session_id: string; dim: number; vector: Uint8Array }[];
+    return rows.map((r) => ({
+      messageId: r.message_id,
+      sessionId: r.session_id,
+      vector: new Float32Array(r.vector.buffer, r.vector.byteOffset, r.dim),
+    }));
   }
 
   // turns -------------------------------------------------------------------
