@@ -78,6 +78,33 @@ export function Logo({ size = 16, filled = false }: { size?: number; filled?: bo
   );
 }
 
+// The mark tumbling in place over sliding ground dashes — shown while a pending
+// turn has nothing else to show (no streamed text yet, no tool running).
+// Geometry is baked into the boughTumble* keyframes for a 16px mark; other
+// sizes would need re-derived keyframes, so size isn't a prop here.
+export function TumblingLogo() {
+  return (
+    <div style={{ position: "relative", width: 64, height: 26, flex: "none" }} aria-label="waiting for the model">
+      <div
+        className="tumble-ground"
+        style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 1 }}
+      />
+      {/* mark at the left edge; the dash track trails off to the right */}
+      <div className="tumble-lift" style={{ position: "absolute", left: 2, bottom: 1 }}>
+        <div
+          className="tumble-rot"
+          style={{
+            width: 16,
+            height: 16,
+            borderRadius: 16 * 0.28,
+            border: `1.5px solid ${c.green}`,
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
 // A live status dot with the green glow.
 export function Dot({ color = c.green, pulse = false }: { color?: string; pulse?: boolean }) {
   const amber = color === c.amber;

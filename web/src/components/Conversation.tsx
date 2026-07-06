@@ -7,7 +7,7 @@ import { useIsMobile } from "../useIsMobile";
 import type { Message, Part, Session } from "../types";
 import { api, type TurnPick } from "../api";
 import type { ActivityGroup, WorkerActivity } from "../mock";
-import { CopyId, Kbd } from "./ui";
+import { CopyId, Kbd, TumblingLogo } from "./ui";
 import { Markdown } from "./Markdown";
 
 const roleLabel: Record<string, { text: string; color: string }> = {
@@ -21,9 +21,31 @@ function clip(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) + `\n… (${s.length - max} more chars)` : s;
 }
 
+// When the client first saw a tool call become the one executing (parts carry no
+// timestamps, and tools in a round run serially — a call only "starts" once every
+// call before it has its result). Client-side only: a reload mid-command restarts
+// the clock from zero.
+const callStarted = new Map<string, number>();
+function startFor(callId: string): number {
+  let t = callStarted.get(callId);
+  if (t === undefined) {
+    t = Date.now();
+    callStarted.set(callId, t);
+  }
+  return t;
+}
+
+function fmtElapsed(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+}
+
 function ToolGroup(
-  { parts, onBranch }: {
+  { parts, pending, onBranch }: {
     parts: Part[];
+    // The enclosing turn is still running — the first call without a result is the
+    // one executing right now and carries the live elapsed clock.
+    pending?: boolean;
     // Branch from a specific call: receives the position (within `parts`) of the
     // call's result — history keeps everything up to and including it.
     onBranch?: (partPos: number) => void;
@@ -36,6 +58,19 @@ function ToolGroup(
       (r) => [r.callId, r]
     )
   );
+  const running = pending ? calls.find((call) => !results.has(call.id)) : undefined;
+  for (const id of results.keys()) callStarted.delete(id);
+  // Quick calls shouldn't flash a clock — it only appears once a call has been
+  // running for 3s (the tick below re-checks every second until it crosses).
+  const runningMs = running ? Date.now() - startFor(running.id) : 0;
+  const showClock = running !== undefined && runningMs >= 3000;
+  // 1s tick while a call runs, so the elapsed label counts up live.
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!running) return;
+    const t = window.setInterval(() => tick((n) => n + 1), 1000);
+    return () => window.clearInterval(t);
+  }, [running?.id]);
   if (calls.length === 0) return null;
   // Harness verdict (SPEC §5 check gating): surface it on the COLLAPSED header —
   // "did it actually pass?" must not require expanding the fold.
@@ -73,6 +108,15 @@ function ToolGroup(
         <span>{open ? "▾" : "▸"}</span>
         {calls.length} tool {calls.length === 1 ? "call" : "calls"}
         {verdict && <span style={{ color: verdict.color, fontWeight: 600 }}>{verdict.text}</span>}
+        {showClock && (
+          <span style={{ color: c.amber, display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <span
+              className="pulse-amber"
+              style={{ width: 7, height: 7, borderRadius: "50%", background: c.amber, flex: "none" }}
+            />
+            {fmtElapsed(runningMs)}
+          </span>
+        )}
         <span style={{ color: c.muted2, marginLeft: "auto", fontWeight: 400 }}>
           {calls.map((call) => call.name).join(" · ")}
         </span>
@@ -613,6 +657,7 @@ function TurnView({
                 ? (
                   <ToolGroup
                     parts={seg.parts}
+                    pending={msg.pending}
                     // Per-call ⑂ inside the expanded group: cut after that call's result.
                     onBranch={branchable
                       ? (pos) => {
@@ -967,6 +1012,15 @@ export function Conversation({
   disabled: boolean;
 }) {
   const activityFor = (id: string) => activity.find((a) => a.messageId === id);
+  // Waiting on the model with nothing on screen for it — before the first token,
+  // and between tool rounds. Shown at the bottom of the thread, not inside the
+  // turn body; a running tool already shows its own elapsed row.
+  const lastMsg = thread[thread.length - 1];
+  const waiting = !!lastMsg?.pending && streaming[lastMsg.id] === undefined &&
+    !lastMsg.parts.some((p) =>
+      p.type === "tool_call" &&
+      !lastMsg.parts.some((q) => q.type === "tool_result" && q.callId === p.id)
+    );
   // Wide screens park subagent cards in a sticky side column; phones flow them inline.
   const chipsAside = !useIsMobile();
   const [text, setText] = useState("");
@@ -1439,6 +1493,7 @@ export function Conversation({
               : undefined}
           />
         ))}
+        {waiting && <TumblingLogo />}
       </div>
 
       {queued.length > 0 && (
