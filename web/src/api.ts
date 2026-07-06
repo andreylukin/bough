@@ -85,6 +85,14 @@ export interface NetConfig {
   /** Per-scope plugin activations; the TTL rides on the activation, not the file. */
   plugins?: PluginActivation[];
 }
+// A directory-autocomplete hit (mirrors src/server/files.ts DirHit).
+export interface DirHit {
+  path: string;
+  /** path with the home dir abbreviated to ~ (display form). */
+  display: string;
+  repo: boolean;
+}
+
 // MCP management state (mirrors src/mcp/status.ts). env values are ${VAR}
 // references, never expanded secrets.
 export interface McpServerEntry {
@@ -162,7 +170,15 @@ export const api = {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
-    }).then(j<Session>),
+    }).then(async (res) => {
+      // Surface the server's message (e.g. "workspace does not exist: …") so the
+      // new-session dialog can show it inline instead of a bare "400".
+      if (!res.ok) {
+        const b = await res.json().catch(() => null) as { error?: string } | null;
+        throw new Error(b?.error || `${res.status} ${res.statusText}`);
+      }
+      return res.json() as Promise<Session>;
+    }),
 
   getSession: (id: string) =>
     fetch(`/sessions/${id}`).then(j<{ session: Session; thread: Message[]; usage: Usage }>),
@@ -184,6 +200,11 @@ export const api = {
   // Installed skills (name + description) for the composer's / autocomplete.
   skills: () => fetch("/skills").then(j<{ skills: SkillInfo[] }>).then((r) => r.skills),
 
+  // Fuzzy directory search for the new-session dialog's path autocomplete.
+  searchDirs: (q: string) =>
+    fetch(`/fs/dirs?q=${encodeURIComponent(q)}`)
+      .then(j<{ dirs: DirHit[] }>)
+      .then((r) => r.dirs),
   // Workspace file search for the composer's @ autocomplete.
   searchFiles: (id: string, q: string) =>
     fetch(`/sessions/${id}/files?q=${encodeURIComponent(q)}`)

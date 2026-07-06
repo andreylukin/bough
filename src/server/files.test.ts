@@ -45,6 +45,41 @@ Deno.test("searchWorkspaceFiles: missing root yields []", async () => {
   assertEquals(await searchWorkspaceFiles("/no/such/dir/xyz", "a"), []);
 });
 
+Deno.test("searchDirectories: fzf fragment under a base, repos ranked and marked, known seeded", async () => {
+  const { searchDirectories } = await import("./files.ts");
+  const root = await Deno.makeTempDir({ prefix: "dirsearch-" });
+  try {
+    await Deno.mkdir(`${root}/repos/bough/.git`, { recursive: true });
+    await Deno.mkdir(`${root}/repos/bough/src`, { recursive: true }); // inside a repo — never offered
+    await Deno.mkdir(`${root}/repos/wordbook`, { recursive: true });
+    await Deno.mkdir(`${root}/notes`, { recursive: true });
+    await Deno.mkdir(`${root}/node_modules/dep`, { recursive: true });
+
+    // Slash query: walk the base, fuzzy the fragment; repo beats plain dir.
+    const hits = searchDirectories(`${root}/repos/bo`);
+    assertEquals(hits[0].path, `${root}/repos/bough`);
+    assertEquals(hits[0].repo, true);
+    assertEquals(hits.some((h) => h.path.endsWith("/bough/src")), false);
+
+    // Subsequence, not prefix: "wdbk" still finds wordbook.
+    const fuzzy = searchDirectories(`${root}/repos/wdbk`);
+    assertEquals(fuzzy.map((h) => h.path), [`${root}/repos/wordbook`]);
+
+    // Skip-dirs never surface.
+    const all = searchDirectories(`${root}/`);
+    assertEquals(all.some((h) => h.path.includes("node_modules")), false);
+
+    // A known workspace matches against the whole query and outranks walked dirs.
+    const known = searchDirectories(`${root}/repos/`, [`${root}/repos/wordbook`]);
+    assertEquals(known[0].path, `${root}/repos/wordbook`);
+
+    // Non-existent base → only known-workspace matches.
+    assertEquals(searchDirectories("/no/such/base/x"), []);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("expandFileReferences inlines a referenced file, skips missing/escapes", async () => {
   const { expandFileReferences } = await import("./files.ts");
   const dir = await fixture();

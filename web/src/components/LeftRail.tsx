@@ -298,50 +298,6 @@ function HeadNode(
   );
 }
 
-function NewSessionForm({ onCreate }: { onCreate: (workspace: string) => void }) {
-  const [workspace, setWorkspace] = useState("");
-  const submit = () => onCreate(workspace.trim());
-  return (
-    <div style={{ padding: "10px 12px", borderBottom: `1px solid ${c.border}`, display: "flex", flexDirection: "column", gap: 7 }}>
-      <input
-        autoFocus
-        style={{
-          width: "100%",
-          background: c.panel,
-          border: `1px solid ${c.border}`,
-          borderRadius: 6,
-          padding: "6px 8px",
-          color: c.text,
-          fontFamily: mono,
-          fontSize: 11.5,
-          outline: "none",
-        }}
-        placeholder="workspace — a repo path, e.g. ~/repos/app"
-        value={workspace}
-        onChange={(e) => setWorkspace(e.target.value)}
-        onKeyDown={(e) => e.key === "Enter" && submit()}
-      />
-      <span style={{ fontSize: 10.5, color: c.muted2, lineHeight: 1.4 }}>
-        A git repo the agent may edit (sandboxed). Leave empty for a chat-only session.
-        The title writes itself from your first message.
-      </span>
-      <button
-        onClick={submit}
-        style={{
-          background: c.green,
-          color: c.bg,
-          borderRadius: 6,
-          padding: "6px 0",
-          fontSize: 11.5,
-          fontWeight: 600,
-        }}
-      >
-        Create session
-      </button>
-    </div>
-  );
-}
-
 function GroupHeader(
   { group, expanded, onToggle, onNewInGroup }: {
     group: HeadGroup;
@@ -407,7 +363,7 @@ function GroupHeader(
 export function LeftRail({
   groups,
   outline,
-  openFormSignal,
+  onOpenNewSession,
   onOpenMap,
   onSelectHead,
   onCreateSession,
@@ -415,14 +371,13 @@ export function LeftRail({
 }: {
   groups: HeadGroup[];
   outline: OutlineNode[];
-  // Bumped by the command palette's "New session" to open the create form.
-  openFormSignal?: number;
+  // Opens the centered new-session dialog (fzf path autocomplete).
+  onOpenNewSession?: () => void;
   onOpenMap: () => void;
   onSelectHead: (id: string) => void;
   onCreateSession?: (workspace: string) => void;
   onArchiveHead?: (id: string) => void;
 }) {
-  const [creating, setCreating] = useState(false);
   // Directory groups are collapsed by default (there can be dozens of heads). A
   // collapsed group still surfaces heads that are busy, active, or have live work
   // in their nested branches — the click target for reopening is the header itself.
@@ -436,9 +391,6 @@ export function LeftRail({
     });
   const alive = (h: Head): boolean =>
     !!h.busy || !!h.active || anyHead(h.children, (k) => !!k.busy || !!k.active);
-  useEffect(() => {
-    if (openFormSignal) setCreating(true);
-  }, [openFormSignal]);
   const headCount = groups.reduce((n, g) => n + g.heads.length, 0);
   return (
     <div
@@ -467,11 +419,11 @@ export function LeftRail({
           HEADS · {headCount}
         </span>
         <div style={{ display: "flex", gap: 6 }}>
-          {onCreateSession && (
+          {onOpenNewSession && (
             <button
-              onClick={() => setCreating((v) => !v)}
+              onClick={onOpenNewSession}
               title="New session"
-              style={{ fontSize: 13, color: creating ? c.green : c.muted, padding: "3px 9px", border: `1px solid ${c.border}`, borderRadius: 6, lineHeight: 1 }}
+              style={{ fontSize: 13, color: c.muted, padding: "3px 9px", border: `1px solid ${c.border}`, borderRadius: 6, lineHeight: 1 }}
             >
               +
             </button>
@@ -493,15 +445,6 @@ export function LeftRail({
           </button>
         </div>
       </div>
-
-      {creating && onCreateSession && (
-        <NewSessionForm
-          onCreate={(w) => {
-            onCreateSession(w);
-            setCreating(false);
-          }}
-        />
-      )}
 
       {/* CURRENT THREAD — capped with its own scroll so a long thread never buries
           the heads list below it. Only shown when there's an outline to draw. */}

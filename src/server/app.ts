@@ -20,7 +20,7 @@ import { activeModel, interruptTurn, MODELS, setActiveModel, startUserTurn } fro
 import { normalizeWorkspace, prepareWorkspace, workspaceProblem } from "../supervisor/workspace.ts";
 import { UNTITLED } from "../supervisor/title.ts";
 import { listSkills } from "../supervisor/skills.ts";
-import { searchWorkspaceFiles } from "./files.ts";
+import { searchDirectories, searchWorkspaceFiles } from "./files.ts";
 import { fork, ForkBody, ForkError } from "../fork.ts";
 import { type BundleManifest, getBundle, listBundles } from "../net/bundles.ts";
 import type { Gate } from "../net/gate.ts";
@@ -151,6 +151,21 @@ const searchFiles: Handler = async (req, ctx, params) => {
   const q = new URL(req.url).searchParams.get("q") ?? "";
   const files = await searchWorkspaceFiles(normalizeWorkspace(workspace), q);
   return json({ files });
+};
+
+// Directory autocomplete for the new-session dialog: fuzzy dirs under the query's
+// base (fzf-style subsequence), seeded with every workspace a session has ever
+// used — but not the per-session jj working copies bough itself creates.
+const searchDirs: Handler = (req, ctx) => {
+  const q = new URL(req.url).searchParams.get("q") ?? "";
+  const known = [
+    ...new Set(
+      ctx.db.listSessions()
+        .map((s) => s.workspace)
+        .filter((w): w is string => !!w && !w.includes("/.bough/workspaces/")),
+    ),
+  ];
+  return json({ dirs: searchDirectories(q, known) });
 };
 
 // Each session carries `busy` (a turn in flight) so the sidebar can show it at a
@@ -883,6 +898,7 @@ const routes: Route[] = [
   { method: "PUT", pattern: new URLPattern({ pathname: "/theme" }), handler: putTheme },
   { method: "DELETE", pattern: new URLPattern({ pathname: "/theme" }), handler: deleteTheme },
   { method: "GET", pattern: new URLPattern({ pathname: "/sessions" }), handler: listSessions },
+  { method: "GET", pattern: new URLPattern({ pathname: "/fs/dirs" }), handler: searchDirs },
   { method: "POST", pattern: new URLPattern({ pathname: "/sessions" }), handler: createSession },
   { method: "GET", pattern: new URLPattern({ pathname: "/sessions/:id" }), handler: getSession },
   {

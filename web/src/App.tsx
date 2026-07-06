@@ -18,6 +18,7 @@ import { Conversation } from "./components/Conversation";
 import { DiffViewer } from "./components/DiffViewer";
 import { LeftRail } from "./components/LeftRail";
 import { CommandPalette } from "./components/CommandPalette";
+import { NewSessionDialog } from "./components/NewSessionDialog";
 import { RightRail, type RailTab } from "./components/RightRail";
 import { MapView } from "./components/MapView";
 import { LiveMapView } from "./components/LiveMapView";
@@ -99,8 +100,10 @@ function LiveApp() {
   const [models, setModels] = useState<ModelOption[]>([]);
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  // Bumping this asks the LeftRail to open its new-session form (from the palette).
-  const [newSessionSignal, setNewSessionSignal] = useState(0);
+  // The centered new-session dialog (fzf path autocomplete), opened by the LeftRail
+  // top "+" and the command palette. The per-group "+" still creates directly in
+  // that group's known workspace — no path to pick.
+  const [newSessionOpen, setNewSessionOpen] = useState(false);
   const bootstrapped = useRef(false);
 
   useEffect(() => {
@@ -209,7 +212,7 @@ function LiveApp() {
         usage={store.usage}
         onSetModel={(m) => api.setModel(m).then((r) => setModel(r.model)).catch(() => {})}
         workspace={store.session?.workspace ?? null}
-        newSessionSignal={newSessionSignal}
+        onOpenNewSession={() => setNewSessionOpen(true)}
         onSend={onSend}
         onInterrupt={store.interrupt}
         onSearchFiles={(q) => (store.currentId ? api.searchFiles(store.currentId, q) : Promise.resolve([]))}
@@ -244,10 +247,15 @@ function LiveApp() {
         onInterrupt={store.interrupt}
         onNewSession={() => {
           location.hash = "main";
-          setNewSessionSignal((n) => n + 1);
+          setNewSessionOpen(true);
         }}
         onMap={() => (location.hash = "map")}
         onBundles={() => (location.hash = "bundles")}
+      />
+      <NewSessionDialog
+        open={newSessionOpen}
+        onClose={() => setNewSessionOpen(false)}
+        onCreate={(workspace) => store.newSession(workspace)}
       />
     </>
   );
@@ -298,7 +306,7 @@ function Window({
   onAdopt,
   onCreateSession,
   onArchiveHead,
-  newSessionSignal,
+  onOpenNewSession,
   onForkEdit,
   onBranchAt,
   onCompact,
@@ -353,7 +361,8 @@ function Window({
   onAdopt?: () => void;
   onCreateSession?: (workspace: string) => void;
   onArchiveHead?: (id: string) => void;
-  newSessionSignal?: number;
+  // Opens the centered new-session dialog (LeftRail top "+", palette).
+  onOpenNewSession?: () => void;
   onForkEdit?: (messageId: string, text: string) => void;
   // Branch from inside a turn: keep parts[0..partIdx], then send `text` as the
   // correction ("don't try it that way") on the new branch.
@@ -436,7 +445,7 @@ function Window({
     <LeftRail
       groups={groups}
       outline={outline}
-      openFormSignal={newSessionSignal}
+      onOpenNewSession={onOpenNewSession}
       onOpenMap={() => (location.hash = "map")}
       onSelectHead={(id) => {
         onSelectHead(id);
