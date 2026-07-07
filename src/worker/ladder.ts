@@ -28,6 +28,7 @@ import { editFile } from "../tools/edit_file.ts";
 import { workerIfRunning } from "./runtime.ts";
 import { workerComplete } from "./client.ts";
 import { anthropicClient } from "../supervisor/llm.ts";
+import { frontierWorkerModel } from "./frontier.ts";
 
 /** Injectable completions for tests: (system, user, temperature) → raw reply. */
 export type UnitCompleter = (system: string, user: string, temperature: number) => Promise<string>;
@@ -50,7 +51,7 @@ const WORKER_TEMPERATURES = [0.2, 0.8];
 const WORKER_MAX_TOKENS = 2048;
 
 export function backstopModel(): string {
-  return Deno.env.get("BOUGH_WORKER_BACKSTOP") ?? "claude-haiku-4-5";
+  return Deno.env.get("BOUGH_WORKER_BACKSTOP") ?? frontierWorkerModel() ?? "claude-haiku-4-5";
 }
 
 // Prompt shape follows the small-model evidence: positive requirements instead of
@@ -113,21 +114,30 @@ export async function runUnit(
     return exitCodeOf(out) === 0 ? null : out;
   };
 
-  const worker = hooks.worker ?? localWorker;
-  for (const temperature of WORKER_TEMPERATURES) {
-    let reply: string;
-    try {
-      reply = await worker(SYSTEM, instruction, temperature);
-    } catch (e) {
-      report = `worker unavailable: ${(e as Error).message}`;
-      break; // no local tier — fall through to the backstop
+  // Frontier mode has no local tier — the backstop below IS the worker.
+  const worker = hooks.worker ?? (frontierWorkerModel() ? null : localWorker);
+  if (worker) {
+    for (const temperature of WORKER_TEMPERATURES) {
+      let reply: string;
+      try {
+        reply = await worker(SYSTEM, instruction, temperature);
+      } catch (e) {
+        report = `worker unavailable: ${(e as Error).message}`;
+        break; // no local tier — fall through to the backstop
+      }
+      attempts++;
+      const failure = await tryReply(reply);
+      if (failure === null) {
+        return {
+          solved: true,
+          tier: "worker",
+          attempts,
+          touched: unique(),
+          report: "check passed",
+        };
+      }
+      report = failure;
     }
-    attempts++;
-    const failure = await tryReply(reply);
-    if (failure === null) {
-      return { solved: true, tier: "worker", attempts, touched: unique(), report: "check passed" };
-    }
-    report = failure;
   }
 
   if (Deno.env.get("BOUGH_WORKER_LOCAL_ONLY") !== "1") {

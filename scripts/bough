@@ -235,7 +235,11 @@ cmd_update() {
 
   # shellcheck source=/dev/null
   . "$ROOT/scripts/worker-model.sh"
-  ensure_worker_model || echo "warning: worker model download failed — re-run update to resume" >&2
+  if [ -n "${BOUGH_WORKER_FRONTIER:-}" ] && [ "${BOUGH_WORKER_FRONTIER}" != "0" ]; then
+    echo "==> BOUGH_WORKER_FRONTIER is set — skipping local worker model download"
+  else
+    ensure_worker_model || echo "warning: worker model download failed — re-run update to resume" >&2
+  fi
   prune_stale_worker_models
 
   if [ -n "$was_running" ]; then

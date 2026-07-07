@@ -17,6 +17,7 @@
  */
 import { workerIfRunning } from "./runtime.ts";
 import { workerComplete } from "./client.ts";
+import { frontierComplete, frontierWorkerModel } from "./frontier.ts";
 
 /** Injectable completion for tests: (system, user, temperature) → raw reply. */
 export type Completer = (system: string, user: string, temperature: number) => Promise<string>;
@@ -167,6 +168,10 @@ function numberedExcerpt(lines: string[], oldString: string): string | null {
 
 /** Live path: an already-running worker only — an edit never waits on a cold start. */
 async function defaultComplete(system: string, user: string, temperature: number): Promise<string> {
+  if (frontierWorkerModel()) {
+    // Bigger cap than the local path: a chat model may pad the JSON with prose.
+    return await frontierComplete({ system, user, maxTokens: 128, jsonSchema: RANGE_SCHEMA });
+  }
   const url = await workerIfRunning();
   if (!url) throw new Error("no local worker running");
   return await workerComplete(url, {

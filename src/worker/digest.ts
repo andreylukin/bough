@@ -8,10 +8,13 @@
  * Privacy tier: this path is local-only BY DESIGN — command output is exactly the
  * kind of text (env dumps, tokens in logs) that shouldn't ride to a remote API as
  * a side effect. When no local worker is reachable the middle is simply dropped
- * with a deterministic omission marker; there is no frontier fallback.
+ * with a deterministic omission marker; there is no frontier fallback. The one
+ * exception is BOUGH_WORKER_FRONTIER, where the user explicitly opts the whole
+ * worker surface — this path included — onto a remote model.
  */
 import { workerIfRunning } from "./runtime.ts";
 import { workerComplete } from "./client.ts";
+import { frontierComplete, frontierWorkerModel } from "./frontier.ts";
 
 /** Injectable completion for tests: (system, user) → digest text. */
 export type DigestCompleter = (system: string, user: string) => Promise<string>;
@@ -48,9 +51,10 @@ export async function digestOutput(
   const tail = text.slice(-TAIL_CHARS);
   const middle = text.slice(HEAD_CHARS, -TAIL_CHARS);
   const omitted = middle.split("\n").length;
+  const label = frontierWorkerModel() ? "worker digest" : "local-worker digest";
   const marker = (summary: string | null) =>
     `${head}\n[…${omitted} middle lines omitted${
-      summary ? `; local-worker digest:\n${summary}` : ""
+      summary ? `; ${label}:\n${summary}` : ""
     }]\n${tail}`;
 
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -88,6 +92,9 @@ async function summarize(
 
 /** Live path: an already-running worker only, and strictly local — no fallback. */
 async function defaultComplete(system: string, user: string): Promise<string> {
+  if (frontierWorkerModel()) {
+    return await frontierComplete({ system, user, maxTokens: 256 });
+  }
   const url = await workerIfRunning();
   if (!url) throw new Error("no local worker running");
   return await workerComplete(url, {

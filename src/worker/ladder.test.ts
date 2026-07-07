@@ -114,6 +114,25 @@ Deno.test("runUnit: BOUGH_WORKER_LOCAL_ONLY=1 skips the backstop", async () => {
   }
 });
 
+Deno.test("runUnit: BOUGH_WORKER_FRONTIER skips the local tier — backstop is the worker", async () => {
+  const ctx = await tmpCtx();
+  Deno.env.set("BOUGH_WORKER_FRONTIER", "1");
+  try {
+    const result = await runUnit(
+      "Create f.txt with content: right",
+      "grep -q right f.txt",
+      ctx,
+      // No worker hook: frontier mode must not fall back to the local worker.
+      { backstop: () => Promise.resolve(fence("write", "f.txt", "right")) },
+    );
+    assertEquals(result.solved, true);
+    assertEquals(result.tier, "backstop");
+    assertEquals(result.attempts, 1);
+  } finally {
+    Deno.env.delete("BOUGH_WORKER_FRONTIER");
+  }
+});
+
 Deno.test("runUnit: edit op applies through edit_file, sh op runs", async () => {
   const ctx = await tmpCtx();
   await Deno.writeTextFile(`${ctx.workspace}/code.py`, "def f():\n    return 1\n");

@@ -8,6 +8,7 @@
 import type { NetRequest } from "../schema/parts.ts";
 import { workerIfRunning } from "./runtime.ts";
 import { workerComplete } from "./client.ts";
+import { frontierComplete, frontierWorkerModel } from "./frontier.ts";
 
 const DEADLINE_MS = 5_000;
 
@@ -58,6 +59,9 @@ async function oneLiner(system: string, user: string, cap: number): Promise<stri
   try {
     const raw = await Promise.race([
       (async () => {
+        if (frontierWorkerModel()) {
+          return await frontierComplete({ system, user, maxTokens: 96, jsonSchema: SUMMARY_SCHEMA });
+        }
         const url = await workerIfRunning();
         if (!url) return null;
         return await workerComplete(url, {

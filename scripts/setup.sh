@@ -79,9 +79,13 @@ echo "==> caching Deno dependencies + typecheck"
 (cd "$ROOT" && deno install && deno task check)
 
 # Worker model (~2 GB, resumes partial downloads). The local worker is optional
-# at runtime, so a failed download is a warning, not a setup failure.
+# at runtime, so a failed download is a warning, not a setup failure. A machine
+# configured for frontier-worker mode never loads the GGUF — skip the download.
 . "$ROOT/scripts/worker-model.sh"
-if ! ensure_worker_model; then
+frontier_cfg="$(grep -E '^BOUGH_WORKER_FRONTIER=' "$HOME/.bough/env" 2>/dev/null | tail -1 | cut -d= -f2- || true)"
+if [ -n "$frontier_cfg" ] && [ "$frontier_cfg" != "0" ]; then
+  echo "==> BOUGH_WORKER_FRONTIER is set — skipping local worker model download"
+elif ! ensure_worker_model; then
   echo "warning: worker model download failed — re-run setup.sh to resume it" >&2
 fi
 prune_stale_worker_models
@@ -109,6 +113,7 @@ ANTHROPIC_API_KEY=
 # BOUGH_PORT=4321
 # BOUGH_HOST=
 # BOUGH_CLAWPATROL=1       # opt-in native egress firewall (plugins, holds, rules)
+# BOUGH_WORKER_FRONTIER=1  # worker micro-tasks on claude-haiku-4-5 instead of the local Qwen (or set a model id)
 EOF
   chmod 600 "$ENV_FILE"
 fi

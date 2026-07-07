@@ -16,13 +16,14 @@ import type { Bus } from "../bus.ts";
 import { anthropicClient } from "./llm.ts";
 import { ensureWorker } from "../worker/runtime.ts";
 import { workerComplete } from "../worker/client.ts";
+import { frontierWorkerModel } from "../worker/frontier.ts";
 
 /** Placeholder for sessions created without a title; the trigger for auto-titling. */
 export const UNTITLED = "untitled";
 
 /** Frontier backstop model when the local worker is unavailable/unusable. */
 export function titleBackstopModel(): string {
-  return Deno.env.get("BOUGH_TITLE_MODEL") ?? "claude-haiku-4-5";
+  return Deno.env.get("BOUGH_TITLE_MODEL") ?? frontierWorkerModel() ?? "claude-haiku-4-5";
 }
 
 const SYSTEM = [
@@ -66,6 +67,8 @@ async function generate(ctx: TitleCtx, sessionId: string, text: string): Promise
 
 /** tier1: local worker; on any failure, tier3: frontier backstop. */
 async function defaultTitler(text: string): Promise<string> {
+  // Frontier mode: no local tier — title straight on the backstop model.
+  if (frontierWorkerModel()) return await backstopTitle(text);
   try {
     const url = await ensureWorker();
     // Low temperature: this is a one-shot formatting task, not reasoning.
