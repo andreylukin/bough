@@ -27,8 +27,8 @@ fi
 # cloudflared: `deno task tunnel` for phone access. (deno has its own block below —
 # it needs a version floor, and may already be on PATH from the deno.land installer.)
 echo "==> checking Homebrew packages"
-brew_bins=(node jj llama-server cloudflared)
-brew_pkgs=(node jj llama.cpp cloudflared)
+brew_bins=(node jj llama-server cloudflared rg uv)
+brew_pkgs=(node jj llama.cpp cloudflared ripgrep uv)
 missing=()
 for i in "${!brew_bins[@]}"; do
   command -v "${brew_bins[$i]}" >/dev/null || missing+=("${brew_pkgs[$i]}")
