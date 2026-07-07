@@ -55,6 +55,7 @@ import { maybeAutoTitle, type Titler } from "./supervisor/title.ts";
 import { activeSkills } from "./supervisor/skills.ts";
 import { prepareWorkspace } from "./supervisor/workspace.ts";
 import { activationsFor } from "./mcp/config.ts";
+import { createLspBridge, lspAvailable, lspSection } from "./mcp/lsp.ts";
 import { mcpManager } from "./mcp/manager.ts";
 import { mcpSection } from "./mcp/prompt.ts";
 import { mcpStatusFor } from "./mcp/status.ts";
@@ -137,8 +138,9 @@ const SYSTEM = [
   "await bash(cmd) — shell in the sandboxed workspace, returns combined output;",
   "await read(path); await write(path, content); await edit(path, oldText, newText).",
   "Later sections of this prompt may grant more host functions — delegation",
-  "(agent/spawn/join/adopt) and await mcp(server, tool, args) for MCP tools, whose",
-  "connected servers and calling convention appear in a '# MCP tools' section. A host",
+  "(agent/spawn/join/adopt), await mcp(server, tool, args) for MCP tools (whose",
+  "connected servers and calling convention appear in a '# MCP tools' section), and",
+  "lsp.* symbol navigation (a '## Symbol navigation (lsp)' section). A host",
   "function exists ONLY when this prompt grants it — never guess at others.",
   "One host function is always available: await mcpStatus() returns this session's",
   "MCP management state {registry, auth, active, connections}. MCP servers are",
@@ -494,12 +496,25 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
         };
       }
     }
+    // LSP: always-on when the backing server is registered — symbol navigation is
+    // a core capability, not a skill grant. Nothing spawns until the program's
+    // first lsp.* call, and every underlying tool call still passes the Claw
+    // Patrol gate exactly like mcp().
+    let lspNote = "";
+    if (lspAvailable()) {
+      toolCtx.lsp = createLspBridge(
+        sessionId,
+        { workspace: prepared.cwd, sandbox: toolCtx.sandbox },
+        mcpManager(),
+      );
+      lspNote = lspSection();
+    }
     const system = SYSTEM +
       (isSub ? SYSTEM_SUBAGENT : "") +
       (mayDelegate ? (isSub ? SYSTEM_DELEGATION_NESTED : SYSTEM_DELEGATION) : "") +
       (mayDelegate && !isSub ? runningSubagentsNote(db, sessionId) : "") +
       workspaceNote(prepared.cwd) + (agents ?? "") +
-      mcpNote + skills.sections;
+      mcpNote + lspNote + skills.sections;
     const toolDefs = tools.map((t) => ({
       name: t.name,
       description: t.description,

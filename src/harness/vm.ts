@@ -41,6 +41,12 @@ export interface HostFns {
    * capability grant; calling tools still requires mcp().
    */
   mcpStatus?(): Promise<string>;
+  /**
+   * LSP symbol verb (bridged when a language-intelligence server is registered —
+   * mcp/lsp.ts): args in and result back travel as JSON, like mcp(). The worker
+   * side exposes it as the `lsp.*` method object.
+   */
+  lsp?(verb: string, argsJson: string): Promise<string>;
 }
 
 export interface ProgramResult {

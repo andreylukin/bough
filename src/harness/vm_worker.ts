@@ -25,7 +25,8 @@ type HostName =
   | "join"
   | "adopt"
   | "mcp"
-  | "mcpStatus";
+  | "mcpStatus"
+  | "lsp";
 
 const pending = new Map<number, { resolve: (v: string) => void; reject: (e: Error) => void }>();
 let seq = 0;
@@ -76,6 +77,15 @@ async function run(code: string): Promise<void> {
     JSON.parse(await hostCall("mcp", [server, tool, JSON.stringify(args ?? {})]));
   // MCP management state (registry/auth/active/connections) — read-only, always on.
   const mcpStatus = async () => JSON.parse(await hostCall("mcpStatus", []));
+  // LSP symbol verbs (bridged only when a language backend is registered): one
+  // host function fanned out as a method object; JSON round-trip like mcp().
+  const lspCall = async (verb: string, args?: unknown) =>
+    JSON.parse(await hostCall("lsp", [verb, JSON.stringify(args ?? {})]));
+  const lsp = Object.fromEntries(
+    ["find", "def", "refs", "impls", "overview", "diagnostics", "rename"].map(
+      (verb) => [verb, (args?: unknown) => lspCall(verb, args)],
+    ),
+  );
 
   // deno-lint-ignore no-explicit-any
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as any;
@@ -91,6 +101,7 @@ async function run(code: string): Promise<void> {
     "adopt",
     "mcp",
     "mcpStatus",
+    "lsp",
     "console",
     code,
   );
@@ -106,6 +117,7 @@ async function run(code: string): Promise<void> {
     adopt,
     mcp,
     mcpStatus,
+    lsp,
     sandboxConsole,
   );
 }

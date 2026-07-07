@@ -69,6 +69,15 @@ export interface ToolRunCtx {
    * status is not a capability grant, tool calls still require `mcp`.
    */
   mcpStatus?: () => Promise<unknown>;
+  /**
+   * LSP symbol verbs (mcp/lsp.ts), wired by the turn runner whenever the backing
+   * language-intelligence server is registered — always-on, no skill grant, but
+   * every call still passes the Claw Patrol gate like an `mcp` call. Lazy: the
+   * first call connects the server and activates the session workspace.
+   */
+  lsp?: {
+    call: (verb: string, args: unknown) => Promise<unknown>;
+  };
 }
 
 /**

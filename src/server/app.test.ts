@@ -2,6 +2,7 @@ import { assert, assertEquals } from "jsr:@std/assert@1";
 import { Db } from "../db/db.ts";
 import { Bus } from "../bus.ts";
 import { type AppCtx, createHandler } from "./app.ts";
+import { BUILTIN_SERVERS } from "../mcp/config.ts";
 import type { Message, Session } from "../schema/parts.ts";
 
 function ctx(): AppCtx {
@@ -360,14 +361,19 @@ Deno.test("mcp: registry round-trips, enable/disable manage activations, guards 
   const c = ctx();
   const h = createHandler(c);
   try {
-    // empty registry, nothing active, nothing connected
+    // no user registry: builtins only, nothing active, nothing connected
     const empty = await (await h(req("GET", "/mcp/servers"))).json() as {
       registry: { servers: Record<string, unknown> };
       auth: Record<string, unknown>;
       active: string[];
       connections: unknown[];
     };
-    assertEquals(empty, { registry: { servers: {} }, auth: {}, active: [], connections: [] });
+    assertEquals(empty, {
+      registry: JSON.parse(JSON.stringify({ servers: BUILTIN_SERVERS })),
+      auth: {},
+      active: [],
+      connections: [],
+    });
 
     // PUT validates: bad shape 400, good shape persists
     assertEquals((await h(req("PUT", "/mcp/servers", { servers: { bad: {} } }))).status, 400);
@@ -423,7 +429,10 @@ Deno.test("mcp: per-server PUT/DELETE, connect-now proves a server runs", async 
     const reg = await (await h(req("GET", "/mcp/servers"))).json() as {
       registry: { servers: Record<string, unknown> };
     };
-    assertEquals(Object.keys(reg.registry.servers).sort(), ["echo", "other"]);
+    assertEquals(
+      Object.keys(reg.registry.servers).sort(),
+      ["echo", "other", ...Object.keys(BUILTIN_SERVERS)].sort(),
+    );
 
     // connect guards: session required/known, name registered
     const s = await (await h(req("POST", "/sessions", { title: "m" }))).json() as Session;

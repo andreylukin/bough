@@ -105,6 +105,35 @@ Deno.test("mcpStatus() bridges the management state as a parsed object", async (
   assertStringIncludes(bare, "unknown host function: mcpStatus");
 });
 
+Deno.test("lsp.* bridges verbs into the program when wired; absent otherwise", async () => {
+  const calls: unknown[] = [];
+  const c: ToolRunCtx = {
+    ...ctx(),
+    lsp: {
+      call: (verb, args) => {
+        calls.push([verb, args]);
+        return Promise.resolve([{ name_path: "Foo/bar", relative_path: "src/foo.ts" }]);
+      },
+    },
+  };
+  const out = await runSteps.run(
+    {
+      code: `const hits = await lsp.refs({name_path: "Foo/bar", relative_path: "src/foo.ts"});
+             console.log("first:", hits[0].name_path);`,
+    },
+    c,
+  );
+  assertStringIncludes(out, "first: Foo/bar");
+  assertEquals(calls, [["refs", { name_path: "Foo/bar", relative_path: "src/foo.ts" }]]);
+
+  // Not wired (no backing server registered) → the call rejects inside the program.
+  const bare = await runSteps.run(
+    { code: `try { await lsp.def({}); } catch (e) { console.log("no fn:", e.message); }` },
+    ctx(),
+  );
+  assertStringIncludes(bare, "unknown host function: lsp");
+});
+
 Deno.test("mcp() string results round-trip too", async () => {
   const c: ToolRunCtx = { ...ctx(), mcp: { call: () => Promise.resolve("plain text") } };
   const out = await runSteps.run(

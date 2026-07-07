@@ -15,7 +15,7 @@
  */
 import { wrap } from "../sandbox/seatbelt.ts";
 import { clawpatrolEnv } from "../net/gateway.ts";
-import { expandEnv, loadRegistry, type ServerConfig } from "./config.ts";
+import { expandEnv, expandHome, loadRegistry, type ServerConfig } from "./config.ts";
 import {
   type McpCallResult,
   type McpConnection,
@@ -195,7 +195,9 @@ export class McpManager {
     if (spawn.sandbox && Deno.build.os === "darwin" && Deno.env.get("BOUGH_NO_SANDBOX") !== "1") {
       argv = wrap(argv, {
         workspace: spawn.workspace,
-        allowWrite: [spawn.sandbox.sessionDir],
+        // The snapshot dir plus the entry's declared write roots (e.g. serena's
+        // ~/.serena) — servers that keep state outside the workspace need them.
+        allowWrite: [spawn.sandbox.sessionDir, ...cfg.allowWrite.map(expandHome)],
         confineNetwork: Object.keys(netEnv).length > 0,
       });
     }

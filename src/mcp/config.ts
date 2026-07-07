@@ -26,12 +26,46 @@ export const ServerConfig = z.object({
   args: z.array(z.string()).default([]),
   /** Extra child env; values may reference ${VAR} from bough's environment. */
   env: z.record(z.string(), z.string()).default({}),
+  /** Extra seatbelt write roots for the server child (a leading ~ expands to the
+   * user's home) — for servers that keep state outside the workspace. */
+  allowWrite: z.array(z.string()).default([]),
   /** Remote transport (phase 2 — accepted by the schema, rejected by the manager). */
   url: z.string().optional(),
 }).superRefine((s, ctx) => {
   if (!s.command === !s.url) ctx.addIssue("a server needs exactly one of command or url");
 });
 export type ServerConfig = z.infer<typeof ServerConfig>;
+
+/**
+ * Servers shipped with bough — present in every install without user config, so
+ * capabilities built on them (mcp/lsp.ts) work everywhere. A user entry with the
+ * same name in servers.json overrides its builtin; deleting the override restores
+ * it. Mutations below write the USER file only — a builtin is never persisted, so
+ * shipping a new default command takes effect without touching anyone's config.
+ */
+export const BUILTIN_SERVERS: Record<string, ServerConfig> = {
+  // The LSP backend (see mcp/lsp.ts): serena orchestrates per-language servers.
+  // ide-assistant context = the symbol-tool surface we curate from; ~/.serena is
+  // where it keeps project registrations and logs. Dashboard/GUI off: one serena
+  // per session runs headless in the background (and dashboards would fight over
+  // the port).
+  serena: ServerConfig.parse({
+    command: "uvx",
+    args: [
+      "--from",
+      "serena-agent",
+      "serena",
+      "start-mcp-server",
+      "--context",
+      "ide-assistant",
+      "--enable-web-dashboard",
+      "false",
+      "--enable-gui-log-window",
+      "false",
+    ],
+    allowWrite: ["~/.serena"],
+  }),
+};
 
 const NAME_RE = /^[a-z0-9][a-z0-9_-]*$/;
 
@@ -67,10 +101,16 @@ function writeJson(path: string, value: unknown): void {
   writeFileSync(path, JSON.stringify(value, null, 2) + "\n");
 }
 
-/** The server registry; a missing or corrupt file is an empty registry (fail closed). */
-export function loadRegistry(): Registry {
+/** The USER registry file alone — the mutation paths' base, builtins excluded. */
+function loadUserRegistry(): Registry {
   const parsed = Registry.safeParse(readJson(join(mcpDir(), "servers.json")) ?? {});
   return parsed.success ? parsed.data : { servers: {} };
+}
+
+/** The effective registry: builtins overlaid by the user file (same name wins).
+ * A missing or corrupt user file contributes nothing (fail closed). */
+export function loadRegistry(): Registry {
+  return { servers: { ...BUILTIN_SERVERS, ...loadUserRegistry().servers } };
 }
 
 /** Parse with a human-readable failure — these messages surface as 400 bodies in
@@ -95,15 +135,16 @@ export function saveRegistry(raw: unknown): Registry {
  */
 export function upsertServer(name: string, raw: unknown): Registry {
   if (!NAME_RE.test(name)) throw new Error("server names are lowercase slugs");
-  const reg = loadRegistry();
+  const reg = loadUserRegistry();
   reg.servers[name] = parseReadable(ServerConfig, raw);
   writeJson(join(mcpDir(), "servers.json"), reg);
   return reg;
 }
 
-/** Remove one server entry. Returns false when the name wasn't registered. */
+/** Remove one server entry from the USER file (a builtin's override reverts to the
+ * builtin). Returns false when the name wasn't in the user file. */
 export function removeServer(name: string): boolean {
-  const reg = loadRegistry();
+  const reg = loadUserRegistry();
   if (!(name in reg.servers)) return false;
   delete reg.servers[name];
   writeJson(join(mcpDir(), "servers.json"), reg);
@@ -125,6 +166,11 @@ export function expandEnv(env: Record<string, string>): Record<string, string> {
     });
   }
   return out;
+}
+
+/** Expand a leading ~ to the user's home (for allowWrite roots). */
+export function expandHome(p: string): string {
+  return p === "~" || p.startsWith("~/") ? join(homedir(), p.slice(1)) : p;
 }
 
 function loadActivations(): Activations {

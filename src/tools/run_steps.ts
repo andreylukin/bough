@@ -36,8 +36,8 @@ const schema = z.object({
       "capability surface is five async host functions: bash(cmd), read(path), " +
       "write(path, content), edit(path, oldText, newText), and worker(instruction, check) " +
       "— plus mcpStatus() (always available: this session's MCP management state) and any " +
-      "delegation (agent/spawn/join/adopt) and mcp(server, tool, args) host " +
-      "functions your system prompt grants. worker() hands one SMALL, self-contained, " +
+      "delegation (agent/spawn/join/adopt), mcp(server, tool, args), and lsp.* symbol " +
+      "navigation host functions your system prompt grants. worker() hands one SMALL, self-contained, " +
       "verifiable edit to a fast local model: instruction must dictate file + exact change " +
       "(or file + behavior + example), name every file the unit touches, and quote the " +
       "current code being changed — the worker cannot search or read files, so the " +
@@ -117,10 +117,18 @@ export const runSteps: ToolDef = {
         ...(ctx.mcpStatus
           ? { mcpStatus: async () => JSON.stringify(await ctx.mcpStatus!()) }
           : {}),
+        // LSP symbol verbs (wired when the backing server is registered): same
+        // JSON round-trip as mcp(); the worker side fans this out as lsp.*.
+        ...(ctx.lsp
+          ? {
+            lsp: async (verb: string, argsJson: string) =>
+              JSON.stringify(await ctx.lsp!.call(verb, JSON.parse(argsJson))) ?? "null",
+          }
+          : {}),
       },
-      // agent() blocks on whole subagent turns; a held mcp() call blocks on a human
-      // approval — both need far more wall-clock than the plain 3-minute cap.
-      ctx.delegate || ctx.mcp ? DELEGATING_TIMEOUT_MS : undefined,
+      // agent() blocks on whole subagent turns; a held mcp()/lsp() call blocks on a
+      // human approval — both need far more wall-clock than the plain 3-minute cap.
+      ctx.delegate || ctx.mcp || ctx.lsp ? DELEGATING_TIMEOUT_MS : undefined,
       ctx.signal,
     );
 
