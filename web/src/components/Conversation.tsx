@@ -1097,21 +1097,49 @@ export function Conversation({
     });
   }
 
-  // / skill autocomplete: same UX as @, against the (small, prefetched) skill list.
+  // / skill autocomplete: same UX as @. The prefetched prop seeds the list; opening
+  // the menu refetches /skills so a skill installed mid-session (by the human or by
+  // a turn) autocompletes without a page reload or server restart.
   const [skillMatches, setSkillMatches] = useState<{ name: string; description: string }[]>([]);
   const [skillActive, setSkillActive] = useState(0);
+  const [liveSkills, setLiveSkills] = useState(skills);
+  useEffect(() => setLiveSkills(skills), [skills]);
   const slashMenuOpen = skillMatches.length > 0;
 
-  // Parse a trailing `/token` (no spaces) at the cursor and filter the skill list.
+  // Parse a trailing `/token` (no spaces) at the cursor; null = no token (menu closed).
+  function matchSkills(
+    list: { name: string; description: string }[],
+    value: string,
+    caret: number,
+  ): { name: string; description: string }[] | null {
+    const m = /(^|\s)\/([\w-]*)$/.exec(value.slice(0, caret));
+    if (!m) return null;
+    const q = m[2].toLowerCase();
+    return list.filter((s) => s.name.toLowerCase().includes(q));
+  }
+
   function refreshSlashMenu(value: string, caret: number) {
     if (skills.length === 0) return;
-    const m = /(^|\s)\/([\w-]*)$/.exec(value.slice(0, caret));
-    if (!m) {
+    const matches = matchSkills(liveSkills, value, caret);
+    if (!matches) {
       setSkillMatches([]);
       return;
     }
-    const q = m[2].toLowerCase();
-    setSkillMatches(skills.filter((s) => s.name.toLowerCase().includes(q)));
+    if (!slashMenuOpen) {
+      // The menu is opening — refresh the list behind it and re-filter at the
+      // caret's current position once the fresh list lands.
+      api.skills().then((fresh) => {
+        setLiveSkills(fresh);
+        const ta = taRef.current;
+        if (!ta) return;
+        const again = matchSkills(fresh, ta.value, ta.selectionStart ?? ta.value.length);
+        if (again) {
+          setSkillMatches(again);
+          setSkillActive((a) => Math.min(a, Math.max(again.length - 1, 0)));
+        }
+      }).catch(() => {});
+    }
+    setSkillMatches(matches);
     setSkillActive(0);
   }
 
