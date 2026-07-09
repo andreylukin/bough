@@ -93,6 +93,7 @@ const GOLDEN = `(version 1)
   (subpath "/home/u/.nuget")
   (subpath "/home/u/.dotnet")
   (subpath "/home/u/.cocoapods")
+  (subpath "/home/u/.agent-browser")
   (subpath "/extra")
   (literal "/dev/null") (literal "/dev/zero") (literal "/dev/random") (literal "/dev/urandom") (regex #"^/dev/tty") (regex #"^/dev/fd/") (regex #"^/dev/stdout"))
 `;
@@ -137,6 +138,9 @@ Deno.test("buildProfile: confineNetwork denies egress but allows loopback", () =
   assertStringIncludes(p, '(allow network-outbound (remote ip "localhost:*")');
   // loopback-only: the deny comes before the narrow allow, and no broad allow leaks
   assert(p.indexOf("(deny network*)") < p.indexOf("network-outbound"), "deny precedes allow");
+  // local daemons need to bind + accept: unix sockets and loopback TCP only
+  assertStringIncludes(p, '(allow network-bind (local ip "localhost:*") (local unix-socket))');
+  assertStringIncludes(p, '(allow network-inbound (local ip "localhost:*") (local unix-socket))');
 });
 
 // ---- real enforcement smokes (macOS only) ----------------------------------

@@ -128,6 +128,8 @@ const WRITE_ALLOW = [
   "~/.nuget",
   "~/.dotnet",
   "~/.cocoapods",
+  // browser-automation CLIs (daemon socket + downloaded browsers + scratch)
+  "~/.agent-browser",
 ];
 
 /** Device files processes need to write (null sink, ptys, pipes). */
@@ -203,14 +205,18 @@ export function buildProfile(opts: SandboxOptions & { home: string }): string {
 
   // Loopback-only egress: the local proxy is the sole route out, and any other
   // outbound socket (direct-to-internet bypass) is denied by the kernel. Unix
-  // sockets stay open (local IPC, not egress); loopback bind allows dev servers.
+  // sockets stay open (local IPC, not egress). Loopback bind + inbound allow dev
+  // servers and local daemons (e.g. agent-browser's socket, Chrome's CDP port)
+  // to accept connections — a 0.0.0.0 bind is still denied, so nothing is
+  // reachable from off the machine.
   if (confineNetwork) {
     parts.push(
       "",
       ";; loopback-only egress — the local Claw Patrol proxy is the only way out",
       "(deny network*)",
       '(allow network-outbound (remote ip "localhost:*") (remote unix-socket))',
-      '(allow network-bind (local ip "localhost:*"))',
+      '(allow network-bind (local ip "localhost:*") (local unix-socket))',
+      '(allow network-inbound (local ip "localhost:*") (local unix-socket))',
     );
   }
   parts.push("");
