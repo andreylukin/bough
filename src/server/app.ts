@@ -833,7 +833,11 @@ const setYoloH: Handler = async (req, ctx) => {
   const config = setYolo(ctx.db, sessionId, body.on, ctx.netDir);
   if (sessionId) ctx.gate?.invalidate();
   else ctx.gate?.setPolicy(toPolicy(config));
-  return json({ config, scope: sessionId ? { sessionId } : "global" });
+  // Flipping ON releases requests already parked on the now-ungated scope — each
+  // hold re-resolves its branch policy, so inherited yolo counts and a branch
+  // carrying its own non-yolo override keeps its cards.
+  const released = body.on ? ctx.gate?.releaseYoloHolds() ?? 0 : 0;
+  return json({ config, scope: sessionId ? { sessionId } : "global", released });
 };
 
 // Recent NetRequest rows for the Network rail (optionally per-session).

@@ -243,6 +243,25 @@ export class Gate {
   }
 
   /**
+   * Approve-and-release parked holds whose branch now resolves to mode "yolo" —
+   * called right after the YOLO toggle flips on, so requests already queued for
+   * approval don't stay parked on a branch that no longer gates anything.
+   * Scoping rides on policy resolution itself: a child branch inherits its
+   * parent's yolo, while one carrying its own non-yolo override keeps its holds.
+   * Returns the count released.
+   */
+  releaseYoloHolds(): number {
+    let n = 0;
+    for (const [id, hold] of [...this.#holds]) {
+      if (this.#policyFor(hold.sessionId).mode !== "yolo") continue;
+      this.#holds.delete(id);
+      hold.resolve({ approve: true, reason: "auto-approved: YOLO is on for this branch" });
+      n++;
+    }
+    return n;
+  }
+
+  /**
    * Deny-and-clear parked holds whose turn is gone — for one session, or all of
    * them (sessionId undefined). Without this, an interrupted turn leaves its hold
    * pending forever and the approval card haunts every session. Returns the count.

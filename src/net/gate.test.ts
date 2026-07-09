@@ -187,3 +187,41 @@ Deno.test("db: expirePendingNetEvents sweeps orphaned pending rows", () => {
   assertEquals(row.verdict, "denied");
   assertEquals(row.reason, "expired — server restarted");
 });
+
+Deno.test("gate: releaseYoloHolds approves parked holds on now-yolo branches; overridden branches keep theirs", async () => {
+  const bus = new Bus();
+  const db = new Db(":memory:");
+  const review = policy({ mode: "review" });
+  let yoloOn = false;
+  const gate = createGate({
+    db,
+    bus,
+    // s2 carries its own non-yolo override; everything else follows the flip
+    resolve: (sessionId) =>
+      sessionId === "s2" ? review : yoloOn ? policy({ mode: "yolo" }) : review,
+  });
+  const p1 = gate.gate(ghDelete, { sessionId: "s1" });
+  const p2 = gate.gate(ghDelete, { sessionId: "s2" });
+  await new Promise((r) => setTimeout(r, 0));
+  assertEquals(gate.pending, 2);
+
+  // nothing resolves to yolo yet → nothing released
+  assertEquals(gate.releaseYoloHolds(), 0);
+  assertEquals(gate.pending, 2);
+
+  yoloOn = true;
+  gate.invalidate(); // the /net/yolo handler invalidates before releasing
+  assertEquals(gate.releaseYoloHolds(), 1);
+  const d1 = await p1;
+  assertEquals(d1.verdict, "allow");
+  assertEquals(d1.reason, "auto-approved: YOLO is on for this branch");
+  assertEquals(gate.pending, 1);
+  // the s1 card flipped to allowed with the auto-approval reason
+  const row = db.recentNetEvents("s1")[0];
+  assertEquals(row.verdict, "allowed");
+  assertEquals(row.reason, "auto-approved: YOLO is on for this branch");
+
+  // s2's hold is untouched; resolve it to finish
+  gate.resolveHold(db.recentNetEvents("s2")[0].id, false);
+  assertEquals((await p2).verdict, "deny");
+});
