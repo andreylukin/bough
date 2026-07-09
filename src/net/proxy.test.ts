@@ -232,3 +232,64 @@ Deno.test("MITM upstream CA: without the cluster CA, re-origination fails closed
     eks.server.close();
   }
 });
+
+Deno.test("credentials: a provider value is minted host-side and stamped; origin sees the header", async () => {
+  const ca = await makeCA();
+  const origin = originHttp("ok");
+  const oport = await origin.ready;
+  let mints = 0;
+  const proxy = new ProxyServer({
+    ca,
+    gate: () => Promise.resolve(allow()),
+    credentials: [{
+      host: "127.0.0.1",
+      header: "authorization",
+      value: () => Promise.resolve(`Bearer minted-${++mints}`),
+    }],
+  });
+  await proxy.start();
+  try {
+    for (let i = 0; i < 2; i++) {
+      await rawExchange(
+        proxy.port,
+        `GET http://127.0.0.1:${oport}/ HTTP/1.1\r\nHost: 127.0.0.1:${oport}\r\nConnection: close\r\n\r\n`,
+      );
+    }
+    assertEquals(origin.hits.length, 2);
+    // the provider runs per request (caching is the provider's job — see execcred.ts)
+    assertEquals(origin.hits[0].headers["authorization"], "Bearer minted-1");
+    assertEquals(origin.hits[1].headers["authorization"], "Bearer minted-2");
+  } finally {
+    await proxy.stop();
+    origin.server.close();
+  }
+});
+
+Deno.test("credentials: a provider that throws fails the request with a 502 naming the mint error", async () => {
+  const ca = await makeCA();
+  const origin = originHttp("should-not-see-this");
+  const oport = await origin.ready;
+  const proxy = new ProxyServer({
+    ca,
+    gate: () => Promise.resolve(allow()),
+    credentials: [{
+      host: "127.0.0.1",
+      header: "authorization",
+      value: () => Promise.reject(new Error("aws sso session expired")),
+    }],
+  });
+  await proxy.start();
+  try {
+    const res = await rawExchange(
+      proxy.port,
+      `GET http://127.0.0.1:${oport}/ HTTP/1.1\r\nHost: 127.0.0.1:${oport}\r\nConnection: close\r\n\r\n`,
+    );
+    assertStringIncludes(res, "502");
+    assertStringIncludes(res, "credential mint failed");
+    assertStringIncludes(res, "aws sso session expired");
+    assertEquals(origin.hits.length, 0);
+  } finally {
+    await proxy.stop();
+    origin.server.close();
+  }
+});

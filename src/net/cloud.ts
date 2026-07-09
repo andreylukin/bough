@@ -20,8 +20,10 @@
 import { dirname, join } from "node:path";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { kubeconfigPath, loadKubeconfig, rewriteKubeconfig } from "./kubeconfig.ts";
+import { execBearerProvider } from "./execcred.ts";
 import { netDir } from "./install.ts";
 import type { Policy } from "./policy.ts";
+import type { CredentialRule } from "./proxy.ts";
 
 /** AWS API hosts trusted (host-level) so `aws` works; writes still action-gated. */
 export const AWS_HOST_SUFFIX = "*.amazonaws.com";
@@ -35,6 +37,12 @@ export interface KubeSetup {
   upstreamCa: Map<string, string>;
   /** Users on client-cert auth (breaks under MITM — caller warns). */
   clientCertUsers: string[];
+  /**
+   * Authorization stamped per cluster host from exec plugins the rewrite lifted out
+   * of the kubeconfig — the HOST mints (execcred.ts), the proxy injects, and the
+   * cloud credentials behind the plugin (~/.aws, ...) never enter the sandbox.
+   */
+  credentials: CredentialRule[];
 }
 
 /**
@@ -67,6 +75,11 @@ export function setupKube(boughCaPem: string, dir = netDir()): KubeSetup | undef
     hosts: rewritten.clusters.map((c) => c.host),
     upstreamCa,
     clientCertUsers: rewritten.clientCertUsers,
+    credentials: rewritten.execCreds.map((spec) => ({
+      host: spec.host,
+      header: "authorization",
+      value: execBearerProvider(spec),
+    })),
   };
 }
 

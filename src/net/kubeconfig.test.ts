@@ -39,11 +39,58 @@ Deno.test("rewrite: cluster CA becomes bough's; original CA + host returned for 
 
   // upstream: the proxy learns the real cluster CA, keyed by (lowercased) host
   assertEquals(clusters, [{ host: "eabf96.gr7.us-east-2.eks.amazonaws.com", caPem: REAL_CA }]);
-
-  // exec auth is preserved untouched; no client-cert users here
-  assertStringIncludes(rewritten, "command: aws");
-  assertStringIncludes(rewritten, "get-token");
   assertEquals(clientCertUsers, []);
+});
+
+Deno.test("rewrite: exec auth is lifted out — stripped from the sandbox copy, keyed to its cluster host", () => {
+  const { rewritten, execCreds } = rewriteKubeconfig(eksConfig(), BOUGH_CA);
+
+  // the sandbox copy carries no exec block (the plugin couldn't run in-sandbox anyway:
+  // it reads ~/.aws, which the seatbelt denies) — the host mints, the proxy stamps
+  assertEquals(rewritten.includes("exec:"), false);
+  assertEquals(rewritten.includes("get-token"), false);
+  // the host learns what to run, keyed by cluster host via the context pairing
+  assertEquals(execCreds, [{
+    host: "eabf96.gr7.us-east-2.eks.amazonaws.com",
+    command: "aws",
+    args: ["eks", "get-token", "--cluster-name", "dev"],
+    env: {},
+  }]);
+});
+
+Deno.test("rewrite: exec env flattens to a map; non-exec users contribute nothing and keep their auth", () => {
+  const cfg = [
+    "clusters:",
+    "- name: a",
+    "  cluster: { server: 'https://a.example.com' }",
+    "- name: b",
+    "  cluster: { server: 'https://b.example.com' }",
+    "users:",
+    "- name: a",
+    "  user:",
+    "    exec:",
+    "      command: aws",
+    "      args: [eks, get-token, --cluster-name, a]",
+    "      env:",
+    "      - name: AWS_PROFILE",
+    "        value: dev",
+    "- name: b",
+    "  user: { token: static-token }",
+    "contexts:",
+    "- name: a",
+    "  context: { cluster: a, user: a }",
+    "- name: b",
+    "  context: { cluster: b, user: b }",
+  ].join("\n");
+  const { rewritten, execCreds } = rewriteKubeconfig(cfg, BOUGH_CA);
+  assertEquals(execCreds, [{
+    host: "a.example.com",
+    command: "aws",
+    args: ["eks", "get-token", "--cluster-name", "a"],
+    env: { AWS_PROFILE: "dev" },
+  }]);
+  // static-token auth survives untouched (it works through MITM as-is)
+  assertStringIncludes(rewritten, "static-token");
 });
 
 Deno.test("rewrite: certificate-authority FILE ref is read, then replaced by inline bough data", async () => {

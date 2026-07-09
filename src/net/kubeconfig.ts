@@ -26,6 +26,21 @@ export interface ClusterCa {
   caPem?: string;
 }
 
+/**
+ * An exec credential plugin lifted out of a kubeconfig user (aws eks get-token,
+ * gke-gcloud-auth-plugin, ...). The HOST runs it — the sandbox can't (the plugin
+ * reads ~/.aws etc., which the seatbelt denies) — and the proxy stamps the minted
+ * bearer token onto requests to `host` (see cloud.ts / proxy.ts CredentialRule).
+ */
+export interface ExecCredSpec {
+  /** Cluster API-server host[:port] this credential authenticates. */
+  host: string;
+  command: string;
+  args: string[];
+  /** exec.env entries ({name, value} list in the kubeconfig) flattened to a map. */
+  env: Record<string, string>;
+}
+
 export interface RewriteResult {
   /** The rewritten kubeconfig YAML: every cluster CA replaced with bough's. */
   rewritten: string;
@@ -33,6 +48,8 @@ export interface RewriteResult {
   clusters: ClusterCa[];
   /** Names of users relying on client-cert auth (breaks under MITM; caller warns). */
   clientCertUsers: string[];
+  /** Exec plugins stripped from users, mapped to their cluster hosts via contexts. */
+  execCreds: ExecCredSpec[];
 }
 
 // deno-lint-ignore no-explicit-any
@@ -97,13 +114,17 @@ export function rewriteKubeconfig(text: string, boughCaPem: string, baseDir = ""
   const clusters: ClusterCa[] = [];
   const clientCertUsers: string[] = [];
   const boughData = btoa(boughCaPem);
+  const clusterHostByName = new Map<string, string>();
 
   for (const entry of doc?.clusters ?? []) {
     const cluster = entry?.cluster;
     if (!cluster) continue;
     const host = hostOf(cluster.server);
     const caPem = clusterCaPem(cluster, baseDir);
-    if (host) clusters.push({ host, caPem });
+    if (host) {
+      clusters.push({ host, caPem });
+      if (typeof entry.name === "string") clusterHostByName.set(entry.name, host);
+    }
     // Point kubectl at bough's CA; drop any file ref so only the inline data is used.
     cluster["certificate-authority-data"] = boughData;
     delete cluster["certificate-authority"];
@@ -111,12 +132,44 @@ export function rewriteKubeconfig(text: string, boughCaPem: string, baseDir = ""
     // kubeconfig server URL stays as-is — no insecure-skip-tls-verify needed.
   }
 
+  // Lift exec plugins out of users: the sandbox can't run them (they read ~/.aws
+  // and friends, seatbelt-denied), so the HOST mints the token and the proxy stamps
+  // it (cloud.ts). Stripping the block keeps in-sandbox kubectl from trying anyway
+  // and failing; the request goes out unauthenticated and the proxy adds the header.
+  const execByUser = new Map<string, { command: string; args: string[]; env: Record<string, string> }>();
   for (const entry of doc?.users ?? []) {
     const user = entry?.user;
-    if (user && (user["client-certificate"] || user["client-certificate-data"])) {
+    if (!user) continue;
+    if (user["client-certificate"] || user["client-certificate-data"]) {
       clientCertUsers.push(entry.name ?? "(unnamed)");
+    }
+    const exec = user.exec;
+    if (exec && typeof exec.command === "string" && typeof entry.name === "string") {
+      const env: Record<string, string> = {};
+      for (const e of Array.isArray(exec.env) ? exec.env : []) {
+        if (typeof e?.name === "string" && typeof e?.value === "string") env[e.name] = e.value;
+      }
+      execByUser.set(entry.name, {
+        command: exec.command,
+        args: Array.isArray(exec.args) ? exec.args.filter((a: unknown) => typeof a === "string") : [],
+        env,
+      });
+      delete user.exec;
     }
   }
 
-  return { rewritten: stringify(doc), clusters, clientCertUsers };
+  // Pair users with clusters via contexts (first pairing per host wins — matches
+  // kubectl's own resolution, where a context names one user per cluster).
+  const execCreds: ExecCredSpec[] = [];
+  const taken = new Set<string>();
+  for (const entry of doc?.contexts ?? []) {
+    const ctx = entry?.context;
+    const host = clusterHostByName.get(ctx?.cluster);
+    const exec = execByUser.get(ctx?.user);
+    if (!host || !exec || taken.has(host)) continue;
+    taken.add(host);
+    execCreds.push({ host, ...exec });
+  }
+
+  return { rewritten: stringify(doc), clusters, clientCertUsers, execCreds };
 }

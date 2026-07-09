@@ -35,7 +35,13 @@ export interface CredentialRule {
   /** exact host or "*.suffix". */
   host: string;
   header: string; // e.g. "authorization"
-  value: string; // e.g. "Bearer ghp_…"
+  /**
+   * The header value, or a provider for one that must be minted/refreshed (an EKS
+   * exec token — see execcred.ts). A provider that throws fails the request with a
+   * 502 naming the mint error, so an expired SSO session surfaces in the output
+   * instead of as a mystery 401 from the origin.
+   */
+  value: string | (() => Promise<string>);
 }
 
 export interface ProxyOptions {
@@ -215,25 +221,32 @@ export class ProxyServer {
     // THIS request, and this request no longer has a client. (Check the response
     // side only: creq.destroyed is routinely true once the body was fully read.)
     if (cres.destroyed || cres.writableEnded) return;
-    this.#forward(creq, cres, host, secure, body, port);
+    await this.#forward(creq, cres, host, secure, body, port);
   }
 
   /** Re-originate the request to the real host and stream the response back. */
-  #forward(
+  async #forward(
     creq: http.IncomingMessage,
     cres: http.ServerResponse,
     host: string,
     secure: boolean,
     body: Uint8Array,
     port?: number,
-  ): void {
+  ): Promise<void> {
     const headers: Record<string, string> = {};
     for (const [k, v] of Object.entries(flatHeaders(creq.headers))) {
       if (!HOP_BY_HOP.has(k.toLowerCase())) headers[k] = v;
     }
     // Stamp credentials for this host — the token never entered the sandbox.
     for (const cred of this.#opts.credentials ?? []) {
-      if (hostMatches(host, cred.host)) headers[cred.header] = cred.value;
+      if (!hostMatches(host, cred.host)) continue;
+      try {
+        headers[cred.header] = typeof cred.value === "string" ? cred.value : await cred.value();
+      } catch (e) {
+        if (!cres.headersSent) cres.writeHead(502, { "content-type": "text/plain" });
+        cres.end(`Claw Patrol: credential mint failed for ${host}: ${(e as Error).message}\n`);
+        return;
+      }
     }
 
     const u = safeUrl(creq.url);

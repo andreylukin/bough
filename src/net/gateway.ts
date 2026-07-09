@@ -224,6 +224,9 @@ export class ClawpatrolGateway {
         // Trust each k8s cluster's private CA when re-originating (EKS serving certs
         // aren't public-rooted). Empty/absent for everyone else = default trust.
         upstreamCa: this.#kube?.upstreamCa,
+        // Host-minted exec tokens (aws eks get-token, ...) stamped per cluster host —
+        // the kubeconfig the sandbox sees has no auth; the proxy is the authenticator.
+        credentials: this.#kube?.credentials,
       });
       starting = proxy.start().then(() => {
         this.#starting.delete(key);
