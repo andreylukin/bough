@@ -41,6 +41,44 @@ Deno.test("GET /config lists models; PATCH /config switches the active model", a
   c.db.close();
 });
 
+Deno.test("GET /config lists workers; PATCH /config switches the worker", async () => {
+  const c = ctx();
+  const h = createHandler(c);
+
+  const cfg = await (await h(req("GET", "/config"))).json() as {
+    worker: string;
+    workerOptions: { id: string }[];
+  };
+  assertEquals(cfg.worker, "local");
+  assert(cfg.workerOptions.some((w) => w.id === "local"));
+  assert(cfg.workerOptions.some((w) => w.id === "claude-haiku-4-5"));
+
+  const patched = await h(req("PATCH", "/config", { worker: "claude-haiku-4-5" }));
+  assertEquals((await patched.json() as { worker: string }).worker, "claude-haiku-4-5");
+  assertEquals(
+    (await (await h(req("GET", "/config"))).json() as { worker: string }).worker,
+    "claude-haiku-4-5",
+  );
+
+  // Local-only pins the worker: switching to a frontier model is rejected and the
+  // effective worker reads as local even with a frontier choice stored.
+  Deno.env.set("BOUGH_WORKER_LOCAL_ONLY", "1");
+  try {
+    assertEquals((await h(req("PATCH", "/config", { worker: "claude-haiku-4-5" }))).status, 400);
+    assertEquals(
+      (await (await h(req("GET", "/config"))).json() as { worker: string }).worker,
+      "local",
+    );
+  } finally {
+    Deno.env.delete("BOUGH_WORKER_LOCAL_ONLY");
+  }
+
+  assertEquals((await h(req("PATCH", "/config", {}))).status, 400);
+  // Restore so later tests see the default.
+  await h(req("PATCH", "/config", { worker: "local" }));
+  c.db.close();
+});
+
 Deno.test("GET /sessions/:id includes token usage (zero before any turn)", async () => {
   const c = ctx();
   const h = createHandler(c);

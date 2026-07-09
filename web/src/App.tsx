@@ -98,6 +98,8 @@ function LiveApp() {
   const [bundles, setBundles] = useState<Bundle[]>([]);
   const [model, setModel] = useState("");
   const [models, setModels] = useState<ModelOption[]>([]);
+  const [worker, setWorker] = useState("");
+  const [workerOptions, setWorkerOptions] = useState<{ id: string; label: string }[]>([]);
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [paletteOpen, setPaletteOpen] = useState(false);
   // The centered new-session dialog (fzf path autocomplete), opened by the LeftRail
@@ -110,6 +112,8 @@ function LiveApp() {
     api.config().then((c) => {
       setModel(c.model);
       setModels(c.models);
+      setWorker(c.worker);
+      setWorkerOptions(c.workerOptions);
     }).catch(() => {});
     api.skills().then(setSkills).catch(() => {});
   }, []);
@@ -211,6 +215,9 @@ function LiveApp() {
         models={models}
         usage={store.usage}
         onSetModel={(m) => api.setModel(m).then((r) => setModel(r.model)).catch(() => {})}
+        worker={worker}
+        workerOptions={workerOptions}
+        onSetWorker={(w) => api.setWorker(w).then((r) => setWorker(r.worker)).catch(() => {})}
         workspace={store.session?.workspace ?? null}
         onOpenNewSession={() => setNewSessionOpen(true)}
         onSend={onSend}
@@ -293,6 +300,9 @@ function Window({
   models,
   usage,
   onSetModel,
+  worker,
+  workerOptions,
+  onSetWorker,
   workspace,
   onSend,
   onInterrupt,
@@ -347,6 +357,10 @@ function Window({
   models?: ModelOption[];
   usage?: import("./api").Usage;
   onSetModel?: (model: string) => void;
+  /** The worker micro-tasks run on ("local" or a model id) — global, not per session. */
+  worker?: string;
+  workerOptions?: { id: string; label: string }[];
+  onSetWorker?: (worker: string) => void;
   workspace?: string | null;
   onSend: (text: string, branch: boolean) => void;
   onInterrupt?: () => void;
@@ -515,6 +529,9 @@ function Window({
               models={models}
               usage={usage}
               onSetModel={onSetModel}
+              worker={worker}
+              workerOptions={workerOptions}
+              onSetWorker={onSetWorker}
               workspace={workspace}
               sessionId={currentId}
               subagentsRunning={subagentsRunning}

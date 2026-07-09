@@ -68,7 +68,7 @@ Point a session at a repo and ask. The supervisor plans, the sandbox runs the wo
 </p>
 
 - **Own the network.** The Network rail is a live feed of gated egress; a request outside policy pauses as a *hold* you allow or deny from the UI. Installable policy **bundles** (e.g. `github`) grant scoped access with credential injection, so tokens never enter the sandbox.
-- **Local worker.** A small local model (Qwen2.5-Coder-3B via `llama-server`) handles delegated fixes for free, gated by `CHECK`. Prefer no local model at all? `BOUGH_WORKER_FRONTIER=1` routes every worker micro-task (delegated fixes, output digestion, annotations, fast-apply, titles) to `claude-haiku-4-5` instead — set the variable to a model id to pick another. Only recall embeddings still use a local model.
+- **Local worker.** A small local model (Qwen2.5-Coder-3B via `llama-server`) handles delegated fixes for free, gated by `CHECK`. Prefer no local model at all? `BOUGH_WORKER_FRONTIER=1` routes every worker micro-task (delegated fixes, output digestion, annotations, fast-apply, titles) to `claude-haiku-4-5` instead — set the variable to a model id to pick another, or switch at runtime from the title bar's worker picker (⚒); the env var is the boot default. Only recall embeddings still use a local model.
 
 ## How it works
 

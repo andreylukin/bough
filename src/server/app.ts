@@ -17,6 +17,7 @@ import { CreateSessionBody, PostMessageBody, type Session } from "../schema/part
 import type { Db } from "../db/db.ts";
 import type { Bus, Listener } from "../bus.ts";
 import { activeModel, interruptTurn, MODELS, setActiveModel, startUserTurn } from "../turn.ts";
+import { setWorkerChoice, WORKER_OPTIONS, workerChoice } from "../worker/frontier.ts";
 import { normalizeWorkspace, prepareWorkspace, workspaceProblem } from "../supervisor/workspace.ts";
 import { UNTITLED } from "../supervisor/title.ts";
 import { listSkills } from "../supervisor/skills.ts";
@@ -113,7 +114,13 @@ function error(status: number, message: string): Response {
 
 // ---- handlers --------------------------------------------------------------
 
-const getConfig: Handler = () => json({ model: activeModel(), models: MODELS });
+const getConfig: Handler = () =>
+  json({
+    model: activeModel(),
+    models: MODELS,
+    worker: workerChoice(),
+    workerOptions: WORKER_OPTIONS,
+  });
 
 // Recall: semantic search over the whole session forest via the LOCAL embedder
 // (recall.ts) — lazily indexes a batch of new messages on each call.
@@ -129,15 +136,27 @@ const recallSearch: Handler = async (req, ctx) => {
   }
 };
 
-// Switch the model new turns run on. Any id is accepted (the picker lists a curated
-// subset); a provider-prefixed id routes to OpenRouter (see turn.ts / llm.ts).
+// Switch the model new turns run on and/or the worker micro-tasks run on. Any id
+// is accepted (the pickers list curated subsets); a provider-prefixed model id
+// routes to OpenRouter (see turn.ts / llm.ts). `worker` is "local" or a model id —
+// process-global like the active model, never per session.
 const patchConfig: Handler = async (req) => {
-  const body = await req.json().catch(() => null) as { model?: unknown } | null;
-  if (!body || typeof body.model !== "string" || !body.model.trim()) {
-    return error(400, "invalid body: { model: string } required");
+  const body = await req.json().catch(() => null) as
+    | { model?: unknown; worker?: unknown }
+    | null;
+  const model = typeof body?.model === "string" && body.model.trim() ? body.model.trim() : null;
+  const worker = typeof body?.worker === "string" && body.worker.trim()
+    ? body.worker.trim()
+    : null;
+  if (!model && !worker) {
+    return error(400, "invalid body: { model?: string, worker?: string } — at least one required");
   }
-  setActiveModel(body.model.trim());
-  return json({ model: activeModel() });
+  if (worker && worker !== "local" && Deno.env.get("BOUGH_WORKER_LOCAL_ONLY") === "1") {
+    return error(400, "BOUGH_WORKER_LOCAL_ONLY=1 pins the worker to local");
+  }
+  if (model) setActiveModel(model);
+  if (worker) setWorkerChoice(worker);
+  return json({ model: activeModel(), worker: workerChoice() });
 };
 
 // Installed skills (name + description) for composer autocomplete / discovery.

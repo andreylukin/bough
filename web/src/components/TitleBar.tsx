@@ -14,10 +14,13 @@ function fmtTokens(n: number): string {
 }
 
 // Model name + click-to-switch menu. Falls back to a static label when no models/handler.
-function ModelPicker({ model, models, onSetModel }: {
+// Reused for the worker picker (any {id,label} list) via symbol/switchTitle.
+function ModelPicker({ model, models, onSetModel, symbol = "◇", switchTitle = "Switch model" }: {
   model: string;
-  models?: ModelOption[];
+  models?: { id: string; label: string }[];
   onSetModel?: (m: string) => void;
+  symbol?: string;
+  switchTitle?: string;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -38,7 +41,7 @@ function ModelPicker({ model, models, onSetModel }: {
     <div ref={ref} style={{ position: "relative" }}>
       <button
         onClick={clickable ? () => setOpen((v) => !v) : undefined}
-        title={clickable ? "Switch model" : model}
+        title={clickable ? switchTitle : model}
         style={{
           display: "inline-flex",
           alignItems: "center",
@@ -49,7 +52,7 @@ function ModelPicker({ model, models, onSetModel }: {
           cursor: clickable ? "pointer" : "default",
         }}
       >
-        <span style={{ color: c.green }}>◇</span> {label}
+        <span style={{ color: c.green }}>{symbol}</span> {label}
         {clickable && <span style={{ color: c.muted2, fontSize: 9 }}>▾</span>}
       </button>
       {open && models && (
@@ -112,6 +115,9 @@ export function TitleBar({
   models,
   usage,
   onSetModel,
+  worker,
+  workerOptions,
+  onSetWorker,
   workspace,
   sessionId,
   subagentsRunning = 0,
@@ -131,6 +137,10 @@ export function TitleBar({
     tree?: { inputTokens: number; outputTokens: number; sessions: number };
   };
   onSetModel?: (model: string) => void;
+  // The worker micro-tasks run on ("local" or a model id) — global, not per session.
+  worker?: string;
+  workerOptions?: { id: string; label: string }[];
+  onSetWorker?: (worker: string) => void;
   workspace?: string | null;
   // When set, a copy chip next to the branch chip copies this head's session id.
   sessionId?: string | null;
@@ -208,6 +218,15 @@ export function TitleBar({
         </span>
       )}
       {model && <ModelPicker model={model} models={models} onSetModel={onSetModel} />}
+      {worker && (
+        <ModelPicker
+          model={worker}
+          models={workerOptions}
+          onSetModel={onSetWorker}
+          symbol="⚒"
+          switchTitle="Switch worker (delegated fixes, digests, annotations, titles)"
+        />
+      )}
       <span style={{ display: "flex", alignItems: "center", gap: 6, color: c.muted }}>
         <Dot color={connected ? c.green : c.muted2} pulse={connected} />
         {connected ? "connected" : "reconnecting…"}

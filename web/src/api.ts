@@ -129,7 +129,16 @@ export interface PluginActivation {
 }
 
 export const api = {
-  config: () => fetch("/config").then(j<{ model: string; models: ModelOption[] }>),
+  config: () =>
+    fetch("/config").then(
+      j<{
+        model: string;
+        models: ModelOption[];
+        /** The worker micro-tasks run on: "local" or a model id. Global, not per session. */
+        worker: string;
+        workerOptions: { id: string; label: string }[];
+      }>,
+    ),
 
   // The saved UI theme (null = default palette). Applied as CSS-variable
   // overrides at boot; created via the /theme skill or the composer's picker.
@@ -155,6 +164,14 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ model }),
     }).then(j<{ model: string }>),
+
+  // Switch the worker micro-tasks run on ("local" or a model id) — global.
+  setWorker: (worker: string) =>
+    fetch("/config", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ worker }),
+    }).then(j<{ worker: string }>),
 
   listSessions: () => fetch("/sessions").then(j<Session[]>),
 
