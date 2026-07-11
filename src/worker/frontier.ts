@@ -1,6 +1,6 @@
 /**
  * Frontier-worker mode — BOUGH_WORKER_FRONTIER routes every worker micro-task
- * (ladder units, digestion, annotations, fast-apply, titles) to a small frontier
+ * (digestion, annotations, fast-apply, titles) to a small frontier
  * model instead of the local llama-server. Set it to "1" for the default
  * (claude-haiku-4-5) or to a model id. No llama-server is spawned and no GGUF is
  * needed; the embedder (recall) is unaffected — embeddings have no frontier

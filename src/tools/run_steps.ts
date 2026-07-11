@@ -19,7 +19,6 @@ import { writeFile } from "./write_file.ts";
 import { editFile } from "./edit_file.ts";
 import { runProgram } from "../harness/vm.ts";
 import { digestOutput } from "../worker/digest.ts";
-import { runUnit } from "../worker/ladder.ts";
 
 /** Appears in the tool output when the harness accepts `done` (turn may end). */
 export const DONE_ACCEPTED = "[done] accepted";
@@ -33,18 +32,11 @@ const DELEGATING_TIMEOUT_MS = 45 * 60_000;
 const schema = z.object({
   code: z.string().describe(
     "One JavaScript program for this round. It runs in a sealed V8 sandbox; the core " +
-      "capability surface is five async host functions: bash(cmd), read(path), " +
-      "write(path, content), edit(path, oldText, newText), and worker(instruction, check) " +
+      "capability surface is four async host functions: bash(cmd), read(path), " +
+      "write(path, content), and edit(path, oldText, newText) " +
       "— plus mcpStatus() (always available: this session's MCP management state) and any " +
       "delegation (agent/spawn/join/adopt), mcp(server, tool, args), and lsp.* symbol " +
-      "navigation host functions your system prompt grants. worker() hands one SMALL, self-contained, " +
-      "verifiable edit to a fast local model: instruction must dictate file + exact change " +
-      "(or file + behavior + example), name every file the unit touches, and quote the " +
-      "current code being changed — the worker cannot search or read files, so the " +
-      "instruction is all it sees; check is a shell command that exits 0 iff the change " +
-      "is correct; returns JSON {solved, tier, attempts, touched, report}. Use it for " +
-      "mechanical single-file changes you can specify precisely; do anything ambiguous or " +
-      "multi-file yourself. Use console.log(...) to see " +
+      "navigation host functions your system prompt grants. Use console.log(...) to see " +
       "anything — printed output is returned to you. Cover inspect → change → verify in " +
       "one program.",
   ),
@@ -83,9 +75,6 @@ export const runSteps: ToolDef = {
         read: (path) => readFile.run({ path }, ctx),
         write: (path, content) => writeFile.run({ path, content }, ctx),
         edit: (path, old_string, new_string) => editFile.run({ path, old_string, new_string }, ctx),
-        // Delegated verifiable unit on the local-worker ladder (CHECK-gated; see
-        // worker/ladder.ts). JSON round-trip like agent(), string-only protocol.
-        worker: async (instruction, check) => JSON.stringify(await runUnit(instruction, check, ctx)),
         // Delegation (present only when the turn runner allows it): agent()/join() can
         // block on whole subagent turns, so the program gets a far larger wall-clock
         // budget. spawn/join are absent in subagent turns (blocking delegation only).

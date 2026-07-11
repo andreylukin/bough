@@ -19,7 +19,6 @@ type HostName =
   | "read"
   | "write"
   | "edit"
-  | "worker"
   | "agent"
   | "spawn"
   | "join"
@@ -61,9 +60,6 @@ async function run(code: string): Promise<void> {
   const write = (path: string, content: string) => hostCall("write", [path, content]);
   const edit = (path: string, oldText: string, newText: string) =>
     hostCall("edit", [path, oldText, newText]);
-  // Local-worker delegation: the host sends the UnitResult as JSON; parse it back.
-  const worker = async (instruction: string, check: string) =>
-    JSON.parse(await hostCall("worker", [instruction, check]));
   // Delegation: the host sends subagent results/handles as JSON (postMessage stays
   // string-only); parse them back so the program gets real objects. Sessions that
   // may not delegate have no bridged fn — the call rejects as "unknown host function".
@@ -94,7 +90,6 @@ async function run(code: string): Promise<void> {
     "read",
     "write",
     "edit",
-    "worker",
     "agent",
     "spawn",
     "join",
@@ -110,7 +105,6 @@ async function run(code: string): Promise<void> {
     read,
     write,
     edit,
-    worker,
     agent,
     spawn,
     join,
