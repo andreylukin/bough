@@ -1,6 +1,6 @@
 /** Run a shell command in the session workspace, capturing combined output. */
 import { z } from "zod/v4";
-import { wrap } from "../sandbox/seatbelt.ts";
+import { wrapChild } from "../sandbox/seatbelt.ts";
 import { clawpatrolEnv } from "../net/gateway.ts";
 import type { ToolDef, ToolRunCtx } from "./types.ts";
 
@@ -32,15 +32,11 @@ export const bash: ToolDef = {
     // route — a subprocess can't `--noproxy`/`env -u http_proxy` its way to the open
     // internet. On other platforms we run unwrapped (the sandbox is macOS-only).
     let argv = ["/bin/sh", "-c", command];
-    if (ctx.sandbox && Deno.build.os === "darwin" && Deno.env.get("BOUGH_NO_SANDBOX") !== "1") {
-      argv = wrap(argv, {
+    if (ctx.sandbox) {
+      argv = wrapChild(argv, {
         workspace: ctx.workspace,
         allowWrite: [ctx.sandbox.sessionDir, ctx.sandbox.scratchDir],
         confineNetwork: Object.keys(netEnv).length > 0,
-        // Close the self-approval hole: deny the sandbox bough's own API port.
-        apiPort: Number(Deno.env.get("BOUGH_PORT") ?? "4321"),
-        // Agent-user mode: the keychain is empty and creds are proxy-injected.
-        denyKeychain: !!Deno.env.get("BOUGH_AGENT_USER"),
       });
     }
     // The child dies on whichever fires first: the per-command timeout, or the

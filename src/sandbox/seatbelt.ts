@@ -282,3 +282,22 @@ export function wrap(cmd: string[], opts: SandboxOptions): string[] {
   });
   return [SANDBOX_EXEC, "-p", profile, ...cmd];
 }
+
+/**
+ * `wrap()` for session children (bash commands, MCP server spawns): no-op off
+ * darwin or when BOUGH_NO_SANDBOX=1, and applies the hardening every child gets —
+ * bough's own API port is unreachable (a sandboxed process can't approve its own
+ * held requests) and, in agent-user mode, the keychain is read-denied (credentials
+ * are proxy-injected, never read in-sandbox).
+ */
+export function wrapChild(
+  cmd: string[],
+  opts: Pick<SandboxOptions, "workspace" | "allowWrite" | "confineNetwork">,
+): string[] {
+  if (Deno.build.os !== "darwin" || Deno.env.get("BOUGH_NO_SANDBOX") === "1") return cmd;
+  return wrap(cmd, {
+    ...opts,
+    apiPort: Number(Deno.env.get("BOUGH_PORT") ?? "4321"),
+    denyKeychain: !!Deno.env.get("BOUGH_AGENT_USER"),
+  });
+}

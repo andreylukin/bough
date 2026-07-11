@@ -13,7 +13,7 @@
  * Grant scoping (which servers a turn may call) is the turn runner's job — the
  * manager connects and executes; it does not decide who may ask.
  */
-import { wrap } from "../sandbox/seatbelt.ts";
+import { wrapChild } from "../sandbox/seatbelt.ts";
 import { clawpatrolEnv } from "../net/gateway.ts";
 import { expandEnv, expandHome, loadRegistry, type ServerConfig } from "./config.ts";
 import {
@@ -192,17 +192,13 @@ export class McpManager {
     // Same egress routing as a bash child: this session's proxy + the MITM CA.
     const netEnv = await clawpatrolEnv(sessionId);
     let argv = [cfg.command!, ...cfg.args];
-    if (spawn.sandbox && Deno.build.os === "darwin" && Deno.env.get("BOUGH_NO_SANDBOX") !== "1") {
-      argv = wrap(argv, {
+    if (spawn.sandbox) {
+      argv = wrapChild(argv, {
         workspace: spawn.workspace,
         // The snapshot dir plus the entry's declared write roots (e.g. serena's
         // ~/.serena) — servers that keep state outside the workspace need them.
         allowWrite: [spawn.sandbox.sessionDir, ...cfg.allowWrite.map(expandHome)],
         confineNetwork: Object.keys(netEnv).length > 0,
-        // Same hardening as bash children: no reaching the local API, no keychain
-        // reads in agent-user mode.
-        apiPort: Number(Deno.env.get("BOUGH_PORT") ?? "4321"),
-        denyKeychain: !!Deno.env.get("BOUGH_AGENT_USER"),
       });
     }
     const home = Deno.env.get("HOME");
