@@ -18,6 +18,7 @@
  * always created and handed back so bash can be granted write access to it.
  */
 import type { Db } from "../db/db.ts";
+import { join } from "node:path";
 import { sessionDir as snapshotSessionDir, snapshotBase } from "../vcs/clonefile.ts";
 import {
   addWorkspace,
@@ -34,8 +35,26 @@ export interface PreparedWorkspace {
   cwd: string;
   /** The clonefile snapshot dir for this session (added to the Seatbelt allowWrite). */
   sessionDir: string;
+  /**
+   * Per-session scratchpad dir — a writable dir OUTSIDE the workspace and the snapshot
+   * dir, for temp files/scripts/outputs. It lives under the OS temp root so the OS
+   * reaps it, and being outside the repo means scratch files never get jj-snapshotted,
+   * built by the live server, or turn up in `git diff main HEAD`. "" when not sandboxed.
+   */
+  scratchDir: string;
   /** Whether the turn should run sandboxed (an explicit workspace was configured). */
   sandboxed: boolean;
+}
+
+/**
+ * Root holding per-session scratchpads. BOUGH_SCRATCH_BASE overrides (tests); else a
+ * `bough-scratch` dir under the OS temp root ($TMPDIR, else /tmp) — already inside the
+ * Seatbelt write allowlist and auto-reaped by the OS.
+ */
+function scratchBase(): string {
+  const override = Deno.env.get("BOUGH_SCRATCH_BASE");
+  if (override) return override;
+  return join(Deno.env.get("TMPDIR") ?? "/tmp", "bough-scratch");
 }
 
 async function pathExists(p: string): Promise<boolean> {
@@ -108,8 +127,11 @@ export async function prepareWorkspace(
   const base = Deno.env.get("BOUGH_SNAPSHOT_BASE") ?? snapshotBase();
   const dir = snapshotSessionDir(sessionId, base);
 
+  let scratchDir = "";
   if (sandboxed) {
     await Deno.mkdir(dir, { recursive: true });
+    scratchDir = join(scratchBase(), sessionId);
+    await Deno.mkdir(scratchDir, { recursive: true });
     const isGit = await pathExists(`${cwd}/.git`);
     const isJj = await pathExists(`${cwd}/.jj`);
     if (isGit || isJj) {
@@ -118,7 +140,7 @@ export async function prepareWorkspace(
     }
   }
 
-  return { cwd, sessionDir: dir, sandboxed };
+  return { cwd, sessionDir: dir, scratchDir, sandboxed };
 }
 
 /**

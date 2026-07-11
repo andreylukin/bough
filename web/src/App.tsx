@@ -342,7 +342,7 @@ function Window({
   net: NetRequest[];
   pending: NetRequest | null;
   pendingCount?: number;
-  onResolve: (approve: boolean) => void;
+  onResolve: (approve: boolean, scope?: "once" | "session") => void;
   policy: import("./api").NetConfig | null;
   policySource?: import("./api").PolicySource | null;
   onSavePolicy: (cfg: import("./api").NetConfig) => void;

@@ -98,3 +98,23 @@ Deno.test("expandFileReferences inlines a referenced file, skips missing/escapes
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("grantedDirs reads ~/.bough/grants.json, empty on absence/garbage", async () => {
+  const { grantedDirs } = await import("./files.ts");
+  const home = await Deno.makeTempDir({ prefix: "granthome-" });
+  const orig = Deno.env.get("HOME");
+  try {
+    Deno.env.set("HOME", home);
+    assertEquals(grantedDirs(), []); // no file yet
+
+    await Deno.mkdir(`${home}/.bough`, { recursive: true });
+    await Deno.writeTextFile(`${home}/.bough/grants.json`, JSON.stringify(["/a", "/b", 3]));
+    assertEquals(grantedDirs(), ["/a", "/b"]); // non-strings filtered
+
+    await Deno.writeTextFile(`${home}/.bough/grants.json`, "not json");
+    assertEquals(grantedDirs(), []); // garbage → []
+  } finally {
+    if (orig) Deno.env.set("HOME", orig);
+    await Deno.remove(home, { recursive: true });
+  }
+});

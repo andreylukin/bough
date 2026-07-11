@@ -89,6 +89,41 @@ Deno.test("setupKube: rewrites kubeconfig to bough CA, writes it, maps host→re
   }
 });
 
+Deno.test("setupKube: BOUGH_KUBE_IMPERSONATE adds an impersonate-user rule per cluster host", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "bough-cloud-imp-" });
+  const kube = await Deno.makeTempDir({ prefix: "bough-kube-imp-" });
+  const cfgPath = `${kube}/config`;
+  await Deno.writeTextFile(
+    cfgPath,
+    [
+      "clusters:",
+      "- name: dev",
+      `  cluster: { server: https://${EKS}, certificate-authority-data: ${btoa(CLUSTER_CA)} }`,
+      "users:",
+      "- name: dev",
+      "  user: { exec: { command: aws, args: [eks, get-token] } }",
+      "contexts:",
+      "- name: dev",
+      "  context: { cluster: dev, user: dev }",
+    ].join("\n"),
+  );
+  Deno.env.set("KUBECONFIG", cfgPath);
+  Deno.env.set("BOUGH_KUBE_IMPERSONATE", "bough");
+  try {
+    const setup = setupKube(BOUGH_CA, dir)!;
+    // Composed per host: the exec-minted authorization rule PLUS the impersonation rule.
+    const forHost = setup.credentials.filter((c) => c.host === EKS);
+    assertEquals(forHost.map((c) => c.header).sort(), ["authorization", "impersonate-user"]);
+    const imp = forHost.find((c) => c.header === "impersonate-user")!;
+    assertEquals(imp.value, "bough"); // constant, not a provider
+  } finally {
+    Deno.env.delete("KUBECONFIG");
+    Deno.env.delete("BOUGH_KUBE_IMPERSONATE");
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+    await Deno.remove(kube, { recursive: true }).catch(() => {});
+  }
+});
+
 Deno.test("setupKube: no kubeconfig → undefined (kubectl left alone)", () => {
   Deno.env.set("KUBECONFIG", "/nonexistent/bough/kubeconfig-xyz");
   try {

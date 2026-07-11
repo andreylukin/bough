@@ -20,12 +20,41 @@ const EXPIRY_SLACK_MS = 60_000;
 /** Cache lifetime when the plugin reports no expirationTimestamp. */
 const DEFAULT_TTL_MS = 5 * 60_000;
 
+/**
+ * Container-credentials env for the exec plugin's OWN AWS auth, pointing at the
+ * broker's admin endpoint. Post-cutover the agent user has no ~/.aws, so
+ * `aws eks get-token` (run here, host-side) gets its credentials from the broker
+ * — the resulting admin k8s token is then demoted at the proxy via Impersonate-User.
+ * Empty unless the broker is configured; the RO `/aws` URL is rewritten to `/aws-admin`.
+ */
+export function brokerAdminEnv(): Record<string, string> {
+  const url = Deno.env.get("BOUGH_AWS_BROKER_URL");
+  if (!url) return {};
+  const adminUrl = url.replace(/\/aws$/, "/aws-admin");
+  const tokenFile = Deno.env.get("BOUGH_AWS_BROKER_TOKEN_FILE");
+  let token = Deno.env.get("BOUGH_AWS_BROKER_TOKEN") ?? "";
+  if (!token && tokenFile) {
+    try {
+      token = Deno.readTextFileSync(tokenFile).trim();
+    } catch {
+      return {};
+    }
+  }
+  if (!token) return {};
+  return {
+    AWS_CONTAINER_CREDENTIALS_FULL_URI: adminUrl,
+    AWS_CONTAINER_AUTHORIZATION_TOKEN: token,
+  };
+}
+
 async function mint(spec: ExecCredSpec): Promise<{ header: string; expires: number }> {
   let out: Deno.CommandOutput;
   try {
     out = await new Deno.Command(spec.command, {
+      // spec.env is merged over the server's own env (Deno default); the broker admin
+      // env supplies AWS creds when the agent user has no ~/.aws (post-cutover).
       args: spec.args,
-      env: spec.env, // merged over the server's own env (Deno default), where ~/.aws etc. live
+      env: { ...brokerAdminEnv(), ...spec.env },
       stdout: "piped",
       stderr: "piped",
       signal: AbortSignal.timeout(30_000),

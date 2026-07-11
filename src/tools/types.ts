@@ -26,9 +26,11 @@ export interface ToolRunCtx {
   /**
    * When set, the turn is sandboxed: bash wraps its argv in the Seatbelt profile
    * (darwin), and the in-process file tools may also write under `sessionDir` (the
-   * clonefile snapshot dir). Absent for tests and non-sandboxed runs.
+   * clonefile snapshot dir) and `scratchDir` (the per-session scratchpad — outside
+   * the repo, so temp files don't pollute what the server builds or what ships).
+   * Absent for tests and non-sandboxed runs.
    */
-  sandbox?: { sessionDir: string };
+  sandbox?: { sessionDir: string; scratchDir: string };
   /**
    * Per-turn harness state, created by the turn runner. `check` is the committed
    * completion gate (SPEC §5): the shell command `run_steps` re-runs before
@@ -104,16 +106,17 @@ function realPath(p: string): string {
 
 /**
  * Resolve `path` against the workspace and confine it: the symlink-resolved result
- * must sit inside the workspace (or the sandbox's sessionDir, when sandboxed).
- * Seatbelt only guards subprocesses, so the in-process read/write/edit tools enforce
- * this themselves — including following symlinks, so a link inside the workspace
- * can't point the tool at a file outside it. Returns the lexical path to operate on.
+ * must sit inside the workspace (or the sandbox's sessionDir / scratchDir, when
+ * sandboxed). Seatbelt only guards subprocesses, so the in-process read/write/edit
+ * tools enforce this themselves — including following symlinks, so a link inside the
+ * workspace can't point the tool at a file outside it. Returns the lexical path to
+ * operate on.
  */
 export function resolveInWorkspace(ctx: ToolRunCtx, path: string): string {
   const full = resolve(ctx.workspace, path);
   const realFull = realPath(full);
   const roots = [ctx.workspace];
-  if (ctx.sandbox) roots.push(ctx.sandbox.sessionDir);
+  if (ctx.sandbox) roots.push(ctx.sandbox.sessionDir, ctx.sandbox.scratchDir);
   for (const root of roots) {
     const realRoot = realPath(resolve(root));
     if (realFull === realRoot || realFull.startsWith(realRoot + sep)) return full;

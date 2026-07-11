@@ -9,10 +9,11 @@
  *     cluster upstream when it re-originates (EKS serving certs are signed by the
  *     private cluster CA, not a public root — see proxy.ts upstreamCa).
  *
- * Auth is left untouched: exec plugins (aws eks get-token) and bearer tokens survive
- * MITM. Client-certificate auth does NOT — the client cert is negotiated to the proxy,
- * not the origin — so users carrying `client-certificate(-data)` are reported for a
- * warning; their clusters won't authenticate through the proxy.
+ * Auth is LIFTED OUT of the sandbox copy entirely: exec plugins (aws eks get-token)
+ * and static bearer tokens are stripped and minted/injected host-side by the proxy
+ * (the sandbox kubeconfig carries no credential). Client-certificate auth can't
+ * survive MITM (the cert is negotiated to the proxy, not the origin), so its material
+ * is stripped too and the affected users reported for a warning.
  */
 import { parse, stringify } from "@std/yaml";
 import { readFileSync } from "node:fs";
@@ -41,8 +42,14 @@ export interface ExecCredSpec {
   env: Record<string, string>;
 }
 
+/** A static bearer token lifted out of a kubeconfig user, keyed to its cluster host. */
+export interface TokenCredSpec {
+  host: string;
+  token: string;
+}
+
 export interface RewriteResult {
-  /** The rewritten kubeconfig YAML: every cluster CA replaced with bough's. */
+  /** The rewritten kubeconfig YAML: cluster CAs swapped, all auth material removed. */
   rewritten: string;
   /** Original CA per cluster host — feeds the proxy's upstream trust + k8sHosts. */
   clusters: ClusterCa[];
@@ -50,6 +57,8 @@ export interface RewriteResult {
   clientCertUsers: string[];
   /** Exec plugins stripped from users, mapped to their cluster hosts via contexts. */
   execCreds: ExecCredSpec[];
+  /** Static bearer tokens stripped from users, mapped to their cluster hosts. */
+  tokenCreds: TokenCredSpec[];
 }
 
 // deno-lint-ignore no-explicit-any
@@ -132,44 +141,76 @@ export function rewriteKubeconfig(text: string, boughCaPem: string, baseDir = ""
     // kubeconfig server URL stays as-is — no insecure-skip-tls-verify needed.
   }
 
-  // Lift exec plugins out of users: the sandbox can't run them (they read ~/.aws
-  // and friends, seatbelt-denied), so the HOST mints the token and the proxy stamps
-  // it (cloud.ts). Stripping the block keeps in-sandbox kubectl from trying anyway
-  // and failing; the request goes out unauthenticated and the proxy adds the header.
+  // Lift every credential out of users so the sandbox copy carries NONE:
+  //  - exec plugins: the sandbox can't run them (they read ~/.aws etc., seatbelt-
+  //    denied) — the HOST mints, the proxy stamps (cloud.ts / execcred.ts).
+  //  - static bearer tokens (token / tokenFile): stripped and injected host-side by
+  //    the proxy, so a compromised sandbox can't read or exfiltrate them.
+  //  - client-certificate(-data)/client-key(-data): can't survive MITM anyway;
+  //    stripped so the material never reaches the sandbox (user reported for a warning).
   const execByUser = new Map<string, { command: string; args: string[]; env: Record<string, string> }>();
+  const tokenByUser = new Map<string, string>();
   for (const entry of doc?.users ?? []) {
     const user = entry?.user;
     if (!user) continue;
+    const name = typeof entry.name === "string" ? entry.name : undefined;
     if (user["client-certificate"] || user["client-certificate-data"]) {
-      clientCertUsers.push(entry.name ?? "(unnamed)");
+      clientCertUsers.push(name ?? "(unnamed)");
     }
+    // mTLS material never reaches the sandbox — it's useless through the proxy.
+    delete user["client-certificate"];
+    delete user["client-certificate-data"];
+    delete user["client-key"];
+    delete user["client-key-data"];
+
     const exec = user.exec;
-    if (exec && typeof exec.command === "string" && typeof entry.name === "string") {
+    if (exec && typeof exec.command === "string" && name) {
       const env: Record<string, string> = {};
       for (const e of Array.isArray(exec.env) ? exec.env : []) {
         if (typeof e?.name === "string" && typeof e?.value === "string") env[e.name] = e.value;
       }
-      execByUser.set(entry.name, {
+      execByUser.set(name, {
         command: exec.command,
         args: Array.isArray(exec.args) ? exec.args.filter((a: unknown) => typeof a === "string") : [],
         env,
       });
       delete user.exec;
     }
+
+    // Static bearer: inline `token`, or `tokenFile` read host-side (path relative to
+    // the kubeconfig dir). Stripped from the sandbox copy either way.
+    let token: string | undefined;
+    if (typeof user.token === "string" && user.token) token = user.token;
+    else if (typeof user.tokenFile === "string" && user.tokenFile) {
+      const p = user.tokenFile.startsWith("/") ? user.tokenFile : join(baseDir, user.tokenFile);
+      try {
+        token = readFileSync(p, "utf8").trim();
+      } catch { /* unreadable → nothing to lift */ }
+    }
+    if (token && name) tokenByUser.set(name, token);
+    delete user.token;
+    delete user.tokenFile;
   }
 
   // Pair users with clusters via contexts (first pairing per host wins — matches
   // kubectl's own resolution, where a context names one user per cluster).
   const execCreds: ExecCredSpec[] = [];
+  const tokenCreds: TokenCredSpec[] = [];
   const taken = new Set<string>();
   for (const entry of doc?.contexts ?? []) {
     const ctx = entry?.context;
     const host = clusterHostByName.get(ctx?.cluster);
+    if (!host || taken.has(host)) continue;
     const exec = execByUser.get(ctx?.user);
-    if (!host || !exec || taken.has(host)) continue;
-    taken.add(host);
-    execCreds.push({ host, ...exec });
+    const token = tokenByUser.get(ctx?.user);
+    if (exec) {
+      execCreds.push({ host, ...exec });
+      taken.add(host);
+    } else if (token) {
+      tokenCreds.push({ host, token });
+      taken.add(host);
+    }
   }
 
-  return { rewritten: stringify(doc), clusters, clientCertUsers, execCreds };
+  return { rewritten: stringify(doc), clusters, clientCertUsers, execCreds, tokenCreds };
 }

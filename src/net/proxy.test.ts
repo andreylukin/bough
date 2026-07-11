@@ -265,6 +265,34 @@ Deno.test("credentials: a provider value is minted host-side and stamped; origin
   }
 });
 
+Deno.test("credentials: multiple rules for one host compose (authorization + impersonate-user)", async () => {
+  const ca = await makeCA();
+  const origin = originHttp("ok");
+  const oport = await origin.ready;
+  const proxy = new ProxyServer({
+    ca,
+    gate: () => Promise.resolve(allow()),
+    // The kube impersonation shape: an exec-minted Authorization plus a constant
+    // Impersonate-User, both matching the same host — the stamping loop sets both.
+    credentials: [
+      { host: "127.0.0.1", header: "authorization", value: () => Promise.resolve("Bearer admin") },
+      { host: "127.0.0.1", header: "impersonate-user", value: "bough" },
+    ],
+  });
+  await proxy.start();
+  try {
+    await rawExchange(
+      proxy.port,
+      `GET http://127.0.0.1:${oport}/ HTTP/1.1\r\nHost: 127.0.0.1:${oport}\r\nConnection: close\r\n\r\n`,
+    );
+    assertEquals(origin.hits[0].headers["authorization"], "Bearer admin");
+    assertEquals(origin.hits[0].headers["impersonate-user"], "bough");
+  } finally {
+    await proxy.stop();
+    origin.server.close();
+  }
+});
+
 Deno.test("credentials: a provider that throws fails the request with a 502 naming the mint error", async () => {
   const ca = await makeCA();
   const origin = originHttp("should-not-see-this");

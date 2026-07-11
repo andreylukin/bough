@@ -5,12 +5,18 @@ import { createGate } from "./gate.ts";
 import { policy } from "./policy.ts";
 import type { BoughEvent, NetRequest } from "../schema/parts.ts";
 
-function harness(pol = policy()) {
+function harness(pol = policy(), opts: { holdTimeoutMs?: number; grantTtlMs?: number } = {}) {
   const bus = new Bus();
   const db = new Db(":memory:");
   const events: BoughEvent[] = [];
   bus.subscribe((e) => events.push(e));
-  return { gate: createGate({ db, bus, policy: pol }), db, events };
+  // Default the hold timeout off so parked-hold tests don't race a real timer; the
+  // timeout behavior is exercised explicitly with a small holdTimeoutMs.
+  return {
+    gate: createGate({ db, bus, policy: pol, holdTimeoutMs: opts.holdTimeoutMs ?? 0, grantTtlMs: opts.grantTtlMs }),
+    db,
+    events,
+  };
 }
 
 const ghGet = { host: "api.github.com", method: "GET", path: "/user" };
@@ -188,40 +194,53 @@ Deno.test("db: expirePendingNetEvents sweeps orphaned pending rows", () => {
   assertEquals(row.reason, "expired — server restarted");
 });
 
-Deno.test("gate: releaseYoloHolds approves parked holds on now-yolo branches; overridden branches keep theirs", async () => {
-  const bus = new Bus();
-  const db = new Db(":memory:");
-  const review = policy({ mode: "review" });
-  let yoloOn = false;
-  const gate = createGate({
-    db,
-    bus,
-    // s2 carries its own non-yolo override; everything else follows the flip
-    resolve: (sessionId) =>
-      sessionId === "s2" ? review : yoloOn ? policy({ mode: "yolo" }) : review,
-  });
-  const p1 = gate.gate(ghDelete, { sessionId: "s1" });
-  const p2 = gate.gate(ghDelete, { sessionId: "s2" });
+Deno.test("gate: a human hold times out — socket fails closed, card stays pending & re-requestable", async () => {
+  const h = harness(policy({ holdVerbs: new Set(["GET /user"]) }), { holdTimeoutMs: 20 });
+  const d = await h.gate.gate(ghGet, { sessionId: "s1" });
+  // the socket is failed closed with a re-request message
+  assertEquals(d.verdict, "deny");
+  assertEquals(d.reason, "held for approval — approve in the Network rail and retry");
+  // but the card is still live (detached) — not swept, and expireHolds leaves it be
+  assertEquals(h.gate.pending, 1);
+  assertEquals(h.gate.expireHolds("s1", "turn ended"), 0); // detached holds survive
+  assertEquals(h.gate.pending, 1);
+  // the last emitted row for the request is still pending (re-requestable), not denied
+  const row = h.db.recentNetEvents("s1")[0];
+  assertEquals(row.verdict, "pending");
+});
+
+Deno.test("gate: approving a timed-out hold mints a session grant so the retry passes", async () => {
+  const h = harness(policy({ holdVerbs: new Set(["GET /user"]) }), { holdTimeoutMs: 20 });
+  await h.gate.gate(ghGet, { sessionId: "s1" }); // times out → detached
+  const id = h.db.recentNetEvents("s1")[0].id;
+
+  // approve the lingering card → grant minted; card settles to allowed
+  assertEquals(h.gate.resolveHold(id, true), true);
+  assertEquals(h.gate.pending, 0);
+  assertEquals(h.db.recentNetEvents("s1")[0].verdict, "allowed");
+
+  // the RETRY of the same host+verb now passes on the grant, without parking
+  const retry = await h.gate.gate(ghGet, { sessionId: "s1" });
+  assertEquals(retry.verdict, "allow");
+  assertEquals(retry.reason, "approved for this session (grant)");
+
+  // the grant is session-scoped: another session still holds
+  const other = h.gate.gate(ghGet, { sessionId: "s2" });
   await new Promise((r) => setTimeout(r, 0));
-  assertEquals(gate.pending, 2);
+  assertEquals(h.gate.pending, 1);
+  h.gate.resolveHold(h.db.recentNetEvents("s2")[0].id, false);
+  assertEquals((await other).verdict, "deny");
+});
 
-  // nothing resolves to yolo yet → nothing released
-  assertEquals(gate.releaseYoloHolds(), 0);
-  assertEquals(gate.pending, 2);
+Deno.test("gate: resolveHold scope 'session' grants a future retry even without a timeout", async () => {
+  const h = harness(policy({ holdVerbs: new Set(["GET /user"]) }));
+  const parked = h.gate.gate(ghGet, { sessionId: "s1" });
+  const id = h.db.recentNetEvents("s1")[0].id;
+  assertEquals(h.gate.resolveHold(id, true, "session"), true);
+  assertEquals((await parked).verdict, "allow"); // the parked request itself passes
 
-  yoloOn = true;
-  gate.invalidate(); // the /net/yolo handler invalidates before releasing
-  assertEquals(gate.releaseYoloHolds(), 1);
-  const d1 = await p1;
-  assertEquals(d1.verdict, "allow");
-  assertEquals(d1.reason, "auto-approved: YOLO is on for this branch");
-  assertEquals(gate.pending, 1);
-  // the s1 card flipped to allowed with the auto-approval reason
-  const row = db.recentNetEvents("s1")[0];
-  assertEquals(row.verdict, "allowed");
-  assertEquals(row.reason, "auto-approved: YOLO is on for this branch");
-
-  // s2's hold is untouched; resolve it to finish
-  gate.resolveHold(db.recentNetEvents("s2")[0].id, false);
-  assertEquals((await p2).verdict, "deny");
+  // and a later retry is allowed by the session grant, no second hold
+  const retry = await h.gate.gate(ghGet, { sessionId: "s1" });
+  assertEquals(retry.verdict, "allow");
+  assertEquals(retry.reason, "approved for this session (grant)");
 });

@@ -21,7 +21,7 @@ import { setWorkerChoice, WORKER_OPTIONS, workerChoice } from "../worker/frontie
 import { normalizeWorkspace, prepareWorkspace, workspaceProblem } from "../supervisor/workspace.ts";
 import { UNTITLED } from "../supervisor/title.ts";
 import { listSkills } from "../supervisor/skills.ts";
-import { searchDirectories, searchWorkspaceFiles } from "./files.ts";
+import { grantedDirs, searchDirectories, searchWorkspaceFiles } from "./files.ts";
 import { fork, ForkBody, ForkError } from "../fork.ts";
 import { type BundleManifest, getBundle, listBundles } from "../net/bundles.ts";
 import type { Gate } from "../net/gate.ts";
@@ -178,11 +178,12 @@ const searchFiles: Handler = async (req, ctx, params) => {
 const searchDirs: Handler = (req, ctx) => {
   const q = new URL(req.url).searchParams.get("q") ?? "";
   const known = [
-    ...new Set(
-      ctx.db.listSessions()
+    ...new Set([
+      ...grantedDirs(),
+      ...ctx.db.listSessions()
         .map((s) => s.workspace)
         .filter((w): w is string => !!w && !w.includes("/.bough/workspaces/")),
-    ),
+    ]),
   ];
   return json({ dirs: searchDirectories(q, known) });
 };
@@ -833,11 +834,10 @@ const setYoloH: Handler = async (req, ctx) => {
   const config = setYolo(ctx.db, sessionId, body.on, ctx.netDir);
   if (sessionId) ctx.gate?.invalidate();
   else ctx.gate?.setPolicy(toPolicy(config));
-  // Flipping ON releases requests already parked on the now-ungated scope — each
-  // hold re-resolves its branch policy, so inherited yolo counts and a branch
-  // carrying its own non-yolo override keeps its cards.
-  const released = body.on ? ctx.gate?.releaseYoloHolds() ?? 0 : 0;
-  return json({ config, scope: sessionId ? { sessionId } : "global", released });
+  // Flipping YOLO on no longer silently auto-approves requests a human is already
+  // looking at — parked holds stay parked for an explicit decision. YOLO only affects
+  // requests decided AFTER the flip.
+  return json({ config, scope: sessionId ? { sessionId } : "global" });
 };
 
 // Recent NetRequest rows for the Network rail (optionally per-session).
@@ -849,9 +849,12 @@ const netRequests: Handler = (req, ctx) => {
 // Resolve a held request: the gate's awaiting Promise settles and the row/event flip
 // to allowed|denied. A `pending` row with no live hold behind it (stale — its turn or
 // server died) is healed in place instead of 404-looping the approval card forever.
-const resolveHold = (approve: boolean): Handler => (_req, ctx, params) => {
-  if (ctx.gate?.resolveHold(params.id, approve)) {
-    return json({ ok: true, id: params.id, verdict: approve ? "allowed" : "denied" });
+const resolveHold = (approve: boolean): Handler => (req, ctx, params) => {
+  // ?scope=session mints a short-TTL host+verb grant so the retried command passes
+  // (used by "allow for session" and by any approval of a timed-out hold).
+  const scope = new URL(req.url).searchParams.get("scope") === "session" ? "session" : "once";
+  if (ctx.gate?.resolveHold(params.id, approve, scope)) {
+    return json({ ok: true, id: params.id, verdict: approve ? "allowed" : "denied", scope });
   }
   const row = ctx.db.netEventsByIds([params.id])[0];
   if (row?.verdict === "pending") {

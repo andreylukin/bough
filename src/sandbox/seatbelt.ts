@@ -50,11 +50,16 @@ const DENY_READS = [
   // both reach server child processes / the host only, never the sandbox.
   "~/.bough/mcp/tokens",
   "~/.bough/env",
+  // the MITM CA PRIVATE keys + the credential registry. Reading ca.key would let a
+  // sandboxed process forge certs the proxy trusts; the public ca.crt (SSL_CERT_FILE)
+  // stays readable so the sandbox can still trust the proxy leaf.
+  "~/.bough/net/ca/ca.key",
+  "~/.bough/net/ca/leaf.key",
+  "~/.bough/net/credentials.json",
   // keychains / password stores
-  // NOTE: ~/Library/Keychains + /Library/Keychains are deliberately NOT denied so the
-  // agent's git/gh can read GitHub credentials to push (osxkeychain helper + gh token).
-  // Tradeoff: the whole login keychain is readable in-sandbox; egress stays gated by
-  // Claw Patrol, which is the backstop against exfiltration.
+  // NOTE: ~/Library/Keychains is denied only in agent-user mode (opts.denyKeychain) —
+  // post-cutover the agent's keychain is empty and injection is the sole cred path. In
+  // single-user mode it stays readable so the operator's own git/gh can push.
   "~/Library/Containers/com.1password.1password",
   "~/Library/Group Containers/2BUA8C4S2C.com.1password",
   // shell configs (may embed secrets) + history
@@ -158,6 +163,19 @@ export interface SandboxOptions {
    * `env -u http_proxy` bypass at the kernel. Off = network unrestricted.
    */
   confineNetwork?: boolean;
+  /**
+   * bough's own API port. When set (with confineNetwork), a sandboxed process is
+   * denied outbound to localhost:<apiPort> — so it can't reach the unauthenticated
+   * local control plane and approve its own held requests. Other loopback (dev
+   * servers, CDP, the AWS broker) stays reachable.
+   */
+  apiPort?: number;
+  /**
+   * Deny reads of the login keychain (`~/Library/Keychains`, `/Library/Keychains`).
+   * Set in agent-user mode, where the agent's keychain is empty and credentials are
+   * injected at the proxy — never read from the keychain in-sandbox.
+   */
+  denyKeychain?: boolean;
 }
 
 function resolveHome(home?: string): string {
@@ -183,7 +201,8 @@ function subpath(p: string): string {
 export function buildProfile(opts: SandboxOptions & { home: string }): string {
   const { workspace, home, allowWrite = [], denyRead = [], confineNetwork = false } = opts;
 
-  const denies = [...DENY_READS, ...denyRead]
+  const KEYCHAINS = ["~/Library/Keychains", "/Library/Keychains"];
+  const denies = [...DENY_READS, ...denyRead, ...(opts.denyKeychain ? KEYCHAINS : [])]
     .map((p) => subpath(expand(p, home)))
     .join("\n  ");
 
@@ -218,6 +237,14 @@ export function buildProfile(opts: SandboxOptions & { home: string }): string {
       '(allow network-bind (local ip "localhost:*") (local unix-socket))',
       '(allow network-inbound (local ip "localhost:*") (local unix-socket))',
     );
+    // ...but NOT bough's own API (last-match-wins in SBPL, so this deny overrides the
+    // loopback allow for that one port): a sandboxed process must not reach the
+    // unauthenticated local control plane to approve its own held requests.
+    if (opts.apiPort) {
+      parts.push(
+        `(deny network-outbound (remote ip "localhost:${opts.apiPort}"))`,
+      );
+    }
   }
   parts.push("");
   return parts.join("\n");

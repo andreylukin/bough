@@ -70,17 +70,36 @@ export function setupKube(boughCaPem: string, dir = netDir()): KubeSetup | undef
   const upstreamCa = new Map<string, string>();
   for (const c of rewritten.clusters) if (c.caPem) upstreamCa.set(c.host, c.caPem);
 
-  return {
-    configPath,
-    hosts: rewritten.clusters.map((c) => c.host),
-    upstreamCa,
-    clientCertUsers: rewritten.clientCertUsers,
-    credentials: rewritten.execCreds.map((spec) => ({
+  const hosts = rewritten.clusters.map((c) => c.host);
+  const credentials: CredentialRule[] = [
+    // Authorization: minted per cluster from the lifted exec plugin...
+    ...rewritten.execCreds.map((spec) => ({
       host: spec.host,
       header: "authorization",
       value: execBearerProvider(spec),
     })),
-  };
+    // ...or a lifted static bearer token (constant value).
+    ...rewritten.tokenCreds.map((spec) => ({
+      host: spec.host,
+      header: "authorization",
+      value: `Bearer ${spec.token}`,
+    })),
+  ];
+
+  // Kubernetes impersonation (Phase 3): the operator's admin credential authenticates
+  // upstream, but the proxy stamps Impersonate-User on every cluster request so the
+  // API server demotes it to the named (read-only) principal. The sandbox never holds
+  // either identity and its kubeconfig can't opt out — the demotion is at the gate.
+  // A single header per host; the API server also honors Impersonate-Group but `view`
+  // via the user is enough. Unset BOUGH_KUBE_IMPERSONATE = today's behavior.
+  const impersonate = Deno.env.get("BOUGH_KUBE_IMPERSONATE");
+  if (impersonate) {
+    for (const host of hosts) {
+      credentials.push({ host, header: "impersonate-user", value: impersonate });
+    }
+  }
+
+  return { configPath, hosts, upstreamCa, clientCertUsers: rewritten.clientCertUsers, credentials };
 }
 
 /**

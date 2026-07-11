@@ -36,6 +36,21 @@ export interface BundleFixture {
   expect: { verdict: Verdict; rule?: string; endpoint?: string };
 }
 
+/**
+ * A credential binding a bundle contributes: stamp `header` on requests to `host`,
+ * with the value read from bough's env var `env` at request time. Only the var NAME
+ * is persisted — the secret itself never touches config or the sandbox; the proxy
+ * resolves it host-side (see credentials.ts). Matches the MCP `${VAR}` convention.
+ */
+export interface CredentialBinding {
+  host: string; // exact host or "*.suffix"
+  header: string; // e.g. "authorization"
+  /** Env var in bough's own environment holding the token; the value is `Bearer <it>`. */
+  env: string;
+  /** Header value template: `{token}` is replaced with the env value. Default "Bearer {token}". */
+  template?: string;
+}
+
 /** What a bundle contributes to the rule set — merged (deduped) into the persisted NetConfig. */
 export interface BundleContribution {
   allowHosts?: string[];
@@ -46,6 +61,8 @@ export interface BundleContribution {
   allowVerbs?: string[];
   denyVerbs?: string[];
   holdVerbs?: string[];
+  /** Credential injections — the proxy stamps these host-side (credentials.ts). */
+  credentials?: CredentialBinding[];
 }
 
 export interface BundleManifest {
@@ -78,6 +95,15 @@ export const githubBundle: BundleManifest = {
       type: "host",
       required: false,
       default: "api.github.com",
+    },
+    {
+      name: "tokenEnv",
+      description:
+        "Name of the bough env var holding the GitHub token. Empty → no injection " +
+        "(reads still flow; writes just aren't authenticated by the proxy).",
+      type: "string",
+      required: false,
+      default: "",
     },
   ],
   credentials: [
@@ -127,13 +153,32 @@ export const githubBundle: BundleManifest = {
       },
       expect: { verdict: "hold", rule: "github-graphql-mutation" },
     },
+    {
+      name: "git-fetch",
+      action: {
+        host: "github.com",
+        http: { method: "POST", path: "/o/r.git/git-upload-pack", headers: {} },
+      },
+      expect: { verdict: "allow", rule: "github-git-fetch" },
+    },
+    {
+      name: "git-push",
+      action: {
+        host: "github.com",
+        http: { method: "POST", path: "/o/r.git/git-receive-pack", headers: {} },
+      },
+      expect: { verdict: "hold", rule: "github-git-push" },
+    },
   ],
   render(params) {
     const host = (params.host as string) ?? "api.github.com";
+    const tokenEnv = ((params.tokenEnv as string) ?? "").trim();
+    // git-over-HTTPS uses the web host (github.com), not the API host. Derive it so
+    // clone/fetch/push traverse the gate too; for GHES api.ghe.x → ghe.x.
+    const gitHost = host === "api.github.com" ? "github.com" : host.replace(/^api\./, "");
+    const hosts = [...new Set([host, gitHost])];
     return {
-      allowHosts: [host],
-      // No hosts scope — like the holdVerbs entry it replaces, this holds graphql
-      // mutations wherever they're classified (the GHES host param included).
+      allowHosts: hosts,
       rules: [
         {
           name: "github-graphql-mutation",
@@ -141,7 +186,29 @@ export const githubBundle: BundleManifest = {
           verdict: "hold",
           reason: "graphql mutation needs approval",
         },
+        // git smart-HTTP: fetch/clone (git-upload-pack) is a read — allow it so it's
+        // frictionless despite the POST. Push (git-receive-pack) always holds, both the
+        // POST and the info/refs advertisement that precedes it (query carries service).
+        {
+          name: "github-git-fetch",
+          condition: "http.path.endsWith('/git-upload-pack')",
+          verdict: "allow",
+          reason: "git fetch/clone (read)",
+        },
+        {
+          name: "github-git-push",
+          condition: "http.path.endsWith('/git-receive-pack') || " +
+            "(has(http.query.service) && http.query.service == 'git-receive-pack')",
+          verdict: "hold",
+          reason: "git push needs approval",
+        },
       ],
+      // Inject the token host-side when the operator named an env var — on BOTH the API
+      // and git hosts, so gh and git are authenticated on the wire. The secret stays in
+      // bough's environment; only its NAME rides in the persisted config.
+      ...(tokenEnv
+        ? { credentials: hosts.map((h) => ({ host: h, header: "authorization", env: tokenEnv })) }
+        : {}),
     };
   },
 };

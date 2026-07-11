@@ -232,7 +232,7 @@ function FeedGroupRow(
 function HoldCard(
   { req, onResolve, onRefine, queued = 0 }: {
     req: NetRequest;
-    onResolve: (approve: boolean) => void;
+    onResolve: (approve: boolean, scope?: "once" | "session") => void;
     onRefine?: () => void;
     /** Additional holds waiting behind this one. */
     queued?: number;
@@ -274,7 +274,8 @@ function HoldCard(
       {req.reason && <p style={{ fontSize: 12, color: c.muted, lineHeight: 1.5, margin: 0 }}>{req.reason}</p>}
       <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
         <button
-          onClick={() => onResolve(true)}
+          onClick={() => onResolve(true, "once")}
+          title="Allow just this request"
           style={{ flex: 1, fontSize: 12, fontWeight: 600, color: c.bg, background: c.green, borderRadius: 6, padding: "6px 0" }}
         >
           Approve
@@ -286,6 +287,15 @@ function HoldCard(
           Deny
         </button>
       </div>
+      {/* Allow this host+verb for the rest of the session (short TTL) — so a retried
+          command (incl. one whose socket already timed out) passes without re-asking. */}
+      <button
+        onClick={() => onResolve(true, "session")}
+        title="Allow this host + action for the rest of the session, so a retry passes without asking again"
+        style={{ fontSize: 11, color: c.green, background: "none", border: `1px solid ${alpha(c.green, 40)}`, borderRadius: 6, padding: "5px 0" }}
+      >
+        Allow {req.verb ?? ""} on {req.host} for this session
+      </button>
     </div>
   );
 }
@@ -1086,7 +1096,7 @@ function NetworkPanel(
     net: NetRequest[];
     pending: NetRequest | null;
     pendingCount?: number;
-    onResolve: (approve: boolean) => void;
+    onResolve: (approve: boolean, scope?: "once" | "session") => void;
     policy: NetConfig | null;
     policySource: PolicySource | null;
     onSavePolicy: (cfg: NetConfig) => void;
@@ -1492,7 +1502,7 @@ export function RightRail({
   pending: NetRequest | null;
   /** Total holds waiting (shown one at a time); default derives from `pending`. */
   pendingCount?: number;
-  onResolve: (approve: boolean) => void;
+  onResolve: (approve: boolean, scope?: "once" | "session") => void;
   policy: NetConfig | null;
   policySource?: PolicySource | null;
   onSavePolicy: (cfg: NetConfig) => void;

@@ -36,6 +36,55 @@ Deno.test("workspaceProblem: ok for a real dir, message for missing/file", async
   await Deno.remove(dir, { recursive: true });
 });
 
+Deno.test("prepareWorkspace: a sandboxed turn gets a scratch dir created OUTSIDE the workspace", async () => {
+  // A plain (non-repo) dir as the workspace: sandboxed=true, but the git/jj branch
+  // is skipped, so this exercises the scratch-dir creation without needing jj on PATH.
+  const ws = await Deno.makeTempDir({ prefix: "wstest-ws-" });
+  const snapBase = await Deno.makeTempDir({ prefix: "wstest-snap-" });
+  const scratchBase = await Deno.makeTempDir({ prefix: "wstest-scratch-" });
+  const env = { BOUGH_SNAPSHOT_BASE: snapBase, BOUGH_SCRATCH_BASE: scratchBase };
+  const prev = new Map<string, string | undefined>();
+  for (const [k, v] of Object.entries(env)) {
+    prev.set(k, Deno.env.get(k));
+    Deno.env.set(k, v);
+  }
+  const db = new Db(":memory:");
+  try {
+    db.createSession({ id: "s1", parentId: null, title: "s1", kind: "root", createdAt: 1, workspace: ws });
+    const p = await prepareWorkspace(db, "s1");
+    assert(p.sandboxed);
+    assertEquals(p.scratchDir, `${scratchBase}/s1`);
+    assertEquals((await Deno.stat(p.scratchDir)).isDirectory, true);
+    // the scratch dir is not inside the workspace — the whole point
+    assert(!p.scratchDir.startsWith(ws), "scratch must live outside the workspace");
+  } finally {
+    db.close();
+    for (const [k, v] of prev) v === undefined ? Deno.env.delete(k) : Deno.env.set(k, v);
+    await Deno.remove(ws, { recursive: true }).catch(() => {});
+    await Deno.remove(snapBase, { recursive: true }).catch(() => {});
+    await Deno.remove(scratchBase, { recursive: true }).catch(() => {});
+  }
+});
+
+Deno.test("prepareWorkspace: a non-sandboxed run (bare cwd) has no scratch dir", async () => {
+  const db = new Db(":memory:");
+  try {
+    db.createSession({ id: "s1", parentId: null, title: "s1", kind: "root", createdAt: 1 });
+    // No workspace column and no BOUGH_WORKSPACE → falls back to cwd, unsandboxed.
+    const hadEnv = Deno.env.get("BOUGH_WORKSPACE");
+    Deno.env.delete("BOUGH_WORKSPACE");
+    try {
+      const p = await prepareWorkspace(db, "s1");
+      assertEquals(p.sandboxed, false);
+      assertEquals(p.scratchDir, "");
+    } finally {
+      if (hadEnv !== undefined) Deno.env.set("BOUGH_WORKSPACE", hadEnv);
+    }
+  } finally {
+    db.close();
+  }
+});
+
 // ---- external-mode prepareWorkspace (needs jj + git on PATH) -----------------
 
 async function sh(bin: string, args: string[], cwd: string): Promise<void> {

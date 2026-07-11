@@ -164,6 +164,19 @@ function mergeRules(existing: NetConfig["rules"], contributed: Rule[] = []): Net
   return merged;
 }
 
+/** Merge credential bindings by (host, header): a re-install replaces the prior binding. */
+function mergeCredentials(
+  existing: NetConfig["credentials"],
+  contributed: NetConfig["credentials"] = [],
+): NetConfig["credentials"] {
+  const key = (b: { host: string; header: string }) => `${b.host.toLowerCase()}\0${b.header.toLowerCase()}`;
+  const incoming = new Map(contributed.map((b) => [key(b), b]));
+  const merged = existing.map((b) => incoming.get(key(b)) ?? b);
+  const known = new Set(existing.map(key));
+  merged.push(...contributed.filter((b) => !known.has(key(b))));
+  return merged;
+}
+
 /** Merge a bundle's contribution into the persisted rule set + record it as installed. */
 function mergeIntoConfig(name: string, c: BundleContribution, dir: string): NetConfig {
   const cfg = loadConfig(dir);
@@ -176,6 +189,7 @@ function mergeIntoConfig(name: string, c: BundleContribution, dir: string): NetC
     allowVerbs: union(cfg.allowVerbs, c.allowVerbs),
     denyVerbs: union(cfg.denyVerbs, c.denyVerbs),
     holdVerbs: union(cfg.holdVerbs, c.holdVerbs),
+    credentials: mergeCredentials(cfg.credentials, c.credentials),
     bundles: union(cfg.bundles, [name]),
   }, dir);
 }

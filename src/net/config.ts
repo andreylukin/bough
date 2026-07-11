@@ -78,6 +78,18 @@ export const NetConfig = z.object({
   /** Names of policy bundles merged into this config (metadata; drives `installed` in the UI). */
   bundles: z.array(z.string()).default([]),
   /**
+   * Credential injections contributed by installed bundles: stamp `header` on requests
+   * to `host` with the value from bough's env var `env` (only the NAME is stored — the
+   * secret stays in bough's environment). The proxy resolves these host-side at request
+   * time (credentials.ts); the sandbox never sees the token.
+   */
+  credentials: z.array(z.object({
+    host: z.string(),
+    header: z.string(),
+    env: z.string(),
+    template: z.string().optional(),
+  })).default([]),
+  /**
    * Classifier-plugin activations. Plugin FILES (~/.bough/net/plugins/) are a global
    * library; a plugin only gates where an activation names it — globally here, or per
    * branch via a session's net_policies override (inherited down the session tree

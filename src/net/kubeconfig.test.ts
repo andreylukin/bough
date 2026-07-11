@@ -58,7 +58,7 @@ Deno.test("rewrite: exec auth is lifted out — stripped from the sandbox copy, 
   }]);
 });
 
-Deno.test("rewrite: exec env flattens to a map; non-exec users contribute nothing and keep their auth", () => {
+Deno.test("rewrite: exec env flattens to a map; static bearer is lifted host-side, stripped from the copy", () => {
   const cfg = [
     "clusters:",
     "- name: a",
@@ -82,15 +82,40 @@ Deno.test("rewrite: exec env flattens to a map; non-exec users contribute nothin
     "- name: b",
     "  context: { cluster: b, user: b }",
   ].join("\n");
-  const { rewritten, execCreds } = rewriteKubeconfig(cfg, BOUGH_CA);
+  const { rewritten, execCreds, tokenCreds } = rewriteKubeconfig(cfg, BOUGH_CA);
   assertEquals(execCreds, [{
     host: "a.example.com",
     command: "aws",
     args: ["eks", "get-token", "--cluster-name", "a"],
     env: { AWS_PROFILE: "dev" },
   }]);
-  // static-token auth survives untouched (it works through MITM as-is)
-  assertStringIncludes(rewritten, "static-token");
+  // the static bearer is lifted to a host-side cred, keyed to its cluster host...
+  assertEquals(tokenCreds, [{ host: "b.example.com", token: "static-token" }]);
+  // ...and scrubbed from the sandbox copy (proxy injects it host-side instead)
+  assertEquals(rewritten.includes("static-token"), false);
+});
+
+Deno.test("rewrite: tokenFile is read host-side, lifted, and stripped from the copy", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "bough-kc-tf-" });
+  try {
+    await Deno.writeTextFile(`${dir}/tok`, "file-token\n");
+    const cfg = [
+      "clusters:",
+      "- name: c",
+      "  cluster: { server: 'https://c.example.com' }",
+      "users:",
+      "- name: c",
+      "  user: { tokenFile: tok }",
+      "contexts:",
+      "- name: c",
+      "  context: { cluster: c, user: c }",
+    ].join("\n");
+    const { rewritten, tokenCreds } = rewriteKubeconfig(cfg, BOUGH_CA, dir);
+    assertEquals(tokenCreds, [{ host: "c.example.com", token: "file-token" }]); // trimmed
+    assertEquals(rewritten.includes("tokenFile"), false);
+  } finally {
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
 });
 
 Deno.test("rewrite: certificate-authority FILE ref is read, then replaced by inline bough data", async () => {

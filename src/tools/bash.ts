@@ -35,8 +35,12 @@ export const bash: ToolDef = {
     if (ctx.sandbox && Deno.build.os === "darwin" && Deno.env.get("BOUGH_NO_SANDBOX") !== "1") {
       argv = wrap(argv, {
         workspace: ctx.workspace,
-        allowWrite: [ctx.sandbox.sessionDir],
+        allowWrite: [ctx.sandbox.sessionDir, ctx.sandbox.scratchDir],
         confineNetwork: Object.keys(netEnv).length > 0,
+        // Close the self-approval hole: deny the sandbox bough's own API port.
+        apiPort: Number(Deno.env.get("BOUGH_PORT") ?? "4321"),
+        // Agent-user mode: the keychain is empty and creds are proxy-injected.
+        denyKeychain: !!Deno.env.get("BOUGH_AGENT_USER"),
       });
     }
     // The child dies on whichever fires first: the per-command timeout, or the

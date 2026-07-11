@@ -249,6 +249,21 @@ function workspaceNote(cwd: string): string {
     "it in place.";
 }
 
+/**
+ * Point the agent at the per-session scratchpad for throwaway files. The workspace is
+ * a repo the live server builds from and jj auto-snapshots, so a stray `./probe.json`
+ * pollutes the build and `git diff main HEAD`. The scratch dir is outside the repo and
+ * OS-reaped — the right home for anything not meant to ship.
+ */
+function scratchpadNote(scratchDir: string): string {
+  return `\n\n# Scratchpad\n${scratchDir} is a writable per-session temp dir OUTSIDE ` +
+    "the workspace. Put ALL throwaway files there — intermediate data, temp scripts, " +
+    "probe outputs, downloads — NOT in the workspace and NOT in /tmp. Files written " +
+    "into the workspace are treated as real changes: they get snapshotted, built by " +
+    "the live server, and show up in the diff you're asked to ship. Use absolute paths " +
+    "under the scratchpad; it's already created.";
+}
+
 /** Read the workspace AGENTS.md (capped) as a system-prompt section, or null if absent. */
 async function readAgentsFile(cwd: string): Promise<string | null> {
   try {
@@ -426,7 +441,9 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       // Interrupt reaches INTO a running tool: run_steps terminates its program's
       // worker and bash kills its child — stop means stop, not "after this step".
       signal,
-      sandbox: prepared.sandboxed ? { sessionDir: prepared.sessionDir } : undefined,
+      sandbox: prepared.sandboxed
+        ? { sessionDir: prepared.sessionDir, scratchDir: prepared.scratchDir }
+        : undefined,
       // Per-turn harness state: run_steps commits the CHECK here (SPEC §5 gating).
       turn: {},
       // Management-plane visibility, always on: the program can ask what MCP state
@@ -517,7 +534,9 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       (isSub ? SYSTEM_SUBAGENT : "") +
       (mayDelegate ? (isSub ? SYSTEM_DELEGATION_NESTED : SYSTEM_DELEGATION) : "") +
       (mayDelegate && !isSub ? runningSubagentsNote(db, sessionId) : "") +
-      workspaceNote(prepared.cwd) + (agents ?? "") +
+      workspaceNote(prepared.cwd) +
+      (prepared.sandboxed ? scratchpadNote(prepared.scratchDir) : "") +
+      (agents ?? "") +
       mcpNote + lspNote + skills.sections;
     const toolDefs = tools.map((t) => ({
       name: t.name,

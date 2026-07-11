@@ -14,9 +14,10 @@
  * from a turn (`foo &`) loses its proxy when the turn ends — the next turn gets a
  * fresh one.
  *
- * Opt-in for now (BOUGH_CLAWPATROL=1). The default flips to on once the approval UI can
- * clear held requests (until then a fail-closed default could wedge a turn with no way
- * to unblock it). With the flag off, no proxy ever starts and exec runs unrouted.
+ * On by default (opt out with BOUGH_CLAWPATROL=0). Held requests can no longer wedge a
+ * turn: a human hold fails closed after a timeout (gate.ts) with a re-request message,
+ * so a fail-closed default is safe. With the flag set to 0, no proxy starts and exec
+ * runs unrouted.
  */
 import { caEnv, CertAuthority } from "./ca.ts";
 import { ProxyServer } from "./proxy.ts";
@@ -24,14 +25,53 @@ import { createGate, type Gate } from "./gate.ts";
 import { PluginHost, type PluginInfo, type RequestSample, specFromRequests } from "./plugins.ts";
 import { caTrustCommand, isCaTrusted } from "./catrust.ts";
 import { augmentCloudPolicy, type KubeSetup, setupKube } from "./cloud.ts";
-import { loadConfig, resolveConfig, toPolicy } from "./config.ts";
+import { loadConfig, type NetConfig, resolveConfig, toPolicy } from "./config.ts";
+import { resolveCredentials } from "./credentials.ts";
 import type { Db } from "../db/db.ts";
 import type { Bus } from "../bus.ts";
 import { annotateNet } from "../worker/annotate.ts";
 
-/** Whether bough should run the egress proxy (opt-in — see module docs). */
+/** Whether bough should run the egress proxy (on by default — opt out with =0). */
 export function clawpatrolEnabled(): boolean {
-  return Deno.env.get("BOUGH_CLAWPATROL") === "1";
+  return Deno.env.get("BOUGH_CLAWPATROL") !== "0";
+}
+
+/**
+ * Container-credentials env pointing the sandbox's AWS SDK/CLI at the local
+ * read-only broker (scripts/cred-broker.ts, run in the operator's account). Every
+ * AWS tool honors these natively, so `aws`/terraform/boto3 get IAM-enforced
+ * read-only creds without the SSO cache ever entering the sandbox. Empty unless
+ * BOUGH_AWS_BROKER_URL is set; the bearer is read fresh from the group-readable
+ * token file per exec, so a broker token rotation (per boot) needs no restart.
+ */
+function awsBrokerEnv(): Record<string, string> {
+  const url = Deno.env.get("BOUGH_AWS_BROKER_URL");
+  if (!url) return {};
+  const tokenFile = Deno.env.get("BOUGH_AWS_BROKER_TOKEN_FILE");
+  let token = Deno.env.get("BOUGH_AWS_BROKER_TOKEN") ?? "";
+  if (!token && tokenFile) {
+    try {
+      token = Deno.readTextFileSync(tokenFile).trim();
+    } catch {
+      return {}; // broker not up / token unreadable — leave AWS unconfigured
+    }
+  }
+  if (!token) return {};
+  return {
+    AWS_CONTAINER_CREDENTIALS_FULL_URI: url,
+    AWS_CONTAINER_AUTHORIZATION_TOKEN: token,
+  };
+}
+
+/** Useless placeholder token; the proxy overwrites the header with the real PAT. */
+const GH_SENTINEL = "__bough_github_pat__";
+
+/** GH_TOKEN/GITHUB_TOKEN sentinel iff the session has a github credential binding. */
+function githubSentinelEnv(config: NetConfig): Record<string, string> {
+  const hasGithub = config.credentials.some((c) =>
+    c.host === "github.com" || c.host === "api.github.com" || c.host.endsWith(".github.com")
+  );
+  return hasGithub ? { GH_TOKEN: GH_SENTINEL, GITHUB_TOKEN: GH_SENTINEL } : {};
 }
 
 export interface GatewayStatus {
@@ -224,9 +264,14 @@ export class ClawpatrolGateway {
         // Trust each k8s cluster's private CA when re-originating (EKS serving certs
         // aren't public-rooted). Empty/absent for everyone else = default trust.
         upstreamCa: this.#kube?.upstreamCa,
-        // Host-minted exec tokens (aws eks get-token, ...) stamped per cluster host —
-        // the kubeconfig the sandbox sees has no auth; the proxy is the authenticator.
-        credentials: this.#kube?.credentials,
+        // All host-side credential injection for this session: bundle bindings from the
+        // resolved config (env-var tokens, read per request) plus the kube exec creds
+        // (aws eks get-token, ...). The sandbox's kubeconfig/tools carry no auth — the
+        // proxy is the sole credential holder (credentials.ts).
+        credentials: resolveCredentials(
+          resolveConfig(this.#db, key || undefined).config,
+          this.#kube?.credentials,
+        ),
       });
       starting = proxy.start().then(() => {
         this.#starting.delete(key);
@@ -273,6 +318,14 @@ export class ClawpatrolGateway {
       // kubectl reads clusters from KUBECONFIG; point it at the CA-rewritten copy so
       // it trusts the proxy's leaf. Absent when there's no kubeconfig to rewrite.
       ...(this.#kube ? { KUBECONFIG: this.#kube.configPath } : {}),
+      // AWS read-only creds via the local broker (container-credentials protocol).
+      // Direct-to-loopback (NO_PROXY covers 127.0.0.1); absent unless configured.
+      ...awsBrokerEnv(),
+      // GitHub sentinel: when a github credential binding is installed, gh needs *a*
+      // token to send an authenticated request at all — the proxy overwrites the
+      // Authorization header with the real PAT for github hosts. The sentinel itself
+      // is useless (fails closed at github if the MITM is ever bypassed).
+      ...githubSentinelEnv(resolveConfig(this.#db, sessionId).config),
       ...caEnv(this.#ca.caCertPath),
     };
   }

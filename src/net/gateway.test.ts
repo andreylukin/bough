@@ -65,9 +65,35 @@ Deno.test("gateway: turn.finished reaps the session's listener; next turn gets a
   });
 });
 
-Deno.test("gateway: disabled flag means no listeners and empty env", async () => {
+Deno.test("gateway: envFor injects broker container-creds env when configured", async () => {
+  const tokenFile = await Deno.makeTempFile({ prefix: "broker-tok-" });
+  await Deno.writeTextFile(tokenFile, "  s3cr3t-boot-token\n");
+  Deno.env.set("BOUGH_AWS_BROKER_URL", "http://127.0.0.1:9109/aws");
+  Deno.env.set("BOUGH_AWS_BROKER_TOKEN_FILE", tokenFile);
+  try {
+    await withGateway(async (g) => {
+      const env = await g.envFor("sAws");
+      assertEquals(env.AWS_CONTAINER_CREDENTIALS_FULL_URI, "http://127.0.0.1:9109/aws");
+      assertEquals(env.AWS_CONTAINER_AUTHORIZATION_TOKEN, "s3cr3t-boot-token"); // trimmed
+    });
+
+    // Unreadable/absent token file → AWS left unconfigured, rest of env intact.
+    await Deno.remove(tokenFile);
+    await withGateway(async (g) => {
+      const env = await g.envFor("sAws2");
+      assertEquals(env.AWS_CONTAINER_CREDENTIALS_FULL_URI, undefined);
+      assertEquals(env.AWS_CONTAINER_AUTHORIZATION_TOKEN, undefined);
+      assertNotEquals(env.HTTPS_PROXY, undefined);
+    });
+  } finally {
+    Deno.env.delete("BOUGH_AWS_BROKER_URL");
+    Deno.env.delete("BOUGH_AWS_BROKER_TOKEN_FILE");
+  }
+});
+
+Deno.test("gateway: BOUGH_CLAWPATROL=0 opts out — no listeners, empty env", async () => {
   const prev = Deno.env.get("BOUGH_CLAWPATROL");
-  Deno.env.delete("BOUGH_CLAWPATROL");
+  Deno.env.set("BOUGH_CLAWPATROL", "0");
   try {
     const gateway = new ClawpatrolGateway({ db: new Db(":memory:"), bus: new Bus() });
     await gateway.start();
@@ -75,7 +101,7 @@ Deno.test("gateway: disabled flag means no listeners and empty env", async () =>
     assertEquals(gateway.status().running, false);
     await gateway.stop();
   } finally {
-    if (prev) Deno.env.set("BOUGH_CLAWPATROL", prev);
+    prev !== undefined ? Deno.env.set("BOUGH_CLAWPATROL", prev) : Deno.env.delete("BOUGH_CLAWPATROL");
   }
 });
 

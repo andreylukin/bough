@@ -171,6 +171,24 @@ export function searchDirectories(query: string, known: string[] = []): DirHit[]
     .map(([path]) => ({ path, display: abbrev(path), repo: isRepo(path) }));
 }
 
+/**
+ * Directories the agent user has been granted access to (`bough grant <dir>`),
+ * read from ~/.bough/grants.json. In agent-user mode the server's own $HOME is
+ * near-empty, so these are the real roots for the new-session picker. Returns []
+ * when the file is absent (single-user mode) or unreadable.
+ */
+export function grantedDirs(): string[] {
+  const home = Deno.env.get("HOME");
+  if (!home) return [];
+  try {
+    const raw = Deno.readTextFileSync(`${home}/.bough/grants.json`);
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr.filter((p): p is string => typeof p === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 const MAX_INLINE_BYTES = 64 * 1024;
 
 /**

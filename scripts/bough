@@ -16,15 +16,41 @@ while [ -L "$SOURCE" ]; do
 done
 ROOT="$(cd "$(dirname "$SOURCE")/.." && pwd)"
 
-BOUGH_HOME="$HOME/.bough"
+LABEL="com.bough.server"
+
+# Agent-user mode: the server runs as a dedicated non-admin user via a system
+# LaunchDaemon; you drive it from the web UI and manage it through sudo. The
+# flag lives in YOUR ~/.bough/env (read before we know the agent's home), so we
+# peek at it directly. Legacy single-user LaunchAgent stays the default.
+CALLER_ENV="$HOME/.bough/env"
+AGENT_USER=""
+if [ -f "$CALLER_ENV" ]; then
+  AGENT_USER="$(grep -E '^BOUGH_AGENT_USER=' "$CALLER_ENV" 2>/dev/null | tail -1 | cut -d= -f2- || true)"
+fi
+
+if [ -n "$AGENT_USER" ]; then
+  AGENT_HOME="$(dscl . -read "/Users/$AGENT_USER" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"
+  [ -n "$AGENT_HOME" ] || { echo "error: agent user '$AGENT_USER' not found — run scripts/agent-user.sh" >&2; exit 1; }
+  BOUGH_HOME="$AGENT_HOME/.bough"
+  PLIST="/Library/LaunchDaemons/$LABEL.plist"
+  DOMAIN="system"
+  # launchctl for the system domain needs root; grant/logs run as the agent.
+  LAUNCHCTL="sudo launchctl"
+  AS_AGENT=(sudo -u "$AGENT_USER")
+else
+  AGENT_HOME="$HOME"
+  BOUGH_HOME="$HOME/.bough"
+  PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+  DOMAIN="gui/$(id -u)"
+  LAUNCHCTL="launchctl"
+  AS_AGENT=()
+fi
+
 LOG_FILE="$BOUGH_HOME/server.log"
 ENV_FILE="$BOUGH_HOME/env"
-LABEL="com.bough.server"
-PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-DOMAIN="gui/$(id -u)"
 
-mkdir -p "$BOUGH_HOME"
-if [ -f "$ENV_FILE" ]; then
+mkdir -p "$HOME/.bough"
+if [ -f "$ENV_FILE" ] && [ -r "$ENV_FILE" ]; then
   set -a
   # shellcheck source=/dev/null
   . "$ENV_FILE"
@@ -35,12 +61,14 @@ PORT="${BOUGH_PORT:-4321}"
 # Always exits 0: with pipefail, lsof's exit 1 on "no listener" would otherwise
 # propagate through bare assignments and trip errexit.
 server_pid() {
-  lsof -ti "tcp:$PORT" -sTCP:LISTEN 2>/dev/null | head -n1
+  # As the agent user (its own socket) in agent mode, else directly — a plain
+  # caller's lsof can't see another user's listening socket.
+  "${AS_AGENT[@]}" lsof -ti "tcp:$PORT" -sTCP:LISTEN 2>/dev/null | head -n1
   return 0
 }
 
 service_loaded() {
-  launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1
+  $LAUNCHCTL print "$DOMAIN/$LABEL" >/dev/null 2>&1
 }
 
 # Up = any HTTP answer on the port (200 without auth, 401 with).
@@ -49,16 +77,26 @@ is_up() {
     [ "$(curl -s -o /dev/null -m 2 -w '%{http_code}' "http://127.0.0.1:$PORT/sessions")" = 401 ]
 }
 
+# In agent-user mode the plist is a system LaunchDaemon (owned root:wheel, with a
+# UserName key) written via sudo; otherwise a per-user LaunchAgent. KeepAlive on
+# SuccessfulExit=false: relaunch after a crash, stay down after a clean exit (so
+# a missing API key doesn't loop). No WatchPaths — on purpose.
 write_plist() {
-  mkdir -p "$HOME/Library/LaunchAgents"
-  # KeepAlive on SuccessfulExit=false: relaunch after a crash, stay down after a
-  # clean exit (so a missing API key doesn't loop). No WatchPaths — on purpose.
-  cat > "$PLIST" <<EOF
+  local user_key=""
+  local writer=(tee)
+  if [ -n "$AGENT_USER" ]; then
+    user_key="  <key>UserName</key><string>$AGENT_USER</string>"
+    writer=(sudo tee)
+  else
+    mkdir -p "$HOME/Library/LaunchAgents"
+  fi
+  "${writer[@]}" "$PLIST" >/dev/null <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key><string>$LABEL</string>
+$user_key
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
@@ -72,6 +110,8 @@ write_plist() {
 </dict>
 </plist>
 EOF
+  [ -n "$AGENT_USER" ] && sudo chown root:wheel "$PLIST"
+  return 0
 }
 
 wait_up() {
@@ -114,7 +154,9 @@ cmd_start() {
     echo "already running (pid $(server_pid)) on http://127.0.0.1:$PORT$note"
     return 0
   fi
-  if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+  # In agent-user mode the key lives in the agent's 0600 env, which this account
+  # can't read — the daemon's own `run` does the check and exits cleanly if unset.
+  if [ -z "$AGENT_USER" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then
     echo "error: ANTHROPIC_API_KEY is not set — put it in $ENV_FILE" >&2
     exit 1
   fi
@@ -125,11 +167,11 @@ cmd_start() {
 
   write_plist
   echo "starting bough service on port $PORT (logs: $LOG_FILE)"
-  launchctl enable "$DOMAIN/$LABEL" 2>/dev/null || true
+  $LAUNCHCTL enable "$DOMAIN/$LABEL" 2>/dev/null || true
   if service_loaded; then
-    launchctl kickstart "$DOMAIN/$LABEL"
+    $LAUNCHCTL kickstart "$DOMAIN/$LABEL"
   else
-    launchctl bootstrap "$DOMAIN" "$PLIST"
+    $LAUNCHCTL bootstrap "$DOMAIN" "$PLIST"
   fi
   wait_up
 }
@@ -140,8 +182,8 @@ cmd_kill() {
     # disable makes the stop stick across logins (start re-enables). bootout can
     # report non-zero while the teardown is still in flight — the wait loop below
     # is the real confirmation.
-    launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
-    launchctl disable "$DOMAIN/$LABEL" 2>/dev/null || true
+    $LAUNCHCTL bootout "$DOMAIN/$LABEL" 2>/dev/null || true
+    $LAUNCHCTL disable "$DOMAIN/$LABEL" 2>/dev/null || true
     local i
     for i in $(seq 1 20); do
       [ -z "$(server_pid)" ] && break
@@ -153,13 +195,13 @@ cmd_kill() {
   pid="$(server_pid)"
   if [ -n "$pid" ]; then
     echo "killing non-service listener (pid $pid)"
-    kill "$pid" 2>/dev/null || true
+    "${AS_AGENT[@]}" kill "$pid" 2>/dev/null || true
     local i
     for i in $(seq 1 20); do
-      kill -0 "$pid" 2>/dev/null || break
+      "${AS_AGENT[@]}" kill -0 "$pid" 2>/dev/null || break
       sleep 0.5
     done
-    kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
+    "${AS_AGENT[@]}" kill -0 "$pid" 2>/dev/null && "${AS_AGENT[@]}" kill -9 "$pid" 2>/dev/null
   fi
   echo "stopped"
 }
@@ -167,7 +209,7 @@ cmd_kill() {
 cmd_restart() {
   if service_loaded; then
     echo "restarting service"
-    launchctl kickstart -k "$DOMAIN/$LABEL"
+    $LAUNCHCTL kickstart -k "$DOMAIN/$LABEL"
     wait_up
   else
     cmd_start
@@ -251,9 +293,11 @@ cmd_update() {
 }
 
 # Set KEY=VALUE in the env file: replace the existing line (even a commented-out
-# template line like "# KEY=…"), else append. Values are written verbatim.
+# template line like "# KEY=…"), else append. Values are written verbatim. Reads
+# and writes through the agent user in agent-user mode (the env is 0600, its own).
 env_set() {
-  local k="$1" v="$2" tmp replaced=""
+  local k="$1" v="$2" cur tmp replaced=""
+  cur="$("${AS_AGENT[@]}" cat "$ENV_FILE" 2>/dev/null || true)"
   tmp="$(mktemp)"
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
@@ -267,10 +311,11 @@ env_set() {
         ;;
       *) echo "$line" ;;
     esac
-  done < "$ENV_FILE" > "$tmp"
+  done <<< "$cur" > "$tmp"
   [ -n "$replaced" ] || echo "$k=$v" >> "$tmp"
-  mv "$tmp" "$ENV_FILE"
-  chmod 600 "$ENV_FILE"
+  "${AS_AGENT[@]}" tee "$ENV_FILE" < "$tmp" >/dev/null
+  "${AS_AGENT[@]}" chmod 600 "$ENV_FILE"
+  rm -f "$tmp"
 }
 
 # One command from fresh clone to running server: install deps + build
@@ -299,12 +344,13 @@ cmd_setup() {
         ANTHROPIC_API_KEY="$key"
       fi
     fi
-    if ! grep -q '^BOUGH_CLAWPATROL=1' "$ENV_FILE"; then
-      printf "enable Claw Patrol (egress firewall: approvals, rules, plugins)? [y/N] "
+    # Claw Patrol is on by default now; offer to opt out (writes =0).
+    if [ "${BOUGH_CLAWPATROL:-}" != "0" ]; then
+      printf "Claw Patrol (egress firewall: approvals, rules, plugins) is ON. Disable it? [y/N] "
       local cp
       read -r cp
       case "$cp" in
-        y | Y) env_set BOUGH_CLAWPATROL 1 && export BOUGH_CLAWPATROL=1 ;;
+        y | Y) env_set BOUGH_CLAWPATROL 0 && export BOUGH_CLAWPATROL=0 ;;
       esac
     fi
   fi
@@ -391,6 +437,205 @@ cmd_desktop() {
   esac
 }
 
+GROUP="bough-work"
+GRANTS_JSON="$BOUGH_HOME/grants.json"
+
+# Full inherited rwx for the shared group on a granted repo, so the agent-user
+# server can read/edit/snapshot it while your account keeps ownership.
+ACL_DIR='group:bough-work allow read,write,delete,add_file,add_subdirectory,readattr,writeattr,readextattr,writeextattr,readsecurity,list,search,file_inherit,directory_inherit'
+# Traverse-only on the parent chain, so the agent can reach the repo without
+# being able to list your other directories.
+ACL_TRAVERSE='group:bough-work allow execute,readattr,readextattr,readsecurity'
+
+require_agent_mode() {
+  [ -n "$AGENT_USER" ] && return 0
+  echo "error: '$1' requires agent-user mode (set BOUGH_AGENT_USER in $CALLER_ENV" >&2
+  echo "       and run scripts/agent-user.sh first)" >&2
+  exit 1
+}
+
+# JSON array read/modify/write as the agent (grants.json is agent-owned, 0600).
+grants_edit() { # $1 = add|remove, $2 = abs path
+  local deno; deno="$(command -v deno)"
+  "${AS_AGENT[@]}" env OP="$1" P="$2" F="$GRANTS_JSON" "$deno" eval '
+    const f = Deno.env.get("F"), op = Deno.env.get("OP"), p = Deno.env.get("P");
+    let a = []; try { a = JSON.parse(Deno.readTextFileSync(f)); } catch {}
+    a = a.filter((x) => x !== p);
+    if (op === "add") a.push(p);
+    Deno.mkdirSync(f.replace(/\/[^/]*$/, ""), { recursive: true });
+    Deno.writeTextFileSync(f, JSON.stringify(a, null, 2) + "\n");
+  '
+}
+
+cmd_grant() {
+  require_agent_mode grant
+  local dir="${1:-}"
+  [ -n "$dir" ] || { echo "usage: bough grant <dir>" >&2; exit 1; }
+  dir="$(cd "$dir" 2>/dev/null && pwd)" || { echo "error: no such directory: $1" >&2; exit 1; }
+  echo "==> granting $GROUP access to $dir"
+  chmod +a "$ACL_DIR" "$dir"
+  # Traverse ACL on each parent up to (not including) /Users, so the agent can
+  # walk into the repo. Idempotent: chmod +a is a no-op if the ACE exists.
+  local p="$dir"
+  while [ "$p" != "/" ] && [ "$p" != "/Users" ]; do
+    p="$(dirname "$p")"
+    [ "$p" = "/" ] || [ "$p" = "/Users" ] && break
+    chmod +a "$ACL_TRAVERSE" "$p" 2>/dev/null || true
+  done
+  # jj/git run as the agent across a uid boundary — mark the repo safe for it.
+  "${AS_AGENT[@]}" git config --global --add safe.directory "$dir" 2>/dev/null || true
+  grants_edit add "$dir"
+  echo "granted. New sessions can now use $dir."
+}
+
+cmd_revoke() {
+  require_agent_mode revoke
+  local dir="${1:-}"
+  [ -n "$dir" ] || { echo "usage: bough revoke <dir>" >&2; exit 1; }
+  dir="$(cd "$dir" 2>/dev/null && pwd)" || dir="$1"
+  echo "==> revoking $GROUP access to $dir"
+  chmod -a "$ACL_DIR" "$dir" 2>/dev/null || true
+  "${AS_AGENT[@]}" git config --global --unset-all safe.directory "$dir" 2>/dev/null || true
+  grants_edit remove "$dir"
+  # Parent traverse ACLs are intentionally left in place: other granted repos may
+  # share the same parent chain. They leak nothing (execute-only, no list).
+  echo "revoked."
+}
+
+# Reverse the cutover: stop + remove the daemon, drop grants, and print the
+# remaining root-owned bits for you to remove by hand.
+cmd_teardown() {
+  require_agent_mode teardown
+  echo "==> stopping and removing the LaunchDaemon"
+  sudo launchctl bootout "system/$LABEL" 2>/dev/null || true
+  sudo rm -f "$PLIST"
+  if [ -f "$GRANTS_JSON" ] && [ -r "$GRANTS_JSON" ]; then
+    echo "==> revoking recorded grants"
+    "${AS_AGENT[@]}" cat "$GRANTS_JSON" 2>/dev/null |
+      "$(command -v deno)" eval 'for (const p of JSON.parse(await new Response(Deno.stdin.readable).text())) console.log(p)' 2>/dev/null |
+      while IFS= read -r d; do [ -n "$d" ] && chmod -a "$ACL_DIR" "$d" 2>/dev/null || true; done
+  fi
+  echo
+  echo "removed the daemon and repo ACLs. To finish teardown by hand:"
+  echo "  sudo rm -f /etc/sudoers.d/bough-agent-user /etc/sudoers.d/bough-agent"
+  echo "  sudo sysadminctl -deleteUser $AGENT_USER   # also removes ~$AGENT_USER"
+  echo "  # then remove BOUGH_AGENT_USER from $CALLER_ENV and: bough start"
+}
+
+# Migrate this account's ~/.bough state into the agent user's home and install
+# the system LaunchDaemon. Idempotent; never overwrites values already present.
+cmd_setup_agent_user() {
+  require_agent_mode "setup --agent-user"
+  local src="$HOME/.bough" dst="$AGENT_HOME/.bough"
+  echo "==> migrating state $src -> $dst (as $AGENT_USER)"
+  sudo mkdir -p "$dst"
+  # Copy env (minus the caller-only flag), net policy + CA, and the worker model.
+  if [ -f "$src/env" ]; then
+    grep -v '^BOUGH_AGENT_USER=' "$src/env" | "${AS_AGENT[@]}" tee "$dst/env" >/dev/null
+    "${AS_AGENT[@]}" chmod 600 "$dst/env"
+  fi
+  for sub in net models; do
+    [ -d "$src/$sub" ] && sudo cp -R "$src/$sub" "$dst/" && sudo chown -R "$AGENT_USER" "$dst/$sub"
+  done
+  sudo chown -R "$AGENT_USER" "$dst"
+  # kubeconfig: the host-side source setupKube reads to mint + rewrite. The sandbox
+  # copy is auth-stripped by rewriteKubeconfig; impersonation demotes at the proxy.
+  if [ -f "$HOME/.kube/config" ]; then
+    echo "==> copying kubeconfig to $AGENT_HOME/.kube/config"
+    sudo mkdir -p "$AGENT_HOME/.kube"
+    sudo cp "$HOME/.kube/config" "$AGENT_HOME/.kube/config"
+    sudo chown -R "$AGENT_USER" "$AGENT_HOME/.kube"
+    sudo chmod 600 "$AGENT_HOME/.kube/config"
+  fi
+  # Group-readable log so `bough logs` works from your account.
+  "${AS_AGENT[@]}" touch "$dst/server.log"
+  "${AS_AGENT[@]}" chmod 640 "$dst/server.log"
+  sudo chgrp "$GROUP" "$dst" "$dst/server.log" 2>/dev/null || true
+  # Rewrite SSH GitHub remotes to HTTPS so git always traverses the proxy (SSH would
+  # bypass the gate entirely). The read-only PAT is injected on the wire by the proxy.
+  "${AS_AGENT[@]}" git config --global url."https://github.com/".insteadOf "git@github.com:" 2>/dev/null || true
+  echo "==> installing the system LaunchDaemon"
+  write_plist
+  echo
+  echo "migrated. Next:"
+  echo "  1. bough grant <dir>       # per-repo access for the agent"
+  echo "  2. bough start"
+  echo "  3. trust the MITM CA for Go tools (gh): the exact 'security add-trusted-cert'"
+  echo "     command is shown in the Network rail (and 'bough status' via the API) once"
+  echo "     the server is up — run it once with sudo."
+}
+
+BROKER_LABEL="com.bough.credbroker"
+BROKER_PLIST="$HOME/Library/LaunchAgents/$BROKER_LABEL.plist"
+BROKER_PORT="${BOUGH_AWS_BROKER_PORT:-9109}"
+# Shared, world-traversable path so the agent user (a bough-work member) can read
+# the boot-fresh, 0640 group-owned bearer written by the caller-run broker.
+BROKER_TOKEN_FILE="/Users/Shared/.bough-broker-token"
+
+# The AWS credential broker (Phase 2). Always runs in YOUR account — it needs the
+# interactive SSO cache — even when the server runs as the agent user. Installs a
+# per-user LaunchAgent and points the server env at it.
+cmd_broker() {
+  local deno; deno="$(command -v deno)"
+  case "${1:-}" in
+    install)
+      echo "==> installing $BROKER_LABEL (runs as $(id -un), port $BROKER_PORT)"
+      mkdir -p "$HOME/Library/LaunchAgents"
+      cat > "$BROKER_PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$BROKER_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$deno</string><string>run</string>
+    <string>--allow-net</string><string>--allow-env</string>
+    <string>--allow-read</string><string>--allow-write</string><string>--allow-run</string>
+    <string>$ROOT/scripts/cred-broker.ts</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>HOME</key><string>$HOME</string>
+    <key>BOUGH_AWS_BROKER_PORT</key><string>$BROKER_PORT</string>
+    <key>BOUGH_AWS_BROKER_TOKEN_FILE</key><string>$BROKER_TOKEN_FILE</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>$HOME/.bough/broker.log</string>
+  <key>StandardErrorPath</key><string>$HOME/.bough/broker.log</string>
+</dict>
+</plist>
+EOF
+      launchctl bootout "gui/$(id -u)/$BROKER_LABEL" 2>/dev/null || true
+      launchctl bootstrap "gui/$(id -u)" "$BROKER_PLIST"
+      # Point the server (agent env in agent-user mode) at the broker.
+      env_set BOUGH_AWS_BROKER_URL "http://127.0.0.1:$BROKER_PORT/aws"
+      env_set BOUGH_AWS_BROKER_TOKEN_FILE "$BROKER_TOKEN_FILE"
+      echo "installed. Ensure a [profile bough-ro] SSO profile exists, then: bough restart"
+      ;;
+    uninstall)
+      launchctl bootout "gui/$(id -u)/$BROKER_LABEL" 2>/dev/null || true
+      rm -f "$BROKER_PLIST"
+      echo "broker removed. Remove BOUGH_AWS_BROKER_* from $ENV_FILE to fully disable."
+      ;;
+    status)
+      if launchctl print "gui/$(id -u)/$BROKER_LABEL" >/dev/null 2>&1; then
+        curl -s -o /dev/null -w "broker: loaded, HTTP %{http_code} on :$BROKER_PORT\n" \
+          -H "authorization: Bearer $(cat "$BROKER_TOKEN_FILE" 2>/dev/null)" \
+          "http://127.0.0.1:$BROKER_PORT/aws" || echo "broker: loaded, not answering"
+      else
+        echo "broker: not installed"
+      fi
+      ;;
+    *)
+      echo "usage: bough broker {install|uninstall|status}" >&2
+      exit 1
+      ;;
+  esac
+}
+
 # Claw Patrol offline checks. `net validate` runs the same load path the server
 # does (policy.json + the plugin library) and reports every problem loudly.
 cmd_net() {
@@ -407,7 +652,15 @@ cmd_net() {
 }
 
 case "${1:-}" in
-  setup) cmd_setup ;;
+  setup)
+    if [ "${2:-}" = "--agent-user" ]; then cmd_setup_agent_user; else cmd_setup; fi
+    ;;
+  grant) cmd_grant "${2:-}" ;;
+  revoke) cmd_revoke "${2:-}" ;;
+  teardown)
+    [ "${2:-}" = "--agent-user" ] || { echo "usage: bough teardown --agent-user" >&2; exit 1; }
+    cmd_teardown
+    ;;
   start) cmd_start ;;
   kill | stop) cmd_kill ;;
   restart) cmd_restart ;;
@@ -415,6 +668,9 @@ case "${1:-}" in
   status) cmd_status ;;
   logs) cmd_logs ;;
   run) cmd_run ;;
+  broker)
+    cmd_broker "${2:-}"
+    ;;
   net)
     shift
     cmd_net "$@"
@@ -424,13 +680,18 @@ case "${1:-}" in
     cmd_desktop "$@"
     ;;
   *)
-    echo "usage: bough {setup|start|kill|restart|update|status|logs|run|net|desktop}" >&2
+    echo "usage: bough {setup|grant|revoke|teardown|start|kill|restart|update|status|logs|run|net|desktop}" >&2
     echo "  setup    fresh clone → running: install deps, build, configure env, start" >&2
+    echo "           setup --agent-user: migrate state + install the dedicated-user daemon" >&2
+    echo "  grant    bough grant <dir>: give the agent user access to a project dir" >&2
+    echo "  revoke   bough revoke <dir>: remove the agent user's access" >&2
+    echo "  teardown teardown --agent-user: reverse the dedicated-user cutover" >&2
     echo "  start    install + start the launchd service (auto-starts at login)" >&2
     echo "  kill     stop the service and keep it stopped (across logins)" >&2
     echo "  restart  pick up code changes explicitly" >&2
     echo "  update   fast-forward to origin/main, rebuild, restart" >&2
     echo "  run      run the server in the foreground (what launchd executes)" >&2
+    echo "  broker   AWS read-only credential broker: 'bough broker {install|uninstall|status}'" >&2
     echo "  net      Claw Patrol checks: 'bough net validate' verifies policy + plugins" >&2
     echo "  desktop  native app: 'bough desktop [run|install|restart]'" >&2
     exit 1

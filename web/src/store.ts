@@ -45,7 +45,7 @@ export interface Store {
   send: (text: string, queue?: boolean) => Promise<void>;
   interrupt: () => void;
   archive: (id: string) => void;
-  resolvePending: (approve: boolean) => void;
+  resolvePending: (approve: boolean, scope?: "once" | "session") => void;
   savePolicy: (cfg: NetConfig) => Promise<void>;
   overridePolicy: () => Promise<void>;
   clearPolicyOverride: () => Promise<void>;
@@ -158,13 +158,13 @@ export function useStore(): Store {
     }
   }, []);
 
-  const resolvePending = useCallback((approve: boolean) => {
+  const resolvePending = useCallback((approve: boolean, scope: "once" | "session" = "once") => {
     const req = pendingRef.current;
     // Drop this card optimistically — the NEXT parked hold (if any) surfaces right
     // away; the gate re-emits the row with its final verdict, reconciled by id.
     setPendings((prev) => prev.filter((p) => p.id !== req?.id));
     if (!req) return;
-    (approve ? api.allowRequest(req.id) : api.denyRequest(req.id)).catch(() => {
+    (approve ? api.allowRequest(req.id, scope) : api.denyRequest(req.id)).catch(() => {
       // The hold may have already resolved/expired server-side (404). Re-sync so the
       // rail reflects the true state rather than a stale card.
       refreshNet();

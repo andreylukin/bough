@@ -199,6 +199,10 @@ export class McpManager {
         // ~/.serena) — servers that keep state outside the workspace need them.
         allowWrite: [spawn.sandbox.sessionDir, ...cfg.allowWrite.map(expandHome)],
         confineNetwork: Object.keys(netEnv).length > 0,
+        // Same hardening as bash children: no reaching the local API, no keychain
+        // reads in agent-user mode.
+        apiPort: Number(Deno.env.get("BOUGH_PORT") ?? "4321"),
+        denyKeychain: !!Deno.env.get("BOUGH_AGENT_USER"),
       });
     }
     const home = Deno.env.get("HOME");

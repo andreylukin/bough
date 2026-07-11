@@ -28,6 +28,9 @@ const GOLDEN = `(version 1)
   (subpath "/home/u/.1password")
   (subpath "/home/u/.bough/mcp/tokens")
   (subpath "/home/u/.bough/env")
+  (subpath "/home/u/.bough/net/ca/ca.key")
+  (subpath "/home/u/.bough/net/ca/leaf.key")
+  (subpath "/home/u/.bough/net/credentials.json")
   (subpath "/home/u/Library/Containers/com.1password.1password")
   (subpath "/home/u/Library/Group Containers/2BUA8C4S2C.com.1password")
   (subpath "/home/u/.zshrc")
@@ -141,6 +144,29 @@ Deno.test("buildProfile: confineNetwork denies egress but allows loopback", () =
   // local daemons need to bind + accept: unix sockets and loopback TCP only
   assertStringIncludes(p, '(allow network-bind (local ip "localhost:*") (local unix-socket))');
   assertStringIncludes(p, '(allow network-inbound (local ip "localhost:*") (local unix-socket))');
+});
+
+Deno.test("buildProfile: apiPort deny overrides the loopback allow (last-match-wins)", () => {
+  const p = buildProfile({ workspace: "/w", home: "/home/u", confineNetwork: true, apiPort: 4321 });
+  const deny = '(deny network-outbound (remote ip "localhost:4321"))';
+  assertStringIncludes(p, deny);
+  // the port deny MUST come after the loopback allow so SBPL's last-match-wins denies it
+  assert(p.indexOf('(allow network-outbound (remote ip "localhost:*")') < p.indexOf(deny), "deny after allow");
+  // no apiPort → no such line (single-user default)
+  const q = buildProfile({ workspace: "/w", home: "/home/u", confineNetwork: true });
+  assert(!q.includes("localhost:4321"));
+  // apiPort without confineNetwork does nothing (no network section at all)
+  const r = buildProfile({ workspace: "/w", home: "/home/u", apiPort: 4321 });
+  assert(!r.includes("network"));
+});
+
+Deno.test("buildProfile: denyKeychain adds the keychain deny only when set", () => {
+  const withKc = buildProfile({ workspace: "/w", home: "/home/u", denyKeychain: true });
+  assertStringIncludes(withKc, '(subpath "/home/u/Library/Keychains")');
+  assertStringIncludes(withKc, '(subpath "/Library/Keychains")');
+  // default (single-user): keychain stays readable so the operator's git/gh can push
+  const without = buildProfile({ workspace: "/w", home: "/home/u" });
+  assert(!without.includes("Library/Keychains"));
 });
 
 // ---- real enforcement smokes (macOS only) ----------------------------------

@@ -53,15 +53,18 @@ Deno.test("file tools reject paths that escape the workspace", async () => {
   try {
     await assertRejects(() => writeFile.run({ path: "../escape.txt", content: "x" }, ctx));
     await assertRejects(() => readFile.run({ path: "/etc/hosts" }, ctx));
-    // With a sandbox handle, the snapshot dir is also writable.
+    // With a sandbox handle, the snapshot dir and the scratchpad are also writable.
     const snap = `${dir}-snap`;
+    const scratch = `${dir}-scratch`;
     await Deno.mkdir(snap, { recursive: true });
-    await writeFile.run({ path: `${snap}/ok.txt`, content: "y" }, {
-      workspace: dir,
-      sandbox: { sessionDir: snap },
-    });
+    await Deno.mkdir(scratch, { recursive: true });
+    const sbx = { workspace: dir, sandbox: { sessionDir: snap, scratchDir: scratch } };
+    await writeFile.run({ path: `${snap}/ok.txt`, content: "y" }, sbx);
     assertEquals(await Deno.readTextFile(`${snap}/ok.txt`), "y");
+    await writeFile.run({ path: `${scratch}/tmp.txt`, content: "z" }, sbx);
+    assertEquals(await Deno.readTextFile(`${scratch}/tmp.txt`), "z");
     await Deno.remove(snap, { recursive: true });
+    await Deno.remove(scratch, { recursive: true });
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -87,7 +90,7 @@ Deno.test({
   ignore: Deno.build.os !== "darwin",
   async fn() {
     const dir = await Deno.makeTempDir();
-    const ctx = { workspace: dir, sandbox: { sessionDir: `${dir}/.snap` } };
+    const ctx = { workspace: dir, sandbox: { sessionDir: `${dir}/.snap`, scratchDir: `${dir}/.scratch` } };
     const escape = `${Deno.env.get("HOME")}/bough-seatbelt-escape-${crypto.randomUUID()}.txt`;
     try {
       await bash.run({ command: "echo hi > inside.txt" }, ctx);
