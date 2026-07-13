@@ -230,6 +230,13 @@ export function openaiClient(): LlmClient {
     apiKeyEnv: "OPENAI_API_KEY",
     mapModel: (m) => (m.startsWith("openai:") ? m.slice("openai:".length) : m),
     maxTokensParam: "max_completion_tokens",
+    // Reasoning-family models reject function tools on chat/completions unless
+    // reasoning is off ("Function tools with reasoning_effort are not supported…
+    // set reasoning_effort to 'none'"). Older families reject the param outright,
+    // so it's model-gated. Full reasoning + tools needs the Responses API — a
+    // future migration, not this client.
+    extraBody: (wireModel, hasTools) =>
+      hasTools && /^(o\d|gpt-[5-9])/.test(wireModel) ? { reasoning_effort: "none" } : {},
   });
 }
 
@@ -244,6 +251,8 @@ interface OpenAICompatOpts {
   mapModel?: (model: string) => string;
   /** Wire name for the output-token cap; OpenAI proper wants max_completion_tokens. */
   maxTokensParam?: "max_tokens" | "max_completion_tokens";
+  /** Provider-specific body fields, computed from the wire model id + tool use. */
+  extraBody?: (wireModel: string, hasTools: boolean) => Record<string, unknown>;
 }
 
 // The shared OpenAI chat-completions streaming client behind both OpenRouter and
@@ -264,6 +273,10 @@ function openAICompatClient(opts: OpenAICompatOpts): LlmClient {
         body: JSON.stringify({
           model: opts.mapModel ? opts.mapModel(params.model) : params.model,
           [opts.maxTokensParam ?? "max_tokens"]: params.maxTokens,
+          ...(opts.extraBody?.(
+            opts.mapModel ? opts.mapModel(params.model) : params.model,
+            params.tools.length > 0,
+          ) ?? {}),
           stream: true,
           stream_options: { include_usage: true },
           messages: toOpenAIMessages(params.system, params.messages),
