@@ -11,7 +11,7 @@ export function Composer(
   return (
     <Box borderStyle="round" borderColor={busy ? "yellow" : "gray"} paddingX={1}>
       <Text wrap="wrap">
-        <Text color="cyan">{"› "}</Text>
+        <Text color="green">{"› "}</Text>
         {before}
         <Text inverse>{at === undefined || at === "\n" ? " " : at}</Text>
         {at === "\n" ? "\n" + after : after}

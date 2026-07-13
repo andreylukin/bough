@@ -1,5 +1,5 @@
 import { assertEquals } from "jsr:@std/assert@1";
-import { wordLeft, wordRight } from "./format.ts";
+import { fuzzyScore, wordLeft, wordRight } from "./format.ts";
 
 Deno.test("wordLeft/wordRight: readline word boundaries", () => {
   const t = "what does this do";
@@ -13,4 +13,13 @@ Deno.test("wordLeft/wordRight: readline word boundaries", () => {
 
 Deno.test("wordLeft: whitespace runs collapse into the jump", () => {
   assertEquals(wordLeft("ab   cd", 5), 0); // from inside the gap → start of "ab"
+});
+
+Deno.test("fuzzyScore: prefix > word-boundary > substring > subsequence > none", () => {
+  assertEquals(fuzzyScore("exa", "ex"), 4);
+  assertEquals(fuzzyScore("user-testing", "test"), 3);
+  assertEquals(fuzzyScore("restish", "tish"), 2);
+  assertEquals(fuzzyScore("wiki", "wk"), 1); // in-order subsequence
+  assertEquals(fuzzyScore("commit", "xyz"), 0);
+  assertEquals(fuzzyScore("anything", ""), 1); // empty query matches everything
 });

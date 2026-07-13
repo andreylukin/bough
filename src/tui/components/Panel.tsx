@@ -140,7 +140,7 @@ export function Panel(
   },
 ) {
   return (
-    <Box flexDirection="column" borderStyle="round" paddingX={1}>
+    <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
       <Tabs tab={tab} />
       <Box marginTop={1}>
         {tab === "net"

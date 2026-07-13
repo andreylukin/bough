@@ -8,7 +8,7 @@ const PAD = Math.max(...KEYMAP.flatMap((s) => s.keys.map(([k]) => k.length))) + 
 
 export function Help() {
   return (
-    <Box flexDirection="column" borderStyle="round" paddingX={1}>
+    <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
       <Text bold>keys</Text>
       {KEYMAP.map((sec) => (
         <Box key={sec.section} flexDirection="column" marginTop={1}>
@@ -16,7 +16,7 @@ export function Help() {
           {sec.keys.map(([key, desc]) => (
             <Text key={key} wrap="truncate">
               {"  "}
-              <Text color="cyan">{key.padEnd(PAD)}</Text>
+              <Text color="green">{key.padEnd(PAD)}</Text>
               {desc}
             </Text>
           ))}

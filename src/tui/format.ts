@@ -93,6 +93,25 @@ export function fmtTokens(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : `${n}`;
 }
 
+/**
+ * Fuzzy rank for the composer popups: exact prefix beats word-boundary prefix
+ * beats substring beats in-order subsequence; non-matches drop out (score 0).
+ */
+export function fuzzyScore(candidate: string, query: string): number {
+  if (!query) return 1;
+  const c = candidate.toLowerCase();
+  const q = query.toLowerCase();
+  if (c.startsWith(q)) return 4;
+  if (c.includes("-" + q) || c.includes("_" + q) || c.includes(" " + q)) return 3;
+  if (c.includes(q)) return 2;
+  let i = 0;
+  for (const ch of c) {
+    if (ch === q[i]) i++;
+    if (i === q.length) return 1;
+  }
+  return 0;
+}
+
 // Readline-style word boundaries for the composer (⌥b/⌥f, ctrl+w).
 export function wordLeft(text: string, cursor: number): number {
   let i = cursor;

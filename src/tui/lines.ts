@@ -20,8 +20,10 @@ const green = (s: string) => SGR(32, s);
 const yellow = (s: string) => SGR(33, s);
 const red = (s: string) => SGR(31, s);
 
+// One accent: green is bough's color (identity + affirmative status); the user
+// speaks in plain bright text, cyan is reserved for code.
 const ROLE_LABEL: Record<Role, string> = {
-  user: bold(cyan("you")),
+  user: bold("you"),
   supervisor: bold(green("bough")),
   worker: dim("worker"),
   system: bold(yellow("system")),

@@ -41,7 +41,7 @@ export function ModelPicker(
 ) {
   let lastKind: string | null = null;
   return (
-    <Box flexDirection="column" borderStyle="round" paddingX={1}>
+    <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
       {entries.map((e, i) => {
         const header = e.kind !== lastKind;
         lastKind = e.kind;

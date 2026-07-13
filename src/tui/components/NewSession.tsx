@@ -8,7 +8,7 @@ export function NewSession(
   { query, hits, selected }: { query: string; hits: DirHit[]; selected: number },
 ) {
   return (
-    <Box flexDirection="column" borderStyle="round" paddingX={1}>
+    <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
       <Text bold>new session</Text>
       <Text>
         <Text dimColor>{"workspace: "}</Text>

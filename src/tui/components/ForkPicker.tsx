@@ -19,7 +19,7 @@ export function ForkPicker(
   const start = Math.max(0, Math.min(selected - Math.floor(max / 2), messages.length - max));
   const win = messages.slice(start, start + max);
   return (
-    <Box flexDirection="column" borderStyle="round" paddingX={1}>
+    <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
       <Text bold>fork at…</Text>
       {win.map((m, i) => (
         <Text key={m.id} inverse={start + i === selected} wrap="truncate">

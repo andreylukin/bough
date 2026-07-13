@@ -18,7 +18,7 @@ import {
 } from "../api.ts";
 import { useStore } from "../store.ts";
 import { buildLines } from "../lines.ts";
-import { segmentParts, wordLeft, wordRight } from "../format.ts";
+import { fuzzyScore, segmentParts, wordLeft, wordRight } from "../format.ts";
 import { type MouseEvent, onMouse, onPaste } from "../mouse.ts";
 import { Composer } from "./Composer.tsx";
 import { StatusBar } from "./StatusBar.tsx";
@@ -30,7 +30,7 @@ import { DiffView, flattenDiffs } from "./DiffView.tsx";
 import { modelEntries, ModelPicker } from "./ModelPicker.tsx";
 import { Panel, PANEL_TABS, type PanelTab } from "./Panel.tsx";
 import { Help } from "./Help.tsx";
-import { saveLastSession } from "../state.ts";
+import { appendHistory, loadHistory, saveLastSession } from "../state.ts";
 
 type Mode = "chat" | "picker" | "new" | "fork" | "diff" | "model" | "panel" | "help";
 
@@ -67,8 +67,9 @@ export function App(
   const [pickSel, setPickSel] = useState(0);
   const [filter, setFilter] = useState("");
   const [filterActive, setFilterActive] = useState(false);
-  // composer history (sent messages, oldest first); null idx = editing the draft
-  const history = useRef<string[]>([]);
+  // composer history (sent messages, oldest first, persisted across runs);
+  // null idx = editing the draft
+  const history = useRef<string[]>(loadHistory());
   const [histIdx, setHistIdx] = useState<number | null>(null);
   const draft = useRef("");
   // panel state
@@ -252,12 +253,17 @@ export function App(
       return ws < 0 ? text.length : cursor + ws;
     })();
     if (text.startsWith("/") && cursor >= 1 && !/\s/.test(text.slice(0, cursor))) {
-      const q = text.slice(1, cursor).toLowerCase();
+      const q = text.slice(1, cursor);
       const apply = (skills: SkillInfo[]) => {
         const items = skills
-          .filter((s) => s.name.toLowerCase().includes(q))
+          .map((s) => ({ s, score: fuzzyScore(s.name, q) }))
+          .filter((x) => x.score > 0)
+          .sort((a, b) =>
+            b.score - a.score || a.s.name.length - b.s.name.length ||
+            a.s.name.localeCompare(b.s.name)
+          )
           .slice(0, 6)
-          .map((s) => ({ label: `/${s.name}`, detail: s.description, insert: `/${s.name} ` }));
+          .map(({ s }) => ({ label: `/${s.name}`, detail: s.description, insert: `/${s.name} ` }));
         setPopup(
           items.length ? { kind: "skill", items, sel: 0, tokenStart: 0, tokenEnd: end } : null,
         );
@@ -662,16 +668,16 @@ export function App(
       if (store.busy) store.interrupt();
       return;
     }
-    if (key.return) {
-      // Resolve the text inside the updater: an Enter that lands in the same
-      // React batch as just-typed/pasted text would otherwise read a stale
-      // (empty) closure and silently drop the send.
-      const queue = key.meta;
+    // Send resolves the text inside the updater: an Enter that lands in the same
+    // React batch as just-typed/pasted text would otherwise read a stale (empty)
+    // closure and silently drop the send.
+    const sendNow = (queue: boolean) => {
       setComp((c) => {
         const text = c.text.trim();
         if (!text) return c;
         queueMicrotask(() => {
           history.current.push(text);
+          appendHistory(text);
           setHistIdx(null);
           draft.current = "";
           // alt+enter stages the message until the turn finishes; plain enter steers.
@@ -679,6 +685,9 @@ export function App(
         });
         return { text: "", cursor: 0 };
       });
+    };
+    if (key.return) {
+      sendNow(key.meta);
       return;
     }
     // ↑/↓: history recall on a single-line draft; cursor movement across lines
@@ -755,7 +764,21 @@ export function App(
         }
       );
     }
-    if (ch && !key.ctrl && !key.meta) insertAtCursor(ch);
+    if (ch && !key.ctrl && !key.meta) {
+      // Stream reads can coalesce fast input into one chunk ("text\r"), so a
+      // newline can arrive as DATA rather than a return keypress. Normalize CRs
+      // (a raw \r in the composer corrupts the render) and honor a trailing
+      // newline as "…then send" — that's what the sender meant.
+      const norm = ch.replace(/\r\n?/g, "\n");
+      if (norm.includes("\n")) {
+        const sendAfter = norm.endsWith("\n");
+        const body = sendAfter ? norm.slice(0, -1) : norm;
+        if (body) insertAtCursor(body);
+        if (sendAfter) sendNow(key.meta);
+        return;
+      }
+      insertAtCursor(ch);
+    }
   });
 
   const shortWs = defaultWorkspace.replace(new RegExp(`^${Deno.env.get("HOME")}`), "~");
@@ -806,15 +829,17 @@ export function App(
           ? (
             <>
               {Array.from(
-                { length: Math.max(0, bodyH - 2) },
+                { length: Math.max(0, Math.floor((bodyH - 5) / 2)) },
                 (_, i) => <Text key={`pad-${i}`}>{" "}</Text>,
               )}
-              <Text>
-                {" "}
-                <Text color="green" bold>new session</Text>
-                <Text dimColor>{"  "}{shortWs}</Text>
-              </Text>
-              <Text dimColor>{" "}type a message to start · ^p resume a session · ? help</Text>
+              <Box flexDirection="column" alignItems="center">
+                <Text>
+                  <Text color="green">●</Text> <Text bold>bough</Text>
+                </Text>
+                <Text dimColor>new session in {shortWs}</Text>
+                <Text>{" "}</Text>
+                <Text dimColor>type to start · ^p resume · ? help</Text>
+              </Box>
             </>
           )
           : (

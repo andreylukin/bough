@@ -6,7 +6,11 @@ interface TuiState {
   lastSessionId?: string;
   /** bough_session auth cookie ("name=token") from a previous login. */
   cookie?: string;
+  /** Composer history (sent messages, oldest first) — survives restarts. */
+  history?: string[];
 }
+
+const HISTORY_CAP = 50;
 
 function load(): TuiState {
   try {
@@ -39,4 +43,13 @@ export function loadCookie(): string | null {
 
 export function saveCookie(cookie: string): void {
   save({ cookie });
+}
+
+export function loadHistory(): string[] {
+  const h = load().history;
+  return Array.isArray(h) ? h.filter((x) => typeof x === "string") : [];
+}
+
+export function appendHistory(entry: string): void {
+  save({ history: [...loadHistory(), entry].slice(-HISTORY_CAP) });
 }

@@ -48,7 +48,7 @@ export function DiffView(
   const bodyRows = Math.max(4, rows - fileRows - 7);
   const at = Math.max(0, Math.min(scroll, lines.length - bodyRows));
   return (
-    <Box flexDirection="column" borderStyle="round" paddingX={1}>
+    <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
       <Text bold>
         changes{" "}
         <Text dimColor>

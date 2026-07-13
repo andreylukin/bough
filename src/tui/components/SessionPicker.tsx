@@ -47,7 +47,7 @@ export function SessionPicker(
   const start = Math.max(0, Math.min(selected - Math.floor(max / 2), rowsList.length - max));
   const win = rowsList.slice(start, start + max);
   return (
-    <Box flexDirection="column" borderStyle="round" paddingX={1}>
+    <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
       <Text bold>sessions</Text>
       {filterActive
         ? (
