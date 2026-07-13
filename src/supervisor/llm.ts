@@ -16,7 +16,10 @@ import Anthropic from "@anthropic-ai/sdk";
 
 export type LlmBlock =
   | { type: "text"; text: string }
-  | { type: "reasoning"; text: string }
+  // `meta` is an opaque provider payload replayed verbatim within a turn — the
+  // OpenAI Responses API requires a function_call's reasoning item (encrypted
+  // content included) to precede it in the next round's input.
+  | { type: "reasoning"; text: string; meta?: unknown }
   | { type: "tool_use"; id: string; name: string; input: unknown };
 
 /** A block as it appears in a request message (adds tool_result to LlmBlock). */
@@ -71,20 +74,23 @@ export interface LlmClient {
 // ---- real client -----------------------------------------------------------
 
 function toApiMessage(m: LlmMessage): Anthropic.MessageParam {
-  const content = m.content.map((b): Anthropic.ContentBlockParam => {
+  const content = m.content.flatMap((b): Anthropic.ContentBlockParam[] => {
     switch (b.type) {
       case "text":
+        return [{ type: "text", text: b.text }];
       case "reasoning":
-        return { type: "text", text: b.text };
+        // Replayed reasoning (an OpenAI Responses concern) degrades to prose here;
+        // summary-less items would be empty text blocks, which the API rejects.
+        return b.text.trim() ? [{ type: "text", text: b.text }] : [];
       case "tool_use":
-        return { type: "tool_use", id: b.id, name: b.name, input: b.input ?? {} };
+        return [{ type: "tool_use", id: b.id, name: b.name, input: b.input ?? {} }];
       case "tool_result":
-        return {
+        return [{
           type: "tool_result",
           tool_use_id: b.toolUseId,
           content: b.content,
           is_error: b.isError,
-        };
+        }];
     }
   });
   return { role: m.role, content };
@@ -217,42 +223,183 @@ export function openrouterClient(): LlmClient {
   });
 }
 
-// OpenAI proper. Picker ids carry an "openai:" prefix (openai:gpt-5) so the router can
-// tell them from bare Anthropic ids; strip it for the wire call. Current OpenAI
-// models reject `max_tokens` ("use max_completion_tokens"), so that name is
-// per-provider. OPENAI_API_BASE overrides the host for tests (same knob the model
-// puller uses).
+// ---- OpenAI proper: the Responses API --------------------------------------
+//
+// Chat/completions can't combine function tools with reasoning on the gpt-5/o*
+// families, so OpenAI rides /v1/responses instead. Stateless (store:false): each
+// round replays the whole history as input items, with reasoning items (their
+// encrypted content requested via `include`) echoed back verbatim before their
+// function_call — the API rejects a function_call whose reasoning item is missing.
+// Reasoning items ride LlmBlock.meta through turn.ts's in-memory round loop;
+// across turns the history mapper drops them, and old function_calls replay
+// bare (accepted — the pairing rule binds items of the live response chain).
+// Picker ids carry an "openai:" prefix (openai:gpt-5); stripped for the wire.
+
+/** LlmMessages → Responses `input` items. Exported for tests. */
+export function toResponsesInput(messages: LlmMessage[]): unknown[] {
+  const out: unknown[] = [];
+  for (const m of messages) {
+    for (const b of m.content) {
+      if (b.type === "text") {
+        out.push(
+          m.role === "user"
+            ? { role: "user", content: [{ type: "input_text", text: b.text }] }
+            : { role: "assistant", content: [{ type: "output_text", text: b.text }] },
+        );
+      } else if (b.type === "reasoning") {
+        if (b.meta) out.push(b.meta); // the raw reasoning item, replayed verbatim
+      } else if (b.type === "tool_use") {
+        out.push({
+          type: "function_call",
+          call_id: b.id,
+          name: b.name,
+          arguments: JSON.stringify(b.input ?? {}),
+        });
+      } else if (b.type === "tool_result") {
+        out.push({ type: "function_call_output", call_id: b.toolUseId, output: b.content });
+      }
+    }
+  }
+  return out;
+}
+
+interface ResponsesItem {
+  type?: string;
+  call_id?: string;
+  name?: string;
+  arguments?: string;
+  content?: { type?: string; text?: string }[];
+  summary?: { text?: string }[];
+}
+
+/** A Responses `output` array → our normalized blocks. Exported for tests. */
+export function fromResponsesOutput(output: ResponsesItem[]): LlmBlock[] {
+  const blocks: LlmBlock[] = [];
+  for (const item of output) {
+    if (item.type === "message") {
+      const text = (item.content ?? [])
+        .filter((c) => c.type === "output_text")
+        .map((c) => c.text ?? "")
+        .join("");
+      if (text) blocks.push({ type: "text", text });
+    } else if (item.type === "function_call") {
+      let input: unknown = {};
+      try {
+        input = JSON.parse(item.arguments ?? "{}");
+      } catch {
+        // leave {} — the tool layer reports the schema violation
+      }
+      blocks.push({ type: "tool_use", id: item.call_id ?? "", name: item.name ?? "", input });
+    } else if (item.type === "reasoning") {
+      const text = (item.summary ?? []).map((s) => s.text ?? "").join("\n");
+      blocks.push({ type: "reasoning", text, meta: item });
+    }
+  }
+  return blocks;
+}
+
 export function openaiClient(): LlmClient {
   const base = Deno.env.get("OPENAI_API_BASE") ?? "https://api.openai.com";
-  return openAICompatClient({
-    provider: "openai",
-    url: `${base}/v1/chat/completions`,
-    apiKeyEnv: "OPENAI_API_KEY",
-    mapModel: (m) => (m.startsWith("openai:") ? m.slice("openai:".length) : m),
-    maxTokensParam: "max_completion_tokens",
-    // Reasoning-family models reject function tools on chat/completions unless
-    // reasoning is off ("Function tools with reasoning_effort are not supported…
-    // set reasoning_effort to 'none'"). Older families reject the param outright,
-    // so it's model-gated. Full reasoning + tools needs the Responses API — a
-    // future migration, not this client.
-    extraBody: (wireModel, hasTools) =>
-      hasTools && /^(o\d|gpt-[5-9])/.test(wireModel) ? { reasoning_effort: "none" } : {},
-  });
+  return {
+    async run(params, onText, signal) {
+      const apiKey = Deno.env.get("OPENAI_API_KEY");
+      if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
+      const model = params.model.startsWith("openai:")
+        ? params.model.slice("openai:".length)
+        : params.model;
+      const res = await fetch(`${base}/v1/responses`, {
+        method: "POST",
+        signal,
+        headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
+        body: JSON.stringify({
+          model,
+          instructions: params.system,
+          max_output_tokens: params.maxTokens,
+          stream: true,
+          store: false,
+          include: ["reasoning.encrypted_content"],
+          input: toResponsesInput(params.messages),
+          tools: params.tools.map((t) => ({
+            type: "function",
+            name: t.name,
+            description: t.description,
+            parameters: t.inputSchema,
+          })),
+        }),
+      });
+      if (!res.ok || !res.body) {
+        throw new Error(`openai: ${res.status} ${await res.text().catch(() => "")}`);
+      }
+
+      // Deltas stream for the live feel; the final content comes whole from the
+      // response.completed payload (no per-item assembly to get wrong).
+      let final: {
+        output?: ResponsesItem[];
+        status?: string;
+        incomplete_details?: { reason?: string };
+        usage?: {
+          input_tokens?: number;
+          output_tokens?: number;
+          input_tokens_details?: { cached_tokens?: number };
+        };
+      } | undefined;
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buffer = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += dec.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = buffer.indexOf("\n")) >= 0) {
+          const line = buffer.slice(0, nl).trim();
+          buffer = buffer.slice(nl + 1);
+          if (!line.startsWith("data:")) continue;
+          const data = line.slice(5).trim();
+          if (data === "[DONE]") continue;
+          let ev: { type?: string; delta?: string; response?: typeof final; message?: string };
+          try {
+            ev = JSON.parse(data);
+          } catch {
+            continue;
+          }
+          if (ev.type === "response.output_text.delta" && ev.delta) onText(ev.delta);
+          else if (ev.type === "response.completed" && ev.response) final = ev.response;
+          else if (
+            (ev.type === "response.failed" || ev.type === "error") && !final
+          ) {
+            throw new Error(`openai: ${JSON.stringify(ev)}`);
+          } else if (ev.type === "response.incomplete" && ev.response) final = ev.response;
+        }
+      }
+      if (!final) throw new Error("openai: stream ended without response.completed");
+
+      const content = fromResponsesOutput(final.output ?? []);
+      const stopReason = content.some((b) => b.type === "tool_use")
+        ? "tool_use"
+        : final.status === "incomplete" && final.incomplete_details?.reason === "max_output_tokens"
+        ? "max_tokens"
+        : "end_turn";
+      const usage: LlmUsage = {
+        inputTokens: final.usage?.input_tokens ?? 0,
+        outputTokens: final.usage?.output_tokens ?? 0,
+        cacheReadTokens: final.usage?.input_tokens_details?.cached_tokens ?? 0,
+        cacheCreationTokens: 0,
+      };
+      return { content, stopReason, usage };
+    },
+  };
 }
 
 interface OpenAICompatOpts {
-  /** Names the provider in errors ("openai: 401 …", "OPENAI_API_KEY is not set"). */
+  /** Names the provider in errors ("openrouter: 401 …", "…_API_KEY is not set"). */
   provider: string;
   url: string;
   /** Read at run() time, so a key set at runtime applies without a restart. */
   apiKeyEnv: string;
   extraHeaders?: Record<string, string>;
-  /** Map our model id to the provider's wire id (e.g. strip the "openai:" prefix). */
+  /** Map our model id to the provider's wire id. */
   mapModel?: (model: string) => string;
-  /** Wire name for the output-token cap; OpenAI proper wants max_completion_tokens. */
-  maxTokensParam?: "max_tokens" | "max_completion_tokens";
-  /** Provider-specific body fields, computed from the wire model id + tool use. */
-  extraBody?: (wireModel: string, hasTools: boolean) => Record<string, unknown>;
 }
 
 // The shared OpenAI chat-completions streaming client behind both OpenRouter and
@@ -272,11 +419,7 @@ function openAICompatClient(opts: OpenAICompatOpts): LlmClient {
         },
         body: JSON.stringify({
           model: opts.mapModel ? opts.mapModel(params.model) : params.model,
-          [opts.maxTokensParam ?? "max_tokens"]: params.maxTokens,
-          ...(opts.extraBody?.(
-            opts.mapModel ? opts.mapModel(params.model) : params.model,
-            params.tools.length > 0,
-          ) ?? {}),
+          max_tokens: params.maxTokens,
           stream: true,
           stream_options: { include_usage: true },
           messages: toOpenAIMessages(params.system, params.messages),

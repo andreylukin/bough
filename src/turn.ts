@@ -577,8 +577,12 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
           append({ type: "text", text: block.text });
           assistant.push({ type: "text", text: block.text });
         } else if (block.type === "reasoning") {
-          // Persisted for display; dropped from the replayed assistant turn.
-          append({ type: "reasoning", text: block.text });
+          // Persisted for display (when there's a summary to show) and replayed
+          // in-memory within this turn — the OpenAI Responses client must echo a
+          // function_call's reasoning item back on the next round. Cross-turn
+          // replay still drops reasoning (see toLlmMessages).
+          if (block.text) append({ type: "reasoning", text: block.text });
+          assistant.push(block);
         } else if (block.type === "tool_use") {
           append({ type: "tool_call", id: block.id, name: block.name, input: block.input });
           assistant.push(block);
