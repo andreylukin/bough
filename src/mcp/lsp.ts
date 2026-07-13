@@ -51,9 +51,11 @@ export function lspSection(): string {
     "START code exploration here: lsp.overview on a file instead of reading it whole, " +
     "lsp.find to locate a symbol instead of an rg sweep, lsp.refs for callers instead of " +
     "grepping the name. These answer in symbols, not dumped text — far fewer tokens and " +
-    "no false matches. Fall back to rg/read only for non-code text or when a verb comes " +
-    "back empty. Verbs (await each; the args object goes to the language backend " +
-    "verbatim):\n" +
+    "no false matches. Fall back to rg/read for non-code text, when a verb comes back " +
+    "empty, or when lsp itself errors (language server missing or failing to start) — " +
+    "a broken server is never a reason to stop the task; note it in one line and keep " +
+    "working with rg/read. Verbs (await each; the args object goes to the language " +
+    "backend verbatim):\n" +
     "- lsp.find({name_path_pattern, relative_path?, include_body?}) — search symbols by " +
     'name path ("method" matches anywhere, "Class/method" scoped, substring via ' +
     "substring_matching: true)\n" +
@@ -65,7 +67,7 @@ export function lspSection(): string {
     "- lsp.diagnostics({relative_path, start_line?, end_line?}) — language-server " +
     "diagnostics for a file\n" +
     "- lsp.rename({name_path, relative_path, new_name}) — rename across the codebase\n" +
-    "name_path addresses a symbol (e.g. \"UserHandler/get_user\"); relative_path is " +
+    'name_path addresses a symbol (e.g. "UserHandler/get_user"); relative_path is ' +
     "workspace-relative and pins the symbol's defining file. The first call in a " +
     "session may take seconds (language-server startup + indexing) — still worth it.";
 }
