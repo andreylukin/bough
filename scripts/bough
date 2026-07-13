@@ -677,8 +677,20 @@ cmd_tui() {
     --allow-write=/dev/tty,"$HOME/.bough" --allow-sys --allow-run src/tui/main.tsx "$@"
 }
 
+# Hard-delete sessions archived over 30 days ago (the long-term purge; also runs on
+# boot). Talks to the running server so it uses the same DB handle.
+cmd_purge() {
+  if ! is_up; then
+    echo "server not running — start it first (bough start)" >&2
+    exit 1
+  fi
+  local n
+  n="$(curl -sf -m 10 -X POST "http://127.0.0.1:$PORT/purge" | sed -n 's/.*"purged":\([0-9]*\).*/\1/p')"
+  echo "purged ${n:-0} session(s) archived over 30 days ago"
+}
+
 usage() {
-  echo "usage: bough [tui|setup|grant|revoke|teardown|start|kill|restart|update|status|logs|run|net|desktop]"
+  echo "usage: bough [tui|setup|grant|revoke|teardown|start|kill|restart|update|status|logs|run|net|purge|desktop]"
   echo "  (no args) open the terminal UI (auto-starts the server)"
   echo "  setup    fresh clone → running: install deps, build, configure env, start"
   echo "           setup --agent-user: migrate state + install the dedicated-user daemon"
@@ -692,6 +704,7 @@ usage() {
   echo "  run      run the server in the foreground (what launchd executes)"
   echo "  broker   AWS read-only credential broker: 'bough broker {install|uninstall|status}'"
   echo "  net      Claw Patrol checks: 'bough net validate' verifies policy + plugins"
+  echo "  purge    hard-delete sessions archived over 30 days ago (also runs on boot)"
   echo "  desktop  native app: 'bough desktop [run|install|restart]'"
 }
 
@@ -725,6 +738,9 @@ case "${1:-}" in
   net)
     shift
     cmd_net "$@"
+    ;;
+  purge)
+    cmd_purge
     ;;
   desktop)
     shift

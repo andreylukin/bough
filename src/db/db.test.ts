@@ -6,7 +6,12 @@ function mkDb(): Db {
   return new Db(":memory:");
 }
 
-function session(id: string, parentId: string | null, kind: Session["kind"], createdAt: number): Session {
+function session(
+  id: string,
+  parentId: string | null,
+  kind: Session["kind"],
+  createdAt: number,
+): Session {
   return { id, parentId, title: id, kind, createdAt };
 }
 
@@ -53,9 +58,21 @@ Deno.test("session lineage: origin fields round-trip; absent stays undefined", (
 Deno.test("treeUsage sums the subagent subtree only (forks excluded, archived included)", () => {
   const db = mkDb();
   db.createSession(session("root", null, "root", 1));
-  db.createSession({ ...session("sub", null, "subagent", 2), originId: "root", originMessageId: "m1" });
-  db.createSession({ ...session("grand", null, "subagent", 3), originId: "sub", originMessageId: "m2" });
-  db.createSession({ ...session("fork", null, "fork", 4), originId: "root", originMessageId: "m3" });
+  db.createSession({
+    ...session("sub", null, "subagent", 2),
+    originId: "root",
+    originMessageId: "m1",
+  });
+  db.createSession({
+    ...session("grand", null, "subagent", 3),
+    originId: "sub",
+    originMessageId: "m2",
+  });
+  db.createSession({
+    ...session("fork", null, "fork", 4),
+    originId: "root",
+    originMessageId: "m3",
+  });
   db.setSessionUsage("root", 10_000, 100, 1_000);
   db.setSessionUsage("sub", 5_000, 200, 2_000);
   db.setSessionUsage("grand", 2_000, 400, 4_000);
@@ -128,5 +145,40 @@ Deno.test("recordNetEvent inserts without throwing (minimal columns)", () => {
     verdict: "allowed",
     ts: 1,
   });
+  db.close();
+});
+
+Deno.test("purgeArchivedBefore: removes sessions archived past the cutoff + their rows", () => {
+  const db = mkDb();
+  db.createSession(session("keep", null, "root", 1));
+  db.createSession(session("old", null, "root", 2));
+  db.createSession(session("recent", null, "root", 3));
+  db.createMessage(msg("m1", "old", 1, "gone"));
+  db.createMessage(msg("m2", "keep", 1, "stays"));
+  // archive "old" long ago and "recent" just now
+  db.archiveSession("old");
+  db.archiveSession("recent");
+  // Backdate "old"'s archived_at by hand-setting via a fresh purge cutoff:
+  // archiveSession stamps Date.now(); purge with a FUTURE cutoff catches both,
+  // with a past cutoff catches neither — so test the boundary explicitly.
+  const future = Date.now() + 1000;
+  // Only "old" should go if we could backdate; since both share ~now, use future
+  // cutoff to purge all archived, and assert non-archived survives.
+  const n = db.purgeArchivedBefore(future);
+  assertEquals(n, 2); // old + recent (both archived before the future cutoff)
+  assertEquals(db.getSession("keep")?.id, "keep"); // non-archived survives
+  assertEquals(db.getSession("old"), undefined); // purged
+  assertEquals(db.messagesFor("old").length, 0); // its messages gone too
+  assertEquals(db.messagesFor("keep").length, 1); // untouched
+  db.close();
+});
+
+Deno.test("purgeArchivedBefore: leaves sessions archived after the cutoff", () => {
+  const db = mkDb();
+  db.createSession(session("a", null, "root", 1));
+  db.archiveSession("a");
+  const past = Date.now() - 1000; // cutoff before it was archived
+  assertEquals(db.purgeArchivedBefore(past), 0);
+  assertEquals(db.getSession("a")?.id, "a"); // still there (archived, not purged)
   db.close();
 });

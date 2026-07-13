@@ -30,6 +30,8 @@ export interface TreeNode {
   steps: ToolStep[];
   branches: TuiSession[];
   tip: boolean;
+  /** All message ids in this turn (user + reply span) — the picks for range ops. */
+  msgIds: string[];
 }
 
 export type TreeItem =
@@ -80,6 +82,7 @@ export function buildTree(thread: Message[], branches: TuiSession[]): TreeNode[]
         steps: [],
         branches: [],
         tip: false,
+        msgIds: [m.id],
       };
       cur = { node, span: [] };
       nodes.push(node);
@@ -87,6 +90,7 @@ export function buildTree(thread: Message[], branches: TuiSession[]): TreeNode[]
     } else if (cur) {
       cur.span.push(m);
       cur.node.steps = stepsOf(cur.span);
+      cur.node.msgIds.push(m.id);
       nodeByMsgId.set(m.id, cur.node);
     }
   }
@@ -118,23 +122,34 @@ const KIND_GLYPH: Record<string, string> = {
 };
 
 export function ConversationTree(
-  { items, selected, rows, showDeprecated }: {
+  { items, selected, rows, showDeprecated, range }: {
     items: TreeItem[];
     selected: number;
     rows: number;
     showDeprecated: boolean;
+    /** Inclusive [lo, hi] item indices highlighted for a range op, or null. */
+    range: [number, number] | null;
   },
 ) {
   const max = Math.max(3, rows - 9);
   const start = Math.max(0, Math.min(selected - Math.floor(max / 2), items.length - max));
   const win = items.slice(start, start + max);
+  const rangeCount = range
+    ? items.slice(range[0], range[1] + 1).filter((it) => it.type === "node").length
+    : 0;
   return (
     <Box flexDirection="column">
       <Text dimColor>
-        branch at any turn or tool run{showDeprecated ? "  (showing deprecated)" : ""}
+        {range
+          ? `select turns — ${rangeCount} · c compact · e extract · esc cancel`
+          : `branch at a turn/tool · v select range${
+            showDeprecated ? " · (showing deprecated)" : ""
+          }`}
       </Text>
       {win.map((it, i) => {
-        const sel = start + i === selected;
+        const idx = start + i;
+        const sel = idx === selected;
+        const inRange = !!range && idx >= range[0] && idx <= range[1];
         if (it.type === "step") {
           return (
             <Text key={`s-${i}`} inverse={sel} wrap="truncate">
@@ -164,16 +179,17 @@ export function ConversationTree(
         }
         const n = it.node;
         const text = n.msg.parts.find((p) => p.type === "text");
-        const preview = text && "text" in text ? clip(text.text.split("\n")[0], 68) : "(no text)";
+        const preview = text && "text" in text ? clip(text.text.split("\n")[0], 66) : "(no text)";
         return (
           <Text key={`n-${n.msg.id}`} inverse={sel} wrap="truncate">
+            <Text color="green">{inRange ? "▍" : " "}</Text>
             <Text color="cyan" bold>you</Text> {preview}
             {n.tip ? <Text color="green">{"  "}← here</Text> : null}
           </Text>
         );
       })}
       {items.length === 0 && <Text dimColor>no turns yet</Text>}
-      <Text dimColor>↑↓ move · enter branch/open · x deprecate · h show hidden · esc</Text>
+      <Text dimColor>↑↓ move · enter branch/open · x deprecate · h hidden · v select · esc</Text>
     </Box>
   );
 }

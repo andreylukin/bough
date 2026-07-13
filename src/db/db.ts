@@ -395,6 +395,38 @@ export class Db {
       .run(on ? Date.now() : null, id);
   }
 
+  /**
+   * Hard-delete sessions archived before `cutoff` (epoch ms) and all their rows —
+   * the long-term purge behind soft-archive. Returns the number of sessions removed.
+   * FK enforcement is toggled off for the sweep so child rows and inter-session
+   * parent pointers don't dictate a delete order; everything referencing a purged
+   * session is being removed or is a survivor whose pointer is nulled.
+   */
+  purgeArchivedBefore(cutoff: number): number {
+    const ids = (this.#db
+      .prepare(`SELECT id FROM sessions WHERE archived_at IS NOT NULL AND archived_at < ?`)
+      .all(cutoff) as { id: string }[]).map((r) => r.id);
+    if (ids.length === 0) return 0;
+    const ph = ids.map(() => "?").join(",");
+    this.#db.exec("PRAGMA foreign_keys = OFF");
+    try {
+      for (
+        const t of ["message_embeddings", "turns", "snapshots", "net_events", "net_policies"]
+      ) {
+        this.#db.prepare(`DELETE FROM ${t} WHERE session_id IN (${ph})`).run(...ids);
+      }
+      this.#db.prepare(`DELETE FROM messages WHERE session_id IN (${ph})`).run(...ids);
+      // Survivors that pointed at a purged parent lose that pointer (surface as roots).
+      this.#db.prepare(`UPDATE sessions SET parent_id = NULL WHERE parent_id IN (${ph})`).run(
+        ...ids,
+      );
+      this.#db.prepare(`DELETE FROM sessions WHERE id IN (${ph})`).run(...ids);
+    } finally {
+      this.#db.exec("PRAGMA foreign_keys = ON");
+    }
+    return ids.length;
+  }
+
   /** The root→self chain of sessions (root first). Empty if id is unknown. */
   ancestorChain(id: string): Session[] {
     const chain: Session[] = [];

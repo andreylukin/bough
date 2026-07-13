@@ -6,7 +6,7 @@ import { openDb } from "../db/db.ts";
 import { ClawpatrolGateway, setActiveGateway } from "../net/gateway.ts";
 import { mcpManager } from "../mcp/manager.ts";
 import { bus } from "../bus.ts";
-import { createHandler } from "./app.ts";
+import { createHandler, PURGE_RETENTION_MS } from "./app.ts";
 import { recoverOrphanedTurns } from "../supervisor/turns.ts";
 import { watchActivity } from "../worker/activity.ts";
 import { workerTitle } from "../supervisor/title.ts";
@@ -22,6 +22,10 @@ if (orphaned > 0) console.log(`recovered ${orphaned} orphaned turn(s)`);
 // startup is an orphan whose approval card would otherwise haunt every session.
 const swept = db.expirePendingNetEvents("expired — server restarted before approval");
 if (swept > 0) console.log(`swept ${swept} orphaned pending net request(s)`);
+// Long-term purge: archive is a soft delete with a grace window; sessions archived
+// longer than the retention period are hard-removed on boot (and via `bough purge`).
+const purged = db.purgeArchivedBefore(Date.now() - PURGE_RETENTION_MS);
+if (purged > 0) console.log(`purged ${purged} session(s) archived over 30 days ago`);
 // Claw Patrol is bough's native egress firewall (opt-in via BOUGH_CLAWPATROL=1): it
 // runs an in-process intercepting proxy and routes sandboxed commands through it.
 const gateway = new ClawpatrolGateway({ db, bus });

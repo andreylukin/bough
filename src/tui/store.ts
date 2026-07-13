@@ -53,6 +53,8 @@ export interface Store {
   fork: (atMessageId: string, atPart?: number) => Promise<Session | null>;
   // Compact the current session's own turns onto a summary branch; opens it.
   compact: () => Promise<Session | null>;
+  compactPicks: (msgIds: string[]) => Promise<Session | null>;
+  extractPicks: (msgIds: string[]) => Promise<Session | null>;
   applyChanges: (source: WireDiff["source"], paths: string[]) => void;
   revertChanges: () => void;
   dismissNotice: () => void;
@@ -175,6 +177,33 @@ export function useStore(initialSessions: Session[]): Store {
       return null;
     }
   }, []);
+
+  // Range ops on a hand-picked set of turn message ids (only this session's OWN
+  // messages qualify; the server 400s picks that reach into ancestor history).
+  const rangeOp = useCallback(
+    async (
+      msgIds: string[],
+      run: (id: string, picks: { messageId: string }[]) => Promise<Session>,
+    ) => {
+      const id = currentRef.current;
+      if (!id) return null;
+      const own = new Set(threadRef.current.filter((m) => m.sessionId === id).map((m) => m.id));
+      const picks = msgIds.filter((mid) => own.has(mid)).map((messageId) => ({ messageId }));
+      if (picks.length === 0) {
+        setNotice("select turns from this conversation (not inherited history)");
+        return null;
+      }
+      try {
+        return await run(id, picks);
+      } catch (e) {
+        setNotice(e instanceof Error ? e.message : String(e));
+        return null;
+      }
+    },
+    [],
+  );
+  const compactPicks = useCallback((ids: string[]) => rangeOp(ids, api.compact), [rangeOp]);
+  const extractPicks = useCallback((ids: string[]) => rangeOp(ids, api.extract), [rangeOp]);
 
   const applyChanges = useCallback((source: WireDiff["source"], paths: string[]) => {
     const id = currentRef.current;
@@ -394,6 +423,8 @@ export function useStore(initialSessions: Session[]): Store {
     resolvePending,
     fork,
     compact,
+    compactPicks,
+    extractPicks,
     applyChanges,
     revertChanges,
     dismissNotice,

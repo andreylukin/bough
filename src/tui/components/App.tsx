@@ -87,8 +87,9 @@ export function App(
   const [newQuery, setNewQuery] = useState("");
   const [newSel, setNewSel] = useState(0);
   const [dirHits, setDirHits] = useState<DirHit[]>([]);
-  // fork state
+  // conversation-tree state: cursor + a range-selection anchor (v starts/ends it).
   const [forkSel, setForkSel] = useState(0);
+  const [rangeAnchor, setRangeAnchor] = useState<number | null>(null);
   // diff state
   const [fileSel, setFileSel] = useState(0);
   const [diffScroll, setDiffScroll] = useState(0);
@@ -421,11 +422,14 @@ export function App(
     }
 
     if (mode === "panel") {
-      // Escape closes the panel — unless it's dismissing the sessions filter.
+      // Escape closes the panel — unless it's dismissing the sessions filter or a
+      // pending conversation range selection.
       if (key.escape) {
         if (panelTab === "sessions" && filterActive) {
           setFilterActive(false);
           setFilter("");
+        } else if (panelTab === "conversation" && rangeAnchor !== null) {
+          setRangeAnchor(null);
         } else setMode("chat");
         return;
       }
@@ -484,9 +488,26 @@ export function App(
 
       // ---- conversation: the branch tree (was ^f) ----
       if (panelTab === "conversation") {
+        // Range selection (v): highlight turns, then compact/extract them.
+        if (ch === "v") {
+          setRangeAnchor((a) => (a === null ? forkSel : null));
+          return;
+        }
+        if (rangeAnchor !== null && (ch === "c" || ch === "e")) {
+          const lo = Math.min(rangeAnchor, forkSel);
+          const hi = Math.max(rangeAnchor, forkSel);
+          const ids = convItems.slice(lo, hi + 1)
+            .flatMap((it) => (it.type === "node" ? it.node.msgIds : []));
+          setRangeAnchor(null);
+          setMode("chat");
+          const op = ch === "c" ? store.compactPicks : store.extractPicks;
+          op(ids).then((s) => s && openSession(s));
+          return;
+        }
         if (key.return) {
           const it = convItems[forkSel];
           if (!it) return;
+          setRangeAnchor(null);
           setMode("chat");
           if (it.type === "branch") openSession(it.session);
           else if (it.type === "step") {
@@ -668,6 +689,7 @@ export function App(
       if (store.thread.length === 0) return;
       // Start on the live tip (last selectable row); ↑ walks back through history.
       setForkSel(Math.max(0, convItems.length - 1));
+      setRangeAnchor(null);
       setPanelTab("conversation");
       setMode("panel");
       return;
@@ -887,6 +909,9 @@ export function App(
               selected={forkSel}
               rows={rows}
               showDeprecated={showDeprecated}
+              range={rangeAnchor === null
+                ? null
+                : [Math.min(rangeAnchor, forkSel), Math.max(rangeAnchor, forkSel)]}
             />
           )
           : (

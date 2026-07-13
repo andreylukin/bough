@@ -189,6 +189,9 @@ export const api = {
   compact: (id: string, picks: { messageId: string }[]) =>
     jmsg<{ session: Session }>(`/sessions/${id}/compact`, postJson({ picks }))
       .then((r) => r.session),
+  extract: (id: string, picks: { messageId: string }[]) =>
+    jmsg<{ session: Session }>(`/sessions/${id}/extract`, postJson({ picks }))
+      .then((r) => r.session),
 
   getConfig: () => j<BoughConfig>("/config"),
   putKey: (provider: KeyProvider, key: string) =>

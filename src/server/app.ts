@@ -308,6 +308,15 @@ const deprecateSession: Handler = async (req, ctx, params) => {
   return json({ ok: true, deprecated: body.on });
 };
 
+// How long an archived session lingers before the long-term purge removes it.
+export const PURGE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
+// Run the long-term purge now (also runs on server boot). `bough purge` hits this.
+const purgeArchived: Handler = (_req, ctx) => {
+  const purged = ctx.db.purgeArchivedBefore(Date.now() - PURGE_RETENTION_MS);
+  return json({ ok: true, purged });
+};
+
 const interruptSession: Handler = (_req, ctx, params) => {
   if (!ctx.db.getSession(params.id)) return error(404, "session not found");
   const stopped = interruptTurn(params.id);
@@ -980,6 +989,7 @@ const routes: Route[] = [
     pattern: new URLPattern({ pathname: "/sessions/:id/deprecate" }),
     handler: deprecateSession,
   },
+  { method: "POST", pattern: new URLPattern({ pathname: "/purge" }), handler: purgeArchived },
   {
     method: "POST",
     pattern: new URLPattern({ pathname: "/sessions/:id/interrupt" }),
