@@ -1,0 +1,61 @@
+// Keybindings as data: KEYMAP drives the `?` help overlay, HINTS the status bar.
+// Kept together so the bindings and their docs can't drift apart.
+
+export const KEYMAP: { section: string; keys: [string, string][] }[] = [
+  {
+    section: "chat",
+    keys: [
+      ["enter", "send (steers a running turn)"],
+      ["⌥enter", "queue until the turn finishes"],
+      ["esc", "interrupt the running turn"],
+      ["↑/↓", "recall previously sent messages"],
+      ["^e", "expand/collapse tool calls (live turns)"],
+      ["^u", "clear the input"],
+      ["?", "this help (when the input is empty)"],
+    ],
+  },
+  {
+    section: "sessions",
+    keys: [
+      ["^p", "session picker (j/k move · / filter · enter open · ^t new · ^x archive)"],
+      ["^n", "new session with workspace autocomplete"],
+      ["^f", "fork at a message"],
+      ["^k", "compact this session onto a summary branch"],
+    ],
+  },
+  {
+    section: "work",
+    keys: [
+      ["^d", "changes review (↑↓ file · j/k scroll · a apply · R revert)"],
+      ["^o", "model + worker picker"],
+      ["^t", "panels: net / mcp / skills (tab cycles)"],
+    ],
+  },
+  {
+    section: "net hold",
+    keys: [
+      ["a", "allow once"],
+      ["A", "allow for the session"],
+      ["d", "deny"],
+    ],
+  },
+  {
+    section: "global",
+    keys: [["^c ^c", "quit (double ctrl+c)"]],
+  },
+];
+
+export const HINTS = {
+  chat: "enter send · esc stop · ^p sessions · ^n new · ^t panels · ? help",
+  approval: "a allow once · A allow session · d deny · ^p sessions",
+  picker: "j/k move · / filter · enter open · ^t new · ^x archive · esc back",
+  new: "type dir query · ↑↓ pick · enter create · esc cancel",
+  fork: "↑↓ pick message · enter fork there · esc cancel",
+  diff: "↑↓ file · j/k scroll · a apply file · R revert all · esc close",
+  model: "↑↓ move · enter set · esc close",
+  panel:
+    "tab switch · j/k move · net: y yolo · mcp: c connect · r restart · e on/off · a auth · esc close",
+  help: "any key closes",
+} as const;
+
+export type UiMode = keyof typeof HINTS;

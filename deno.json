@@ -5,7 +5,8 @@
   "tasks": {
     "dev": "deno run --watch --allow-net --allow-env --allow-read --allow-write --allow-ffi --allow-sys --allow-run src/server/main.ts",
     "test": "deno test --allow-net --allow-env --allow-read --allow-write --allow-ffi --allow-sys --allow-run",
-    "check": "deno check src/**/*.ts",
+    "check": "deno check src/**/*.ts src/tui/**/*.tsx",
+    "tui": "deno run --no-prompt --allow-net=127.0.0.1 --allow-env --allow-read --allow-write=/dev/tty,$HOME/.bough --allow-sys --allow-run src/tui/main.tsx",
     "tunnel": "deno run --allow-net --allow-env --allow-run=cloudflared scripts/tunnel.ts",
     "desktop": "deno desktop --allow-net --allow-env --allow-read --allow-write --allow-ffi --allow-sys --allow-run src/desktop/main.ts",
     "desktop:build": "deno desktop --output bough.app --include web/dist --allow-net --allow-env --allow-read --allow-write --allow-ffi --allow-sys --allow-run src/desktop/main.ts"
@@ -17,7 +18,14 @@
     "@anthropic-ai/sdk": "npm:@anthropic-ai/sdk@0.68.0",
     "drizzle-orm": "npm:drizzle-orm@0.36.4",
     "node-forge": "npm:node-forge@1.4.0",
-    "@std/yaml": "jsr:@std/yaml@1"
+    "@std/yaml": "jsr:@std/yaml@1",
+    "react": "npm:react@19.2.7",
+    "ink": "npm:ink@7.1.0",
+    "@types/react": "npm:@types/react@19"
+  },
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "react"
   },
   "nodeModulesDir": "auto",
   "unstable": [
@@ -31,6 +39,9 @@
     "rules": {
       "tags": [
         "recommended"
+      ],
+      "exclude": [
+        "jsx-curly-braces"
       ]
     }
   }

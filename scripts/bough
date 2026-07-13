@@ -43,7 +43,9 @@ else
   PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
   DOMAIN="gui/$(id -u)"
   LAUNCHCTL="launchctl"
-  AS_AGENT=()
+  # `env` as a no-op prefix: bash 3.2 + `set -u` treats expanding an empty
+  # array as an unbound variable, so AS_AGENT can never be ().
+  AS_AGENT=(env)
 fi
 
 LOG_FILE="$BOUGH_HOME/server.log"
@@ -651,7 +653,54 @@ cmd_net() {
   esac
 }
 
+# The terminal client — what bare `bough` runs. The server is a launchd service
+# that should already be up; if it isn't, start it and wait briefly.
+cmd_tui() {
+  if ! is_up; then
+    echo "server not running — starting it…" >&2
+    cmd_start
+    for _ in $(seq 1 20); do
+      is_up && break
+      sleep 0.5
+    done
+    if ! is_up; then
+      echo "error: server didn't come up on port $PORT — check: bough logs" >&2
+      exit 1
+    fi
+  fi
+  cd "$ROOT"
+  # --no-prompt: Deno's node:tty requests an optional write permission on startup;
+  # denied it works fine, but the interactive prompt would eat the first keystrokes.
+  exec deno run --no-prompt --allow-net=127.0.0.1 --allow-env --allow-read \
+    --allow-write=/dev/tty,"$HOME/.bough" --allow-sys --allow-run src/tui/main.tsx "$@"
+}
+
+usage() {
+  echo "usage: bough [tui|setup|grant|revoke|teardown|start|kill|restart|update|status|logs|run|net|desktop]"
+  echo "  (no args) open the terminal UI (auto-starts the server)"
+  echo "  setup    fresh clone → running: install deps, build, configure env, start"
+  echo "           setup --agent-user: migrate state + install the dedicated-user daemon"
+  echo "  grant    bough grant <dir>: give the agent user access to a project dir"
+  echo "  revoke   bough revoke <dir>: remove the agent user's access"
+  echo "  teardown teardown --agent-user: reverse the dedicated-user cutover"
+  echo "  start    install + start the launchd service (auto-starts at login)"
+  echo "  kill     stop the service and keep it stopped (across logins)"
+  echo "  restart  pick up code changes explicitly"
+  echo "  update   fast-forward to origin/main, rebuild, restart"
+  echo "  run      run the server in the foreground (what launchd executes)"
+  echo "  broker   AWS read-only credential broker: 'bough broker {install|uninstall|status}'"
+  echo "  net      Claw Patrol checks: 'bough net validate' verifies policy + plugins"
+  echo "  desktop  native app: 'bough desktop [run|install|restart]'"
+}
+
 case "${1:-}" in
+  "" | tui)
+    [ $# -gt 0 ] && shift
+    cmd_tui "$@"
+    ;;
+  help | -h | --help)
+    usage
+    ;;
   setup)
     if [ "${2:-}" = "--agent-user" ]; then cmd_setup_agent_user; else cmd_setup; fi
     ;;
@@ -680,20 +729,8 @@ case "${1:-}" in
     cmd_desktop "$@"
     ;;
   *)
-    echo "usage: bough {setup|grant|revoke|teardown|start|kill|restart|update|status|logs|run|net|desktop}" >&2
-    echo "  setup    fresh clone → running: install deps, build, configure env, start" >&2
-    echo "           setup --agent-user: migrate state + install the dedicated-user daemon" >&2
-    echo "  grant    bough grant <dir>: give the agent user access to a project dir" >&2
-    echo "  revoke   bough revoke <dir>: remove the agent user's access" >&2
-    echo "  teardown teardown --agent-user: reverse the dedicated-user cutover" >&2
-    echo "  start    install + start the launchd service (auto-starts at login)" >&2
-    echo "  kill     stop the service and keep it stopped (across logins)" >&2
-    echo "  restart  pick up code changes explicitly" >&2
-    echo "  update   fast-forward to origin/main, rebuild, restart" >&2
-    echo "  run      run the server in the foreground (what launchd executes)" >&2
-    echo "  broker   AWS read-only credential broker: 'bough broker {install|uninstall|status}'" >&2
-    echo "  net      Claw Patrol checks: 'bough net validate' verifies policy + plugins" >&2
-    echo "  desktop  native app: 'bough desktop [run|install|restart]'" >&2
+    echo "error: unknown command '$1'" >&2
+    usage >&2
     exit 1
     ;;
 esac
