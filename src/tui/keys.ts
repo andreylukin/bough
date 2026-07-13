@@ -5,11 +5,13 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
   {
     section: "chat",
     keys: [
-      ["enter", "send (steers a running turn)"],
+      ["enter", "send (steers a running turn; first send creates the session)"],
       ["⌥enter", "queue until the turn finishes"],
       ["esc", "interrupt the running turn"],
       ["↑/↓", "recall previously sent messages"],
-      ["^e", "expand/collapse tool calls (live turns)"],
+      ["click ▸", "expand/collapse that tool group"],
+      ["wheel / pgup/pgdn", "scroll the conversation"],
+      ["^e", "expand/collapse all tool calls"],
       ["^u", "clear the input"],
       ["?", "this help (when the input is empty)"],
     ],

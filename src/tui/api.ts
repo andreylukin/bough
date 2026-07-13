@@ -30,11 +30,14 @@ export interface ModelOption {
   id: string;
   label: string;
 }
+export type KeyProvider = "anthropic" | "openrouter" | "openai";
 export interface BoughConfig {
   model: string;
   models: ModelOption[];
   worker: string;
   workerOptions: ModelOption[];
+  /** Which provider API keys are configured (booleans only — never values). */
+  keys?: Record<KeyProvider, boolean>;
 }
 // Shapes below mirror web/src/api.ts (the reference client), trimmed to TUI needs.
 export interface Usage {
@@ -181,6 +184,11 @@ export const api = {
       .then((r) => r.session),
 
   getConfig: () => j<BoughConfig>("/config"),
+  putKey: (provider: KeyProvider, key: string) =>
+    j<{ ok: boolean; keys: Record<KeyProvider, boolean> }>("/config/keys", {
+      ...postJson({ provider, key }),
+      method: "PUT",
+    }),
   setModel: (model: string) =>
     j<{ model: string }>("/config", { ...postJson({ model }), method: "PATCH" }),
   setWorker: (worker: string) =>

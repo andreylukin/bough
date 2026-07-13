@@ -9,7 +9,7 @@ async function j<T>(res: Response): Promise<T> {
 export interface ModelOption {
   id: string;
   label: string;
-  provider: "anthropic" | "openrouter";
+  provider: "anthropic" | "openai" | "openrouter";
   /** USD per million tokens (input/output); absent when the price is unknown. */
   pricing?: { in: number; out: number };
 }
@@ -244,7 +244,9 @@ export const api = {
   // Resolve a held request; the gate re-emits it with the final verdict. scope
   // "session" mints a short-TTL host+verb grant so the retried command passes.
   allowRequest: (id: string, scope: "once" | "session" = "once") =>
-    fetch(`/net/requests/${id}/allow${scope === "session" ? "?scope=session" : ""}`, { method: "POST" }),
+    fetch(`/net/requests/${id}/allow${scope === "session" ? "?scope=session" : ""}`, {
+      method: "POST",
+    }),
   denyRequest: (id: string) => fetch(`/net/requests/${id}/deny`, { method: "POST" }),
 
   // The editable allow/deny/hold rule set. PUT hot-swaps the live gate.
@@ -380,7 +382,9 @@ export const api = {
   listBundles: () => fetch("/net/bundles").then(j<BundleSummary[]>),
 
   getBundle: (name: string) =>
-    fetch(`/net/bundles/${encodeURIComponent(name)}`).then(j<BundleSummary & { fixtures: unknown[] }>),
+    fetch(`/net/bundles/${encodeURIComponent(name)}`).then(
+      j<BundleSummary & { fixtures: unknown[] }>,
+    ),
 
   installBundle: (name: string, params: Record<string, unknown>) =>
     fetch(`/net/bundles/${encodeURIComponent(name)}/install`, {

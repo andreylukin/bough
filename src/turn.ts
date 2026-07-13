@@ -93,8 +93,8 @@ class InterruptedError extends Error {
 /**
  * The model turns run on. Starts from BOUGH_MODEL (else the default) and can be
  * changed at runtime via PATCH /config — new turns pick up the change. Anthropic
- * ids ("claude-…") route to the Anthropic client; a provider-prefixed id
- * ("anthropic/…", "openai/…") routes to OpenRouter (see llm.clientFor).
+ * ids ("claude-…") route to the Anthropic client; an "openai:…" id routes to OpenAI
+ * proper; any other "vendor/model" id routes to OpenRouter (see llm.clientFor).
  */
 let currentModel = Deno.env.get("BOUGH_MODEL") ?? "claude-opus-4-8";
 
@@ -107,14 +107,15 @@ export function setActiveModel(model: string): void {
 }
 
 /**
- * Models offered in the picker. Anthropic ids go direct; the `openrouter/…` ids
- * route through OpenRouter (need OPENROUTER_API_KEY). Not exhaustive — the composer
- * accepts any id, this is just the quick-switch menu.
+ * Models offered in the picker. Anthropic ids go direct; "openai:…" ids go to OpenAI
+ * (need OPENAI_API_KEY); "vendor/model" ids go through OpenRouter (need
+ * OPENROUTER_API_KEY). Not exhaustive — the composer accepts any id, this is just the
+ * quick-switch menu.
  */
 export const MODELS: {
   id: string;
   label: string;
-  provider: "anthropic" | "openrouter";
+  provider: "anthropic" | "openai" | "openrouter";
   /** USD per million tokens (input/output) — drives the UI's cost estimate. */
   pricing?: { in: number; out: number };
 }[] = [
@@ -122,6 +123,8 @@ export const MODELS: {
   { id: "claude-fable-5", label: "Fable 5", provider: "anthropic", pricing: { in: 10, out: 50 } },
   { id: "claude-sonnet-5", label: "Sonnet 5", provider: "anthropic", pricing: { in: 3, out: 15 } },
   { id: "claude-haiku-4-5", label: "Haiku 4.5", provider: "anthropic", pricing: { in: 1, out: 5 } },
+  { id: "openai:gpt-5", label: "GPT-5 (OpenAI)", provider: "openai" },
+  { id: "openai:gpt-5-mini", label: "GPT-5 mini (OpenAI)", provider: "openai" },
   { id: "openai/gpt-5", label: "GPT-5 (OpenRouter)", provider: "openrouter" },
   { id: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro (OpenRouter)", provider: "openrouter" },
   { id: "z-ai/glm-5.2", label: "GLM 5.2 (OpenRouter)", provider: "openrouter" },

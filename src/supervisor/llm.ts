@@ -151,12 +151,13 @@ export function anthropicClient(): LlmClient {
   };
 }
 
-// ---- OpenRouter (OpenAI-compatible) ---------------------------------------
+// ---- OpenAI-compatible providers (OpenRouter + OpenAI) --------------------
 //
-// A separate provider, not the Anthropic client with a base_url override: it speaks
-// the OpenAI chat-completions shape (different message/tool encoding), so it gets its
-// own hand-rolled fetch client. Selected when the model id carries a provider prefix
-// (e.g. "anthropic/claude-3.5-sonnet", "openai/gpt-4o"). Needs OPENROUTER_API_KEY.
+// A separate provider family, not the Anthropic client with a base_url override: it
+// speaks the OpenAI chat-completions shape (different message/tool encoding), so it
+// gets its own hand-rolled fetch client, shared by OpenRouter and OpenAI proper.
+// OpenRouter is selected by a "vendor/model" id (e.g. "openai/gpt-4o"); OpenAI proper
+// by an "openai:model" id (see clientFor). Need OPENROUTER_API_KEY / OPENAI_API_KEY.
 
 interface OpenAIToolCall {
   index: number;
@@ -170,12 +171,18 @@ function toOpenAIMessages(system: string | undefined, messages: LlmMessage[]): u
   if (system) out.push({ role: "system", content: system });
   for (const m of messages) {
     if (m.role === "assistant") {
-      const text = m.content.filter((b) => b.type === "text").map((b) => (b as { text: string }).text).join("");
+      const text = m.content.filter((b) => b.type === "text").map((b) =>
+        (b as { text: string }).text
+      ).join("");
       const toolCalls = m.content
         .filter((b) => b.type === "tool_use")
         .map((b) => {
           const t = b as { id: string; name: string; input: unknown };
-          return { id: t.id, type: "function", function: { name: t.name, arguments: JSON.stringify(t.input ?? {}) } };
+          return {
+            id: t.id,
+            type: "function",
+            function: { name: t.name, arguments: JSON.stringify(t.input ?? {}) },
+          };
         });
       out.push({
         role: "assistant",
@@ -187,7 +194,10 @@ function toOpenAIMessages(system: string | undefined, messages: LlmMessage[]): u
       const texts = m.content.filter((b) => b.type === "text");
       const results = m.content.filter((b) => b.type === "tool_result");
       if (texts.length) {
-        out.push({ role: "user", content: texts.map((b) => (b as { text: string }).text).join("\n") });
+        out.push({
+          role: "user",
+          content: texts.map((b) => (b as { text: string }).text).join("\n"),
+        });
       }
       for (const r of results) {
         const t = r as { toolUseId: string; content: string };
@@ -199,20 +209,53 @@ function toOpenAIMessages(system: string | undefined, messages: LlmMessage[]): u
 }
 
 export function openrouterClient(): LlmClient {
-  const apiKey = Deno.env.get("OPENROUTER_API_KEY");
+  return openAICompatClient({
+    provider: "openrouter",
+    url: "https://openrouter.ai/api/v1/chat/completions",
+    apiKeyEnv: "OPENROUTER_API_KEY",
+    extraHeaders: { "x-title": "bough" },
+  });
+}
+
+// OpenAI proper. Picker ids carry an "openai:" prefix (openai:gpt-5) so the router can
+// tell them from bare Anthropic ids; strip it for the wire call.
+export function openaiClient(): LlmClient {
+  return openAICompatClient({
+    provider: "openai",
+    url: "https://api.openai.com/v1/chat/completions",
+    apiKeyEnv: "OPENAI_API_KEY",
+    mapModel: (m) => (m.startsWith("openai:") ? m.slice("openai:".length) : m),
+  });
+}
+
+interface OpenAICompatOpts {
+  /** Names the provider in errors ("openai: 401 …", "OPENAI_API_KEY is not set"). */
+  provider: string;
+  url: string;
+  /** Read at run() time, so a key set at runtime applies without a restart. */
+  apiKeyEnv: string;
+  extraHeaders?: Record<string, string>;
+  /** Map our model id to the provider's wire id (e.g. strip the "openai:" prefix). */
+  mapModel?: (model: string) => string;
+}
+
+// The shared OpenAI chat-completions streaming client behind both OpenRouter and
+// OpenAI proper — same wire shape; only the URL, key, and headers differ.
+function openAICompatClient(opts: OpenAICompatOpts): LlmClient {
   return {
     async run(params, onText, signal) {
-      if (!apiKey) throw new Error("OPENROUTER_API_KEY is not set");
-      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      const apiKey = Deno.env.get(opts.apiKeyEnv);
+      if (!apiKey) throw new Error(`${opts.apiKeyEnv} is not set`);
+      const res = await fetch(opts.url, {
         method: "POST",
         signal,
         headers: {
           authorization: `Bearer ${apiKey}`,
           "content-type": "application/json",
-          "x-title": "bough",
+          ...opts.extraHeaders,
         },
         body: JSON.stringify({
-          model: params.model,
+          model: opts.mapModel ? opts.mapModel(params.model) : params.model,
           max_tokens: params.maxTokens,
           stream: true,
           stream_options: { include_usage: true },
@@ -224,7 +267,7 @@ export function openrouterClient(): LlmClient {
         }),
       });
       if (!res.ok || !res.body) {
-        throw new Error(`openrouter: ${res.status} ${await res.text().catch(() => "")}`);
+        throw new Error(`${opts.provider}: ${res.status} ${await res.text().catch(() => "")}`);
       }
 
       let text = "";
@@ -247,7 +290,10 @@ export function openrouterClient(): LlmClient {
           const data = line.slice(5).trim();
           if (data === "[DONE]") continue;
           let chunk: {
-            choices?: { delta?: { content?: string; tool_calls?: OpenAIToolCall[] }; finish_reason?: string }[];
+            choices?: {
+              delta?: { content?: string; tool_calls?: OpenAIToolCall[] };
+              finish_reason?: string;
+            }[];
             usage?: {
               prompt_tokens?: number;
               completion_tokens?: number;
@@ -280,7 +326,10 @@ export function openrouterClient(): LlmClient {
             if (tc.id) cur.id = tc.id;
             if (tc.function?.name) cur.function = { ...cur.function, name: tc.function.name };
             if (tc.function?.arguments) {
-              cur.function = { ...cur.function, arguments: (cur.function?.arguments ?? "") + tc.function.arguments };
+              cur.function = {
+                ...cur.function,
+                arguments: (cur.function?.arguments ?? "") + tc.function.arguments,
+              };
             }
             toolCalls.set(tc.index, cur);
           }
@@ -294,7 +343,12 @@ export function openrouterClient(): LlmClient {
         try {
           input = JSON.parse(tc.function?.arguments || "{}");
         } catch { /* malformed args → empty object */ }
-        content.push({ type: "tool_use", id: tc.id ?? crypto.randomUUID(), name: tc.function?.name ?? "", input });
+        content.push({
+          type: "tool_use",
+          id: tc.id ?? crypto.randomUUID(),
+          name: tc.function?.name ?? "",
+          input,
+        });
       }
       // Normalize OpenAI's finish_reason to our stopReason vocabulary.
       const stopReason = finishReason === "tool_calls" ? "tool_use" : finishReason;
@@ -303,7 +357,26 @@ export function openrouterClient(): LlmClient {
   };
 }
 
-/** Pick the client for a model id: a provider-prefixed id ("x/y") → OpenRouter, else Anthropic. */
+export type Provider = "anthropic" | "openai" | "openrouter";
+
+/**
+ * Route a model id to its provider: an "openai:model" id → OpenAI proper, any other
+ * "vendor/model" id → OpenRouter, everything else (bare "claude-…") → Anthropic. Pure,
+ * so the routing is unit-testable without touching the network.
+ */
+export function providerFor(model: string): Provider {
+  if (model.startsWith("openai:")) return "openai";
+  return model.includes("/") ? "openrouter" : "anthropic";
+}
+
+/** The LLM client for a model id (see providerFor for the id scheme). */
 export function clientFor(model: string): LlmClient {
-  return model.includes("/") ? openrouterClient() : anthropicClient();
+  switch (providerFor(model)) {
+    case "openai":
+      return openaiClient();
+    case "openrouter":
+      return openrouterClient();
+    case "anthropic":
+      return anthropicClient();
+  }
 }

@@ -11,6 +11,7 @@
     "npm:ink@7.1.0": "7.1.0_@types+react@19.2.17_react@19.2.7",
     "npm:node-forge@1.4.0": "1.4.0",
     "npm:react@19.2.7": "19.2.7",
+    "npm:wrap-ansi@9.0.2": "9.0.2",
     "npm:zod@3.25.76": "3.25.76"
   },
   "jsr": {
@@ -170,7 +171,7 @@
       "integrity": "sha512-06p9vyLahLa4zkGcgsGxU6iEkSOiuI4fhCH6Emhe2lPAcoUv73n72DnODsnHA+5wwXGnV0n9M9/qOQJSjYhFhw==",
       "dependencies": [
         "slice-ansi",
-        "string-width"
+        "string-width@8.2.2"
       ]
     },
     "code-excerpt@4.0.0": {
@@ -245,6 +246,9 @@
     },
     "ee-first@1.1.1": {
       "integrity": "sha512-WMwm9LhRUo+WUaRN+vRuETqG89IgZphVSNkdFgeb6sS/E4OrDIN7t48CAewSHXc6C8lefD8KKfr5vY61brQlow=="
+    },
+    "emoji-regex@10.6.0": {
+      "integrity": "sha512-toUI84YS5YmxW219erniWD0CIVOo46xGKColeNQRgOzDorgBi1v4D71/OFzgD9GO2UGKIv1C3Sp8DAn0+j5w7A=="
     },
     "encodeurl@2.0.0": {
       "integrity": "sha512-Q0n9HRi4m6JuGIV1eFlmvJB7ZEVxu93IrMyiMsGC0lrMJMWzRgx6WGquyfQgZVb31vhGgXnfmPNNXmxnOkRBrg=="
@@ -436,11 +440,11 @@
         "signal-exit",
         "slice-ansi",
         "stack-utils",
-        "string-width",
+        "string-width@8.2.2",
         "terminal-size",
         "type-fest",
         "widest-line",
-        "wrap-ansi",
+        "wrap-ansi@10.0.0",
         "ws",
         "yoga-layout"
       ],
@@ -709,6 +713,14 @@
     "statuses@2.0.2": {
       "integrity": "sha512-DvEy55V3DB7uknRo+4iOGT5fP1slR8wQohVdknigZPMpMstaKJQWhwiYBACJE3Ul2pTnATihhBYnRhZQHGBiRw=="
     },
+    "string-width@7.2.0": {
+      "integrity": "sha512-tsaTIkKW9b4N+AEj+SVA+WhJzV7/zMhcSu78mLKWSk7cXMOSHsBKFWUs0fWwq8QyK3MgJBQRX6Gbi4kYbdvGkQ==",
+      "dependencies": [
+        "emoji-regex",
+        "get-east-asian-width",
+        "strip-ansi"
+      ]
+    },
     "string-width@8.2.2": {
       "integrity": "sha512-GaPUh5gfdrYzqeVNZvUfT23vYYxXzKYidUcnMtJg/3rxRV63EFZy3k6xfKlmfeJD0176lnUV/Usr3XcwSvFzpg==",
       "dependencies": [
@@ -764,14 +776,22 @@
     "widest-line@6.0.0": {
       "integrity": "sha512-U89AsyEeAsyoF0zVJBkG9zBgekjgjK7yk9sje3F4IQpXBJ10TF6ByLlIfjMhcmHMJgHZI4KHt4rdNfktzxIAMA==",
       "dependencies": [
-        "string-width"
+        "string-width@8.2.2"
       ]
     },
     "wrap-ansi@10.0.0": {
       "integrity": "sha512-SGcvg80f0wUy2/fXES19feHMz8E0JoXv2uNgHOu4Dgi2OrCy1lqwFYEJz1BLbDI0exjPMe/ZdzZ/YpGECBG/aQ==",
       "dependencies": [
         "ansi-styles",
-        "string-width",
+        "string-width@8.2.2",
+        "strip-ansi"
+      ]
+    },
+    "wrap-ansi@9.0.2": {
+      "integrity": "sha512-42AtmgqjV+X1VpdOfyTGOYRi0/zsoLqtXQckTmqTeybT+BDIbM/Guxo7x3pE2vtpr1ok6xRqM9OpBe+Jyoqyww==",
+      "dependencies": [
+        "ansi-styles",
+        "string-width@7.2.0",
         "strip-ansi"
       ]
     },
@@ -804,6 +824,7 @@
       "npm:ink@7.1.0",
       "npm:node-forge@1.4.0",
       "npm:react@19.2.7",
+      "npm:wrap-ansi@9.0.2",
       "npm:zod@3.25.76"
     ]
   }

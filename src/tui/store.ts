@@ -40,8 +40,10 @@ export interface Store {
   feed: NetRequest[];
   open: (id: string) => Promise<void>;
   newSession: (workspace?: string) => Promise<Session>;
-  /** Post a message. While busy: posts immediately (steer) unless queue=true. */
-  send: (text: string, queue?: boolean) => Promise<void>;
+  /** Post a message. While busy: posts immediately (steer) unless queue=true.
+   * `id` overrides the current session (used right after a draft's session is
+   * created, before the state round-trip lands). */
+  send: (text: string, queue?: boolean, id?: string) => Promise<void>;
   interrupt: () => void;
   archive: (id: string) => void;
   resolvePending: (approve: boolean, scope?: "once" | "session") => void;
@@ -185,8 +187,8 @@ export function useStore(initialSessions: Session[]): Store {
     api.revertChanges(id).catch((e) => setNotice(e instanceof Error ? e.message : String(e)));
   }, []);
 
-  const send = useCallback(async (text: string, queue = false) => {
-    const id = currentRef.current;
+  const send = useCallback(async (text: string, queue = false, idArg?: string) => {
+    const id = idArg ?? currentRef.current;
     if (!id) return;
     if (busyRef.current && queue) {
       setQueued((q) => [...q, text]);

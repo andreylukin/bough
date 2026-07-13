@@ -60,6 +60,7 @@ import type { LlmClient } from "../supervisor/llm.ts";
 import { applyChanges, ChangesError, revertChanges, sessionChanges } from "./changes.ts";
 import { ChangesApplyBody, ChangesRevertBody } from "../schema/changes.ts";
 import { clearTheme, loadTheme, saveTheme, Theme, THEME_DEFAULTS, THEME_TOKENS } from "./theme.ts";
+import { KeysBody, keyStatus, setKey } from "./keys.ts";
 
 export interface AppCtx {
   db: Db;
@@ -120,7 +121,19 @@ const getConfig: Handler = () =>
     models: MODELS,
     worker: workerChoice(),
     workerOptions: WORKER_OPTIONS,
+    // Which provider API keys are configured — booleans only, never the values.
+    keys: keyStatus(),
   });
+
+// Set a provider's API key: applies to the live process env immediately (clients read
+// the env at run time) and persists to ~/.bough/env for restarts. Returns the
+// refreshed booleans; never echoes the value back.
+const putKeys: Handler = async (req) => {
+  const parsed = KeysBody.safeParse(await req.json().catch(() => null));
+  if (!parsed.success) return error(400, "invalid body: " + parsed.error.message);
+  const keys = setKey(parsed.data.provider, parsed.data.key);
+  return json({ ok: true, keys });
+};
 
 // Recall: semantic search over the whole session forest via the LOCAL embedder
 // (recall.ts) — lazily indexes a batch of new messages on each call.
@@ -145,9 +158,7 @@ const patchConfig: Handler = async (req) => {
     | { model?: unknown; worker?: unknown }
     | null;
   const model = typeof body?.model === "string" && body.model.trim() ? body.model.trim() : null;
-  const worker = typeof body?.worker === "string" && body.worker.trim()
-    ? body.worker.trim()
-    : null;
+  const worker = typeof body?.worker === "string" && body.worker.trim() ? body.worker.trim() : null;
   if (!model && !worker) {
     return error(400, "invalid body: { model?: string, worker?: string } — at least one required");
   }
@@ -919,6 +930,7 @@ const installBundleH: Handler = async (req, ctx, params) => {
 const routes: Route[] = [
   { method: "GET", pattern: new URLPattern({ pathname: "/config" }), handler: getConfig },
   { method: "PATCH", pattern: new URLPattern({ pathname: "/config" }), handler: patchConfig },
+  { method: "PUT", pattern: new URLPattern({ pathname: "/config/keys" }), handler: putKeys },
   { method: "GET", pattern: new URLPattern({ pathname: "/skills" }), handler: getSkills },
   { method: "GET", pattern: new URLPattern({ pathname: "/theme" }), handler: getTheme },
   { method: "PUT", pattern: new URLPattern({ pathname: "/theme" }), handler: putTheme },

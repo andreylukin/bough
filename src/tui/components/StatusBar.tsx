@@ -5,7 +5,7 @@ import { HINTS, type UiMode } from "../keys.ts";
 import type { TuiSession } from "../store.ts";
 
 export function StatusBar(
-  { connected, busy, session, pendingCount, quitHint, mode, usage }: {
+  { connected, busy, session, pendingCount, quitHint, mode, usage, draftLabel }: {
     connected: boolean;
     busy: boolean;
     session: TuiSession | null;
@@ -13,6 +13,8 @@ export function StatusBar(
     quitHint: boolean;
     mode: UiMode;
     usage: Usage;
+    /** Shown instead of a session title while no session exists yet. */
+    draftLabel?: string | null;
   },
 ) {
   const status = busy
@@ -29,7 +31,11 @@ export function StatusBar(
       <Text wrap="truncate">
         <Text color={connected ? "green" : "red"}>{connected ? "●" : "○"}</Text>
         <Text dimColor>{connected ? "" : " reconnecting…"}</Text>
-        {session ? <Text bold>{" "}{session.title || "(untitled)"}</Text> : null}
+        {session
+          ? <Text bold>{" "}{session.title || "(untitled)"}</Text>
+          : draftLabel
+          ? <Text dimColor>{" "}{draftLabel}</Text>
+          : null}
         {status ? <Text color={status.color}>{"  "}{status.text}</Text> : null}
         {usage.contextTokens > 0
           ? <Text dimColor>{"  "}{fmtTokens(usage.contextTokens)} ctx</Text>

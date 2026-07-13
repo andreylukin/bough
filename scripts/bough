@@ -668,6 +668,8 @@ cmd_tui() {
       exit 1
     fi
   fi
+  # The TUI defaults new conversations to the directory bough was launched from.
+  export BOUGH_TUI_CWD="$PWD"
   cd "$ROOT"
   # --no-prompt: Deno's node:tty requests an optional write permission on startup;
   # denied it works fine, but the interactive prompt would eat the first keystrokes.

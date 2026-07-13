@@ -4,6 +4,7 @@
 import { render } from "ink";
 import { api, AuthError, BASE, setCookie } from "./api.ts";
 import { loadCookie, saveCookie } from "./state.ts";
+import { enterTui, filteredStdin, leaveTui } from "./mouse.ts";
 import { App } from "./components/App.tsx";
 
 // Read a password from the tty without echoing (raw mode, pre-Ink).
@@ -67,9 +68,26 @@ async function preflight() {
 
 async function main() {
   const sessions = await preflight();
+  // New conversations default to where `bough` was launched (scripts/bough exports
+  // this before cd'ing to the repo root).
+  const defaultWorkspace = Deno.env.get("BOUGH_TUI_CWD") ?? Deno.cwd();
+  // Alternate screen + mouse tracking; always restored on the way out (including
+  // the unload backstop for uncaught crashes).
+  enterTui();
+  globalThis.addEventListener("unload", leaveTui);
   // exitOnCtrlC off: the app implements double-ctrl+c itself (a single ^c would
-  // otherwise unmount ink out from under the quit-hint).
-  render(<App initialSessions={sessions} />, { exitOnCtrlC: false });
+  // otherwise unmount ink out from under the quit-hint). stdin goes through the
+  // mouse filter so ink never sees SGR mouse sequences.
+  const inst = render(
+    <App initialSessions={sessions} defaultWorkspace={defaultWorkspace} />,
+    { exitOnCtrlC: false, stdin: filteredStdin() },
+  );
+  try {
+    await inst.waitUntilExit();
+  } finally {
+    leaveTui();
+    Deno.exit(0); // the stdin data listener would otherwise keep the loop alive
+  }
 }
 
 main();
