@@ -368,7 +368,7 @@ export function App(
   const treeRows: TreeRow[] = filter
     ? flattenTree(store.sessions)
       .filter(({ s }) => (s.title || "").toLowerCase().includes(filter.toLowerCase()))
-      .map(({ s }) => ({ s, depth: 0 }))
+      .map(({ s }) => ({ s, depth: 0, prefix: "" }))
     : flattenTree(store.sessions);
 
   const forkMsgs = [...store.thread].reverse();
@@ -842,6 +842,7 @@ export function App(
         filter={filter}
         filterActive={filterActive}
         rows={rows}
+        currentId={currentId}
       />
     )
     : mode === "panel"

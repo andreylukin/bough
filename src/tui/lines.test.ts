@@ -33,3 +33,45 @@ Deno.test("parseSubagentNote: FAILED status + no files", () => {
 Deno.test("parseSubagentNote: non-note text returns null", () => {
   assertEquals(parseSubagentNote("just a normal message"), null);
 });
+
+import { flattenTree } from "./components/SessionPicker.tsx";
+import type { TuiSession } from "./store.ts";
+
+function sess(p: Partial<TuiSession> & { id: string; kind: string }): TuiSession {
+  return { title: p.id, createdAt: 1, ...p } as TuiSession;
+}
+
+Deno.test("flattenTree: nests by originId (what it branched from), not parentId", () => {
+  // root ← fork ← subagent(of the fork); a fork of the fork nests under the fork.
+  const rows = flattenTree([
+    sess({ id: "root", kind: "root", createdAt: 1 }),
+    sess({ id: "fork1", kind: "fork", originId: "root", parentId: null, createdAt: 2 }),
+    sess({ id: "sub", kind: "subagent", originId: "fork1", createdAt: 3 }),
+    // a fork of fork1 that carries a stale parentId=root — must still nest under fork1
+    sess({ id: "fork2", kind: "fork", originId: "fork1", parentId: "root", createdAt: 4 }),
+  ]);
+  const depth = Object.fromEntries(rows.map((r) => [r.s.id, r.depth]));
+  assertEquals(depth, { root: 0, fork1: 1, sub: 2, fork2: 2 });
+});
+
+Deno.test("flattenTree: connectors — last child gets └, earlier ├, with │ spine", () => {
+  const rows = flattenTree([
+    sess({ id: "r", kind: "root", createdAt: 1 }),
+    sess({ id: "a", kind: "fork", originId: "r", createdAt: 2 }),
+    sess({ id: "a1", kind: "subagent", originId: "a", createdAt: 3 }),
+    sess({ id: "b", kind: "compaction", originId: "r", createdAt: 4 }),
+  ]);
+  const pref = Object.fromEntries(rows.map((r) => [r.s.id, r.prefix]));
+  assertEquals(pref.r, ""); // trunk, no connector
+  assertEquals(pref.a, "├─"); // first child of r (b comes after)
+  assertEquals(pref.a1, "│ └─"); // only child of a, but r's spine continues (│)
+  assertEquals(pref.b, "└─"); // last child of r
+});
+
+Deno.test("flattenTree: a root with an unknown origin surfaces as a trunk", () => {
+  const rows = flattenTree([
+    sess({ id: "orphan", kind: "fork", originId: "gone", createdAt: 1 }),
+  ]);
+  assertEquals(rows.length, 1);
+  assertEquals(rows[0].depth, 0);
+});
