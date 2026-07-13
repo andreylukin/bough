@@ -170,6 +170,11 @@ export const api = {
   searchDirs: (q: string) =>
     j<{ dirs: DirHit[] }>(`/fs/dirs?q=${encodeURIComponent(q)}`).then((r) => r.dirs),
 
+  // Workspace file search for the composer's @-reference autocomplete.
+  searchFiles: (id: string, q: string) =>
+    j<{ files: string[] }>(`/sessions/${id}/files?q=${encodeURIComponent(q)}`)
+      .then((r) => r.files),
+
   // Review payloads for a session's workspace changes.
   getChanges: (id: string) => j<{ diffs: WireDiff[] }>(`/sessions/${id}/changes`),
   applyChanges: (id: string, source: ChangeSource, paths: string[]) =>

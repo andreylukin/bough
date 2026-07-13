@@ -1,8 +1,29 @@
+import { useEffect, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import type { Usage } from "../api.ts";
 import { fmtTokens } from "../format.ts";
 import { HINTS, type UiMode } from "../keys.ts";
 import type { TuiSession } from "../store.ts";
+
+const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/** Animated spinner + elapsed seconds while a turn runs. */
+function useSpinner(busy: boolean): string | null {
+  const [tick, setTick] = useState(0);
+  const since = useRef<number | null>(null);
+  useEffect(() => {
+    if (!busy) {
+      since.current = null;
+      return;
+    }
+    since.current ??= Date.now();
+    const t = setInterval(() => setTick((x) => x + 1), 120);
+    return () => clearInterval(t);
+  }, [busy]);
+  if (!busy) return null;
+  const secs = Math.floor((Date.now() - (since.current ?? Date.now())) / 1000);
+  return `${FRAMES[tick % FRAMES.length]} working · ${secs}s · esc interrupts`;
+}
 
 export function StatusBar(
   { connected, busy, session, pendingCount, quitHint, mode, usage, draftLabel, model }: {
@@ -19,8 +40,9 @@ export function StatusBar(
     model?: string | null;
   },
 ) {
-  const status = busy
-    ? { text: "⋯ working", color: "yellow" }
+  const spinner = useSpinner(busy);
+  const status = spinner
+    ? { text: spinner, color: "yellow" }
     : session?.lastTurnStatus === "error"
     ? { text: "✗ error", color: "red" }
     : session?.lastTurnStatus === "interrupted"

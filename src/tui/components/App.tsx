@@ -18,8 +18,8 @@ import {
 } from "../api.ts";
 import { useStore } from "../store.ts";
 import { buildLines } from "../lines.ts";
-import { segmentParts } from "../format.ts";
-import { type MouseEvent, onMouse } from "../mouse.ts";
+import { segmentParts, wordLeft, wordRight } from "../format.ts";
+import { type MouseEvent, onMouse, onPaste } from "../mouse.ts";
 import { Composer } from "./Composer.tsx";
 import { StatusBar } from "./StatusBar.tsx";
 import { flattenTree, SessionPicker, type TreeRow } from "./SessionPicker.tsx";
@@ -41,7 +41,20 @@ export function App(
   const { stdout } = useStdout();
   const store = useStore(initialSessions);
   const [mode, setMode] = useState<Mode>("chat");
-  const [input, setInput] = useState("");
+  // The composer: text plus a cursor for real line editing (arrows, ctrl+a/e/w/k,
+  // word jumps). `set` clamps; helpers keep every mutation cursor-correct.
+  const [comp, setComp] = useState({ text: "", cursor: 0 });
+  const input = comp.text;
+  const setInput = useCallback((text: string) => setComp({ text, cursor: text.length }), []);
+  const insertAtCursor = useCallback((chunk: string) => {
+    setComp((c) => ({
+      text: c.text.slice(0, c.cursor) + chunk + c.text.slice(c.cursor),
+      cursor: c.cursor + chunk.length,
+    }));
+  }, []);
+  const moveCursor = useCallback((to: (c: { text: string; cursor: number }) => number) => {
+    setComp((c) => ({ ...c, cursor: Math.max(0, Math.min(c.text.length, to(c))) }));
+  }, []);
   const [quitHint, setQuitHint] = useState(false);
   const lastCtrlC = useRef(0);
   const [err, setErr] = useState<string | null>(null);
@@ -217,6 +230,75 @@ export function App(
   layout.current = { mode, start, padTop, maxOff };
   const linesRef = useRef(lines);
   linesRef.current = lines;
+  // Composer autocomplete: "/" at the start completes skills, "@" completes
+  // workspace files (needs a live session — drafts have no workspace yet).
+  interface Popup {
+    kind: "skill" | "file";
+    items: { label: string; detail: string; insert: string }[];
+    sel: number;
+    tokenStart: number;
+    tokenEnd: number;
+  }
+  const [popup, setPopup] = useState<Popup | null>(null);
+  const skillsCache = useRef<SkillInfo[] | null>(null);
+  useEffect(() => {
+    if (mode !== "chat") {
+      setPopup(null);
+      return;
+    }
+    const { text, cursor } = comp;
+    const end = (() => {
+      const ws = text.slice(cursor).search(/\s/);
+      return ws < 0 ? text.length : cursor + ws;
+    })();
+    if (text.startsWith("/") && cursor >= 1 && !/\s/.test(text.slice(0, cursor))) {
+      const q = text.slice(1, cursor).toLowerCase();
+      const apply = (skills: SkillInfo[]) => {
+        const items = skills
+          .filter((s) => s.name.toLowerCase().includes(q))
+          .slice(0, 6)
+          .map((s) => ({ label: `/${s.name}`, detail: s.description, insert: `/${s.name} ` }));
+        setPopup(
+          items.length ? { kind: "skill", items, sel: 0, tokenStart: 0, tokenEnd: end } : null,
+        );
+      };
+      if (skillsCache.current) apply(skillsCache.current);
+      else api.skills().then((s) => (skillsCache.current = s, apply(s)), () => {});
+      return;
+    }
+    const at = text.lastIndexOf("@", cursor - 1);
+    if (
+      at >= 0 && currentId && !/\s/.test(text.slice(at + 1, cursor)) &&
+      (at === 0 || /\s/.test(text[at - 1]))
+    ) {
+      const q = text.slice(at + 1, cursor);
+      const t = setTimeout(() => {
+        api.searchFiles(currentId, q).then((files) => {
+          const items = files.slice(0, 6).map((f) => ({
+            label: `@${f}`,
+            detail: "",
+            insert: `@${f} `,
+          }));
+          setPopup(
+            items.length ? { kind: "file", items, sel: 0, tokenStart: at, tokenEnd: end } : null,
+          );
+        }, () => setPopup(null));
+      }, 120);
+      return () => clearTimeout(t);
+    }
+    setPopup(null);
+  }, [comp, mode, currentId]);
+
+  // Bracketed pastes land whole in the composer (chat mode only), newlines intact.
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  useEffect(() => {
+    onPaste((text) => {
+      if (modeRef.current === "chat") insertAtCursor(text);
+    });
+    return () => onPaste(null);
+  }, [insertAtCursor]);
+
   useEffect(() => {
     onMouse((ev: MouseEvent) => {
       const l = layout.current;
@@ -548,6 +630,25 @@ export function App(
       setMode("help");
       return;
     }
+    // Autocomplete popup owns navigation + enter while open.
+    if (popup) {
+      if (key.escape) return setPopup(null);
+      if (key.upArrow) {
+        return setPopup((p) => p && { ...p, sel: (p.sel - 1 + p.items.length) % p.items.length });
+      }
+      if (key.downArrow || key.tab) {
+        return setPopup((p) => p && { ...p, sel: (p.sel + 1) % p.items.length });
+      }
+      if (key.return) {
+        const it = popup.items[popup.sel];
+        setComp((c) => {
+          const text = c.text.slice(0, popup.tokenStart) + it.insert + c.text.slice(popup.tokenEnd);
+          return { text, cursor: popup.tokenStart + it.insert.length };
+        });
+        setPopup(null);
+        return;
+      }
+    }
     if (key.pageUp) return setScrollOff((o) => Math.min(maxOff, o + Math.max(1, viewH - 2)));
     if (key.pageDown) return setScrollOff((o) => Math.max(0, o - Math.max(1, viewH - 2)));
     if (store.pending) {
@@ -562,18 +663,37 @@ export function App(
       return;
     }
     if (key.return) {
-      const text = input.trim();
-      if (!text) return;
-      setInput("");
-      history.current.push(text);
-      setHistIdx(null);
-      draft.current = "";
-      // alt+enter stages the message until the turn finishes; plain enter steers.
-      submit(text, key.meta);
+      // Resolve the text inside the updater: an Enter that lands in the same
+      // React batch as just-typed/pasted text would otherwise read a stale
+      // (empty) closure and silently drop the send.
+      const queue = key.meta;
+      setComp((c) => {
+        const text = c.text.trim();
+        if (!text) return c;
+        queueMicrotask(() => {
+          history.current.push(text);
+          setHistIdx(null);
+          draft.current = "";
+          // alt+enter stages the message until the turn finishes; plain enter steers.
+          submit(text, queue);
+        });
+        return { text: "", cursor: 0 };
+      });
       return;
     }
-    // ↑/↓ recall previously sent messages (the in-progress draft is stashed).
+    // ↑/↓: history recall on a single-line draft; cursor movement across lines
+    // once the input is multiline (pasted blocks, ctrl+j).
+    const multiline = input.includes("\n");
     if (key.upArrow) {
+      if (multiline) {
+        return moveCursor((c) => {
+          const prevNl = c.text.lastIndexOf("\n", Math.max(0, c.cursor - 1));
+          if (prevNl < 0) return c.cursor;
+          const col = c.cursor - prevNl - 1;
+          const prevPrevNl = c.text.lastIndexOf("\n", prevNl - 1);
+          return Math.min(prevPrevNl + 1 + col, prevNl);
+        });
+      }
       const h = history.current;
       if (h.length === 0) return;
       if (histIdx === null) draft.current = input;
@@ -583,6 +703,16 @@ export function App(
       return;
     }
     if (key.downArrow) {
+      if (multiline) {
+        return moveCursor((c) => {
+          const nextNl = c.text.indexOf("\n", c.cursor);
+          if (nextNl < 0) return c.cursor;
+          const prevNl = c.text.lastIndexOf("\n", Math.max(0, c.cursor - 1));
+          const col = c.cursor - prevNl - 1;
+          const lineEnd = c.text.indexOf("\n", nextNl + 1);
+          return Math.min(nextNl + 1 + col, lineEnd < 0 ? c.text.length : lineEnd);
+        });
+      }
       if (histIdx === null) return;
       if (histIdx >= history.current.length - 1) {
         setHistIdx(null);
@@ -594,9 +724,38 @@ export function App(
       setInput(history.current[ni]);
       return;
     }
+    // Line editing (readline muscle memory). Word jumps first — ⌥← arrives as
+    // meta+leftArrow in some terminals and would match the plain-arrow branch.
+    if (key.meta && (ch === "b" || key.leftArrow)) {
+      return moveCursor((c) => wordLeft(c.text, c.cursor));
+    }
+    if (key.meta && (ch === "f" || key.rightArrow)) {
+      return moveCursor((c) => wordRight(c.text, c.cursor));
+    }
+    if (key.leftArrow) return moveCursor((c) => c.cursor - 1);
+    if (key.rightArrow) return moveCursor((c) => c.cursor + 1);
+    if (key.ctrl && ch === "a") return moveCursor(() => 0);
+    if (key.ctrl && ch === "e") return moveCursor((c) => c.text.length);
+    if (key.ctrl && ch === "w") {
+      return setComp((c) => {
+        const from = wordLeft(c.text, c.cursor);
+        return { text: c.text.slice(0, from) + c.text.slice(c.cursor), cursor: from };
+      });
+    }
+    if (key.ctrl && ch === "k") {
+      return setComp((c) => ({ text: c.text.slice(0, c.cursor), cursor: c.cursor }));
+    }
     if (key.ctrl && ch === "u") return setInput("");
-    if (key.backspace || key.delete) return setInput((v) => v.slice(0, -1));
-    if (ch && !key.ctrl && !key.meta) setInput((v) => v + ch);
+    if (key.ctrl && ch === "j") return insertAtCursor("\n");
+    if (key.backspace || key.delete) {
+      return setComp((c) =>
+        c.cursor === 0 ? c : {
+          text: c.text.slice(0, c.cursor - 1) + c.text.slice(c.cursor),
+          cursor: c.cursor - 1,
+        }
+      );
+    }
+    if (ch && !key.ctrl && !key.meta) insertAtCursor(ch);
   });
 
   const shortWs = defaultWorkspace.replace(new RegExp(`^${Deno.env.get("HOME")}`), "~");
@@ -675,9 +834,21 @@ export function App(
               {store.queued.map((q, i) => <Text key={i} dimColor>⧖ queued: {q}</Text>)}
               {err ? <Text color="red">{err}</Text> : null}
               {store.notice ? <Text color="yellow">{store.notice}</Text> : null}
+              {popup && !store.pending
+                ? (
+                  <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
+                    {popup.items.map((it, i) => (
+                      <Text key={it.label} inverse={i === popup.sel} wrap="truncate">
+                        {it.label}
+                        {it.detail ? <Text dimColor>{"  "}{it.detail}</Text> : null}
+                      </Text>
+                    ))}
+                  </Box>
+                )
+                : null}
               {store.pending
                 ? <NetApproval req={store.pending} count={store.pendingCount} />
-                : <Composer input={input} queued={[]} busy={store.busy} />}
+                : <Composer input={input} cursor={comp.cursor} busy={store.busy} />}
             </>
           )
           : null}

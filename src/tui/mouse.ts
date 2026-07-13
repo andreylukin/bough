@@ -1,7 +1,8 @@
-// Mouse support. Ink has no mouse handling, so we sit between the real stdin and
-// ink: a PassThrough stream receives everything the terminal sends, SGR mouse
-// sequences (\x1b[<b;x;yM / m) are consumed here and dispatched to a handler,
-// and every other byte is forwarded to the stream ink reads from.
+// Mouse + paste support. Ink has no handling for either, so we sit between the
+// real stdin and ink: a PassThrough stream receives everything the terminal
+// sends; SGR mouse sequences (\x1b[<b;x;yM / m) and bracketed pastes
+// (\x1b[200~ … \x1b[201~) are consumed here and dispatched to handlers, and
+// every other byte is forwarded to the stream ink reads from.
 import { PassThrough } from "node:stream";
 import process from "node:process";
 
@@ -18,32 +19,77 @@ export function onMouse(h: Handler | null) {
   handler = h;
 }
 
+/** Bracketed pastes arrive whole here (newlines normalized), never through ink. */
+type PasteHandler = (text: string) => void;
+let pasteHandler: PasteHandler | null = null;
+export function onPaste(h: PasteHandler | null) {
+  pasteHandler = h;
+}
+
 // deno-lint-ignore no-control-regex -- ESC is the point: SGR mouse sequences
 const SGR = /\x1b\[<(\d+);(\d+);(\d+)([Mm])/g;
+const PASTE_START = "\x1b[200~";
+const PASTE_END = "\x1b[201~";
+// A trailing fragment that could grow into one of our sequences next chunk.
+// Deliberately requires the distinguishing third byte ("[<" mouse, "[2" paste
+// marker): holding a bare ESC would swallow the Escape KEY until the next
+// keypress (terminals send key sequences atomically; only our two multi-byte
+// sequences ever split across reads in practice).
+// deno-lint-ignore no-control-regex -- ESC is the point
+const PARTIAL_TAIL = /\x1b\[(<[\d;]*|20[01]?)$/;
 
-/** ink-compatible stdin: filters mouse sequences out of the real stdin. */
+function dispatchMouse(s: string): string {
+  return s.replace(SGR, (_all, b, x, y, fin) => {
+    const btn = Number(b);
+    if (fin === "M" && handler) {
+      // Press events only (releases are `m`); 64/65 = wheel.
+      if (btn === 64) handler({ x: Number(x), y: Number(y), kind: "wheel-up" });
+      else if (btn === 65) handler({ x: Number(x), y: Number(y), kind: "wheel-down" });
+      else if ((btn & 3) === 0) handler({ x: Number(x), y: Number(y), kind: "click" });
+    }
+    return "";
+  });
+}
+
+/** ink-compatible stdin: filters mouse + paste sequences out of the real stdin. */
 export function filteredStdin(): typeof process.stdin {
   const out = new PassThrough();
   let carry = "";
+  let inPaste = false;
+  let pasteBuf = "";
   process.stdin.on("data", (chunk: Buffer | string) => {
     let s = carry + chunk.toString("latin1");
     carry = "";
-    // Hold back a trailing partial mouse sequence for the next chunk.
-    const tailStart = s.lastIndexOf("\x1b[<");
-    if (tailStart >= 0 && !/[Mm]/.test(s.slice(tailStart))) {
-      carry = s.slice(tailStart);
-      s = s.slice(0, tailStart);
-    }
-    const forwarded = s.replace(SGR, (_all, b, x, y, fin) => {
-      const btn = Number(b);
-      if (fin === "M" && handler) {
-        // Press events only (releases are `m`); 64/65 = wheel.
-        if (btn === 64) handler({ x: Number(x), y: Number(y), kind: "wheel-up" });
-        else if (btn === 65) handler({ x: Number(x), y: Number(y), kind: "wheel-down" });
-        else if ((btn & 3) === 0) handler({ x: Number(x), y: Number(y), kind: "click" });
+    let forwarded = "";
+    while (s.length > 0) {
+      if (inPaste) {
+        const end = s.indexOf(PASTE_END);
+        if (end < 0) {
+          // Keep a possible partial end-marker for the next chunk.
+          const tail = PARTIAL_TAIL.exec(s)?.[0] ?? "";
+          pasteBuf += s.slice(0, s.length - tail.length);
+          carry = tail;
+          s = "";
+          break;
+        }
+        pasteBuf += s.slice(0, end);
+        s = s.slice(end + PASTE_END.length);
+        inPaste = false;
+        pasteHandler?.(pasteBuf.replace(/\r\n?/g, "\n"));
+        pasteBuf = "";
+        continue;
       }
-      return "";
-    });
+      const start = s.indexOf(PASTE_START);
+      if (start < 0) {
+        const tail = PARTIAL_TAIL.exec(s)?.[0] ?? "";
+        forwarded += dispatchMouse(s.slice(0, s.length - tail.length));
+        carry = tail;
+        break;
+      }
+      forwarded += dispatchMouse(s.slice(0, start));
+      s = s.slice(start + PASTE_START.length);
+      inPaste = true;
+    }
     if (forwarded) out.write(Buffer.from(forwarded, "latin1"));
   });
   // ink probes these on its stdin.
@@ -58,14 +104,14 @@ export function filteredStdin(): typeof process.stdin {
 }
 
 const enc = new TextEncoder();
-/** Alt screen + SGR mouse tracking on. */
+/** Alt screen + SGR mouse tracking + bracketed paste on. */
 export function enterTui() {
-  Deno.stdout.writeSync(enc.encode("\x1b[?1049h\x1b[?1000h\x1b[?1006h"));
+  Deno.stdout.writeSync(enc.encode("\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[?2004h"));
 }
-/** Restore the normal buffer, mouse off, cursor visible. */
+/** Restore the normal buffer, mouse + paste modes off, cursor visible. */
 export function leaveTui() {
   try {
-    Deno.stdout.writeSync(enc.encode("\x1b[?1006l\x1b[?1000l\x1b[?1049l\x1b[?25h"));
+    Deno.stdout.writeSync(enc.encode("\x1b[?2004l\x1b[?1006l\x1b[?1000l\x1b[?1049l\x1b[?25h"));
   } catch {
     // stdout already gone — nothing to restore onto.
   }

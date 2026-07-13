@@ -93,6 +93,21 @@ export function fmtTokens(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : `${n}`;
 }
 
+// Readline-style word boundaries for the composer (⌥b/⌥f, ctrl+w).
+export function wordLeft(text: string, cursor: number): number {
+  let i = cursor;
+  while (i > 0 && /\s/.test(text[i - 1])) i--;
+  while (i > 0 && !/\s/.test(text[i - 1])) i--;
+  return i;
+}
+
+export function wordRight(text: string, cursor: number): number {
+  let i = cursor;
+  while (i < text.length && /\s/.test(text[i])) i++;
+  while (i < text.length && !/\s/.test(text[i])) i++;
+  return i;
+}
+
 export function relTime(ts: number): string {
   const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
   if (s < 60) return `${s}s`;
