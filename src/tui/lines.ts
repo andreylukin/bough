@@ -4,7 +4,7 @@
 // any tool group, however old, can be expanded in place.
 import wrapAnsi from "wrap-ansi";
 import type { Message, Role } from "../schema/parts.ts";
-import { clip, md, outputText, segmentParts, toolSummary } from "./format.ts";
+import { md, outputText, segmentParts, toolSummary } from "./format.ts";
 
 export interface VLine {
   text: string;
@@ -37,6 +37,47 @@ function push(out: VLine[], text: string, width: number, click?: string) {
   for (const l of wrap(text, width)) out.push(click ? { text: l, click } : { text: l });
 }
 
+// How much of an expanded call shows before "… +N more lines" (logical lines,
+// before wrapping; a runaway single line is still tamed by the hard wrap).
+const CODE_LINES = 14;
+const OUTPUT_LINES = 20;
+
+/**
+ * A gutter-framed block: each logical line wraps to the remaining width and
+ * every physical line carries a dim `│` (clickable — anywhere in the block
+ * collapses it). `style` colors the content; the gutter stays dim.
+ */
+function pushBlock(
+  out: VLine[],
+  text: string,
+  width: number,
+  opts: { maxLines: number; style: (l: string) => string; click: string },
+) {
+  const logical = text.split("\n");
+  const shown = logical.slice(0, opts.maxLines);
+  for (const line of shown) {
+    for (const l of wrap(line, width - 2)) {
+      out.push({ text: `${dim("│")} ${l ? opts.style(l) : ""}`, click: opts.click });
+    }
+  }
+  if (logical.length > shown.length) {
+    out.push({
+      text: `${dim("│")} ${dim(`… +${logical.length - shown.length} more lines`)}`,
+      click: opts.click,
+    });
+  }
+}
+
+// Harness verdict lines inside run_steps output get their own colors; everything
+// else in an output block reads dim (it's the result, not the intent).
+function styleOutputLine(line: string, isError: boolean): string {
+  if (isError) return red(line);
+  if (line.startsWith("[done] accepted")) return green(line);
+  if (line.startsWith("[done] rejected")) return red(line);
+  if (line.startsWith("[check]")) return yellow(line);
+  return dim(line);
+}
+
 function toolGroupLines(
   out: VLine[],
   parts: Message["parts"],
@@ -61,14 +102,22 @@ function toolGroupLines(
   for (const call of calls) {
     const res = results.get(call.id);
     const status = res ? (res.isError ? red("✗ error") : green("✓ done")) : yellow("⚙ running");
-    push(out, `  ${green("◇")} ${call.name} ${status}`, width, key);
+    push(out, `${green("◇")} ${call.name} ${status}`, width, key);
+    // What ran, bright; what came back, dim — the brightness IS the boundary,
+    // with an ↳ seam between the two.
     const raw = call.input as Record<string, unknown> | null | undefined;
     const code = raw && typeof raw.code === "string" ? raw.code : null;
-    const input = code ?? JSON.stringify(call.input);
-    if (input) push(out, dim(clip(input, 600)), width);
+    const input = code ?? (call.input === undefined ? "" : JSON.stringify(call.input, null, 2));
+    if (input) {
+      pushBlock(out, input, width, { maxLines: CODE_LINES, style: (l) => l, click: key });
+    }
     if (res && outputText(res) !== "") {
-      const body = clip(outputText(res), 1000);
-      push(out, res.isError ? red(body) : dim(body), width);
+      out.push({ text: dim("↳ output"), click: key });
+      pushBlock(out, outputText(res), width, {
+        maxLines: OUTPUT_LINES,
+        style: (l) => styleOutputLine(l, res.isError),
+        click: key,
+      });
     }
   }
 }

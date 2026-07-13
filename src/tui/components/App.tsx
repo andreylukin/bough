@@ -226,11 +226,14 @@ export function App(
   const visible = lines.slice(start, start + bodyH);
   const padTop = bodyH - visible.length;
 
-  // Everything a mouse event needs from the current layout, without re-subscribing.
-  const layout = useRef({ mode, start, padTop, maxOff });
-  layout.current = { mode, start, padTop, maxOff };
-  const linesRef = useRef(lines);
-  linesRef.current = lines;
+  // Everything a mouse event needs from the current layout. Synced in an effect
+  // (post-commit) rather than during render, so a click always maps against the
+  // frame actually ON SCREEN — chromeH is measured a frame late, so the padTop
+  // used during an in-flight render can differ from what's painted by one row.
+  const layout = useRef({ mode, start, padTop, maxOff, lines });
+  useEffect(() => {
+    layout.current = { mode, start, padTop, maxOff, lines };
+  });
   // Composer autocomplete: "/" at the start completes skills, "@" completes
   // workspace files (needs a live session — drafts have no workspace yet).
   interface Popup {
@@ -318,7 +321,7 @@ export function App(
       }
       if (l.mode !== "chat") return;
       const idx = l.start + (ev.y - 1) - l.padTop;
-      const line = linesRef.current[idx];
+      const line = l.lines[idx];
       if (line?.click) toggleGroup(line.click);
     });
     return () => onMouse(null);
