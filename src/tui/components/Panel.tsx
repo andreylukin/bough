@@ -5,16 +5,21 @@ import type { NetRequest } from "../../schema/parts.ts";
 import type { McpStatus, NetConfig, NetStatus, SkillInfo } from "../api.ts";
 import { relTime } from "../format.ts";
 
-export type PanelTab = "net" | "mcp" | "skills";
-export const PANEL_TABS: PanelTab[] = ["net", "mcp", "skills"];
+// The management view is one tabbed panel: the session tree, the current
+// conversation's branch tree, and the net/mcp/skills tabs. ^p/^f/^t open it on a tab.
+export type PanelTab = "sessions" | "conversation" | "net" | "mcp" | "skills";
+export const PANEL_TABS: PanelTab[] = ["sessions", "conversation", "net", "mcp", "skills"];
 
-function Tabs({ tab }: { tab: PanelTab }) {
+/** The tab bar for the unified panel — active tab bold + green underline. */
+export function PanelTabs({ tab }: { tab: PanelTab }) {
   return (
     <Text>
       {PANEL_TABS.map((t, i) => (
-        <Text key={t} bold={t === tab} dimColor={t !== tab}>
-          {i > 0 ? "  " : ""}
-          {t}
+        <Text key={t}>
+          {i > 0 ? "   " : ""}
+          <Text bold={t === tab} color={t === tab ? "green" : undefined} dimColor={t !== tab}>
+            {t}
+          </Text>
         </Text>
       ))}
     </Text>
@@ -139,16 +144,14 @@ export function Panel(
     rows: number;
   },
 ) {
+  // Content only — the unified panel container owns the border + tab bar.
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
-      <Tabs tab={tab} />
-      <Box marginTop={1}>
-        {tab === "net"
-          ? <NetTab status={status} policy={policy} feed={feed} rows={rows} />
-          : tab === "mcp"
-          ? <McpTab mcp={mcp} selected={mcpSel} msg={mcpMsg} />
-          : <SkillsTab skills={skills} rows={rows} />}
-      </Box>
+    <Box marginTop={1}>
+      {tab === "net"
+        ? <NetTab status={status} policy={policy} feed={feed} rows={rows} />
+        : tab === "mcp"
+        ? <McpTab mcp={mcp} selected={mcpSel} msg={mcpMsg} />
+        : <SkillsTab skills={skills} rows={rows} />}
     </Box>
   );
 }

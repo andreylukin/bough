@@ -28,11 +28,12 @@ import { NewSession } from "./NewSession.tsx";
 import { buildTree, ConversationTree, treeItems } from "./ConversationTree.tsx";
 import { DiffView, flattenDiffs } from "./DiffView.tsx";
 import { modelEntries, ModelPicker } from "./ModelPicker.tsx";
-import { Panel, PANEL_TABS, type PanelTab } from "./Panel.tsx";
+import { Panel, PANEL_TABS, type PanelTab, PanelTabs } from "./Panel.tsx";
 import { Help } from "./Help.tsx";
 import { appendHistory, loadHistory, saveLastSession } from "../state.ts";
 
-type Mode = "chat" | "picker" | "new" | "fork" | "diff" | "model" | "panel" | "help";
+// picker + conversation + net/mcp/skills are all tabs of the one "panel" view.
+type Mode = "chat" | "new" | "diff" | "model" | "panel" | "help";
 
 export function App(
   { initialSessions, defaultWorkspace }: { initialSessions: Session[]; defaultWorkspace: string },
@@ -75,7 +76,7 @@ export function App(
   const [histIdx, setHistIdx] = useState<number | null>(null);
   const draft = useRef("");
   // panel state
-  const [panelTab, setPanelTab] = useState<PanelTab>("net");
+  const [panelTab, setPanelTab] = useState<PanelTab>("sessions");
   const [mcpSel, setMcpSel] = useState(0);
   const [panelMsg, setPanelMsg] = useState<string | null>(null);
   const [netStat, setNetStat] = useState<NetStatus | null>(null);
@@ -149,9 +150,10 @@ export function App(
         setMcpStat(null);
         setPanelMsg(String(e));
       });
-    } else {
+    } else if (tab === "skills") {
       api.skills().then(setSkillsList, () => setSkillsList([]));
     }
+    // sessions / conversation read from the store — nothing to fetch.
   }, [currentId]);
   useEffect(() => {
     if (mode === "panel") refreshPanel(panelTab);
@@ -418,80 +420,93 @@ export function App(
       return;
     }
 
-    if (mode === "picker") {
-      // Filter-entry sub-mode (`/`): printable keys type; enter/esc drop back to nav.
-      if (filterActive) {
-        if (key.escape) {
+    if (mode === "panel") {
+      // Escape closes the panel — unless it's dismissing the sessions filter.
+      if (key.escape) {
+        if (panelTab === "sessions" && filterActive) {
           setFilterActive(false);
           setFilter("");
-          return;
-        }
-        if (key.return) {
-          setFilterActive(false);
-          return;
-        }
-        if (key.backspace || key.delete) {
-          setPickSel(0);
-          return setFilter((f) => f.slice(0, -1));
-        }
-        if (ch && !key.ctrl && !key.meta && !key.upArrow && !key.downArrow) {
-          setPickSel(0);
-          setFilter((f) => f + ch);
-          return;
-        }
-      }
-      if (key.escape) {
-        setMode("chat");
+        } else setMode("chat");
         return;
       }
-      if (key.return) {
-        const sel = treeRows[pickSel];
-        if (sel) openSession(sel.s);
-        return;
-      }
-      if (key.upArrow || (!filterActive && ch === "k")) {
-        return setPickSel((i) => Math.max(0, i - 1));
-      }
-      if (key.downArrow || (!filterActive && ch === "j")) {
-        return setPickSel((i) => Math.min(treeRows.length - 1, i + 1));
-      }
-      if (!filterActive && ch === "g") return setPickSel(0);
-      if (!filterActive && ch === "G") return setPickSel(Math.max(0, treeRows.length - 1));
-      if (!filterActive && ch === "/") {
-        setFilterActive(true);
-        return;
-      }
-      if (key.ctrl && ch === "t") {
-        store.newSession().then((s) => openSession(s), (e) => setErr(String(e)));
-        return;
-      }
-      if (key.ctrl && ch === "x") {
-        const sel = treeRows[pickSel];
-        if (sel) store.archive(sel.s.id); // session.archived prunes the list
-        return;
-      }
-      // x deprecates/un-deprecates a branch (hidden by default); h reveals hidden.
-      if (!filterActive && ch === "x") {
-        const sel = treeRows[pickSel];
-        if (sel && sel.s.kind !== "root") store.deprecate(sel.s.id, !sel.s.deprecatedAt);
-        return;
-      }
-      if (!filterActive && ch === "h") return setShowDeprecated((v) => !v);
-      if (key.backspace || key.delete) {
-        setPickSel(0);
-        return setFilter((f) => f.slice(0, -1));
-      }
-      return;
-    }
-
-    if (mode === "panel") {
-      if (key.escape) return setMode("chat");
-      if (key.tab) {
+      // Tab cycles tabs (but while typing a session filter, let it type).
+      if (key.tab && !(panelTab === "sessions" && filterActive)) {
         setPanelMsg(null);
         setMcpSel(0);
         setPanelTab((t) => PANEL_TABS[(PANEL_TABS.indexOf(t) + 1) % PANEL_TABS.length]);
         return;
       }
+
+      // ---- sessions: the lineage tree (was ^p) ----
+      if (panelTab === "sessions") {
+        if (filterActive) {
+          if (key.return) return setFilterActive(false);
+          if (key.backspace || key.delete) {
+            setPickSel(0);
+            return setFilter((f) => f.slice(0, -1));
+          }
+          if (ch && !key.ctrl && !key.meta && !key.upArrow && !key.downArrow) {
+            setPickSel(0);
+            return setFilter((f) => f + ch);
+          }
+        }
+        if (key.return) {
+          const sel = treeRows[pickSel];
+          if (sel) openSession(sel.s);
+          return;
+        }
+        if (key.upArrow || (!filterActive && ch === "k")) {
+          return setPickSel((i) => Math.max(0, i - 1));
+        }
+        if (key.downArrow || (!filterActive && ch === "j")) {
+          return setPickSel((i) => Math.min(treeRows.length - 1, i + 1));
+        }
+        if (!filterActive && ch === "g") return setPickSel(0);
+        if (!filterActive && ch === "G") return setPickSel(Math.max(0, treeRows.length - 1));
+        if (!filterActive && ch === "/") return setFilterActive(true);
+        if (key.ctrl && ch === "t") {
+          store.newSession().then((s) => openSession(s), (e) => setErr(String(e)));
+          return;
+        }
+        if (key.ctrl && ch === "x") {
+          const sel = treeRows[pickSel];
+          if (sel) store.archive(sel.s.id);
+          return;
+        }
+        if (!filterActive && ch === "x") {
+          const sel = treeRows[pickSel];
+          if (sel && sel.s.kind !== "root") store.deprecate(sel.s.id, !sel.s.deprecatedAt);
+          return;
+        }
+        if (!filterActive && ch === "h") return setShowDeprecated((v) => !v);
+        return;
+      }
+
+      // ---- conversation: the branch tree (was ^f) ----
+      if (panelTab === "conversation") {
+        if (key.return) {
+          const it = convItems[forkSel];
+          if (!it) return;
+          setMode("chat");
+          if (it.type === "branch") openSession(it.session);
+          else if (it.type === "step") {
+            store.fork(it.step.point.msgId, it.step.point.atPart).then((s) => s && openSession(s));
+          } else store.fork(it.node.point.msgId).then((s) => s && openSession(s));
+          return;
+        }
+        if (key.upArrow || ch === "k") return setForkSel((i) => Math.max(0, i - 1));
+        if (key.downArrow || ch === "j") {
+          return setForkSel((i) => Math.min(convItems.length - 1, i + 1));
+        }
+        if (ch === "x") {
+          const it = convItems[forkSel];
+          if (it?.type === "branch") store.deprecate(it.session.id, !it.session.deprecatedAt);
+          return;
+        }
+        if (ch === "h") return setShowDeprecated((v) => !v);
+        return;
+      }
+
       if (panelTab === "net" && ch === "y") {
         const on = policy?.mode !== "yolo";
         api.setYolo(on).then(({ config }) => setPolicy(config), (e) => setPanelMsg(String(e)));
@@ -574,33 +589,6 @@ export function App(
       return;
     }
 
-    if (mode === "fork") {
-      if (key.escape) return setMode("chat");
-      if (key.return) {
-        const it = convItems[forkSel];
-        if (!it) return;
-        setMode("chat");
-        // A branch row opens that session; a node/tool-run forks there.
-        if (it.type === "branch") openSession(it.session);
-        else if (it.type === "step") {
-          store.fork(it.step.point.msgId, it.step.point.atPart).then((s) => s && openSession(s));
-        } else store.fork(it.node.point.msgId).then((s) => s && openSession(s));
-        return;
-      }
-      if (key.upArrow || ch === "k") return setForkSel((i) => Math.max(0, i - 1));
-      if (key.downArrow || ch === "j") {
-        return setForkSel((i) => Math.min(convItems.length - 1, i + 1));
-      }
-      // x deprecates/un-deprecates the selected branch; h toggles showing hidden.
-      if (ch === "x") {
-        const it = convItems[forkSel];
-        if (it?.type === "branch") store.deprecate(it.session.id, !it.session.deprecatedAt);
-        return;
-      }
-      if (ch === "h") return setShowDeprecated((v) => !v);
-      return;
-    }
-
     if (mode === "diff") {
       if (key.escape) return setMode("chat");
       if (key.upArrow) {
@@ -661,11 +649,12 @@ export function App(
       return;
     }
 
-    // chat mode
+    // chat mode. ^p/^f/^t all open the one panel view on their tab.
     if (key.ctrl && ch === "p") {
       setPickSel(0);
       setFilter("");
-      setMode("picker");
+      setPanelTab("sessions");
+      setMode("panel");
       return;
     }
     if (key.ctrl && ch === "n") {
@@ -679,7 +668,8 @@ export function App(
       if (store.thread.length === 0) return;
       // Start on the live tip (last selectable row); ↑ walks back through history.
       setForkSel(Math.max(0, convItems.length - 1));
-      setMode("fork");
+      setPanelTab("conversation");
+      setMode("panel");
       return;
     }
     if (key.ctrl && ch === "d") {
@@ -710,6 +700,7 @@ export function App(
     if (key.ctrl && ch === "t") {
       setPanelMsg(null);
       setMcpSel(0);
+      setPanelTab("net");
       setMode("panel");
       return;
     }
@@ -871,52 +862,62 @@ export function App(
   const shortWs = defaultWorkspace.replace(new RegExp(`^${Deno.env.get("HOME")}`), "~");
   const isDraft = !store.currentId;
 
-  const modal = mode === "picker"
+  // The unified management view: one bordered container, a tab bar, and the active
+  // tab's content (sessions/conversation trees, or net/mcp/skills).
+  const panel = mode === "panel"
     ? (
-      <SessionPicker
-        rowsList={treeRows}
-        selected={pickSel}
-        filter={filter}
-        filterActive={filterActive}
-        rows={rows}
-        currentId={currentId}
-        showDeprecated={showDeprecated}
-      />
+      <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
+        <PanelTabs tab={panelTab} />
+        {panelTab === "sessions"
+          ? (
+            <SessionPicker
+              rowsList={treeRows}
+              selected={pickSel}
+              filter={filter}
+              filterActive={filterActive}
+              rows={rows}
+              currentId={currentId}
+              showDeprecated={showDeprecated}
+            />
+          )
+          : panelTab === "conversation"
+          ? (
+            <ConversationTree
+              items={convItems}
+              selected={forkSel}
+              rows={rows}
+              showDeprecated={showDeprecated}
+            />
+          )
+          : (
+            <Panel
+              tab={panelTab}
+              status={netStat}
+              policy={policy}
+              feed={store.feed}
+              mcp={mcpStat}
+              mcpSel={mcpSel}
+              mcpMsg={panelMsg}
+              skills={skillsList}
+              rows={rows}
+            />
+          )}
+      </Box>
     )
-    : mode === "panel"
-    ? (
-      <Panel
-        tab={panelTab}
-        status={netStat}
-        policy={policy}
-        feed={store.feed}
-        mcp={mcpStat}
-        mcpSel={mcpSel}
-        mcpMsg={panelMsg}
-        skills={skillsList}
-        rows={rows}
-      />
-    )
-    : mode === "help"
-    ? <Help />
-    : mode === "new"
-    ? <NewSession query={newQuery} hits={dirHits} selected={newSel} />
-    : mode === "fork"
-    ? (
-      <ConversationTree
-        items={convItems}
-        selected={forkSel}
-        rows={rows}
-        showDeprecated={showDeprecated}
-      />
-    )
-    : mode === "diff"
-    ? <DiffView entries={diffEntries} fileSel={fileSel} scroll={diffScroll} rows={rows} />
-    : mode === "model"
-    ? (cfg
-      ? <ModelPicker cfg={cfg} entries={cfgEntries} selected={modelSel} keyInput={keyInput} />
-      : <Text dimColor>loading config…</Text>)
     : null;
+
+  const modal = panel ??
+    (mode === "help"
+      ? <Help />
+      : mode === "new"
+      ? <NewSession query={newQuery} hits={dirHits} selected={newSel} />
+      : mode === "diff"
+      ? <DiffView entries={diffEntries} fileSel={fileSel} scroll={diffScroll} rows={rows} />
+      : mode === "model"
+      ? (cfg
+        ? <ModelPicker cfg={cfg} entries={cfgEntries} selected={modelSel} keyInput={keyInput} />
+        : <Text dimColor>loading config…</Text>)
+      : null);
 
   return (
     <Box flexDirection="column" height={rows} width={width}>

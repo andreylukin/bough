@@ -65,14 +65,12 @@ export function SessionPicker(
     showDeprecated: boolean;
   },
 ) {
-  const max = Math.max(3, rows - 8);
+  const max = Math.max(3, rows - 9);
   const start = Math.max(0, Math.min(selected - Math.floor(max / 2), rowsList.length - max));
   const win = rowsList.slice(start, start + max);
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
-      <Text bold>
-        sessions{showDeprecated ? <Text dimColor>{"  "}(showing deprecated)</Text> : null}
-      </Text>
+    <Box flexDirection="column">
+      {showDeprecated ? <Text dimColor>(showing deprecated)</Text> : null}
       {filterActive
         ? (
           <Text>

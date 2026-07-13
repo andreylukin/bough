@@ -59,8 +59,7 @@ export const HINTS = {
   fork: "↑↓ move · enter branch here / open · esc close",
   diff: "↑↓ file · j/k scroll · a apply file · R revert all · esc close",
   model: "↑↓ move · enter set · esc close",
-  panel:
-    "tab switch · j/k move · net: y yolo · mcp: c connect · r restart · e on/off · a auth · esc close",
+  panel: "tab: cycle · ↑↓ move · enter select · x deprecate · h show hidden · esc close",
   help: "any key closes",
 } as const;
 

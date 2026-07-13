@@ -125,14 +125,13 @@ export function ConversationTree(
     showDeprecated: boolean;
   },
 ) {
-  const max = Math.max(3, rows - 8);
+  const max = Math.max(3, rows - 9);
   const start = Math.max(0, Math.min(selected - Math.floor(max / 2), items.length - max));
   const win = items.slice(start, start + max);
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
-      <Text bold>
-        conversation · branch at any turn or tool run
-        {showDeprecated ? <Text dimColor>{"  "}(showing deprecated)</Text> : null}
+    <Box flexDirection="column">
+      <Text dimColor>
+        branch at any turn or tool run{showDeprecated ? "  (showing deprecated)" : ""}
       </Text>
       {win.map((it, i) => {
         const sel = start + i === selected;
