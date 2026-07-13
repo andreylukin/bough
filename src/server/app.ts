@@ -61,6 +61,12 @@ import { applyChanges, ChangesError, revertChanges, sessionChanges } from "./cha
 import { ChangesApplyBody, ChangesRevertBody } from "../schema/changes.ts";
 import { clearTheme, loadTheme, saveTheme, Theme, THEME_DEFAULTS, THEME_TOKENS } from "./theme.ts";
 import { KeysBody, keyStatus, setKey } from "./keys.ts";
+import {
+  ensureOpenAIModels,
+  mergeModels,
+  openaiModels,
+  refreshOpenAIModels,
+} from "./openai_models.ts";
 
 export interface AppCtx {
   db: Db;
@@ -115,23 +121,30 @@ function error(status: number, message: string): Response {
 
 // ---- handlers --------------------------------------------------------------
 
-const getConfig: Handler = () =>
-  json({
+const getConfig: Handler = () => {
+  // First config read after boot with a key already present: refresh the OpenAI
+  // list in the background — this response serves the static table, the next
+  // one includes the pulled models.
+  ensureOpenAIModels();
+  return json({
     model: activeModel(),
-    models: MODELS,
+    models: mergeModels(MODELS, openaiModels()),
     worker: workerChoice(),
     workerOptions: WORKER_OPTIONS,
     // Which provider API keys are configured — booleans only, never the values.
     keys: keyStatus(),
   });
+};
 
 // Set a provider's API key: applies to the live process env immediately (clients read
 // the env at run time) and persists to ~/.bough/env for restarts. Returns the
-// refreshed booleans; never echoes the value back.
+// refreshed booleans; never echoes the value back. An OpenAI key also pulls the
+// account's model list (awaited, so the client's follow-up config read sees it).
 const putKeys: Handler = async (req) => {
   const parsed = KeysBody.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return error(400, "invalid body: " + parsed.error.message);
   const keys = setKey(parsed.data.provider, parsed.data.key);
+  if (parsed.data.provider === "openai") await refreshOpenAIModels();
   return json({ ok: true, keys });
 };
 

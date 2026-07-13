@@ -112,13 +112,14 @@ export function setActiveModel(model: string): void {
  * OPENROUTER_API_KEY). Not exhaustive — the composer accepts any id, this is just the
  * quick-switch menu.
  */
-export const MODELS: {
+export interface ModelRow {
   id: string;
   label: string;
   provider: "anthropic" | "openai" | "openrouter";
   /** USD per million tokens (input/output) — drives the UI's cost estimate. */
   pricing?: { in: number; out: number };
-}[] = [
+}
+export const MODELS: ModelRow[] = [
   { id: "claude-opus-4-8", label: "Opus 4.8", provider: "anthropic", pricing: { in: 5, out: 25 } },
   { id: "claude-fable-5", label: "Fable 5", provider: "anthropic", pricing: { in: 10, out: 50 } },
   { id: "claude-sonnet-5", label: "Sonnet 5", provider: "anthropic", pricing: { in: 3, out: 15 } },

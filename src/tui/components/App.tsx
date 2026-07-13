@@ -95,6 +95,12 @@ export function App(
   // Launch = a fresh draft targeting the caller's cwd; the session is created on
   // the first send. ^p resumes existing sessions.
 
+  // Config once at startup so the status bar can name the active model (^o keeps
+  // it fresh after switches; there's no config event to subscribe to).
+  useEffect(() => {
+    api.getConfig().then(setCfg, () => {});
+  }, []);
+
   // Repaint on terminal resize (SIGWINCH fallback: the node-compat resize event
   // doesn't always fire under Deno).
   useEffect(() => {
@@ -658,6 +664,7 @@ export function App(
           mode={mode === "chat" && store.pending ? "approval" : mode}
           usage={store.usage}
           draftLabel={isDraft ? `new · ${shortWs}` : null}
+          model={cfg ? (cfg.models.find((m) => m.id === cfg.model)?.label ?? cfg.model) : null}
         />
       </Box>
     </Box>
