@@ -63,16 +63,22 @@ const CYAN = "\x1b[36m";
 const FG_OFF = "\x1b[39m";
 
 function mdInline(line: string): string {
-  // Style code spans first so their contents are exempt from bold rewriting.
+  // Style code spans first so their contents are exempt from prose rewriting.
   return line
     .split(/(`[^`]+`)/)
     .map((seg) =>
       seg.startsWith("`") && seg.endsWith("`") && seg.length > 2
         ? `${CYAN}${seg.slice(1, -1)}${FG_OFF}`
-        : seg.replace(/\*\*([^*]+)\*\*/g, `${B}$1${B_OFF}`)
+        : seg
+          .replace(/\*\*([^*]+)\*\*/g, `${B}$1${B_OFF}`)
+          // [text](url) → underlined text, url dimmed alongside.
+          .replace(/\[([^\]]+)\]\((\S+?)\)/g, `${UL}$1${UL_OFF} ${DIM}($2)${B_OFF}`)
     )
     .join("");
 }
+
+const UL = "\x1b[4m";
+const UL_OFF = "\x1b[24m";
 
 export function md(text: string): string {
   let inFence = false;
@@ -83,7 +89,10 @@ export function md(text: string): string {
     }
     if (inFence) return `${DIM}${line}${B_OFF}`;
     const h = line.match(/^(#{1,6})\s+(.*)$/);
-    if (h) return `${B}${h[2]}${B_OFF}`;
+    if (h) return h[1].length === 1 ? `${B}${UL}${h[2]}${UL_OFF}${B_OFF}` : `${B}${h[2]}${B_OFF}`;
+    if (/^\s*(-{3,}|\*{3,})\s*$/.test(line)) return `${DIM}${"─".repeat(24)}${B_OFF}`;
+    const quoted = line.match(/^>\s?(.*)$/);
+    if (quoted) return `${DIM}│ ${quoted[1]}${B_OFF}`;
     return mdInline(line.replace(/^(\s*)- /, "$1• "));
   }).join("\n");
 }

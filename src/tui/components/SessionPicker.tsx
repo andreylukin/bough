@@ -63,12 +63,14 @@ export function SessionPicker(
         const sel = start + i === selected;
         const dot = s.busy ? "⋯" : s.unseen ? "●" : " ";
         return (
-          <Text key={s.id} inverse={sel} wrap="truncate">
-            <Text color={s.busy ? "yellow" : "green"}>{dot}</Text> {"  ".repeat(depth)}
-            {KIND_MARK[s.kind] ?? ""}
-            {s.title || "(untitled)"}
-            <Text dimColor>{"  "}{relTime(s.createdAt)} ago</Text>
-          </Text>
+          <Box key={s.id} justifyContent="space-between" gap={2}>
+            <Text inverse={sel} wrap="truncate">
+              <Text color={s.busy ? "yellow" : "green"}>{dot}</Text> {"  ".repeat(depth)}
+              {KIND_MARK[s.kind] ?? ""}
+              {s.title || "(untitled)"}
+            </Text>
+            <Text inverse={sel} dimColor>{relTime(s.createdAt)} ago</Text>
+          </Box>
         );
       })}
       {rowsList.length === 0 && <Text dimColor>no sessions — ^t creates one</Text>}

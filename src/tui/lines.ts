@@ -82,12 +82,16 @@ export function messageLines(
   const out: VLine[] = [];
   out.push({ text: "" });
   out.push({ text: ROLE_LABEL[msg.role] });
+  // Bodies hang 2 columns under the role label so turns read as blocks.
+  const body: VLine[] = [];
+  const w = width - 2;
   segmentParts(msg.parts).forEach((s, i) => {
-    if (s.kind === "text") push(out, md(s.text), width);
-    else if (s.kind === "reasoning") push(out, dim(s.text), width);
-    else toolGroupLines(out, s.parts, `${msg.id}:${i}`, isExpanded(`${msg.id}:${i}`), width);
+    if (s.kind === "text") push(body, md(s.text), w);
+    else if (s.kind === "reasoning") push(body, dim(s.text), w);
+    else toolGroupLines(body, s.parts, `${msg.id}:${i}`, isExpanded(`${msg.id}:${i}`), w);
   });
-  if (streaming) push(out, md(streaming) + "▌", width);
+  if (streaming) push(body, md(streaming) + "▌", w);
+  out.push(...body.map((l) => (l.text ? { ...l, text: "  " + l.text } : l)));
   return out;
 }
 

@@ -63,7 +63,13 @@ export function DiffView(
             inverse={fileStart + i === fileSel}
             wrap="truncate"
           >
-            <Text color={e.file.status === "deleted" ? "red" : "yellow"}>
+            <Text
+              color={e.file.status === "deleted"
+                ? "red"
+                : e.file.status === "added"
+                ? "green"
+                : "yellow"}
+            >
               {STATUS_MARK[e.file.status]}
             </Text>{" "}
             {e.file.path}
