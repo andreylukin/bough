@@ -8,7 +8,8 @@ import { md, outputText, segmentParts, toolSummary } from "./format.ts";
 
 export interface VLine {
   text: string;
-  /** Set on expandable lines: clicking (or ^e-ing) toggles this key. */
+  /** Click target: a tool-group key toggles its fold; an "open:<sessionId>" key
+   * descends into that subagent's branch. */
   click?: string;
 }
 
@@ -31,6 +32,57 @@ const ROLE_LABEL: Record<Role, string> = {
 
 function wrap(text: string, width: number): string[] {
   return wrapAnsi(text, Math.max(20, width), { hard: true, trim: false }).split("\n");
+}
+
+// A subagent's completion note (subagent.ts formatNote) replays as a system
+// message so the model can act on it, but the raw bracketed wall is noise to a
+// human. Parse it back into fields so we can render a real card.
+export interface SubagentNote {
+  title: string;
+  sessionId: string;
+  status: string;
+  ok: boolean;
+  files: string[];
+  report: string | null;
+}
+
+export function parseSubagentNote(text: string): SubagentNote | null {
+  const head = text.match(/^\[subagent finished\] "(.*)" \(([^)]+)\) — (.+)\.$/m);
+  if (!head) return null;
+  const [, title, sessionId, status] = head;
+  const filesLine = text.match(/^Changed files on its branch: (.+)\.$/m);
+  const files = filesLine && filesLine[1] !== "none"
+    ? filesLine[1].split(", ").map((f) => f.trim())
+    : [];
+  const reportMatch = text.match(/^Report:\n([\s\S]*?)\nIts changes stay on its own branch/m);
+  const report = reportMatch ? reportMatch[1].trim() : null;
+  return { title, sessionId, status, ok: !status.startsWith("FAILED"), files, report };
+}
+
+// The card for a finished subagent: a clickable ◆ header (opens its branch),
+// a files line, the report as markdown, and a dim footer with the next action.
+function subagentNoteLines(out: VLine[], note: SubagentNote, width: number) {
+  const open = `open:${note.sessionId}`;
+  const dot = note.ok ? green("◆") : red("◆");
+  const statusTag = note.ok ? green(note.status) : red(note.status);
+  out.push({ text: `${dot} ${bold(note.title)}  ${statusTag}`, click: open });
+  const fileNote = note.files.length
+    ? `${note.files.length} file${note.files.length === 1 ? "" : "s"} on its branch · ${
+      note.files.join(", ")
+    }`
+    : "no file changes";
+  push(out, dim(`  ${fileNote}`), width, open);
+  if (note.report) {
+    for (const line of md(note.report).split("\n")) {
+      for (const l of wrap(line, width - 2)) out.push({ text: `${dim("│")} ${l}` });
+    }
+  }
+  push(
+    out,
+    dim(`  ↳ enter/click to open · adopt("…") in a turn to merge its changes`),
+    width,
+    open,
+  );
 }
 
 function push(out: VLine[], text: string, width: number, click?: string) {
@@ -129,11 +181,26 @@ export function messageLines(
   streaming?: string,
 ): VLine[] {
   const out: VLine[] = [];
+  const body: VLine[] = [];
+  const w = width - 2;
+
+  // A system message that is a subagent completion note renders as a branch card
+  // (◆ header, report, next action) instead of the raw bracketed wall — and drops
+  // the "system" role label, since the card names itself.
+  const noteText = msg.role === "system"
+    ? msg.parts.filter((p) => p.type === "text").map((p) => (p as { text: string }).text).join("\n")
+    : "";
+  const note = noteText ? parseSubagentNote(noteText) : null;
+  if (note) {
+    out.push({ text: "" });
+    subagentNoteLines(body, note, w);
+    out.push(...body.map((l) => (l.text ? { ...l, text: "  " + l.text } : l)));
+    return out;
+  }
+
   out.push({ text: "" });
   out.push({ text: ROLE_LABEL[msg.role] });
   // Bodies hang 2 columns under the role label so turns read as blocks.
-  const body: VLine[] = [];
-  const w = width - 2;
   segmentParts(msg.parts).forEach((s, i) => {
     if (s.kind === "text") push(body, md(s.text), w);
     else if (s.kind === "reasoning") push(body, dim(s.text), w);
@@ -144,13 +211,35 @@ export function messageLines(
   return out;
 }
 
+/** A running subagent branch: id, title, and busy flag for the live card. */
+export interface LiveBranch {
+  id: string;
+  title: string;
+  busy: boolean;
+}
+
 export function buildLines(
   thread: Message[],
   streaming: Record<string, string>,
   isExpanded: (key: string) => boolean,
   width: number,
+  liveBranches: LiveBranch[] = [],
 ): VLine[] {
   const out: VLine[] = [];
   for (const m of thread) out.push(...messageLines(m, isExpanded, width, streaming[m.id]));
+  // In-flight subagents (no completion note yet) get a live card under the tail —
+  // a pulse dot, the branch title, clickable to descend into its thread.
+  if (liveBranches.length > 0) {
+    out.push({ text: "" });
+    out.push({ text: `  ${dim("◆ branches")}` });
+    for (const b of liveBranches) {
+      const dot = b.busy ? yellow("◆") : green("◆");
+      const tail = b.busy ? yellow(" ⋯ working") : green(" ✓ done");
+      out.push({
+        text: `  ${dot} ${b.title.replace(/^subagent · /, "")}${dim(tail)}`,
+        click: `open:${b.id}`,
+      });
+    }
+  }
   return out;
 }

@@ -7,17 +7,24 @@ export interface TreeRow {
   depth: number;
 }
 
-const VISIBLE_KINDS = new Set(["root", "fork", "compaction"]);
+const VISIBLE_KINDS = new Set(["root", "fork", "compaction", "subagent"]);
 
-// Flatten the session tree for the picker: roots newest-first, children (forks/
-// compactions) indented under their parent oldest-first. A child whose parent
-// isn't visible (e.g. archived) surfaces as a root.
+// A session's parent for the tree: forks/compactions link by parentId, subagents
+// by originId (their spawner). Falls back to null (surfaces as a root) when the
+// parent isn't visible.
+function parentOf(s: TuiSession): string | null {
+  return s.parentId ?? s.originId ?? null;
+}
+
+// Flatten the session tree for the picker: roots newest-first, children (forks,
+// compactions, subagent branches) indented under their parent oldest-first.
 export function flattenTree(all: TuiSession[]): TreeRow[] {
   const visible = all.filter((s) => VISIBLE_KINDS.has(s.kind));
   const ids = new Set(visible.map((s) => s.id));
   const byParent = new Map<string | null, TuiSession[]>();
   for (const s of visible) {
-    const p = s.parentId && ids.has(s.parentId) ? s.parentId : null;
+    const parent = parentOf(s);
+    const p = parent && ids.has(parent) ? parent : null;
     byParent.set(p, [...(byParent.get(p) ?? []), s]);
   }
   const out: TreeRow[] = [];
@@ -31,7 +38,7 @@ export function flattenTree(all: TuiSession[]): TreeRow[] {
   return out;
 }
 
-const KIND_MARK: Record<string, string> = { fork: "⑂ ", compaction: "≣ " };
+const KIND_MARK: Record<string, string> = { fork: "⑂ ", compaction: "≣ ", subagent: "◆ " };
 
 export function SessionPicker(
   { rowsList, selected, filter, filterActive, rows }: {
@@ -67,7 +74,7 @@ export function SessionPicker(
             <Text inverse={sel} wrap="truncate">
               <Text color={s.busy ? "yellow" : "green"}>{dot}</Text> {"  ".repeat(depth)}
               {KIND_MARK[s.kind] ?? ""}
-              {s.title || "(untitled)"}
+              {(s.title || "(untitled)").replace(/^subagent · /, "")}
             </Text>
             <Text inverse={sel} dimColor>{relTime(s.createdAt)} ago</Text>
           </Box>

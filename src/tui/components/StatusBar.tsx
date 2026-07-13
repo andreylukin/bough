@@ -26,19 +26,22 @@ function useSpinner(busy: boolean): string | null {
 }
 
 export function StatusBar(
-  { connected, busy, session, pendingCount, quitHint, mode, usage, draftLabel, model }: {
-    connected: boolean;
-    busy: boolean;
-    session: TuiSession | null;
-    pendingCount: number;
-    quitHint: boolean;
-    mode: UiMode;
-    usage: Usage;
-    /** Shown instead of a session title while no session exists yet. */
-    draftLabel?: string | null;
-    /** Active model's label (global, from /config). */
-    model?: string | null;
-  },
+  { connected, busy, session, pendingCount, quitHint, mode, usage, draftLabel, model, parentTitle }:
+    {
+      connected: boolean;
+      busy: boolean;
+      session: TuiSession | null;
+      pendingCount: number;
+      quitHint: boolean;
+      mode: UiMode;
+      usage: Usage;
+      /** Shown instead of a session title while no session exists yet. */
+      draftLabel?: string | null;
+      /** Active model's label (global, from /config). */
+      model?: string | null;
+      /** Spawner's title when the open session is a subagent branch. */
+      parentTitle?: string | null;
+    },
 ) {
   const spinner = useSpinner(busy);
   const status = spinner
@@ -55,11 +58,18 @@ export function StatusBar(
       <Text wrap="truncate">
         <Text color={connected ? "green" : "red"}>{connected ? "●" : "○"}</Text>
         <Text dimColor>{connected ? "" : " reconnecting…"}</Text>
+        {session?.kind === "subagent" ? <Text color="green">{" "}◆</Text> : null}
         {session
-          ? <Text bold>{" "}{session.title || "(untitled)"}</Text>
+          ? (
+            <Text bold>
+              {" "}
+              {(session.title || "(untitled)").replace(/^subagent · /, "")}
+            </Text>
+          )
           : draftLabel
           ? <Text dimColor>{" "}{draftLabel}</Text>
           : null}
+        {parentTitle ? <Text dimColor>{"  "}branch of {parentTitle} · ^p to go back</Text> : null}
         {status ? <Text color={status.color}>{"  "}{status.text}</Text> : null}
         {model ? <Text dimColor>{"  "}⌬ {model}</Text> : null}
         {usage.contextTokens > 0

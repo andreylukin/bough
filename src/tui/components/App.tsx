@@ -17,7 +17,7 @@ import {
   type SkillInfo,
 } from "../api.ts";
 import { useStore } from "../store.ts";
-import { buildLines } from "../lines.ts";
+import { buildLines, type LiveBranch } from "../lines.ts";
 import { fuzzyScore, segmentParts, wordLeft, wordRight } from "../format.ts";
 import { type MouseEvent, onMouse, onPaste } from "../mouse.ts";
 import { Composer } from "./Composer.tsx";
@@ -172,9 +172,30 @@ export function App(
     (key: string) => (expandAll !== toggled.has(key)),
     [expandAll, toggled],
   );
+  // Subagents spawned by the open session (live branch cards). A finished one that
+  // already posted its [subagent finished] note is rendered inline by that note, so
+  // only surface branches with no completion note in the thread yet.
+  const notedIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const m of store.thread) {
+      if (m.role !== "system") continue;
+      const t = m.parts.filter((p) => p.type === "text").map((p) => (p as { text: string }).text)
+        .join("\n");
+      const id = t.match(/\[subagent finished\] ".*" \(([^)]+)\)/)?.[1];
+      if (id) ids.add(id);
+    }
+    return ids;
+  }, [store.thread]);
+  const liveBranches = useMemo<LiveBranch[]>(
+    () =>
+      store.sessions
+        .filter((s) => s.kind === "subagent" && s.originId === currentId && !notedIds.has(s.id))
+        .map((s) => ({ id: s.id, title: s.title || "(untitled)", busy: !!s.busy })),
+    [store.sessions, currentId, notedIds],
+  );
   const lines = useMemo(
-    () => buildLines(store.thread, store.streaming, isExpanded, width),
-    [store.thread, store.streaming, isExpanded, width],
+    () => buildLines(store.thread, store.streaming, isExpanded, width, liveBranches),
+    [store.thread, store.streaming, isExpanded, width, liveBranches],
   );
   const toggleGroup = useCallback((key: string) => {
     setToggled((prev) => {
@@ -308,6 +329,17 @@ export function App(
     return () => onPaste(null);
   }, [insertAtCursor]);
 
+  // A click key is either a tool-group fold or "open:<sessionId>" (descend into a
+  // subagent branch). Kept in a ref so the mouse subscription stays stable.
+  const onClickRef = useRef<(key: string) => void>(() => {});
+  onClickRef.current = (key) => {
+    if (key.startsWith("open:")) {
+      const s = store.sessions.find((x) => x.id === key.slice(5));
+      if (s) openSession(s);
+      return;
+    }
+    toggleGroup(key);
+  };
   useEffect(() => {
     onMouse((ev: MouseEvent) => {
       const l = layout.current;
@@ -322,10 +354,10 @@ export function App(
       if (l.mode !== "chat") return;
       const idx = l.start + (ev.y - 1) - l.padTop;
       const line = l.lines[idx];
-      if (line?.click) toggleGroup(line.click);
+      if (line?.click) onClickRef.current(line.click);
     });
     return () => onMouse(null);
-  }, [toggleGroup]);
+  }, []);
 
   const treeRows: TreeRow[] = filter
     ? flattenTree(store.sessions)
@@ -890,6 +922,10 @@ export function App(
           usage={store.usage}
           draftLabel={isDraft ? `new · ${shortWs}` : null}
           model={cfg ? (cfg.models.find((m) => m.id === cfg.model)?.label ?? cfg.model) : null}
+          parentTitle={store.session?.kind === "subagent" && store.session.originId
+            ? (store.sessions.find((s) => s.id === store.session!.originId)?.title ?? "parent")
+              .replace(/^subagent · /, "")
+            : null}
         />
       </Box>
     </Box>
