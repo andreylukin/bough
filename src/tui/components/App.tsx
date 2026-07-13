@@ -25,7 +25,7 @@ import { StatusBar } from "./StatusBar.tsx";
 import { flattenTree, SessionPicker, type TreeRow } from "./SessionPicker.tsx";
 import { NetApproval } from "./NetApproval.tsx";
 import { NewSession } from "./NewSession.tsx";
-import { ForkPicker } from "./ForkPicker.tsx";
+import { buildTree, ConversationTree, treeItems } from "./ConversationTree.tsx";
 import { DiffView, flattenDiffs } from "./DiffView.tsx";
 import { modelEntries, ModelPicker } from "./ModelPicker.tsx";
 import { Panel, PANEL_TABS, type PanelTab } from "./Panel.tsx";
@@ -371,7 +371,16 @@ export function App(
       .map(({ s }) => ({ s, depth: 0, prefix: "" }))
     : flattenTree(store.sessions);
 
-  const forkMsgs = [...store.thread].reverse();
+  // The conversation tree: user turns as nodes with every child session (forks,
+  // compactions, subagents) that split off during the turn attached to it.
+  const childSessions = useMemo(
+    () => store.sessions.filter((s) => s.originId === currentId),
+    [store.sessions, currentId],
+  );
+  const convItems = useMemo(() => treeItems(buildTree(store.thread, childSessions)), [
+    store.thread,
+    childSessions,
+  ]);
   const diffEntries = flattenDiffs(store.changes);
   const cfgEntries = cfg ? modelEntries(cfg) : [];
 
@@ -554,14 +563,18 @@ export function App(
     if (mode === "fork") {
       if (key.escape) return setMode("chat");
       if (key.return) {
-        const msg = forkMsgs[forkSel];
-        if (!msg) return;
+        const it = convItems[forkSel];
+        if (!it) return;
         setMode("chat");
-        store.fork(msg.id).then((s) => s && openSession(s));
+        // A branch row opens that session; a message node forks there (new branch).
+        if (it.type === "branch") openSession(it.session);
+        else store.fork(it.node.msg.id).then((s) => s && openSession(s));
         return;
       }
-      if (key.upArrow) return setForkSel((i) => Math.max(0, i - 1));
-      if (key.downArrow) return setForkSel((i) => Math.min(forkMsgs.length - 1, i + 1));
+      if (key.upArrow || ch === "k") return setForkSel((i) => Math.max(0, i - 1));
+      if (key.downArrow || ch === "j") {
+        return setForkSel((i) => Math.min(convItems.length - 1, i + 1));
+      }
       return;
     }
 
@@ -641,7 +654,8 @@ export function App(
     }
     if (key.ctrl && ch === "f") {
       if (store.thread.length === 0) return;
-      setForkSel(0);
+      // Start on the live tip (last selectable row); ↑ walks back through history.
+      setForkSel(Math.max(0, convItems.length - 1));
       setMode("fork");
       return;
     }
@@ -864,7 +878,7 @@ export function App(
     : mode === "new"
     ? <NewSession query={newQuery} hits={dirHits} selected={newSel} />
     : mode === "fork"
-    ? <ForkPicker messages={forkMsgs} selected={forkSel} rows={rows} />
+    ? <ConversationTree items={convItems} selected={forkSel} rows={rows} />
     : mode === "diff"
     ? <DiffView entries={diffEntries} fileSel={fileSel} scroll={diffScroll} rows={rows} />
     : mode === "model"

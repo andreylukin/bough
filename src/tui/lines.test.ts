@@ -75,3 +75,37 @@ Deno.test("flattenTree: a root with an unknown origin surfaces as a trunk", () =
   assertEquals(rows.length, 1);
   assertEquals(rows[0].depth, 0);
 });
+
+import { buildTree, treeItems } from "./components/ConversationTree.tsx";
+import type { Message } from "../schema/parts.ts";
+
+function msg(id: string, role: string, text = ""): Message {
+  return { id, sessionId: "s", role, parts: text ? [{ type: "text", text }] : [], pending: false } as Message;
+}
+
+Deno.test("buildTree: user turns are nodes, branches attach to their origin turn", () => {
+  const thread = [
+    msg("u1", "user", "analyze auth"),
+    msg("a1", "supervisor", "ok done"),
+    msg("u2", "user", "now fix it"),
+    msg("a2", "supervisor", "fixed"),
+  ];
+  const branches = [
+    sess({ id: "sub", kind: "subagent", originId: "s", originMessageId: "a1", createdAt: 2 }),
+    sess({ id: "fork", kind: "fork", originId: "s", originMessageId: "u2", createdAt: 3 }),
+  ];
+  const nodes = buildTree(thread, branches);
+  assertEquals(nodes.map((n) => n.msg.id), ["u1", "u2"]);
+  assertEquals(nodes[0].branches.map((b) => b.id), ["sub"]); // sub spawned during turn 1
+  assertEquals(nodes[1].branches.map((b) => b.id), ["fork"]); // fork split at u2
+  assertEquals(nodes[1].tip, true); // last turn is the live tip
+  assertEquals(nodes[0].reply, "replied");
+});
+
+Deno.test("treeItems: flattens nodes then their branches, in order", () => {
+  const thread = [msg("u1", "user", "hi"), msg("a1", "supervisor", "yo")];
+  const items = treeItems(buildTree(thread, [
+    sess({ id: "b", kind: "subagent", originId: "s", originMessageId: "a1", createdAt: 1 }),
+  ]));
+  assertEquals(items.map((it) => it.type === "node" ? it.node.msg.id : it.session.id), ["u1", "b"]);
+});

@@ -24,7 +24,7 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
     keys: [
       ["^p", "session picker (j/k move · / filter · enter open · ^t new · ^x archive)"],
       ["^n", "new session with workspace autocomplete"],
-      ["^f", "fork at a message"],
+      ["^f", "conversation tree — branch at any turn / open a branch"],
       ["^b", "back to the parent (from a subagent branch)"],
       ["^k", "compact this session onto a summary branch"],
     ],
@@ -56,7 +56,7 @@ export const HINTS = {
   approval: "a allow once · A allow session · d deny · ^p sessions",
   picker: "j/k move · / filter · enter open · ^t new · ^x archive · esc back",
   new: "type dir query · ↑↓ pick · enter create · esc cancel",
-  fork: "↑↓ pick message · enter fork there · esc cancel",
+  fork: "↑↓ move · enter branch here / open · esc close",
   diff: "↑↓ file · j/k scroll · a apply file · R revert all · esc close",
   model: "↑↓ move · enter set · esc close",
   panel:
