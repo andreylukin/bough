@@ -25,6 +25,7 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
       ["^p", "session picker (j/k move · / filter · enter open · ^t new · ^x archive)"],
       ["^n", "new session with workspace autocomplete"],
       ["^f", "fork at a message"],
+      ["^b", "back to the parent (from a subagent branch)"],
       ["^k", "compact this session onto a summary branch"],
     ],
   },

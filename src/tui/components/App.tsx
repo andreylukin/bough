@@ -662,6 +662,14 @@ export function App(
       store.compact().then((s) => s && openSession(s));
       return;
     }
+    // ^b: go back to the spawner when viewing a subagent branch (esc is stop).
+    if (key.ctrl && ch === "b") {
+      if (store.session?.kind === "subagent" && store.session.originId) {
+        const parent = store.sessions.find((s) => s.id === store.session!.originId);
+        if (parent) openSession(parent);
+      }
+      return;
+    }
     if (key.ctrl && ch === "t") {
       setPanelMsg(null);
       setMcpSel(0);
@@ -706,15 +714,8 @@ export function App(
       return;
     }
     if (key.escape) {
-      if (store.busy) {
-        store.interrupt();
-        return;
-      }
-      // Idle Esc inside a subagent pops back to its spawner — the quick way out.
-      if (input === "" && store.session?.kind === "subagent" && store.session.originId) {
-        const parent = store.sessions.find((s) => s.id === store.session!.originId);
-        if (parent) openSession(parent);
-      }
+      // Esc is the agent's stop button — nothing else.
+      if (store.busy) store.interrupt();
       return;
     }
     // Send resolves the text inside the updater: an Enter that lands in the same

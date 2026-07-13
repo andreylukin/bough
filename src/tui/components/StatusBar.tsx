@@ -69,7 +69,7 @@ export function StatusBar(
           : draftLabel
           ? <Text dimColor>{" "}{draftLabel}</Text>
           : null}
-        {parentTitle ? <Text dimColor>{"  "}branch of {parentTitle} · esc to go back</Text> : null}
+        {parentTitle ? <Text dimColor>{"  "}branch of {parentTitle} · ^b to go back</Text> : null}
         {status ? <Text color={status.color}>{"  "}{status.text}</Text> : null}
         {model ? <Text dimColor>{"  "}⌬ {model}</Text> : null}
         {usage.contextTokens > 0
