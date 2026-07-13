@@ -295,6 +295,19 @@ const archiveSession: Handler = (_req, ctx, params) => {
   return json({ ok: true });
 };
 
+// Deprecate/un-deprecate a branch: hidden by default in the tree views, still fully
+// usable. Body {on: boolean}. A session.updated event carries the new flag.
+const deprecateSession: Handler = async (req, ctx, params) => {
+  const s = ctx.db.getSession(params.id);
+  if (!s) return error(404, "session not found");
+  const body = await req.json().catch(() => null) as { on?: boolean } | null;
+  if (typeof body?.on !== "boolean") return error(400, "body {on: boolean} required");
+  ctx.db.setDeprecated(params.id, body.on);
+  const updated = ctx.db.getSession(params.id)!;
+  ctx.bus.publish({ type: "session.updated", sessionId: params.id, data: updated });
+  return json({ ok: true, deprecated: body.on });
+};
+
 const interruptSession: Handler = (_req, ctx, params) => {
   if (!ctx.db.getSession(params.id)) return error(404, "session not found");
   const stopped = interruptTurn(params.id);
@@ -961,6 +974,11 @@ const routes: Route[] = [
     method: "POST",
     pattern: new URLPattern({ pathname: "/sessions/:id/archive" }),
     handler: archiveSession,
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/sessions/:id/deprecate" }),
+    handler: deprecateSession,
   },
   {
     method: "POST",

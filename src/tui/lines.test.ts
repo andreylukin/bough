@@ -80,7 +80,13 @@ import { buildTree, treeItems } from "./components/ConversationTree.tsx";
 import type { Message } from "../schema/parts.ts";
 
 function msg(id: string, role: string, text = ""): Message {
-  return { id, sessionId: "s", role, parts: text ? [{ type: "text", text }] : [], pending: false } as Message;
+  return {
+    id,
+    sessionId: "s",
+    role,
+    parts: text ? [{ type: "text", text }] : [],
+    pending: false,
+  } as Message;
 }
 
 Deno.test("buildTree: user turns are nodes, branches attach to their origin turn", () => {
@@ -99,13 +105,39 @@ Deno.test("buildTree: user turns are nodes, branches attach to their origin turn
   assertEquals(nodes[0].branches.map((b) => b.id), ["sub"]); // sub spawned during turn 1
   assertEquals(nodes[1].branches.map((b) => b.id), ["fork"]); // fork split at u2
   assertEquals(nodes[1].tip, true); // last turn is the live tip
-  assertEquals(nodes[0].reply, "replied");
 });
 
-Deno.test("treeItems: flattens nodes then their branches, in order", () => {
-  const thread = [msg("u1", "user", "hi"), msg("a1", "supervisor", "yo")];
-  const items = treeItems(buildTree(thread, [
+Deno.test("buildTree: tool runs become branch points cutting at the result part", () => {
+  const asst = {
+    id: "a1",
+    sessionId: "s",
+    role: "supervisor",
+    parts: [
+      { type: "tool_call", id: "c1", name: "run_steps", input: { code: "read()" } },
+      { type: "tool_result", callId: "c1", output: "ok" },
+      { type: "tool_call", id: "c2", name: "run_steps", input: { code: "edit()" } },
+      { type: "tool_result", callId: "c2", output: "done" },
+    ],
+    pending: false,
+  } as unknown as Message;
+  const [node] = buildTree([msg("u1", "user", "go"), asst], []);
+  assertEquals(node.steps.map((s) => s.point.atPart), [1, 3]); // cut through each result
+  assertEquals(node.steps[0].label.startsWith("run_steps"), true);
+});
+
+Deno.test("treeItems: node, then its tool steps, then its branches", () => {
+  const asst = {
+    id: "a1",
+    sessionId: "s",
+    role: "supervisor",
+    parts: [{ type: "tool_call", id: "c1", name: "run_steps", input: {} }],
+    pending: false,
+  } as unknown as Message;
+  const items = treeItems(buildTree([msg("u1", "user", "hi"), asst], [
     sess({ id: "b", kind: "subagent", originId: "s", originMessageId: "a1", createdAt: 1 }),
   ]));
-  assertEquals(items.map((it) => it.type === "node" ? it.node.msg.id : it.session.id), ["u1", "b"]);
+  assertEquals(
+    items.map((it) => it.type === "node" ? "node" : it.type === "step" ? "step" : "branch"),
+    ["node", "step", "branch"],
+  );
 });

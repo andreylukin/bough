@@ -52,7 +52,7 @@ const KIND: Record<string, { glyph: string; color?: string; strip?: RegExp }> = 
 };
 
 export function SessionPicker(
-  { rowsList, selected, filter, filterActive, rows, currentId }: {
+  { rowsList, selected, filter, filterActive, rows, currentId, showDeprecated }: {
     rowsList: TreeRow[];
     selected: number;
     filter: string;
@@ -61,6 +61,8 @@ export function SessionPicker(
     rows: number;
     /** The open session — marked "you are here" in the tree. */
     currentId: string | null;
+    /** Whether deprecated branches are currently revealed. */
+    showDeprecated: boolean;
   },
 ) {
   const max = Math.max(3, rows - 8);
@@ -68,7 +70,9 @@ export function SessionPicker(
   const win = rowsList.slice(start, start + max);
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
-      <Text bold>sessions</Text>
+      <Text bold>
+        sessions{showDeprecated ? <Text dimColor>{"  "}(showing deprecated)</Text> : null}
+      </Text>
       {filterActive
         ? (
           <Text>
@@ -93,14 +97,20 @@ export function SessionPicker(
               <Text color={dotColor} dimColor={dot === " "}>{dot}</Text>{" "}
               <Text dimColor>{prefix}</Text>
               <Text color={k.color} dimColor={!k.color}>{k.glyph}</Text>{" "}
-              <Text bold={here}>{title}</Text>
+              <Text bold={here} dimColor={!!s.deprecatedAt} strikethrough={!!s.deprecatedAt}>
+                {title}
+              </Text>
             </Text>
-            <Text inverse={sel} dimColor>{relTime(s.createdAt)}</Text>
+            <Text inverse={sel} dimColor>
+              {s.deprecatedAt ? "deprecated" : relTime(s.createdAt)}
+            </Text>
           </Box>
         );
       })}
       {rowsList.length === 0 && <Text dimColor>no sessions — ^t creates one</Text>}
-      <Text dimColor>● root · ⑂ fork · ≣ compaction · ◆ subagent · ▸ current</Text>
+      <Text dimColor>
+        j/k move · enter open · ^t new · ^x archive · x deprecate · h show hidden
+      </Text>
     </Box>
   );
 }

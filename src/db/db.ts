@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   origin_id         TEXT,             -- lineage: session this fork/compaction branched from (null for root/plain)
   origin_message_id TEXT,             -- lineage: the fork-at message / compaction span-end message
   archived_at INTEGER,                -- soft delete: archived sessions leave the sidebar, rows stay
+  deprecated_at INTEGER,              -- branch hidden by default in the tree views (toggle to show)
   context_tokens INTEGER,             -- last turn's prompt size (context meter)
   output_tokens  INTEGER,             -- cumulative output tokens across the session
   input_tokens   INTEGER,             -- cumulative input tokens across the session (cost)
@@ -107,6 +108,7 @@ type SessionRow = {
   base: string | null;
   origin_id: string | null;
   origin_message_id: string | null;
+  deprecated_at: number | null;
   context_tokens: number | null;
   cached_tokens: number | null;
   last_llm_at: number | null;
@@ -170,6 +172,7 @@ function toSession(r: SessionRow): Session {
     ...(r.workspace ? { workspace: r.workspace } : {}),
     ...(r.origin_id ? { originId: r.origin_id } : {}),
     ...(r.origin_message_id ? { originMessageId: r.origin_message_id } : {}),
+    ...(r.deprecated_at != null ? { deprecatedAt: r.deprecated_at } : {}),
     // Prompt-cache visibility: last prompt size, its cached share, and when the
     // last LLM round finished (the client derives warm/cold from this + the TTL).
     ...(r.context_tokens != null ? { contextTokens: r.context_tokens } : {}),
@@ -211,6 +214,7 @@ export class Db {
         "origin_id TEXT",
         "origin_message_id TEXT",
         "archived_at INTEGER",
+        "deprecated_at INTEGER",
         "context_tokens INTEGER",
         "output_tokens INTEGER",
         "input_tokens INTEGER",
@@ -383,6 +387,12 @@ export class Db {
    */
   archiveSession(id: string): void {
     this.#db.prepare(`UPDATE sessions SET archived_at = ? WHERE id = ?`).run(Date.now(), id);
+  }
+
+  /** Deprecate (hide-by-default in the tree) or un-deprecate a branch. */
+  setDeprecated(id: string, on: boolean): void {
+    this.#db.prepare(`UPDATE sessions SET deprecated_at = ? WHERE id = ?`)
+      .run(on ? Date.now() : null, id);
   }
 
   /** The root→self chain of sessions (root first). Empty if id is unknown. */

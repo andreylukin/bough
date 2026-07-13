@@ -1,64 +1,92 @@
 import { Box, Text } from "ink";
-import type { Message } from "../../schema/parts.ts";
+import type { Message, Part } from "../../schema/parts.ts";
 import type { TuiSession } from "../store.ts";
 import { clip, toolSummary } from "../format.ts";
 import { parseSubagentNote } from "../lines.ts";
 
-// The conversation as a branchable tree: each user message is a node, with a dim
-// one-line summary of the reply it drew and any branches (forks/compactions/
-// subagents) that split off within that turn. Matches pi's /tree — select a node to
-// branch there. bough branches into a NEW session (fork), so there is no in-place
-// leaf; the last node is the live tip.
+// The conversation as a branchable tree (pi's /tree model). Each user turn is a
+// node; each tool run inside the reply is its own branch point; existing branches
+// (forks/compactions/subagents) hang off the turn they split from. Selecting a
+// node/tool branches there (a new fork); selecting a branch opens it. bough forks
+// into a NEW session, so there is no in-place leaf — the last turn is the live tip.
+
+/** A branch point: a message id and an optional mid-message part cut (a tool run). */
+export interface BranchPoint {
+  msgId: string;
+  /** Cut inside the message — keep parts[0..atPart]. Absent = the whole message. */
+  atPart?: number;
+}
+
+/** A tool run within a turn: a labeled branch point after that run. */
+export interface ToolStep {
+  label: string;
+  point: BranchPoint;
+}
 
 export interface TreeNode {
-  /** The user message this node branches from. */
   msg: Message;
-  /** One-line summary of the assistant's reply to it. */
-  reply: string;
-  /** Branch sessions that split off during this turn. */
+  point: BranchPoint;
+  /** Tool runs in the reply, each a branch point ("agree with this one, differ after"). */
+  steps: ToolStep[];
   branches: TuiSession[];
-  /** True for the final user turn — the conversation's live tip. */
   tip: boolean;
 }
 
-/** A flat, selectable row: a message node or one of its branch children. */
 export type TreeItem =
   | { type: "node"; node: TreeNode }
+  | { type: "step"; step: ToolStep }
   | { type: "branch"; session: TuiSession };
 
-function summarizeReply(msgs: Message[]): string {
-  const calls = msgs.flatMap((m) => toolSummary(m.parts).calls);
-  const text = msgs.flatMap((m) => m.parts).find((p) => p.type === "text");
-  const bits: string[] = [];
-  if (calls.length) bits.push(`${calls.length} tool ${calls.length === 1 ? "call" : "calls"}`);
-  if (text && "text" in text) bits.push("replied");
-  return bits.join(" · ") || "…";
+// The tool runs in a reply span → labeled branch points. atPart cuts through the
+// run's result (kept inclusive) so the completed call is retained in the branch.
+function stepsOf(span: Message[]): ToolStep[] {
+  const steps: ToolStep[] = [];
+  for (const m of span) {
+    m.parts.forEach((p: Part, i) => {
+      if (p.type !== "tool_call") return;
+      const raw = p.input as Record<string, unknown> | null | undefined;
+      const hint = raw && typeof raw.code === "string"
+        ? raw.code.split("\n")[0]
+        : raw && typeof raw.command === "string"
+        ? raw.command
+        : "";
+      // Keep through this call's result if present, else through the call itself.
+      const resIdx = m.parts.findIndex((q) => q.type === "tool_result" && q.callId === p.id);
+      steps.push({
+        label: `${p.name}${hint ? ` · ${clip(hint, 44)}` : ""}`,
+        point: { msgId: m.id, atPart: resIdx >= 0 ? resIdx : i },
+      });
+    });
+  }
+  return steps;
 }
 
-// Build the node list: group each user turn with its reply span, attach branch
-// sessions to the turn whose messages include their originMessageId.
 export function buildTree(thread: Message[], branches: TuiSession[]): TreeNode[] {
   const nodes: TreeNode[] = [];
-  const nodeByMsgId = new Map<string, TreeNode>(); // every msg id → its owning turn
+  const nodeByMsgId = new Map<string, TreeNode>();
   let cur: { node: TreeNode; span: Message[] } | null = null;
   for (const m of thread) {
     const noteText = m.role === "system"
       ? m.parts.map((p) => ("text" in p ? p.text : "")).join("\n")
       : "";
-    // Subagent completion notes are represented by their branch, not a node — but
-    // still map their id so a branch originating from the note attaches to this turn.
     if (noteText && parseSubagentNote(noteText)) {
       if (cur) nodeByMsgId.set(m.id, cur.node);
       continue;
     }
     if (m.role === "user") {
-      const node: TreeNode = { msg: m, reply: "", branches: [], tip: false };
+      const node: TreeNode = {
+        msg: m,
+        point: { msgId: m.id },
+        steps: [],
+        branches: [],
+        tip: false,
+      };
       cur = { node, span: [] };
       nodes.push(node);
       nodeByMsgId.set(m.id, node);
     } else if (cur) {
       cur.span.push(m);
-      cur.node.reply = summarizeReply(cur.span);
+      cur.node.steps = stepsOf(cur.span);
       nodeByMsgId.set(m.id, cur.node);
     }
   }
@@ -66,18 +94,17 @@ export function buildTree(thread: Message[], branches: TuiSession[]): TreeNode[]
   for (const b of branches) {
     const owner = b.originMessageId ? nodeByMsgId.get(b.originMessageId) : undefined;
     if (owner) owner.branches.push(b);
-    else if (nodes.length) nodes[0].branches.push(b); // orphan origin → first turn
+    else if (nodes.length) nodes[0].branches.push(b);
   }
-  // Branches oldest-first within a turn.
   for (const n of nodes) n.branches.sort((a, b) => a.createdAt - b.createdAt);
   return nodes;
 }
 
-// Flatten to the selectable row list the picker navigates.
 export function treeItems(nodes: TreeNode[]): TreeItem[] {
   const items: TreeItem[] = [];
   for (const n of nodes) {
     items.push({ type: "node", node: n });
+    for (const s of n.steps) items.push({ type: "step", step: s });
     for (const b of n.branches) items.push({ type: "branch", session: b });
   }
   return items;
@@ -91,19 +118,35 @@ const KIND_GLYPH: Record<string, string> = {
 };
 
 export function ConversationTree(
-  { items, selected, rows }: { items: TreeItem[]; selected: number; rows: number },
+  { items, selected, rows, showDeprecated }: {
+    items: TreeItem[];
+    selected: number;
+    rows: number;
+    showDeprecated: boolean;
+  },
 ) {
   const max = Math.max(3, rows - 8);
   const start = Math.max(0, Math.min(selected - Math.floor(max / 2), items.length - max));
   const win = items.slice(start, start + max);
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
-      <Text bold>conversation · branch at any turn</Text>
+      <Text bold>
+        conversation · branch at any turn or tool run
+        {showDeprecated ? <Text dimColor>{"  "}(showing deprecated)</Text> : null}
+      </Text>
       {win.map((it, i) => {
         const sel = start + i === selected;
+        if (it.type === "step") {
+          return (
+            <Text key={`s-${i}`} inverse={sel} wrap="truncate">
+              {"     "}
+              <Text color="green">◇</Text> <Text dimColor>{it.step.label}</Text>
+            </Text>
+          );
+        }
         if (it.type === "branch") {
           const s = it.session;
-          const g = KIND_GLYPH[s.kind] ?? "•";
+          const dep = !!s.deprecatedAt;
           return (
             <Text key={`b-${s.id}`} inverse={sel} wrap="truncate">
               {"    "}
@@ -111,29 +154,27 @@ export function ConversationTree(
                 color={s.kind === "subagent" ? "green" : undefined}
                 dimColor={s.kind !== "subagent"}
               >
-                {g}
+                {KIND_GLYPH[s.kind] ?? "•"}
               </Text>{" "}
-              <Text dimColor>
+              <Text dimColor strikethrough={dep}>
                 {(s.title || "(untitled)").replace(/^(fork|compacted|subagent) · /, "")}
               </Text>
+              {dep ? <Text dimColor>{"  deprecated"}</Text> : null}
             </Text>
           );
         }
         const n = it.node;
         const text = n.msg.parts.find((p) => p.type === "text");
-        const preview = text && "text" in text ? clip(text.text.split("\n")[0], 70) : "(no text)";
+        const preview = text && "text" in text ? clip(text.text.split("\n")[0], 68) : "(no text)";
         return (
-          <Box key={`n-${n.msg.id}`} flexDirection="column">
-            <Text inverse={sel} wrap="truncate">
-              <Text color="cyan" bold>you</Text> {preview}
-              {n.tip ? <Text color="green">{"  "}← here</Text> : null}
-            </Text>
-            <Text dimColor wrap="truncate">{"      ↳ "}{n.reply}</Text>
-          </Box>
+          <Text key={`n-${n.msg.id}`} inverse={sel} wrap="truncate">
+            <Text color="cyan" bold>you</Text> {preview}
+            {n.tip ? <Text color="green">{"  "}← here</Text> : null}
+          </Text>
         );
       })}
       {items.length === 0 && <Text dimColor>no turns yet</Text>}
-      <Text dimColor>↑↓ move · enter branch here / open · esc close</Text>
+      <Text dimColor>↑↓ move · enter branch/open · x deprecate · h show hidden · esc</Text>
     </Box>
   );
 }

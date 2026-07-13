@@ -67,6 +67,8 @@ export function App(
   const [pickSel, setPickSel] = useState(0);
   const [filter, setFilter] = useState("");
   const [filterActive, setFilterActive] = useState(false);
+  // Deprecated branches are hidden by default in both trees; `h` reveals them.
+  const [showDeprecated, setShowDeprecated] = useState(false);
   // composer history (sent messages, oldest first, persisted across runs);
   // null idx = editing the draft
   const history = useRef<string[]>(loadHistory());
@@ -365,17 +367,22 @@ export function App(
     return () => onMouse(null);
   }, []);
 
+  // Deprecated branches are hidden from the picker unless revealed with `h`.
+  const pickerSessions = showDeprecated
+    ? store.sessions
+    : store.sessions.filter((s) => !s.deprecatedAt);
   const treeRows: TreeRow[] = filter
-    ? flattenTree(store.sessions)
+    ? flattenTree(pickerSessions)
       .filter(({ s }) => (s.title || "").toLowerCase().includes(filter.toLowerCase()))
       .map(({ s }) => ({ s, depth: 0, prefix: "" }))
-    : flattenTree(store.sessions);
+    : flattenTree(pickerSessions);
 
   // The conversation tree: user turns as nodes with every child session (forks,
   // compactions, subagents) that split off during the turn attached to it.
   const childSessions = useMemo(
-    () => store.sessions.filter((s) => s.originId === currentId),
-    [store.sessions, currentId],
+    () =>
+      store.sessions.filter((s) => s.originId === currentId && (showDeprecated || !s.deprecatedAt)),
+    [store.sessions, currentId, showDeprecated],
   );
   const convItems = useMemo(() => treeItems(buildTree(store.thread, childSessions)), [
     store.thread,
@@ -463,6 +470,13 @@ export function App(
         if (sel) store.archive(sel.s.id); // session.archived prunes the list
         return;
       }
+      // x deprecates/un-deprecates a branch (hidden by default); h reveals hidden.
+      if (!filterActive && ch === "x") {
+        const sel = treeRows[pickSel];
+        if (sel && sel.s.kind !== "root") store.deprecate(sel.s.id, !sel.s.deprecatedAt);
+        return;
+      }
+      if (!filterActive && ch === "h") return setShowDeprecated((v) => !v);
       if (key.backspace || key.delete) {
         setPickSel(0);
         return setFilter((f) => f.slice(0, -1));
@@ -566,15 +580,24 @@ export function App(
         const it = convItems[forkSel];
         if (!it) return;
         setMode("chat");
-        // A branch row opens that session; a message node forks there (new branch).
+        // A branch row opens that session; a node/tool-run forks there.
         if (it.type === "branch") openSession(it.session);
-        else store.fork(it.node.msg.id).then((s) => s && openSession(s));
+        else if (it.type === "step") {
+          store.fork(it.step.point.msgId, it.step.point.atPart).then((s) => s && openSession(s));
+        } else store.fork(it.node.point.msgId).then((s) => s && openSession(s));
         return;
       }
       if (key.upArrow || ch === "k") return setForkSel((i) => Math.max(0, i - 1));
       if (key.downArrow || ch === "j") {
         return setForkSel((i) => Math.min(convItems.length - 1, i + 1));
       }
+      // x deprecates/un-deprecates the selected branch; h toggles showing hidden.
+      if (ch === "x") {
+        const it = convItems[forkSel];
+        if (it?.type === "branch") store.deprecate(it.session.id, !it.session.deprecatedAt);
+        return;
+      }
+      if (ch === "h") return setShowDeprecated((v) => !v);
       return;
     }
 
@@ -857,6 +880,7 @@ export function App(
         filterActive={filterActive}
         rows={rows}
         currentId={currentId}
+        showDeprecated={showDeprecated}
       />
     )
     : mode === "panel"
@@ -878,7 +902,14 @@ export function App(
     : mode === "new"
     ? <NewSession query={newQuery} hits={dirHits} selected={newSel} />
     : mode === "fork"
-    ? <ConversationTree items={convItems} selected={forkSel} rows={rows} />
+    ? (
+      <ConversationTree
+        items={convItems}
+        selected={forkSel}
+        rows={rows}
+        showDeprecated={showDeprecated}
+      />
+    )
     : mode === "diff"
     ? <DiffView entries={diffEntries} fileSel={fileSel} scroll={diffScroll} rows={rows} />
     : mode === "model"

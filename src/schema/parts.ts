@@ -78,6 +78,9 @@ export const Session = z.object({
   // message. Root/plain sessions omit them. Gives the map real lineage edges.
   originId: z.string().nullish(),
   originMessageId: z.string().nullish(),
+  // Set when a branch is deprecated — hidden by default in the tree views, shown
+  // on toggle. Distinct from archive (which removes it from the list entirely).
+  deprecatedAt: z.number().nullish(),
   // Prompt-cache visibility (additive; stamped after each turn's last LLM round).
   // contextTokens = that round's full prompt size; cachedTokens = the share of it
   // served from / written to the provider's prompt cache; lastLlmAt = when the round

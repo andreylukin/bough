@@ -46,9 +46,11 @@ export interface Store {
   send: (text: string, queue?: boolean, id?: string) => Promise<void>;
   interrupt: () => void;
   archive: (id: string) => void;
+  deprecate: (id: string, on: boolean) => void;
   resolvePending: (approve: boolean, scope?: "once" | "session") => void;
-  // Branch off the current session at a message; opens the new branch (or notices).
-  fork: (atMessageId: string) => Promise<Session | null>;
+  // Branch off the current session at a message (optionally cut mid-message at a
+  // tool run via atPart); opens the new branch (or notices).
+  fork: (atMessageId: string, atPart?: number) => Promise<Session | null>;
   // Compact the current session's own turns onto a summary branch; opens it.
   compact: () => Promise<Session | null>;
   applyChanges: (source: WireDiff["source"], paths: string[]) => void;
@@ -143,11 +145,11 @@ export function useStore(initialSessions: Session[]): Store {
     return s;
   }, [open]);
 
-  const fork = useCallback(async (atMessageId: string) => {
+  const fork = useCallback(async (atMessageId: string, atPart?: number) => {
     const id = currentRef.current;
     if (!id) return null;
     try {
-      return await api.fork(id, { atMessageId });
+      return await api.fork(id, atPart === undefined ? { atMessageId } : { atMessageId, atPart });
     } catch (e) {
       setNotice(e instanceof Error ? e.message : String(e));
       return null;
@@ -205,6 +207,10 @@ export function useStore(initialSessions: Session[]): Store {
 
   const archive = useCallback((id: string) => {
     api.archiveSession(id).catch(() => {});
+  }, []);
+
+  const deprecate = useCallback((id: string, on: boolean) => {
+    api.deprecateSession(id, on).catch(() => {}); // session.updated event reflects it
   }, []);
 
   const dismissNotice = useCallback(() => setNotice(null), []);
@@ -384,6 +390,7 @@ export function useStore(initialSessions: Session[]): Store {
     send,
     interrupt,
     archive,
+    deprecate,
     resolvePending,
     fork,
     compact,

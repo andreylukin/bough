@@ -160,6 +160,8 @@ export const api = {
   interrupt: (id: string) =>
     j<{ ok: boolean; interrupted: boolean }>(`/sessions/${id}/interrupt`, { method: "POST" }),
   archiveSession: (id: string) => post(`/sessions/${id}/archive`),
+  deprecateSession: (id: string, on: boolean) =>
+    j<{ ok: boolean }>(`/sessions/${id}/deprecate`, postJson({ on })),
   netRequests: (sessionId?: string) =>
     j<NetRequest[]>(`/net/requests${sessionId ? `?sessionId=${sessionId}` : ""}`),
   allowRequest: (id: string, scope: "once" | "session" = "once") =>
