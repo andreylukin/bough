@@ -183,21 +183,6 @@ export function messageLines(
   const out: VLine[] = [];
   const body: VLine[] = [];
   const w = width - 2;
-
-  // A system message that is a subagent completion note renders as a branch card
-  // (◆ header, report, next action) instead of the raw bracketed wall — and drops
-  // the "system" role label, since the card names itself.
-  const noteText = msg.role === "system"
-    ? msg.parts.filter((p) => p.type === "text").map((p) => (p as { text: string }).text).join("\n")
-    : "";
-  const note = noteText ? parseSubagentNote(noteText) : null;
-  if (note) {
-    out.push({ text: "" });
-    subagentNoteLines(body, note, w);
-    out.push(...body.map((l) => (l.text ? { ...l, text: "  " + l.text } : l)));
-    return out;
-  }
-
   out.push({ text: "" });
   out.push({ text: ROLE_LABEL[msg.role] });
   // Bodies hang 2 columns under the role label so turns read as blocks.
@@ -211,11 +196,33 @@ export function messageLines(
   return out;
 }
 
-/** A running subagent branch: id, title, and busy flag for the live card. */
-export interface LiveBranch {
+/** A subagent branch, anchored to the turn that spawned it. */
+export interface Branch {
   id: string;
   title: string;
   busy: boolean;
+  /** The assistant message whose turn called spawn — where the card is drawn. */
+  originMessageId?: string | null;
+  /** Parsed completion note once the subagent finished (report/files/status). */
+  note?: SubagentNote | null;
+}
+
+// One branch's card: a live ⋯/✓ line, or the full finished card (header, files,
+// report as markdown, footer). Indented under the spawning turn.
+function branchCardLines(out: VLine[], b: Branch, width: number) {
+  const w = width - 2;
+  const body: VLine[] = [];
+  if (b.note) subagentNoteLines(body, b.note, w);
+  else {
+    const dot = b.busy ? yellow("◆") : green("◆");
+    const tail = b.busy ? yellow(" ⋯ working") : green(" ✓ done");
+    body.push({
+      text: `${dot} ${b.title.replace(/^subagent · /, "")}${dim(tail)}`,
+      click: `open:${b.id}`,
+    });
+  }
+  out.push({ text: "" });
+  out.push(...body.map((l) => (l.text ? { ...l, text: "  " + l.text } : l)));
 }
 
 export function buildLines(
@@ -223,23 +230,32 @@ export function buildLines(
   streaming: Record<string, string>,
   isExpanded: (key: string) => boolean,
   width: number,
-  liveBranches: LiveBranch[] = [],
+  branches: Branch[] = [],
 ): VLine[] {
-  const out: VLine[] = [];
-  for (const m of thread) out.push(...messageLines(m, isExpanded, width, streaming[m.id]));
-  // In-flight subagents (no completion note yet) get a live card under the tail —
-  // a pulse dot, the branch title, clickable to descend into its thread.
-  if (liveBranches.length > 0) {
-    out.push({ text: "" });
-    out.push({ text: `  ${dim("◆ branches")}` });
-    for (const b of liveBranches) {
-      const dot = b.busy ? yellow("◆") : green("◆");
-      const tail = b.busy ? yellow(" ⋯ working") : green(" ✓ done");
-      out.push({
-        text: `  ${dot} ${b.title.replace(/^subagent · /, "")}${dim(tail)}`,
-        click: `open:${b.id}`,
-      });
-    }
+  // Branches draw under the turn that spawned them; a completion note that already
+  // renders as a card is dropped from the raw thread (it's a system message).
+  const notedIds = new Set(branches.map((b) => b.note?.sessionId).filter(Boolean));
+  const byOrigin = new Map<string, Branch[]>();
+  const orphans: Branch[] = [];
+  for (const b of branches) {
+    if (b.originMessageId) {
+      byOrigin.set(b.originMessageId, [...(byOrigin.get(b.originMessageId) ?? []), b]);
+    } else orphans.push(b);
   }
+  const out: VLine[] = [];
+  for (const m of thread) {
+    // Skip the raw [subagent finished] system message — its card renders at the
+    // spawn point instead.
+    if (m.role === "system") {
+      const t = m.parts.filter((p) => p.type === "text").map((p) => (p as { text: string }).text)
+        .join("\n");
+      const parsed = parseSubagentNote(t);
+      if (parsed && notedIds.has(parsed.sessionId)) continue;
+    }
+    out.push(...messageLines(m, isExpanded, width, streaming[m.id]));
+    for (const b of byOrigin.get(m.id) ?? []) branchCardLines(out, b, width);
+  }
+  // Branches whose spawn point isn't in the current thread fall to the tail.
+  for (const b of orphans) branchCardLines(out, b, width);
   return out;
 }

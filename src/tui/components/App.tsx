@@ -17,7 +17,7 @@ import {
   type SkillInfo,
 } from "../api.ts";
 import { useStore } from "../store.ts";
-import { buildLines, type LiveBranch } from "../lines.ts";
+import { type Branch, buildLines, parseSubagentNote, type SubagentNote } from "../lines.ts";
 import { fuzzyScore, segmentParts, wordLeft, wordRight } from "../format.ts";
 import { type MouseEvent, onMouse, onPaste } from "../mouse.ts";
 import { Composer } from "./Composer.tsx";
@@ -172,30 +172,36 @@ export function App(
     (key: string) => (expandAll !== toggled.has(key)),
     [expandAll, toggled],
   );
-  // Subagents spawned by the open session (live branch cards). A finished one that
-  // already posted its [subagent finished] note is rendered inline by that note, so
-  // only surface branches with no completion note in the thread yet.
-  const notedIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const m of store.thread) {
-      if (m.role !== "system") continue;
-      const t = m.parts.filter((p) => p.type === "text").map((p) => (p as { text: string }).text)
+  // Subagents spawned by the open session, each anchored to its spawning turn.
+  // Its completion note (a system message in the thread) supplies the report; the
+  // branch card is drawn under originMessageId and the raw note is suppressed.
+  const noteById = useMemo(() => {
+    const m = new Map<string, SubagentNote>();
+    for (const msg of store.thread) {
+      if (msg.role !== "system") continue;
+      const t = msg.parts.filter((p) => p.type === "text").map((p) => (p as { text: string }).text)
         .join("\n");
-      const id = t.match(/\[subagent finished\] ".*" \(([^)]+)\)/)?.[1];
-      if (id) ids.add(id);
+      const note = parseSubagentNote(t);
+      if (note) m.set(note.sessionId, note);
     }
-    return ids;
+    return m;
   }, [store.thread]);
-  const liveBranches = useMemo<LiveBranch[]>(
+  const branches = useMemo<Branch[]>(
     () =>
       store.sessions
-        .filter((s) => s.kind === "subagent" && s.originId === currentId && !notedIds.has(s.id))
-        .map((s) => ({ id: s.id, title: s.title || "(untitled)", busy: !!s.busy })),
-    [store.sessions, currentId, notedIds],
+        .filter((s) => s.kind === "subagent" && s.originId === currentId)
+        .map((s) => ({
+          id: s.id,
+          title: s.title || "(untitled)",
+          busy: !!s.busy,
+          originMessageId: s.originMessageId,
+          note: noteById.get(s.id) ?? null,
+        })),
+    [store.sessions, currentId, noteById],
   );
   const lines = useMemo(
-    () => buildLines(store.thread, store.streaming, isExpanded, width, liveBranches),
-    [store.thread, store.streaming, isExpanded, width, liveBranches],
+    () => buildLines(store.thread, store.streaming, isExpanded, width, branches),
+    [store.thread, store.streaming, isExpanded, width, branches],
   );
   const toggleGroup = useCallback((key: string) => {
     setToggled((prev) => {
@@ -700,7 +706,15 @@ export function App(
       return;
     }
     if (key.escape) {
-      if (store.busy) store.interrupt();
+      if (store.busy) {
+        store.interrupt();
+        return;
+      }
+      // Idle Esc inside a subagent pops back to its spawner — the quick way out.
+      if (input === "" && store.session?.kind === "subagent" && store.session.originId) {
+        const parent = store.sessions.find((s) => s.id === store.session!.originId);
+        if (parent) openSession(parent);
+      }
       return;
     }
     // Send resolves the text inside the updater: an Enter that lands in the same
