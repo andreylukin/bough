@@ -218,13 +218,18 @@ export function openrouterClient(): LlmClient {
 }
 
 // OpenAI proper. Picker ids carry an "openai:" prefix (openai:gpt-5) so the router can
-// tell them from bare Anthropic ids; strip it for the wire call.
+// tell them from bare Anthropic ids; strip it for the wire call. Current OpenAI
+// models reject `max_tokens` ("use max_completion_tokens"), so that name is
+// per-provider. OPENAI_API_BASE overrides the host for tests (same knob the model
+// puller uses).
 export function openaiClient(): LlmClient {
+  const base = Deno.env.get("OPENAI_API_BASE") ?? "https://api.openai.com";
   return openAICompatClient({
     provider: "openai",
-    url: "https://api.openai.com/v1/chat/completions",
+    url: `${base}/v1/chat/completions`,
     apiKeyEnv: "OPENAI_API_KEY",
     mapModel: (m) => (m.startsWith("openai:") ? m.slice("openai:".length) : m),
+    maxTokensParam: "max_completion_tokens",
   });
 }
 
@@ -237,6 +242,8 @@ interface OpenAICompatOpts {
   extraHeaders?: Record<string, string>;
   /** Map our model id to the provider's wire id (e.g. strip the "openai:" prefix). */
   mapModel?: (model: string) => string;
+  /** Wire name for the output-token cap; OpenAI proper wants max_completion_tokens. */
+  maxTokensParam?: "max_tokens" | "max_completion_tokens";
 }
 
 // The shared OpenAI chat-completions streaming client behind both OpenRouter and
@@ -256,7 +263,7 @@ function openAICompatClient(opts: OpenAICompatOpts): LlmClient {
         },
         body: JSON.stringify({
           model: opts.mapModel ? opts.mapModel(params.model) : params.model,
-          max_tokens: params.maxTokens,
+          [opts.maxTokensParam ?? "max_tokens"]: params.maxTokens,
           stream: true,
           stream_options: { include_usage: true },
           messages: toOpenAIMessages(params.system, params.messages),

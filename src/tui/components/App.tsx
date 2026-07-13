@@ -18,6 +18,7 @@ import {
 } from "../api.ts";
 import { useStore } from "../store.ts";
 import { buildLines } from "../lines.ts";
+import { segmentParts } from "../format.ts";
 import { type MouseEvent, onMouse } from "../mouse.ts";
 import { Composer } from "./Composer.tsx";
 import { StatusBar } from "./StatusBar.tsx";
@@ -169,6 +170,29 @@ export function App(
       return next;
     });
   }, []);
+
+  // A turn that ends on a tool group has its whole answer inside the fold —
+  // auto-expand it when the message finishes (user-testing finding). Only for
+  // messages watched live (seen pending), so opening an old session doesn't
+  // pop open its history.
+  const isExpandedRef = useRef(isExpanded);
+  isExpandedRef.current = isExpanded;
+  const watchedPending = useRef(new Set<string>());
+  useEffect(() => {
+    for (const m of store.thread) {
+      if (m.pending) {
+        watchedPending.current.add(m.id);
+        continue;
+      }
+      if (!watchedPending.current.delete(m.id)) continue;
+      const segs = segmentParts(m.parts);
+      const last = segs[segs.length - 1];
+      if (last?.kind === "tools") {
+        const key = `${m.id}:${segs.length - 1}`;
+        if (!isExpandedRef.current(key)) toggleGroup(key);
+      }
+    }
+  }, [store.thread, toggleGroup]);
 
   // Bottom-chrome height is measured post-render (the approval card and queued
   // rows vary); one frame of lag at most.
@@ -369,7 +393,9 @@ export function App(
 
     if (mode === "help") {
       setMode("chat"); // any key closes
-      return;
+      // …but a ctrl-chord typed right behind the closing key shouldn't be
+      // swallowed — fall through to the chat handlers below (Esc+^p chording).
+      if (!(key.ctrl && ch)) return;
     }
 
     if (mode === "new") {

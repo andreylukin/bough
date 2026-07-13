@@ -3,6 +3,9 @@
 import { Box, Text } from "ink";
 import { KEYMAP } from "../keys.ts";
 
+// Key column sized to the longest binding so descriptions always keep a gutter.
+const PAD = Math.max(...KEYMAP.flatMap((s) => s.keys.map(([k]) => k.length))) + 2;
+
 export function Help() {
   return (
     <Box flexDirection="column" borderStyle="round" paddingX={1}>
@@ -13,7 +16,7 @@ export function Help() {
           {sec.keys.map(([key, desc]) => (
             <Text key={key} wrap="truncate">
               {"  "}
-              <Text color="cyan">{key.padEnd(8)}</Text>
+              <Text color="cyan">{key.padEnd(PAD)}</Text>
               {desc}
             </Text>
           ))}

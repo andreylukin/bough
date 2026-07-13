@@ -48,7 +48,7 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
 ];
 
 export const HINTS = {
-  chat: "enter send · esc stop · ^p sessions · ^n new · ^t panels · ? help",
+  chat: "enter send · esc stop · ^p sessions · ^n new · ^t panels · ? help · ^c^c quit",
   approval: "a allow once · A allow session · d deny · ^p sessions",
   picker: "j/k move · / filter · enter open · ^t new · ^x archive · esc back",
   new: "type dir query · ↑↓ pick · enter create · esc cancel",
