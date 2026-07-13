@@ -141,7 +141,9 @@ export function ConversationTree(
     <Box flexDirection="column">
       <Text dimColor>
         {range
-          ? `select turns — ${rangeCount} · c compact · e extract · esc cancel`
+          ? `${rangeCount} turn${
+            rangeCount === 1 ? "" : "s"
+          } · c compact · e extract · m move · d delete · esc`
           : `branch at a turn/tool · v select range${
             showDeprecated ? " · (showing deprecated)" : ""
           }`}

@@ -192,6 +192,10 @@ export const api = {
   extract: (id: string, picks: { messageId: string }[]) =>
     jmsg<{ session: Session }>(`/sessions/${id}/extract`, postJson({ picks }))
       .then((r) => r.session),
+  // Append copies of the source's picked messages onto an existing target session.
+  moveInto: (targetId: string, sourceId: string, picks: { messageId: string }[]) =>
+    jmsg<{ session: Session }>(`/sessions/${targetId}/move-into`, postJson({ sourceId, picks }))
+      .then((r) => r.session),
 
   getConfig: () => j<BoughConfig>("/config"),
   putKey: (provider: KeyProvider, key: string) =>

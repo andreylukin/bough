@@ -55,6 +55,8 @@ export interface Store {
   compact: () => Promise<Session | null>;
   compactPicks: (msgIds: string[]) => Promise<Session | null>;
   extractPicks: (msgIds: string[]) => Promise<Session | null>;
+  deleteRange: (rangeIds: string[]) => Promise<Session | null>;
+  moveRange: (targetId: string, rangeIds: string[]) => Promise<Session | null>;
   applyChanges: (source: WireDiff["source"], paths: string[]) => void;
   revertChanges: () => void;
   dismissNotice: () => void;
@@ -204,6 +206,47 @@ export function useStore(initialSessions: Session[]): Store {
   );
   const compactPicks = useCallback((ids: string[]) => rangeOp(ids, api.compact), [rangeOp]);
   const extractPicks = useCallback((ids: string[]) => rangeOp(ids, api.extract), [rangeOp]);
+
+  // Delete a section: branch the conversation WITHOUT the picked turns (extract the
+  // complement), then archive the original — recoverable until the 30-day purge.
+  const deleteRange = useCallback(async (rangeIds: string[]) => {
+    const id = currentRef.current;
+    if (!id) return null;
+    const cut = new Set(rangeIds);
+    const keep = threadRef.current
+      .filter((m) => m.sessionId === id && !cut.has(m.id))
+      .map((m) => ({ messageId: m.id }));
+    if (keep.length === 0) {
+      setNotice("that's the whole conversation — archive it from the sessions tab instead");
+      return null;
+    }
+    try {
+      const s = await api.extract(id, keep);
+      await api.archiveSession(id);
+      return s;
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : String(e));
+      return null;
+    }
+  }, []);
+
+  // Move a section onto an existing branch: append the picked turns to the target.
+  const moveRange = useCallback(async (targetId: string, rangeIds: string[]) => {
+    const id = currentRef.current;
+    if (!id) return null;
+    const own = new Set(threadRef.current.filter((m) => m.sessionId === id).map((m) => m.id));
+    const picks = rangeIds.filter((mid) => own.has(mid)).map((messageId) => ({ messageId }));
+    if (picks.length === 0) {
+      setNotice("select turns from this conversation (not inherited history)");
+      return null;
+    }
+    try {
+      return await api.moveInto(targetId, id, picks);
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : String(e));
+      return null;
+    }
+  }, []);
 
   const applyChanges = useCallback((source: WireDiff["source"], paths: string[]) => {
     const id = currentRef.current;
@@ -425,6 +468,8 @@ export function useStore(initialSessions: Session[]): Store {
     compact,
     compactPicks,
     extractPicks,
+    deleteRange,
+    moveRange,
     applyChanges,
     revertChanges,
     dismissNotice,

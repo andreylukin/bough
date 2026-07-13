@@ -90,6 +90,9 @@ export function App(
   // conversation-tree state: cursor + a range-selection anchor (v starts/ends it).
   const [forkSel, setForkSel] = useState(0);
   const [rangeAnchor, setRangeAnchor] = useState<number | null>(null);
+  // Turn ids pending a move: set by `m`, consumed by picking a destination on the
+  // sessions tab (Enter appends there instead of opening).
+  const [movePicks, setMovePicks] = useState<string[] | null>(null);
   // diff state
   const [fileSel, setFileSel] = useState(0);
   const [diffScroll, setDiffScroll] = useState(0);
@@ -428,6 +431,8 @@ export function App(
         if (panelTab === "sessions" && filterActive) {
           setFilterActive(false);
           setFilter("");
+        } else if (panelTab === "sessions" && movePicks) {
+          setMovePicks(null); // cancel a pending move
         } else if (panelTab === "conversation" && rangeAnchor !== null) {
           setRangeAnchor(null);
         } else setMode("chat");
@@ -456,7 +461,17 @@ export function App(
         }
         if (key.return) {
           const sel = treeRows[pickSel];
-          if (sel) openSession(sel.s);
+          if (!sel) return;
+          // A pending move lands the turns on the chosen target, then opens it.
+          if (movePicks) {
+            const picks = movePicks;
+            const target = sel.s;
+            setMovePicks(null);
+            setMode("chat");
+            store.moveRange(target.id, picks).then((s) => s && openSession(s));
+            return;
+          }
+          openSession(sel.s);
           return;
         }
         if (key.upArrow || (!filterActive && ch === "k")) {
@@ -493,14 +508,26 @@ export function App(
           setRangeAnchor((a) => (a === null ? forkSel : null));
           return;
         }
-        if (rangeAnchor !== null && (ch === "c" || ch === "e")) {
+        if (rangeAnchor !== null && (ch === "c" || ch === "e" || ch === "d" || ch === "m")) {
           const lo = Math.min(rangeAnchor, forkSel);
           const hi = Math.max(rangeAnchor, forkSel);
           const ids = convItems.slice(lo, hi + 1)
             .flatMap((it) => (it.type === "node" ? it.node.msgIds : []));
+          if (ch === "m") {
+            // Move: stash the picks and switch to the sessions tab to pick a target.
+            setRangeAnchor(null);
+            setMovePicks(ids);
+            setPickSel(0);
+            setPanelTab("sessions");
+            return;
+          }
           setRangeAnchor(null);
           setMode("chat");
-          const op = ch === "c" ? store.compactPicks : store.extractPicks;
+          const op = ch === "c"
+            ? store.compactPicks
+            : ch === "e"
+            ? store.extractPicks
+            : store.deleteRange;
           op(ids).then((s) => s && openSession(s));
           return;
         }
@@ -674,6 +701,7 @@ export function App(
     if (key.ctrl && ch === "p") {
       setPickSel(0);
       setFilter("");
+      setMovePicks(null);
       setPanelTab("sessions");
       setMode("panel");
       return;
@@ -900,6 +928,7 @@ export function App(
               rows={rows}
               currentId={currentId}
               showDeprecated={showDeprecated}
+              moveHint={movePicks !== null}
             />
           )
           : panelTab === "conversation"

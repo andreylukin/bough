@@ -52,7 +52,7 @@ const KIND: Record<string, { glyph: string; color?: string; strip?: RegExp }> = 
 };
 
 export function SessionPicker(
-  { rowsList, selected, filter, filterActive, rows, currentId, showDeprecated }: {
+  { rowsList, selected, filter, filterActive, rows, currentId, showDeprecated, moveHint }: {
     rowsList: TreeRow[];
     selected: number;
     filter: string;
@@ -63,6 +63,8 @@ export function SessionPicker(
     currentId: string | null;
     /** Whether deprecated branches are currently revealed. */
     showDeprecated: boolean;
+    /** True while picking a destination for a move — Enter appends instead of opens. */
+    moveHint: boolean;
   },
 ) {
   const max = Math.max(3, rows - 9);
@@ -70,7 +72,11 @@ export function SessionPicker(
   const win = rowsList.slice(start, start + max);
   return (
     <Box flexDirection="column">
-      {showDeprecated ? <Text dimColor>(showing deprecated)</Text> : null}
+      {moveHint
+        ? <Text color="green">▸ move here: pick a destination · enter appends · esc cancels</Text>
+        : showDeprecated
+        ? <Text dimColor>(showing deprecated)</Text>
+        : null}
       {filterActive
         ? (
           <Text>

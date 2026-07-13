@@ -55,6 +55,7 @@ import { createAuth } from "./auth.ts";
 import { compact, CompactBody, CompactError } from "../compact.ts";
 import { type Embedder, recall } from "../recall.ts";
 import { extract, ExtractBody, ExtractError } from "../extract.ts";
+import { move, MoveBody, MoveError } from "../move.ts";
 import { adoptSubagent } from "../subagent.ts";
 import type { LlmClient } from "../supervisor/llm.ts";
 import { applyChanges, ChangesError, revertChanges, sessionChanges } from "./changes.ts";
@@ -349,6 +350,19 @@ const extractSession: Handler = async (req, ctx, params) => {
     return json({ session });
   } catch (e) {
     if (e instanceof ExtractError) return error(e.status, e.message);
+    throw e;
+  }
+};
+
+// Move (copy) picked messages from a source session onto this existing target.
+const moveInto: Handler = async (req, ctx, params) => {
+  const parsed = MoveBody.safeParse(await req.json().catch(() => null));
+  if (!parsed.success) return error(400, "invalid body: " + parsed.error.message);
+  try {
+    const session = move(ctx, params.id, parsed.data);
+    return json({ session });
+  } catch (e) {
+    if (e instanceof MoveError) return error(e.status, e.message);
     throw e;
   }
 };
@@ -1009,6 +1023,11 @@ const routes: Route[] = [
     method: "POST",
     pattern: new URLPattern({ pathname: "/sessions/:id/extract" }),
     handler: extractSession,
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/sessions/:id/move-into" }),
+    handler: moveInto,
   },
   {
     method: "POST",
