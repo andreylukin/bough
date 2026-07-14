@@ -31,22 +31,26 @@ const SECTION: Record<ModelEntry["kind"], string> = {
 // /config/keys. One list, three sections; the active entry carries the dot,
 // key rows show set/missing. Selecting a key row opens a masked input.
 export function ModelPicker(
-  { cfg, entries, selected, keyInput }: {
+  { cfg, entries, selected, keyInput, sessionModel }: {
     cfg: BoughConfig;
     entries: ModelEntry[];
     selected: number;
     /** Non-null while typing a key for the selected provider (masked). */
     keyInput: string | null;
+    /** The open session's pinned model, if any — the dot marks what THIS session
+     * runs on (the global default when unpinned). */
+    sessionModel?: string | null;
   },
 ) {
   let lastKind: string | null = null;
+  const effectiveModel = sessionModel ?? cfg.model;
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
       {entries.map((e, i) => {
         const header = e.kind !== lastKind;
         lastKind = e.kind;
         const active = e.kind === "model"
-          ? cfg.model === e.id
+          ? effectiveModel === e.id
           : e.kind === "worker"
           ? cfg.worker === e.id
           : !!cfg.keys?.[e.id as KeyProvider];

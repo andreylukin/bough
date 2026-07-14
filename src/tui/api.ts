@@ -207,8 +207,13 @@ export const api = {
       ...postJson({ provider, key }),
       method: "PUT",
     }),
-  setModel: (model: string) =>
-    j<{ model: string }>("/config", { ...postJson({ model }), method: "PATCH" }),
+  // With sessionId: pins that session to the model AND moves the default for
+  // new sessions; other existing sessions keep their own.
+  setModel: (model: string, sessionId?: string) =>
+    j<{ model: string }>("/config", {
+      ...postJson(sessionId ? { model, sessionId } : { model }),
+      method: "PATCH",
+    }),
   setWorker: (worker: string) =>
     j<{ worker: string }>("/config", { ...postJson({ worker }), method: "PATCH" }),
 

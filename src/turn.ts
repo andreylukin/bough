@@ -447,7 +447,10 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
   const { db, bus } = ctx;
   const sessionId = message.sessionId;
   const messageId = message.id;
-  const model = ctx.model ?? activeModel();
+  // Model precedence: explicit ctx override (tests/embedders) → the session's own
+  // pinned model (set when the user switches models with this session open) → the
+  // process-global default (what new sessions start on).
+  const model = ctx.model ?? db.getSession(sessionId)?.model ?? activeModel();
   const llm = ctx.llm ?? clientFor(model);
   const tools = ctx.tools ?? defaultTools;
   // Newest round's input_tokens ≈ the live context size; output accumulates, and

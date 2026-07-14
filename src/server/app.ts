@@ -61,7 +61,7 @@ import type { LlmClient } from "../supervisor/llm.ts";
 import { applyChanges, ChangesError, revertChanges, sessionChanges } from "./changes.ts";
 import { ChangesApplyBody, ChangesRevertBody } from "../schema/changes.ts";
 import { clearTheme, loadTheme, saveTheme, Theme, THEME_DEFAULTS, THEME_TOKENS } from "./theme.ts";
-import { KeysBody, keyStatus, setKey } from "./keys.ts";
+import { KeysBody, keyStatus, persistEnvVar, setKey } from "./keys.ts";
 import {
   ensureOpenAIModels,
   mergeModels,
@@ -80,6 +80,8 @@ export interface AppCtx {
   netDir?: string;
   /** Theme storage dir override (tests); undefined = ~/.bough. */
   themeDir?: string;
+  /** Launcher env-file dir override (tests); undefined = ~/.bough. */
+  envDir?: string;
   /** Built web UI dir override (tests/packaging); undefined = web/dist. */
   webDir?: string;
   /** LLM client for compaction/turns; injected for tests, else the real Anthropic client. */
@@ -167,19 +169,35 @@ const recallSearch: Handler = async (req, ctx) => {
 // is accepted (the pickers list curated subsets); a provider-prefixed model id
 // routes to OpenRouter (see turn.ts / llm.ts). `worker` is "local" or a model id —
 // process-global like the active model, never per session.
-const patchConfig: Handler = async (req) => {
+// A model change with `sessionId` also PINS that session to the model: the open
+// conversation switches immediately, the global default moves so NEW sessions
+// start on it, and every other existing session keeps whatever it was on. The
+// default persists to ~/.bough/env (BOUGH_MODEL) so it survives a restart.
+const patchConfig: Handler = async (req, ctx) => {
   const body = await req.json().catch(() => null) as
-    | { model?: unknown; worker?: unknown }
+    | { model?: unknown; worker?: unknown; sessionId?: unknown }
     | null;
   const model = typeof body?.model === "string" && body.model.trim() ? body.model.trim() : null;
   const worker = typeof body?.worker === "string" && body.worker.trim() ? body.worker.trim() : null;
+  const sessionId = typeof body?.sessionId === "string" && body.sessionId ? body.sessionId : null;
   if (!model && !worker) {
     return error(400, "invalid body: { model?: string, worker?: string } — at least one required");
   }
   if (worker && worker !== "local" && Deno.env.get("BOUGH_WORKER_LOCAL_ONLY") === "1") {
     return error(400, "BOUGH_WORKER_LOCAL_ONLY=1 pins the worker to local");
   }
-  if (model) setActiveModel(model);
+  if (model) {
+    // Validate before mutating anything — a bad sessionId must not half-apply
+    // (moving the global default while failing the pin).
+    if (sessionId && !ctx.db.getSession(sessionId)) return error(404, "session not found");
+    setActiveModel(model);
+    persistEnvVar("BOUGH_MODEL", model, ctx.envDir);
+    if (sessionId) {
+      ctx.db.setSessionModel(sessionId, model);
+      const updated = ctx.db.getSession(sessionId)!;
+      ctx.bus.publish({ type: "session.updated", sessionId, data: updated });
+    }
+  }
   if (worker) setWorkerChoice(worker);
   return json({ model: activeModel(), worker: workerChoice() });
 };

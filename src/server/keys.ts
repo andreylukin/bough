@@ -99,3 +99,25 @@ export function setKey(
   chmodSync(path, 0o600); // writeFileSync's mode only applies on create
   return keyStatus();
 }
+
+/**
+ * Persist any launcher env var to ~/.bough/env (same file/format as setKey) so
+ * it survives a restart — e.g. BOUGH_MODEL when the default model changes.
+ * Best-effort: a read-only env file must not fail the setting change itself.
+ */
+export function persistEnvVar(varName: string, value: string, dir?: string): void {
+  try {
+    const path = envPath(dir);
+    mkdirSync(join(path, ".."), { recursive: true });
+    let current = "";
+    try {
+      current = readFileSync(path, "utf8");
+    } catch {
+      current = "";
+    }
+    writeFileSync(path, setEnvVar(current, varName, value), { mode: 0o600 });
+    chmodSync(path, 0o600);
+  } catch (e) {
+    console.error(`persistEnvVar ${varName}: ${(e as Error).message}`);
+  }
+}

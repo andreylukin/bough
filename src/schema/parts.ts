@@ -81,6 +81,10 @@ export const Session = z.object({
   // Set when a branch is deprecated — hidden by default in the tree views, shown
   // on toggle. Distinct from archive (which removes it from the list entirely).
   deprecatedAt: z.number().nullish(),
+  // Per-session model override (additive). Absent = the process-global default.
+  // Set by the model picker: switching models pins THIS session and moves the
+  // default new sessions start on; other existing sessions keep theirs.
+  model: z.string().nullish(),
   // Prompt-cache visibility (additive; stamped after each turn's last LLM round).
   // contextTokens = that round's full prompt size; cachedTokens = the share of it
   // served from / written to the provider's prompt cache; lastLlmAt = when the round

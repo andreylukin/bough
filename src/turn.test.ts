@@ -170,6 +170,21 @@ Deno.test("tool-call turn runs a tool, appends the result, and loops to completi
   assertExists(results);
 });
 
+Deno.test("a session pinned to a model runs its turns on it; unpinned follows the default", async () => {
+  const { db, bus, sessionId } = seed();
+  db.setSessionModel(sessionId, "claude-haiku-4-5");
+  const llm = fakeLlm([{
+    content: [
+      { type: "text", text: "hi" },
+      { type: "tool_use", id: "s", name: "stop", input: {} },
+    ],
+    stopReason: "tool_use",
+  }]);
+  const { done } = beginTurn({ db, bus, llm, tools: [] }, sessionId);
+  await done;
+  assertEquals(llm.calls[0].model, "claude-haiku-4-5");
+});
+
 Deno.test("a turn that trails off without stop is nudged; nudge + stop never persist", async () => {
   const { db, bus, sessionId } = seed();
   const llm = fakeLlm([

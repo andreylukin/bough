@@ -767,7 +767,9 @@ export function App(
           setKeyInput("");
           return;
         }
-        (e.kind === "model" ? api.setModel(e.id) : api.setWorker(e.id))
+        // Model switches pin the OPEN session and move the default for new
+        // sessions (other sessions keep theirs); worker stays process-global.
+        (e.kind === "model" ? api.setModel(e.id, currentId ?? undefined) : api.setWorker(e.id))
           .then(() => api.getConfig().then(setCfg))
           .catch((err) => setErr(String(err)));
         return;
@@ -1078,7 +1080,15 @@ export function App(
       ? <DiffView entries={diffEntries} fileSel={fileSel} scroll={diffScroll} rows={rows} />
       : mode === "model"
       ? (cfg
-        ? <ModelPicker cfg={cfg} entries={cfgEntries} selected={modelSel} keyInput={keyInput} />
+        ? (
+          <ModelPicker
+            cfg={cfg}
+            entries={cfgEntries}
+            selected={modelSel}
+            keyInput={keyInput}
+            sessionModel={store.session?.model}
+          />
+        )
         : <Text dimColor>loading config…</Text>)
       : null);
 
@@ -1146,7 +1156,13 @@ export function App(
           mode={mode === "chat" && store.pending ? "approval" : mode}
           usage={store.usage}
           draftLabel={isDraft ? `new · ${shortWs}` : null}
-          model={cfg ? (cfg.models.find((m) => m.id === cfg.model)?.label ?? cfg.model) : null}
+          model={cfg
+            ? (() => {
+              // The session's pinned model wins over the global default.
+              const id = store.session?.model ?? cfg.model;
+              return cfg.models.find((m) => m.id === id)?.label ?? id;
+            })()
+            : null}
           parentTitle={store.session?.kind === "subagent" && store.session.originId
             ? (store.sessions.find((s) => s.id === store.session!.originId)?.title ?? "parent")
               .replace(/^subagent · /, "")

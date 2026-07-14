@@ -7,7 +7,9 @@ import type { Message, Session } from "../schema/parts.ts";
 
 function ctx(): AppCtx {
   const bus = new Bus();
-  return { db: new Db(":memory:"), bus };
+  // envDir: PATCH /config persists the default model to the launcher env file —
+  // point it at a throwaway dir so tests never touch the real ~/.bough/env.
+  return { db: new Db(":memory:"), bus, envDir: Deno.makeTempDirSync({ prefix: "app-env-" }) };
 }
 
 const req = (method: string, path: string, body?: unknown) =>
@@ -37,6 +39,42 @@ Deno.test("GET /config lists models; PATCH /config switches the active model", a
 
   assertEquals((await h(req("PATCH", "/config", { model: "" }))).status, 400);
   // Restore so later tests see the default.
+  await h(req("PATCH", "/config", { model: "claude-opus-4-8" }));
+  c.db.close();
+});
+
+Deno.test("PATCH /config with sessionId pins that session; others keep theirs", async () => {
+  const c = ctx();
+  const h = createHandler(c);
+  const events: unknown[] = [];
+  c.bus.subscribe((e) => e.type === "session.updated" && events.push(e.data));
+  c.db.createSession({ id: "A", parentId: null, title: "a", kind: "root", createdAt: 1 });
+  c.db.createSession({ id: "B", parentId: null, title: "b", kind: "root", createdAt: 2 });
+
+  const res = await h(
+    req("PATCH", "/config", { model: "claude-haiku-4-5", sessionId: "A" }),
+  );
+  assertEquals(res.status, 200);
+  // The open session is pinned, the sibling untouched, the global default moved.
+  assertEquals(c.db.getSession("A")?.model, "claude-haiku-4-5");
+  assertEquals(c.db.getSession("B")?.model, undefined);
+  assertEquals(
+    (await (await h(req("GET", "/config"))).json() as { model: string }).model,
+    "claude-haiku-4-5",
+  );
+  // The pin is announced so open UIs refresh the session row.
+  assertEquals((events.at(-1) as { model?: string })?.model, "claude-haiku-4-5");
+  // …and the session row carries it over the wire.
+  const got = await (await h(req("GET", "/sessions/A"))).json() as {
+    session: { model?: string };
+  };
+  assertEquals(got.session.model, "claude-haiku-4-5");
+
+  assertEquals(
+    (await h(req("PATCH", "/config", { model: "claude-opus-4-8", sessionId: "zzz" }))).status,
+    404,
+  );
+  // Restore the process-global default for later tests.
   await h(req("PATCH", "/config", { model: "claude-opus-4-8" }));
   c.db.close();
 });
@@ -76,6 +114,27 @@ Deno.test("GET /config lists workers; PATCH /config switches the worker", async 
   assertEquals((await h(req("PATCH", "/config", {}))).status, 400);
   // Restore so later tests see the default.
   await h(req("PATCH", "/config", { worker: "local" }));
+  c.db.close();
+});
+
+Deno.test("GET /config exposes key booleans; PUT /config/keys validates", async () => {
+  const c = ctx();
+  const h = createHandler(c);
+
+  const cfg = await (await h(req("GET", "/config"))).json() as { keys: Record<string, unknown> };
+  // A boolean per provider — never a value.
+  assertEquals(typeof cfg.keys.anthropic, "boolean");
+  assertEquals(typeof cfg.keys.openrouter, "boolean");
+  assertEquals(typeof cfg.keys.openai, "boolean");
+
+  // Validation: unknown provider, empty key, newline key, and empty body all 400.
+  assertEquals((await h(req("PUT", "/config/keys", { provider: "bogus", key: "x" }))).status, 400);
+  assertEquals((await h(req("PUT", "/config/keys", { provider: "openai", key: "" }))).status, 400);
+  assertEquals(
+    (await h(req("PUT", "/config/keys", { provider: "openai", key: "a\nb" }))).status,
+    400,
+  );
+  assertEquals((await h(req("PUT", "/config/keys", {}))).status, 400);
   c.db.close();
 });
 
