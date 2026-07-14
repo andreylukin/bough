@@ -36,6 +36,19 @@ function dispatchLlm(scripts: Record<string, ScriptedRound[]>): LlmClient {
           (m.content.find((b) => b.type === "text") as { text?: string } | undefined)?.text
         )
         .find((t) => t !== undefined) ?? "";
+      // The harness's stop-nudge (in-memory re-prompt after a text-only round)
+      // gets the compliant reply — a stop call — instead of a script lookup.
+      if (text.startsWith("[harness]")) {
+        return {
+          content: [{
+            type: "tool_use",
+            id: `stop-${crypto.randomUUID().slice(0, 8)}`,
+            name: "stop",
+            input: {},
+          }],
+          stopReason: "tool_use",
+        };
+      }
       const key = Object.keys(scripts).find((k) => text.startsWith(k));
       if (!key) throw new Error(`no script for thread starting with: ${text.slice(0, 60)}`);
       const i = idx[key] ?? 0;

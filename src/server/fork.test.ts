@@ -6,11 +6,26 @@ import { type AppCtx, createHandler } from "./app.ts";
 import type { Message, Role, Session } from "../schema/parts.ts";
 import type { LlmClient } from "../supervisor/llm.ts";
 
-// Fake LLM: one text block, no tools — the turn ends after one round.
-const fakeLlm = (reply: string): LlmClient => ({
-  run: () =>
-    Promise.resolve({ content: [{ type: "text" as const, text: reply }], stopReason: "end_turn" }),
-});
+// Fake LLM: one text round, then it answers the harness's stop-nudge with a stop
+// call so the turn ends (the compliant-model shape).
+const fakeLlm = (reply: string): LlmClient => {
+  let called = false;
+  return {
+    run: () => {
+      if (called) {
+        return Promise.resolve({
+          content: [{ type: "tool_use" as const, id: "stop-1", name: "stop", input: {} }],
+          stopReason: "tool_use",
+        });
+      }
+      called = true;
+      return Promise.resolve({
+        content: [{ type: "text" as const, text: reply }],
+        stopReason: "end_turn",
+      });
+    },
+  };
+};
 
 function ctx(llm?: LlmClient): AppCtx {
   const bus = new Bus();

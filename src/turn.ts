@@ -134,6 +134,26 @@ export const MODELS: ModelRow[] = [
 const MAX_TOKENS = 64_000;
 // Code-mode (SPEC §5): the supervisor plans and writes; the harness is the only
 // executor. One program per round, CHECK-gated completion.
+// Explicit turn ending: the model must CALL `stop` to end its turn — a response
+// that just trails off (text with no tool call) gets nudged to continue or stop.
+// The stop call and the nudges live only in this turn's in-memory exchange; they
+// are never persisted, so the thread and every future prompt replay stay clean.
+const STOP_NAME = "stop";
+const STOP_TOOL = {
+  name: STOP_NAME,
+  description: "End your turn. Call this after your final text, in the same response, once the " +
+    "user's request is fully handled. Your turn does not end until you call it.",
+  inputSchema: { type: "object", properties: {}, additionalProperties: false } as Record<
+    string,
+    unknown
+  >,
+};
+/** Re-prompts before the harness gives up on an explicit stop (runaway brake). */
+const MAX_STOP_NUDGES = 3;
+const STOP_NUDGE = "[harness] Your turn is still open — it only ends when you call the stop " +
+  "tool. Continue if there is more to do, or call stop now (alone, no other output) if you " +
+  "are finished.";
+
 const SYSTEM = [
   "You are bough, a coding agent. You act ONLY through the run_steps tool: each call",
   "carries one JavaScript program that a deterministic harness executes in a sealed V8",
@@ -174,7 +194,11 @@ const SYSTEM = [
   "Commit a `check` early: a shell command that exits 0 iff the task's literal",
   "acceptance criteria hold. Set `done: true` when the work is complete — the harness",
   "re-runs the committed check and accepts done only if it passes.",
-  "For pure questions or conversation, answer in plain text without calling run_steps.",
+  "Your turn NEVER ends on its own: when the user's request is fully handled, call the",
+  "stop tool — after your final text, in the same response. Ending without stop just",
+  "gets you re-prompted to continue.",
+  "For pure questions or conversation, answer in plain text without calling run_steps,",
+  "then call stop in the same response.",
   "Text output renders in a compact chat UI. Be terse: answer in 1-3 short lines unless",
   "the user asks for detail; one-word answers are fine. After work, report outcome only —",
   "what changed and whether the check passed — never a step-by-step narration.",
@@ -564,14 +588,18 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       (prepared.sandboxed ? scratchpadNote(prepared.scratchDir) : "") +
       (agents ?? "") +
       mcpNote + lspNote + skills.sections;
-    const toolDefs = tools.map((t) => ({
-      name: t.name,
-      description: t.description,
-      inputSchema: jsonSchema(t),
-    }));
+    const toolDefs = [
+      ...tools.map((t) => ({
+        name: t.name,
+        description: t.description,
+        inputSchema: jsonSchema(t),
+      })),
+      STOP_TOOL,
+    ];
 
-    // Unbounded on purpose: the loop ends when the model stops asking for tools or
-    // the CHECK gate accepts done; interruptTurn is the user's brake on a runaway.
+    // Unbounded on purpose: the loop ends when the model calls `stop` or the CHECK
+    // gate accepts done; interruptTurn is the user's brake on a runaway.
+    let nudges = 0;
     for (let round = 0;; round++) {
       if (signal?.aborted) throw new InterruptedError();
       // A user message steered in mid-turn: yield here (a clean round boundary —
@@ -593,6 +621,9 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
         lastLlmAt = Date.now();
       }
 
+      // The stop call is loop control, not content: honor it, but never persist
+      // or replay it — the thread and future prompts must not carry it.
+      let stopRequested = false;
       const assistant: LlmContentBlock[] = [];
       for (const block of result.content) {
         if (block.type === "text") {
@@ -606,38 +637,53 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
           if (block.text) append({ type: "reasoning", text: block.text });
           assistant.push(block);
         } else if (block.type === "tool_use") {
+          if (block.name === STOP_NAME) {
+            stopRequested = true;
+            continue;
+          }
           append({ type: "tool_call", id: block.id, name: block.name, input: block.input });
           assistant.push(block);
         }
       }
-      messages.push({ role: "assistant", content: assistant });
+      if (assistant.length > 0) messages.push({ role: "assistant", content: assistant });
       checkpoint(db, turn.id, `round:${round + 1}`);
 
-      const toolUses = result.content.filter((b) => b.type === "tool_use");
-      if (result.stopReason !== "tool_use" || toolUses.length === 0) break;
-
-      const toolResults: LlmContentBlock[] = [];
-      let doneAccepted = false;
-      for (const tu of toolUses) {
-        if (tu.type !== "tool_use") continue;
-        // Don't start new tools once interrupted — stop before side effects.
-        if (signal?.aborted) throw new InterruptedError();
-        const { output, isError } = await executeTool(tools, tu.name, tu.input, toolCtx);
-        append({ type: "tool_result", callId: tu.id, output, isError });
-        toolResults.push({ type: "tool_result", toolUseId: tu.id, content: output, isError });
-        checkpoint(db, turn.id, `tool:${tu.name}`);
-        // CHECK-gated completion (SPEC §5): the harness — not the model's say-so —
-        // decides `done`. run_steps stamps its verdict into the tool output.
-        if (
-          tu.name === "run_steps" &&
-          (tu.input as { done?: boolean })?.done === true &&
-          output.includes(DONE_ACCEPTED)
-        ) {
-          doneAccepted = true;
+      const toolUses = result.content.filter(
+        (b) => b.type === "tool_use" && b.name !== STOP_NAME,
+      );
+      if (toolUses.length > 0) {
+        const toolResults: LlmContentBlock[] = [];
+        let doneAccepted = false;
+        for (const tu of toolUses) {
+          if (tu.type !== "tool_use") continue;
+          // Don't start new tools once interrupted — stop before side effects.
+          if (signal?.aborted) throw new InterruptedError();
+          const { output, isError } = await executeTool(tools, tu.name, tu.input, toolCtx);
+          append({ type: "tool_result", callId: tu.id, output, isError });
+          toolResults.push({ type: "tool_result", toolUseId: tu.id, content: output, isError });
+          checkpoint(db, turn.id, `tool:${tu.name}`);
+          // CHECK-gated completion (SPEC §5): the harness — not the model's say-so —
+          // decides `done`. run_steps stamps its verdict into the tool output.
+          if (
+            tu.name === "run_steps" &&
+            (tu.input as { done?: boolean })?.done === true &&
+            output.includes(DONE_ACCEPTED)
+          ) {
+            doneAccepted = true;
+          }
         }
+        messages.push({ role: "user", content: toolResults });
+        if (doneAccepted || stopRequested) break;
+        continue;
       }
-      messages.push({ role: "user", content: toolResults });
-      if (doneAccepted) break;
+
+      // No real tool calls this round: only an explicit stop ends the turn.
+      if (stopRequested) break;
+      // Trailed off without stop — re-prompt (in-memory only, never persisted),
+      // with a cap so a stop-incapable model can't loop the API forever.
+      if (nudges >= MAX_STOP_NUDGES) break;
+      nudges++;
+      messages.push({ role: "user", content: [{ type: "text", text: STOP_NUDGE }] });
     }
 
     db.updateMessage(messageId, parts, false);

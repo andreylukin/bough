@@ -28,7 +28,9 @@ function seed(): { db: Db; bus: Bus; events: BoughEvent[]; sessionId: string } {
   return { db, bus, events, sessionId: s.id };
 }
 
-/** A scripted client: one LlmResult per round, plus the params it was called with. */
+/** A scripted client: one LlmResult per round, plus the params it was called with.
+ * An exhausted script answers the harness's stop-nudge with a stop call — the
+ * compliant-model reply — so scripts keep reading as "…and then the turn ends". */
 function fakeLlm(script: LlmResult[]): LlmClient & { calls: LlmParams[] } {
   let i = 0;
   const calls: LlmParams[] = [];
@@ -36,7 +38,10 @@ function fakeLlm(script: LlmResult[]): LlmClient & { calls: LlmParams[] } {
     calls,
     run(params: LlmParams, onText: (d: string) => void): Promise<LlmResult> {
       calls.push(params);
-      const result = script[i++];
+      const result: LlmResult = script[i++] ?? {
+        content: [{ type: "tool_use", id: `stop-${i}`, name: "stop", input: {} }],
+        stopReason: "tool_use",
+      };
       for (const block of result.content) {
         if (block.type === "text") onText(block.text);
       }
@@ -165,6 +170,56 @@ Deno.test("tool-call turn runs a tool, appends the result, and loops to completi
   assertExists(results);
 });
 
+Deno.test("a turn that trails off without stop is nudged; nudge + stop never persist", async () => {
+  const { db, bus, sessionId } = seed();
+  const llm = fakeLlm([
+    // Trails off — the harness must re-prompt instead of ending the turn.
+    { content: [{ type: "text", text: "half done." }], stopReason: "end_turn" },
+    // The re-prompted round finishes compliantly.
+    {
+      content: [
+        { type: "text", text: "all done." },
+        { type: "tool_use", id: "s", name: "stop", input: {} },
+      ],
+      stopReason: "tool_use",
+    },
+  ]);
+  const { message, done } = beginTurn({ db, bus, llm, tools: [] }, sessionId);
+  await done;
+
+  assertEquals(llm.calls.length, 2); // exactly one nudge round
+  // The nudge reached the model as an in-memory user message (the fake aliases
+  // the live messages array, so check content, not final position).
+  assertStringIncludes(
+    JSON.stringify(llm.calls[1].messages.filter((m) => m.role === "user")),
+    "[harness]",
+  );
+  // …but neither it nor the stop call landed in the persisted thread.
+  const final = finalMessage(db, message.id);
+  assertEquals(final.parts, [
+    { type: "text", text: "half done." },
+    { type: "text", text: "all done." },
+  ] as Part[]);
+  assertEquals(
+    db.threadFor(sessionId).some((m) => JSON.stringify(m.parts).includes("[harness]")),
+    false,
+  );
+  assertEquals(db.turnsByStatus("done").length, 1);
+});
+
+Deno.test("a model that never calls stop hits the nudge cap instead of looping forever", async () => {
+  const { db, bus, sessionId } = seed();
+  // Index-based script: every round trails off; exhaustion would return the
+  // auto-stop, so script enough trailing rounds to outlast the cap (1 + 3 nudges).
+  const trail = { content: [{ type: "text", text: "…" }], stopReason: "end_turn" } as LlmResult;
+  const llm = fakeLlm([trail, trail, trail, trail, trail, trail]);
+  const { done } = beginTurn({ db, bus, llm, tools: [] }, sessionId);
+  await done;
+
+  assertEquals(llm.calls.length, 4); // initial round + MAX_STOP_NUDGES retries
+  assertEquals(db.turnsByStatus("done").length, 1); // still ends cleanly
+});
+
 Deno.test("multi-round loop executes tools across several rounds", async () => {
   const { db, bus, sessionId } = seed();
   let calls = 0;
@@ -180,7 +235,14 @@ Deno.test("multi-round loop executes tools across several rounds", async () => {
   const llm = fakeLlm([
     { content: [{ type: "tool_use", id: "a", name: "count", input: {} }], stopReason: "tool_use" },
     { content: [{ type: "tool_use", id: "b", name: "count", input: {} }], stopReason: "tool_use" },
-    { content: [{ type: "text", text: "fin" }], stopReason: "end_turn" },
+    // The compliant ending: final text + stop in ONE response — no extra round.
+    {
+      content: [
+        { type: "text", text: "fin" },
+        { type: "tool_use", id: "s", name: "stop", input: {} },
+      ],
+      stopReason: "tool_use",
+    },
   ]);
   const { message, done } = beginTurn({ db, bus, llm, tools: [counter] }, sessionId);
   await done;
@@ -189,6 +251,8 @@ Deno.test("multi-round loop executes tools across several rounds", async () => {
   assertEquals(llm.calls.length, 3);
   const final = finalMessage(db, message.id);
   assertEquals(final.parts.filter((p) => p.type === "tool_result").length, 2);
+  // The stop call is loop control — it must never persist into the thread.
+  assertEquals(final.parts.some((p) => p.type === "tool_call" && p.name === "stop"), false);
   assertEquals(final.pending, false);
 });
 
@@ -236,8 +300,15 @@ Deno.test("a mid-turn user message steers: the turn yields at the round boundary
   const llm = fakeLlm([
     // Round 1 asks for a tool and would keep looping (stopReason tool_use)…
     { content: [{ type: "tool_use", id: "t1", name: "poke", input: {} }], stopReason: "tool_use" },
-    // …but the steered message ends the turn at the boundary; this round is the follow-up's.
-    { content: [{ type: "text", text: "doing Y" }], stopReason: "end_turn" },
+    // …but the steered message ends the turn at the boundary; this round is the
+    // follow-up's, ending compliantly with text + stop in one response.
+    {
+      content: [
+        { type: "text", text: "doing Y" },
+        { type: "tool_use", id: "s1", name: "stop", input: {} },
+      ],
+      stopReason: "tool_use",
+    },
   ]);
   const ctx: TurnCtx = { db, bus, llm, tools: [] };
   const poke: ToolDef = {
