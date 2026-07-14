@@ -782,7 +782,10 @@ export function App(
       setMode("model");
       return;
     }
-    if (key.ctrl && ch === "k") {
+    // ^k doubles as readline delete-to-end while composing (matching the help's
+    // line-editing table) — compacting mid-thought on a text-editing chord was a
+    // user-testing bug. Same for ^e below (end-of-line vs expand-all).
+    if (key.ctrl && ch === "k" && input === "") {
       store.compact().then((s) => s && openSession(s));
       return;
     }
@@ -804,7 +807,7 @@ export function App(
       setMode("panel");
       return;
     }
-    if (key.ctrl && ch === "e") {
+    if (key.ctrl && ch === "e" && input === "") {
       setToggled(new Set());
       setExpandAll((v) => !v);
       return;
@@ -939,7 +942,13 @@ export function App(
       return setComp((c) => ({ text: c.text.slice(0, c.cursor), cursor: c.cursor }));
     }
     if (key.ctrl && ch === "u") return setInput("");
-    if (key.ctrl && ch === "j") return insertAtCursor("\n");
+    // Ctrl+J is a raw "\n": ink names it 'enter' with no ctrl flag (kitty-protocol
+    // terminals do report ctrl+"j"), so match both — it's the newline chord, and
+    // without this it fell into the coalesced-text branch below whose trailing-\n
+    // rule means "send" (user-testing bug: ^j submitted half a message).
+    if ((key.ctrl && ch === "j") || (ch === "\n" && !key.return)) {
+      return insertAtCursor("\n");
+    }
     if (key.backspace || key.delete) {
       return setComp((c) =>
         c.cursor === 0 ? c : {

@@ -4,7 +4,7 @@
 // any tool group, however old, can be expanded in place.
 import wrapAnsi from "wrap-ansi";
 import type { Message, Role } from "../schema/parts.ts";
-import { md, outputText, segmentParts, toolSummary } from "./format.ts";
+import { highlightCode, md, outputText, segmentParts, toolSummary } from "./format.ts";
 
 export interface VLine {
   text: string;
@@ -161,7 +161,12 @@ function toolGroupLines(
     const code = raw && typeof raw.code === "string" ? raw.code : null;
     const input = code ?? (call.input === undefined ? "" : JSON.stringify(call.input, null, 2));
     if (input) {
-      pushBlock(out, input, width, { maxLines: CODE_LINES, style: (l) => l, click: key });
+      // run_steps code is harness JS; JSON inputs highlight fine as C-family.
+      pushBlock(out, input, width, {
+        maxLines: CODE_LINES,
+        style: (l) => highlightCode(l, "js"),
+        click: key,
+      });
     }
     if (res && outputText(res) !== "") {
       out.push({ text: dim("↳ output"), click: key });

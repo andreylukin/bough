@@ -63,31 +63,141 @@ const CYAN = "\x1b[36m";
 const FG_OFF = "\x1b[39m";
 
 function mdInline(line: string): string {
-  // Style code spans first so their contents are exempt from prose rewriting.
-  return line
-    .split(/(`[^`]+`)/)
-    .map((seg) =>
-      seg.startsWith("`") && seg.endsWith("`") && seg.length > 2
-        ? `${CYAN}${seg.slice(1, -1)}${FG_OFF}`
-        : seg
-          .replace(/\*\*([^*]+)\*\*/g, `${B}$1${B_OFF}`)
-          // [text](url) → underlined text, url dimmed alongside.
-          .replace(/\[([^\]]+)\]\((\S+?)\)/g, `${UL}$1${UL_OFF} ${DIM}($2)${B_OFF}`)
-    )
-    .join("");
+  // Swap code spans for placeholders so their contents are exempt from prose
+  // rewriting, but bold/links still match ACROSS them ("**bold with `code`**"
+  // was left as literal asterisks when styling split the line at spans).
+  const spans: string[] = [];
+  const protectedLine = line.replace(
+    /`[^`]+`/g,
+    (m) => `\x00${spans.push(m) - 1}\x00`,
+  );
+  return protectedLine
+    .replace(/\*\*([^*]+)\*\*/g, `${B}$1${B_OFF}`)
+    // [text](url) → underlined text, url dimmed alongside.
+    .replace(/\[([^\]]+)\]\((\S+?)\)/g, `${UL}$1${UL_OFF} ${DIM}($2)${B_OFF}`)
+    .replace(/\x00(\d+)\x00/g, (_, i) => `${CYAN}${spans[+i].slice(1, -1)}${FG_OFF}`);
 }
 
 const UL = "\x1b[4m";
 const UL_OFF = "\x1b[24m";
 
-export function md(text: string): string {
-  let inFence = false;
-  return text.split("\n").map((line) => {
-    if (/^\s*```/.test(line)) {
-      inFence = !inFence;
-      return `${DIM}${line}${B_OFF}`;
+// ---- code highlighting -------------------------------------------------------
+// A one-pass approximate tokenizer for fenced blocks and tool-call code: strings
+// green, comments dim, keywords magenta, numbers yellow, the rest plain. Candy,
+// not a parser — a wrong color on an exotic line is fine; flat gray was the bug.
+const MAGENTA = "\x1b[35m";
+const GREEN = "\x1b[32m";
+const YELLOW = "\x1b[33m";
+
+const KW = {
+  js:
+    "const|let|var|function|return|if|else|for|while|do|switch|case|break|continue|new|class|extends|import|export|from|default|try|catch|finally|throw|await|async|typeof|instanceof|in|of|delete|void|yield|static|get|set|this|super|null|undefined|true|false",
+  python:
+    "def|return|if|elif|else|for|while|break|continue|import|from|as|class|try|except|finally|raise|with|lambda|yield|global|nonlocal|assert|del|pass|and|or|not|in|is|None|True|False|async|await|match|case",
+  go:
+    "func|return|if|else|for|range|switch|case|break|continue|import|package|type|struct|interface|map|chan|go|defer|select|const|var|nil|true|false",
+  rust:
+    "fn|return|if|else|for|while|loop|break|continue|use|mod|pub|struct|enum|impl|trait|match|let|mut|const|static|ref|move|async|await|dyn|where|Self|self|None|Some|Ok|Err|true|false",
+  bash:
+    "if|then|else|elif|fi|for|do|done|while|case|esac|function|return|exit|export|local|readonly|set|unset|shift|source|echo|true|false",
+  sql:
+    "SELECT|FROM|WHERE|AND|OR|NOT|INSERT|INTO|VALUES|UPDATE|SET|DELETE|CREATE|TABLE|INDEX|JOIN|LEFT|RIGHT|INNER|OUTER|ON|AS|ORDER|BY|GROUP|HAVING|LIMIT|NULL|IS|IN|LIKE|BETWEEN|DISTINCT",
+} as const;
+const LANG_ALIASES: Record<string, keyof typeof KW> = {
+  js: "js",
+  jsx: "js",
+  ts: "js",
+  tsx: "js",
+  javascript: "js",
+  typescript: "js",
+  json: "js",
+  c: "js",
+  cpp: "js",
+  java: "js",
+  python: "python",
+  py: "python",
+  go: "go",
+  rust: "rust",
+  rs: "rust",
+  bash: "bash",
+  sh: "bash",
+  zsh: "bash",
+  shell: "bash",
+  sql: "sql",
+};
+const LINE_COMMENT: Partial<Record<keyof typeof KW, string>> = {
+  js: "//",
+  go: "//",
+  rust: "//",
+  python: "#",
+  bash: "#",
+  sql: "--",
+};
+// One combined regex per language: strings | keyword | number, applied in a single
+// pass so inserted SGR codes are never re-matched (a digits-in-escape hazard).
+const HL_RE = new Map<keyof typeof KW, RegExp>();
+function hlRegex(lang: keyof typeof KW): RegExp {
+  let re = HL_RE.get(lang);
+  if (!re) {
+    re = new RegExp(
+      `("(?:[^"\\\\]|\\\\.)*"|'(?:[^'\\\\]|\\\\.)*'|\`(?:[^\`\\\\]|\\\\.)*\`)|\\b(${
+        KW[lang]
+      })\\b|\\b(\\d+(?:\\.\\d+)?)\\b`,
+      lang === "sql" ? "gi" : "g",
+    );
+    HL_RE.set(lang, re);
+  }
+  return re;
+}
+
+/** Highlight one line of code for the terminal. `langTag` is the fence tag ("" ok). */
+export function highlightCode(line: string, langTag: string): string {
+  const lang = LANG_ALIASES[langTag.toLowerCase()] ?? "js"; // generic ≈ C-family
+  // Split off a trailing line comment first (approximate: marker outside quotes).
+  const marker = LINE_COMMENT[lang];
+  let code = line;
+  let comment = "";
+  if (marker) {
+    let quote: string | null = null;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (quote) {
+        if (c === "\\") i++;
+        else if (c === quote) quote = null;
+      } else if (c === '"' || c === "'" || c === "`") quote = c;
+      else if (line.startsWith(marker, i)) {
+        code = line.slice(0, i);
+        comment = line.slice(i);
+        break;
+      }
     }
-    if (inFence) return `${DIM}${line}${B_OFF}`;
+  }
+  const styled = code.replace(
+    hlRegex(lang),
+    (_m, str, kw, num) =>
+      str
+        ? `${GREEN}${str}${FG_OFF}`
+        : kw
+        ? `${MAGENTA}${kw}${FG_OFF}`
+        : `${YELLOW}${num}${FG_OFF}`,
+  );
+  return styled + (comment ? `${DIM}${comment}${B_OFF}` : "");
+}
+
+export function md(text: string): string {
+  let fence: string | null = null; // the open fence's language tag
+  return text.split("\n").map((line) => {
+    const open = line.match(/^\s*```(\S*)\s*$/);
+    if (open) {
+      // Fence markers frame the block instead of rendering as raw backticks.
+      if (fence === null) {
+        fence = open[1];
+        return `${DIM}╭ ${fence || "code"}${B_OFF}`;
+      }
+      fence = null;
+      return `${DIM}╰${B_OFF}`;
+    }
+    if (fence !== null) return `${DIM}│${B_OFF} ${highlightCode(line, fence)}`;
     const h = line.match(/^(#{1,6})\s+(.*)$/);
     if (h) return h[1].length === 1 ? `${B}${UL}${h[2]}${UL_OFF}${B_OFF}` : `${B}${h[2]}${B_OFF}`;
     if (/^\s*(-{3,}|\*{3,})\s*$/.test(line)) return `${DIM}${"─".repeat(24)}${B_OFF}`;
