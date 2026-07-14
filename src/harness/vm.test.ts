@@ -9,6 +9,18 @@ function hosts(overrides: Partial<HostFns> = {}): HostFns & { calls: string[] } 
       calls.push(`bash:${cmd}`);
       return Promise.resolve(`out of ${cmd}`);
     },
+    bashBg: (cmd) => {
+      calls.push(`bashBg:${cmd}`);
+      return Promise.resolve(`{"id":"bg_1","pid":1}`);
+    },
+    bashOutput: (id) => {
+      calls.push(`bashOutput:${id}`);
+      return Promise.resolve("(no new output)\n[running]");
+    },
+    bashKill: (id) => {
+      calls.push(`bashKill:${id}`);
+      return Promise.resolve(`sent SIGTERM to ${id}`);
+    },
     read: (path) => {
       calls.push(`read:${path}`);
       return Promise.resolve("file body");

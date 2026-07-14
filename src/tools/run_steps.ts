@@ -14,6 +14,7 @@
 import { z } from "zod/v4";
 import type { ToolDef, ToolRunCtx } from "./types.ts";
 import { bash } from "./bash.ts";
+import * as bg from "./bash_bg.ts";
 import { readFile } from "./read_file.ts";
 import { writeFile } from "./write_file.ts";
 import { editFile } from "./edit_file.ts";
@@ -32,10 +33,11 @@ const DELEGATING_TIMEOUT_MS = 45 * 60_000;
 const schema = z.object({
   code: z.string().describe(
     "One JavaScript program for this round. It runs in a sealed V8 sandbox; the core " +
-      "capability surface is four async host functions: bash(cmd), read(path), " +
-      "write(path, content), and edit(path, oldText, newText) " +
+      "capability surface is async host functions: bash(cmd), read(path), " +
+      "write(path, content), edit(path, oldText, newText), and background shells — " +
+      "bashBg(cmd) → {id, pid}, bashOutput(id), bashKill(id) " +
       "— plus mcpStatus() (always available: this session's MCP management state) and any " +
-      "delegation (agent/spawn/join/adopt), mcp(server, tool, args), and lsp.* symbol " +
+      "oracle(question), delegation (agent/spawn/join/adopt), mcp(server, tool, args), and lsp.* symbol " +
       "navigation host functions your system prompt grants. Use console.log(...) to see " +
       "anything — printed output is returned to you. Cover inspect → change → verify in " +
       "one program.",
@@ -61,7 +63,7 @@ export const runSteps: ToolDef = {
   name: "run_steps",
   description:
     "Execute one JavaScript program in the sealed sandbox (host functions: bash/read/write/edit, " +
-    "plus delegation and mcp() when granted), " +
+    "background shells via bashBg/bashOutput/bashKill, plus delegation and mcp() when granted), " +
     "optionally committing a `check` command and/or requesting `done`. This is your only way to act.",
   schema,
   async run(input: unknown, ctx: ToolRunCtx): Promise<string> {
@@ -72,6 +74,11 @@ export const runSteps: ToolDef = {
       code,
       {
         bash: (command) => bash.run({ command }, ctx),
+        // Background shells: detached from the turn on purpose (no ctx.signal) —
+        // they persist across rounds and turns of this session until killed.
+        bashBg: (command) => bg.bashBg(command, ctx),
+        bashOutput: (id) => Promise.resolve(bg.bashOutput(id, ctx)),
+        bashKill: (id) => Promise.resolve(bg.bashKill(id, ctx)),
         read: (path) => readFile.run({ path }, ctx),
         write: (path, content) => writeFile.run({ path, content }, ctx),
         edit: (path, old_string, new_string) => editFile.run({ path, old_string, new_string }, ctx),
@@ -93,6 +100,8 @@ export const runSteps: ToolDef = {
               : {}),
           }
           : {}),
+        // The oracle (wired for supervisor turns): plain strings both ways.
+        ...(ctx.oracle ? { oracle: (question: string) => ctx.oracle!(question) } : {}),
         // MCP (wired only for turns whose skills/activations granted servers): the
         // JSON round-trip keeps the postMessage protocol string-only, like agent().
         ...(ctx.mcp
@@ -103,9 +112,7 @@ export const runSteps: ToolDef = {
           }
           : {}),
         // MCP management state — read-only, wired for every supervisor turn.
-        ...(ctx.mcpStatus
-          ? { mcpStatus: async () => JSON.stringify(await ctx.mcpStatus!()) }
-          : {}),
+        ...(ctx.mcpStatus ? { mcpStatus: async () => JSON.stringify(await ctx.mcpStatus!()) } : {}),
         // LSP symbol verbs (wired when the backing server is registered): same
         // JSON round-trip as mcp(); the worker side fans this out as lsp.*.
         ...(ctx.lsp
@@ -116,8 +123,9 @@ export const runSteps: ToolDef = {
           : {}),
       },
       // agent() blocks on whole subagent turns; a held mcp()/lsp() call blocks on a
-      // human approval — both need far more wall-clock than the plain 3-minute cap.
-      ctx.delegate || ctx.mcp || ctx.lsp ? DELEGATING_TIMEOUT_MS : undefined,
+      // human approval; an oracle() consult can reason for many minutes — all need
+      // far more wall-clock than the plain 3-minute cap.
+      ctx.delegate || ctx.mcp || ctx.lsp || ctx.oracle ? DELEGATING_TIMEOUT_MS : undefined,
       ctx.signal,
     );
 

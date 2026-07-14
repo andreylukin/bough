@@ -12,6 +12,15 @@
 
 export interface HostFns {
   bash(cmd: string): Promise<string>;
+  /**
+   * Background shells: bashBg spawns a command that outlives the program and the
+   * turn, returning {id, pid} as JSON; bashOutput returns output accrued since the
+   * last call plus a status line; bashKill terminates one. Always wired by
+   * run_steps, like bash.
+   */
+  bashBg(cmd: string): Promise<string>;
+  bashOutput(id: string): Promise<string>;
+  bashKill(id: string): Promise<string>;
   read(path: string): Promise<string>;
   write(path: string, content: string): Promise<string>;
   edit(path: string, oldText: string, newText: string): Promise<string>;
@@ -25,6 +34,11 @@ export interface HostFns {
   spawn?(task: string): Promise<string>;
   join?(sessionId: string): Promise<string>;
   adopt?(sessionId: string): Promise<string>;
+  /**
+   * The oracle (bridged for supervisor turns): consult a stronger read-only
+   * reasoning model; question in, prose advice out — plain strings both ways.
+   */
+  oracle?(question: string): Promise<string>;
   /**
    * MCP tool call (bridged only for turns granted servers): args travel in as JSON
    * and the result returns as JSON — the worker side parses both ends.

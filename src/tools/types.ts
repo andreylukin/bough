@@ -55,6 +55,12 @@ export interface ToolRunCtx {
     adopt: (subagentSessionId: string) => Promise<string>;
   };
   /**
+   * The oracle (tools/oracle.ts), wired by the turn runner for every supervisor
+   * turn: a read-only consult of a stronger reasoning model. The callback closes
+   * over the turn's usage accumulators so oracle tokens bill to the session.
+   */
+  oracle?: (question: string) => Promise<string>;
+  /**
    * MCP tool calls, wired by the turn runner when the triggering message's skills,
    * the session's manual activations, or a spawning turn's inherited grant
    * (subagents) granted servers. `call` runs the

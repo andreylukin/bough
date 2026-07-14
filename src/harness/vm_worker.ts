@@ -16,6 +16,9 @@
 
 type HostName =
   | "bash"
+  | "bashBg"
+  | "bashOutput"
+  | "bashKill"
   | "read"
   | "write"
   | "edit"
@@ -23,6 +26,7 @@ type HostName =
   | "spawn"
   | "join"
   | "adopt"
+  | "oracle"
   | "mcp"
   | "mcpStatus"
   | "lsp";
@@ -56,6 +60,11 @@ const sandboxConsole = {
 
 async function run(code: string): Promise<void> {
   const bash = (cmd: string) => hostCall("bash", [cmd]);
+  // Background shells: the spawn handle comes back as JSON ({id, pid} — the
+  // postMessage protocol stays string-only); output/kill return plain text.
+  const bashBg = async (cmd: string) => JSON.parse(await hostCall("bashBg", [cmd]));
+  const bashOutput = (id: string) => hostCall("bashOutput", [id]);
+  const bashKill = (id: string) => hostCall("bashKill", [id]);
   const read = (path: string) => hostCall("read", [path]);
   const write = (path: string, content: string) => hostCall("write", [path, content]);
   const edit = (path: string, oldText: string, newText: string) =>
@@ -67,6 +76,8 @@ async function run(code: string): Promise<void> {
   const spawn = async (task: string) => JSON.parse(await hostCall("spawn", [task]));
   const join = async (sessionId: string) => JSON.parse(await hostCall("join", [sessionId]));
   const adopt = (sessionId: string) => hostCall("adopt", [sessionId]);
+  // The oracle: plain strings both ways (question in, prose advice out).
+  const oracle = (question: string) => hostCall("oracle", [question]);
   // MCP: args out and result back both travel as JSON (string-only protocol).
   // Turns without granted servers have no bridged fn — the call rejects.
   const mcp = async (server: string, tool: string, args?: unknown) =>
@@ -87,6 +98,9 @@ async function run(code: string): Promise<void> {
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as any;
   const program = new AsyncFunction(
     "bash",
+    "bashBg",
+    "bashOutput",
+    "bashKill",
     "read",
     "write",
     "edit",
@@ -94,6 +108,7 @@ async function run(code: string): Promise<void> {
     "spawn",
     "join",
     "adopt",
+    "oracle",
     "mcp",
     "mcpStatus",
     "lsp",
@@ -102,6 +117,9 @@ async function run(code: string): Promise<void> {
   );
   await program(
     bash,
+    bashBg,
+    bashOutput,
+    bashKill,
     read,
     write,
     edit,
@@ -109,6 +127,7 @@ async function run(code: string): Promise<void> {
     spawn,
     join,
     adopt,
+    oracle,
     mcp,
     mcpStatus,
     lsp,

@@ -34,6 +34,7 @@ import {
   type ToolDef,
   type ToolRunCtx,
 } from "./tools/mod.ts";
+import { runOracle } from "./tools/oracle.ts";
 import {
   clientFor,
   type LlmClient,
@@ -107,6 +108,23 @@ export function setActiveModel(model: string): void {
 }
 
 /**
+ * The model oracle() consults — should be at least as strong as the main model,
+ * ideally a different family (a second opinion catches what the primary is blind
+ * to). BOUGH_ORACLE overrides; the default prefers a cross-family reasoner when
+ * an OpenAI key is configured and falls back to the strongest Anthropic model.
+ */
+let currentOracle = Deno.env.get("BOUGH_ORACLE") ?? "";
+
+export function oracleModel(): string {
+  if (currentOracle) return currentOracle;
+  return Deno.env.get("OPENAI_API_KEY") ? "openai:gpt-5" : "claude-fable-5";
+}
+
+export function setOracleModel(model: string): void {
+  currentOracle = model;
+}
+
+/**
  * Models offered in the picker. Anthropic ids go direct; "openai:…" ids go to OpenAI
  * (need OPENAI_API_KEY); "vendor/model" ids go through OpenRouter (need
  * OPENROUTER_API_KEY). Not exhaustive — the composer accepts any id, this is just the
@@ -158,9 +176,21 @@ const SYSTEM = [
   "You are bough, a coding agent. You act ONLY through the run_steps tool: each call",
   "carries one JavaScript program that a deterministic harness executes in a sealed V8",
   "sandbox — you never touch the machine directly.",
-  "Inside the program the core capability surface is four async host functions:",
+  "Inside the program the core capability surface is these async host functions:",
   "await bash(cmd) — shell in the sandboxed workspace, returns combined output;",
   "await read(path); await write(path, content); await edit(path, oldText, newText).",
+  "Background shells: await bashBg(cmd) starts a long-lived command (dev server,",
+  "watcher, slow build) WITHOUT blocking and returns {id, pid}; it keeps running",
+  "across programs and turns until killed. await bashOutput(id) returns output accrued",
+  "since your last call plus a [running]/[exited] status line; await bashKill(id)",
+  "terminates it. Plain bash(cmd) is killed at its timeout (default 120s) — use bashBg",
+  "for anything that must outlive the program, and kill shells you no longer need.",
+  "await oracle(question) consults a stronger read-only reasoning model for genuinely",
+  "hard problems: gnarly bugs, design decisions, reviewing tricky changes. It explores",
+  "the workspace itself (read-only shell + file reads) and returns prose advice.",
+  "Each consult is slow and expensive — use it when you're stuck or the user asks,",
+  "not for routine work, and put every relevant path, symptom, and constraint into",
+  "the question. It advises; you decide and implement.",
   "Later sections of this prompt may grant more host functions — delegation",
   "(agent/spawn/join/adopt), await mcp(server, tool, args) for MCP tools (whose",
   "connected servers and calling convention appear in a '# MCP tools' section), and",
@@ -504,6 +534,18 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       // tool calls still enter through the granted mcp() bridge below.
       mcpStatus: () => Promise.resolve(mcpStatusFor(sessionId)),
     };
+    // The oracle: read-only consult of a stronger reasoning model (tools/oracle.ts).
+    // Wired for every supervisor turn; its tokens bill into this turn's cumulative
+    // accumulators (cost rollup) but never touch contextTokens — the oracle's
+    // conversation is not this session's context.
+    toolCtx.oracle = (question) =>
+      runOracle(question, toolCtx, {
+        model: oracleModel(),
+        onUsage: (u) => {
+          inputTokens += u.inputTokens;
+          outputTokens += u.outputTokens;
+        },
+      });
     // Delegation, allowed below the depth cap. Subagent turns get BLOCKING
     // delegation only (agent/adopt): a detached spawn would outlive the turn whose
     // report already went upward. At the cap there's no delegate at all, so those
