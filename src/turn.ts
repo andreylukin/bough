@@ -442,6 +442,20 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
   try {
     // Resolve the workspace and (if sandboxed) set up jj + the snapshot dir once.
     const prepared = await prepareWorkspace(db, sessionId, ctx.workspace);
+    if (prepared.warning) {
+      // Isolation degraded — surface it in the thread (plain insert, not
+      // postSystemNote: we're already inside a turn, nothing to wake).
+      const note: Message = {
+        id: crypto.randomUUID(),
+        sessionId,
+        role: "system",
+        parts: [{ type: "text", text: prepared.warning }],
+        pending: false,
+        createdAt: Date.now(),
+      };
+      db.createMessage(note);
+      bus.publish({ type: "message.started", sessionId, data: note });
+    }
     const toolCtx: ToolRunCtx = {
       workspace: prepared.cwd,
       sessionId,

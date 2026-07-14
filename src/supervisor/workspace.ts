@@ -44,6 +44,13 @@ export interface PreparedWorkspace {
   scratchDir: string;
   /** Whether the turn should run sandboxed (an explicit workspace was configured). */
   sandboxed: boolean;
+  /**
+   * Set when workspace isolation was expected but could not be provided (external
+   * jj prep failed on a first turn): the turn runs directly in the user's checkout.
+   * The caller surfaces it in the thread — a silent fallback let sessions pollute
+   * the real repo with nothing visible outside the server log (user-testing bug).
+   */
+  warning?: string;
 }
 
 /**
@@ -136,7 +143,8 @@ export async function prepareWorkspace(
     const isJj = await pathExists(`${cwd}/.jj`);
     if (isGit || isJj) {
       // May relocate the turn into the session's own working copy (external mode).
-      cwd = await prepareRepo(db, sessionId, cwd, runtime.base, isGit && isJj);
+      const prepped = await prepareRepo(db, sessionId, cwd, runtime.base, isGit && isJj);
+      return { cwd: prepped.dir, sessionDir: dir, scratchDir, sandboxed, warning: prepped.warning };
     }
   }
 
@@ -166,7 +174,7 @@ async function prepareRepo(
   repo: string,
   persistedBase: string | null,
   colocated: boolean,
-): Promise<string> {
+): Promise<{ dir: string; warning?: string }> {
   const session = db.getSession(sessionId);
   const firstTurn = persistedBase === null;
   try {
@@ -192,7 +200,7 @@ async function prepareRepo(
         const head = await gitHead(repo);
         if (head) db.setSessionBase(sessionId, head);
       }
-      return repo;
+      return { dir: repo };
     }
 
     if (!firstTurn) {
@@ -200,7 +208,7 @@ async function prepareRepo(
       // own working copy. Repair staleness (a sibling workspace's op can rewrite
       // our working-copy commit) and run where we are.
       await updateStale(repo);
-      return repo;
+      return { dir: repo };
     }
 
     let dir: string;
@@ -223,9 +231,17 @@ async function prepareRepo(
     // Metadata + the "not first turn" sentinel; "jj" when the origin has no
     // resolvable git HEAD (e.g. a fork branched from a parent's workspace dir).
     db.setSessionBase(sessionId, (await gitHead(repo)) ?? "jj");
-    return dir;
+    return { dir };
   } catch (e) {
     console.error(`jj workspace prep skipped for ${sessionId}: ${(e as Error).message}`);
-    return repo;
+    // First-turn external prep is the isolation promise: failing it means the
+    // session works directly in the user's checkout, so say so IN the thread.
+    // (Colocated repos run in place by design; a resumed external session already
+    // sits in its own working copy — those degrade quietly to no tracking.)
+    const warning = firstTurn && !colocated
+      ? `⚠ workspace isolation failed — this session edits ${repo} DIRECTLY, and the ` +
+        `changes review (^d) can't track it. jj said: ${(e as Error).message.split("\n")[0]}`
+      : undefined;
+    return { dir: repo, warning };
   }
 }

@@ -50,7 +50,14 @@ Deno.test("prepareWorkspace: a sandboxed turn gets a scratch dir created OUTSIDE
   }
   const db = new Db(":memory:");
   try {
-    db.createSession({ id: "s1", parentId: null, title: "s1", kind: "root", createdAt: 1, workspace: ws });
+    db.createSession({
+      id: "s1",
+      parentId: null,
+      title: "s1",
+      kind: "root",
+      createdAt: 1,
+      workspace: ws,
+    });
     const p = await prepareWorkspace(db, "s1");
     assert(p.sandboxed);
     assertEquals(p.scratchDir, `${scratchBase}/s1`);
@@ -221,4 +228,50 @@ Deno.test({
       await Deno.remove(snapBase, { recursive: true }).catch(() => {});
     }
   },
+});
+
+Deno.test("prepareWorkspace: failed external prep surfaces a warning, not a silent fallback", async () => {
+  // A dir with a bogus .git: looks like a repo, so external prep runs — and
+  // fails. The turn must still run, but the isolation failure has to come back
+  // as a warning for the thread instead of only a server-log line.
+  const ws = await Deno.makeTempDir({ prefix: "wstest-badgit-" });
+  await Deno.mkdir(`${ws}/.git`);
+  const snapBase = await Deno.makeTempDir({ prefix: "wstest-snap-" });
+  const scratchBase = await Deno.makeTempDir({ prefix: "wstest-scratch-" });
+  const storeBase = await Deno.makeTempDir({ prefix: "wstest-store-" });
+  const env = {
+    BOUGH_SNAPSHOT_BASE: snapBase,
+    BOUGH_SCRATCH_BASE: scratchBase,
+    BOUGH_JJ_BASE: storeBase,
+  };
+  const prev = new Map<string, string | undefined>();
+  for (const [k, v] of Object.entries(env)) {
+    prev.set(k, Deno.env.get(k));
+    Deno.env.set(k, v);
+  }
+  const db = new Db(":memory:");
+  try {
+    db.createSession({
+      id: "s-bad",
+      parentId: null,
+      title: "s-bad",
+      kind: "root",
+      createdAt: 1,
+      workspace: ws,
+    });
+    const p = await prepareWorkspace(db, "s-bad");
+    assertEquals(p.cwd, ws); // the turn still runs, in place
+    assert(p.warning, "external prep failure must surface a warning");
+    assert(p.warning!.includes("isolation failed"), p.warning);
+    // Prep failed before a base was persisted, so the next turn is still a
+    // "first" one: still degraded → warned again, not silenced.
+    const p2 = await prepareWorkspace(db, "s-bad");
+    assert(p2.warning, "still degraded → still warned");
+  } finally {
+    db.close();
+    for (const [k, v] of prev) v === undefined ? Deno.env.delete(k) : Deno.env.set(k, v);
+    for (const d of [ws, snapBase, scratchBase, storeBase]) {
+      await Deno.remove(d, { recursive: true }).catch(() => {});
+    }
+  }
 });

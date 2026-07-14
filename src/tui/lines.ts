@@ -97,13 +97,15 @@ const OUTPUT_LINES = 20;
 /**
  * A gutter-framed block: each logical line wraps to the remaining width and
  * every physical line carries a dim `│` (clickable — anywhere in the block
- * collapses it). `style` colors the content; the gutter stays dim.
+ * collapses it). `style` colors the content; the gutter stays dim. A truncated
+ * block ends on a "+N more · click to show all" line whose click target is
+ * `fullKey` — toggling it re-renders the block uncapped.
  */
 function pushBlock(
   out: VLine[],
   text: string,
   width: number,
-  opts: { maxLines: number; style: (l: string) => string; click: string },
+  opts: { maxLines: number; style: (l: string) => string; click: string; fullKey?: string },
 ) {
   const logical = text.split("\n");
   const shown = logical.slice(0, opts.maxLines);
@@ -114,8 +116,10 @@ function pushBlock(
   }
   if (logical.length > shown.length) {
     out.push({
-      text: `${dim("│")} ${dim(`… +${logical.length - shown.length} more lines`)}`,
-      click: opts.click,
+      text: `${dim("│")} ${
+        dim(`… +${logical.length - shown.length} more lines · click to show all`)
+      }`,
+      click: opts.fullKey ?? opts.click,
     });
   }
 }
@@ -135,8 +139,14 @@ function toolGroupLines(
   parts: Message["parts"],
   key: string,
   expanded: boolean,
+  full: boolean,
   width: number,
 ) {
+  // `full` lifts the per-block line caps (set by clicking a "+N more" line; its
+  // toggle key is `${key}!full`, kept separate from the fold state so ^e
+  // expand-all doesn't dump every 200-line output into the viewport).
+  const capCode = full ? Infinity : CODE_LINES;
+  const capOut = full ? Infinity : OUTPUT_LINES;
   const { calls, results, running, verdict, hasError } = toolSummary(parts);
   if (calls.length === 0) return;
   let head = dim(
@@ -163,17 +173,19 @@ function toolGroupLines(
     if (input) {
       // run_steps code is harness JS; JSON inputs highlight fine as C-family.
       pushBlock(out, input, width, {
-        maxLines: CODE_LINES,
+        maxLines: capCode,
         style: (l) => highlightCode(l, "js"),
         click: key,
+        fullKey: `${key}!full`,
       });
     }
     if (res && outputText(res) !== "") {
       out.push({ text: dim("↳ output"), click: key });
       pushBlock(out, outputText(res), width, {
-        maxLines: OUTPUT_LINES,
+        maxLines: capOut,
         style: (l) => styleOutputLine(l, res.isError),
         click: key,
+        fullKey: `${key}!full`,
       });
     }
   }
@@ -182,6 +194,7 @@ function toolGroupLines(
 export function messageLines(
   msg: Message,
   isExpanded: (key: string) => boolean,
+  isFull: (key: string) => boolean,
   width: number,
   streaming?: string,
 ): VLine[] {
@@ -192,9 +205,10 @@ export function messageLines(
   out.push({ text: ROLE_LABEL[msg.role] });
   // Bodies hang 2 columns under the role label so turns read as blocks.
   segmentParts(msg.parts).forEach((s, i) => {
+    const key = `${msg.id}:${i}`;
     if (s.kind === "text") push(body, md(s.text), w);
     else if (s.kind === "reasoning") push(body, dim(s.text), w);
-    else toolGroupLines(body, s.parts, `${msg.id}:${i}`, isExpanded(`${msg.id}:${i}`), w);
+    else toolGroupLines(body, s.parts, key, isExpanded(key), isFull(key), w);
   });
   if (streaming) push(body, md(streaming) + "▌", w);
   out.push(...body.map((l) => (l.text ? { ...l, text: "  " + l.text } : l)));
@@ -234,6 +248,7 @@ export function buildLines(
   thread: Message[],
   streaming: Record<string, string>,
   isExpanded: (key: string) => boolean,
+  isFull: (key: string) => boolean,
   width: number,
   branches: Branch[] = [],
 ): VLine[] {
@@ -257,7 +272,7 @@ export function buildLines(
       const parsed = parseSubagentNote(t);
       if (parsed && notedIds.has(parsed.sessionId)) continue;
     }
-    out.push(...messageLines(m, isExpanded, width, streaming[m.id]));
+    out.push(...messageLines(m, isExpanded, isFull, width, streaming[m.id]));
     for (const b of byOrigin.get(m.id) ?? []) branchCardLines(out, b, width);
   }
   // Branches whose spawn point isn't in the current thread fall to the tail.

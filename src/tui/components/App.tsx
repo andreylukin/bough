@@ -198,6 +198,13 @@ export function App(
     (key: string) => (expandAll !== toggled.has(key)),
     [expandAll, toggled],
   );
+  // "Show all N lines" state for truncated blocks ("<groupKey>!full" entries in
+  // the same toggled set). Plain membership, no expandAll XOR — ^e expand-all
+  // must not dump every long output into the viewport.
+  const isFull = useCallback(
+    (key: string) => toggled.has(`${key}!full`),
+    [toggled],
+  );
   // Subagents spawned by the open session, each anchored to its spawning turn.
   // Its completion note (a system message in the thread) supplies the report; the
   // branch card is drawn under originMessageId and the raw note is suppressed.
@@ -226,8 +233,8 @@ export function App(
     [store.sessions, currentId, noteById],
   );
   const lines = useMemo(
-    () => buildLines(store.thread, store.streaming, isExpanded, width, branches),
-    [store.thread, store.streaming, isExpanded, width, branches],
+    () => buildLines(store.thread, store.streaming, isExpanded, isFull, width, branches),
+    [store.thread, store.streaming, isExpanded, isFull, width, branches],
   );
   const toggleGroup = useCallback((key: string) => {
     setToggled((prev) => {
@@ -275,6 +282,12 @@ export function App(
   const bodyH = Math.max(2, viewH - (scrollOff > 0 ? 1 : 0));
   const maxOff = Math.max(0, lines.length - bodyH);
   const off = Math.min(scrollOff, maxOff);
+  // Re-anchor the stored offset when the transcript shrinks (collapsing a long
+  // fold): a stale scrollOff far above maxOff made PgDn presses no-ops until the
+  // excess burned off — scrolling felt dead/non-monotonic (user-testing).
+  useEffect(() => {
+    setScrollOff((o) => Math.min(o, maxOff));
+  }, [maxOff]);
   const start = Math.max(0, lines.length - bodyH - off);
   const visible = lines.slice(start, start + bodyH);
   const padTop = bodyH - visible.length;
@@ -700,7 +713,9 @@ export function App(
         return;
       }
       if (ch === "R") {
-        store.revertChanges();
+        // Nothing listed → nothing to revert; the raw call 400s ("no jj
+        // workspace") into a confusing error line.
+        if (diffEntries.length > 0) store.revertChanges();
         return;
       }
       return;
@@ -845,8 +860,10 @@ export function App(
       return;
     }
     if (key.escape) {
-      // Esc is the agent's stop button — nothing else.
+      // Esc is the agent's stop button; when idle it clears a lingering notice
+      // (error notices used to sit above the composer with no way to dismiss).
       if (store.busy) store.interrupt();
+      else if (store.notice) store.dismissNotice();
       return;
     }
     // Send resolves the text inside the updater: an Enter that lands in the same
