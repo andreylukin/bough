@@ -2,13 +2,14 @@ import { assert, assertEquals } from "jsr:@std/assert@1";
 import { Db } from "../db/db.ts";
 import { Bus } from "../bus.ts";
 import { fork } from "../fork.ts";
-import { createHandler, type AppCtx } from "./app.ts";
+import { type AppCtx, createHandler } from "./app.ts";
 import type { Message, Role, Session } from "../schema/parts.ts";
 import type { LlmClient } from "../supervisor/llm.ts";
 
 // Fake LLM: one text block, no tools — the turn ends after one round.
 const fakeLlm = (reply: string): LlmClient => ({
-  run: () => Promise.resolve({ content: [{ type: "text" as const, text: reply }], stopReason: "end_turn" }),
+  run: () =>
+    Promise.resolve({ content: [{ type: "text" as const, text: reply }], stopReason: "end_turn" }),
 });
 
 function ctx(llm?: LlmClient): AppCtx {
@@ -17,12 +18,26 @@ function ctx(llm?: LlmClient): AppCtx {
 }
 
 function seed(db: Db, sessionId: string, id: string, role: Role, text: string, createdAt: number) {
-  db.createMessage({ id, sessionId, role, parts: [{ type: "text", text }], pending: false, createdAt });
+  db.createMessage({
+    id,
+    sessionId,
+    role,
+    parts: [{ type: "text", text }],
+    pending: false,
+    createdAt,
+  });
 }
 
 // Root session S with 4 messages: a / b / c / d (user / sup / user / sup).
 function seedThread(db: Db, workspace?: string): Session {
-  const s: Session = { id: "S", parentId: null, title: "root", kind: "root", createdAt: 1, ...(workspace ? { workspace } : {}) };
+  const s: Session = {
+    id: "S",
+    parentId: null,
+    title: "root",
+    kind: "root",
+    createdAt: 1,
+    ...(workspace ? { workspace } : {}),
+  };
   db.createSession(s);
   seed(db, "S", "m1", "user", "a", 10);
   seed(db, "S", "m2", "supervisor", "b", 11);
@@ -32,16 +47,23 @@ function seedThread(db: Db, workspace?: string): Session {
 }
 
 const post = (path: string, body: unknown) =>
-  new Request("http://x" + path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  new Request("http://x" + path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
 const get = (path: string) => new Request("http://x" + path);
-const texts = (thread: Message[]) => thread.map((m) => [m.role, m.parts.map((p) => (p.type === "text" ? p.text : "")).join("")]);
+const texts = (thread: Message[]) =>
+  thread.map((m) => [m.role, m.parts.map((p) => (p.type === "text" ? p.text : "")).join("")]);
 
 Deno.test("fork no-edit: prefix + fork-point copied, original untouched, workspace inherited", async () => {
   const c = ctx();
   seedThread(c.db, "/tmp/proj");
   const h = createHandler(c);
 
-  const { session } = await (await h(post("/sessions/S/fork", { atMessageId: "m3" }))).json() as { session: Session };
+  const { session } = await (await h(post("/sessions/S/fork", { atMessageId: "m3" }))).json() as {
+    session: Session;
+  };
   assertEquals(session.kind, "fork");
   assertEquals(session.parentId, null); // sibling of the root target
   assertEquals(session.workspace, "/tmp/proj"); // inherited
@@ -49,12 +71,18 @@ Deno.test("fork no-edit: prefix + fork-point copied, original untouched, workspa
   assertEquals(session.originId, "S");
   assertEquals(session.originMessageId, "m3");
 
-  const branch = await (await h(get(`/sessions/${session.id}`))).json() as { session: Session; thread: Message[] };
+  const branch = await (await h(get(`/sessions/${session.id}`))).json() as {
+    session: Session;
+    thread: Message[];
+  };
   assertEquals(branch.session.originId, "S"); // survives the DB round-trip
   assertEquals(branch.session.originMessageId, "m3");
   assertEquals(texts(branch.thread), [["user", "a"], ["supervisor", "b"], ["user", "c"]]);
 
-  const orig = await (await h(get("/sessions/S"))).json() as { session: Session; thread: Message[] };
+  const orig = await (await h(get("/sessions/S"))).json() as {
+    session: Session;
+    thread: Message[];
+  };
   assertEquals(orig.thread.map((m) => m.id), ["m1", "m2", "m3", "m4"]);
   assertEquals(orig.session.originId, undefined); // a root session carries no lineage
   c.db.close();
@@ -139,9 +167,16 @@ Deno.test("fork errors: ancestor msg, non-user edit target, unknown ids, unknown
   // ancestor message (r1 belongs to R, not S's own)
   assertEquals((await h(post("/sessions/S/fork", { atMessageId: "r1" }))).status, 400);
   // editing a supervisor message (without an atPart cut)
-  assertEquals((await h(post("/sessions/S/fork", { atMessageId: "s2", editedText: "no" }))).status, 400);
+  assertEquals(
+    (await h(post("/sessions/S/fork", { atMessageId: "s2", editedText: "no" }))).status,
+    400,
+  );
   // …but WITH atPart the text is a new user message after the cut, not an edit — allowed
-  assertEquals((await h(post("/sessions/S/fork", { atMessageId: "s2", atPart: 0, editedText: "use B" }))).status, 200);
+  assertEquals(
+    (await h(post("/sessions/S/fork", { atMessageId: "s2", atPart: 0, editedText: "use B" })))
+      .status,
+    200,
+  );
   // atPart beyond the message's parts
   assertEquals((await h(post("/sessions/S/fork", { atMessageId: "s2", atPart: 9 }))).status, 400);
   // unknown message id
@@ -162,10 +197,36 @@ Deno.test("fork no-edit from a child session branches as a sibling under the sha
   seed(c.db, "S", "s2", "supervisor", "s-two", 21);
   const h = createHandler(c);
 
-  const { session } = await (await h(post("/sessions/S/fork", { atMessageId: "s2" }))).json() as { session: Session };
+  const { session } = await (await h(post("/sessions/S/fork", { atMessageId: "s2" }))).json() as {
+    session: Session;
+  };
   assertEquals(session.parentId, "R"); // sibling of S under the shared parent R
   const branch = await (await h(get(`/sessions/${session.id}`))).json() as { thread: Message[] };
   // R's message (inherited) + prefix (s1) + the fork-point (s2)
-  assertEquals(texts(branch.thread), [["user", "root msg"], ["user", "s-one"], ["supervisor", "s-two"]]);
+  assertEquals(texts(branch.thread), [["user", "root msg"], ["user", "s-one"], [
+    "supervisor",
+    "s-two",
+  ]]);
+  c.db.close();
+});
+
+Deno.test("fork title: named after the branch point; no prefix stacking", async () => {
+  const c = ctx();
+  seedThread(c.db);
+  const h = createHandler(c);
+
+  // The at-message's text names the fork.
+  const r1 = await (await h(post("/sessions/S/fork", { atMessageId: "m3" }))).json() as {
+    session: Session;
+  };
+  assertEquals(r1.session.title, "fork · c");
+
+  // Forking the fork doesn't compound to "fork · fork · …".
+  const own = await (await h(get(`/sessions/${r1.session.id}`))).json() as { thread: Message[] };
+  const at = own.thread.find((m) => m.sessionId === r1.session.id)!;
+  const r2 = await (await h(post(`/sessions/${r1.session.id}/fork`, { atMessageId: at.id })))
+    .json() as { session: Session };
+  assertEquals(r2.session.title.startsWith("fork · fork ·"), false);
+  assertEquals(r2.session.title.startsWith("fork · "), true);
   c.db.close();
 });

@@ -66,6 +66,14 @@ export interface BranchCtx {
   bus: Bus;
 }
 
+/**
+ * A session title with accumulated branch prefixes stripped — branching a branch
+ * composes titles ("fork · fork · X"), so callers prefix the BASE title instead.
+ */
+export function baseTitle(title: string): string {
+  return title.replace(/^((fork|extract|subagent) · )+/, "");
+}
+
 export interface BranchSpec {
   parentId: string | null;
   title: string;

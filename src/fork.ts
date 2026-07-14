@@ -30,7 +30,7 @@
  */
 import { z } from "zod";
 import type { Message, Session } from "./schema/parts.ts";
-import { openBranch } from "./branch.ts";
+import { baseTitle, openBranch } from "./branch.ts";
 import { startUserTurn, type TurnCtx } from "./turn.ts";
 
 export const ForkBody = z.object({
@@ -78,9 +78,14 @@ export function fork(ctx: TurnCtx, sessionId: string, body: ForkBody): ForkResul
     throw new ForkError(400, "atPart out of range for the at-message");
   }
 
+  // Title the fork after its branch point so several forks of one session stay
+  // tellable-apart in the pickers; fall back to the source's base title (a fork
+  // of a fork must not compound into "fork · fork · X").
+  const atText = own[atIdx].parts.find((p) => p.type === "text");
+  const excerpt = atText && "text" in atText ? atText.text.split("\n")[0].trim().slice(0, 48) : "";
   const seeder = openBranch(ctx, {
     parentId: session.parentId,
-    title: `fork · ${session.title}`,
+    title: `fork · ${excerpt || baseTitle(session.title)}`,
     kind: "fork",
     workspace: session.workspace ?? null,
     originId: session.id, // lineage: the forked-from session…

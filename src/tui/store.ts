@@ -60,6 +60,9 @@ export interface Store {
   applyChanges: (source: WireDiff["source"], paths: string[]) => void;
   revertChanges: () => void;
   dismissNotice: () => void;
+  /** Show a transient notice (auto-clears) — feedback for actions that would
+   * otherwise be silent (fork created, range deleted, key not applicable). */
+  notify: (msg: string) => void;
 }
 
 export function useStore(initialSessions: Session[]): Store {
@@ -149,6 +152,18 @@ export function useStore(initialSessions: Session[]): Store {
     return s;
   }, [open]);
 
+  // Transient toast: unlike error notices (which persist until replaced), these
+  // self-dismiss — the message confirms an action, it shouldn't linger as state.
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const notify = useCallback((msg: string) => {
+    setNotice(msg);
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    noticeTimer.current = setTimeout(() => {
+      noticeTimer.current = null;
+      setNotice((n) => (n === msg ? null : n));
+    }, 5000);
+  }, []);
+
   const fork = useCallback(async (atMessageId: string, atPart?: number) => {
     const id = currentRef.current;
     if (!id) return null;
@@ -221,14 +236,16 @@ export function useStore(initialSessions: Session[]): Store {
       return null;
     }
     try {
-      const s = await api.extract(id, keep);
+      // replaceSource: the new session takes the original's title + lineage spot.
+      const s = await api.extract(id, keep, true);
       await api.archiveSession(id);
+      notify("turns deleted — the original conversation is archived (recoverable)");
       return s;
     } catch (e) {
       setNotice(e instanceof Error ? e.message : String(e));
       return null;
     }
-  }, []);
+  }, [notify]);
 
   // Move a section onto an existing branch: append the picked turns to the target.
   const moveRange = useCallback(async (targetId: string, rangeIds: string[]) => {
@@ -473,5 +490,6 @@ export function useStore(initialSessions: Session[]): Store {
     applyChanges,
     revertChanges,
     dismissNotice,
+    notify,
   };
 }

@@ -143,7 +143,7 @@ export function ConversationTree(
         {range
           ? `${rangeCount} turn${
             rangeCount === 1 ? "" : "s"
-          } · c compact · e extract · m move · d delete · esc`
+          } · c compact · e extract · m copy to · d delete (recoverable) · esc`
           : `branch at a turn/tool · v select range${
             showDeprecated ? " · (showing deprecated)" : ""
           }`}

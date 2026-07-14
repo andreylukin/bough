@@ -189,9 +189,13 @@ export const api = {
   compact: (id: string, picks: { messageId: string }[]) =>
     jmsg<{ session: Session }>(`/sessions/${id}/compact`, postJson({ picks }))
       .then((r) => r.session),
-  extract: (id: string, picks: { messageId: string }[]) =>
-    jmsg<{ session: Session }>(`/sessions/${id}/extract`, postJson({ picks }))
-      .then((r) => r.session),
+  // `replaceSource` makes the extract stand in for the source in the lineage
+  // (title + origin link) — the delete-range flow, which archives the source.
+  extract: (id: string, picks: { messageId: string }[], replaceSource = false) =>
+    jmsg<{ session: Session }>(
+      `/sessions/${id}/extract`,
+      postJson(replaceSource ? { picks, replaceSource } : { picks }),
+    ).then((r) => r.session),
   // Append copies of the source's picked messages onto an existing target session.
   moveInto: (targetId: string, sourceId: string, picks: { messageId: string }[]) =>
     jmsg<{ session: Session }>(`/sessions/${targetId}/move-into`, postJson({ sourceId, picks }))

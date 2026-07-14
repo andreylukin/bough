@@ -17,11 +17,25 @@
  */
 import { z } from "zod";
 import type { Session } from "./schema/parts.ts";
-import { type BranchCtx, mergePicks, openBranch, PartPick, pickParts } from "./branch.ts";
+import {
+  baseTitle,
+  type BranchCtx,
+  mergePicks,
+  openBranch,
+  PartPick,
+  pickParts,
+} from "./branch.ts";
 
 export const ExtractBody = z.object({
   /** Messages of the session's thread (own or inherited) to copy, any subset. */
   picks: z.array(PartPick).min(1),
+  /**
+   * Take the source's place in the lineage: reuse its title and hang the new
+   * session off the source's OWN origin instead of the source. For delete-range,
+   * which archives the source right after — pointing at the archived session
+   * would strand the replacement as a disconnected top-level root in the tree.
+   */
+  replaceSource: z.boolean().optional(),
 });
 export type ExtractBody = z.infer<typeof ExtractBody>;
 
@@ -59,11 +73,15 @@ export function extract(ctx: BranchCtx, sessionId: string, args: ExtractBody): S
 
   const seeder = openBranch(ctx, {
     parentId: null,
-    title: `extract · ${session.title}`,
+    title: args.replaceSource ? session.title : `extract · ${baseTitle(session.title)}`,
     kind: "root",
     workspace: session.workspace ?? null,
-    originId: session.id, // lineage: the source session…
-    originMessageId: thread[picked[picked.length - 1].idx].id, // …and the last picked node
+    // Lineage: normally the source session + the last picked node; a replacement
+    // instead inherits the source's own origin link (see ExtractBody.replaceSource).
+    originId: args.replaceSource ? session.originId ?? null : session.id,
+    originMessageId: args.replaceSource
+      ? session.originMessageId ?? null
+      : thread[picked[picked.length - 1].idx].id,
   });
   for (const p of picked) seeder.copy(p.view);
   return seeder.session;

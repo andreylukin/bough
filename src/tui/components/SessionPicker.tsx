@@ -52,7 +52,7 @@ const KIND: Record<string, { glyph: string; color?: string; strip?: RegExp }> = 
 };
 
 export function SessionPicker(
-  { rowsList, selected, filter, filterActive, rows, currentId, showDeprecated, moveHint }: {
+  { rowsList, selected, filter, filterActive, rows, currentId, showDeprecated, moveHint, msg }: {
     rowsList: TreeRow[];
     selected: number;
     filter: string;
@@ -63,17 +63,25 @@ export function SessionPicker(
     currentId: string | null;
     /** Whether deprecated branches are currently revealed. */
     showDeprecated: boolean;
-    /** True while picking a destination for a move — Enter appends instead of opens. */
+    /** True while picking a destination for a copy-to — Enter appends instead of opens. */
     moveHint: boolean;
+    /** Transient feedback line (e.g. why a keypress didn't apply). */
+    msg: string | null;
   },
 ) {
-  const max = Math.max(3, rows - 9);
+  const max = Math.max(3, rows - 10);
   const start = Math.max(0, Math.min(selected - Math.floor(max / 2), rowsList.length - max));
   const win = rowsList.slice(start, start + max);
   return (
     <Box flexDirection="column">
       {moveHint
-        ? <Text color="green">▸ move here: pick a destination · enter appends · esc cancels</Text>
+        ? (
+          <Text color="green">
+            ▸ copy here: pick a destination · enter appends the turns · esc cancels
+          </Text>
+        )
+        : msg
+        ? <Text color="yellow">{msg}</Text>
         : showDeprecated
         ? <Text dimColor>(showing deprecated)</Text>
         : null}
@@ -112,6 +120,7 @@ export function SessionPicker(
         );
       })}
       {rowsList.length === 0 && <Text dimColor>no sessions — ^t creates one</Text>}
+      <Text dimColor>● root · ⑂ fork · ◆ subagent · ≣ compacted</Text>
       <Text dimColor>
         j/k move · enter open · ^t new · ^x archive · x deprecate · h show hidden
       </Text>

@@ -64,8 +64,17 @@ export function App(
   const [expandAll, setExpandAll] = useState(false);
   const [toggled, setToggled] = useState<Set<string>>(new Set()); // per-group overrides
   const [, setTick] = useState(0); // resize repaint
-  // picker state
+  // picker state. The cursor also lives in a ref: two keys parsed from one stdin
+  // chunk (fast typing / key repeat) run in the same React batch, so an Enter right
+  // behind a ↓ would act on the pre-movement selection if it read the state var.
   const [pickSel, setPickSel] = useState(0);
+  const pickSelRef = useRef(0);
+  const movePickSel = useCallback((v: number | ((i: number) => number)) => {
+    // Resolve against the ref NOW (not in the updater): state updaters run at
+    // flush, so a same-chunk follow-up key would still read the stale position.
+    pickSelRef.current = typeof v === "number" ? v : v(pickSelRef.current);
+    setPickSel(pickSelRef.current);
+  }, []);
   const [filter, setFilter] = useState("");
   const [filterActive, setFilterActive] = useState(false);
   // Deprecated branches are hidden by default in both trees; `h` reveals them.
@@ -88,7 +97,16 @@ export function App(
   const [newSel, setNewSel] = useState(0);
   const [dirHits, setDirHits] = useState<DirHit[]>([]);
   // conversation-tree state: cursor + a range-selection anchor (v starts/ends it).
+  // Same ref-mirror as pickSel (same one-batch stale-read hazard), plus a "user
+  // took over" flag so the cursor follows late-loading rows only until then.
   const [forkSel, setForkSel] = useState(0);
+  const forkSelRef = useRef(0);
+  const moveForkSel = useCallback((v: number | ((i: number) => number)) => {
+    // Same synchronous-ref discipline as movePickSel above.
+    forkSelRef.current = typeof v === "number" ? v : v(forkSelRef.current);
+    setForkSel(forkSelRef.current);
+  }, []);
+  const forkNavTouched = useRef(false);
   const [rangeAnchor, setRangeAnchor] = useState<number | null>(null);
   // Turn ids pending a move: set by `m`, consumed by picking a destination on the
   // sessions tab (Enter appends there instead of opening).
@@ -397,6 +415,18 @@ export function App(
   const diffEntries = flattenDiffs(store.changes);
   const cfgEntries = cfg ? modelEntries(cfg) : [];
 
+  // ^f opens on the live tip, but branch rows can stream in after the open and
+  // strand the initial "end" index mid-list — keep following the tip until the
+  // user takes the cursor over; after that only clamp to a shrinking list.
+  useEffect(() => {
+    if (mode !== "panel" || panelTab !== "conversation") return;
+    if (forkNavTouched.current) {
+      moveForkSel((i) => Math.min(i, Math.max(0, convItems.length - 1)));
+    } else {
+      moveForkSel(Math.max(0, convItems.length - 1));
+    }
+  }, [mode, panelTab, convItems.length, moveForkSel]);
+
   // Send, creating the draft's session on first use.
   const submit = useCallback((text: string, queue: boolean) => {
     setScrollOff(0);
@@ -451,16 +481,16 @@ export function App(
         if (filterActive) {
           if (key.return) return setFilterActive(false);
           if (key.backspace || key.delete) {
-            setPickSel(0);
+            movePickSel(0);
             return setFilter((f) => f.slice(0, -1));
           }
           if (ch && !key.ctrl && !key.meta && !key.upArrow && !key.downArrow) {
-            setPickSel(0);
+            movePickSel(0);
             return setFilter((f) => f + ch);
           }
         }
         if (key.return) {
-          const sel = treeRows[pickSel];
+          const sel = treeRows[pickSelRef.current];
           if (!sel) return;
           // A pending move lands the turns on the chosen target, then opens it.
           if (movePicks) {
@@ -475,26 +505,30 @@ export function App(
           return;
         }
         if (key.upArrow || (!filterActive && ch === "k")) {
-          return setPickSel((i) => Math.max(0, i - 1));
+          return movePickSel((i) => Math.max(0, i - 1));
         }
         if (key.downArrow || (!filterActive && ch === "j")) {
-          return setPickSel((i) => Math.min(treeRows.length - 1, i + 1));
+          return movePickSel((i) => Math.min(treeRows.length - 1, i + 1));
         }
-        if (!filterActive && ch === "g") return setPickSel(0);
-        if (!filterActive && ch === "G") return setPickSel(Math.max(0, treeRows.length - 1));
+        if (!filterActive && ch === "g") return movePickSel(0);
+        if (!filterActive && ch === "G") return movePickSel(Math.max(0, treeRows.length - 1));
         if (!filterActive && ch === "/") return setFilterActive(true);
         if (key.ctrl && ch === "t") {
           store.newSession().then((s) => openSession(s), (e) => setErr(String(e)));
           return;
         }
         if (key.ctrl && ch === "x") {
-          const sel = treeRows[pickSel];
+          const sel = treeRows[pickSelRef.current];
           if (sel) store.archive(sel.s.id);
           return;
         }
         if (!filterActive && ch === "x") {
-          const sel = treeRows[pickSel];
-          if (sel && sel.s.kind !== "root") store.deprecate(sel.s.id, !sel.s.deprecatedAt);
+          const sel = treeRows[pickSelRef.current];
+          if (!sel) return;
+          if (sel.s.kind !== "root") {
+            setPanelMsg(null);
+            store.deprecate(sel.s.id, !sel.s.deprecatedAt);
+          } else setPanelMsg("roots can't be deprecated — ^x archives"); // was a silent no-op
           return;
         }
         if (!filterActive && ch === "h") return setShowDeprecated((v) => !v);
@@ -505,19 +539,20 @@ export function App(
       if (panelTab === "conversation") {
         // Range selection (v): highlight turns, then compact/extract them.
         if (ch === "v") {
-          setRangeAnchor((a) => (a === null ? forkSel : null));
+          forkNavTouched.current = true;
+          setRangeAnchor((a) => (a === null ? forkSelRef.current : null));
           return;
         }
         if (rangeAnchor !== null && (ch === "c" || ch === "e" || ch === "d" || ch === "m")) {
-          const lo = Math.min(rangeAnchor, forkSel);
-          const hi = Math.max(rangeAnchor, forkSel);
+          const lo = Math.min(rangeAnchor, forkSelRef.current);
+          const hi = Math.max(rangeAnchor, forkSelRef.current);
           const ids = convItems.slice(lo, hi + 1)
             .flatMap((it) => (it.type === "node" ? it.node.msgIds : []));
           if (ch === "m") {
-            // Move: stash the picks and switch to the sessions tab to pick a target.
+            // Copy-to: stash the picks and switch to the sessions tab to pick a target.
             setRangeAnchor(null);
             setMovePicks(ids);
-            setPickSel(0);
+            movePickSel(0);
             setPanelTab("sessions");
             return;
           }
@@ -532,22 +567,32 @@ export function App(
           return;
         }
         if (key.return) {
-          const it = convItems[forkSel];
+          const it = convItems[forkSelRef.current];
           if (!it) return;
           setRangeAnchor(null);
           setMode("chat");
+          // Forking is instant and silent — confirm what happened and the way back.
+          const forked = (s: Session | null) => {
+            if (!s) return;
+            openSession(s);
+            store.notify("⑂ forked — new branch opened (^p switches back)");
+          };
           if (it.type === "branch") openSession(it.session);
           else if (it.type === "step") {
-            store.fork(it.step.point.msgId, it.step.point.atPart).then((s) => s && openSession(s));
-          } else store.fork(it.node.point.msgId).then((s) => s && openSession(s));
+            store.fork(it.step.point.msgId, it.step.point.atPart).then(forked);
+          } else store.fork(it.node.point.msgId).then(forked);
           return;
         }
-        if (key.upArrow || ch === "k") return setForkSel((i) => Math.max(0, i - 1));
+        if (key.upArrow || ch === "k") {
+          forkNavTouched.current = true;
+          return moveForkSel((i) => Math.max(0, i - 1));
+        }
         if (key.downArrow || ch === "j") {
-          return setForkSel((i) => Math.min(convItems.length - 1, i + 1));
+          forkNavTouched.current = true;
+          return moveForkSel((i) => Math.min(convItems.length - 1, i + 1));
         }
         if (ch === "x") {
-          const it = convItems[forkSel];
+          const it = convItems[forkSelRef.current];
           if (it?.type === "branch") store.deprecate(it.session.id, !it.session.deprecatedAt);
           return;
         }
@@ -699,8 +744,9 @@ export function App(
 
     // chat mode. ^p/^f/^t all open the one panel view on their tab.
     if (key.ctrl && ch === "p") {
-      setPickSel(0);
+      movePickSel(0);
       setFilter("");
+      setPanelMsg(null);
       setMovePicks(null);
       setPanelTab("sessions");
       setMode("panel");
@@ -716,7 +762,8 @@ export function App(
     if (key.ctrl && ch === "f") {
       if (store.thread.length === 0) return;
       // Start on the live tip (last selectable row); ↑ walks back through history.
-      setForkSel(Math.max(0, convItems.length - 1));
+      forkNavTouched.current = false;
+      moveForkSel(Math.max(0, convItems.length - 1));
       setRangeAnchor(null);
       setPanelTab("conversation");
       setMode("panel");
@@ -744,6 +791,9 @@ export function App(
       if (store.session?.kind === "subagent" && store.session.originId) {
         const parent = store.sessions.find((s) => s.id === store.session!.originId);
         if (parent) openSession(parent);
+      } else {
+        // Anywhere else the key doesn't apply — say so instead of a silent no-op.
+        store.notify("^b returns from a subagent branch — ^p switches sessions");
       }
       return;
     }
@@ -803,6 +853,12 @@ export function App(
       setComp((c) => {
         const text = c.text.trim();
         if (!text) return c;
+        if (text === "?") {
+          // A bare "?" sent as a message is a help request, not a prompt — the
+          // status bar advertises "? help" without the empty-composer caveat.
+          queueMicrotask(() => setMode("help"));
+          return { text: "", cursor: 0 };
+        }
         queueMicrotask(() => {
           history.current.push(text);
           appendHistory(text);
@@ -929,6 +985,7 @@ export function App(
               currentId={currentId}
               showDeprecated={showDeprecated}
               moveHint={movePicks !== null}
+              msg={panelMsg}
             />
           )
           : panelTab === "conversation"

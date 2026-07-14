@@ -27,6 +27,7 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
       ["^f", "conversation tree — branch at any turn / open a branch"],
       ["^b", "back to the parent (from a subagent branch)"],
       ["^k", "compact this session onto a summary branch"],
+      ["glyphs", "● root · ⑂ fork · ◆ subagent · ≣ compacted · ◇ tool step"],
     ],
   },
   {
