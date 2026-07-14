@@ -6,7 +6,10 @@ import { clip } from "../format.ts";
 // The hold-and-ask card: a network request is parked on the wire waiting for a
 // verdict. Replaces the composer while a hold is pending (holds wedge their turn,
 // so releasing them takes priority over typing).
-export function NetApproval({ req, count }: { req: NetRequest; count: number }) {
+export function NetApproval(
+  { req, count, detail }: { req: NetRequest; count: number; detail: boolean },
+) {
+  const headers = detail && req.headers ? Object.entries(req.headers) : [];
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1}>
       <Text color="yellow" bold>
@@ -20,6 +23,27 @@ export function NetApproval({ req, count }: { req: NetRequest; count: number }) 
       </Text>
       {req.reason ? <Text dimColor wrap="wrap">{req.reason}</Text> : null}
       {req.annotation ? <Text dimColor wrap="wrap">{req.annotation}</Text> : null}
+      {detail
+        ? (
+          <Box flexDirection="column">
+            {headers.length === 0 && !req.bodyPreview
+              ? <Text dimColor>no header/body detail captured for this request</Text>
+              : null}
+            {headers.map(([k, v]) => (
+              <Text key={k} wrap="truncate">
+                <Text dimColor>{"  "}{k}:</Text> {clip(v, 70)}
+              </Text>
+            ))}
+            {req.bodyPreview
+              ? (
+                <Text wrap="wrap">
+                  <Text dimColor>{"  "}body:</Text> {clip(req.bodyPreview, 300)}
+                </Text>
+              )
+              : null}
+          </Box>
+        )
+        : null}
       <Text dimColor>{HINTS.approval}</Text>
     </Box>
   );

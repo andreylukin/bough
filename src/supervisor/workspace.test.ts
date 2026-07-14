@@ -263,6 +263,13 @@ Deno.test("prepareWorkspace: failed external prep surfaces a warning, not a sile
     assertEquals(p.cwd, ws); // the turn still runs, in place
     assert(p.warning, "external prep failure must surface a warning");
     assert(p.warning!.includes("isolation failed"), p.warning);
+    // The bogus .git isn't a STORE corruption, so nothing may be quarantined —
+    // a healthy-looking store base stays untouched by unrelated failures.
+    const quarantined = [];
+    for await (const e of Deno.readDir(storeBase)) {
+      if (e.name.includes(".broken-")) quarantined.push(e.name);
+    }
+    assertEquals(quarantined, []);
     // Prep failed before a base was persisted, so the next turn is still a
     // "first" one: still degraded → warned again, not silenced.
     const p2 = await prepareWorkspace(db, "s-bad");

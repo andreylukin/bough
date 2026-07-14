@@ -26,6 +26,9 @@ import {
   createSessionWorkspace,
   ensureWorkspace,
   forkSession,
+  looksLikeBrokenStore,
+  quarantineStore,
+  storeDirFor,
   updateStale,
   workspaceDirFor,
 } from "../vcs/jj.ts";
@@ -225,7 +228,24 @@ async function prepareRepo(
     } else {
       // Root session on a plain git repo (also forks whose parent never took a
       // turn — nothing to inherit): isolated working copy off a captured snapshot.
-      dir = await createSessionWorkspace(repo, sessionId);
+      // A store that existed BEFORE this attempt and now errors with a corruption
+      // signature is broken derived state: move it aside (never delete —
+      // .broken-<ts> stays for salvage) and retry once fresh. A store born in
+      // this very attempt means the repo/env is the problem — no quarantine.
+      const hadStore = await pathExists(await storeDirFor(repo));
+      try {
+        dir = await createSessionWorkspace(repo, sessionId);
+      } catch (e) {
+        if (!hadStore || !looksLikeBrokenStore(e as Error)) throw e;
+        const moved = await quarantineStore(repo);
+        if (!moved) throw e;
+        console.error(
+          `external store for ${repo} quarantined to ${moved} (${
+            (e as Error).message.split("\n")[0]
+          }); retrying fresh`,
+        );
+        dir = await createSessionWorkspace(repo, sessionId);
+      }
     }
     db.setSessionWorkspace(sessionId, dir);
     // Metadata + the "not first turn" sentinel; "jj" when the origin has no

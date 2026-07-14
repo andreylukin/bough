@@ -41,6 +41,33 @@ import type { NetRequest } from "../schema/parts.ts";
 
 const WIRE = { allow: "allowed", deny: "denied", hold: "pending" } as const;
 
+// Detail-view payload for the approval card: headers with credential values
+// masked (their PRESENCE is signal for the reviewer; their value is a secret
+// that must not land in the DB/event feed), body clipped to a preview.
+const SECRET_HEADERS =
+  /^(authorization|cookie|set-cookie|proxy-authorization|x-api-key|api-key|x-auth-token)$/i;
+const BODY_PREVIEW_BYTES = 400;
+
+function redactHeaders(
+  headers: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  if (!headers || Object.keys(headers).length === 0) return undefined;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(headers)) {
+    out[k] = SECRET_HEADERS.test(k) ? `⟨redacted, ${v.length} chars⟩` : v;
+  }
+  return out;
+}
+
+function bodyPreview(body: string | Uint8Array | undefined): string | undefined {
+  if (body === undefined || body.length === 0) return undefined;
+  const text = typeof body === "string"
+    ? body
+    : new TextDecoder("utf-8", { fatal: false }).decode(body.slice(0, BODY_PREVIEW_BYTES * 2));
+  const clipped = text.slice(0, BODY_PREVIEW_BYTES);
+  return clipped.length < text.length ? `${clipped}…` : clipped;
+}
+
 export interface GateOpts {
   /** Session the request belongs to (rows/events are filtered by it in the UI). */
   sessionId?: string;
@@ -188,6 +215,8 @@ export class Gate {
       reason: decision.reason,
       requestedBy: opts.requestedBy,
       fields: decision.action.facet?.fields,
+      headers: redactHeaders(req.headers),
+      bodyPreview: bodyPreview(req.body),
       ts: Date.now(),
     };
     this.#emit(record, opts.sessionId);

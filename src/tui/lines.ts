@@ -4,7 +4,7 @@
 // any tool group, however old, can be expanded in place.
 import wrapAnsi from "wrap-ansi";
 import type { Message, Role } from "../schema/parts.ts";
-import { highlightCode, md, outputText, segmentParts, toolSummary } from "./format.ts";
+import { COLOR, highlightCode, md, outputText, segmentParts, toolSummary } from "./format.ts";
 
 export interface VLine {
   text: string;
@@ -13,7 +13,7 @@ export interface VLine {
   click?: string;
 }
 
-const SGR = (n: number | string, s: string) => `\x1b[${n}m${s}\x1b[0m`;
+const SGR = (n: number | string, s: string) => (COLOR ? `\x1b[${n}m${s}\x1b[0m` : s);
 const bold = (s: string) => SGR(1, s);
 const dim = (s: string) => SGR(2, s);
 const cyan = (s: string) => SGR(36, s);

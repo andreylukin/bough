@@ -22,14 +22,18 @@ const SUMMARY_SCHEMA = {
 const NET_SYSTEM = [
   "A sandboxed coding agent made an HTTP request that is HELD for human approval.",
   "In one short plain-English sentence, tell the human what the request does and to",
-  'what — e.g. "Creates a fork of the anthropics/claude-code repo". Reply as JSON',
-  '{"summary": "..."}. No hedging, no "this request appears to".',
+  "what, naming the concrete resource from the path when there is one — e.g.",
+  '"Creates a fork of the anthropics/claude-code repo", "Fetches the /status/health',
+  'endpoint". Never restate just the hostname. Reply as JSON {"summary": "..."}.',
+  'No hedging, no "this request appears to".',
 ].join(" ");
 
 /** One-liner for a held egress request, shown on the approval card. */
 export function annotateNet(record: NetRequest): Promise<string | null> {
   const user = [
-    `${record.verb ?? "?"} to host ${record.host}`,
+    // The full request line — without the path the worker can only paraphrase the
+    // hostname, which read as useless boilerplate on the card (user-testing).
+    `${record.verb ?? "?"} ${record.host}${record.path ?? ""}`,
     `classified action: ${record.action}`,
     record.fields ? `parsed fields: ${JSON.stringify(record.fields)}` : "",
     record.requestedBy ? `requested by: ${record.requestedBy}` : "",
@@ -60,7 +64,12 @@ async function oneLiner(system: string, user: string, cap: number): Promise<stri
     const raw = await Promise.race([
       (async () => {
         if (frontierWorkerModel()) {
-          return await frontierComplete({ system, user, maxTokens: 96, jsonSchema: SUMMARY_SCHEMA });
+          return await frontierComplete({
+            system,
+            user,
+            maxTokens: 96,
+            jsonSchema: SUMMARY_SCHEMA,
+          });
         }
         const url = await workerIfRunning();
         if (!url) return null;

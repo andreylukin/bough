@@ -43,6 +43,21 @@ Deno.test("gate: read is allowed, persisted, and emitted as net.request", async 
 
   const recent = h.db.recentNetEvents("s1");
   assertEquals(recent.map((r) => r.verdict), ["allowed"]);
+
+  // Detail view payload: credential header values are redacted (presence kept),
+  // plain headers pass through, the body is clipped to a preview.
+  const detailed = await h.gate.gate({
+    ...ghGet,
+    headers: { "user-agent": "curl/8", "authorization": "Bearer sekrit-token" },
+    body: "x".repeat(500),
+  }, { sessionId: "s1" });
+  assertEquals(detailed.verdict, "allow");
+  const dr = h.events[h.events.length - 1].data as NetRequest;
+  assertEquals(dr.headers?.["user-agent"], "curl/8");
+  assertEquals(dr.headers?.["authorization"]?.includes("sekrit"), false);
+  assertEquals(dr.headers?.["authorization"]?.startsWith("⟨redacted"), true);
+  assertEquals(dr.bodyPreview?.length, 401); // 400 + ellipsis
+  assertEquals(dr.bodyPreview?.endsWith("…"), true);
 });
 
 Deno.test("gate: write is denied under read_only default", async () => {

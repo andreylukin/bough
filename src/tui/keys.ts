@@ -44,6 +44,7 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
       ["a", "allow once"],
       ["A", "allow for the session"],
       ["d", "deny"],
+      ["v", "toggle request details (headers · body, credentials redacted)"],
     ],
   },
   {
@@ -54,7 +55,7 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
 
 export const HINTS = {
   chat: "enter send · esc stop · ^p sessions · ^n new · ^t panels · ? help · ^c^c quit",
-  approval: "a allow once · A allow session · d deny · ^p sessions",
+  approval: "a allow once · A allow session · d deny · v details · ^p sessions",
   picker: "j/k move · / filter · enter open · ^t new · ^x archive · esc back",
   new: "type dir query · ↑↓ pick · enter create · esc cancel",
   fork: "↑↓ move · enter branch here / open · esc close",

@@ -92,6 +92,11 @@ export function App(
   // global default buried "what did THIS session just do" in unrelated history
   // (user-testing). `g` widens to all sessions.
   const [netGlobal, setNetGlobal] = useState(false);
+  // Approval-card detail view (v): inspect the held request before deciding.
+  // Reset per hold so one card's expansion doesn't leak onto the next.
+  const [holdDetail, setHoldDetail] = useState(false);
+  const pendingId = store.pending?.id;
+  useEffect(() => setHoldDetail(false), [pendingId]);
   const [netStat, setNetStat] = useState<NetStatus | null>(null);
   const [policy, setPolicy] = useState<NetConfig | null>(null);
   const [mcpStat, setMcpStat] = useState<McpStatus | null>(null);
@@ -870,6 +875,7 @@ export function App(
       if (ch === "a") return store.resolvePending(true, "once");
       if (ch === "A") return store.resolvePending(true, "session");
       if (ch === "d") return store.resolvePending(false);
+      if (ch === "v") return setHoldDetail((v) => !v);
       return;
     }
     if (key.escape) {
@@ -1126,7 +1132,7 @@ export function App(
                 )
                 : null}
               {store.pending
-                ? <NetApproval req={store.pending} count={store.pendingCount} />
+                ? <NetApproval req={store.pending} count={store.pendingCount} detail={holdDetail} />
                 : <Composer input={input} cursor={comp.cursor} busy={store.busy} />}
             </>
           )

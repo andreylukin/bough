@@ -113,6 +113,12 @@ export const NetRequest = z.object({
   fields: z.record(z.string(), z.unknown()).optional(),
   /** Local-worker one-liner ("Creates a fork of repo X") — advisory, may lag. */
   annotation: z.string().optional(),
+  /** Request headers with credential values redacted — the approval card's
+   * "show me the raw request" detail view (user-testing: skeptics won't approve
+   * what they can't inspect). */
+  headers: z.record(z.string(), z.string()).optional(),
+  /** First bytes of the request body, if any (clipped at the gate). */
+  bodyPreview: z.string().optional(),
   ts: z.number(),
 });
 export type NetRequest = z.infer<typeof NetRequest>;

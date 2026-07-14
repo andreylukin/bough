@@ -56,11 +56,17 @@ export function toolSummary(parts: Part[]) {
 // Terminal styling for prose messages: headings/bold via SGR bold, `code` spans
 // cyan, fenced blocks dim, "- " bullets prettified. Deliberately conservative —
 // italic/links/tables are left as-is (ink's wrap handles ANSI widths correctly).
-const B = "\x1b[1m";
-const B_OFF = "\x1b[22m";
-const DIM = "\x1b[2m";
-const CYAN = "\x1b[36m";
-const FG_OFF = "\x1b[39m";
+// Honor the NO_COLOR convention (https://no-color.org) for the hand-rolled SGR
+// paths — ink's own <Text color> already respects it via chalk, but these raw
+// escapes would otherwise leak styling into a colorless terminal.
+export const COLOR = (Deno.env.get("NO_COLOR") ?? "") === "";
+const sgr = (code: string) => (COLOR ? code : "");
+
+const B = sgr("\x1b[1m");
+const B_OFF = sgr("\x1b[22m");
+const DIM = sgr("\x1b[2m");
+const CYAN = sgr("\x1b[36m");
+const FG_OFF = sgr("\x1b[39m");
 
 function mdInline(line: string): string {
   // Swap code spans for placeholders so their contents are exempt from prose
@@ -78,16 +84,16 @@ function mdInline(line: string): string {
     .replace(/\x00(\d+)\x00/g, (_, i) => `${CYAN}${spans[+i].slice(1, -1)}${FG_OFF}`);
 }
 
-const UL = "\x1b[4m";
-const UL_OFF = "\x1b[24m";
+const UL = sgr("\x1b[4m");
+const UL_OFF = sgr("\x1b[24m");
 
 // ---- code highlighting -------------------------------------------------------
 // A one-pass approximate tokenizer for fenced blocks and tool-call code: strings
 // green, comments dim, keywords magenta, numbers yellow, the rest plain. Candy,
 // not a parser — a wrong color on an exotic line is fine; flat gray was the bug.
-const MAGENTA = "\x1b[35m";
-const GREEN = "\x1b[32m";
-const YELLOW = "\x1b[33m";
+const MAGENTA = sgr("\x1b[35m");
+const GREEN = sgr("\x1b[32m");
+const YELLOW = sgr("\x1b[33m");
 
 const KW = {
   js:

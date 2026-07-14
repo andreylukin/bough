@@ -156,6 +156,35 @@ export function workspaceDirFor(sessionId: string): string {
   return `${workspacesRoot()}/${sessionId}`;
 }
 
+/**
+ * True when an error reads like STORE corruption (broken/partial state under
+ * `storeBase()`), as opposed to a transient or environmental failure. Gates the
+ * quarantine-and-retry below: a healthy store must never be moved aside — other
+ * live workspaces of the repo point into it.
+ */
+export function looksLikeBrokenStore(e: Error): boolean {
+  return /Internal error|repository appears broken|could not be found|not found|does not appear to be a git repository/i
+    .test(e.message);
+}
+
+/**
+ * Move a repo's external store aside — NEVER delete — so the next
+ * createSessionWorkspace re-initializes it fresh. The store is derived state
+ * (snapshots re-import from the repo's git); anything unrecoverable stays in the
+ * `.broken-<ts>` copy for manual salvage. Returns the quarantine path, or null
+ * when there was no store to move.
+ */
+export async function quarantineStore(repo: string): Promise<string | null> {
+  const dir = await storeDirFor(repo);
+  const dst = `${dir}.broken-${Date.now()}`;
+  try {
+    await Deno.rename(dir, dst);
+    return dst;
+  } catch {
+    return null;
+  }
+}
+
 /** External store dir for a repo: `<storeBase>/<name>-<hash>`, stable per canonical path. */
 export async function storeDirFor(repo: string): Promise<string> {
   const real = await Deno.realPath(repo);
