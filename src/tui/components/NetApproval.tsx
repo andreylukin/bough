@@ -1,6 +1,7 @@
 import { Box, Text } from "ink";
 import type { NetRequest } from "../../schema/parts.ts";
 import { HINTS } from "../keys.ts";
+import { clip } from "../format.ts";
 
 // The hold-and-ask card: a network request is parked on the wire waiting for a
 // verdict. Replaces the composer while a hold is pending (holds wedge their turn,
@@ -14,6 +15,7 @@ export function NetApproval({ req, count }: { req: NetRequest; count: number }) 
       <Text>
         {req.verb ? `${req.verb} ` : ""}
         <Text bold>{req.host}</Text>
+        {req.path && req.path !== "/" ? clip(req.path, 60) : ""}
         <Text dimColor>{"  "}{req.action}</Text>
       </Text>
       {req.reason ? <Text dimColor wrap="wrap">{req.reason}</Text> : null}

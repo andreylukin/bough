@@ -13,7 +13,13 @@ function harness(pol = policy(), opts: { holdTimeoutMs?: number; grantTtlMs?: nu
   // Default the hold timeout off so parked-hold tests don't race a real timer; the
   // timeout behavior is exercised explicitly with a small holdTimeoutMs.
   return {
-    gate: createGate({ db, bus, policy: pol, holdTimeoutMs: opts.holdTimeoutMs ?? 0, grantTtlMs: opts.grantTtlMs }),
+    gate: createGate({
+      db,
+      bus,
+      policy: pol,
+      holdTimeoutMs: opts.holdTimeoutMs ?? 0,
+      grantTtlMs: opts.grantTtlMs,
+    }),
     db,
     events,
   };
@@ -32,6 +38,7 @@ Deno.test("gate: read is allowed, persisted, and emitted as net.request", async 
   const nr = h.events[0].data as NetRequest;
   assertEquals(nr.verdict, "allowed");
   assertEquals(nr.host, "api.github.com");
+  assertEquals(nr.path, "/user"); // the approval card shows WHAT, not just where
   assertEquals(nr.requestedBy, "worker");
 
   const recent = h.db.recentNetEvents("s1");

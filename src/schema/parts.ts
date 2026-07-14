@@ -102,6 +102,9 @@ export const NetRequest = z.object({
   sessionId: z.string().optional(),
   host: z.string(),
   verb: z.string().optional(),
+  /** Request path (+query) — the approval card must show WHAT is being fetched,
+   * not just the hostname (user-testing: a bare host isn't enough to decide on). */
+  path: z.string().optional(),
   action: z.string(),
   verdict: z.enum(["allowed", "denied", "pending"]),
   reason: z.string().optional(),

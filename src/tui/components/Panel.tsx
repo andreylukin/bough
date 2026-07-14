@@ -3,7 +3,7 @@
 import { Box, Text } from "ink";
 import type { NetRequest } from "../../schema/parts.ts";
 import type { McpStatus, NetConfig, NetStatus, SkillInfo } from "../api.ts";
-import { relTime } from "../format.ts";
+import { clip, relTime } from "../format.ts";
 
 // The management view is one tabbed panel: the session tree, the current
 // conversation's branch tree, and the net/mcp/skills tabs. ^p/^f/^t open it on a tab.
@@ -33,11 +33,13 @@ const VERDICT_COLOR: Record<NetRequest["verdict"], string> = {
 };
 
 function NetTab(
-  { status, policy, feed, rows }: {
+  { status, policy, feed, rows, scopeLabel }: {
     status: NetStatus | null;
     policy: NetConfig | null;
     feed: NetRequest[];
     rows: number;
+    /** Which requests the feed is filtered to ("this session" / "all sessions"). */
+    scopeLabel: string;
   },
 ) {
   if (!status) return <Text dimColor>loading…</Text>;
@@ -64,6 +66,7 @@ function NetTab(
         ? <Text color="yellow" wrap="truncate">CA untrusted — {status.caTrustCommand}</Text>
         : null}
       <Box marginTop={1} flexDirection="column">
+        <Text dimColor>{scopeLabel}</Text>
         {visible.length === 0
           ? <Text dimColor>no gated requests yet</Text>
           : visible.map((r) => (
@@ -73,6 +76,7 @@ function NetTab(
               </Text>{" "}
               {r.verb ? <Text>{r.verb}{" "}</Text> : null}
               <Text bold>{r.host}</Text>
+              {r.path && r.path !== "/" ? clip(r.path, 32) : ""}
               <Text dimColor>{"  "}{r.action}{"  "}{relTime(r.ts)} ago</Text>
             </Text>
           ))}
@@ -132,7 +136,7 @@ function SkillsTab({ skills, rows }: { skills: SkillInfo[] | null; rows: number 
 }
 
 export function Panel(
-  { tab, status, policy, feed, mcp, mcpSel, mcpMsg, skills, rows }: {
+  { tab, status, policy, feed, mcp, mcpSel, mcpMsg, skills, rows, netScopeLabel }: {
     tab: PanelTab;
     status: NetStatus | null;
     policy: NetConfig | null;
@@ -142,13 +146,22 @@ export function Panel(
     mcpMsg: string | null;
     skills: SkillInfo[] | null;
     rows: number;
+    netScopeLabel: string;
   },
 ) {
   // Content only — the unified panel container owns the border + tab bar.
   return (
     <Box marginTop={1}>
       {tab === "net"
-        ? <NetTab status={status} policy={policy} feed={feed} rows={rows} />
+        ? (
+          <NetTab
+            status={status}
+            policy={policy}
+            feed={feed}
+            rows={rows}
+            scopeLabel={netScopeLabel}
+          />
+        )
         : tab === "mcp"
         ? <McpTab mcp={mcp} selected={mcpSel} msg={mcpMsg} />
         : <SkillsTab skills={skills} rows={rows} />}

@@ -88,6 +88,10 @@ export function App(
   const [panelTab, setPanelTab] = useState<PanelTab>("sessions");
   const [mcpSel, setMcpSel] = useState(0);
   const [panelMsg, setPanelMsg] = useState<string | null>(null);
+  // Net feed scope: this session by default — the feed is an audit trail, and a
+  // global default buried "what did THIS session just do" in unrelated history
+  // (user-testing). `g` widens to all sessions.
+  const [netGlobal, setNetGlobal] = useState(false);
   const [netStat, setNetStat] = useState<NetStatus | null>(null);
   const [policy, setPolicy] = useState<NetConfig | null>(null);
   const [mcpStat, setMcpStat] = useState<McpStatus | null>(null);
@@ -613,6 +617,10 @@ export function App(
         return;
       }
 
+      if (panelTab === "net" && ch === "g") {
+        setNetGlobal((v) => !v);
+        return;
+      }
       if (panelTab === "net" && ch === "y") {
         const on = policy?.mode !== "yolo";
         api.setYolo(on).then(({ config }) => setPolicy(config), (e) => setPanelMsg(String(e)));
@@ -660,6 +668,11 @@ export function App(
             ), (e) => setPanelMsg(String(e)));
           return;
         }
+      }
+      // Unbound printable key while a panel tab has focus: say where typing goes
+      // instead of a silent no-op (user-testing: input "vanished" until esc).
+      if (ch && !key.ctrl && !key.meta) {
+        setPanelMsg("this panel has focus — esc returns to the chat composer");
       }
       return;
     }
@@ -1031,14 +1044,21 @@ export function App(
               tab={panelTab}
               status={netStat}
               policy={policy}
-              feed={store.feed}
+              feed={netGlobal ? store.feed : store.feed.filter((r) => r.sessionId === currentId)}
               mcp={mcpStat}
               mcpSel={mcpSel}
               mcpMsg={panelMsg}
               skills={skillsList}
               rows={rows}
+              netScopeLabel={netGlobal
+                ? "all sessions · g scopes to this session"
+                : "this session · g shows all sessions"}
             />
           )}
+        {/* sessions + mcp render panelMsg themselves; the rest show it here. */}
+        {panelMsg && panelTab !== "sessions" && panelTab !== "mcp"
+          ? <Text color="yellow" wrap="truncate">{panelMsg}</Text>
+          : null}
       </Box>
     )
     : null;

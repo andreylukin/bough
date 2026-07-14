@@ -182,6 +182,7 @@ export class Gate {
       sessionId: opts.sessionId,
       host: req.host,
       verb: req.method,
+      path: req.path,
       action: decision.action.verb,
       verdict: WIRE[decision.verdict],
       reason: decision.reason,
