@@ -222,6 +222,94 @@ Deno.test("a turn that trails off without stop is nudged; nudge + stop never per
   assertEquals(db.turnsByStatus("done").length, 1);
 });
 
+Deno.test("a stop with no text this turn is nudged for a report first", async () => {
+  const { db, bus, sessionId } = seed();
+  const llm = fakeLlm([
+    // Mute ending: stop alone, nothing user-visible said — must not end the turn.
+    {
+      content: [{ type: "tool_use", id: "s1", name: "stop", input: {} }],
+      stopReason: "tool_use",
+    },
+    {
+      content: [
+        { type: "text", text: "the answer." },
+        { type: "tool_use", id: "s2", name: "stop", input: {} },
+      ],
+      stopReason: "tool_use",
+    },
+  ]);
+  const { message, done } = beginTurn({ db, bus, llm, tools: [] }, sessionId);
+  await done;
+
+  assertEquals(llm.calls.length, 2); // exactly one report nudge round
+  assertStringIncludes(
+    JSON.stringify(llm.calls[1].messages.filter((m) => m.role === "user")),
+    "user-visible text",
+  );
+  const final = finalMessage(db, message.id);
+  assertEquals(final.parts, [{ type: "text", text: "the answer." }] as Part[]);
+  assertEquals(db.turnsByStatus("done").length, 1);
+});
+
+Deno.test("an accepted done-check with no text is nudged for a report before ending", async () => {
+  const { db, bus, sessionId } = seed();
+  const fakeSteps: ToolDef = {
+    name: "run_steps",
+    description: "fake run_steps",
+    schema: z.object({ program: z.string(), done: z.boolean().optional() }),
+    run: () => Promise.resolve("ok\n[done] accepted — check passed"),
+  };
+  const llm = fakeLlm([
+    // Work round: check-gated done accepted, but the model said nothing.
+    {
+      content: [{
+        type: "tool_use",
+        id: "t1",
+        name: "run_steps",
+        input: { program: "…", done: true },
+      }],
+      stopReason: "tool_use",
+    },
+    {
+      content: [
+        { type: "text", text: "shipped; check passed." },
+        { type: "tool_use", id: "s", name: "stop", input: {} },
+      ],
+      stopReason: "tool_use",
+    },
+  ]);
+  const { message, done } = beginTurn({ db, bus, llm, tools: [fakeSteps] }, sessionId);
+  await done;
+
+  assertEquals(llm.calls.length, 2);
+  const final = finalMessage(db, message.id);
+  assertEquals(final.parts.at(-1), { type: "text", text: "shipped; check passed." } as Part);
+  // A repeat-mute model still ends after the single report nudge (no loop): covered
+  // by llm.calls length above — one extra round only.
+  assertEquals(db.turnsByStatus("done").length, 1);
+});
+
+Deno.test("a mute nudge round escalates to a forced text-only round", async () => {
+  const { db, bus, sessionId } = seed();
+  const stopAlone = {
+    content: [{ type: "tool_use", id: "s", name: "stop", input: {} }],
+    stopReason: "tool_use",
+  } as LlmResult;
+  const llm = fakeLlm([
+    stopAlone, // mute end attempt → report nudge
+    stopAlone, // ignores the nudge → forced round (tools off)
+    { content: [{ type: "text", text: "forced report." }], stopReason: "end_turn" },
+  ]);
+  const { message, done } = beginTurn({ db, bus, llm, tools: [] }, sessionId);
+  await done;
+
+  assertEquals(llm.calls.length, 3);
+  assertEquals(llm.calls[2].toolChoice, "none"); // the last round forbids tools
+  const final = finalMessage(db, message.id);
+  assertEquals(final.parts, [{ type: "text", text: "forced report." }] as Part[]);
+  assertEquals(db.turnsByStatus("done").length, 1);
+});
+
 Deno.test("a model that never calls stop hits the nudge cap instead of looping forever", async () => {
   const { db, bus, sessionId } = seed();
   // Index-based script: every round trails off; exhaustion would return the

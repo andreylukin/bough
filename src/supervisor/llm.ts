@@ -5,12 +5,14 @@
  *
  * Normalization choices:
  *   - Content blocks are text / tool_use / reasoning / tool_result. We collapse the
- *     SDK's block zoo to these; anything else (redacted_thinking, server tools) is
- *     dropped, which is safe because we don't enable those features.
- *   - We do NOT enable extended thinking (the `thinking` param is omitted). So no
- *     `reasoning` blocks come back in practice, and there are no thinking-block
- *     replay constraints inside the tool loop. `reasoning` stays in the union only
- *     to carry historical parts (which the history mapper drops before replay).
+ *     SDK's block zoo to these; anything else (server tools) is dropped, which is
+ *     safe because we don't enable those features.
+ *   - We do not REQUEST extended thinking (the `thinking` param is omitted), but
+ *     Claude 5 models think adaptively by default and it cannot be turned off, so
+ *     thinking / redacted_thinking blocks do arrive. They ride the `reasoning`
+ *     block's `meta` as the raw SDK block and are replayed VERBATIM within a turn —
+ *     the API requires a tool round's signed thinking to precede its tool_use on
+ *     the next round. Cross-turn replay still drops reasoning (history mapper).
  */
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -44,6 +46,13 @@ export interface LlmParams {
   maxTokens: number;
   messages: LlmMessage[];
   tools: LlmToolDef[];
+  /**
+   * "none" forbids tool calls for this round, forcing a plain-text reply. The
+   * turn runner's last resort against a mute turn end: Claude 5's adaptive
+   * thinking sometimes answers a report request with an empty thinking block +
+   * stop; with tools off it reliably writes the text instead.
+   */
+  toolChoice?: "none";
 }
 
 /** Token usage for one round; summed across a turn for the context meter. */
@@ -78,10 +87,17 @@ function toApiMessage(m: LlmMessage): Anthropic.MessageParam {
     switch (b.type) {
       case "text":
         return [{ type: "text", text: b.text }];
-      case "reasoning":
-        // Replayed reasoning (an OpenAI Responses concern) degrades to prose here;
-        // summary-less items would be empty text blocks, which the API rejects.
+      case "reasoning": {
+        // An Anthropic thinking block replays verbatim (signature included) — the
+        // API rejects a tool_use whose preceding thinking was altered or dropped.
+        const meta = b.meta as { type?: string } | undefined;
+        if (meta?.type === "thinking" || meta?.type === "redacted_thinking") {
+          return [meta as Anthropic.ContentBlockParam];
+        }
+        // Foreign/historical reasoning (an OpenAI Responses concern) degrades to
+        // prose; summary-less items would be empty text blocks, which the API rejects.
         return b.text.trim() ? [{ type: "text", text: b.text }] : [];
+      }
       case "tool_use":
         return [{ type: "tool_use", id: b.id, name: b.name, input: b.input ?? {} }];
       case "tool_result":
@@ -101,11 +117,15 @@ function fromApiBlock(block: Anthropic.ContentBlock): LlmBlock | undefined {
     case "text":
       return { type: "text", text: block.text };
     case "thinking":
-      return { type: "reasoning", text: block.thinking };
+      // Keep the raw block (signature included) for verbatim in-turn replay.
+      return { type: "reasoning", text: block.thinking, meta: block };
+    case "redacted_thinking":
+      // Nothing displayable, but the block must still be echoed on the next round.
+      return { type: "reasoning", text: "", meta: block };
     case "tool_use":
       return { type: "tool_use", id: block.id, name: block.name, input: block.input };
     default:
-      return undefined; // redacted_thinking, server tools, etc. — not used here
+      return undefined; // server tools, etc. — not used here
   }
 }
 
@@ -136,6 +156,7 @@ export function anthropicClient(): LlmClient {
           description: t.description,
           input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
         })),
+        ...(params.toolChoice ? { tool_choice: { type: params.toolChoice } } : {}),
       }, { signal });
       stream.on("text", (delta) => onText(delta));
       const final = await stream.finalMessage();
@@ -325,6 +346,7 @@ export function openaiClient(): LlmClient {
             description: t.description,
             parameters: t.inputSchema,
           })),
+          ...(params.toolChoice ? { tool_choice: params.toolChoice } : {}),
         }),
       });
       if (!res.ok || !res.body) {
@@ -427,6 +449,7 @@ function openAICompatClient(opts: OpenAICompatOpts): LlmClient {
             type: "function",
             function: { name: t.name, description: t.description, parameters: t.inputSchema },
           })),
+          ...(params.toolChoice ? { tool_choice: params.toolChoice } : {}),
         }),
       });
       if (!res.ok || !res.body) {

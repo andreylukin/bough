@@ -171,6 +171,13 @@ const MAX_STOP_NUDGES = 3;
 const STOP_NUDGE = "[harness] Your turn is still open — it only ends when you call the stop " +
   "tool. Continue if there is more to do, or call stop now (alone, no other output) if you " +
   "are finished.";
+// A turn that ends with no text part shows the user nothing but collapsed tool
+// calls — the agent looks mute. If the model tries to end (stop, or an accepted
+// done-check) without having said anything, re-prompt once for a report.
+const REPORT_NUDGE = "[harness] Your turn is about to end but you have written no " +
+  "user-visible text this turn — the user would see nothing but collapsed tool calls. " +
+  "Reply now with 1-3 short lines (the answer, or what changed and the check result), " +
+  "then call stop in the same response.";
 
 const SYSTEM = [
   "You are bough, a coding agent. You act ONLY through the run_steps tool: each call",
@@ -232,6 +239,10 @@ const SYSTEM = [
   "Text output renders in a compact chat UI. Be terse: answer in 1-3 short lines unless",
   "the user asks for detail; one-word answers are fine. After work, report outcome only —",
   "what changed and whether the check passed — never a step-by-step narration.",
+  "EVERY turn must end with user-visible text: tool calls render collapsed, so a turn",
+  "of only tool calls shows the user nothing. Write your 1-3 line answer or outcome",
+  "report in the SAME response as your final run_steps(done) or stop call — never end",
+  "a turn silent.",
   "Cut filler from every output, chat text and program prints alike: no preambles",
   '("Let me...", "I\'ll now..."), no postambles, no hedging without information',
   '("seems to", "might possibly"), no restating the question, no meta-commentary or',
@@ -645,6 +656,12 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     // Unbounded on purpose: the loop ends when the model calls `stop` or the CHECK
     // gate accepts done; interruptTurn is the user's brake on a runaway.
     let nudges = 0;
+    let reportNudges = 0;
+    // Last resort against a mute turn end: a round with tools forbidden
+    // (toolChoice "none"), which reliably yields plain text where a second nudge
+    // would just get another empty-thinking + stop.
+    let forceText = false;
+    const saidSomething = () => parts.some((p) => p.type === "text");
     for (let round = 0;; round++) {
       if (signal?.aborted) throw new InterruptedError();
       // A user message steered in mid-turn: yield here (a clean round boundary —
@@ -652,7 +669,14 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       // continue with the new message in history.
       if (steering.has(sessionId)) break;
       const result = await llm.run(
-        { model, system, maxTokens: MAX_TOKENS, messages, tools: toolDefs },
+        {
+          model,
+          system,
+          maxTokens: MAX_TOKENS,
+          messages,
+          tools: toolDefs,
+          ...(forceText ? { toolChoice: "none" as const } : {}),
+        },
         (delta) => bus.publish({ type: "message.delta", sessionId, data: { messageId, delta } }),
         signal,
       );
@@ -693,6 +717,10 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       if (assistant.length > 0) messages.push({ role: "assistant", content: assistant });
       checkpoint(db, turn.id, `round:${round + 1}`);
 
+      // The forced text round is the turn's last word: whatever it said (text was
+      // appended above; tools were forbidden) the turn ends here.
+      if (forceText) break;
+
       const toolUses = result.content.filter(
         (b) => b.type === "tool_use" && b.name !== STOP_NAME,
       );
@@ -717,13 +745,48 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
             doneAccepted = true;
           }
         }
+        // Ending mute (accepted done / stop with no text this turn): ask for the
+        // report INSIDE the tool_result message — Claude 5 answers an inline
+        // nudge with text far more reliably than one sent as a separate message
+        // (it tends to reply with empty thinking + stop). If even the nudge
+        // round ends mute, escalate to a forced text-only round.
+        const wantsEnd = doneAccepted || stopRequested;
+        if (wantsEnd && !saidSomething()) {
+          if (reportNudges < 1) {
+            reportNudges++;
+            toolResults.push({ type: "text", text: REPORT_NUDGE });
+            messages.push({ role: "user", content: toolResults });
+          } else {
+            messages.push({ role: "user", content: toolResults });
+            forceText = true;
+          }
+          continue;
+        }
         messages.push({ role: "user", content: toolResults });
-        if (doneAccepted || stopRequested) break;
+        if (wantsEnd) break;
         continue;
       }
 
       // No real tool calls this round: only an explicit stop ends the turn.
-      if (stopRequested) break;
+      if (stopRequested) {
+        if (saidSomething()) break;
+        if (reportNudges < 1) {
+          reportNudges++;
+          messages.push({ role: "user", content: [{ type: "text", text: REPORT_NUDGE }] });
+          continue;
+        }
+        // The nudge failed (typically an empty-thinking + stop). Drop that
+        // reasoning-only assistant tail — ending the prompt on a thinking
+        // prefill is invalid — and force one text-only round.
+        const tail = messages.at(-1);
+        if (
+          tail?.role === "assistant" && tail.content.every((b) => b.type === "reasoning")
+        ) {
+          messages.pop();
+        }
+        forceText = true;
+        continue;
+      }
       // Trailed off without stop — re-prompt (in-memory only, never persisted),
       // with a cap so a stop-incapable model can't loop the API forever.
       if (nudges >= MAX_STOP_NUDGES) break;
