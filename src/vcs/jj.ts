@@ -619,6 +619,22 @@ export async function undo(repo: string): Promise<void> {
   await jj(repo, ["undo"]);
 }
 
+/**
+ * Per-path revert: restore ONLY `paths` of the session's change back to its parent
+ * revision (`jj restore --from <bookmark>- <paths>`), leaving every other edited
+ * path in the change untouched. Run in the session workspace so the working copy
+ * updates on disk, then export refs so the session's git branch tracks the tip.
+ * No-op when `paths` is empty. Snapshots first so on-disk edits are folded into the
+ * change before the restore rewrites it.
+ */
+export async function revertPaths(repo: string, sessionId: string, paths: string[]): Promise<void> {
+  if (paths.length === 0) return;
+  await snapshot(repo);
+  const name = bookmarkFor(sessionId);
+  await jj(repo, ["restore", "--from", `${name}-`, ...paths]);
+  await exportRefs(repo);
+}
+
 /** Restore the repo to the state at a given operation id (`jj op restore`). */
 export async function restore(repo: string, opId: string): Promise<void> {
   await jj(repo, ["op", "restore", opId]);

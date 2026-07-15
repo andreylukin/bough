@@ -54,7 +54,8 @@ export const ChangesApplyBody = z.object({
 });
 export type ChangesApplyBody = z.infer<typeof ChangesApplyBody>;
 
-/** Revert a jj-workspace session's changes. v1 is whole-change (paths ignored). */
+/** Revert a jj-workspace session's changes. Non-empty `paths` reverts only those paths
+ * back to the change's parent; empty/absent `paths` reverts the whole change. */
 export const ChangesRevertBody = z.object({
   paths: z.array(z.string()).optional(),
 });

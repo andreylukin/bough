@@ -100,6 +100,39 @@ Deno.test({
 });
 
 Deno.test({
+  name: "jj: revertPaths reverts only the given paths; the rest of the change survives",
+  ignore: !jjAvailable,
+  fn: async () => {
+    const repo = await tempGitRepo();
+    try {
+      await jj.ensureWorkspace(repo, "s1");
+      // Two edits in one change: a new file and a modified tracked file.
+      await Deno.writeTextFile(`${repo}/a.txt`, "a-work\n");
+      await Deno.writeTextFile(`${repo}/README.md`, "base\nedit\n");
+
+      const before = await jj.diff(repo, "s1");
+      assertEquals(before.files.map((f) => f.path).sort(), ["README.md", "a.txt"]);
+
+      // Revert only a.txt: it goes back to the parent (gone), README.md survives.
+      await jj.revertPaths(repo, "s1", ["a.txt"]);
+      assertEquals(await exists(`${repo}/a.txt`), false);
+      assertEquals(await Deno.readTextFile(`${repo}/README.md`), "base\nedit\n");
+
+      // The diff shrank to just the surviving edit.
+      const after = await jj.diff(repo, "s1");
+      assertEquals(after.files.map((f) => f.path), ["README.md"]);
+      assertEquals(after.files[0].status, "modified");
+
+      // Empty paths is a no-op (whole-change undo is revertChanges' job, not this).
+      await jj.revertPaths(repo, "s1", []);
+      assertEquals((await jj.diff(repo, "s1")).files.map((f) => f.path), ["README.md"]);
+    } finally {
+      await Deno.remove(repo, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
   name: "jj: ensureWorkspace is idempotent and modified files diff correctly",
   ignore: !jjAvailable,
   fn: async () => {

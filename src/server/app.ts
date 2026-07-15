@@ -488,9 +488,9 @@ const revertChangesH: Handler = async (req, ctx, params) => {
   const parsed = ChangesRevertBody.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) return error(400, "invalid body: " + parsed.error.message);
   try {
-    await revertChanges(ctx.db, params.id);
+    const revertedPaths = await revertChanges(ctx.db, params.id, parsed.data.paths);
     emitChangesUpdated(ctx, params.id);
-    return json({ ok: true, reverted: "jj" });
+    return json({ ok: true, reverted: "jj", paths: revertedPaths });
   } catch (e) {
     if (e instanceof ChangesError) return error(e.status, e.message);
     throw e;

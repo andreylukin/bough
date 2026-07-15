@@ -17,9 +17,11 @@
  *     the session title) so the rail clears.
  *   - jj apply, colocated session → accept & advance (jj.accept): the edits already
  *     live in the checkout, sealing is the whole apply. Whole-change.
- *   - jj revert → whole-change: `jj undo` (undo the most recent jj operation on the
- *     workspace). Per-path revert is deferred — `paths` is accepted but ignored — so
- *     revert immediately after review, before other jj ops intervene.
+ *   - jj revert → per-path when `paths` is given: restore just those paths of the change
+ *     back to its parent (`jj.revertPaths`), leaving the rest of the change intact.
+ *     With empty/absent `paths` it's whole-change: `jj undo` (undo the most recent jj
+ *     operation on the workspace) — so a whole-change revert must come right after
+ *     review, before other jj ops intervene.
  *   - clonefile revert is implicit: the originals stay pristine until you apply, so
  *     "revert" is simply not applying; there is no clonefile revert path.
  */
@@ -159,9 +161,24 @@ export async function applyChanges(
   return { applied: paths, origin, branch: jj.bookmarkFor(sessionId), sealed: coversAll };
 }
 
-/** Revert a jj-workspace session (whole-change `jj undo`). Throws if there's no repo. */
-export async function revertChanges(db: Db, sessionId: string): Promise<void> {
+/**
+ * Revert a jj-workspace session. With a non-empty `paths`, restore ONLY those paths
+ * of the change back to its parent (`jj.revertPaths`), leaving the rest of the change
+ * intact. With empty/absent `paths`, undo the whole change (`jj undo`). Returns the
+ * list of paths actually reverted (empty for a whole-change undo). Throws if there's
+ * no repo.
+ */
+export async function revertChanges(
+  db: Db,
+  sessionId: string,
+  paths?: string[],
+): Promise<string[]> {
   const repo = await hasJjWorkspace(db, sessionId);
   if (!repo) throw new ChangesError(400, "no jj workspace to revert");
+  if (paths && paths.length > 0) {
+    await jj.revertPaths(repo, sessionId, paths);
+    return paths;
+  }
   await jj.undo(repo);
+  return [];
 }

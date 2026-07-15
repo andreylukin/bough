@@ -40,7 +40,17 @@ async function tempGitRepo(): Promise<string> {
   await sh("git", ["init", "-q", "."]);
   await Deno.writeTextFile(`${dir}/README.md`, "base\n");
   await sh("git", ["add", "-A"]);
-  await sh("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init"]);
+  await sh("git", [
+    "-c",
+    "user.email=t@t",
+    "-c",
+    "user.name=t",
+    "-c",
+    "commit.gpgsign=false",
+    "commit",
+    "-qm",
+    "init",
+  ]);
   return dir;
 }
 
@@ -182,6 +192,54 @@ Deno.test({
         diffs: Diff[];
       };
       assertEquals(after.diffs[0]?.files ?? [], []);
+      assert(events.some((e) => e.type === "changes.updated" && e.sessionId === s.id));
+    } finally {
+      await Deno.remove(repo, { recursive: true });
+      c.db.close();
+    }
+  },
+});
+
+Deno.test({
+  name: "changes: jj per-path revert reverts only the selected file",
+  ignore: !jjAvailable,
+  fn: async () => {
+    const repo = await tempGitRepo();
+    const c = ctx();
+    const h = createHandler(c);
+    try {
+      const s = await (await h(jsonReq("POST", "/sessions", { title: "s", workspace: repo })))
+        .json() as Session;
+      await jj.ensureWorkspace(repo, s.id);
+      // Two edited files in the session's change.
+      await Deno.writeTextFile(`${repo}/a.txt`, "a-work\n");
+      await Deno.writeTextFile(`${repo}/b.txt`, "b-work\n");
+
+      const events: BoughEvent[] = [];
+      c.bus.subscribe((e) => events.push(e));
+
+      // Snapshot both via the diff read.
+      const { diffs } = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
+        diffs: Diff[];
+      };
+      assertEquals(diffs[0].files.map((f) => f.path).sort(), ["a.txt", "b.txt"]);
+
+      // Per-path revert of a.txt only.
+      const reverted = await h(
+        jsonReq("POST", `/sessions/${s.id}/changes/revert`, { paths: ["a.txt"] }),
+      );
+      assertEquals(reverted.status, 200);
+      assertEquals(await reverted.json(), { ok: true, reverted: "jj", paths: ["a.txt"] });
+
+      // a.txt is gone from disk; b.txt survives.
+      assertEquals(await Deno.stat(`${repo}/a.txt`).then(() => true).catch(() => false), false);
+      assertEquals(await Deno.readTextFile(`${repo}/b.txt`), "b-work\n");
+
+      // The diff shrank to just b.txt.
+      const after = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
+        diffs: Diff[];
+      };
+      assertEquals(after.diffs[0].files.map((f) => f.path), ["b.txt"]);
       assert(events.some((e) => e.type === "changes.updated" && e.sessionId === s.id));
     } finally {
       await Deno.remove(repo, { recursive: true });
