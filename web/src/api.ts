@@ -452,6 +452,16 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     }),
+
+  // Hand off to a fresh conversation focused on `goal`: the server drafts a
+  // self-contained opening prompt from this thread and attaches it to the new
+  // session as an editable composer draft (session.draft).
+  handoff: (sessionId: string, body: { goal: string }) =>
+    fetch(`/sessions/${sessionId}/handoff`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }),
 };
 
 // One picked turn for compact/extract: the whole message, or — with `parts` —

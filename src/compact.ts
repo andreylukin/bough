@@ -92,7 +92,8 @@ function stringify(v: unknown): string {
   return typeof v === "string" ? v : JSON.stringify(v);
 }
 
-function renderSpan(messages: Message[]): string {
+/** Messages rendered as a plain transcript for an LLM prompt (shared with handoff.ts). */
+export function renderSpan(messages: Message[]): string {
   return messages
     .flatMap((m) => (m.parts.length ? m.parts.map((p) => renderPart(m.role, p)) : [`${m.role}:`]))
     .join("\n");
@@ -105,7 +106,13 @@ async function summarize(ctx: CompactCtx, span: Message[], instructions?: string
     ? `${renderSpan(span)}\n\nAdditional instructions: ${instructions}`
     : renderSpan(span);
   const result = await llm.run(
-    { model, system: SYSTEM, maxTokens: MAX_TOKENS, messages: [{ role: "user", content: [{ type: "text", text: prompt }] }], tools: [] },
+    {
+      model,
+      system: SYSTEM,
+      maxTokens: MAX_TOKENS,
+      messages: [{ role: "user", content: [{ type: "text", text: prompt }] }],
+      tools: [],
+    },
     () => {},
   );
   return result.content
@@ -120,7 +127,11 @@ async function summarize(ctx: CompactCtx, span: Message[], instructions?: string
  * the new session. Each contiguous run of selected messages is replaced in place by one
  * summary; everything unselected is copied verbatim. Throws CompactError (400/404).
  */
-export async function compact(ctx: CompactCtx, sessionId: string, args: CompactBody): Promise<Session> {
+export async function compact(
+  ctx: CompactCtx,
+  sessionId: string,
+  args: CompactBody,
+): Promise<Session> {
   const session = ctx.db.getSession(sessionId);
   if (!session) throw new CompactError(404, "session not found");
 

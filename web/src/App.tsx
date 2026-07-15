@@ -236,6 +236,8 @@ function LiveApp() {
         onBranchAt={(id, partIdx, text) => store.fork(id, text, partIdx)}
         onCompact={(picks, sessionId) => store.compact(picks, sessionId)}
         onExtract={(picks) => store.extract(picks)}
+        onHandoff={(goal) => store.handoff(goal)}
+        draft={store.session?.draft ?? null}
         onDismissNotice={store.dismissNotice}
         queued={store.queued}
         onRemoveQueued={store.removeQueued}
@@ -321,6 +323,8 @@ function Window({
   onBranchAt,
   onCompact,
   onExtract,
+  onHandoff,
+  draft,
   onDismissNotice,
   queued = [],
   onRemoveQueued,
@@ -383,6 +387,10 @@ function Window({
   onBranchAt?: (messageId: string, partIdx: number, text: string) => void;
   onCompact?: (picks: TurnPick[], sessionId?: string) => void;
   onExtract?: (picks: TurnPick[]) => void;
+  // Hand off to a fresh goal-focused conversation (LLM-drafted opening prompt).
+  onHandoff?: (goal: string) => Promise<void>;
+  // The open session's unsent handoff draft — prefills the composer.
+  draft?: string | null;
   onDismissNotice?: () => void;
   queued?: string[];
   onRemoveQueued?: (i: number) => void;
@@ -588,6 +596,8 @@ function Window({
                 onBranchAt={onBranchAt}
                 onCompact={onCompact}
                 onExtract={onExtract}
+                onHandoff={onHandoff}
+                draft={draft}
                 sessionId={currentId}
                 queued={queued}
                 onRemoveQueued={onRemoveQueued}

@@ -44,6 +44,9 @@ export interface Session {
   contextTokens?: number | null;
   cachedTokens?: number | null;
   lastLlmAt?: number | null;
+  // A drafted-but-unsent opening prompt (set by handoff). The composer prefills
+  // with it; the server clears it when the first message is posted.
+  draft?: string | null;
   // Client-only: a turn finished while this session wasn't open — needs a look.
   // Set by the store on message.finished, cleared when the session is opened.
   unseen?: boolean;

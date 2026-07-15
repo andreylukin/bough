@@ -65,6 +65,11 @@ export interface Store {
   // Copy the picked thread turns (or sections of them) into a fresh conversation
   // and open it.
   extract: (picks: TurnPick[]) => void;
+  // Hand off to a fresh conversation focused on `goal`: the server drafts its
+  // opening prompt from this thread; the promise resolves when the new session is
+  // open (the composer prefills from session.draft). Slow (one LLM call) — the
+  // caller shows its own pending state.
+  handoff: (goal: string) => Promise<void>;
   // Adopt the OPEN subagent session's changes into its spawner's workspace.
   adopt: () => void;
   dismissNotice: () => void;
@@ -292,6 +297,16 @@ export function useStore(): Store {
     if (!id) return;
     api
       .extract(id, { picks })
+      .then(readBranch)
+      .then((s) => open(s.id))
+      .catch((e: Error) => setNotice(e.message));
+  }, [open]);
+
+  const handoff = useCallback((goal: string) => {
+    const id = currentRef.current;
+    if (!id) return Promise.resolve();
+    return api
+      .handoff(id, { goal })
       .then(readBranch)
       .then((s) => open(s.id))
       .catch((e: Error) => setNotice(e.message));
@@ -586,6 +601,7 @@ export function useStore(): Store {
     fork,
     compact,
     extract,
+    handoff,
     adopt,
     dismissNotice,
   };

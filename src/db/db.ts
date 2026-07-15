@@ -114,6 +114,7 @@ type SessionRow = {
   cached_tokens: number | null;
   last_llm_at: number | null;
   model: string | null;
+  draft: string | null;
 };
 
 /**
@@ -181,6 +182,7 @@ function toSession(r: SessionRow): Session {
     ...(r.context_tokens != null ? { contextTokens: r.context_tokens } : {}),
     ...(r.cached_tokens != null ? { cachedTokens: r.cached_tokens } : {}),
     ...(r.last_llm_at != null ? { lastLlmAt: r.last_llm_at } : {}),
+    ...(r.draft != null ? { draft: r.draft } : {}),
   };
 }
 
@@ -224,6 +226,7 @@ export class Db {
         "cached_tokens INTEGER",
         "last_llm_at INTEGER",
         "model TEXT",
+        "draft TEXT",
       ]
     ) {
       try {
@@ -285,6 +288,11 @@ export class Db {
 
   setSessionWorkspace(id: string, workspace: string): void {
     this.#db.prepare(`UPDATE sessions SET workspace = ? WHERE id = ?`).run(workspace, id);
+  }
+
+  /** Set (handoff) or clear (first post) a session's drafted opening prompt. */
+  setSessionDraft(id: string, draft: string | null): void {
+    this.#db.prepare(`UPDATE sessions SET draft = ? WHERE id = ?`).run(draft, id);
   }
 
   /** Per-session model override; null clears back to the global default. */

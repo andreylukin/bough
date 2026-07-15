@@ -1,7 +1,7 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { Db } from "../db/db.ts";
 import { Bus } from "../bus.ts";
-import { createHandler, type AppCtx } from "./app.ts";
+import { type AppCtx, createHandler } from "./app.ts";
 import type { BoughEvent, Message, Role, Session } from "../schema/parts.ts";
 import type { LlmClient, LlmParams } from "../supervisor/llm.ts";
 
@@ -14,7 +14,10 @@ function fakeLlm(summary: string): { client: LlmClient; prompts: string[] } {
       run(params: LlmParams) {
         const block = params.messages[0].content[0];
         prompts.push(block.type === "text" ? block.text : "");
-        return Promise.resolve({ content: [{ type: "text" as const, text: summary }], stopReason: "end_turn" });
+        return Promise.resolve({
+          content: [{ type: "text" as const, text: summary }],
+          stopReason: "end_turn",
+        });
       },
     },
   };
@@ -25,8 +28,22 @@ function ctx(llm?: LlmClient): AppCtx {
   return { db: new Db(":memory:"), bus, llm };
 }
 
-function seedMessage(db: Db, sessionId: string, id: string, role: Role, text: string, createdAt: number) {
-  const m: Message = { id, sessionId, role, parts: [{ type: "text", text }], pending: false, createdAt };
+function seedMessage(
+  db: Db,
+  sessionId: string,
+  id: string,
+  role: Role,
+  text: string,
+  createdAt: number,
+) {
+  const m: Message = {
+    id,
+    sessionId,
+    role,
+    parts: [{ type: "text", text }],
+    pending: false,
+    createdAt,
+  };
   db.createMessage(m);
 }
 
@@ -59,7 +76,11 @@ Deno.test("compact: mid-thread span replaced by summary; original untouched", as
   const events: BoughEvent[] = [];
   c.bus.subscribe((e) => events.push(e));
 
-  const res = await h(post("/sessions/S/compact", { picks: [{ messageId: "m2" }, { messageId: "m3" }, { messageId: "m4" }] }));
+  const res = await h(
+    post("/sessions/S/compact", {
+      picks: [{ messageId: "m2" }, { messageId: "m3" }, { messageId: "m4" }],
+    }),
+  );
   assertEquals(res.status, 200);
   const { session } = await res.json() as { session: Session };
   assertEquals(session.kind, "compaction");
@@ -83,7 +104,9 @@ Deno.test("compact: mid-thread span replaced by summary; original untouched", as
   assertEquals(branch.session.originId, "S"); // lineage survives the DB round-trip
   assertEquals(branch.session.originMessageId, "m4");
   assertEquals(
-    branch.thread.map((m) => [m.role, m.parts.map((p) => (p.type === "text" ? p.text : "")).join("")]),
+    branch.thread.map((
+      m,
+    ) => [m.role, m.parts.map((p) => (p.type === "text" ? p.text : "")).join("")]),
     [["user", "hello"], ["supervisor", "SUMMARY of the middle"], ["user", "thanks"]],
   );
 
@@ -96,7 +119,10 @@ Deno.test("compact: mid-thread span replaced by summary; original untouched", as
   assertEquals(created.length, 1);
   assertEquals((created[0].data as Session).originId, "S");
   assertEquals((created[0].data as Session).originMessageId, "m4");
-  assertEquals(events.filter((e) => e.type === "message.started" && e.sessionId === session.id).length, 3);
+  assertEquals(
+    events.filter((e) => e.type === "message.started" && e.sessionId === session.id).length,
+    3,
+  );
   c.db.close();
 });
 
@@ -118,7 +144,9 @@ Deno.test("compact: a non-contiguous selection summarizes each run in place", as
   const h = createHandler(c);
 
   // Select m2 and m4 but NOT m3 (order shouldn't matter): two runs, two summaries.
-  const res = await h(post("/sessions/S/compact", { picks: [{ messageId: "m4" }, { messageId: "m2" }] }));
+  const res = await h(
+    post("/sessions/S/compact", { picks: [{ messageId: "m4" }, { messageId: "m2" }] }),
+  );
   assertEquals(res.status, 200);
   const { session } = await res.json() as { session: Session };
   assertEquals(session.title, "compacted · 2 turns");
@@ -170,12 +198,17 @@ Deno.test("compact: a partial pick narrows what the summarizer sees; the message
   // The whole message is consumed by the summary — unpicked parts drop (compaction shrinks).
   const branch = await (await h(get(`/sessions/${session.id}`))).json() as { thread: Message[] };
   assertEquals(
-    branch.thread.map((m) => m.parts.map((p) => (p.type === "text" ? p.text : `[${p.type}]`)).join("|")),
+    branch.thread.map((m) =>
+      m.parts.map((p) => (p.type === "text" ? p.text : `[${p.type}]`)).join("|")
+    ),
     ["hello", "PROSE-ONLY-SUMMARY"],
   );
 
   // An out-of-range part index errors cleanly.
-  assertEquals((await h(post("/sessions/S/compact", { picks: [{ messageId: "m2", parts: [9] }] }))).status, 400);
+  assertEquals(
+    (await h(post("/sessions/S/compact", { picks: [{ messageId: "m2", parts: [9] }] }))).status,
+    400,
+  );
   c.db.close();
 });
 
@@ -185,11 +218,18 @@ Deno.test("compact: invalid selections and unknown ids error cleanly", async () 
   const h = createHandler(c);
 
   // unknown message id
-  assertEquals((await h(post("/sessions/S/compact", { picks: [{ messageId: "m2" }, { messageId: "zzz" }] }))).status, 400);
+  assertEquals(
+    (await h(post("/sessions/S/compact", { picks: [{ messageId: "m2" }, { messageId: "zzz" }] })))
+      .status,
+    400,
+  );
   // empty selection
   assertEquals((await h(post("/sessions/S/compact", { picks: [] }))).status, 400);
   // unknown session
-  assertEquals((await h(post("/sessions/missing/compact", { picks: [{ messageId: "m2" }] }))).status, 404);
+  assertEquals(
+    (await h(post("/sessions/missing/compact", { picks: [{ messageId: "m2" }] }))).status,
+    404,
+  );
   // malformed body
   assertEquals((await h(post("/sessions/S/compact", { nope: 1 }))).status, 400);
   c.db.close();
@@ -205,7 +245,9 @@ Deno.test("compact: a forked child span compacts as a sibling under the shared p
   seedMessage(c.db, "S", "s2", "supervisor", "child msg 2", 21);
   const h = createHandler(c);
 
-  const { session } = await (await h(post("/sessions/S/compact", { picks: [{ messageId: "s1" }, { messageId: "s2" }] })))
+  const { session } = await (await h(
+    post("/sessions/S/compact", { picks: [{ messageId: "s1" }, { messageId: "s2" }] }),
+  ))
     .json() as { session: Session };
   assertEquals(session.parentId, "R"); // sibling of S, under the shared parent R
 

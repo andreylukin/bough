@@ -63,6 +63,7 @@ import { createAuth } from "./auth.ts";
 import { compact, CompactBody, CompactError } from "../compact.ts";
 import { type Embedder, recall } from "../recall.ts";
 import { extract, ExtractBody, ExtractError } from "../extract.ts";
+import { handoff, HandoffBody, HandoffError } from "../handoff.ts";
 import { move, MoveBody, MoveError } from "../move.ts";
 import { adoptSubagent } from "../subagent.ts";
 import type { LlmClient } from "../supervisor/llm.ts";
@@ -310,6 +311,16 @@ const postMessage: Handler = async (req, ctx, params) => {
   const parsed = PostMessageBody.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return error(400, "invalid body: " + parsed.error.message);
 
+  // A handoff draft is consumed by the first post — whatever the user actually
+  // sent (edited or not) supersedes it, so clear it and announce the change.
+  if (session.draft != null) {
+    ctx.db.setSessionDraft(session.id, null);
+    const updated = ctx.db.getSession(session.id);
+    if (updated) {
+      ctx.bus.publish({ type: "session.updated", sessionId: session.id, data: updated });
+    }
+  }
+
   // Persist + announce the user message and run the turn (streams over /events).
   startUserTurn(ctx, session.id, parsed.data.text);
   return new Response(null, { status: 202, headers: CORS });
@@ -389,6 +400,20 @@ const extractSession: Handler = async (req, ctx, params) => {
   }
 };
 
+// Handoff: draft a goal-focused opening prompt from this thread and attach it to a
+// fresh root conversation as an editable composer draft (see handoff.ts).
+const handoffSession: Handler = async (req, ctx, params) => {
+  const parsed = HandoffBody.safeParse(await req.json().catch(() => null));
+  if (!parsed.success) return error(400, "invalid body: " + parsed.error.message);
+  try {
+    const session = await handoff(ctx, params.id, parsed.data);
+    return json({ session });
+  } catch (e) {
+    if (e instanceof HandoffError) return error(e.status, e.message);
+    throw e;
+  }
+};
+
 // Move (copy) picked messages from a source session onto this existing target.
 const moveInto: Handler = async (req, ctx, params) => {
   const parsed = MoveBody.safeParse(await req.json().catch(() => null));
@@ -447,14 +472,15 @@ const applyChangesH: Handler = async (req, ctx, params) => {
   if (!ctx.db.getSession(params.id)) return error(404, "session not found");
   const parsed = ChangesApplyBody.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return error(400, "invalid body: " + parsed.error.message);
+  let result;
   try {
-    await applyChanges(ctx.db, params.id, parsed.data, { snapshotBase: ctx.snapshotBase });
+    result = await applyChanges(ctx.db, params.id, parsed.data, { snapshotBase: ctx.snapshotBase });
   } catch (e) {
     if (e instanceof ChangesError) return error(e.status, e.message);
     throw e;
   }
   emitChangesUpdated(ctx, params.id);
-  return json({ ok: true, source: parsed.data.source, applied: parsed.data.paths });
+  return json({ ok: true, source: parsed.data.source, ...result });
 };
 
 const revertChangesH: Handler = async (req, ctx, params) => {
@@ -1058,6 +1084,11 @@ const routes: Route[] = [
     method: "POST",
     pattern: new URLPattern({ pathname: "/sessions/:id/extract" }),
     handler: extractSession,
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/sessions/:id/handoff" }),
+    handler: handoffSession,
   },
   {
     method: "POST",

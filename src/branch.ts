@@ -71,7 +71,7 @@ export interface BranchCtx {
  * composes titles ("fork · fork · X"), so callers prefix the BASE title instead.
  */
 export function baseTitle(title: string): string {
-  return title.replace(/^((fork|extract|subagent) · )+/, "");
+  return title.replace(/^((fork|extract|subagent|handoff) · )+/, "");
 }
 
 export interface BranchSpec {

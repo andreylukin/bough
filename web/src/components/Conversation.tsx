@@ -965,6 +965,8 @@ export function Conversation({
   onBranchAt,
   onCompact,
   onExtract,
+  onHandoff,
+  draft: sessionDraft,
   sessionId,
   skills = [],
   queued = [],
@@ -998,6 +1000,11 @@ export function Conversation({
   onCompact?: (picks: TurnPick[]) => void;
   // Copy the picked turns/sections (ancestors allowed) into a fresh conversation.
   onExtract?: (picks: TurnPick[]) => void;
+  // Hand off to a fresh conversation focused on a goal: the server drafts its
+  // opening prompt from this thread. Resolves when the new session is open.
+  onHandoff?: (goal: string) => Promise<void>;
+  // The open session's unsent handoff draft — prefills an empty composer.
+  draft?: string | null;
   // The open session's id — marks which thread messages are its own (vs inherited),
   // gating the compact action on selections the server would reject.
   sessionId?: string | null;
@@ -1031,6 +1038,21 @@ export function Conversation({
   useEffect(() => {
     taRef.current?.focus();
   }, [focusKey]);
+
+  // A handoff draft prefills the composer when its session opens (review, edit,
+  // send); the server clears the draft on first post. Typed text deliberately
+  // survives session switches (existing behavior), but an UNEDITED prefill must
+  // not follow the user to another session — so on switch, text that still equals
+  // the last prefill is replaced by the new session's draft (or cleared).
+  const prefillRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (text.trim() && text !== prefillRef.current) return; // user-typed — never clobber
+    const next = sessionDraft ?? "";
+    setText(next);
+    prefillRef.current = next || null;
+    // deliberately not depending on `text`: prefill happens on open/draft change only
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionDraft, sessionId]);
 
   // Large pastes become a "[Pasted content #N]" marker + chip instead of flooding
   // the textarea; markers expand back to the full text on send.
@@ -1275,6 +1297,25 @@ export function Conversation({
           : { messageId: m.id, parts: [...set].sort((x, y) => x - y) };
       });
   }
+  // Handoff: a one-line goal input in the toolbar; submit drafts the opening prompt
+  // for a fresh conversation (slow: one LLM call — the button shows drafting…).
+  const [handingOff, setHandingOff] = useState(false);
+  const [handoffGoal, setHandoffGoal] = useState("");
+  const [handoffBusy, setHandoffBusy] = useState(false);
+
+  function submitHandoff() {
+    const goal = handoffGoal.trim();
+    if (!goal || !onHandoff || handoffBusy) return;
+    setHandoffBusy(true);
+    // The store opens the new session (or surfaces the error as a notice) — either
+    // way this composer is done with the goal input.
+    onHandoff(goal).finally(() => {
+      setHandoffBusy(false);
+      setHandingOff(false);
+      setHandoffGoal("");
+    });
+  }
+
   function confirmCompact() {
     if (pickedCount === 0 || !pickedOwn || !onCompact) return;
     onCompact(buildPicks());
@@ -1403,7 +1444,7 @@ export function Conversation({
         background: c.panel,
       }}
     >
-      {canBranch && (onCompact || onExtract) && thread.length > 0 && (
+      {canBranch && (onCompact || onExtract || onHandoff) && thread.length > 0 && (
         <div
           style={{
             flex: "none",
@@ -1465,10 +1506,72 @@ export function Conversation({
                 Cancel
               </button>
             </>
+          ) : handingOff ? (
+            <>
+              <span style={{ color: c.green, flex: "none" }}>⤳ Handoff</span>
+              <input
+                autoFocus
+                value={handoffGoal}
+                onChange={(e) => setHandoffGoal(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") submitHandoff();
+                  if (e.key === "Escape") {
+                    setHandingOff(false);
+                    setHandoffGoal("");
+                  }
+                }}
+                disabled={handoffBusy}
+                placeholder="Goal for the new conversation — what should it pick up and do?"
+                style={{
+                  flex: 1,
+                  fontSize: 12.5,
+                  color: c.text,
+                  background: c.bg,
+                  border: `1px solid ${c.border2}`,
+                  borderRadius: 7,
+                  padding: "5px 10px",
+                  outline: "none",
+                }}
+              />
+              <button
+                onClick={submitHandoff}
+                disabled={!handoffGoal.trim() || handoffBusy}
+                title="Draft a self-contained opening prompt from this thread and open it in a fresh conversation"
+                style={{
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: handoffGoal.trim() && !handoffBusy ? c.bg : c.muted2,
+                  background: handoffGoal.trim() && !handoffBusy ? c.green : c.border2,
+                  borderRadius: 7,
+                  padding: "5px 11px",
+                }}
+              >
+                {handoffBusy ? "drafting…" : "Hand off"}
+              </button>
+              <button
+                onClick={() => {
+                  setHandingOff(false);
+                  setHandoffGoal("");
+                }}
+                disabled={handoffBusy}
+                style={{ fontSize: 12, color: c.muted, border: `1px solid ${c.border}`, borderRadius: 7, padding: "5px 11px" }}
+              >
+                Cancel
+              </button>
+            </>
           ) : (
             <>
               <span style={{ color: c.muted2, fontFamily: mono, fontSize: 11 }}>current thread</span>
               <div style={{ flex: 1 }} />
+              {onHandoff && (
+                <button
+                  onClick={() => setHandingOff(true)}
+                  title="Hand off to a fresh conversation: state a goal, get an editable opening prompt drafted from this thread"
+                  style={{ fontSize: 12, color: c.muted, border: `1px solid ${c.border}`, borderRadius: 7, padding: "5px 11px" }}
+                >
+                  ⤳ Handoff
+                </button>
+              )}
               <button
                 onClick={() => setSelecting(true)}
                 title="Select turns to compact into a summary or extract into a new conversation"

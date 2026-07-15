@@ -93,6 +93,9 @@ export const Session = z.object({
   contextTokens: z.number().nullish(),
   cachedTokens: z.number().nullish(),
   lastLlmAt: z.number().nullish(),
+  // A drafted-but-unsent opening prompt (additive; set by handoff). The UI prefills
+  // the composer with it; posting the session's first message clears it server-side.
+  draft: z.string().nullish(),
 });
 export type Session = z.infer<typeof Session>;
 
