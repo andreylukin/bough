@@ -388,6 +388,49 @@ Deno.test({
 });
 
 Deno.test({
+  // Apply-to-checkout: originRepo resolves the backing repo from jj plumbing, and
+  // materialize delivers reviewed paths into the origin working tree (3-way) while
+  // HEAD, branch, and unrelated files stay put.
+  name: "jj: originRepo + materialize deliver session edits to the user's checkout",
+  ignore: !jjAvailable,
+  fn: async () => {
+    const repo = await tempGitRepo();
+    const { jjBase, wsBase } = await tempExternalBases();
+    try {
+      await withEnv({ BOUGH_JJ_BASE: jjBase, BOUGH_SUBAGENT_BASE: wsBase }, async () => {
+        const dir = await jj.createSessionWorkspace(repo, "m1");
+        assertEquals(await jj.originRepo(dir), await Deno.realPath(repo));
+
+        // Agent work in the isolated workspace: a new file and an edit.
+        await Deno.writeTextFile(`${dir}/agent.txt`, "agent-work\n");
+        await Deno.writeTextFile(`${dir}/README.md`, "base\nagent line\n");
+        const headRefBefore = await gitOut(repo, ["symbolic-ref", "HEAD"]);
+
+        // Deliver only agent.txt: it lands; the README edit stays back.
+        await jj.materialize(dir, "m1", repo, ["agent.txt"]);
+        assertEquals(await Deno.readTextFile(`${repo}/agent.txt`), "agent-work\n");
+        assertEquals(await Deno.readTextFile(`${repo}/README.md`), "base\n");
+        // Working tree only — the delivered file arrives untracked, never staged.
+        assert((await gitOut(repo, ["status", "--porcelain"])).includes("?? agent.txt"));
+
+        // Deliver the rest (no scope = whole change); HEAD/branch untouched.
+        await jj.materialize(dir, "m1", repo, []);
+        assertEquals(await Deno.readTextFile(`${repo}/README.md`), "base\nagent line\n");
+        assertEquals(await gitOut(repo, ["symbolic-ref", "HEAD"]), headRefBefore);
+
+        // Re-applying an already-delivered change is a clean no-op (3-way).
+        await jj.materialize(dir, "m1", repo, ["agent.txt"]);
+        assertEquals(await Deno.readTextFile(`${repo}/agent.txt`), "agent-work\n");
+      });
+    } finally {
+      await Deno.remove(repo, { recursive: true });
+      await Deno.remove(jjBase, { recursive: true }).catch(() => {});
+      await Deno.remove(wsBase, { recursive: true }).catch(() => {});
+    }
+  },
+});
+
+Deno.test({
   // External mode on a clean repo bases the session directly off HEAD (no snapshot
   // commit), and forking branches a second workspace off the session's tip.
   name: "jj: createSessionWorkspace clean-repo base + fork via addWorkspace",

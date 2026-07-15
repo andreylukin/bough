@@ -30,6 +30,7 @@
  * parseable output, and pins `user.name`/`user.email` via `--config` so jj works
  * with no global config. macOS-first but nothing here is macOS-specific.
  */
+import { dirname, resolve } from "node:path";
 import { parseGitDiff } from "../schema/changes.ts";
 import type { Diff } from "../schema/changes.ts";
 
@@ -56,15 +57,23 @@ async function run(
   args: string[],
   cwd: string,
   env?: Record<string, string>,
+  stdin?: string,
 ): Promise<RunResult> {
   const cmd = new Deno.Command(bin, {
     args,
     cwd,
     env,
+    stdin: stdin === undefined ? "null" : "piped",
     stdout: "piped",
     stderr: "piped",
   });
-  const { code, stdout, stderr } = await cmd.output();
+  const child = cmd.spawn();
+  if (stdin !== undefined) {
+    const w = child.stdin.getWriter();
+    await w.write(new TextEncoder().encode(stdin));
+    await w.close();
+  }
+  const { code, stdout, stderr } = await child.output();
   return {
     ok: code === 0,
     code,
@@ -95,8 +104,9 @@ async function git(
   repo: string,
   args: string[],
   env?: Record<string, string>,
+  stdin?: string,
 ): Promise<string> {
-  const r = await run("git", args, repo, env);
+  const r = await run("git", args, repo, env, stdin);
   if (!r.ok) {
     throw new Error(`git ${args.join(" ")} failed (${r.code}): ${r.stderr.trim()}`);
   }
@@ -486,13 +496,85 @@ export async function diff(repo: string, sessionId: string): Promise<Diff> {
  * The accepted work stays on disk — it's the new working copy's parent — and the
  * session's change-vs-parent diff resets to empty, so the Changes rail clears.
  * Whole-change in v1; snapshots first so on-disk edits are folded in before sealing.
+ * `message`, when given, becomes the sealed commit's description (otherwise the
+ * change keeps whatever it had — usually empty, which reads badly from plain git).
  */
-export async function accept(repo: string, sessionId: string): Promise<void> {
+export async function accept(repo: string, sessionId: string, message?: string): Promise<void> {
   await snapshot(repo);
   const name = bookmarkFor(sessionId);
+  if (message) await jj(repo, ["describe", "-r", name, "-m", message]);
   await jj(repo, ["new", name]);
   await jj(repo, ["bookmark", "move", name, "--to", "@"]);
   await exportRefs(repo);
+}
+
+/**
+ * The origin git repo behind a session's jj dir, from jj's own plumbing:
+ * `<dir>/.jj/repo` (a pointer file for workspaces, the store itself otherwise) →
+ * `<store>/store/git_target` → the backing `.git`. For an external-mode session
+ * workspace this is the user's checkout; for a colocated repo it's the repo
+ * itself (callers compare against `dir` to tell the modes apart). Null when the
+ * plumbing can't be read (no jj, exotic store).
+ */
+export async function originRepo(dir: string): Promise<string | null> {
+  try {
+    const ptrPath = `${dir}/.jj/repo`;
+    let repoDir = ptrPath;
+    if ((await Deno.stat(ptrPath)).isFile) {
+      const ptr = (await Deno.readTextFile(ptrPath)).trim();
+      repoDir = ptr.startsWith("/") ? ptr : resolve(`${dir}/.jj`, ptr);
+    }
+    const target = (await Deno.readTextFile(`${repoDir}/store/git_target`)).trim();
+    const gitDir = target.startsWith("/") ? target : resolve(`${repoDir}/store`, target);
+    const real = await Deno.realPath(gitDir);
+    return real.endsWith("/.git") ? dirname(real) : real;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Deliver a session's reviewed edits into the origin checkout's working tree:
+ * the change-vs-parent diff, limited to `paths`, applied with `git apply --3way`
+ * (3-way so a file the user touched since the session branched merges instead of
+ * being clobbered; conflicts surface as an error naming the file). Only the
+ * working tree changes — HEAD, index, and branch stay put. No-op when the scoped
+ * diff is empty.
+ */
+export async function materialize(
+  workspace: string,
+  sessionId: string,
+  origin: string,
+  paths: string[],
+): Promise<void> {
+  await snapshot(workspace);
+  await exportRefs(workspace); // refresh bough/<id> in the origin's git first
+  const name = bookmarkFor(sessionId);
+  const all = (await git(origin, ["diff", "--name-only", `${name}^..${name}`]))
+    .split("\n").map((s) => s.trim()).filter(Boolean);
+  const targets = paths.length > 0 ? all.filter((p) => paths.includes(p)) : all;
+  const failed: string[] = [];
+  for (const p of targets) {
+    // Already delivered? Compare the working file against the session tip's blob
+    // (hash compare — exact and binary-safe). A re-press becomes a clean no-op.
+    const tip = await run("git", ["rev-parse", `${name}:${p}`], origin);
+    const cur = await run("git", ["hash-object", "--", p], origin);
+    if (tip.ok ? cur.ok && cur.stdout.trim() === tip.stdout.trim() : !cur.ok) continue;
+    const patch = await git(origin, ["diff", "--binary", `${name}^..${name}`, "--", p]);
+    if (!patch.trim()) continue;
+    // Plain apply first: it touches ONLY the working tree. --3way (which stages
+    // what it merges) is the fallback for files the user changed since branching.
+    try {
+      await git(origin, ["apply", "--whitespace=nowarn"], undefined, patch);
+    } catch {
+      try {
+        await git(origin, ["apply", "--3way", "--whitespace=nowarn"], undefined, patch);
+      } catch (e) {
+        failed.push(`${p}: ${(e as Error).message.trim().split("\n").at(-1)}`);
+      }
+    }
+  }
+  if (failed.length > 0) throw new Error(`could not apply ${failed.join("; ")}`);
 }
 
 /** One entry in the operation log — the unit of undo/restore. */

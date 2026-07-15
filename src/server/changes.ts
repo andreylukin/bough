@@ -8,13 +8,15 @@
  *   - clonefile — non-git config. Present when a snapshot dir with a manifest exists.
  * A session may have both, neither (→ empty), or one.
  *
- * Apply / revert semantics (v1, per INTEGRATION §4):
+ * Apply / revert semantics:
  *   - clonefile apply → copy the approved originals back (applyBack). This is the real
  *     mutation for config edits.
- *   - jj apply → accept & advance: seal the session's change as a finished commit and
- *     move the bookmark to a new empty child (jj.accept). The edits stay on disk and
- *     the change-vs-parent diff resets, so the rail clears. Whole-change — `paths` is
- *     accepted but informational.
+ *   - jj apply, external-mode session (isolated workspace) → deliver the selected
+ *     paths into the origin checkout's working tree (jj.materialize, 3-way); when
+ *     every changed path is covered, also seal the change (jj.accept, described with
+ *     the session title) so the rail clears.
+ *   - jj apply, colocated session → accept & advance (jj.accept): the edits already
+ *     live in the checkout, sealing is the whole apply. Whole-change.
  *   - jj revert → whole-change: `jj undo` (undo the most recent jj operation on the
  *     workspace). Per-path revert is deferred — `paths` is accepted but ignored — so
  *     revert immediately after review, before other jj ops intervene.
@@ -67,7 +69,11 @@ async function hasJjWorkspace(db: Db, sessionId: string): Promise<string | null>
 }
 
 /** All review payloads for a session (0..2), one per active snapshot source. */
-export async function sessionChanges(db: Db, sessionId: string, opts: ChangesOpts = {}): Promise<Diff[]> {
+export async function sessionChanges(
+  db: Db,
+  sessionId: string,
+  opts: ChangesOpts = {},
+): Promise<Diff[]> {
   const diffs: Diff[] = [];
 
   const repo = await hasJjWorkspace(db, sessionId);
@@ -91,22 +97,66 @@ export async function sessionChanges(db: Db, sessionId: string, opts: ChangesOpt
   return diffs;
 }
 
-/** Apply reviewed changes. clonefile copies approved originals back; jj accepts the change. */
+/** What an apply actually did — the UI's feedback line is built from this. */
+export interface ApplyResult {
+  /** Paths delivered/accepted this call. */
+  applied: string[];
+  /** The user's checkout the files landed in (external mode), else null. */
+  origin: string | null;
+  /** The session's git branch in the origin repo, when one exists. */
+  branch: string | null;
+  /** True when the whole change was covered and the jj change was sealed. */
+  sealed: boolean;
+}
+
+/**
+ * Apply reviewed changes. clonefile copies approved originals back. jj delivers:
+ * for an external-mode session (isolated workspace, user's checkout elsewhere)
+ * the selected paths are materialized into the origin checkout's working tree
+ * (3-way, so user edits merge rather than clobber); when every changed path is
+ * covered the change is also sealed (accept & advance, commit message = session
+ * title) so the rail clears. Colocated sessions keep the legacy whole-change
+ * accept — the edits are already on disk there.
+ */
 export async function applyChanges(
   db: Db,
   sessionId: string,
   body: ChangesApplyBody,
   opts: ChangesOpts = {},
-): Promise<void> {
+): Promise<ApplyResult> {
   if (body.source === "clonefile") {
     await clonefile.applyBack(sessionId, body.paths, snapBase(opts));
-    return;
+    return { applied: body.paths, origin: null, branch: null, sealed: false };
   }
-  // jj: accept & advance — seal the change and move the bookmark to a fresh empty
-  // child, so the rail clears and later edits diff cleanly on top (whole-change v1).
   const repo = await hasJjWorkspace(db, sessionId);
   if (!repo) throw new ChangesError(400, "no jj workspace to apply");
-  await jj.accept(repo, sessionId);
+  const title = db.getSession(sessionId)?.title;
+  const message = title ? `bough: ${title}` : "bough: session changes";
+  const origin = await jj.originRepo(repo);
+  const external = origin !== null && (await Deno.realPath(origin)) !== (await Deno.realPath(repo));
+  if (!external) {
+    // Colocated: edits already live in the checkout; accepting is the whole apply.
+    await jj.accept(repo, sessionId, message);
+    return { applied: body.paths, origin: null, branch: jj.bookmarkFor(sessionId), sealed: true };
+  }
+  // External: resolve [] to "every changed path" so delivery and the seal test
+  // work from one concrete list.
+  const changed = (await jj.diff(repo, sessionId)).files.map((f) => f.path);
+  const paths = body.paths.length > 0 ? body.paths.filter((p) => changed.includes(p)) : changed;
+  if (paths.length === 0) return { applied: [], origin, branch: null, sealed: false };
+  try {
+    await jj.materialize(repo, sessionId, origin, paths);
+  } catch (e) {
+    throw new ChangesError(
+      409,
+      `apply to ${origin} failed — resolve by hand from branch ${jj.bookmarkFor(sessionId)}: ${
+        (e as Error).message.split("\n").at(-1)
+      }`,
+    );
+  }
+  const coversAll = changed.every((p) => paths.includes(p));
+  if (coversAll) await jj.accept(repo, sessionId, message);
+  return { applied: paths, origin, branch: jj.bookmarkFor(sessionId), sealed: coversAll };
 }
 
 /** Revert a jj-workspace session (whole-change `jj undo`). Throws if there's no repo. */
