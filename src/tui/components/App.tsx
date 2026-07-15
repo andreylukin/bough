@@ -3,6 +3,7 @@
 // offset, mouse clicks map row → line → expandable tool group. The bottom chrome
 // (composer/approval card + status bar) is pinned to the terminal's last rows; its
 // height is measured after render so the viewport always fits exactly.
+import { applyTheme, palette, THEME_PRESETS } from "../theme.ts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, type DOMElement, measureElement, Text, useApp, useInput, useStdout } from "ink";
 import type { Session } from "../../schema/parts.ts";
@@ -15,13 +16,14 @@ import {
   type NetConfig,
   type NetStatus,
   type SkillInfo,
+  type ThemeState,
 } from "../api.ts";
 import { useStore } from "../store.ts";
 import { type Branch, buildLines, parseSubagentNote, type SubagentNote } from "../lines.ts";
-import { fuzzyScore, segmentParts, wordLeft, wordRight } from "../format.ts";
+import { fmtTokens, fuzzyScore, segmentParts, wordLeft, wordRight } from "../format.ts";
 import { type MouseEvent, onMouse, onPaste } from "../mouse.ts";
 import { Composer } from "./Composer.tsx";
-import { StatusBar } from "./StatusBar.tsx";
+import { ActivityLine, StatusBar } from "./StatusBar.tsx";
 import { flattenTree, SessionPicker, type TreeRow } from "./SessionPicker.tsx";
 import { NetApproval } from "./NetApproval.tsx";
 import { NewSession } from "./NewSession.tsx";
@@ -59,6 +61,8 @@ export function App(
   const [quitHint, setQuitHint] = useState(false);
   const lastCtrlC = useRef(0);
   const [err, setErr] = useState<string | null>(null);
+  // /conversation info card above the composer; esc or the next send dismisses it.
+  const [showInfo, setShowInfo] = useState(false);
   // viewport state
   const [scrollOff, setScrollOff] = useState(0); // lines up from the bottom; 0 = follow
   const [expandAll, setExpandAll] = useState(false);
@@ -127,10 +131,37 @@ export function App(
   const [cfg, setCfg] = useState<BoughConfig | null>(null);
   const [modelSel, setModelSel] = useState(0);
   const [keyInput, setKeyInput] = useState<string | null>(null); // masked API-key entry
+  // theme tab: cursor + auto-apply. Moving the cursor applies the hovered preset
+  // (debounced — rapid arrows shouldn't race PUT/GET chains out of order).
+  const [themeState, setThemeState] = useState<ThemeState | null>(null);
+  const [themeSel, setThemeSel] = useState(0);
+  const themeSelRef = useRef(0);
+  const themeApplyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const applyPreset = useCallback((idx: number) => {
+    const p = THEME_PRESETS[idx];
+    if (!p) return;
+    (p.name === "Default" ? api.resetTheme() : api.putTheme(p.name, p.colors))
+      .then(() => api.getTheme())
+      .then((next) => {
+        applyTheme(next); // the running TUI recolors now
+        setThemeState(next);
+      })
+      .catch((e) => setPanelMsg(String(e)));
+  }, []);
+  const moveThemeSel = useCallback((v: (i: number) => number) => {
+    themeSelRef.current = Math.max(
+      0,
+      Math.min(THEME_PRESETS.length - 1, v(themeSelRef.current)),
+    );
+    setThemeSel(themeSelRef.current);
+    if (themeApplyTimer.current) clearTimeout(themeApplyTimer.current);
+    themeApplyTimer.current = setTimeout(() => applyPreset(themeSelRef.current), 120);
+  }, [applyPreset]);
 
   const { open } = store;
   const openSession = useCallback((s: Session) => {
     setErr(null);
+    setShowInfo(false);
     setMode("chat");
     setFilter("");
     setFilterActive(false);
@@ -140,6 +171,15 @@ export function App(
     saveLastSession(s.id);
     open(s.id).catch((e) => setErr(String(e)));
   }, [open]);
+
+  // A handoff draft prefills an EMPTY composer when its session opens (review,
+  // edit, send); the server clears it on the first post. Never clobbers typed text.
+  const sessionDraft = store.session?.draft ?? null;
+  const sessionIdForDraft = store.session?.id;
+  useEffect(() => {
+    if (!sessionDraft) return;
+    setComp((c) => (c.text.trim() ? c : { text: sessionDraft, cursor: sessionDraft.length }));
+  }, [sessionIdForDraft, sessionDraft]);
 
   // Launch = a fresh draft targeting the caller's cwd; the session is created on
   // the first send. ^p resumes existing sessions.
@@ -183,6 +223,16 @@ export function App(
       });
     } else if (tab === "skills") {
       api.skills().then(setSkillsList, () => setSkillsList([]));
+    } else if (tab === "theme") {
+      // Fresh state + cursor onto the current theme, so the first arrow move
+      // steps (and auto-applies) from where the user actually is.
+      api.getTheme().then((t) => {
+        setThemeState(t);
+        const cur = t.theme?.name ?? "Default";
+        const idx = Math.max(0, THEME_PRESETS.findIndex((p) => p.name === cur));
+        themeSelRef.current = idx;
+        setThemeSel(idx);
+      }, () => setThemeState(null));
     }
     // sessions / conversation read from the store — nothing to fetch.
   }, [currentId]);
@@ -243,7 +293,8 @@ export function App(
   );
   const lines = useMemo(
     () => buildLines(store.thread, store.streaming, isExpanded, isFull, width, branches),
-    [store.thread, store.streaming, isExpanded, isFull, width, branches],
+    // palette.epoch: an applied theme must recolor the pre-rendered SGR lines.
+    [store.thread, store.streaming, isExpanded, isFull, width, branches, palette.epoch],
   );
   const toggleGroup = useCallback((key: string) => {
     setToggled((prev) => {
@@ -277,6 +328,24 @@ export function App(
     }
   }, [store.thread, toggleGroup]);
 
+  // Clicking the activity line ("⠴ running the test suite…") opens the fold it
+  // describes: the running turn's trailing tool group. Ref'd so the mouse
+  // subscription stays stable.
+  const toggleRunningGroupRef = useRef<() => void>(() => {});
+  toggleRunningGroupRef.current = () => {
+    const pending = [...store.thread].reverse().find((m) =>
+      m.pending && m.role === "supervisor"
+    );
+    if (!pending) return;
+    const segs = segmentParts(pending.parts);
+    for (let i = segs.length - 1; i >= 0; i--) {
+      if (segs[i].kind === "tools") {
+        toggleGroup(`${pending.id}:${i}`);
+        return;
+      }
+    }
+  };
+
   // Bottom-chrome height is measured post-render (the approval card and queued
   // rows vary); one frame of lag at most.
   const chromeRef = useRef<DOMElement | null>(null);
@@ -309,6 +378,9 @@ export function App(
   useEffect(() => {
     layout.current = { mode, start, padTop, maxOff, lines };
   });
+  // Screen row (0-based) of the activity line, synced post-render below (its
+  // position depends on chrome pieces declared later); null when hidden.
+  const activityRowRef = useRef<number | null>(null);
   // Composer autocomplete: "/" at the start completes skills, "@" completes
   // workspace files (needs a live session — drafts have no workspace yet).
   interface Popup {
@@ -333,7 +405,13 @@ export function App(
     if (text.startsWith("/") && cursor >= 1 && !/\s/.test(text.slice(0, cursor))) {
       const q = text.slice(1, cursor);
       const apply = (skills: SkillInfo[]) => {
-        const items = skills
+        // Composer-local commands complete alongside server skills. The server's
+        // `theme` skill is hidden here — theming lives in the panel's theme tab.
+        const local: SkillInfo[] = [
+          { name: "handoff", description: "draft a fresh conversation focused on a goal" },
+          { name: "conversation", description: "show this conversation's id and details" },
+        ];
+        const items = [...local, ...skills.filter((s) => s.name !== "theme")]
           .map((s) => ({ s, score: fuzzyScore(s.name, q) }))
           .filter((x) => x.score > 0)
           .sort((a, b) =>
@@ -406,6 +484,12 @@ export function App(
         return;
       }
       if (l.mode !== "chat") return;
+      // The activity line lives in the bottom chrome, outside the line viewport:
+      // clicking it expands/collapses the running tool group it summarizes.
+      if (activityRowRef.current !== null && ev.y - 1 === activityRowRef.current) {
+        toggleRunningGroupRef.current();
+        return;
+      }
       const idx = l.start + (ev.y - 1) - l.padTop;
       const line = l.lines[idx];
       if (line?.click) onClickRef.current(line.click);
@@ -449,9 +533,30 @@ export function App(
     }
   }, [mode, panelTab, convItems.length, moveForkSel]);
 
-  // Send, creating the draft's session on first use.
+  // Send, creating the draft's session on first use. `/handoff <goal>` is a
+  // composer command, not a message: the server drafts a self-contained opening
+  // prompt from this thread and we open the fresh conversation with the composer
+  // prefilled from it (the draft-prefill effect above the composer state).
   const submit = useCallback((text: string, queue: boolean) => {
     setScrollOff(0);
+    setShowInfo(false);
+    if (/^\/conversation\s*$/.test(text)) {
+      if (!store.currentId) return setErr("no open conversation — send a message first");
+      setShowInfo(true);
+      return;
+    }
+    if (/^\/handoff\b/.test(text)) {
+      const goal = text.slice("/handoff".length).trim();
+      if (!goal) return setErr("usage: /handoff <goal for the new conversation>");
+      if (!store.currentId) return setErr("no open conversation to hand off from");
+      store.notify("⤳ drafting handoff…");
+      store.handoff(goal).then((s) => {
+        if (!s) return; // the store surfaced the error as a notice
+        openSession(s);
+        store.notify("⤳ handoff drafted — review the prompt, edit, send");
+      });
+      return;
+    }
     if (store.currentId) {
       store.send(text, queue).catch((e) => setErr(String(e)));
       return;
@@ -463,7 +568,15 @@ export function App(
       },
       (e) => setErr(String(e)),
     );
-  }, [store.currentId, store.send, store.newSession, defaultWorkspace]);
+  }, [
+    store.currentId,
+    store.send,
+    store.newSession,
+    store.handoff,
+    store.notify,
+    openSession,
+    defaultWorkspace,
+  ]);
 
   useInput((ch, key) => {
     // Quit: double ctrl+c.
@@ -631,6 +744,13 @@ export function App(
         api.setYolo(on).then(({ config }) => setPolicy(config), (e) => setPanelMsg(String(e)));
         return;
       }
+      if (panelTab === "theme") {
+        // Moving the cursor IS applying: the hovered preset lands (debounced) on
+        // the server and the TUI recolors under the cursor.
+        if (key.upArrow || ch === "k") return moveThemeSel((i) => i - 1);
+        if (key.downArrow || ch === "j") return moveThemeSel((i) => i + 1);
+        if (key.return) return applyPreset(themeSelRef.current);
+      }
       if (panelTab === "mcp") {
         const names = mcpStat ? Object.keys(mcpStat.registry.servers).sort() : [];
         if (key.upArrow || ch === "k") return setMcpSel((i) => Math.max(0, i - 1));
@@ -728,6 +848,16 @@ export function App(
       if (ch === "a") {
         const e = diffEntries[fileSel];
         if (e) store.applyChanges(e.source, [e.file.path]);
+        return;
+      }
+      if (ch === "A") {
+        // Apply everything, one call per source (a session can have jj + clonefile).
+        for (const source of new Set(diffEntries.map((e) => e.source))) {
+          store.applyChanges(
+            source,
+            diffEntries.filter((e) => e.source === source).map((e) => e.file.path),
+          );
+        }
         return;
       }
       if (ch === "R") {
@@ -884,6 +1014,7 @@ export function App(
       // Esc is the agent's stop button; when idle it clears a lingering notice
       // (error notices used to sit above the composer with no way to dismiss).
       if (store.busy) store.interrupt();
+      else if (showInfo) setShowInfo(false);
       else if (store.notice) store.dismissNotice();
       return;
     }
@@ -1015,11 +1146,59 @@ export function App(
   const shortWs = defaultWorkspace.replace(new RegExp(`^${Deno.env.get("HOME")}`), "~");
   const isDraft = !store.currentId;
 
+  // /conversation card rows — derived at render so they track live session state.
+  const infoRows: [string, string][] = (() => {
+    const s = store.session;
+    if (!showInfo || !s) return [];
+    const rows: [string, string][] = [
+      ["id", s.id],
+      ["title", s.title || "(untitled)"],
+      ["kind", s.kind],
+      ["created", new Date(s.createdAt).toLocaleString()],
+    ];
+    if (s.workspace) {
+      rows.push([
+        "workspace",
+        s.workspace.replace(new RegExp(`^${Deno.env.get("HOME")}`), "~"),
+      ]);
+    }
+    rows.push(["model", s.model ? `${s.model} (pinned)` : cfg ? `${cfg.model} (default)` : "—"]);
+    if (s.originId) {
+      const origin = store.sessions.find((x) => x.id === s.originId);
+      rows.push(["origin", origin ? `${origin.title || origin.id} · ${s.originId}` : s.originId]);
+    }
+    rows.push(["messages", String(store.thread.length)]);
+    if (s.contextTokens) {
+      const cached = s.cachedTokens
+        ? ` · ${Math.round((s.cachedTokens / s.contextTokens) * 100)}% cached`
+        : "";
+      rows.push(["context", `${fmtTokens(s.contextTokens)} tokens${cached}`]);
+    }
+    return rows;
+  })();
+
+  // Where the activity line lands on screen this frame: chrome starts at viewH,
+  // then queued rows, the error line, and the info card (bordered: rows + 4)
+  // precede it. Synced post-commit like `layout`, so clicks map to the painted frame.
+  const activityRow = mode === "chat" && store.busy && store.activity
+    ? viewH + store.queued.length + (err ? 1 : 0) +
+      (infoRows.length > 0 ? infoRows.length + 4 : 0)
+    : null;
+  useEffect(() => {
+    activityRowRef.current = activityRow;
+  });
+
   // The unified management view: one bordered container, a tab bar, and the active
   // tab's content (sessions/conversation trees, or net/mcp/skills).
   const panel = mode === "panel"
     ? (
-      <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
+      <Box
+        flexDirection="column"
+        borderStyle="round"
+        backgroundColor={palette.panel}
+        borderColor={palette.border}
+        paddingX={1}
+      >
         <PanelTabs tab={panelTab} />
         {panelTab === "sessions"
           ? (
@@ -1061,11 +1240,13 @@ export function App(
               netScopeLabel={netGlobal
                 ? "all sessions · g scopes to this session"
                 : "this session · g shows all sessions"}
+              theme={themeState}
+              themeSel={themeSel}
             />
           )}
         {/* sessions + mcp render panelMsg themselves; the rest show it here. */}
         {panelMsg && panelTab !== "sessions" && panelTab !== "mcp"
-          ? <Text color="yellow" wrap="truncate">{panelMsg}</Text>
+          ? <Text color={palette.warn} wrap="truncate">{panelMsg}</Text>
           : null}
       </Box>
     )
@@ -1073,7 +1254,7 @@ export function App(
 
   const modal = panel ??
     (mode === "help"
-      ? <Help />
+      ? <Help rows={rows} width={width} />
       : mode === "new"
       ? <NewSession query={newQuery} hits={dirHits} selected={newSel} />
       : mode === "diff"
@@ -1093,7 +1274,7 @@ export function App(
       : null);
 
   return (
-    <Box flexDirection="column" height={rows} width={width}>
+    <Box flexDirection="column" height={rows} width={width} backgroundColor={palette.bg}>
       <Box flexDirection="column" flexGrow={1} overflow="hidden">
         {modal ?? (isDraft && store.thread.length === 0
           ? (
@@ -1104,7 +1285,7 @@ export function App(
               )}
               <Box flexDirection="column" alignItems="center">
                 <Text>
-                  <Text color="green">●</Text> <Text bold>bough</Text>
+                  <Text color={palette.accent}>●</Text> <Text bold>bough</Text>
                 </Text>
                 <Text dimColor>new session in {shortWs}</Text>
                 <Text>{" "}</Text>
@@ -1127,11 +1308,37 @@ export function App(
           ? (
             <>
               {store.queued.map((q, i) => <Text key={i} dimColor>⧖ queued: {q}</Text>)}
-              {err ? <Text color="red">{err}</Text> : null}
-              {store.notice ? <Text color="yellow">{store.notice}</Text> : null}
+              {err ? <Text color={palette.error}>{err}</Text> : null}
+              {infoRows.length > 0
+                ? (
+                  <Box
+                    flexDirection="column"
+                    borderStyle="round"
+                    backgroundColor={palette.panel}
+                    borderColor={palette.border}
+                    paddingX={1}
+                  >
+                    <Text bold>conversation</Text>
+                    {infoRows.map(([k, v]) => (
+                      <Text key={k} wrap="truncate">
+                        <Text color={palette.accent}>{k.padEnd(11)}</Text>
+                        {v}
+                      </Text>
+                    ))}
+                    <Text dimColor>esc dismisses</Text>
+                  </Box>
+                )
+                : null}
+              {store.busy && store.activity ? <ActivityLine text={store.activity} /> : null}
               {popup && !store.pending
                 ? (
-                  <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
+                  <Box
+                    flexDirection="column"
+                    borderStyle="round"
+                    backgroundColor={palette.panel}
+                    borderColor={palette.border}
+                    paddingX={1}
+                  >
                     {popup.items.map((it, i) => (
                       <Text key={it.label} inverse={i === popup.sel} wrap="truncate">
                         {it.label}
@@ -1147,6 +1354,9 @@ export function App(
             </>
           )
           : null}
+        {/* Action feedback (apply results, errors) must show in every mode — an
+            apply from the diff panel that reports nowhere reads as a silent no-op. */}
+        {store.notice ? <Text color={palette.warn} wrap="truncate">{store.notice}</Text> : null}
         <StatusBar
           connected={store.connected}
           busy={store.busy}

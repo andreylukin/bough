@@ -1,3 +1,4 @@
+import { palette } from "../theme.ts";
 import { Box, Text } from "ink";
 import type { WireDiff, WireFileDiff } from "../api.ts";
 
@@ -24,7 +25,11 @@ function stats(f: WireFileDiff): { add: number; del: number } {
 const STATUS_MARK = { added: "A", modified: "M", deleted: "D" } as const;
 
 function DiffLine({ line }: { line: string }) {
-  const color = line.startsWith("+") ? "green" : line.startsWith("-") ? "red" : undefined;
+  const color = line.startsWith("+")
+    ? palette.accent
+    : line.startsWith("-")
+    ? palette.error
+    : undefined;
   return <Text color={color} dimColor={!color} wrap="truncate-end">{line || " "}</Text>;
 }
 
@@ -48,7 +53,13 @@ export function DiffView(
   const bodyRows = Math.max(4, rows - fileRows - 7);
   const at = Math.max(0, Math.min(scroll, lines.length - bodyRows));
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
+    <Box
+      flexDirection="column"
+      borderStyle="round"
+      backgroundColor={palette.panel}
+      borderColor={palette.border}
+      paddingX={1}
+    >
       <Text bold>
         changes{" "}
         <Text dimColor>
@@ -65,16 +76,16 @@ export function DiffView(
           >
             <Text
               color={e.file.status === "deleted"
-                ? "red"
+                ? palette.error
                 : e.file.status === "added"
-                ? "green"
-                : "yellow"}
+                ? palette.accent
+                : palette.warn}
             >
               {STATUS_MARK[e.file.status]}
             </Text>{" "}
             {e.file.path}
-            <Text color="green">{"  "}+{add}</Text>
-            <Text color="red">{" "}-{del}</Text>
+            <Text color={palette.accent}>{"  "}+{add}</Text>
+            <Text color={palette.error}>{" "}-{del}</Text>
             <Text dimColor>{"  "}{e.source}</Text>
           </Text>
         );

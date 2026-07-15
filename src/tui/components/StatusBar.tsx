@@ -1,3 +1,4 @@
+import { palette } from "../theme.ts";
 import { useEffect, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import type { Usage } from "../api.ts";
@@ -25,9 +26,34 @@ function useSpinner(busy: boolean): string | null {
   return `${FRAMES[tick % FRAMES.length]} working · ${secs}s · esc interrupts`;
 }
 
+/** The line above the composer while a turn runs — the local worker's blurb of
+ * what the program is doing, Claude-Code-style ("✳ Running the test suite…"). */
+export function ActivityLine({ text }: { text: string }) {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((x) => x + 1), 120);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <Text color={palette.warn} wrap="truncate">
+      {FRAMES[tick % FRAMES.length]} {text}…
+    </Text>
+  );
+}
+
 export function StatusBar(
-  { connected, busy, session, pendingCount, quitHint, mode, usage, draftLabel, model, parentTitle }:
-    {
+  {
+    connected,
+    busy,
+    session,
+    pendingCount,
+    quitHint,
+    mode,
+    usage,
+    draftLabel,
+    model,
+    parentTitle,
+  }: {
       connected: boolean;
       busy: boolean;
       session: TuiSession | null;
@@ -45,20 +71,20 @@ export function StatusBar(
 ) {
   const spinner = useSpinner(busy);
   const status = spinner
-    ? { text: spinner, color: "yellow" }
+    ? { text: spinner, color: palette.warn }
     : session?.lastTurnStatus === "error"
-    ? { text: "✗ error", color: "red" }
+    ? { text: "✗ error", color: palette.error }
     : session?.lastTurnStatus === "interrupted"
-    ? { text: "◼ interrupted", color: "yellow" }
+    ? { text: "◼ interrupted", color: palette.warn }
     : session?.lastTurnStatus === "done"
-    ? { text: "✓", color: "green" }
+    ? { text: "✓", color: palette.accent }
     : null;
   return (
     <Box justifyContent="space-between" gap={2}>
       <Text wrap="truncate">
-        <Text color={connected ? "green" : "red"}>{connected ? "●" : "○"}</Text>
+        <Text color={connected ? palette.accent : palette.error}>{connected ? "●" : "○"}</Text>
         <Text dimColor>{connected ? "" : " reconnecting…"}</Text>
-        {session?.kind === "subagent" ? <Text color="green">{" "}◆</Text> : null}
+        {session?.kind === "subagent" ? <Text color={palette.accent}>{" "}◆</Text> : null}
         {session
           ? (
             <Text bold>
@@ -76,7 +102,11 @@ export function StatusBar(
           ? <Text dimColor>{"  "}{fmtTokens(usage.contextTokens)} ctx</Text>
           : null}
         {pendingCount > 0
-          ? <Text color="yellow">{"  "}⏸ {pendingCount} hold{pendingCount > 1 ? "s" : ""}</Text>
+          ? (
+            <Text color={palette.warn}>
+              {"  "}⏸ {pendingCount} hold{pendingCount > 1 ? "s" : ""}
+            </Text>
+          )
           : null}
       </Text>
       <Text dimColor wrap="truncate">

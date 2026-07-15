@@ -27,15 +27,16 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
       ["^f", "conversation tree — branch at any turn / open a branch"],
       ["^b", "back to the parent (from a subagent branch)"],
       ["^k", "compact this session onto a summary branch (when the input is empty)"],
+      ["/handoff <goal>", "draft a fresh conversation from this thread, focused on the goal"],
       ["glyphs", "● root · ⑂ fork · ◆ subagent · ≣ compacted · ◇ tool step"],
     ],
   },
   {
     section: "work",
     keys: [
-      ["^d", "changes review (↑↓ file · j/k scroll · a apply · R revert)"],
+      ["^d", "changes review (↑↓ file · a apply · A apply all · R revert)"],
       ["^o", "model + worker picker"],
-      ["^t", "panels: net / mcp / skills (tab cycles)"],
+      ["^t", "panels: net / mcp / skills / theme (tab cycles; theme ↑↓ applies live)"],
     ],
   },
   {
@@ -59,7 +60,7 @@ export const HINTS = {
   picker: "j/k move · / filter · enter open · ^t new · ^x archive · esc back",
   new: "type dir query · ↑↓ pick · enter create · esc cancel",
   fork: "↑↓ move · enter branch here / open · esc close",
-  diff: "↑↓ file · j/k scroll · a apply file · R revert all · esc close",
+  diff: "↑↓ file · j/k scroll · a apply file · A apply all · R revert all · esc close",
   model: "↑↓ move · enter set · esc close",
   panel: "tab: cycle · ↑↓ move · enter select · x deprecate · h show hidden · esc close",
   help: "any key closes",

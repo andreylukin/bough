@@ -1,3 +1,4 @@
+import { palette } from "../theme.ts";
 import { Box, Text } from "ink";
 import type { DirHit } from "../api.ts";
 
@@ -8,7 +9,13 @@ export function NewSession(
   { query, hits, selected }: { query: string; hits: DirHit[]; selected: number },
 ) {
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
+    <Box
+      flexDirection="column"
+      borderStyle="round"
+      backgroundColor={palette.panel}
+      borderColor={palette.border}
+      paddingX={1}
+    >
       <Text bold>new session</Text>
       <Text>
         <Text dimColor>{"workspace: "}</Text>
@@ -17,7 +24,7 @@ export function NewSession(
       </Text>
       {hits.map((h, i) => (
         <Text key={h.path} inverse={i === selected} wrap="truncate">
-          {h.repo ? <Text color="green">{"◆ "}</Text> : <Text dimColor>{"◇ "}</Text>}
+          {h.repo ? <Text color={palette.accent}>{"◆ "}</Text> : <Text dimColor>{"◇ "}</Text>}
           {h.display}
         </Text>
       ))}

@@ -1,14 +1,15 @@
 // The tabbed side-panel: net (Claw Patrol feed + policy), mcp (server registry),
 // skills. Mirrors the web RightRail's tabs; App owns the data and key handling.
+import { palette, THEME_PRESETS } from "../theme.ts";
 import { Box, Text } from "ink";
 import type { NetRequest } from "../../schema/parts.ts";
-import type { McpStatus, NetConfig, NetStatus, SkillInfo } from "../api.ts";
+import type { McpStatus, NetConfig, NetStatus, SkillInfo, ThemeState } from "../api.ts";
 import { clip, relTime } from "../format.ts";
 
 // The management view is one tabbed panel: the session tree, the current
-// conversation's branch tree, and the net/mcp/skills tabs. ^p/^f/^t open it on a tab.
-export type PanelTab = "sessions" | "conversation" | "net" | "mcp" | "skills";
-export const PANEL_TABS: PanelTab[] = ["sessions", "conversation", "net", "mcp", "skills"];
+// conversation's branch tree, and the net/mcp/skills/theme tabs. ^p/^f/^t open it on a tab.
+export type PanelTab = "sessions" | "conversation" | "net" | "mcp" | "skills" | "theme";
+export const PANEL_TABS: PanelTab[] = ["sessions", "conversation", "net", "mcp", "skills", "theme"];
 
 /** The tab bar for the unified panel — active tab bold + green underline. */
 export function PanelTabs({ tab }: { tab: PanelTab }) {
@@ -17,7 +18,11 @@ export function PanelTabs({ tab }: { tab: PanelTab }) {
       {PANEL_TABS.map((t, i) => (
         <Text key={t}>
           {i > 0 ? "   " : ""}
-          <Text bold={t === tab} color={t === tab ? "green" : undefined} dimColor={t !== tab}>
+          <Text
+            bold={t === tab}
+            color={t === tab ? palette.accent : undefined}
+            dimColor={t !== tab}
+          >
             {t}
           </Text>
         </Text>
@@ -26,11 +31,10 @@ export function PanelTabs({ tab }: { tab: PanelTab }) {
   );
 }
 
-const VERDICT_COLOR: Record<NetRequest["verdict"], string> = {
-  allowed: "green",
-  denied: "red",
-  pending: "yellow",
-};
+// A function, not a const map: palette values change when a theme is applied
+// mid-run, and a module-level map would freeze the boot palette.
+const verdictColor = (v: NetRequest["verdict"]): string =>
+  v === "allowed" ? palette.accent : v === "denied" ? palette.error : palette.warn;
 
 function NetTab(
   { status, policy, feed, rows, scopeLabel }: {
@@ -49,7 +53,11 @@ function NetTab(
     <Box flexDirection="column">
       <Text>
         {status.enabled
-          ? <Text color={yolo ? "red" : "green"}>{yolo ? "⚠ YOLO (log-only)" : "● gating"}</Text>
+          ? (
+            <Text color={yolo ? palette.error : palette.accent}>
+              {yolo ? "⚠ YOLO (log-only)" : "● gating"}
+            </Text>
+          )
           : <Text dimColor>○ off</Text>}
         {policy
           ? (
@@ -63,7 +71,7 @@ function NetTab(
           : null}
       </Text>
       {status.caTrusted === false
-        ? <Text color="yellow" wrap="truncate">CA untrusted — {status.caTrustCommand}</Text>
+        ? <Text color={palette.warn} wrap="truncate">CA untrusted — {status.caTrustCommand}</Text>
         : null}
       <Box marginTop={1} flexDirection="column">
         <Text dimColor>{scopeLabel}</Text>
@@ -71,7 +79,7 @@ function NetTab(
           ? <Text dimColor>no gated requests yet</Text>
           : visible.map((r) => (
             <Text key={r.id} wrap="truncate">
-              <Text color={VERDICT_COLOR[r.verdict]}>
+              <Text color={verdictColor(r.verdict)}>
                 {r.verdict === "allowed" ? "✓" : r.verdict === "denied" ? "✗" : "⏸"}
               </Text>{" "}
               {r.verb ? <Text>{r.verb}{" "}</Text> : null}
@@ -100,7 +108,10 @@ function McpTab(
         const entry = mcp.registry.servers[name];
         return (
           <Text key={name} inverse={i === selected} wrap="truncate">
-            <Text color={conn?.alive ? "green" : active ? "yellow" : undefined} dimColor={!active}>
+            <Text
+              color={conn?.alive ? palette.accent : active ? palette.warn : undefined}
+              dimColor={!active}
+            >
               {conn?.alive ? "●" : active ? "◐" : "○"}
             </Text>{" "}
             {name}
@@ -114,7 +125,41 @@ function McpTab(
           </Text>
         );
       })}
-      {msg ? <Text color="yellow" wrap="wrap">{msg}</Text> : null}
+      {msg ? <Text color={palette.warn} wrap="wrap">{msg}</Text> : null}
+    </Box>
+  );
+}
+
+/** Swatch tokens shown per preset row, in order: surfaces, accent, text. */
+const SWATCH_TOKENS = ["bg", "panel", "panelInset", "green", "text"];
+
+// The theme tab auto-applies: moving the cursor IS the action (App PUTs the
+// hovered preset and the whole TUI recolors live), so rows carry no extra
+// "enter to apply" affordance.
+function ThemeTab(
+  { state, selected }: { state: ThemeState | null; selected: number },
+) {
+  if (!state) return <Text dimColor>loading theme…</Text>;
+  const currentName = state.theme?.name ?? "Default";
+  const isPreset = THEME_PRESETS.some((p) => p.name === currentName);
+  return (
+    <Box flexDirection="column">
+      <Text dimColor>
+        current: {currentName}
+        {isPreset ? "" : " (custom)"} — ↑↓ applies live (web UI on next load)
+      </Text>
+      {THEME_PRESETS.map((p, i) => {
+        // The row's own resolved colors — distinct from the live TUI `palette`.
+        const row = { ...state.defaults, ...p.colors };
+        const active = currentName === p.name;
+        return (
+          <Text key={p.name} inverse={i === selected} wrap="truncate">
+            <Text color={palette.accent}>{active ? "●" : " "}</Text> {p.name.padEnd(15)}{" "}
+            {SWATCH_TOKENS.map((t) => <Text key={t} color={row[t]}>██</Text>)}
+            <Text dimColor>{"  "}{p.note}</Text>
+          </Text>
+        );
+      })}
     </Box>
   );
 }
@@ -136,18 +181,21 @@ function SkillsTab({ skills, rows }: { skills: SkillInfo[] | null; rows: number 
 }
 
 export function Panel(
-  { tab, status, policy, feed, mcp, mcpSel, mcpMsg, skills, rows, netScopeLabel }: {
-    tab: PanelTab;
-    status: NetStatus | null;
-    policy: NetConfig | null;
-    feed: NetRequest[];
-    mcp: McpStatus | null;
-    mcpSel: number;
-    mcpMsg: string | null;
-    skills: SkillInfo[] | null;
-    rows: number;
-    netScopeLabel: string;
-  },
+  { tab, status, policy, feed, mcp, mcpSel, mcpMsg, skills, rows, netScopeLabel, theme, themeSel }:
+    {
+      tab: PanelTab;
+      status: NetStatus | null;
+      policy: NetConfig | null;
+      feed: NetRequest[];
+      mcp: McpStatus | null;
+      mcpSel: number;
+      mcpMsg: string | null;
+      skills: SkillInfo[] | null;
+      rows: number;
+      netScopeLabel: string;
+      theme: ThemeState | null;
+      themeSel: number;
+    },
 ) {
   // Content only — the unified panel container owns the border + tab bar.
   return (
@@ -164,6 +212,8 @@ export function Panel(
         )
         : tab === "mcp"
         ? <McpTab mcp={mcp} selected={mcpSel} msg={mcpMsg} />
+        : tab === "theme"
+        ? <ThemeTab state={theme} selected={themeSel} />
         : <SkillsTab skills={skills} rows={rows} />}
     </Box>
   );

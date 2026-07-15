@@ -1,3 +1,4 @@
+import { palette } from "../theme.ts";
 import { Box, Text } from "ink";
 import type { NetRequest } from "../../schema/parts.ts";
 import { HINTS } from "../keys.ts";
@@ -11,8 +12,14 @@ export function NetApproval(
 ) {
   const headers = detail && req.headers ? Object.entries(req.headers) : [];
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1}>
-      <Text color="yellow" bold>
+    <Box
+      flexDirection="column"
+      borderStyle="round"
+      backgroundColor={palette.panel}
+      borderColor={palette.warn}
+      paddingX={1}
+    >
+      <Text color={palette.warn} bold>
         ⏸ network hold{count > 1 ? ` (1 of ${count})` : ""}
       </Text>
       <Text>

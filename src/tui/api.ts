@@ -26,6 +26,14 @@ export interface WireDiff {
   source: ChangeSource;
   files: WireFileDiff[];
 }
+/** What POST changes/apply reports back — feeds the panel's feedback toast. */
+export interface ApplyOutcome {
+  applied: string[];
+  /** The user's checkout files were delivered to (external mode), else null. */
+  origin: string | null;
+  branch: string | null;
+  sealed: boolean;
+}
 export interface ModelOption {
   id: string;
   label: string;
@@ -38,6 +46,12 @@ export interface BoughConfig {
   workerOptions: ModelOption[];
   /** Which provider API keys are configured (booleans only — never values). */
   keys?: Record<KeyProvider, boolean>;
+}
+/** GET /theme: the stored theme (null = default palette) + the token contract. */
+export interface ThemeState {
+  theme: { name: string; colors: Record<string, string> } | null;
+  tokens: string[];
+  defaults: Record<string, string>;
 }
 // Shapes below mirror web/src/api.ts (the reference client), trimmed to TUI needs.
 export interface Usage {
@@ -180,7 +194,7 @@ export const api = {
   // Review payloads for a session's workspace changes.
   getChanges: (id: string) => j<{ diffs: WireDiff[] }>(`/sessions/${id}/changes`),
   applyChanges: (id: string, source: ChangeSource, paths: string[]) =>
-    j(`/sessions/${id}/changes/apply`, postJson({ source, paths })),
+    jmsg<ApplyOutcome>(`/sessions/${id}/changes/apply`, postJson({ source, paths })),
   revertChanges: (id: string) => j(`/sessions/${id}/changes/revert`, postJson({})),
 
   // Branching. Both return the new branch's Session (or throw the server's message).
@@ -196,6 +210,11 @@ export const api = {
       `/sessions/${id}/extract`,
       postJson(replaceSource ? { picks, replaceSource } : { picks }),
     ).then((r) => r.session),
+  // Handoff: the server drafts a self-contained opening prompt from this thread
+  // toward `goal` and attaches it to a fresh conversation (session.draft).
+  handoff: (id: string, goal: string) =>
+    jmsg<{ session: Session }>(`/sessions/${id}/handoff`, postJson({ goal }))
+      .then((r) => r.session),
   // Append copies of the source's picked messages onto an existing target session.
   moveInto: (targetId: string, sourceId: string, picks: { messageId: string }[]) =>
     jmsg<{ session: Session }>(`/sessions/${targetId}/move-into`, postJson({ sourceId, picks }))
@@ -216,6 +235,15 @@ export const api = {
     }),
   setWorker: (worker: string) =>
     j<{ worker: string }>("/config", { ...postJson({ worker }), method: "PATCH" }),
+
+  // Web-UI theme: stored palette + token contract; PUT applies, DELETE resets.
+  getTheme: () => j<ThemeState>("/theme"),
+  putTheme: (name: string, colors: Record<string, string>) =>
+    jmsg<{ theme: ThemeState["theme"] }>("/theme", {
+      ...postJson({ name, colors }),
+      method: "PUT",
+    }),
+  resetTheme: () => j<{ theme: null }>("/theme", { method: "DELETE" }),
 
   skills: () => j<{ skills: SkillInfo[] }>("/skills").then((r) => r.skills),
 

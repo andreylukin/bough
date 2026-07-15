@@ -32,6 +32,9 @@ export interface Store {
   // Messages typed while a turn was running — staged locally, flushed once idle.
   queued: string[];
   notice: string | null;
+  // Local-worker blurb of what the running turn's program is doing ("running the
+  // test suite") — shown next to the working spinner; null when idle/unknown.
+  activity: string | null;
   // Review payloads for the open session; refetched on changes.updated.
   changes: WireDiff[];
   // Token usage for the open session (status-bar meter); zeroed on session switch.
@@ -55,6 +58,8 @@ export interface Store {
   compact: () => Promise<Session | null>;
   compactPicks: (msgIds: string[]) => Promise<Session | null>;
   extractPicks: (msgIds: string[]) => Promise<Session | null>;
+  /** Draft a goal-focused opening prompt from this thread onto a fresh conversation. */
+  handoff: (goal: string) => Promise<Session | null>;
   deleteRange: (rangeIds: string[]) => Promise<Session | null>;
   moveRange: (targetId: string, rangeIds: string[]) => Promise<Session | null>;
   applyChanges: (source: WireDiff["source"], paths: string[]) => void;
@@ -76,6 +81,7 @@ export function useStore(initialSessions: Session[]): Store {
   const pending = pendings[0] ?? null;
   const [queued, setQueued] = useState<string[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
+  const [activity, setActivity] = useState<string | null>(null);
   const [changes, setChanges] = useState<WireDiff[]>([]);
   const [usage, setUsage] = useState<Usage>(USAGE_ZERO);
   const [feed, setFeed] = useState<NetRequest[]>([]);
@@ -134,6 +140,7 @@ export function useStore(initialSessions: Session[]): Store {
     setCurrentId(id);
     setStreaming({});
     setQueued([]); // staged messages belong to the session they were typed in
+    setActivity(null); // a blurb describes the session it was born in
     setChanges([]);
     setUsage(USAGE_ZERO);
     setSessions((prev) => prev.map((s) => (s.id === id && s.unseen ? { ...s, unseen: false } : s)));
@@ -222,6 +229,21 @@ export function useStore(initialSessions: Session[]): Store {
   const compactPicks = useCallback((ids: string[]) => rangeOp(ids, api.compact), [rangeOp]);
   const extractPicks = useCallback((ids: string[]) => rangeOp(ids, api.extract), [rangeOp]);
 
+  // Handoff (focused threads instead of compaction): the server drafts a
+  // self-contained opening prompt from this thread toward `goal` and attaches it
+  // to a fresh conversation as session.draft — the composer prefills from it and
+  // the first send consumes it.
+  const handoff = useCallback(async (goal: string) => {
+    const id = currentRef.current;
+    if (!id) return null;
+    try {
+      return await api.handoff(id, goal);
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : String(e));
+      return null;
+    }
+  }, []);
+
   // Delete a section: branch the conversation WITHOUT the picked turns (extract the
   // complement), then archive the original — recoverable until the 30-day purge.
   const deleteRange = useCallback(async (rangeIds: string[]) => {
@@ -269,8 +291,21 @@ export function useStore(initialSessions: Session[]): Store {
     const id = currentRef.current;
     if (!id || paths.length === 0) return;
     // The changes.updated event triggers the refetch; no optimistic mutation needed.
-    api.applyChanges(id, source, paths).catch(() => refreshChangesRef.current(id));
-  }, []);
+    api.applyChanges(id, source, paths).then((r) => {
+      // Say where the files actually went — silence here reads as a failed no-op.
+      const n = r.applied.length;
+      if (n === 0) return notify("nothing to apply");
+      const files = `${n} file${n === 1 ? "" : "s"}`;
+      if (r.origin) {
+        notify(`✓ ${files} → ${r.origin}${r.sealed && r.branch ? ` · sealed as ${r.branch}` : ""}`);
+      } else {
+        notify(`✓ accepted ${files}${r.branch ? ` · kept on ${r.branch}` : ""}`);
+      }
+    }, (e) => {
+      setNotice(e instanceof Error ? e.message : String(e));
+      refreshChangesRef.current(id);
+    });
+  }, [notify]);
 
   const revertChanges = useCallback(() => {
     const id = currentRef.current;
@@ -359,6 +394,11 @@ export function useStore(initialSessions: Session[]): Store {
         }
         break;
       }
+      case "session.activity": {
+        const { text } = ev.data as { text: string };
+        if (ev.sessionId === currentRef.current) setActivity(text);
+        break;
+      }
       case "message.finished": {
         const { messageId } = ev.data as { messageId: string };
         if (ev.sessionId) {
@@ -368,6 +408,7 @@ export function useStore(initialSessions: Session[]): Store {
               s.id === ev.sessionId ? { ...s, busy: false, unseen: s.unseen || !seen } : s
             )
           );
+          if (ev.sessionId === currentRef.current) setActivity(null);
         }
         setThread((prev) => prev.map((m) => (m.id === messageId ? { ...m, pending: false } : m)));
         setStreaming((prev) => {
@@ -471,6 +512,7 @@ export function useStore(initialSessions: Session[]): Store {
     pendingCount: pendings.length,
     queued,
     notice,
+    activity,
     changes,
     usage,
     feed,
@@ -485,6 +527,7 @@ export function useStore(initialSessions: Session[]): Store {
     compact,
     compactPicks,
     extractPicks,
+    handoff,
     deleteRange,
     moveRange,
     applyChanges,

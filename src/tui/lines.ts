@@ -5,6 +5,7 @@
 import wrapAnsi from "wrap-ansi";
 import type { Message, Role } from "../schema/parts.ts";
 import { COLOR, highlightCode, md, outputText, segmentParts, toolSummary } from "./format.ts";
+import { fgParams, palette } from "./theme.ts";
 
 export interface VLine {
   text: string;
@@ -16,19 +17,24 @@ export interface VLine {
 const SGR = (n: number | string, s: string) => (COLOR ? `\x1b[${n}m${s}\x1b[0m` : s);
 const bold = (s: string) => SGR(1, s);
 const dim = (s: string) => SGR(2, s);
-const cyan = (s: string) => SGR(36, s);
-const green = (s: string) => SGR(32, s);
-const yellow = (s: string) => SGR(33, s);
-const red = (s: string) => SGR(31, s);
+// Hue helpers read the live theme palette (truecolor) — evaluated per call, so
+// an applied theme recolors rebuilt lines without a restart.
+const cyan = (s: string) => SGR(fgParams(palette.info), s);
+const green = (s: string) => SGR(fgParams(palette.accent), s);
+const yellow = (s: string) => SGR(fgParams(palette.warn), s);
+const red = (s: string) => SGR(fgParams(palette.error), s);
 
 // One accent: green is bough's color (identity + affirmative status); the user
-// speaks in plain bright text, cyan is reserved for code.
-const ROLE_LABEL: Record<Role, string> = {
-  user: bold("you"),
-  supervisor: bold(green("bough")),
-  worker: dim("worker"),
-  system: bold(yellow("system")),
-};
+// speaks in plain bright text, cyan is reserved for code. A function (not a
+// const map) so labels pick up the palette active at render time.
+const roleLabel = (role: Role): string =>
+  role === "user"
+    ? bold("you")
+    : role === "supervisor"
+    ? bold(green("bough"))
+    : role === "worker"
+    ? dim("worker")
+    : bold(yellow("system"));
 
 function wrap(text: string, width: number): string[] {
   return wrapAnsi(text, Math.max(20, width), { hard: true, trim: false }).split("\n");
@@ -202,7 +208,7 @@ export function messageLines(
   const body: VLine[] = [];
   const w = width - 2;
   out.push({ text: "" });
-  out.push({ text: ROLE_LABEL[msg.role] });
+  out.push({ text: roleLabel(msg.role) });
   // Bodies hang 2 columns under the role label so turns read as blocks.
   segmentParts(msg.parts).forEach((s, i) => {
     const key = `${msg.id}:${i}`;

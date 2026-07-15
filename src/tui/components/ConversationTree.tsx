@@ -1,3 +1,4 @@
+import { palette } from "../theme.ts";
 import { Box, Text } from "ink";
 import type { Message, Part } from "../../schema/parts.ts";
 import type { TuiSession } from "../store.ts";
@@ -156,7 +157,7 @@ export function ConversationTree(
           return (
             <Text key={`s-${i}`} inverse={sel} wrap="truncate">
               {"     "}
-              <Text color="green">◇</Text> <Text dimColor>{it.step.label}</Text>
+              <Text color={palette.accent}>◇</Text> <Text dimColor>{it.step.label}</Text>
             </Text>
           );
         }
@@ -167,7 +168,7 @@ export function ConversationTree(
             <Text key={`b-${s.id}`} inverse={sel} wrap="truncate">
               {"    "}
               <Text
-                color={s.kind === "subagent" ? "green" : undefined}
+                color={s.kind === "subagent" ? palette.accent : undefined}
                 dimColor={s.kind !== "subagent"}
               >
                 {KIND_GLYPH[s.kind] ?? "•"}
@@ -184,9 +185,9 @@ export function ConversationTree(
         const preview = text && "text" in text ? clip(text.text.split("\n")[0], 66) : "(no text)";
         return (
           <Text key={`n-${n.msg.id}`} inverse={sel} wrap="truncate">
-            <Text color="green">{inRange ? "▍" : " "}</Text>
-            <Text color="cyan" bold>you</Text> {preview}
-            {n.tip ? <Text color="green">{"  "}← here</Text> : null}
+            <Text color={palette.accent}>{inRange ? "▍" : " "}</Text>
+            <Text color={palette.info} bold>you</Text> {preview}
+            {n.tip ? <Text color={palette.accent}>{"  "}← here</Text> : null}
           </Text>
         );
       })}

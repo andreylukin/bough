@@ -1,3 +1,4 @@
+import { palette } from "../theme.ts";
 import { Box, Text } from "ink";
 import type { BoughConfig, KeyProvider } from "../api.ts";
 
@@ -45,7 +46,13 @@ export function ModelPicker(
   let lastKind: string | null = null;
   const effectiveModel = sessionModel ?? cfg.model;
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
+    <Box
+      flexDirection="column"
+      borderStyle="round"
+      backgroundColor={palette.panel}
+      borderColor={palette.border}
+      paddingX={1}
+    >
       {entries.map((e, i) => {
         const header = e.kind !== lastKind;
         lastKind = e.kind;
@@ -59,7 +66,7 @@ export function ModelPicker(
           <Box key={`${e.kind}:${e.id}`} flexDirection="column">
             {header && <Text bold>{SECTION[e.kind]}</Text>}
             <Text inverse={i === selected && !editing} wrap="truncate">
-              <Text color="green">{active ? "●" : " "}</Text> {e.label}
+              <Text color={palette.accent}>{active ? "●" : " "}</Text> {e.label}
               {editing
                 ? (
                   <Text>

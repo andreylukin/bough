@@ -3,6 +3,7 @@
 // `deno task tui`.
 import { render } from "ink";
 import { api, AuthError, BASE, setCookie } from "./api.ts";
+import { loadTheme } from "./theme.ts";
 import { loadCookie, saveCookie } from "./state.ts";
 import { enterTui, filteredStdin, leaveTui } from "./mouse.ts";
 import { App } from "./components/App.tsx";
@@ -68,6 +69,9 @@ async function preflight() {
 
 async function main() {
   const sessions = await preflight();
+  // The stored web-UI theme also colors the TUI (accents/borders) — load it
+  // before first paint so the initial frame is already themed.
+  await loadTheme();
   // New conversations default to where `bough` was launched (scripts/bough exports
   // this before cd'ing to the repo root).
   const defaultWorkspace = Deno.env.get("BOUGH_TUI_CWD") ?? Deno.cwd();

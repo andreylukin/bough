@@ -1,3 +1,4 @@
+import { palette } from "../theme.ts";
 import { Box, Text } from "ink";
 import { relTime } from "../format.ts";
 import type { TuiSession } from "../store.ts";
@@ -43,12 +44,14 @@ export function flattenTree(all: TuiSession[]): TreeRow[] {
   return out;
 }
 
-// Per-kind glyph + how to clean the auto-generated title prefix.
-const KIND: Record<string, { glyph: string; color?: string; strip?: RegExp }> = {
-  root: { glyph: "●", color: "green" },
+// Per-kind glyph + how to clean the auto-generated title prefix. `accent: true`
+// resolves to palette.accent at render time (a hex here would freeze the boot
+// palette — the theme can change mid-run).
+const KIND: Record<string, { glyph: string; accent?: boolean; strip?: RegExp }> = {
+  root: { glyph: "●", accent: true },
   fork: { glyph: "⑂", strip: /^fork · / },
   compaction: { glyph: "≣", strip: /^compacted · / },
-  subagent: { glyph: "◆", color: "green", strip: /^subagent · / },
+  subagent: { glyph: "◆", accent: true, strip: /^subagent · / },
 };
 
 export function SessionPicker(
@@ -76,12 +79,12 @@ export function SessionPicker(
     <Box flexDirection="column">
       {moveHint
         ? (
-          <Text color="green">
+          <Text color={palette.accent}>
             ▸ copy here: pick a destination · enter appends the turns · esc cancels
           </Text>
         )
         : msg
-        ? <Text color="yellow">{msg}</Text>
+        ? <Text color={palette.warn}>{msg}</Text>
         : showDeprecated
         ? <Text dimColor>(showing deprecated)</Text>
         : null}
@@ -101,14 +104,16 @@ export function SessionPicker(
         const k = KIND[s.kind] ?? { glyph: "•" };
         // Status dot: busy pulse, unseen result, or "you are here"; else blank.
         const dot = s.busy ? "⋯" : s.unseen ? "●" : here ? "▸" : " ";
-        const dotColor = s.busy ? "yellow" : "green";
+        const dotColor = s.busy ? palette.warn : palette.accent;
         const title = (s.title || "(untitled)").replace(k.strip ?? /^\b$/, "");
         return (
           <Box key={s.id} justifyContent="space-between" gap={2}>
             <Text inverse={sel} wrap="truncate">
               <Text color={dotColor} dimColor={dot === " "}>{dot}</Text>{" "}
               <Text dimColor>{prefix}</Text>
-              <Text color={k.color} dimColor={!k.color}>{k.glyph}</Text>{" "}
+              <Text color={k.accent ? palette.accent : undefined} dimColor={!k.accent}>
+                {k.glyph}
+              </Text>{" "}
               <Text bold={here} dimColor={!!s.deprecatedAt} strikethrough={!!s.deprecatedAt}>
                 {title}
               </Text>
@@ -122,7 +127,7 @@ export function SessionPicker(
       {rowsList.length === 0 && <Text dimColor>no sessions — ^t creates one</Text>}
       <Text dimColor>● root · ⑂ fork · ◆ subagent · ≣ compacted</Text>
       <Text dimColor>
-        j/k move · enter open · ^t new · ^x archive · x deprecate · h show hidden
+        j/k move · / filter · enter open · ^t new · ^x archive · x deprecate · h show hidden
       </Text>
     </Box>
   );
