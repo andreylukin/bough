@@ -19,6 +19,7 @@
  * so a fail-closed default is safe. With the flag set to 0, no proxy starts and exec
  * runs unrouted.
  */
+import { join } from "node:path";
 import { caEnv, CertAuthority } from "./ca.ts";
 import { ProxyServer } from "./proxy.ts";
 import { createGate, type Gate } from "./gate.ts";
@@ -61,6 +62,27 @@ function awsBrokerEnv(): Record<string, string> {
     AWS_CONTAINER_CREDENTIALS_FULL_URI: url,
     AWS_CONTAINER_AUTHORIZATION_TOKEN: token,
   };
+}
+
+/**
+ * Per-session kubectl cache dir (KUBECACHEDIR). kubectl's discovery/HTTP cache
+ * defaults to ~/.kube/cache, which the Seatbelt read-denylist covers wholesale —
+ * without this, every kubectl run stalls on cache read/write denials. Temp paths
+ * are already in the profile's write-allow. Created eagerly: kubectl won't mkdir -p
+ * a missing parent chain itself.
+ */
+function kubeCacheDir(sessionId: string): string {
+  const dir = join(
+    Deno.env.get("TMPDIR") ?? "/tmp",
+    "bough-kube-cache",
+    sessionId || "default",
+  );
+  try {
+    Deno.mkdirSync(dir, { recursive: true });
+  } catch {
+    // Racing a concurrent create is fine; anything else surfaces in kubectl itself.
+  }
+  return dir;
 }
 
 /** Useless placeholder token; the proxy overwrites the header with the real PAT. */
@@ -317,7 +339,12 @@ export class ClawpatrolGateway {
       BOUGH_PORT: Deno.env.get("BOUGH_PORT") ?? "4321",
       // kubectl reads clusters from KUBECONFIG; point it at the CA-rewritten copy so
       // it trusts the proxy's leaf. Absent when there's no kubeconfig to rewrite.
-      ...(this.#kube ? { KUBECONFIG: this.#kube.configPath } : {}),
+      // KUBECACHEDIR moves kubectl's discovery/HTTP cache off ~/.kube/cache (which
+      // Seatbelt denies wholesale — ~/.kube is credential-adjacent) into a
+      // per-session temp dir the write-allow already covers.
+      ...(this.#kube
+        ? { KUBECONFIG: this.#kube.configPath, KUBECACHEDIR: kubeCacheDir(sessionId ?? "") }
+        : {}),
       // AWS read-only creds via the local broker (container-credentials protocol).
       // Direct-to-loopback (NO_PROXY covers 127.0.0.1); absent unless configured.
       ...awsBrokerEnv(),

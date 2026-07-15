@@ -1,4 +1,4 @@
-import { assertEquals, assertNotEquals } from "jsr:@std/assert@1";
+import { assertEquals, assertNotEquals, assertStringIncludes } from "jsr:@std/assert@1";
 import { Bus } from "../bus.ts";
 import { Db } from "../db/db.ts";
 import { ClawpatrolGateway } from "./gateway.ts";
@@ -101,7 +101,9 @@ Deno.test("gateway: BOUGH_CLAWPATROL=0 opts out — no listeners, empty env", as
     assertEquals(gateway.status().running, false);
     await gateway.stop();
   } finally {
-    prev !== undefined ? Deno.env.set("BOUGH_CLAWPATROL", prev) : Deno.env.delete("BOUGH_CLAWPATROL");
+    prev !== undefined
+      ? Deno.env.set("BOUGH_CLAWPATROL", prev)
+      : Deno.env.delete("BOUGH_CLAWPATROL");
   }
 });
 
@@ -120,4 +122,53 @@ Deno.test("gateway: turn.finished expires the session's parked holds", async () 
     assertEquals(decision.verdict, "deny");
     assertEquals(g.gate!.pending, 0);
   });
+});
+
+Deno.test("gateway: envFor points kubectl at the rewritten config + a per-session cache dir", async () => {
+  // A minimal EKS-shaped kubeconfig (mirrors kubeconfig.test.ts): one cluster,
+  // exec auth — enough for setupKube to rewrite it and arm the kube env.
+  const kc = await Deno.makeTempFile({ prefix: "bough-gw-kc-", suffix: ".yaml" });
+  const ca = "-----BEGIN CERTIFICATE-----\nCLUSTERROOT\n-----END CERTIFICATE-----\n";
+  await Deno.writeTextFile(
+    kc,
+    [
+      "apiVersion: v1",
+      "kind: Config",
+      "clusters:",
+      "- name: dev",
+      "  cluster:",
+      "    server: https://EABF96.gr7.us-east-2.eks.amazonaws.com",
+      `    certificate-authority-data: ${btoa(ca)}`,
+      "users:",
+      "- name: dev",
+      "  user:",
+      "    exec:",
+      "      apiVersion: client.authentication.k8s.io/v1beta1",
+      "      command: aws",
+      "      args: [eks, get-token, --cluster-name, dev]",
+      "contexts:",
+      "- name: dev",
+      "  context: { cluster: dev, user: dev }",
+      "current-context: dev",
+      "",
+    ].join("\n"),
+  );
+  const prev = Deno.env.get("KUBECONFIG");
+  Deno.env.set("KUBECONFIG", kc);
+  try {
+    await withGateway(async (g) => {
+      const env = await g.envFor("sKube");
+      // KUBECONFIG is the CA-rewritten copy in the net dir, never the original.
+      assertNotEquals(env.KUBECONFIG, kc);
+      assertStringIncludes(env.KUBECONFIG, "kubeconfig");
+      // The cache dir is per-session, exists, and sits under the temp write-allow.
+      assertStringIncludes(env.KUBECACHEDIR, "bough-kube-cache");
+      assertStringIncludes(env.KUBECACHEDIR, "sKube");
+      const st = await Deno.stat(env.KUBECACHEDIR);
+      assertEquals(st.isDirectory, true);
+    });
+  } finally {
+    prev !== undefined ? Deno.env.set("KUBECONFIG", prev) : Deno.env.delete("KUBECONFIG");
+    await Deno.remove(kc).catch(() => {});
+  }
 });
