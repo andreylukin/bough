@@ -9,7 +9,7 @@
  * BOUGH_WORKER_LOCAL_ONLY=1 wins over this flag: local-only is the privacy tier,
  * and a mode that ships command output to a remote API must never override it.
  */
-import { anthropicClient } from "../supervisor/llm.ts";
+import { clientFor } from "../supervisor/llm.ts";
 
 const DEFAULT_FRONTIER = "claude-haiku-4-5";
 
@@ -57,7 +57,7 @@ export interface FrontierParams {
 export async function frontierComplete(params: FrontierParams): Promise<string> {
   const model = frontierWorkerModel();
   if (!model) throw new Error("frontier worker mode is not enabled");
-  const result = await anthropicClient().run(
+  const result = await clientFor(model).run(
     {
       model,
       system: params.system,
