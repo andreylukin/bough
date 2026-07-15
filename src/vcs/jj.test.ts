@@ -283,6 +283,53 @@ Deno.test({
   },
 });
 
+Deno.test({
+  // Regression: adopting the FIRST of two parallel subagents rewrites the spawner's
+  // change, which rebases the second subagent's working-copy commit and leaves its
+  // workspace stale — adoptChanges' opening snapshot (`jj st`) then refused with
+  // "The working copy is stale" and the second adopt failed. snapshot() must repair
+  // staleness and retry so every parallel branch stays adoptable.
+  name: "jj: adoptChanges adopts a second parallel subagent whose copy went stale",
+  ignore: !jjAvailable,
+  fn: async () => {
+    const repo = await tempGitRepo();
+    const dir1 = await Deno.makeTempDir({ prefix: "jjtest-ws-" });
+    const dir2 = await Deno.makeTempDir({ prefix: "jjtest-ws-" });
+    try {
+      await jj.ensureWorkspace(repo, "spawner");
+      await Deno.remove(dir1);
+      await jj.addWorkspace(repo, "sub1", dir1, jj.bookmarkFor("spawner"));
+      await Deno.remove(dir2);
+      await jj.addWorkspace(repo, "sub2", dir2, jj.bookmarkFor("spawner"));
+
+      // Both subagents work in parallel on their own copies; their finishing
+      // turns snapshot the work (buildResult's diff), as in the real flow.
+      await Deno.writeTextFile(`${dir1}/sub1.txt`, "sub1-work\n");
+      await Deno.writeTextFile(`${dir2}/sub2.txt`, "sub2-work\n");
+      await jj.snapshot(dir1);
+      await jj.snapshot(dir2);
+
+      // Adopting sub1 rewrites the spawner change; sub2's working-copy commit is
+      // rebased under it and its workspace goes stale.
+      await jj.adoptChanges(repo, dir1, "sub1", "spawner");
+      // Previously threw: jj st failed (1): The working copy is stale.
+      await jj.adoptChanges(repo, dir2, "sub2", "spawner");
+
+      assertEquals(await Deno.readTextFile(`${repo}/sub1.txt`), "sub1-work\n");
+      assertEquals(await Deno.readTextFile(`${repo}/sub2.txt`), "sub2-work\n");
+      const spawnerDiff = await jj.diff(repo, "spawner");
+      assertEquals(spawnerDiff.files.map((f) => f.path).sort(), ["sub1.txt", "sub2.txt"]);
+      // Both subagent branches emptied but stay continuable.
+      assertEquals((await jj.diff(dir1, "sub1")).files.length, 0);
+      assertEquals((await jj.diff(dir2, "sub2")).files.length, 0);
+    } finally {
+      await Deno.remove(repo, { recursive: true });
+      await Deno.remove(dir1, { recursive: true }).catch(() => {});
+      await Deno.remove(dir2, { recursive: true }).catch(() => {});
+    }
+  },
+});
+
 /** Set env vars for the duration of `fn`, restoring previous values after. */
 async function withEnv(vars: Record<string, string>, fn: () => Promise<void>): Promise<void> {
   const prev = new Map<string, string | undefined>();

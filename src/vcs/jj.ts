@@ -465,7 +465,17 @@ export async function adoptChanges(
  * that must reflect the latest edits). Returns the status text.
  */
 export async function snapshot(repo: string): Promise<string> {
-  return await jj(repo, ["st"]);
+  try {
+    return await jj(repo, ["st"]);
+  } catch (e) {
+    // A sibling workspace's op (a parallel subagent's snapshot, an adopt) can
+    // rewrite this working copy's commit, leaving it stale — jj then refuses to
+    // snapshot at all, which broke adopting the second of two parallel subagents.
+    // Repair and retry once; anything else is a real failure.
+    if (!String(e).includes("stale")) throw e;
+    await jj(repo, ["workspace", "update-stale"]);
+    return await jj(repo, ["st"]);
+  }
 }
 
 /**
