@@ -11,8 +11,16 @@ Deno.test("validateInstall: github default contributes API + git hosts and passe
   assertEquals(r.contribution.allowHosts, ["api.github.com", "github.com"]);
   assert(r.contribution.rules?.some((rule) => rule.name === "github-graphql-mutation"));
   // git fetch allowed, push held — path-distinguishable
-  assert(r.contribution.rules?.some((rule) => rule.name === "github-git-fetch" && rule.verdict === "allow"));
-  assert(r.contribution.rules?.some((rule) => rule.name === "github-git-push" && rule.verdict === "hold"));
+  assert(
+    r.contribution.rules?.some((rule) =>
+      rule.name === "github-git-fetch" && rule.verdict === "allow"
+    ),
+  );
+  assert(
+    r.contribution.rules?.some((rule) =>
+      rule.name === "github-git-push" && rule.verdict === "hold"
+    ),
+  );
 });
 
 Deno.test("validateInstall: wrong param type throws InstallError", () => {

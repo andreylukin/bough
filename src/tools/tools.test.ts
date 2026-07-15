@@ -90,7 +90,10 @@ Deno.test({
   ignore: Deno.build.os !== "darwin",
   async fn() {
     const dir = await Deno.makeTempDir();
-    const ctx = { workspace: dir, sandbox: { sessionDir: `${dir}/.snap`, scratchDir: `${dir}/.scratch` } };
+    const ctx = {
+      workspace: dir,
+      sandbox: { sessionDir: `${dir}/.snap`, scratchDir: `${dir}/.scratch` },
+    };
     const escape = `${Deno.env.get("HOME")}/bough-seatbelt-escape-${crypto.randomUUID()}.txt`;
     try {
       await bash.run({ command: "echo hi > inside.txt" }, ctx);

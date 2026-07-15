@@ -23,7 +23,7 @@ const OLD = [
 // The file drifted: indentation and quote style changed.
 const DRIFTED = [
   "function greet(name) {",
-  "    console.log(\"hello \" + name);",
+  '    console.log("hello " + name);',
   "    return name.length;",
   "}",
 ].join("\n");

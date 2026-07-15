@@ -28,7 +28,9 @@ export const editFile: ToolDef = {
     if (count === 0) {
       // Fast-apply: the local worker locates the drifted line range the edit meant
       // to match; deterministic checks in reconcileEdit decide. Null = fail as before.
-      const reconciled = old_string === "" ? null : await reconcileEdit(text, old_string, new_string);
+      const reconciled = old_string === ""
+        ? null
+        : await reconcileEdit(text, old_string, new_string);
       if (reconciled !== null) {
         await Deno.writeTextFile(full, reconciled);
         return `edited ${path} (old_string was not an exact match; the local worker ` +

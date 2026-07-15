@@ -64,7 +64,9 @@ let warnedMissing = false;
 function warnMissingBuildOnce(root: string): void {
   if (warnedMissing) return;
   warnedMissing = true;
-  console.warn(`[static] no web build at ${root} — serving placeholder. Run: cd web && npm run build`);
+  console.warn(
+    `[static] no web build at ${root} — serving placeholder. Run: cd web && npm run build`,
+  );
 }
 
 /**

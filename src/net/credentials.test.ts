@@ -14,7 +14,11 @@ async function valueOf(rule: CredentialRule): Promise<string> {
 Deno.test("bindingRules: reads the token from bough's env at call time (rotation-safe)", async () => {
   Deno.env.set("BOUGH_TEST_GH_TOKEN", "ghp_first");
   try {
-    const [rule] = bindingRules([{ host: "api.github.com", header: "authorization", env: "BOUGH_TEST_GH_TOKEN" }]);
+    const [rule] = bindingRules([{
+      host: "api.github.com",
+      header: "authorization",
+      env: "BOUGH_TEST_GH_TOKEN",
+    }]);
     assertEquals(rule.host, "api.github.com");
     assertEquals(rule.header, "authorization");
     assertEquals(await valueOf(rule), "Bearer ghp_first");
@@ -53,7 +57,10 @@ Deno.test("resolveCredentials: bundle bindings come first, kube exec creds last"
       header: "authorization",
       value: () => Promise.resolve("Bearer minted"),
     }];
-    const rules = resolveCredentials(cfg([{ host: "api.github.com", header: "authorization", env: "BOUGH_TEST_TOK" }]), kube);
+    const rules = resolveCredentials(
+      cfg([{ host: "api.github.com", header: "authorization", env: "BOUGH_TEST_TOK" }]),
+      kube,
+    );
     assertEquals(rules.map((r) => r.host), ["api.github.com", "eks.example.com"]);
     assertEquals(await valueOf(rules[0]), "Bearer t");
     assertEquals(await valueOf(rules[1]), "Bearer minted");

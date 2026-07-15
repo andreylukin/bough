@@ -126,7 +126,8 @@ if one was set.`,
   },
   mcp: {
     name: "mcp",
-    description: "Manage this session's MCP servers: status, register, enable/disable, prove they run",
+    description:
+      "Manage this session's MCP servers: status, register, enable/disable, prove they run",
     body: `Manage MCP servers for this session via the bough API at
 http://127.0.0.1:\${BOUGH_PORT:-4321} (loopback is reachable from your shell and bypasses
 the egress proxy). $BOUGH_SESSION in your shell env is this session's id; carry

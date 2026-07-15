@@ -49,8 +49,16 @@ export function recoverOrphanedTurns(db: Db, bus: Bus): number {
     };
     const parts = [...msg.parts, note];
     db.updateMessage(msg.id, parts, false);
-    bus.publish({ type: "message.part", sessionId: msg.sessionId, data: { messageId: msg.id, part: note } });
-    bus.publish({ type: "message.finished", sessionId: msg.sessionId, data: { messageId: msg.id } });
+    bus.publish({
+      type: "message.part",
+      sessionId: msg.sessionId,
+      data: { messageId: msg.id, part: note },
+    });
+    bus.publish({
+      type: "message.finished",
+      sessionId: msg.sessionId,
+      data: { messageId: msg.id },
+    });
   }
   return stranded.length;
 }

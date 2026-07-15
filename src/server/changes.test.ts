@@ -3,7 +3,7 @@ import { Db } from "../db/db.ts";
 import { Bus } from "../bus.ts";
 import * as jj from "../vcs/jj.ts";
 import * as clonefile from "../vcs/clonefile.ts";
-import { createHandler, type AppCtx } from "./app.ts";
+import { type AppCtx, createHandler } from "./app.ts";
 import type { BoughEvent, Session } from "../schema/parts.ts";
 import type { Diff } from "../schema/changes.ts";
 
@@ -33,7 +33,8 @@ const cpAvailable = (await canRun("git")) && (await canRun("cp"));
 async function tempGitRepo(): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: "chg-" });
   const sh = async (bin: string, args: string[]) => {
-    const { code } = await new Deno.Command(bin, { args, cwd: dir, stdout: "null", stderr: "null" }).output();
+    const { code } = await new Deno.Command(bin, { args, cwd: dir, stdout: "null", stderr: "null" })
+      .output();
     if (code !== 0) throw new Error(`${bin} ${args.join(" ")}`);
   };
   await sh("git", ["init", "-q", "."]);
@@ -54,7 +55,9 @@ Deno.test("workspace persists on create and returns on the session", async () =>
   const created = await (await h(jsonReq("POST", "/sessions", { title: "w", workspace: proj })))
     .json() as Session;
   assertEquals(created.workspace, proj);
-  const got = await (await h(jsonReq("GET", `/sessions/${created.id}`))).json() as { session: Session };
+  const got = await (await h(jsonReq("GET", `/sessions/${created.id}`))).json() as {
+    session: Session;
+  };
   assertEquals(got.session.workspace, proj);
   c.db.close();
   await Deno.remove(proj, { recursive: true });
@@ -82,12 +85,19 @@ Deno.test("changes endpoints 404 on unknown session; revert 400 without a jj wor
   const c = ctx();
   const h = createHandler(c);
   assertEquals((await h(jsonReq("GET", "/sessions/nope/changes"))).status, 404);
-  assertEquals((await h(jsonReq("POST", "/sessions/nope/changes/apply", { source: "jj", paths: [] }))).status, 404);
+  assertEquals(
+    (await h(jsonReq("POST", "/sessions/nope/changes/apply", { source: "jj", paths: [] }))).status,
+    404,
+  );
   assertEquals((await h(jsonReq("POST", "/sessions/nope/changes/revert", {}))).status, 404);
   // a real session with no jj workspace can't be reverted — or jj-applied
   const s = await (await h(jsonReq("POST", "/sessions", { title: "s" }))).json() as Session;
   assertEquals((await h(jsonReq("POST", `/sessions/${s.id}/changes/revert`, {}))).status, 400);
-  assertEquals((await h(jsonReq("POST", `/sessions/${s.id}/changes/apply`, { source: "jj", paths: [] }))).status, 400);
+  assertEquals(
+    (await h(jsonReq("POST", `/sessions/${s.id}/changes/apply`, { source: "jj", paths: [] })))
+      .status,
+    400,
+  );
   c.db.close();
 });
 
@@ -101,7 +111,8 @@ Deno.test({
     const c = ctx();
     const h = createHandler(c);
     try {
-      const s = await (await h(jsonReq("POST", "/sessions", { title: "s", workspace: repo }))).json() as Session;
+      const s = await (await h(jsonReq("POST", "/sessions", { title: "s", workspace: repo })))
+        .json() as Session;
       await jj.ensureWorkspace(repo, s.id); // what the turn runner does on first turn
       await Deno.writeTextFile(`${repo}/new.txt`, "hi\n");
 
@@ -109,7 +120,9 @@ Deno.test({
       c.bus.subscribe((e) => events.push(e));
 
       // diff shows the new file, tagged source jj
-      const { diffs } = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as { diffs: Diff[] };
+      const { diffs } = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
+        diffs: Diff[];
+      };
       assertEquals(diffs.length, 1);
       assertEquals(diffs[0].source, "jj");
       assertEquals(diffs[0].files.map((f) => f.path), ["new.txt"]);
@@ -117,16 +130,22 @@ Deno.test({
       // apply = accept & advance: file stays on disk, the session diff resets to
       // empty (the change is sealed, the bookmark moved to a fresh child), and
       // changes.updated is emitted so the rail refetches.
-      const applied = await h(jsonReq("POST", `/sessions/${s.id}/changes/apply`, { source: "jj", paths: ["new.txt"] }));
+      const applied = await h(
+        jsonReq("POST", `/sessions/${s.id}/changes/apply`, { source: "jj", paths: ["new.txt"] }),
+      );
       assertEquals(applied.status, 200);
       assert(await Deno.stat(`${repo}/new.txt`).then(() => true).catch(() => false));
-      const after = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as { diffs: Diff[] };
+      const after = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
+        diffs: Diff[];
+      };
       assertEquals(after.diffs[0]?.files ?? [], []);
       assert(events.some((e) => e.type === "changes.updated" && e.sessionId === s.id));
 
       // post-accept edits diff cleanly on top — only the new work shows
       await Deno.writeTextFile(`${repo}/next.txt`, "more\n");
-      const d2 = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as { diffs: Diff[] };
+      const d2 = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
+        diffs: Diff[];
+      };
       assertEquals(d2.diffs[0].files.map((f) => f.path), ["next.txt"]);
     } finally {
       await Deno.remove(repo, { recursive: true });
@@ -143,7 +162,8 @@ Deno.test({
     const c = ctx();
     const h = createHandler(c);
     try {
-      const s = await (await h(jsonReq("POST", "/sessions", { title: "s", workspace: repo }))).json() as Session;
+      const s = await (await h(jsonReq("POST", "/sessions", { title: "s", workspace: repo })))
+        .json() as Session;
       await jj.ensureWorkspace(repo, s.id);
       await Deno.writeTextFile(`${repo}/new.txt`, "hi\n");
 
@@ -151,12 +171,16 @@ Deno.test({
       c.bus.subscribe((e) => events.push(e));
 
       // reading the diff snapshots the edit; revert then undoes it whole-change
-      const { diffs } = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as { diffs: Diff[] };
+      const { diffs } = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
+        diffs: Diff[];
+      };
       assertEquals(diffs[0].files.map((f) => f.path), ["new.txt"]);
       const reverted = await h(jsonReq("POST", `/sessions/${s.id}/changes/revert`, {}));
       assertEquals(reverted.status, 200);
       assertEquals(await Deno.stat(`${repo}/new.txt`).then(() => true).catch(() => false), false);
-      const after = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as { diffs: Diff[] };
+      const after = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
+        diffs: Diff[];
+      };
       assertEquals(after.diffs[0]?.files ?? [], []);
       assert(events.some((e) => e.type === "changes.updated" && e.sessionId === s.id));
     } finally {
@@ -186,13 +210,17 @@ Deno.test({
       const events: BoughEvent[] = [];
       c.bus.subscribe((e) => events.push(e));
 
-      const { diffs } = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as { diffs: Diff[] };
+      const { diffs } = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
+        diffs: Diff[];
+      };
       assertEquals(diffs.length, 1);
       assertEquals(diffs[0].source, "clonefile");
       assertEquals(diffs[0].files.map((f) => f.path), [orig]);
       assertEquals(await Deno.readTextFile(orig), "v1\n"); // original still pristine
 
-      const applied = await h(jsonReq("POST", `/sessions/${s.id}/changes/apply`, { source: "clonefile", paths: [orig] }));
+      const applied = await h(
+        jsonReq("POST", `/sessions/${s.id}/changes/apply`, { source: "clonefile", paths: [orig] }),
+      );
       assertEquals(applied.status, 200);
       assertEquals(await Deno.readTextFile(orig), "v2\n"); // approved edit copied back
       assert(events.some((e) => e.type === "changes.updated" && e.sessionId === s.id));

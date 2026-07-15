@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { Db } from "../db/db.ts";
 import { Bus } from "../bus.ts";
 import { serveWeb } from "./static.ts";
-import { createHandler, type AppCtx } from "./app.ts";
+import { type AppCtx, createHandler } from "./app.ts";
 
 async function fakeDist(): Promise<string> {
   const dir = await Deno.makeTempDir();

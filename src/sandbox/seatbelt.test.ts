@@ -151,7 +151,10 @@ Deno.test("buildProfile: apiPort deny overrides the loopback allow (last-match-w
   const deny = '(deny network-outbound (remote ip "localhost:4321"))';
   assertStringIncludes(p, deny);
   // the port deny MUST come after the loopback allow so SBPL's last-match-wins denies it
-  assert(p.indexOf('(allow network-outbound (remote ip "localhost:*")') < p.indexOf(deny), "deny after allow");
+  assert(
+    p.indexOf('(allow network-outbound (remote ip "localhost:*")') < p.indexOf(deny),
+    "deny after allow",
+  );
   // no apiPort → no such line (single-user default)
   const q = buildProfile({ workspace: "/w", home: "/home/u", confineNetwork: true });
   assert(!q.includes("localhost:4321"));
@@ -274,7 +277,17 @@ Deno.test({
     try {
       // Direct public egress (the --noproxy bypass) must fail closed.
       const direct = wrap(
-        ["/usr/bin/curl", "-sS", "-m", "6", "--noproxy", "*", "-o", "/dev/null", "http://example.com"],
+        [
+          "/usr/bin/curl",
+          "-sS",
+          "-m",
+          "6",
+          "--noproxy",
+          "*",
+          "-o",
+          "/dev/null",
+          "http://example.com",
+        ],
         { workspace: ws, confineNetwork: true },
       );
       assert(await runArgv(direct) !== 0, "direct egress must be blocked under confineNetwork");
@@ -288,7 +301,17 @@ Deno.test({
 
       // Without confineNetwork, the same direct egress is allowed (opt-in posture).
       const open = wrap(
-        ["/usr/bin/curl", "-sS", "-m", "8", "--noproxy", "*", "-o", "/dev/null", "http://example.com"],
+        [
+          "/usr/bin/curl",
+          "-sS",
+          "-m",
+          "8",
+          "--noproxy",
+          "*",
+          "-o",
+          "/dev/null",
+          "http://example.com",
+        ],
         { workspace: ws },
       );
       assertEquals(await runArgv(open), 0);

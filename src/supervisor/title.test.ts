@@ -38,7 +38,9 @@ Deno.test("untitled session gets a worker-generated title + session.updated", as
 
 Deno.test("small-model decoration is stripped (label, quotes, extra lines)", async () => {
   const { db, bus } = harness(UNTITLED);
-  const titler = fakeTitler('Title: **"Debug flaky tests"**\nHere is a short title for the session.');
+  const titler = fakeTitler(
+    'Title: **"Debug flaky tests"**\nHere is a short title for the session.',
+  );
   maybeAutoTitle({ db, bus, titler }, "s1", "tests flake on CI");
   await new Promise((r) => setTimeout(r, 0));
 

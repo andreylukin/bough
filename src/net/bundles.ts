@@ -98,8 +98,7 @@ export const githubBundle: BundleManifest = {
     },
     {
       name: "tokenEnv",
-      description:
-        "Name of the bough env var holding the GitHub token. Empty → no injection " +
+      description: "Name of the bough env var holding the GitHub token. Empty → no injection " +
         "(reads still flow; writes just aren't authenticated by the proxy).",
       type: "string",
       required: false,

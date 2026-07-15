@@ -169,7 +169,8 @@ function mergeCredentials(
   existing: NetConfig["credentials"],
   contributed: NetConfig["credentials"] = [],
 ): NetConfig["credentials"] {
-  const key = (b: { host: string; header: string }) => `${b.host.toLowerCase()}\0${b.header.toLowerCase()}`;
+  const key = (b: { host: string; header: string }) =>
+    `${b.host.toLowerCase()}\0${b.header.toLowerCase()}`;
   const incoming = new Map(contributed.map((b) => [key(b), b]));
   const merged = existing.map((b) => incoming.get(key(b)) ?? b);
   const known = new Set(existing.map(key));

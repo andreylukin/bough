@@ -48,7 +48,7 @@ const SYSTEM = [
   "the failed search text, and the intended replacement. Identify the contiguous",
   "line range the search text was meant to match. Reply with JSON",
   '{"start_line": N, "end_line": M} — 1-based, inclusive, using the line numbers',
-  'shown. If no region of the file corresponds to the search text, reply',
+  "shown. If no region of the file corresponds to the search text, reply",
   '{"start_line": 0, "end_line": 0}.',
 ].join(" ");
 

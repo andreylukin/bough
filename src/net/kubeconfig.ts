@@ -148,7 +148,10 @@ export function rewriteKubeconfig(text: string, boughCaPem: string, baseDir = ""
   //    the proxy, so a compromised sandbox can't read or exfiltrate them.
   //  - client-certificate(-data)/client-key(-data): can't survive MITM anyway;
   //    stripped so the material never reaches the sandbox (user reported for a warning).
-  const execByUser = new Map<string, { command: string; args: string[]; env: Record<string, string> }>();
+  const execByUser = new Map<
+    string,
+    { command: string; args: string[]; env: Record<string, string> }
+  >();
   const tokenByUser = new Map<string, string>();
   for (const entry of doc?.users ?? []) {
     const user = entry?.user;
@@ -171,7 +174,9 @@ export function rewriteKubeconfig(text: string, boughCaPem: string, baseDir = ""
       }
       execByUser.set(name, {
         command: exec.command,
-        args: Array.isArray(exec.args) ? exec.args.filter((a: unknown) => typeof a === "string") : [],
+        args: Array.isArray(exec.args)
+          ? exec.args.filter((a: unknown) => typeof a === "string")
+          : [],
         env,
       });
       delete user.exec;

@@ -8,8 +8,19 @@
  */
 
 const SKIP_DIRS = new Set([
-  ".git", ".jj", "node_modules", ".deno", "dist", "build", "target",
-  ".next", ".cache", "vendor", "__pycache__", ".venv", "venv",
+  ".git",
+  ".jj",
+  "node_modules",
+  ".deno",
+  "dist",
+  "build",
+  "target",
+  ".next",
+  ".cache",
+  "vendor",
+  "__pycache__",
+  ".venv",
+  "venv",
 ]);
 const MAX_SCAN = 20_000; // files walked before we stop
 const MAX_RESULTS = 20;
@@ -96,7 +107,8 @@ const DIR_MAX_RESULTS = 20;
 export function searchDirectories(query: string, known: string[] = []): DirHit[] {
   const home = Deno.env.get("HOME") ?? "/";
   const expand = (p: string) => (p === "~" || p.startsWith("~/")) ? home + p.slice(1) : p;
-  const abbrev = (p: string) => p === home || p.startsWith(home + "/") ? "~" + p.slice(home.length) : p;
+  const abbrev = (p: string) =>
+    p === home || p.startsWith(home + "/") ? "~" + p.slice(home.length) : p;
   const q = expand(query.trim());
 
   // Split into the deepest EXISTING base dir and the leftover fuzzy fragment.
