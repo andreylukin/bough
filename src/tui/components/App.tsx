@@ -381,6 +381,9 @@ export function App(
   // Screen row (0-based) of the activity line, synced post-render below (its
   // position depends on chrome pieces declared later); null when hidden.
   const activityRowRef = useRef<number | null>(null);
+  // The /conversation card's clickable region: screen row of its first data row
+  // plus the rows themselves. Synced post-render alongside activityRowRef.
+  const infoClickRef = useRef<{ firstRow: number; rows: [string, string, string][] } | null>(null);
   // Composer autocomplete: "/" at the start completes skills, "@" completes
   // workspace files (needs a live session — drafts have no workspace yet).
   interface Popup {
@@ -461,6 +464,24 @@ export function App(
     return () => onPaste(null);
   }, [insertAtCursor]);
 
+  // Clicking an info-card row copies its value. pbcopy (bough is macOS-only);
+  // kept in a ref so the mouse subscription stays stable.
+  const copyInfoRef = useRef<(row: [string, string, string]) => void>(() => {});
+  copyInfoRef.current = ([label, , value]) => {
+    (async () => {
+      const child = new Deno.Command("pbcopy", { stdin: "piped", stdout: "null", stderr: "null" })
+        .spawn();
+      const w = child.stdin.getWriter();
+      await w.write(new TextEncoder().encode(value));
+      await w.close();
+      const { success } = await child.status;
+      if (!success) throw new Error("pbcopy failed");
+    })().then(
+      () => store.notify(`✓ copied ${label}`),
+      () => store.notify("✗ copy failed (pbcopy)"),
+    );
+  };
+
   // A click key is either a tool-group fold or "open:<sessionId>" (descend into a
   // subagent branch). Kept in a ref so the mouse subscription stays stable.
   const onClickRef = useRef<(key: string) => void>(() => {});
@@ -489,6 +510,15 @@ export function App(
       if (activityRowRef.current !== null && ev.y - 1 === activityRowRef.current) {
         toggleRunningGroupRef.current();
         return;
+      }
+      // Info-card rows also live in the chrome: a click copies the row's value.
+      const info = infoClickRef.current;
+      if (info) {
+        const rel = ev.y - 1 - info.firstRow;
+        if (rel >= 0 && rel < info.rows.length) {
+          copyInfoRef.current(info.rows[rel]);
+          return;
+        }
       }
       const idx = l.start + (ev.y - 1) - l.padTop;
       const line = l.lines[idx];
@@ -1147,32 +1177,41 @@ export function App(
   const isDraft = !store.currentId;
 
   // /conversation card rows — derived at render so they track live session state.
-  const infoRows: [string, string][] = (() => {
+  // [label, display, copy] — copy is the raw value a click puts on the clipboard
+  // (full workspace path, bare model id, origin session id — not the pretty text).
+  const infoRows: [string, string, string][] = (() => {
     const s = store.session;
     if (!showInfo || !s) return [];
-    const rows: [string, string][] = [
-      ["id", s.id],
-      ["title", s.title || "(untitled)"],
-      ["kind", s.kind],
-      ["created", new Date(s.createdAt).toLocaleString()],
+    const rows: [string, string, string][] = [
+      ["id", s.id, s.id],
+      ["title", s.title || "(untitled)", s.title],
+      ["kind", s.kind, s.kind],
+      ["created", new Date(s.createdAt).toLocaleString(), new Date(s.createdAt).toISOString()],
     ];
     if (s.workspace) {
       rows.push([
         "workspace",
         s.workspace.replace(new RegExp(`^${Deno.env.get("HOME")}`), "~"),
+        s.workspace,
       ]);
     }
-    rows.push(["model", s.model ? `${s.model} (pinned)` : cfg ? `${cfg.model} (default)` : "—"]);
+    const model = s.model ?? cfg?.model;
+    rows.push(["model", s.model ? `${s.model} (pinned)` : model ? `${model} (default)` : "—", model ?? ""]);
     if (s.originId) {
       const origin = store.sessions.find((x) => x.id === s.originId);
-      rows.push(["origin", origin ? `${origin.title || origin.id} · ${s.originId}` : s.originId]);
+      rows.push([
+        "origin",
+        origin ? `${origin.title || origin.id} · ${s.originId}` : s.originId,
+        s.originId,
+      ]);
     }
-    rows.push(["messages", String(store.thread.length)]);
+    rows.push(["messages", String(store.thread.length), String(store.thread.length)]);
     if (s.contextTokens) {
       const cached = s.cachedTokens
         ? ` · ${Math.round((s.cachedTokens / s.contextTokens) * 100)}% cached`
         : "";
-      rows.push(["context", `${fmtTokens(s.contextTokens)} tokens${cached}`]);
+      const display = `${fmtTokens(s.contextTokens)} tokens${cached}`;
+      rows.push(["context", display, display]);
     }
     return rows;
   })();
@@ -1184,8 +1223,14 @@ export function App(
     ? viewH + store.queued.length + (err ? 1 : 0) +
       (infoRows.length > 0 ? infoRows.length + 4 : 0)
     : null;
+  // The info card's data rows are clickable (click copies the value): first data
+  // row sits below the card's top border + title. Same post-commit sync as above.
+  const infoClick = mode === "chat" && infoRows.length > 0
+    ? { firstRow: viewH + store.queued.length + (err ? 1 : 0) + 2, rows: infoRows }
+    : null;
   useEffect(() => {
     activityRowRef.current = activityRow;
+    infoClickRef.current = infoClick;
   });
 
   // The unified management view: one bordered container, a tab bar, and the active
@@ -1325,7 +1370,7 @@ export function App(
                         {v}
                       </Text>
                     ))}
-                    <Text dimColor>esc dismisses</Text>
+                    <Text dimColor>click a row to copy · esc dismisses</Text>
                   </Box>
                 )
                 : null}
