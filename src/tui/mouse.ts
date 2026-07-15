@@ -10,7 +10,7 @@ export interface MouseEvent {
   /** 1-based terminal column/row of the event. */
   x: number;
   y: number;
-  kind: "click" | "wheel-up" | "wheel-down";
+  kind: "click" | "right-click" | "wheel-up" | "wheel-down";
 }
 
 type Handler = (ev: MouseEvent) => void;
@@ -46,6 +46,7 @@ function dispatchMouse(s: string): string {
       if (btn === 64) handler({ x: Number(x), y: Number(y), kind: "wheel-up" });
       else if (btn === 65) handler({ x: Number(x), y: Number(y), kind: "wheel-down" });
       else if ((btn & 3) === 0) handler({ x: Number(x), y: Number(y), kind: "click" });
+      else if ((btn & 3) === 2) handler({ x: Number(x), y: Number(y), kind: "right-click" });
     }
     return "";
   });

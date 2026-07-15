@@ -12,6 +12,9 @@ export interface VLine {
   /** Click target: a tool-group key toggles its fold; an "open:<sessionId>" key
    * descends into that subagent's branch. */
   click?: string;
+  /** The raw, unstyled, unwrapped text of the section this line belongs to; a
+   * right-click copies it. */
+  copy?: string;
 }
 
 const SGR = (n: number | string, s: string) => (COLOR ? `\x1b[${n}m${s}\x1b[0m` : s);
@@ -197,6 +200,23 @@ function toolGroupLines(
   }
 }
 
+// The whole tool group as plain text for right-click-to-copy: per call, a
+// `◇ <name>` header over its raw input (the same string the renderer derives),
+// then `↳ output` over the result when there is one. Calls join with a blank
+// line. Computed once per group and stamped on every line the group renders.
+function toolGroupCopy(parts: Message["parts"]): string {
+  const { calls, results } = toolSummary(parts);
+  return calls.map((call) => {
+    const raw = call.input as Record<string, unknown> | null | undefined;
+    const code = raw && typeof raw.code === "string" ? raw.code : null;
+    const input = code ?? (call.input === undefined ? "" : JSON.stringify(call.input, null, 2));
+    let block = `◇ ${call.name}\n${input}`;
+    const res = results.get(call.id);
+    if (res && outputText(res) !== "") block += `\n↳ output\n${outputText(res)}`;
+    return block;
+  }).join("\n\n");
+}
+
 export function messageLines(
   msg: Message,
   isExpanded: (key: string) => boolean,
@@ -209,14 +229,29 @@ export function messageLines(
   const w = width - 2;
   out.push({ text: "" });
   out.push({ text: roleLabel(msg.role) });
-  // Bodies hang 2 columns under the role label so turns read as blocks.
+  // Bodies hang 2 columns under the role label so turns read as blocks. Each
+  // segment's fresh lines are stamped with the section's raw text for copy.
   segmentParts(msg.parts).forEach((s, i) => {
     const key = `${msg.id}:${i}`;
-    if (s.kind === "text") push(body, md(s.text), w);
-    else if (s.kind === "reasoning") push(body, dim(s.text), w);
-    else toolGroupLines(body, s.parts, key, isExpanded(key), isFull(key), w);
+    const seg: VLine[] = [];
+    let copy: string;
+    if (s.kind === "text") {
+      push(seg, md(s.text), w);
+      copy = s.text;
+    } else if (s.kind === "reasoning") {
+      push(seg, dim(s.text), w);
+      copy = s.text;
+    } else {
+      toolGroupLines(seg, s.parts, key, isExpanded(key), isFull(key), w);
+      copy = toolGroupCopy(s.parts);
+    }
+    for (const l of seg) body.push({ ...l, copy });
   });
-  if (streaming) push(body, md(streaming) + "▌", w);
+  if (streaming) {
+    const seg: VLine[] = [];
+    push(seg, md(streaming) + "▌", w);
+    for (const l of seg) body.push({ ...l, copy: streaming });
+  }
   out.push(...body.map((l) => (l.text ? { ...l, text: "  " + l.text } : l)));
   return out;
 }
@@ -237,17 +272,23 @@ export interface Branch {
 function branchCardLines(out: VLine[], b: Branch, width: number) {
   const w = width - 2;
   const body: VLine[] = [];
-  if (b.note) subagentNoteLines(body, b.note, w);
-  else {
+  let copy: string;
+  if (b.note) {
+    subagentNoteLines(body, b.note, w);
+    copy = b.note.report ?? b.note.title;
+  } else {
     const dot = b.busy ? yellow("◆") : green("◆");
     const tail = b.busy ? yellow(" ⋯ working") : green(" ✓ done");
     body.push({
       text: `${dot} ${b.title.replace(/^subagent · /, "")}${dim(tail)}`,
       click: `open:${b.id}`,
     });
+    copy = b.title;
   }
   out.push({ text: "" });
-  out.push(...body.map((l) => (l.text ? { ...l, text: "  " + l.text } : l)));
+  out.push(
+    ...body.map((l) => (l.text ? { ...l, copy, text: "  " + l.text } : { ...l, copy })),
+  );
 }
 
 export function buildLines(

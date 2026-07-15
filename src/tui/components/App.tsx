@@ -33,6 +33,7 @@ import { modelEntries, ModelPicker } from "./ModelPicker.tsx";
 import { Panel, PANEL_TABS, type PanelTab, PanelTabs } from "./Panel.tsx";
 import { Help } from "./Help.tsx";
 import { appendHistory, loadHistory, saveLastSession } from "../state.ts";
+import { copyToClipboard } from "../clipboard.ts";
 
 // picker + conversation + net/mcp/skills are all tabs of the one "panel" view.
 type Mode = "chat" | "new" | "diff" | "model" | "panel" | "help";
@@ -333,9 +334,7 @@ export function App(
   // subscription stays stable.
   const toggleRunningGroupRef = useRef<() => void>(() => {});
   toggleRunningGroupRef.current = () => {
-    const pending = [...store.thread].reverse().find((m) =>
-      m.pending && m.role === "supervisor"
-    );
+    const pending = [...store.thread].reverse().find((m) => m.pending && m.role === "supervisor");
     if (!pending) return;
     const segs = segmentParts(pending.parts);
     for (let i = segs.length - 1; i >= 0; i--) {
@@ -464,23 +463,18 @@ export function App(
     return () => onPaste(null);
   }, [insertAtCursor]);
 
-  // Clicking an info-card row copies its value. pbcopy (bough is macOS-only);
-  // kept in a ref so the mouse subscription stays stable.
-  const copyInfoRef = useRef<(row: [string, string, string]) => void>(() => {});
-  copyInfoRef.current = ([label, , value]) => {
-    (async () => {
-      const child = new Deno.Command("pbcopy", { stdin: "piped", stdout: "null", stderr: "null" })
-        .spawn();
-      const w = child.stdin.getWriter();
-      await w.write(new TextEncoder().encode(value));
-      await w.close();
-      const { success } = await child.status;
-      if (!success) throw new Error("pbcopy failed");
-    })().then(
+  // Copy-with-toast, kept in a ref so the mouse subscription stays stable.
+  // Info-card rows copy on any click; everything else copies on right-click.
+  const copyRef = useRef<(text: string, label: string) => void>(() => {});
+  copyRef.current = (text, label) => {
+    copyToClipboard(text).then(
       () => store.notify(`✓ copied ${label}`),
       () => store.notify("✗ copy failed (pbcopy)"),
     );
   };
+  // The running turn's activity blurb, mirrored for the right-click handler.
+  const activityTextRef = useRef<string | null>(null);
+  activityTextRef.current = store.activity;
 
   // A click key is either a tool-group fold or "open:<sessionId>" (descend into a
   // subagent branch). Kept in a ref so the mouse subscription stays stable.
@@ -505,24 +499,35 @@ export function App(
         return;
       }
       if (l.mode !== "chat") return;
-      // The activity line lives in the bottom chrome, outside the line viewport:
-      // clicking it expands/collapses the running tool group it summarizes.
-      if (activityRowRef.current !== null && ev.y - 1 === activityRowRef.current) {
-        toggleRunningGroupRef.current();
-        return;
-      }
-      // Info-card rows also live in the chrome: a click copies the row's value.
+      // Info-card rows live in the chrome: any click (left or right) copies the
+      // row's raw value.
       const info = infoClickRef.current;
       if (info) {
         const rel = ev.y - 1 - info.firstRow;
         if (rel >= 0 && rel < info.rows.length) {
-          copyInfoRef.current(info.rows[rel]);
+          const [label, , value] = info.rows[rel];
+          copyRef.current(value, label);
           return;
         }
       }
+      // The activity line also lives in the chrome: left-click expands/collapses
+      // the running tool group it summarizes, right-click copies the blurb.
+      if (activityRowRef.current !== null && ev.y - 1 === activityRowRef.current) {
+        if (ev.kind === "right-click") {
+          if (activityTextRef.current) copyRef.current(activityTextRef.current, "activity");
+        } else toggleRunningGroupRef.current();
+        return;
+      }
       const idx = l.start + (ev.y - 1) - l.padTop;
       const line = l.lines[idx];
-      if (line?.click) onClickRef.current(line.click);
+      if (!line) return;
+      // Right-click copies the raw text of the section the line belongs to;
+      // left-click keeps its fold/open behavior.
+      if (ev.kind === "right-click") {
+        if (line.copy) copyRef.current(line.copy, "section");
+        return;
+      }
+      if (line.click) onClickRef.current(line.click);
     });
     return () => onMouse(null);
   }, []);
@@ -1196,7 +1201,11 @@ export function App(
       ]);
     }
     const model = s.model ?? cfg?.model;
-    rows.push(["model", s.model ? `${s.model} (pinned)` : model ? `${model} (default)` : "—", model ?? ""]);
+    rows.push([
+      "model",
+      s.model ? `${s.model} (pinned)` : model ? `${model} (default)` : "—",
+      model ?? "",
+    ]);
     if (s.originId) {
       const origin = store.sessions.find((x) => x.id === s.originId);
       rows.push([
@@ -1399,8 +1408,10 @@ export function App(
             </>
           )
           : null}
-        {/* Action feedback (apply results, errors) must show in every mode — an
-            apply from the diff panel that reports nowhere reads as a silent no-op. */}
+        {
+          /* Action feedback (apply results, errors) must show in every mode — an
+            apply from the diff panel that reports nowhere reads as a silent no-op. */
+        }
         {store.notice ? <Text color={palette.warn} wrap="truncate">{store.notice}</Text> : null}
         <StatusBar
           connected={store.connected}

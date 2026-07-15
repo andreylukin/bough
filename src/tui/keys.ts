@@ -10,6 +10,7 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
       ["esc", "interrupt the running turn"],
       ["↑/↓", "recall previously sent messages"],
       ["click ▸", "expand/collapse that tool group"],
+      ["right-click", "copy that section's text (message, reasoning, tool calls)"],
       ["wheel / pgup/pgdn", "scroll the conversation"],
       ["^e", "expand/collapse all tool calls (when the input is empty)"],
       ["←/→ ⌥b/⌥f ^a/^e", "move the cursor (char · word · line ends)"],
