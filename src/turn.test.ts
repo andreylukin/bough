@@ -549,6 +549,7 @@ Deno.test("recoverOrphanedTurns orphans a stranded turn and finishes its message
     status: "running",
     step: "round:1",
     updatedAt: 6,
+    firstOutputAt: null,
   });
 
   const recovered = recoverOrphanedTurns(db, bus);

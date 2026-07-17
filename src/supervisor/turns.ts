@@ -22,6 +22,7 @@ export function startTurn(db: Db, sessionId: string, messageId: string): Turn {
     status: "running",
     step: "start",
     updatedAt: Date.now(),
+    firstOutputAt: null,
   });
 }
 

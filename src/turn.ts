@@ -505,8 +505,18 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
   let lastLlmAt = 0;
 
   const turn = startTurn(db, sessionId, messageId);
+  // Time-to-first-output metric: stamp the moment ANYTHING from this turn becomes
+  // visible to the user — the first streamed delta or the first finalized part,
+  // whichever lands first (a tool-only round has no text deltas).
+  let sawOutput = false;
+  const markFirstOutput = () => {
+    if (sawOutput) return;
+    sawOutput = true;
+    db.setTurnFirstOutput(turn.id, Date.now());
+  };
   const parts: Part[] = [];
   const append = (part: Part) => {
+    markFirstOutput();
     parts.push(part);
     db.updateMessage(messageId, parts, true);
     bus.publish({ type: "message.part", sessionId, data: { messageId, part } });
@@ -677,7 +687,10 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
           tools: toolDefs,
           ...(forceText ? { toolChoice: "none" as const } : {}),
         },
-        (delta) => bus.publish({ type: "message.delta", sessionId, data: { messageId, delta } }),
+        (delta) => {
+          markFirstOutput();
+          bus.publish({ type: "message.delta", sessionId, data: { messageId, delta } });
+        },
         signal,
       );
 

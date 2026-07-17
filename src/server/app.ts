@@ -26,6 +26,7 @@ import {
   startUserTurn,
 } from "../turn.ts";
 import { setWorkerChoice, WORKER_OPTIONS, workerChoice } from "../worker/frontier.ts";
+import { sessionMetrics } from "../metrics.ts";
 import { normalizeWorkspace, prepareWorkspace, workspaceProblem } from "../supervisor/workspace.ts";
 import { UNTITLED } from "../supervisor/title.ts";
 import { listSkills } from "../supervisor/skills.ts";
@@ -460,6 +461,12 @@ const forkSession: Handler = async (req, ctx, params) => {
 
 const emitChangesUpdated = (ctx: AppCtx, sessionId: string) =>
   ctx.bus.publish({ type: "changes.updated", sessionId, data: { sessionId } });
+
+// GET /sessions/:id/metrics → usability metrics derived from stored data (metrics.ts).
+const getMetrics: Handler = (_req, ctx, params) => {
+  if (!ctx.db.getSession(params.id)) return error(404, "session not found");
+  return json(sessionMetrics(ctx.db, params.id));
+};
 
 // GET /sessions/:id/changes → { diffs } across active snapshot sources (jj + clonefile).
 const getChanges: Handler = async (_req, ctx, params) => {
@@ -1114,6 +1121,11 @@ const routes: Route[] = [
     method: "GET",
     pattern: new URLPattern({ pathname: "/sessions/:id/changes" }),
     handler: getChanges,
+  },
+  {
+    method: "GET",
+    pattern: new URLPattern({ pathname: "/sessions/:id/metrics" }),
+    handler: getMetrics,
   },
   {
     method: "POST",

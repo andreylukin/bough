@@ -412,6 +412,7 @@ Deno.test("GET /sessions carries lastTurnStatus once a session has run a turn", 
     status: "error",
     step: "x",
     updatedAt: 3,
+    firstOutputAt: null,
   });
   list = await (await h(req("GET", "/sessions")))
     .json() as (Session & { lastTurnStatus?: string })[];

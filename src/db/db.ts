@@ -83,7 +83,8 @@ CREATE TABLE IF NOT EXISTS turns (
   message_id  TEXT NOT NULL REFERENCES messages(id),  -- the pending supervisor msg
   status      TEXT NOT NULL,          -- running | done | error | orphaned
   step        TEXT NOT NULL,          -- last checkpoint (human-readable)
-  updated_at  INTEGER NOT NULL
+  updated_at  INTEGER NOT NULL,
+  first_output_at INTEGER             -- when the user first SAW anything (metrics)
 );
 CREATE INDEX IF NOT EXISTS turns_status ON turns(status);
 -- Message embeddings for recall search (local embedder — see recall.ts). Vectors are
@@ -143,6 +144,8 @@ export interface Turn {
   status: TurnStatus;
   step: string;
   updatedAt: number;
+  /** When the turn's first output (delta or part) reached the UI — see metrics.ts. */
+  firstOutputAt: number | null;
 }
 type TurnRow = {
   id: string;
@@ -151,6 +154,7 @@ type TurnRow = {
   status: string;
   step: string;
   updated_at: number;
+  first_output_at: number | null;
 };
 
 function toTurn(r: TurnRow): Turn {
@@ -161,6 +165,7 @@ function toTurn(r: TurnRow): Turn {
     status: r.status as TurnStatus,
     step: r.step,
     updatedAt: r.updated_at,
+    firstOutputAt: r.first_output_at,
   };
 }
 
@@ -237,6 +242,11 @@ export class Db {
     }
     try {
       this.#db.exec(`ALTER TABLE net_events ADD COLUMN fields TEXT`);
+    } catch {
+      // column already exists
+    }
+    try {
+      this.#db.exec(`ALTER TABLE turns ADD COLUMN first_output_at INTEGER`);
     } catch {
       // column already exists
     }
@@ -553,6 +563,24 @@ export class Db {
       )
       .run(t.id, t.sessionId, t.messageId, t.status, t.step, t.updatedAt);
     return t;
+  }
+
+  /**
+   * Stamp when the turn's first output reached the user (idempotent — only the
+   * first call lands). Doesn't bump updated_at: this is a metric, not a checkpoint.
+   */
+  setTurnFirstOutput(id: string, ts: number): void {
+    this.#db
+      .prepare(`UPDATE turns SET first_output_at = ? WHERE id = ? AND first_output_at IS NULL`)
+      .run(ts, id);
+  }
+
+  /** All turns for a session, oldest first (metrics.ts). */
+  turnsForSession(sessionId: string): Turn[] {
+    const rows = this.#db
+      .prepare(`SELECT * FROM turns WHERE session_id = ? ORDER BY updated_at`)
+      .all(sessionId) as TurnRow[];
+    return rows.map(toTurn);
   }
 
   /** Patch a turn's status and/or step, bumping updated_at. Used for checkpoints. */
