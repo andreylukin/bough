@@ -47,6 +47,17 @@ Deno.test("small-model decoration is stripped (label, quotes, extra lines)", asy
   assertEquals(db.getSession("s1")?.title, "Debug flaky tests");
 });
 
+Deno.test("a prose echo is capped to a readable stub, not stored wholesale", async () => {
+  const { db, bus } = harness(UNTITLED);
+  const titler = fakeTitler(
+    "A tree stood tall, its roots deep in the earth, its branches reaching for the sky above the ridge.",
+  );
+  maybeAutoTitle({ db, bus, titler }, "s1", "write a story about a tree");
+  await new Promise((r) => setTimeout(r, 0));
+
+  assertEquals(db.getSession("s1")?.title, "A tree stood tall, its roots deep in");
+});
+
 Deno.test("titled session is left alone", async () => {
   const { db, bus, events } = harness("main");
   const titler = fakeTitler("never used");

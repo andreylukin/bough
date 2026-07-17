@@ -81,34 +81,47 @@ export function StatusBar(
     : null;
   return (
     <Box justifyContent="space-between" gap={2}>
-      <Text wrap="truncate">
-        <Text color={connected ? palette.accent : palette.error}>{connected ? "●" : "○"}</Text>
-        <Text dimColor>{connected ? "" : " reconnecting…"}</Text>
-        {session?.kind === "subagent" ? <Text color={palette.accent}>{" "}◆</Text> : null}
-        {session
-          ? (
-            <Text bold>
-              {" "}
-              {(session.title || "(untitled)").replace(/^subagent · /, "")}
-            </Text>
-          )
-          : draftLabel
-          ? <Text dimColor>{" "}{draftLabel}</Text>
-          : null}
-        {parentTitle ? <Text dimColor>{"  "}branch of {parentTitle} · ^b to go back</Text> : null}
-        {status ? <Text color={status.color}>{"  "}{status.text}</Text> : null}
-        {model ? <Text dimColor>{"  "}⌬ {model}</Text> : null}
-        {usage.contextTokens > 0
-          ? <Text dimColor>{"  "}{fmtTokens(usage.contextTokens)} ctx</Text>
-          : null}
-        {pendingCount > 0
-          ? (
-            <Text color={palette.warn}>
-              {"  "}⏸ {pendingCount} hold{pendingCount > 1 ? "s" : ""}
-            </Text>
-          )
-          : null}
-      </Text>
+      {/* Title shrinks; the status cluster (spinner/esc-interrupts, holds) never
+        does — a long auto-title must not truncate away the brake hint (probe
+        finding: "esc interrupts" vanished behind a story-length title). */}
+      <Box minWidth={0} flexShrink={1}>
+        <Box minWidth={4} flexShrink={1}>
+          <Text wrap="truncate">
+            <Text color={connected ? palette.accent : palette.error}>{connected ? "●" : "○"}</Text>
+            <Text dimColor>{connected ? "" : " reconnecting…"}</Text>
+            {session?.kind === "subagent" ? <Text color={palette.accent}>{" "}◆</Text> : null}
+            {session
+              ? (
+                <Text bold>
+                  {" "}
+                  {(session.title || "(untitled)").replace(/^subagent · /, "")}
+                </Text>
+              )
+              : draftLabel
+              ? <Text dimColor>{" "}{draftLabel}</Text>
+              : null}
+            {parentTitle
+              ? <Text dimColor>{"  "}branch of {parentTitle} · ^b to go back</Text>
+              : null}
+          </Text>
+        </Box>
+        <Box flexShrink={0}>
+          <Text>
+            {status ? <Text color={status.color}>{"  "}{status.text}</Text> : null}
+            {model ? <Text dimColor>{"  "}⌬ {model}</Text> : null}
+            {usage.contextTokens > 0
+              ? <Text dimColor>{"  "}{fmtTokens(usage.contextTokens)} ctx</Text>
+              : null}
+            {pendingCount > 0
+              ? (
+                <Text color={palette.warn}>
+                  {"  "}⏸ {pendingCount} hold{pendingCount > 1 ? "s" : ""}
+                </Text>
+              )
+              : null}
+          </Text>
+        </Box>
+      </Box>
       <Text dimColor wrap="truncate">
         {quitHint ? "ctrl+c again to quit" : HINTS[mode]}
       </Text>

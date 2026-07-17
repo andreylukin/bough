@@ -4,7 +4,7 @@
 // any tool group, however old, can be expanded in place.
 import wrapAnsi from "wrap-ansi";
 import type { Message, Role } from "../schema/parts.ts";
-import { COLOR, highlightCode, md, outputText, segmentParts, toolSummary } from "./format.ts";
+import { clip, COLOR, highlightCode, md, outputText, segmentParts, toolSummary } from "./format.ts";
 import { fgParams, palette } from "./theme.ts";
 
 export interface VLine {
@@ -143,6 +143,18 @@ function styleOutputLine(line: string, isError: boolean): string {
   return dim(line);
 }
 
+// One-line excerpt of a call's input for the collapsed fold header: the first
+// meaningful code line (or compact JSON). A bare tool name ("run_steps") tells
+// the reader nothing about what ran; the scrollback is the session's record.
+function inputGist(call: { input?: unknown }): string {
+  const raw = call.input as Record<string, unknown> | null | undefined;
+  const code = raw && typeof raw.code === "string" ? raw.code : null;
+  const src = code ?? (call.input === undefined ? "" : JSON.stringify(call.input));
+  const line = src.trim().split("\n").map((l) => l.trim())
+    .find((l) => l.length > 0 && !l.startsWith("//")) ?? "";
+  return clip(line, 60);
+}
+
 function toolGroupLines(
   out: VLine[],
   parts: Message["parts"],
@@ -163,6 +175,12 @@ function toolGroupLines(
       calls.map((c) => c.name).join(" · ")
     }`,
   );
+  // Collapsed single-call groups carry a gist of what ran (expanded shows the
+  // real thing, multi-call headers are already crowded with names).
+  if (!expanded && calls.length === 1) {
+    const gist = inputGist(calls[0]);
+    if (gist) head += dim(` · ${gist}`);
+  }
   if (verdict) head += "  " + (verdict.ok ? green(verdict.text) : yellow(verdict.text));
   else if (hasError) head += "  " + red("✗ error");
   if (running) head += "  " + yellow(`⚙ ${running.name}…`);

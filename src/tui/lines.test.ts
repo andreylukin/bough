@@ -141,3 +141,32 @@ Deno.test("treeItems: node, then its tool steps, then its branches", () => {
     ["node", "step", "branch"],
   );
 });
+
+import { messageLines } from "./lines.ts";
+
+Deno.test("collapsed tool fold carries a gist of what ran", () => {
+  const msg: Message = {
+    id: "m1",
+    sessionId: "s",
+    role: "supervisor",
+    pending: false,
+    createdAt: 1,
+    parts: [
+      {
+        type: "tool_call",
+        id: "c1",
+        name: "run_steps",
+        input: { code: "// setup\nsh('curl -sS https://example.com')" },
+      },
+      { type: "tool_result", callId: "c1", output: "200", isError: false },
+    ],
+  };
+  const collapsed = messageLines(msg, () => false, () => false, 120);
+  const head = collapsed.find((l) => l.text.includes("tool call"))!;
+  // Gist = first meaningful code line (comments skipped), on the fold header.
+  assertEquals(head.text.includes("sh('curl -sS https://example.com')"), true);
+  // Expanded shows the real thing — no gist on the header.
+  const expanded = messageLines(msg, () => true, () => false, 120);
+  const openHead = expanded.find((l) => l.text.includes("tool call"))!;
+  assertEquals(openHead.text.includes("curl"), false);
+});

@@ -111,12 +111,16 @@ async function backstopTitle(text: string): Promise<string> {
   return result.content.find((b) => b.type === "text")?.text ?? "";
 }
 
-/** Small models decorate: take the first real line, strip quotes/labels, cap length. */
+/** Small models decorate: take the first real line, strip quotes/labels, cap length.
+ * The word cap converts a prose echo (the 3B worker sometimes answers the prompt
+ * instead of titling it — live finding: a session titled with 13 words of story)
+ * into a readable stub; real 3-6-word titles pass untouched. */
 function sanitize(raw: string): string {
   const line = raw.trim().split("\n").map((l) => l.trim()).find((l) => l.length > 0) ?? "";
   return line
     .replace(/^(title\s*:)\s*/i, "")
     .replace(/^["'“”`*]+|["'“”`*.]+$/g, "")
-    .slice(0, 80)
+    .split(/\s+/).slice(0, 8).join(" ")
+    .slice(0, 60)
     .trim();
 }

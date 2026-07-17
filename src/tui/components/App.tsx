@@ -101,7 +101,14 @@ export function App(
   // Reset per hold so one card's expansion doesn't leak onto the next.
   const [holdDetail, setHoldDetail] = useState(false);
   const pendingId = store.pending?.id;
-  useEffect(() => setHoldDetail(false), [pendingId]);
+  // Anti-misclick guard: a card that just replaced the composer must not eat a
+  // keystroke that was already in flight for the composer — a/A/d arm after a
+  // short delay (same idea as Claude Code's 200ms permission-dialog guard).
+  const pendingSince = useRef(0);
+  useEffect(() => {
+    setHoldDetail(false);
+    if (pendingId) pendingSince.current = Date.now();
+  }, [pendingId]);
   const [netStat, setNetStat] = useState<NetStatus | null>(null);
   const [policy, setPolicy] = useState<NetConfig | null>(null);
   const [mcpStat, setMcpStat] = useState<McpStatus | null>(null);
@@ -1039,9 +1046,13 @@ export function App(
     if (key.pageDown) return setScrollOff((o) => Math.max(0, o - Math.max(1, viewH - 2)));
     if (store.pending) {
       // The approval card replaces the composer; plain keys act on the hold.
-      if (ch === "a") return store.resolvePending(true, "once");
-      if (ch === "A") return store.resolvePending(true, "session");
-      if (ch === "d") return store.resolvePending(false);
+      // Deciding keys are dead for the first beat after the card appears so a
+      // keystroke aimed at the composer can't approve a request unseen ('v'
+      // stays live — inspecting is always safe).
+      const armed = Date.now() - pendingSince.current > 250;
+      if (ch === "a" && armed) return store.resolvePending(true, "once");
+      if (ch === "A" && armed) return store.resolvePending(true, "session");
+      if (ch === "d" && armed) return store.resolvePending(false);
       if (ch === "v") return setHoldDetail((v) => !v);
       return;
     }
