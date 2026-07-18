@@ -121,6 +121,14 @@ export const runSteps: ToolDef = {
               JSON.stringify(await ctx.lsp!.call(verb, JSON.parse(argsJson))) ?? "null",
           }
           : {}),
+        // Artifacts (wired for supervisor turns): write + host a file for browser
+        // viewing; the JSON round-trip returns the artifact object to the program.
+        ...(ctx.artifact
+          ? {
+            artifact: async (name: string, content: string) =>
+              JSON.stringify(await ctx.artifact!(name, content)),
+          }
+          : {}),
       },
       // agent() blocks on whole subagent turns; a held mcp()/lsp() call blocks on a
       // human approval; an oracle() consult can reason for many minutes — all need

@@ -1,5 +1,5 @@
 // Thin REST client over the bough backend. Paths are proxied to :4321 in dev.
-import type { BundleSummary, ChangeSource, Message, NetRequest, Session, WireDiff } from "./types";
+import type { Artifact, BundleSummary, ChangeSource, Message, NetRequest, Session, WireDiff } from "./types";
 
 async function j<T>(res: Response): Promise<T> {
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
@@ -199,6 +199,11 @@ export const api = {
 
   getSession: (id: string) =>
     fetch(`/sessions/${id}`).then(j<{ session: Session; thread: Message[]; usage: Usage }>),
+
+  // A session's published artifacts (filesystem-backed; survives reload). The store
+  // loads these on open and merges live `artifact.published` events on top.
+  getArtifacts: (id: string) =>
+    fetch(`/sessions/${id}/artifacts`).then(j<{ artifacts: Artifact[] }>).then((r) => r.artifacts),
 
   // Fire-and-forget: the turn streams back over /events.
   postMessage: (id: string, text: string) =>

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type NetConfig, type NetStatus, type PolicySource, readBranch, type TurnPick, type Usage } from "./api";
 import { useEvents } from "./useEvents";
-import type { BoughEvent, ChangeSource, Message, NetRequest, Part, Session, WireDiff } from "./types";
+import type { Artifact, BoughEvent, ChangeSource, Message, NetRequest, Part, Session, WireDiff } from "./types";
 
 export interface Store {
   sessions: Session[];
@@ -30,6 +30,8 @@ export interface Store {
   policySource: PolicySource | null;
   // Review payloads for the open session (0..2: jj repo + clonefile config).
   changes: WireDiff[];
+  // Artifacts the agent published for the open session (newest first); browser-viewable.
+  artifacts: Artifact[];
   // A transient message to surface (e.g. a fork/compact 400); null when clear.
   notice: string | null;
   // Token usage for the open session (context meter); zeroed on session switch.
@@ -95,6 +97,7 @@ export function useStore(): Store {
   const [policy, setPolicy] = useState<NetConfig | null>(null);
   const [policySource, setPolicySource] = useState<PolicySource | null>(null);
   const [changes, setChanges] = useState<WireDiff[]>([]);
+  const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [usage, setUsage] = useState<Usage>({ contextTokens: 0, outputTokens: 0, inputTokens: 0 });
   const [queued, setQueued] = useState<string[]>([]);
@@ -239,6 +242,7 @@ export function useStore(): Store {
     setCurrentId(id);
     setStreaming({});
     setChanges([]);
+    setArtifacts([]); // published artifacts are per-session
     setQueued([]); // staged messages belong to the session they were typed in
     // Opening a session is "seeing" it — the attention dot comes off.
     setSessions((prev) => prev.map((s) => (s.id === id && s.unseen ? { ...s, unseen: false } : s)));
@@ -246,6 +250,7 @@ export function useStore(): Store {
     setSession(session);
     setThread(thread);
     setUsage(usage);
+    api.getArtifacts(id).then(setArtifacts).catch(() => {});
     refreshChanges(id);
     refreshPolicy(id); // the rail shows this branch's effective rules
     refreshNet(id); // …and this branch's egress feed, not other sessions' history
@@ -482,6 +487,14 @@ export function useStore(): Store {
         if (sessionId === currentRef.current) refreshChangesRef.current(sessionId);
         break;
       }
+      case "artifact.published": {
+        // The agent hosted a file for browser viewing. Show it in the open session's
+        // strip; upsert by name (a re-publish overwrites in place) and keep newest first.
+        if (ev.sessionId !== currentRef.current) break;
+        const a = ev.data as Artifact;
+        setArtifacts((prev) => [a, ...prev.filter((x) => x.name !== a.name)]);
+        break;
+      }
       case "usage.updated": {
         const u = ev.data as { sessionId: string } & Usage;
         // Cache warmth: stamp the session row so the tree views (sidebar/map) start
@@ -534,6 +547,7 @@ export function useStore(): Store {
       setThread(thread);
       setUsage(usage);
       setStreaming({});
+      api.getArtifacts(id).then(setArtifacts).catch(() => {});
       refreshChangesRef.current(id);
     } catch {
       // server unreachable — the next reconnect will resync again
@@ -579,6 +593,7 @@ export function useStore(): Store {
     policy,
     policySource,
     changes,
+    artifacts,
     notice,
     usage,
     queued,

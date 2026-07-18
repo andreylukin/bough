@@ -4,7 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 import { applyTheme, c, alpha, mono, sans, THEME_PRESETS, type ThemePreset } from "../theme";
 import { useIsMobile } from "../useIsMobile";
-import type { Message, Part, Session } from "../types";
+import type { Artifact, Message, Part, Session } from "../types";
 import { api, type TurnPick } from "../api";
 import type { ActivityGroup, WorkerActivity } from "../mock";
 import { CopyId, Kbd, TumblingLogo } from "./ui";
@@ -947,6 +947,63 @@ function QueuedList(
   );
 }
 
+function fmtBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10 * 1024 ? 1 : 0)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// A strip above the composer listing files the agent published for browser viewing
+// (the artifact() host function). Each chip opens the hosted file in a new tab — this
+// is how bough showcases rendered HTML/CSS/JS results.
+function ArtifactsBar({ artifacts }: { artifacts: Artifact[] }) {
+  if (artifacts.length === 0) return null;
+  return (
+    <div
+      style={{
+        flex: "none",
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        flexWrap: "wrap",
+        padding: "8px 24px",
+        borderTop: `1px solid ${c.border}`,
+        background: c.panel,
+        fontFamily: mono,
+        fontSize: 11.5,
+      }}
+    >
+      <span style={{ color: c.muted2, flex: "none" }}>◈ artifacts</span>
+      {artifacts.map((a) => (
+        <a
+          key={a.name}
+          href={a.url}
+          target="_blank"
+          rel="noreferrer"
+          title={`Open ${a.name} (${fmtBytes(a.bytes)}) in a new tab`}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "3px 9px",
+            borderRadius: 6,
+            border: `1px solid ${c.border2}`,
+            background: c.panelInset,
+            color: c.green,
+            textDecoration: "none",
+            maxWidth: 260,
+          }}
+        >
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {a.name}
+          </span>
+          <span style={{ color: c.muted2, flex: "none" }}>↗</span>
+        </a>
+      ))}
+    </div>
+  );
+}
+
 export function Conversation({
   thread,
   streaming,
@@ -972,6 +1029,7 @@ export function Conversation({
   queued = [],
   onRemoveQueued,
   onEditQueued,
+  artifacts = [],
   disabled,
 }: {
   thread: Message[];
@@ -1016,6 +1074,8 @@ export function Conversation({
   queued?: string[];
   onRemoveQueued?: (i: number) => void;
   onEditQueued?: (i: number, text: string) => void;
+  // Agent-published artifacts for this session (browser-viewable); newest first.
+  artifacts?: Artifact[];
   disabled: boolean;
 }) {
   const activityFor = (id: string) => activity.find((a) => a.messageId === id);
@@ -1627,6 +1687,7 @@ export function Conversation({
         {waiting && <TumblingLogo />}
       </div>
 
+      <ArtifactsBar artifacts={artifacts} />
       {queued.length > 0 && (
         <QueuedList queued={queued} onRemove={onRemoveQueued} onEdit={onEditQueued} />
       )}

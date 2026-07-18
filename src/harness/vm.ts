@@ -56,6 +56,13 @@ export interface HostFns {
    * side exposes it as the `lsp.*` method object.
    */
   lsp?(verb: string, argsJson: string): Promise<string>;
+  /**
+   * Publish an artifact for browser viewing (server/artifacts.ts): write `content`
+   * to the session's artifact store, host it on the bough server, and return the
+   * artifact ({url, href, …}) as JSON — the worker side parses it back. Bridged for
+   * every supervisor turn.
+   */
+  artifact?(name: string, content: string): Promise<string>;
 }
 
 export interface ProgramResult {

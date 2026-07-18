@@ -63,6 +63,7 @@ import { mcpManager } from "./mcp/manager.ts";
 import { mcpSection } from "./mcp/prompt.ts";
 import { mcpStatusFor } from "./mcp/status.ts";
 import { expandFileReferences } from "./server/files.ts";
+import { publishArtifact } from "./server/artifacts.ts";
 
 export interface TurnCtx {
   db: Db;
@@ -218,6 +219,13 @@ const SYSTEM = [
   "Each consult is slow and expensive — use it when you're stuck or the user asks,",
   "not for routine work, and put every relevant path, symptom, and constraint into",
   "the question. It advises; you decide and implement.",
+  "await artifact(name, content) publishes a file for browser viewing: it writes",
+  "content to the session's artifact store, hosts it on the bough server, and returns",
+  "{ url, href } — a link the user opens to see rendered HTML/CSS/JS. Use it to",
+  "showcase results visually (charts, diagrams, mockups, reports, small apps): call it",
+  "once per file (e.g. index.html, then style.css / app.js referenced by relative path),",
+  "then share the returned href in your reply so the user can open it. Artifacts live",
+  "outside the workspace, so they never pollute the diff you're asked to ship.",
   "Later sections of this prompt may grant more host functions — delegation",
   "(agent/spawn/join/adopt), await mcp(server, tool, args) for MCP tools (whose",
   "connected servers and calling convention appear in a '# MCP tools' section), and",
@@ -591,6 +599,13 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
           outputTokens += u.outputTokens;
         },
       });
+    // Artifacts: the program publishes a file for browser viewing; we host it on the
+    // server (server/artifacts.ts) and announce it so the open UI lists it live.
+    toolCtx.artifact = async (name, content) => {
+      const art = await publishArtifact(sessionId, name, content);
+      bus.publish({ type: "artifact.published", sessionId, data: { sessionId, ...art } });
+      return art;
+    };
     // Delegation, allowed below the depth cap. Subagent turns get BLOCKING
     // delegation only (agent/adopt): a detached spawn would outlive the turn whose
     // report already went upward. At the cap there's no delegate at all, so those

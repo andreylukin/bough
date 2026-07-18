@@ -63,6 +63,7 @@ import { mcpStatusFor } from "../mcp/status.ts";
 import { beginAuth, clearAuth, completeAuth } from "../mcp/oauth.ts";
 import { clientFor } from "../supervisor/llm.ts";
 import { defaultWebDir, serveWeb } from "./static.ts";
+import { listArtifacts, serveArtifact } from "./artifacts.ts";
 import { createAuth } from "./auth.ts";
 import { compact, CompactBody, CompactError } from "../compact.ts";
 import { type Embedder, recall } from "../recall.ts";
@@ -1071,6 +1072,15 @@ const installBundleH: Handler = async (req, ctx, params) => {
   }
 };
 
+// List a session's published artifacts (server/artifacts.ts). Filesystem-backed, so
+// it survives restarts with no DB row; the UI merges live `artifact.published` events on top.
+const listArtifactsH: Handler = async (_req, _ctx, params) =>
+  json({ artifacts: await listArtifacts(params.id) });
+
+// Serve one hosted artifact by path (rendered HTML/JS/CSS/…). Same origin as the UI so
+// links open in the browser; traversal + bad ids are rejected inside serveArtifact.
+const getArtifact: Handler = (_req, _ctx, params) => serveArtifact(params.id, params.path ?? "");
+
 // ---- route table + dispatch ------------------------------------------------
 
 // Matched on pathname only (URLPattern rejects an init object + base together).
@@ -1146,6 +1156,11 @@ const routes: Route[] = [
     method: "GET",
     pattern: new URLPattern({ pathname: "/sessions/:id/files" }),
     handler: searchFiles,
+  },
+  {
+    method: "GET",
+    pattern: new URLPattern({ pathname: "/sessions/:id/artifacts" }),
+    handler: listArtifactsH,
   },
   {
     method: "GET",
@@ -1292,6 +1307,7 @@ const routes: Route[] = [
     pattern: new URLPattern({ pathname: "/net/bundles/:name/install" }),
     handler: installBundleH,
   },
+  { method: "GET", pattern: new URLPattern({ pathname: "/artifacts/:id/:path*" }), handler: getArtifact },
 ];
 
 /** Build the fetch handler bound to a ctx (used by main.ts and by tests). */

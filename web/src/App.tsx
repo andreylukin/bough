@@ -13,7 +13,7 @@ import { useStore } from "./store";
 import { bundleFromSummary, diffsToFiles, headGroupsFromSessions, outlineFromThread } from "./live";
 import type { HeadGroup } from "./live";
 import type { Bundle, ActivityGroup, DiffFile, OutlineNode } from "./mock";
-import type { ChangeSource, Message, NetRequest, Session } from "./types";
+import type { Artifact, ChangeSource, Message, NetRequest, Session } from "./types";
 import { Conversation } from "./components/Conversation";
 import { DiffViewer } from "./components/DiffViewer";
 import { LeftRail } from "./components/LeftRail";
@@ -242,6 +242,7 @@ function LiveApp() {
         queued={store.queued}
         onRemoveQueued={store.removeQueued}
         onEditQueued={store.editQueued}
+        artifacts={store.artifacts}
       />
       <CommandPalette
         open={paletteOpen}
@@ -329,6 +330,7 @@ function Window({
   queued = [],
   onRemoveQueued,
   onEditQueued,
+  artifacts = [],
 }: {
   live: boolean;
   connected: boolean;
@@ -395,6 +397,8 @@ function Window({
   queued?: string[];
   onRemoveQueued?: (i: number) => void;
   onEditQueued?: (i: number, text: string) => void;
+  // Agent-published artifacts for the open session (browser-viewable); mock passes none.
+  artifacts?: Artifact[];
 }) {
   const init = readHash();
   const [view, setView] = useState<View>(init.view);
@@ -602,6 +606,7 @@ function Window({
                 queued={queued}
                 onRemoveQueued={onRemoveQueued}
                 onEditQueued={onEditQueued}
+                artifacts={artifacts}
                 disabled={false}
               />
             </div>

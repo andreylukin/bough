@@ -52,6 +52,19 @@ export interface Session {
   unseen?: boolean;
 }
 
+// An artifact the agent published for browser viewing (mirrors src/server/artifacts.ts).
+export interface Artifact {
+  // Session-relative path (e.g. "index.html" or "assets/app.js").
+  name: string;
+  // Same-origin path the UI links to: /artifacts/<sessionId>/<name>.
+  url: string;
+  // Absolute loopback URL (for copy/paste); the UI opens `url` (origin-agnostic).
+  href: string;
+  bytes: number;
+  // Publish/update time (mtime epoch ms).
+  ts: number;
+}
+
 // SSE envelope. `data` shape depends on `type`.
 export interface BoughEvent {
   type: string;

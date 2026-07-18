@@ -29,7 +29,8 @@ type HostName =
   | "oracle"
   | "mcp"
   | "mcpStatus"
-  | "lsp";
+  | "lsp"
+  | "artifact";
 
 const pending = new Map<number, { resolve: (v: string) => void; reject: (e: Error) => void }>();
 let seq = 0;
@@ -93,6 +94,10 @@ async function run(code: string): Promise<void> {
       (verb) => [verb, (args?: unknown) => lspCall(verb, args)],
     ),
   );
+  // Artifacts: write a file to the session's artifact store and host it; returns the
+  // artifact object ({url, href, …}). JSON round-trip like agent()/mcp().
+  const artifact = async (name: string, content: string) =>
+    JSON.parse(await hostCall("artifact", [name, content]));
 
   // deno-lint-ignore no-explicit-any
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as any;
@@ -112,6 +117,7 @@ async function run(code: string): Promise<void> {
     "mcp",
     "mcpStatus",
     "lsp",
+    "artifact",
     "console",
     code,
   );
@@ -131,6 +137,7 @@ async function run(code: string): Promise<void> {
     mcp,
     mcpStatus,
     lsp,
+    artifact,
     sandboxConsole,
   );
 }

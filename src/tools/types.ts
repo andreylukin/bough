@@ -10,6 +10,7 @@
  */
 import { z } from "zod/v4";
 import { basename, dirname, join, resolve, sep } from "node:path";
+import type { Artifact } from "../server/artifacts.ts";
 
 export interface ToolRunCtx {
   /** Absolute path the tool runs against (cwd for bash, root for file paths). */
@@ -86,6 +87,13 @@ export interface ToolRunCtx {
   lsp?: {
     call: (verb: string, args: unknown) => Promise<unknown>;
   };
+  /**
+   * Publish an artifact for browser viewing (server/artifacts.ts), wired by the turn
+   * runner for every supervisor turn. Writes `content` under the session's artifact
+   * dir, hosts it on the bough server, emits an `artifact.published` event, and
+   * returns the artifact — its same-origin `url` and absolute local `href`.
+   */
+  artifact?: (name: string, content: string) => Promise<Artifact>;
 }
 
 /**

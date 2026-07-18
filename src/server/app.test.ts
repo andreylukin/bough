@@ -643,3 +643,41 @@ Deno.test("mcp oauth: auth endpoint guards; callback validates state", async () 
     c.db.close();
   }
 });
+
+Deno.test("GET /artifacts/:id/* serves a published artifact; /sessions/:id/artifacts lists them", async () => {
+  const home = Deno.makeTempDirSync({ prefix: "app-artifacts-" });
+  const prevHome = Deno.env.get("HOME");
+  Deno.env.set("HOME", home);
+  try {
+    const { publishArtifact } = await import("./artifacts.ts");
+    await publishArtifact("sessX", "index.html", "<!doctype html><title>demo</title>");
+    await publishArtifact("sessX", "css/app.css", "body{color:red}");
+
+    const c = ctx();
+    const h = createHandler(c);
+
+    const page = await h(req("GET", "/artifacts/sessX/index.html"));
+    assertEquals(page.status, 200);
+    assertEquals(page.headers.get("content-type"), "text/html; charset=utf-8");
+    assert((await page.text()).includes("<title>demo</title>"));
+
+    const css = await h(req("GET", "/artifacts/sessX/css/app.css"));
+    assertEquals(css.status, 200);
+    assertEquals(css.headers.get("content-type"), "text/css; charset=utf-8");
+
+    const missing = await h(req("GET", "/artifacts/sessX/ghost.html"));
+    assertEquals(missing.status, 404);
+
+    const listed = await (await h(req("GET", "/sessions/sessX/artifacts"))).json() as {
+      artifacts: { name: string }[];
+    };
+    assertEquals(listed.artifacts.map((a) => a.name).sort(), ["css/app.css", "index.html"]);
+
+    c.db.close();
+  } finally {
+    if (prevHome) Deno.env.set("HOME", prevHome);
+    else Deno.env.delete("HOME");
+    await Deno.remove(home, { recursive: true });
+  }
+});
+

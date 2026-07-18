@@ -142,3 +142,37 @@ Deno.test("mcp() string results round-trip too", async () => {
   );
   assertStringIncludes(out, "string plain text");
 });
+
+Deno.test("artifact() bridges into the program: publishes and returns the object", async () => {
+  const published: Array<{ name: string; content: string }> = [];
+  const c: ToolRunCtx = {
+    ...ctx(),
+    artifact: (name, content) => {
+      published.push({ name, content });
+      return Promise.resolve({
+        name,
+        url: `/artifacts/S/${name}`,
+        href: `http://127.0.0.1:4321/artifacts/S/${name}`,
+        bytes: content.length,
+        ts: 1,
+      });
+    },
+  };
+  const out = await runSteps.run(
+    {
+      code: `const a = await artifact("demo.html", "<h1>hi</h1>");
+             console.log("href:", a.href, "bytes:", a.bytes);`,
+    },
+    c,
+  );
+  assertStringIncludes(out, "href: http://127.0.0.1:4321/artifacts/S/demo.html bytes: 11");
+  assertEquals(published, [{ name: "demo.html", content: "<h1>hi</h1>" }]);
+
+  // Not wired → the call rejects inside the program.
+  const bare = await runSteps.run(
+    { code: `try { await artifact("x", "y"); } catch (e) { console.log("no fn:", e.message); }` },
+    ctx(),
+  );
+  assertStringIncludes(bare, "unknown host function: artifact");
+});
+
