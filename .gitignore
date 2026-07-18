@@ -1,8 +1,6 @@
 # local artifacts
 node_modules/
-web/dist/
 bough.app/
-desktop.app/
 
 # OS
 .DS_Store

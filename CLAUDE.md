@@ -15,4 +15,5 @@ so nothing here ever detaches HEAD or fights the index anymore.
 # Server / working tree
 
 The live bough server builds from this working tree and is respawned by
-launchd on kill. UI changes additionally need `npm run build` in web/.
+launchd on kill. The UI is the `bough` TUI (src/tui/), which runs from source —
+there is no web UI or build step.

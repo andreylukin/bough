@@ -7,9 +7,7 @@
     "test": "deno test --allow-net --allow-env --allow-read --allow-write --allow-ffi --allow-sys --allow-run",
     "check": "deno check src/**/*.ts src/tui/**/*.tsx",
     "tui": "deno run --no-prompt --allow-net=127.0.0.1 --allow-env --allow-read --allow-write=/dev/tty,$HOME/.bough --allow-sys --allow-run src/tui/main.tsx",
-    "tunnel": "deno run --allow-net --allow-env --allow-run=cloudflared scripts/tunnel.ts",
-    "desktop": "deno desktop --allow-net --allow-env --allow-read --allow-write --allow-ffi --allow-sys --allow-run src/desktop/main.ts",
-    "desktop:build": "deno desktop --output bough.app --include web/dist --allow-net --allow-env --allow-read --allow-write --allow-ffi --allow-sys --allow-run src/desktop/main.ts"
+    "tunnel": "deno run --allow-net --allow-env --allow-run=cloudflared scripts/tunnel.ts"
   },
   "imports": {
     "@modelcontextprotocol/sdk": "npm:@modelcontextprotocol/sdk@1.29.0",

@@ -1,4 +1,4 @@
-// App state + event reduction — port of web/src/store.ts trimmed to the TUI's P1
+// App state + event reduction — originally a port of the retired web UI's store, trimmed to the TUI's P1
 // scope (sessions, open thread, streaming buffers, net holds, queued messages).
 // Policy/changes/usage/fork land with their panels in later phases.
 import { useCallback, useEffect, useRef, useState } from "react";

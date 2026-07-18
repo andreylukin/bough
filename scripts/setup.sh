@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fresh-machine bootstrap for bough (macOS only — the sandbox is Seatbelt-based).
-# Installs toolchain deps via Homebrew, builds the web UI, fetches the worker
+# Installs toolchain deps via Homebrew, fetches the worker
 # model, and links the `bough` server manager onto PATH. Safe to re-run.
 set -euo pipefail
 
@@ -23,12 +23,12 @@ if ! command -v git >/dev/null; then
   exit 1
 fi
 
-# node: builds web/. jj: workspace snapshots. llama.cpp: local worker (llama-server).
+# llama.cpp: local worker (llama-server).
 # cloudflared: `deno task tunnel` for phone access. (deno has its own block below —
 # it needs a version floor, and may already be on PATH from the deno.land installer.)
 echo "==> checking Homebrew packages"
-brew_bins=(node jj llama-server cloudflared rg uv)
-brew_pkgs=(node jj llama.cpp cloudflared ripgrep uv)
+brew_bins=(node llama-server cloudflared rg uv)
+brew_pkgs=(node llama.cpp cloudflared ripgrep uv)
 missing=()
 for i in "${!brew_bins[@]}"; do
   command -v "${brew_bins[$i]}" >/dev/null || missing+=("${brew_pkgs[$i]}")
@@ -90,8 +90,6 @@ if ! command -v zed >/dev/null; then
   echo "  Install Zed (brew install --cask zed), then run 'zed: install CLI' inside it." >&2
 fi
 
-echo "==> building web UI (server serves web/dist)"
-(cd "$ROOT/web" && npm ci && npm run build)
 
 echo "==> caching Deno dependencies + typecheck"
 (cd "$ROOT" && deno install && deno task check)

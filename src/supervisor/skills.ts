@@ -8,8 +8,7 @@
  * harness appends that skill's body to the supervisor's system prompt for the
  * run and connects its MCP servers (see turn.ts). Three sources, first name wins:
  *   1. BUILTINS — inline in this file;
- *   2. bundled — the repo's skills/ dir (ships with bough; `deno desktop`
- *      packaging must --include it);
+ *   2. bundled — the repo's skills/ dir (ships with bough);
  *   3. installed — ~/.bough/skills (the user's own).
  * `${SKILL_DIR}` in a file-based skill body resolves to the skill's folder, so
  * instructions can reference helper scripts that live next to the SKILL.md.

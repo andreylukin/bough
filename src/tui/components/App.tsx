@@ -120,6 +120,10 @@ export function App(
     setHoldDetail(false);
     if (pendingId) pendingSince.current = Date.now();
   }, [pendingId]);
+  // Double-esc detection (Claude Code parity): only an esc that did nothing on
+  // its own arms the pair — an esc that interrupted or dismissed something
+  // already spent itself.
+  const lastEscAt = useRef(0);
   const [netStat, setNetStat] = useState<NetStatus | null>(null);
   const [policy, setPolicy] = useState<NetConfig | null>(null);
   const [mcpStat, setMcpStat] = useState<McpStatus | null>(null);

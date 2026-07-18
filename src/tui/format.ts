@@ -1,5 +1,5 @@
 // Part folding + text helpers — port of segmentParts and the tool-group header
-// rules from web/src/components/Conversation.tsx, minus the DOM.
+// rules originally ported from the retired web UI's Conversation view.
 import stringWidth from "string-width";
 import type { Part } from "../schema/parts.ts";
 

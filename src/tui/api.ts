@@ -1,11 +1,11 @@
-// REST client for the TUI. Unlike web/src/api.ts (relative URLs behind the Vite
+// REST client for the TUI. Unlike the retired web client (relative URLs behind a
 // proxy), this talks to the server directly, so every call needs the absolute base.
 import type { Message, NetRequest, Session } from "../schema/parts.ts";
 
 const PORT = Deno.env.get("BOUGH_PORT") ?? "4321";
 export const BASE = `http://127.0.0.1:${PORT}`;
 
-// Small response shapes, mirrored from web/src/api.ts (the web client is the
+// Small response shapes, mirrored from the server routes (src/server/app.ts is the
 // reference; these cover only what the TUI consumes).
 export interface DirHit {
   path: string;
@@ -56,7 +56,7 @@ export interface ThemeState {
   tokens: string[];
   defaults: Record<string, string>;
 }
-// Shapes below mirror web/src/api.ts (the reference client), trimmed to TUI needs.
+// Shapes below mirror the server contract (src/server/app.ts), trimmed to TUI needs.
 export interface Usage {
   contextTokens: number;
   outputTokens: number;

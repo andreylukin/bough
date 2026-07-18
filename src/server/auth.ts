@@ -36,7 +36,7 @@ function cookieToken(req: Request): string | undefined {
   return undefined;
 }
 
-// Styled to match the placeholder page in static.ts.
+// Minimal inline page — the only HTML the server serves besides artifacts.
 const loginPage = (error: boolean) =>
   `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">

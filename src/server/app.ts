@@ -62,7 +62,6 @@ import { mcpManager } from "../mcp/manager.ts";
 import { mcpStatusFor } from "../mcp/status.ts";
 import { beginAuth, clearAuth, completeAuth } from "../mcp/oauth.ts";
 import { clientFor } from "../supervisor/llm.ts";
-import { defaultWebDir, serveWeb } from "./static.ts";
 import { listArtifacts, serveArtifact } from "./artifacts.ts";
 import { createAuth } from "./auth.ts";
 import { compact, CompactBody, CompactError } from "../compact.ts";
@@ -96,8 +95,6 @@ export interface AppCtx {
   themeDir?: string;
   /** Launcher env-file dir override (tests); undefined = ~/.bough. */
   envDir?: string;
-  /** Built web UI dir override (tests/packaging); undefined = web/dist. */
-  webDir?: string;
   /** LLM client for compaction/turns; injected for tests, else the real Anthropic client. */
   llm?: LlmClient;
   /** Model override; else BOUGH_MODEL, else the default. */
@@ -1312,7 +1309,6 @@ const routes: Route[] = [
 
 /** Build the fetch handler bound to a ctx (used by main.ts and by tests). */
 export function createHandler(ctx: AppCtx): (req: Request) => Response | Promise<Response> {
-  const webDir = ctx.webDir ?? defaultWebDir();
   const auth = createAuth(ctx.password);
   return async (req) => {
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
@@ -1324,8 +1320,13 @@ export function createHandler(ctx: AppCtx): (req: Request) => Response | Promise
       const match = route.pattern.exec({ pathname });
       if (match) return route.handler(req, ctx, match.pathname.groups as Record<string, string>);
     }
-    // Unmatched GETs fall through to the built web UI (file, else SPA index).
-    if (req.method === "GET") return serveWeb(req, webDir);
+    // No web UI — bough is driven through the TUI; the server is API + artifacts.
+    if (req.method === "GET" && pathname === "/") {
+      return new Response(
+        "bough server — drive it with the `bough` TUI. Artifacts: /artifacts/<sessionId>/<name>\n",
+        { headers: { "content-type": "text/plain; charset=utf-8", ...CORS } },
+      );
+    }
     return error(404, "not found");
   };
 }
