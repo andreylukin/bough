@@ -1,5 +1,5 @@
 import { assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
-import { COLOR, fuzzyScore, md, wordLeft, wordRight } from "./format.ts";
+import { COLOR, fuzzyScore, linkAt, md, wordLeft, wordRight } from "./format.ts";
 
 Deno.test("wordLeft/wordRight: readline word boundaries", () => {
   const t = "what does this do";
@@ -47,4 +47,25 @@ Deno.test("md: URLs inside code spans are not linkified", () => {
   if (!COLOR) return;
   const out = md("run `curl https://example.com`");
   assertEquals(out.includes("]8;;"), false);
+});
+
+Deno.test("linkAt: resolves the hyperlink under a display column", () => {
+  if (!COLOR) return;
+  // "go " + linked "docs (url)" + " end", with bold prose before the link.
+  const line = md("go **now** [docs](https://example.com/x) end");
+  // Plain text: "go now docs (https://example.com/x) end" — link spans cols 7..35.
+  assertEquals(linkAt(line, 0), null); // "g"
+  assertEquals(linkAt(line, 7), "https://example.com/x"); // "d" of docs
+  assertEquals(linkAt(line, 34), "https://example.com/x"); // inside the dimmed url
+  assertEquals(linkAt(line, 37), null); // "e" of end
+  assertEquals(linkAt(line, 200), null); // past end of line
+});
+
+Deno.test("linkAt: wrapped continuation fragment still carries the full target", () => {
+  if (!COLOR) return;
+  // wrap-ansi re-opens the link on a continuation line that never sees a close
+  // in-slice order: open + text, close at the very end.
+  const frag = "\x1b]8;;https://example.com/long\x1b\\example.com/lo\x1b]8;;\x1b\\";
+  assertEquals(linkAt(frag, 5), "https://example.com/long");
+  assertEquals(linkAt(frag, 14), null); // one past the visible text
 });

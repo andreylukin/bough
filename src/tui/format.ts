@@ -1,5 +1,6 @@
 // Part folding + text helpers — port of segmentParts and the tool-group header
 // rules from web/src/components/Conversation.tsx, minus the DOM.
+import stringWidth from "string-width";
 import type { Part } from "../schema/parts.ts";
 
 export type ToolCall = Extract<Part, { type: "tool_call" }>;
@@ -74,6 +75,28 @@ const FG_OFF = sgr("\x1b[39m");
 const osc8 = (url: string, text: string) =>
   COLOR ? `\x1b]8;;${url}\x1b\\${text}\x1b]8;;\x1b\\` : text;
 
+/**
+ * The OSC 8 hyperlink target under 0-based display column `col` of a rendered
+ * line, or null. Lets a plain click open the link even though the TUI's mouse
+ * reporting keeps the terminal's own hit-testing away (Ghostty et al. need
+ * shift+cmd once an app owns the mouse). The escapes are zero-width, so column
+ * math counts only the visible text between markers; a wrapped URL works
+ * because wrap-ansi re-opens the link (full target) on each continuation line.
+ */
+export function linkAt(text: string, col: number): string | null {
+  const re = /\x1b\]8;;([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+  let url: string | null = null;
+  let width = 0;
+  let last = 0;
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    width += stringWidth(text.slice(last, m.index));
+    if (col < width) return url;
+    url = m[1] || null;
+    last = m.index + m[0].length;
+  }
+  return url && col < width + stringWidth(text.slice(last)) ? url : null;
+}
+
 function mdInline(line: string): string {
   // Swap code spans for placeholders so their contents are exempt from prose
   // rewriting, but bold/links still match ACROSS them ("**bold with `code`**"
@@ -85,9 +108,11 @@ function mdInline(line: string): string {
   return line
     .replace(/`[^`]+`/g, (m) => guard(`${CYAN}${m.slice(1, -1)}${FG_OFF}`))
     .replace(/\*\*([^*]+)\*\*/g, `${B}$1${B_OFF}`)
-    // [text](url) → clickable underlined text, url dimmed alongside.
+    // [text](url) → clickable underlined text, url dimmed alongside. The
+    // lookbehind keeps "[" of an earlier-inserted SGR escape (\x1b[1m from
+    // bold) from being taken as the link opener and swallowing the escape.
     .replace(
-      /\[([^\]]+)\]\((\S+?)\)/g,
+      /(?<!\x1b)\[([^\]]+)\]\((\S+?)\)/g,
       (_m, text, url) => guard(osc8(url, `${UL}${text}${UL_OFF} ${DIM}(${url})${B_OFF}`)),
     )
     // Bare URLs become clickable as themselves; trailing punctuation stays prose.

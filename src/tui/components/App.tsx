@@ -20,7 +20,7 @@ import {
 } from "../api.ts";
 import { useStore } from "../store.ts";
 import { type Branch, buildLines, parseSubagentNote, type SubagentNote } from "../lines.ts";
-import { fmtTokens, fuzzyScore, segmentParts, wordLeft, wordRight } from "../format.ts";
+import { fmtTokens, fuzzyScore, linkAt, segmentParts, wordLeft, wordRight } from "../format.ts";
 import { type MouseEvent, onMouse, onPaste } from "../mouse.ts";
 import { extractSpan, highlightSpan, rowSpan, type Selection, selRows } from "../selection.ts";
 import { findMatches, markLine } from "../search.ts";
@@ -538,7 +538,7 @@ export function App(
     // Click/right-click dispatch at a screen cell (chrome rows first, then the
     // viewport line under it). Left clicks land on mouse-UP so they can be told
     // apart from a starting drag.
-    const clickAt = (y: number, right: boolean) => {
+    const clickAt = (x: number, y: number, right: boolean) => {
       const l = layout.current;
       // Info-card rows live in the chrome: any click (left or right) copies the
       // row's raw value.
@@ -570,6 +570,13 @@ export function App(
       // left-click keeps its fold/open behavior.
       if (right) {
         if (line.copy) copyRef.current(line.copy, "section");
+        return;
+      }
+      // A click landing on a hyperlink opens it — the TUI owns the mouse, so
+      // the terminal's own cmd+click never fires without a shift bypass.
+      const url = linkAt(line.text, x - 1);
+      if (url && /^https?:\/\//.test(url)) {
+        new Deno.Command("open", { args: [url], stdout: "null", stderr: "null" }).spawn();
         return;
       }
       if (line.click) onClickRef.current(line.click);
@@ -623,10 +630,10 @@ export function App(
           if (text) copyRef.current(text, "selection");
           return;
         }
-        if (press) clickAt(press.y, false);
+        if (press) clickAt(press.x, press.y, false);
         return;
       }
-      if (ev.kind === "right-click") clickAt(ev.y, true);
+      if (ev.kind === "right-click") clickAt(ev.x, ev.y, true);
     });
     return () => onMouse(null);
   }, []);
