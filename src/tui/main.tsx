@@ -6,6 +6,7 @@ import { api, AuthError, BASE, setCookie } from "./api.ts";
 import { loadTheme } from "./theme.ts";
 import { loadCookie, saveCookie } from "./state.ts";
 import { enterTui, filteredStdin, leaveTui } from "./mouse.ts";
+import { queryTermBg, syncedStdout } from "./term.ts";
 import { App } from "./components/App.tsx";
 
 // Read a password from the tty without echoing (raw mode, pre-Ink).
@@ -81,11 +82,23 @@ async function main() {
   globalThis.addEventListener("unload", leaveTui);
   // exitOnCtrlC off: the app implements double-ctrl+c itself (a single ^c would
   // otherwise unmount ink out from under the quit-hint). stdin goes through the
-  // mouse filter so ink never sees SGR mouse sequences.
+  // mouse filter so ink never sees SGR mouse sequences; stdout wraps each frame
+  // in synchronized-update guards (DEC 2026) so terminals repaint atomically.
+  // kittyKeyboard 'enabled' (not 'auto': detection fails under tmux) makes
+  // modified keys like shift+enter distinguishable where the terminal supports
+  // the protocol; elsewhere the push is ignored harmlessly.
   const inst = render(
     <App initialSessions={sessions} defaultWorkspace={defaultWorkspace} />,
-    { exitOnCtrlC: false, stdin: filteredStdin() },
+    {
+      exitOnCtrlC: false,
+      stdin: filteredStdin(),
+      stdout: syncedStdout(),
+      kittyKeyboard: { mode: "enabled" },
+    },
   );
+  // Ask for the terminal's background color now that ink has stdin in raw mode;
+  // the reply is consumed by the stdin filter (never seen as keystrokes).
+  queryTermBg();
   try {
     await inst.waitUntilExit();
   } finally {

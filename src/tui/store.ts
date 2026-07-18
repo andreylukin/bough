@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { BoughEvent, Message, NetRequest, Part, Session } from "../schema/parts.ts";
 import { api, type Usage, USAGE_ZERO, type WireDiff } from "./api.ts";
 import { useEvents } from "./events.ts";
+import { notifyDesktop } from "./term.ts";
 
 // Client-side decorations the wire Session doesn't carry.
 // Net-feed rows kept in memory for the panel.
@@ -91,6 +92,9 @@ export function useStore(initialSessions: Session[]): Store {
   currentRef.current = currentId;
   const threadRef = useRef<Message[]>([]);
   threadRef.current = thread;
+  // For desktop notifications: the stable event handler needs session titles.
+  const sessionsRef = useRef<TuiSession[]>([]);
+  sessionsRef.current = sessions;
   const busyRef = useRef(false);
   const pendingRef = useRef<NetRequest | null>(null);
   pendingRef.current = pending;
@@ -413,6 +417,13 @@ export function useStore(initialSessions: Session[]): Store {
             )
           );
           if (ev.sessionId === currentRef.current) setActivity(null);
+          // Desktop banner when a turn lands while the terminal is unfocused
+          // (notifyDesktop self-gates on focus). Subagent turns finish inside a
+          // parent's still-running turn — a banner there would be noise.
+          const fin = sessionsRef.current.find((s) => s.id === ev.sessionId);
+          if (fin?.busy && fin.kind !== "subagent") {
+            notifyDesktop(`${fin.title || "bough"} — turn finished`);
+          }
         }
         setThread((prev) => prev.map((m) => (m.id === messageId ? { ...m, pending: false } : m)));
         setStreaming((prev) => {
@@ -451,10 +462,13 @@ export function useStore(initialSessions: Session[]): Store {
         });
         setPendings((prev) => {
           if (r.verdict === "pending") {
-            // enqueue (or refresh in place) — never displace the card being shown
-            return prev.some((p) => p.id === r.id)
-              ? prev.map((p) => (p.id === r.id ? r : p))
-              : [...prev, r];
+            // A NEW hold (not a refresh) wants eyes on it — desktop banner if
+            // the terminal is unfocused (notifyDesktop self-gates on focus).
+            if (!prev.some((p) => p.id === r.id)) {
+              notifyDesktop(`bough — approval needed: ${r.host}`);
+              return [...prev, r];
+            }
+            return prev.map((p) => (p.id === r.id ? r : p));
           }
           return prev.filter((p) => p.id !== r.id); // resolved/expired → next surfaces
         });

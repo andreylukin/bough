@@ -36,6 +36,7 @@ import { Panel, PANEL_TABS, type PanelTab, PanelTabs } from "./Panel.tsx";
 import { Help } from "./Help.tsx";
 import { appendHistory, loadHistory, saveLastSession } from "../state.ts";
 import { copyToClipboard } from "../clipboard.ts";
+import { progressEnd, progressStart, setTitle, tabColor, termBackground } from "../term.ts";
 
 // picker + conversation + net/mcp/skills are all tabs of the one "panel" view.
 type Mode = "chat" | "new" | "diff" | "model" | "panel" | "help";
@@ -214,6 +215,26 @@ export function App(
   useEffect(() => {
     api.getConfig().then(setCfg, () => {});
   }, []);
+
+  // Terminal chrome: the tab is named after the open conversation, tinted amber
+  // (iTerm2) while an approval waits, and shows taskbar/tab progress while the
+  // turn runs — all no-ops on terminals without the respective sequence.
+  const sessionTitle = store.session?.title;
+  useEffect(() => {
+    setTitle(sessionTitle ? `bough — ${sessionTitle}` : "bough");
+  }, [sessionTitle]);
+  const hasPending = !!store.pending;
+  useEffect(() => {
+    tabColor(hasPending ? palette.warn : null);
+  }, [hasPending]);
+  // turnErrored rides in a ref: the effect must fire on busy EDGES only (an
+  // error status landing later must not re-clear an already-cleared progress).
+  const turnErroredRef = useRef(false);
+  turnErroredRef.current = store.session?.lastTurnStatus === "error";
+  useEffect(() => {
+    if (store.busy) progressStart();
+    else progressEnd(turnErroredRef.current);
+  }, [store.busy]);
 
   // Repaint on terminal resize (SIGWINCH fallback: the node-compat resize event
   // doesn't always fire under Deno).
@@ -1328,6 +1349,11 @@ export function App(
         return { text: "", cursor: 0 };
       });
     };
+    // Shift+enter = newline (kitty-protocol terminals report the modifier;
+    // elsewhere it arrives as a plain return and ctrl+j stays the chord).
+    if (key.return && key.shift) {
+      return insertAtCursor("\n");
+    }
     if (key.return) {
       sendNow(key.meta);
       return;
@@ -1474,6 +1500,8 @@ export function App(
       ]);
     }
     rows.push(["messages", String(store.thread.length), String(store.thread.length)]);
+    const bg = termBackground();
+    if (bg) rows.push(["terminal", `${bg.scheme} (${bg.hex})`, bg.hex]);
     if (s.contextTokens) {
       const cached = s.cachedTokens
         ? ` · ${Math.round((s.cachedTokens / s.contextTokens) * 100)}% cached`

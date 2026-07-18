@@ -5,6 +5,7 @@
 // every other byte is forwarded to the stream ink reads from.
 import { PassThrough } from "node:stream";
 import process from "node:process";
+import { reportTermBg, setFocused, termCleanup } from "./term.ts";
 
 export interface MouseEvent {
   /** 1-based terminal column/row of the event. */
@@ -39,6 +40,27 @@ const PASTE_END = "\x1b[201~";
 // sequences ever split across reads in practice).
 // deno-lint-ignore no-control-regex -- ESC is the point
 const PARTIAL_TAIL = /\x1b\[(<[\d;]*|20[01]?)$/;
+
+// Focus in/out (mode 1004) and the OSC 11 background report are terminal
+// REPLIES, not keystrokes — consumed here (term.ts keeps the state) so they
+// never leak into ink's input parser as garbage keys. Like the mouse sequences
+// above, terminals send them atomically, so no cross-chunk reassembly.
+// deno-lint-ignore no-control-regex -- ESC is the point
+const FOCUS = /\x1b\[([IO])/g;
+// deno-lint-ignore no-control-regex -- ESC is the point
+const BG_REPORT = /\x1b\]11;([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+
+function dispatchReports(s: string): string {
+  return s
+    .replace(FOCUS, (_all, io) => {
+      setFocused(io === "I");
+      return "";
+    })
+    .replace(BG_REPORT, (_all, spec) => {
+      reportTermBg(spec);
+      return "";
+    });
+}
 
 function dispatchMouse(s: string): string {
   return s.replace(SGR, (_all, b, x, y, fin) => {
@@ -91,11 +113,11 @@ export function filteredStdin(): typeof process.stdin {
       const start = s.indexOf(PASTE_START);
       if (start < 0) {
         const tail = PARTIAL_TAIL.exec(s)?.[0] ?? "";
-        forwarded += dispatchMouse(s.slice(0, s.length - tail.length));
+        forwarded += dispatchReports(dispatchMouse(s.slice(0, s.length - tail.length)));
         carry = tail;
         break;
       }
-      forwarded += dispatchMouse(s.slice(0, start));
+      forwarded += dispatchReports(dispatchMouse(s.slice(0, start)));
       s = s.slice(start + PASTE_START.length);
       inPaste = true;
     }
@@ -115,15 +137,22 @@ export function filteredStdin(): typeof process.stdin {
 const enc = new TextEncoder();
 /** Alt screen + SGR mouse tracking + bracketed paste on. 1002 (button-event)
  * adds drag motion for text selection; 1000 stays as a fallback for terminals
- * without it. */
+ * without it. 1004 reports focus in/out (gates desktop notifications); 22;0t
+ * pushes the terminal's current title so leaveTui can restore it. */
 export function enterTui() {
-  Deno.stdout.writeSync(enc.encode("\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1006h\x1b[?2004h"));
+  Deno.stdout.writeSync(
+    enc.encode("\x1b[22;0t\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1006h\x1b[?2004h\x1b[?1004h"),
+  );
 }
-/** Restore the normal buffer, mouse + paste modes off, cursor visible. */
+/** Restore the normal buffer, mouse + paste + focus modes off, cursor visible,
+ * the pushed title popped back, progress/tab-color cleared. */
 export function leaveTui() {
   try {
+    termCleanup();
     Deno.stdout.writeSync(
-      enc.encode("\x1b[?2004l\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?1049l\x1b[?25h"),
+      enc.encode(
+        "\x1b[?1004l\x1b[?2004l\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?1049l\x1b[?25h\x1b[23;0t",
+      ),
     );
   } catch {
     // stdout already gone — nothing to restore onto.
