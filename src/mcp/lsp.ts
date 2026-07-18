@@ -85,10 +85,14 @@ const VERBS: Record<string, (a: Args) => string[]> = {
 /** The system-prompt section for turns that have lsp.* bridged. */
 export function lspSection(): string {
   return "\n\n## Symbol navigation (lsp)\n" +
-    "START code exploration here: lsp.overview on a file instead of reading it whole, " +
-    "lsp.find to locate a symbol instead of an rg sweep, lsp.refs for callers instead of " +
-    "grepping the name. These answer in symbols, not dumped text — far fewer tokens and " +
-    "no false matches. Fall back to rg/read for non-code text, when a verb comes back " +
+    "These verbs are the DEFAULT whenever the target is a symbol — use them first, " +
+    "not as an alternative you sometimes remember: lsp.overview on a file instead of " +
+    "reading it whole, lsp.find to locate a symbol instead of an rg sweep, lsp.refs " +
+    "for callers instead of grepping the name (and BEFORE changing any signature, so " +
+    "you know every call site), lsp.show to read one definition instead of the file " +
+    "around it, lsp.rename for renames instead of hand-editing each site. These " +
+    "answer in symbols, not dumped text — far fewer tokens and no false matches. " +
+    "Fall back to rg/read for non-code text, when a verb comes back " +
     "empty, or when lsp itself errors (language server missing or failing to start) — " +
     "a broken server is never a reason to stop the task; note it in one line and keep " +
     "working with rg/read. Verbs (await each; results are plain text; a symbol is a " +
