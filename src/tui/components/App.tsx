@@ -1247,6 +1247,10 @@ export function App(
       if (ch === "A" && armed) return store.resolvePending(true, "session");
       if (ch === "d" && armed) return store.resolvePending(false);
       if (ch === "v") return setHoldDetail((v) => !v);
+      // Esc stays the brake even while a hold card is up: stop the whole turn
+      // (the hold dies with it) instead of being dead until a/A/d. No arm-delay:
+      // stopping is always safe.
+      if (key.escape) return store.interrupt();
       return;
     }
     if (key.escape) {
@@ -1256,6 +1260,29 @@ export function App(
       else if (shellOut) setShellOut(null);
       else if (showInfo) setShowInfo(false);
       else if (store.notice) store.dismissNotice();
+      else if (Date.now() - lastEscAt.current < 600) {
+        // Double-esc (Claude Code parity): clear the draft (↑ recalls it), or
+        // with an empty composer open the rewind view — the conversation tree,
+        // where enter branches at an earlier turn.
+        lastEscAt.current = 0;
+        if (input.trim() !== "") {
+          history.current.push(input);
+          appendHistory(input);
+          setHistIdx(null);
+          draft.current = "";
+          setComp({ text: "", cursor: 0 });
+        } else if (store.thread.length > 0) {
+          forkNavTouched.current = false;
+          moveForkSel(Math.max(0, convItems.length - 1));
+          setRangeAnchor(null);
+          setPanelTab("conversation");
+          setMode("panel");
+        }
+        return;
+      } else {
+        // This esc did nothing on its own — arm the pair.
+        lastEscAt.current = Date.now();
+      }
       return;
     }
     // Send resolves the text inside the updater: an Enter that lands in the same

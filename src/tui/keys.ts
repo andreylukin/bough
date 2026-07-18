@@ -7,7 +7,8 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
     keys: [
       ["enter", "send (steers a running turn; first send creates the session)"],
       ["⌥enter", "queue until the turn finishes"],
-      ["esc", "interrupt the running turn"],
+      ["esc", "interrupt the running turn (also during a net hold)"],
+      ["esc esc", "clear the draft (↑ recalls it) · rewind via the conversation tree when empty"],
       ["↑/↓", "recall previously sent messages"],
       ["click ▸", "expand/collapse that tool group or thinking fold"],
       ["right-click", "copy that section's text (message, reasoning, tool calls)"],
