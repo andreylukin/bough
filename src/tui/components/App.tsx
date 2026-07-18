@@ -1034,7 +1034,7 @@ export function App(
         return;
       }
       if (ch === "A") {
-        // Apply everything, one call per source (a session can have jj + clonefile).
+        // Apply everything, one call per source (a session can have shadow + clonefile).
         for (const source of new Set(diffEntries.map((e) => e.source))) {
           store.applyChanges(
             source,
@@ -1044,7 +1044,7 @@ export function App(
         return;
       }
       if (ch === "R") {
-        // Nothing listed → nothing to revert; the raw call 400s ("no jj
+        // Nothing listed → nothing to revert; the raw call 400s ("no
         // workspace") into a confusing error line.
         if (diffEntries.length > 0) store.revertChanges();
         return;

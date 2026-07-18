@@ -2,30 +2,24 @@
  * The Changes-tab backend: turn a session's snapshot state into review payloads and
  * apply/revert reviewed edits. Two snapshot sources feed the same Diff contract
  * (src/schema/changes.ts, see sandbox/INTEGRATION.md §2-4):
- *   - jj — repo work. A session with a git-repo workspace has a `bough/<id>` change;
- *     jj.diff is the change-vs-parent diff. Present only when runtime.workspace is set
- *     and jj is initialised there (`.jj/`).
+ *   - shadow — repo work. A session with a repo workspace runs in a shadow-git
+ *     worktree; shadow.diff is the base..tip diff. Present when the workspace's
+ *     `.git` file resolves to a bough shadow store.
  *   - clonefile — non-git config. Present when a snapshot dir with a manifest exists.
  * A session may have both, neither (→ empty), or one.
  *
  * Apply / revert semantics:
  *   - clonefile apply → copy the approved originals back (applyBack). This is the real
  *     mutation for config edits.
- *   - jj apply, external-mode session (isolated workspace) → deliver the selected
- *     paths into the origin checkout's working tree (jj.materialize, 3-way); when
- *     every changed path is covered, also seal the change (jj.accept, described with
- *     the session title) so the rail clears.
- *   - jj apply, colocated session → accept & advance (jj.accept): the edits already
- *     live in the checkout, sealing is the whole apply. Whole-change.
- *   - jj revert → per-path when `paths` is given: restore just those paths of the change
- *     back to its parent (`jj.revertPaths`), leaving the rest of the change intact.
- *     With empty/absent `paths` it's whole-change: `jj undo` (undo the most recent jj
- *     operation on the workspace) — so a whole-change revert must come right after
- *     review, before other jj ops intervene.
+ *   - shadow apply → deliver the selected paths into the origin's working tree
+ *     (shadow.materialize, content-level 3-way); when every changed path is covered,
+ *     also seal the change (shadow.accept, described with the session title) so the
+ *     rail clears.
+ *   - shadow revert → per-path when `paths` is given (restore just those paths back to
+ *     the session base), whole-change otherwise (shadow.undoAll).
  *   - clonefile revert is implicit: the originals stay pristine until you apply, so
  *     "revert" is simply not applying; there is no clonefile revert path.
  */
-import * as jj from "../vcs/jj.ts";
 import * as shadow from "../vcs/shadow.ts";
 import * as clonefile from "../vcs/clonefile.ts";
 import type { Db } from "../db/db.ts";
@@ -65,12 +59,6 @@ async function isFile(path: string): Promise<boolean> {
   }
 }
 
-/** True when the session's workspace is an initialised jj repo. */
-async function hasJjWorkspace(db: Db, sessionId: string): Promise<string | null> {
-  const { workspace } = db.getSessionRuntime(sessionId);
-  return workspace && (await isDir(`${workspace}/.jj`)) ? workspace : null;
-}
-
 /** The session's shadow worktree, or null (its `.git` file resolves to a bough store). */
 async function hasShadowWorkspace(db: Db, sessionId: string): Promise<string | null> {
   const { workspace } = db.getSessionRuntime(sessionId);
@@ -92,15 +80,6 @@ export async function sessionChanges(
       diffs.push(await shadow.diff(sdir, sessionId));
     } catch (e) {
       console.error(`changes: shadow diff failed for ${sessionId}: ${(e as Error).message}`);
-    }
-  }
-
-  const repo = sdir ? null : await hasJjWorkspace(db, sessionId);
-  if (repo) {
-    try {
-      diffs.push(await jj.diff(repo, sessionId));
-    } catch (e) {
-      console.error(`changes: jj diff failed for ${sessionId}: ${(e as Error).message}`);
     }
   }
 
@@ -173,35 +152,7 @@ export async function applyChanges(
     if (coversAll) await shadow.accept(dir, sessionId, sealMsg);
     return { applied: paths, origin, branch: null, sealed: coversAll };
   }
-  const repo = await hasJjWorkspace(db, sessionId);
-  if (!repo) throw new ChangesError(400, "no jj workspace to apply");
-  const title = db.getSession(sessionId)?.title;
-  const message = title ? `bough: ${title}` : "bough: session changes";
-  const origin = await jj.originRepo(repo);
-  const external = origin !== null && (await Deno.realPath(origin)) !== (await Deno.realPath(repo));
-  if (!external) {
-    // Colocated: edits already live in the checkout; accepting is the whole apply.
-    await jj.accept(repo, sessionId, message);
-    return { applied: body.paths, origin: null, branch: jj.bookmarkFor(sessionId), sealed: true };
-  }
-  // External: resolve [] to "every changed path" so delivery and the seal test
-  // work from one concrete list.
-  const changed = (await jj.diff(repo, sessionId)).files.map((f) => f.path);
-  const paths = body.paths.length > 0 ? body.paths.filter((p) => changed.includes(p)) : changed;
-  if (paths.length === 0) return { applied: [], origin, branch: null, sealed: false };
-  try {
-    await jj.materialize(repo, sessionId, origin, paths);
-  } catch (e) {
-    throw new ChangesError(
-      409,
-      `apply to ${origin} failed — resolve by hand from branch ${jj.bookmarkFor(sessionId)}: ${
-        (e as Error).message.split("\n").at(-1)
-      }`,
-    );
-  }
-  const coversAll = changed.every((p) => paths.includes(p));
-  if (coversAll) await jj.accept(repo, sessionId, message);
-  return { applied: paths, origin, branch: jj.bookmarkFor(sessionId), sealed: coversAll };
+  throw new ChangesError(400, `unknown source ${body.source}`);
 }
 
 /**
@@ -224,12 +175,5 @@ export async function revertChanges(
     }
     return await shadow.undoAll(sdir, sessionId);
   }
-  const repo = await hasJjWorkspace(db, sessionId);
-  if (!repo) throw new ChangesError(400, "no jj workspace to revert");
-  if (paths && paths.length > 0) {
-    await jj.revertPaths(repo, sessionId, paths);
-    return paths;
-  }
-  await jj.undo(repo);
-  return [];
+  throw new ChangesError(400, "no workspace to revert");
 }

@@ -267,7 +267,7 @@ const searchFiles: Handler = async (req, ctx, params) => {
 
 // Directory autocomplete for the new-session dialog: fuzzy dirs under the query's
 // base (fzf-style subsequence), seeded with every workspace a session has ever
-// used — but not the per-session jj working copies bough itself creates.
+// used — but not the per-session worktrees bough itself creates.
 const searchDirs: Handler = (req, ctx) => {
   const q = new URL(req.url).searchParams.get("q") ?? "";
   const known = [
@@ -459,7 +459,7 @@ const moveInto: Handler = async (req, ctx, params) => {
   }
 };
 
-// Adopt a subagent's branch: squash its jj change into its spawner's workspace —
+// Adopt a subagent's branch: fold its diff into its spawner's workspace —
 // the UI affordance mirroring the supervisor program's adopt() host function.
 const adoptSession: Handler = async (_req, ctx, params) => {
   const session = ctx.db.getSession(params.id);
@@ -499,7 +499,7 @@ const getMetrics: Handler = (_req, ctx, params) => {
   return json(sessionMetrics(ctx.db, params.id));
 };
 
-// GET /sessions/:id/changes → { diffs } across active snapshot sources (jj + clonefile).
+// GET /sessions/:id/changes → { diffs } across active snapshot sources (shadow + clonefile).
 const getChanges: Handler = async (_req, ctx, params) => {
   if (!ctx.db.getSession(params.id)) return error(404, "session not found");
   const diffs = await sessionChanges(ctx.db, params.id, { snapshotBase: ctx.snapshotBase });
@@ -528,7 +528,7 @@ const revertChangesH: Handler = async (req, ctx, params) => {
   try {
     const revertedPaths = await revertChanges(ctx.db, params.id, parsed.data.paths);
     emitChangesUpdated(ctx, params.id);
-    return json({ ok: true, reverted: "jj", paths: revertedPaths });
+    return json({ ok: true, reverted: "shadow", paths: revertedPaths });
   } catch (e) {
     if (e instanceof ChangesError) return error(e.status, e.message);
     throw e;

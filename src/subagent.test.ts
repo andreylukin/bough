@@ -1,7 +1,7 @@
 /**
  * Subagent integration: a supervisor program calls agent() (through run_steps and
  * the sealed VM), a real subagent session spins up as a tree branch, works its own
- * jj workspace, and the spawner adopts its changes. The LLM is a dispatcher keyed
+ * shadow worktree, and the spawner adopts its changes. The LLM is a dispatcher keyed
  * by the thread's first user text, because spawner and subagent turns interleave
  * on the same injected client.
  */
@@ -12,7 +12,6 @@ import type { Message, Session } from "./schema/parts.ts";
 import type { LlmClient, LlmParams, LlmResult } from "./supervisor/llm.ts";
 import { defaultTools } from "./tools/mod.ts";
 import { beginTurn, startUserTurn, type TurnCtx } from "./turn.ts";
-import * as jj from "./vcs/jj.ts";
 import * as shadow from "./vcs/shadow.ts";
 import { saveRegistry, setActivation } from "./mcp/config.ts";
 import { mcpManager } from "./mcp/manager.ts";
@@ -150,15 +149,7 @@ async function canRun(cmd: string): Promise<boolean> {
   return (await Deno.permissions.query({ name: "run", command: cmd })).state === "granted";
 }
 
-const jjAvailable = (await canRun("jj")) && (await canRun("git")) &&
-  await (async () => {
-    try {
-      await jj.version();
-      return true;
-    } catch {
-      return false;
-    }
-  })();
+const gitAvailable = await canRun("git");
 
 // ---- tests -----------------------------------------------------------------
 
@@ -526,19 +517,19 @@ Deno.test("delegation stops at the depth cap (no agent() host function at depth 
 });
 
 Deno.test({
-  name: "repo workspace: subagent works an isolated jj branch; adopt() squashes it back",
-  ignore: !jjAvailable,
+  name: "repo workspace: subagent works an isolated shadow branch; adopt() folds it back",
+  ignore: !gitAvailable,
   fn: async () => {
     const repo = await tempGitRepo();
     const subBase = await Deno.makeTempDir({ prefix: "subagent-ws-" });
     const snapBase = await Deno.makeTempDir({ prefix: "subagent-snap-" });
-    const jjBase = await Deno.makeTempDir({ prefix: "subagent-jj-" });
+    const shadowBase2 = await Deno.makeTempDir({ prefix: "subagent-shadow-" });
     const prevSub = Deno.env.get("BOUGH_SUBAGENT_BASE");
     const prevSnap = Deno.env.get("BOUGH_SNAPSHOT_BASE");
     const prevJj = Deno.env.get("BOUGH_SHADOW_BASE");
     Deno.env.set("BOUGH_SUBAGENT_BASE", subBase);
     Deno.env.set("BOUGH_SNAPSHOT_BASE", snapBase);
-    Deno.env.set("BOUGH_SHADOW_BASE", jjBase);
+    Deno.env.set("BOUGH_SHADOW_BASE", shadowBase2);
     const db = new Db(":memory:");
     const bus = new Bus();
     try {
@@ -581,9 +572,9 @@ Deno.test({
       assert(subDir.startsWith(subBase), `subagent dir ${subDir} outside ${subBase}`);
       assertEquals(await Deno.readTextFile(`${subDir}/sub.txt`), "from-sub\n");
 
-      // Adoption landed the file in the spawner's own working copy and jj change.
+      // Adoption landed the file in the spawner's own worktree and session tip.
       // External mode: the spawner itself was relocated off the repo checkout, so
-      // the user's repo stays pristine — no .jj, no adopted files.
+      // the user's repo stays pristine — no adopted files.
       const spawnerDir = db.getSessionRuntime(spawner.id).workspace!;
       assert(spawnerDir !== repo, "spawner should run in its own working copy");
       assertEquals(await Deno.readTextFile(`${spawnerDir}/sub.txt`), "from-sub\n");
@@ -610,28 +601,27 @@ Deno.test({
       await Deno.remove(repo, { recursive: true }).catch(() => {});
       await Deno.remove(subBase, { recursive: true }).catch(() => {});
       await Deno.remove(snapBase, { recursive: true }).catch(() => {});
-      await Deno.remove(jjBase, { recursive: true }).catch(() => {});
+      await Deno.remove(shadowBase2, { recursive: true }).catch(() => {});
     }
   },
 });
 
 Deno.test({
-  // The nested adopt chain: a subagent's workspace dir is a jj workspace WITHOUT
-  // .git, so this also covers the isolation check accepting .jj — a grandchild must
+  // The nested adopt chain: a grandchild must
   // get its own branched dir, not run on the subagent's working copy.
   name: "nested repo delegation: grandchild works its own branch; adopts chain upward",
-  ignore: !jjAvailable,
+  ignore: !gitAvailable,
   fn: async () => {
     const repo = await tempGitRepo();
     const subBase = await Deno.makeTempDir({ prefix: "subagent-ws-" });
     const snapBase = await Deno.makeTempDir({ prefix: "subagent-snap-" });
-    const jjBase = await Deno.makeTempDir({ prefix: "subagent-jj-" });
+    const shadowBase2 = await Deno.makeTempDir({ prefix: "subagent-shadow-" });
     const prevSub = Deno.env.get("BOUGH_SUBAGENT_BASE");
     const prevSnap = Deno.env.get("BOUGH_SNAPSHOT_BASE");
     const prevJj = Deno.env.get("BOUGH_SHADOW_BASE");
     Deno.env.set("BOUGH_SUBAGENT_BASE", subBase);
     Deno.env.set("BOUGH_SNAPSHOT_BASE", snapBase);
-    Deno.env.set("BOUGH_SHADOW_BASE", jjBase);
+    Deno.env.set("BOUGH_SHADOW_BASE", shadowBase2);
     const db = new Db(":memory:");
     const bus = new Bus();
     try {
@@ -703,7 +693,7 @@ Deno.test({
       await Deno.remove(repo, { recursive: true }).catch(() => {});
       await Deno.remove(subBase, { recursive: true }).catch(() => {});
       await Deno.remove(snapBase, { recursive: true }).catch(() => {});
-      await Deno.remove(jjBase, { recursive: true }).catch(() => {});
+      await Deno.remove(shadowBase2, { recursive: true }).catch(() => {});
     }
   },
 });
@@ -713,18 +703,18 @@ Deno.test({
   // it (the same startUserTurn path behind POST /sessions/:id/messages) runs a new
   // turn in ITS jj workspace, stacking edits on its branch, spawner untouched.
   name: "a finished subagent accepts human messages and keeps working its own branch",
-  ignore: !jjAvailable,
+  ignore: !gitAvailable,
   fn: async () => {
     const repo = await tempGitRepo();
     const subBase = await Deno.makeTempDir({ prefix: "subagent-ws-" });
     const snapBase = await Deno.makeTempDir({ prefix: "subagent-snap-" });
-    const jjBase = await Deno.makeTempDir({ prefix: "subagent-jj-" });
+    const shadowBase2 = await Deno.makeTempDir({ prefix: "subagent-shadow-" });
     const prevSub = Deno.env.get("BOUGH_SUBAGENT_BASE");
     const prevSnap = Deno.env.get("BOUGH_SNAPSHOT_BASE");
     const prevJj = Deno.env.get("BOUGH_SHADOW_BASE");
     Deno.env.set("BOUGH_SUBAGENT_BASE", subBase);
     Deno.env.set("BOUGH_SNAPSHOT_BASE", snapBase);
-    Deno.env.set("BOUGH_SHADOW_BASE", jjBase);
+    Deno.env.set("BOUGH_SHADOW_BASE", shadowBase2);
     const db = new Db(":memory:");
     const bus = new Bus();
     try {
@@ -782,25 +772,25 @@ Deno.test({
       await Deno.remove(repo, { recursive: true }).catch(() => {});
       await Deno.remove(subBase, { recursive: true }).catch(() => {});
       await Deno.remove(snapBase, { recursive: true }).catch(() => {});
-      await Deno.remove(jjBase, { recursive: true }).catch(() => {});
+      await Deno.remove(shadowBase2, { recursive: true }).catch(() => {});
     }
   },
 });
 
 Deno.test({
   name: "parallel subagents: two agent() calls in Promise.all work disjoint branches",
-  ignore: !jjAvailable,
+  ignore: !gitAvailable,
   fn: async () => {
     const repo = await tempGitRepo();
     const subBase = await Deno.makeTempDir({ prefix: "subagent-ws-" });
     const snapBase = await Deno.makeTempDir({ prefix: "subagent-snap-" });
-    const jjBase = await Deno.makeTempDir({ prefix: "subagent-jj-" });
+    const shadowBase2 = await Deno.makeTempDir({ prefix: "subagent-shadow-" });
     const prevSub = Deno.env.get("BOUGH_SUBAGENT_BASE");
     const prevSnap = Deno.env.get("BOUGH_SNAPSHOT_BASE");
     const prevJj = Deno.env.get("BOUGH_SHADOW_BASE");
     Deno.env.set("BOUGH_SUBAGENT_BASE", subBase);
     Deno.env.set("BOUGH_SNAPSHOT_BASE", snapBase);
-    Deno.env.set("BOUGH_SHADOW_BASE", jjBase);
+    Deno.env.set("BOUGH_SHADOW_BASE", shadowBase2);
     const db = new Db(":memory:");
     const bus = new Bus();
     try {
@@ -863,7 +853,7 @@ Deno.test({
       await Deno.remove(repo, { recursive: true }).catch(() => {});
       await Deno.remove(subBase, { recursive: true }).catch(() => {});
       await Deno.remove(snapBase, { recursive: true }).catch(() => {});
-      await Deno.remove(jjBase, { recursive: true }).catch(() => {});
+      await Deno.remove(shadowBase2, { recursive: true }).catch(() => {});
     }
   },
 });

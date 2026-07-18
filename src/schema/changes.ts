@@ -1,12 +1,12 @@
 /**
  * The Changes-tab contract — Zod schemas for a structured diff, shared by both
- * snapshot sources (jj for repo work, clonefile for non-git config). The UI's
+ * snapshot sources (shadow for repo work, clonefile for non-git config). The UI's
  * Changes rail renders a `Diff` and lets the reviewer approve/apply per file or
  * per hunk, so this shape is deliberately minimal and source-tagged.
  *
  * Design notes:
  *   - A `Diff` carries its `source` so the apply path knows which backend to call
- *     (jj op-log restore vs. clonefile copy-back) — the shapes are otherwise identical.
+ *     (shadow materialize/restore vs. clonefile copy-back) — the shapes are otherwise identical.
  *   - `FileDiff.status` is the coarse git status (added/modified/deleted). Renames
  *     surface as a delete + add pair (git's default without `-M`), keeping the model flat.
  *   - A `Hunk` is one `@@ ... @@` block: its `header` verbatim plus the body `lines`
@@ -35,7 +35,7 @@ export type FileDiff = z.infer<typeof FileDiff>;
 
 /** A full review payload from one snapshot source. */
 export const Diff = z.object({
-  source: z.enum(["jj", "clonefile", "shadow"]),
+  source: z.enum(["clonefile", "shadow"]),
   files: z.array(FileDiff),
 });
 export type Diff = z.infer<typeof Diff>;
@@ -44,31 +44,30 @@ export type Diff = z.infer<typeof Diff>;
 
 /**
  * Apply reviewed changes. For `clonefile`, `paths` are the original absolute paths to
- * copy back over. For `jj`, apply accepts the whole change — seals it as a finished
- * commit and advances the session bookmark — so `paths` is informational (v1 has no
- * per-path jj apply; see the Changes API).
+ * copy back over. For `shadow`, `paths` selects which changed files to materialize
+ * into the origin; covering every changed path also seals the change.
  */
 export const ChangesApplyBody = z.object({
-  source: z.enum(["jj", "clonefile", "shadow"]),
+  source: z.enum(["clonefile", "shadow"]),
   paths: z.array(z.string()),
 });
 export type ChangesApplyBody = z.infer<typeof ChangesApplyBody>;
 
-/** Revert a jj-workspace session's changes. Non-empty `paths` reverts only those paths
- * back to the change's parent; empty/absent `paths` reverts the whole change. */
+/** Revert a snapshot-workspace session's changes. Non-empty `paths` reverts only those
+ * paths back to the session base; empty/absent `paths` reverts the whole change. */
 export const ChangesRevertBody = z.object({
   paths: z.array(z.string()).optional(),
 });
 export type ChangesRevertBody = z.infer<typeof ChangesRevertBody>;
 
 /**
- * Parse a unified/`--git` diff into `FileDiff[]`. Shared by jj.ts (`jj diff --git`)
+ * Parse a unified/`--git` diff into `FileDiff[]`. Shared by shadow.ts (`git diff`)
  * and clonefile.ts (`git diff --no-index`) so both sources produce byte-identical
  * structure. Pure and dependency-free.
  *
  * `stripPrefix` drops a leading path segment from the `a/`,`b/` names: `git
  * --no-index` reports absolute paths, so callers pass the snapshot/original roots
- * to recover a clean relative path. jj already emits repo-relative names, so it
+ * to recover a clean relative path. shadow already emits repo-relative names, so it
  * passes nothing.
  */
 export function parseGitDiff(text: string, stripPrefix?: (p: string) => string): FileDiff[] {

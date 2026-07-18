@@ -1334,7 +1334,6 @@ function fileTint(s: DiffFile["status"]) {
 }
 
 const SOURCE_LABEL: Record<NonNullable<DiffFile["source"]>, string> = {
-  jj: "REPO · jj",
   shadow: "REPO",
   clonefile: "CONFIG · clonefile",
 };
@@ -1413,7 +1412,7 @@ function ChangesPanel({
   const sources = grouped
     ? ([...new Set(diffs.map((f) => f.source))].filter(Boolean) as NonNullable<DiffFile["source"]>[])
     : [];
-  const hasRepo = diffs.some((f) => f.source === "jj" || f.source === "shadow");
+  const hasRepo = diffs.some((f) => f.source === "shadow");
 
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: "14px 12px", minHeight: 0 }}>

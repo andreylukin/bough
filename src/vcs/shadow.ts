@@ -297,7 +297,12 @@ export async function addWorkspace(
 ): Promise<string> {
   if (await pathExists(`${dir}/.git`)) return dir;
   const store = await gitCommonDir(fromDir);
-  if (!store) throw new Error(`not a shadow worktree: ${fromDir}`);
+  // The bough-origin pointer marks a bough shadow store. Never branch inside an
+  // arbitrary git dir — a spawn from an un-tracked repo must fail, not write
+  // refs/worktrees into the user's own .git (or a legacy jj workspace).
+  if (!store || !(await pathExists(`${store}/bough-origin`))) {
+    throw new Error(`not a shadow worktree: ${fromDir}`);
+  }
   const tip = fromSessionId !== null
     ? await track(fromDir, fromSessionId)
     : (await git(fromDir, ["rev-parse", "HEAD"])).trim();

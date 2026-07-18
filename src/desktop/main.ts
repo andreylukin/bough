@@ -24,7 +24,7 @@ import { recoverOrphanedTurns } from "../supervisor/turns.ts";
 // Finder/`open` launches get launchd's bare environment, not a shell's — the
 // launchd service gets its env from scripts/bough sourcing ~/.bough/env, so the
 // desktop app has to load it itself (KEY=VALUE lines; existing env wins), and
-// put Homebrew on PATH for git/jj/llama-server.
+// put Homebrew on PATH for git/llama-server.
 try {
   const envFile = Deno.readTextFileSync(join(homedir(), ".bough", "env"));
   for (const line of envFile.split("\n")) {

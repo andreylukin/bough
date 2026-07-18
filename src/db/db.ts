@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   kind        TEXT NOT NULL,
   created_at  INTEGER NOT NULL,
   workspace   TEXT,                   -- read-write root for this session; null = BOUGH_WORKSPACE/cwd
-  base        TEXT,                   -- persisted jj/git base commit, captured on the first turn
+  base        TEXT,                   -- persisted snapshot/git base commit, captured on the first turn
   origin_id         TEXT,             -- lineage: session this fork/compaction branched from (null for root/plain)
   origin_message_id TEXT,             -- lineage: the fork-at message / compaction span-end message
   archived_at INTEGER,                -- soft delete: archived sessions leave the sidebar, rows stay
@@ -67,12 +67,6 @@ CREATE TABLE IF NOT EXISTS net_policies (
   session_id  TEXT PRIMARY KEY REFERENCES sessions(id),
   config      TEXT NOT NULL,          -- JSON NetConfig
   updated_at  INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS snapshots (
-  id          TEXT PRIMARY KEY,
-  session_id  TEXT NOT NULL REFERENCES sessions(id),
-  ref         TEXT NOT NULL,          -- jj change id / clonefile path
-  created_at  INTEGER NOT NULL
 );
 -- The supervisor state machine: one row per in-flight (or finished) turn. The
 -- runner checkpoints the step after each API round + each tool result so a restart
@@ -121,7 +115,7 @@ type SessionRow = {
 
 /**
  * The runtime (non-wire) facts a session carries for the turn runner: its explicit
- * workspace (null = fall back to BOUGH_WORKSPACE/cwd) and its persisted jj/git base.
+ * workspace (null = fall back to BOUGH_WORKSPACE/cwd) and its persisted snapshot base.
  * Kept off the wire `Session` type so the UI mirror in schema/parts.ts is untouched.
  */
 export interface SessionRuntime {
@@ -446,7 +440,7 @@ export class Db {
     this.#db.exec("PRAGMA foreign_keys = OFF");
     try {
       for (
-        const t of ["message_embeddings", "turns", "snapshots", "net_events", "net_policies"]
+        const t of ["message_embeddings", "turns", "net_events", "net_policies"]
       ) {
         this.#db.prepare(`DELETE FROM ${t} WHERE session_id IN (${ph})`).run(...ids);
       }

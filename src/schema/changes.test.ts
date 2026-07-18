@@ -3,7 +3,7 @@ import { Diff, type FileDiff, parseGitDiff } from "./changes.ts";
 
 Deno.test("Diff schema round-trips", () => {
   const d = {
-    source: "jj",
+    source: "shadow",
     files: [
       {
         path: "a.txt",

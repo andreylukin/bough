@@ -4,15 +4,14 @@
  *   1. Resolve the read-write root. Precedence: the session's persisted `workspace`
  *      column, then $BOUGH_WORKSPACE, then the process cwd. Only an *explicit*
  *      workspace (column or env) turns on the sandbox — a bare cwd fallback runs
- *      unsandboxed, which keeps the server- and turn-level tests from touching jj
- *      or spawning sandbox-exec.
+ *      unsandboxed, which keeps the server- and turn-level tests from touching
+ *      snapshot state or spawning sandbox-exec.
  *
- *   2. When the root is a git repo (or a session's jj workspace dir), lazily set up
- *      the session's jj state and resolve the dir the turn actually runs in — see
- *      prepareRepo for the two modes (external store vs. legacy colocated). The
- *      base is captured on the first turn and persisted so later turns are
- *      deterministic. jj failures (not installed, not a repo mid-op) are
- *      non-fatal: the turn still runs sandboxed, just without snapshot tracking.
+ *   2. When the root is a repo dir, lazily set up the session's shadow worktree
+ *      (docs/shadow-snapshots.md) and resolve the dir the turn actually runs in —
+ *      see prepareShadow. The base is captured on the first turn and persisted so
+ *      later turns are deterministic. Snapshot failures are non-fatal: the turn
+ *      still runs sandboxed, just without snapshot tracking.
  *
  * The clonefile snapshot dir (BOUGH_SNAPSHOT_BASE override, else ~/.bough/…) is
  * always created and handed back so bash can be granted write access to it.
@@ -20,30 +19,7 @@
 import type { Db } from "../db/db.ts";
 import { join } from "node:path";
 import { sessionDir as snapshotSessionDir, snapshotBase } from "../vcs/clonefile.ts";
-import {
-  addWorkspace,
-  bookmarkFor,
-  createSessionWorkspace,
-  ensureWorkspace,
-  forkSession,
-  looksLikeBrokenStore,
-  quarantineStore,
-  storeDirFor,
-  updateStale,
-  workspaceDirFor,
-} from "../vcs/jj.ts";
 import * as shadow from "../vcs/shadow.ts";
-
-/**
- * Which snapshot backend NEW sessions get — shadow (docs/shadow-snapshots.md)
- * unless BOUGH_VCS=jj opts back into the legacy backend. Existing sessions are
- * unaffected either way: every later operation (diff/apply/revert/spawn/adopt)
- * detects the backend from the workspace itself, so jj-era and shadow sessions
- * coexist.
- */
-export function vcsBackend(): "jj" | "shadow" {
-  return Deno.env.get("BOUGH_VCS") === "jj" ? "jj" : "shadow";
-}
 
 export interface PreparedWorkspace {
   /** The resolved read-write root (bash cwd + file-tool root). */
@@ -155,130 +131,15 @@ export async function prepareWorkspace(
     scratchDir = join(scratchBase(), sessionId);
     await Deno.mkdir(scratchDir, { recursive: true });
     const isGit = await pathExists(`${cwd}/.git`);
-    const isJj = await pathExists(`${cwd}/.jj`);
+    const isJj = await pathExists(`${cwd}/.jj`); // legacy jj-era workspace dirs still count as repos
     if (isGit || isJj) {
-      // May relocate the turn into the session's own working copy (external mode).
-      const prepped = await prepareRepo(db, sessionId, cwd, runtime.base, isGit && isJj);
+      // May relocate the turn into the session's own worktree (first turn).
+      const prepped = await prepareShadow(db, sessionId, cwd, runtime.base === null);
       return { cwd: prepped.dir, sessionDir: dir, scratchDir, sandboxed, warning: prepped.warning };
     }
   }
 
   return { cwd, sessionDir: dir, scratchDir, sandboxed };
-}
-
-/**
- * Set up the session's jj state for a repo workspace and return the dir the turn
- * should run in. Two modes, decided by what `repo` already carries:
- *
- *   - Colocated (`.git` + `.jj` — a checkout the user deliberately runs jj in,
- *     e.g. bough's own dev repo): legacy in-place behavior. The session's change
- *     lives in the primary checkout and the turn runs there.
- *   - External (plain `.git`, or a session's `.jj`-only workspace dir): jj stays
- *     out of the repo. The first turn branches an isolated working copy under
- *     ~/.bough/workspaces/<id> — off the parent session's tip for forks, else off
- *     a captured snapshot of the repo's working tree — and repoints the session's
- *     workspace column at it (the same repoint subagent spawns do). The user's
- *     checkout is never modified.
- *
- * jj failures are non-fatal: the turn still runs sandboxed on the original cwd,
- * just without snapshot tracking.
- */
-async function prepareRepo(
-  db: Db,
-  sessionId: string,
-  repo: string,
-  persistedBase: string | null,
-  colocated: boolean,
-): Promise<{ dir: string; warning?: string }> {
-  const session = db.getSession(sessionId);
-  const firstTurn = persistedBase === null;
-  if (vcsBackend() === "shadow") {
-    return await prepareShadow(db, sessionId, repo, firstTurn);
-  }
-  try {
-    if (colocated) {
-      if (firstTurn && session?.kind === "fork" && session.parentId) {
-        // Fork sessions branch off the parent session's tip, once. Falls back to a
-        // plain workspace if the parent never took a turn (no bookmark to fork from).
-        try {
-          await forkSession(repo, session.parentId, sessionId);
-        } catch {
-          await ensureWorkspace(repo, sessionId, bookmarkFor(session.parentId));
-        }
-      } else {
-        // Never pass a stored git-HEAD as the jj base: `jj new <HEAD>` would reset
-        // the working copy to the committed tree and wipe uncommitted work. Let
-        // ensureWorkspace default to the current working-copy snapshot (`@`); the
-        // bookmark-exists check already handles deterministic resume.
-        await ensureWorkspace(repo, sessionId);
-      }
-      if (firstTurn) {
-        // Record the git point the session started from (metadata + the "not first
-        // turn" sentinel). It is deliberately NOT fed back to `jj new`.
-        const head = await gitHead(repo);
-        if (head) db.setSessionBase(sessionId, head);
-      }
-      return { dir: repo };
-    }
-
-    if (!firstTurn) {
-      // External-mode resume: the workspace column already points at the session's
-      // own working copy. Repair staleness (a sibling workspace's op can rewrite
-      // our working-copy commit) and run where we are.
-      await updateStale(repo);
-      return { dir: repo };
-    }
-
-    let dir: string;
-    if (session?.kind === "fork" && session.parentId && await pathExists(`${repo}/.jj`)) {
-      // `repo` is the parent session's workspace dir (forks inherit the workspace
-      // column); branch the fork's own working copy off the parent's tip. If the
-      // parent bookmark vanished, fall back to the dir's current working copy.
-      dir = workspaceDirFor(sessionId);
-      try {
-        await addWorkspace(repo, sessionId, dir, bookmarkFor(session.parentId));
-      } catch {
-        await addWorkspace(repo, sessionId, dir, "@");
-      }
-    } else {
-      // Root session on a plain git repo (also forks whose parent never took a
-      // turn — nothing to inherit): isolated working copy off a captured snapshot.
-      // A store that existed BEFORE this attempt and now errors with a corruption
-      // signature is broken derived state: move it aside (never delete —
-      // .broken-<ts> stays for salvage) and retry once fresh. A store born in
-      // this very attempt means the repo/env is the problem — no quarantine.
-      const hadStore = await pathExists(await storeDirFor(repo));
-      try {
-        dir = await createSessionWorkspace(repo, sessionId);
-      } catch (e) {
-        if (!hadStore || !looksLikeBrokenStore(e as Error)) throw e;
-        const moved = await quarantineStore(repo);
-        if (!moved) throw e;
-        console.error(
-          `external store for ${repo} quarantined to ${moved} (${
-            (e as Error).message.split("\n")[0]
-          }); retrying fresh`,
-        );
-        dir = await createSessionWorkspace(repo, sessionId);
-      }
-    }
-    db.setSessionWorkspace(sessionId, dir);
-    // Metadata + the "not first turn" sentinel; "jj" when the origin has no
-    // resolvable git HEAD (e.g. a fork branched from a parent's workspace dir).
-    db.setSessionBase(sessionId, (await gitHead(repo)) ?? "jj");
-    return { dir };
-  } catch (e) {
-    console.error(`jj workspace prep skipped for ${sessionId}: ${(e as Error).message}`);
-    // First-turn external prep is the isolation promise: failing it means the
-    // session works directly in the user's checkout, so say so IN the thread.
-    // (Colocated repos run in place by design; a resumed external session already
-    // sits in its own working copy — those degrade quietly to no tracking.)
-    const warning = firstTurn && !colocated
-      ? `⚠ workspace isolation failed — this session edits ${repo} DIRECTLY, and the ` +
-        `changes review (^d) can't track it. jj said: ${(e as Error).message.split("\n")[0]}`
-      : undefined;
-    return { dir: repo, warning };
-  }
 }
 
 /**

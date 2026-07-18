@@ -3,7 +3,6 @@
 // external-mode prepareWorkspace flow (isolated per-session working copies).
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { Db } from "../db/db.ts";
-import * as jj from "../vcs/jj.ts";
 import * as shadow from "../vcs/shadow.ts";
 import { normalizeWorkspace, prepareWorkspace, workspaceProblem } from "./workspace.ts";
 
@@ -128,15 +127,7 @@ async function canRun(cmd: string): Promise<boolean> {
   return (await Deno.permissions.query({ name: "run", command: cmd })).state === "granted";
 }
 
-const jjAvailable = (await canRun("jj")) && (await canRun("git")) &&
-  await (async () => {
-    try {
-      await jj.version();
-      return true;
-    } catch {
-      return false;
-    }
-  })();
+const gitAvailable = await canRun("git");
 
 async function exists(p: string): Promise<boolean> {
   try {
@@ -153,7 +144,7 @@ Deno.test({
   // same dir, and a fork branches its own copy off the parent's tip. The user's
   // repo never gains a .jj and never changes checkout.
   name: "prepareWorkspace: plain git repo → isolated session workspace; fork inherits",
-  ignore: !jjAvailable,
+  ignore: !gitAvailable,
   fn: async () => {
     const repo = await tempGitRepo();
     const jjBase = await Deno.makeTempDir({ prefix: "wstest-store-" });

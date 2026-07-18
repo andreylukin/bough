@@ -1,9 +1,8 @@
 # Removing jj: shadow-git snapshots
 
-Status: PHASES 1–3 SHIPPED (2026-07-18) — shadow is the default backend
-(`BOUGH_VCS=jj` opts back), bough's own repo is de-colocated, and legacy
-jj-era sessions are still served by `src/vcs/jj.ts` until phase 4 deletes it.
-Replaces Jujutsu with a per-project **shadow git repository** for all
+Status: SHIPPED (2026-07-18, phases 1–4) — shadow is the only backend; jj is
+fully removed. Legacy jj-era sessions' changes rails read empty (their
+`bough/*` git refs remain in origin repos for salvage). Replaced Jujutsu with a per-project **shadow git repository** for all
 working-tree snapshotting, session branching, subagent workspaces, and the
 changes rail.
 

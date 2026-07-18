@@ -1,6 +1,6 @@
 /**
  * Manual end-to-end smoke for the sandboxed turn. NOT part of `deno task test`.
- * Requires jj, git, and macOS (sandbox-exec). No API key — the LLM is scripted.
+ * Requires git and macOS (sandbox-exec). No API key — the LLM is scripted.
  *
  *   deno run --allow-net --allow-env --allow-read --allow-write --allow-run --allow-ffi --allow-sys \
  *     scripts/sandbox-smoke.ts
@@ -8,12 +8,12 @@
  * Drives a real turn in a throwaway git repo and asserts:
  *   1. write_file inside the workspace succeeds,
  *   2. bash writing OUTSIDE the workspace is denied by Seatbelt,
- *   3. jj diff shows the edits the session made.
+ *   3. the shadow diff shows the edits the session made.
  */
 import { Db } from "../src/db/db.ts";
 import { Bus } from "../src/bus.ts";
 import { beginTurn } from "../src/turn.ts";
-import * as jj from "../src/vcs/jj.ts";
+import * as shadow from "../src/vcs/shadow.ts";
 import type { LlmClient, LlmParams, LlmResult } from "../src/supervisor/llm.ts";
 
 if (Deno.build.os !== "darwin") {
@@ -34,7 +34,11 @@ function scriptedLlm(rounds: LlmResult[]): LlmClient {
 const repo = await Deno.makeTempDir({ prefix: "bough-smoke-" });
 const escape = `${Deno.env.get("HOME")}/bough-smoke-escape-${crypto.randomUUID()}.txt`;
 const snapBase = await Deno.makeTempDir({ prefix: "bough-snap-" });
+const shadowBase = await Deno.makeTempDir({ prefix: "bough-shadow-" });
+const wsBase = await Deno.makeTempDir({ prefix: "bough-ws-" });
 Deno.env.set("BOUGH_SNAPSHOT_BASE", snapBase);
+Deno.env.set("BOUGH_SHADOW_BASE", shadowBase);
+Deno.env.set("BOUGH_SUBAGENT_BASE", wsBase);
 
 try {
   // A real git repo with one committed file.
@@ -79,8 +83,13 @@ try {
     Deno.exit(1);
   };
 
-  // 1. write inside succeeded.
-  if (!(await Deno.stat(`${repo}/created.txt`).then(() => true).catch(() => false))) fail("created.txt missing");
+  // The turn relocated the session into its shadow worktree; assert there.
+  const ws = db.getSessionRuntime(sessionId).workspace!;
+  if (ws === repo) fail("session was not relocated into a shadow worktree");
+
+  // 1. write inside succeeded (in the worktree — the origin stays untouched).
+  if (!(await Deno.stat(`${ws}/created.txt`).then(() => true).catch(() => false))) fail("created.txt missing");
+  if (await Deno.stat(`${repo}/created.txt`).then(() => true).catch(() => false)) fail("created.txt leaked into the origin");
 
   // 2. escape write denied.
   const leaked = await Deno.stat(escape).then(() => true).catch(() => false);
@@ -88,17 +97,17 @@ try {
   const bashResult = parts.find((p) => p.type === "tool_result" && p.callId === "b") as { output: string } | undefined;
   console.log("bash escape result:", JSON.stringify(bashResult?.output));
 
-  // 3. jj diff shows the session's edits.
-  const diff = await jj.diff(repo, sessionId);
+  // 3. the shadow diff shows the session's edits.
+  const diff = await shadow.diff(ws, sessionId);
   const files = diff.files.map((f) => f.path).sort();
-  console.log("jj diff files:", files);
-  if (!files.includes("created.txt") || !files.includes("tracked.txt")) fail("jj diff missing expected files");
+  console.log("shadow diff files:", files);
+  if (!files.includes("created.txt") || !files.includes("tracked.txt")) fail("shadow diff missing expected files");
 
   // 4. Fork-at-first-turn: a kind=fork session branches off the parent's tip, so its
   //    change-vs-parent diff shows only what the fork itself added.
   const forkId = "smoke-fork";
   db.createSession({ id: forkId, parentId: sessionId, title: "fork", kind: "fork", createdAt: Date.now() });
-  db.setSessionWorkspace(forkId, repo);
+  db.setSessionWorkspace(forkId, ws); // forks inherit the parent's workspace column
   db.createMessage({
     id: "uf",
     sessionId: forkId,
@@ -116,7 +125,8 @@ try {
   ]);
   const forkTurn = beginTurn({ db, bus, llm: forkLlm }, forkId);
   await forkTurn.done;
-  const forkDiff = await jj.diff(repo, forkId);
+  const forkWs = db.getSessionRuntime(forkId).workspace!;
+  const forkDiff = await shadow.diff(forkWs, forkId);
   const forkFiles = forkDiff.files.map((f) => f.path).sort();
   console.log("fork diff files:", forkFiles);
   if (!forkFiles.includes("fork-only.txt")) {
@@ -124,10 +134,14 @@ try {
     Deno.exit(1);
   }
 
-  console.log("\nOK — write-inside ok, escape denied, jj diff shows the edits, fork branches off the parent tip");
+  console.log("\nOK — write-inside ok, escape denied, shadow diff shows the edits, fork branches off the parent tip");
 } finally {
   Deno.env.delete("BOUGH_SNAPSHOT_BASE");
+  Deno.env.delete("BOUGH_SHADOW_BASE");
+  Deno.env.delete("BOUGH_SUBAGENT_BASE");
   await Deno.remove(repo, { recursive: true }).catch(() => {});
   await Deno.remove(snapBase, { recursive: true }).catch(() => {});
+  await Deno.remove(shadowBase, { recursive: true }).catch(() => {});
+  await Deno.remove(wsBase, { recursive: true }).catch(() => {});
   await Deno.remove(escape).catch(() => {});
 }

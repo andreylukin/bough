@@ -58,8 +58,6 @@ HEAD, branch, index, `git status` — is never modified; non-git origin dirs wor
 
 - `track()` (snapshot) staples the worktree to the session tip ref on every diff/apply/revert; a
   failed `git add` is fatal, never swallowed. Restores only ever touch explicit path lists.
-- Legacy jj-era sessions (`src/vcs/jj.ts`) are still detected by their workspace dirs and served by
-  the old backend until it is removed; `BOUGH_VCS=jj` opts new sessions back into it.
 
 ## 3. clonefile — non-git config
 
@@ -103,5 +101,4 @@ binary/empty files yield a `FileDiff` with no hunks.
 All three shell out, so the server and tests need `--allow-run` (already present in the `dev`/`test`
 tasks in `deno.json`). The subprocess tests self-skip when run permission is absent, so they never
 turn the suite red under a reduced permission set; they execute for real when `--allow-run` is
-granted. Required binaries on PATH: `git`, `cp`, `/usr/bin/sandbox-exec` (plus `jj` >= 0.42 only while the
-legacy backend remains).
+granted. Required binaries on PATH: `git`, `cp`, `/usr/bin/sandbox-exec`.

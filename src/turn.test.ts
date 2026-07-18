@@ -497,7 +497,7 @@ Deno.test("history from a prior turn is replayed as assistant + tool_result mess
 
 Deno.test("an explicit session workspace makes the turn sandboxed and hands tools a sandbox dir", async () => {
   const { db, bus, sessionId } = seed();
-  const ws = await Deno.makeTempDir(); // non-repo → jj is skipped
+  const ws = await Deno.makeTempDir(); // non-repo → snapshot prep is skipped
   const snap = await Deno.makeTempDir();
   db.setSessionWorkspace(sessionId, ws);
   Deno.env.set("BOUGH_SNAPSHOT_BASE", snap);

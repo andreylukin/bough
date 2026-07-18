@@ -12,7 +12,7 @@ export interface DirHit {
   display: string;
   repo: boolean;
 }
-export type ChangeSource = "jj" | "clonefile" | "shadow";
+export type ChangeSource = "clonefile" | "shadow";
 export interface WireHunk {
   header: string;
   lines: string[];

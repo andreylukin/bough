@@ -9,7 +9,7 @@
  *   - `atMessageId` must be one of the target session's OWN messages (same constraint as
  *     compaction — an ancestor turn is 400: fork the ancestor session instead).
  *   - The fork is a SIBLING (parent = target.parentId) and inherits the target's
- *     workspace, so #9's turn machinery forks the jj change off the shared parent's tip
+ *     workspace, so #9's turn machinery forks the shadow worktree off the shared parent's tip
  *     on the fork's first turn (kind=fork).
  *   - Seed the fork with copies of the target's own messages STRICTLY BEFORE atMessageId.
  *   - With `editedText`: append a new user message carrying it and run a real turn from
@@ -24,7 +24,7 @@
  *     Replay already tolerates a cut that strands a tool_call: turn.ts synthesizes an
  *     "(interrupted)" tool_result for any call left without one.
  *
- * Note: the fork carries the *conversation* prefix; the jj file base is the shared
+ * Note: the fork carries the *conversation* prefix; the snapshot file base is the shared
  * parent's tip (#9), so file edits made by the copied prefix turns are not replayed —
  * v1 forks history, and the workspace re-derives from the parent snapshot.
  */

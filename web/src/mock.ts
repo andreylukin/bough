@@ -72,7 +72,7 @@ export interface DiffFile {
   hunks: Hunk[];
   // Live-only: which snapshot source the file came from (jj = repo, clonefile = config).
   // Drives the source label in the rail and the apply call. Omitted in mock.
-  source?: "jj" | "clonefile" | "shadow";
+  source?: "clonefile" | "shadow";
 }
 
 export interface BundleParam {

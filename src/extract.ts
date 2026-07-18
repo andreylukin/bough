@@ -9,7 +9,7 @@
  * parts) to copy just those sections — e.g. a turn's prose without its tool calls.
  *
  * The new session keeps the source's workspace so work continues in the same repo
- * (as a root, its first turn branches jj off the current working copy, not the
+ * (as a root, its first turn branches a shadow worktree off the current working copy, not the
  * source's tip) and records lineage (originId/originMessageId) for the map.
  *
  * Events: session.created for the new conversation and message.started per copy —

@@ -356,7 +356,7 @@ function workspaceNote(cwd: string): string {
 
 /**
  * Point the agent at the per-session scratchpad for throwaway files. The workspace is
- * a repo the live server builds from and jj auto-snapshots, so a stray `./probe.json`
+ * a repo the live server builds from and the snapshot layer tracks, so a stray `./probe.json`
  * pollutes the build and `git diff main HEAD`. The scratch dir is outside the repo and
  * OS-reaped — the right home for anything not meant to ship.
  */
@@ -555,7 +555,7 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
   };
 
   try {
-    // Resolve the workspace and (if sandboxed) set up jj + the snapshot dir once.
+    // Resolve the workspace and (if sandboxed) set up snapshots + the snapshot dir once.
     const prepared = await prepareWorkspace(db, sessionId, ctx.workspace);
     if (prepared.warning) {
       // Isolation degraded — surface it in the thread (plain insert, not
