@@ -24,6 +24,7 @@
  *     synthetic error tool_result so the history stays valid for the API.
  */
 import { join } from "node:path";
+import { homedir } from "node:os";
 import type { Db } from "./db/db.ts";
 import type { Bus } from "./bus.ts";
 import type { Message, Part } from "./schema/parts.ts";
@@ -243,10 +244,11 @@ const SYSTEM = [
   "Program output is billed context: filter at the source (rg/head/tail/wc, targeted",
   "reads) instead of dumping whole files or raw command output, and never re-print",
   "content you already have in context.",
-  "Search code with rg (ripgrep — installed) instead of grep -r or find sweeps; and",
-  "when this prompt has a '## Symbol navigation (lsp)' section, START code exploration",
-  "with those verbs — a symbol overview or reference list is far cheaper and more",
-  "precise than dumped files.",
+  "Search code with rg (ripgrep — installed) instead of grep -r or find sweeps. When",
+  "this prompt has a '## Symbol navigation (lsp)' section, the lsp verbs are the",
+  "DEFAULT for anything symbol-shaped — finding a definition, listing callers,",
+  "sizing up a file, renaming — reach for them BEFORE rg or whole-file reads;",
+  "rg/read are the fallback for strings, comments, and non-code files.",
   "Granted tooling can still break at runtime (an lsp language server missing, an MCP",
   "server down). That is NEVER a reason to stop or declare the task blocked: mention",
   "the failure in one line and finish the job with bash/rg/read.",
@@ -386,19 +388,44 @@ function scratchpadNote(scratchDir: string): string {
     "under the scratchpad; it's already created.";
 }
 
-/** Read the workspace AGENTS.md (capped) as a system-prompt section, or null if absent. */
-async function readAgentsFile(cwd: string): Promise<string | null> {
+/** Read one AGENTS.md (capped, trimmed), or null if absent/empty. */
+async function readOneAgentsFile(path: string): Promise<string | null> {
   try {
-    const text = await Deno.readTextFile(join(cwd, "AGENTS.md"));
+    const text = await Deno.readTextFile(path);
     if (!text.trim()) return null;
     // Cap so a huge file can't crowd out the task; the model can read the rest itself.
-    const body = text.length > 12_000 ? text.slice(0, 12_000) + "\n…(truncated)" : text;
-    return "\n\n# Project rules (AGENTS.md)\nThe workspace root has an AGENTS.md — treat it " +
-      'as authoritative for build/test commands, conventions, and what "done" means:\n\n' +
-      body.trim();
+    return text.length > 12_000 ? text.slice(0, 12_000).trim() + "\n…(truncated)" : text.trim();
   } catch {
     return null;
   }
+}
+
+/**
+ * Build the "Project rules" system-prompt section from two AGENTS.md files:
+ * a global one at ~/.bough/AGENTS.md (applies to every workspace) and the
+ * workspace root's own. Both are included when present; the project file is
+ * authoritative and overrides the global on conflict. Returns null if neither
+ * exists. (BOUGH_GLOBAL_AGENTS overrides the global path, chiefly for tests.)
+ */
+export async function readAgentsFile(cwd: string): Promise<string | null> {
+  const globalPath = Deno.env.get("BOUGH_GLOBAL_AGENTS") ??
+    join(homedir(), ".bough", "AGENTS.md");
+  const [global, project] = await Promise.all([
+    readOneAgentsFile(globalPath),
+    readOneAgentsFile(join(cwd, "AGENTS.md")),
+  ]);
+  if (!global && !project) return null;
+  let out = "\n\n# Project rules (AGENTS.md)\nTreat the following as authoritative for " +
+    'build/test commands, conventions, and what "done" means.';
+  if (global) {
+    out += "\n\n## Global rules (~/.bough/AGENTS.md) — apply to every workspace\n\n" + global;
+  }
+  if (project) {
+    out +=
+      "\n\n## Workspace rules (AGENTS.md) — this project, override the global on conflict\n\n" +
+      project;
+  }
+  return out;
 }
 
 /** Kick off the supervisor turn for `sessionId`. Returns the placeholder message. */
@@ -664,8 +691,8 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     // Inline any @path references in the triggering message so the model sees the
     // file content, not just the name. Only for workspace sessions (files exist).
     if (prepared.sandboxed) inlineFileReferences(messages, prepared.cwd);
-    // Project rules: an AGENTS.md at the workspace root is authoritative for build/test
-    // commands, conventions, and what "done" means — inject it into the system prompt.
+    // Project rules: a global ~/.bough/AGENTS.md plus the workspace root's AGENTS.md are
+    // authoritative for build/test commands, conventions, and what "done" means — inject them.
     const agents = prepared.sandboxed ? await readAgentsFile(prepared.cwd) : null;
     // MCP: connect the turn's granted servers (grantedMcp, resolved above) so the
     // prompt can list real tools; a server that fails to connect is named
