@@ -44,11 +44,11 @@ export type ServerConfig = z.infer<typeof ServerConfig>;
  * shipping a new default command takes effect without touching anyone's config.
  */
 export const BUILTIN_SERVERS: Record<string, ServerConfig> = {
-  // The LSP backend (see mcp/lsp.ts): serena orchestrates per-language servers.
-  // ide-assistant context = the symbol-tool surface we curate from; ~/.serena is
-  // where it keeps project registrations and logs. Dashboard/GUI off: one serena
-  // per session runs headless in the background (and dashboards would fight over
-  // the port).
+  // serena's symbol/file tools, behind an explicit mcp() grant. (No longer the
+  // lsp.* backend — that's the leta CLI now, see mcp/lsp.ts.) ide-assistant
+  // context = the symbol-tool surface; ~/.serena is where it keeps project
+  // registrations and logs. Dashboard/GUI off: one serena per session runs
+  // headless in the background (and dashboards would fight over the port).
   serena: ServerConfig.parse({
     command: "uvx",
     args: [

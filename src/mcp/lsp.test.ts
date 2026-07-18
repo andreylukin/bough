@@ -1,90 +1,105 @@
 import { assertEquals, assertRejects, assertStringIncludes } from "jsr:@std/assert@1";
-import { saveRegistry } from "./config.ts";
-import { createLspBridge, LSP_SERVER, lspAvailable, type LspManager } from "./lsp.ts";
-import type { ServerCatalog, SpawnCtx } from "./manager.ts";
-
-function withMcpDir(fn: () => void) {
-  const dir = Deno.makeTempDirSync({ prefix: "bough-mcp-" });
-  Deno.env.set("BOUGH_MCP_DIR", dir);
-  try {
-    fn();
-  } finally {
-    Deno.env.delete("BOUGH_MCP_DIR");
-  }
-}
+import { createLspBridge, type LetaRun, lspAvailable } from "./lsp.ts";
+import type { SpawnCtx } from "./manager.ts";
 
 const spawn: SpawnCtx = { workspace: "/ws" };
 
-/** A fake manager that records ensures/calls and answers with canned results. */
-function fakeManager(opts: { ensureError?: string } = {}) {
-  const ensures: string[][] = [];
-  const calls: Array<{ server: string; tool: string; args: unknown }> = [];
-  const manager: LspManager = {
-    ensure: (_s, servers) => {
-      ensures.push(servers);
-      return Promise.resolve(
-        servers.map((name): ServerCatalog =>
-          opts.ensureError ? { name, tools: [], error: opts.ensureError } : { name, tools: [] }
-        ),
-      );
-    },
-    call: (_s, server, tool, args) => {
-      calls.push({ server, tool, args });
-      return Promise.resolve(`${tool} ok`);
-    },
+/** A fake runner that records invocations and answers with canned results. */
+function fakeRun(opts: { failWith?: string; failOnce?: boolean } = {}) {
+  const calls: Array<{ args: string[]; cwd: string }> = [];
+  let failed = false;
+  const run: LetaRun = (args, cwd) => {
+    calls.push({ args, cwd });
+    if (opts.failWith && !(opts.failOnce && failed)) {
+      failed = true;
+      return Promise.resolve({ code: 1, stdout: "", stderr: opts.failWith });
+    }
+    return Promise.resolve({ code: 0, stdout: `${args[0]} ok`, stderr: "" });
   };
-  return { manager, ensures, calls };
+  return { run, calls };
 }
 
-Deno.test("lspAvailable: true out of the box (builtin) and with a user override", () => {
-  withMcpDir(() => {
-    assertEquals(lspAvailable(), true); // BUILTIN_SERVERS ships the backend
-    saveRegistry({ servers: { [LSP_SERVER]: { command: "my-serena", args: [] } } });
+Deno.test("lspAvailable: finds a leta binary on PATH", () => {
+  // Only the true case is assertable: EXTRA_BIN_DIRS may find a real install
+  // regardless of PATH, so "false when absent" can't be tested portably.
+  const path = Deno.env.get("PATH");
+  try {
+    const dir = Deno.makeTempDirSync({ prefix: "bough-lsp-" });
+    Deno.writeTextFileSync(`${dir}/leta`, "#!/bin/sh\n");
+    Deno.env.set("PATH", dir);
     assertEquals(lspAvailable(), true);
-  });
+  } finally {
+    path === undefined ? Deno.env.delete("PATH") : Deno.env.set("PATH", path);
+  }
 });
 
-Deno.test("bridge: first call connects + activates the workspace once, verbs map to tools", async () => {
-  const { manager, ensures, calls } = fakeManager();
-  const bridge = createLspBridge("s1", spawn, manager);
+Deno.test("bridge: first call registers the workspace once, verbs map to argv", async () => {
+  const { run, calls } = fakeRun();
+  const bridge = createLspBridge(spawn, run);
 
-  const out = await bridge.call("refs", { name_path: "Foo/bar", relative_path: "src/foo.ts" });
-  assertEquals(out, "find_referencing_symbols ok");
-  assertEquals(ensures, [[LSP_SERVER]]);
-  assertEquals(calls[0], {
-    server: LSP_SERVER,
-    tool: "activate_project",
-    args: { project: "/ws" },
-  });
-  assertEquals(calls[1].tool, "find_referencing_symbols");
+  const out = await bridge.call("refs", { symbol: "Gate.decide", context: 2 });
+  assertEquals(out, "refs ok");
+  assertEquals(calls[0], { args: ["workspace", "add"], cwd: "/ws" });
+  assertEquals(calls[1], { args: ["refs", "Gate.decide", "--context", "2"], cwd: "/ws" });
 
-  // Second call reuses the memoized connect — no new ensure, no re-activation.
-  await bridge.call("def", { name_path: "Foo" });
-  assertEquals(ensures.length, 1);
-  assertEquals(calls.map((c) => c.tool), [
-    "activate_project",
-    "find_referencing_symbols",
-    "find_declaration",
-  ]);
+  // Second call reuses the memoized registration — no new workspace add.
+  await bridge.call("find", { pattern: "decide", path: "src/net" });
+  assertEquals(calls.length, 3);
+  assertEquals(calls[2].args, ["grep", "decide", "src/net"]);
+
+  await bridge.call("overview", { path: "src/net/gate.ts" });
+  assertEquals(calls[3].args, ["grep", ".", "src/net/gate.ts"]);
+  await bridge.call("rename", { symbol: "old", new_name: "neu" });
+  assertEquals(calls[4].args, ["rename", "old", "neu"]);
+  await bridge.call("calls", { to: "decide" });
+  assertEquals(calls[5].args, ["calls", "--to", "decide"]);
 });
 
-Deno.test("bridge: unknown verb rejects and names the verbs, without connecting", async () => {
-  const { manager, ensures } = fakeManager();
-  const bridge = createLspBridge("s1", spawn, manager);
+Deno.test("bridge: unknown verb rejects and names the verbs, without running", async () => {
+  const { run, calls } = fakeRun();
+  const bridge = createLspBridge(spawn, run);
   const err = await assertRejects(() => bridge.call("hover", {}), Error);
   assertStringIncludes(err.message, 'unknown lsp verb "hover"');
   assertStringIncludes(err.message, "refs");
-  assertEquals(ensures.length, 0);
+  assertEquals(calls.length, 0);
 });
 
-Deno.test("bridge: a failed connect surfaces the catalog error and is retried next call", async () => {
-  const { manager, ensures, calls } = fakeManager({ ensureError: "spawn failed" });
-  const bridge = createLspBridge("s1", spawn, manager);
-  const err = await assertRejects(() => bridge.call("find", {}), Error);
-  assertStringIncludes(err.message, `lsp backend "${LSP_SERVER}" unavailable: spawn failed`);
-  assertEquals(calls.length, 0); // never reached activate/tool call
+Deno.test("bridge: bad args reject without running", async () => {
+  const { run, calls } = fakeRun();
+  const bridge = createLspBridge(spawn, run);
+  await assertRejects(() => bridge.call("show", {}), Error, '"symbol"');
+  await assertRejects(() => bridge.call("calls", {}), Error, 'exactly one of "to" or "from"');
+  await assertRejects(
+    () => bridge.call("calls", { to: "a", from: "b" }),
+    Error,
+    'exactly one of "to" or "from"',
+  );
+  assertEquals(calls.length, 0);
+});
 
-  // The memo was cleared: the next call ensures again.
-  await assertRejects(() => bridge.call("find", {}), Error);
-  assertEquals(ensures.length, 2);
+Deno.test("bridge: a failed registration surfaces and is retried next call", async () => {
+  const { run, calls } = fakeRun({ failWith: "daemon dead", failOnce: true });
+  const bridge = createLspBridge(spawn, run);
+  const err = await assertRejects(() => bridge.call("find", { pattern: "x" }), Error);
+  assertStringIncludes(err.message, "leta workspace add failed: daemon dead");
+  assertEquals(calls.length, 1); // never reached the verb invocation
+
+  // The memo was cleared: the next call registers again, then runs the verb.
+  await bridge.call("find", { pattern: "x" });
+  assertEquals(calls.map((c) => c.args[0]), ["workspace", "workspace", "grep"]);
+});
+
+Deno.test("bridge: a failed verb surfaces stderr in the error", async () => {
+  const calls: Array<string[]> = [];
+  const run: LetaRun = (args) => {
+    calls.push(args);
+    return Promise.resolve(
+      args[0] === "workspace"
+        ? { code: 0, stdout: "", stderr: "" }
+        : { code: 1, stdout: "", stderr: "Error: Symbol 'nope' not found" },
+    );
+  };
+  const bridge = createLspBridge(spawn, run);
+  const err = await assertRejects(() => bridge.call("show", { symbol: "nope" }), Error);
+  assertStringIncludes(err.message, "lsp.show failed: Error: Symbol 'nope' not found");
 });

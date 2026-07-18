@@ -657,17 +657,12 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
         };
       }
     }
-    // LSP: always-on when the backing server is registered — symbol navigation is
-    // a core capability, not a skill grant. Nothing spawns until the program's
-    // first lsp.* call, and every underlying tool call still passes the Claw
-    // Patrol gate exactly like mcp().
+    // LSP: always-on when the leta CLI is installed — symbol navigation is a
+    // core capability, not a skill grant. Nothing spawns until the program's
+    // first lsp.* call (see mcp/lsp.ts for the host-side confinement trade-off).
     let lspNote = "";
     if (lspAvailable()) {
-      toolCtx.lsp = createLspBridge(
-        sessionId,
-        { workspace: prepared.cwd, sandbox: toolCtx.sandbox },
-        mcpManager(),
-      );
+      toolCtx.lsp = createLspBridge({ workspace: prepared.cwd, sandbox: toolCtx.sandbox });
       lspNote = lspSection();
     }
     const system = SYSTEM +

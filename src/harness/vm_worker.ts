@@ -89,7 +89,7 @@ async function run(code: string): Promise<void> {
   const lspCall = async (verb: string, args?: unknown) =>
     JSON.parse(await hostCall("lsp", [verb, JSON.stringify(args ?? {})]));
   const lsp = Object.fromEntries(
-    ["find", "def", "refs", "impls", "overview", "diagnostics", "rename"].map(
+    ["find", "show", "def", "refs", "impls", "calls", "overview", "rename"].map(
       (verb) => [verb, (args?: unknown) => lspCall(verb, args)],
     ),
   );
