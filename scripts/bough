@@ -277,6 +277,17 @@ cmd_update() {
   echo "==> refreshing Deno dependencies"
   (cd "$ROOT" && deno install)
 
+  # leta + tsserver: LSP backend (lsp.* host functions). Added in the leta
+  # cutover — ensure they exist on update, not just fresh setup.
+  if ! command -v leta >/dev/null; then
+    echo "==> installing leta (LSP backend) via brew tap"
+    brew install andreasjansson/tap/leta
+  fi
+  if ! command -v typescript-language-server >/dev/null; then
+    echo "==> installing typescript-language-server + typescript@5 (npm global)"
+    npm install -g typescript-language-server typescript@5
+  fi
+
   # shellcheck source=/dev/null
   . "$ROOT/scripts/worker-model.sh"
   if [ -n "${BOUGH_WORKER_FRONTIER:-}" ] && [ "${BOUGH_WORKER_FRONTIER}" != "0" ]; then

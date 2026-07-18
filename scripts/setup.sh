@@ -66,6 +66,24 @@ if ! deno_ok; then
   exit 1
 fi
 
+# leta: LSP backend for the lsp.* host functions (symbol navigation).
+# From a third-party tap, so it can't go in the main brew array above.
+if ! command -v leta >/dev/null; then
+  echo "==> installing leta (LSP backend) via brew tap"
+  brew install andreasjansson/tap/leta
+else
+  echo "==> leta already installed"
+fi
+
+# typescript-language-server + typescript@5: leta's tsserver for TS/JS navigation.
+# TS7 ships no tsserver.js, so pin typescript@5.
+if ! command -v typescript-language-server >/dev/null; then
+  echo "==> installing typescript-language-server + typescript@5 (npm global)"
+  npm install -g typescript-language-server typescript@5
+else
+  echo "==> typescript-language-server already installed"
+fi
+
 # The plugin panel's "✎ Edit" button opens definitions in Zed. Optional but nice.
 if ! command -v zed >/dev/null; then
   echo "warning: zed CLI not found — the Plugins panel's Edit button opens files in Zed." >&2
