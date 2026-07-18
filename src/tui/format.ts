@@ -68,20 +68,34 @@ const DIM = sgr("\x1b[2m");
 const CYAN = sgr("\x1b[36m");
 const FG_OFF = sgr("\x1b[39m");
 
+// OSC 8 hyperlink — supporting terminals make the wrapped text clickable, the
+// rest ignore the sequence. Zero-width for wrap-ansi/slice-ansi/strip-ansi
+// (ansi-regex matches OSC with BEL/ST terminators), so layout math is unchanged.
+const osc8 = (url: string, text: string) =>
+  COLOR ? `\x1b]8;;${url}\x1b\\${text}\x1b]8;;\x1b\\` : text;
+
 function mdInline(line: string): string {
   // Swap code spans for placeholders so their contents are exempt from prose
   // rewriting, but bold/links still match ACROSS them ("**bold with `code`**"
   // was left as literal asterisks when styling split the line at spans).
+  // Rendered links are guarded the same way so the bare-URL pass can't re-match
+  // a URL already inside an OSC 8 wrapper (nesting would truncate the link).
   const spans: string[] = [];
-  const protectedLine = line.replace(
-    /`[^`]+`/g,
-    (m) => `\x00${spans.push(m) - 1}\x00`,
-  );
-  return protectedLine
+  const guard = (rendered: string) => `\x00${spans.push(rendered) - 1}\x00`;
+  return line
+    .replace(/`[^`]+`/g, (m) => guard(`${CYAN}${m.slice(1, -1)}${FG_OFF}`))
     .replace(/\*\*([^*]+)\*\*/g, `${B}$1${B_OFF}`)
-    // [text](url) → underlined text, url dimmed alongside.
-    .replace(/\[([^\]]+)\]\((\S+?)\)/g, `${UL}$1${UL_OFF} ${DIM}($2)${B_OFF}`)
-    .replace(/\x00(\d+)\x00/g, (_, i) => `${CYAN}${spans[+i].slice(1, -1)}${FG_OFF}`);
+    // [text](url) → clickable underlined text, url dimmed alongside.
+    .replace(
+      /\[([^\]]+)\]\((\S+?)\)/g,
+      (_m, text, url) => guard(osc8(url, `${UL}${text}${UL_OFF} ${DIM}(${url})${B_OFF}`)),
+    )
+    // Bare URLs become clickable as themselves; trailing punctuation stays prose.
+    .replace(/https?:\/\/[^\s)\]>'"]+/g, (m) => {
+      const url = m.replace(/[.,;:!?]+$/, "");
+      return guard(osc8(url, url)) + m.slice(url.length);
+    })
+    .replace(/\x00(\d+)\x00/g, (_, i) => spans[+i]);
 }
 
 const UL = sgr("\x1b[4m");
