@@ -201,7 +201,10 @@ export const api = {
   revertChanges: (id: string) => j(`/sessions/${id}/changes/revert`, postJson({})),
 
   // Branching. Both return the new branch's Session (or throw the server's message).
-  fork: (id: string, body: { atMessageId: string; atPart?: number; editedText?: string }) =>
+  fork: (
+    id: string,
+    body: { atMessageId: string; atPart?: number; editedText?: string; exclusive?: boolean },
+  ) =>
     jmsg<{ session: Session }>(`/sessions/${id}/fork`, postJson(body)).then((r) => r.session),
   compact: (id: string, picks: { messageId: string }[]) =>
     jmsg<{ session: Session }>(`/sessions/${id}/compact`, postJson({ picks }))

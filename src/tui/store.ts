@@ -53,7 +53,7 @@ export interface Store {
   resolvePending: (approve: boolean, scope?: "once" | "session") => void;
   // Branch off the current session at a message (optionally cut mid-message at a
   // tool run via atPart); opens the new branch (or notices).
-  fork: (atMessageId: string, atPart?: number) => Promise<Session | null>;
+  fork: (atMessageId: string, atPart?: number, exclusive?: boolean) => Promise<Session | null>;
   // Compact the current session's own turns onto a summary branch; opens it.
   compact: () => Promise<Session | null>;
   compactPicks: (msgIds: string[]) => Promise<Session | null>;
@@ -171,11 +171,15 @@ export function useStore(initialSessions: Session[]): Store {
     }, 5000);
   }, []);
 
-  const fork = useCallback(async (atMessageId: string, atPart?: number) => {
+  const fork = useCallback(async (atMessageId: string, atPart?: number, exclusive?: boolean) => {
     const id = currentRef.current;
     if (!id) return null;
     try {
-      return await api.fork(id, atPart === undefined ? { atMessageId } : { atMessageId, atPart });
+      return await api.fork(id, {
+        atMessageId,
+        ...(atPart === undefined ? {} : { atPart }),
+        ...(exclusive ? { exclusive: true } : {}),
+      });
     } catch (e) {
       setNotice(e instanceof Error ? e.message : String(e));
       return null;

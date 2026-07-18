@@ -145,7 +145,7 @@ export function ConversationTree(
           ? `${rangeCount} turn${
             rangeCount === 1 ? "" : "s"
           } · c compact · e extract · m copy to · d delete (recoverable) · esc`
-          : `branch at a turn/tool · v select range${
+          : `turn: rewind & edit its message · tool: branch after it · v select range${
             showDeprecated ? " · (showing deprecated)" : ""
           }`}
       </Text>
@@ -192,7 +192,7 @@ export function ConversationTree(
         );
       })}
       {items.length === 0 && <Text dimColor>no turns yet</Text>}
-      <Text dimColor>↑↓ move · enter branch/open · x deprecate · h hidden · v select · esc</Text>
+      <Text dimColor>↑↓ move · enter rewind/branch/open · x deprecate · h hidden · v select · esc</Text>
     </Box>
   );
 }

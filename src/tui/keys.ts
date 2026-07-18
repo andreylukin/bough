@@ -28,7 +28,7 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
     keys: [
       ["^p", "session picker (j/k move · / filter · enter open · ^t new · ^x archive)"],
       ["^n", "new session with workspace autocomplete"],
-      ["^f", "conversation tree — branch at any turn / open a branch"],
+      ["^f", "conversation tree — rewind to a turn (its message back in the composer) / open a branch"],
       ["^b", "back to the parent (from a subagent branch)"],
       ["^k", "compact this session onto a summary branch (when the input is empty)"],
       ["/handoff <goal>", "draft a fresh conversation from this thread, focused on the goal"],

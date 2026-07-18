@@ -16,7 +16,8 @@
  *     there (streams message.started/delta/part/finished over the bus). `editedText` may
  *     only replace a user message (editing a supervisor turn is 400).
  *   - Without `editedText`: also copy atMessageId itself — a plain branch point left
- *     ready for new input, no turn run.
+ *     ready for new input, no turn run. With `exclusive`: skip that copy — the branch
+ *     ends strictly before atMessageId (the UI's "rewind to edit this message" cut).
  *   - With `atPart`: cut INSIDE the at-message — copy it truncated to parts[0..atPart]
  *     (e.g. history up to a failed tool result) as the branch's last seeded message.
  *     Here `editedText` is a NEW user message appended after the cut (any at-message
@@ -38,6 +39,10 @@ export const ForkBody = z.object({
   /** Cut inside the at-message: keep parts[0..atPart] of it (see module doc). */
   atPart: z.number().int().nonnegative().optional(),
   editedText: z.string().optional(),
+  /** Cut BEFORE the at-message: don't copy it into the branch — the caller intends
+   * to re-send it (possibly edited) itself. Only for the plain-branch-point case
+   * (no editedText, no atPart), where the at-message would otherwise be copied. */
+  exclusive: z.boolean().optional(),
 });
 export type ForkBody = z.infer<typeof ForkBody>;
 
@@ -112,7 +117,8 @@ export function fork(ctx: TurnCtx, sessionId: string, body: ForkBody): ForkResul
     const { done } = startUserTurn(ctx, seeder.session.id, body.editedText!);
     return { session: seeder.session, done };
   }
-  // Plain branch point: include the fork-point message, ready for new input.
-  seeder.copy(own[atIdx]);
+  // Plain branch point: include the fork-point message, ready for new input —
+  // unless the caller asked for an exclusive cut to re-send it itself.
+  if (!body.exclusive) seeder.copy(own[atIdx]);
   return { session: seeder.session };
 }

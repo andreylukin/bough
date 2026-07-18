@@ -902,7 +902,24 @@ export function App(
           if (it.type === "branch") openSession(it.session);
           else if (it.type === "step") {
             store.fork(it.step.point.msgId, it.step.point.atPart).then(forked);
-          } else store.fork(it.node.point.msgId).then(forked);
+          } else {
+            // Rewind-to-edit: the branch cuts BEFORE this turn and its user message
+            // lands back in the composer, ready to edit & resend (Claude Code's
+            // rewind), instead of sitting in history with the cursor after it.
+            const text = it.node.msg.parts
+              .filter((p) => p.type === "text")
+              .map((p) => p.text)
+              .join("\n");
+            store.fork(it.node.point.msgId, undefined, true).then((s) => {
+              if (!s) return;
+              if (text) {
+                setComp({ text, cursor: text.length });
+                setHistIdx(null);
+                draft.current = "";
+              }
+              forked(s);
+            });
+          }
           return;
         }
         if (key.upArrow || ch === "k") {

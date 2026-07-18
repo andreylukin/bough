@@ -103,6 +103,21 @@ Deno.test("fork no-edit: prefix + fork-point copied, original untouched, workspa
   c.db.close();
 });
 
+Deno.test("fork exclusive: branch ends strictly before the at-message (rewind-to-edit)", async () => {
+  const c = ctx();
+  seedThread(c.db);
+  const h = createHandler(c);
+
+  const { session } = await (await h(
+    post("/sessions/S/fork", { atMessageId: "m3", exclusive: true }),
+  )).json() as { session: Session };
+  const branch = await (await h(get(`/sessions/${session.id}`))).json() as {
+    thread: Message[];
+  };
+  assertEquals(texts(branch.thread), [["user", "a"], ["supervisor", "b"]]); // no "c"
+  c.db.close();
+});
+
 Deno.test("fork with-edit: edited user message lands and a turn runs on the fork", async () => {
   const c = ctx(fakeLlm("FORK-REPLY"));
   seedThread(c.db); // no workspace → turn runs unsandboxed, no FS side effects
