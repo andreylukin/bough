@@ -1260,7 +1260,9 @@ export function App(
       else if (shellOut) setShellOut(null);
       else if (showInfo) setShowInfo(false);
       else if (store.notice) store.dismissNotice();
-      else if (Date.now() - lastEscAt.current < 600) {
+      else if (key.meta || Date.now() - lastEscAt.current < 600) {
+        // key.meta: two ESC bytes in one stdin chunk (fast double-tap) parse as
+        // a single meta+escape keypress rather than two events.
         // Double-esc (Claude Code parity): clear the draft (↑ recalls it), or
         // with an empty composer open the rewind view — the conversation tree,
         // where enter branches at an earlier turn.
