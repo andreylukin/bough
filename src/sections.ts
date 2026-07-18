@@ -1,8 +1,9 @@
 /**
- * Section grouping: an LLM partitions a conversation's turns into contiguous,
- * labeled sections of related activity ("debugging the auth flow", "editing the
- * parser") so the TUI can color-code history and offer whole sections as
- * range-op selections (compact/extract/delete).
+ * Section grouping: an LLM partitions a conversation's turns into contiguous
+ * sections BY TOPIC — what the work was about ("token refresh race", "theme
+ * picker", "gap-analysis research") — so the TUI can color-code history and
+ * offer whole sections as range-op selections (compact/extract/delete). The
+ * label IS the content; there is no fixed activity taxonomy.
  *
  * The CLIENT sends the turn gists (one line per user-turn, derived from the same
  * tree the selection UI is built on) rather than the server re-deriving turn
@@ -12,16 +13,6 @@
  */
 import { z } from "zod";
 import { anthropicClient, type LlmClient } from "./supervisor/llm.ts";
-
-export const SECTION_KINDS = [
-  "debug",
-  "implement",
-  "explore",
-  "config",
-  "review",
-  "discuss",
-] as const;
-export type SectionKind = (typeof SECTION_KINDS)[number];
 
 export const SectionsBody = z.object({
   /** One gist per turn, thread order — index i is turn i in the reply. */
@@ -33,7 +24,7 @@ export interface Section {
   /** Inclusive 0-based turn range. */
   start: number;
   end: number;
-  kind: SectionKind;
+  /** What this stretch of the conversation was about, in the LLM's words. */
   label: string;
 }
 
@@ -56,22 +47,18 @@ const MAX_TOKENS = 1500;
 
 const SYSTEM = "You label the history of a coding-agent conversation. Given numbered turns " +
   "(each one line: the user's request and a gist of the reply), partition ALL turns into " +
-  "contiguous sections of related activity. Prefer fewer, broader sections (2-6 turns) over " +
-  "one section per turn; start a new section where the activity genuinely shifts.\n" +
-  "kind must be one of:\n" +
-  "- debug: diagnosing or fixing broken behavior, failing tests, errors\n" +
-  "- implement: writing or editing code for features/changes\n" +
-  "- explore: reading code, research, questions, gathering information\n" +
-  "- config: environment, tooling, dependencies, settings, infrastructure\n" +
-  "- review: reviewing, verifying, testing, or shipping changes\n" +
-  "- discuss: planning, decisions, and everything else\n" +
-  'Reply with JSON only, no prose: [{"start":0,"end":2,"kind":"debug","label":"auth flow 401s"}] ' +
-  "— start/end are inclusive 0-based turn indexes, labels are specific and at most 6 words.";
+  "contiguous sections BY TOPIC — group consecutive turns that are about the same piece of " +
+  "work, and start a new section where the subject genuinely changes. Do NOT categorize by " +
+  "activity type (debugging vs editing); the label says WHAT the work was about, in concrete " +
+  "terms a reader scanning history would recognize (name the feature, bug, file, or question " +
+  "— not 'various requests' or 'misc tasks'). Prefer fewer, broader sections over one per " +
+  "turn.\n" +
+  'Reply with JSON only, no prose: [{"start":0,"end":2,"label":"auth token refresh race"}] ' +
+  "— start/end are inclusive 0-based turn indexes, labels at most 7 words.";
 
 const LlmSections = z.array(z.object({
   start: z.number().int().min(0),
   end: z.number().int().min(0),
-  kind: z.enum(SECTION_KINDS),
   label: z.string(),
 }));
 
@@ -90,28 +77,28 @@ export function parseSections(text: string): z.infer<typeof LlmSections> | null 
 
 /**
  * Force a possibly-sloppy model answer into a clean partition of [0, n):
- * sorted, clipped to bounds, overlaps trimmed, gaps filled with "discuss".
+ * sorted, clipped to bounds, overlaps trimmed, gaps filled with "…".
  */
 export function normalizeSections(raw: z.infer<typeof LlmSections>, n: number): Section[] {
   const sorted = raw
     .filter((s) => s.start < n && s.start <= s.end)
-    .map((s) => ({ ...s, end: Math.min(s.end, n - 1), label: s.label.slice(0, 60) }))
+    .map((s) => ({ start: s.start, end: Math.min(s.end, n - 1), label: s.label.slice(0, 60) }))
     .sort((a, b) => a.start - b.start || a.end - b.end);
   const out: Section[] = [];
   let next = 0;
   for (const s of sorted) {
     if (s.end < next) continue; // fully covered by an earlier section
     const start = Math.max(s.start, next);
-    if (start > next) out.push({ start: next, end: start - 1, kind: "discuss", label: "…" });
-    out.push({ start, end: s.end, kind: s.kind, label: s.label });
+    if (start > next) out.push({ start: next, end: start - 1, label: "…" });
+    out.push({ start, end: s.end, label: s.label });
     next = s.end + 1;
   }
-  if (next < n) out.push({ start: next, end: n - 1, kind: "discuss", label: "…" });
+  if (next < n) out.push({ start: next, end: n - 1, label: "…" });
   return out;
 }
 
-/** Partition `turns` into labeled sections. Throws SectionsError(502) if the model
- * output can't be parsed even once retried. */
+/** Partition `turns` into topic-labeled sections. Throws SectionsError(502) if
+ * the model output can't be parsed. */
 export async function sectionize(
   ctx: SectionsCtx,
   turns: { gist: string }[],

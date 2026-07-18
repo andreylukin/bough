@@ -40,17 +40,21 @@ export type TreeItem =
   | { type: "node"; node: TreeNode; sectionColor?: string }
   | { type: "step"; step: ToolStep; sectionColor?: string }
   | { type: "branch"; session: TuiSession; sectionColor?: string }
-  | { type: "section"; section: WireSection };
+  | { type: "section"; section: WireSection; color: string };
 
-/** Fixed hues per section kind (theme-independent so the legend stays stable). */
-export const SECTION_COLORS: Record<WireSection["kind"], string> = {
-  debug: "#e2776e",
-  implement: "#4ec98f",
-  explore: "#5c88c9",
-  config: "#d9b45f",
-  review: "#9a7fd1",
-  discuss: "#aeb4bd",
-};
+/** Sections are topics, not categories — the color only tells adjacent sections
+ * apart, so hues cycle by section order (theme-independent, distinct hues). */
+export const SECTION_COLORS = [
+  "#5c88c9", // blue
+  "#4ec98f", // green
+  "#d9b45f", // amber
+  "#9a7fd1", // iris
+  "#e2776e", // red
+  "#3fbdb0", // teal
+  "#d97a8e", // rose
+] as const;
+
+export const sectionColor = (i: number): string => SECTION_COLORS[i % SECTION_COLORS.length];
 
 // The tool runs in a reply span → labeled branch points. atPart cuts through the
 // run's result (kept inclusive) so the completed call is retained in the branch.
@@ -118,19 +122,20 @@ export function buildTree(thread: Message[], branches: TuiSession[]): TreeNode[]
 }
 
 export function treeItems(nodes: TreeNode[], sections?: WireSection[] | null): TreeItem[] {
-  const byStart = new Map((sections ?? []).map((s) => [s.start, s]));
+  const secs = sections ?? [];
+  const byStart = new Map(secs.map((s, i) => [s.start, { section: s, color: sectionColor(i) }]));
   const colorAt = (turn: number): string | undefined => {
-    const s = (sections ?? []).find((x) => turn >= x.start && turn <= x.end);
-    return s ? SECTION_COLORS[s.kind] : undefined;
+    const i = secs.findIndex((x) => turn >= x.start && turn <= x.end);
+    return i >= 0 ? sectionColor(i) : undefined;
   };
   const items: TreeItem[] = [];
   nodes.forEach((n, turn) => {
     const sec = byStart.get(turn);
-    if (sec) items.push({ type: "section", section: sec });
-    const sectionColor = colorAt(turn);
-    items.push({ type: "node", node: n, sectionColor });
-    for (const s of n.steps) items.push({ type: "step", step: s, sectionColor });
-    for (const b of n.branches) items.push({ type: "branch", session: b, sectionColor });
+    if (sec) items.push({ type: "section", section: sec.section, color: sec.color });
+    const color = colorAt(turn);
+    items.push({ type: "node", node: n, sectionColor: color });
+    for (const s of n.steps) items.push({ type: "step", step: s, sectionColor: color });
+    for (const b of n.branches) items.push({ type: "branch", session: b, sectionColor: color });
   });
   return items;
 }
@@ -192,9 +197,7 @@ export function ConversationTree(
           return (
             <Text key={`h-${idx}`} inverse={sel} wrap="truncate">
               {" "}
-              <Text color={SECTION_COLORS[s.kind]} bold>■ {s.kind}</Text>
-              <Text dimColor>{" · "}</Text>
-              {s.label}
+              <Text color={it.color} bold>■ {s.label}</Text>
               <Text dimColor>{`  ${turns} turn${turns === 1 ? "" : "s"}`}</Text>
             </Text>
           );

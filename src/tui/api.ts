@@ -14,12 +14,12 @@ export interface DirHit {
 }
 export type ChangeSource = "clonefile" | "shadow";
 
-/** An LLM-labeled activity section over the conversation tree's turns
- * (inclusive 0-based turn indexes; mirror of the server's Section). */
+/** An LLM-labeled topic section over the conversation tree's turns — the label
+ * says what that stretch of work was about (inclusive 0-based turn indexes;
+ * mirror of the server's Section). */
 export interface WireSection {
   start: number;
   end: number;
-  kind: "debug" | "implement" | "explore" | "config" | "review" | "discuss";
   label: string;
 }
 export interface WireHunk {
