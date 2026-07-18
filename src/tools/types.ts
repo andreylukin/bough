@@ -94,6 +94,12 @@ export interface ToolRunCtx {
    * returns the artifact — its same-origin `url` and absolute local `href`.
    */
   artifact?: (name: string, content: string) => Promise<Artifact>;
+  /**
+   * Ship the session's work into the origin repo as a real commit (+ optional push)
+   * — vcs/shadow.ts shipToOrigin via the turn runner. Wired only for root-session
+   * turns whose workspace is a shadow worktree with a resolvable origin.
+   */
+  ship?: (opts: { message: string; paths?: string[]; push?: boolean }) => Promise<unknown>;
 }
 
 /**

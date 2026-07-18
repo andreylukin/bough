@@ -63,6 +63,12 @@ export interface HostFns {
    * every supervisor turn.
    */
   artifact?(name: string, content: string): Promise<string>;
+  /**
+   * Ship the session's work into the origin repo as a real commit (+ optional
+   * push) — vcs/shadow.ts shipToOrigin. Options in and ShipResult back travel
+   * as JSON. Bridged only for root-session turns with a repo workspace.
+   */
+  ship?(optsJson: string): Promise<string>;
 }
 
 export interface ProgramResult {

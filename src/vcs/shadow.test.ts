@@ -214,3 +214,68 @@ Deno.test("looksLikeBrokenStore: corruption signatures only", () => {
   assert(shadow.looksLikeBrokenStore(new Error("error: object file is corrupt")));
   assert(!shadow.looksLikeBrokenStore(new Error("permission denied")));
 });
+
+Deno.test("hydrate: gitignored runtime artifacts clone into the worktree", async () => {
+  await withRoots(async () => {
+    const repo = await makeRepo();
+    // Ignored deps at root, one level deep, and an ignored env file.
+    await Deno.writeTextFile(`${repo}/.gitignore`, "ignored.txt\nnode_modules/\n.env\n");
+    await Deno.mkdir(`${repo}/node_modules/pkg`, { recursive: true });
+    await Deno.writeTextFile(`${repo}/node_modules/pkg/index.js`, "dep\n");
+    await Deno.mkdir(`${repo}/web/node_modules/wpkg`, { recursive: true });
+    await Deno.writeTextFile(`${repo}/web/node_modules/wpkg/index.js`, "webdep\n");
+    await Deno.writeTextFile(`${repo}/web/app.ts`, "app\n"); // tracked sibling
+    await Deno.writeTextFile(`${repo}/.env`, "SECRET=1\n");
+    const dir = await shadow.createSessionWorkspace(repo, "h1");
+    assertEquals(await Deno.readTextFile(`${dir}/node_modules/pkg/index.js`), "dep\n");
+    assertEquals(await Deno.readTextFile(`${dir}/web/node_modules/wpkg/index.js`), "webdep\n");
+    assertEquals(await Deno.readTextFile(`${dir}/.env`), "SECRET=1\n");
+    // Hydrated artifacts are ignored in the worktree too — they never hit the diff.
+    assertEquals((await shadow.diff(dir, "h1")).files, []);
+    // Isolation: mutating the clone leaves the origin's copy alone.
+    await Deno.writeTextFile(`${dir}/node_modules/pkg/index.js`, "mutated\n");
+    assertEquals(await Deno.readTextFile(`${repo}/node_modules/pkg/index.js`), "dep\n");
+  });
+});
+
+Deno.test("shipToOrigin: commits on the origin branch without touching its index; pushes", async () => {
+  await withRoots(async () => {
+    const repo = await makeRepo();
+    // A bare "remote" so push has somewhere real to go.
+    const remote = await Deno.makeTempDir({ prefix: "bough-shadow-remote-" });
+    await sh(remote, "git", "init", "-q", "--bare", ".");
+    await sh(repo, "git", "remote", "add", "origin", remote);
+    // The user has something STAGED that must survive shipping untouched.
+    await Deno.writeTextFile(`${repo}/staged.txt`, "user staged\n");
+    await sh(repo, "git", "add", "staged.txt");
+
+    const dir = await shadow.createSessionWorkspace(repo, "ship1");
+    await Deno.writeTextFile(`${dir}/feature.txt`, "shipped\n");
+    const res = await shadow.shipToOrigin(dir, "ship1", repo, {
+      message: "bough: ship feature",
+      push: true,
+    });
+    assert(res.commit, "expected a commit");
+    assertEquals(res.branch, "main");
+    assertEquals(res.paths, ["feature.txt"]);
+    assertEquals(res.pushed, true);
+
+    // The commit is on main, contains ONLY the shipped file, and reached the remote.
+    assertEquals((await sh(repo, "git", "log", "-1", "--format=%s")).trim(), "bough: ship feature");
+    const shown = await sh(repo, "git", "show", "--stat", "--format=", "HEAD");
+    assertStringIncludes(shown, "feature.txt");
+    assertEquals(shown.includes("staged.txt"), false);
+    assertEquals(
+      (await sh(remote, "git", "log", "-1", "--format=%s", "main")).trim(),
+      "bough: ship feature",
+    );
+    // The user's staging area is exactly as they left it.
+    assertEquals((await sh(repo, "git", "diff", "--cached", "--name-only")).trim(), "staged.txt");
+    // The session sealed: its rail is empty.
+    assertEquals((await shadow.diff(dir, "ship1")).files, []);
+    // Re-ship with nothing new is a clean no-op.
+    const again = await shadow.shipToOrigin(dir, "ship1", repo, { message: "again", push: true });
+    assertEquals(again.commit, null);
+    await Deno.remove(remote, { recursive: true }).catch(() => {});
+  });
+});

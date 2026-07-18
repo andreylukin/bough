@@ -30,7 +30,8 @@ type HostName =
   | "mcp"
   | "mcpStatus"
   | "lsp"
-  | "artifact";
+  | "artifact"
+  | "ship";
 
 const pending = new Map<number, { resolve: (v: string) => void; reject: (e: Error) => void }>();
 let seq = 0;
@@ -98,6 +99,10 @@ async function run(code: string): Promise<void> {
   // artifact object ({url, href, …}). JSON round-trip like agent()/mcp().
   const artifact = async (name: string, content: string) =>
     JSON.parse(await hostCall("artifact", [name, content]));
+  // Ship: commit (+push) the session's work into the origin repo; options and the
+  // result object both travel as JSON, like mcp().
+  const ship = async (opts?: unknown) =>
+    JSON.parse(await hostCall("ship", [JSON.stringify(opts ?? {})]));
 
   // deno-lint-ignore no-explicit-any
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as any;
@@ -118,6 +123,7 @@ async function run(code: string): Promise<void> {
     "mcpStatus",
     "lsp",
     "artifact",
+    "ship",
     "console",
     code,
   );
@@ -138,6 +144,7 @@ async function run(code: string): Promise<void> {
     mcpStatus,
     lsp,
     artifact,
+    ship,
     sandboxConsole,
   );
 }

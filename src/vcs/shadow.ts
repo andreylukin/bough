@@ -278,6 +278,7 @@ export async function createSessionWorkspace(origin: string, sessionId: string):
     await git(store, ["update-ref", refFor(sessionId), base]);
     await Deno.mkdir(workspacesRoot(), { recursive: true });
     await git(store, ["worktree", "add", "--detach", dir, base]);
+    await hydrate(origin, dir);
     return dir;
   });
 }
@@ -311,6 +312,7 @@ export async function addWorkspace(
     await git(store, ["update-ref", refFor(sessionId), tip]);
     await Deno.mkdir(workspacesRoot(), { recursive: true });
     await git(store, ["worktree", "add", "--detach", dir, tip]);
+    await hydrate(fromDir, dir); // the parent's runtime artifacts, already hydrated once
     return dir;
   });
 }
@@ -321,6 +323,50 @@ async function gitCommonDir(dir: string): Promise<string | null> {
   if (!r.ok) return null;
   const p = r.stdout.trim();
   return isAbsolute(p) ? p : resolve(dir, p);
+}
+
+/**
+ * Gitignored runtime artifacts a fresh worktree needs to actually RUN the code —
+ * a checkout carries tracked+untracked files only, so deps/venvs/env files never
+ * arrive on their own. Root-level candidates plus one-level-deep node_modules
+ * (monorepo web/ dirs). Cloned with APFS clonefile (`cp -c`): instant, CoW, and
+ * fully isolated from the source's copies.
+ */
+const HYDRATE_CANDIDATES = [
+  "node_modules",
+  ".venv",
+  "venv",
+  "target",
+  "vendor",
+  ".env",
+  ".env.local",
+];
+
+/**
+ * Copy runtime artifacts from `source` (the origin, or a parent worktree) into a
+ * fresh worktree. Best-effort by design: a failed or unsupported clone (non-APFS,
+ * cross-volume) skips that artifact — the session still starts; the agent can
+ * reinstall deps itself.
+ */
+async function hydrate(source: string, dir: string): Promise<void> {
+  const targets: string[] = [...HYDRATE_CANDIDATES];
+  // One level deep: <subdir>/node_modules (e.g. web/node_modules).
+  try {
+    for await (const e of Deno.readDir(source)) {
+      if (!e.isDirectory || e.name.startsWith(".") || e.name === "node_modules") continue;
+      targets.push(`${e.name}/node_modules`);
+    }
+  } catch { /* unreadable source — nothing to hydrate */ }
+  for (const rel of targets) {
+    const from = join(source, rel);
+    const to = join(dir, rel);
+    if (!(await pathExists(from)) || (await pathExists(to))) continue;
+    const r = await run("cp", ["-Rc", from, to], dir);
+    if (!r.ok) {
+      await Deno.remove(to, { recursive: true }).catch(() => {}); // no half-copies
+      console.error(`shadow: hydrate skipped ${rel}: ${r.stderr.trim().split("\n")[0]}`);
+    }
+  }
 }
 
 /**
@@ -570,6 +616,98 @@ export async function materialize(
     }
   }
   if (failed.length > 0) throw new Error(`could not apply ${failed.join("; ")}`);
+}
+
+export interface ShipResult {
+  /** The new commit sha in the origin, or null when there was nothing to commit. */
+  commit: string | null;
+  /** The origin branch the commit landed on. */
+  branch: string;
+  /** Paths included in the commit. */
+  paths: string[];
+  /** True when the branch was pushed to its remote. */
+  pushed: boolean;
+  /** Human-readable caveat (nothing to ship, no remote to push to, …). */
+  note?: string;
+}
+
+/**
+ * Ship a session's work into the origin as a real commit: materialize the
+ * selected paths into the origin's working tree (content-level 3-way; conflicts
+ * throw), build the commit through a THROWAWAY index seeded from HEAD — the
+ * user's own index/staging is never read or written — advance the origin's
+ * current branch, seal the session (base → tip), and optionally `git push`.
+ * The commit is authored with the origin's own git identity/config, and the
+ * push uses the user's normal credentials (keychain), exactly as if they had
+ * typed it. Refuses a detached-HEAD origin: there is no branch to advance.
+ */
+export async function shipToOrigin(
+  dir: string,
+  sessionId: string,
+  origin: string,
+  opts: { message: string; paths?: string[]; push?: boolean },
+): Promise<ShipResult> {
+  await track(dir, sessionId);
+  const base = await refSha(dir, baseRefFor(sessionId));
+  const tip = await refSha(dir, refFor(sessionId));
+  if (!base || !tip) throw new Error(`ship: unknown session refs for ${sessionId}`);
+  const branchR = await run("git", ["symbolic-ref", "--short", "-q", "HEAD"], origin);
+  if (!branchR.ok) {
+    throw new Error("ship: the origin checkout is on a detached HEAD — check out a branch first");
+  }
+  const branch = branchR.stdout.trim();
+  const all = (await git(dir, ["diff", "--name-only", base, tip]))
+    .split("\n").map((s) => s.trim()).filter(Boolean);
+  const paths = opts.paths && opts.paths.length > 0
+    ? all.filter((p) => opts.paths!.includes(p))
+    : all;
+  if (paths.length === 0) {
+    return { commit: null, branch, paths: [], pushed: false, note: "nothing to ship" };
+  }
+  await materialize(dir, sessionId, origin, paths);
+  // Commit exactly HEAD + the shipped paths via a temp index. `git add` there
+  // reads the just-materialized working files; the user's index stays untouched,
+  // so anything they had staged remains staged.
+  const idx = await Deno.makeTempFile({ prefix: "bough-ship-index-" });
+  let commit: string | null = null;
+  try {
+    const env = { GIT_INDEX_FILE: idx };
+    const headR = await run("git", ["rev-parse", "--verify", "-q", "HEAD"], origin, env);
+    const head = headR.ok ? headR.stdout.trim() : null;
+    await originGit(origin, head ? ["read-tree", "HEAD"] : ["read-tree", "--empty"], env);
+    await originGit(origin, ["add", "--", ...paths], env);
+    const tree = (await originGit(origin, ["write-tree"], env)).trim();
+    if (head && tree === (await originGit(origin, ["rev-parse", "HEAD^{tree}"])).trim()) {
+      await accept(dir, sessionId, opts.message);
+      return { commit: null, branch, paths, pushed: false, note: "already committed" };
+    }
+    const args = ["commit-tree", tree, "-m", opts.message];
+    if (head) args.push("-p", head);
+    commit = (await originGit(origin, args, env)).trim();
+    await originGit(
+      origin,
+      head
+        ? ["update-ref", `refs/heads/${branch}`, commit, head]
+        : ["update-ref", `refs/heads/${branch}`, commit],
+    );
+    // Sync ONLY the shipped paths into the real index (adds and deletions):
+    // without this, the advanced HEAD reads the stale index as phantom staged
+    // deletions in `git status`. Everything else the user staged stays staged —
+    // the end state is exactly `git add <paths> && git commit`.
+    await originGit(origin, ["add", "--all", "--", ...paths]);
+  } finally {
+    await Deno.remove(idx).catch(() => {});
+  }
+  await accept(dir, sessionId, opts.message);
+  if (!opts.push) return { commit, branch, paths, pushed: false };
+  const remote =
+    (await run("git", ["config", `branch.${branch}.remote`], origin)).stdout.trim() || "origin";
+  const hasRemote = (await run("git", ["remote"], origin)).stdout.split("\n").includes(remote);
+  if (!hasRemote) {
+    return { commit, branch, paths, pushed: false, note: `no remote "${remote}" to push to` };
+  }
+  await originGit(origin, ["push", remote, branch]);
+  return { commit, branch, paths, pushed: true };
 }
 
 /** Restore `path` in the worktree to its state at `rev` (delete if absent there). */

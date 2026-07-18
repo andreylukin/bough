@@ -129,6 +129,14 @@ export const runSteps: ToolDef = {
               JSON.stringify(await ctx.artifact!(name, content)),
           }
           : {}),
+        // Ship (wired for root-session repo turns): commit + optional push into the
+        // origin repo; options and result travel as JSON like mcp().
+        ...(ctx.ship
+          ? {
+            ship: async (optsJson: string) =>
+              JSON.stringify(await ctx.ship!(JSON.parse(optsJson || "{}"))),
+          }
+          : {}),
       },
       // agent() blocks on whole subagent turns; a held mcp()/lsp() call blocks on a
       // human approval; an oracle() consult can reason for many minutes — all need

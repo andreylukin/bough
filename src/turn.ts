@@ -64,6 +64,7 @@ import { mcpSection } from "./mcp/prompt.ts";
 import { mcpStatusFor } from "./mcp/status.ts";
 import { expandFileReferences } from "./server/files.ts";
 import { publishArtifact } from "./server/artifacts.ts";
+import { originRepo as shadowOrigin, shipToOrigin } from "./vcs/shadow.ts";
 
 export interface TurnCtx {
   db: Db;
@@ -277,6 +278,22 @@ const SYSTEM = [
   'apologies. "X imports Y" beats "It looks like X seems to import Y" — specificity',
   "comes from content, not phrasing. Act, then stop.",
 ].join(" ");
+
+// Ship section, appended only when the turn runner wired ship() (root session,
+// repo workspace with a resolvable origin).
+const SHIP_NOTE = "\n\n" + [
+  "Another granted host function: await ship({message, paths?, push?}) lands this",
+  "session's work in the user's real repository checkout as a git commit. It delivers",
+  "the changed files into the origin's working tree (3-way merged with any edits the",
+  "user made meanwhile; a conflict fails with the file named), commits them on the",
+  "origin's current branch with `message` — the user's own staged changes stay",
+  "staged and untouched — and with push:true also pushes the branch to its remote",
+  "with the user's credentials. `paths` limits the commit to those files; omitted",
+  "means everything this session changed. Returns {commit, branch, paths, pushed,",
+  "note?}. Shipping publishes work outside your workspace: call it ONLY when the",
+  "user explicitly asks you to commit/push/ship — never as a routine end-of-task",
+  "step — and report the returned commit and branch afterward.",
+].join("\n");
 
 // Delegation section, appended only for sessions that may spawn (not subagents).
 const SYSTEM_DELEGATION = " " + [
@@ -680,7 +697,27 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       toolCtx.lsp = createLspBridge({ workspace: prepared.cwd, sandbox: toolCtx.sandbox });
       lspNote = lspSection();
     }
+    // Ship (root sessions running in a shadow worktree only): commit + optional
+    // push into the origin repo, executed HOST-side — the sandbox itself never
+    // gains write access to the user's checkout. Subagents don't ship; their work
+    // flows upward via adopt.
+    let shipNote = "";
+    if (!isSub && prepared.sandboxed) {
+      const shipOrigin = await shadowOrigin(prepared.cwd);
+      if (shipOrigin) {
+        toolCtx.ship = async (opts) => {
+          if (!opts || typeof opts.message !== "string" || !opts.message.trim()) {
+            throw new Error("ship({message, paths?, push?}): a commit message is required");
+          }
+          const res = await shipToOrigin(prepared.cwd, sessionId, shipOrigin, opts);
+          bus.publish({ type: "changes.updated", sessionId, data: { sessionId } });
+          return res;
+        };
+        shipNote = SHIP_NOTE;
+      }
+    }
     const system = SYSTEM +
+      shipNote +
       (isSub ? SYSTEM_SUBAGENT : "") +
       (mayDelegate ? (isSub ? SYSTEM_DELEGATION_NESTED : SYSTEM_DELEGATION) : "") +
       (mayDelegate && !isSub ? runningSubagentsNote(db, sessionId) : "") +
