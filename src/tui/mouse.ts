@@ -10,7 +10,9 @@ export interface MouseEvent {
   /** 1-based terminal column/row of the event. */
   x: number;
   y: number;
-  kind: "click" | "right-click" | "wheel-up" | "wheel-down";
+  /** Left button reports the full press/drag/release cycle so the app can
+   * distinguish a click (down+up in place) from a drag selection. */
+  kind: "down" | "drag" | "up" | "right-click" | "wheel-up" | "wheel-down";
 }
 
 type Handler = (ev: MouseEvent) => void;
@@ -41,12 +43,18 @@ const PARTIAL_TAIL = /\x1b\[(<[\d;]*|20[01]?)$/;
 function dispatchMouse(s: string): string {
   return s.replace(SGR, (_all, b, x, y, fin) => {
     const btn = Number(b);
-    if (fin === "M" && handler) {
-      // Press events only (releases are `m`); 64/65 = wheel.
-      if (btn === 64) handler({ x: Number(x), y: Number(y), kind: "wheel-up" });
-      else if (btn === 65) handler({ x: Number(x), y: Number(y), kind: "wheel-down" });
-      else if ((btn & 3) === 0) handler({ x: Number(x), y: Number(y), kind: "click" });
-      else if ((btn & 3) === 2) handler({ x: Number(x), y: Number(y), kind: "right-click" });
+    if (handler) {
+      // 64/65 = wheel; bit 32 = motion while held (mode 1002 drag events).
+      if (fin === "M") {
+        if (btn === 64) handler({ x: Number(x), y: Number(y), kind: "wheel-up" });
+        else if (btn === 65) handler({ x: Number(x), y: Number(y), kind: "wheel-down" });
+        else if (btn & 32) {
+          if ((btn & 3) === 0) handler({ x: Number(x), y: Number(y), kind: "drag" });
+        } else if ((btn & 3) === 0) handler({ x: Number(x), y: Number(y), kind: "down" });
+        else if ((btn & 3) === 2) handler({ x: Number(x), y: Number(y), kind: "right-click" });
+      } else if ((btn & 3) === 0 && !(btn & 32)) {
+        handler({ x: Number(x), y: Number(y), kind: "up" });
+      }
     }
     return "";
   });
@@ -105,14 +113,18 @@ export function filteredStdin(): typeof process.stdin {
 }
 
 const enc = new TextEncoder();
-/** Alt screen + SGR mouse tracking + bracketed paste on. */
+/** Alt screen + SGR mouse tracking + bracketed paste on. 1002 (button-event)
+ * adds drag motion for text selection; 1000 stays as a fallback for terminals
+ * without it. */
 export function enterTui() {
-  Deno.stdout.writeSync(enc.encode("\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[?2004h"));
+  Deno.stdout.writeSync(enc.encode("\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1006h\x1b[?2004h"));
 }
 /** Restore the normal buffer, mouse + paste modes off, cursor visible. */
 export function leaveTui() {
   try {
-    Deno.stdout.writeSync(enc.encode("\x1b[?2004l\x1b[?1006l\x1b[?1000l\x1b[?1049l\x1b[?25h"));
+    Deno.stdout.writeSync(
+      enc.encode("\x1b[?2004l\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?1049l\x1b[?25h"),
+    );
   } catch {
     // stdout already gone — nothing to restore onto.
   }

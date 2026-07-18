@@ -37,6 +37,8 @@ import {
 import { runOracle } from "./tools/oracle.ts";
 import {
   clientFor,
+  type Effort,
+  EFFORTS,
   type LlmClient,
   type LlmContentBlock,
   type LlmMessage,
@@ -105,6 +107,24 @@ export function activeModel(): string {
 
 export function setActiveModel(model: string): void {
   currentModel = model;
+}
+
+/**
+ * Thinking depth new turns run at ("" = provider default: request unchanged).
+ * Starts from BOUGH_EFFORT and changes at runtime via PATCH /config, with the
+ * same per-session pinning as the model (session.effort wins when set).
+ */
+let currentEffort = ((): Effort | "" => {
+  const e = Deno.env.get("BOUGH_EFFORT") ?? "";
+  return (EFFORTS as string[]).includes(e) ? (e as Effort) : "";
+})();
+
+export function activeEffort(): Effort | "" {
+  return currentEffort;
+}
+
+export function setActiveEffort(effort: Effort | ""): void {
+  currentEffort = effort;
 }
 
 /**
@@ -492,6 +512,10 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
   // pinned model (set when the user switches models with this session open) → the
   // process-global default (what new sessions start on).
   const model = ctx.model ?? db.getSession(sessionId)?.model ?? activeModel();
+  // Thinking depth: the session's pin wins over the global default; "" = unset
+  // (the request carries no thinking/effort fields at all).
+  const effort = (db.getSession(sessionId)?.effort as Effort | undefined) ??
+    (activeEffort() || undefined);
   const llm = ctx.llm ?? clientFor(model);
   const tools = ctx.tools ?? defaultTools;
   // Newest round's input_tokens ≈ the live context size; output accumulates, and
@@ -686,6 +710,7 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
           messages,
           tools: toolDefs,
           ...(forceText ? { toolChoice: "none" as const } : {}),
+          ...(effort ? { effort } : {}),
         },
         (delta) => {
           markFirstOutput();

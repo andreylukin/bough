@@ -79,6 +79,36 @@ Deno.test("PATCH /config with sessionId pins that session; others keep theirs", 
   c.db.close();
 });
 
+Deno.test("PATCH /config effort: validates, pins per session, 'default' clears", async () => {
+  const c = ctx();
+  const h = createHandler(c);
+  c.db.createSession({ id: "A", parentId: null, title: "a", kind: "root", createdAt: 1 });
+
+  // Advertised in GET /config; starts unset.
+  const cfg = await (await h(req("GET", "/config"))).json() as {
+    effort: string;
+    efforts: string[];
+  };
+  assertEquals(cfg.effort, "");
+  assert(cfg.efforts.includes("xhigh"));
+
+  assertEquals((await h(req("PATCH", "/config", { effort: "extreme" }))).status, 400);
+
+  // Pin: session + global default move together (same semantics as model).
+  const res = await h(req("PATCH", "/config", { effort: "xhigh", sessionId: "A" }));
+  assertEquals((await res.json() as { effort: string }).effort, "xhigh");
+  assertEquals(c.db.getSession("A")?.effort, "xhigh");
+
+  // "default" clears the global and the pin.
+  await h(req("PATCH", "/config", { effort: "default", sessionId: "A" }));
+  assertEquals(c.db.getSession("A")?.effort, undefined);
+  assertEquals(
+    (await (await h(req("GET", "/config"))).json() as { effort: string }).effort,
+    "",
+  );
+  c.db.close();
+});
+
 Deno.test("GET /config lists workers; PATCH /config switches the worker", async () => {
   const c = ctx();
   const h = createHandler(c);

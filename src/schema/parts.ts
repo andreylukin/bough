@@ -85,6 +85,9 @@ export const Session = z.object({
   // Set by the model picker: switching models pins THIS session and moves the
   // default new sessions start on; other existing sessions keep theirs.
   model: z.string().nullish(),
+  // Per-session thinking-depth override (additive; same pinning semantics as
+  // model). One of low/medium/high/xhigh/max; absent = the global default.
+  effort: z.string().nullish(),
   // Prompt-cache visibility (additive; stamped after each turn's last LLM round).
   // contextTokens = that round's full prompt size; cachedTokens = the share of it
   // served from / written to the provider's prompt cache; lastLlmAt = when the round

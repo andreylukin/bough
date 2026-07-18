@@ -170,3 +170,27 @@ Deno.test("collapsed tool fold carries a gist of what ran", () => {
   const openHead = expanded.find((l) => l.text.includes("tool call"))!;
   assertEquals(openHead.text.includes("curl"), false);
 });
+
+Deno.test("reasoning folds: collapsed gist line, expanded gutter block", () => {
+  const msg: Message = {
+    id: "m1",
+    sessionId: "s",
+    role: "supervisor",
+    pending: false,
+    createdAt: 1,
+    parts: [
+      { type: "reasoning", text: "Let me look at the auth flow.\nSecond thought.\nThird." },
+      { type: "text", text: "done" },
+    ],
+  } as unknown as Message;
+  const collapsed = messageLines(msg, () => false, () => false, 120);
+  const head = collapsed.find((l) => l.text.includes("thinking"))!;
+  assertEquals(head.text.includes("▸"), true);
+  assertEquals(head.text.includes("Let me look at the auth flow."), true);
+  assertEquals(head.click, "m1:0"); // click expands
+  // Body lines are hidden while collapsed.
+  assertEquals(collapsed.some((l) => l.text.includes("Second thought.")), false);
+  const expanded = messageLines(msg, () => true, () => false, 120);
+  assertEquals(expanded.some((l) => l.text.includes("▾ thinking (3 lines)")), true);
+  assertEquals(expanded.some((l) => l.text.includes("Second thought.")), true);
+});

@@ -9,9 +9,11 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
       ["⌥enter", "queue until the turn finishes"],
       ["esc", "interrupt the running turn"],
       ["↑/↓", "recall previously sent messages"],
-      ["click ▸", "expand/collapse that tool group"],
+      ["click ▸", "expand/collapse that tool group or thinking fold"],
       ["right-click", "copy that section's text (message, reasoning, tool calls)"],
       ["wheel / pgup/pgdn", "scroll the conversation"],
+      ["^s", "search the conversation (enter/↓ next · ↑ prev · esc close)"],
+      ["! cmd", "run a local shell command in the workspace (esc dismisses output)"],
       ["^e", "expand/collapse all tool calls (when the input is empty)"],
       ["←/→ ⌥b/⌥f ^a/^e", "move the cursor (char · word · line ends)"],
       ["^w / ^k / ^u", "delete word · to end · all"],
@@ -36,7 +38,7 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
     section: "work",
     keys: [
       ["^d", "changes review (↑↓ file · a apply · A apply all · R revert)"],
-      ["^o", "model + worker picker"],
+      ["^o", "model · thinking depth · worker picker"],
       ["^t", "panels: net / mcp / skills / theme (tab cycles; theme ↑↓ applies live)"],
     ],
   },
@@ -56,7 +58,7 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
 ];
 
 export const HINTS = {
-  chat: "enter send · esc stop · ^p sessions · ^n new · ^t panels · ? help · ^c^c quit",
+  chat: "enter send · esc stop · ^s find · ^p sessions · ^n new · ^t panels · ? help · ^c^c quit",
   approval: "a allow once · A allow session · d deny · v details · ^p sessions",
   picker: "j/k move · / filter · enter open · ^t new · ^x archive · esc back",
   new: "type dir query · ↑↓ pick · enter create · esc cancel",

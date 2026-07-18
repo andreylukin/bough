@@ -22,6 +22,8 @@
     "react": "npm:react@19.2.7",
     "ink": "npm:ink@7.1.0",
     "wrap-ansi": "npm:wrap-ansi@9.0.2",
+    "slice-ansi": "npm:slice-ansi@9.0.0",
+    "strip-ansi": "npm:strip-ansi@7.2.0",
     "@types/react": "npm:@types/react@19"
   },
   "compilerOptions": {

@@ -257,7 +257,24 @@ export function messageLines(
       push(seg, md(s.text), w);
       copy = s.text;
     } else if (s.kind === "reasoning") {
-      push(seg, dim(s.text), w);
+      // Thinking folds like a tool group: a long reasoning wall is process, not
+      // answer. Collapsed = one clickable gist line; expanded = a gutter block
+      // (capped like outputs, "+N more" lifts the cap via the !full key).
+      // Empty reasoning (thinking happened, text not captured) renders nothing.
+      if (!s.text.trim()) return;
+      const logical = s.text.split("\n");
+      if (isExpanded(key)) {
+        seg.push({ text: dim(`▾ thinking (${logical.length} lines)`), click: key });
+        pushBlock(seg, s.text, w, {
+          maxLines: isFull(key) ? Infinity : OUTPUT_LINES,
+          style: dim,
+          click: key,
+          fullKey: `${key}!full`,
+        });
+      } else {
+        const gist = logical.map((l) => l.trim()).find((l) => l.length > 0) ?? "";
+        seg.push({ text: dim(`▸ thinking · ${clip(gist, 60)}`), click: key });
+      }
       copy = s.text;
     } else {
       toolGroupLines(seg, s.parts, key, isExpanded(key), isFull(key), w);

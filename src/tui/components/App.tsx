@@ -22,6 +22,8 @@ import { useStore } from "../store.ts";
 import { type Branch, buildLines, parseSubagentNote, type SubagentNote } from "../lines.ts";
 import { fmtTokens, fuzzyScore, segmentParts, wordLeft, wordRight } from "../format.ts";
 import { type MouseEvent, onMouse, onPaste } from "../mouse.ts";
+import { extractSpan, highlightSpan, rowSpan, type Selection, selRows } from "../selection.ts";
+import { findMatches, markLine } from "../search.ts";
 import { Composer } from "./Composer.tsx";
 import { ActivityLine, StatusBar } from "./StatusBar.tsx";
 import { flattenTree, SessionPicker, type TreeRow } from "./SessionPicker.tsx";
@@ -68,6 +70,15 @@ export function App(
   const [scrollOff, setScrollOff] = useState(0); // lines up from the bottom; 0 = follow
   const [expandAll, setExpandAll] = useState(false);
   const [toggled, setToggled] = useState<Set<string>>(new Set()); // per-group overrides
+  // Transcript search (^s): null = closed; while open the keyboard types the
+  // query and enter/↑/↓ walk matches (the viewport recenters on the current one).
+  const [searchQ, setSearchQ] = useState<string | null>(null);
+  const [searchIdx, setSearchIdx] = useState(0);
+  // `!cmd` local shell passthrough: last run's card (never touches the thread).
+  const [shellOut, setShellOut] = useState<
+    { cmd: string; out: string; code: number | null } | null
+  >(null);
+  const shellSeq = useRef(0);
   const [, setTick] = useState(0); // resize repaint
   // picker state. The cursor also lives in a ref: two keys parsed from one stdin
   // chunk (fast typing / key repeat) run in the same React batch, so an Enter right
@@ -176,6 +187,8 @@ export function App(
     setScrollOff(0);
     setToggled(new Set());
     setExpandAll(false);
+    setSearchQ(null);
+    setShellOut(null);
     saveLastSession(s.id);
     open(s.id).catch((e) => setErr(String(e)));
   }, [open]);
@@ -304,6 +317,13 @@ export function App(
     // palette.epoch: an applied theme must recolor the pre-rendered SGR lines.
     [store.thread, store.streaming, isExpanded, isFull, width, branches, palette.epoch],
   );
+  // Search matches over the current lines; the index clamps as lines rebuild
+  // (streaming appends, folds toggling) so the counter never dangles.
+  const matches = useMemo(
+    () => (searchQ ? findMatches(lines, searchQ) : []),
+    [lines, searchQ],
+  );
+  const curMatch = matches.length ? Math.min(searchIdx, matches.length - 1) : -1;
   const toggleGroup = useCallback((key: string) => {
     setToggled((prev) => {
       const next = new Set(prev);
@@ -372,6 +392,13 @@ export function App(
   useEffect(() => {
     setScrollOff((o) => Math.min(o, maxOff));
   }, [maxOff]);
+  // Keep the current search match centered in the viewport — including as the
+  // transcript grows under it (streaming) or the match set changes with the query.
+  useEffect(() => {
+    if (curMatch < 0) return;
+    const line = matches[curMatch].line;
+    setScrollOff(Math.max(0, Math.min(maxOff, lines.length - line - Math.ceil(bodyH / 2))));
+  }, [curMatch, matches, lines.length, maxOff, bodyH]);
   const start = Math.max(0, lines.length - bodyH - off);
   const visible = lines.slice(start, start + bodyH);
   const padTop = bodyH - visible.length;
@@ -380,10 +407,23 @@ export function App(
   // (post-commit) rather than during render, so a click always maps against the
   // frame actually ON SCREEN — chromeH is measured a frame late, so the padTop
   // used during an in-flight render can differ from what's painted by one row.
-  const layout = useRef({ mode, start, padTop, maxOff, lines });
+  const layout = useRef({ mode, start, padTop, maxOff, bodyH, lines });
   useEffect(() => {
-    layout.current = { mode, start, padTop, maxOff, lines };
+    layout.current = { mode, start, padTop, maxOff, bodyH, lines };
   });
+  // Drag selection over the viewport: mouse-down arms it, dragging highlights,
+  // release copies the plain text. State drives the highlight render; the refs
+  // keep the (stable) mouse subscription in sync.
+  const [drag, setDrag] = useState<Selection | null>(null);
+  const dragRef = useRef<Selection | null>(null);
+  const pressRef = useRef<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    if (mode !== "chat") {
+      setDrag(null);
+      dragRef.current = null;
+      pressRef.current = null;
+    }
+  }, [mode]);
   // Screen row (0-based) of the activity line, synced post-render below (its
   // position depends on chrome pieces declared later); null when hidden.
   const activityRowRef = useRef<number | null>(null);
@@ -495,6 +535,45 @@ export function App(
     toggleGroup(key);
   };
   useEffect(() => {
+    // Click/right-click dispatch at a screen cell (chrome rows first, then the
+    // viewport line under it). Left clicks land on mouse-UP so they can be told
+    // apart from a starting drag.
+    const clickAt = (y: number, right: boolean) => {
+      const l = layout.current;
+      // Info-card rows live in the chrome: any click (left or right) copies the
+      // row's raw value.
+      const info = infoClickRef.current;
+      if (info) {
+        const rel = y - 1 - info.firstRow;
+        if (rel >= 0 && rel < info.rows.length) {
+          const [label, , value] = info.rows[rel];
+          copyRef.current(value, label);
+          return;
+        }
+      }
+      // The activity line also lives in the chrome: left-click expands/collapses
+      // the running tool group it summarizes, right-click copies the blurb.
+      if (activityRowRef.current !== null && y - 1 === activityRowRef.current) {
+        if (right) {
+          if (activityTextRef.current) copyRef.current(activityTextRef.current, "activity");
+        } else toggleRunningGroupRef.current();
+        return;
+      }
+      // Only rows inside the painted viewport map to lines — a click on the
+      // chrome (composer, cards, status bar) while scrolled up must not toggle
+      // an off-screen fold.
+      const rel = (y - 1) - l.padTop;
+      if (rel < 0 || rel >= l.bodyH) return;
+      const line = l.lines[l.start + rel];
+      if (!line) return;
+      // Right-click copies the raw text of the section the line belongs to;
+      // left-click keeps its fold/open behavior.
+      if (right) {
+        if (line.copy) copyRef.current(line.copy, "section");
+        return;
+      }
+      if (line.click) onClickRef.current(line.click);
+    };
     onMouse((ev: MouseEvent) => {
       const l = layout.current;
       if (ev.kind === "wheel-up") {
@@ -506,35 +585,48 @@ export function App(
         return;
       }
       if (l.mode !== "chat") return;
-      // Info-card rows live in the chrome: any click (left or right) copies the
-      // row's raw value.
-      const info = infoClickRef.current;
-      if (info) {
-        const rel = ev.y - 1 - info.firstRow;
-        if (rel >= 0 && rel < info.rows.length) {
-          const [label, , value] = info.rows[rel];
-          copyRef.current(value, label);
+      if (ev.kind === "down") {
+        pressRef.current = { x: ev.x, y: ev.y };
+        return;
+      }
+      if (ev.kind === "drag") {
+        const p = pressRef.current;
+        if (!p) return;
+        // Drags starting on the chrome (composer, status bar) aren't selections.
+        const rel = p.y - 1 - l.padTop;
+        if (rel < 0 || rel >= l.bodyH) return;
+        const next = { anchor: p, focus: { x: ev.x, y: ev.y } };
+        dragRef.current = next;
+        setDrag(next);
+        return;
+      }
+      if (ev.kind === "up") {
+        const sel = dragRef.current;
+        const press = pressRef.current;
+        pressRef.current = null;
+        if (sel) {
+          dragRef.current = null;
+          setDrag(null);
+          // Rows top to bottom, each clipped to its selected span; skip rows
+          // outside the painted viewport.
+          const [y1, y2] = selRows(sel);
+          const rows: string[] = [];
+          for (let y = y1; y <= y2; y++) {
+            const rel = y - 1 - l.padTop;
+            if (rel < 0 || rel >= l.bodyH) continue;
+            const line = l.lines[l.start + rel];
+            if (!line) continue;
+            const span = rowSpan(sel, y);
+            if (span) rows.push(extractSpan(line.text, span.from, span.to));
+          }
+          const text = rows.join("\n").replace(/^\n+|\n+$/g, "");
+          if (text) copyRef.current(text, "selection");
           return;
         }
-      }
-      // The activity line also lives in the chrome: left-click expands/collapses
-      // the running tool group it summarizes, right-click copies the blurb.
-      if (activityRowRef.current !== null && ev.y - 1 === activityRowRef.current) {
-        if (ev.kind === "right-click") {
-          if (activityTextRef.current) copyRef.current(activityTextRef.current, "activity");
-        } else toggleRunningGroupRef.current();
+        if (press) clickAt(press.y, false);
         return;
       }
-      const idx = l.start + (ev.y - 1) - l.padTop;
-      const line = l.lines[idx];
-      if (!line) return;
-      // Right-click copies the raw text of the section the line belongs to;
-      // left-click keeps its fold/open behavior.
-      if (ev.kind === "right-click") {
-        if (line.copy) copyRef.current(line.copy, "section");
-        return;
-      }
-      if (line.click) onClickRef.current(line.click);
+      if (ev.kind === "right-click") clickAt(ev.y, true);
     });
     return () => onMouse(null);
   }, []);
@@ -575,6 +667,40 @@ export function App(
     }
   }, [mode, panelTab, convItems.length, moveForkSel]);
 
+  // `!cmd` runs locally in the session's workspace — a quick look (git status,
+  // ls) shouldn't cost an agent turn. Output lands in a card above the composer;
+  // the conversation never sees it. 30s cap so a hung command can't wedge the card.
+  const shellWorkspace = store.session?.workspace ?? defaultWorkspace;
+  const runShell = useCallback((cmd: string) => {
+    const seq = ++shellSeq.current;
+    setShellOut({ cmd, out: "", code: null });
+    (async () => {
+      try {
+        const child = new Deno.Command("/bin/sh", {
+          args: ["-c", cmd],
+          cwd: shellWorkspace,
+          stdin: "null",
+          stdout: "piped",
+          stderr: "piped",
+        }).spawn();
+        const timer = setTimeout(() => {
+          try {
+            child.kill("SIGKILL");
+          } catch {
+            // already exited
+          }
+        }, 30_000);
+        const { code, stdout, stderr } = await child.output();
+        clearTimeout(timer);
+        const dec = new TextDecoder();
+        const out = (dec.decode(stdout) + dec.decode(stderr)).replace(/\s+$/, "");
+        if (shellSeq.current === seq) setShellOut({ cmd, out, code });
+      } catch (e) {
+        if (shellSeq.current === seq) setShellOut({ cmd, out: String(e), code: -1 });
+      }
+    })();
+  }, [shellWorkspace]);
+
   // Send, creating the draft's session on first use. `/handoff <goal>` is a
   // composer command, not a message: the server drafts a self-contained opening
   // prompt from this thread and we open the fresh conversation with the composer
@@ -582,6 +708,13 @@ export function App(
   const submit = useCallback((text: string, queue: boolean) => {
     setScrollOff(0);
     setShowInfo(false);
+    if (text.startsWith("!")) {
+      const cmd = text.slice(1).trim();
+      if (!cmd) return setErr("usage: !<command> — runs locally in the workspace");
+      runShell(cmd);
+      return;
+    }
+    setShellOut(null); // a real send supersedes the local-shell card
     if (/^\/conversation\s*$/.test(text)) {
       if (!store.currentId) return setErr("no open conversation — send a message first");
       setShowInfo(true);
@@ -618,6 +751,7 @@ export function App(
     store.notify,
     openSession,
     defaultWorkspace,
+    runShell,
   ]);
 
   useInput((ch, key) => {
@@ -939,9 +1073,13 @@ export function App(
           setKeyInput("");
           return;
         }
-        // Model switches pin the OPEN session and move the default for new
-        // sessions (other sessions keep theirs); worker stays process-global.
-        (e.kind === "model" ? api.setModel(e.id, currentId ?? undefined) : api.setWorker(e.id))
+        // Model/effort switches pin the OPEN session and move the default for
+        // new sessions (other sessions keep theirs); worker stays process-global.
+        (e.kind === "model"
+          ? api.setModel(e.id, currentId ?? undefined)
+          : e.kind === "effort"
+          ? api.setEffort(e.id, currentId ?? undefined)
+          : api.setWorker(e.id))
           .then(() => api.getConfig().then(setCfg))
           .catch((err) => setErr(String(err)));
         return;
@@ -949,6 +1087,50 @@ export function App(
       return;
     }
 
+    // Transcript search owns the keyboard while open: type to refine, enter/↓
+    // next, ↑ previous, ^s advances too, esc closes. Page keys still scroll;
+    // any other chord closes the bar and falls through to its normal action.
+    if (searchQ !== null) {
+      if (key.escape) return setSearchQ(null);
+      if (key.return || key.downArrow || (key.ctrl && ch === "s")) {
+        if (matches.length) {
+          setSearchIdx((i) => (Math.min(i, matches.length - 1) + 1) % matches.length);
+        }
+        return;
+      }
+      if (key.upArrow) {
+        if (matches.length) {
+          setSearchIdx((i) =>
+            (Math.min(i, matches.length - 1) - 1 + matches.length) % matches.length
+          );
+        }
+        return;
+      }
+      if (key.backspace || key.delete) {
+        setSearchIdx(0);
+        return setSearchQ((q) => (q ?? "").slice(0, -1));
+      }
+      if (ch && !key.ctrl && !key.meta) {
+        // Coalesced input can smuggle returns in as DATA ("\r\r" from rapid
+        // enters) — a raw CR in the query corrupts the bar render. Strip them;
+        // a pure-returns chunk means "advance" like the enter branch above.
+        const norm = ch.replace(/[\r\n]/g, "");
+        if (norm) {
+          setSearchIdx(0);
+          setSearchQ((q) => (q ?? "") + norm);
+        } else if (matches.length) {
+          setSearchIdx((i) => (Math.min(i, matches.length - 1) + 1) % matches.length);
+        }
+        return;
+      }
+      if (!key.pageUp && !key.pageDown) setSearchQ(null); // other chords exit search…
+      // …and fall through to their usual meaning.
+    }
+    if (key.ctrl && ch === "s") {
+      setSearchIdx(0);
+      setSearchQ("");
+      return;
+    }
     // chat mode. ^p/^f/^t all open the one panel view on their tab.
     if (key.ctrl && ch === "p") {
       movePickSel(0);
@@ -1060,6 +1242,7 @@ export function App(
       // Esc is the agent's stop button; when idle it clears a lingering notice
       // (error notices used to sit above the composer with no way to dismiss).
       if (store.busy) store.interrupt();
+      else if (shellOut) setShellOut(null);
       else if (showInfo) setShowInfo(false);
       else if (store.notice) store.dismissNotice();
       return;
@@ -1217,6 +1400,14 @@ export function App(
       s.model ? `${s.model} (pinned)` : model ? `${model} (default)` : "—",
       model ?? "",
     ]);
+    const effort = s.effort ?? cfg?.effort;
+    if (effort) {
+      rows.push([
+        "thinking",
+        s.effort ? `${s.effort} (pinned)` : `${effort} (default)`,
+        effort,
+      ]);
+    }
     if (s.originId) {
       const origin = store.sessions.find((x) => x.id === s.originId);
       rows.push([
@@ -1333,6 +1524,7 @@ export function App(
             selected={modelSel}
             keyInput={keyInput}
             sessionModel={store.session?.model}
+            sessionEffort={store.session?.effort}
           />
         )
         : <Text dimColor>loading config…</Text>)
@@ -1361,10 +1553,26 @@ export function App(
           : (
             <>
               {Array.from({ length: padTop }, (_, i) => <Text key={`pad-${i}`}>{" "}</Text>)}
-              {visible.map((l, i) => (
-                <Text key={`l-${start + i}`} wrap="truncate">{l.text || " "}</Text>
-              ))}
-              {off > 0 ? <Text dimColor>↓ {off} more line{off === 1 ? "" : "s"} below</Text> : null}
+              {visible.map((l, i) => {
+                // Screen row padTop+i+1 (1-based); a live drag paints its span
+                // in inverse video; search matches mark theirs (current inverse,
+                // the rest underlined).
+                const span = drag ? rowSpan(drag, padTop + i + 1) : null;
+                const text = span
+                  ? highlightSpan(l.text || " ", span.from, span.to)
+                  : searchQ && matches.length
+                  ? markLine(l.text || " ", matches, start + i, curMatch)
+                  : l.text || " ";
+                return <Text key={`l-${start + i}`} wrap="truncate">{text}</Text>;
+              })}
+              {off > 0
+                ? (
+                  <Text dimColor>
+                    ↓ {off} more line{off === 1 ? "" : "s"} below ·{" "}
+                    {Math.round(((lines.length - off) / Math.max(1, lines.length)) * 100)}%
+                  </Text>
+                )
+                : null}
             </>
           ))}
       </Box>
@@ -1395,6 +1603,67 @@ export function App(
                 )
                 : null}
               {store.busy && store.activity ? <ActivityLine text={store.activity} /> : null}
+              {shellOut
+                ? (
+                  <Box
+                    flexDirection="column"
+                    borderStyle="round"
+                    backgroundColor={palette.panel}
+                    borderColor={palette.border}
+                    paddingX={1}
+                  >
+                    <Text wrap="truncate">
+                      <Text color={palette.accent}>${" "}</Text>
+                      <Text bold>{shellOut.cmd}</Text>
+                      {shellOut.code === null
+                        ? <Text color={palette.warn}>{"  "}⚙ running…</Text>
+                        : shellOut.code === 0
+                        ? <Text color={palette.accent}>{"  "}✓</Text>
+                        : <Text color={palette.error}>{"  "}✗ exit {shellOut.code}</Text>}
+                    </Text>
+                    {(() => {
+                      // Tail of the output (errors live at the end), capped so
+                      // the card can't swallow the viewport.
+                      const all = shellOut.out ? shellOut.out.split("\n") : [];
+                      const CAP = 12;
+                      const shown = all.slice(-CAP);
+                      const skipped = all.length - shown.length;
+                      return (
+                        <>
+                          {skipped > 0
+                            ? (
+                              <Text dimColor>
+                                … {skipped} earlier line{skipped === 1 ? "" : "s"}
+                              </Text>
+                            )
+                            : null}
+                          {shown.map((l, i) => (
+                            <Text key={`sh-${i}`} wrap="truncate">{l || " "}</Text>
+                          ))}
+                        </>
+                      );
+                    })()}
+                    <Text dimColor>local shell · not part of the conversation · esc dismisses</Text>
+                  </Box>
+                )
+                : null}
+              {searchQ !== null
+                ? (
+                  <Text wrap="truncate">
+                    <Text color={palette.accent}>⌕{" "}</Text>
+                    {searchQ}
+                    <Text color={palette.accent}>▌</Text>
+                    <Text dimColor>
+                      {"  "}
+                      {matches.length
+                        ? `${curMatch + 1}/${matches.length}`
+                        : searchQ
+                        ? "no matches"
+                        : "type to search"} · enter/↓ next · ↑ prev · esc close
+                    </Text>
+                  </Text>
+                )
+                : null}
               {popup && !store.pending
                 ? (
                   <Box
@@ -1435,9 +1704,11 @@ export function App(
           draftLabel={isDraft ? `new · ${shortWs}` : null}
           model={cfg
             ? (() => {
-              // The session's pinned model wins over the global default.
+              // The session's pinned model (and depth) win over the globals.
               const id = store.session?.model ?? cfg.model;
-              return cfg.models.find((m) => m.id === id)?.label ?? id;
+              const label = cfg.models.find((m) => m.id === id)?.label ?? id;
+              const effort = store.session?.effort ?? cfg.effort;
+              return effort ? `${label} · ${effort}` : label;
             })()
             : null}
           parentTitle={store.session?.kind === "subagent" && store.session.originId

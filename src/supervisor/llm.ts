@@ -40,6 +40,10 @@ export interface LlmToolDef {
   inputSchema: Record<string, unknown>;
 }
 
+/** Thinking depth (the API's `output_config.effort` vocabulary). */
+export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
+export const EFFORTS: Effort[] = ["low", "medium", "high", "xhigh", "max"];
+
 export interface LlmParams {
   model: string;
   system?: string;
@@ -53,6 +57,15 @@ export interface LlmParams {
    * stop; with tools off it reliably writes the text instead.
    */
   toolChoice?: "none";
+  /**
+   * Thinking depth. When set, the Anthropic client requests adaptive thinking
+   * with summarized display (so the reasoning is visible) at this effort;
+   * OpenAI maps it onto `reasoning.effort` (capped at "high"); OpenRouter
+   * ignores it (support varies per routed model). Unset = provider defaults,
+   * request shape unchanged. Not supported by every model (e.g. Haiku 4.5
+   * rejects it) — the resulting API error surfaces as a turn error.
+   */
+  effort?: Effort;
 }
 
 /** Token usage for one round; summed across a turn for the context meter. */
@@ -129,6 +142,20 @@ function fromApiBlock(block: Anthropic.ContentBlock): LlmBlock | undefined {
   }
 }
 
+// Thinking depth: adaptive thinking (explicit — Opus 4.8 runs WITHOUT thinking
+// when the param is omitted) with summarized display so the UI's reasoning folds
+// carry text, at the chosen effort. Returned as a plain object and spread in
+// (spreads skip excess-property checks) — the pinned SDK (0.68) predates these
+// fields in its types but serializes unknown request keys fine.
+function effortParams(effort?: Effort): Record<string, unknown> {
+  return effort
+    ? {
+      thinking: { type: "adaptive", display: "summarized" },
+      output_config: { effort },
+    }
+    : {};
+}
+
 export function anthropicClient(): LlmClient {
   const client = new Anthropic();
   return {
@@ -157,6 +184,7 @@ export function anthropicClient(): LlmClient {
           input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
         })),
         ...(params.toolChoice ? { tool_choice: { type: params.toolChoice } } : {}),
+        ...effortParams(params.effort),
       }, { signal });
       stream.on("text", (delta) => onText(delta));
       const final = await stream.finalMessage();
@@ -339,6 +367,16 @@ export function openaiClient(): LlmClient {
           stream: true,
           store: false,
           include: ["reasoning.encrypted_content"],
+          // Thinking depth: the Responses API caps reasoning effort at "high".
+          ...(params.effort
+            ? {
+              reasoning: {
+                effort: params.effort === "xhigh" || params.effort === "max"
+                  ? "high"
+                  : params.effort,
+              },
+            }
+            : {}),
           input: toResponsesInput(params.messages),
           tools: params.tools.map((t) => ({
             type: "function",

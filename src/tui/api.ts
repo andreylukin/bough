@@ -42,6 +42,9 @@ export type KeyProvider = "anthropic" | "openrouter" | "openai";
 export interface BoughConfig {
   model: string;
   models: ModelOption[];
+  /** Thinking depth ("" = provider default) + the values the server accepts. */
+  effort?: string;
+  efforts?: string[];
   worker: string;
   workerOptions: ModelOption[];
   /** Which provider API keys are configured (booleans only — never values). */
@@ -235,6 +238,12 @@ export const api = {
     }),
   setWorker: (worker: string) =>
     j<{ worker: string }>("/config", { ...postJson({ worker }), method: "PATCH" }),
+  // Thinking depth — same pin-the-session semantics as setModel; "default" clears.
+  setEffort: (effort: string, sessionId?: string) =>
+    j<{ effort: string }>("/config", {
+      ...postJson(sessionId ? { effort, sessionId } : { effort }),
+      method: "PATCH",
+    }),
 
   // Web-UI theme: stored palette + token contract; PUT applies, DELETE resets.
   getTheme: () => j<ThemeState>("/theme"),

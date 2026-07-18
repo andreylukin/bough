@@ -3,16 +3,32 @@ import { Box, Text } from "ink";
 import type { BoughConfig, KeyProvider } from "../api.ts";
 
 export interface ModelEntry {
-  kind: "model" | "worker" | "key";
+  kind: "model" | "effort" | "worker" | "key";
   id: string;
   label: string;
 }
 
 export const KEY_PROVIDERS: KeyProvider[] = ["anthropic", "openrouter", "openai"];
 
+// "default" leaves the request untouched (the provider decides); the rest map to
+// the API's output_config.effort levels (adaptive thinking on, summaries shown).
+const EFFORT_LABELS: Record<string, string> = {
+  default: "adaptive (provider default)",
+  low: "low — quick, minimal thinking",
+  medium: "medium — balanced",
+  high: "high — thorough",
+  xhigh: "xhigh — deep (coding/agentic sweet spot)",
+  max: "max — correctness over cost",
+};
+
 export function modelEntries(cfg: BoughConfig): ModelEntry[] {
   return [
     ...cfg.models.map((m) => ({ kind: "model" as const, id: m.id, label: m.label })),
+    ...["default", ...(cfg.efforts ?? [])].map((e) => ({
+      kind: "effort" as const,
+      id: e,
+      label: EFFORT_LABELS[e] ?? e,
+    })),
     ...cfg.workerOptions.map((w) => ({ kind: "worker" as const, id: w.id, label: w.label })),
     ...KEY_PROVIDERS.map((p) => ({
       kind: "key" as const,
@@ -24,6 +40,7 @@ export function modelEntries(cfg: BoughConfig): ModelEntry[] {
 
 const SECTION: Record<ModelEntry["kind"], string> = {
   model: "model",
+  effort: "thinking depth",
   worker: "worker",
   key: "API keys",
 };
@@ -32,7 +49,7 @@ const SECTION: Record<ModelEntry["kind"], string> = {
 // /config/keys. One list, three sections; the active entry carries the dot,
 // key rows show set/missing. Selecting a key row opens a masked input.
 export function ModelPicker(
-  { cfg, entries, selected, keyInput, sessionModel }: {
+  { cfg, entries, selected, keyInput, sessionModel, sessionEffort }: {
     cfg: BoughConfig;
     entries: ModelEntry[];
     selected: number;
@@ -41,10 +58,13 @@ export function ModelPicker(
     /** The open session's pinned model, if any — the dot marks what THIS session
      * runs on (the global default when unpinned). */
     sessionModel?: string | null;
+    /** The open session's pinned thinking depth (same semantics as the model). */
+    sessionEffort?: string | null;
   },
 ) {
   let lastKind: string | null = null;
   const effectiveModel = sessionModel ?? cfg.model;
+  const effectiveEffort = sessionEffort ?? cfg.effort ?? "";
   return (
     <Box
       flexDirection="column"
@@ -58,6 +78,8 @@ export function ModelPicker(
         lastKind = e.kind;
         const active = e.kind === "model"
           ? effectiveModel === e.id
+          : e.kind === "effort"
+          ? (effectiveEffort || "default") === e.id
           : e.kind === "worker"
           ? cfg.worker === e.id
           : !!cfg.keys?.[e.id as KeyProvider];

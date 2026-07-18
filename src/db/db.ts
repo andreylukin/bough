@@ -115,6 +115,7 @@ type SessionRow = {
   cached_tokens: number | null;
   last_llm_at: number | null;
   model: string | null;
+  effort: string | null;
   draft: string | null;
 };
 
@@ -182,6 +183,7 @@ function toSession(r: SessionRow): Session {
     ...(r.origin_message_id ? { originMessageId: r.origin_message_id } : {}),
     ...(r.deprecated_at != null ? { deprecatedAt: r.deprecated_at } : {}),
     ...(r.model ? { model: r.model } : {}),
+    ...(r.effort ? { effort: r.effort } : {}),
     // Prompt-cache visibility: last prompt size, its cached share, and when the
     // last LLM round finished (the client derives warm/cold from this + the TTL).
     ...(r.context_tokens != null ? { contextTokens: r.context_tokens } : {}),
@@ -231,6 +233,7 @@ export class Db {
         "cached_tokens INTEGER",
         "last_llm_at INTEGER",
         "model TEXT",
+        "effort TEXT",
         "draft TEXT",
       ]
     ) {
@@ -308,6 +311,11 @@ export class Db {
   /** Per-session model override; null clears back to the global default. */
   setSessionModel(id: string, model: string | null): void {
     this.#db.prepare(`UPDATE sessions SET model = ? WHERE id = ?`).run(model, id);
+  }
+
+  /** Per-session thinking-depth override; null clears back to the global default. */
+  setSessionEffort(id: string, effort: string | null): void {
+    this.#db.prepare(`UPDATE sessions SET effort = ? WHERE id = ?`).run(effort, id);
   }
 
   /** Record the base commit captured on a session's first turn (see supervisor/workspace.ts). */

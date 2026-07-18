@@ -17,14 +17,17 @@ import { CreateSessionBody, PostMessageBody, type Session } from "../schema/part
 import type { Db } from "../db/db.ts";
 import type { Bus, Listener } from "../bus.ts";
 import {
+  activeEffort,
   activeModel,
   interruptTurn,
   MODELS,
   oracleModel,
+  setActiveEffort,
   setActiveModel,
   setOracleModel,
   startUserTurn,
 } from "../turn.ts";
+import { type Effort, EFFORTS } from "../supervisor/llm.ts";
 import { setWorkerChoice, WORKER_OPTIONS, workerChoice } from "../worker/frontier.ts";
 import { sessionMetrics } from "../metrics.ts";
 import { normalizeWorkspace, prepareWorkspace, workspaceProblem } from "../supervisor/workspace.ts";
@@ -142,6 +145,9 @@ const getConfig: Handler = () => {
   return json({
     model: activeModel(),
     models: mergeModels(MODELS, openaiModels()),
+    // Thinking depth: "" = provider default; the picker offers `efforts`.
+    effort: activeEffort(),
+    efforts: EFFORTS,
     oracle: oracleModel(),
     worker: workerChoice(),
     workerOptions: WORKER_OPTIONS,
@@ -186,17 +192,23 @@ const recallSearch: Handler = async (req, ctx) => {
 // default persists to ~/.bough/env (BOUGH_MODEL) so it survives a restart.
 const patchConfig: Handler = async (req, ctx) => {
   const body = await req.json().catch(() => null) as
-    | { model?: unknown; worker?: unknown; oracle?: unknown; sessionId?: unknown }
+    | { model?: unknown; worker?: unknown; oracle?: unknown; effort?: unknown; sessionId?: unknown }
     | null;
   const model = typeof body?.model === "string" && body.model.trim() ? body.model.trim() : null;
   const worker = typeof body?.worker === "string" && body.worker.trim() ? body.worker.trim() : null;
   const oracle = typeof body?.oracle === "string" && body.oracle.trim() ? body.oracle.trim() : null;
+  // Thinking depth: one of EFFORTS, or "default" to fall back to the provider
+  // default (clears the pin when a sessionId rides along).
+  const effort = typeof body?.effort === "string" && body.effort.trim() ? body.effort.trim() : null;
   const sessionId = typeof body?.sessionId === "string" && body.sessionId ? body.sessionId : null;
-  if (!model && !worker && !oracle) {
+  if (!model && !worker && !oracle && !effort) {
     return error(
       400,
-      "invalid body: { model?: string, worker?: string, oracle?: string } — at least one required",
+      "invalid body: { model?: string, worker?: string, oracle?: string, effort?: string } — at least one required",
     );
+  }
+  if (effort && effort !== "default" && !(EFFORTS as string[]).includes(effort)) {
+    return error(400, `invalid effort: one of ${EFFORTS.join(", ")}, or "default"`);
   }
   if (worker && worker !== "local" && Deno.env.get("BOUGH_WORKER_LOCAL_ONLY") === "1") {
     return error(400, "BOUGH_WORKER_LOCAL_ONLY=1 pins the worker to local");
@@ -213,12 +225,30 @@ const patchConfig: Handler = async (req, ctx) => {
       ctx.bus.publish({ type: "session.updated", sessionId, data: updated });
     }
   }
+  if (effort) {
+    // Same pinning semantics as model: with a sessionId the session pins AND the
+    // global default moves; other sessions keep theirs. "default" clears both.
+    if (sessionId && !ctx.db.getSession(sessionId)) return error(404, "session not found");
+    const value = effort === "default" ? "" : (effort as Effort);
+    setActiveEffort(value);
+    persistEnvVar("BOUGH_EFFORT", value, ctx.envDir);
+    if (sessionId) {
+      ctx.db.setSessionEffort(sessionId, value || null);
+      const updated = ctx.db.getSession(sessionId)!;
+      ctx.bus.publish({ type: "session.updated", sessionId, data: updated });
+    }
+  }
   if (oracle) {
     setOracleModel(oracle);
     persistEnvVar("BOUGH_ORACLE", oracle, ctx.envDir);
   }
   if (worker) setWorkerChoice(worker);
-  return json({ model: activeModel(), worker: workerChoice(), oracle: oracleModel() });
+  return json({
+    model: activeModel(),
+    effort: activeEffort(),
+    worker: workerChoice(),
+    oracle: oracleModel(),
+  });
 };
 
 // Installed skills (name + description) for composer autocomplete / discovery.
