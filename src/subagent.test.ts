@@ -13,6 +13,7 @@ import type { LlmClient, LlmParams, LlmResult } from "./supervisor/llm.ts";
 import { defaultTools } from "./tools/mod.ts";
 import { beginTurn, startUserTurn, type TurnCtx } from "./turn.ts";
 import * as jj from "./vcs/jj.ts";
+import * as shadow from "./vcs/shadow.ts";
 import { saveRegistry, setActivation } from "./mcp/config.ts";
 import { mcpManager } from "./mcp/manager.ts";
 
@@ -534,10 +535,10 @@ Deno.test({
     const jjBase = await Deno.makeTempDir({ prefix: "subagent-jj-" });
     const prevSub = Deno.env.get("BOUGH_SUBAGENT_BASE");
     const prevSnap = Deno.env.get("BOUGH_SNAPSHOT_BASE");
-    const prevJj = Deno.env.get("BOUGH_JJ_BASE");
+    const prevJj = Deno.env.get("BOUGH_SHADOW_BASE");
     Deno.env.set("BOUGH_SUBAGENT_BASE", subBase);
     Deno.env.set("BOUGH_SNAPSHOT_BASE", snapBase);
-    Deno.env.set("BOUGH_JJ_BASE", jjBase);
+    Deno.env.set("BOUGH_SHADOW_BASE", jjBase);
     const db = new Db(":memory:");
     const bus = new Bus();
     try {
@@ -586,7 +587,7 @@ Deno.test({
       const spawnerDir = db.getSessionRuntime(spawner.id).workspace!;
       assert(spawnerDir !== repo, "spawner should run in its own working copy");
       assertEquals(await Deno.readTextFile(`${spawnerDir}/sub.txt`), "from-sub\n");
-      const spawnerDiff = await jj.diff(spawnerDir, spawner.id);
+      const spawnerDiff = await shadow.diff(spawnerDir, spawner.id);
       assert(spawnerDiff.files.some((f) => f.path === "sub.txt"));
       for (const leaked of [".jj", "sub.txt"]) {
         let inRepo = true;
@@ -598,14 +599,14 @@ Deno.test({
         assertEquals(inRepo, false, `${leaked} leaked into the repo checkout`);
       }
       // The subagent branch emptied but survives — continuable, not consumed.
-      assertEquals((await jj.diff(subDir, sub.id)).files.length, 0);
+      assertEquals((await shadow.diff(subDir, sub.id)).files.length, 0);
     } finally {
       if (prevSub === undefined) Deno.env.delete("BOUGH_SUBAGENT_BASE");
       else Deno.env.set("BOUGH_SUBAGENT_BASE", prevSub);
       if (prevSnap === undefined) Deno.env.delete("BOUGH_SNAPSHOT_BASE");
       else Deno.env.set("BOUGH_SNAPSHOT_BASE", prevSnap);
-      if (prevJj === undefined) Deno.env.delete("BOUGH_JJ_BASE");
-      else Deno.env.set("BOUGH_JJ_BASE", prevJj);
+      if (prevJj === undefined) Deno.env.delete("BOUGH_SHADOW_BASE");
+      else Deno.env.set("BOUGH_SHADOW_BASE", prevJj);
       await Deno.remove(repo, { recursive: true }).catch(() => {});
       await Deno.remove(subBase, { recursive: true }).catch(() => {});
       await Deno.remove(snapBase, { recursive: true }).catch(() => {});
@@ -627,10 +628,10 @@ Deno.test({
     const jjBase = await Deno.makeTempDir({ prefix: "subagent-jj-" });
     const prevSub = Deno.env.get("BOUGH_SUBAGENT_BASE");
     const prevSnap = Deno.env.get("BOUGH_SNAPSHOT_BASE");
-    const prevJj = Deno.env.get("BOUGH_JJ_BASE");
+    const prevJj = Deno.env.get("BOUGH_SHADOW_BASE");
     Deno.env.set("BOUGH_SUBAGENT_BASE", subBase);
     Deno.env.set("BOUGH_SNAPSHOT_BASE", snapBase);
-    Deno.env.set("BOUGH_JJ_BASE", jjBase);
+    Deno.env.set("BOUGH_SHADOW_BASE", jjBase);
     const db = new Db(":memory:");
     const bus = new Bus();
     try {
@@ -690,15 +691,15 @@ Deno.test({
       assert(grandDir.startsWith(subBase), `grandchild dir ${grandDir} outside ${subBase}`);
       assert(grandDir !== subDir, "grandchild shared the subagent's working copy");
       // Both branches emptied by their adoptions but survive — still continuable.
-      assertEquals((await jj.diff(grandDir, grandchild.id)).files.length, 0);
-      assertEquals((await jj.diff(subDir, sub.id)).files.length, 0);
+      assertEquals((await shadow.diff(grandDir, grandchild.id)).files.length, 0);
+      assertEquals((await shadow.diff(subDir, sub.id)).files.length, 0);
     } finally {
       if (prevSub === undefined) Deno.env.delete("BOUGH_SUBAGENT_BASE");
       else Deno.env.set("BOUGH_SUBAGENT_BASE", prevSub);
       if (prevSnap === undefined) Deno.env.delete("BOUGH_SNAPSHOT_BASE");
       else Deno.env.set("BOUGH_SNAPSHOT_BASE", prevSnap);
-      if (prevJj === undefined) Deno.env.delete("BOUGH_JJ_BASE");
-      else Deno.env.set("BOUGH_JJ_BASE", prevJj);
+      if (prevJj === undefined) Deno.env.delete("BOUGH_SHADOW_BASE");
+      else Deno.env.set("BOUGH_SHADOW_BASE", prevJj);
       await Deno.remove(repo, { recursive: true }).catch(() => {});
       await Deno.remove(subBase, { recursive: true }).catch(() => {});
       await Deno.remove(snapBase, { recursive: true }).catch(() => {});
@@ -720,10 +721,10 @@ Deno.test({
     const jjBase = await Deno.makeTempDir({ prefix: "subagent-jj-" });
     const prevSub = Deno.env.get("BOUGH_SUBAGENT_BASE");
     const prevSnap = Deno.env.get("BOUGH_SNAPSHOT_BASE");
-    const prevJj = Deno.env.get("BOUGH_JJ_BASE");
+    const prevJj = Deno.env.get("BOUGH_SHADOW_BASE");
     Deno.env.set("BOUGH_SUBAGENT_BASE", subBase);
     Deno.env.set("BOUGH_SNAPSHOT_BASE", snapBase);
-    Deno.env.set("BOUGH_JJ_BASE", jjBase);
+    Deno.env.set("BOUGH_SHADOW_BASE", jjBase);
     const db = new Db(":memory:");
     const bus = new Bus();
     try {
@@ -762,7 +763,7 @@ Deno.test({
       assertEquals(own[3].pending, false);
       // …and its edit stacked onto the subagent's branch, not the spawner's.
       const subDir = db.getSessionRuntime(sub.id).workspace!;
-      const files = (await jj.diff(subDir, sub.id)).files.map((f) => f.path).sort();
+      const files = (await shadow.diff(subDir, sub.id)).files.map((f) => f.path).sort();
       assertEquals(files, ["more.txt", "sub.txt"]);
       let leaked = true;
       try {
@@ -776,8 +777,8 @@ Deno.test({
       else Deno.env.set("BOUGH_SUBAGENT_BASE", prevSub);
       if (prevSnap === undefined) Deno.env.delete("BOUGH_SNAPSHOT_BASE");
       else Deno.env.set("BOUGH_SNAPSHOT_BASE", prevSnap);
-      if (prevJj === undefined) Deno.env.delete("BOUGH_JJ_BASE");
-      else Deno.env.set("BOUGH_JJ_BASE", prevJj);
+      if (prevJj === undefined) Deno.env.delete("BOUGH_SHADOW_BASE");
+      else Deno.env.set("BOUGH_SHADOW_BASE", prevJj);
       await Deno.remove(repo, { recursive: true }).catch(() => {});
       await Deno.remove(subBase, { recursive: true }).catch(() => {});
       await Deno.remove(snapBase, { recursive: true }).catch(() => {});
@@ -796,10 +797,10 @@ Deno.test({
     const jjBase = await Deno.makeTempDir({ prefix: "subagent-jj-" });
     const prevSub = Deno.env.get("BOUGH_SUBAGENT_BASE");
     const prevSnap = Deno.env.get("BOUGH_SNAPSHOT_BASE");
-    const prevJj = Deno.env.get("BOUGH_JJ_BASE");
+    const prevJj = Deno.env.get("BOUGH_SHADOW_BASE");
     Deno.env.set("BOUGH_SUBAGENT_BASE", subBase);
     Deno.env.set("BOUGH_SNAPSHOT_BASE", snapBase);
-    Deno.env.set("BOUGH_JJ_BASE", jjBase);
+    Deno.env.set("BOUGH_SHADOW_BASE", jjBase);
     const db = new Db(":memory:");
     const bus = new Bus();
     try {
@@ -857,8 +858,8 @@ Deno.test({
       else Deno.env.set("BOUGH_SUBAGENT_BASE", prevSub);
       if (prevSnap === undefined) Deno.env.delete("BOUGH_SNAPSHOT_BASE");
       else Deno.env.set("BOUGH_SNAPSHOT_BASE", prevSnap);
-      if (prevJj === undefined) Deno.env.delete("BOUGH_JJ_BASE");
-      else Deno.env.set("BOUGH_JJ_BASE", prevJj);
+      if (prevJj === undefined) Deno.env.delete("BOUGH_SHADOW_BASE");
+      else Deno.env.set("BOUGH_SHADOW_BASE", prevJj);
       await Deno.remove(repo, { recursive: true }).catch(() => {});
       await Deno.remove(subBase, { recursive: true }).catch(() => {});
       await Deno.remove(snapBase, { recursive: true }).catch(() => {});

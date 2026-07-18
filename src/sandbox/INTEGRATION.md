@@ -6,7 +6,8 @@ Nothing here imports the server; the server imports these.
 Modules:
 
 - `src/sandbox/seatbelt.ts` — Seatbelt profile generation + `wrap()` for subprocesses.
-- `src/vcs/jj.ts` — jj (Jujutsu) per-session snapshots/branching for **repo** work.
+- `src/vcs/shadow.ts` — shadow-git per-session snapshots/branching for **repo** work
+  (docs/shadow-snapshots.md).
 - `src/vcs/clonefile.ts` — APFS clonefile snapshots for **non-git config** (`~/.zshrc`,
   `~/.config`).
 - `src/schema/changes.ts` — the `Diff` contract shared by both snapshot sources (the Changes tab).
@@ -36,40 +37,29 @@ const cmd = new Deno.Command(argv[0], { args: argv.slice(1), cwd: workspace, ...
   sessions don't race.
 - macOS-only. On other platforms, don't wrap (or gate on `Deno.build.os === "darwin"`).
 
-## 2. jj — session lifecycle for repo work
+## 2. shadow — session lifecycle for repo work
 
-One jj bookmark per session (`bough/<sessionId>`). jj state placement depends on the repo (decided
-by `prepareRepo` in `src/supervisor/workspace.ts`):
+One shadow git repository per origin directory (`~/.bough/shadow/<name>-<hash>`), holding every
+session's snapshot history on `refs/bough/{sessions,base}/<id>`. Every session runs in its own
+linked worktree of the shadow repo under `~/.bough/workspaces/<sessionId>`, branched off a captured
+snapshot of the origin's working tree (uncommitted + untracked included). The origin's checkout —
+HEAD, branch, index, `git status` — is never modified; non-git origin dirs work identically.
+`prepareShadow` in `src/supervisor/workspace.ts` wires the session lifecycle to it.
 
-- **External (default for plain git repos):** jj never touches the repo. The store lives under
-  `~/.bough/jj/<repo>-<hash>` (`jj git init --git-repo`), and each session runs in its own jj
-  workspace under `~/.bough/workspaces/<sessionId>`, branched off a captured snapshot of the repo's
-  working tree (uncommitted + untracked included). The user's checkout — HEAD, branch, index,
-  `git status` — is never modified; session tips are exported as `bough/<id>` git branches so plain
-  git can still see them.
-- **Colocated (legacy):** repos that already carry `.jj` next to `.git` (a checkout the user
-  deliberately runs jj in, e.g. bough's own dev repo) keep the in-place model: sessions share the
-  primary checkout and `jj new` moves it onto the session's change.
+| Session event      | Call                                                                             |
+| ------------------ | -------------------------------------------------------------------------------- |
+| session created    | `createSessionWorkspace(origin, sessionId)` — worktree off a working-tree snapshot |
+| session resumed    | nothing — the workspace column already points at the worktree                    |
+| session forked / subagent spawned | `addWorkspace(parentDir, toId, dir, fromSessionId)` — worktree off the parent's tip |
+| render Changes tab | `diff(dir, sessionId)` → `Diff` (source: `"shadow"`), always base..tip           |
+| apply              | `materialize(dir, id, origin, paths)` + `accept(dir, id, msg)` when all covered  |
+| revert             | `revertPaths(dir, id, paths)` (per-path) or `undoAll(dir, id)` (whole change)    |
+| adopt (subagent)   | `adoptChanges(parentDir, subDir, fromId, intoId)` — 3-way apply + base advance   |
 
-| Session event                     | Call                                                                                                   |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| session created (root, external)  | `createSessionWorkspace(repo, sessionId)` — isolated working copy off a working-tree snapshot          |
-| session created (root, colocated) | `ensureWorkspace(repo, sessionId, base?)` — new change off the working-copy snapshot                   |
-| session resumed                   | external: `updateStale(dir)`; colocated: `ensureWorkspace` (idempotent)                                |
-| session forked                    | external: `addWorkspace(parentDir, toId, dir, bookmark)`; colocated: `forkSession(repo, fromId, toId)` |
-| render Changes tab                | `diff(dir, sessionId)` → `Diff` (source: `"jj"`)                                                       |
-| revert                            | `undo(dir)` (last op) or `operations(dir)` + `restore(dir, opId)`                                      |
-
-- `base` is the commit a new session branches from. The `sessions` row is the natural home for it
-  (store the repo's HEAD at attach time and pass it back on resume/fork); default is
-  `git rev-parse HEAD`, falling back to the jj root for an empty repo.
-- `diff()` snapshots first (jj auto-snapshots on any command) and returns the
-  **change-vs-its-parent** diff — exactly what the session changed since it branched. If a session
-  ever accumulates multiple internal jj commits, switch to a `--from <base> --to <bookmark>` range;
-  the single-change form covers the normal flow where all edits land on one working-copy change.
-- **Caveat:** `forkSession` makes the fork a child of the source. Editing the source again after
-  forking rebases the fork onto the new tip. For a frozen fork, branch off the source's parent (or
-  `jj duplicate`) instead — revisit if the UI needs it.
+- `track()` (snapshot) staples the worktree to the session tip ref on every diff/apply/revert; a
+  failed `git add` is fatal, never swallowed. Restores only ever touch explicit path lists.
+- Legacy jj-era sessions (`src/vcs/jj.ts`) are still detected by their workspace dirs and served by
+  the old backend until it is removed; `BOUGH_VCS=jj` opts new sessions back into it.
 
 ## 3. clonefile — non-git config
 
@@ -97,14 +87,14 @@ await applyBack(sessionId, approvedPaths); // copy approved clones back over ori
 `src/schema/changes.ts`:
 
 ```ts
-Diff     = { source: "jj" | "clonefile", files: FileDiff[] }
+Diff     = { source: "jj" | "clonefile" | "shadow", files: FileDiff[] }
 FileDiff = { path: string, status: "added" | "modified" | "deleted", hunks: Hunk[] }
 Hunk     = { header: string, lines: string[] }   // "@@ … @@" + body lines with ` `/`+`/`-` markers
 ```
 
 Both sources produce byte-identical structure via `parseGitDiff()`. The UI's Changes rail renders a
-`Diff` and calls the matching apply/revert path: jj apply → `accept` (seal the change, advance the
-session bookmark — whole-change in v1), jj revert → `undo`, clonefile apply →
+`Diff` and calls the matching apply/revert path: shadow apply → `materialize` + `accept` (seal:
+base advances onto tip), shadow revert → `revertPaths`/`undoAll`, clonefile apply →
 `applyBack(sessionId, approvedPaths)`. Renames surface as delete + add (git default without `-M`);
 binary/empty files yield a `FileDiff` with no hunks.
 
@@ -113,5 +103,5 @@ binary/empty files yield a `FileDiff` with no hunks.
 All three shell out, so the server and tests need `--allow-run` (already present in the `dev`/`test`
 tasks in `deno.json`). The subprocess tests self-skip when run permission is absent, so they never
 turn the suite red under a reduced permission set; they execute for real when `--allow-run` is
-granted. Required binaries on PATH: `jj` (>= 0.42, `brew install jj`), `git`, `cp`,
-`/usr/bin/sandbox-exec`.
+granted. Required binaries on PATH: `git`, `cp`, `/usr/bin/sandbox-exec` (plus `jj` >= 0.42 only while the
+legacy backend remains).

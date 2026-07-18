@@ -26,6 +26,7 @@
  *     "revert" is simply not applying; there is no clonefile revert path.
  */
 import * as jj from "../vcs/jj.ts";
+import * as shadow from "../vcs/shadow.ts";
 import * as clonefile from "../vcs/clonefile.ts";
 import type { Db } from "../db/db.ts";
 import type { ChangesApplyBody, Diff } from "../schema/changes.ts";
@@ -70,6 +71,13 @@ async function hasJjWorkspace(db: Db, sessionId: string): Promise<string | null>
   return workspace && (await isDir(`${workspace}/.jj`)) ? workspace : null;
 }
 
+/** The session's shadow worktree, or null (its `.git` file resolves to a bough store). */
+async function hasShadowWorkspace(db: Db, sessionId: string): Promise<string | null> {
+  const { workspace } = db.getSessionRuntime(sessionId);
+  if (!workspace) return null;
+  return (await shadow.originRepo(workspace)) !== null ? workspace : null;
+}
+
 /** All review payloads for a session (0..2), one per active snapshot source. */
 export async function sessionChanges(
   db: Db,
@@ -78,7 +86,16 @@ export async function sessionChanges(
 ): Promise<Diff[]> {
   const diffs: Diff[] = [];
 
-  const repo = await hasJjWorkspace(db, sessionId);
+  const sdir = await hasShadowWorkspace(db, sessionId);
+  if (sdir) {
+    try {
+      diffs.push(await shadow.diff(sdir, sessionId));
+    } catch (e) {
+      console.error(`changes: shadow diff failed for ${sessionId}: ${(e as Error).message}`);
+    }
+  }
+
+  const repo = sdir ? null : await hasJjWorkspace(db, sessionId);
   if (repo) {
     try {
       diffs.push(await jj.diff(repo, sessionId));
@@ -130,6 +147,32 @@ export async function applyChanges(
     await clonefile.applyBack(sessionId, body.paths, snapBase(opts));
     return { applied: body.paths, origin: null, branch: null, sealed: false };
   }
+  const title0 = db.getSession(sessionId)?.title;
+  const sealMsg = title0 ? `bough: ${title0}` : "bough: session changes";
+  if (body.source === "shadow") {
+    // Shadow sessions are always external-style: materialize into the origin,
+    // seal when every changed path was covered.
+    const dir = await hasShadowWorkspace(db, sessionId);
+    if (!dir) throw new ChangesError(400, "no shadow workspace to apply");
+    const origin = await shadow.originRepo(dir);
+    if (!origin) throw new ChangesError(400, "shadow workspace has no origin");
+    const changed = (await shadow.diff(dir, sessionId)).files.map((f) => f.path);
+    const paths = body.paths.length > 0 ? body.paths.filter((p) => changed.includes(p)) : changed;
+    if (paths.length === 0) return { applied: [], origin, branch: null, sealed: false };
+    try {
+      await shadow.materialize(dir, sessionId, origin, paths);
+    } catch (e) {
+      throw new ChangesError(
+        409,
+        `apply to ${origin} failed — session history is at ${
+          shadow.refFor(sessionId)
+        } in its shadow store: ${(e as Error).message.split("\n").at(-1)}`,
+      );
+    }
+    const coversAll = changed.every((p) => paths.includes(p));
+    if (coversAll) await shadow.accept(dir, sessionId, sealMsg);
+    return { applied: paths, origin, branch: null, sealed: coversAll };
+  }
   const repo = await hasJjWorkspace(db, sessionId);
   if (!repo) throw new ChangesError(400, "no jj workspace to apply");
   const title = db.getSession(sessionId)?.title;
@@ -173,6 +216,14 @@ export async function revertChanges(
   sessionId: string,
   paths?: string[],
 ): Promise<string[]> {
+  const sdir = await hasShadowWorkspace(db, sessionId);
+  if (sdir) {
+    if (paths && paths.length > 0) {
+      await shadow.revertPaths(sdir, sessionId, paths);
+      return paths;
+    }
+    return await shadow.undoAll(sdir, sessionId);
+  }
   const repo = await hasJjWorkspace(db, sessionId);
   if (!repo) throw new ChangesError(400, "no jj workspace to revert");
   if (paths && paths.length > 0) {

@@ -75,7 +75,7 @@ Point a session at a repo and ask. The supervisor plans, the sandbox runs the wo
 - **One tool.** The supervisor's only tool is a JS program per turn, executed in a fresh Deno Worker with `permissions: "none"` — a sealed V8 isolate; only `bash`/`read`/`write`/`edit` bridge out.
 - **Two fences.** The worker isolate confines the agent's program; a macOS Seatbelt profile confines the processes it launches.
 - **Gated egress.** Outbound traffic is matched against policy; misses hold for a human verdict. Policies ship as parameterized bundles.
-- **Snapshots.** Each turn checkpoints the workspace ([jj](https://github.com/jj-vcs/jj) for repos, APFS clonefile for config); a fork restores it.
+- **Snapshots.** Each turn checkpoints the workspace (a per-project shadow git repository for repos, APFS clonefile for config); a fork restores it. Your repo's own `.git` is never touched.
 - **Headless server + web UI.** One Deno process serves the JSON API, an SSE event stream, and the built React UI on `:4321` — same origin, phone-friendly, optional password gate for remote use.
 
 ## Develop

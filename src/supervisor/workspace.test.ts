@@ -4,6 +4,7 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { Db } from "../db/db.ts";
 import * as jj from "../vcs/jj.ts";
+import * as shadow from "../vcs/shadow.ts";
 import { normalizeWorkspace, prepareWorkspace, workspaceProblem } from "./workspace.ts";
 
 Deno.test("normalizeWorkspace expands a leading ~", () => {
@@ -159,7 +160,7 @@ Deno.test({
     const wsBase = await Deno.makeTempDir({ prefix: "wstest-wsroot-" });
     const snapBase = await Deno.makeTempDir({ prefix: "wstest-snap-" });
     const env: Record<string, string> = {
-      BOUGH_JJ_BASE: jjBase,
+      BOUGH_SHADOW_BASE: jjBase,
       BOUGH_SUBAGENT_BASE: wsBase,
       BOUGH_SNAPSHOT_BASE: snapBase,
     };
@@ -182,14 +183,14 @@ Deno.test({
       // First turn: relocated into the session's own working copy, column repointed.
       const p1 = await prepareWorkspace(db, "s1");
       assert(p1.sandboxed);
-      assertEquals(p1.cwd, jj.workspaceDirFor("s1"));
+      assertEquals(p1.cwd, shadow.workspaceDirFor("s1"));
       assertEquals(db.getSessionRuntime("s1").workspace, p1.cwd);
       assert(db.getSessionRuntime("s1").base !== null, "base sentinel persisted");
       assertEquals(await exists(`${repo}/.jj`), false);
 
       // Session work lands in the isolated dir only.
       await Deno.writeTextFile(`${p1.cwd}/work.txt`, "s1-work\n");
-      assertEquals((await jj.diff(p1.cwd, "s1")).files.map((f) => f.path), ["work.txt"]);
+      assertEquals((await shadow.diff(p1.cwd, "s1")).files.map((f) => f.path), ["work.txt"]);
       assertEquals(await exists(`${repo}/work.txt`), false);
 
       // Resume: later turns run in the same dir.
@@ -207,13 +208,13 @@ Deno.test({
         workspace: db.getSessionRuntime("s1").workspace,
       });
       const pf = await prepareWorkspace(db, "s2");
-      assertEquals(pf.cwd, jj.workspaceDirFor("s2"));
+      assertEquals(pf.cwd, shadow.workspaceDirFor("s2"));
       assertEquals(db.getSessionRuntime("s2").workspace, pf.cwd);
       assertEquals(await Deno.readTextFile(`${pf.cwd}/work.txt`), "s1-work\n");
 
       // The fork diverges without touching the parent's copy or the repo.
       await Deno.writeTextFile(`${pf.cwd}/fork.txt`, "s2-work\n");
-      assertEquals((await jj.diff(pf.cwd, "s2")).files.map((f) => f.path), ["fork.txt"]);
+      assertEquals((await shadow.diff(pf.cwd, "s2")).files.map((f) => f.path), ["fork.txt"]);
       assertEquals(await exists(`${p1.cwd}/fork.txt`), false);
       assertEquals(await exists(`${repo}/.jj`), false);
     } finally {
@@ -231,18 +232,22 @@ Deno.test({
 });
 
 Deno.test("prepareWorkspace: failed external prep surfaces a warning, not a silent fallback", async () => {
-  // A dir with a bogus .git: looks like a repo, so external prep runs — and
-  // fails. The turn must still run, but the isolation failure has to come back
-  // as a warning for the thread instead of only a server-log line.
+  // An unwritable store base: the repo looks fine, so external prep runs — and
+  // fails creating the shadow store. The turn must still run, but the isolation
+  // failure has to come back as a warning for the thread instead of only a
+  // server-log line.
   const ws = await Deno.makeTempDir({ prefix: "wstest-badgit-" });
   await Deno.mkdir(`${ws}/.git`);
   const snapBase = await Deno.makeTempDir({ prefix: "wstest-snap-" });
   const scratchBase = await Deno.makeTempDir({ prefix: "wstest-scratch-" });
   const storeBase = await Deno.makeTempDir({ prefix: "wstest-store-" });
+  await Deno.chmod(storeBase, 0o555); // store creation fails ⇒ prep fails
+  const wsRoot = await Deno.makeTempDir({ prefix: "wstest-wsroot-" });
   const env = {
     BOUGH_SNAPSHOT_BASE: snapBase,
     BOUGH_SCRATCH_BASE: scratchBase,
-    BOUGH_JJ_BASE: storeBase,
+    BOUGH_SHADOW_BASE: storeBase,
+    BOUGH_SUBAGENT_BASE: wsRoot,
   };
   const prev = new Map<string, string | undefined>();
   for (const [k, v] of Object.entries(env)) {
@@ -277,7 +282,8 @@ Deno.test("prepareWorkspace: failed external prep surfaces a warning, not a sile
   } finally {
     db.close();
     for (const [k, v] of prev) v === undefined ? Deno.env.delete(k) : Deno.env.set(k, v);
-    for (const d of [ws, snapBase, scratchBase, storeBase]) {
+    await Deno.chmod(storeBase, 0o755).catch(() => {});
+    for (const d of [ws, snapBase, scratchBase, storeBase, wsRoot]) {
       await Deno.remove(d, { recursive: true }).catch(() => {});
     }
   }

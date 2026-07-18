@@ -31,6 +31,12 @@ import { DONE_ACCEPTED } from "./tools/mod.ts";
 import { maybeAutoTitle, UNTITLED } from "./supervisor/title.ts";
 import { normalizeWorkspace } from "./supervisor/workspace.ts";
 import * as jj from "./vcs/jj.ts";
+import * as shadow from "./vcs/shadow.ts";
+
+/** True when `dir` is a shadow worktree (vs a jj workspace / plain repo). */
+async function isShadowDir(dir: string): Promise<boolean> {
+  return (await shadow.originRepo(dir)) !== null;
+}
 
 export interface SpawnCtx {
   spawnerId: string;
@@ -178,7 +184,10 @@ async function buildResult(
   let changedFiles: string[] = [];
   if (subDir) {
     try {
-      changedFiles = (await jj.diff(subDir, sessionId)).files.map((f) => f.path);
+      const d = await isShadowDir(subDir)
+        ? await shadow.diff(subDir, sessionId)
+        : await jj.diff(subDir, sessionId);
+      changedFiles = d.files.map((f) => f.path);
     } catch {
       // diff is best-effort reporting; the branch itself is intact
     }
@@ -255,7 +264,11 @@ async function launch(
     try {
       const dir = jj.workspaceDirFor(session.id);
       await Deno.mkdir(jj.workspacesRoot(), { recursive: true });
-      await jj.addWorkspace(explicit!, session.id, dir, jj.bookmarkFor(spawn.spawnerId));
+      if (await isShadowDir(explicit!)) {
+        await shadow.addWorkspace(explicit!, session.id, dir, spawn.spawnerId);
+      } else {
+        await jj.addWorkspace(explicit!, session.id, dir, jj.bookmarkFor(spawn.spawnerId));
+      }
       db.setSessionWorkspace(session.id, dir);
       const updated = db.getSession(session.id)!;
       bus.publish({ type: "session.updated", sessionId: session.id, data: updated });
@@ -389,7 +402,11 @@ export async function adoptSubagent(
   if (!subDir || !repo || subDir === repo) {
     throw new Error("this subagent has no branched workspace to adopt");
   }
-  await jj.adoptChanges(repo, subDir, subagentId, spawnerId);
+  if (await isShadowDir(subDir)) {
+    await shadow.adoptChanges(repo, subDir, subagentId, spawnerId);
+  } else {
+    await jj.adoptChanges(repo, subDir, subagentId, spawnerId);
+  }
   // Both Changes rails move: the spawner gains the diff, the subagent's empties.
   bus.publish({ type: "changes.updated", sessionId: spawnerId, data: { sessionId: spawnerId } });
   bus.publish({ type: "changes.updated", sessionId: subagentId, data: { sessionId: subagentId } });

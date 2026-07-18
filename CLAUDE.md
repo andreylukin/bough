@@ -1,20 +1,16 @@
-# Version control: git only
+# Version control: plain git
 
-This repo is jj-colocated, but **jj belongs to bough itself** — the live bough
-server drives jj and auto-snapshots the working tree into anonymous per-session
-commits (`bough/*` bookmarks). In Claude Code, use plain git for everything.
+This repo is a normal git checkout on `main`. Session snapshotting moved from
+jj colocation to per-project **shadow git repos** (docs/shadow-snapshots.md);
+bough keeps all snapshot state under `~/.bough/shadow` and `~/.bough/workspaces`,
+so nothing here ever detaches HEAD or fights the index anymore.
 
-- Never run `jj` commands. To inspect jj state read-only, use the git side:
-  session snapshots are reachable as `bough/<session-id>` refs.
-- Never `git stash` — jj's index snapshots make stash push/pop fail messily.
-- The primary checkout usually sits on a detached-HEAD snapshot chain, and a
-  clean `git status` does NOT mean "nothing pending": jj absorbs tree changes
-  into snapshot commits. "What's unshipped" = `git diff main HEAD` (tree-to-tree).
-- To ship work to main: create a temp `git worktree` on main, `git checkout
-  <snapshot-sha> -- <paths>` per logical group, commit, test, push, remove the
-  worktree. Never rewrite or reset the primary checkout.
-
-A PreToolUse hook (.claude/hooks/block-jj.sh) enforces the first two rules.
+- Ship work with ordinary commits on `main` (branch first for anything you'd
+  want reviewed as a PR).
+- Session snapshot history, if you ever need to salvage from it, lives in the
+  shadow stores: `git --git-dir ~/.bough/shadow/<name>-<hash> log refs/bough/sessions/<id>`.
+- Legacy jj-era session refs may still exist as `bough/<session-id>` branches in
+  older repos; they are inert.
 
 # Server / working tree
 

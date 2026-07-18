@@ -32,6 +32,18 @@ import {
   updateStale,
   workspaceDirFor,
 } from "../vcs/jj.ts";
+import * as shadow from "../vcs/shadow.ts";
+
+/**
+ * Which snapshot backend NEW sessions get — shadow (docs/shadow-snapshots.md)
+ * unless BOUGH_VCS=jj opts back into the legacy backend. Existing sessions are
+ * unaffected either way: every later operation (diff/apply/revert/spawn/adopt)
+ * detects the backend from the workspace itself, so jj-era and shadow sessions
+ * coexist.
+ */
+export function vcsBackend(): "jj" | "shadow" {
+  return Deno.env.get("BOUGH_VCS") === "jj" ? "jj" : "shadow";
+}
 
 export interface PreparedWorkspace {
   /** The resolved read-write root (bash cwd + file-tool root). */
@@ -180,6 +192,9 @@ async function prepareRepo(
 ): Promise<{ dir: string; warning?: string }> {
   const session = db.getSession(sessionId);
   const firstTurn = persistedBase === null;
+  if (vcsBackend() === "shadow") {
+    return await prepareShadow(db, sessionId, repo, firstTurn);
+  }
   try {
     if (colocated) {
       if (firstTurn && session?.kind === "fork" && session.parentId) {
@@ -261,6 +276,73 @@ async function prepareRepo(
     const warning = firstTurn && !colocated
       ? `⚠ workspace isolation failed — this session edits ${repo} DIRECTLY, and the ` +
         `changes review (^d) can't track it. jj said: ${(e as Error).message.split("\n")[0]}`
+      : undefined;
+    return { dir: repo, warning };
+  }
+}
+
+/**
+ * Shadow-backend session prep — the single external-style path (there is no
+ * colocated mode: every session gets an isolated shadow-repo worktree, even on
+ * repos that still carry a legacy `.jj`). First turn branches the worktree —
+ * off the parent session's tip for forks, else off a captured snapshot of the
+ * repo's working tree — and repoints the session's workspace column at it.
+ * Resumes run where the column already points. Failures degrade exactly like
+ * the jj path: sandboxed turn in the user's checkout, with a loud warning.
+ */
+async function prepareShadow(
+  db: Db,
+  sessionId: string,
+  repo: string,
+  firstTurn: boolean,
+): Promise<{ dir: string; warning?: string }> {
+  const session = db.getSession(sessionId);
+  try {
+    if (!firstTurn) return { dir: repo };
+    let dir: string;
+    if (
+      session?.kind === "fork" && session.parentId &&
+      (await shadow.originRepo(repo)) !== null
+    ) {
+      // `repo` is the parent session's worktree (forks inherit the workspace
+      // column); branch off the parent's tip, falling back to the worktree's
+      // HEAD if the parent's refs vanished.
+      dir = shadow.workspaceDirFor(sessionId);
+      try {
+        await shadow.addWorkspace(repo, sessionId, dir, session.parentId);
+      } catch {
+        await shadow.addWorkspace(repo, sessionId, dir, null);
+      }
+    } else {
+      // Root session (also forks whose parent never took a turn): isolated
+      // worktree off a captured snapshot. A store that predates this attempt
+      // and now errors with a corruption signature is broken derived state:
+      // quarantine (never delete) and retry once fresh.
+      const hadStore = await pathExists(await shadow.storeDirFor(repo));
+      try {
+        dir = await shadow.createSessionWorkspace(repo, sessionId);
+      } catch (e) {
+        if (!hadStore || !shadow.looksLikeBrokenStore(e as Error)) throw e;
+        const moved = await shadow.quarantineStore(repo);
+        if (!moved) throw e;
+        console.error(
+          `shadow store for ${repo} quarantined to ${moved} (${
+            (e as Error).message.split("\n")[0]
+          }); retrying fresh`,
+        );
+        dir = await shadow.createSessionWorkspace(repo, sessionId);
+      }
+    }
+    db.setSessionWorkspace(sessionId, dir);
+    // Metadata + the "not first turn" sentinel; "shadow" when the origin has no
+    // resolvable git HEAD (non-git dirs, forks from a parent's worktree).
+    db.setSessionBase(sessionId, (await gitHead(repo)) ?? "shadow");
+    return { dir };
+  } catch (e) {
+    console.error(`shadow workspace prep skipped for ${sessionId}: ${(e as Error).message}`);
+    const warning = firstTurn
+      ? `⚠ workspace isolation failed — this session edits ${repo} DIRECTLY, and the ` +
+        `changes review (^d) can't track it. git said: ${(e as Error).message.split("\n")[0]}`
       : undefined;
     return { dir: repo, warning };
   }

@@ -35,7 +35,7 @@ export type FileDiff = z.infer<typeof FileDiff>;
 
 /** A full review payload from one snapshot source. */
 export const Diff = z.object({
-  source: z.enum(["jj", "clonefile"]),
+  source: z.enum(["jj", "clonefile", "shadow"]),
   files: z.array(FileDiff),
 });
 export type Diff = z.infer<typeof Diff>;
@@ -49,7 +49,7 @@ export type Diff = z.infer<typeof Diff>;
  * per-path jj apply; see the Changes API).
  */
 export const ChangesApplyBody = z.object({
-  source: z.enum(["jj", "clonefile"]),
+  source: z.enum(["jj", "clonefile", "shadow"]),
   paths: z.array(z.string()),
 });
 export type ChangesApplyBody = z.infer<typeof ChangesApplyBody>;

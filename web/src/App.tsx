@@ -164,7 +164,7 @@ function LiveApp() {
 
   // Apply all: one call per snapshot source, with that source's file paths.
   const onApplyAll = () => {
-    for (const source of ["jj", "clonefile"] as ChangeSource[]) {
+    for (const source of ["jj", "shadow", "clonefile"] as ChangeSource[]) {
       const paths = diffs.filter((f) => f.source === source).map((f) => f.path);
       if (paths.length) store.applyChanges(source, paths);
     }

@@ -125,7 +125,7 @@ export interface BundleSummary {
 // Mirrors src/schema/changes.ts. A Hunk's `lines` are raw unified-diff lines with
 // their leading ` `/`+`/`-` markers kept; the UI parses them for display.
 export type FileStatus = "added" | "modified" | "deleted";
-export type ChangeSource = "jj" | "clonefile";
+export type ChangeSource = "jj" | "clonefile" | "shadow";
 
 export interface WireHunk {
   header: string;
