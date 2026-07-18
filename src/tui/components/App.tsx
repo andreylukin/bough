@@ -6,7 +6,7 @@
 import { applyTheme, palette, THEME_PRESETS } from "../theme.ts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, type DOMElement, measureElement, Text, useApp, useInput, useStdout } from "ink";
-import type { Session } from "../../schema/parts.ts";
+import type { Message, Session } from "../../schema/parts.ts";
 import {
   api,
   type BoughConfig,
@@ -17,6 +17,7 @@ import {
   type NetStatus,
   type SkillInfo,
   type ThemeState,
+  type WireSection,
 } from "../api.ts";
 import { useStore } from "../store.ts";
 import { type Branch, buildLines, parseSubagentNote, type SubagentNote } from "../lines.ts";
@@ -29,7 +30,13 @@ import { ActivityLine, StatusBar } from "./StatusBar.tsx";
 import { flattenTree, SessionPicker, type TreeRow } from "./SessionPicker.tsx";
 import { NetApproval } from "./NetApproval.tsx";
 import { NewSession } from "./NewSession.tsx";
-import { buildTree, ConversationTree, treeItems } from "./ConversationTree.tsx";
+import {
+  buildTree,
+  ConversationTree,
+  sectionSpan,
+  type TreeNode,
+  treeItems,
+} from "./ConversationTree.tsx";
 import { DiffView, flattenDiffs } from "./DiffView.tsx";
 import { modelEntries, ModelPicker } from "./ModelPicker.tsx";
 import { Panel, PANEL_TABS, type PanelTab, PanelTabs } from "./Panel.tsx";
@@ -145,6 +152,8 @@ export function App(
   }, []);
   const forkNavTouched = useRef(false);
   const [rangeAnchor, setRangeAnchor] = useState<number | null>(null);
+  // LLM-labeled activity sections over the tree's turns (s toggles; null = off).
+  const [sections, setSections] = useState<WireSection[] | null>(null);
   // Turn ids pending a move: set by `m`, consumed by picking a destination on the
   // sessions tab (Enter appends there instead of opening).
   const [movePicks, setMovePicks] = useState<string[] | null>(null);
@@ -194,6 +203,7 @@ export function App(
     setExpandAll(false);
     setSearchQ(null);
     setShellOut(null);
+    setSections(null); // labels describe the session they were computed for
     saveLastSession(s.id);
     open(s.id).catch((e) => setErr(String(e)));
   }, [open]);
@@ -680,9 +690,10 @@ export function App(
       store.sessions.filter((s) => s.originId === currentId && (showDeprecated || !s.deprecatedAt)),
     [store.sessions, currentId, showDeprecated],
   );
-  const convItems = useMemo(() => treeItems(buildTree(store.thread, childSessions)), [
+  const convItems = useMemo(() => treeItems(buildTree(store.thread, childSessions), sections), [
     store.thread,
     childSessions,
+    sections,
   ]);
   const diffEntries = flattenDiffs(store.changes);
   const cfgEntries = cfg ? modelEntries(cfg) : [];
@@ -880,9 +891,53 @@ export function App(
 
       // ---- conversation: the branch tree (was ^f) ----
       if (panelTab === "conversation") {
-        // Range selection (v): highlight turns, then compact/extract them.
+        // Section labeling (s): an LLM groups the turns into colored activity
+        // sections (debug/implement/explore/…); pressing s again hides them.
+        if (ch === "s") {
+          if (sections) {
+            setSections(null);
+            return;
+          }
+          const id = store.currentId;
+          const nodes = convItems.flatMap((it) => (it.type === "node" ? [it.node] : []));
+          if (!id || nodes.length === 0) return;
+          const byId = new Map(store.thread.map((m) => [m.id, m]));
+          const firstLine = (m: Message | undefined): string => {
+            const t = m?.parts.find((p) => p.type === "text");
+            return t && "text" in t ? (t.text.split("\n").find((l) => l.trim()) ?? "") : "";
+          };
+          const gists = nodes.map((n: TreeNode) => {
+            const user = firstLine(n.msg).slice(0, 140);
+            // The reply's final text (the outcome) beats its first (the preamble).
+            const replyMsg = [...n.msgIds.slice(1)].reverse()
+              .map((mid) => byId.get(mid))
+              .find((m) => m?.parts.some((p) => p.type === "text"));
+            const reply = firstLine(replyMsg).slice(0, 140);
+            const tools = n.steps.length;
+            return {
+              gist: `${user}${reply ? ` → ${reply}` : ""}${tools ? ` [${tools} tool runs]` : ""}`,
+            };
+          });
+          setPanelMsg("✳ labeling sections…");
+          api.getSections(id, gists).then((s) => {
+            setSections(s);
+            setPanelMsg(null);
+          }, (e) => setPanelMsg(String(e)));
+          return;
+        }
+        // Range selection (v): highlight turns, then compact/extract them. On a
+        // section header, v (like enter) selects the whole section.
         if (ch === "v") {
           forkNavTouched.current = true;
+          const it = convItems[forkSelRef.current];
+          if (it?.type === "section") {
+            const span = sectionSpan(convItems, forkSelRef.current);
+            if (span) {
+              setRangeAnchor(span[0]);
+              moveForkSel(span[1]);
+            }
+            return;
+          }
           setRangeAnchor((a) => (a === null ? forkSelRef.current : null));
           return;
         }
@@ -912,6 +967,17 @@ export function App(
         if (key.return) {
           const it = convItems[forkSelRef.current];
           if (!it) return;
+          // Enter on a section header arms the range over the whole section —
+          // the c/e/d/m ops then apply to it like a hand-picked selection.
+          if (it.type === "section") {
+            const span = sectionSpan(convItems, forkSelRef.current);
+            if (span) {
+              forkNavTouched.current = true;
+              setRangeAnchor(span[0]);
+              moveForkSel(span[1]);
+            }
+            return;
+          }
           setRangeAnchor(null);
           setMode("chat");
           // Forking is instant and silent — confirm what happened and the way back.

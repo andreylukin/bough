@@ -1,6 +1,7 @@
 import { palette } from "../theme.ts";
 import { Box, Text } from "ink";
 import type { Message, Part } from "../../schema/parts.ts";
+import type { WireSection } from "../api.ts";
 import type { TuiSession } from "../store.ts";
 import { clip, toolSummary } from "../format.ts";
 import { parseSubagentNote } from "../lines.ts";
@@ -36,9 +37,20 @@ export interface TreeNode {
 }
 
 export type TreeItem =
-  | { type: "node"; node: TreeNode }
-  | { type: "step"; step: ToolStep }
-  | { type: "branch"; session: TuiSession };
+  | { type: "node"; node: TreeNode; sectionColor?: string }
+  | { type: "step"; step: ToolStep; sectionColor?: string }
+  | { type: "branch"; session: TuiSession; sectionColor?: string }
+  | { type: "section"; section: WireSection };
+
+/** Fixed hues per section kind (theme-independent so the legend stays stable). */
+export const SECTION_COLORS: Record<WireSection["kind"], string> = {
+  debug: "#e2776e",
+  implement: "#4ec98f",
+  explore: "#5c88c9",
+  config: "#d9b45f",
+  review: "#9a7fd1",
+  discuss: "#aeb4bd",
+};
 
 // The tool runs in a reply span → labeled branch points. atPart cuts through the
 // run's result (kept inclusive) so the completed call is retained in the branch.
@@ -105,14 +117,35 @@ export function buildTree(thread: Message[], branches: TuiSession[]): TreeNode[]
   return nodes;
 }
 
-export function treeItems(nodes: TreeNode[]): TreeItem[] {
+export function treeItems(nodes: TreeNode[], sections?: WireSection[] | null): TreeItem[] {
+  const byStart = new Map((sections ?? []).map((s) => [s.start, s]));
+  const colorAt = (turn: number): string | undefined => {
+    const s = (sections ?? []).find((x) => turn >= x.start && turn <= x.end);
+    return s ? SECTION_COLORS[s.kind] : undefined;
+  };
   const items: TreeItem[] = [];
-  for (const n of nodes) {
-    items.push({ type: "node", node: n });
-    for (const s of n.steps) items.push({ type: "step", step: s });
-    for (const b of n.branches) items.push({ type: "branch", session: b });
-  }
+  nodes.forEach((n, turn) => {
+    const sec = byStart.get(turn);
+    if (sec) items.push({ type: "section", section: sec });
+    const sectionColor = colorAt(turn);
+    items.push({ type: "node", node: n, sectionColor });
+    for (const s of n.steps) items.push({ type: "step", step: s, sectionColor });
+    for (const b of n.branches) items.push({ type: "branch", session: b, sectionColor });
+  });
   return items;
+}
+
+/** Inclusive item-index span a section header covers (its nodes + their steps/
+ * branches) — what enter on the header arms as the range selection. */
+export function sectionSpan(items: TreeItem[], headerIdx: number): [number, number] | null {
+  const it = items[headerIdx];
+  if (it?.type !== "section") return null;
+  let hi = headerIdx;
+  for (let i = headerIdx + 1; i < items.length; i++) {
+    if (items[i].type === "section") break;
+    hi = i;
+  }
+  return hi > headerIdx ? [headerIdx + 1, hi] : null;
 }
 
 const KIND_GLYPH: Record<string, string> = {
@@ -145,7 +178,7 @@ export function ConversationTree(
           ? `${rangeCount} turn${
             rangeCount === 1 ? "" : "s"
           } · c compact · e extract · m copy to · d delete (recoverable) · esc`
-          : `turn: rewind & edit its message · tool: branch after it · v select range${
+          : `turn: rewind & edit its message · tool: branch after it · v select range · s sections${
             showDeprecated ? " · (showing deprecated)" : ""
           }`}
       </Text>
@@ -153,10 +186,31 @@ export function ConversationTree(
         const idx = start + i;
         const sel = idx === selected;
         const inRange = !!range && idx >= range[0] && idx <= range[1];
+        if (it.type === "section") {
+          const s = it.section;
+          const turns = s.end - s.start + 1;
+          return (
+            <Text key={`h-${idx}`} inverse={sel} wrap="truncate">
+              {" "}
+              <Text color={SECTION_COLORS[s.kind]} bold>■ {s.kind}</Text>
+              <Text dimColor>{" · "}</Text>
+              {s.label}
+              <Text dimColor>{`  ${turns} turn${turns === 1 ? "" : "s"}`}</Text>
+            </Text>
+          );
+        }
+        // While sections are shown, every turn row carries its section's color
+        // as a left gutter bar (range selection overrides it with the accent).
+        const gutter = inRange
+          ? <Text color={palette.accent}>▍</Text>
+          : it.sectionColor
+          ? <Text color={it.sectionColor}>▏</Text>
+          : <Text>{" "}</Text>;
         if (it.type === "step") {
           return (
             <Text key={`s-${i}`} inverse={sel} wrap="truncate">
-              {"     "}
+              {gutter}
+              {"    "}
               <Text color={palette.accent}>◇</Text> <Text dimColor>{it.step.label}</Text>
             </Text>
           );
@@ -166,7 +220,8 @@ export function ConversationTree(
           const dep = !!s.deprecatedAt;
           return (
             <Text key={`b-${s.id}`} inverse={sel} wrap="truncate">
-              {"    "}
+              {gutter}
+              {"   "}
               <Text
                 color={s.kind === "subagent" ? palette.accent : undefined}
                 dimColor={s.kind !== "subagent"}
@@ -185,7 +240,7 @@ export function ConversationTree(
         const preview = text && "text" in text ? clip(text.text.split("\n")[0], 66) : "(no text)";
         return (
           <Text key={`n-${n.msg.id}`} inverse={sel} wrap="truncate">
-            <Text color={palette.accent}>{inRange ? "▍" : " "}</Text>
+            {gutter}
             <Text color={palette.info} bold>you</Text> {preview}
             {n.tip ? <Text color={palette.accent}>{"  "}← here</Text> : null}
           </Text>

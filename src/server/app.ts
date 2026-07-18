@@ -65,6 +65,7 @@ import { clientFor } from "../supervisor/llm.ts";
 import { listArtifacts, serveArtifact } from "./artifacts.ts";
 import { createAuth } from "./auth.ts";
 import { compact, CompactBody, CompactError } from "../compact.ts";
+import { sectionize, SectionsBody, SectionsError } from "../sections.ts";
 import { type Embedder, recall } from "../recall.ts";
 import { extract, ExtractBody, ExtractError } from "../extract.ts";
 import { handoff, HandoffBody, HandoffError } from "../handoff.ts";
@@ -411,6 +412,21 @@ const compactSession: Handler = async (req, ctx, params) => {
     return json({ session });
   } catch (e) {
     if (e instanceof CompactError) return error(e.status, e.message);
+    throw e;
+  }
+};
+
+// Section grouping: LLM-label the client's turn gists into contiguous activity
+// sections for the conversation tree's color coding + section selection
+// (see sections.ts). Read-only; nothing stored.
+const sectionsSession: Handler = async (req, ctx, params) => {
+  const parsed = SectionsBody.safeParse(await req.json().catch(() => null));
+  if (!parsed.success) return error(400, "invalid body: " + parsed.error.message);
+  if (!ctx.db.getSession(params.id)) return error(404, "session not found");
+  try {
+    return json({ sections: await sectionize(ctx, parsed.data.turns) });
+  } catch (e) {
+    if (e instanceof SectionsError) return error(e.status, e.message);
     throw e;
   }
 };
@@ -1123,6 +1139,11 @@ const routes: Route[] = [
     method: "GET",
     pattern: new URLPattern({ pathname: "/recall" }),
     handler: recallSearch,
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/sessions/:id/sections" }),
+    handler: sectionsSession,
   },
   {
     method: "POST",

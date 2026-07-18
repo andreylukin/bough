@@ -13,6 +13,15 @@ export interface DirHit {
   repo: boolean;
 }
 export type ChangeSource = "clonefile" | "shadow";
+
+/** An LLM-labeled activity section over the conversation tree's turns
+ * (inclusive 0-based turn indexes; mirror of the server's Section). */
+export interface WireSection {
+  start: number;
+  end: number;
+  kind: "debug" | "implement" | "explore" | "config" | "review" | "discuss";
+  label: string;
+}
 export interface WireHunk {
   header: string;
   lines: string[];
@@ -216,6 +225,11 @@ export const api = {
       `/sessions/${id}/extract`,
       postJson(replaceSource ? { picks, replaceSource } : { picks }),
     ).then((r) => r.session),
+  // Section grouping: LLM-label the tree's turn gists into contiguous activity
+  // sections (color coding + whole-section selection in the conversation tree).
+  getSections: (id: string, turns: { gist: string }[]) =>
+    jmsg<{ sections: WireSection[] }>(`/sessions/${id}/sections`, postJson({ turns }))
+      .then((r) => r.sections),
   // Handoff: the server drafts a self-contained opening prompt from this thread
   // toward `goal` and attaches it to a fresh conversation (session.draft).
   handoff: (id: string, goal: string) =>
