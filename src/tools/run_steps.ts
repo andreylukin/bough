@@ -153,7 +153,17 @@ export const runSteps: ToolDef = {
 
     if (done) {
       const committed = ctx.turn?.check ?? check;
-      if (!committed) {
+      if (!committed && ctx.turn && !ctx.turn.checkNudged) {
+        // First check-less done bounces: a completion claim with no committed
+        // check is unverified. The second one is accepted (some work has no
+        // natural check), so this can never loop.
+        ctx.turn.checkNudged = true;
+        out.push(
+          `${DONE_REJECTED} — no check committed. Commit a \`check\` command that ` +
+            `exits 0 iff the request's acceptance criteria hold, then set done:true ` +
+            `again. If the work is genuinely uncheckable, set done:true once more.`,
+        );
+      } else if (!committed) {
         out.push(`${DONE_ACCEPTED} — no check declared`);
       } else {
         const checkOut = await bash.run({ command: committed }, ctx).catch(

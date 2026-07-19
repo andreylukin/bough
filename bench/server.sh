@@ -22,6 +22,10 @@ case "${1:-status}" in
     # shellcheck source=/dev/null
     [ -f "$HOME/.bough/env" ] && set -a && source "$HOME/.bough/env" && set +a
     [ -n "${ANTHROPIC_API_KEY:-}" ] || { echo "ANTHROPIC_API_KEY not set (checked ~/.bough/env)" >&2; exit 1; }
+    # Python lsp needs basedpyright on the host (leta's default python server);
+    # without it every lsp.* call on python tasks fails and wastes agent rounds.
+    command -v basedpyright-langserver >/dev/null 2>&1 ||
+      echo "warn: basedpyright not installed — python lsp will fail (npm i -g basedpyright)" >&2
     mkdir -p "$STATE"
     (
       cd "$BENCH/.."

@@ -37,7 +37,7 @@ export interface ToolRunCtx {
    * completion gate (SPEC §5): the shell command `run_steps` re-runs before
    * accepting `done`. Absent for tools that don't participate in gating.
    */
-  turn?: { check?: string };
+  turn?: { check?: string; checkNudged?: boolean };
   /**
    * Delegation, wired by the turn runner for sessions below the depth cap (absent
    * at MAX_SUBAGENT_DEPTH). Each subagent is a fresh session on its own workspace

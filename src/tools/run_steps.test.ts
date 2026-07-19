@@ -37,10 +37,13 @@ Deno.test("done is gated on the committed check: fails → rejected, passes → 
   assertEquals(c.turn?.check, "test -f ok.txt");
 });
 
-Deno.test("done with no check ever declared is accepted with a note", async () => {
-  const out = await runSteps.run({ code: `console.log("hi");`, done: true }, ctx());
-  assertStringIncludes(out, DONE_ACCEPTED);
-  assertStringIncludes(out, "no check declared");
+Deno.test("done with no check bounces once with a nudge, then is accepted", async () => {
+  const c = ctx();
+  const r1 = await runSteps.run({ code: `console.log("hi");`, done: true }, c);
+  assertStringIncludes(r1, "no check committed");
+  const r2 = await runSteps.run({ code: `console.log("still no check");`, done: true }, c);
+  assertStringIncludes(r2, DONE_ACCEPTED);
+  assertStringIncludes(r2, "no check declared");
 });
 
 Deno.test("program errors surface in the output without killing the round", async () => {

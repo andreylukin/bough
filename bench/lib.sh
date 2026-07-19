@@ -36,7 +36,9 @@ fail_reason() { # $1 = task, $2 = workspace, $3 = runner status
   if [ "$3" = "timeout" ]; then echo timeout; return; fi
   local last
   # Last traced command, skipping EXIT-trap cleanup that runs after the failure.
-  last="$(bash -x "$BENCH/tasks/$1/verify.sh" "$2" 2>&1 >/dev/null | grep '^+' | grep -Ev '^\+ (rm -rf|trap )' | tail -1 || true)"
+  # PS4 sentinel: unittest assertion diffs also emit ^+ lines on stderr, which
+  # would masquerade as trace lines without it.
+  last="$(PS4='+BENCHX ' bash -x "$BENCH/tasks/$1/verify.sh" "$2" 2>&1 >/dev/null | grep '^+*BENCHX ' | grep -Ev 'BENCHX (rm -rf|trap )' | tail -1 || true)"
   case "$last" in
     *"cmp -s"*)        echo protected-file-modified ;;
     *unittest*)        echo tests-fail ;;
