@@ -33,10 +33,10 @@ bough                                  # the terminal UI (auto-starts the server
 bough start                            # serves http://127.0.0.1:4321 (logs: ~/.bough/server.log)
 bough kill | restart | status | logs   # manage the service (kill sticks across logins)
 bough update                           # fast-forward to origin/main, rebuild, restart
-bough prompt [-w dir] [-m model] [--yolo] [--json] "..."   # headless one-shot turn
+bough exec [-w dir] [-m model] [--yolo] [--json] "..."     # headless one-shot turn
 ```
 
-`bough prompt` runs a single turn against the running server and streams the answer to stdout — `--json` prints a machine-readable envelope with token usage (including cache splits) instead; exit code 0 means the turn finished clean.
+`bough exec` runs a single turn (auto-starting the server if needed) and streams the answer to stdout; the prompt can also arrive on stdin. `--json` prints a machine-readable envelope with token usage (including cache splits) instead; exit code 0 means the turn finished clean. `bough prompt` remains as an alias.
 
 Or run it in the foreground — requires [Deno](https://deno.com). From the repo root:
 

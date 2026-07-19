@@ -8,8 +8,9 @@ should be numbers, not anecdotes.
 
 Each probe drives the **real TUI against the live server** with
 [shell-use](https://github.com/microsoft/shell-use), from a scratch workspace
-outside the repo, and archives its conversation afterward. Probes spend real
-tokens (one short turn each).
+outside the repo, and archives its conversation afterward (`exec.sh` is the
+exception: it exercises the headless CLI, no TUI). Probes spend real tokens
+(one short turn each).
 
 | Probe | Metric | Why it matters |
 | --- | --- | --- |
@@ -17,6 +18,7 @@ tokens (one short turn each).
 | `interrupt.sh` | Esc mid-stream → "⏹ Stopped." + clean server state | cost of pulling the brake must stay far below the cost of undoing |
 | `chrome.sh` | fixed chrome markers present (`›` composer, `? help`) | wrappers and humans both navigate by stable chrome |
 | `scrollback-dump.sh` | full scrollback dump for the reconstruction test | scrollback is the chronological record; what a fresh reader can't reconstruct, the rendering lost |
+| `exec.sh` | `bough exec` round-trip (arg + stdin forms, `--json` envelope) | the headless CLI is the scripting/bench transport; it must stay green without a TUI |
 | `report.sh` | per-session metrics table (`GET /sessions/:id/metrics`) | prompts-per-task, turns-to-done, stops/fails, latency percentiles across real usage |
 
 Server-side metrics come from `src/metrics.ts` — derived from rows the server

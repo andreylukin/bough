@@ -11,10 +11,10 @@ WORK="$(stage_fixture "$TASK")"
 trap 'rm -rf "$WORK"' EXIT
 
 # The whole session-create → net-yolo → stream → wait dance lives in the CLI now
-# (src/cli/prompt.ts); the bench keeps only staging, grading, and pricing.
+# (src/cli/exec.ts); the bench keeps only staging, grading, and pricing.
 T0="$(now_ms)"
 ENVELOPE="$(BOUGH_PORT="$PORT" deno run --no-prompt --allow-net=127.0.0.1 --allow-env --allow-read \
-  "$BENCH/../src/cli/prompt.ts" --json --yolo --timeout "$TRIAL_TIMEOUT" -w "$WORK" \
+  "$BENCH/../src/cli/exec.ts" --json --yolo --timeout "$TRIAL_TIMEOUT" -w "$WORK" \
   "$(cat "$BENCH/tasks/$TASK/prompt.md")")" || true
 T1="$(now_ms)"
 

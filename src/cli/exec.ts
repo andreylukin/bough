@@ -1,11 +1,14 @@
 /**
- * Headless one-shot turn: `bough prompt [flags] "do the thing"`.
+ * Headless one-shot turn: `bough exec [flags] "do the thing"` (alias: prompt).
  *
- * Talks to the RUNNING bough server (it does not boot one): creates a session
- * for the workspace, opens the event stream FIRST (a fast turn must not finish
- * unseen), posts the prompt, streams assistant text to stdout as it arrives,
- * and exits when the turn finishes — 0 for a completed turn, 1 for an errored
- * one, 2 for usage/connection problems.
+ * The prompt comes from the first positional argument, or from stdin when the
+ * argument is `-` or absent with stdin piped. Talks to a running bough server —
+ * the `bough exec` wrapper auto-starts the default one; invoked directly, this
+ * script does not boot anything. It creates a session for the workspace, opens
+ * the event stream FIRST (a fast turn must not finish unseen), posts the
+ * prompt, streams assistant text to stdout as it arrives, and exits when the
+ * turn finishes — 0 for a completed turn, 1 for an errored one, 2 for
+ * usage/connection problems.
  *
  *   -w, --workspace DIR   workspace for the session (default: cwd)
  *   -m, --model ID        pin the session's model
@@ -21,9 +24,12 @@ const args = parseArgs(Deno.args, {
   boolean: ["yolo", "json"],
   alias: { w: "workspace", m: "model" },
 });
-const prompt = String(args._[0] ?? "").trim();
+let prompt = String(args._[0] ?? "").trim();
+if (prompt === "-" || (!prompt && !Deno.stdin.isTerminal())) {
+  prompt = (await new Response(Deno.stdin.readable).text()).trim();
+}
 if (!prompt) {
-  console.error('usage: bough prompt [-w dir] [-m model] [--yolo] [--json] "..."');
+  console.error('usage: bough exec [-w dir] [-m model] [--yolo] [--json] "..." (or prompt on stdin)');
   Deno.exit(2);
 }
 const port = args.port ?? Deno.env.get("BOUGH_PORT") ?? "4321";
@@ -46,7 +52,7 @@ try {
     ? await Deno.realPath(args.workspace)
     : Deno.cwd();
   const res = await post("/sessions", {
-    title: "prompt: " + prompt.slice(0, 48),
+    title: "exec: " + prompt.slice(0, 48),
     workspace,
     ...(args.model ? { model: args.model } : {}),
   });

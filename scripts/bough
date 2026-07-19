@@ -673,7 +673,7 @@ cmd_net() {
 
 # The terminal client — what bare `bough` runs. The server is a launchd service
 # that should already be up; if it isn't, start it and wait briefly.
-cmd_tui() {
+ensure_up() {
   if ! is_up; then
     echo "server not running — starting it…" >&2
     cmd_start
@@ -686,6 +686,10 @@ cmd_tui() {
       exit 1
     fi
   fi
+}
+
+cmd_tui() {
+  ensure_up
   # The TUI defaults new conversations to the directory bough was launched from.
   export BOUGH_TUI_CWD="$PWD"
   cd "$ROOT"
@@ -708,7 +712,7 @@ cmd_purge() {
 }
 
 usage() {
-  echo "usage: bough [tui|setup|grant|revoke|teardown|start|kill|restart|update|status|logs|run|prompt|broker|net|purge]"
+  echo "usage: bough [tui|setup|grant|revoke|teardown|start|kill|restart|update|status|logs|run|exec|broker|net|purge]"
   echo "  (no args) open the terminal UI (auto-starts the server)"
   echo "  setup    fresh clone → running: install deps, configure env, start"
   echo "           setup --agent-user: migrate state + install the dedicated-user daemon"
@@ -720,8 +724,8 @@ usage() {
   echo "  restart  pick up code changes explicitly"
   echo "  update   fast-forward to origin/main, rebuild, restart"
   echo "  run      run the server in the foreground (what launchd executes)"
-  echo "  prompt   headless one-shot turn against the running server:"
-  echo "           bough prompt [-w dir] [-m model] [--yolo] [--json] \"...\""
+  echo "  exec     headless one-shot turn (auto-starts the server; alias: prompt):"
+  echo "           bough exec [-w dir] [-m model] [--yolo] [--json] \"...\" — or prompt on stdin"
   echo "  broker   AWS credential broker: 'bough broker {install [--profile NAME]|uninstall|status}'"
   echo "  net      Claw Patrol checks: 'bough net validate' verifies policy + plugins"
   echo "  purge    hard-delete sessions archived over 30 days ago (also runs on boot)"
@@ -751,10 +755,13 @@ case "${1:-}" in
   status) cmd_status ;;
   logs) cmd_logs ;;
   run) cmd_run ;;
-  prompt)
+  exec | prompt)
     shift
+    # Auto-start the default server like the TUI does; an explicit --port means
+    # the caller manages that server (e.g. the bench), so leave it alone.
+    case " $* " in *" --port "*) ;; *) ensure_up ;; esac
     exec deno run --no-prompt --allow-net=127.0.0.1 --allow-env --allow-read \
-      "$ROOT/src/cli/prompt.ts" "$@"
+      "$ROOT/src/cli/exec.ts" "$@"
     ;;
   broker)
     shift
