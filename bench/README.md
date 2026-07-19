@@ -71,8 +71,8 @@ extra guidance. Each trial stages a fresh git-committed fixture copy.
   That's part of each harness — but check the failure taxonomy before reading
   a bough loss as a capability gap (a sandbox denial is a different bug).
 - **Token accounting**: Claude Code's `cost_usd` is provider-reported;
-  bough's is computed from cumulative session input/output tokens at Haiku
-  list price ($1/$5 per Mtok) with cache discounts not modeled — bough's cost
-  is therefore an upper bound.
+  bough's is computed from cumulative session tokens at Haiku list price
+  ($1/$5 per Mtok) with cache reads billed 0.1x and writes 1.25x (from the
+  sessions table's cache_read_total/cache_write_total).
 - **Budget caps**: Claude Code gets `--max-budget-usd 2`; bough has no cost
   cap (known gap), so both sides rely on the shared 900s wall-clock timeout.

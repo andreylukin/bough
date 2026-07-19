@@ -585,6 +585,8 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
   // Last round's cached prompt share + finish time — the cache-warmth clock the
   // tree view decays against (Anthropic's 5-min sliding TTL starts here).
   let cachedTokens = 0;
+  let cacheReadTokens = 0; // cumulative this turn — reads bill ~0.1x
+  let cacheWriteTokens = 0; // cumulative this turn — writes bill ~1.25x
   let lastLlmAt = 0;
 
   const turn = startTurn(db, sessionId, messageId);
@@ -806,6 +808,8 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
         inputTokens += result.usage.inputTokens;
         cachedTokens = (result.usage.cacheReadTokens ?? 0) +
           (result.usage.cacheCreationTokens ?? 0);
+        cacheReadTokens += result.usage.cacheReadTokens ?? 0;
+        cacheWriteTokens += result.usage.cacheCreationTokens ?? 0;
         lastLlmAt = Date.now();
       }
 
@@ -942,7 +946,9 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
         inputTokens: prev.inputTokens + inputTokens,
       };
       db.setSessionUsage(sessionId, contextTokens, totals.outputTokens, totals.inputTokens);
-      if (lastLlmAt > 0) db.setSessionCache(sessionId, cachedTokens, lastLlmAt);
+      if (lastLlmAt > 0) {
+        db.setSessionCache(sessionId, cachedTokens, lastLlmAt, cacheReadTokens, cacheWriteTokens);
+      }
       bus.publish({
         type: "usage.updated",
         sessionId,

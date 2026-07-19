@@ -225,6 +225,8 @@ export class Db {
         "output_tokens INTEGER",
         "input_tokens INTEGER",
         "cached_tokens INTEGER",
+        "cache_read_total INTEGER",
+        "cache_write_total INTEGER",
         "last_llm_at INTEGER",
         "model TEXT",
         "effort TEXT",
@@ -343,11 +345,26 @@ export class Db {
       .run(contextTokens, outputTokens, inputTokens, id);
   }
 
-  /** Last LLM round's cache stats: cached prompt share + finish time (warmth clock). */
-  setSessionCache(id: string, cachedTokens: number, lastLlmAt: number): void {
+  /**
+   * Last LLM round's cache stats (cached prompt share + finish time, the warmth
+   * clock) plus cumulative cache read/write totals across the session — the
+   * discounted share of input_tokens (reads bill ~0.1x, writes ~1.25x).
+   */
+  setSessionCache(
+    id: string,
+    cachedTokens: number,
+    lastLlmAt: number,
+    cacheReadTotal = 0,
+    cacheWriteTotal = 0,
+  ): void {
     this.#db
-      .prepare(`UPDATE sessions SET cached_tokens = ?, last_llm_at = ? WHERE id = ?`)
-      .run(cachedTokens, lastLlmAt, id);
+      .prepare(
+        `UPDATE sessions SET cached_tokens = ?, last_llm_at = ?,
+           cache_read_total = COALESCE(cache_read_total, 0) + ?,
+           cache_write_total = COALESCE(cache_write_total, 0) + ?
+         WHERE id = ?`,
+      )
+      .run(cachedTokens, lastLlmAt, cacheReadTotal, cacheWriteTotal, id);
   }
 
   sessionUsage(id: string): {

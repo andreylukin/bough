@@ -66,7 +66,7 @@ PASS="$(verify_task "$TASK" "$WS")"
 REASON=""
 [ "$PASS" = 0 ] && REASON="$(fail_reason "$TASK" "$WS" "$STATUS")"
 METRICS="$(curl -sf "$API/sessions/$SID/metrics" || echo '{}')"
-TOKENS="$(sqlite3 "$STATE/bough.db" "select coalesce(input_tokens,0), coalesce(output_tokens,0) from sessions where id='$SID'" 2>/dev/null || echo '0|0')"
+TOKENS="$(sqlite3 "$STATE/bough.db" "select coalesce(input_tokens,0), coalesce(output_tokens,0), coalesce(cache_read_total,0), coalesce(cache_write_total,0) from sessions where id='$SID'" 2>/dev/null || echo '0|0|0|0')"
 
 curl -sf -X POST "$API/sessions/$SID/archive" >/dev/null 2>&1 || true
 
@@ -76,9 +76,13 @@ python3 - <<'PY'
 import json, os, time
 
 m = json.loads(os.environ["METRICS"] or "{}")
-tin, tout = (int(x) for x in os.environ["TOKENS"].split("|"))
-# Anthropic list price for Haiku 4.5 ($/Mtok): in 1, out 5 — cache discounts not modeled.
-cost = tin * 1e-6 * 1 + tout * 1e-6 * 5
+parts = [int(x) for x in os.environ["TOKENS"].split("|")]
+tin, tout = parts[0], parts[1]
+cread, cwrite = (parts[2], parts[3]) if len(parts) == 4 else (0, 0)
+# Haiku 4.5 list price ($/Mtok): in 1, out 5; cache reads bill 0.1x, writes 1.25x.
+# bough's input_tokens is total prompt (uncached + reads + writes).
+uncached = max(0, tin - cread - cwrite)
+cost = (uncached * 1 + cread * 0.1 + cwrite * 1.25) * 1e-6 + tout * 5e-6
 print(json.dumps({
     "ts": int(time.time()),
     "harness": "bough",
@@ -90,7 +94,7 @@ print(json.dumps({
     "status": os.environ["STATUS"],
     "wall_ms": int(os.environ["WALL"]),
     "tokens_in": tin,
-    "tokens_in_cached": None,
+    "tokens_in_cached": (cread + cwrite) or None,
     "tokens_out": tout,
     "cost_usd": round(cost, 6),
     "turns": m.get("assistantTurns"),
