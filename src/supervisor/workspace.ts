@@ -162,15 +162,16 @@ async function prepareShadow(
     if (!firstTurn) return { dir: repo };
     let dir: string;
     if (
-      session?.kind === "fork" && session.parentId &&
+      session?.kind === "fork" && session.originId &&
       (await shadow.originRepo(repo)) !== null
     ) {
-      // `repo` is the parent session's worktree (forks inherit the workspace
-      // column); branch off the parent's tip, falling back to the worktree's
-      // HEAD if the parent's refs vanished.
+      // `repo` is the forked-from session's worktree (forks inherit the
+      // workspace column, and originId names that session — forks are SIBLINGS,
+      // so parentId is null when forking a root session); branch off its tip,
+      // falling back to the worktree's HEAD if its refs vanished.
       dir = shadow.workspaceDirFor(sessionId);
       try {
-        await shadow.addWorkspace(repo, sessionId, dir, session.parentId);
+        await shadow.addWorkspace(repo, sessionId, dir, session.originId);
       } catch {
         await shadow.addWorkspace(repo, sessionId, dir, null);
       }

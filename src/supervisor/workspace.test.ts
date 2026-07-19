@@ -92,7 +92,7 @@ Deno.test("prepareWorkspace: a non-sandboxed run (bare cwd) has no scratch dir",
   }
 });
 
-// ---- external-mode prepareWorkspace (needs jj + git on PATH) -----------------
+// ---- external-mode prepareWorkspace (needs git on PATH) ----------------------
 
 async function sh(bin: string, args: string[], cwd: string): Promise<void> {
   const { code, stderr } = await new Deno.Command(bin, {
@@ -147,11 +147,11 @@ Deno.test({
   ignore: !gitAvailable,
   fn: async () => {
     const repo = await tempGitRepo();
-    const jjBase = await Deno.makeTempDir({ prefix: "wstest-store-" });
+    const shadowBase = await Deno.makeTempDir({ prefix: "wstest-store-" });
     const wsBase = await Deno.makeTempDir({ prefix: "wstest-wsroot-" });
     const snapBase = await Deno.makeTempDir({ prefix: "wstest-snap-" });
     const env: Record<string, string> = {
-      BOUGH_SHADOW_BASE: jjBase,
+      BOUGH_SHADOW_BASE: shadowBase,
       BOUGH_SUBAGENT_BASE: wsBase,
       BOUGH_SNAPSHOT_BASE: snapBase,
     };
@@ -188,20 +188,35 @@ Deno.test({
       const p2 = await prepareWorkspace(db, "s1");
       assertEquals(p2.cwd, p1.cwd);
 
-      // Fork: inherits the parent's workspace column (as fork() does), gets its
-      // own working copy branched off the parent's tip.
+      // Fork: exactly as fork() creates it — a SIBLING (parentId = target's
+      // parent, null here) carrying originId + the target's workspace column —
+      // gets its own working copy branched off the target's tip.
       db.createSession({
         id: "s2",
-        parentId: "s1",
+        parentId: null,
         title: "s2",
         kind: "fork",
         createdAt: 2,
         workspace: db.getSessionRuntime("s1").workspace,
+        originId: "s1",
       });
       const pf = await prepareWorkspace(db, "s2");
       assertEquals(pf.cwd, shadow.workspaceDirFor("s2"));
       assertEquals(db.getSessionRuntime("s2").workspace, pf.cwd);
       assertEquals(await Deno.readTextFile(`${pf.cwd}/work.txt`), "s1-work\n");
+      // ...in the SAME shadow store — not a second store nested on the parent's
+      // worktree — so the grafted real history stays reachable in the fork.
+      const stores = [...Deno.readDirSync(shadowBase)].filter((e) => e.isDirectory);
+      assertEquals(stores.length, 1);
+      const log = new TextDecoder().decode(
+        (await new Deno.Command("git", {
+          args: ["log", "--format=%s"],
+          cwd: pf.cwd,
+          stdout: "piped",
+          stderr: "piped",
+        }).output()).stdout,
+      );
+      assert(log.includes("init"), `real history missing from fork log:\n${log}`);
 
       // The fork diverges without touching the parent's copy or the repo.
       await Deno.writeTextFile(`${pf.cwd}/fork.txt`, "s2-work\n");
@@ -215,7 +230,7 @@ Deno.test({
         else Deno.env.set(k, v);
       }
       await Deno.remove(repo, { recursive: true });
-      await Deno.remove(jjBase, { recursive: true }).catch(() => {});
+      await Deno.remove(shadowBase, { recursive: true }).catch(() => {});
       await Deno.remove(wsBase, { recursive: true }).catch(() => {});
       await Deno.remove(snapBase, { recursive: true }).catch(() => {});
     }

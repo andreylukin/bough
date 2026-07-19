@@ -2,7 +2,9 @@
  * Shadow-git snapshots — the jj replacement (docs/shadow-snapshots.md). One bare
  * "shadow" git repository per origin directory, kept entirely OUTSIDE it under
  * `~/.bough/shadow/<name>-<hash>`; the origin's own `.git` (if any) is never
- * read from or written to beyond `git hash-object`/`git apply` against its
+ * written to — it is read only to link its objects in via alternates (session
+ * bases graft onto the origin's HEAD, so worktrees see the repo's real history
+ * in `git log`/`blame`) and for `git hash-object`/`git apply` against its
  * working tree at materialize time. Sessions are chains of snapshot commits on
  * shadow refs, and every session runs in its own linked worktree of the shadow
  * repo under `~/.bough/workspaces/<sessionId>`.
@@ -203,7 +205,10 @@ async function pathExists(p: string): Promise<boolean> {
  */
 export async function ensureStore(origin: string): Promise<string> {
   const store = await storeDirFor(origin);
-  if (await pathExists(`${store}/HEAD`)) return store;
+  if (await pathExists(`${store}/HEAD`)) {
+    await linkOriginObjects(store, origin);
+    return store;
+  }
   await Deno.mkdir(store, { recursive: true });
   try {
     await git(store, ["init", "--bare", "-b", "bough", "."]);
@@ -226,7 +231,29 @@ export async function ensureStore(origin: string): Promise<string> {
   // everyone expects from it. Project .gitignore files apply as usual.
   await Deno.writeTextFile(`${store}/info/exclude`, ".DS_Store\n");
   await Deno.writeTextFile(`${store}/bough-origin`, await Deno.realPath(origin));
+  await linkOriginObjects(store, origin);
   return store;
+}
+
+/**
+ * Point the shadow store's `objects/info/alternates` at the origin repo's
+ * object dir (read-only from the shadow side), so session bases can graft onto
+ * the origin's HEAD and worktrees see the repo's real history. No-op when the
+ * origin isn't itself a git toplevel (plain dirs, nested non-repo subdirs).
+ * Idempotent — re-run on every ensureStore so pre-existing stores pick it up.
+ */
+async function linkOriginObjects(store: string, origin: string): Promise<void> {
+  const top = await run("git", ["rev-parse", "--show-toplevel"], origin, ISOLATED);
+  if (!top.ok) return;
+  const topReal = await Deno.realPath(top.stdout.trim()).catch(() => null);
+  const originReal = await Deno.realPath(origin).catch(() => null);
+  if (!topReal || topReal !== originReal) return;
+  const common = await gitCommonDir(origin);
+  if (!common) return;
+  const objects = join(common, "objects");
+  if (!(await pathExists(objects))) return;
+  await Deno.mkdir(`${store}/objects/info`, { recursive: true });
+  await Deno.writeTextFile(`${store}/objects/info/alternates`, objects + "\n");
 }
 
 /**
@@ -242,12 +269,25 @@ async function captureBase(store: string, origin: string): Promise<string> {
     await git(origin, ["read-tree", "--empty"], env);
     await git(origin, ["add", "-A"], env);
     const tree = (await git(origin, ["write-tree"], env)).trim();
-    return (await git(origin, [
-      "commit-tree",
-      tree,
-      "-m",
-      "bough: session base (working-tree snapshot)",
-    ], env)).trim();
+    const args = ["commit-tree", tree, "-m", "bough: session base (working-tree snapshot)"];
+    // Graft the origin's real history under the base: HEAD becomes the parent
+    // when the store can actually read it (alternates linked by ensureStore) —
+    // otherwise (non-git origin, unborn branch) the base stays parentless.
+    const head = await run(
+      "git",
+      ["rev-parse", "--verify", "-q", "HEAD^{commit}"],
+      origin,
+      ISOLATED,
+    );
+    if (head.ok) {
+      const sha = head.stdout.trim();
+      const visible = await run("git", ["cat-file", "-e", sha], origin, {
+        ...ISOLATED,
+        GIT_DIR: store,
+      });
+      if (visible.ok) args.splice(2, 0, "-p", sha);
+    }
+    return (await git(origin, args, env)).trim();
   } finally {
     await Deno.remove(idx).catch(() => {});
   }

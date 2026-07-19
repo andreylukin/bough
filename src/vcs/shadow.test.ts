@@ -92,6 +92,22 @@ Deno.test("track + diff: change-vs-base, empty when untouched, ignores ignored",
   });
 });
 
+Deno.test("session worktree sees the origin's real git history", async () => {
+  await withRoots(async () => {
+    const repo = await makeRepo();
+    const dir = await shadow.createSessionWorkspace(repo, "s-hist");
+    // The base grafts onto the origin's HEAD (alternates), so log/blame reach
+    // the repo's actual commits from inside the session worktree.
+    const log = await sh(dir, "git", "log", "--format=%s");
+    assertStringIncludes(log, "bough: session base");
+    assertStringIncludes(log, "init");
+    const blame = await sh(dir, "git", "blame", "--line-porcelain", "HEAD", "--", ".gitignore");
+    assertStringIncludes(blame, "summary init");
+    // History under the base must not leak into the changes rail.
+    assertEquals((await shadow.diff(dir, "s-hist")).files, []);
+  });
+});
+
 Deno.test("non-git origin dir works identically", async () => {
   await withRoots(async () => {
     const origin = await Deno.makeTempDir({ prefix: "bough-shadow-plain-" });
