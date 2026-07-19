@@ -76,6 +76,7 @@ export const runSteps: ToolDef = {
     const { code, check, done, todo } = input as z.infer<typeof schema>;
     if (check && ctx.turn) ctx.turn.check = check;
     if (todo !== undefined && ctx.turn) ctx.turn.todo = todo;
+    let wrote = false;
 
     const result = await runProgram(
       code,
@@ -87,8 +88,14 @@ export const runSteps: ToolDef = {
         bashOutput: (id) => Promise.resolve(bg.bashOutput(id, ctx)),
         bashKill: (id) => Promise.resolve(bg.bashKill(id, ctx)),
         read: (path) => readFile.run({ path }, ctx),
-        write: (path, content) => writeFile.run({ path, content }, ctx),
-        edit: (path, old_string, new_string) => editFile.run({ path, old_string, new_string }, ctx),
+        write: (path, content) => {
+          wrote = true;
+          return writeFile.run({ path, content }, ctx);
+        },
+        edit: (path, old_string, new_string) => {
+          wrote = true;
+          return editFile.run({ path, old_string, new_string }, ctx);
+        },
         // Delegation (present only when the turn runner allows it): agent()/join() can
         // block on whole subagent turns, so the program gets a far larger wall-clock
         // budget. spawn/join are absent in subagent turns (blocking delegation only).
@@ -182,6 +189,25 @@ export const runSteps: ToolDef = {
           exit === 0
             ? `${DONE_ACCEPTED} — check passed`
             : `${DONE_REJECTED} — check failed (exit ${exit}); keep working`,
+        );
+      }
+    }
+    // Probe-round meter: verify-by-eyeball shows up as runs of rounds that
+    // change nothing and commit nothing (bench evidence: up to 19 such rounds
+    // re-confirming a finished implementation by hand). Deterministic and
+    // advisory — after 3 consecutive probe-only rounds, nudge toward the check.
+    if (ctx.turn) {
+      // Armed only after the first write: pre-implementation exploration rounds
+      // are legitimate; the waste pattern is the post-implementation probe tail.
+      if (wrote) ctx.turn.everWrote = true;
+      const probeOnly = ctx.turn.everWrote === true && !wrote && !check && !done;
+      ctx.turn.probeRounds = probeOnly ? (ctx.turn.probeRounds ?? 0) + 1 : 0;
+      if (ctx.turn.probeRounds >= 3) {
+        ctx.turn.probeRounds = 0;
+        out.push(
+          "[verification note] 3 rounds without a file change or a committed check. " +
+            "If behavior is confirmed, encode that verification as your `check` command " +
+            "and set done:true; if something is wrong, fix it now instead of probing further.",
         );
       }
     }

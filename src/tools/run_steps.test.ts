@@ -61,6 +61,29 @@ Deno.test("todo commits on the turn and is echoed on every later result", async 
   if (r3.includes("[todo")) throw new Error("cleared todo must not echo");
 });
 
+Deno.test("probe-round meter nudges after 3 no-write no-check rounds, then resets", async () => {
+  const c = ctx();
+  const probe = { code: `console.log("looking");` };
+  // Pre-implementation exploration never trips the meter, however long.
+  for (let i = 0; i < 4; i++) {
+    const r = await runSteps.run(probe, c);
+    if (r.includes("[verification note]")) throw new Error("nudge fired before first write");
+  }
+  // First write arms it; then 3 probe-only rounds nudge.
+  await runSteps.run({ code: `await write("f.txt", "x");` }, c);
+  const r1 = await runSteps.run(probe, c);
+  const r2 = await runSteps.run(probe, c);
+  if (r1.includes("[verification note]") || r2.includes("[verification note]")) {
+    throw new Error("nudge fired early");
+  }
+  const r3 = await runSteps.run(probe, c);
+  assertStringIncludes(r3, "[verification note]");
+  // A writing round resets the counter.
+  await runSteps.run({ code: `await write("g.txt", "y");` }, c);
+  const r5 = await runSteps.run(probe, c);
+  if (r5.includes("[verification note]")) throw new Error("counter did not reset");
+});
+
 Deno.test("program errors surface in the output without killing the round", async () => {
   const out = await runSteps.run({ code: `throw new Error("boom");` }, ctx());
   assertStringIncludes(out, "[program error]");

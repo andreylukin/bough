@@ -55,6 +55,10 @@ PY
   sleep 1
 done
 T1="$(now_ms)"
+# A timed-out trial must not leave its turn running server-side (sweep 9: a hung
+# turn ran 15 extra minutes and skewed the next trial's wall-clock).
+[ "$STATUS" = "timeout" ] &&
+  curl -sf -X POST "$API/sessions/$SID/interrupt" >/dev/null 2>&1 || true
 kill "$SSE_PID" 2>/dev/null || true
 wait "$SSE_PID" 2>/dev/null || true
 SSE_PID=""
