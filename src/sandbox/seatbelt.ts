@@ -143,6 +143,9 @@ const DEV_WRITES = [
   '(literal "/dev/zero")',
   '(literal "/dev/random")',
   '(literal "/dev/urandom")',
+  // ptmx: allocating a NEW pty (openpty/posix_openpt) — PTY-driving tools like
+  // shell-use need it; the slave side is covered by the tty regex below.
+  '(literal "/dev/ptmx")',
   '(regex #"^/dev/tty")',
   '(regex #"^/dev/fd/")',
   '(regex #"^/dev/stdout")',
@@ -245,6 +248,14 @@ export function buildProfile(opts: SandboxOptions & { home: string }): string {
         `(deny network-outbound (remote ip "localhost:${opts.apiPort}"))`,
       );
     }
+    // Same idea for the operator's shell-use PTY daemon: its socket fronts an
+    // UNCONFINED process spawner, so attaching from the sandbox is an escape.
+    // The agent can still run its own daemon inside the sandbox under a scratch
+    // $HOME (see skills/tui-test). File-read denies don't stop connect(2) —
+    // this has to be a network rule.
+    parts.push(
+      `(deny network-outbound (remote unix-socket ${subpath(expand("~/.shell-use", home))}))`,
+    );
   }
   parts.push("");
   return parts.join("\n");

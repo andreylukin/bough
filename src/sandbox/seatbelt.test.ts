@@ -98,7 +98,7 @@ const GOLDEN = `(version 1)
   (subpath "/home/u/.cocoapods")
   (subpath "/home/u/.agent-browser")
   (subpath "/extra")
-  (literal "/dev/null") (literal "/dev/zero") (literal "/dev/random") (literal "/dev/urandom") (regex #"^/dev/tty") (regex #"^/dev/fd/") (regex #"^/dev/stdout"))
+  (literal "/dev/null") (literal "/dev/zero") (literal "/dev/random") (literal "/dev/urandom") (literal "/dev/ptmx") (regex #"^/dev/tty") (regex #"^/dev/fd/") (regex #"^/dev/stdout"))
 `;
 
 Deno.test("buildProfile matches golden", () => {
@@ -161,6 +161,17 @@ Deno.test("buildProfile: apiPort deny overrides the loopback allow (last-match-w
   // apiPort without confineNetwork does nothing (no network section at all)
   const r = buildProfile({ workspace: "/w", home: "/home/u", apiPort: 4321 });
   assert(!r.includes("network"));
+});
+
+Deno.test("buildProfile: confineNetwork denies the operator's shell-use daemon socket", () => {
+  const p = buildProfile({ workspace: "/w", home: "/home/u", confineNetwork: true });
+  const deny = '(deny network-outbound (remote unix-socket (subpath "/home/u/.shell-use")))';
+  assertStringIncludes(p, deny);
+  // after the unix-socket allow so SBPL's last-match-wins denies it
+  assert(p.indexOf("(remote unix-socket)") < p.indexOf(deny), "deny after allow");
+  // no confineNetwork → no network section at all
+  const q = buildProfile({ workspace: "/w", home: "/home/u" });
+  assert(!q.includes("shell-use"));
 });
 
 Deno.test("buildProfile: denyKeychain adds the keychain deny only when set", () => {
