@@ -1,0 +1,1 @@
+Rename the function `calc` in pricing.py to `compute_total`, updating every caller in the repo. No behavior change. No reference to the old name may remain anywhere. The tests must still pass (`python3 -m unittest`); do not change test_pricing.py.

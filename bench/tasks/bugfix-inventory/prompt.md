@@ -1,0 +1,1 @@
+The test suite in this repo fails. Find and fix the bug in the implementation so all tests pass. Do not change test_inventory.py — the tests encode the intended behavior. Verify with `python3 -m unittest`.

@@ -147,8 +147,12 @@ function fromApiBlock(block: Anthropic.ContentBlock): LlmBlock | undefined {
 // carry text, at the chosen effort. Returned as a plain object and spread in
 // (spreads skip excess-property checks) — the pinned SDK (0.68) predates these
 // fields in its types but serializes unknown request keys fine.
-function effortParams(effort?: Effort): Record<string, unknown> {
-  return effort
+function effortParams(effort?: Effort, model?: string): Record<string, unknown> {
+  // Adaptive thinking exists on the Claude 5 family and Opus 4.8+ only — sending
+  // it to e.g. Haiku 4.5 is a hard 400, so a set effort must not kill the turn.
+  const supported = model === undefined ||
+    /claude-(fable|mythos|sonnet)-5|opus-4-[89]/.test(model);
+  return effort && supported
     ? {
       thinking: { type: "adaptive", display: "summarized" },
       output_config: { effort },
@@ -184,7 +188,7 @@ export function anthropicClient(): LlmClient {
           input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
         })),
         ...(params.toolChoice ? { tool_choice: { type: params.toolChoice } } : {}),
-        ...effortParams(params.effort),
+        ...effortParams(params.effort, params.model),
       }, { signal });
       stream.on("text", (delta) => onText(delta));
       const final = await stream.finalMessage();
