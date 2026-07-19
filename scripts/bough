@@ -657,44 +657,6 @@ EOF
   esac
 }
 
-# One-screen cloud-access readiness: is aws/kubectl wired for agent sessions,
-# and if not, what's the next command. Kube needs no install step — the server
-# rewrites the operator's kubeconfig at start and stamps exec-minted tokens at
-# the proxy — so its half is purely a report.
-cmd_cloud() {
-  echo "== aws =="
-  if ! command -v aws >/dev/null; then
-    echo "  aws CLI: not installed        → brew install awscli"
-  elif ! launchctl print "gui/$(id -u)/$BROKER_LABEL" >/dev/null 2>&1; then
-    echo "  broker:  not installed        → bough broker install [--profile NAME]"
-  else
-    local prof code
-    prof="$(sed -n 's:.*BOUGH_AWS_RO_PROFILE</key><string>\(.*\)</string>.*:\1:p' "$BROKER_PLIST" 2>/dev/null)"
-    code="$(curl -s -o /dev/null -m 3 -w '%{http_code}' \
-      -H "authorization: Bearer $(cat "$BROKER_TOKEN_FILE" 2>/dev/null)" \
-      "http://127.0.0.1:$BROKER_PORT/aws" 2>/dev/null || true)"
-    case "$code" in
-      200) echo "  broker:  minting creds (profile ${prof:-bough-ro}) — sessions get aws automatically" ;;
-      503) echo "  broker:  up, session expired  → aws sso login --profile ${prof:-bough-ro}" ;;
-      *) echo "  broker:  installed, not answering (HTTP ${code:-none}) → check ~/.bough/broker.log" ;;
-    esac
-    grep -q "^BOUGH_AWS_BROKER_URL=" "$ENV_FILE" 2>/dev/null ||
-      echo "  env:     BOUGH_AWS_BROKER_URL missing from $ENV_FILE → bough broker install"
-  fi
-  echo "== kubernetes =="
-  local kc="${KUBECONFIG%%:*}"
-  [ -n "$kc" ] || kc="$HOME/.kube/config"
-  if [ ! -f "$kc" ]; then
-    echo "  kubeconfig: none at $kc — get cluster access (e.g. aws eks update-kubeconfig), then: bough restart"
-  else
-    local ctxs="?"
-    command -v kubectl >/dev/null && ctxs="$(kubectl config get-contexts -o name 2>/dev/null | wc -l | tr -d ' ')"
-    echo "  kubeconfig: $kc ($ctxs context(s))"
-    echo "  sessions get a CA-rewritten copy; exec plugins run host-side, tokens stamped at the proxy"
-    command -v kubectl >/dev/null || echo "  kubectl: not installed → brew install kubernetes-cli"
-  fi
-}
-
 # Claw Patrol offline checks. `net validate` runs the same load path the server
 # does (policy.json + the plugin library) and reports every problem loudly.
 cmd_net() {
@@ -759,7 +721,6 @@ usage() {
   echo "  restart  pick up code changes explicitly"
   echo "  update   fast-forward to origin/main, rebuild, restart"
   echo "  run      run the server in the foreground (what launchd executes)"
-  echo "  cloud    aws/k8s access readiness for agent sessions (what's wired, what's next)"
   echo "  broker   AWS credential broker: 'bough broker {install [--profile NAME]|uninstall|status}'"
   echo "  net      Claw Patrol checks: 'bough net validate' verifies policy + plugins"
   echo "  purge    hard-delete sessions archived over 30 days ago (also runs on boot)"
@@ -793,7 +754,6 @@ case "${1:-}" in
     shift
     cmd_broker "$@"
     ;;
-  cloud) cmd_cloud ;;
   net)
     shift
     cmd_net "$@"
