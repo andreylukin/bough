@@ -263,6 +263,17 @@ const searchFiles: Handler = async (req, ctx, params) => {
   return json({ files });
 };
 
+// File autocomplete for a draft conversation (no session yet): search the
+// prospective workspace directly, same bounded walk as the per-session route.
+const searchDraftFiles: Handler = async (req) => {
+  const url = new URL(req.url);
+  const dir = url.searchParams.get("dir");
+  if (!dir) return error(400, "dir required");
+  const q = url.searchParams.get("q") ?? "";
+  const files = await searchWorkspaceFiles(normalizeWorkspace(dir), q);
+  return json({ files });
+};
+
 // Directory autocomplete for the new-session dialog: fuzzy dirs under the query's
 // base (fzf-style subsequence), seeded with every workspace a session has ever
 // used — but not the per-session worktrees bough itself creates.
@@ -1107,6 +1118,7 @@ const routes: Route[] = [
   { method: "DELETE", pattern: new URLPattern({ pathname: "/theme" }), handler: deleteTheme },
   { method: "GET", pattern: new URLPattern({ pathname: "/sessions" }), handler: listSessions },
   { method: "GET", pattern: new URLPattern({ pathname: "/fs/dirs" }), handler: searchDirs },
+  { method: "GET", pattern: new URLPattern({ pathname: "/fs/files" }), handler: searchDraftFiles },
   { method: "POST", pattern: new URLPattern({ pathname: "/sessions" }), handler: createSession },
   { method: "GET", pattern: new URLPattern({ pathname: "/sessions/:id" }), handler: getSession },
   {

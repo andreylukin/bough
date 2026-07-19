@@ -203,6 +203,12 @@ export const api = {
     j<{ files: string[] }>(`/sessions/${id}/files?q=${encodeURIComponent(q)}`)
       .then((r) => r.files),
 
+  // Same, for a draft conversation (no session yet): search the prospective
+  // workspace by path.
+  searchDraftFiles: (dir: string, q: string) =>
+    j<{ files: string[] }>(`/fs/files?dir=${encodeURIComponent(dir)}&q=${encodeURIComponent(q)}`)
+      .then((r) => r.files),
+
   // Review payloads for a session's workspace changes.
   getChanges: (id: string) => j<{ diffs: WireDiff[] }>(`/sessions/${id}/changes`),
   applyChanges: (id: string, source: ChangeSource, paths: string[]) =>

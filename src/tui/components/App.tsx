@@ -466,7 +466,7 @@ export function App(
   // plus the rows themselves. Synced post-render alongside activityRowRef.
   const infoClickRef = useRef<{ firstRow: number; rows: [string, string, string][] } | null>(null);
   // Composer autocomplete: "/" at the start completes skills, "@" completes
-  // workspace files (needs a live session — drafts have no workspace yet).
+  // workspace files (in a draft, the prospective workspace's files by path).
   interface Popup {
     kind: "skill" | "file";
     items: { label: string; detail: string; insert: string }[];
@@ -496,10 +496,11 @@ export function App(
           { name: "conversation", description: "show this conversation's id and details" },
         ];
         const items = [...local, ...skills.filter((s) => s.name !== "theme")]
-          .map((s) => ({ s, score: fuzzyScore(s.name, q) }))
+          .map((s, i) => ({ s, local: i < local.length, score: fuzzyScore(s.name, q) }))
           .filter((x) => x.score > 0)
           .sort((a, b) =>
-            b.score - a.score || a.s.name.length - b.s.name.length ||
+            b.score - a.score || Number(b.local) - Number(a.local) ||
+            a.s.name.length - b.s.name.length ||
             a.s.name.localeCompare(b.s.name)
           )
           .slice(0, 6)
@@ -514,12 +515,15 @@ export function App(
     }
     const at = text.lastIndexOf("@", cursor - 1);
     if (
-      at >= 0 && currentId && !/\s/.test(text.slice(at + 1, cursor)) &&
+      at >= 0 && !/\s/.test(text.slice(at + 1, cursor)) &&
       (at === 0 || /\s/.test(text[at - 1]))
     ) {
       const q = text.slice(at + 1, cursor);
       const t = setTimeout(() => {
-        api.searchFiles(currentId, q).then((files) => {
+        const search = currentId
+          ? api.searchFiles(currentId, q)
+          : api.searchDraftFiles(defaultWorkspace, q);
+        search.then((files) => {
           const items = files.slice(0, 6).map((f) => ({
             label: `@${f}`,
             detail: "",
@@ -533,7 +537,7 @@ export function App(
       return () => clearTimeout(t);
     }
     setPopup(null);
-  }, [comp, mode, currentId]);
+  }, [comp, mode, currentId, defaultWorkspace]);
 
   // Bracketed pastes land whole in the composer (chat mode only), newlines intact.
   const modeRef = useRef(mode);
