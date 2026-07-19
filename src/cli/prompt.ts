@@ -103,6 +103,12 @@ outer: while (Date.now() < deadline) {
 }
 reader.cancel().catch(() => {});
 
+// A timed-out turn must not keep running server-side (it would burn tokens and
+// skew whatever runs next against this server).
+if (status === "timeout") {
+  await fetch(`${api}/sessions/${session.id}/interrupt`, { method: "POST" }).catch(() => {});
+}
+
 if (args.json) {
   // Post-turn metrics are the authoritative usage record (incl. cache splits
   // for discounted pricing) — the SSE usage event races the finish.
