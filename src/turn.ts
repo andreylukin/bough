@@ -178,6 +178,7 @@ export const MODELS: ModelRow[] = [
   { id: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro (OpenRouter)", provider: "openrouter" },
   { id: "z-ai/glm-5.2", label: "GLM 5.2 (OpenRouter)", provider: "openrouter" },
   { id: "deepseek/deepseek-v4-flash", label: "DeepSeek V4 Flash (OpenRouter)", provider: "openrouter" },
+  { id: "moonshotai/kimi-k3", label: "Kimi K3 (OpenRouter)", provider: "openrouter", pricing: { in: 3, out: 15 } },
 ];
 
 const MAX_TOKENS = 64_000;
