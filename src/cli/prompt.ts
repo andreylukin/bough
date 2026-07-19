@@ -67,10 +67,7 @@ const reader = events.body!.pipeThrough(new TextDecoderStream()).getReader();
 await post(`/sessions/${session.id}/messages`, { text: prompt });
 
 let status = "timeout";
-let usage: Record<string, unknown> = {};
-let deadline = Date.now() + timeoutMs;
-// usage.updated lands just AFTER turn.finished — take a short grace read for it.
-let finishing = false;
+const deadline = Date.now() + timeoutMs;
 let buf = "";
 let dataName = "";
 outer: while (Date.now() < deadline) {
@@ -98,26 +95,32 @@ outer: while (Date.now() < deadline) {
     if (dataName === "message.delta" && !args.json) {
       const delta = (data as { delta?: string }).delta;
       if (delta) await Deno.stdout.write(new TextEncoder().encode(delta));
-    } else if (dataName === "usage.updated") {
-      usage = data;
-      if (finishing) break outer;
     } else if (dataName === "turn.finished") {
       status = String((data as { status?: string }).status ?? "done");
-      if (!args.json) break outer;
-      finishing = true;
-      deadline = Math.min(deadline, Date.now() + 1500);
+      break outer;
     }
   }
 }
 reader.cancel().catch(() => {});
 
 if (args.json) {
+  // Post-turn metrics are the authoritative usage record (incl. cache splits
+  // for discounted pricing) — the SSE usage event races the finish.
+  let usage: Record<string, unknown> = {};
+  let turns: Record<string, unknown> = {};
+  try {
+    const m = await (await fetch(`${api}/sessions/${session.id}/metrics`)).json();
+    usage = m.usage ?? {};
+    turns = { turns: m.assistantTurns ?? null, tool_calls: m.toolCalls ?? null };
+  } catch { /* metrics are best-effort in the envelope */ }
   console.log(JSON.stringify({
     session: session.id,
     status,
+    ...turns,
     input_tokens: usage.inputTokens ?? null,
     output_tokens: usage.outputTokens ?? null,
-    context_tokens: usage.contextTokens ?? null,
+    cache_read_tokens: usage.cacheReadTokens ?? null,
+    cache_write_tokens: usage.cacheWriteTokens ?? null,
   }));
 } else {
   // Deltas usually end mid-line; land the shell prompt cleanly.

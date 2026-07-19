@@ -372,11 +372,14 @@ export class Db {
     outputTokens: number;
     inputTokens: number;
     cachedTokens: number;
+    cacheReadTotal: number;
+    cacheWriteTotal: number;
     lastLlmAt: number | null;
   } {
     const r = this.#db
       .prepare(
-        `SELECT context_tokens, output_tokens, input_tokens, cached_tokens, last_llm_at
+        `SELECT context_tokens, output_tokens, input_tokens, cached_tokens,
+                cache_read_total, cache_write_total, last_llm_at
          FROM sessions WHERE id = ?`,
       )
       .get(id) as {
@@ -384,6 +387,8 @@ export class Db {
         output_tokens: number | null;
         input_tokens: number | null;
         cached_tokens: number | null;
+        cache_read_total: number | null;
+        cache_write_total: number | null;
         last_llm_at: number | null;
       } | undefined;
     return {
@@ -391,6 +396,8 @@ export class Db {
       outputTokens: r?.output_tokens ?? 0,
       inputTokens: r?.input_tokens ?? 0,
       cachedTokens: r?.cached_tokens ?? 0,
+      cacheReadTotal: r?.cache_read_total ?? 0,
+      cacheWriteTotal: r?.cache_write_total ?? 0,
       lastLlmAt: r?.last_llm_at ?? null,
     };
   }

@@ -88,6 +88,8 @@ Deno.test("treeUsage sums the subagent subtree only (forks excluded, archived in
     outputTokens: 100,
     inputTokens: 1_000,
     cachedTokens: 0,
+    cacheReadTotal: 0,
+    cacheWriteTotal: 0,
     lastLlmAt: null,
   });
   db.close();

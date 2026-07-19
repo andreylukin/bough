@@ -41,6 +41,14 @@ export interface SessionMetrics {
   turnDuration: DurationStats | null;
   /** First message → last message activity in the session. */
   wallClockMs: number;
+  /** Cumulative session tokens (input includes cache reads+writes; the cache
+   * splits let callers price at discounted rates). */
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
+  };
 }
 
 function stats(samples: number[]): DurationStats | null {
@@ -114,5 +122,11 @@ export function sessionMetrics(db: Db, sessionId: string): SessionMetrics {
     firstOutput: stats(firstOutputSamples),
     turnDuration: stats(durationSamples),
     wallClockMs,
+    usage: (({ inputTokens, outputTokens, cacheReadTotal, cacheWriteTotal }) => ({
+      inputTokens,
+      outputTokens,
+      cacheReadTokens: cacheReadTotal,
+      cacheWriteTokens: cacheWriteTotal,
+    }))(db.sessionUsage(sessionId)),
   };
 }
