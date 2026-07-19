@@ -61,5 +61,5 @@ Line legend:
   `SELECT session_id, id FROM messages WHERE parts LIKE '%some text%';`
 - Timestamps are epoch milliseconds.
 - Override the db path with `BOUGH_DB` if needed.
-- Session snapshots (jj/clonefile refs) live in `snapshots`; workspaces under
+- Session snapshots (shadow-git/clonefile refs) live in `snapshots`; workspaces under
   `~/.bough/workspaces/<id>`.

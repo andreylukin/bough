@@ -1,7 +1,6 @@
 import { assertEquals, assertThrows } from "jsr:@std/assert@1";
 import {
   activationsFor,
-  BUILTIN_SERVERS,
   expandEnv,
   loadRegistry,
   removeServer,
@@ -20,14 +19,14 @@ function withMcpDir(fn: () => void) {
   }
 }
 
-Deno.test("registry: builtins-only when absent, round-trips, rejects bad shapes", () => {
+Deno.test("registry: empty when absent, round-trips, rejects bad shapes", () => {
   withMcpDir(() => {
-    assertEquals(loadRegistry(), { servers: BUILTIN_SERVERS });
+    assertEquals(loadRegistry(), { servers: {} });
     saveRegistry({
       servers: { echo: { command: "deno", args: ["run", "srv.ts"] } },
     });
     const reg = loadRegistry();
-    assertEquals(Object.keys(reg.servers).sort(), ["echo", ...Object.keys(BUILTIN_SERVERS)].sort());
+    assertEquals(Object.keys(reg.servers).sort(), ["echo"]);
     assertEquals(reg.servers.echo.command, "deno");
     // exactly one of command|url
     assertThrows(() => saveRegistry({ servers: { bad: {} } }));
@@ -39,10 +38,9 @@ Deno.test("registry: builtins-only when absent, round-trips, rejects bad shapes"
 
 Deno.test("upsertServer adds/replaces one entry without touching siblings; removeServer deletes", () => {
   withMcpDir(() => {
-    const builtins = Object.keys(BUILTIN_SERVERS);
     saveRegistry({ servers: { exa: { command: "npx", args: ["exa-mcp"] } } });
     upsertServer("echo", { command: "deno", args: ["run", "srv.ts"] });
-    assertEquals(Object.keys(loadRegistry().servers).sort(), ["echo", "exa", ...builtins].sort());
+    assertEquals(Object.keys(loadRegistry().servers).sort(), ["echo", "exa"]);
     assertEquals(loadRegistry().servers.exa.args, ["exa-mcp"]); // sibling untouched
 
     upsertServer("echo", { url: "https://mcp.example.com/mcp" });
@@ -54,23 +52,7 @@ Deno.test("upsertServer adds/replaces one entry without touching siblings; remov
 
     assertEquals(removeServer("echo"), true);
     assertEquals(removeServer("echo"), false);
-    assertEquals(Object.keys(loadRegistry().servers).sort(), ["exa", ...builtins].sort());
-  });
-});
-
-Deno.test("builtin servers: overridable per-user, never persisted by mutations", () => {
-  withMcpDir(() => {
-    // Overlay: a user entry with a builtin's name wins for reads.
-    upsertServer("serena", { command: "my-serena", args: [] });
-    assertEquals(loadRegistry().servers.serena.command, "my-serena");
-    // Removing the override reverts to the builtin instead of deleting the server.
-    assertEquals(removeServer("serena"), true);
-    assertEquals(loadRegistry().servers.serena, BUILTIN_SERVERS.serena);
-    // The builtin itself lives in code, not the user file: nothing left to remove.
-    assertEquals(removeServer("serena"), false);
-    // Unrelated mutations never froze the builtin into the file.
-    upsertServer("echo", { command: "deno" });
-    assertEquals(removeServer("serena"), false);
+    assertEquals(Object.keys(loadRegistry().servers).sort(), ["exa"]);
   });
 });
 

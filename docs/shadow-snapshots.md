@@ -80,30 +80,10 @@ like any civilian repo.
 - clonefile backend stays for now (non-repo dirs); collapsing it into shadow
   is a possible later simplification since shadow handles non-git dirs too.
 
-## Phases
+## Possible later simplifications
 
-1. **Build** `src/vcs/shadow.ts` + `shadow.test.ts`: full contract
-   (ensure/track/diff/fork/worktreeAdd/adopt/materialize/revertPaths/undo/
-   accept/quarantine), no callers. Port jj.test.ts scenarios. Additive, zero
-   risk.
-2. **Wire behind a flag**: `prepareRepo` collapses to the single external-style
-   path via shadow when `BOUGH_VCS=shadow`; changes.ts + subagent.ts branch on
-   the same flag. jj remains the default. Live-verify a full session
-   (snapshot → diff → apply → revert → subagent → adopt) on a scratch repo.
-3. **Flip the default**, migrate bough's own repo: stop the jj daemon
-   habits, `rm -rf .jj`, primary checkout sits on `main` permanently.
-   Update CLAUDE.md / README / INTEGRATION.md, retire `.claude/hooks/block-jj.sh`.
-4. **Rip out**: delete `src/vcs/jj.ts` (641 loc) + `jj.test.ts` (584 loc),
-   the mode-split half of `supervisor/workspace.ts`, jj branches in
-   `server/changes.ts`, dead op-log exports, `snapshots` table, desktop PATH
-   note. `deno task test` green; live session green.
-5. **Optional later**: unify clonefile into shadow; `bough recover <session>`
-   CLI over shadow refs; fsmonitor for big trees.
+Unify clonefile into shadow; `bough recover <session>` CLI over shadow refs;
+fsmonitor for big trees.
 
-## Verification gates
-
-Each phase: full `deno task test` + a live end-to-end session on a scratch
-git repo (create → edit → diff → apply to origin → revert → fork → subagent
-adopt), plus one on a non-git dir. Phase 3 additionally: bough's own repo
-daily-drive smoke (this repo, real turn, ship-to-main afterward now being a
-plain `git commit` on main).
+(The phased jj→shadow migration plan that used to live here completed on
+2026-07-18 — see the git history of this file for the cutover steps.)

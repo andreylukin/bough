@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fresh-machine bootstrap in one line — clones the repo and hands off to the full
-# setup (deps, web build, worker model, API-key prompt, launchd service):
+# setup (deps, worker model, API-key prompt, launchd service):
 #
 #   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/andreylukin/bough/main/install.sh)"
 #

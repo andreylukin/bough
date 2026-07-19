@@ -36,37 +36,6 @@ export const ServerConfig = z.object({
 });
 export type ServerConfig = z.infer<typeof ServerConfig>;
 
-/**
- * Servers shipped with bough — present in every install without user config, so
- * capabilities built on them (mcp/lsp.ts) work everywhere. A user entry with the
- * same name in servers.json overrides its builtin; deleting the override restores
- * it. Mutations below write the USER file only — a builtin is never persisted, so
- * shipping a new default command takes effect without touching anyone's config.
- */
-export const BUILTIN_SERVERS: Record<string, ServerConfig> = {
-  // serena's symbol/file tools, behind an explicit mcp() grant. (No longer the
-  // lsp.* backend — that's the leta CLI now, see mcp/lsp.ts.) ide-assistant
-  // context = the symbol-tool surface; ~/.serena is where it keeps project
-  // registrations and logs. Dashboard/GUI off: one serena per session runs
-  // headless in the background (and dashboards would fight over the port).
-  serena: ServerConfig.parse({
-    command: "uvx",
-    args: [
-      "--from",
-      "serena-agent",
-      "serena",
-      "start-mcp-server",
-      "--context",
-      "ide-assistant",
-      "--enable-web-dashboard",
-      "false",
-      "--enable-gui-log-window",
-      "false",
-    ],
-    allowWrite: ["~/.serena"],
-  }),
-};
-
 const NAME_RE = /^[a-z0-9][a-z0-9_-]*$/;
 
 export const Registry = z.object({
@@ -101,16 +70,10 @@ function writeJson(path: string, value: unknown): void {
   writeFileSync(path, JSON.stringify(value, null, 2) + "\n");
 }
 
-/** The USER registry file alone — the mutation paths' base, builtins excluded. */
-function loadUserRegistry(): Registry {
+/** The registry file. A missing or corrupt file contributes nothing (fail closed). */
+export function loadRegistry(): Registry {
   const parsed = Registry.safeParse(readJson(join(mcpDir(), "servers.json")) ?? {});
   return parsed.success ? parsed.data : { servers: {} };
-}
-
-/** The effective registry: builtins overlaid by the user file (same name wins).
- * A missing or corrupt user file contributes nothing (fail closed). */
-export function loadRegistry(): Registry {
-  return { servers: { ...BUILTIN_SERVERS, ...loadUserRegistry().servers } };
 }
 
 /** Parse with a human-readable failure — these messages surface as 400 bodies in
@@ -135,16 +98,15 @@ export function saveRegistry(raw: unknown): Registry {
  */
 export function upsertServer(name: string, raw: unknown): Registry {
   if (!NAME_RE.test(name)) throw new Error("server names are lowercase slugs");
-  const reg = loadUserRegistry();
+  const reg = loadRegistry();
   reg.servers[name] = parseReadable(ServerConfig, raw);
   writeJson(join(mcpDir(), "servers.json"), reg);
   return reg;
 }
 
-/** Remove one server entry from the USER file (a builtin's override reverts to the
- * builtin). Returns false when the name wasn't in the user file. */
+/** Remove one server entry. Returns false when the name wasn't registered. */
 export function removeServer(name: string): boolean {
-  const reg = loadUserRegistry();
+  const reg = loadRegistry();
   if (!(name in reg.servers)) return false;
   delete reg.servers[name];
   writeJson(join(mcpDir(), "servers.json"), reg);

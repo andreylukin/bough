@@ -1,6 +1,4 @@
-// SSE client — port of web/src/useEvents.ts. Differences: absolute base URL, plain
-// GET /events (the web's POST variant only exists for Cloudflare tunnel buffering,
-// which never applies on localhost), and no visibilitychange resync (a terminal
+// SSE client over plain GET /events. No visibilitychange resync (a terminal
 // never backgrounds the fetch) — resync fires on reconnect only.
 import { useEffect, useRef, useState } from "react";
 import type { BoughEvent } from "../schema/parts.ts";

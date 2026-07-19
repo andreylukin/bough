@@ -69,12 +69,7 @@ falls back to empty, never half-loads):
   live in `~/.bough/env`, not in the registry file. Secrets reach the **server
   child process only** — never the VM, never the model's context.
 - `allowWrite` adds seatbelt write roots for the server child (leading `~` expands)
-  — for servers that keep state outside the workspace (serena's `~/.serena`).
-- **Builtins**: `BUILTIN_SERVERS` in `mcp/config.ts` ships default entries with the
-  repo (currently `serena`, the lsp.\* backend — see `mcp/lsp.ts`) so they exist on
-  every install with zero user config. The user file overlays by name; mutations
-  write the user file only, so a builtin is never frozen into anyone's config and
-  deleting an override reverts to the shipped default.
+  — for servers that keep state outside the workspace.
 - API: `GET /mcp/servers` (registry + per-session connection status),
   `PUT /mcp/servers` (validate, persist, drop live connections to changed entries).
 

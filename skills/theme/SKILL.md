@@ -3,7 +3,7 @@ name: theme
 description: Design a UI color theme from a description and save it as JSON
 ---
 
-Create a color theme for the bough web UI from the user's description (a mood,
+Create a color theme for the bough TUI from the user's description (a mood,
 some base colors, or a well-known palette like Rosé Pine / Nord / Gruvbox), save it via
 the theme API, and show the JSON so it can be copied and shared. The bough API is at
 http://127.0.0.1:${BOUGH_PORT:-4321}, reachable from your shell.

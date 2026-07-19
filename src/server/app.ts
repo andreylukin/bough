@@ -9,7 +9,7 @@
  *   POST /sessions                 → Session            {title, parentId?, kind?}
  *   GET  /sessions/:id             → {session, thread}  (thread = root→self messages)
  *   POST /sessions/:id/messages    → 202                {text}  (persist + start turn)
- *   GET|POST /events[?sessionId=]  → SSE stream of BoughEvent (named events + heartbeat)
+ *   GET /events[?sessionId=]  → SSE stream of BoughEvent (named events + heartbeat)
  *
  * CORS is permissive (localhost dev; Vite proxies but standalone must work too).
  */
@@ -1213,10 +1213,6 @@ const routes: Route[] = [
     handler: revertChangesH,
   },
   { method: "GET", pattern: new URLPattern({ pathname: "/events" }), handler: events },
-  // POST variant for tunneled use: Cloudflare quick tunnels buffer GET event-streams
-  // until the connection closes (cloudflared#1449) but stream POST bodies live. The
-  // web client always uses POST; GET stays for curl and local tools.
-  { method: "POST", pattern: new URLPattern({ pathname: "/events" }), handler: events },
   { method: "GET", pattern: new URLPattern({ pathname: "/net/status" }), handler: netStatus },
   {
     method: "POST",
@@ -1337,7 +1333,11 @@ const routes: Route[] = [
     pattern: new URLPattern({ pathname: "/net/bundles/:name/install" }),
     handler: installBundleH,
   },
-  { method: "GET", pattern: new URLPattern({ pathname: "/artifacts/:id/:path*" }), handler: getArtifact },
+  {
+    method: "GET",
+    pattern: new URLPattern({ pathname: "/artifacts/:id/:path*" }),
+    handler: getArtifact,
+  },
 ];
 
 /** Build the fetch handler bound to a ctx (used by main.ts and by tests). */

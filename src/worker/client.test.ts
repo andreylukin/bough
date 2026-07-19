@@ -1,5 +1,5 @@
 import { assertEquals, assertRejects } from "jsr:@std/assert@1";
-import { workerComplete, workerCompleteMeta, workerEmbed, workerInfill } from "./client.ts";
+import { workerComplete, workerEmbed } from "./client.ts";
 
 /** A scripted local endpoint: one canned {status, body} per request, in order. */
 function fakeEndpoint(script: { status: number; body?: unknown; content?: string }[]) {
@@ -77,46 +77,6 @@ Deno.test("jsonSchema and cachePrompt ride along as llama-server expects", async
   assertEquals(body.response_format.type, "json_schema");
   assertEquals(body.response_format.json_schema.schema, schema);
   assertEquals(body.cache_prompt, true);
-  await ep.close();
-});
-
-Deno.test("workerCompleteMeta requests logprobs and averages them", async () => {
-  const ep = fakeEndpoint([{
-    status: 200,
-    body: {
-      choices: [{
-        message: { content: "hi" },
-        logprobs: { content: [{ logprob: -0.5 }, { logprob: -1.5 }] },
-      }],
-    },
-  }]);
-  const out = await workerCompleteMeta(ep.url, { system: "s", user: "u", maxTokens: 8 });
-  assertEquals(out.text, "hi");
-  assertEquals(out.avgLogprob, -1.0);
-  assertEquals((ep.requests[0].body as { logprobs: boolean }).logprobs, true);
-  await ep.close();
-});
-
-Deno.test("workerCompleteMeta without server logprobs still returns the text", async () => {
-  const ep = fakeEndpoint([{ status: 200, content: "hi" }]);
-  const out = await workerCompleteMeta(ep.url, { system: "s", user: "u", maxTokens: 8 });
-  assertEquals(out.text, "hi");
-  assertEquals(out.avgLogprob, undefined);
-  await ep.close();
-});
-
-Deno.test("workerInfill hits /infill with prefix/suffix and returns the fill", async () => {
-  const ep = fakeEndpoint([{ status: 200, body: { content: "return a + b" } }]);
-  const out = await workerInfill(ep.url, {
-    prefix: "def add(a, b):\n    ",
-    suffix: "\n",
-    maxTokens: 32,
-  });
-  assertEquals(out, "return a + b");
-  assertEquals(ep.requests[0].path, "/infill");
-  const body = ep.requests[0].body as { input_prefix: string; input_suffix: string };
-  assertEquals(body.input_prefix, "def add(a, b):\n    ");
-  assertEquals(body.input_suffix, "\n");
   await ep.close();
 });
 

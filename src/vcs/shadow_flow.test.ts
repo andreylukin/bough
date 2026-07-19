@@ -1,6 +1,6 @@
 /**
  * Shadow backend end-to-end through the real entry points: prepareWorkspace
- * (BOUGH_VCS=shadow) → sessionChanges → applyChanges → revertChanges, on a real
+ * → sessionChanges → applyChanges → revertChanges, on a real
  * git repo in a temp dir. The jj-era paths are untouched; this exercises the
  * flag-gated wiring of docs/shadow-snapshots.md phase 2.
  */
@@ -28,7 +28,6 @@ Deno.test("shadow flow: prepare → edit → changes → apply → revert", asyn
   await sh(repo, "git", "commit", "-q", "-m", "init");
 
   const env = {
-    BOUGH_VCS: "shadow",
     BOUGH_SHADOW_BASE: await Deno.makeTempDir({ prefix: "bough-flow-shadow-" }),
     BOUGH_SUBAGENT_BASE: await Deno.makeTempDir({ prefix: "bough-flow-ws-" }),
     BOUGH_SNAPSHOT_BASE: await Deno.makeTempDir({ prefix: "bough-flow-snap-" }),

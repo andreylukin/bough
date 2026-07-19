@@ -2,7 +2,6 @@ import { assert, assertEquals } from "jsr:@std/assert@1";
 import { Db } from "../db/db.ts";
 import { Bus } from "../bus.ts";
 import { type AppCtx, createHandler } from "./app.ts";
-import { BUILTIN_SERVERS } from "../mcp/config.ts";
 import type { Message, Session } from "../schema/parts.ts";
 
 function ctx(): AppCtx {
@@ -178,6 +177,8 @@ Deno.test("GET /sessions/:id includes token usage (zero before any turn)", async
       outputTokens: number;
       inputTokens: number;
       cachedTokens: number;
+      cacheReadTotal: number;
+      cacheWriteTotal: number;
       lastLlmAt: number | null;
       tree: { inputTokens: number; outputTokens: number; sessions: number };
     };
@@ -187,6 +188,8 @@ Deno.test("GET /sessions/:id includes token usage (zero before any turn)", async
     outputTokens: 0,
     inputTokens: 0,
     cachedTokens: 0,
+    cacheReadTotal: 0,
+    cacheWriteTotal: 0,
     lastLlmAt: null,
     tree: { inputTokens: 0, outputTokens: 0, sessions: 0 },
   });
@@ -356,42 +359,6 @@ Deno.test("smoke: /events streams named events for a posted turn", async () => {
   assertEquals(seen.filter((t) => t === "message.started").length, 2);
 });
 
-// The web client streams via POST (quick tunnels buffer GET event-streams; see routes).
-Deno.test("POST /events streams the same event feed", async () => {
-  const c = ctx();
-  const h = createHandler(c);
-  const server = Deno.serve({ port: 0, onListen() {} }, h);
-  const { port } = server.addr as Deno.NetAddr;
-  const origin = `http://127.0.0.1:${port}`;
-
-  const evRes = await fetch(`${origin}/events`, { method: "POST" });
-  assertEquals(evRes.headers.get("content-type"), "text/event-stream");
-  const reader = evRes.body!.getReader();
-  const dec = new TextDecoder();
-
-  const first = (async () => {
-    let buf = "";
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) return null;
-      buf += dec.decode(value, { stream: true });
-      const m = buf.match(/^event: (.+)$/m);
-      if (m) return m[1];
-    }
-  })();
-
-  await fetch(`${origin}/sessions`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ title: "post-events" }),
-  }).then((r) => r.body?.cancel());
-
-  assertEquals(await first, "session.created");
-  reader.cancel();
-  await server.shutdown();
-  c.db.close();
-});
-
 Deno.test("POST /sessions/:id/adopt guards: 404 unknown, 400 non-subagent / no workspace", async () => {
   const c = ctx();
   const h = createHandler(c);
@@ -497,7 +464,7 @@ Deno.test("mcp: registry round-trips, enable/disable manage activations, guards 
       connections: unknown[];
     };
     assertEquals(empty, {
-      registry: JSON.parse(JSON.stringify({ servers: BUILTIN_SERVERS })),
+      registry: { servers: {} },
       auth: {},
       active: [],
       connections: [],
@@ -557,10 +524,7 @@ Deno.test("mcp: per-server PUT/DELETE, connect-now proves a server runs", async 
     const reg = await (await h(req("GET", "/mcp/servers"))).json() as {
       registry: { servers: Record<string, unknown> };
     };
-    assertEquals(
-      Object.keys(reg.registry.servers).sort(),
-      ["echo", "other", ...Object.keys(BUILTIN_SERVERS)].sort(),
-    );
+    assertEquals(Object.keys(reg.registry.servers).sort(), ["echo", "other"]);
 
     // connect guards: session required/known, name registered
     const s = await (await h(req("POST", "/sessions", { title: "m" }))).json() as Session;
@@ -680,4 +644,3 @@ Deno.test("GET /artifacts/:id/* serves a published artifact; /sessions/:id/artif
     await Deno.remove(home, { recursive: true });
   }
 });
-

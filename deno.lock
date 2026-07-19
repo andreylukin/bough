@@ -8,7 +8,6 @@
     "npm:@anthropic-ai/sdk@0.68.0": "0.68.0_zod@3.25.76",
     "npm:@modelcontextprotocol/sdk@1.29.0": "1.29.0_zod@3.25.76",
     "npm:@types/react@19": "19.2.17",
-    "npm:drizzle-orm@0.36.4": "0.36.4_@types+react@19.2.17_react@19.2.7",
     "npm:ink@7.1.0": "7.1.0_@types+react@19.2.17_react@19.2.7",
     "npm:node-forge@1.4.0": "1.4.0",
     "npm:react@19.2.7": "19.2.7",
@@ -231,17 +230,6 @@
     },
     "depd@2.0.0": {
       "integrity": "sha512-g7nH6P6dyDioJogAAGprGpCtVImJhpPk/roCzdb3fIh61/s/nPsfR6onyMwkCAR/OlC3yBC0lESvUoQEAssIrw=="
-    },
-    "drizzle-orm@0.36.4_@types+react@19.2.17_react@19.2.7": {
-      "integrity": "sha512-1OZY3PXD7BR00Gl61UUOFihslDldfH4NFRH2MbP54Yxi0G/PKn4HfO65JYZ7c16DeP3SpM3Aw+VXVG9j6CRSXA==",
-      "dependencies": [
-        "@types/react",
-        "react"
-      ],
-      "optionalPeers": [
-        "@types/react",
-        "react"
-      ]
     },
     "dunder-proto@1.0.1": {
       "integrity": "sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==",
@@ -827,7 +815,6 @@
       "npm:@anthropic-ai/sdk@0.68.0",
       "npm:@modelcontextprotocol/sdk@1.29.0",
       "npm:@types/react@19",
-      "npm:drizzle-orm@0.36.4",
       "npm:ink@7.1.0",
       "npm:node-forge@1.4.0",
       "npm:react@19.2.7",

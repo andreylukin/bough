@@ -195,8 +195,8 @@ export class McpManager {
     if (spawn.sandbox) {
       argv = wrapChild(argv, {
         workspace: spawn.workspace,
-        // The snapshot dir plus the entry's declared write roots (e.g. serena's
-        // ~/.serena) — servers that keep state outside the workspace need them.
+        // The snapshot dir plus the entry's declared write roots — servers that
+        // keep state outside the workspace need them.
         allowWrite: [spawn.sandbox.sessionDir, ...cfg.allowWrite.map(expandHome)],
         confineNetwork: Object.keys(netEnv).length > 0,
       });

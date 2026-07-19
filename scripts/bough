@@ -132,7 +132,7 @@ wait_up() {
 }
 
 # What launchd executes (also handy for a manual foreground run). launchd starts
-# with a bare environment, so put Homebrew on PATH for deno/git/jj/llama-server.
+# with a bare environment, so put Homebrew on PATH for deno/git/llama-server.
 cmd_run() {
   export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
   if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
@@ -217,17 +217,16 @@ cmd_update() {
   is_up && was_running=1
 
   if ! git -C "$ROOT" merge-base --is-ancestor HEAD origin/main; then
-    # Dev checkout: HEAD sits on a jj snapshot chain carrying unshipped work,
-    # and main's commits are shipped FROM this tree — there is nothing to pull
-    # into it (a tree-level merge just re-collides with its own shipped
-    # history). Leave git alone; rebuild and restart from the tree as-is.
+    # Dev checkout: HEAD carries unshipped work and main's commits are shipped
+    # FROM this tree — there is nothing to pull into it (a tree-level merge just
+    # re-collides with its own shipped history). Leave git alone; rebuild and
+    # restart from the tree as-is.
     echo "==> dev checkout (unshipped snapshot work) — skipping git update, rebuilding from the tree"
   else
     # Consumer checkout: fast-forward to the new main, carrying uncommitted
-    # changes over as a patch — no `git stash`, whose push/pop fails messily
-    # against jj's index snapshots in a colocated repo. Lock files stay out of
-    # the patch (npm install / deno install below regenerate them); untracked
-    # files pass through untouched.
+    # changes over as a patch — no `git stash` (its pop can conflict messily
+    # mid-update). Lock files stay out of the patch (npm install / deno install
+    # below regenerate them); untracked files pass through untouched.
     local patch added=""
     patch="$BOUGH_HOME/update-carry-$(date +%Y%m%d-%H%M%S).patch"
     git -C "$ROOT" diff --binary HEAD -- . \
@@ -320,7 +319,7 @@ env_set() {
   rm -f "$tmp"
 }
 
-# One command from fresh clone to running server: install deps + build
+# One command from fresh clone to running server: install deps
 # (scripts/setup.sh, idempotent), then fill in the env interactively (API key,
 # Claw Patrol opt-in) and start the launchd service. Safe to re-run any time —
 # it never overwrites values that are already set.
@@ -438,7 +437,7 @@ cmd_grant() {
     [ "$p" = "/" ] || [ "$p" = "/Users" ] && break
     chmod +a "$ACL_TRAVERSE" "$p" 2>/dev/null || true
   done
-  # jj/git run as the agent across a uid boundary — mark the repo safe for it.
+  # git runs as the agent across a uid boundary — mark the repo safe for it.
   "${AS_AGENT[@]}" git config --global --add safe.directory "$dir" 2>/dev/null || true
   grants_edit add "$dir"
   echo "granted. New sessions can now use $dir."
@@ -709,9 +708,9 @@ cmd_purge() {
 }
 
 usage() {
-  echo "usage: bough [tui|setup|grant|revoke|teardown|start|kill|restart|update|status|logs|run|net|purge]"
+  echo "usage: bough [tui|setup|grant|revoke|teardown|start|kill|restart|update|status|logs|run|prompt|broker|net|purge]"
   echo "  (no args) open the terminal UI (auto-starts the server)"
-  echo "  setup    fresh clone → running: install deps, build, configure env, start"
+  echo "  setup    fresh clone → running: install deps, configure env, start"
   echo "           setup --agent-user: migrate state + install the dedicated-user daemon"
   echo "  grant    bough grant <dir>: give the agent user access to a project dir"
   echo "  revoke   bough revoke <dir>: remove the agent user's access"
