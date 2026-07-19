@@ -46,6 +46,21 @@ Deno.test("done with no check bounces once with a nudge, then is accepted", asyn
   assertStringIncludes(r2, "no check declared");
 });
 
+Deno.test("todo commits on the turn and is echoed on every later result", async () => {
+  const c = ctx();
+  const r1 = await runSteps.run(
+    { code: `console.log("a");`, todo: "1. rule one\n2. rule two" },
+    c,
+  );
+  assertStringIncludes(r1, "[todo");
+  assertStringIncludes(r1, "rule two");
+  const r2 = await runSteps.run({ code: `console.log("b");` }, c);
+  assertStringIncludes(r2, "rule one");
+  const r3 = await runSteps.run({ code: `console.log("c");`, todo: "" }, c);
+  assertStringIncludes(r3, "c");
+  if (r3.includes("[todo")) throw new Error("cleared todo must not echo");
+});
+
 Deno.test("program errors surface in the output without killing the round", async () => {
   const out = await runSteps.run({ code: `throw new Error("boom");` }, ctx());
   assertStringIncludes(out, "[program error]");

@@ -19,6 +19,9 @@ shift $((OPTIND - 1))
 TASKS=("$@")
 [ ${#TASKS[@]} -gt 0 ] || TASKS=($(ls "$BENCH/tasks"))
 
+# Always restart: a server left over from a previous sweep runs stale code,
+# which silently invalidates any harness-edit verification (burned twice).
+"$BENCH/server.sh" stop >&2 || true
 "$BENCH/server.sh" start >&2
 mkdir -p "$RESULTS"
 OUT="$RESULTS/results.jsonl"

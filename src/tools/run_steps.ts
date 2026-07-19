@@ -51,6 +51,12 @@ const schema = z.object({
     "Set true when you believe the task is complete. The harness re-runs the committed " +
       "check and accepts done only if it passes.",
   ),
+  todo: z.string().optional().describe(
+    "STRONGLY RECOMMENDED when the request states several rules or steps: copy them " +
+      "here as a numbered list, VERBATIM, in your first program — it is echoed back " +
+      "after every round so no stated rule falls out of view. Re-declare with " +
+      "completed items pruned; an unpruned item is work you have not verified.",
+  ),
 });
 
 /** "cmd output…[exit code N]" (bash tool format) → N; absent marker = 0. */
@@ -67,8 +73,9 @@ export const runSteps: ToolDef = {
     "optionally committing a `check` command and/or requesting `done`. This is your only way to act.",
   schema,
   async run(input: unknown, ctx: ToolRunCtx): Promise<string> {
-    const { code, check, done } = input as z.infer<typeof schema>;
+    const { code, check, done, todo } = input as z.infer<typeof schema>;
     if (check && ctx.turn) ctx.turn.check = check;
+    if (todo !== undefined && ctx.turn) ctx.turn.todo = todo;
 
     const result = await runProgram(
       code,
@@ -178,6 +185,9 @@ export const runSteps: ToolDef = {
         );
       }
     }
+    // Context reinforcement: the turn's todo rides on every result so stated
+    // rules survive long turns (weak models drop prose sub-clauses otherwise).
+    if (ctx.turn?.todo?.trim()) out.push(`[todo — prune as items complete]\n${ctx.turn.todo}`);
     return out.join("\n") || "(no output)";
   },
 };
