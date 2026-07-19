@@ -43,6 +43,10 @@ export interface ToolRunCtx {
     todo?: string;
     probeRounds?: number;
     everWrote?: boolean;
+    /** Set (to the triggering request text) only for multi-rule requests —
+     * enables the one-time spec-recheck bounce at done-time. */
+    requestText?: string;
+    specEchoed?: boolean;
   };
   /**
    * Delegation, wired by the turn runner for sessions below the depth cap (absent

@@ -61,6 +61,19 @@ Deno.test("todo commits on the turn and is echoed on every later result", async 
   if (r3.includes("[todo")) throw new Error("cleared todo must not echo");
 });
 
+Deno.test("multi-rule requests get one spec-recheck bounce after a passing check", async () => {
+  const c = ctx();
+  c.turn = { requestText: "Do it.\n1. rule one\n2. rule two" };
+  const r1 = await runSteps.run(
+    { code: `await write("ok.txt", "y");`, check: "test -f ok.txt", done: true },
+    c,
+  );
+  assertStringIncludes(r1, "spec recheck");
+  assertStringIncludes(r1, "rule two");
+  const r2 = await runSteps.run({ code: `console.log("re-verified");`, done: true }, c);
+  assertStringIncludes(r2, DONE_ACCEPTED);
+});
+
 Deno.test("probe-round meter nudges after 3 no-write no-check rounds, then resets", async () => {
   const c = ctx();
   const probe = { code: `console.log("looking");` };

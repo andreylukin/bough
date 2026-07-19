@@ -185,11 +185,25 @@ export const runSteps: ToolDef = {
         );
         const exit = exitCodeOf(checkOut);
         out.push(`[check] ${committed}\n${checkOut}`);
-        out.push(
-          exit === 0
-            ? `${DONE_ACCEPTED} — check passed`
-            : `${DONE_REJECTED} — check failed (exit ${exit}); keep working`,
-        );
+        if (exit === 0 && ctx.turn?.requestText && !ctx.turn.specEchoed) {
+          // Multi-rule requests get one spec replay at the decisive moment: a
+          // passing check can still be weaker than the spec (it usually is when
+          // a prose sub-clause got dropped rounds ago). Second done accepts.
+          ctx.turn.specEchoed = true;
+          out.push(
+            `${DONE_REJECTED} — spec recheck. Your check passed, but re-read the ` +
+              `request below and confirm EACH numbered rule is implemented and ` +
+              `covered by your check. If any rule is not tested by the check, fix ` +
+              `that first; when every rule is verified, set done:true again.\n` +
+              `--- original request ---\n${ctx.turn.requestText}`,
+          );
+        } else {
+          out.push(
+            exit === 0
+              ? `${DONE_ACCEPTED} — check passed`
+              : `${DONE_REJECTED} — check failed (exit ${exit}); keep working`,
+          );
+        }
       }
     }
     // Probe-round meter: verify-by-eyeball shows up as runs of rounds that

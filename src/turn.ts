@@ -202,6 +202,11 @@ const REPORT_NUDGE = "[harness] Your turn is about to end but you have written n
   "Reply now with 1-3 short lines (the answer, or what changed and the check result), " +
   "then call stop in the same response.";
 
+const STOP_GATE_NUDGE = "[harness] You changed files this turn but never passed a " +
+  "committed check — stop would end the turn with the work unverified. Either commit " +
+  "a `check` that encodes the request's acceptance criteria and set done:true, or, " +
+  "if these changes genuinely need no verification, call stop again to end anyway.";
+
 const SYSTEM = [
   "You are bough, a coding agent. You act ONLY through the run_steps tool: each call",
   "carries one JavaScript program that a deterministic harness executes in a sealed V8",
@@ -644,7 +649,19 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
         ? { sessionDir: prepared.sessionDir, scratchDir: prepared.scratchDir }
         : undefined,
       // Per-turn harness state: run_steps commits the CHECK here (SPEC §5 gating).
-      turn: {},
+      // Multi-rule requests (≥2 numbered rules) additionally carry their text so
+      // the done-gate can replay the spec once at the decisive moment — weak
+      // models drop prose sub-clauses by then (bench: refactor-behavior task).
+      turn: ((): { requestText?: string } => {
+        // `message` is the pending supervisor placeholder — the request lives in
+        // the thread's last USER message.
+        const users = db.threadFor(sessionId).filter((m) => m.role === "user");
+        const text = (users.at(-1)?.parts ?? [])
+          .filter((p): p is Extract<Part, { type: "text" }> => p.type === "text")
+          .map((p) => p.text).join("\n");
+        const numbered = (text.match(/^\s*\d+[.)]\s/gm) ?? []).length;
+        return numbered >= 2 ? { requestText: text } : {};
+      })(),
       // Management-plane visibility, always on: the program can ask what MCP state
       // this session sees without shelling curl at the loopback API. Read-only —
       // tool calls still enter through the granted mcp() bridge below.
@@ -784,6 +801,15 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     // gate accepts done; interruptTurn is the user's brake on a runaway.
     let nudges = 0;
     let reportNudges = 0;
+    // Stop-gate: a turn that wrote files must exit through the check gate (done)
+    // or explicitly decline it twice — stop is not a side door around verification.
+    let anyDoneAccepted = false;
+    let stopGateNudged = false;
+    const stopGateBlocks = (): boolean => {
+      if (anyDoneAccepted || stopGateNudged || !toolCtx.turn?.everWrote) return false;
+      stopGateNudged = true;
+      return true;
+    };
     // Last resort against a mute turn end: a round with tools forbidden
     // (toolChoice "none"), which reliably yields plain text where a second nudge
     // would just get another empty-thinking + stop.
@@ -876,6 +902,7 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
             output.includes(DONE_ACCEPTED)
           ) {
             doneAccepted = true;
+            anyDoneAccepted = true;
           }
         }
         // Ending mute (accepted done / stop with no text this turn): ask for the
@@ -883,6 +910,11 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
         // nudge with text far more reliably than one sent as a separate message
         // (it tends to reply with empty thinking + stop). If even the nudge
         // round ends mute, escalate to a forced text-only round.
+        if (stopRequested && !doneAccepted && stopGateBlocks()) {
+          toolResults.push({ type: "text", text: STOP_GATE_NUDGE });
+          messages.push({ role: "user", content: toolResults });
+          continue;
+        }
         const wantsEnd = doneAccepted || stopRequested;
         if (wantsEnd && !saidSomething()) {
           if (reportNudges < 1) {
@@ -902,6 +934,10 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
 
       // No real tool calls this round: only an explicit stop ends the turn.
       if (stopRequested) {
+        if (stopGateBlocks()) {
+          messages.push({ role: "user", content: [{ type: "text", text: STOP_GATE_NUDGE }] });
+          continue;
+        }
         if (saidSomething()) break;
         if (reportNudges < 1) {
           reportNudges++;
