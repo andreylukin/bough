@@ -33,12 +33,15 @@ const DELEGATING_TIMEOUT_MS = 45 * 60_000;
 const schema = z.object({
   code: z.string().describe(
     "One JavaScript program for this round. It runs in a sealed V8 sandbox; the core " +
-      "capability surface is async host functions: bash(cmd), read(path), " +
+      "capability surface is async host functions with these RETURN TYPES: " +
+      "bash(cmd) → string (combined stdout+stderr — NOT a {stdout} object; " +
+      "`const {stdout} = await bash(...)` yields undefined), read(path) → string, " +
       "write(path, content), edit(path, oldText, newText), and background shells — " +
-      "bashBg(cmd) → {id, pid}, bashOutput(id), bashKill(id) " +
+      "bashBg(cmd) → {id, pid}, bashOutput(id) → string, bashKill(id) " +
       "— plus mcpStatus() (always available: this session's MCP management state) and any " +
-      "oracle(question), delegation (agent/spawn/join/adopt), mcp(server, tool, args), and lsp.* symbol " +
-      "navigation host functions your system prompt grants. Use console.log(...) to see " +
+      "oracle(question) → string, delegation (agent/spawn/join/adopt), mcp(server, tool, args), and lsp.* symbol " +
+      "navigation host functions your system prompt grants. Node globals (process, " +
+      "require) do not exist. Use console.log(...) to see " +
       "anything — printed output is returned to you. Cover inspect → change → verify in " +
       "one program.",
   ),
