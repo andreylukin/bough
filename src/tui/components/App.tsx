@@ -4,6 +4,23 @@
 // (composer/approval card + status bar) is pinned to the terminal's last rows; its
 // height is measured after render so the viewport always fits exactly.
 import { applyTheme, palette, THEME_PRESETS } from "../theme.ts";
+
+// BOUGH_TUI_DEBUG=1: append composer/popup traces to ~/.bough/tui-debug.log
+// (inside the TUI's --allow-write list; /tmp is not). For diagnosing behavior
+// that only reproduces in a real terminal, where a screenshot can't show state.
+const dbg = Deno.env.get("BOUGH_TUI_DEBUG")
+  ? (m: string) => {
+    try {
+      Deno.writeTextFileSync(
+        `${Deno.env.get("HOME")}/.bough/tui-debug.log`,
+        `${new Date().toISOString()} ${m}\n`,
+        { append: true },
+      );
+    } catch {
+      // diagnostics must never break the TUI
+    }
+  }
+  : null;
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, type DOMElement, measureElement, Text, useApp, useInput, useStdout } from "ink";
 import type { Message, Session } from "../../schema/parts.ts";
@@ -482,6 +499,7 @@ export function App(
       return;
     }
     const { text, cursor } = comp;
+    dbg?.(`popup-effect text=${JSON.stringify(text)} cursor=${cursor} currentId=${currentId}`);
     const end = (() => {
       const ws = text.slice(cursor).search(/\s/);
       return ws < 0 ? text.length : cursor + ws;
@@ -505,12 +523,18 @@ export function App(
           )
           .slice(0, 6)
           .map(({ s }) => ({ label: `/${s.name}`, detail: s.description, insert: `/${s.name} ` }));
+        dbg?.(`skill-popup q=${JSON.stringify(q)} items=${items.length}`);
         setPopup(
           items.length ? { kind: "skill", items, sel: 0, tokenStart: 0, tokenEnd: end } : null,
         );
       };
       if (skillsCache.current) apply(skillsCache.current);
-      else api.skills().then((s) => (skillsCache.current = s, apply(s)), () => {});
+      else {
+        api.skills().then(
+          (s) => (skillsCache.current = s, apply(s)),
+          (e) => dbg?.(`skills fetch FAILED: ${e}`),
+        );
+      }
       return;
     }
     const at = text.lastIndexOf("@", cursor - 1);
