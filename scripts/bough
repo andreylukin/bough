@@ -721,6 +721,8 @@ usage() {
   echo "  restart  pick up code changes explicitly"
   echo "  update   fast-forward to origin/main, rebuild, restart"
   echo "  run      run the server in the foreground (what launchd executes)"
+  echo "  prompt   headless one-shot turn against the running server:"
+  echo "           bough prompt [-w dir] [-m model] [--yolo] [--json] \"...\""
   echo "  broker   AWS credential broker: 'bough broker {install [--profile NAME]|uninstall|status}'"
   echo "  net      Claw Patrol checks: 'bough net validate' verifies policy + plugins"
   echo "  purge    hard-delete sessions archived over 30 days ago (also runs on boot)"
@@ -750,6 +752,11 @@ case "${1:-}" in
   status) cmd_status ;;
   logs) cmd_logs ;;
   run) cmd_run ;;
+  prompt)
+    shift
+    exec deno run --no-prompt --allow-net=127.0.0.1 --allow-env --allow-read \
+      "$ROOT/src/cli/prompt.ts" "$@"
+    ;;
   broker)
     shift
     cmd_broker "$@"
