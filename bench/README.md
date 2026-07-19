@@ -64,6 +64,22 @@ Edits whose predictions fail get reverted — no vibes-driven prompt growth.
 Fixtures carry identical `AGENTS.md` and `CLAUDE.md` so neither harness gets
 extra guidance. Each trial stages a fresh git-committed fixture copy.
 
+## The 2x2 (model x harness), 2026-07-19
+
+| cell | pass | cost/solved |
+| --- | --- | --- |
+| haiku-4.5 + bough | 14/16 | $0.042 |
+| haiku-4.5 + Claude Code | 16/16 | $0.076 |
+| sonnet-5 + bough | 15/16 | $0.060 |
+| sonnet-5 + Claude Code | 14/16 | $0.193 |
+
+Two literature results replicate locally: **harness-induced cost variance
+(3.2x on sonnet at matched pass rates) exceeds model-induced variance**
+(Scaffold Effect), and the **pass-rate ranking reverses across tiers** (CC
+wins on haiku, bough on sonnet — CC-on-sonnet walks into the crossmodule
+misleading-comment trap that haiku ignores). Report harness+model pairs,
+never either alone.
+
 ## Comparability caveats
 
 - **Sandbox asymmetry**: bough turns run seatbelt-sandboxed behind the net
