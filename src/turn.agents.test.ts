@@ -1,5 +1,5 @@
 import { assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
-import { readAgentsFile } from "./turn.ts";
+import { readAgentsFile } from "./supervisor/prompt.ts";
 
 function tmp(): string {
   return Deno.makeTempDirSync({ prefix: "bough-agents-" });

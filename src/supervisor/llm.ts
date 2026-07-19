@@ -608,3 +608,25 @@ export function clientFor(model: string): LlmClient {
       return anthropicClient();
   }
 }
+
+/** One-shot text completion — no tools, no event consumer. Returns the
+ * concatenated text blocks (untrimmed; callers trim if they care). */
+export async function completeText(
+  llm: LlmClient,
+  opts: { model: string; system: string; maxTokens: number; prompt: string },
+): Promise<string> {
+  const result = await llm.run(
+    {
+      model: opts.model,
+      system: opts.system,
+      maxTokens: opts.maxTokens,
+      messages: [{ role: "user", content: [{ type: "text", text: opts.prompt }] }],
+      tools: [],
+    },
+    () => {},
+  );
+  return result.content
+    .filter((b): b is { type: "text"; text: string } => b.type === "text")
+    .map((b) => b.text)
+    .join("");
+}

@@ -11,8 +11,9 @@
  * sees, whatever the client's grouping rules are. Stateless and read-only: a
  * labeling pass over excerpts, nothing is stored.
  */
+import { HttpError } from "./errors.ts";
 import { z } from "zod";
-import { anthropicClient, type LlmClient } from "./supervisor/llm.ts";
+import { anthropicClient, completeText, type LlmClient } from "./supervisor/llm.ts";
 
 export const SectionsBody = z.object({
   /** One gist per turn, thread order — index i is turn i in the reply. */
@@ -28,12 +29,7 @@ export interface Section {
   label: string;
 }
 
-export class SectionsError extends Error {
-  constructor(readonly status: number, message: string) {
-    super(message);
-    this.name = "SectionsError";
-  }
-}
+export class SectionsError extends HttpError {}
 
 export interface SectionsCtx {
   /** Injected for tests; defaults to the real Anthropic client. */
@@ -105,20 +101,12 @@ export async function sectionize(
 ): Promise<Section[]> {
   const llm = ctx.llm ?? anthropicClient();
   const prompt = turns.map((t, i) => `${i}. ${t.gist.replaceAll("\n", " ")}`).join("\n");
-  const result = await llm.run(
-    {
-      model: MODEL,
-      system: SYSTEM,
-      maxTokens: MAX_TOKENS,
-      messages: [{ role: "user", content: [{ type: "text", text: prompt }] }],
-      tools: [],
-    },
-    () => {},
-  );
-  const text = result.content
-    .filter((b): b is { type: "text"; text: string } => b.type === "text")
-    .map((b) => b.text)
-    .join("");
+  const text = await completeText(llm, {
+    model: MODEL,
+    system: SYSTEM,
+    maxTokens: MAX_TOKENS,
+    prompt,
+  });
   const raw = parseSections(text);
   if (!raw) throw new SectionsError(502, "section labeling failed (unparseable model output)");
   return normalizeSections(raw, turns.length);

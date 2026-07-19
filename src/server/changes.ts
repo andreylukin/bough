@@ -20,6 +20,7 @@
  *   - clonefile revert is implicit: the originals stay pristine until you apply, so
  *     "revert" is simply not applying; there is no clonefile revert path.
  */
+import { HttpError } from "../errors.ts";
 import * as shadow from "../vcs/shadow.ts";
 import * as clonefile from "../vcs/clonefile.ts";
 import type { Db } from "../db/db.ts";
@@ -33,12 +34,7 @@ export interface ChangesOpts {
 }
 
 /** 400 for an unrevertable session, etc. */
-export class ChangesError extends Error {
-  constructor(readonly status: number, message: string) {
-    super(message);
-    this.name = "ChangesError";
-  }
-}
+export class ChangesError extends HttpError {}
 
 function snapBase(opts: ChangesOpts): string {
   return opts.snapshotBase ?? Deno.env.get("BOUGH_SNAPSHOT_BASE") ?? clonefile.snapshotBase();

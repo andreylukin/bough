@@ -1,8 +1,8 @@
 /**
  * Artifacts — files the agent publishes for browser viewing, hosted on the same
- * :4321 origin as the API and web UI. The supervisor's `artifact()` host function
- * writes here (server/../turn.ts wires it); `GET /artifacts/:id/*` serves them; the
- * web UI lists a session's artifacts and links out to open them.
+ * :4321 origin as the API. The supervisor's `artifact()` host function
+ * writes here (server/../turn.ts wires it); `GET /artifacts/:id/*` serves them;
+ * `GET /sessions/:id/artifacts` lists a session's artifacts.
  *
  * Stored under ~/.bough/artifacts/<sessionId>/ — OUTSIDE the workspace, so a published
  * artifact never pollutes the repo diff the user reviews. The filesystem is the source
@@ -45,7 +45,7 @@ function contentType(path: string): string {
   return (dot >= 0 && MIME[path.slice(dot).toLowerCase()]) || "application/octet-stream";
 }
 
-/** An artifact the agent published (mirrored by web/src/types.ts `Artifact`). */
+/** An artifact the agent published. */
 export interface Artifact {
   /** Session-relative path, forward-slashed (e.g. "index.html" or "assets/app.js"). */
   name: string;

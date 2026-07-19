@@ -12,9 +12,10 @@
  * the user edits and sends, and posting the message clears it (app.ts). The source
  * session is never mutated.
  */
+import { HttpError } from "./errors.ts";
 import { z } from "zod";
 import type { Session } from "./schema/parts.ts";
-import { anthropicClient, type LlmClient } from "./supervisor/llm.ts";
+import { anthropicClient, completeText, type LlmClient } from "./supervisor/llm.ts";
 import { renderSpan } from "./compact.ts";
 import { baseTitle, type BranchCtx, openBranch } from "./branch.ts";
 
@@ -31,12 +32,7 @@ export interface HandoffCtx extends BranchCtx {
 }
 
 /** 400 for an empty thread, 404 for an unknown session. */
-export class HandoffError extends Error {
-  constructor(readonly status: number, message: string) {
-    super(message);
-    this.name = "HandoffError";
-  }
-}
+export class HandoffError extends HttpError {}
 
 const SYSTEM =
   "You are handing off work from one coding-agent conversation to a new, focused one. " +
@@ -69,20 +65,7 @@ export async function handoff(
   const llm = ctx.llm ?? anthropicClient();
   const model = ctx.model ?? Deno.env.get("BOUGH_MODEL") ?? "claude-opus-4-8";
   const prompt = `${renderSpan(thread)}\n\nGoal for the new conversation: ${args.goal}`;
-  const result = await llm.run(
-    {
-      model,
-      system: SYSTEM,
-      maxTokens: MAX_TOKENS,
-      messages: [{ role: "user", content: [{ type: "text", text: prompt }] }],
-      tools: [],
-    },
-    () => {},
-  );
-  const draft = result.content
-    .filter((b): b is { type: "text"; text: string } => b.type === "text")
-    .map((b) => b.text)
-    .join("")
+  const draft = (await completeText(llm, { model, system: SYSTEM, maxTokens: MAX_TOKENS, prompt }))
     .trim();
   if (!draft) throw new HandoffError(502, "the model returned an empty draft");
 

@@ -5,9 +5,10 @@
  * mutates history in place, so this is a copy: the source keeps its turns. The target
  * gains them as new messages (fresh ids), announced per copy like a seeded branch.
  */
+import { HttpError } from "./errors.ts";
 import { z } from "zod";
 import type { Session } from "./schema/parts.ts";
-import { type BranchCtx, mergePicks, PartPick, pickParts } from "./branch.ts";
+import { type BranchCtx, PartPick, resolvePicks, Seeder } from "./branch.ts";
 
 export const MoveBody = z.object({
   /** The session to copy FROM. */
@@ -17,12 +18,7 @@ export const MoveBody = z.object({
 });
 export type MoveBody = z.infer<typeof MoveBody>;
 
-export class MoveError extends Error {
-  constructor(readonly status: number, message: string) {
-    super(message);
-    this.name = "MoveError";
-  }
-}
+export class MoveError extends HttpError {}
 
 /** Append the picked source messages to `targetId`. Returns the target session. */
 export function move(ctx: BranchCtx, targetId: string, args: MoveBody): Session {
@@ -34,31 +30,10 @@ export function move(ctx: BranchCtx, targetId: string, args: MoveBody): Session 
   }
 
   const thread = ctx.db.threadFor(args.sourceId);
-  const index = new Map(thread.map((m, i) => [m.id, i]));
-  const picked = [...mergePicks(args.picks)]
-    .map(([id, sel]) => {
-      const i = index.get(id);
-      if (i === undefined) throw new MoveError(400, "picks must be messages of the source thread");
-      const parts = pickParts(thread[i], sel);
-      if (parts === undefined) {
-        throw new MoveError(400, `part index out of range for message ${id}`);
-      }
-      return { idx: i, view: { ...thread[i], parts } };
-    })
-    .sort((a, b) => a.idx - b.idx);
+  const picked = resolvePicks(thread, args.picks, (m) => new MoveError(400, m));
 
   // Append in thread order, each a fresh message on the target announced over the bus.
-  for (const p of picked) {
-    const msg = {
-      id: crypto.randomUUID(),
-      sessionId: targetId,
-      role: p.view.role,
-      parts: JSON.parse(JSON.stringify(p.view.parts)),
-      pending: false,
-      createdAt: Date.now(),
-    };
-    ctx.db.createMessage(msg);
-    ctx.bus.publish({ type: "message.started", sessionId: targetId, data: msg });
-  }
+  const seeder = new Seeder(ctx, target);
+  for (const p of picked) seeder.copy(p.view);
   return target;
 }

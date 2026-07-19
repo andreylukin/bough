@@ -15,16 +15,10 @@
  * Events: session.created for the new conversation and message.started per copy —
  * the UI's existing reducers render it with no changes (same contract as compact).
  */
+import { HttpError } from "./errors.ts";
 import { z } from "zod";
 import type { Session } from "./schema/parts.ts";
-import {
-  baseTitle,
-  type BranchCtx,
-  mergePicks,
-  openBranch,
-  PartPick,
-  pickParts,
-} from "./branch.ts";
+import { baseTitle, type BranchCtx, openBranch, PartPick, resolvePicks } from "./branch.ts";
 
 export const ExtractBody = z.object({
   /** Messages of the session's thread (own or inherited) to copy, any subset. */
@@ -40,12 +34,7 @@ export const ExtractBody = z.object({
 export type ExtractBody = z.infer<typeof ExtractBody>;
 
 /** 400 for an unknown message, 404 for an unknown session. */
-export class ExtractError extends Error {
-  constructor(readonly status: number, message: string) {
-    super(message);
-    this.name = "ExtractError";
-  }
-}
+export class ExtractError extends HttpError {}
 
 /**
  * Copy the selected thread messages of `sessionId` into a new root conversation and
@@ -56,20 +45,7 @@ export function extract(ctx: BranchCtx, sessionId: string, args: ExtractBody): S
   if (!session) throw new ExtractError(404, "session not found");
 
   const thread = ctx.db.threadFor(sessionId);
-  const index = new Map(thread.map((m, i) => [m.id, i]));
-  const picked = [...mergePicks(args.picks)]
-    .map(([id, sel]) => {
-      const i = index.get(id);
-      if (i === undefined) {
-        throw new ExtractError(400, "picks must be messages of this session's thread");
-      }
-      const parts = pickParts(thread[i], sel);
-      if (parts === undefined) {
-        throw new ExtractError(400, `part index out of range for message ${id}`);
-      }
-      return { idx: i, view: { ...thread[i], parts } };
-    })
-    .sort((a, b) => a.idx - b.idx);
+  const picked = resolvePicks(thread, args.picks, (m) => new ExtractError(400, m));
 
   const seeder = openBranch(ctx, {
     parentId: null,

@@ -2,7 +2,7 @@ import { assertEquals } from "jsr:@std/assert@1";
 import { BoughEvent, Message, NetRequest, Part, Session } from "./parts.ts";
 import type { Message as TMessage, Session as TSession } from "./parts.ts";
 
-// Round-trip the exact shapes web/src/types.ts pins. If the mirror drifts, these fail.
+// Round-trip the exact wire shapes clients pin. If the schema drifts, these fail.
 
 Deno.test("Part union round-trips all four kinds", () => {
   const parts: unknown[] = [

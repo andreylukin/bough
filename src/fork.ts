@@ -29,6 +29,7 @@
  * parent's tip (#9), so file edits made by the copied prefix turns are not replayed —
  * v1 forks history, and the workspace re-derives from the parent snapshot.
  */
+import { HttpError } from "./errors.ts";
 import { z } from "zod";
 import type { Message, Session } from "./schema/parts.ts";
 import { baseTitle, openBranch } from "./branch.ts";
@@ -47,12 +48,7 @@ export const ForkBody = z.object({
 export type ForkBody = z.infer<typeof ForkBody>;
 
 /** 400 for a bad fork point, 404 for an unknown session. */
-export class ForkError extends Error {
-  constructor(readonly status: number, message: string) {
-    super(message);
-    this.name = "ForkError";
-  }
-}
+export class ForkError extends HttpError {}
 
 export interface ForkResult {
   session: Session;

@@ -4,7 +4,7 @@
  * {method, URLPattern, handler}, matched in order, so an OpenAPI doc can be generated
  * from it later. Bodies are Zod-validated at the edge; handlers work in domain types.
  *
- * Endpoints (contract mirrored by web/src/api.ts + useEvents.ts):
+ * Endpoints (consumed by the TUI's api.ts/events.ts and the headless CLI):
  *   GET  /sessions                 → Session[]
  *   POST /sessions                 → Session            {title, parentId?, kind?}
  *   GET  /sessions/:id             → {session, thread}  (thread = root→self messages)
@@ -13,6 +13,8 @@
  *
  * CORS is permissive (localhost dev; Vite proxies but standalone must work too).
  */
+import type { z } from "zod";
+import { HttpError } from "../errors.ts";
 import { CreateSessionBody, PostMessageBody, type Session } from "../schema/parts.ts";
 import type { Db } from "../db/db.ts";
 import type { Bus, Listener } from "../bus.ts";
@@ -34,7 +36,7 @@ import { normalizeWorkspace, prepareWorkspace, workspaceProblem } from "../super
 import { UNTITLED } from "../supervisor/title.ts";
 import { listSkills } from "../supervisor/skills.ts";
 import { grantedDirs, searchDirectories, searchWorkspaceFiles } from "./files.ts";
-import { fork, ForkBody, ForkError } from "../fork.ts";
+import { fork, ForkBody } from "../fork.ts";
 import { type BundleManifest, getBundle, listBundles } from "../net/bundles.ts";
 import type { Gate } from "../net/gate.ts";
 import type { ClawpatrolGateway } from "../net/gateway.ts";
@@ -64,15 +66,15 @@ import { beginAuth, clearAuth, completeAuth } from "../mcp/oauth.ts";
 import { clientFor } from "../supervisor/llm.ts";
 import { listArtifacts, serveArtifact } from "./artifacts.ts";
 import { createAuth } from "./auth.ts";
-import { compact, CompactBody, CompactError } from "../compact.ts";
-import { sectionize, SectionsBody, SectionsError } from "../sections.ts";
+import { compact, CompactBody } from "../compact.ts";
+import { sectionize, SectionsBody } from "../sections.ts";
 import { type Embedder, recall } from "../recall.ts";
-import { extract, ExtractBody, ExtractError } from "../extract.ts";
-import { handoff, HandoffBody, HandoffError } from "../handoff.ts";
-import { move, MoveBody, MoveError } from "../move.ts";
+import { extract, ExtractBody } from "../extract.ts";
+import { handoff, HandoffBody } from "../handoff.ts";
+import { move, MoveBody } from "../move.ts";
 import { adoptSubagent } from "../subagent.ts";
 import type { LlmClient } from "../supervisor/llm.ts";
-import { applyChanges, ChangesError, revertChanges, sessionChanges } from "./changes.ts";
+import { applyChanges, revertChanges, sessionChanges } from "./changes.ts";
 import { ChangesApplyBody, ChangesRevertBody } from "../schema/changes.ts";
 import { clearTheme, loadTheme, saveTheme, Theme, THEME_DEFAULTS, THEME_TOKENS } from "./theme.ts";
 import { KeysBody, keyStatus, persistEnvVar, setKey } from "./keys.ts";
@@ -134,6 +136,19 @@ function error(status: number, message: string): Response {
   return json({ error: message }, status);
 }
 
+/** Parse + validate a JSON body; an invalid one throws the 400 that the
+ * dispatcher's HttpError catch turns into a response. `fallback` stands in for
+ * an absent/unparseable body (default null → schema decides the 400). */
+async function parseBody<S extends z.ZodTypeAny>(
+  req: Request,
+  schema: S,
+  fallback: unknown = null,
+): Promise<z.infer<S>> {
+  const parsed = schema.safeParse(await req.json().catch(() => fallback));
+  if (!parsed.success) throw new HttpError(400, "invalid body: " + parsed.error.message);
+  return parsed.data;
+}
+
 // ---- handlers --------------------------------------------------------------
 
 const getConfig: Handler = () => {
@@ -160,10 +175,9 @@ const getConfig: Handler = () => {
 // refreshed booleans; never echoes the value back. An OpenAI key also pulls the
 // account's model list (awaited, so the client's follow-up config read sees it).
 const putKeys: Handler = async (req) => {
-  const parsed = KeysBody.safeParse(await req.json().catch(() => null));
-  if (!parsed.success) return error(400, "invalid body: " + parsed.error.message);
-  const keys = setKey(parsed.data.provider, parsed.data.key);
-  if (parsed.data.provider === "openai") await refreshOpenAIModels();
+  const body = await parseBody(req, KeysBody);
+  const keys = setKey(body.provider, body.key);
+  if (body.provider === "openai") await refreshOpenAIModels();
   return json({ ok: true, keys });
 };
 
@@ -305,9 +319,8 @@ const listSessions: Handler = (_req, ctx) => {
 };
 
 const createSession: Handler = async (req, ctx) => {
-  const parsed = CreateSessionBody.safeParse(await req.json().catch(() => null));
-  if (!parsed.success) return error(400, "invalid body: " + parsed.error.message);
-  const { title, parentId, kind, workspace: rawWorkspace } = parsed.data;
+  const body = await parseBody(req, CreateSessionBody);
+  const { title, parentId, kind, workspace: rawWorkspace } = body;
   // Expand `~` and reject a workspace that doesn't exist NOW, with one clear
   // message — otherwise the bad path only surfaces later as per-tool sandbox
   // spawn failures inside the session.
@@ -349,8 +362,7 @@ const getSession: Handler = (_req, ctx, params) => {
 const postMessage: Handler = async (req, ctx, params) => {
   const session = ctx.db.getSession(params.id);
   if (!session) return error(404, "session not found");
-  const parsed = PostMessageBody.safeParse(await req.json().catch(() => null));
-  if (!parsed.success) return error(400, "invalid body: " + parsed.error.message);
+  const body = await parseBody(req, PostMessageBody);
 
   // A handoff draft is consumed by the first post — whatever the user actually
   // sent (edited or not) supersedes it, so clear it and announce the change.
@@ -363,7 +375,7 @@ const postMessage: Handler = async (req, ctx, params) => {
   }
 
   // Persist + announce the user message and run the turn (streams over /events).
-  startUserTurn(ctx, session.id, parsed.data.text);
+  startUserTurn(ctx, session.id, body.text);
   return new Response(null, { status: 202, headers: CORS });
 };
 
@@ -416,71 +428,41 @@ const interruptSession: Handler = (_req, ctx, params) => {
 // Compaction-as-a-branch: summarize selected turns onto a new compaction session
 // (see compact.ts).
 const compactSession: Handler = async (req, ctx, params) => {
-  const parsed = CompactBody.safeParse(await req.json().catch(() => null));
-  if (!parsed.success) return error(400, "invalid body: " + parsed.error.message);
-  try {
-    const session = await compact(ctx, params.id, parsed.data);
-    return json({ session });
-  } catch (e) {
-    if (e instanceof CompactError) return error(e.status, e.message);
-    throw e;
-  }
+  const body = await parseBody(req, CompactBody);
+  const session = await compact(ctx, params.id, body);
+  return json({ session });
 };
 
 // Section grouping: LLM-label the client's turn gists into contiguous activity
 // sections for the conversation tree's color coding + section selection
 // (see sections.ts). Read-only; nothing stored.
 const sectionsSession: Handler = async (req, ctx, params) => {
-  const parsed = SectionsBody.safeParse(await req.json().catch(() => null));
-  if (!parsed.success) return error(400, "invalid body: " + parsed.error.message);
+  const body = await parseBody(req, SectionsBody);
   if (!ctx.db.getSession(params.id)) return error(404, "session not found");
-  try {
-    return json({ sections: await sectionize(ctx, parsed.data.turns) });
-  } catch (e) {
-    if (e instanceof SectionsError) return error(e.status, e.message);
-    throw e;
-  }
+  return json({ sections: await sectionize(ctx, body.turns) });
 };
 
 // Extract-to-conversation: copy picked thread messages into a fresh root session
 // (see extract.ts).
 const extractSession: Handler = async (req, ctx, params) => {
-  const parsed = ExtractBody.safeParse(await req.json().catch(() => null));
-  if (!parsed.success) return error(400, "invalid body: " + parsed.error.message);
-  try {
-    const session = extract(ctx, params.id, parsed.data);
-    return json({ session });
-  } catch (e) {
-    if (e instanceof ExtractError) return error(e.status, e.message);
-    throw e;
-  }
+  const body = await parseBody(req, ExtractBody);
+  const session = extract(ctx, params.id, body);
+  return json({ session });
 };
 
 // Handoff: draft a goal-focused opening prompt from this thread and attach it to a
 // fresh root conversation as an editable composer draft (see handoff.ts).
 const handoffSession: Handler = async (req, ctx, params) => {
-  const parsed = HandoffBody.safeParse(await req.json().catch(() => null));
-  if (!parsed.success) return error(400, "invalid body: " + parsed.error.message);
-  try {
-    const session = await handoff(ctx, params.id, parsed.data);
-    return json({ session });
-  } catch (e) {
-    if (e instanceof HandoffError) return error(e.status, e.message);
-    throw e;
-  }
+  const body = await parseBody(req, HandoffBody);
+  const session = await handoff(ctx, params.id, body);
+  return json({ session });
 };
 
 // Move (copy) picked messages from a source session onto this existing target.
 const moveInto: Handler = async (req, ctx, params) => {
-  const parsed = MoveBody.safeParse(await req.json().catch(() => null));
-  if (!parsed.success) return error(400, "invalid body: " + parsed.error.message);
-  try {
-    const session = move(ctx, params.id, parsed.data);
-    return json({ session });
-  } catch (e) {
-    if (e instanceof MoveError) return error(e.status, e.message);
-    throw e;
-  }
+  const body = await parseBody(req, MoveBody);
+  const session = move(ctx, params.id, body);
+  return json({ session });
 };
 
 // Adopt a subagent's branch: fold its diff into its spawner's workspace —
@@ -501,15 +483,9 @@ const adoptSession: Handler = async (_req, ctx, params) => {
 
 // Fork-at-message: branch a new session at a past turn (edit & resend or plain branch).
 const forkSession: Handler = async (req, ctx, params) => {
-  const parsed = ForkBody.safeParse(await req.json().catch(() => null));
-  if (!parsed.success) return error(400, "invalid body: " + parsed.error.message);
-  try {
-    const { session } = fork(ctx, params.id, parsed.data);
-    return json({ session });
-  } catch (e) {
-    if (e instanceof ForkError) return error(e.status, e.message);
-    throw e;
-  }
+  const body = await parseBody(req, ForkBody);
+  const { session } = fork(ctx, params.id, body);
+  return json({ session });
 };
 
 // ---- changes (review rail) -------------------------------------------------
@@ -532,31 +508,18 @@ const getChanges: Handler = async (_req, ctx, params) => {
 
 const applyChangesH: Handler = async (req, ctx, params) => {
   if (!ctx.db.getSession(params.id)) return error(404, "session not found");
-  const parsed = ChangesApplyBody.safeParse(await req.json().catch(() => null));
-  if (!parsed.success) return error(400, "invalid body: " + parsed.error.message);
-  let result;
-  try {
-    result = await applyChanges(ctx.db, params.id, parsed.data, { snapshotBase: ctx.snapshotBase });
-  } catch (e) {
-    if (e instanceof ChangesError) return error(e.status, e.message);
-    throw e;
-  }
+  const body = await parseBody(req, ChangesApplyBody);
+  const result = await applyChanges(ctx.db, params.id, body, { snapshotBase: ctx.snapshotBase });
   emitChangesUpdated(ctx, params.id);
-  return json({ ok: true, source: parsed.data.source, ...result });
+  return json({ ok: true, source: body.source, ...result });
 };
 
 const revertChangesH: Handler = async (req, ctx, params) => {
   if (!ctx.db.getSession(params.id)) return error(404, "session not found");
-  const parsed = ChangesRevertBody.safeParse(await req.json().catch(() => ({})));
-  if (!parsed.success) return error(400, "invalid body: " + parsed.error.message);
-  try {
-    const revertedPaths = await revertChanges(ctx.db, params.id, parsed.data.paths);
-    emitChangesUpdated(ctx, params.id);
-    return json({ ok: true, reverted: "shadow", paths: revertedPaths });
-  } catch (e) {
-    if (e instanceof ChangesError) return error(e.status, e.message);
-    throw e;
-  }
+  const body = await parseBody(req, ChangesRevertBody, {});
+  const revertedPaths = await revertChanges(ctx.db, params.id, body.paths);
+  emitChangesUpdated(ctx, params.id);
+  return json({ ok: true, reverted: "shadow", paths: revertedPaths });
 };
 
 const events: Handler = (req, ctx) => {
@@ -1351,7 +1314,16 @@ export function createHandler(ctx: AppCtx): (req: Request) => Response | Promise
     for (const route of routes) {
       if (route.method !== req.method) continue;
       const match = route.pattern.exec({ pathname });
-      if (match) return route.handler(req, ctx, match.pathname.groups as Record<string, string>);
+      if (match) {
+        try {
+          return await route.handler(req, ctx, match.pathname.groups as Record<string, string>);
+        } catch (e) {
+          // Domain errors (HttpError subclasses) carry their response; this one
+          // catch replaces a per-handler catch block per error type.
+          if (e instanceof HttpError) return error(e.status, e.message);
+          throw e;
+        }
+      }
     }
     // No web UI — bough is driven through the TUI; the server is API + artifacts.
     if (req.method === "GET" && pathname === "/") {

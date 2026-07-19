@@ -44,7 +44,7 @@ function bundledDir(): string {
 /**
  * Skills shipped with bough, available without an install. `/init` mirrors opencode's:
  * analyze the project and write an authoritative AGENTS.md (which future turns then load
- * automatically — see turn.ts readAgentsFile).
+ * automatically — see supervisor/prompt.ts readAgentsFile).
  */
 const BUILTINS: Record<string, Skill & { body: string }> = {
   init: {

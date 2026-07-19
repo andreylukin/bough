@@ -61,6 +61,28 @@ export function pickParts(m: Message, indexes: number[] | null): Part[] | undefi
   return indexes.map((i) => m.parts[i]);
 }
 
+/**
+ * Resolve part-picks against a thread: merge duplicates, validate membership and
+ * part ranges (invalid → throw via `err`, which wraps the message in the caller's
+ * error type), and return the picked message views in thread order.
+ */
+export function resolvePicks(
+  thread: Message[],
+  picks: PartPick[],
+  err: (message: string) => Error,
+): { idx: number; view: Message }[] {
+  const index = new Map(thread.map((m, i) => [m.id, i]));
+  return [...mergePicks(picks)]
+    .map(([id, sel]) => {
+      const i = index.get(id);
+      if (i === undefined) throw err("picks must be messages of the source thread");
+      const parts = pickParts(thread[i], sel);
+      if (parts === undefined) throw err(`part index out of range for message ${id}`);
+      return { idx: i, view: { ...thread[i], parts } };
+    })
+    .sort((a, b) => a.idx - b.idx);
+}
+
 export interface BranchCtx {
   db: Db;
   bus: Bus;

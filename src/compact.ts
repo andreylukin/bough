@@ -29,11 +29,12 @@
  * Events: emits session.created for the new branch and message.started for each seeded
  * message (summary + copies), so the UI's existing reducers pick it up with no changes.
  */
+import { HttpError } from "./errors.ts";
 import { z } from "zod";
 import type { Db } from "./db/db.ts";
 import type { Bus } from "./bus.ts";
 import type { Message, Part, Session } from "./schema/parts.ts";
-import { anthropicClient, type LlmClient } from "./supervisor/llm.ts";
+import { anthropicClient, completeText, type LlmClient } from "./supervisor/llm.ts";
 import { mergePicks, openBranch, PartPick, pickParts } from "./branch.ts";
 
 export const CompactBody = z.object({
@@ -57,12 +58,7 @@ export interface CompactCtx {
 }
 
 /** 400 for a bad span, 404 for an unknown session/message. */
-export class CompactError extends Error {
-  constructor(readonly status: number, message: string) {
-    super(message);
-    this.name = "CompactError";
-  }
-}
+export class CompactError extends HttpError {}
 
 const SYSTEM =
   "You are compacting a span of a coding-agent conversation. Produce a concise summary " +
@@ -105,21 +101,7 @@ async function summarize(ctx: CompactCtx, span: Message[], instructions?: string
   const prompt = instructions
     ? `${renderSpan(span)}\n\nAdditional instructions: ${instructions}`
     : renderSpan(span);
-  const result = await llm.run(
-    {
-      model,
-      system: SYSTEM,
-      maxTokens: MAX_TOKENS,
-      messages: [{ role: "user", content: [{ type: "text", text: prompt }] }],
-      tools: [],
-    },
-    () => {},
-  );
-  return result.content
-    .filter((b): b is { type: "text"; text: string } => b.type === "text")
-    .map((b) => b.text)
-    .join("")
-    .trim();
+  return (await completeText(llm, { model, system: SYSTEM, maxTokens: MAX_TOKENS, prompt })).trim();
 }
 
 /**

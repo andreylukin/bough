@@ -1,8 +1,7 @@
 /**
  * The wire contract — Zod schemas for everything that crosses the server↔UI (and
- * server↔db) boundary. This is the source of truth; web/src/types.ts is a hand-kept
- * mirror of these shapes, so any change here must round-trip against it exactly (see
- * parts.test.ts, which asserts the mirror).
+ * server↔db) boundary. This is the source of truth for the wire shapes the TUI and
+ * headless CLI consume; any change here must keep round-tripping (see parts.test.ts).
  *
  * Design notes:
  *   - Parts are a discriminated union on `type` (text/reasoning/tool_call/tool_result)
@@ -70,7 +69,7 @@ export const Session = z.object({
   createdAt: z.number(),
   // The session's read-write root. Optional/additive: absent for sessions with no
   // configured workspace (the turn runner falls back to BOUGH_WORKSPACE/cwd). The
-  // Changes API (#10) exposes/sets this over HTTP; the mirror in web/src/types.ts
+  // Changes API (#10) exposes/sets this over HTTP
   // adds it as an optional field to match.
   workspace: z.string().nullish(),
   // Lineage (additive; set only on branched sessions). For a fork: the session it was
@@ -163,7 +162,7 @@ export const PostMessageBody = z.object({ text: z.string() });
 export type PostMessageBody = z.infer<typeof PostMessageBody>;
 
 // ---- typed event payloads --------------------------------------------------
-// The shapes the store reduces (web/src/store.ts). Kept here so emitters can be
+// The shapes the TUI store reduces. Kept here so emitters can be
 // checked against the same contract the UI consumes. `data` of each named event:
 
 /** `session.created` → a Session (the full row). */
