@@ -83,10 +83,13 @@ m = json.loads(os.environ["METRICS"] or "{}")
 parts = [int(x) for x in os.environ["TOKENS"].split("|")]
 tin, tout = parts[0], parts[1]
 cread, cwrite = (parts[2], parts[3]) if len(parts) == 4 else (0, 0)
-# Haiku 4.5 list price ($/Mtok): in 1, out 5; cache reads bill 0.1x, writes 1.25x.
-# bough's input_tokens is total prompt (uncached + reads + writes).
+# $/Mtok (in, out) by model prefix; cache reads bill 0.1x in, writes 1.25x in.
+# Sonnet 5 uses the intro price (through 2026-08-31) to match CC's provider-
+# reported actuals. bough's input_tokens is total prompt (uncached+reads+writes).
+PRICES = [("claude-haiku-4-5", 1, 5), ("claude-sonnet-5", 2, 10), ("claude-opus-4-8", 5, 25)]
+pin, pout = next(((i, o) for k, i, o in PRICES if os.environ["MODEL"].startswith(k)), (1, 5))
 uncached = max(0, tin - cread - cwrite)
-cost = (uncached * 1 + cread * 0.1 + cwrite * 1.25) * 1e-6 + tout * 5e-6
+cost = (uncached + cread * 0.1 + cwrite * 1.25) * pin * 1e-6 + tout * pout * 1e-6
 print(json.dumps({
     "ts": int(time.time()),
     "harness": "bough",
