@@ -528,6 +528,28 @@ BROKER_PORT="${BOUGH_AWS_BROKER_PORT:-9109}"
 # the boot-fresh, 0640 group-owned bearer written by the caller-run broker.
 BROKER_TOKEN_FILE="/Users/Shared/.bough-broker-token"
 
+# Pick the profile the broker vends to the agent: --profile wins, else bough-ro
+# if configured, else default. `aws configure export-credentials` resolves ANY
+# auth shape behind it (SSO, static keys, assume-role, credential_process), so
+# the profile name is the only thing setup ever needs to know.
+broker_pick_profile() {
+  local want="$1" profiles
+  profiles="$(aws configure list-profiles 2>/dev/null || true)"
+  if [ -n "$want" ]; then
+    echo "$profiles" | grep -qx "$want" || {
+      echo "profile '$want' not found in ~/.aws — available:" >&2
+      echo "$profiles" | sed 's/^/  /' >&2
+      return 1
+    }
+    echo "$want"
+    return
+  fi
+  if echo "$profiles" | grep -qx "bough-ro"; then echo "bough-ro"; return; fi
+  if echo "$profiles" | grep -qx "default"; then echo "default"; return; fi
+  echo "no AWS profiles configured — run 'aws configure' or 'aws configure sso' first" >&2
+  return 1
+}
+
 # The AWS credential broker (Phase 2). Always runs in YOUR account — it needs the
 # interactive SSO cache — even when the server runs as the agent user. Installs a
 # per-user LaunchAgent and points the server env at it.
@@ -535,7 +557,35 @@ cmd_broker() {
   local deno; deno="$(command -v deno)"
   case "${1:-}" in
     install)
-      echo "==> installing $BROKER_LABEL (runs as $(id -un), port $BROKER_PORT)"
+      command -v aws >/dev/null || {
+        echo "aws CLI not found — install it first (brew install awscli)" >&2
+        exit 1
+      }
+      local profile_arg=""
+      case "${2:-}" in
+        --profile) profile_arg="${3:-}" ;;
+        --profile=*) profile_arg="${2#--profile=}" ;;
+        "") ;;
+        *) echo "usage: bough broker install [--profile NAME]" >&2; exit 1 ;;
+      esac
+      local profile
+      profile="$(broker_pick_profile "$profile_arg")" || exit 1
+      # Prove the profile resolves at least once (an expired SSO session is fine —
+      # the broker heals after `aws sso login`; anything else is a config error).
+      local preflight
+      if ! preflight="$(aws configure export-credentials --profile "$profile" --format process 2>&1 >/dev/null)"; then
+        case "$(echo "$preflight" | tr '[:upper:]' '[:lower:]')" in
+          *sso* | *expired*)
+            echo "note: SSO session expired — broker will work after: aws sso login --profile $profile" ;;
+          *)
+            echo "profile '$profile' can't mint credentials:" >&2
+            echo "$preflight" | tail -3 | sed 's/^/  /' >&2
+            exit 1 ;;
+        esac
+      fi
+      [ "$profile" = "bough-ro" ] ||
+        echo "WARNING: agent sessions get the FULL permissions of profile '$profile' — consider a read-only role (bough-ro)"
+      echo "==> installing $BROKER_LABEL (runs as $(id -un), port $BROKER_PORT, profile $profile)"
       mkdir -p "$HOME/Library/LaunchAgents"
       cat > "$BROKER_PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -556,6 +606,7 @@ cmd_broker() {
     <key>HOME</key><string>$HOME</string>
     <key>BOUGH_AWS_BROKER_PORT</key><string>$BROKER_PORT</string>
     <key>BOUGH_AWS_BROKER_TOKEN_FILE</key><string>$BROKER_TOKEN_FILE</string>
+    <key>BOUGH_AWS_RO_PROFILE</key><string>$profile</string>
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
@@ -569,7 +620,21 @@ EOF
       # Point the server (agent env in agent-user mode) at the broker.
       env_set BOUGH_AWS_BROKER_URL "http://127.0.0.1:$BROKER_PORT/aws"
       env_set BOUGH_AWS_BROKER_TOKEN_FILE "$BROKER_TOKEN_FILE"
-      echo "installed. Ensure a [profile bough-ro] SSO profile exists, then: bough restart"
+      # Verify end to end: poll until the agent answers, then test-mint once.
+      local i code=""
+      for i in $(seq 1 20); do
+        code="$(curl -s -o /dev/null -m 2 -w '%{http_code}' \
+          -H "authorization: Bearer $(cat "$BROKER_TOKEN_FILE" 2>/dev/null)" \
+          "http://127.0.0.1:$BROKER_PORT/aws" 2>/dev/null || true)"
+        [ "$code" = 200 ] || [ "$code" = 503 ] && break
+        sleep 0.5
+      done
+      case "$code" in
+        200) echo "verified: broker minting credentials for profile '$profile'" ;;
+        503) echo "broker up; credentials pending login: aws sso login --profile $profile" ;;
+        *) echo "WARNING: broker not answering (HTTP ${code:-none}) — check $HOME/.bough/broker.log" ;;
+      esac
+      echo "done. Restart the server to inject creds into sessions: bough restart"
       ;;
     uninstall)
       launchctl bootout "gui/$(id -u)/$BROKER_LABEL" 2>/dev/null || true
@@ -590,6 +655,44 @@ EOF
       exit 1
       ;;
   esac
+}
+
+# One-screen cloud-access readiness: is aws/kubectl wired for agent sessions,
+# and if not, what's the next command. Kube needs no install step — the server
+# rewrites the operator's kubeconfig at start and stamps exec-minted tokens at
+# the proxy — so its half is purely a report.
+cmd_cloud() {
+  echo "== aws =="
+  if ! command -v aws >/dev/null; then
+    echo "  aws CLI: not installed        → brew install awscli"
+  elif ! launchctl print "gui/$(id -u)/$BROKER_LABEL" >/dev/null 2>&1; then
+    echo "  broker:  not installed        → bough broker install [--profile NAME]"
+  else
+    local prof code
+    prof="$(sed -n 's:.*BOUGH_AWS_RO_PROFILE</key><string>\(.*\)</string>.*:\1:p' "$BROKER_PLIST" 2>/dev/null)"
+    code="$(curl -s -o /dev/null -m 3 -w '%{http_code}' \
+      -H "authorization: Bearer $(cat "$BROKER_TOKEN_FILE" 2>/dev/null)" \
+      "http://127.0.0.1:$BROKER_PORT/aws" 2>/dev/null || true)"
+    case "$code" in
+      200) echo "  broker:  minting creds (profile ${prof:-bough-ro}) — sessions get aws automatically" ;;
+      503) echo "  broker:  up, session expired  → aws sso login --profile ${prof:-bough-ro}" ;;
+      *) echo "  broker:  installed, not answering (HTTP ${code:-none}) → check ~/.bough/broker.log" ;;
+    esac
+    grep -q "^BOUGH_AWS_BROKER_URL=" "$ENV_FILE" 2>/dev/null ||
+      echo "  env:     BOUGH_AWS_BROKER_URL missing from $ENV_FILE → bough broker install"
+  fi
+  echo "== kubernetes =="
+  local kc="${KUBECONFIG%%:*}"
+  [ -n "$kc" ] || kc="$HOME/.kube/config"
+  if [ ! -f "$kc" ]; then
+    echo "  kubeconfig: none at $kc — get cluster access (e.g. aws eks update-kubeconfig), then: bough restart"
+  else
+    local ctxs="?"
+    command -v kubectl >/dev/null && ctxs="$(kubectl config get-contexts -o name 2>/dev/null | wc -l | tr -d ' ')"
+    echo "  kubeconfig: $kc ($ctxs context(s))"
+    echo "  sessions get a CA-rewritten copy; exec plugins run host-side, tokens stamped at the proxy"
+    command -v kubectl >/dev/null || echo "  kubectl: not installed → brew install kubernetes-cli"
+  fi
 }
 
 # Claw Patrol offline checks. `net validate` runs the same load path the server
@@ -656,7 +759,8 @@ usage() {
   echo "  restart  pick up code changes explicitly"
   echo "  update   fast-forward to origin/main, rebuild, restart"
   echo "  run      run the server in the foreground (what launchd executes)"
-  echo "  broker   AWS read-only credential broker: 'bough broker {install|uninstall|status}'"
+  echo "  cloud    aws/k8s access readiness for agent sessions (what's wired, what's next)"
+  echo "  broker   AWS credential broker: 'bough broker {install [--profile NAME]|uninstall|status}'"
   echo "  net      Claw Patrol checks: 'bough net validate' verifies policy + plugins"
   echo "  purge    hard-delete sessions archived over 30 days ago (also runs on boot)"
 }
@@ -686,8 +790,10 @@ case "${1:-}" in
   logs) cmd_logs ;;
   run) cmd_run ;;
   broker)
-    cmd_broker "${2:-}"
+    shift
+    cmd_broker "$@"
     ;;
+  cloud) cmd_cloud ;;
   net)
     shift
     cmd_net "$@"
