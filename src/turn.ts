@@ -388,7 +388,7 @@ function scratchpadNote(scratchDir: string): string {
     "under the scratchpad; it's already created.";
 }
 
-/** Read one AGENTS.md (capped, trimmed), or null if absent/empty. */
+/** Read one instructions file (capped, trimmed), or null if absent/empty. */
 async function readOneAgentsFile(path: string): Promise<string | null> {
   try {
     const text = await Deno.readTextFile(path);
@@ -403,9 +403,11 @@ async function readOneAgentsFile(path: string): Promise<string | null> {
 /**
  * Build the "Project rules" system-prompt section from two AGENTS.md files:
  * a global one at ~/.bough/AGENTS.md (applies to every workspace) and the
- * workspace root's own. Both are included when present; the project file is
- * authoritative and overrides the global on conflict. Returns null if neither
- * exists. (BOUGH_GLOBAL_AGENTS overrides the global path, chiefly for tests.)
+ * workspace root's own. The name is always exactly AGENTS.md — never other
+ * tools' files (no CLAUDE.md, no AGENT.md). Both are included when present;
+ * the project file is authoritative and overrides the global on conflict.
+ * Returns null if neither exists. (BOUGH_GLOBAL_AGENTS overrides the global
+ * path, chiefly for tests.)
  */
 export async function readAgentsFile(cwd: string): Promise<string | null> {
   const globalPath = Deno.env.get("BOUGH_GLOBAL_AGENTS") ??

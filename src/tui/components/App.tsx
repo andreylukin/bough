@@ -1324,21 +1324,48 @@ export function App(
       setMode("help");
       return;
     }
-    // Autocomplete popup owns navigation + enter while open.
+    // Autocomplete popup owns navigation + enter while open. Claude Code muscle
+    // memory: tab completes into the composer, enter RUNS a slash command (an
+    // enter that merely re-inserted the text you already typed read as "/ is
+    // broken" — nothing visibly happened). @-file selections always just insert:
+    // they're part of a message being composed, not a command.
     if (popup) {
+      const completed = (c: { text: string; cursor: number }) => {
+        const it = popup.items[popup.sel];
+        return {
+          text: c.text.slice(0, popup.tokenStart) + it.insert + c.text.slice(popup.tokenEnd),
+          cursor: popup.tokenStart + it.insert.length,
+        };
+      };
       if (key.escape) return setPopup(null);
       if (key.upArrow) {
         return setPopup((p) => p && { ...p, sel: (p.sel - 1 + p.items.length) % p.items.length });
       }
-      if (key.downArrow || key.tab) {
+      if (key.downArrow) {
         return setPopup((p) => p && { ...p, sel: (p.sel + 1) % p.items.length });
       }
+      if (key.tab) {
+        setComp(completed);
+        setPopup(null);
+        return;
+      }
       if (key.return) {
-        const it = popup.items[popup.sel];
-        setComp((c) => {
-          const text = c.text.slice(0, popup.tokenStart) + it.insert + c.text.slice(popup.tokenEnd);
-          return { text, cursor: popup.tokenStart + it.insert.length };
-        });
+        if (popup.kind === "skill") {
+          // Resolve inside the updater (same stale-closure guard as sendNow).
+          setComp((c) => {
+            const text = completed(c).text.trim();
+            queueMicrotask(() => {
+              history.current.push(text);
+              appendHistory(text);
+              setHistIdx(null);
+              draft.current = "";
+              submit(text, key.meta);
+            });
+            return { text: "", cursor: 0 };
+          });
+        } else {
+          setComp(completed);
+        }
         setPopup(null);
         return;
       }

@@ -62,6 +62,23 @@ Deno.test("readAgentsFile: includes BOTH files, global before workspace", async 
   }
 });
 
+Deno.test("readAgentsFile: only AGENTS.md is read — CLAUDE.md/AGENT.md ignored", async () => {
+  Deno.env.set("BOUGH_GLOBAL_AGENTS", tmp() + "/none.md");
+  try {
+    const ws = tmp();
+    Deno.writeTextFileSync(ws + "/CLAUDE.md", "TOKEN-CLAUDE-111\n");
+    Deno.writeTextFileSync(ws + "/AGENT.md", "TOKEN-AGENT-222\n");
+    assertEquals(await readAgentsFile(ws), null);
+    Deno.writeTextFileSync(ws + "/AGENTS.md", "TOKEN-AGENTS-333\n");
+    const out = await readAgentsFile(ws);
+    assertStringIncludes(out!, "TOKEN-AGENTS-333");
+    assertEquals(out!.includes("TOKEN-CLAUDE-111"), false);
+    assertEquals(out!.includes("TOKEN-AGENT-222"), false);
+  } finally {
+    Deno.env.delete("BOUGH_GLOBAL_AGENTS");
+  }
+});
+
 Deno.test("readAgentsFile: empty/whitespace files are ignored", async () => {
   const ws = tmp();
   const g = tmp() + "/global.md";
