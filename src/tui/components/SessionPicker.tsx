@@ -124,10 +124,10 @@ export function SessionPicker(
           </Box>
         );
       })}
-      {rowsList.length === 0 && <Text dimColor>no sessions — ^t creates one</Text>}
+      {rowsList.length === 0 && <Text dimColor>no sessions — n creates one</Text>}
       <Text dimColor>● root · ⑂ fork · ◆ subagent · ≣ compacted</Text>
       <Text dimColor>
-        j/k move · / filter · enter open · ^t new · ^x archive · x deprecate · h show hidden
+        j/k move · / filter · enter open · n new · ^x archive · x deprecate · h show hidden
       </Text>
     </Box>
   );

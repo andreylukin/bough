@@ -51,8 +51,8 @@ import {
   buildTree,
   ConversationTree,
   sectionSpan,
-  type TreeNode,
   treeItems,
+  type TreeNode,
 } from "./ConversationTree.tsx";
 import { DiffView, flattenDiffs } from "./DiffView.tsx";
 import { modelEntries, ModelPicker } from "./ModelPicker.tsx";
@@ -63,7 +63,7 @@ import { copyToClipboard } from "../clipboard.ts";
 import { progressEnd, progressStart, setTitle, tabColor, termBackground } from "../term.ts";
 
 // picker + conversation + net/mcp/skills are all tabs of the one "panel" view.
-type Mode = "chat" | "new" | "diff" | "model" | "panel" | "help";
+type Mode = "chat" | "new" | "panel" | "help";
 
 export function App(
   { initialSessions, defaultWorkspace }: { initialSessions: Session[]; defaultWorkspace: string },
@@ -296,6 +296,9 @@ export function App(
       });
     } else if (tab === "skills") {
       api.skills().then(setSkillsList, () => setSkillsList([]));
+    } else if (tab === "model") {
+      // Refresh without nulling first — cfg also feeds the status-bar model chip.
+      api.getConfig().then(setCfg, (e) => setErr(String(e)));
     } else if (tab === "theme") {
       // Fresh state + cursor onto the current theme, so the first arrow move
       // steps (and auto-applies) from where the user actually is.
@@ -825,6 +828,33 @@ export function App(
     runShell,
   ]);
 
+  // Open the panel on a tab, resetting that tab's transient state. One entry
+  // point for the chat-mode jump chords and the same chords inside the panel.
+  const openTab = (t: PanelTab) => {
+    setPanelMsg(null);
+    if (t === "sessions") {
+      movePickSel(0);
+      setFilter("");
+      setMovePicks(null);
+    } else if (t === "conversation") {
+      if (store.thread.length === 0) return;
+      // Start on the live tip (last selectable row); ↑ walks back through history.
+      forkNavTouched.current = false;
+      moveForkSel(Math.max(0, convItems.length - 1));
+      setRangeAnchor(null);
+    } else if (t === "changes") {
+      setFileSel(0);
+      setDiffScroll(0);
+    } else if (t === "model") {
+      setModelSel(0);
+      setKeyInput(null);
+    } else if (t === "net") {
+      setMcpSel(0);
+    }
+    setPanelTab(t);
+    setMode("panel");
+  };
+
   useInput((ch, key) => {
     // Quit: double ctrl+c.
     if (key.ctrl && ch === "c") {
@@ -837,6 +867,23 @@ export function App(
     }
 
     if (mode === "panel") {
+      // Masked API-key entry (model tab) owns the keyboard while open.
+      if (panelTab === "model" && keyInput !== null) {
+        if (key.escape) return setKeyInput(null);
+        if (key.return) {
+          const e = cfgEntries[modelSel];
+          const k = keyInput.trim();
+          setKeyInput(null);
+          if (!e || e.kind !== "key" || !k) return;
+          api.putKey(e.id as KeyProvider, k)
+            .then(() => api.getConfig().then(setCfg))
+            .catch((err) => setErr(String(err)));
+          return;
+        }
+        if (key.backspace || key.delete) return setKeyInput((v) => (v ?? "").slice(0, -1));
+        if (ch && !key.ctrl && !key.meta) setKeyInput((v) => (v ?? "") + ch);
+        return;
+      }
       // Escape closes the panel — unless it's dismissing the sessions filter or a
       // pending conversation range selection.
       if (key.escape) {
@@ -855,6 +902,14 @@ export function App(
         setPanelMsg(null);
         setMcpSel(0);
         setPanelTab((t) => PANEL_TABS[(PANEL_TABS.indexOf(t) + 1) % PANEL_TABS.length]);
+        return;
+      }
+      // The chat-mode chords keep working here: ^p/^f/^d/^o jump tabs, ^t closes.
+      if (key.ctrl && ch === "t") return setMode("chat");
+      if (key.ctrl && (ch === "p" || ch === "f" || ch === "d" || ch === "o")) {
+        openTab(
+          ch === "p" ? "sessions" : ch === "f" ? "conversation" : ch === "d" ? "changes" : "model",
+        );
         return;
       }
 
@@ -895,8 +950,12 @@ export function App(
         if (!filterActive && ch === "g") return movePickSel(0);
         if (!filterActive && ch === "G") return movePickSel(Math.max(0, treeRows.length - 1));
         if (!filterActive && ch === "/") return setFilterActive(true);
-        if (key.ctrl && ch === "t") {
-          store.newSession().then((s) => openSession(s), (e) => setErr(String(e)));
+        // n: new session via the workspace-autocomplete dialog (esc returns here).
+        if (!filterActive && ch === "n") {
+          setNewQuery("");
+          setNewSel(0);
+          setDirHits([]);
+          setMode("new");
           return;
         }
         if (key.ctrl && ch === "x") {
@@ -1051,6 +1110,12 @@ export function App(
           return;
         }
         if (ch === "h") return setShowDeprecated((v) => !v);
+        // C: compact the WHOLE session onto a summary branch (a v-range + c
+        // compacts just the selected span).
+        if (ch === "C") {
+          store.compact().then((s) => s && openSession(s));
+          return;
+        }
         return;
       }
 
@@ -1113,6 +1178,67 @@ export function App(
           return;
         }
       }
+      // ---- changes: the run's uncommitted diffs (was the ^d modal) ----
+      if (panelTab === "changes") {
+        if (key.upArrow) {
+          setDiffScroll(0);
+          return setFileSel((i) => Math.max(0, i - 1));
+        }
+        if (key.downArrow) {
+          setDiffScroll(0);
+          return setFileSel((i) => Math.min(diffEntries.length - 1, i + 1));
+        }
+        if (ch === "j") return setDiffScroll((s) => s + 3);
+        if (ch === "k") return setDiffScroll((s) => Math.max(0, s - 3));
+        if (ch === "a") {
+          const e = diffEntries[fileSel];
+          if (e) store.applyChanges(e.source, [e.file.path]);
+          return;
+        }
+        if (ch === "A") {
+          // Apply everything, one call per source (a session can have shadow + clonefile).
+          for (const source of new Set(diffEntries.map((e) => e.source))) {
+            store.applyChanges(
+              source,
+              diffEntries.filter((e) => e.source === source).map((e) => e.file.path),
+            );
+          }
+          return;
+        }
+        if (ch === "R") {
+          // Nothing listed → nothing to revert; the raw call 400s ("no
+          // workspace") into a confusing error line.
+          if (diffEntries.length > 0) store.revertChanges();
+          return;
+        }
+        return;
+      }
+      // ---- model: model/effort/worker switch + API keys (was the ^o modal) ----
+      if (panelTab === "model") {
+        if (key.upArrow || ch === "k") return setModelSel((i) => Math.max(0, i - 1));
+        if (key.downArrow || ch === "j") {
+          return setModelSel((i) => Math.min(cfgEntries.length - 1, i + 1));
+        }
+        if (key.return) {
+          const e = cfgEntries[modelSel];
+          if (!e) return;
+          if (e.kind === "key") {
+            setKeyInput("");
+            return;
+          }
+          // Model/effort switches pin the OPEN session and move the default for
+          // new sessions (other sessions keep theirs); worker stays process-global.
+          (e.kind === "model"
+            ? api.setModel(e.id, currentId ?? undefined)
+            : e.kind === "effort"
+            ? api.setEffort(e.id, currentId ?? undefined)
+            : api.setWorker(e.id))
+            .then(() => api.getConfig().then(setCfg))
+            .catch((err) => setErr(String(err)));
+          return;
+        }
+        return;
+      }
       // Unbound printable key while a panel tab has focus: say where typing goes
       // instead of a silent no-op (user-testing: input "vanished" until esc).
       if (ch && !key.ctrl && !key.meta) {
@@ -1129,7 +1255,8 @@ export function App(
     }
 
     if (mode === "new") {
-      if (key.escape) return setMode("chat");
+      // Back to where it was launched from: the panel's sessions tab.
+      if (key.escape) return setMode("panel");
       if (key.return) {
         const hit = dirHits[newSel];
         // A typed query with no hit does nothing — a silent workspace-less session
@@ -1148,84 +1275,6 @@ export function App(
       if (ch && !key.ctrl && !key.meta) {
         setNewSel(0);
         setNewQuery((q) => q + ch);
-      }
-      return;
-    }
-
-    if (mode === "diff") {
-      if (key.escape) return setMode("chat");
-      if (key.upArrow) {
-        setDiffScroll(0);
-        return setFileSel((i) => Math.max(0, i - 1));
-      }
-      if (key.downArrow) {
-        setDiffScroll(0);
-        return setFileSel((i) => Math.min(diffEntries.length - 1, i + 1));
-      }
-      if (ch === "j") return setDiffScroll((s) => s + 3);
-      if (ch === "k") return setDiffScroll((s) => Math.max(0, s - 3));
-      if (ch === "a") {
-        const e = diffEntries[fileSel];
-        if (e) store.applyChanges(e.source, [e.file.path]);
-        return;
-      }
-      if (ch === "A") {
-        // Apply everything, one call per source (a session can have shadow + clonefile).
-        for (const source of new Set(diffEntries.map((e) => e.source))) {
-          store.applyChanges(
-            source,
-            diffEntries.filter((e) => e.source === source).map((e) => e.file.path),
-          );
-        }
-        return;
-      }
-      if (ch === "R") {
-        // Nothing listed → nothing to revert; the raw call 400s ("no
-        // workspace") into a confusing error line.
-        if (diffEntries.length > 0) store.revertChanges();
-        return;
-      }
-      return;
-    }
-
-    if (mode === "model") {
-      // Masked key entry for the selected provider row.
-      if (keyInput !== null) {
-        if (key.escape) return setKeyInput(null);
-        if (key.return) {
-          const e = cfgEntries[modelSel];
-          const k = keyInput.trim();
-          setKeyInput(null);
-          if (!e || e.kind !== "key" || !k) return;
-          api.putKey(e.id as KeyProvider, k)
-            .then(() => api.getConfig().then(setCfg))
-            .catch((err) => setErr(String(err)));
-          return;
-        }
-        if (key.backspace || key.delete) return setKeyInput((v) => (v ?? "").slice(0, -1));
-        if (ch && !key.ctrl && !key.meta) setKeyInput((v) => (v ?? "") + ch);
-        return;
-      }
-      if (key.escape) return setMode("chat");
-      if (key.upArrow) return setModelSel((i) => Math.max(0, i - 1));
-      if (key.downArrow) return setModelSel((i) => Math.min(cfgEntries.length - 1, i + 1));
-      if (key.return) {
-        const e = cfgEntries[modelSel];
-        if (!e) return;
-        if (e.kind === "key") {
-          setKeyInput("");
-          return;
-        }
-        // Model/effort switches pin the OPEN session and move the default for
-        // new sessions (other sessions keep theirs); worker stays process-global.
-        (e.kind === "model"
-          ? api.setModel(e.id, currentId ?? undefined)
-          : e.kind === "effort"
-          ? api.setEffort(e.id, currentId ?? undefined)
-          : api.setWorker(e.id))
-          .then(() => api.getConfig().then(setCfg))
-          .catch((err) => setErr(String(err)));
-        return;
       }
       return;
     }
@@ -1274,71 +1323,16 @@ export function App(
       setSearchQ("");
       return;
     }
-    // chat mode. ^p/^f/^t all open the one panel view on their tab.
-    if (key.ctrl && ch === "p") {
-      movePickSel(0);
-      setFilter("");
-      setPanelMsg(null);
-      setMovePicks(null);
-      setPanelTab("sessions");
-      setMode("panel");
-      return;
-    }
-    if (key.ctrl && ch === "n") {
-      setNewQuery("");
-      setNewSel(0);
-      setDirHits([]);
-      setMode("new");
-      return;
-    }
-    if (key.ctrl && ch === "f") {
-      if (store.thread.length === 0) return;
-      // Start on the live tip (last selectable row); ↑ walks back through history.
-      forkNavTouched.current = false;
-      moveForkSel(Math.max(0, convItems.length - 1));
-      setRangeAnchor(null);
-      setPanelTab("conversation");
-      setMode("panel");
-      return;
-    }
-    if (key.ctrl && ch === "d") {
-      setFileSel(0);
-      setDiffScroll(0);
-      setMode("diff");
-      return;
-    }
-    if (key.ctrl && ch === "o") {
-      setCfg(null);
-      setModelSel(0);
-      api.getConfig().then(setCfg, (e) => setErr(String(e)));
-      setMode("model");
-      return;
-    }
-    // ^k doubles as readline delete-to-end while composing (matching the help's
-    // line-editing table) — compacting mid-thought on a text-editing chord was a
-    // user-testing bug. Same for ^e below (end-of-line vs expand-all).
-    if (key.ctrl && ch === "k" && input === "") {
-      store.compact().then((s) => s && openSession(s));
-      return;
-    }
-    // ^b: go back to the spawner when viewing a subagent branch (esc is stop).
-    if (key.ctrl && ch === "b") {
-      if (store.session?.kind === "subagent" && store.session.originId) {
-        const parent = store.sessions.find((s) => s.id === store.session!.originId);
-        if (parent) openSession(parent);
-      } else {
-        // Anywhere else the key doesn't apply — say so instead of a silent no-op.
-        store.notify("^b returns from a subagent branch — ^p switches sessions");
-      }
-      return;
-    }
-    if (key.ctrl && ch === "t") {
-      setPanelMsg(null);
-      setMcpSel(0);
-      setPanelTab("net");
-      setMode("panel");
-      return;
-    }
+    // chat mode. Four jump chords open the one panel view on a tab; ^t toggles
+    // the panel on whatever tab it last showed.
+    if (key.ctrl && ch === "p") return openTab("sessions");
+    if (key.ctrl && ch === "f") return openTab("conversation");
+    if (key.ctrl && ch === "d") return openTab("changes");
+    if (key.ctrl && ch === "o") return openTab("model");
+    if (key.ctrl && ch === "t") return openTab(panelTab);
+    // ^e doubles as readline end-of-line while composing (matching the help's
+    // line-editing table) — expand-all only fires on an empty input; toggling
+    // folds mid-thought on a text-editing chord was a user-testing bug.
     if (key.ctrl && ch === "e" && input === "") {
       setToggled(new Set());
       setExpandAll((v) => !v);
@@ -1688,6 +1682,21 @@ export function App(
                 : [Math.min(rangeAnchor, forkSel), Math.max(rangeAnchor, forkSel)]}
             />
           )
+          : panelTab === "changes"
+          ? <DiffView entries={diffEntries} fileSel={fileSel} scroll={diffScroll} rows={rows} />
+          : panelTab === "model"
+          ? (cfg
+            ? (
+              <ModelPicker
+                cfg={cfg}
+                entries={cfgEntries}
+                selected={modelSel}
+                keyInput={keyInput}
+                sessionModel={store.session?.model}
+                sessionEffort={store.session?.effort}
+              />
+            )
+            : <Text dimColor>loading config…</Text>)
           : (
             <Panel
               tab={panelTab}
@@ -1719,21 +1728,6 @@ export function App(
       ? <Help rows={rows} width={width} />
       : mode === "new"
       ? <NewSession query={newQuery} hits={dirHits} selected={newSel} />
-      : mode === "diff"
-      ? <DiffView entries={diffEntries} fileSel={fileSel} scroll={diffScroll} rows={rows} />
-      : mode === "model"
-      ? (cfg
-        ? (
-          <ModelPicker
-            cfg={cfg}
-            entries={cfgEntries}
-            selected={modelSel}
-            keyInput={keyInput}
-            sessionModel={store.session?.model}
-            sessionEffort={store.session?.effort}
-          />
-        )
-        : <Text dimColor>loading config…</Text>)
       : null);
 
   return (
@@ -1906,6 +1900,7 @@ export function App(
           pendingCount={store.pendingCount}
           quitHint={quitHint}
           mode={mode === "chat" && store.pending ? "approval" : mode}
+          panelTab={panelTab}
           usage={store.usage}
           draftLabel={isDraft ? `new · ${shortWs}` : null}
           model={cfg

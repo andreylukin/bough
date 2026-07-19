@@ -3,7 +3,8 @@ import { useEffect, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import type { Usage } from "../api.ts";
 import { fmtTokens } from "../format.ts";
-import { HINTS, type UiMode } from "../keys.ts";
+import { HINTS, PANEL_HINTS, type UiMode } from "../keys.ts";
+import type { PanelTab } from "./Panel.tsx";
 import type { TuiSession } from "../store.ts";
 
 const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -49,25 +50,28 @@ export function StatusBar(
     pendingCount,
     quitHint,
     mode,
+    panelTab,
     usage,
     draftLabel,
     model,
     parentTitle,
   }: {
-      connected: boolean;
-      busy: boolean;
-      session: TuiSession | null;
-      pendingCount: number;
-      quitHint: boolean;
-      mode: UiMode;
-      usage: Usage;
-      /** Shown instead of a session title while no session exists yet. */
-      draftLabel?: string | null;
-      /** Active model's label (global, from /config). */
-      model?: string | null;
-      /** Spawner's title when the open session is a subagent branch. */
-      parentTitle?: string | null;
-    },
+    connected: boolean;
+    busy: boolean;
+    session: TuiSession | null;
+    pendingCount: number;
+    quitHint: boolean;
+    mode: UiMode;
+    /** Which panel tab is showing (drives the per-tab hint while mode is "panel"). */
+    panelTab: PanelTab;
+    usage: Usage;
+    /** Shown instead of a session title while no session exists yet. */
+    draftLabel?: string | null;
+    /** Active model's label (global, from /config). */
+    model?: string | null;
+    /** Spawner's title when the open session is a subagent branch. */
+    parentTitle?: string | null;
+  },
 ) {
   const spinner = useSpinner(busy);
   const status = spinner
@@ -81,9 +85,11 @@ export function StatusBar(
     : null;
   return (
     <Box justifyContent="space-between" gap={2}>
-      {/* Title shrinks; the status cluster (spinner/esc-interrupts, holds) never
+      {
+        /* Title shrinks; the status cluster (spinner/esc-interrupts, holds) never
         does — a long auto-title must not truncate away the brake hint (probe
-        finding: "esc interrupts" vanished behind a story-length title). */}
+        finding: "esc interrupts" vanished behind a story-length title). */
+      }
       <Box minWidth={0} flexShrink={1}>
         <Box minWidth={4} flexShrink={1}>
           <Text wrap="truncate">
@@ -101,7 +107,7 @@ export function StatusBar(
               ? <Text dimColor>{" "}{draftLabel}</Text>
               : null}
             {parentTitle
-              ? <Text dimColor>{"  "}branch of {parentTitle} · ^b to go back</Text>
+              ? <Text dimColor>{"  "}branch of {parentTitle} · ^p goes back</Text>
               : null}
           </Text>
         </Box>
@@ -123,7 +129,7 @@ export function StatusBar(
         </Box>
       </Box>
       <Text dimColor wrap="truncate">
-        {quitHint ? "ctrl+c again to quit" : HINTS[mode]}
+        {quitHint ? "ctrl+c again to quit" : mode === "panel" ? PANEL_HINTS[panelTab] : HINTS[mode]}
       </Text>
     </Box>
   );

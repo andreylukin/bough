@@ -35,6 +35,7 @@ function DiffLine({ line }: { line: string }) {
 
 // Changes review: file list on top, the selected file's hunks in a scrollable
 // window below. Long diffs scroll with j/k; apply/revert act via the store.
+// Content-only — the unified panel container owns the border + tab bar.
 export function DiffView(
   { entries, fileSel, scroll, rows }: {
     entries: DiffEntry[];
@@ -50,16 +51,10 @@ export function DiffView(
   );
   const sel = entries[fileSel];
   const lines = sel ? sel.file.hunks.flatMap((h) => [h.header, ...h.lines]) : [];
-  const bodyRows = Math.max(4, rows - fileRows - 7);
+  const bodyRows = Math.max(4, rows - fileRows - 8);
   const at = Math.max(0, Math.min(scroll, lines.length - bodyRows));
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      backgroundColor={palette.panel}
-      borderColor={palette.border}
-      paddingX={1}
-    >
+    <Box flexDirection="column" marginTop={1}>
       <Text bold>
         changes{" "}
         <Text dimColor>

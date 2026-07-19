@@ -1,15 +1,33 @@
 // The tabbed side-panel: net (Claw Patrol feed + policy), mcp (server registry),
-// skills. Mirrors the web RightRail's tabs; App owns the data and key handling.
+// skills. App owns the data and key handling.
 import { palette, THEME_PRESETS } from "../theme.ts";
 import { Box, Text } from "ink";
 import type { NetRequest } from "../../schema/parts.ts";
 import type { McpStatus, NetConfig, NetStatus, SkillInfo, ThemeState } from "../api.ts";
 import { clip, relTime } from "../format.ts";
 
-// The management view is one tabbed panel: the session tree, the current
-// conversation's branch tree, and the net/mcp/skills/theme tabs. ^p/^f/^t open it on a tab.
-export type PanelTab = "sessions" | "conversation" | "net" | "mcp" | "skills" | "theme";
-export const PANEL_TABS: PanelTab[] = ["sessions", "conversation", "net", "mcp", "skills", "theme"];
+// The management view is ONE tabbed panel — every non-chat surface is a tab:
+// session tree, conversation branch tree, changes review, model/keys, and the
+// net/mcp/skills/theme tabs. ^t toggles it; ^p/^f/^d/^o jump to a tab.
+export type PanelTab =
+  | "sessions"
+  | "conversation"
+  | "changes"
+  | "model"
+  | "net"
+  | "mcp"
+  | "skills"
+  | "theme";
+export const PANEL_TABS: PanelTab[] = [
+  "sessions",
+  "conversation",
+  "changes",
+  "model",
+  "net",
+  "mcp",
+  "skills",
+  "theme",
+];
 
 /** The tab bar for the unified panel — active tab bold + green underline. */
 export function PanelTabs({ tab }: { tab: PanelTab }) {
@@ -146,7 +164,7 @@ function ThemeTab(
     <Box flexDirection="column">
       <Text dimColor>
         current: {currentName}
-        {isPreset ? "" : " (custom)"} — ↑↓ applies live (web UI on next load)
+        {isPreset ? "" : " (custom)"} — ↑↓ applies live
       </Text>
       {THEME_PRESETS.map((p, i) => {
         // The row's own resolved colors — distinct from the live TUI `palette`.

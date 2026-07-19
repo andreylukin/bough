@@ -48,6 +48,7 @@ const SECTION: Record<ModelEntry["kind"], string> = {
 // Model + worker switcher and API-key setup over GET/PATCH /config + PUT
 // /config/keys. One list, three sections; the active entry carries the dot,
 // key rows show set/missing. Selecting a key row opens a masked input.
+// Content-only — the unified panel container owns the border + tab bar.
 export function ModelPicker(
   { cfg, entries, selected, keyInput, sessionModel, sessionEffort }: {
     cfg: BoughConfig;
@@ -66,13 +67,7 @@ export function ModelPicker(
   const effectiveModel = sessionModel ?? cfg.model;
   const effectiveEffort = sessionEffort ?? cfg.effort ?? "";
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      backgroundColor={palette.panel}
-      borderColor={palette.border}
-      paddingX={1}
-    >
+    <Box flexDirection="column" marginTop={1}>
       {entries.map((e, i) => {
         const header = e.kind !== lastKind;
         lastKind = e.kind;
