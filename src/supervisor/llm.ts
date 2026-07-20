@@ -51,7 +51,22 @@ export const EFFORTS: Effort[] = ["low", "medium", "high", "xhigh", "max"];
 
 export interface LlmParams {
   model: string;
+  /**
+   * The STABLE system prefix. Prompt-cache contract: this must be byte-identical
+   * across sessions and turns (per delegation tier — see turn.ts's assembly), so
+   * the provider cache can share it machine-wide. Anything carrying per-session
+   * facts (paths, session ids, catalogs) belongs in `systemVolatile`, never here
+   * — one volatile byte early in the prefix defeats cross-session sharing.
+   */
   system?: string;
+  /**
+   * Per-session/per-turn system suffix (workspace + scratchpad paths, AGENTS.md,
+   * MCP catalog, skills, running-subagent notes). Sent AFTER `system` with its
+   * own cache breakpoint, so it still caches across turns within a session
+   * without poisoning the shared stable prefix. Providers without breakpoints
+   * see the two tiers joined (stable first — implicit prefix caching still wins).
+   */
+  systemVolatile?: string;
   maxTokens: number;
   messages: LlmMessage[];
   tools: LlmToolDef[];
@@ -213,6 +228,42 @@ async function throwHttpError(provider: string, res: Response): Promise<never> {
   );
 }
 
+// ---- system-prompt tiers ---------------------------------------------------
+
+/**
+ * The two system tiers as Anthropic system blocks, a 1-HOUR cache breakpoint on
+ * each (stable first — the API caches everything before a breakpoint, so the
+ * volatile block must never precede the stable one). Undefined when there is no
+ * system text at all. Exported for tests: breakpoint placement IS the cache
+ * economics.
+ */
+export function anthropicSystemBlocks(
+  p: Pick<LlmParams, "system" | "systemVolatile">,
+): Anthropic.TextBlockParam[] | undefined {
+  const blocks = [p.system, p.systemVolatile]
+    .filter((t): t is string => !!t)
+    .map((text) => ({
+      type: "text" as const,
+      text,
+      // `ttl` postdates the pinned SDK's types but serializes fine (like
+      // effortParams' spread) — hence the cast.
+      cache_control: { type: "ephemeral", ttl: "1h" } as Anthropic.CacheControlEphemeral,
+    }));
+  return blocks.length > 0 ? blocks : undefined;
+}
+
+/**
+ * Both tiers joined into one string (stable first) for providers that take a
+ * single system/instructions field and cache prefixes implicitly (OpenAI,
+ * OpenRouter). Undefined when both are empty.
+ */
+export function joinedSystem(
+  p: Pick<LlmParams, "system" | "systemVolatile">,
+): string | undefined {
+  const s = (p.system ?? "") + (p.systemVolatile ?? "");
+  return s || undefined;
+}
+
 // ---- real client -----------------------------------------------------------
 
 function toApiMessage(m: LlmMessage): Anthropic.MessageParam {
@@ -286,14 +337,27 @@ export function anthropicClient(): LlmClient {
   const client = new Anthropic({ maxRetries: 0 });
   return {
     async run(params, onText, signal) {
-      // Prompt caching, two tiers (longer-TTL breakpoints must precede shorter):
-      //   - breakpoint on the system block caches tools + system together at a
-      //     1-HOUR TTL. This prefix is stable across turns AND sessions of the
-      //     same workspace, so it survives a lunch break and warms new sessions
-      //     (writes bill 2x vs 1.25x — break-even is roughly one extra hit);
+      // Prompt caching, three breakpoints (longer-TTL breakpoints must precede
+      // shorter; budget is 4):
+      //   - breakpoint on the STABLE system block caches tools + the stable
+      //     system prefix at a 1-HOUR TTL. That prefix is byte-identical across
+      //     sessions (turn.ts's assembly contract), so it warms new sessions and
+      //     survives a lunch break (writes bill 2x vs 1.25x — break-even is
+      //     roughly one extra hit);
+      //   - breakpoint on the VOLATILE system block (per-session paths, AGENTS.md,
+      //     MCP/skills) at 1h too: caches across turns within a session without
+      //     splintering the shared prefix;
       //   - breakpoint on the final block of the final message extends the cached
       //     conversation prefix each round at the default 5-minute sliding TTL
       //     (the API reuses the longest previously cached prefix).
+      // Verifying in the field (~/.bough/bough.db): the sessions table accumulates
+      // cache_read_total / cache_write_total alongside input_tokens —
+      //   SELECT date(created_at/1000,'unixepoch') d,
+      //          1.0*sum(cache_read_total)/sum(input_tokens) cache_share
+      //   FROM sessions GROUP BY d ORDER BY d;
+      // cache_share is the cache-read share of billed input; pre-split field data
+      // sat at ~0.34 (Claude Code on the same machine: ~0.999) — it should climb
+      // toward that after this split.
       const messages = params.messages.map(toApiMessage);
       const lastContent = messages.at(-1)?.content;
       if (Array.isArray(lastContent) && lastContent.length > 0) {
@@ -304,15 +368,7 @@ export function anthropicClient(): LlmClient {
       const stream = client.messages.stream({
         model: params.model,
         max_tokens: params.maxTokens,
-        system: params.system
-          ? [{
-            type: "text",
-            text: params.system,
-            // `ttl` postdates the pinned SDK's types but serializes fine (like
-            // effortParams' spread) — hence the cast.
-            cache_control: { type: "ephemeral", ttl: "1h" } as Anthropic.CacheControlEphemeral,
-          }]
-          : undefined,
+        system: anthropicSystemBlocks(params),
         messages,
         tools: params.tools.map((t) => ({
           name: t.name,
@@ -498,7 +554,7 @@ export function openaiClient(): LlmClient {
         headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
         body: JSON.stringify({
           model,
-          instructions: params.system,
+          instructions: joinedSystem(params),
           max_output_tokens: params.maxTokens,
           stream: true,
           store: false,
@@ -625,7 +681,7 @@ function openAICompatClient(opts: OpenAICompatOpts): LlmClient {
           max_tokens: params.maxTokens,
           stream: true,
           stream_options: { include_usage: true },
-          messages: toOpenAIMessages(params.system, params.messages),
+          messages: toOpenAIMessages(joinedSystem(params), params.messages),
           tools: params.tools.map((t) => ({
             type: "function",
             function: { name: t.name, description: t.description, parameters: t.inputSchema },

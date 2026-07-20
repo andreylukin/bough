@@ -1,7 +1,9 @@
 import { assertEquals, assertRejects } from "jsr:@std/assert@1";
 import {
+  anthropicSystemBlocks,
   fromResponsesOutput,
   isRetryable,
+  joinedSystem,
   type LlmClient,
   LlmError,
   type LlmParams,
@@ -12,6 +14,36 @@ import {
   toResponsesInput,
   withRetries,
 } from "./llm.ts";
+
+Deno.test("anthropicSystemBlocks: stable then volatile, a 1h breakpoint on each", () => {
+  const blocks = anthropicSystemBlocks({ system: "STABLE", systemVolatile: "VOLATILE" })!;
+  assertEquals(blocks.length, 2);
+  // Order is the cache economics: the volatile block must NEVER precede the
+  // stable one — a breakpoint caches everything before it.
+  assertEquals(blocks[0].text, "STABLE");
+  assertEquals(blocks[1].text, "VOLATILE");
+  for (const b of blocks) {
+    assertEquals(
+      (b as { cache_control?: unknown }).cache_control,
+      { type: "ephemeral", ttl: "1h" },
+    );
+  }
+});
+
+Deno.test("anthropicSystemBlocks: empty tiers are skipped; no system → undefined", () => {
+  const only = anthropicSystemBlocks({ system: "S" })!;
+  assertEquals(only.length, 1);
+  assertEquals(only[0].text, "S");
+  assertEquals(anthropicSystemBlocks({}), undefined);
+  assertEquals(anthropicSystemBlocks({ system: "", systemVolatile: "" }), undefined);
+});
+
+Deno.test("joinedSystem: tiers concatenate stable-first for single-field providers", () => {
+  assertEquals(joinedSystem({ system: "A", systemVolatile: "B" }), "AB");
+  assertEquals(joinedSystem({ system: "A" }), "A");
+  assertEquals(joinedSystem({ systemVolatile: "B" }), "B");
+  assertEquals(joinedSystem({}), undefined);
+});
 
 Deno.test("providerFor: routes by model-id scheme", () => {
   // "openai:" prefix → OpenAI proper.
@@ -88,7 +120,10 @@ Deno.test("fromResponsesOutput: malformed arguments degrade to {}", () => {
 // ---- retries ----------------------------------------------------------------
 
 const PARAMS: LlmParams = { model: "m", maxTokens: 10, messages: [], tools: [] };
-const ok = (text: string): LlmResult => ({ content: [{ type: "text", text }], stopReason: "end_turn" });
+const ok = (text: string): LlmResult => ({
+  content: [{ type: "text", text }],
+  stopReason: "end_turn",
+});
 
 Deno.test("isRetryable: transport and server faults yes; aborts and 4xx no", () => {
   assertEquals(isRetryable(new LlmError("truncated stream")), true); // no status = transport
@@ -253,8 +288,7 @@ Deno.test("openai: stream ending without response.completed throws retryable", a
   Deno.env.set("OPENAI_API_KEY", "test");
   const res = sse(JSON.stringify({ type: "response.output_text.delta", delta: "x" }));
   const err = await assertRejects(
-    () =>
-      withFetch(res, () => openaiClient().run({ ...PARAMS, model: "openai:gpt-5" }, () => {})),
+    () => withFetch(res, () => openaiClient().run({ ...PARAMS, model: "openai:gpt-5" }, () => {})),
     LlmError,
     "response.completed",
   );
@@ -270,8 +304,7 @@ Deno.test("openai: response.failed event throws retryable, rate limits as 429", 
     }),
   );
   const err = await assertRejects(
-    () =>
-      withFetch(res, () => openaiClient().run({ ...PARAMS, model: "openai:gpt-5" }, () => {})),
+    () => withFetch(res, () => openaiClient().run({ ...PARAMS, model: "openai:gpt-5" }, () => {})),
     LlmError,
   );
   assertEquals(err.status, 429);

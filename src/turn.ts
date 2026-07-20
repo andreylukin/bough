@@ -308,10 +308,12 @@ export function interruptTurn(sessionId: string): boolean {
   const c = running.get(sessionId);
   if (c) c.abort();
   const hooks = interruptHooks.get(sessionId);
-  if (hooks) for (const h of [...hooks]) {
-    try {
-      h();
-    } catch { /* a child already gone is fine */ }
+  if (hooks) {
+    for (const h of [...hooks]) {
+      try {
+        h();
+      } catch { /* a child already gone is fine */ }
+    }
   }
   return !!c || (hooks?.size ?? 0) > 0;
 }
@@ -606,21 +608,47 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
         shipNote = SHIP_NOTE;
       }
     }
+    // System prompt in two tiers for prompt caching — llm.ts places a cache
+    // breakpoint after each (see anthropicClient's caching comment):
+    //
+    //   STABLE (`system`) — must be byte-identical across sessions and turns so
+    //   the provider cache shares it machine-wide; only text free of per-session
+    //   facts belongs here. The ship/subagent/delegation sections are constant
+    //   TEXT with conditional PRESENCE: they split the cache into a handful of
+    //   tiers (root+ship, root, subagent, depth-capped subagent), each still
+    //   shared by every session of that tier — acceptable. lspSection() is
+    //   constant text gated on a per-machine binary check, so it rides the
+    //   stable tier (moved up from after the MCP section — it's a self-contained
+    //   "##" section nothing references by position).
+    //
+    //   VOLATILE (`systemVolatile`) — everything carrying per-session/per-turn
+    //   facts: running-subagent ids, workspace + scratchpad paths, AGENTS.md
+    //   content, the MCP catalog, invoked skills. Usually stable across turns
+    //   within a session, so its own breakpoint still pays; it must always come
+    //   AFTER the stable tier or it poisons the shared prefix.
+    //
+    // Relative order within each tier is unchanged from the pre-split prompt.
     const system = SYSTEM +
       shipNote +
       (isSub ? SYSTEM_SUBAGENT : "") +
       (mayDelegate ? (isSub ? SYSTEM_DELEGATION_NESTED : SYSTEM_DELEGATION) : "") +
-      (mayDelegate && !isSub
-        ? runningSubagentsNote(
-          db.listSessions().filter((s) =>
-            s.kind === "subagent" && s.originId === sessionId && isTurnRunning(s.id)
-          ),
-        )
-        : "") +
+      lspNote;
+    const systemVolatile = (mayDelegate && !isSub
+      ? runningSubagentsNote(
+        db.listSessions().filter((s) =>
+          s.kind === "subagent" && s.originId === sessionId && isTurnRunning(s.id)
+        ),
+      )
+      : "") +
       workspaceNote(prepared.cwd) +
       (prepared.sandboxed ? scratchpadNote(prepared.scratchDir) : "") +
       (agents ?? "") +
-      mcpNote + lspNote + skills.sections;
+      mcpNote + skills.sections;
+    // Tool defs precede system in the API's cache order, so they're part of the
+    // shared prefix: defaultTools + STOP_TOOL is process-constant and jsonSchema
+    // is deterministic, keeping the array byte-stable across sessions. A
+    // per-session tool would split the cache — grant capabilities via host
+    // functions inside run_steps (prompt sections), never via new tool defs.
     const toolDefs = [
       ...tools.map((t) => ({
         name: t.name,
@@ -658,6 +686,7 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
         {
           model,
           system,
+          systemVolatile,
           maxTokens: MAX_TOKENS,
           messages,
           tools: toolDefs,
