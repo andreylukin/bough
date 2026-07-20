@@ -78,6 +78,18 @@ export interface SkillInfo {
   name: string;
   description: string;
 }
+/** A recurring agent run (mirror of the server's Schedule — schedules.ts). */
+export interface WireSchedule {
+  id: string;
+  title: string;
+  prompt: string;
+  workspace: string | null;
+  spec: string;
+  enabled: boolean;
+  createdAt: number;
+  lastRunAt: number | null;
+  nextRunAt: number;
+}
 export interface NetStatus {
   enabled: boolean;
   running: boolean;
@@ -219,8 +231,7 @@ export const api = {
   fork: (
     id: string,
     body: { atMessageId: string; atPart?: number; editedText?: string; exclusive?: boolean },
-  ) =>
-    jmsg<{ session: Session }>(`/sessions/${id}/fork`, postJson(body)).then((r) => r.session),
+  ) => jmsg<{ session: Session }>(`/sessions/${id}/fork`, postJson(body)).then((r) => r.session),
   compact: (id: string, picks: { messageId: string }[]) =>
     jmsg<{ session: Session }>(`/sessions/${id}/compact`, postJson({ picks }))
       .then((r) => r.session),
@@ -278,6 +289,15 @@ export const api = {
   resetTheme: () => j<{ theme: null }>("/theme", { method: "DELETE" }),
 
   skills: () => j<{ skills: SkillInfo[] }>("/skills").then((r) => r.skills),
+
+  // Recurring agent runs (the /schedule popup). Mutations surface the server's
+  // message (spec/workspace validation 400s carry one).
+  listSchedules: () => j<{ schedules: WireSchedule[] }>("/schedules").then((r) => r.schedules),
+  createSchedule: (body: { title: string; prompt: string; spec: string; workspace?: string }) =>
+    jmsg<WireSchedule>("/schedules", postJson(body)),
+  patchSchedule: (id: string, body: { enabled?: boolean; spec?: string }) =>
+    jmsg<WireSchedule>(`/schedules/${id}`, { ...postJson(body), method: "PATCH" }),
+  deleteSchedule: (id: string) => jmsg<{ ok: boolean }>(`/schedules/${id}`, { method: "DELETE" }),
 
   // Claw Patrol: gateway status, the editable rule set, and the yolo toggle.
   netStatus: () => j<NetStatus>("/net/status"),

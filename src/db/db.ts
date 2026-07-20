@@ -90,6 +90,19 @@ CREATE TABLE IF NOT EXISTS message_embeddings (
   dim         INTEGER NOT NULL,
   vector      BLOB
 );
+-- Recurring agent runs (see schedules.ts): each due fire creates a fresh root
+-- session titled from the schedule and starts a turn with its prompt.
+CREATE TABLE IF NOT EXISTS schedules (
+  id          TEXT PRIMARY KEY,
+  title       TEXT NOT NULL,
+  prompt      TEXT NOT NULL,
+  workspace   TEXT,                   -- null = chat-only sessions (no sandbox root)
+  spec        TEXT NOT NULL,          -- "every:<N><m|h|d>" | "daily@HH:MM" (local)
+  enabled     INTEGER NOT NULL,       -- 0/1
+  created_at  INTEGER NOT NULL,
+  last_run_at INTEGER,
+  next_run_at INTEGER NOT NULL
+);
 `;
 
 // ---- row <-> domain mapping ------------------------------------------------
@@ -151,6 +164,45 @@ type TurnRow = {
   updated_at: number;
   first_output_at: number | null;
 };
+
+/** A recurring agent run: title/prompt/workspace for the session each fire creates. */
+export interface Schedule {
+  id: string;
+  title: string;
+  prompt: string;
+  workspace: string | null;
+  /** "every:<N><m|h|d>" or "daily@HH:MM" — parsed by schedules.ts, stored verbatim. */
+  spec: string;
+  enabled: boolean;
+  createdAt: number;
+  lastRunAt: number | null;
+  nextRunAt: number;
+}
+type ScheduleRow = {
+  id: string;
+  title: string;
+  prompt: string;
+  workspace: string | null;
+  spec: string;
+  enabled: number;
+  created_at: number;
+  last_run_at: number | null;
+  next_run_at: number;
+};
+
+function toSchedule(r: ScheduleRow): Schedule {
+  return {
+    id: r.id,
+    title: r.title,
+    prompt: r.prompt,
+    workspace: r.workspace,
+    spec: r.spec,
+    enabled: r.enabled === 1,
+    createdAt: r.created_at,
+    lastRunAt: r.last_run_at,
+    nextRunAt: r.next_run_at,
+  };
+}
 
 function toTurn(r: TurnRow): Turn {
   return {
@@ -650,6 +702,72 @@ export class Db {
       .prepare(`SELECT * FROM turns WHERE status = ? ORDER BY updated_at`)
       .all(status) as TurnRow[];
     return rows.map(toTurn);
+  }
+
+  // schedules ---------------------------------------------------------------
+
+  createSchedule(s: Schedule): Schedule {
+    this.#db
+      .prepare(
+        `INSERT INTO schedules (id, title, prompt, workspace, spec, enabled, created_at, last_run_at, next_run_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        s.id,
+        s.title,
+        s.prompt,
+        s.workspace,
+        s.spec,
+        s.enabled ? 1 : 0,
+        s.createdAt,
+        s.lastRunAt,
+        s.nextRunAt,
+      );
+    return s;
+  }
+
+  getSchedule(id: string): Schedule | undefined {
+    const r = this.#db.prepare(`SELECT * FROM schedules WHERE id = ?`).get(id) as
+      | ScheduleRow
+      | undefined;
+    return r && toSchedule(r);
+  }
+
+  listSchedules(): Schedule[] {
+    const rows = this.#db
+      .prepare(`SELECT * FROM schedules ORDER BY created_at, rowid`)
+      .all() as ScheduleRow[];
+    return rows.map(toSchedule);
+  }
+
+  /** Enabled schedules whose next_run_at has passed — the ticker's due set. */
+  dueSchedules(now: number): Schedule[] {
+    const rows = this.#db
+      .prepare(
+        `SELECT * FROM schedules WHERE enabled = 1 AND next_run_at <= ? ORDER BY next_run_at`,
+      )
+      .all(now) as ScheduleRow[];
+    return rows.map(toSchedule);
+  }
+
+  /** Overwrite the caller-recomputed fields (PATCH merges into the full row first). */
+  updateSchedule(s: Schedule): void {
+    this.#db
+      .prepare(
+        `UPDATE schedules SET title = ?, prompt = ?, workspace = ?, spec = ?, enabled = ?, next_run_at = ? WHERE id = ?`,
+      )
+      .run(s.title, s.prompt, s.workspace, s.spec, s.enabled ? 1 : 0, s.nextRunAt, s.id);
+  }
+
+  /** Stamp a fire: when it ran and when it runs next. */
+  markScheduleRun(id: string, lastRunAt: number, nextRunAt: number): void {
+    this.#db
+      .prepare(`UPDATE schedules SET last_run_at = ?, next_run_at = ? WHERE id = ?`)
+      .run(lastRunAt, nextRunAt, id);
+  }
+
+  deleteSchedule(id: string): void {
+    this.#db.prepare(`DELETE FROM schedules WHERE id = ?`).run(id);
   }
 
   // net_policies ------------------------------------------------------------

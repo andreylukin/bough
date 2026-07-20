@@ -222,11 +222,14 @@ Deno.test("artifact comments: POST adds, GET lists, DELETE removes (404s guarded
     const anchor = { label: "Files", selector: "body>h2", xf: 0.5, yf: 0.2 };
 
     // Unknown session → 404 on add.
-    assertEquals((await h(req("POST", "/sessions/nope/comments", {
-      artifact: "i.html",
-      text: "x",
-      anchor,
-    }))).status, 404);
+    assertEquals(
+      (await h(req("POST", "/sessions/nope/comments", {
+        artifact: "i.html",
+        text: "x",
+        anchor,
+      }))).status,
+      404,
+    );
 
     const added = await (await h(req("POST", `/sessions/${s.id}/comments`, {
       artifact: "index.html",
@@ -328,6 +331,80 @@ Deno.test("POST message returns 202 and persists user + pending supervisor msgs"
   assertEquals(msgs[0].pending, false);
   assertEquals(msgs[1].role, "supervisor");
   assertEquals(msgs[1].pending, true); // stub turn placeholder
+  c.db.close();
+});
+
+Deno.test("schedules: CRUD round-trip, spec/workspace validation, 404s", async () => {
+  const c = ctx();
+  const h = createHandler(c);
+  const ws = Deno.makeTempDirSync({ prefix: "sched-api-" });
+
+  // Create — spec validated, next_run_at computed, enabled defaults on.
+  const res = await h(
+    req("POST", "/schedules", {
+      title: "deploy check",
+      prompt: "check it",
+      spec: "every:30m",
+      workspace: ws,
+    }),
+  );
+  assertEquals(res.status, 201);
+  const created = await res.json() as {
+    id: string;
+    enabled: boolean;
+    nextRunAt: number;
+    workspace: string;
+  };
+  assertEquals(created.enabled, true);
+  assert(created.nextRunAt > Date.now());
+  assertEquals(created.workspace, ws);
+
+  // Bad spec / bad workspace → 400 with the parser's message.
+  assertEquals(
+    (await h(req("POST", "/schedules", { title: "x", prompt: "y", spec: "weekly" }))).status,
+    400,
+  );
+  assertEquals(
+    (await h(
+      req("POST", "/schedules", {
+        title: "x",
+        prompt: "y",
+        spec: "every:1h",
+        workspace: "/nope/zzz",
+      }),
+    ))
+      .status,
+    400,
+  );
+
+  // List.
+  const listed = await (await h(req("GET", "/schedules"))).json() as {
+    schedules: { id: string }[];
+  };
+  assertEquals(listed.schedules.map((s) => s.id), [created.id]);
+
+  // PATCH: disable, then edit the spec (recomputes next run); bad spec 400; 404 unknown.
+  const off = await (await h(req("PATCH", `/schedules/${created.id}`, { enabled: false })))
+    .json() as {
+      enabled: boolean;
+    };
+  assertEquals(off.enabled, false);
+  const respec = await (await h(req("PATCH", `/schedules/${created.id}`, { spec: "daily@09:00" })))
+    .json() as {
+      spec: string;
+    };
+  assertEquals(respec.spec, "daily@09:00");
+  assertEquals((await h(req("PATCH", `/schedules/${created.id}`, { spec: "bogus" }))).status, 400);
+  assertEquals((await h(req("PATCH", "/schedules/zzz", { enabled: true }))).status, 404);
+
+  // DELETE: removes; unknown id 404s.
+  assertEquals((await h(req("DELETE", `/schedules/${created.id}`))).status, 200);
+  assertEquals(
+    ((await (await h(req("GET", "/schedules"))).json()) as { schedules: unknown[] }).schedules
+      .length,
+    0,
+  );
+  assertEquals((await h(req("DELETE", `/schedules/${created.id}`))).status, 404);
   c.db.close();
 });
 

@@ -73,6 +73,7 @@ import { mcpStatusFor } from "./mcp/status.ts";
 import { expandFileReferences } from "./server/files.ts";
 import { publishArtifact } from "./server/artifacts.ts";
 import { recall as recallSearch } from "./recall.ts";
+import { scheduleVerb } from "./schedules.ts";
 import { originRepo as shadowOrigin, shipToOrigin } from "./vcs/shadow.ts";
 
 export interface TurnCtx {
@@ -178,8 +179,17 @@ export const MODELS: ModelRow[] = [
   { id: "openai/gpt-5", label: "GPT-5 (OpenRouter)", provider: "openrouter" },
   { id: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro (OpenRouter)", provider: "openrouter" },
   { id: "z-ai/glm-5.2", label: "GLM 5.2 (OpenRouter)", provider: "openrouter" },
-  { id: "deepseek/deepseek-v4-flash", label: "DeepSeek V4 Flash (OpenRouter)", provider: "openrouter" },
-  { id: "moonshotai/kimi-k3", label: "Kimi K3 (OpenRouter)", provider: "openrouter", pricing: { in: 3, out: 15 } },
+  {
+    id: "deepseek/deepseek-v4-flash",
+    label: "DeepSeek V4 Flash (OpenRouter)",
+    provider: "openrouter",
+  },
+  {
+    id: "moonshotai/kimi-k3",
+    label: "Kimi K3 (OpenRouter)",
+    provider: "openrouter",
+    pricing: { in: 3, out: 15 },
+  },
 ];
 
 const MAX_TOKENS = 64_000;
@@ -309,10 +319,12 @@ export function interruptTurn(sessionId: string): boolean {
   const c = running.get(sessionId);
   if (c) c.abort();
   const hooks = interruptHooks.get(sessionId);
-  if (hooks) for (const h of [...hooks]) {
-    try {
-      h();
-    } catch { /* a child already gone is fine */ }
+  if (hooks) {
+    for (const h of [...hooks]) {
+      try {
+        h();
+      } catch { /* a child already gone is fine */ }
+    }
   }
   return !!c || (hooks?.size ?? 0) > 0;
 }
@@ -497,6 +509,12 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     // Recall: semantic search over all past conversations (recall.ts), host-side —
     // the sandbox never sees the DB or the embedder. Lazily indexes as it's used.
     toolCtx.recall = (query, k) => recallSearch(db, query, k);
+    // Schedules: the model manages recurring runs through the SAME validated code
+    // path as the REST CRUD (schedules.ts). schedule.add() without a workspace
+    // defaults to this session's persisted workspace.
+    toolCtx.schedule = {
+      call: (verb, args) => scheduleVerb(db, verb, args, db.getSessionRuntime(sessionId).workspace),
+    };
     // Artifacts: the program publishes a file for browser viewing; we host it on the
     // server (server/artifacts.ts) and announce it so the open UI lists it live.
     toolCtx.artifact = async (name, content) => {

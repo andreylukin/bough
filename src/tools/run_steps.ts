@@ -136,7 +136,10 @@ export const runSteps: ToolDef = {
         // Recall (wired for supervisor turns): semantic search over past
         // conversations; the RecallResult round-trips as JSON.
         ...(ctx.recall
-          ? { recall: async (query: string, k?: number) => JSON.stringify(await ctx.recall!(query, k)) }
+          ? {
+            recall: async (query: string, k?: number) =>
+              JSON.stringify(await ctx.recall!(query, k)),
+          }
           : {}),
         // LSP symbol verbs (wired when the backing server is registered): same
         // JSON round-trip as mcp(); the worker side fans this out as lsp.*.
@@ -160,6 +163,14 @@ export const runSteps: ToolDef = {
           ? {
             ship: async (optsJson: string) =>
               JSON.stringify(await ctx.ship!(JSON.parse(optsJson || "{}"))),
+          }
+          : {}),
+        // Recurring runs (wired for supervisor turns): verb-dispatched like lsp();
+        // the worker side fans this out as schedule.*.
+        ...(ctx.schedule
+          ? {
+            schedule: async (verb: string, argsJson: string) =>
+              JSON.stringify(await ctx.schedule!.call(verb, JSON.parse(argsJson))) ?? "null",
           }
           : {}),
       },
