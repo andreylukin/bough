@@ -269,6 +269,16 @@ export function fmtUsd(n: number): string {
   return `$${n >= 1 ? n.toFixed(2) : n >= 0.001 ? n.toFixed(3) : n.toFixed(4)}`;
 }
 
+/** Whole-percent usable context left, measured against the session model's
+ * usable prompt budget (Usage.contextLimit). Null when the limit is unknown. */
+export function ctxPctLeft(
+  usage: { contextTokens: number; contextLimit?: number | null },
+): number | null {
+  const limit = usage.contextLimit;
+  if (!limit || limit <= 0) return null;
+  return Math.max(0, Math.min(100, Math.floor((1 - usage.contextTokens / limit) * 100)));
+}
+
 // ---- cache warmth -------------------------------------------------------------
 // The conversation prefix rides Anthropic's default 5-minute sliding TTL
 // (supervisor/llm.ts); the system+tools prefix is on the 1-hour tier but is small

@@ -5,12 +5,14 @@
 //
 //   deno run --allow-net=models.dev --allow-write=src scripts/update-pricing.ts
 //
-// Output is a flat map "provider/model-id" → [input, output, cacheRead, cacheWrite]
-// in USD per million tokens (null = rate not published). One line per model so
-// regens diff reviewably. Lookup semantics live in src/pricing.ts.
+// Output is a flat map "provider/model-id" → [input, output, cacheRead, cacheWrite,
+// contextWindow]: rates in USD per million tokens (null = rate not published),
+// context window in tokens (null = unknown). One line per model so regens diff
+// reviewably. Lookup semantics live in src/pricing.ts.
 
 interface CatalogModel {
   cost?: { input?: number; output?: number; cache_read?: number; cache_write?: number };
+  limit?: { context?: number; output?: number };
 }
 interface CatalogProvider {
   models?: Record<string, CatalogModel>;
@@ -20,12 +22,18 @@ const res = await fetch("https://models.dev/api.json");
 if (!res.ok) throw new Error(`models.dev fetch failed: ${res.status}`);
 const catalog = await res.json() as Record<string, CatalogProvider>;
 
-const out: Record<string, [number, number, number | null, number | null]> = {};
+const out: Record<string, [number, number, number | null, number | null, number | null]> = {};
 for (const [provider, p] of Object.entries(catalog)) {
   for (const [id, m] of Object.entries(p.models ?? {})) {
     const c = m.cost;
     if (c?.input === undefined || c.output === undefined) continue; // unpriced (open weights etc.)
-    out[`${provider}/${id}`] = [c.input, c.output, c.cache_read ?? null, c.cache_write ?? null];
+    out[`${provider}/${id}`] = [
+      c.input,
+      c.output,
+      c.cache_read ?? null,
+      c.cache_write ?? null,
+      m.limit?.context ?? null,
+    ];
   }
 }
 

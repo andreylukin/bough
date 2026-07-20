@@ -2,6 +2,7 @@ import { assert, assertEquals } from "jsr:@std/assert@1";
 import { Db } from "../db/db.ts";
 import { Bus } from "../bus.ts";
 import { type AppCtx, createHandler } from "./app.ts";
+import { activeModel, usableContextLimit } from "../turn.ts";
 import type { Message, Session } from "../schema/parts.ts";
 
 function ctx(): AppCtx {
@@ -180,6 +181,7 @@ Deno.test("GET /sessions/:id includes token usage (zero before any turn)", async
       cacheReadTotal: number;
       cacheWriteTotal: number;
       costUsd: number;
+      contextLimit: number | null;
       lastLlmAt: number | null;
       tree: { inputTokens: number; outputTokens: number; costUsd: number; sessions: number };
     };
@@ -192,6 +194,8 @@ Deno.test("GET /sessions/:id includes token usage (zero before any turn)", async
     cacheReadTotal: 0,
     cacheWriteTotal: 0,
     costUsd: 0,
+    // The default model's usable prompt budget (catalog window − output reservation).
+    contextLimit: usableContextLimit(activeModel()),
     lastLlmAt: null,
     tree: { inputTokens: 0, outputTokens: 0, costUsd: 0, sessions: 0 },
   });

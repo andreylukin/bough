@@ -50,6 +50,7 @@ import { useStore } from "../store.ts";
 import { type Branch, buildLines, parseSubagentNote, type SubagentNote } from "../lines.ts";
 import {
   fmtTokens,
+  ctxPctLeft,
   fmtUsd,
   fuzzyScore,
   linkAt,
@@ -1849,7 +1850,12 @@ export function App(
       const cached = s.cachedTokens
         ? ` · ${Math.round((s.cachedTokens / s.contextTokens) * 100)}% cached`
         : "";
-      const display = `${fmtTokens(s.contextTokens)} tokens${cached}`;
+      const pct = ctxPctLeft({
+        contextTokens: s.contextTokens,
+        contextLimit: store.usage.contextLimit,
+      });
+      const left = pct !== null ? ` · ${pct}% left` : "";
+      const display = `${fmtTokens(s.contextTokens)} tokens${cached}${left}`;
       rows.push(["context", display, display]);
     }
     const spend = store.usage.tree?.costUsd ?? store.usage.costUsd ?? 0;

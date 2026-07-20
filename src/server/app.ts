@@ -39,6 +39,7 @@ import {
   setActiveModel,
   setOracleModel,
   startUserTurn,
+  usableContextLimit,
 } from "../turn.ts";
 import { type Effort, EFFORTS } from "../supervisor/llm.ts";
 import { setWorkerChoice, WORKER_OPTIONS, workerChoice } from "../worker/frontier.ts";
@@ -381,7 +382,11 @@ const getSession: Handler = (_req, ctx, params) => {
   return json({
     session,
     thread: ctx.db.threadFor(session.id),
-    usage: { ...ctx.db.sessionUsage(session.id), tree: ctx.db.treeUsage(session.id) },
+    usage: {
+      ...ctx.db.sessionUsage(session.id),
+      contextLimit: usableContextLimit(session.model ?? activeModel()),
+      tree: ctx.db.treeUsage(session.id),
+    },
   });
 };
 

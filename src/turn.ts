@@ -38,7 +38,7 @@ import {
   type ToolRunCtx,
 } from "./tools/mod.ts";
 import { runOracle } from "./tools/oracle.ts";
-import { usageCostUsd } from "./pricing.ts";
+import { contextWindowFor, usageCostUsd } from "./pricing.ts";
 import {
   clientFor,
   type Effort,
@@ -193,6 +193,16 @@ export const MODELS: ModelRow[] = [
 ];
 
 const MAX_TOKENS = 64_000;
+
+/**
+ * Usable prompt budget for a model: its catalog context window (pricing.ts)
+ * minus the output reservation every round makes (MAX_TOKENS). The context
+ * meter's "% left" is measured against this. Null when the window is unknown.
+ */
+export function usableContextLimit(model: string): number | null {
+  const window = contextWindowFor(model);
+  return window === null ? null : window - MAX_TOKENS;
+}
 // Code-mode (SPEC §5): the supervisor plans and writes; the harness is the only
 // executor. One program per round, CHECK-gated completion.
 // Explicit turn ending: the model must CALL `stop` to end its turn — a response
@@ -941,6 +951,7 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
         data: {
           sessionId,
           contextTokens,
+          contextLimit: usableContextLimit(model),
           ...totals,
           tree: db.treeUsage(sessionId),
           ...(lastLlmAt > 0 ? { cachedTokens, lastLlmAt } : {}),
@@ -957,7 +968,12 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
         bus.publish({
           type: "usage.updated",
           sessionId: cur.originId,
-          data: { sessionId: cur.originId, ...u, tree: db.treeUsage(cur.originId) },
+          data: {
+            sessionId: cur.originId,
+            ...u,
+            contextLimit: usableContextLimit(db.getSession(cur.originId)?.model ?? activeModel()),
+            tree: db.treeUsage(cur.originId),
+          },
         });
       }
     }

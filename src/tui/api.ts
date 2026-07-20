@@ -72,6 +72,9 @@ export interface Usage {
   inputTokens: number;
   cachedTokens?: number;
   lastLlmAt?: number | null;
+  /** Usable prompt budget of the session's model (window minus the output
+   * reservation) — drives the "% left" context meter. Null/absent = unknown model. */
+  contextLimit?: number | null;
   /** Cumulative dollars, priced server-side (pricing.ts); 0/absent when unpriced. */
   costUsd?: number;
   /** Rollup incl. the subagent subtree — the number a root session's spend should show. */

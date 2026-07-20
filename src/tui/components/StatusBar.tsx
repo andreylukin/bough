@@ -2,7 +2,7 @@ import { palette } from "../theme.ts";
 import { useEffect, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import type { Usage } from "../api.ts";
-import { coldCacheNote, fmtTokens, fmtUsd } from "../format.ts";
+import { coldCacheNote, ctxPctLeft, fmtTokens, fmtUsd } from "../format.ts";
 import type { UiMode } from "../keys.ts";
 import type { TuiSession } from "../store.ts";
 
@@ -87,6 +87,9 @@ export function StatusBar(
   const cold = useColdCache(usage);
   // Session spend: tree rollup (incl. subagents) when present, else own total.
   const spend = usage.tree?.costUsd ?? usage.costUsd ?? 0;
+  // Usable context left; the chip turns warn-colored when the window runs low.
+  const pctLeft = ctxPctLeft(usage);
+  const ctxLow = pctLeft !== null && pctLeft <= 10;
   const status = spinner
     ? { text: spinner, color: palette.warn }
     : session?.lastTurnStatus === "error"
@@ -129,7 +132,12 @@ export function StatusBar(
             {usage.contextTokens > 0
               ? cold && !busy
                 ? <Text color={palette.warn}>{"  "}{cold}</Text>
-                : <Text dimColor>{"  "}{fmtTokens(usage.contextTokens)} ctx</Text>
+                : (
+                  <Text dimColor={!ctxLow} color={ctxLow ? palette.warn : undefined}>
+                    {"  "}{fmtTokens(usage.contextTokens)} ctx
+                    {pctLeft !== null ? ` · ${pctLeft}% left` : ""}
+                  </Text>
+                )
               : null}
             {spend > 0 ? <Text dimColor>{"  "}{fmtUsd(spend)}</Text> : null}
             {pendingCount > 0

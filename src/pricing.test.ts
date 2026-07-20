@@ -1,5 +1,5 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
-import { ratesFor, usageCostUsd } from "./pricing.ts";
+import { contextWindowFor, ratesFor, usageCostUsd } from "./pricing.ts";
 
 Deno.test("ratesFor resolves all three provider id forms", () => {
   // Bare id → anthropic; catalog values drift on regen, so assert shape not price.
@@ -31,6 +31,14 @@ Deno.test("usageCostUsd re-prices the cached share of inclusive input", () => {
   assert(Math.abs(cost - expected) < 1e-9);
   // Cached tokens must cost LESS than pricing them at the full input rate.
   assert(cost < 1.25 * r.input + r.output);
+});
+
+Deno.test("contextWindowFor reports the catalog window per id form", () => {
+  const w = contextWindowFor("claude-opus-4-8");
+  assert(w !== null && w >= 200_000);
+  assert((contextWindowFor("openai:gpt-5") ?? 0) > 0);
+  assert((contextWindowFor("moonshotai/kimi-k3") ?? 0) > 0);
+  assertEquals(contextWindowFor("no-such-model-xyz"), null);
 });
 
 Deno.test("usageCostUsd is null for unpriced models and handles missing cache fields", () => {
