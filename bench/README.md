@@ -58,6 +58,7 @@ Edits whose predictions fail get reverted — no vibes-driven prompt growth.
 | bugfix-inventory | failing test, fix impl not tests | tests green + test file byte-identical |
 | feature-topwords | add `--top N` flag to a CLI | exact output incl. tie-break, old behavior intact |
 | refactor-rename | rename across 3 files | no old name remains, tests untouched + green |
+| rename-precise | rename a method whose name recurs as decoys (dict key, string, unrelated class) | only the real call sites change; a global text replace breaks the decoy test — isolates *semantic* rename (lsp.rename) from text search |
 | test-writing | write tests for slugify | tests pass on real impl AND fail on two mutants |
 | wiring-stats | new command + registration | exact output, existing commands still work |
 
