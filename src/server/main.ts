@@ -8,6 +8,7 @@ import { mcpManager } from "../mcp/manager.ts";
 import { bus } from "../bus.ts";
 import { createHandler, PURGE_RETENTION_MS } from "./app.ts";
 import { recoverOrphanedTurns } from "../supervisor/turns.ts";
+import { startScheduleTicker } from "../schedules.ts";
 import { watchActivity } from "../worker/activity.ts";
 import { workerTitle } from "../supervisor/title.ts";
 
@@ -47,6 +48,11 @@ const handler = createHandler({
   password,
   retitler: workerTitle,
 });
+// Recurring runs: every ~30s fire each enabled schedule whose next_run_at has
+// passed — one fresh session + turn per fire; a downtime backlog fires once
+// (schedules.ts catch-up semantics). Sessions arrive pre-titled from the
+// schedule, so no titler is needed here.
+startScheduleTicker({ db, bus });
 
 // Deno.serve defaults to 0.0.0.0 — only take the LAN-visible bind when a password
 // guards it. BOUGH_HOST overrides either way.

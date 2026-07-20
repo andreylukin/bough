@@ -80,6 +80,7 @@ import { collectImageAttachments, expandFileReferences, imagePartToBlock } from 
 import { publishArtifact } from "./server/artifacts.ts";
 import { recall as recallSearch } from "./recall.ts";
 import { expireAsks, raiseAsk } from "./asks.ts";
+import { scheduleVerb } from "./schedules.ts";
 import { originRepo as shadowOrigin, shipToOrigin } from "./vcs/shadow.ts";
 
 export interface TurnCtx {
@@ -527,6 +528,12 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     // Recall: semantic search over all past conversations (recall.ts), host-side —
     // the sandbox never sees the DB or the embedder. Lazily indexes as it's used.
     toolCtx.recall = (query, k) => recallSearch(db, query, k);
+    // Schedules: the model manages recurring runs through the SAME validated code
+    // path as the REST CRUD (schedules.ts). schedule.add() without a workspace
+    // defaults to this session's persisted workspace.
+    toolCtx.schedule = {
+      call: (verb, args) => scheduleVerb(db, verb, args, db.getSessionRuntime(sessionId).workspace),
+    };
     // Artifacts: the program publishes a file for browser viewing; we host it on the
     // server (server/artifacts.ts) and announce it so the open UI lists it live.
     toolCtx.artifact = async (name, content) => {

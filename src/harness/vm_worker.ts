@@ -34,7 +34,8 @@ type HostName =
   | "lsp"
   | "artifact"
   | "recall"
-  | "ship";
+  | "ship"
+  | "schedule";
 
 const pending = new Map<number, { resolve: (v: string) => void; reject: (e: Error) => void }>();
 let seq = 0;
@@ -114,6 +115,15 @@ async function run(code: string): Promise<void> {
   // result object both travel as JSON, like mcp().
   const ship = async (opts?: unknown) =>
     JSON.parse(await hostCall("ship", [JSON.stringify(opts ?? {})]));
+  // Recurring runs: one host function fanned out as a method object, like lsp.*;
+  // JSON round-trip both ways.
+  const scheduleCall = async (verb: string, args?: unknown) =>
+    JSON.parse(await hostCall("schedule", [verb, JSON.stringify(args ?? null)]));
+  const schedule = Object.fromEntries(
+    ["list", "add", "enable", "disable", "remove"].map(
+      (verb) => [verb, (args?: unknown) => scheduleCall(verb, args)],
+    ),
+  );
 
   // deno-lint-ignore no-explicit-any
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as any;
@@ -138,6 +148,7 @@ async function run(code: string): Promise<void> {
     "artifact",
     "recall",
     "ship",
+    "schedule",
     "console",
     code,
   );
@@ -162,6 +173,7 @@ async function run(code: string): Promise<void> {
     artifact,
     recall,
     ship,
+    schedule,
     sandboxConsole,
   );
 }

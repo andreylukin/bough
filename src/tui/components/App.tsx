@@ -21,6 +21,15 @@ const dbg = Deno.env.get("BOUGH_TUI_DEBUG")
     }
   }
   : null;
+/** "due" / "in 5m" / "in 3h" / "in 2d" — the schedule list's next-run column. */
+function nextIn(ts: number): string {
+  const d = ts - Date.now();
+  if (d <= 0) return "due";
+  const m = Math.round(d / 60_000);
+  if (m < 60) return `in ${Math.max(1, m)}m`;
+  const h = Math.round(m / 60);
+  return h < 24 ? `in ${h}h` : `in ${Math.round(h / 24)}d`;
+}
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, type DOMElement, measureElement, Text, useApp, useInput, useStdout } from "ink";
 import type { Message, Session } from "../../schema/parts.ts";
@@ -34,6 +43,7 @@ import {
   type NetStatus,
   type SkillInfo,
   type ThemeState,
+  type WireSchedule,
   type WireSection,
 } from "../api.ts";
 import { useStore } from "../store.ts";
@@ -113,6 +123,31 @@ export function App(
     { cmd: string; out: string; code: number | null } | null
   >(null);
   const shellSeq = useRef(0);
+  // /schedule popup: recurring runs (list + toggle/delete + a small create form).
+  // Owns the keyboard while open; the human mirror of the model's schedule.* fn.
+  const SCHED_FIELDS = ["title", "prompt", "spec", "workspace"] as const;
+  const [sched, setSched] = useState<
+    {
+      scheds: WireSchedule[];
+      sel: number;
+      // Create form: one string per SCHED_FIELDS entry; null = list view.
+      form: { fields: string[]; focus: number } | null;
+      msg: string | null;
+    } | null
+  >(null);
+  // (Re)load the list, keeping the cursor near where it was after a mutation.
+  const loadSchedules = useCallback(() => {
+    api.listSchedules().then(
+      (scheds) =>
+        setSched((s) => ({
+          scheds,
+          sel: Math.min(s?.sel ?? 0, Math.max(0, scheds.length - 1)),
+          form: null,
+          msg: null,
+        })),
+      (e) => setErr(String(e)),
+    );
+  }, []);
   const [, setTick] = useState(0); // resize repaint
   // picker state. The cursor also lives in a ref: two keys parsed from one stdin
   // chunk (fast typing / key repeat) run in the same React batch, so an Enter right
@@ -548,6 +583,7 @@ export function App(
         const local: SkillInfo[] = [
           { name: "handoff", description: "draft a fresh conversation focused on a goal" },
           { name: "conversation", description: "show this conversation's id and details" },
+          { name: "schedule", description: "recurring agent runs — list, toggle, create" },
         ];
         const items = [...local, ...skills.filter((s) => s.name !== "theme")]
           .map((s, i) => ({ s, local: i < local.length, score: fuzzyScore(s.name, q) }))
@@ -847,6 +883,10 @@ export function App(
       setShowInfo(true);
       return;
     }
+    if (/^\/schedules?\s*$/.test(text)) {
+      loadSchedules();
+      return;
+    }
     if (/^\/handoff\b/.test(text)) {
       const goal = text.slice("/handoff".length).trim();
       if (!goal) return setErr("usage: /handoff <goal for the new conversation>");
@@ -879,6 +919,7 @@ export function App(
     openSession,
     defaultWorkspace,
     runShell,
+    loadSchedules,
   ]);
 
   // Open the panel on a tab, resetting that tab's transient state. One entry
@@ -1380,6 +1421,94 @@ export function App(
     if (key.ctrl && ch === "s") {
       setSearchIdx(0);
       setSearchQ("");
+      return;
+    }
+    // The /schedule popup owns the keyboard while open (list: pick/toggle/delete/
+    // new; form: type into the focused field). Esc unwinds form → list → closed.
+    if (sched) {
+      const f = sched.form;
+      if (f) {
+        if (key.escape) return setSched((s) => s && { ...s, form: null, msg: null });
+        // Tab (or enter on any field but the last) moves focus; enter on the
+        // last field submits through the same validated route as REST/host fn.
+        if (key.tab || (key.return && f.focus < SCHED_FIELDS.length - 1)) {
+          return setSched((s) =>
+            s?.form
+              ? { ...s, form: { ...s.form, focus: (s.form.focus + 1) % SCHED_FIELDS.length } }
+              : s
+          );
+        }
+        if (key.return) {
+          const [title, prompt, spec, workspace] = f.fields.map((v) => v.trim());
+          if (!title || !prompt || !spec) {
+            return setSched((s) => s && { ...s, msg: "title, prompt, and spec are required" });
+          }
+          api.createSchedule({ title, prompt, spec, ...(workspace ? { workspace } : {}) }).then(
+            () => loadSchedules(),
+            (e) => setSched((s) => s && { ...s, msg: String((e as Error).message ?? e) }),
+          );
+          return;
+        }
+        if (key.backspace || key.delete) {
+          return setSched((s) =>
+            s?.form
+              ? {
+                ...s,
+                form: {
+                  ...s.form,
+                  fields: s.form.fields.map((v, i) => i === s.form!.focus ? v.slice(0, -1) : v),
+                },
+              }
+              : s
+          );
+        }
+        if (ch && !key.ctrl && !key.meta) {
+          const norm = ch.replace(/[\r\n]/g, "");
+          if (!norm) return;
+          return setSched((s) =>
+            s?.form
+              ? {
+                ...s,
+                form: {
+                  ...s.form,
+                  fields: s.form.fields.map((v, i) => i === s.form!.focus ? v + norm : v),
+                },
+              }
+              : s
+          );
+        }
+        return;
+      }
+      if (key.escape) return setSched(null);
+      if (key.upArrow) return setSched((s) => s && { ...s, sel: Math.max(0, s.sel - 1) });
+      if (key.downArrow) {
+        return setSched((s) =>
+          s && { ...s, sel: Math.min(Math.max(0, s.scheds.length - 1), s.sel + 1) }
+        );
+      }
+      if (ch === "n" || ch === "a") {
+        // Workspace defaults to the open session's (else the launch default) —
+        // mirroring schedule.add()'s default for the model.
+        const ws = store.session?.workspace ?? defaultWorkspace ?? "";
+        return setSched((s) =>
+          s && { ...s, form: { fields: ["", "", "", ws], focus: 0 }, msg: null }
+        );
+      }
+      const cur = sched.scheds[sched.sel];
+      if (cur && (ch === " " || key.return || ch === "e")) {
+        api.patchSchedule(cur.id, { enabled: !cur.enabled }).then(
+          () => loadSchedules(),
+          (e) => setSched((s) => s && { ...s, msg: String((e as Error).message ?? e) }),
+        );
+        return;
+      }
+      if (cur && (ch === "d" || ch === "x")) {
+        api.deleteSchedule(cur.id).then(
+          () => loadSchedules(),
+          (e) => setSched((s) => s && { ...s, msg: String((e as Error).message ?? e) }),
+        );
+        return;
+      }
       return;
     }
     // chat mode. Four jump chords open the one panel view on a tab; ^t toggles
@@ -1918,6 +2047,58 @@ export function App(
                       </Text>
                     ))}
                     <Text dimColor>click a row to copy · esc dismisses</Text>
+                  </Box>
+                )
+                : null}
+              {sched
+                ? (
+                  <Box
+                    flexDirection="column"
+                    borderStyle="round"
+                    backgroundColor={palette.panel}
+                    borderColor={palette.border}
+                    paddingX={1}
+                  >
+                    <Text bold>schedules</Text>
+                    {sched.form
+                      ? (
+                        <>
+                          {SCHED_FIELDS.map((name, i) => (
+                            <Text key={name} wrap="truncate">
+                              <Text color={palette.accent}>{name.padEnd(11)}</Text>
+                              {sched.form!.fields[i]}
+                              {i === sched.form!.focus ? <Text inverse>{" "}</Text> : null}
+                            </Text>
+                          ))}
+                          <Text dimColor>
+                            spec: every:{"<N><m|h|d>"}{" "}
+                            or daily@HH:MM · enter next / create · esc back
+                          </Text>
+                        </>
+                      )
+                      : (
+                        <>
+                          {sched.scheds.map((s, i) => (
+                            <Text key={s.id} inverse={i === sched.sel} wrap="truncate">
+                              {s.enabled
+                                ? <Text color={palette.accent}>{"● "}</Text>
+                                : <Text dimColor>{"○ "}</Text>}
+                              {s.title}
+                              <Text dimColor>
+                                {"  "}
+                                {s.spec}{"  "}{s.enabled ? nextIn(s.nextRunAt) : "off"}
+                              </Text>
+                            </Text>
+                          ))}
+                          {sched.scheds.length === 0
+                            ? <Text dimColor>no schedules — n creates one</Text>
+                            : null}
+                          <Text dimColor>
+                            ↑↓ pick · space toggle · d delete · n new · esc close
+                          </Text>
+                        </>
+                      )}
+                    {sched.msg ? <Text color={palette.error}>{sched.msg}</Text> : null}
                   </Box>
                 )
                 : null}

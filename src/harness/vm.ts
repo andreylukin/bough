@@ -83,6 +83,12 @@ export interface HostFns {
    * as JSON. Bridged only for root-session turns with a repo workspace.
    */
   ship?(optsJson: string): Promise<string>;
+  /**
+   * Recurring runs (schedules.ts): one verb-dispatched function like lsp() —
+   * args in and result back travel as JSON; the worker side exposes it as the
+   * `schedule.*` method object (list/add/enable/disable/remove).
+   */
+  schedule?(verb: string, argsJson: string): Promise<string>;
 }
 
 export interface ProgramResult {

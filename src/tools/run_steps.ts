@@ -177,6 +177,14 @@ export const runSteps: ToolDef = {
               JSON.stringify(await ctx.ship!(JSON.parse(optsJson || "{}"))),
           }
           : {}),
+        // Recurring runs (wired for supervisor turns): verb-dispatched like lsp();
+        // the worker side fans this out as schedule.*.
+        ...(ctx.schedule
+          ? {
+            schedule: async (verb: string, argsJson: string) =>
+              JSON.stringify(await ctx.schedule!.call(verb, JSON.parse(argsJson))) ?? "null",
+          }
+          : {}),
       },
       // agent() blocks on whole subagent turns; a held mcp()/lsp() call blocks on a
       // human approval; an oracle() consult can reason for many minutes; an ask()

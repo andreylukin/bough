@@ -9,6 +9,7 @@
  *   POST /sessions                 → Session            {title, parentId?, kind?}
  *   GET  /sessions/:id             → {session, thread}  (thread = root→self messages)
  *   POST /sessions/:id/messages    → 202                {text}  (persist + start turn)
+ *   GET/POST /schedules, PATCH/DELETE /schedules/:id → recurring runs (schedules.ts)
  *   GET /events[?sessionId=]  → SSE stream of BoughEvent (named events + heartbeat)
  *
  * No CORS headers: the only client is the native `bough` TUI (not a browser), so the
@@ -85,6 +86,13 @@ import {
 } from "./comments.ts";
 import { createAuth } from "./auth.ts";
 import { compact, CompactBody } from "../compact.ts";
+import {
+  scheduleCreate,
+  ScheduleCreateBody,
+  schedulePatch,
+  SchedulePatchBody,
+  scheduleRemove,
+} from "../schedules.ts";
 import { sectionize, SectionsBody } from "../sections.ts";
 import { type Embedder, recall } from "../recall.ts";
 import { extract, ExtractBody } from "../extract.ts";
@@ -547,6 +555,25 @@ const revertChangesH: Handler = async (req, ctx, params) => {
   const revertedPaths = await revertChanges(ctx.db, params.id, body.paths);
   emitChangesUpdated(ctx, params.id);
   return json({ ok: true, reverted: "shadow", paths: revertedPaths });
+};
+
+// ---- schedules (recurring agent runs — schedules.ts owns validation) --------
+
+const listSchedulesH: Handler = (_req, ctx) => json({ schedules: ctx.db.listSchedules() });
+
+const createScheduleH: Handler = async (req, ctx) => {
+  const body = await parseBody(req, ScheduleCreateBody);
+  return json(await scheduleCreate(ctx.db, body), 201);
+};
+
+const patchScheduleH: Handler = async (req, ctx, params) => {
+  const body = await parseBody(req, SchedulePatchBody);
+  return json(await schedulePatch(ctx.db, params.id, body));
+};
+
+const deleteScheduleH: Handler = (_req, ctx, params) => {
+  scheduleRemove(ctx.db, params.id);
+  return json({ ok: true });
 };
 
 const events: Handler = (req, ctx) => {
@@ -1291,6 +1318,18 @@ const routes: Route[] = [
     method: "POST",
     pattern: new URLPattern({ pathname: "/sessions/:id/questions/:qid" }),
     handler: answerQuestionH,
+  },
+  { method: "GET", pattern: new URLPattern({ pathname: "/schedules" }), handler: listSchedulesH },
+  { method: "POST", pattern: new URLPattern({ pathname: "/schedules" }), handler: createScheduleH },
+  {
+    method: "PATCH",
+    pattern: new URLPattern({ pathname: "/schedules/:id" }),
+    handler: patchScheduleH,
+  },
+  {
+    method: "DELETE",
+    pattern: new URLPattern({ pathname: "/schedules/:id" }),
+    handler: deleteScheduleH,
   },
   { method: "GET", pattern: new URLPattern({ pathname: "/events" }), handler: events },
   { method: "GET", pattern: new URLPattern({ pathname: "/net/status" }), handler: netStatus },

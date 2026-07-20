@@ -129,6 +129,14 @@ export interface ToolRunCtx {
    */
   recall?: (query: string, k?: number) => Promise<unknown>;
   /**
+   * Recurring runs (schedules.ts), wired by the turn runner for every supervisor
+   * turn: the same validated CRUD the REST routes use, fanned out in the program
+   * as the `schedule.*` method object (list/add/enable/disable/remove).
+   */
+  schedule?: {
+    call: (verb: string, args: unknown) => Promise<unknown>;
+  };
+  /**
    * Ship the session's work into the origin repo as a real commit (+ optional push)
    * — vcs/shadow.ts shipToOrigin via the turn runner. Wired only for root-session
    * turns whose workspace is a shadow worktree with a resolvable origin.
