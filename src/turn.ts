@@ -54,6 +54,7 @@ import {
 } from "./subagent.ts";
 import { maybeAutoTitle, type Titler } from "./supervisor/title.ts";
 import {
+  delegationHintNote,
   readAgentsFile,
   runningSubagentsNote,
   scratchpadNote,
@@ -524,7 +525,8 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     // Skills: `/name` in the triggering user message pulls that skill's
     // instructions into the system prompt for this run (supervisor/skills.ts) and
     // names the MCP servers the invocation grants.
-    const skills = activeSkills(lastUserText(db, sessionId));
+    const triggerText = lastUserText(db, sessionId);
+    const skills = activeSkills(triggerText);
     // The turn's MCP grant: the invoked skills' servers + the session's manual
     // activations (/mcp enable) + servers inherited from the spawning turn (a
     // subagent doing part of granted work keeps the grant).
@@ -633,13 +635,20 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       (isSub ? SYSTEM_SUBAGENT : "") +
       (mayDelegate ? (isSub ? SYSTEM_DELEGATION_NESTED : SYSTEM_DELEGATION) : "") +
       lspNote;
-    const systemVolatile = (mayDelegate && !isSub
-      ? runningSubagentsNote(
-        db.listSessions().filter((s) =>
-          s.kind === "subagent" && s.originId === sessionId && isTurnRunning(s.id)
-        ),
-      )
-      : "") +
+    const systemVolatile =
+      // Delegation fit gate: a decomposable-shaped request gets the decision rule
+      // + spawn() code shape injected once (root sessions only — spawn exists
+      // there). Cohesive requests see a byte-identical prompt (see prompt.ts).
+      // Per-turn text, so it lives in the volatile tier — leading it, which
+      // keeps its pre-split position right after SYSTEM_DELEGATION.
+      (mayDelegate && !isSub ? delegationHintNote(triggerText) : "") +
+      (mayDelegate && !isSub
+        ? runningSubagentsNote(
+          db.listSessions().filter((s) =>
+            s.kind === "subagent" && s.originId === sessionId && isTurnRunning(s.id)
+          ),
+        )
+        : "") +
       workspaceNote(prepared.cwd) +
       (prepared.sandboxed ? scratchpadNote(prepared.scratchDir) : "") +
       (agents ?? "") +
