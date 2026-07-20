@@ -72,6 +72,7 @@ import { mcpSection } from "./mcp/prompt.ts";
 import { mcpStatusFor } from "./mcp/status.ts";
 import { expandFileReferences } from "./server/files.ts";
 import { publishArtifact } from "./server/artifacts.ts";
+import { recall as recallSearch } from "./recall.ts";
 import { originRepo as shadowOrigin, shipToOrigin } from "./vcs/shadow.ts";
 
 export interface TurnCtx {
@@ -461,6 +462,9 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
           outputTokens += u.outputTokens;
         },
       });
+    // Recall: semantic search over all past conversations (recall.ts), host-side —
+    // the sandbox never sees the DB or the embedder. Lazily indexes as it's used.
+    toolCtx.recall = (query, k) => recallSearch(db, query, k);
     // Artifacts: the program publishes a file for browser viewing; we host it on the
     // server (server/artifacts.ts) and announce it so the open UI lists it live.
     toolCtx.artifact = async (name, content) => {

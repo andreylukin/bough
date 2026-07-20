@@ -159,6 +159,39 @@ Deno.test("mcpStatus() bridges the management state as a parsed object", async (
   assertStringIncludes(bare, "unknown host function: mcpStatus");
 });
 
+Deno.test("recall() bridges semantic search when wired; absent otherwise", async () => {
+  const queries: unknown[] = [];
+  const c: ToolRunCtx = {
+    ...ctx(),
+    recall: (query, k) => {
+      queries.push([query, k]);
+      return Promise.resolve({
+        hits: [{ sessionId: "s1", title: "old fix", snippet: "we solved it", score: 0.83 }],
+        indexed: 2,
+      });
+    },
+  };
+  const out = await runSteps.run(
+    {
+      code: `const r = await recall("websocket fix", 5);
+             console.log("hit:", r.hits[0].title, r.hits[0].score, "indexed:", r.indexed);`,
+    },
+    c,
+  );
+  assertStringIncludes(out, "hit: old fix 0.83 indexed: 2");
+  assertEquals(queries, [["websocket fix", 5]]);
+
+  // k omitted → forwarded as undefined (recall.ts applies its own default).
+  await runSteps.run({ code: `await recall("just a query");` }, c);
+  assertEquals(queries[1], ["just a query", undefined]);
+
+  const bare = await runSteps.run(
+    { code: `try { await recall("x"); } catch (e) { console.log("no fn:", e.message); }` },
+    ctx(),
+  );
+  assertStringIncludes(bare, "unknown host function: recall");
+});
+
 Deno.test("lsp.* bridges verbs into the program when wired; absent otherwise", async () => {
   const calls: unknown[] = [];
   const c: ToolRunCtx = {

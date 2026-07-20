@@ -2,12 +2,23 @@ import { palette } from "../theme.ts";
 import { useEffect, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import type { Usage } from "../api.ts";
-import { fmtTokens } from "../format.ts";
+import { coldCacheNote, fmtTokens } from "../format.ts";
 import { HINTS, PANEL_HINTS, type UiMode } from "../keys.ts";
 import type { PanelTab } from "./Panel.tsx";
 import type { TuiSession } from "../store.ts";
 
 const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/** Cold-cache resume warning, re-evaluated on a slow tick so it appears while
+ * the user idles (staleness is a function of wall clock, not of events). */
+function useColdCache(usage: Usage): string | null {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((x) => x + 1), 30_000);
+    return () => clearInterval(t);
+  }, []);
+  return coldCacheNote(usage, Date.now());
+}
 
 /** Animated spinner + elapsed seconds while a turn runs. */
 function useSpinner(busy: boolean): string | null {
@@ -74,6 +85,7 @@ export function StatusBar(
   },
 ) {
   const spinner = useSpinner(busy);
+  const cold = useColdCache(usage);
   const status = spinner
     ? { text: spinner, color: palette.warn }
     : session?.lastTurnStatus === "error"
@@ -116,7 +128,9 @@ export function StatusBar(
             {status ? <Text color={status.color}>{"  "}{status.text}</Text> : null}
             {model ? <Text dimColor>{"  "}⌬ {model}</Text> : null}
             {usage.contextTokens > 0
-              ? <Text dimColor>{"  "}{fmtTokens(usage.contextTokens)} ctx</Text>
+              ? cold && !busy
+                ? <Text color={palette.warn}>{"  "}{cold}</Text>
+                : <Text dimColor>{"  "}{fmtTokens(usage.contextTokens)} ctx</Text>
               : null}
             {pendingCount > 0
               ? (

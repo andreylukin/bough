@@ -189,6 +189,70 @@ def cmd_show(args):
                 print(f"  {fmt_ts(n['ts'])}  {n['verdict']:<7}  {n['host']}  {n['action']}  ({n['reason']})")
 
 
+# ---- search -----------------------------------------------------------------
+
+def part_texts(parts_json):
+    """All searchable strings in a message's parts (prose + tool i/o)."""
+    out = []
+    for p in json.loads(parts_json):
+        ty = p.get("type")
+        if ty in ("text", "reasoning"):
+            out.append(p.get("text", ""))
+        elif ty == "tool_call":
+            out.append(call_digest(p.get("name"), p.get("input")))
+        elif ty == "tool_result":
+            o = p.get("output")
+            out.append(o if isinstance(o, str) else json.dumps(o))
+    return out
+
+
+def snippet_around(text, needle, width=90):
+    at = text.lower().find(needle.lower())
+    if at < 0:
+        return None
+    start = max(0, at - width // 2)
+    s = text[start : at + len(needle) + width // 2].replace("\n", " ")
+    return ("…" if start > 0 else "") + s + "…"
+
+
+def cmd_search(args):
+    """Keyword search (exact substring, case-insensitive) across all messages.
+    Best for identifiers and error strings; for meaning-level queries use the
+    recall() host function from a bough session (see SKILL.md)."""
+    db = connect()
+    rows = db.execute(
+        """
+        SELECT m.session_id, m.role, m.created_at, m.parts, s.title, s.workspace
+        FROM messages m JOIN sessions s ON s.id = m.session_id
+        WHERE m.parts LIKE ? ESCAPE '\\'
+        ORDER BY m.created_at DESC
+        """,
+        ("%" + args.query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%",),
+    ).fetchall()
+    shown = 0
+    last_session = None
+    for r in rows:
+        if args.project and args.project not in (r["workspace"] or ""):
+            continue
+        snip = next(
+            (s for t in part_texts(r["parts"]) if (s := snippet_around(t, args.query))), None
+        )
+        if snip is None:  # matched only JSON plumbing (keys, ids) — skip
+            continue
+        if r["session_id"] != last_session:
+            last_session = r["session_id"]
+            ws = os.path.basename(r["workspace"] or "")
+            ws = "" if ws == r["session_id"] else ws + "  "  # shadow worktrees are named by session id
+            print(f"\n{r['session_id']}  {ws}{r['title'][:60]}")
+        print(f"  {fmt_ts(r['created_at'])}  {ROLE_LABEL.get(r['role'], r['role'])}: {snip}")
+        shown += 1
+        if shown >= args.limit:
+            print(f"\n(capped at {args.limit} matches — narrow the query or raise -n)")
+            break
+    if shown == 0:
+        print(f"no matches for {args.query!r}")
+
+
 def main():
     p = argparse.ArgumentParser(description="Read bough conversation history from bough.db.")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -208,6 +272,12 @@ def main():
     ps.add_argument("-q", "--quiet", action="store_true", help="hide system messages and reasoning")
     ps.add_argument("--net", action="store_true", help="append the session's gated network requests")
     ps.set_defaults(func=cmd_show)
+
+    pq = sub.add_parser("search", help="keyword search across all messages")
+    pq.add_argument("query", help="case-insensitive substring")
+    pq.add_argument("-p", "--project", help="filter by substring of workspace path")
+    pq.add_argument("-n", "--limit", type=int, default=25, help="max matches (default 25)")
+    pq.set_defaults(func=cmd_search)
 
     args = p.parse_args()
     args.func(args)

@@ -69,3 +69,16 @@ Deno.test("linkAt: wrapped continuation fragment still carries the full target",
   assertEquals(linkAt(frag, 5), "https://example.com/long");
   assertEquals(linkAt(frag, 14), null); // one past the visible text
 });
+
+Deno.test("coldCacheNote: fires only for stale, substantial contexts", async () => {
+  const { coldCacheNote } = await import("./format.ts");
+  const now = 1_000_000_000;
+  const warm = { contextTokens: 180_000, lastLlmAt: now - 60_000 };
+  const stale = { contextTokens: 180_000, lastLlmAt: now - 6 * 60_000 };
+  const small = { contextTokens: 5_000, lastLlmAt: now - 6 * 60_000 };
+  assertEquals(coldCacheNote(warm, now), null);
+  assertEquals(coldCacheNote(stale, now), "❄ re-caches ~180k");
+  assertEquals(coldCacheNote(small, now), null); // trivial cost — no noise
+  assertEquals(coldCacheNote({ contextTokens: 180_000, lastLlmAt: null }, now), null);
+  assertEquals(coldCacheNote({ contextTokens: 180_000 }, now), null); // never ran
+});

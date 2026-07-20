@@ -105,6 +105,14 @@ export interface ToolRunCtx {
    */
   artifact?: (name: string, content: string) => Promise<Artifact>;
   /**
+   * Semantic search over ALL past conversations (recall.ts, local embeddings),
+   * wired by the turn runner for every supervisor turn. Runs host-side — the
+   * sandbox never touches the DB or the embedder. Lazily indexes a batch of new
+   * messages per call; the result's `indexed` field > 0 means the index is still
+   * converging (call again for fuller coverage).
+   */
+  recall?: (query: string, k?: number) => Promise<unknown>;
+  /**
    * Ship the session's work into the origin repo as a real commit (+ optional push)
    * — vcs/shadow.ts shipToOrigin via the turn runner. Wired only for root-session
    * turns whose workspace is a shadow worktree with a resolvable origin.

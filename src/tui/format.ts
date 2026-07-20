@@ -257,6 +257,26 @@ export function fmtTokens(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : `${n}`;
 }
 
+// ---- cache warmth -------------------------------------------------------------
+// The conversation prefix rides Anthropic's default 5-minute sliding TTL
+// (supervisor/llm.ts); the system+tools prefix is on the 1-hour tier but is small
+// next to a long conversation, so the ~ tilde absorbs it.
+const CACHE_TTL_MS = 5 * 60_000;
+// Contexts below this re-cache for pennies — no chip, no noise.
+const COLD_NOTE_MIN_TOKENS = 20_000;
+
+/** Status-bar note when the next message would re-write the prompt cache: the
+ * session's context is substantial and its last LLM round is older than the
+ * cache TTL. Null while warm, small, or never-run. */
+export function coldCacheNote(
+  usage: { contextTokens: number; lastLlmAt?: number | null },
+  now: number,
+): string | null {
+  if (usage.contextTokens < COLD_NOTE_MIN_TOKENS) return null;
+  if (!usage.lastLlmAt || now - usage.lastLlmAt < CACHE_TTL_MS) return null;
+  return `❄ re-caches ~${fmtTokens(usage.contextTokens)}`;
+}
+
 /**
  * Fuzzy rank for the composer popups: exact prefix beats word-boundary prefix
  * beats substring beats in-order subsequence; non-matches drop out (score 0).

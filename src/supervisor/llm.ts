@@ -286,10 +286,14 @@ export function anthropicClient(): LlmClient {
   const client = new Anthropic({ maxRetries: 0 });
   return {
     async run(params, onText, signal) {
-      // Prompt caching (5-minute sliding TTL, refreshed free on every hit):
-      //   - breakpoint on the system block caches tools + system together;
+      // Prompt caching, two tiers (longer-TTL breakpoints must precede shorter):
+      //   - breakpoint on the system block caches tools + system together at a
+      //     1-HOUR TTL. This prefix is stable across turns AND sessions of the
+      //     same workspace, so it survives a lunch break and warms new sessions
+      //     (writes bill 2x vs 1.25x — break-even is roughly one extra hit);
       //   - breakpoint on the final block of the final message extends the cached
-      //     prefix each round (the API reuses the longest previously cached prefix).
+      //     conversation prefix each round at the default 5-minute sliding TTL
+      //     (the API reuses the longest previously cached prefix).
       const messages = params.messages.map(toApiMessage);
       const lastContent = messages.at(-1)?.content;
       if (Array.isArray(lastContent) && lastContent.length > 0) {
@@ -301,7 +305,13 @@ export function anthropicClient(): LlmClient {
         model: params.model,
         max_tokens: params.maxTokens,
         system: params.system
-          ? [{ type: "text", text: params.system, cache_control: { type: "ephemeral" } }]
+          ? [{
+            type: "text",
+            text: params.system,
+            // `ttl` postdates the pinned SDK's types but serializes fine (like
+            // effortParams' spread) — hence the cast.
+            cache_control: { type: "ephemeral", ttl: "1h" } as Anthropic.CacheControlEphemeral,
+          }]
           : undefined,
         messages,
         tools: params.tools.map((t) => ({

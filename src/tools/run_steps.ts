@@ -38,7 +38,8 @@ const schema = z.object({
       "`const {stdout} = await bash(...)` yields undefined), read(path) → string, " +
       "write(path, content), edit(path, oldText, newText), and background shells — " +
       "bashBg(cmd) → {id, pid}, bashOutput(id) → string, bashKill(id) " +
-      "— plus mcpStatus() (always available: this session's MCP management state) and any " +
+      "— plus mcpStatus() (always available: this session's MCP management state), " +
+      "recall(query, k?) → {hits, indexed} (semantic search over past bough conversations) and any " +
       "oracle(question) → string, delegation (agent/spawn/join/adopt), mcp(server, tool, args), and lsp.* symbol " +
       "navigation host functions your system prompt grants. Node globals (process, " +
       "require) do not exist. Use console.log(...) to see " +
@@ -130,6 +131,11 @@ export const runSteps: ToolDef = {
           : {}),
         // MCP management state — read-only, wired for every supervisor turn.
         ...(ctx.mcpStatus ? { mcpStatus: async () => JSON.stringify(await ctx.mcpStatus!()) } : {}),
+        // Recall (wired for supervisor turns): semantic search over past
+        // conversations; the RecallResult round-trips as JSON.
+        ...(ctx.recall
+          ? { recall: async (query: string, k?: number) => JSON.stringify(await ctx.recall!(query, k)) }
+          : {}),
         // LSP symbol verbs (wired when the backing server is registered): same
         // JSON round-trip as mcp(); the worker side fans this out as lsp.*.
         ...(ctx.lsp

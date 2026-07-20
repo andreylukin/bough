@@ -64,6 +64,12 @@ export interface HostFns {
    */
   artifact?(name: string, content: string): Promise<string>;
   /**
+   * Semantic search over all past conversations (recall.ts): the RecallResult
+   * ({hits, indexed}) returns as JSON — the worker side parses it back. Bridged
+   * for every supervisor turn.
+   */
+  recall?(query: string, k?: number): Promise<string>;
+  /**
    * Ship the session's work into the origin repo as a real commit (+ optional
    * push) — vcs/shadow.ts shipToOrigin. Options in and ShipResult back travel
    * as JSON. Bridged only for root-session turns with a repo workspace.
