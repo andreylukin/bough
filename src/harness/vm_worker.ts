@@ -28,6 +28,7 @@ type HostName =
   | "join"
   | "adopt"
   | "oracle"
+  | "ask"
   | "mcp"
   | "mcpStatus"
   | "lsp"
@@ -83,6 +84,10 @@ async function run(code: string): Promise<void> {
   const adopt = (sessionId: string) => hostCall("adopt", [sessionId]);
   // The oracle: plain strings both ways (question in, prose advice out).
   const oracle = (question: string) => hostCall("oracle", [question]);
+  // Ask the human: options ride out as JSON (string-only protocol); the answer
+  // comes back as a plain string. Rejects on decline/interrupt (catchable).
+  const ask = (question: string, opts?: unknown) =>
+    hostCall("ask", [question, JSON.stringify(opts ?? {})]);
   // MCP: args out and result back both travel as JSON (string-only protocol).
   // Turns without granted servers have no bridged fn — the call rejects.
   const mcp = async (server: string, tool: string, args?: unknown) =>
@@ -126,6 +131,7 @@ async function run(code: string): Promise<void> {
     "join",
     "adopt",
     "oracle",
+    "ask",
     "mcp",
     "mcpStatus",
     "lsp",
@@ -149,6 +155,7 @@ async function run(code: string): Promise<void> {
     join,
     adopt,
     oracle,
+    ask,
     mcp,
     mcpStatus,
     lsp,

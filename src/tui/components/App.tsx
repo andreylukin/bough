@@ -46,6 +46,7 @@ import { Composer } from "./Composer.tsx";
 import { ActivityLine, StatusBar } from "./StatusBar.tsx";
 import { flattenTree, SessionPicker, type TreeRow } from "./SessionPicker.tsx";
 import { NetApproval } from "./NetApproval.tsx";
+import { AskCard } from "./AskCard.tsx";
 import { NewSession } from "./NewSession.tsx";
 import {
   buildTree,
@@ -145,6 +146,20 @@ export function App(
     setHoldDetail(false);
     if (pendingId) pendingSince.current = Date.now();
   }, [pendingId]);
+  // ask() question-hold state: the free-text draft + whether the text line is
+  // active. Reset per question (same leak-guard as holdDetail); an option-less
+  // question starts in typing mode — free text is its only input. Same arm-delay
+  // idea as the net card so an in-flight composer keystroke can't answer unseen.
+  const askId = store.ask?.id;
+  const askHasOptions = (store.ask?.options?.length ?? 0) > 0;
+  const [askText, setAskText] = useState("");
+  const [askTyping, setAskTyping] = useState(false);
+  const askSince = useRef(0);
+  useEffect(() => {
+    setAskText("");
+    setAskTyping(!askHasOptions);
+    if (askId) askSince.current = Date.now();
+  }, [askId, askHasOptions]);
   // Double-esc detection (Claude Code parity): only an esc that did nothing on
   // its own arms the pair — an esc that interrupted or dismissed something
   // already spent itself.
@@ -259,7 +274,7 @@ export function App(
   useEffect(() => {
     setTitle(sessionTitle ? `bough — ${sessionTitle}` : "bough");
   }, [sessionTitle]);
-  const hasPending = !!store.pending;
+  const hasPending = !!store.pending || !!store.ask;
   useEffect(() => {
     tabColor(hasPending ? palette.warn : null);
   }, [hasPending]);
@@ -1374,7 +1389,7 @@ export function App(
       setExpandAll((v) => !v);
       return;
     }
-    if (ch === "?" && !key.ctrl && !key.meta && input === "" && !store.pending) {
+    if (ch === "?" && !key.ctrl && !key.meta && input === "" && !store.pending && !store.ask) {
       setMode("help");
       return;
     }
@@ -1440,6 +1455,39 @@ export function App(
       // (the hold dies with it) instead of being dead until a/A/d. No arm-delay:
       // stopping is always safe.
       if (key.escape) return store.interrupt();
+      return;
+    }
+    if (store.ask) {
+      // The question card replaces the composer (net holds outrank it above).
+      // Deciding keys arm after the same beat as the net card; esc DECLINES the
+      // question — the program catches a "user declined" error and continues, so
+      // the turn keeps running (interrupt still reachable once the card clears).
+      const armed = Date.now() - askSince.current > 250;
+      if (askTyping) {
+        if (key.return) {
+          if (armed && askText.trim()) store.answerAsk(askText.trim());
+          return;
+        }
+        if (key.escape) {
+          // With options, esc backs out of the text line first (panel
+          // convention); option-less questions have nothing to back into.
+          if (askHasOptions) {
+            setAskTyping(false);
+            setAskText("");
+          } else if (armed) store.declineAsk();
+          return;
+        }
+        if (key.backspace || key.delete) return setAskText((t) => t.slice(0, -1));
+        if (ch && !key.ctrl && !key.meta) return setAskText((t) => t + ch);
+        return;
+      }
+      if (/^[1-9]$/.test(ch) && armed) {
+        const opt = store.ask.options?.[Number(ch) - 1];
+        if (opt) store.answerAsk(opt);
+        return;
+      }
+      if (ch === "t") return setAskTyping(true);
+      if (key.escape && armed) return store.declineAsk();
       return;
     }
     if (key.escape) {
@@ -1920,7 +1968,7 @@ export function App(
                   </Text>
                 )
                 : null}
-              {popup && !store.pending
+              {popup && !store.pending && !store.ask
                 ? (
                   <Box
                     flexDirection="column"
@@ -1940,6 +1988,15 @@ export function App(
                 : null}
               {store.pending
                 ? <NetApproval req={store.pending} count={store.pendingCount} detail={holdDetail} />
+                : store.ask
+                ? (
+                  <AskCard
+                    q={store.ask}
+                    count={store.askCount}
+                    input={askText}
+                    typing={askTyping}
+                  />
+                )
                 : <Composer input={input} cursor={comp.cursor} busy={store.busy} />}
             </>
           )
@@ -1953,9 +2010,9 @@ export function App(
           connected={store.connected}
           busy={store.busy}
           session={store.session}
-          pendingCount={store.pendingCount}
+          pendingCount={store.pendingCount + store.askCount}
           quitHint={quitHint}
-          mode={mode === "chat" && store.pending ? "approval" : mode}
+          mode={mode === "chat" && (store.pending || store.ask) ? "approval" : mode}
           usage={store.usage}
           draftLabel={isDraft ? `new · ${shortWs}` : null}
           model={cfg

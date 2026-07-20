@@ -72,6 +72,13 @@ export interface ToolRunCtx {
    */
   oracle?: (question: string) => Promise<string>;
   /**
+   * Ask the HUMAN a mid-task question (asks.ts, wired by the turn runner for every
+   * supervisor turn). Blocks user-paced until the TUI answers; resolves with the
+   * chosen option or typed free text. Rejects with a catchable "user declined"
+   * error on decline, and rejects on turn interrupt so the program unwinds.
+   */
+  ask?: (question: string, opts?: { options?: string[] }) => Promise<string>;
+  /**
    * Post a harness note to this session (→ turn.ts postSystemNote), waking a fresh
    * turn if idle or riding the queued-drain if one is running. Wired for every
    * supervisor turn; background shells (bash_bg.ts) use it to announce completion so

@@ -18,7 +18,13 @@
  */
 import type { z } from "zod";
 import { HttpError } from "../errors.ts";
-import { CreateSessionBody, PostMessageBody, type Session } from "../schema/parts.ts";
+import {
+  AnswerQuestionBody,
+  CreateSessionBody,
+  PostMessageBody,
+  type Session,
+} from "../schema/parts.ts";
+import { answerAsk, declineAsk, getAsk, pendingAsks } from "../asks.ts";
 import type { Db } from "../db/db.ts";
 import type { Bus, Listener } from "../bus.ts";
 import {
@@ -27,9 +33,9 @@ import {
   interruptTurn,
   MODELS,
   oracleModel,
+  postSystemNote,
   setActiveEffort,
   setActiveModel,
-  postSystemNote,
   setOracleModel,
   startUserTurn,
 } from "../turn.ts";
@@ -70,8 +76,8 @@ import { beginAuth, clearAuth, completeAuth } from "../mcp/oauth.ts";
 import { clientFor } from "../supervisor/llm.ts";
 import { listArtifacts, serveArtifact } from "./artifacts.ts";
 import {
-  AddCommentBody,
   addComment,
+  AddCommentBody,
   deleteComment,
   formatForAgent,
   loadComments,
@@ -471,7 +477,11 @@ const handoffSession: Handler = async (req, ctx, params) => {
   // OpenAI/OpenRouter model (or with no Anthropic key) threw an unhandled error
   // → 500 instead of drafting through the configured provider.
   const model = ctx.model ?? ctx.db.getSession(params.id)?.model ?? activeModel();
-  const session = await handoff({ ...ctx, llm: ctx.llm ?? clientFor(model), model }, params.id, body);
+  const session = await handoff(
+    { ...ctx, llm: ctx.llm ?? clientFor(model), model },
+    params.id,
+    body,
+  );
   return json({ session });
 };
 
@@ -1033,6 +1043,37 @@ const resolveHold = (approve: boolean): Handler => (req, ctx, params) => {
   return error(404, "no request awaiting approval for that id");
 };
 
+// ---- ask() questions -------------------------------------------------------
+// Pending mid-task questions (asks.ts holds) — the ask() mirror of the net-hold
+// routes. Memory-only: GET rebuilds a freshly-attached client's hold card (like
+// /net/requests rebuilds the rail); POST settles one and the program resumes.
+
+// GET /questions[?sessionId=] → pending AskQuestions, oldest first.
+const listQuestionsH: Handler = (req) => {
+  const sessionId = new URL(req.url).searchParams.get("sessionId") ?? undefined;
+  return json(pendingAsks(sessionId));
+};
+
+// POST /sessions/:id/questions/:qid — {answer} resolves the program's ask();
+// {decline: true} rejects it with a catchable "user declined" error.
+const answerQuestionH: Handler = async (req, _ctx, params) => {
+  const q = getAsk(params.qid);
+  if (!q || q.sessionId !== params.id) {
+    return error(404, "no question awaiting an answer for that id");
+  }
+  const body = AnswerQuestionBody.safeParse(await req.json().catch(() => null));
+  if (!body.success) return error(400, "body {answer: string} or {decline: true} required");
+  if (body.data.decline === true) {
+    declineAsk(params.qid);
+    return json({ ok: true, id: params.qid, status: "declined" });
+  }
+  if (typeof body.data.answer !== "string" || !body.data.answer.trim()) {
+    return error(400, "body {answer: string} or {decline: true} required");
+  }
+  answerAsk(params.qid, body.data.answer);
+  return json({ ok: true, id: params.qid, status: "answered" });
+};
+
 function bundleSummary(m: BundleManifest, dir: string | undefined) {
   return {
     name: m.name,
@@ -1244,6 +1285,12 @@ const routes: Route[] = [
     method: "POST",
     pattern: new URLPattern({ pathname: "/sessions/:id/changes/revert" }),
     handler: revertChangesH,
+  },
+  { method: "GET", pattern: new URLPattern({ pathname: "/questions" }), handler: listQuestionsH },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/sessions/:id/questions/:qid" }),
+    handler: answerQuestionH,
   },
   { method: "GET", pattern: new URLPattern({ pathname: "/events" }), handler: events },
   { method: "GET", pattern: new URLPattern({ pathname: "/net/status" }), handler: netStatus },

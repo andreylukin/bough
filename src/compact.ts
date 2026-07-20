@@ -78,6 +78,11 @@ function renderPart(role: string, p: Part): string {
       return `${role}: [tool ${p.name}] ${clip(JSON.stringify(p.input))}`;
     case "tool_result":
       return `tool_result${p.isError ? " (error)" : ""}: ${clip(stringify(p.output))}`;
+    case "ask":
+      // A settled ask() Q/A: what was asked and how the human resolved it.
+      return `ask: ${p.question} → ${
+        p.status === "answered" ? `user answered: ${p.answer}` : p.status
+      }`;
   }
 }
 

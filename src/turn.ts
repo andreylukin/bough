@@ -22,6 +22,9 @@
  *     re-sending them as plain text would only confuse the model.
  *   - any tool_use without a matching tool_result (e.g. a crash mid-tool) gets a
  *     synthetic error tool_result so the history stays valid for the API.
+ *   - ask parts        → user-side text after the tool_results ("[ask] Q → the user
+ *     answered: A"): the answer was the USER's input, and plain text can never
+ *     re-block a replay the way re-raising the hold would.
  */
 import type { Db } from "./db/db.ts";
 import type { Bus } from "./bus.ts";
@@ -73,6 +76,7 @@ import { mcpStatusFor } from "./mcp/status.ts";
 import { expandFileReferences } from "./server/files.ts";
 import { publishArtifact } from "./server/artifacts.ts";
 import { recall as recallSearch } from "./recall.ts";
+import { expireAsks, raiseAsk } from "./asks.ts";
 import { originRepo as shadowOrigin, shipToOrigin } from "./vcs/shadow.ts";
 
 export interface TurnCtx {
@@ -178,8 +182,17 @@ export const MODELS: ModelRow[] = [
   { id: "openai/gpt-5", label: "GPT-5 (OpenRouter)", provider: "openrouter" },
   { id: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro (OpenRouter)", provider: "openrouter" },
   { id: "z-ai/glm-5.2", label: "GLM 5.2 (OpenRouter)", provider: "openrouter" },
-  { id: "deepseek/deepseek-v4-flash", label: "DeepSeek V4 Flash (OpenRouter)", provider: "openrouter" },
-  { id: "moonshotai/kimi-k3", label: "Kimi K3 (OpenRouter)", provider: "openrouter", pricing: { in: 3, out: 15 } },
+  {
+    id: "deepseek/deepseek-v4-flash",
+    label: "DeepSeek V4 Flash (OpenRouter)",
+    provider: "openrouter",
+  },
+  {
+    id: "moonshotai/kimi-k3",
+    label: "Kimi K3 (OpenRouter)",
+    provider: "openrouter",
+    pricing: { in: 3, out: 15 },
+  },
 ];
 
 const MAX_TOKENS = 64_000;
@@ -309,10 +322,12 @@ export function interruptTurn(sessionId: string): boolean {
   const c = running.get(sessionId);
   if (c) c.abort();
   const hooks = interruptHooks.get(sessionId);
-  if (hooks) for (const h of [...hooks]) {
-    try {
-      h();
-    } catch { /* a child already gone is fine */ }
+  if (hooks) {
+    for (const h of [...hooks]) {
+      try {
+        h();
+      } catch { /* a child already gone is fine */ }
+    }
   }
   return !!c || (hooks?.size ?? 0) > 0;
 }
@@ -426,6 +441,10 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     db.setTurnFirstOutput(turn.id, Date.now());
   };
   const parts: Part[] = [];
+  // Set right before the message's final write. A late ask() settle (program
+  // timeout, expire at turn end) must not append into a finished message — that
+  // would flip it pending again and strand the UI on a turn that already ended.
+  let finalized = false;
   const append = (part: Part) => {
     markFirstOutput();
     parts.push(part);
@@ -503,6 +522,36 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       const art = await publishArtifact(sessionId, name, content);
       bus.publish({ type: "artifact.published", sessionId, data: { sessionId, ...art } });
       return art;
+    };
+    // ask(): park the program on a question to the human (asks.ts — the net gate's
+    // hold-and-ask pattern). The settled Q/A is appended to THIS message as an
+    // "ask" part, so the transcript keeps it and replay renders it as plain text
+    // (toLlmMessages) — replay never re-blocks.
+    toolCtx.ask = async (question, opts) => {
+      const options = opts?.options?.map((o) => String(o).trim()).filter(Boolean);
+      const { record, answer } = raiseAsk(
+        bus,
+        { sessionId, messageId, question, ...(options?.length ? { options } : {}) },
+        signal,
+      );
+      const askPart = (status: "answered" | "declined" | "interrupted", ans?: string): Part => ({
+        type: "ask",
+        id: record.id,
+        question,
+        ...(options?.length ? { options } : {}),
+        status,
+        ...(ans !== undefined ? { answer: ans } : {}),
+      });
+      try {
+        const ans = await answer;
+        if (!finalized) append(askPart("answered", ans));
+        return ans;
+      } catch (err) {
+        if (!finalized) {
+          append(askPart(record.status === "declined" ? "declined" : "interrupted"));
+        }
+        throw err;
+      }
     };
     // Delegation, allowed below the depth cap. Subagent turns get BLOCKING
     // delegation only (agent/adopt): a detached spawn would outlive the turn whose
@@ -787,11 +836,13 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       messages.push({ role: "user", content: [{ type: "text", text: STOP_NUDGE }] });
     }
 
+    finalized = true;
     db.updateMessage(messageId, parts, false);
     finishTurn(db, turn.id, "done");
     bus.publish({ type: "message.finished", sessionId, data: { messageId } });
     bus.publish({ type: "turn.finished", sessionId, data: { sessionId, status: "done" } });
   } catch (err) {
+    finalized = true;
     // An interrupt (explicit abort, or the SDK's abort error) ends the turn
     // cleanly with a marker, not a failure — the user asked it to stop.
     const interrupted = err instanceof InterruptedError || signal?.aborted ||
@@ -807,6 +858,10 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     bus.publish({ type: "message.finished", sessionId, data: { messageId } });
     bus.publish({ type: "turn.finished", sessionId, data: { sessionId, status } });
   } finally {
+    // A question the turn never got answered (program timed out around it, or the
+    // turn died some other way) must not haunt the TUI as a live hold — same
+    // reasoning as gate.expireHolds for an interrupted turn's net holds.
+    expireAsks(sessionId);
     // Persist token usage for the context meter and announce it (usage.updated).
     // contextTokens stays 0 for a stream that errored before its first usage report.
     if (contextTokens > 0 || outputTokens > 0) {
@@ -923,6 +978,9 @@ function toLlmMessages(m: Message): LlmMessage[] {
 
   const assistant: LlmContentBlock[] = [];
   const results: LlmContentBlock[] = [];
+  // Settled ask() holds replay as user-side text AFTER the tool_results (a
+  // tool_use's result must lead the next user message) — see module header.
+  const asks: LlmContentBlock[] = [];
   const resolved = new Set<string>();
   const requested = new Set<string>();
   for (const p of m.parts) {
@@ -930,6 +988,13 @@ function toLlmMessages(m: Message): LlmMessage[] {
       assistant.push({ type: "text", text: p.text });
     } else if (p.type === "reasoning") {
       // dropped on replay (see module header)
+    } else if (p.type === "ask") {
+      const outcome = p.status === "answered"
+        ? `the user answered: ${p.answer}`
+        : p.status === "declined"
+        ? "the user declined to answer"
+        : "the turn was interrupted before an answer";
+      asks.push({ type: "text", text: `[ask] ${p.question}\n→ ${outcome}` });
     } else if (p.type === "tool_call") {
       requested.add(p.id);
       assistant.push({ type: "tool_use", id: p.id, name: p.name, input: p.input });
@@ -952,7 +1017,7 @@ function toLlmMessages(m: Message): LlmMessage[] {
 
   const out: LlmMessage[] = [];
   if (assistant.length) out.push({ role: "assistant", content: assistant });
-  if (results.length) out.push({ role: "user", content: results });
+  if (results.length || asks.length) out.push({ role: "user", content: [...results, ...asks] });
   return out;
 }
 

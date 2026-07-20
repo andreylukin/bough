@@ -208,9 +208,27 @@ Deno.test("finished-subagent card caps the report; !full lifts the cap", () => {
     'Its changes stay on its own branch; adopt("x") to merge them.',
   ].join("\n");
   const thread = [
-    { id: "u1", sessionId: "s", role: "user", parts: [{ type: "text", text: "go" }], pending: false },
-    { id: "a1", sessionId: "s", role: "supervisor", parts: [{ type: "text", text: "delegating" }], pending: false },
-    { id: "n1", sessionId: "s", role: "system", parts: [{ type: "text", text: noteText }], pending: false },
+    {
+      id: "u1",
+      sessionId: "s",
+      role: "user",
+      parts: [{ type: "text", text: "go" }],
+      pending: false,
+    },
+    {
+      id: "a1",
+      sessionId: "s",
+      role: "supervisor",
+      parts: [{ type: "text", text: "delegating" }],
+      pending: false,
+    },
+    {
+      id: "n1",
+      sessionId: "s",
+      role: "system",
+      parts: [{ type: "text", text: noteText }],
+      pending: false,
+    },
   ] as unknown as Message[];
   const branch = {
     id: sessionId,
@@ -242,8 +260,20 @@ Deno.test("branch card: a finished blocking subagent reflects its real status (f
   // the branch has note=null. The card now reads the session's lastTurnStatus so
   // a subagent that ERRORED or was INTERRUPTED no longer masquerades as "✓ done".
   const thread = [
-    { id: "u1", sessionId: "s", role: "user", parts: [{ type: "text", text: "go" }], pending: false },
-    { id: "a1", sessionId: "s", role: "supervisor", parts: [{ type: "text", text: "delegating" }], pending: false },
+    {
+      id: "u1",
+      sessionId: "s",
+      role: "user",
+      parts: [{ type: "text", text: "go" }],
+      pending: false,
+    },
+    {
+      id: "a1",
+      sessionId: "s",
+      role: "supervisor",
+      parts: [{ type: "text", text: "delegating" }],
+      pending: false,
+    },
   ] as unknown as Message[];
   const card = (status: Branch["status"]) => {
     const branch: Branch = {
@@ -262,4 +292,44 @@ Deno.test("branch card: a finished blocking subagent reflects its real status (f
   assertEquals(card("done").includes("done"), true);
   // A failed one must NOT read as done.
   assertEquals(card("error").includes("✗"), true);
+});
+
+import { assertStringIncludes } from "jsr:@std/assert@1";
+
+Deno.test("messageLines renders a settled ask part as an always-visible Q → A line", () => {
+  const msg: Message = {
+    id: "m1",
+    sessionId: "s1",
+    role: "supervisor",
+    parts: [{
+      type: "ask",
+      id: "q1",
+      question: "Which env?",
+      options: ["dev", "prod"],
+      status: "answered",
+      answer: "prod",
+    }],
+    pending: false,
+    createdAt: 1,
+  };
+  const joined = messageLines(msg, () => false, () => false, 80).map((l) => l.text).join("\n");
+  assertStringIncludes(joined, "Which env?");
+  assertStringIncludes(joined, "prod");
+  // Copy payload carries the full exchange.
+  const line = messageLines(msg, () => false, () => false, 80).find((l) => l.copy);
+  assertStringIncludes(line?.copy ?? "", "Which env? → prod");
+});
+
+Deno.test("messageLines renders a declined ask part", () => {
+  const msg: Message = {
+    id: "m2",
+    sessionId: "s1",
+    role: "supervisor",
+    parts: [{ type: "ask", id: "q2", question: "Push to main?", status: "declined" }],
+    pending: false,
+    createdAt: 1,
+  };
+  const joined = messageLines(msg, () => false, () => false, 80).map((l) => l.text).join("\n");
+  assertStringIncludes(joined, "Push to main?");
+  assertStringIncludes(joined, "declined");
 });

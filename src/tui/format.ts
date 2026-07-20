@@ -5,19 +5,23 @@ import type { Part } from "../schema/parts.ts";
 
 export type ToolCall = Extract<Part, { type: "tool_call" }>;
 export type ToolResult = Extract<Part, { type: "tool_result" }>;
+export type AskPart = Extract<Part, { type: "ask" }>;
 
 export type Segment =
   | { kind: "text"; text: string }
   | { kind: "reasoning"; text: string }
+  | { kind: "ask"; part: AskPart }
   | { kind: "tools"; parts: Part[] };
 
 // Group a turn's parts into renderable segments, preserving their order. Consecutive
-// tool_call/tool_result parts fold into one collapsible group between prose blocks.
+// tool_call/tool_result parts fold into one collapsible group between prose blocks;
+// a settled ask() Q/A stands alone (it's a human exchange, not tool plumbing).
 export function segmentParts(parts: Part[]): Segment[] {
   const segs: Segment[] = [];
   for (const p of parts) {
     if (p.type === "text") segs.push({ kind: "text", text: p.text });
     else if (p.type === "reasoning") segs.push({ kind: "reasoning", text: p.text });
+    else if (p.type === "ask") segs.push({ kind: "ask", part: p });
     else {
       const last = segs[segs.length - 1];
       if (last?.kind === "tools") last.parts.push(p);

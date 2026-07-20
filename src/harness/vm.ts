@@ -41,6 +41,13 @@ export interface HostFns {
    */
   oracle?(question: string): Promise<string>;
   /**
+   * Ask the HUMAN a mid-task question (bridged for supervisor turns — asks.ts):
+   * the program parks until they answer in the TUI. Options travel in as JSON
+   * ({options?: string[]}); the chosen/typed answer returns as a plain string.
+   * Rejects (catchably) when the user declines, and on turn interrupt.
+   */
+  ask?(question: string, optsJson: string): Promise<string>;
+  /**
    * MCP tool call (bridged only for turns granted servers): args travel in as JSON
    * and the result returns as JSON — the worker side parses both ends.
    */
