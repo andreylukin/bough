@@ -17,6 +17,10 @@ function hosts(overrides: Partial<HostFns> = {}): HostFns & { calls: string[] } 
       calls.push(`bashOutput:${id}`);
       return Promise.resolve("(no new output)\n[running]");
     },
+    bashWait: (id) => {
+      calls.push(`bashWait:${id}`);
+      return Promise.resolve("late\n[exited with code 0]");
+    },
     bashKill: (id) => {
       calls.push(`bashKill:${id}`);
       return Promise.resolve(`sent SIGTERM to ${id}`);

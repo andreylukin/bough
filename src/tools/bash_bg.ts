@@ -1,11 +1,18 @@
 /**
- * Background shells — bash's detached sibling, for commands that must outlive a
- * single program round (dev servers, long builds, watchers). `bashBg` spawns the
- * command under the SAME confinement as bash (Seatbelt profile + Claw Patrol proxy
- * env via shellInvocation) but detached from the turn: it deliberately does NOT
- * observe ctx.signal, so it survives program timeouts, turn ends, and the user's
- * stop button. `bashOutput` returns output accrued since the caller's last read
- * plus a status line; `bashKill` terminates (SIGTERM, then a SIGKILL backstop).
+ * Background shells — bash's detached sibling, for commands that outlive a single
+ * program round (dev servers, long builds, watchers). A shell lands here two ways:
+ *   - explicitly, via `bashBg` (fire-and-forget; spawned WITHOUT the turn signal so
+ *     it survives the user's stop button, like a dev server should);
+ *   - automatically, when a foreground `bash` is still running at the background
+ *     threshold (bash.ts) — the running child is `promote`d here instead of being
+ *     killed, so long commands are never lost and never block the turn.
+ *
+ * Reads work while a shell is still running: `bashOutput` returns output accrued
+ * since the caller's last read plus a `[running]`/`[exited …]` status line — the
+ * supervisor can watch progress mid-flight. `bashWait` blocks until exit (the bash
+ * analog of subagent join). On exit a shell posts a one-line completion note via
+ * ctx.notify (→ turn.ts postSystemNote), so the model is TOLD it finished and never
+ * writes a poll loop — unless the model already claimed the result with bashWait.
  *
  * Shells are registered per session, in memory: they persist across run_steps
  * rounds and turns of the same session, and die with the server process. A
@@ -32,6 +39,14 @@ interface BgShell {
   /** The cap dropped output the caller never saw — reported once, then cleared. */
   droppedUnread: boolean;
   status: Deno.CommandStatus | null;
+  /** Resolves when both stdout+stderr streams have fully drained. */
+  pumps: Promise<void>;
+  /** Fired after `status` is set — the completion notifier (set by promote). */
+  onExit?: () => void;
+  /** bashWait sets this so the exit note is suppressed (result claimed in-band). */
+  claimed: boolean;
+  /** Guards against a double completion note. */
+  notified: boolean;
 }
 
 /** sessionKey → shellId → shell. Module-level: shells outlive turns, not the server. */
@@ -64,16 +79,96 @@ async function pump(stream: ReadableStream<Uint8Array>, sh: BgShell) {
   }
 }
 
-/** Spawn `command` detached; returns {id, pid} as JSON immediately. */
-export async function bashBg(command: string, ctx: ToolRunCtx): Promise<string> {
+/**
+ * Wrap a spawned child in a shell struct and start pumping its output. Does NOT
+ * register it — a foreground `bash` uses this to stream while it decides whether to
+ * background (promote) or return inline. `status`/output are tracked either way.
+ */
+export function newShell(command: string, child: Deno.ChildProcess): BgShell {
+  const sh: BgShell = {
+    id: "",
+    command,
+    child,
+    buf: "",
+    readAt: 0,
+    droppedUnread: false,
+    status: null,
+    pumps: Promise.resolve(),
+    claimed: false,
+    notified: false,
+  };
+  sh.pumps = Promise.all([pump(child.stdout, sh), pump(child.stderr, sh)]).then(() => {});
+  child.status.then((s) => {
+    sh.status = s;
+    sh.onExit?.();
+  });
+  return sh;
+}
+
+/**
+ * Register a running shell so later rounds/turns can read it, and wire its
+ * completion note. Returns the assigned id, or null when the session is already at
+ * MAX_RUNNING (the caller keeps waiting rather than detach). Used by both bashBg
+ * (explicit) and bash's auto-background.
+ */
+export function promote(ctx: ToolRunCtx, sh: BgShell): string | null {
   const shells = shellsOf(ctx);
   const running = [...shells.values()].filter((s) => s.status === null).length;
+  if (running >= MAX_RUNNING) return null;
+  sh.id = `bg_${++seq}`;
+  shells.set(sh.id, sh);
+  const notify = ctx.notify;
+  if (notify) {
+    sh.onExit = () => {
+      // Claimed (bashWait) or already-noted → the model has/will get the result in
+      // band; don't also wake it with a note.
+      if (sh.notified || sh.claimed) return;
+      sh.notified = true;
+      const st = sh.status;
+      const lines = sh.buf ? sh.buf.trimEnd().split("\n").filter(Boolean).length : 0;
+      notify(
+        `[background] ${sh.id} finished (exit ${st?.code ?? "?"}${
+          st?.signal ? ` on ${st.signal}` : ""
+        }) — command "${sh.command.slice(0, 60)}", ${lines} line${lines === 1 ? "" : "s"} of ` +
+          `output. Read it with bashOutput("${sh.id}").`,
+      );
+    };
+    // Raced a near-instant exit between the caller's threshold and here.
+    if (sh.status !== null) sh.onExit();
+  }
+  return sh.id;
+}
+
+/** The bash-tool inline format for a finished foreground command (see bash.ts). */
+export function formatFinal(sh: BgShell): string {
+  const body = sh.buf.trimEnd();
+  const parts: string[] = [];
+  if (body) parts.push(body);
+  const code = sh.status?.code ?? 0;
+  if (code !== 0) parts.push(`[exit code ${code}]`);
+  return parts.join("\n") || "(no output)";
+}
+
+/** The string a foreground bash returns once it auto-backgrounds at the threshold. */
+export function backgroundNote(sh: BgShell, id: string, afterMs: number): string {
+  const soFar = sh.buf.slice(sh.readAt).trimEnd();
+  sh.readAt = sh.buf.length;
+  const head = `[still running after ${Math.round(afterMs / 1000)}s — moved to background as ` +
+    `${id}. It keeps running; you'll be notified when it finishes. Read progress: ` +
+    `bashOutput("${id}"); block until done: bashWait("${id}"); stop it: bashKill("${id}").]`;
+  return soFar ? `${head}\n${soFar}` : head;
+}
+
+/** Spawn `command` detached; returns {id, pid} as JSON immediately. */
+export async function bashBg(command: string, ctx: ToolRunCtx): Promise<string> {
+  const running = [...shellsOf(ctx).values()].filter((s) => s.status === null).length;
   if (running >= MAX_RUNNING) {
     throw new Error(
       `this session already has ${running} running background shells; bashKill one first`,
     );
   }
   const { argv, env } = await shellInvocation(command, ctx);
+  // No ctx.signal: an explicit background shell survives the turn's stop button.
   const child = new Deno.Command(argv[0], {
     args: argv.slice(1),
     cwd: ctx.workspace,
@@ -82,23 +177,13 @@ export async function bashBg(command: string, ctx: ToolRunCtx): Promise<string> 
     stdout: "piped",
     stderr: "piped",
   }).spawn();
-  const sh: BgShell = {
-    id: `bg_${++seq}`,
-    command,
-    child,
-    buf: "",
-    readAt: 0,
-    droppedUnread: false,
-    status: null,
-  };
-  shells.set(sh.id, sh);
-  pump(child.stdout, sh);
-  pump(child.stderr, sh);
-  child.status.then((s) => sh.status = s);
-  return JSON.stringify({ id: sh.id, pid: child.pid });
+  const sh = newShell(command, child);
+  const id = promote(ctx, sh)!; // cap re-checked above; promote can't fail here
+  return JSON.stringify({ id, pid: child.pid });
 }
 
-/** Output accrued since the last bashOutput(id) call, plus a status line. */
+/** Output accrued since the last bashOutput(id) call, plus a status line. Safe to
+ * call while the shell is still running — this is how the supervisor watches progress. */
 export function bashOutput(id: string, ctx: ToolRunCtx): string {
   const sh = shellsOf(ctx).get(id);
   if (!sh) throw new Error(`no background shell ${id} in this session`);
@@ -118,11 +203,24 @@ export function bashOutput(id: string, ctx: ToolRunCtx): string {
   return parts.join("\n");
 }
 
+/** Block until the shell exits (returns immediately if already done), then return
+ * its remaining output + exit line. The bash analog of subagent join: use it when
+ * the result is needed before continuing, instead of a poll loop. */
+export async function bashWait(id: string, ctx: ToolRunCtx): Promise<string> {
+  const sh = shellsOf(ctx).get(id);
+  if (!sh) throw new Error(`no background shell ${id} in this session`);
+  sh.claimed = true; // result taken in-band — suppress the exit note
+  if (sh.status === null) await sh.child.status;
+  await sh.pumps.catch(() => {});
+  return bashOutput(id, ctx);
+}
+
 /** SIGTERM the shell (graceful for servers that forward it), SIGKILL backstop. */
 export function bashKill(id: string, ctx: ToolRunCtx): string {
   const sh = shellsOf(ctx).get(id);
   if (!sh) throw new Error(`no background shell ${id} in this session`);
   if (sh.status !== null) return `${id} already exited with code ${sh.status.code}`;
+  sh.claimed = true; // deliberate kill — don't also post a completion note
   try {
     sh.child.kill("SIGTERM");
   } catch {

@@ -72,6 +72,13 @@ export interface ToolRunCtx {
    */
   oracle?: (question: string) => Promise<string>;
   /**
+   * Post a harness note to this session (→ turn.ts postSystemNote), waking a fresh
+   * turn if idle or riding the queued-drain if one is running. Wired for every
+   * supervisor turn; background shells (bash_bg.ts) use it to announce completion so
+   * the model is told a job finished instead of polling for it.
+   */
+  notify?: (text: string) => void;
+  /**
    * MCP tool calls, wired by the turn runner when the triggering message's skills,
    * the session's manual activations, or a spawning turn's inherited grant
    * (subagents) granted servers. `call` runs the

@@ -20,6 +20,7 @@ export interface HostFns {
    */
   bashBg(cmd: string): Promise<string>;
   bashOutput(id: string): Promise<string>;
+  bashWait(id: string): Promise<string>;
   bashKill(id: string): Promise<string>;
   read(path: string): Promise<string>;
   write(path: string, content: string): Promise<string>;

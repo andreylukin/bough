@@ -449,6 +449,10 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       // this session sees without shelling curl at the loopback API. Read-only —
       // tool calls still enter through the granted mcp() bridge below.
       mcpStatus: () => Promise.resolve(mcpStatusFor(sessionId)),
+      // Completion notes from background shells (bash_bg.ts): a finished job wakes
+      // the session with a one-line note, so the model never polls. Same wake path
+      // as a subagent's report — starts a turn if idle, else rides the queued-drain.
+      notify: (text) => postSystemNote(ctx, sessionId, text),
     };
     // The oracle: read-only consult of a stronger reasoning model (tools/oracle.ts).
     // Wired for every supervisor turn; its tokens bill into this turn's cumulative

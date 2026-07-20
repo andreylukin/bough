@@ -3,6 +3,7 @@ import { z } from "zod/v4";
 import { wrapChild } from "../sandbox/seatbelt.ts";
 import { clawpatrolEnv } from "../net/gateway.ts";
 import type { ToolDef, ToolRunCtx } from "./types.ts";
+import { backgroundNote, formatFinal, newShell, promote } from "./bash_bg.ts";
 
 const schema = z.object({
   command: z.string().describe("The shell command to run via `sh -c`."),
@@ -11,8 +12,20 @@ const schema = z.object({
     .int()
     .positive()
     .optional()
-    .describe("Max runtime in milliseconds before the command is killed (default 120000)."),
+    .describe(
+      "Hard cap in ms; only reached if the background registry is full (default 120000). " +
+        "A command still running at the background threshold (default 60s) is moved to the " +
+        "background instead of blocking — read it with bashOutput/bashWait; you're notified when it exits.",
+    ),
 });
+
+/** A foreground command still running this long auto-backgrounds instead of blocking
+ * the turn. Env-tunable; per the harness research, ~60s only backgrounds genuinely
+ * long commands (builds, servers), not the medium ones a program waits on. */
+function bgAfterMs(): number {
+  const n = Number(Deno.env.get("BOUGH_BASH_BG_AFTER_MS"));
+  return Number.isFinite(n) && n > 0 ? n : 60_000;
+}
 
 /**
  * Argv + env for running `command` under this ctx's confinement — shared by the
@@ -59,36 +72,57 @@ export const bash: ToolDef = {
   async run(input: unknown, ctx: ToolRunCtx): Promise<string> {
     const { command, timeout_ms } = input as z.infer<typeof schema>;
     const { argv, env } = await shellInvocation(command, ctx);
-    // The child dies on whichever fires first: the per-command timeout, or the
-    // turn's interrupt (ctx.signal) — the user's stop button must kill the actual
-    // process, not leave it running to completion in the background.
-    const timeout = AbortSignal.timeout(timeout_ms ?? 120_000);
-    const cmd = new Deno.Command(argv[0], {
+    // Spawn bound to the turn's interrupt only (the user's stop button must kill the
+    // actual process). We stream the output so a long command can be handed to the
+    // background registry mid-run rather than blocked-then-killed.
+    const child = new Deno.Command(argv[0], {
       args: argv.slice(1),
       cwd: ctx.workspace,
       env,
+      stdin: "null",
       stdout: "piped",
       stderr: "piped",
-      signal: ctx.signal ? AbortSignal.any([timeout, ctx.signal]) : timeout,
-    });
-    let out: Deno.CommandOutput;
-    try {
-      out = await cmd.output();
-    } catch (e) {
-      // Timeout, interrupt, or spawn failure surfaces here.
+      signal: ctx.signal,
+    }).spawn();
+    const sh = newShell(command, child);
+
+    const soft = bgAfterMs();
+    const first = await raceExit(sh, soft);
+    if (first === "exit") {
+      await sh.pumps;
       if (ctx.signal?.aborted) throw new Error("command killed: turn interrupted");
-      throw new Error(`command did not complete: ${(e as Error).message}`);
+      return formatFinal(sh);
     }
-    // An abort can also surface as a normal completion carrying the kill status —
-    // report the interrupt explicitly either way.
+    // Still running at the threshold — stopped mid-wait dies like any interrupt.
     if (ctx.signal?.aborted) throw new Error("command killed: turn interrupted");
-    const dec = new TextDecoder();
-    const chunks: string[] = [];
-    const stdout = dec.decode(out.stdout).trimEnd();
-    const stderr = dec.decode(out.stderr).trimEnd();
-    if (stdout) chunks.push(stdout);
-    if (stderr) chunks.push(stderr);
-    if (out.code !== 0) chunks.push(`[exit code ${out.code}]`);
-    return chunks.join("\n") || "(no output)";
+    // Hand the running child to the background registry (auto-background). The
+    // program continues; the model reads it via bashOutput/bashWait and is notified
+    // when it exits — it no longer waits (or writes a poll loop) for a long command.
+    const id = promote(ctx, sh);
+    if (id) return backgroundNote(sh, id, soft);
+    // Registry full — fall back to blocking up to the hard cap, then kill.
+    const hard = (timeout_ms ?? 120_000) - soft;
+    if ((await raceExit(sh, Math.max(0, hard))) === "exit") {
+      await sh.pumps;
+      if (ctx.signal?.aborted) throw new Error("command killed: turn interrupted");
+      return formatFinal(sh);
+    }
+    try {
+      child.kill("SIGKILL");
+    } catch { /* raced a natural exit */ }
+    return `command killed after ${(timeout_ms ?? 120_000) / 1000}s ` +
+      `(background registry full, could not detach)`;
   },
 };
+
+/** Resolve "exit" when the child finishes, or "timeout" after `ms`. */
+function raceExit(sh: { child: Deno.ChildProcess }, ms: number): Promise<"exit" | "timeout"> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve("timeout"), ms);
+    Deno.unrefTimer(timer);
+    sh.child.status.then(() => {
+      clearTimeout(timer);
+      resolve("exit");
+    });
+  });
+}

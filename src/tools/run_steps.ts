@@ -36,8 +36,9 @@ const schema = z.object({
       "capability surface is async host functions with these RETURN TYPES: " +
       "bash(cmd) → string (combined stdout+stderr — NOT a {stdout} object; " +
       "`const {stdout} = await bash(...)` yields undefined), read(path) → string, " +
-      "write(path, content), edit(path, oldText, newText), and background shells — " +
-      "bashBg(cmd) → {id, pid}, bashOutput(id) → string, bashKill(id) " +
+      "write(path, content), edit(path, oldText, newText), and background jobs (a slow " +
+      "bash auto-backgrounds after ~60s) — bashBg(cmd) → {id, pid}, bashOutput(id) → " +
+      "string (progress, safe while running), bashWait(id) → string (block until done), bashKill(id) " +
       "— plus mcpStatus() (always available: this session's MCP management state), " +
       "recall(query, k?) → {hits, indexed} (semantic search over past bough conversations) and any " +
       "oracle(question) → string, delegation (agent/spawn/join/adopt), mcp(server, tool, args), and lsp.* symbol " +
@@ -90,6 +91,7 @@ export const runSteps: ToolDef = {
         // they persist across rounds and turns of this session until killed.
         bashBg: (command) => bg.bashBg(command, ctx),
         bashOutput: (id) => Promise.resolve(bg.bashOutput(id, ctx)),
+        bashWait: (id) => bg.bashWait(id, ctx),
         bashKill: (id) => Promise.resolve(bg.bashKill(id, ctx)),
         read: (path) => readFile.run({ path }, ctx),
         write: (path, content) => {

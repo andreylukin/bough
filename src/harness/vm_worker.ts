@@ -18,6 +18,7 @@ type HostName =
   | "bash"
   | "bashBg"
   | "bashOutput"
+  | "bashWait"
   | "bashKill"
   | "read"
   | "write"
@@ -67,6 +68,7 @@ async function run(code: string): Promise<void> {
   // postMessage protocol stays string-only); output/kill return plain text.
   const bashBg = async (cmd: string) => JSON.parse(await hostCall("bashBg", [cmd]));
   const bashOutput = (id: string) => hostCall("bashOutput", [id]);
+  const bashWait = (id: string) => hostCall("bashWait", [id]);
   const bashKill = (id: string) => hostCall("bashKill", [id]);
   const read = (path: string) => hostCall("read", [path]);
   const write = (path: string, content: string) => hostCall("write", [path, content]);
@@ -114,6 +116,7 @@ async function run(code: string): Promise<void> {
     "bash",
     "bashBg",
     "bashOutput",
+    "bashWait",
     "bashKill",
     "read",
     "write",
@@ -136,6 +139,7 @@ async function run(code: string): Promise<void> {
     bash,
     bashBg,
     bashOutput,
+    bashWait,
     bashKill,
     read,
     write,
