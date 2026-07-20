@@ -14,7 +14,8 @@
  * drive the whole loop with a scripted fake and never hit the network.
  *
  * Replay mapping (stored parts → Anthropic messages), see toLlmMessages:
- *   - user message      → one user message of text blocks
+ *   - user message      → one user message of text blocks (+ image blocks, loaded
+ *     base64 from ~/.bough/attachments; a lost attachment replays as placeholder text)
  *   - supervisor/worker → an assistant message (text + tool_use) followed, if it
  *     produced tool results, by a user message of tool_result blocks
  *   - reasoning parts   → DROPPED on replay. They're persisted for display, but we
@@ -66,13 +67,13 @@ import {
   workspaceNote,
 } from "./supervisor/prompt.ts";
 import { activeSkills } from "./supervisor/skills.ts";
-import { prepareWorkspace } from "./supervisor/workspace.ts";
+import { normalizeWorkspace, prepareWorkspace } from "./supervisor/workspace.ts";
 import { activationsFor } from "./mcp/config.ts";
 import { createLspBridge, lspAvailable, lspSection } from "./mcp/lsp.ts";
 import { mcpManager } from "./mcp/manager.ts";
 import { mcpSection } from "./mcp/prompt.ts";
 import { mcpStatusFor } from "./mcp/status.ts";
-import { expandFileReferences } from "./server/files.ts";
+import { collectImageAttachments, expandFileReferences, imagePartToBlock } from "./server/files.ts";
 import { publishArtifact } from "./server/artifacts.ts";
 import { recall as recallSearch } from "./recall.ts";
 import { originRepo as shadowOrigin, shipToOrigin } from "./vcs/shadow.ts";
@@ -330,11 +331,16 @@ export function startUserTurn(
   sessionId: string,
   text: string,
 ): { userMessage: Message; done: Promise<void> } {
+  // Image @refs become attachment-backed image parts NOW (the file is copied to
+  // ~/.bough/attachments, so the message replays after the original moves);
+  // text @refs keep inlining lazily at replay time (inlineFileReferences).
+  const ws = ctx.db.getSessionRuntime(sessionId).workspace;
+  const images = collectImageAttachments(text, ws ? normalizeWorkspace(ws) : null);
   const userMessage: Message = {
     id: crypto.randomUUID(),
     sessionId,
     role: "user",
-    parts: [{ type: "text", text }],
+    parts: [{ type: "text", text }, ...images],
     pending: false,
     createdAt: Date.now(),
   };
@@ -970,9 +976,15 @@ function toLlmMessages(m: Message): LlmMessage[] {
   // System notes (harness-injected, e.g. subagent reports) replay as user-side text:
   // they are input TO the model, never words it said.
   if (m.role === "user" || m.role === "system") {
-    const content: LlmContentBlock[] = m.parts
-      .filter((p) => p.type === "text")
-      .map((p) => ({ type: "text", text: (p as { text: string }).text }));
+    // Image parts load from their attachment file here (base64); a missing file
+    // degrades to a text placeholder inside imagePartToBlock, never a crash.
+    const content: LlmContentBlock[] = m.parts.flatMap((p): LlmContentBlock[] =>
+      p.type === "text"
+        ? [{ type: "text", text: p.text }]
+        : p.type === "image"
+        ? [imagePartToBlock(p)]
+        : []
+    );
     return content.length ? [{ role: "user", content }] : [];
   }
 

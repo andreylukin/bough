@@ -118,3 +118,101 @@ Deno.test("grantedDirs reads ~/.bough/grants.json, empty on absence/garbage", as
     await Deno.remove(home, { recursive: true });
   }
 });
+
+// ---- image attachments ------------------------------------------------------
+
+// A real 1×1 PNG (70 bytes) — enough to test byte-exact copy + base64 replay.
+const PNG_B64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+const PNG_BYTES = Uint8Array.fromBase64(PNG_B64);
+
+Deno.test("collectImageAttachments: copies workspace image refs into destDir as image parts", async () => {
+  const { collectImageAttachments } = await import("./files.ts");
+  const ws = await Deno.makeTempDir({ prefix: "imgws-" });
+  const dest = await Deno.makeTempDir({ prefix: "imgdest-" });
+  try {
+    await Deno.mkdir(`${ws}/shots`, { recursive: true });
+    await Deno.writeFile(`${ws}/shots/graf.png`, PNG_BYTES);
+    await Deno.writeTextFile(`${ws}/notes.txt`, "text file, not an image");
+
+    const parts = collectImageAttachments(
+      "compare @shots/graf.png with @notes.txt and @missing.png",
+      ws,
+      dest,
+    );
+    assertEquals(parts.length, 1); // .txt is not an image; missing.png doesn't exist
+    const p = parts[0];
+    assertEquals(p.type, "image");
+    assertEquals(p.mediaType, "image/png");
+    assertEquals(p.name, "shots/graf.png");
+    assertEquals(p.size, PNG_BYTES.length);
+    assertEquals(p.path.startsWith(`${dest}/`), true);
+    assertEquals(p.path.endsWith(".png"), true);
+    assertEquals(await Deno.readFile(p.path), PNG_BYTES); // byte-exact copy
+  } finally {
+    await Deno.remove(ws, { recursive: true });
+    await Deno.remove(dest, { recursive: true });
+  }
+});
+
+Deno.test("collectImageAttachments: absolute refs allowed, relative escapes/no-workspace skipped", async () => {
+  const { collectImageAttachments } = await import("./files.ts");
+  const dir = await Deno.makeTempDir({ prefix: "imgabs-" });
+  const dest = await Deno.makeTempDir({ prefix: "imgdest-" });
+  try {
+    await Deno.writeFile(`${dir}/cap.jpg`, PNG_BYTES);
+    // Absolute path works even with no workspace (chat-only session).
+    const abs = collectImageAttachments(`see @${dir}/cap.jpg`, null, dest);
+    assertEquals(abs.length, 1);
+    assertEquals(abs[0].mediaType, "image/jpeg");
+    // A `..` relative ref never resolves; a relative ref without a workspace is skipped.
+    assertEquals(collectImageAttachments("see @../cap.jpg", dir, dest), []);
+    assertEquals(collectImageAttachments("see @cap.jpg", null, dest), []);
+    // Duplicated refs attach once.
+    const dup = collectImageAttachments(`@${dir}/cap.jpg and @${dir}/cap.jpg`, null, dest);
+    assertEquals(dup.length, 1);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+    await Deno.remove(dest, { recursive: true });
+  }
+});
+
+Deno.test("expandFileReferences leaves image refs to the image-part path", async () => {
+  const { expandFileReferences } = await import("./files.ts");
+  const ws = await Deno.makeTempDir({ prefix: "imgskip-" });
+  try {
+    await Deno.writeFile(`${ws}/shot.png`, PNG_BYTES);
+    // Even though the file exists and is small, it must NOT inline as text.
+    assertEquals(expandFileReferences("look at @shot.png", ws), "look at @shot.png");
+  } finally {
+    await Deno.remove(ws, { recursive: true });
+  }
+});
+
+Deno.test("imagePartToBlock: base64 replay, missing attachment degrades to placeholder", async () => {
+  const { imagePartToBlock } = await import("./files.ts");
+  const dir = await Deno.makeTempDir({ prefix: "imgblk-" });
+  try {
+    await Deno.writeFile(`${dir}/a.png`, PNG_BYTES);
+    const part = {
+      type: "image" as const,
+      path: `${dir}/a.png`,
+      mediaType: "image/png",
+      name: "shot.png",
+      size: PNG_BYTES.length,
+    };
+    assertEquals(imagePartToBlock(part), {
+      type: "image",
+      data: PNG_B64,
+      mediaType: "image/png",
+      name: "shot.png",
+    });
+    // Attachment gone (e.g. wiped ~/.bough) → placeholder text, never a throw.
+    assertEquals(imagePartToBlock({ ...part, path: `${dir}/gone.png` }), {
+      type: "text",
+      text: "[image: shot.png — attachment missing]",
+    });
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

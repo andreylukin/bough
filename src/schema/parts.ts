@@ -4,7 +4,7 @@
  * headless CLI consume; any change here must keep round-tripping (see parts.test.ts).
  *
  * Design notes:
- *   - Parts are a discriminated union on `type` (text/reasoning/tool_call/tool_result)
+ *   - Parts are a discriminated union on `type` (text/reasoning/tool_call/tool_result/image)
  *     so the UI can switch on it and so new part kinds are additive.
  *   - A Message carries a `parts[]` array plus a `pending` flag: a message is created
  *     pending (the supervisor is still streaming) and flipped to done when finished.
@@ -40,12 +40,27 @@ export const ToolResultPart = z.object({
   output: z.unknown(),
   isError: z.boolean(),
 });
+// A user-attached image (composer `@shot.png`). The bytes live OUTSIDE the parts
+// JSON: composing the message copies the referenced file to
+// ~/.bough/attachments/<uuid>.<ext> and the part stores only that `path` — the db
+// row stays small and the message replays even after the workspace file moves.
+// `name` is the reference as the user typed it; `size` (bytes, at attach time)
+// feeds the UI's placeholder line.
+export const ImagePart = z.object({
+  type: z.literal("image"),
+  path: z.string(),
+  mediaType: z.string(),
+  name: z.string(),
+  size: z.number(),
+});
+export type ImagePart = z.infer<typeof ImagePart>;
 
 export const Part = z.discriminatedUnion("type", [
   TextPart,
   ReasoningPart,
   ToolCallPart,
   ToolResultPart,
+  ImagePart,
 ]);
 export type Part = z.infer<typeof Part>;
 

@@ -717,3 +717,52 @@ Deno.test("mcp end-to-end: /skill grant connects the server, prompts tools, brid
     Deno.env.delete("BOUGH_MCP_DIR");
   }
 });
+
+Deno.test("an @image ref composes an image part and replays as a base64 image block", async () => {
+  // 1×1 PNG; HOME is swapped to a temp dir so the attachment copy lands there.
+  const PNG_B64 =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+  const home = await Deno.makeTempDir({ prefix: "imghome-" });
+  const dir = await Deno.makeTempDir({ prefix: "imgsrc-" });
+  const origHome = Deno.env.get("HOME");
+  try {
+    Deno.env.set("HOME", home);
+    await Deno.writeFile(`${dir}/shot.png`, Uint8Array.fromBase64(PNG_B64));
+    const { db, bus, sessionId } = seed();
+    const llm = fakeLlm([{
+      content: [{ type: "text", text: "looks fine" }],
+      stopReason: "end_turn",
+    }]);
+    const ctx: TurnCtx = { db, bus, llm, tools: [] };
+
+    const { userMessage, done } = startUserTurn(
+      ctx,
+      sessionId,
+      `what is this? @${dir}/shot.png`,
+    );
+    await done;
+
+    // Composed message: the text part plus an attachment-backed image part.
+    assertEquals(userMessage.parts.length, 2);
+    const img = userMessage.parts[1] as Extract<Part, { type: "image" }>;
+    assertEquals(img.type, "image");
+    assertEquals(img.mediaType, "image/png");
+    assertEquals(img.path.startsWith(`${home}/.bough/attachments/`), true);
+
+    // Replay: the LLM round saw the image as a base64 block on the user message.
+    // calls[0].messages is a live reference the loop appends to across rounds,
+    // so index the composed message (after seed's "hi") rather than taking last.
+    const users = llm.calls[0].messages.filter((m) => m.role === "user");
+    const blocks = users[1].content;
+    assertEquals(blocks[1], {
+      type: "image",
+      data: PNG_B64,
+      mediaType: "image/png",
+      name: `${dir}/shot.png`,
+    });
+  } finally {
+    if (origHome) Deno.env.set("HOME", origHome);
+    await Deno.remove(home, { recursive: true });
+    await Deno.remove(dir, { recursive: true });
+  }
+});

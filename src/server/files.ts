@@ -5,7 +5,12 @@
  * machine's whole disk: skips VCS/dependency/build dirs and dotfiles, caps the
  * number of files scanned and results returned. Read-only; no traversal outside
  * the workspace root (paths are returned workspace-relative).
+ *
+ * Also home to the composer's `@path` reference expansion: text files inline at
+ * replay time (expandFileReferences) while image files become attachment-backed
+ * image parts at compose time (collectImageAttachments) — see schema/parts.ts.
  */
+import type { ImagePart } from "../schema/parts.ts";
 
 const SKIP_DIRS = new Set([
   ".git",
@@ -218,6 +223,9 @@ export function expandFileReferences(text: string, workspace: string): string {
     const rel = m[1];
     if (seen.has(rel) || rel.includes("..")) continue;
     seen.add(rel);
+    // Images ride as attachment-backed image parts (collectImageAttachments),
+    // never as inlined "text" — a binary read here would be mojibake.
+    if (imageMediaType(rel)) continue;
     const abs = `${root}/${rel}`;
     try {
       const info = Deno.statSync(abs);
@@ -229,4 +237,97 @@ export function expandFileReferences(text: string, workspace: string): string {
     }
   }
   return blocks.length ? `${text}\n\n${blocks.join("\n\n")}` : text;
+}
+
+// ---- image attachments (`@shot.png` → image parts) --------------------------
+
+/** The formats we attach (matches what the Anthropic API accepts). */
+const IMAGE_TYPES: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+};
+
+/** Media type for a path with a supported image extension, else undefined. */
+export function imageMediaType(path: string): string | undefined {
+  return IMAGE_TYPES[path.slice(path.lastIndexOf(".") + 1).toLowerCase()];
+}
+
+/** Anthropic's per-image cap; a larger file stays a plain @reference. */
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+/** Where attached images are copied: ~/.bough/attachments. */
+export function attachmentsDir(): string {
+  return `${Deno.env.get("HOME") ?? "."}/.bough/attachments`;
+}
+
+/**
+ * Collect `@path` image references from a user message into image parts, copying
+ * each file to `destDir` at compose time (the part stores the copy's path — the
+ * message replays even after the original moves; see schema/parts.ts). Relative
+ * refs resolve against the workspace with the same `..` confinement as
+ * expandFileReferences; absolute and `~/` refs are ALSO accepted for images —
+ * a screenshot usually lives outside the repo, and the user is explicitly
+ * pointing at it. Missing, oversized, or uncopyable files are skipped (the raw
+ * @ref stays in the text for the agent's own tools). Never throws.
+ */
+export function collectImageAttachments(
+  text: string,
+  workspace: string | null,
+  destDir: string = attachmentsDir(),
+): ImagePart[] {
+  const home = Deno.env.get("HOME");
+  const seen = new Set<string>();
+  const parts: ImagePart[] = [];
+  // Same token shape as expandFileReferences, plus `~` so "@~/Desktop/x.png" works.
+  for (const m of text.matchAll(/(?:^|\s)@([\w./~-]+)/g)) {
+    const ref = m[1];
+    const mediaType = imageMediaType(ref);
+    if (!mediaType || seen.has(ref)) continue;
+    seen.add(ref);
+    let abs: string;
+    if (ref.startsWith("/")) abs = ref;
+    else if (home && ref.startsWith("~/")) abs = home + ref.slice(1);
+    else if (workspace && !ref.includes("..")) abs = `${workspace.replace(/\/+$/, "")}/${ref}`;
+    else continue;
+    try {
+      const info = Deno.statSync(abs);
+      if (!info.isFile || info.size > MAX_IMAGE_BYTES) continue;
+      Deno.mkdirSync(destDir, { recursive: true });
+      const dest = `${destDir}/${crypto.randomUUID()}.${
+        abs.slice(abs.lastIndexOf(".") + 1)
+          .toLowerCase()
+      }`;
+      Deno.copyFileSync(abs, dest);
+      parts.push({ type: "image", path: dest, mediaType, name: ref, size: info.size });
+    } catch {
+      // unreadable — leave the @reference as plain text
+    }
+  }
+  return parts;
+}
+
+/**
+ * An image part → the base64 block replayed to the LLM (turn.ts history
+ * assembly). A missing or unreadable attachment degrades to a text placeholder —
+ * history must always replay, never crash the turn.
+ */
+export function imagePartToBlock(
+  part: ImagePart,
+): { type: "image"; data: string; mediaType: string; name: string } | {
+  type: "text";
+  text: string;
+} {
+  try {
+    return {
+      type: "image",
+      data: Deno.readFileSync(part.path).toBase64(),
+      mediaType: part.mediaType,
+      name: part.name,
+    };
+  } catch {
+    return { type: "text", text: `[image: ${part.name} — attachment missing]` };
+  }
 }
