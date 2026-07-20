@@ -20,6 +20,11 @@ exception: it exercises the headless CLI, no TUI). Probes spend real tokens
 | `scrollback-dump.sh` | full scrollback dump for the reconstruction test | scrollback is the chronological record; what a fresh reader can't reconstruct, the rendering lost |
 | `exec.sh` | `bough exec` round-trip (arg + stdin forms, `--json` envelope) | the headless CLI is the scripting/bench transport; it must stay green without a TUI |
 | `report.sh` | per-session metrics table (`GET /sessions/:id/metrics`) | prompts-per-task, turns-to-done, stops/fails, latency percentiles across real usage |
+| `subagent-failures.sh` | subagent failure/interrupt RENDERING (E3–E6): interrupted/failed/orphaned cards, long-error truncation+expand, click-into-failed → esc-back | a failed or interrupted subagent must read as failed, not "✓ done"; the rendering gaps behind the "bad subagent UX" complaint |
+
+`subagent-failures.sh` is the exception to "live server": it boots its OWN
+isolated server on a seeded DB (the failure states can't be produced on the live
+server on demand) and spends no tokens. See `docs/subagent-failure-testing.md`.
 
 Server-side metrics come from `src/metrics.ts` — derived from rows the server
 already persists, plus a `turns.first_output_at` stamp written by the turn

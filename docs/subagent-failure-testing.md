@@ -92,8 +92,12 @@ pinning the bug to asserting the fix):
 - **B1** — pinned as intended behavior: interrupting the spawner kills its
   program too (stop = stop now); no fix needed.
 
-Still open (Tier 3): E3–E6 (interrupted-card / live transition / long-error
-truncation / click-into-failed) want shell-use coverage.
+Tier 3 (shell-use, `probes/subagent-failures.sh` — isolated server + seeded DB,
+no tokens): E3 interrupted card reads `◼ interrupted`; E4 a run stranded by a
+restart renders `ORPHANED` + posts a note to the spawner; E5 a long-error report
+card is capped and expands on "click to show all"; E6 clicking a failed card
+opens the subagent (its Turn-failed text) and esc returns to the spawner. Run:
+`bash probes/subagent-failures.sh`.
 
 Run the unit tier:
 
