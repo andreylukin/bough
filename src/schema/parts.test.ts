@@ -4,12 +4,19 @@ import type { Message as TMessage, Session as TSession } from "./parts.ts";
 
 // Round-trip the exact wire shapes clients pin. If the schema drifts, these fail.
 
-Deno.test("Part union round-trips all four kinds", () => {
+Deno.test("Part union round-trips all five kinds", () => {
   const parts: unknown[] = [
     { type: "text", text: "hi" },
     { type: "reasoning", text: "thinking" },
     { type: "tool_call", id: "c1", name: "read", input: { path: "/x" } },
     { type: "tool_result", callId: "c1", output: "done", isError: false },
+    {
+      type: "image",
+      path: "/home/u/.bough/attachments/abc.png",
+      mediaType: "image/png",
+      name: "shot.png",
+      size: 12345,
+    },
   ];
   for (const p of parts) assertEquals(Part.parse(p), p);
 });

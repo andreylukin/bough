@@ -29,10 +29,14 @@ export type LlmBlock =
   | { type: "reasoning"; text: string; meta?: unknown }
   | { type: "tool_use"; id: string; name: string; input: unknown };
 
-/** A block as it appears in a request message (adds tool_result to LlmBlock). */
+/** A block as it appears in a request message (adds tool_result/image to LlmBlock). */
 export type LlmContentBlock =
   | LlmBlock
-  | { type: "tool_result"; toolUseId: string; content: string; isError: boolean };
+  | { type: "tool_result"; toolUseId: string; content: string; isError: boolean }
+  // A user-attached image, base64-encoded at history-assembly time (turn.ts).
+  // Every provider maps it to its native image-input shape; `name` labels it in
+  // errors/placeholders.
+  | { type: "image"; data: string; mediaType: string; name: string };
 
 export interface LlmMessage {
   role: "user" | "assistant";
@@ -215,11 +219,21 @@ async function throwHttpError(provider: string, res: Response): Promise<never> {
 
 // ---- real client -----------------------------------------------------------
 
-function toApiMessage(m: LlmMessage): Anthropic.MessageParam {
+/** Our normalized message → the Anthropic wire shape. Exported for tests. */
+export function toApiMessage(m: LlmMessage): Anthropic.MessageParam {
   const content = m.content.flatMap((b): Anthropic.ContentBlockParam[] => {
     switch (b.type) {
       case "text":
         return [{ type: "text", text: b.text }];
+      case "image":
+        return [{
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: b.mediaType as Anthropic.Base64ImageSource["media_type"],
+            data: b.data,
+          },
+        }];
       case "reasoning": {
         // An Anthropic thinking block replays verbatim (signature included) — the
         // API rejects a tool_use whose preceding thinking was altered or dropped.
@@ -356,8 +370,9 @@ interface OpenAIToolCall {
   function?: { name?: string; arguments?: string };
 }
 
-/** Flatten our multi-block messages into OpenAI chat messages (tool_results split out). */
-function toOpenAIMessages(system: string | undefined, messages: LlmMessage[]): unknown[] {
+/** Flatten our multi-block messages into OpenAI chat messages (tool_results split
+ * out). Exported for tests. */
+export function toOpenAIMessages(system: string | undefined, messages: LlmMessage[]): unknown[] {
   const out: unknown[] = [];
   if (system) out.push({ role: "system", content: system });
   for (const m of messages) {
@@ -381,13 +396,30 @@ function toOpenAIMessages(system: string | undefined, messages: LlmMessage[]): u
         ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
       });
     } else {
-      // user turn: text blocks → one user message; tool_result blocks → one tool msg each.
+      // user turn: text/image blocks → one user message; tool_result blocks →
+      // one tool msg each. With no images the content stays a plain string
+      // (wire shape unchanged); with images it becomes the multimodal parts
+      // array — image_url data URLs, which OpenRouter passes through to
+      // vision-capable models (a non-vision model errors, surfaced as-is).
       const texts = m.content.filter((b) => b.type === "text");
+      const images = m.content.filter((b) => b.type === "image");
       const results = m.content.filter((b) => b.type === "tool_result");
-      if (texts.length) {
+      if (texts.length || images.length) {
+        const joined = texts.map((b) => (b as { text: string }).text).join("\n");
         out.push({
           role: "user",
-          content: texts.map((b) => (b as { text: string }).text).join("\n"),
+          content: images.length
+            ? [
+              ...(joined ? [{ type: "text", text: joined }] : []),
+              ...images.map((b) => {
+                const i = b as { data: string; mediaType: string };
+                return {
+                  type: "image_url",
+                  image_url: { url: `data:${i.mediaType};base64,${i.data}` },
+                };
+              }),
+            ]
+            : joined,
         });
       }
       for (const r of results) {
@@ -431,6 +463,12 @@ export function toResponsesInput(messages: LlmMessage[]): unknown[] {
             ? { role: "user", content: [{ type: "input_text", text: b.text }] }
             : { role: "assistant", content: [{ type: "output_text", text: b.text }] },
         );
+      } else if (b.type === "image") {
+        // Images only occur on user messages (turn.ts history assembly).
+        out.push({
+          role: "user",
+          content: [{ type: "input_image", image_url: `data:${b.mediaType};base64,${b.data}` }],
+        });
       } else if (b.type === "reasoning") {
         if (b.meta) out.push(b.meta); // the raw reasoning item, replayed verbatim
       } else if (b.type === "tool_use") {

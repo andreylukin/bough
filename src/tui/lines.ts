@@ -95,7 +95,9 @@ function subagentNoteLines(out: VLine[], note: SubagentNote, width: number, full
     // what floods the screen, so cap those, not logical lines.
     const physical = md(note.report).split("\n").flatMap((line) => wrap(line, width - 2));
     const shown = full ? physical : physical.slice(0, REPORT_LINES);
-    for (const l of shown) out.push({ text: `${dim("│")} ${l}`, click: `report:${note.sessionId}` });
+    for (const l of shown) {
+      out.push({ text: `${dim("│")} ${l}`, click: `report:${note.sessionId}` });
+    }
     if (physical.length > shown.length) {
       out.push({
         text: `${dim("│")} ${dim(`… +${physical.length - shown.length} more · click to show all`)}`,
@@ -293,6 +295,12 @@ export function messageLines(
         seg.push({ text: dim(`▸ thinking · ${clip(gist, 60)}`), click: key });
       }
       copy = s.text;
+    } else if (s.kind === "image") {
+      // An attached image renders as a compact placeholder (terminals don't do
+      // pixels); the bytes live in ~/.bough/attachments and went to the model.
+      const kb = Math.max(1, Math.round(s.part.size / 1024));
+      seg.push({ text: dim(`🖼 ${s.part.name} (${kb} KB)`) });
+      copy = s.part.path;
     } else {
       toolGroupLines(seg, s.parts, key, isExpanded(key), isFull(key), w);
       copy = toolGroupCopy(s.parts);

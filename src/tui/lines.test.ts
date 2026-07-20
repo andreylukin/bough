@@ -195,6 +195,31 @@ Deno.test("reasoning folds: collapsed gist line, expanded gutter block", () => {
   assertEquals(expanded.some((l) => l.text.includes("Second thought.")), true);
 });
 
+Deno.test("image part renders as a compact placeholder line", () => {
+  const msg: Message = {
+    id: "m1",
+    sessionId: "s",
+    role: "user",
+    pending: false,
+    createdAt: 1,
+    parts: [
+      { type: "text", text: "what does this graph mean? @shot.png" },
+      {
+        type: "image",
+        path: "/home/u/.bough/attachments/x.png",
+        mediaType: "image/png",
+        name: "shot.png",
+        size: 34_567,
+      },
+    ],
+  };
+  const lines = messageLines(msg, () => false, () => false, 120);
+  const img = lines.find((l) => l.text.includes("\u{1F5BC}"))!;
+  assertEquals(img.text.includes("shot.png (34 KB)"), true);
+  // Right-click copy yields the attachment path.
+  assertEquals(img.copy, "/home/u/.bough/attachments/x.png");
+});
+
 import { type Branch, buildLines } from "./lines.ts";
 
 Deno.test("finished-subagent card caps the report; !full lifts the cap", () => {
@@ -208,9 +233,27 @@ Deno.test("finished-subagent card caps the report; !full lifts the cap", () => {
     'Its changes stay on its own branch; adopt("x") to merge them.',
   ].join("\n");
   const thread = [
-    { id: "u1", sessionId: "s", role: "user", parts: [{ type: "text", text: "go" }], pending: false },
-    { id: "a1", sessionId: "s", role: "supervisor", parts: [{ type: "text", text: "delegating" }], pending: false },
-    { id: "n1", sessionId: "s", role: "system", parts: [{ type: "text", text: noteText }], pending: false },
+    {
+      id: "u1",
+      sessionId: "s",
+      role: "user",
+      parts: [{ type: "text", text: "go" }],
+      pending: false,
+    },
+    {
+      id: "a1",
+      sessionId: "s",
+      role: "supervisor",
+      parts: [{ type: "text", text: "delegating" }],
+      pending: false,
+    },
+    {
+      id: "n1",
+      sessionId: "s",
+      role: "system",
+      parts: [{ type: "text", text: noteText }],
+      pending: false,
+    },
   ] as unknown as Message[];
   const branch = {
     id: sessionId,
@@ -242,8 +285,20 @@ Deno.test("branch card: a finished blocking subagent reflects its real status (f
   // the branch has note=null. The card now reads the session's lastTurnStatus so
   // a subagent that ERRORED or was INTERRUPTED no longer masquerades as "✓ done".
   const thread = [
-    { id: "u1", sessionId: "s", role: "user", parts: [{ type: "text", text: "go" }], pending: false },
-    { id: "a1", sessionId: "s", role: "supervisor", parts: [{ type: "text", text: "delegating" }], pending: false },
+    {
+      id: "u1",
+      sessionId: "s",
+      role: "user",
+      parts: [{ type: "text", text: "go" }],
+      pending: false,
+    },
+    {
+      id: "a1",
+      sessionId: "s",
+      role: "supervisor",
+      parts: [{ type: "text", text: "delegating" }],
+      pending: false,
+    },
   ] as unknown as Message[];
   const card = (status: Branch["status"]) => {
     const branch: Branch = {

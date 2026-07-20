@@ -5,10 +5,12 @@ import type { Part } from "../schema/parts.ts";
 
 export type ToolCall = Extract<Part, { type: "tool_call" }>;
 export type ToolResult = Extract<Part, { type: "tool_result" }>;
+export type ImagePart = Extract<Part, { type: "image" }>;
 
 export type Segment =
   | { kind: "text"; text: string }
   | { kind: "reasoning"; text: string }
+  | { kind: "image"; part: ImagePart }
   | { kind: "tools"; parts: Part[] };
 
 // Group a turn's parts into renderable segments, preserving their order. Consecutive
@@ -18,6 +20,7 @@ export function segmentParts(parts: Part[]): Segment[] {
   for (const p of parts) {
     if (p.type === "text") segs.push({ kind: "text", text: p.text });
     else if (p.type === "reasoning") segs.push({ kind: "reasoning", text: p.text });
+    else if (p.type === "image") segs.push({ kind: "image", part: p });
     else {
       const last = segs[segs.length - 1];
       if (last?.kind === "tools") last.parts.push(p);

@@ -88,7 +88,10 @@ Deno.test("fromResponsesOutput: malformed arguments degrade to {}", () => {
 // ---- retries ----------------------------------------------------------------
 
 const PARAMS: LlmParams = { model: "m", maxTokens: 10, messages: [], tools: [] };
-const ok = (text: string): LlmResult => ({ content: [{ type: "text", text }], stopReason: "end_turn" });
+const ok = (text: string): LlmResult => ({
+  content: [{ type: "text", text }],
+  stopReason: "end_turn",
+});
 
 Deno.test("isRetryable: transport and server faults yes; aborts and 4xx no", () => {
   assertEquals(isRetryable(new LlmError("truncated stream")), true); // no status = transport
@@ -253,8 +256,7 @@ Deno.test("openai: stream ending without response.completed throws retryable", a
   Deno.env.set("OPENAI_API_KEY", "test");
   const res = sse(JSON.stringify({ type: "response.output_text.delta", delta: "x" }));
   const err = await assertRejects(
-    () =>
-      withFetch(res, () => openaiClient().run({ ...PARAMS, model: "openai:gpt-5" }, () => {})),
+    () => withFetch(res, () => openaiClient().run({ ...PARAMS, model: "openai:gpt-5" }, () => {})),
     LlmError,
     "response.completed",
   );
@@ -270,9 +272,73 @@ Deno.test("openai: response.failed event throws retryable, rate limits as 429", 
     }),
   );
   const err = await assertRejects(
-    () =>
-      withFetch(res, () => openaiClient().run({ ...PARAMS, model: "openai:gpt-5" }, () => {})),
+    () => withFetch(res, () => openaiClient().run({ ...PARAMS, model: "openai:gpt-5" }, () => {})),
     LlmError,
   );
   assertEquals(err.status, 429);
+});
+
+// ---- image blocks (all three providers) -------------------------------------
+
+const IMG = {
+  type: "image" as const,
+  data:
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+  mediaType: "image/png",
+  name: "shot.png",
+};
+
+Deno.test("toApiMessage: image block → Anthropic base64 image source", async () => {
+  const { toApiMessage } = await import("./llm.ts");
+  const msg = toApiMessage({
+    role: "user",
+    content: [{ type: "text", text: "what's wrong here?" }, IMG],
+  });
+  assertEquals(msg, {
+    role: "user",
+    content: [
+      { type: "text", text: "what's wrong here?" },
+      {
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: IMG.data },
+      },
+    ],
+  });
+});
+
+Deno.test("toResponsesInput: image block → input_image data URL", async () => {
+  const { toResponsesInput } = await import("./llm.ts");
+  const items = toResponsesInput([
+    { role: "user", content: [{ type: "text", text: "see" }, IMG] },
+  ]);
+  assertEquals(items, [
+    { role: "user", content: [{ type: "input_text", text: "see" }] },
+    {
+      role: "user",
+      content: [{
+        type: "input_image",
+        image_url: `data:image/png;base64,${IMG.data}`,
+      }],
+    },
+  ]);
+});
+
+Deno.test("toOpenAIMessages: image → image_url data URL parts; no image keeps string content", async () => {
+  const { toOpenAIMessages } = await import("./llm.ts");
+  // With an image, user content becomes the multimodal parts array.
+  const withImg = toOpenAIMessages(undefined, [
+    { role: "user", content: [{ type: "text", text: "see" }, IMG] },
+  ]);
+  assertEquals(withImg, [{
+    role: "user",
+    content: [
+      { type: "text", text: "see" },
+      { type: "image_url", image_url: { url: `data:image/png;base64,${IMG.data}` } },
+    ],
+  }]);
+  // Without images the wire shape is untouched: plain string content.
+  const plain = toOpenAIMessages(undefined, [
+    { role: "user", content: [{ type: "text", text: "hi" }] },
+  ]);
+  assertEquals(plain, [{ role: "user", content: "hi" }]);
 });

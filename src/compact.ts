@@ -78,6 +78,8 @@ function renderPart(role: string, p: Part): string {
       return `${role}: [tool ${p.name}] ${clip(JSON.stringify(p.input))}`;
     case "tool_result":
       return `tool_result${p.isError ? " (error)" : ""}: ${clip(stringify(p.output))}`;
+    case "image":
+      return `${role}: [image ${p.name}]`;
   }
 }
 
