@@ -68,9 +68,16 @@ export function parseSubagentNote(text: string): SubagentNote | null {
   return { title, sessionId, status, ok: !status.startsWith("FAILED"), files, report };
 }
 
-// The card for a finished subagent: a clickable ◆ header (opens its branch),
-// a files line, the report as markdown, and a dim footer with the next action.
-function subagentNoteLines(out: VLine[], note: SubagentNote, width: number) {
+// How many report lines a finished-subagent card shows before "+N more"; the
+// full report is one click away (its own toggle key). Keeps a chatty subagent
+// from burying the conversation it reported into (the card is a summary, not the
+// subagent's transcript — that lives one `open` away).
+const REPORT_LINES = 6;
+
+// The card for a finished subagent: a clickable ◆ header (opens its branch), a
+// files line, a capped report preview (expand toggle), and a footer with the
+// next action. `full` lifts the report cap (set by clicking its "+N more" line).
+function subagentNoteLines(out: VLine[], note: SubagentNote, width: number, full: boolean) {
   const open = `open:${note.sessionId}`;
   const dot = note.ok ? green("◆") : red("◆");
   const statusTag = note.ok ? green(note.status) : red(note.status);
@@ -82,8 +89,17 @@ function subagentNoteLines(out: VLine[], note: SubagentNote, width: number) {
     : "no file changes";
   push(out, dim(`  ${fileNote}`), width, open);
   if (note.report) {
-    for (const line of md(note.report).split("\n")) {
-      for (const l of wrap(line, width - 2)) out.push({ text: `${dim("│")} ${l}` });
+    // The rendered report can be long; cap it like a tool-output block so a
+    // finished subagent stays a compact card. Physical (post-wrap) lines are
+    // what floods the screen, so cap those, not logical lines.
+    const physical = md(note.report).split("\n").flatMap((line) => wrap(line, width - 2));
+    const shown = full ? physical : physical.slice(0, REPORT_LINES);
+    for (const l of shown) out.push({ text: `${dim("│")} ${l}`, click: `report:${note.sessionId}` });
+    if (physical.length > shown.length) {
+      out.push({
+        text: `${dim("│")} ${dim(`… +${physical.length - shown.length} more · click to show all`)}`,
+        click: `report:${note.sessionId}!full`,
+      });
     }
   }
   push(
@@ -302,14 +318,20 @@ export interface Branch {
   note?: SubagentNote | null;
 }
 
-// One branch's card: a live ⋯/✓ line, or the full finished card (header, files,
-// report as markdown, footer). Indented under the spawning turn.
-function branchCardLines(out: VLine[], b: Branch, width: number) {
+// One branch's card: a live ⋯/✓ line, or the finished card (header, files,
+// capped report, footer). Indented under the spawning turn. `isFull` lifts the
+// report cap when its "+N more" line was clicked.
+function branchCardLines(
+  out: VLine[],
+  b: Branch,
+  width: number,
+  isFull: (key: string) => boolean,
+) {
   const w = width - 2;
   const body: VLine[] = [];
   let copy: string;
   if (b.note) {
-    subagentNoteLines(body, b.note, w);
+    subagentNoteLines(body, b.note, w, isFull(`report:${b.note.sessionId}`));
     copy = b.note.report ?? b.note.title;
   } else {
     const dot = b.busy ? yellow("◆") : green("◆");
@@ -355,9 +377,9 @@ export function buildLines(
       if (parsed && notedIds.has(parsed.sessionId)) continue;
     }
     out.push(...messageLines(m, isExpanded, isFull, width, streaming[m.id]));
-    for (const b of byOrigin.get(m.id) ?? []) branchCardLines(out, b, width);
+    for (const b of byOrigin.get(m.id) ?? []) branchCardLines(out, b, width, isFull);
   }
   // Branches whose spawn point isn't in the current thread fall to the tail.
-  for (const b of orphans) branchCardLines(out, b, width);
+  for (const b of orphans) branchCardLines(out, b, width, isFull);
   return out;
 }

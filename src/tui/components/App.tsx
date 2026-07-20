@@ -225,6 +225,15 @@ export function App(
     open(s.id).catch((e) => setErr(String(e)));
   }, [open]);
 
+  // The spawner of the open session, when it's a subagent branch (else null).
+  // Peeking into a running subagent must be reversible in one key, and — the trap
+  // this closes — without interrupting the subagent's turn (bare esc used to).
+  const spawnerSession = useCallback((): Session | null => {
+    const cur = store.session;
+    if (cur?.kind !== "subagent" || !cur.originId) return null;
+    return store.sessions.find((s) => s.id === cur.originId) ?? null;
+  }, [store.session, store.sessions]);
+
   // A handoff draft prefills an EMPTY composer when its session opens (review,
   // edit, send); the server clears it on the first post. Never clobbers typed text.
   const sessionDraft = store.session?.draft ?? null;
@@ -1407,6 +1416,13 @@ export function App(
       return;
     }
     if (key.escape) {
+      // Inside a subagent branch, esc means "get me back up" — return to the
+      // spawner without touching the subagent's turn. This closes the trap where
+      // peeking into a running subagent and hitting esc silently killed its work
+      // (esc = interrupt below). Explicitly interrupting a subagent is niche and
+      // risky — the parent may be awaiting it — so it's not on the bare reflex.
+      const spawner = spawnerSession();
+      if (spawner) return openSession(spawner);
       // Esc is the agent's stop button; when idle it clears a lingering notice
       // (error notices used to sit above the composer with no way to dismiss).
       if (store.busy) store.interrupt();

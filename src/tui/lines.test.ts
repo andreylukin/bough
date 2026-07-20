@@ -194,3 +194,45 @@ Deno.test("reasoning folds: collapsed gist line, expanded gutter block", () => {
   assertEquals(expanded.some((l) => l.text.includes("▾ thinking (3 lines)")), true);
   assertEquals(expanded.some((l) => l.text.includes("Second thought.")), true);
 });
+
+import { buildLines } from "./lines.ts";
+
+Deno.test("finished-subagent card caps the report; !full lifts the cap", () => {
+  const sessionId = "sub-1";
+  const report = Array.from({ length: 20 }, (_, i) => `report line ${i + 1}`).join("\n");
+  const noteText = [
+    `[subagent finished] "extract token logic" (${sessionId}) — DONE.`,
+    "Changed files on its branch: token.ts.",
+    "Report:",
+    report,
+    'Its changes stay on its own branch; adopt("x") to merge them.',
+  ].join("\n");
+  const thread = [
+    { id: "u1", sessionId: "s", role: "user", parts: [{ type: "text", text: "go" }], pending: false },
+    { id: "a1", sessionId: "s", role: "supervisor", parts: [{ type: "text", text: "delegating" }], pending: false },
+    { id: "n1", sessionId: "s", role: "system", parts: [{ type: "text", text: noteText }], pending: false },
+  ] as unknown as Message[];
+  const branch = {
+    id: sessionId,
+    title: "subagent · extract token logic",
+    busy: false,
+    originMessageId: "a1",
+    note: parseSubagentNote(noteText),
+  };
+
+  // Collapsed: the report is capped, with a "show all" affordance.
+  const capped = buildLines(thread, {}, () => false, () => false, 100, [branch]);
+  const reportLines = capped.filter((l) => l.click === `report:${sessionId}`);
+  const moreLine = capped.find((l) => l.text.includes("more · click to show all"));
+  assertEquals(reportLines.length <= 6, true); // REPORT_LINES cap
+  assertEquals(!!moreLine, true);
+  assertEquals(moreLine!.click, `report:${sessionId}!full`);
+  // The last report line is NOT shown while capped.
+  assertEquals(capped.some((l) => l.text.includes("report line 20")), false);
+
+  // Full (its !full toggle set): the whole report renders, no "+N more".
+  const isFull = (k: string) => k === `report:${sessionId}`;
+  const expanded = buildLines(thread, {}, () => false, isFull, 100, [branch]);
+  assertEquals(expanded.some((l) => l.text.includes("report line 20")), true);
+  assertEquals(expanded.some((l) => l.text.includes("more · click to show all")), false);
+});

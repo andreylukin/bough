@@ -20,8 +20,10 @@ function useColdCache(usage: Usage): string | null {
   return coldCacheNote(usage, Date.now());
 }
 
-/** Animated spinner + elapsed seconds while a turn runs. */
-function useSpinner(busy: boolean): string | null {
+/** Animated spinner + elapsed seconds while a turn runs. `escHint` closes the
+ * line — "esc interrupts" for your own turn, "esc ↩ back" inside a subagent
+ * branch (where esc returns to the spawner instead of killing the subagent). */
+function useSpinner(busy: boolean, escHint: string): string | null {
   const [tick, setTick] = useState(0);
   const since = useRef<number | null>(null);
   useEffect(() => {
@@ -35,7 +37,7 @@ function useSpinner(busy: boolean): string | null {
   }, [busy]);
   if (!busy) return null;
   const secs = Math.floor((Date.now() - (since.current ?? Date.now())) / 1000);
-  return `${FRAMES[tick % FRAMES.length]} working · ${secs}s · esc interrupts`;
+  return `${FRAMES[tick % FRAMES.length]} working · ${secs}s · ${escHint}`;
 }
 
 /** The line above the composer while a turn runs — the local worker's blurb of
@@ -84,7 +86,8 @@ export function StatusBar(
     parentTitle?: string | null;
   },
 ) {
-  const spinner = useSpinner(busy);
+  const isSub = session?.kind === "subagent";
+  const spinner = useSpinner(busy, isSub ? "esc ↩ back" : "esc interrupts");
   const cold = useColdCache(usage);
   const status = spinner
     ? { text: spinner, color: palette.warn }
@@ -119,7 +122,7 @@ export function StatusBar(
               ? <Text dimColor>{" "}{draftLabel}</Text>
               : null}
             {parentTitle
-              ? <Text dimColor>{"  "}branch of {parentTitle} · ^p goes back</Text>
+              ? <Text dimColor>{"  "}branch of {parentTitle} · esc ↩ back</Text>
               : null}
           </Text>
         </Box>
