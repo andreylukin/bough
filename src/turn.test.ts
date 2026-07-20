@@ -607,9 +607,12 @@ Deno.test("delegation fit note: injected for a decomposable request, absent othe
   const llm = fakeLlm([{ content: [{ type: "text", text: "ok" }], stopReason: "end_turn" }]);
   const { done } = beginTurn({ db, bus, llm, tools: [] }, sessionId);
   await done;
-  const system = llm.calls[0].system ?? "";
-  assertStringIncludes(system, "# Delegation fit (this request)");
-  assertStringIncludes(system, "spawn(t)");
+  // Per-turn text lives in the VOLATILE tier — the stable prefix must stay
+  // byte-identical across requests, hint or no hint.
+  const volatile = llm.calls[0].systemVolatile ?? "";
+  assertStringIncludes(volatile, "# Delegation fit (this request)");
+  assertStringIncludes(volatile, "spawn(t)");
+  assertEquals((llm.calls[0].system ?? "").includes("# Delegation fit"), false);
 });
 
 Deno.test("delegation fit note: cohesive request gets no note", async () => {
@@ -617,7 +620,8 @@ Deno.test("delegation fit note: cohesive request gets no note", async () => {
   const llm = fakeLlm([{ content: [{ type: "text", text: "ok" }], stopReason: "end_turn" }]);
   const { done } = beginTurn({ db, bus, llm, tools: [] }, sessionId);
   await done;
-  assertEquals((llm.calls[0].system ?? "").includes("# Delegation fit"), false);
+  const all = (llm.calls[0].system ?? "") + (llm.calls[0].systemVolatile ?? "");
+  assertEquals(all.includes("# Delegation fit"), false);
 });
 
 Deno.test("delegation fit note: never for subagent turns (they have no spawn())", async () => {
@@ -645,7 +649,8 @@ Deno.test("delegation fit note: never for subagent turns (they have no spawn())"
   const system = llm.calls[0].system ?? "";
   // Depth 1 still delegates (blocking agent()), but the spawn-shaped note must not render.
   assertStringIncludes(system, "await agent(task)");
-  assertEquals(system.includes("# Delegation fit"), false);
+  const all = system + (llm.calls[0].systemVolatile ?? "");
+  assertEquals(all.includes("# Delegation fit"), false);
 });
 
 Deno.test("mcp end-to-end: /skill grant connects the server, prompts tools, bridges mcp()", async () => {
