@@ -40,7 +40,10 @@ const schema = z.object({
       "bash auto-backgrounds after ~60s) — bashBg(cmd) → {id, pid}, bashOutput(id) → " +
       "string (progress, safe while running), bashWait(id) → string (block until done), bashKill(id) " +
       "— plus mcpStatus() (always available: this session's MCP management state), " +
-      "recall(query, k?) → {hits, indexed} (semantic search over past bough conversations) and any " +
+      "recall(query, k?) → {hits, indexed} (semantic search over past bough conversations), " +
+      "ask(question, {options?: string[]}) → string (pause and ask the USER a clarifying " +
+      "question; blocks until they answer in the TUI — they pick an option or type freely — " +
+      "and throws a catchable 'user declined' error if dismissed) and any " +
       "oracle(question) → string, delegation (agent/spawn/join/adopt), mcp(server, tool, args), and lsp.* symbol " +
       "navigation host functions your system prompt grants. Node globals (process, " +
       "require) do not exist. Use console.log(...) to see " +
@@ -122,6 +125,15 @@ export const runSteps: ToolDef = {
           : {}),
         // The oracle (wired for supervisor turns): plain strings both ways.
         ...(ctx.oracle ? { oracle: (question: string) => ctx.oracle!(question) } : {}),
+        // ask() (wired for supervisor turns): park the program on a question to
+        // the human; options travel as JSON like mcp() args. User-paced — the
+        // delegating wall-clock budget below covers the wait.
+        ...(ctx.ask
+          ? {
+            ask: (question: string, optsJson: string) =>
+              ctx.ask!(question, JSON.parse(optsJson || "{}")),
+          }
+          : {}),
         // MCP (wired only for turns whose skills/activations granted servers): the
         // JSON round-trip keeps the postMessage protocol string-only, like agent().
         ...(ctx.mcp
@@ -136,7 +148,10 @@ export const runSteps: ToolDef = {
         // Recall (wired for supervisor turns): semantic search over past
         // conversations; the RecallResult round-trips as JSON.
         ...(ctx.recall
-          ? { recall: async (query: string, k?: number) => JSON.stringify(await ctx.recall!(query, k)) }
+          ? {
+            recall: async (query: string, k?: number) =>
+              JSON.stringify(await ctx.recall!(query, k)),
+          }
           : {}),
         // LSP symbol verbs (wired when the backing server is registered): same
         // JSON round-trip as mcp(); the worker side fans this out as lsp.*.
@@ -164,9 +179,11 @@ export const runSteps: ToolDef = {
           : {}),
       },
       // agent() blocks on whole subagent turns; a held mcp()/lsp() call blocks on a
-      // human approval; an oracle() consult can reason for many minutes — all need
-      // far more wall-clock than the plain 3-minute cap.
-      ctx.delegate || ctx.mcp || ctx.lsp || ctx.oracle ? DELEGATING_TIMEOUT_MS : undefined,
+      // human approval; an oracle() consult can reason for many minutes; an ask()
+      // waits on the human — all need far more wall-clock than the 3-minute cap.
+      ctx.delegate || ctx.mcp || ctx.lsp || ctx.oracle || ctx.ask
+        ? DELEGATING_TIMEOUT_MS
+        : undefined,
       ctx.signal,
     );
 

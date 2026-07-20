@@ -2,7 +2,14 @@
 // scope (sessions, open thread, streaming buffers, net holds, queued messages).
 // Policy/changes/usage/fork land with their panels in later phases.
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { BoughEvent, Message, NetRequest, Part, Session } from "../schema/parts.ts";
+import type {
+  AskQuestion,
+  BoughEvent,
+  Message,
+  NetRequest,
+  Part,
+  Session,
+} from "../schema/parts.ts";
 import { api, type Usage, USAGE_ZERO, type WireDiff } from "./api.ts";
 import { useEvents } from "./events.ts";
 import { notifyDesktop } from "./term.ts";
@@ -30,6 +37,9 @@ export interface Store {
   // Oldest pending net hold (the card shows one at a time) + how many wait in total.
   pending: NetRequest | null;
   pendingCount: number;
+  // Oldest pending ask() question (net holds take precedence in the UI) + total.
+  ask: AskQuestion | null;
+  askCount: number;
   // Messages typed while a turn was running — staged locally, flushed once idle.
   queued: string[];
   notice: string | null;
@@ -52,6 +62,10 @@ export interface Store {
   archive: (id: string) => void;
   deprecate: (id: string, on: boolean) => void;
   resolvePending: (approve: boolean, scope?: "once" | "session") => void;
+  /** Answer the surfaced ask() question (chosen option or typed free text). */
+  answerAsk: (answer: string) => void;
+  /** Decline it — the program's ask() rejects with a "user declined" error. */
+  declineAsk: () => void;
   // Branch off the current session at a message (optionally cut mid-message at a
   // tool run via atPart); opens the new branch (or notices).
   fork: (atMessageId: string, atPart?: number, exclusive?: boolean) => Promise<Session | null>;
@@ -80,6 +94,9 @@ export function useStore(initialSessions: Session[]): Store {
   // ALL holds awaiting approval, oldest first.
   const [pendings, setPendings] = useState<NetRequest[]>([]);
   const pending = pendings[0] ?? null;
+  // ALL ask() questions awaiting an answer, oldest first.
+  const [asks, setAsks] = useState<AskQuestion[]>([]);
+  const ask = asks[0] ?? null;
   const [queued, setQueued] = useState<string[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [activity, setActivity] = useState<string | null>(null);
@@ -98,6 +115,8 @@ export function useStore(initialSessions: Session[]): Store {
   const busyRef = useRef(false);
   const pendingRef = useRef<NetRequest | null>(null);
   pendingRef.current = pending;
+  const askRef = useRef<AskQuestion | null>(null);
+  askRef.current = ask;
 
   const reload = useCallback(async () => {
     const s = await api.listSessions();
@@ -128,6 +147,12 @@ export function useStore(initialSessions: Session[]): Store {
     setPendings(all.filter((r) => r.verdict === "pending").reverse()); // oldest first
   }, []);
 
+  // Rebuild the ask() hold card after (re)attach — the server returns pending
+  // questions oldest first, so a reconnecting client sees the same hold.
+  const refreshAsks = useCallback(async () => {
+    setAsks(await api.questions());
+  }, []);
+
   const resolvePending = useCallback((approve: boolean, scope: "once" | "session" = "once") => {
     const req = pendingRef.current;
     // Drop this card optimistically — the next parked hold surfaces right away; the
@@ -139,6 +164,26 @@ export function useStore(initialSessions: Session[]): Store {
       refreshPendings().catch(() => {});
     });
   }, [refreshPendings]);
+
+  // Same optimistic-drop shape as resolvePending: the next question surfaces right
+  // away; the settle re-emits the row (final status), reconciled by id.
+  const settleAsk = useCallback((run: (q: AskQuestion) => Promise<unknown>) => {
+    const q = askRef.current;
+    if (!q) return;
+    setAsks((prev) => prev.filter((p) => p.id !== q.id));
+    run(q).catch(() => {
+      // Already settled/expired server-side — re-sync.
+      refreshAsks().catch(() => {});
+    });
+  }, [refreshAsks]);
+  const answerAsk = useCallback(
+    (answer: string) => settleAsk((q) => api.answerQuestion(q.sessionId, q.id, answer)),
+    [settleAsk],
+  );
+  const declineAsk = useCallback(
+    () => settleAsk((q) => api.declineQuestion(q.sessionId, q.id)),
+    [settleAsk],
+  );
 
   const refreshChanges = useCallback(async (id: string | null) => {
     if (!id) return setChanges([]);
@@ -498,6 +543,22 @@ export function useStore(initialSessions: Session[]): Store {
         });
         break;
       }
+      case "ask.question": {
+        const q = ev.data as AskQuestion;
+        setAsks((prev) => {
+          if (q.status === "pending") {
+            // A NEW question wants eyes on it — banner if the terminal is
+            // unfocused (notifyDesktop self-gates on focus), like a net hold.
+            if (!prev.some((p) => p.id === q.id)) {
+              notifyDesktop(`bough — question: ${q.question}`);
+              return [...prev, q];
+            }
+            return prev.map((p) => (p.id === q.id ? q : p));
+          }
+          return prev.filter((p) => p.id !== q.id); // settled → next surfaces
+        });
+        break;
+      }
       default:
         break;
     }
@@ -509,6 +570,7 @@ export function useStore(initialSessions: Session[]): Store {
   const resync = useCallback(async () => {
     reload().catch(() => {});
     refreshPendings().catch(() => {});
+    refreshAsks().catch(() => {});
     const id = currentRef.current;
     if (!id) return;
     try {
@@ -521,13 +583,14 @@ export function useStore(initialSessions: Session[]): Store {
     } catch {
       // server unreachable — the next reconnect will resync again
     }
-  }, [reload, refreshPendings]);
+  }, [reload, refreshPendings, refreshAsks]);
 
   const connected = useEvents(onEvent, resync);
 
   useEffect(() => {
     refreshPendings().catch(() => {});
-  }, [refreshPendings]);
+    refreshAsks().catch(() => {});
+  }, [refreshPendings, refreshAsks]);
 
   const busy = thread.some((m) => m.pending);
   busyRef.current = busy;
@@ -552,6 +615,8 @@ export function useStore(initialSessions: Session[]): Store {
     busy,
     pending,
     pendingCount: pendings.length,
+    ask,
+    askCount: asks.length,
     queued,
     notice,
     activity,
@@ -565,6 +630,8 @@ export function useStore(initialSessions: Session[]): Store {
     archive,
     deprecate,
     resolvePending,
+    answerAsk,
+    declineAsk,
     fork,
     compact,
     compactPicks,

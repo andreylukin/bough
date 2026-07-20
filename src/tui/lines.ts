@@ -301,6 +301,15 @@ export function messageLines(
       const kb = Math.max(1, Math.round(s.part.size / 1024));
       seg.push({ text: dim(`🖼 ${s.part.name} (${kb} KB)`) });
       copy = s.part.path;
+    } else if (s.kind === "ask") {
+      // A settled ask() Q/A — one always-visible line: the question, then how it
+      // ended (chosen/typed answer, declined, or interrupted).
+      const a = s.part;
+      const outcome = a.status === "answered"
+        ? bold(a.answer ?? "")
+        : dim(a.status === "declined" ? "declined" : "interrupted");
+      push(seg, `${yellow("?")} ${a.question} ${dim("→")} ${outcome}`, w);
+      copy = `${a.question} → ${a.answer ?? a.status}`;
     } else {
       toolGroupLines(seg, s.parts, key, isExpanded(key), isFull(key), w);
       copy = toolGroupCopy(s.parts);

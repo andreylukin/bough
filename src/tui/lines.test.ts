@@ -318,3 +318,43 @@ Deno.test("branch card: a finished blocking subagent reflects its real status (f
   // A failed one must NOT read as done.
   assertEquals(card("error").includes("✗"), true);
 });
+
+import { assertStringIncludes } from "jsr:@std/assert@1";
+
+Deno.test("messageLines renders a settled ask part as an always-visible Q → A line", () => {
+  const msg: Message = {
+    id: "m1",
+    sessionId: "s1",
+    role: "supervisor",
+    parts: [{
+      type: "ask",
+      id: "q1",
+      question: "Which env?",
+      options: ["dev", "prod"],
+      status: "answered",
+      answer: "prod",
+    }],
+    pending: false,
+    createdAt: 1,
+  };
+  const joined = messageLines(msg, () => false, () => false, 80).map((l) => l.text).join("\n");
+  assertStringIncludes(joined, "Which env?");
+  assertStringIncludes(joined, "prod");
+  // Copy payload carries the full exchange.
+  const line = messageLines(msg, () => false, () => false, 80).find((l) => l.copy);
+  assertStringIncludes(line?.copy ?? "", "Which env? → prod");
+});
+
+Deno.test("messageLines renders a declined ask part", () => {
+  const msg: Message = {
+    id: "m2",
+    sessionId: "s1",
+    role: "supervisor",
+    parts: [{ type: "ask", id: "q2", question: "Push to main?", status: "declined" }],
+    pending: false,
+    createdAt: 1,
+  };
+  const joined = messageLines(msg, () => false, () => false, 80).map((l) => l.text).join("\n");
+  assertStringIncludes(joined, "Push to main?");
+  assertStringIncludes(joined, "declined");
+});

@@ -46,15 +46,15 @@ snapshot of the origin's working tree (uncommitted + untracked included). The or
 HEAD, branch, index, `git status` — is never modified; non-git origin dirs work identically.
 `prepareShadow` in `src/supervisor/workspace.ts` wires the session lifecycle to it.
 
-| Session event      | Call                                                                             |
-| ------------------ | -------------------------------------------------------------------------------- |
-| session created    | `createSessionWorkspace(origin, sessionId)` — worktree off a working-tree snapshot |
-| session resumed    | nothing — the workspace column already points at the worktree                    |
+| Session event                     | Call                                                                                |
+| --------------------------------- | ----------------------------------------------------------------------------------- |
+| session created                   | `createSessionWorkspace(origin, sessionId)` — worktree off a working-tree snapshot  |
+| session resumed                   | nothing — the workspace column already points at the worktree                       |
 | session forked / subagent spawned | `addWorkspace(parentDir, toId, dir, fromSessionId)` — worktree off the parent's tip |
-| render Changes tab | `diff(dir, sessionId)` → `Diff` (source: `"shadow"`), always base..tip           |
-| apply              | `materialize(dir, id, origin, paths)` + `accept(dir, id, msg)` when all covered  |
-| revert             | `revertPaths(dir, id, paths)` (per-path) or `undoAll(dir, id)` (whole change)    |
-| adopt (subagent)   | `adoptChanges(parentDir, subDir, fromId, intoId)` — 3-way apply + base advance   |
+| render Changes tab                | `diff(dir, sessionId)` → `Diff` (source: `"shadow"`), always base..tip              |
+| apply                             | `materialize(dir, id, origin, paths)` + `accept(dir, id, msg)` when all covered     |
+| revert                            | `revertPaths(dir, id, paths)` (per-path) or `undoAll(dir, id)` (whole change)       |
+| adopt (subagent)                  | `adoptChanges(parentDir, subDir, fromId, intoId)` — 3-way apply + base advance      |
 
 - `track()` (snapshot) staples the worktree to the session tip ref on every diff/apply/revert; a
   failed `git add` is fatal, never swallowed. Restores only ever touch explicit path lists.
@@ -91,8 +91,8 @@ Hunk     = { header: string, lines: string[] }   // "@@ … @@" + body lines wit
 ```
 
 Both sources produce byte-identical structure via `parseGitDiff()`. The UI's Changes rail renders a
-`Diff` and calls the matching apply/revert path: shadow apply → `materialize` + `accept` (seal:
-base advances onto tip), shadow revert → `revertPaths`/`undoAll`, clonefile apply →
+`Diff` and calls the matching apply/revert path: shadow apply → `materialize` + `accept` (seal: base
+advances onto tip), shadow revert → `revertPaths`/`undoAll`, clonefile apply →
 `applyBack(sessionId, approvedPaths)`. Renames surface as delete + add (git default without `-M`);
 binary/empty files yield a `FileDiff` with no hunks.
 

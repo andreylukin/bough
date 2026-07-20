@@ -18,6 +18,7 @@ const KNOWN_TYPES = new Set([
   "usage.updated",
   "worker.step",
   "net.request",
+  "ask.question",
   "session.activity",
 ]);
 

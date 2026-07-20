@@ -224,11 +224,14 @@ Deno.test("artifact comments: POST adds, GET lists, DELETE removes (404s guarded
     const anchor = { label: "Files", selector: "body>h2", xf: 0.5, yf: 0.2 };
 
     // Unknown session → 404 on add.
-    assertEquals((await h(req("POST", "/sessions/nope/comments", {
-      artifact: "i.html",
-      text: "x",
-      anchor,
-    }))).status, 404);
+    assertEquals(
+      (await h(req("POST", "/sessions/nope/comments", {
+        artifact: "i.html",
+        text: "x",
+        anchor,
+      }))).status,
+      404,
+    );
 
     const added = await (await h(req("POST", `/sessions/${s.id}/comments`, {
       artifact: "index.html",
@@ -704,4 +707,68 @@ Deno.test("GET /artifacts/:id/* serves a published artifact; /sessions/:id/artif
     else Deno.env.delete("HOME");
     await Deno.remove(home, { recursive: true });
   }
+});
+
+Deno.test("questions: GET lists pending asks; POST answers/declines; stale ids 404", async () => {
+  const { raiseAsk } = await import("../asks.ts");
+  const c = ctx();
+  const h = createHandler(c);
+
+  const q1 = raiseAsk(c.bus, {
+    sessionId: "s1",
+    messageId: "m1",
+    question: "Which env?",
+    options: ["dev", "prod"],
+  });
+
+  // A freshly-attached client rebuilds the hold from the GET.
+  const listed = await (await h(req("GET", "/questions"))).json() as {
+    id: string;
+    status: string;
+    options?: string[];
+  }[];
+  assertEquals(listed.length, 1);
+  assertEquals(listed[0].id, q1.record.id);
+  assertEquals(listed[0].status, "pending");
+  assertEquals(listed[0].options, ["dev", "prod"]);
+  // Session filter: another session sees nothing.
+  assertEquals(
+    await (await h(req("GET", "/questions?sessionId=zzz"))).json() as unknown[],
+    [],
+  );
+
+  // Wrong session in the path → 404; empty body → 400.
+  assertEquals(
+    (await h(req("POST", `/sessions/zzz/questions/${q1.record.id}`, { answer: "dev" }))).status,
+    404,
+  );
+  assertEquals(
+    (await h(req("POST", `/sessions/s1/questions/${q1.record.id}`, {}))).status,
+    400,
+  );
+
+  // Answer resolves the program's promise and clears the listing.
+  const res = await h(req("POST", `/sessions/s1/questions/${q1.record.id}`, { answer: "prod" }));
+  assertEquals(res.status, 200);
+  assertEquals(await q1.answer, "prod");
+  assertEquals((await (await h(req("GET", "/questions"))).json() as unknown[]).length, 0);
+  // Settled → gone: a second answer 404s instead of double-settling.
+  assertEquals(
+    (await h(req("POST", `/sessions/s1/questions/${q1.record.id}`, { answer: "x" }))).status,
+    404,
+  );
+
+  // Decline rejects the program's ask() with the catchable error.
+  const q2 = raiseAsk(c.bus, { sessionId: "s1", messageId: "m1", question: "Proceed?" });
+  assertEquals(
+    (await h(req("POST", `/sessions/s1/questions/${q2.record.id}`, { decline: true }))).status,
+    200,
+  );
+  await q2.answer.then(
+    () => {
+      throw new Error("decline should reject");
+    },
+    (err: Error) => assert(err.message.includes("user declined")),
+  );
+  c.db.close();
 });

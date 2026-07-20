@@ -104,10 +104,11 @@ export function sessionMetrics(db: Db, sessionId: string): SessionMetrics {
     if (t.status !== "running") durationSamples.push(t.updatedAt - at);
   }
 
-  const approvalPrompts = db.recentNetEvents(sessionId, 10_000).filter((e) =>
-    e.verdict === "pending" ||
-    (e.reason !== undefined && HOLD_REASONS.some((r) => e.reason!.includes(r)))
-  ).length;
+  const approvalPrompts =
+    db.recentNetEvents(sessionId, 10_000).filter((e) =>
+      e.verdict === "pending" ||
+      (e.reason !== undefined && HOLD_REASONS.some((r) => e.reason!.includes(r)))
+    ).length;
 
   const wallClockMs = messages.length < 2
     ? 0

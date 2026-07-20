@@ -1,5 +1,5 @@
 import { assertEquals } from "jsr:@std/assert@1";
-import { BoughEvent, Message, NetRequest, Part, Session } from "./parts.ts";
+import { AskQuestion, BoughEvent, Message, NetRequest, Part, Session } from "./parts.ts";
 import type { Message as TMessage, Session as TSession } from "./parts.ts";
 
 // Round-trip the exact wire shapes clients pin. If the schema drifts, these fail.
@@ -17,8 +17,38 @@ Deno.test("Part union round-trips all five kinds", () => {
       name: "shot.png",
       size: 12345,
     },
+    {
+      type: "ask",
+      id: "q1",
+      question: "Which env?",
+      options: ["dev", "prod"],
+      status: "answered",
+      answer: "prod",
+    },
   ];
   for (const p of parts) assertEquals(Part.parse(p), p);
+});
+
+Deno.test("AskQuestion round-trips (with and without options/answer)", () => {
+  const pending: unknown = {
+    id: "q1",
+    sessionId: "s1",
+    messageId: "m1",
+    question: "Which env?",
+    options: ["dev", "prod"],
+    status: "pending",
+    ts: 1,
+  };
+  assertEquals(AskQuestion.parse(pending), pending);
+  const declined: unknown = {
+    id: "q2",
+    sessionId: "s1",
+    messageId: "m1",
+    question: "Proceed?",
+    status: "declined",
+    ts: 2,
+  };
+  assertEquals(AskQuestion.parse(declined), declined);
 });
 
 Deno.test("Message round-trips", () => {

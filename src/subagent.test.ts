@@ -950,7 +950,13 @@ function abortRound(onStart?: () => void): ScriptedRound {
 }
 
 function failCtx(db: Db, bus: Bus, llm: LlmClient): TurnCtx {
-  return { db, bus, llm, tools: defaultTools, titler: (t) => Promise.resolve("t:" + t.slice(0, 12)) };
+  return {
+    db,
+    bus,
+    llm,
+    tools: defaultTools,
+    titler: (t) => Promise.resolve("t:" + t.slice(0, 12)),
+  };
 }
 
 Deno.test("A1 blocking agent(): a subagent whose turn errors returns ok:false with the error in the report", async () => {
@@ -959,7 +965,9 @@ Deno.test("A1 blocking agent(): a subagent whose turn errors returns ok:false wi
   const spawner = seed(db);
   const llm = dispatchLlm({
     "hi": [
-      program(`const r = await agent("do the thing"); console.log("ok=" + r.ok + " report=" + r.report);`),
+      program(
+        `const r = await agent("do the thing"); console.log("ok=" + r.ok + " report=" + r.report);`,
+      ),
       textRound("handled the failure"),
     ],
     "do the thing": [errorRound("model exploded mid-turn")],
@@ -1008,7 +1016,9 @@ Deno.test("A4 partial success: a subagent that finishes without passing a check 
   const spawner = seed(db);
   const llm = dispatchLlm({
     "hi": [
-      program(`const r = await agent("task"); console.log("ok=" + r.ok + " check=" + r.checkPassed);`),
+      program(
+        `const r = await agent("task"); console.log("ok=" + r.ok + " check=" + r.checkPassed);`,
+      ),
       textRound("done"),
     ],
     // finishes normally (text reply, no committed check / done gate)
@@ -1102,7 +1112,7 @@ Deno.test("B4 timeout: a subagent that overruns BOUGH_SUBAGENT_TIMEOUT_MS is aut
   }
 });
 
-Deno.test("C5 bad launch: agent(\"\") rejects with a clear error the model sees (no phantom subagent)", async () => {
+Deno.test('C5 bad launch: agent("") rejects with a clear error the model sees (no phantom subagent)', async () => {
   const db = new Db(":memory:");
   const bus = new Bus();
   const spawner = seed(db);

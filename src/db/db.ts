@@ -432,7 +432,12 @@ export class Db {
          FROM sessions WHERE id IN (SELECT id FROM tree)`,
       )
       .get(id) as { descendants: number; input: number; output: number; cost: number };
-    return { inputTokens: r.input, outputTokens: r.output, costUsd: r.cost, sessions: r.descendants };
+    return {
+      inputTokens: r.input,
+      outputTokens: r.output,
+      costUsd: r.cost,
+      sessions: r.descendants,
+    };
   }
 
   /** Sessions with a turn in flight (any message still pending) — sidebar busy dots. */

@@ -40,7 +40,10 @@ Deno.test("md: markdown links wrap in an OSC 8 hyperlink", () => {
 Deno.test("md: bare URLs become clickable, trailing punctuation stays prose", () => {
   if (!COLOR) return;
   const out = md("try https://example.com/a.");
-  assertStringIncludes(out, `${LINK_OPEN("https://example.com/a")}https://example.com/a${LINK_CLOSE}.`);
+  assertStringIncludes(
+    out,
+    `${LINK_OPEN("https://example.com/a")}https://example.com/a${LINK_CLOSE}.`,
+  );
 });
 
 Deno.test("md: URLs inside code spans are not linkified", () => {

@@ -263,7 +263,6 @@ Deno.test("artifact() bridges into the program: publishes and returns the object
   assertStringIncludes(bare, "unknown host function: artifact");
 });
 
-
 Deno.test("ship() bridges into the program: options in, result object back", async () => {
   const calls: unknown[] = [];
   const c: ToolRunCtx = {
@@ -287,4 +286,55 @@ Deno.test("ship() bridges into the program: options in, result object back", asy
   );
   assertStringIncludes(out, "shipped: abc123 main true");
   assertEquals(calls, [{ message: "ship it", paths: ["a.txt"], push: true }]);
+});
+
+Deno.test("ask() bridges into the program: options in, chosen answer back", async () => {
+  const seen: { question: string; opts?: { options?: string[] } }[] = [];
+  const c: ToolRunCtx = {
+    ...ctx(),
+    ask: (question, opts) => {
+      seen.push({ question, opts });
+      return Promise.resolve("dev");
+    },
+  };
+  const out = await runSteps.run(
+    {
+      code: `const a = await ask("Which env?", { options: ["dev", "prod"] });
+             console.log("picked:", a);`,
+    },
+    c,
+  );
+  assertStringIncludes(out, "picked: dev");
+  assertEquals(seen, [{ question: "Which env?", opts: { options: ["dev", "prod"] } }]);
+
+  // Option-less form: the opts JSON round-trip yields an empty object.
+  const free = await runSteps.run(
+    { code: `console.log("typed:", await ask("Name it?"));` },
+    c,
+  );
+  assertStringIncludes(free, "typed: dev");
+  assertEquals(seen[1], { question: "Name it?", opts: {} });
+
+  // Not wired → the call rejects inside the program.
+  const bare = await runSteps.run(
+    { code: `try { await ask("x"); } catch (e) { console.log("no fn:", e.message); }` },
+    ctx(),
+  );
+  assertStringIncludes(bare, "unknown host function: ask");
+});
+
+Deno.test("a declined ask() rejects inside the program as a catchable error", async () => {
+  const c: ToolRunCtx = {
+    ...ctx(),
+    ask: (question) => Promise.reject(new Error(`user declined to answer: ${question}`)),
+  };
+  const out = await runSteps.run(
+    {
+      code: `try { await ask("Proceed?"); } catch (e) { console.log("caught:", e.message); }
+             console.log("still running");`,
+    },
+    c,
+  );
+  assertStringIncludes(out, "caught: user declined to answer: Proceed?");
+  assertStringIncludes(out, "still running");
 });

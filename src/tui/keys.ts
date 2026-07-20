@@ -78,6 +78,14 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
     ],
   },
   {
+    section: "question hold",
+    keys: [
+      ["1-9", "choose an option"],
+      ["t", "type a custom answer"],
+      ["enter / esc", "send the typed answer · decline"],
+    ],
+  },
+  {
     section: "global",
     keys: [["^c ^c", "quit"]],
   },
@@ -85,5 +93,10 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
 
 /** Shown inside the net-hold card (it replaces the composer, so it carries its own keys). */
 export const APPROVAL_HINT = "a allow once · A allow session · d deny · v details";
+
+/** Question-hold card hints (same convention: the card carries its own keys). */
+export const ASK_OPTIONS_HINT = "1-9 choose · t type an answer · esc decline";
+export const ASK_TYPING_HINT = "enter send · esc decline";
+export const ASK_TYPING_BACK_HINT = "enter send · esc back to options";
 
 export type UiMode = "chat" | "approval" | "new" | "help" | "panel";

@@ -212,9 +212,8 @@ export function ConversationTree(
         if (it.type === "step") {
           return (
             <Text key={`s-${i}`} inverse={sel} wrap="truncate">
-              {gutter}
-              {"    "}
-              <Text color={palette.accent}>◇</Text> <Text dimColor>{it.step.label}</Text>
+              {gutter}{"    "}<Text color={palette.accent}>◇</Text>{" "}
+              <Text dimColor>{it.step.label}</Text>
             </Text>
           );
         }
@@ -223,8 +222,7 @@ export function ConversationTree(
           const dep = !!s.deprecatedAt;
           return (
             <Text key={`b-${s.id}`} inverse={sel} wrap="truncate">
-              {gutter}
-              {"   "}
+              {gutter}{"   "}
               <Text
                 color={s.kind === "subagent" ? palette.accent : undefined}
                 dimColor={s.kind !== "subagent"}
@@ -250,7 +248,9 @@ export function ConversationTree(
         );
       })}
       {items.length === 0 && <Text dimColor>no turns yet</Text>}
-      <Text dimColor>↑↓ move · enter rewind/branch/open · x deprecate · h hidden · v select · esc</Text>
+      <Text dimColor>
+        ↑↓ move · enter rewind/branch/open · x deprecate · h hidden · v select · esc
+      </Text>
     </Box>
   );
 }

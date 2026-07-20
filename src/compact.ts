@@ -80,6 +80,11 @@ function renderPart(role: string, p: Part): string {
       return `tool_result${p.isError ? " (error)" : ""}: ${clip(stringify(p.output))}`;
     case "image":
       return `${role}: [image ${p.name}]`;
+    case "ask":
+      // A settled ask() Q/A: what was asked and how the human resolved it.
+      return `ask: ${p.question} → ${
+        p.status === "answered" ? `user answered: ${p.answer}` : p.status
+      }`;
   }
 }
 

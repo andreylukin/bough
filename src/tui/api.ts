@@ -1,6 +1,6 @@
 // REST client for the TUI. Unlike the retired web client (relative URLs behind a
 // proxy), this talks to the server directly, so every call needs the absolute base.
-import type { Message, NetRequest, Session } from "../schema/parts.ts";
+import type { AskQuestion, Message, NetRequest, Session } from "../schema/parts.ts";
 
 const PORT = Deno.env.get("BOUGH_PORT") ?? "4321";
 export const BASE = `http://127.0.0.1:${PORT}`;
@@ -198,6 +198,13 @@ export const api = {
     post(`/net/requests/${id}/allow${scope === "session" ? "?scope=session" : ""}`),
   denyRequest: (id: string) => post(`/net/requests/${id}/deny`),
 
+  // ask() question holds — the reconnect/refresh mirror of netRequests.
+  questions: () => j<AskQuestion[]>(`/questions`),
+  answerQuestion: (sessionId: string, qid: string, answer: string) =>
+    j<{ ok: boolean }>(`/sessions/${sessionId}/questions/${qid}`, postJson({ answer })),
+  declineQuestion: (sessionId: string, qid: string) =>
+    j<{ ok: boolean }>(`/sessions/${sessionId}/questions/${qid}`, postJson({ decline: true })),
+
   // Fuzzy directory search for the new-session workspace autocomplete.
   searchDirs: (q: string) =>
     j<{ dirs: DirHit[] }>(`/fs/dirs?q=${encodeURIComponent(q)}`).then((r) => r.dirs),
@@ -223,8 +230,7 @@ export const api = {
   fork: (
     id: string,
     body: { atMessageId: string; atPart?: number; editedText?: string; exclusive?: boolean },
-  ) =>
-    jmsg<{ session: Session }>(`/sessions/${id}/fork`, postJson(body)).then((r) => r.session),
+  ) => jmsg<{ session: Session }>(`/sessions/${id}/fork`, postJson(body)).then((r) => r.session),
   compact: (id: string, picks: { messageId: string }[]) =>
     jmsg<{ session: Session }>(`/sessions/${id}/compact`, postJson({ picks }))
       .then((r) => r.session),

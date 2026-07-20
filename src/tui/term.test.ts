@@ -5,8 +5,8 @@ import {
   reportTermBg,
   sanitize,
   setFocused,
-  tmuxWrap,
   termBackground,
+  tmuxWrap,
 } from "./term.ts";
 
 Deno.test("sanitize strips control bytes from titles/bodies", () => {

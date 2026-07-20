@@ -2,7 +2,8 @@ import { assertEquals, assertExists, assertStringIncludes } from "jsr:@std/asser
 import { z } from "zod/v4";
 import { Db } from "./db/db.ts";
 import { Bus } from "./bus.ts";
-import type { BoughEvent, Message, Part, Session } from "./schema/parts.ts";
+import type { AskQuestion, BoughEvent, Message, Part, Session } from "./schema/parts.ts";
+import { answerAsk, declineAsk, pendingAsks } from "./asks.ts";
 import type { LlmClient, LlmMessage, LlmParams, LlmResult } from "./supervisor/llm.ts";
 import type { ToolDef, ToolRunCtx } from "./tools/mod.ts";
 import { beginTurn, interruptTurn, isTurnRunning, startUserTurn, type TurnCtx } from "./turn.ts";
@@ -770,4 +771,142 @@ Deno.test("an @image ref composes an image part and replays as a base64 image bl
     await Deno.remove(home, { recursive: true });
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+// ---- ask(): the mid-task question hold --------------------------------------
+
+Deno.test("ask(): the program parks, the answer resolves it, and the Q/A persists + replays", async () => {
+  const { db, bus, events, sessionId } = seed();
+  const llm = fakeLlm([
+    {
+      content: [{
+        type: "tool_use",
+        id: "t1",
+        name: "run_steps",
+        input: {
+          code: 'console.log("got:", await ask("Which env?", { options: ["dev", "prod"] }));',
+        },
+      }],
+      stopReason: "tool_use",
+    },
+    { content: [{ type: "text", text: "deployed to prod" }], stopReason: "end_turn" },
+  ]);
+  // Answer the hold the moment it's raised (synchronous bus listener = the same
+  // path a TUI answer takes through POST /sessions/:id/questions/:qid).
+  bus.subscribe((e) => {
+    if (e.type !== "ask.question") return;
+    const q = e.data as AskQuestion;
+    if (q.status === "pending") answerAsk(q.id, "prod");
+  });
+  const ctx: TurnCtx = { db, bus, llm, workspace: Deno.makeTempDirSync() };
+
+  const { message, done } = beginTurn(ctx, sessionId);
+  await done;
+
+  // The program saw the answer, and nothing is left holding.
+  const final = finalMessage(db, message.id);
+  const result = final.parts.find((p) => p.type === "tool_result") as { output: string };
+  assertStringIncludes(result.output, "got: prod");
+  assertEquals(pendingAsks().length, 0);
+
+  // The settled Q/A persisted as an ask part on the supervisor message…
+  const askPart = final.parts.find((p) => p.type === "ask") as Extract<Part, { type: "ask" }>;
+  assertExists(askPart);
+  assertEquals(askPart.question, "Which env?");
+  assertEquals(askPart.options, ["dev", "prod"]);
+  assertEquals(askPart.status, "answered");
+  assertEquals(askPart.answer, "prod");
+  // …and the hold's lifecycle was announced pending → answered on one id.
+  const askEvents = events.filter((e) => e.type === "ask.question")
+    .map((e) => e.data as AskQuestion);
+  assertEquals(askEvents.map((q) => q.status), ["pending", "answered"]);
+  assertEquals(new Set(askEvents.map((q) => q.id)).size, 1);
+
+  // Replay: a later turn sees the Q/A as plain user-side text — it can never
+  // re-raise the hold (no pending ask exists while the new turn builds history).
+  db.createMessage({
+    id: "u2",
+    sessionId,
+    role: "user",
+    parts: [{ type: "text", text: "and staging?" }],
+    pending: false,
+    createdAt: 99,
+  });
+  const llm2 = fakeLlm([{ content: [{ type: "text", text: "ok" }], stopReason: "end_turn" }]);
+  await beginTurn({ db, bus, llm: llm2, tools: [] }, sessionId).done;
+  const replayed = llm2.calls[0].messages
+    .flatMap((m) => m.content)
+    .find((b) => b.type === "text" && b.text.startsWith("[ask]")) as { text: string };
+  assertExists(replayed);
+  assertStringIncludes(replayed.text, "Which env?");
+  assertStringIncludes(replayed.text, "the user answered: prod");
+});
+
+Deno.test("ask(): a decline rejects catchably in the program and persists as declined", async () => {
+  const { db, bus, sessionId } = seed();
+  const llm = fakeLlm([
+    {
+      content: [{
+        type: "tool_use",
+        id: "t1",
+        name: "run_steps",
+        input: {
+          code:
+            `try { await ask("Push to main?"); } catch (e) { console.log("caught:", e.message); }`,
+        },
+      }],
+      stopReason: "tool_use",
+    },
+    { content: [{ type: "text", text: "stopped short of pushing" }], stopReason: "end_turn" },
+  ]);
+  bus.subscribe((e) => {
+    if (e.type !== "ask.question") return;
+    const q = e.data as AskQuestion;
+    if (q.status === "pending") declineAsk(q.id);
+  });
+  const ctx: TurnCtx = { db, bus, llm, workspace: Deno.makeTempDirSync() };
+
+  const { message, done } = beginTurn(ctx, sessionId);
+  await done;
+
+  const final = finalMessage(db, message.id);
+  const result = final.parts.find((p) => p.type === "tool_result") as { output: string };
+  assertStringIncludes(result.output, "caught: user declined to answer: Push to main?");
+  const askPart = final.parts.find((p) => p.type === "ask") as Extract<Part, { type: "ask" }>;
+  assertEquals(askPart.status, "declined");
+  assertEquals(db.turnsByStatus("done").length, 1);
+});
+
+Deno.test("ask(): turn interrupt rejects the hold and the turn ends interrupted", async () => {
+  const { db, bus, sessionId } = seed();
+  const llm = fakeLlm([
+    {
+      content: [{
+        type: "tool_use",
+        id: "t1",
+        name: "run_steps",
+        // Parks forever — only the interrupt can release it.
+        input: { code: `await ask("Which?", { options: ["a", "b"] });` },
+      }],
+      stopReason: "tool_use",
+    },
+  ]);
+  bus.subscribe((e) => {
+    if (e.type !== "ask.question") return;
+    const q = e.data as AskQuestion;
+    if (q.status === "pending") interruptTurn(sessionId);
+  });
+  const ctx: TurnCtx = { db, bus, llm, workspace: Deno.makeTempDirSync() };
+
+  const { message, done } = beginTurn(ctx, sessionId);
+  await done;
+
+  const final = finalMessage(db, message.id);
+  assertEquals(final.pending, false);
+  assertStringIncludes((final.parts.at(-1) as { text: string }).text, "Stopped");
+  const askPart = final.parts.find((p) => p.type === "ask") as Extract<Part, { type: "ask" }>;
+  assertEquals(askPart.status, "interrupted");
+  assertEquals(db.turnsByStatus("interrupted").length, 1);
+  // Nothing haunts the next session: the hold is gone.
+  assertEquals(pendingAsks().length, 0);
 });

@@ -29,7 +29,9 @@ if (prompt === "-" || (!prompt && !Deno.stdin.isTerminal())) {
   prompt = (await new Response(Deno.stdin.readable).text()).trim();
 }
 if (!prompt) {
-  console.error('usage: bough exec [-w dir] [-m model] [--yolo] [--json] "..." (or prompt on stdin)');
+  console.error(
+    'usage: bough exec [-w dir] [-m model] [--yolo] [--json] "..." (or prompt on stdin)',
+  );
   Deno.exit(2);
 }
 const port = args.port ?? Deno.env.get("BOUGH_PORT") ?? "4321";
@@ -48,9 +50,7 @@ async function post(path: string, body: unknown): Promise<Response> {
 
 let session: { id: string };
 try {
-  const workspace = args.workspace
-    ? await Deno.realPath(args.workspace)
-    : Deno.cwd();
+  const workspace = args.workspace ? await Deno.realPath(args.workspace) : Deno.cwd();
   const res = await post("/sessions", {
     title: "exec: " + prompt.slice(0, 48),
     workspace,

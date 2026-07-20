@@ -54,6 +54,17 @@ export const ImagePart = z.object({
   size: z.number(),
 });
 export type ImagePart = z.infer<typeof ImagePart>;
+// A settled ask() hold (asks.ts): the question the program raised mid-turn and how
+// it ended. Appended only once resolved — never "pending" — so replay can render it
+// as plain text and can never re-block. `id` joins the row to its ask.question events.
+export const AskPart = z.object({
+  type: z.literal("ask"),
+  id: z.string(),
+  question: z.string(),
+  options: z.array(z.string()).optional(),
+  status: z.enum(["answered", "declined", "interrupted"]),
+  answer: z.string().optional(),
+});
 
 export const Part = z.discriminatedUnion("type", [
   TextPart,
@@ -61,6 +72,7 @@ export const Part = z.discriminatedUnion("type", [
   ToolCallPart,
   ToolResultPart,
   ImagePart,
+  AskPart,
 ]);
 export type Part = z.infer<typeof Part>;
 
@@ -147,6 +159,26 @@ export const NetRequest = z.object({
 });
 export type NetRequest = z.infer<typeof NetRequest>;
 
+// ---- ask() questions -------------------------------------------------------
+
+// One mid-task question a run_steps program raised via ask() (asks.ts). The hold
+// mirror of NetRequest: emitted as `ask.question` when raised (status "pending")
+// and re-emitted on the same id with its final status. Memory-only server-side —
+// the settled record persists as an AskPart on the supervisor message.
+export const AskQuestion = z.object({
+  id: z.string(),
+  sessionId: z.string(),
+  /** The supervisor message whose turn raised it (the transcript anchor). */
+  messageId: z.string(),
+  question: z.string(),
+  /** Pick-one choices; absent = free-text only. Free text is always possible. */
+  options: z.array(z.string()).optional(),
+  status: z.enum(["pending", "answered", "declined", "interrupted"]),
+  answer: z.string().optional(),
+  ts: z.number(),
+});
+export type AskQuestion = z.infer<typeof AskQuestion>;
+
 // ---- event envelope --------------------------------------------------------
 
 // The SSE envelope. `type` names the event (also the SSE `event:` field); `seq` is a
@@ -179,6 +211,14 @@ export type CreateSessionBody = z.infer<typeof CreateSessionBody>;
 export const PostMessageBody = z.object({ text: z.string() });
 export type PostMessageBody = z.infer<typeof PostMessageBody>;
 
+// POST /sessions/:id/questions/:qid — {answer} settles the hold; {decline: true}
+// rejects the program's ask() with a "user declined" error it can catch.
+export const AnswerQuestionBody = z.object({
+  answer: z.string().optional(),
+  decline: z.boolean().optional(),
+});
+export type AnswerQuestionBody = z.infer<typeof AnswerQuestionBody>;
+
 // ---- typed event payloads --------------------------------------------------
 // The shapes the TUI store reduces. Kept here so emitters can be
 // checked against the same contract the UI consumes. `data` of each named event:
@@ -198,3 +238,5 @@ export const MessageRetryData = z.object({ messageId: z.string() });
 export const MessagePartData = z.object({ messageId: z.string(), part: Part });
 /** `message.finished` → the message is complete (flip pending → false). */
 export const MessageFinishedData = z.object({ messageId: z.string() });
+/** `ask.question` → an AskQuestion (pending on raise; re-emitted with its final status). */
+export const AskQuestionData = AskQuestion;
