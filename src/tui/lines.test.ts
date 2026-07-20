@@ -236,3 +236,29 @@ Deno.test("finished-subagent card caps the report; !full lifts the cap", () => {
   assertEquals(expanded.some((l) => l.text.includes("report line 20")), true);
   assertEquals(expanded.some((l) => l.text.includes("more · click to show all")), false);
 });
+
+Deno.test("branch card GAP: a finished blocking subagent shows green ✓ done regardless of a failed/interrupted outcome", () => {
+  // A blocking agent()'s result flows in-band to the parent program — no
+  // [subagent finished] system note — so the branch has note=null. The Branch
+  // type carries no status, so branchCardLines can only show busy (⋯) vs the
+  // default "✓ done". A subagent that ERRORED or was INTERRUPTED renders
+  // identically to one that succeeded. This pins the E1 gap: to fix it, Branch
+  // needs a status derived from the session's lastTurnStatus, and the card must
+  // render red/interrupted here.
+  const thread = [
+    { id: "u1", sessionId: "s", role: "user", parts: [{ type: "text", text: "go" }], pending: false },
+    { id: "a1", sessionId: "s", role: "supervisor", parts: [{ type: "text", text: "delegating" }], pending: false },
+  ] as unknown as Message[];
+  const failedBranch = {
+    id: "sub-failed",
+    title: "subagent · do the risky thing",
+    busy: false,
+    originMessageId: "a1",
+    note: null, // blocking → no completion note, even though its turn errored
+  };
+  const lines = buildLines(thread, {}, () => false, () => false, 100, [failedBranch]);
+  const card = lines.find((l) => l.text.includes("do the risky thing"));
+  assertEquals(!!card, true);
+  // Current (buggy) behavior: it says "done", with no way to signal failure.
+  assertEquals(card!.text.includes("done"), true);
+});

@@ -61,8 +61,12 @@ export interface SubagentHandle {
   title: string;
 }
 
-/** Wall-clock cap per subagent turn; overrun interrupts it (result reports ok:false). */
-const TURN_TIMEOUT_MS = 15 * 60_000;
+/** Wall-clock cap per subagent turn; overrun interrupts it (result reports ok:false).
+ * Env-overridable (BOUGH_SUBAGENT_TIMEOUT_MS) so the timeout path is testable. */
+function turnTimeoutMs(): number {
+  const n = Number(Deno.env.get("BOUGH_SUBAGENT_TIMEOUT_MS"));
+  return Number.isFinite(n) && n > 0 ? n : 15 * 60_000;
+}
 
 /**
  * Nesting cap: sessions at depth < MAX may delegate, so a root (0) spawns subagents
@@ -279,7 +283,7 @@ async function launch(
   maybeAutoTitle({ db, bus, titler: ctx.titler }, session.id, task);
   const { message, done } = beginTurn({ ...ctx, model: spawn.model ?? ctx.model }, session.id);
 
-  const timer = setTimeout(() => interruptTurn(session.id), TURN_TIMEOUT_MS);
+  const timer = setTimeout(() => interruptTurn(session.id), turnTimeoutMs());
   const result = done
     .finally(() => clearTimeout(timer))
     // Re-read the title at completion — the title worker has usually named it by then.

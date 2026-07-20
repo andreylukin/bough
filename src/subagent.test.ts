@@ -11,7 +11,7 @@ import { Bus } from "./bus.ts";
 import type { Message, Session } from "./schema/parts.ts";
 import type { LlmClient, LlmParams, LlmResult } from "./supervisor/llm.ts";
 import { defaultTools } from "./tools/mod.ts";
-import { beginTurn, startUserTurn, type TurnCtx } from "./turn.ts";
+import { beginTurn, interruptTurn, startUserTurn, type TurnCtx } from "./turn.ts";
 import * as shadow from "./vcs/shadow.ts";
 import { saveRegistry, setActivation } from "./mcp/config.ts";
 import { mcpManager } from "./mcp/manager.ts";
@@ -25,11 +25,17 @@ import { mcpManager } from "./mcp/manager.ts";
  * thunk returning a promise, to gate WHEN that thread's reply lands (background
  * subagent timing).
  */
-type ScriptedRound = LlmResult | (() => Promise<LlmResult>);
+// A thunk receives the round's abort signal, so a failure/interrupt scenario can
+// reject when the turn is aborted (simulating a real LLM's aborted request).
+type ScriptedRound = LlmResult | ((signal?: AbortSignal) => Promise<LlmResult>);
 function dispatchLlm(scripts: Record<string, ScriptedRound[]>): LlmClient {
   const idx: Record<string, number> = {};
   return {
-    async run(params: LlmParams, onText: (d: string) => void): Promise<LlmResult> {
+    async run(
+      params: LlmParams,
+      onText: (d: string) => void,
+      signal?: AbortSignal,
+    ): Promise<LlmResult> {
       const text = [...params.messages].reverse()
         .filter((m) => m.role === "user")
         .map((m) =>
@@ -55,7 +61,7 @@ function dispatchLlm(scripts: Record<string, ScriptedRound[]>): LlmClient {
       idx[key] = i + 1;
       const scripted = scripts[key][i];
       if (!scripted) throw new Error(`script "${key}" exhausted at round ${i + 1}`);
-      const result = typeof scripted === "function" ? await scripted() : scripted;
+      const result = typeof scripted === "function" ? await scripted(signal) : scripted;
       for (const block of result.content) {
         if (block.type === "text") onText(block.text);
       }
@@ -916,4 +922,236 @@ Deno.test({
       await Deno.remove(mcpDir, { recursive: true }).catch(() => {});
     }
   },
+});
+
+// ---- failure & interruption edge cases -------------------------------------
+// A subagent can fail (its turn errors), be interrupted (user stop, or the
+// spawner's interrupt cascading), time out, or fail to even launch (caps, bad
+// task). This block exercises how each outcome flows back — the surface behind
+// the "subagent failed / was interrupted" UX. Caps (spawn/concurrency/depth) are
+// covered above; here we cover error, interrupt, timeout, and partial fan-out.
+
+/** A round that rejects like a real LLM request error. */
+function errorRound(message: string): ScriptedRound {
+  return () => Promise.reject(new Error(message));
+}
+
+/** A round that never resolves until its turn is aborted, then rejects like an
+ * aborted LLM request — for interrupt/timeout scenarios. */
+function abortRound(onStart?: () => void): ScriptedRound {
+  return (signal?: AbortSignal) =>
+    new Promise<LlmResult>((_res, rej) => {
+      onStart?.();
+      if (signal?.aborted) return rej(new DOMException("aborted", "AbortError"));
+      signal?.addEventListener("abort", () => rej(new DOMException("aborted", "AbortError")), {
+        once: true,
+      });
+    });
+}
+
+function failCtx(db: Db, bus: Bus, llm: LlmClient): TurnCtx {
+  return { db, bus, llm, tools: defaultTools, titler: (t) => Promise.resolve("t:" + t.slice(0, 12)) };
+}
+
+Deno.test("A1 blocking agent(): a subagent whose turn errors returns ok:false with the error in the report", async () => {
+  const db = new Db(":memory:");
+  const bus = new Bus();
+  const spawner = seed(db);
+  const llm = dispatchLlm({
+    "hi": [
+      program(`const r = await agent("do the thing"); console.log("ok=" + r.ok + " report=" + r.report);`),
+      textRound("handled the failure"),
+    ],
+    "do the thing": [errorRound("model exploded mid-turn")],
+  });
+  const { message, done } = beginTurn(failCtx(db, bus, llm), spawner.id);
+  await done;
+
+  const out = lastToolResult(db.getMessage(message.id)!);
+  assertStringIncludes(out, "ok=false");
+  assertStringIncludes(out, "Turn failed"); // the subagent's error is carried in its report
+  assertStringIncludes(out, "model exploded mid-turn");
+  // The subagent session is a real, finished branch with error status.
+  const sub = db.listSessions().find((s) => s.kind === "subagent")!;
+  const subMsg = db.messagesFor(sub.id).at(-1)!;
+  assertEquals(subMsg.pending, false);
+});
+
+Deno.test("A2 detached spawn(): a subagent that errors posts a FAILED completion note that wakes the spawner", async () => {
+  const db = new Db(":memory:");
+  const bus = new Bus();
+  const spawner = seed(db);
+  const llm = dispatchLlm({
+    "hi": [
+      program(`await spawn("bg that dies"); console.log("spawned");`),
+      textRound("turn over"),
+    ],
+    "bg that dies": [errorRound("boom in background")],
+    "[subagent finished]": [textRound("saw the failure note")],
+  });
+  const { done } = beginTurn(failCtx(db, bus, llm), spawner.id);
+  await done;
+
+  await until(() => db.messagesFor(spawner.id).some((m) => m.role === "system"));
+  const note = db.messagesFor(spawner.id).find((m) => m.role === "system")!;
+  const text = (note.parts[0] as { text: string }).text;
+  assertStringIncludes(text, "[subagent finished]");
+  // NOTE: the note conflates error/interrupt/timeout under one label — a UX gap
+  // this test pins (so a future "distinguish why it failed" fix is verifiable).
+  assertStringIncludes(text, "FAILED (turn errored or was interrupted)");
+});
+
+Deno.test("A4 partial success: a subagent that finishes without passing a check is ok:true but checkPassed:false", async () => {
+  const db = new Db(":memory:");
+  const bus = new Bus();
+  const spawner = seed(db);
+  const llm = dispatchLlm({
+    "hi": [
+      program(`const r = await agent("task"); console.log("ok=" + r.ok + " check=" + r.checkPassed);`),
+      textRound("done"),
+    ],
+    // finishes normally (text reply, no committed check / done gate)
+    "task": [textRound("I did some of it")],
+  });
+  const { message, done } = beginTurn(failCtx(db, bus, llm), spawner.id);
+  await done;
+  const out = lastToolResult(db.getMessage(message.id)!);
+  // "finished but unverified" must be distinguishable from a hard failure.
+  assertStringIncludes(out, "ok=true");
+  assertStringIncludes(out, "check=false");
+});
+
+Deno.test("B1 interrupt cascades: interrupting the spawner while agent() blocks interrupts the subagent (ok:false)", async () => {
+  const db = new Db(":memory:");
+  const bus = new Bus();
+  const spawner = seed(db);
+  let subStarted = false;
+  const llm = dispatchLlm({
+    "hi": [
+      program(`const r = await agent("slow work"); console.log("ok=" + r.ok);`),
+      textRound("stopped"),
+    ],
+    "slow work": [abortRound(() => (subStarted = true))],
+  });
+  const { message, done } = beginTurn(failCtx(db, bus, llm), spawner.id);
+  await until(() => subStarted);
+  interruptTurn(spawner.id); // user stop on the spawner
+  await done;
+
+  // Both stop. The subagent's turn ends interrupted...
+  const sub = db.listSessions().find((s) => s.kind === "subagent")!;
+  const t = db.turnForMessage(db.messagesFor(sub.id).at(-1)!.id);
+  assertEquals(t?.status, "interrupted");
+  // ...and the spawner's PROGRAM is killed by the same interrupt — so it never
+  // gets to observe the subagent's result (no graceful "ok=false" handling). The
+  // tool_result is the program-interrupt notice, and the spawner turn is
+  // interrupted. This pins the real cascade: interrupt = stop everything now.
+  assertStringIncludes(lastToolResult(db.getMessage(message.id)!), "interrupted");
+  const spawnerTurn = db.turnForMessage(message.id);
+  assertEquals(spawnerTurn?.status, "interrupted");
+});
+
+Deno.test("B3 detached survives: interrupting the spawner does NOT stop a background spawn()", async () => {
+  const db = new Db(":memory:");
+  const bus = new Bus();
+  const spawner = seed(db);
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  let subStarted = false;
+  const llm = dispatchLlm({
+    "hi": [
+      program(`await spawn("bg keep going"); console.log("spawned");`),
+      textRound("turn over"),
+    ],
+    "bg keep going": [async () => {
+      subStarted = true;
+      await gate;
+      return textRound("finished despite the interrupt");
+    }],
+    "[subagent finished]": [textRound("noted")],
+  });
+  const { done } = beginTurn(failCtx(db, bus, llm), spawner.id);
+  await until(() => subStarted);
+  interruptTurn(spawner.id); // stop the spawner
+  await done;
+
+  // The detached subagent is still running (not tied to the spawner's signal).
+  const sub = db.listSessions().find((s) => s.kind === "subagent")!;
+  assertEquals(db.messagesFor(sub.id).at(-1)!.pending, true);
+  release();
+  await until(() => db.turnForMessage(db.messagesFor(sub.id).at(-1)!.id)?.status === "done");
+});
+
+Deno.test("B4 timeout: a subagent that overruns BOUGH_SUBAGENT_TIMEOUT_MS is auto-interrupted (ok:false)", async () => {
+  const prev = Deno.env.get("BOUGH_SUBAGENT_TIMEOUT_MS");
+  Deno.env.set("BOUGH_SUBAGENT_TIMEOUT_MS", "150");
+  try {
+    const db = new Db(":memory:");
+    const bus = new Bus();
+    const spawner = seed(db);
+    const llm = dispatchLlm({
+      "hi": [
+        program(`const r = await agent("runaway"); console.log("ok=" + r.ok);`),
+        textRound("timed out"),
+      ],
+      "runaway": [abortRound()], // never finishes on its own; the timeout fires
+    });
+    const { message, done } = beginTurn(failCtx(db, bus, llm), spawner.id);
+    await done;
+    const sub = db.listSessions().find((s) => s.kind === "subagent")!;
+    assertEquals(db.turnForMessage(db.messagesFor(sub.id).at(-1)!.id)?.status, "interrupted");
+    assertStringIncludes(lastToolResult(db.getMessage(message.id)!), "ok=false");
+  } finally {
+    if (prev === undefined) Deno.env.delete("BOUGH_SUBAGENT_TIMEOUT_MS");
+    else Deno.env.set("BOUGH_SUBAGENT_TIMEOUT_MS", prev);
+  }
+});
+
+Deno.test("C5 bad launch: agent(\"\") rejects with a clear error the model sees (no phantom subagent)", async () => {
+  const db = new Db(":memory:");
+  const bus = new Bus();
+  const spawner = seed(db);
+  const llm = dispatchLlm({
+    "hi": [
+      program(`try { await agent(""); } catch (e) { console.log("caught:" + e.message); }`),
+      textRound("ok"),
+    ],
+  });
+  const { message, done } = beginTurn(failCtx(db, bus, llm), spawner.id);
+  await done;
+  assertStringIncludes(lastToolResult(db.getMessage(message.id)!), "caught:");
+  assertStringIncludes(lastToolResult(db.getMessage(message.id)!), "non-empty string");
+  assertEquals(db.listSessions().some((s) => s.kind === "subagent"), false);
+});
+
+Deno.test("C6 partial fan-out gap: a launch failure in Promise.all rejects the batch but a sibling still ran (orphaned)", async () => {
+  const db = new Db(":memory:");
+  const bus = new Bus();
+  const spawner = seed(db);
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  const llm = dispatchLlm({
+    "hi": [
+      program(
+        `try { await Promise.all([agent("good sibling"), agent("")]); }
+         catch (e) { console.log("batch failed:" + e.message); }`,
+      ),
+      textRound("recovered"),
+    ],
+    "good sibling": [async () => {
+      await gate;
+      return textRound("sibling done");
+    }],
+  });
+  const { message, done } = beginTurn(failCtx(db, bus, llm), spawner.id);
+  // The empty-task launch rejects synchronously; the good sibling has already begun.
+  await until(() => db.listSessions().some((s) => s.kind === "subagent"));
+  release();
+  await done;
+  // The batch rejected (Promise.all short-circuits) — the model caught it...
+  assertStringIncludes(lastToolResult(db.getMessage(message.id)!), "batch failed:");
+  // ...but the good sibling was spawned and its result went unconsumed. This pins
+  // the gap: fan-out with agent() should use allSettled, or the launch failure
+  // should not strand a live sibling.
+  assertExists(db.listSessions().find((s) => s.kind === "subagent"));
 });
