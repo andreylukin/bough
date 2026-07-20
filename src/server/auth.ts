@@ -60,8 +60,8 @@ function loginPageResponse(error: boolean): Response {
 export interface Auth {
   /**
    * Gate a request. Returns null when it may proceed to the router (no password
-   * configured, valid session cookie, or CORS preflight handled elsewhere); otherwise
-   * the response to send (login page, 401, or the /auth/login result).
+   * configured, or a valid session cookie); otherwise the response to send
+   * (login page, 401, or the /auth/login result).
    */
   gate(req: Request): Promise<Response | null>;
 }

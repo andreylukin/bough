@@ -308,12 +308,16 @@ Deno.test("invalid body → 400", async () => {
   c.db.close();
 });
 
-Deno.test("OPTIONS preflight → 204 with CORS", async () => {
+Deno.test("no CORS: responses carry no allow-origin; a browser can't drive the loopback API", async () => {
   const c = ctx();
   const h = createHandler(c);
-  const res = await h(req("OPTIONS", "/sessions"));
-  assertEquals(res.status, 204);
-  assertEquals(res.headers.get("access-control-allow-origin"), "*");
+  // A normal API response opts into no cross-origin access.
+  const get = await h(req("GET", "/sessions"));
+  assertEquals(get.headers.get("access-control-allow-origin"), null);
+  // No preflight handler either — OPTIONS isn't a routed method, so it 404s.
+  const opt = await h(req("OPTIONS", "/sessions"));
+  assertEquals(opt.status, 404);
+  assertEquals(opt.headers.get("access-control-allow-origin"), null);
   c.db.close();
 });
 

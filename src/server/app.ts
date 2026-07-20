@@ -11,7 +11,10 @@
  *   POST /sessions/:id/messages    → 202                {text}  (persist + start turn)
  *   GET /events[?sessionId=]  → SSE stream of BoughEvent (named events + heartbeat)
  *
- * CORS is permissive (localhost dev; Vite proxies but standalone must work too).
+ * No CORS headers: the only client is the native `bough` TUI (not a browser), so the
+ * server never opts into cross-origin access. This keeps a webpage you happen to visit
+ * from reaching the loopback API and driving the agent (browsers block the cross-origin
+ * fetch without an allow-origin header) — the web UI that once needed CORS is gone.
  */
 import type { z } from "zod";
 import { HttpError } from "../errors.ts";
@@ -119,16 +122,10 @@ type Handler = (
 ) => Response | Promise<Response>;
 type Route = { method: string; pattern: URLPattern; handler: Handler };
 
-const CORS = {
-  "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET, POST, PATCH, PUT, DELETE, OPTIONS",
-  "access-control-allow-headers": "content-type",
-};
-
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json", ...CORS },
+    headers: { "content-type": "application/json" },
   });
 }
 
@@ -382,7 +379,7 @@ const postMessage: Handler = async (req, ctx, params) => {
 
   // Persist + announce the user message and run the turn (streams over /events).
   startUserTurn(ctx, session.id, body.text);
-  return new Response(null, { status: 202, headers: CORS });
+  return new Response(null, { status: 202 });
 };
 
 // Soft-delete: hide from the sidebar; the row and its thread stay (forks keep
@@ -565,7 +562,6 @@ const events: Handler = (req, ctx) => {
       "content-type": "text/event-stream",
       "cache-control": "no-cache",
       connection: "keep-alive",
-      ...CORS,
     },
   });
 };
@@ -1313,7 +1309,6 @@ const routes: Route[] = [
 export function createHandler(ctx: AppCtx): (req: Request) => Response | Promise<Response> {
   const auth = createAuth(ctx.password);
   return async (req) => {
-    if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
     const denied = await auth.gate(req);
     if (denied) return denied;
     const { pathname } = new URL(req.url);
@@ -1335,7 +1330,7 @@ export function createHandler(ctx: AppCtx): (req: Request) => Response | Promise
     if (req.method === "GET" && pathname === "/") {
       return new Response(
         "bough server — drive it with the `bough` TUI. Artifacts: /artifacts/<sessionId>/<name>\n",
-        { headers: { "content-type": "text/plain; charset=utf-8", ...CORS } },
+        { headers: { "content-type": "text/plain; charset=utf-8" } },
       );
     }
     return error(404, "not found");
