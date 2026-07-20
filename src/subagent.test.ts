@@ -996,9 +996,10 @@ Deno.test("A2 detached spawn(): a subagent that errors posts a FAILED completion
   const note = db.messagesFor(spawner.id).find((m) => m.role === "system")!;
   const text = (note.parts[0] as { text: string }).text;
   assertStringIncludes(text, "[subagent finished]");
-  // NOTE: the note conflates error/interrupt/timeout under one label — a UX gap
-  // this test pins (so a future "distinguish why it failed" fix is verifiable).
-  assertStringIncludes(text, "FAILED (turn errored or was interrupted)");
+  // The note says WHY: an errored turn reads as FAILED — its turn errored, and
+  // the error itself is in the report (distinct from a stop/timeout/orphan).
+  assertStringIncludes(text, "FAILED — its turn errored");
+  assertStringIncludes(text, "boom in background");
 });
 
 Deno.test("A4 partial success: a subagent that finishes without passing a check is ok:true but checkPassed:false", async () => {
@@ -1051,35 +1052,29 @@ Deno.test("B1 interrupt cascades: interrupting the spawner while agent() blocks 
   assertEquals(spawnerTurn?.status, "interrupted");
 });
 
-Deno.test("B3 detached survives: interrupting the spawner does NOT stop a background spawn()", async () => {
+Deno.test("B3 detached stop path: an explicit interrupt of the spawner cascades to (stops) a runaway detached subagent", async () => {
   const db = new Db(":memory:");
   const bus = new Bus();
   const spawner = seed(db);
-  let release!: () => void;
-  const gate = new Promise<void>((r) => (release = r));
   let subStarted = false;
   const llm = dispatchLlm({
     "hi": [
-      program(`await spawn("bg keep going"); console.log("spawned");`),
+      program(`await spawn("bg runaway"); console.log("spawned");`),
       textRound("turn over"),
     ],
-    "bg keep going": [async () => {
-      subStarted = true;
-      await gate;
-      return textRound("finished despite the interrupt");
-    }],
-    "[subagent finished]": [textRound("noted")],
+    // Never finishes on its own — only the cascaded interrupt can stop it.
+    "bg runaway": [abortRound(() => (subStarted = true))],
   });
   const { done } = beginTurn(failCtx(db, bus, llm), spawner.id);
+  await done; // the spawner turn ends normally; the detached child runs on
   await until(() => subStarted);
-  interruptTurn(spawner.id); // stop the spawner
-  await done;
 
-  // The detached subagent is still running (not tied to the spawner's signal).
+  // Interrupting the (now idle) spawner cascades to its detached child.
+  assertEquals(interruptTurn(spawner.id), true);
   const sub = db.listSessions().find((s) => s.kind === "subagent")!;
-  assertEquals(db.messagesFor(sub.id).at(-1)!.pending, true);
-  release();
-  await until(() => db.turnForMessage(db.messagesFor(sub.id).at(-1)!.id)?.status === "done");
+  await until(() => db.turnForMessage(db.messagesFor(sub.id).at(-1)!.id)?.status === "interrupted");
+  // (Detached surviving a NORMAL turn end is covered by the spawn() non-blocking
+  // test above — only an EXPLICIT interrupt cascades.)
 });
 
 Deno.test("B4 timeout: a subagent that overruns BOUGH_SUBAGENT_TIMEOUT_MS is auto-interrupted (ok:false)", async () => {
@@ -1124,34 +1119,68 @@ Deno.test("C5 bad launch: agent(\"\") rejects with a clear error the model sees 
   assertEquals(db.listSessions().some((s) => s.kind === "subagent"), false);
 });
 
-Deno.test("C6 partial fan-out gap: a launch failure in Promise.all rejects the batch but a sibling still ran (orphaned)", async () => {
+Deno.test("C6 fan-out: Promise.allSettled (the guided pattern) keeps a good sibling's result when another launch fails", async () => {
   const db = new Db(":memory:");
   const bus = new Bus();
   const spawner = seed(db);
-  let release!: () => void;
-  const gate = new Promise<void>((r) => (release = r));
   const llm = dispatchLlm({
     "hi": [
       program(
-        `try { await Promise.all([agent("good sibling"), agent("")]); }
-         catch (e) { console.log("batch failed:" + e.message); }`,
+        `const rs = await Promise.allSettled([agent("good sibling"), agent("")]);
+         console.log("good=" + rs[0].value.report + " bad=" + rs[1].status);`,
       ),
       textRound("recovered"),
     ],
-    "good sibling": [async () => {
-      await gate;
-      return textRound("sibling done");
-    }],
+    "good sibling": [textRound("sibling done")],
   });
   const { message, done } = beginTurn(failCtx(db, bus, llm), spawner.id);
-  // The empty-task launch rejects synchronously; the good sibling has already begun.
-  await until(() => db.listSessions().some((s) => s.kind === "subagent"));
-  release();
   await done;
-  // The batch rejected (Promise.all short-circuits) — the model caught it...
-  assertStringIncludes(lastToolResult(db.getMessage(message.id)!), "batch failed:");
-  // ...but the good sibling was spawned and its result went unconsumed. This pins
-  // the gap: fan-out with agent() should use allSettled, or the launch failure
-  // should not strand a live sibling.
-  assertExists(db.listSessions().find((s) => s.kind === "subagent"));
+  // allSettled preserves BOTH outcomes: the good sibling's report is obtained,
+  // and the bad launch surfaces as a rejection — no result is discarded. (Raw
+  // Promise.all would fail-fast and strand the sibling, which is why the
+  // delegation prompt now recommends allSettled.)
+  const out = lastToolResult(db.getMessage(message.id)!);
+  assertStringIncludes(out, "good=sibling done");
+  assertStringIncludes(out, "bad=rejected");
+});
+
+import { recoverOrphanedTurns, startTurn } from "./supervisor/turns.ts";
+
+Deno.test("D1 orphan recovery: a subagent stranded by a restart surfaces in the SPAWNER's thread (not silently stuck)", () => {
+  const db = new Db(":memory:");
+  const bus = new Bus();
+  const spawner = seed(db); // root "s1"
+  // A subagent mid-turn: kind=subagent, origin=spawner, a running turn + pending msg.
+  const subId = "sub-orphan";
+  db.createSession({
+    id: subId,
+    parentId: null,
+    title: "risky background job",
+    kind: "subagent",
+    createdAt: 3,
+    originId: spawner.id,
+    originMessageId: "m0",
+  } as unknown as Session);
+  const pending: Message = {
+    id: "sm1",
+    sessionId: subId,
+    role: "supervisor",
+    parts: [],
+    pending: true,
+    createdAt: 4,
+  };
+  db.createMessage(pending);
+  startTurn(db, subId, pending.id); // leaves a "running" turn row
+
+  const recovered = recoverOrphanedTurns(db, bus);
+  assertEquals(recovered, 1);
+  // The subagent's own message is finished with the restart notice...
+  assertEquals(db.getMessage(pending.id)!.pending, false);
+  // ...and the SPAWNER learns about it — a system note lands in its thread.
+  const note = db.messagesFor(spawner.id).find((m) => m.role === "system");
+  assertExists(note);
+  const text = (note!.parts[0] as { text: string }).text;
+  assertStringIncludes(text, "[subagent finished]");
+  assertStringIncludes(text, "ORPHANED");
+  assertStringIncludes(text, subId);
 });

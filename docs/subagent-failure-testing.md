@@ -68,27 +68,32 @@ isolated server, and screenshot/assert. This catches the rendering gaps (E1–E6
 `buildLines` in `src/tui/lines.ts` is also unit-testable directly (see the E1
 test) without a live TUI.
 
-## Current coverage & the gaps it pins
+## Current coverage & status
 
-Implemented (Tier 1 in `subagent.test.ts`, plus E1 in `tui/lines.test.ts`):
-A1, A2, A4, B1, B3, B4, C1–C3 (pre-existing caps), C5, C6, E1.
+Tested (Tier 1 in `subagent.test.ts`, plus E1 in `tui/lines.test.ts`, D1 unit +
+live-verified): A1, A2, A4, B1, B3, B4, C1–C3 (caps), C5, C6, D1, E1.
 
-Gaps the tests pin (each a verifiable fix target):
-- **E1 — failed blocking subagent shows "✓ done".** `Branch` carries no status;
-  fix by threading the session's `lastTurnStatus` onto `Branch` and rendering
-  red/interrupted in `branchCardLines`.
-- **A2 — the note conflates error/interrupt/timeout** under one `FAILED (turn
-  errored or was interrupted)` string. Split it so the user learns *why*.
-- **B1 — interrupting the spawner kills its program**, so it can't gracefully
-  report the subagent's interruption. Acceptable ("stop = stop now"), but worth
-  knowing.
-- **C6 — a launch failure in a `Promise.all` fan-out strands a live sibling.**
-  Guidance/mechanism: prefer `allSettled`, or don't reject the batch on one
-  launch error.
-- **B5 / D1 (Tier 2/3 TODO)** — no stop path for a runaway *detached* subagent
-  (esc goes back to the spawner; the spawner's interrupt doesn't cascade to
-  detached children), and an orphaned detached subagent after a restart never
-  wakes its parent.
+Gaps the tests surfaced — **now fixed** (each with a test that flipped from
+pinning the bug to asserting the fix):
+- **E1 (fixed)** — `Branch` gained a `status` (from the session's
+  `lastTurnStatus`); `branchCardLines` renders `✗ failed` / `◼ interrupted`
+  instead of a blanket green `✓ done`. Live-verified in the TUI. `store.reload`
+  now prefers the server's authoritative `lastTurnStatus`.
+- **A2 (fixed)** — `formatNote` (and `SubagentResult.status`) distinguish
+  `FAILED — its turn errored`, `STOPPED — interrupted`, and `ORPHANED`;
+  `parseSubagentNote` treats all three as not-ok.
+- **C6 (fixed)** — the delegation prompt now recommends `Promise.allSettled`, and
+  the test proves it preserves a good sibling's result when another launch fails.
+- **B5 (fixed)** — an explicit interrupt of the spawner now cascades to its
+  detached subagents (a `turn.ts` interrupt-hook registry), so a runaway detached
+  child is stoppable; a *normal* turn end still lets it survive.
+- **D1 (fixed)** — `recoverOrphanedTurns` posts an `ORPHANED` note into the
+  spawner's thread, so a subagent stranded by a restart isn't silently lost.
+- **B1** — pinned as intended behavior: interrupting the spawner kills its
+  program too (stop = stop now); no fix needed.
+
+Still open (Tier 3): E3–E6 (interrupted-card / live transition / long-error
+truncation / click-into-failed) want shell-use coverage.
 
 Run the unit tier:
 

@@ -65,7 +65,8 @@ export function parseSubagentNote(text: string): SubagentNote | null {
     : [];
   const reportMatch = text.match(/^Report:\n([\s\S]*?)\nIts changes stay on its own branch/m);
   const report = reportMatch ? reportMatch[1].trim() : null;
-  return { title, sessionId, status, ok: !status.startsWith("FAILED"), files, report };
+  // Only a "finished…" note is a success; FAILED / STOPPED / ORPHANED are not.
+  return { title, sessionId, status, ok: status.startsWith("finished"), files, report };
 }
 
 // How many report lines a finished-subagent card shows before "+N more"; the
@@ -312,6 +313,9 @@ export interface Branch {
   id: string;
   title: string;
   busy: boolean;
+  /** The subagent's last turn status, so a finished blocking subagent (no note)
+   * still shows failed/interrupted rather than a blanket "✓ done". */
+  status?: "done" | "error" | "interrupted" | "orphaned";
   /** The assistant message whose turn called spawn — where the card is drawn. */
   originMessageId?: string | null;
   /** Parsed completion note once the subagent finished (report/files/status). */
@@ -334,8 +338,15 @@ function branchCardLines(
     subagentNoteLines(body, b.note, w, isFull(`report:${b.note.sessionId}`));
     copy = b.note.report ?? b.note.title;
   } else {
-    const dot = b.busy ? yellow("◆") : green("◆");
-    const tail = b.busy ? yellow(" ⋯ working") : green(" ✓ done");
+    // A finished blocking subagent has no completion note — reflect its real
+    // outcome from the session status instead of always showing "✓ done".
+    const { dot, tail } = b.busy
+      ? { dot: yellow("◆"), tail: yellow(" ⋯ working") }
+      : b.status === "error" || b.status === "orphaned"
+      ? { dot: red("◆"), tail: red(" ✗ failed") }
+      : b.status === "interrupted"
+      ? { dot: yellow("◆"), tail: yellow(" ◼ interrupted") }
+      : { dot: green("◆"), tail: green(" ✓ done") };
     body.push({
       text: `${dot} ${b.title.replace(/^subagent · /, "")}${dim(tail)}`,
       click: `open:${b.id}`,

@@ -273,20 +273,48 @@ const steering = new Set<string>();
 /** Live turns by session, for interruption. One turn per session at a time. */
 const running = new Map<string, AbortController>();
 
+/**
+ * Cascade hooks fired when a session is interrupted — how a stop reaches work not
+ * tied to the turn's own signal. subagent.ts registers one per DETACHED child so an
+ * explicit interrupt of the spawner stops the whole subtree (a runaway detached
+ * subagent is otherwise unstoppable). A normal turn end does NOT fire these, so
+ * detached spawns still survive the turn ending — only an explicit stop cascades.
+ */
+const interruptHooks = new Map<string, Set<() => void>>();
+
+/** Register a cascade hook for `sessionId`; returns an unregister thunk. */
+export function onInterrupt(sessionId: string, cb: () => void): () => void {
+  let set = interruptHooks.get(sessionId);
+  if (!set) interruptHooks.set(sessionId, set = new Set());
+  set.add(cb);
+  return () => {
+    set!.delete(cb);
+    if (set!.size === 0) interruptHooks.delete(sessionId);
+  };
+}
+
 /** True if a turn is currently running for this session. */
 export function isTurnRunning(sessionId: string): boolean {
   return running.has(sessionId);
 }
 
 /**
- * Interrupt the session's in-flight turn. Aborts the current LLM request and
- * signals the loop to stop after the current step. Returns false if nothing runs.
+ * Interrupt the session's in-flight turn AND cascade to its detached subagents
+ * (interrupt hooks). Aborts the current LLM request and signals the loop to stop
+ * after the current step. Fires cascade hooks even when the session itself is idle
+ * (its turn ended but a detached child runs on). Returns false only if there was
+ * nothing to stop.
  */
 export function interruptTurn(sessionId: string): boolean {
   const c = running.get(sessionId);
-  if (!c) return false;
-  c.abort();
-  return true;
+  if (c) c.abort();
+  const hooks = interruptHooks.get(sessionId);
+  if (hooks) for (const h of [...hooks]) {
+    try {
+      h();
+    } catch { /* a child already gone is fine */ }
+  }
+  return !!c || (hooks?.size ?? 0) > 0;
 }
 
 /**

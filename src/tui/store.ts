@@ -102,10 +102,22 @@ export function useStore(initialSessions: Session[]): Store {
   const reload = useCallback(async () => {
     const s = await api.listSessions();
     // busy/unseen are client-side memory — carry them across the server refetch.
+    // lastTurnStatus is server-authoritative (the last finished turn's status), so
+    // prefer the fresh value and fall back to client memory only when it's absent —
+    // otherwise a failed/interrupted subagent shows no status until a live event.
     setSessions((prev) =>
       s.map((n) => {
         const old = prev.find((p) => p.id === n.id);
-        return { ...n, busy: old?.busy, unseen: old?.unseen, lastTurnStatus: old?.lastTurnStatus };
+        // The server augments the row with a runtime lastTurnStatus (not in the
+        // persisted schema type) — read it via a cast and prefer it over memory.
+        const serverStatus = (n as { lastTurnStatus?: TuiSession["lastTurnStatus"] })
+          .lastTurnStatus;
+        return {
+          ...n,
+          busy: old?.busy,
+          unseen: old?.unseen,
+          lastTurnStatus: serverStatus ?? old?.lastTurnStatus,
+        };
       })
     );
   }, []);

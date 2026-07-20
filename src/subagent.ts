@@ -26,7 +26,14 @@
 import { join as joinPath } from "node:path";
 import type { Db } from "./db/db.ts";
 import { openBranch } from "./branch.ts";
-import { beginTurn, interruptTurn, isTurnRunning, postSystemNote, type TurnCtx } from "./turn.ts";
+import {
+  beginTurn,
+  interruptTurn,
+  isTurnRunning,
+  onInterrupt,
+  postSystemNote,
+  type TurnCtx,
+} from "./turn.ts";
 import { DONE_ACCEPTED } from "./tools/mod.ts";
 import { maybeAutoTitle, UNTITLED } from "./supervisor/title.ts";
 import { normalizeWorkspace } from "./supervisor/workspace.ts";
@@ -47,6 +54,9 @@ export interface SubagentResult {
   title: string;
   /** The subagent's turn ran to completion (no error, not interrupted). */
   ok: boolean;
+  /** Why it ended: "done" | "error" | "interrupted" | "orphaned" — so the parent
+   * (and the completion note) can say WHY, not just that it failed. */
+  status: "done" | "error" | "interrupted" | "orphaned";
   /** The harness accepted `done` (committed CHECK passed). */
   checkPassed: boolean;
   /** The subagent's final message text. */
@@ -187,7 +197,8 @@ async function buildResult(
       // diff is best-effort reporting; the branch itself is intact
     }
   }
-  return { sessionId, title, ok: turn?.status === "done", checkPassed, report, changedFiles };
+  const status = (turn?.status ?? "orphaned") as SubagentResult["status"];
+  return { sessionId, title, ok: status === "done", status, checkPassed, report, changedFiles };
 }
 
 /**
@@ -329,12 +340,16 @@ export async function spawnSubagentDetached(
   const h = await launch(ctx, spawn, task);
   const entry = { spawnerId: spawn.spawnerId, result: h.result, claimed: false };
   detached.set(h.sessionId, entry);
+  // An explicit interrupt of the spawner cascades to this detached child — the
+  // only stop path for a runaway. Unregistered when it finishes on its own.
+  const unhook = onInterrupt(spawn.spawnerId, () => interruptTurn(h.sessionId));
   h.result
     .then((r) => {
       if (entry.claimed) return;
       postSystemNote(ctx, spawn.spawnerId, formatNote(r));
     })
-    .catch((err) => console.error(`detached subagent ${h.sessionId} failed:`, err));
+    .catch((err) => console.error(`detached subagent ${h.sessionId} failed:`, err))
+    .finally(() => unhook());
   return { sessionId: h.sessionId, title: h.title };
 }
 
@@ -361,11 +376,16 @@ export async function joinSubagent(
   }
 }
 
-/** The completion note a detached subagent posts back to its spawner. */
+/** The completion note a detached subagent posts back to its spawner. Says WHY it
+ * ended so the parent can react (retry an error, respect a stop, re-run a timeout). */
 function formatNote(r: SubagentResult): string {
-  const status = r.ok
-    ? (r.checkPassed ? "finished, check passed" : "finished")
-    : "FAILED (turn errored or was interrupted)";
+  const status = r.status === "done"
+    ? (r.checkPassed ? "finished, check passed" : "finished (no check committed)")
+    : r.status === "error"
+    ? "FAILED — its turn errored (see the report for the error)"
+    : r.status === "interrupted"
+    ? "STOPPED — interrupted (a user stop, or it hit the time limit)"
+    : "ORPHANED — the server restarted before it finished";
   const files = r.changedFiles.length ? r.changedFiles.join(", ") : "none";
   return [
     `[subagent finished] "${r.title}" (${r.sessionId}) — ${status}.`,

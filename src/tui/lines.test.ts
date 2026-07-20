@@ -195,7 +195,7 @@ Deno.test("reasoning folds: collapsed gist line, expanded gutter block", () => {
   assertEquals(expanded.some((l) => l.text.includes("Second thought.")), true);
 });
 
-import { buildLines } from "./lines.ts";
+import { type Branch, buildLines } from "./lines.ts";
 
 Deno.test("finished-subagent card caps the report; !full lifts the cap", () => {
   const sessionId = "sub-1";
@@ -237,28 +237,29 @@ Deno.test("finished-subagent card caps the report; !full lifts the cap", () => {
   assertEquals(expanded.some((l) => l.text.includes("more · click to show all")), false);
 });
 
-Deno.test("branch card GAP: a finished blocking subagent shows green ✓ done regardless of a failed/interrupted outcome", () => {
-  // A blocking agent()'s result flows in-band to the parent program — no
-  // [subagent finished] system note — so the branch has note=null. The Branch
-  // type carries no status, so branchCardLines can only show busy (⋯) vs the
-  // default "✓ done". A subagent that ERRORED or was INTERRUPTED renders
-  // identically to one that succeeded. This pins the E1 gap: to fix it, Branch
-  // needs a status derived from the session's lastTurnStatus, and the card must
-  // render red/interrupted here.
+Deno.test("branch card: a finished blocking subagent reflects its real status (failed/interrupted, not always ✓ done)", () => {
+  // A blocking agent()'s result flows in-band — no [subagent finished] note — so
+  // the branch has note=null. The card now reads the session's lastTurnStatus so
+  // a subagent that ERRORED or was INTERRUPTED no longer masquerades as "✓ done".
   const thread = [
     { id: "u1", sessionId: "s", role: "user", parts: [{ type: "text", text: "go" }], pending: false },
     { id: "a1", sessionId: "s", role: "supervisor", parts: [{ type: "text", text: "delegating" }], pending: false },
   ] as unknown as Message[];
-  const failedBranch = {
-    id: "sub-failed",
-    title: "subagent · do the risky thing",
-    busy: false,
-    originMessageId: "a1",
-    note: null, // blocking → no completion note, even though its turn errored
+  const card = (status: Branch["status"]) => {
+    const branch: Branch = {
+      id: "sub-x",
+      title: "subagent · do the risky thing",
+      busy: false,
+      status,
+      note: null,
+    };
+    const lines = buildLines(thread, {}, () => false, () => false, 100, [branch]);
+    return lines.find((l) => l.text.includes("do the risky thing"))!.text;
   };
-  const lines = buildLines(thread, {}, () => false, () => false, 100, [failedBranch]);
-  const card = lines.find((l) => l.text.includes("do the risky thing"));
-  assertEquals(!!card, true);
-  // Current (buggy) behavior: it says "done", with no way to signal failure.
-  assertEquals(card!.text.includes("done"), true);
+  assertEquals(card("error").includes("failed"), true);
+  assertEquals(card("orphaned").includes("failed"), true);
+  assertEquals(card("interrupted").includes("interrupted"), true);
+  assertEquals(card("done").includes("done"), true);
+  // A failed one must NOT read as done.
+  assertEquals(card("error").includes("✗"), true);
 });

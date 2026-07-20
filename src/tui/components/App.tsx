@@ -371,6 +371,7 @@ export function App(
           id: s.id,
           title: s.title || "(untitled)",
           busy: !!s.busy,
+          status: s.lastTurnStatus,
           originMessageId: s.originMessageId,
           note: noteById.get(s.id) ?? null,
         })),

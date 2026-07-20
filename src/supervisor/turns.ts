@@ -12,7 +12,7 @@
  */
 import type { Db, Turn, TurnStatus } from "../db/db.ts";
 import type { Bus } from "../bus.ts";
-import type { Part } from "../schema/parts.ts";
+import type { Message, Part } from "../schema/parts.ts";
 
 export function startTurn(db: Db, sessionId: string, messageId: string): Turn {
   return db.createTurn({
@@ -60,6 +60,29 @@ export function recoverOrphanedTurns(db: Db, bus: Bus): number {
       sessionId: msg.sessionId,
       data: { messageId: msg.id },
     });
+    // A stranded SUBAGENT's spawner is waiting for a result (the in-memory
+    // `detached` map died with the process) — surface the orphan in the spawner's
+    // thread so it isn't silently stuck. Plain insert (no turn kickoff): boot must
+    // not auto-start turns for every orphaned subagent.
+    const sub = db.getSession(msg.sessionId);
+    if (sub?.kind === "subagent" && sub.originId && db.getSession(sub.originId)) {
+      const notice: Message = {
+        id: crypto.randomUUID(),
+        sessionId: sub.originId,
+        role: "system",
+        parts: [{
+          type: "text",
+          text: `[subagent finished] "${sub.title}" (${sub.id}) — ORPHANED — the server ` +
+            `restarted before it finished.\nChanged files on its branch: unknown.\nNo report.\n` +
+            `Its changes stay on its own branch — adopt("${sub.id}") in run_steps merges them ` +
+            `into this workspace; or leave the branch for review.`,
+        }],
+        pending: false,
+        createdAt: Date.now(),
+      };
+      db.createMessage(notice);
+      bus.publish({ type: "message.started", sessionId: sub.originId, data: notice });
+    }
   }
   return stranded.length;
 }
