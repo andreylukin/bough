@@ -35,6 +35,8 @@ export function NewSession(
             : "no matches — clear the query to create without a workspace"}
         </Text>
       )}
+      {/* The status bar no longer carries per-mode hints — the modal owns its keys. */}
+      <Text dimColor>↑↓ pick · enter create · esc back</Text>
     </Box>
   );
 }

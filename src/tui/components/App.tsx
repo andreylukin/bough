@@ -942,6 +942,12 @@ export function App(
         );
         return;
       }
+      // ? opens the help overlay here too (the status bar promises it) — except
+      // while the sessions filter is capturing printable keys.
+      if (ch === "?" && !key.ctrl && !key.meta && !(panelTab === "sessions" && filterActive)) {
+        setMode("help");
+        return;
+      }
 
       // ---- sessions: the lineage tree (was ^p) ----
       if (panelTab === "sessions") {
@@ -1797,7 +1803,9 @@ export function App(
                   return (
                     <Box key={`l-${start + i}`} justifyContent="flex-end">
                       <Text bold color={palette.accent} backgroundColor={palette.panel}>
-                        {" "}{flash.msg}{" "}
+                        {" "}
+                        {flash.msg}
+                        {" "}
                       </Text>
                     </Box>
                   );
@@ -1948,7 +1956,6 @@ export function App(
           pendingCount={store.pendingCount}
           quitHint={quitHint}
           mode={mode === "chat" && store.pending ? "approval" : mode}
-          panelTab={panelTab}
           usage={store.usage}
           draftLabel={isDraft ? `new · ${shortWs}` : null}
           model={cfg

@@ -3,8 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import type { Usage } from "../api.ts";
 import { coldCacheNote, fmtTokens } from "../format.ts";
-import { HINTS, PANEL_HINTS, type UiMode } from "../keys.ts";
-import type { PanelTab } from "./Panel.tsx";
+import type { UiMode } from "../keys.ts";
 import type { TuiSession } from "../store.ts";
 
 const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -63,7 +62,6 @@ export function StatusBar(
     pendingCount,
     quitHint,
     mode,
-    panelTab,
     usage,
     draftLabel,
     model,
@@ -75,8 +73,6 @@ export function StatusBar(
     pendingCount: number;
     quitHint: boolean;
     mode: UiMode;
-    /** Which panel tab is showing (drives the per-tab hint while mode is "panel"). */
-    panelTab: PanelTab;
     usage: Usage;
     /** Shown instead of a session title while no session exists yet. */
     draftLabel?: string | null;
@@ -121,9 +117,7 @@ export function StatusBar(
               : draftLabel
               ? <Text dimColor>{" "}{draftLabel}</Text>
               : null}
-            {parentTitle
-              ? <Text dimColor>{"  "}branch of {parentTitle} · esc ↩ back</Text>
-              : null}
+            {parentTitle ? <Text dimColor>{"  "}branch of {parentTitle} · esc ↩ back</Text> : null}
           </Text>
         </Box>
         <Box flexShrink={0}>
@@ -145,8 +139,18 @@ export function StatusBar(
           </Text>
         </Box>
       </Box>
+      {
+        /* The right side is only "? help" — keybindings live in the ? overlay,
+        the hold card, and the modals; the status bar stays session info. */
+      }
       <Text dimColor wrap="truncate">
-        {quitHint ? "ctrl+c again to quit" : mode === "panel" ? PANEL_HINTS[panelTab] : HINTS[mode]}
+        {quitHint
+          ? "ctrl+c again to quit"
+          : mode === "help"
+          ? "any key closes"
+          : mode === "chat" || mode === "panel"
+          ? "? help"
+          : ""}
       </Text>
     </Box>
   );

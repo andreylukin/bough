@@ -23,8 +23,8 @@ function flatRows(spaced: boolean): Row[] {
 }
 
 function Line({ row }: { row: Row }) {
-  if ("blank" in row) return <Text> </Text>;
-  if ("header" in row) return <Text dimColor>{row.header}</Text>;
+  if ("blank" in row) return <Text>{" "}</Text>;
+  if ("header" in row) return <Text bold>{row.header}</Text>;
   return (
     <Text wrap="truncate">
       {"  "}
@@ -53,7 +53,10 @@ export function Help({ rows = 30, width = 80 }: { rows?: number; width?: number 
         borderColor={palette.border}
         paddingX={1}
       >
-        <Text bold>keys</Text>
+        <Text>
+          <Text bold>keys</Text>
+          <Text dimColor>{"  "}any key closes</Text>
+        </Text>
         {shown.map((r, i) => <Line key={i} row={r} />)}
         {cut ? <Text dimColor>… more — enlarge the window to see all</Text> : null}
       </Box>
@@ -72,7 +75,14 @@ export function Help({ rows = 30, width = 80 }: { rows?: number; width?: number 
     >
       {cols.map((col, c) => (
         <Box key={c} flexDirection="column" width="50%" paddingRight={c === 0 ? 2 : 0}>
-          {c === 0 ? <Text bold>keys</Text> : <Text> </Text>}
+          {c === 0
+            ? (
+              <Text>
+                <Text bold>keys</Text>
+                <Text dimColor>{"  "}any key closes</Text>
+              </Text>
+            )
+            : <Text>{" "}</Text>}
           {col.map((r, i) => <Line key={i} row={r} />)}
         </Box>
       ))}

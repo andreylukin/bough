@@ -1,7 +1,7 @@
 import { palette } from "../theme.ts";
 import { Box, Text } from "ink";
 import type { NetRequest } from "../../schema/parts.ts";
-import { HINTS } from "../keys.ts";
+import { APPROVAL_HINT } from "../keys.ts";
 import { clip } from "../format.ts";
 
 // The hold-and-ask card: a network request is parked on the wire waiting for a
@@ -51,7 +51,7 @@ export function NetApproval(
           </Box>
         )
         : null}
-      <Text dimColor>{HINTS.approval}</Text>
+      <Text dimColor>{APPROVAL_HINT}</Text>
     </Box>
   );
 }
