@@ -13,6 +13,11 @@
  *     block's `meta` as the raw SDK block and are replayed VERBATIM within a turn —
  *     the API requires a tool round's signed thinking to precede its tool_use on
  *     the next round. Cross-turn replay still drops reasoning (history mapper).
+ *
+ * Hardening: clientFor wraps every provider in withRetries — transient failures
+ * (429/5xx, network faults, dropped/truncated/stalled streams) back off and retry;
+ * the fetch clients treat a stream that ends without its completion marker as an
+ * error rather than returning a partial round (half-assembled tool calls).
  */
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -93,6 +98,121 @@ export interface LlmClient {
   run(params: LlmParams, onText: (delta: string) => void, signal?: AbortSignal): Promise<LlmResult>;
 }
 
+// ---- transient-failure retries ----------------------------------------------
+
+/**
+ * A provider/transport failure. `status` (when known) drives retry classification;
+ * no status = a transport fault (dropped, truncated, or stalled stream), always
+ * retryable. `retryAfterMs` carries the provider's Retry-After hint.
+ */
+export class LlmError extends Error {
+  constructor(message: string, readonly status?: number, readonly retryAfterMs?: number) {
+    super(message);
+    this.name = "LlmError";
+  }
+}
+
+const retryableStatus = (s: number): boolean => s === 408 || s === 429 || s >= 500;
+
+/** Should this failure be re-attempted? User aborts and caller mistakes (4xx) never are. */
+export function isRetryable(err: unknown): boolean {
+  const e = err as { name?: string; status?: unknown } | null;
+  if (e?.name === "AbortError" || e?.name === "APIUserAbortError") return false;
+  if (err instanceof LlmError) return err.status === undefined || retryableStatus(err.status);
+  // Anthropic SDK: APIError carries `.status`; connection failures carry none.
+  if (typeof e?.status === "number") return retryableStatus(e.status);
+  if (e?.name === "APIConnectionError" || e?.name === "APIConnectionTimeoutError") return true;
+  return err instanceof TypeError; // fetch network failure
+}
+
+export interface RetryOpts {
+  /** Observes each re-attempt: called after a retryable failure, before the backoff sleep. */
+  onRetry?: (info: { attempt: number; maxAttempts: number; error: Error; delayMs: number }) => void;
+  maxAttempts?: number;
+  baseDelayMs?: number;
+}
+
+const MAX_ATTEMPTS = 4;
+const BASE_DELAY_MS = 1000;
+
+/**
+ * Transparent retries around an LlmClient. Sound because a round has no side
+ * effects until run() resolves (the turn loop executes tools afterwards), so
+ * re-sending identical params can at worst repeat streamed text deltas — the
+ * caller's onRetry hook is where the UI resets its streaming buffer.
+ */
+export function withRetries(inner: LlmClient, opts: RetryOpts = {}): LlmClient {
+  const maxAttempts = opts.maxAttempts ?? MAX_ATTEMPTS;
+  const baseDelayMs = opts.baseDelayMs ?? BASE_DELAY_MS;
+  return {
+    async run(params, onText, signal) {
+      for (let attempt = 1;; attempt++) {
+        try {
+          return await inner.run(params, onText, signal);
+        } catch (err) {
+          if (attempt >= maxAttempts || signal?.aborted || !isRetryable(err)) throw err;
+          // Exponential backoff with jitter; the provider's Retry-After wins when longer.
+          const backoff = baseDelayMs * 2 ** (attempt - 1) * (0.5 + Math.random() / 2);
+          const delayMs = Math.round(Math.max(retryAfterHint(err) ?? 0, backoff));
+          opts.onRetry?.({ attempt, maxAttempts, error: err as Error, delayMs });
+          await delay(delayMs, signal);
+        }
+      }
+    },
+  };
+}
+
+/** The provider's Retry-After, in ms, when the error carries one. */
+function retryAfterHint(err: unknown): number | undefined {
+  if (err instanceof LlmError) return err.retryAfterMs;
+  // Anthropic SDK errors expose the response headers.
+  const headers = (err as { headers?: { get?: (k: string) => string | null } }).headers;
+  const secs = Number(headers?.get?.("retry-after"));
+  return Number.isFinite(secs) && secs > 0 ? secs * 1000 : undefined;
+}
+
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException("interrupted during retry backoff", "AbortError"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/** A stream that stops sending bytes for this long is treated as dropped. */
+const STALL_TIMEOUT_MS = 60_000;
+
+/** reader.read() with a stall guard — a silently dead connection surfaces as a
+ * retryable LlmError instead of hanging the turn until the user interrupts. */
+function readWithStallGuard(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  provider: string,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reader.cancel().catch(() => {});
+      reject(new LlmError(`${provider}: stream stalled (no data for ${STALL_TIMEOUT_MS / 1000}s)`));
+    }, STALL_TIMEOUT_MS);
+    reader.read().then(resolve, reject).finally(() => clearTimeout(timer));
+  });
+}
+
+/** Map a non-2xx provider response to a classified LlmError (never returns). */
+async function throwHttpError(provider: string, res: Response): Promise<never> {
+  const retryAfter = Number(res.headers.get("retry-after"));
+  throw new LlmError(
+    `${provider}: ${res.status} ${await res.text().catch(() => "")}`,
+    res.status,
+    Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : undefined,
+  );
+}
+
 // ---- real client -----------------------------------------------------------
 
 function toApiMessage(m: LlmMessage): Anthropic.MessageParam {
@@ -161,7 +281,9 @@ function effortParams(effort?: Effort, model?: string): Record<string, unknown> 
 }
 
 export function anthropicClient(): LlmClient {
-  const client = new Anthropic();
+  // maxRetries 0: the retry policy lives in withRetries (see clientFor), uniform
+  // across providers — the SDK's own pre-stream retries would stack under it.
+  const client = new Anthropic({ maxRetries: 0 });
   return {
     async run(params, onText, signal) {
       // Prompt caching (5-minute sliding TTL, refreshed free on every hit):
@@ -391,9 +513,8 @@ export function openaiClient(): LlmClient {
           ...(params.toolChoice ? { tool_choice: params.toolChoice } : {}),
         }),
       });
-      if (!res.ok || !res.body) {
-        throw new Error(`openai: ${res.status} ${await res.text().catch(() => "")}`);
-      }
+      if (!res.ok) await throwHttpError("openai", res);
+      if (!res.body) throw new LlmError("openai: empty response body");
 
       // Deltas stream for the live feel; the final content comes whole from the
       // response.completed payload (no per-item assembly to get wrong).
@@ -401,6 +522,7 @@ export function openaiClient(): LlmClient {
         output?: ResponsesItem[];
         status?: string;
         incomplete_details?: { reason?: string };
+        error?: { code?: string; message?: string };
         usage?: {
           input_tokens?: number;
           output_tokens?: number;
@@ -411,7 +533,7 @@ export function openaiClient(): LlmClient {
       const dec = new TextDecoder();
       let buffer = "";
       for (;;) {
-        const { done, value } = await reader.read();
+        const { done, value } = await readWithStallGuard(reader, "openai");
         if (done) break;
         buffer += dec.decode(value, { stream: true });
         let nl: number;
@@ -432,11 +554,18 @@ export function openaiClient(): LlmClient {
           else if (
             (ev.type === "response.failed" || ev.type === "error") && !final
           ) {
-            throw new Error(`openai: ${JSON.stringify(ev)}`);
+            // Mid-stream failure events are server-side (the request itself was
+            // accepted) — classify retryable, rate limits by their error code.
+            const code = ev.response?.error?.code ?? "";
+            throw new LlmError(
+              `openai: ${JSON.stringify(ev)}`,
+              code.includes("rate_limit") ? 429 : 500,
+            );
           } else if (ev.type === "response.incomplete" && ev.response) final = ev.response;
         }
       }
-      if (!final) throw new Error("openai: stream ended without response.completed");
+      // No status → transport fault → retryable.
+      if (!final) throw new LlmError("openai: stream ended without response.completed");
 
       const content = fromResponsesOutput(final.output ?? []);
       const stopReason = content.some((b) => b.type === "tool_use")
@@ -494,20 +623,23 @@ function openAICompatClient(opts: OpenAICompatOpts): LlmClient {
           ...(params.toolChoice ? { tool_choice: params.toolChoice } : {}),
         }),
       });
-      if (!res.ok || !res.body) {
-        throw new Error(`${opts.provider}: ${res.status} ${await res.text().catch(() => "")}`);
-      }
+      if (!res.ok) await throwHttpError(opts.provider, res);
+      if (!res.body) throw new LlmError(`${opts.provider}: empty response body`);
 
       let text = "";
       const toolCalls = new Map<number, OpenAIToolCall>();
       let finishReason = "stop";
       let usage: LlmUsage | undefined;
+      // Whether the stream reached a proper end ([DONE] or a finish_reason). A
+      // stream that just closes was cut mid-response — returning the partial
+      // round as success would run half-assembled tool calls.
+      let ended = false;
 
       const reader = res.body.getReader();
       const dec = new TextDecoder();
       let buffer = "";
       for (;;) {
-        const { done, value } = await reader.read();
+        const { done, value } = await readWithStallGuard(reader, opts.provider);
         if (done) break;
         buffer += dec.decode(value, { stream: true });
         let nl: number;
@@ -516,12 +648,16 @@ function openAICompatClient(opts: OpenAICompatOpts): LlmClient {
           buffer = buffer.slice(nl + 1);
           if (!line.startsWith("data:")) continue;
           const data = line.slice(5).trim();
-          if (data === "[DONE]") continue;
+          if (data === "[DONE]") {
+            ended = true;
+            continue;
+          }
           let chunk: {
             choices?: {
               delta?: { content?: string; tool_calls?: OpenAIToolCall[] };
               finish_reason?: string;
             }[];
+            error?: { message?: string; code?: number | string };
             usage?: {
               prompt_tokens?: number;
               completion_tokens?: number;
@@ -533,6 +669,15 @@ function openAICompatClient(opts: OpenAICompatOpts): LlmClient {
           } catch {
             continue;
           }
+          // OpenRouter surfaces an upstream provider failure as a terminal `error`
+          // chunk on an otherwise-200 stream; without this it would silently pass
+          // the partial round off as success.
+          if (chunk.error) {
+            throw new LlmError(
+              `${opts.provider}: ${chunk.error.message ?? JSON.stringify(chunk.error)}`,
+              typeof chunk.error.code === "number" ? chunk.error.code : undefined,
+            );
+          }
           if (chunk.usage) {
             usage = {
               inputTokens: chunk.usage.prompt_tokens ?? 0,
@@ -543,7 +688,10 @@ function openAICompatClient(opts: OpenAICompatOpts): LlmClient {
           }
           const choice = chunk.choices?.[0];
           if (!choice) continue;
-          if (choice.finish_reason) finishReason = choice.finish_reason;
+          if (choice.finish_reason) {
+            finishReason = choice.finish_reason;
+            ended = true;
+          }
           const delta = choice.delta;
           if (delta?.content) {
             text += delta.content;
@@ -563,6 +711,8 @@ function openAICompatClient(opts: OpenAICompatOpts): LlmClient {
           }
         }
       }
+      // No status → transport fault → retryable.
+      if (!ended) throw new LlmError(`${opts.provider}: stream truncated before completion`);
 
       const content: LlmBlock[] = [];
       if (text) content.push({ type: "text", text });
@@ -597,16 +747,23 @@ export function providerFor(model: string): Provider {
   return model.includes("/") ? "openrouter" : "anthropic";
 }
 
-/** The LLM client for a model id (see providerFor for the id scheme). */
-export function clientFor(model: string): LlmClient {
-  switch (providerFor(model)) {
-    case "openai":
-      return openaiClient();
-    case "openrouter":
-      return openrouterClient();
-    case "anthropic":
-      return anthropicClient();
-  }
+/**
+ * The LLM client for a model id (see providerFor for the id scheme), wrapped with
+ * transient-failure retries. `retry.onRetry` observes re-attempts — the turn
+ * runner uses it to reset the UI's streaming buffer and surface the retry.
+ */
+export function clientFor(model: string, retry?: RetryOpts): LlmClient {
+  const inner = ((): LlmClient => {
+    switch (providerFor(model)) {
+      case "openai":
+        return openaiClient();
+      case "openrouter":
+        return openrouterClient();
+      case "anthropic":
+        return anthropicClient();
+    }
+  })();
+  return withRetries(inner, retry);
 }
 
 /** One-shot text completion — no tools, no event consumer. Returns the

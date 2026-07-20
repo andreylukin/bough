@@ -155,6 +155,9 @@ export const CreateSessionBody = z.object({
   kind: SessionKind.optional(),
   // Optional read-write root for the session; persisted and returned on the Session.
   workspace: z.string().optional(),
+  // Optional model pin (same semantics as the picker's per-session pin). Used by
+  // `bough exec -m`; absent = the process-global default.
+  model: z.string().optional(),
 });
 export type CreateSessionBody = z.infer<typeof CreateSessionBody>;
 
@@ -173,6 +176,9 @@ export const SessionUpdatedData = Session;
 export const MessageStartedData = Message;
 /** `message.delta` → an incremental text chunk for a streaming message. */
 export const MessageDeltaData = z.object({ messageId: z.string(), delta: z.string() });
+/** `message.retry` → the LLM round failed transiently and is being re-attempted;
+ * the message will re-stream from the top (UIs drop their streaming buffer). */
+export const MessageRetryData = z.object({ messageId: z.string() });
 /** `message.part` → a finalized Part appended to a message. */
 export const MessagePartData = z.object({ messageId: z.string(), part: Part });
 /** `message.finished` → the message is complete (flip pending → false). */

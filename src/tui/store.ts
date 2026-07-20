@@ -387,6 +387,18 @@ export function useStore(initialSessions: Session[]): Store {
         setStreaming((prev) => ({ ...prev, [messageId]: (prev[messageId] ?? "") + delta }));
         break;
       }
+      case "message.retry": {
+        // The round is being re-attempted and will re-stream from the top —
+        // drop the partial streamed text so it doesn't double up.
+        const { messageId } = ev.data as { messageId: string };
+        setStreaming((prev) => {
+          if (prev[messageId] === undefined) return prev;
+          const next = { ...prev };
+          delete next[messageId];
+          return next;
+        });
+        break;
+      }
       case "message.part": {
         const { messageId, part } = ev.data as { messageId: string; part: Part };
         setThread((prev) =>

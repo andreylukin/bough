@@ -210,6 +210,17 @@ Deno.test("POST /sessions creates and GET /sessions lists it", async () => {
   c.db.close();
 });
 
+Deno.test("POST /sessions with model pins the session (bough exec -m)", async () => {
+  const c = ctx();
+  const h = createHandler(c);
+  const created = await (await h(
+    req("POST", "/sessions", { title: "m", model: "claude-haiku-4-5" }),
+  )).json() as Session;
+  assertEquals(created.model, "claude-haiku-4-5");
+  assertEquals(c.db.getSession(created.id)?.model, "claude-haiku-4-5");
+  c.db.close();
+});
+
 Deno.test("POST /sessions with parentId defaults kind=fork; unknown parent → 400", async () => {
   const c = ctx();
   const h = createHandler(c);

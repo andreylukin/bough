@@ -356,7 +356,23 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
   // (the request carries no thinking/effort fields at all).
   const effort = (db.getSession(sessionId)?.effort as Effort | undefined) ??
     (activeEffort() || undefined);
-  const llm = ctx.llm ?? clientFor(model);
+  const llm = ctx.llm ?? clientFor(model, {
+    onRetry: ({ attempt, maxAttempts, error, delayMs }) => {
+      // A retried round re-streams from the top: tell the UI to drop this
+      // message's partial streamed text, and say what's happening.
+      bus.publish({ type: "message.retry", sessionId, data: { messageId } });
+      const reason = error.message.replace(/\s+/g, " ").slice(0, 80);
+      bus.publish({
+        type: "session.activity",
+        sessionId,
+        data: {
+          text: `⟳ LLM failed (${reason}) — retry ${attempt + 1}/${maxAttempts} in ${
+            Math.ceil(delayMs / 1000)
+          }s`,
+        },
+      });
+    },
+  });
   const tools = ctx.tools ?? defaultTools;
   // Newest round's input_tokens ≈ the live context size; output accumulates, and
   // input accumulates too (cost: every round re-sends the whole thread).

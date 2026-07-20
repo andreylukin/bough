@@ -345,6 +345,12 @@ const createSession: Handler = async (req, ctx) => {
     return error(400, `parent ${session.parentId} not found`);
   }
   ctx.db.createSession(session);
+  // Model pin (not a createSession column): persist it before the announce so the
+  // event and response carry it.
+  if (body.model) {
+    ctx.db.setSessionModel(session.id, body.model);
+    session.model = body.model;
+  }
   ctx.bus.publish({ type: "session.created", sessionId: session.id, data: session });
   return json(session, 201);
 };

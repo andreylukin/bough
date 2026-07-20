@@ -10,6 +10,7 @@ const KNOWN_TYPES = new Set([
   "session.archived",
   "message.started",
   "message.delta",
+  "message.retry",
   "message.part",
   "message.finished",
   "turn.finished",
