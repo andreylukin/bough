@@ -642,11 +642,14 @@ Deno.test("mcp end-to-end: /skill grant connects the server, prompts tools, brid
     const { message, done } = beginTurn(ctx, sessionId);
     await done;
 
-    // the system prompt carried the catalog, and the program's call round-tripped
-    const system = llm.calls[0].system ?? "";
-    assertStringIncludes(system, "# MCP tools");
-    assertStringIncludes(system, 'server "echo" (3 tools):');
-    assertStringIncludes(system, "Active skill: /browse");
+    // the system prompt carried the catalog, and the program's call round-tripped.
+    // MCP catalog + skills are per-turn facts, so they ride the VOLATILE tier —
+    // never the stable prefix (cache contract, see turn.ts).
+    const volatile = llm.calls[0].systemVolatile ?? "";
+    assertStringIncludes(volatile, "# MCP tools");
+    assertStringIncludes(volatile, 'server "echo" (3 tools):');
+    assertStringIncludes(volatile, "Active skill: /browse");
+    assertEquals((llm.calls[0].system ?? "").includes('server "echo"'), false);
     const final = finalMessage(db, message.id);
     const result = final.parts.find((p) => p.type === "tool_result") as { output: string };
     assertStringIncludes(result.output, "mcp says: e2e");

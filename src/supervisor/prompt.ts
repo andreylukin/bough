@@ -4,6 +4,11 @@
  * notes, AGENTS.md project rules). Pure text authoring — turn.ts resolves the
  * runtime facts (which capabilities are wired, which subagents run) and assembles
  * the pieces; nothing here touches the db or the loop.
+ *
+ * Cache contract for new sections: turn.ts assembles two tiers (see its comment
+ * at the `system` / `systemVolatile` split). Constant text goes in the STABLE
+ * tier; anything interpolating a per-session fact (a path, an id, a catalog)
+ * must go in the VOLATILE tier, or it defeats cross-session prompt caching.
  */
 import { join } from "node:path";
 import { homedir } from "node:os";
