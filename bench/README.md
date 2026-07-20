@@ -57,6 +57,7 @@ Edits whose predictions fail get reverted — no vibes-driven prompt growth.
 | --- | --- | --- |
 | bugfix-inventory | failing test, fix impl not tests | tests green + test file byte-identical |
 | fanout-bugs | 4 INDEPENDENT modules, each with a distinct bug | all four suites green + tests untouched — decomposable, so it rewards parallel delegation; grade the *how* with orch_metrics.py |
+| fanout-heavy | 6 INDEPENDENT modules (~265 lines), each with a non-obvious bug needing real reading | all six suites green + tests untouched — the heavy fan-out; still solved serially (~12k parent-ctx), so even this is below the delegation threshold |
 | feature-topwords | add `--top N` flag to a CLI | exact output incl. tie-break, old behavior intact |
 | refactor-rename | rename across 3 files | no old name remains, tests untouched + green |
 | rename-precise | rename a method whose name recurs as decoys (dict key, string, unrelated class) | only the real call sites change; a global text replace breaks the decoy test — isolates *semantic* rename (lsp.rename) from text search |
