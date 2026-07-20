@@ -191,6 +191,83 @@ export const SYSTEM_DELEGATION_NESTED = " " + [
   "only genuinely separable work; do small things yourself.",
 ].join(" ");
 
+// ---- delegation fit gate ---------------------------------------------------
+// Bench finding (predictions.jsonl, 2026-07-20): the supervisor NEVER delegates
+// on its own initiative (0 self-initiated subagents across 240+ sessions), and
+// an always-on prose nudge was refuted twice — inert on weak models, pure token
+// cost on every turn ("prompt dilution"). So the push is gated STRUCTURALLY:
+// a conservative detector on the triggering user message injects ONE short
+// section — decision rule + literal spawn() code shape — only when the request
+// is shaped like independent fan-out work. Cohesive requests see a byte-identical
+// prompt. False positives are harmless by design: the note is a reminder that
+// ends with "do it yourself", never a command.
+
+/** Count words that make an independence adjective plural-scoped ("four
+ * independent modules") rather than incidental ("the unrelated Report class"). */
+const COUNT = /\b(\d+|two|three|four|five|six|seven|eight|nine|ten|several|multiple|many)\b/i;
+/** Independence adjectives — only meaningful next to a count (same sentence). */
+const INDEPENDENCE = /\b(independent|unrelated|separate)\b/i;
+/** Explicit parallel intent stands on its own. */
+const PARALLEL_INTENT = /\b(in parallel|concurrently|independently|simultaneously)\b/i;
+/** "each … its own" — the distributive shape of per-part work. */
+const EACH_ITS_OWN = /\beach\b[^.?!\n]{0,60}\bits own\b/i;
+/** Fan-out survey verbs; deliberately excludes fix/find/update/rename/check,
+ * which name cohesive single-cause work at least as often as fan-outs. */
+const FANOUT_VERB =
+  /\b(audit|review|research|investigate|survey|analy[sz]e|triage|summari[sz]e|compare)\b/i;
+/** Distributive scope markers, only meaningful next to a fan-out verb. */
+const DISTRIBUTIVE = /\b(across|each|every|all)\b/i;
+
+/**
+ * Does the request look decomposable into independent parts? Conservative on
+ * purpose — calibrated against the full bench task bank (fires on fanout-bugs
+ * and fanout-heavy, on nothing else; see prompt.test.ts). Signals:
+ *   1. a count + an independence adjective in one sentence ("six independent modules")
+ *   2. explicit parallel intent ("in parallel", "concurrently")
+ *   3. "each … its own" ("each one has its own bug")
+ *   4. a survey verb + a distributive marker in one sentence ("audit X across Y")
+ *   5. three or more questions (a bundle of independent research questions)
+ */
+export function decomposableRequest(text: string): boolean {
+  if (PARALLEL_INTENT.test(text)) return true;
+  if (EACH_ITS_OWN.test(text)) return true;
+  if ((text.match(/\?/g) ?? []).length >= 3) return true;
+  // Same-sentence co-occurrence rules. Splitting on "." also splits filenames
+  // (mod_a.py) — that only shrinks segments, i.e. errs conservative.
+  const sentences = text.split(/[.?!\n]+/);
+  return sentences.some((s) =>
+    (INDEPENDENCE.test(s) && COUNT.test(s)) ||
+    (FANOUT_VERB.test(s) && DISTRIBUTIVE.test(s))
+  );
+}
+
+/**
+ * The gated section, appended (root sessions only — spawn() exists there) when
+ * the triggering request matches a decomposable shape. Carries the decision rule
+ * and the literal code shape, so acting on it costs the model no invention.
+ */
+export function delegationHintNote(userText: string): string {
+  if (!decomposableRequest(userText)) return "";
+  return "\n\n# Delegation fit (this request)\n" +
+    "This request looks decomposable. Decision rule: list the parts; if two or more " +
+    "(a) touch disjoint files/areas and (b) need nothing from each other's results, " +
+    "DELEGATE — spawn one subagent per part in your FIRST program instead of working " +
+    "through them serially:\n" +
+    "```js\n" +
+    "const tasks = [\n" +
+    '  "Fix the failing tests in src/parser/ (run: npm test parser). Touch only src/parser/. Report root cause + fix in 3 lines.",\n' +
+    '  "Fix the failing tests in src/render/ (run: npm test render). Touch only src/render/. Report root cause + fix in 3 lines.",\n' +
+    "];\n" +
+    "const started = await Promise.allSettled(tasks.map((t) => spawn(t)));\n" +
+    "```\n" +
+    "Then work on anything left, or end your turn — each [subagent finished] report " +
+    "arrives as a system note and wakes you; adopt(sessionId) merges a branch you " +
+    "accept. Write each task string as a complete briefing (paths, commands, " +
+    "acceptance criteria — the subagent sees nothing else). If the parts are NOT " +
+    "truly independent, or the whole job fits in a program or two, ignore this note " +
+    "and do it yourself.";
+}
+
 /**
  * A system-prompt section listing this session's background subagents that are
  * still running, so the model stays aware of in-flight delegated work across

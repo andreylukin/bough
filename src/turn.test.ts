@@ -592,6 +592,62 @@ Deno.test("interrupt reaches INTO a running tool via ctx.signal (stop means stop
   assertEquals(db.turnsByStatus("interrupted").length, 1);
 });
 
+Deno.test("delegation fit note: injected for a decomposable request, absent otherwise", async () => {
+  const { db, bus, sessionId } = seed();
+  // A fresh user message shaped like independent fan-out work (the seed's "hi"
+  // is not); lastUserText picks the latest, so this drives the gate.
+  db.createMessage({
+    id: "u2",
+    sessionId,
+    role: "user",
+    parts: [{ type: "text", text: "Audit each of the three services for PII logging." }],
+    pending: false,
+    createdAt: 3,
+  });
+  const llm = fakeLlm([{ content: [{ type: "text", text: "ok" }], stopReason: "end_turn" }]);
+  const { done } = beginTurn({ db, bus, llm, tools: [] }, sessionId);
+  await done;
+  const system = llm.calls[0].system ?? "";
+  assertStringIncludes(system, "# Delegation fit (this request)");
+  assertStringIncludes(system, "spawn(t)");
+});
+
+Deno.test("delegation fit note: cohesive request gets no note", async () => {
+  const { db, bus, sessionId } = seed(); // "hi" — nothing decomposable
+  const llm = fakeLlm([{ content: [{ type: "text", text: "ok" }], stopReason: "end_turn" }]);
+  const { done } = beginTurn({ db, bus, llm, tools: [] }, sessionId);
+  await done;
+  assertEquals((llm.calls[0].system ?? "").includes("# Delegation fit"), false);
+});
+
+Deno.test("delegation fit note: never for subagent turns (they have no spawn())", async () => {
+  const { db, bus, sessionId } = seed();
+  const sub: Session = {
+    id: "sub1",
+    parentId: null,
+    title: "sub",
+    kind: "subagent",
+    originId: sessionId,
+    createdAt: 4,
+  };
+  db.createSession(sub);
+  db.createMessage({
+    id: "su1",
+    sessionId: sub.id,
+    role: "user",
+    parts: [{ type: "text", text: "Audit each of the three services for PII logging." }],
+    pending: false,
+    createdAt: 5,
+  });
+  const llm = fakeLlm([{ content: [{ type: "text", text: "ok" }], stopReason: "end_turn" }]);
+  const { done } = beginTurn({ db, bus, llm, tools: [] }, sub.id);
+  await done;
+  const system = llm.calls[0].system ?? "";
+  // Depth 1 still delegates (blocking agent()), but the spawn-shaped note must not render.
+  assertStringIncludes(system, "await agent(task)");
+  assertEquals(system.includes("# Delegation fit"), false);
+});
+
 Deno.test("mcp end-to-end: /skill grant connects the server, prompts tools, bridges mcp()", async () => {
   if ((await Deno.permissions.query({ name: "run" })).state !== "granted") return;
   const skillsDir = Deno.makeTempDirSync({ prefix: "bough-skills-" });

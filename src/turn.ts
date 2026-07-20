@@ -53,6 +53,7 @@ import {
 } from "./subagent.ts";
 import { maybeAutoTitle, type Titler } from "./supervisor/title.ts";
 import {
+  delegationHintNote,
   readAgentsFile,
   runningSubagentsNote,
   scratchpadNote,
@@ -178,8 +179,17 @@ export const MODELS: ModelRow[] = [
   { id: "openai/gpt-5", label: "GPT-5 (OpenRouter)", provider: "openrouter" },
   { id: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro (OpenRouter)", provider: "openrouter" },
   { id: "z-ai/glm-5.2", label: "GLM 5.2 (OpenRouter)", provider: "openrouter" },
-  { id: "deepseek/deepseek-v4-flash", label: "DeepSeek V4 Flash (OpenRouter)", provider: "openrouter" },
-  { id: "moonshotai/kimi-k3", label: "Kimi K3 (OpenRouter)", provider: "openrouter", pricing: { in: 3, out: 15 } },
+  {
+    id: "deepseek/deepseek-v4-flash",
+    label: "DeepSeek V4 Flash (OpenRouter)",
+    provider: "openrouter",
+  },
+  {
+    id: "moonshotai/kimi-k3",
+    label: "Kimi K3 (OpenRouter)",
+    provider: "openrouter",
+    pricing: { in: 3, out: 15 },
+  },
 ];
 
 const MAX_TOKENS = 64_000;
@@ -309,10 +319,12 @@ export function interruptTurn(sessionId: string): boolean {
   const c = running.get(sessionId);
   if (c) c.abort();
   const hooks = interruptHooks.get(sessionId);
-  if (hooks) for (const h of [...hooks]) {
-    try {
-      h();
-    } catch { /* a child already gone is fine */ }
+  if (hooks) {
+    for (const h of [...hooks]) {
+      try {
+        h();
+      } catch { /* a child already gone is fine */ }
+    }
   }
   return !!c || (hooks?.size ?? 0) > 0;
 }
@@ -513,7 +525,8 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     // Skills: `/name` in the triggering user message pulls that skill's
     // instructions into the system prompt for this run (supervisor/skills.ts) and
     // names the MCP servers the invocation grants.
-    const skills = activeSkills(lastUserText(db, sessionId));
+    const triggerText = lastUserText(db, sessionId);
+    const skills = activeSkills(triggerText);
     // The turn's MCP grant: the invoked skills' servers + the session's manual
     // activations (/mcp enable) + servers inherited from the spawning turn (a
     // subagent doing part of granted work keeps the grant).
@@ -601,6 +614,10 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       shipNote +
       (isSub ? SYSTEM_SUBAGENT : "") +
       (mayDelegate ? (isSub ? SYSTEM_DELEGATION_NESTED : SYSTEM_DELEGATION) : "") +
+      // Delegation fit gate: a decomposable-shaped request gets the decision rule
+      // + spawn() code shape injected once (root sessions only — spawn exists
+      // there). Cohesive requests see a byte-identical prompt (see prompt.ts).
+      (mayDelegate && !isSub ? delegationHintNote(triggerText) : "") +
       (mayDelegate && !isSub
         ? runningSubagentsNote(
           db.listSessions().filter((s) =>
