@@ -586,13 +586,33 @@ export function App(
     return () => onPaste(null);
   }, [insertAtCursor]);
 
-  // Copy-with-toast, kept in a ref so the mouse subscription stays stable.
+  // Copy feedback is a blinking overlay chip over the bottom viewport row — it
+  // must not take a layout row of its own (a toast above the status bar changes
+  // the measured chrome height and shoves the whole transcript up).
+  const [flash, setFlash] = useState<{ msg: string; on: boolean } | null>(null);
+  const flashTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const flashMsg = useCallback((msg: string) => {
+    flashTimers.current.forEach(clearTimeout);
+    setFlash({ msg, on: true });
+    // Three blinks (~1.5s), then gone.
+    const seq: Array<[number, { msg: string; on: boolean } | null]> = [
+      [350, { msg, on: false }],
+      [500, { msg, on: true }],
+      [850, { msg, on: false }],
+      [1000, { msg, on: true }],
+      [1500, null],
+    ];
+    flashTimers.current = seq.map(([ms, v]) => setTimeout(() => setFlash(v), ms));
+  }, []);
+  useEffect(() => () => flashTimers.current.forEach(clearTimeout), []);
+
+  // Copy handler, kept in a ref so the mouse subscription stays stable.
   // Info-card rows copy on any click; everything else copies on right-click.
   const copyRef = useRef<(text: string, label: string) => void>(() => {});
   copyRef.current = (text, label) => {
     copyToClipboard(text).then(
-      () => store.notify(`✓ copied ${label}`),
-      () => store.notify("✗ copy failed (pbcopy)"),
+      () => flashMsg(`✓ copied ${label}`),
+      () => flashMsg("✗ copy failed (pbcopy)"),
     );
   };
   // The running turn's activity blurb, mirrored for the right-click handler.
@@ -1771,6 +1791,17 @@ export function App(
             <>
               {Array.from({ length: padTop }, (_, i) => <Text key={`pad-${i}`}>{" "}</Text>)}
               {visible.map((l, i) => {
+                // The copy flash blinks over the bottom viewport row — same row,
+                // no extra height, so nothing shifts. Off-phases show the line.
+                if (flash?.on && i === visible.length - 1) {
+                  return (
+                    <Box key={`l-${start + i}`} justifyContent="flex-end">
+                      <Text bold color={palette.accent} backgroundColor={palette.panel}>
+                        {" "}{flash.msg}{" "}
+                      </Text>
+                    </Box>
+                  );
+                }
                 // Screen row padTop+i+1 (1-based); a live drag paints its span
                 // in inverse video; search matches mark theirs (current inverse,
                 // the rest underlined).
