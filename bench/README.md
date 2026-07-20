@@ -56,6 +56,7 @@ Edits whose predictions fail get reverted — no vibes-driven prompt growth.
 | task | shape | oracle |
 | --- | --- | --- |
 | bugfix-inventory | failing test, fix impl not tests | tests green + test file byte-identical |
+| fanout-bugs | 4 INDEPENDENT modules, each with a distinct bug | all four suites green + tests untouched — decomposable, so it rewards parallel delegation; grade the *how* with orch_metrics.py |
 | feature-topwords | add `--top N` flag to a CLI | exact output incl. tie-break, old behavior intact |
 | refactor-rename | rename across 3 files | no old name remains, tests untouched + green |
 | rename-precise | rename a method whose name recurs as decoys (dict key, string, unrelated class) | only the real call sites change; a global text replace breaks the decoy test — isolates *semantic* rename (lsp.rename) from text search |
@@ -64,6 +65,32 @@ Edits whose predictions fail get reverted — no vibes-driven prompt growth.
 
 Fixtures carry identical `AGENTS.md` and `CLAUDE.md` so neither harness gets
 extra guidance. Each trial stages a fresh git-committed fixture copy.
+
+## Orchestration metrics (subagents & background tasks)
+
+Final pass/fail hides *how* the agent works — ClawArena-Team found leaderboard
+scores cluster in a ~10pt band while orchestration behaviors diverge >10x. So to
+test and iterate on delegation and background-task use, grade the trajectory, not
+just the end state:
+
+```sh
+python3 bench/orch_metrics.py <since_ts_seconds> [task]
+```
+
+Per trial it reports, from `state/bough.db`: **delegated** (subagents spawned),
+**parallel** (in-program `Promise.all` / multiple `agent()`/`spawn()`), **bg-used**
+(`bashBg`/`bashWait`/auto-background), **polled** (the sleep/until anti-pattern),
+and **parent-ctx** (the parent's context tokens — delegation should keep it lean).
+
+The iteration loop is the same AHE protocol: record a prediction, change the
+guidance or mechanism, re-run a task that *rewards* the behavior (`fanout-bugs`),
+compare adoption + Pareto (pass/cost/wall/parent-ctx), keep only wins. Baseline
+finding (2026-07-20): across 240+ sessions the agent has **never** spawned a
+subagent, and `fanout-bugs` is solved serially/cheaply (0/3 delegated) — a small
+fan-out doesn't pressure delegation. Making delegation *win* needs heavier,
+genuinely-independent subtasks (so serial bloats the parent) — that's the next
+task to author before nudging the prompt (per "Do More Agents Help?", nudging
+delegation on tasks that don't need it usually hurts).
 
 ## The 2x2 (model x harness), 2026-07-19
 
