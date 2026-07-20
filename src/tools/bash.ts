@@ -1,6 +1,7 @@
 /** Run a shell command in the session workspace, capturing combined output. */
 import { z } from "zod/v4";
-import { wrapChild } from "../sandbox/seatbelt.ts";
+import { sandboxActive, wrapChild } from "../sandbox/seatbelt.ts";
+import { ensureShims } from "../sandbox/shims.ts";
 import { clawpatrolEnv } from "../net/gateway.ts";
 import type { ToolDef, ToolRunCtx } from "./types.ts";
 import { backgroundNote, formatFinal, newShell, promote } from "./bash_bg.ts";
@@ -52,15 +53,24 @@ export async function shellInvocation(
   opts?: { readOnly?: boolean },
 ): Promise<{ argv: string[]; env?: Record<string, string> }> {
   const netEnv = await clawpatrolEnv(ctx.sessionId);
+  const env: Record<string, string> = { ...netEnv };
   let argv = ["/bin/sh", "-c", command];
   if (ctx.sandbox) {
     argv = wrapChild(argv, {
       workspace: opts?.readOnly ? ctx.sandbox.scratchDir : ctx.workspace,
-      allowWrite: opts?.readOnly ? [] : [ctx.sandbox.sessionDir, ctx.sandbox.scratchDir],
+      allowWrite: opts?.readOnly
+        ? []
+        : [ctx.sandbox.sessionDir, ctx.sandbox.scratchDir, ...(ctx.sandbox.gitWriteDirs ?? [])],
       confineNetwork: Object.keys(netEnv).length > 0,
     });
+    // Shim commands the profile can't fix (setuid /bin/ps) — see sandbox/shims.ts.
+    // Best-effort: an unwritable shim dir must not take bash down with it.
+    if (sandboxActive()) {
+      const shims = await ensureShims().catch(() => null);
+      if (shims) env.PATH = `${shims}:${Deno.env.get("PATH") ?? "/usr/bin:/bin"}`;
+    }
   }
-  return { argv, env: Object.keys(netEnv).length ? netEnv : undefined };
+  return { argv, env: Object.keys(env).length ? env : undefined };
 }
 
 export const bash: ToolDef = {

@@ -294,6 +294,11 @@ export function wrap(cmd: string[], opts: SandboxOptions): string[] {
   return [SANDBOX_EXEC, "-p", profile, ...cmd];
 }
 
+/** Whether Seatbelt wrapping applies at all (darwin, not opted out). */
+export function sandboxActive(): boolean {
+  return Deno.build.os === "darwin" && Deno.env.get("BOUGH_NO_SANDBOX") !== "1";
+}
+
 /**
  * `wrap()` for session children (bash commands, MCP server spawns): no-op off
  * darwin or when BOUGH_NO_SANDBOX=1, and applies the hardening every child gets —
@@ -305,7 +310,7 @@ export function wrapChild(
   cmd: string[],
   opts: Pick<SandboxOptions, "workspace" | "allowWrite" | "confineNetwork">,
 ): string[] {
-  if (Deno.build.os !== "darwin" || Deno.env.get("BOUGH_NO_SANDBOX") === "1") return cmd;
+  if (!sandboxActive()) return cmd;
   return wrap(cmd, {
     ...opts,
     apiPort: Number(Deno.env.get("BOUGH_PORT") ?? "4321"),

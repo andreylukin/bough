@@ -29,9 +29,11 @@ export interface ToolRunCtx {
    * (darwin), and the in-process file tools may also write under `sessionDir` (the
    * clonefile snapshot dir) and `scratchDir` (the per-session scratchpad — outside
    * the repo, so temp files don't pollute what the server builds or what ships).
-   * Absent for tests and non-sandboxed runs.
+   * Absent for tests and non-sandboxed runs. `gitWriteDirs` (shadow worktree
+   * sessions only) are the store dirs the SHELL may additionally write so
+   * in-session git works — they are sandbox-profile state, not file-tool roots.
    */
-  sandbox?: { sessionDir: string; scratchDir: string };
+  sandbox?: { sessionDir: string; scratchDir: string; gitWriteDirs?: string[] };
   /**
    * Per-turn harness state, created by the turn runner. `check` is the committed
    * completion gate (SPEC §5): the shell command `run_steps` re-runs before

@@ -36,6 +36,12 @@ export interface PreparedWorkspace {
   /** Whether the turn should run sandboxed (an explicit workspace was configured). */
   sandboxed: boolean;
   /**
+   * Shadow-store dirs the sandboxed shell may write so in-session git works
+   * (worktree git dir + store object db — see shadow.sandboxGitWriteDirs).
+   * Empty when the workspace isn't a shadow worktree.
+   */
+  gitWriteDirs?: string[];
+  /**
    * Set when workspace isolation was expected but could not be provided (external
    * jj prep failed on a first turn): the turn runs directly in the user's checkout.
    * The caller surfaces it in the thread — a silent fallback let sessions pollute
@@ -135,7 +141,14 @@ export async function prepareWorkspace(
     if (isGit || isJj) {
       // May relocate the turn into the session's own worktree (first turn).
       const prepped = await prepareShadow(db, sessionId, cwd, runtime.base === null);
-      return { cwd: prepped.dir, sessionDir: dir, scratchDir, sandboxed, warning: prepped.warning };
+      return {
+        cwd: prepped.dir,
+        sessionDir: dir,
+        scratchDir,
+        sandboxed,
+        warning: prepped.warning,
+        gitWriteDirs: await shadow.sandboxGitWriteDirs(prepped.dir),
+      };
     }
   }
 

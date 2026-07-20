@@ -295,3 +295,28 @@ Deno.test("shipToOrigin: commits on the origin branch without touching its index
     await Deno.remove(remote, { recursive: true }).catch(() => {});
   });
 });
+
+Deno.test("sandboxGitWriteDirs: store worktree+objects for shadow sessions, empty otherwise", async () => {
+  await withRoots(async () => {
+    const repo = await makeRepo();
+    const dir = await shadow.createSessionWorkspace(repo, "sbx1");
+    const dirs = await shadow.sandboxGitWriteDirs(dir);
+    const store = await Deno.realPath(await shadow.storeDirFor(repo));
+    assertEquals(dirs.length, 3);
+    assertEquals(await Deno.realPath(dirs[0]), `${store}/worktrees/sbx1`);
+    assertEquals(await Deno.realPath(dirs[1]), `${store}/objects`);
+    assertEquals(dirs[2], `${store}/packed-refs.lock`);
+
+    // A regular repo checkout (.git is a directory): nothing to allow.
+    assertEquals(await shadow.sandboxGitWriteDirs(repo), []);
+    // A non-git dir: nothing to allow.
+    const plain = await Deno.makeTempDir({ prefix: "bough-shadow-plain-" });
+    assertEquals(await shadow.sandboxGitWriteDirs(plain), []);
+    // A linked worktree of a NON-shadow repo (gitfile points at the user's own
+    // .git): must stay empty — the fallback path must not open the real repo.
+    const wt = `${plain}/wt`;
+    await sh(repo, "git", "worktree", "add", "-q", "--detach", wt);
+    assertEquals(await shadow.sandboxGitWriteDirs(wt), []);
+    await Deno.remove(plain, { recursive: true }).catch(() => {});
+  });
+});

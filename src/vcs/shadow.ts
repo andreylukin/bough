@@ -163,6 +163,40 @@ export async function storeDirFor(origin: string): Promise<string> {
 }
 
 /**
+ * The shadow-store dirs a sandboxed shell running in worktree `ws` needs write
+ * access to for ordinary git use (`add`/`commit`/`fetch`/`stash`): the
+ * worktree's own git dir (index, HEAD, locks) and the store's object database.
+ * Deliberately NOT the store root — shared state (`refs/`, `config`,
+ * `packed-refs`) stays read-only, so a session cannot move another session's
+ * refs or repoint the store (in-sandbox `git branch` fails; commits ride the
+ * detached worktree HEAD, which is bough's model anyway).
+ *
+ * `packed-refs.lock` is the one extra file: `git commit`'s ref transaction
+ * probes it and spams "Unable to create packed-refs.lock" on every in-sandbox
+ * commit otherwise. Allowing the lockfile is harmless — replacing packed-refs
+ * itself requires a rename into the store root, which stays denied.
+ *
+ * Empty unless `ws/.git` is a worktree gitfile pointing under `storeBase()` —
+ * a session that fell back to running directly in the user's checkout must not
+ * gain write access to the real repo's `.git`.
+ */
+export async function sandboxGitWriteDirs(ws: string): Promise<string[]> {
+  let gitdir: string;
+  try {
+    const gitfile = await Deno.readTextFile(join(ws, ".git"));
+    const m = gitfile.match(/^gitdir:\s*(.+)\s*$/m);
+    if (!m) return [];
+    gitdir = isAbsolute(m[1]) ? m[1] : resolve(ws, m[1]);
+  } catch {
+    return []; // no .git, or .git is a directory (not a linked worktree)
+  }
+  const store = await Deno.realPath(dirname(dirname(gitdir))).catch(() => null);
+  const base = await Deno.realPath(storeBase()).catch(() => null);
+  if (!store || !base || store !== base && !store.startsWith(base + "/")) return [];
+  return [gitdir, join(store, "objects"), join(store, "packed-refs.lock")];
+}
+
+/**
  * True when an error reads like shadow-store corruption, as opposed to a
  * transient or environmental failure. Gates quarantine-and-retry: a healthy
  * store must never be moved aside — live worktrees of the origin point into it.
@@ -205,16 +239,22 @@ async function pathExists(p: string): Promise<boolean> {
  */
 export async function ensureStore(origin: string): Promise<string> {
   const store = await storeDirFor(origin);
-  if (await pathExists(`${store}/HEAD`)) {
-    await linkOriginObjects(store, origin);
-    return store;
+  if (!(await pathExists(`${store}/HEAD`))) {
+    await Deno.mkdir(store, { recursive: true });
+    try {
+      await git(store, ["init", "--bare", "-b", "bough", "."]);
+    } catch (e) {
+      if (!(await pathExists(`${store}/HEAD`))) throw e; // a concurrent session won
+    }
+    // The user's global excludesFile is config-isolated away; keep the one entry
+    // everyone expects from it. Project .gitignore files apply as usual.
+    await Deno.writeTextFile(`${store}/info/exclude`, ".DS_Store\n");
+    await Deno.writeTextFile(`${store}/bough-origin`, await Deno.realPath(origin));
   }
-  await Deno.mkdir(store, { recursive: true });
-  try {
-    await git(store, ["init", "--bare", "-b", "bough", "."]);
-  } catch (e) {
-    if (!(await pathExists(`${store}/HEAD`))) throw e; // a concurrent session won
-  }
+  // Pinned on every call (not just init) so pre-existing stores pick up additions.
+  // maintenance.auto: in-sandbox `git commit` otherwise spawns `maintenance run
+  // --auto`, whose pack-refs task hits the write-protected store refs and spams
+  // "Unable to create packed-refs.lock" (gc.auto=0 does not cover it).
   for (
     const [k, v] of [
       ["user.name", USER],
@@ -223,14 +263,11 @@ export async function ensureStore(origin: string): Promise<string> {
       ["core.quotepath", "false"],
       ["commit.gpgsign", "false"],
       ["gc.auto", "0"],
+      ["maintenance.auto", "false"],
     ]
   ) {
     await git(store, ["config", k, v]);
   }
-  // The user's global excludesFile is config-isolated away; keep the one entry
-  // everyone expects from it. Project .gitignore files apply as usual.
-  await Deno.writeTextFile(`${store}/info/exclude`, ".DS_Store\n");
-  await Deno.writeTextFile(`${store}/bough-origin`, await Deno.realPath(origin));
   await linkOriginObjects(store, origin);
   return store;
 }
@@ -483,8 +520,10 @@ export function adoptChanges(
   // Serialized per parent (distinct key from track's per-dir lock — the inner
   // tracks still take that one): two parallel adopts patching one worktree
   // otherwise interleave apply and snapshot.
-  return withLock(`adopt:${parentDir}`, () =>
-    adoptInner(parentDir, subDir, fromSessionId, intoSessionId));
+  return withLock(
+    `adopt:${parentDir}`,
+    () => adoptInner(parentDir, subDir, fromSessionId, intoSessionId),
+  );
 }
 
 async function adoptInner(
@@ -740,8 +779,8 @@ export async function shipToOrigin(
   }
   await accept(dir, sessionId, opts.message);
   if (!opts.push) return { commit, branch, paths, pushed: false };
-  const remote =
-    (await run("git", ["config", `branch.${branch}.remote`], origin)).stdout.trim() || "origin";
+  const remote = (await run("git", ["config", `branch.${branch}.remote`], origin)).stdout.trim() ||
+    "origin";
   const hasRemote = (await run("git", ["remote"], origin)).stdout.split("\n").includes(remote);
   if (!hasRemote) {
     return { commit, branch, paths, pushed: false, note: `no remote "${remote}" to push to` };
