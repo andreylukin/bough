@@ -210,6 +210,50 @@ Deno.test("POST /sessions creates and GET /sessions lists it", async () => {
   c.db.close();
 });
 
+Deno.test("artifact comments: POST adds, GET lists, DELETE removes (404s guarded)", async () => {
+  // Isolate the comments sidecar under a throwaway HOME so the real ~/.bough is untouched.
+  const home = Deno.makeTempDirSync({ prefix: "cmt-home-" });
+  const prevHome = Deno.env.get("HOME");
+  Deno.env.set("HOME", home);
+  try {
+    const c = ctx();
+    const h = createHandler(c);
+    const s = await (await h(req("POST", "/sessions", { title: "art" }))).json() as Session;
+    const anchor = { label: "Files", selector: "body>h2", xf: 0.5, yf: 0.2 };
+
+    // Unknown session → 404 on add.
+    assertEquals((await h(req("POST", "/sessions/nope/comments", {
+      artifact: "i.html",
+      text: "x",
+      anchor,
+    }))).status, 404);
+
+    const added = await (await h(req("POST", `/sessions/${s.id}/comments`, {
+      artifact: "index.html",
+      text: "this is stale",
+      anchor,
+    }))).json() as { id: string; sent: boolean };
+    assertEquals(added.sent, false);
+
+    const listed = await (await h(req("GET", `/sessions/${s.id}/comments`))).json() as {
+      comments: { text: string }[];
+    };
+    assertEquals(listed.comments.map((x) => x.text), ["this is stale"]);
+
+    assertEquals((await h(req("DELETE", `/sessions/${s.id}/comments/${added.id}`))).status, 200);
+    assertEquals((await h(req("DELETE", `/sessions/${s.id}/comments/${added.id}`))).status, 404);
+    assertEquals(
+      ((await (await h(req("GET", `/sessions/${s.id}/comments`))).json()) as { comments: [] })
+        .comments.length,
+      0,
+    );
+    c.db.close();
+  } finally {
+    if (prevHome !== undefined) Deno.env.set("HOME", prevHome);
+    Deno.removeSync(home, { recursive: true });
+  }
+});
+
 Deno.test("POST /sessions with model pins the session (bough exec -m)", async () => {
   const c = ctx();
   const h = createHandler(c);

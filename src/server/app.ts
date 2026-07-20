@@ -29,6 +29,7 @@ import {
   oracleModel,
   setActiveEffort,
   setActiveModel,
+  postSystemNote,
   setOracleModel,
   startUserTurn,
 } from "../turn.ts";
@@ -68,6 +69,14 @@ import { mcpStatusFor } from "../mcp/status.ts";
 import { beginAuth, clearAuth, completeAuth } from "../mcp/oauth.ts";
 import { clientFor } from "../supervisor/llm.ts";
 import { listArtifacts, serveArtifact } from "./artifacts.ts";
+import {
+  AddCommentBody,
+  addComment,
+  deleteComment,
+  formatForAgent,
+  loadComments,
+  markSent,
+} from "./comments.ts";
 import { createAuth } from "./auth.ts";
 import { compact, CompactBody } from "../compact.ts";
 import { sectionize, SectionsBody } from "../sections.ts";
@@ -457,7 +466,12 @@ const extractSession: Handler = async (req, ctx, params) => {
 // fresh root conversation as an editable composer draft (see handoff.ts).
 const handoffSession: Handler = async (req, ctx, params) => {
   const body = await parseBody(req, HandoffBody);
-  const session = await handoff(ctx, params.id, body);
+  // Use the session's model (else the active default) via clientFor — not the
+  // Anthropic client hardcoded in handoff.ts. Without this, a handoff on an
+  // OpenAI/OpenRouter model (or with no Anthropic key) threw an unhandled error
+  // → 500 instead of drafting through the configured provider.
+  const model = ctx.model ?? ctx.db.getSession(params.id)?.model ?? activeModel();
+  const session = await handoff({ ...ctx, llm: ctx.llm ?? clientFor(model), model }, params.id, body);
   return json({ session });
 };
 
@@ -1070,6 +1084,40 @@ const listArtifactsH: Handler = async (_req, _ctx, params) =>
 // links open in the browser; traversal + bad ids are rejected inside serveArtifact.
 const getArtifact: Handler = (_req, _ctx, params) => serveArtifact(params.id, params.path ?? "");
 
+// ---- artifact comments -----------------------------------------------------
+// The comment layer injected into every served HTML artifact (comments.ts) talks
+// to these same-origin endpoints. Notes are the user's margin annotations left
+// for the agent; "send" wakes the session so the agent reads them.
+
+// GET /sessions/:id/comments[?artifact=] → this session's artifact comments.
+const listComments: Handler = (req, _ctx, params) => {
+  const artifact = new URL(req.url).searchParams.get("artifact");
+  const all = loadComments(params.id);
+  return json({ comments: artifact ? all.filter((c) => c.artifact === artifact) : all });
+};
+
+// POST /sessions/:id/comments → add one note (from the injected widget).
+const addCommentH: Handler = async (req, ctx, params) => {
+  if (!ctx.db.getSession(params.id)) return error(404, "session not found");
+  const body = await parseBody(req, AddCommentBody);
+  return json(addComment(params.id, body), 201);
+};
+
+// DELETE /sessions/:id/comments/:cid → remove a note.
+const deleteCommentH: Handler = (_req, _ctx, params) =>
+  deleteComment(params.id, params.cid) ? json({ ok: true }) : error(404, "comment not found");
+
+// POST /sessions/:id/comments/send → deliver the unsent notes to the agent as a
+// system note (waking a turn) and mark them sent. One turn per batch, not per note.
+const sendCommentsH: Handler = (_req, ctx, params) => {
+  if (!ctx.db.getSession(params.id)) return error(404, "session not found");
+  const unsent = loadComments(params.id).filter((c) => !c.sent);
+  if (unsent.length === 0) return json({ sent: 0 });
+  postSystemNote(ctx, params.id, formatForAgent(unsent));
+  markSent(params.id, unsent.map((c) => c.id));
+  return json({ sent: unsent.length });
+};
+
 // ---- route table + dispatch ------------------------------------------------
 
 // Matched on pathname only (URLPattern rejects an init object + base together).
@@ -1156,6 +1204,26 @@ const routes: Route[] = [
     method: "GET",
     pattern: new URLPattern({ pathname: "/sessions/:id/artifacts" }),
     handler: listArtifactsH,
+  },
+  {
+    method: "GET",
+    pattern: new URLPattern({ pathname: "/sessions/:id/comments" }),
+    handler: listComments,
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/sessions/:id/comments" }),
+    handler: addCommentH,
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/sessions/:id/comments/send" }),
+    handler: sendCommentsH,
+  },
+  {
+    method: "DELETE",
+    pattern: new URLPattern({ pathname: "/sessions/:id/comments/:cid" }),
+    handler: deleteCommentH,
   },
   {
     method: "GET",

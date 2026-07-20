@@ -16,6 +16,7 @@
  * containment boundary; treat an artifact like any file the agent wrote.
  */
 import { dirname, join, normalize, resolve } from "node:path";
+import { commentWidget } from "./comments.ts";
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -43,6 +44,13 @@ const MIME: Record<string, string> = {
 function contentType(path: string): string {
   const dot = path.lastIndexOf(".");
   return (dot >= 0 && MIME[path.slice(dot).toLowerCase()]) || "application/octet-stream";
+}
+
+/** Splice the comment layer in before </body> (or append if there's no body tag). */
+function injectCommentWidget(html: string): string {
+  const widget = commentWidget();
+  const idx = html.toLowerCase().lastIndexOf("</body>");
+  return idx >= 0 ? html.slice(0, idx) + widget + html.slice(idx) : html + widget;
 }
 
 /** An artifact the agent published. */
@@ -165,9 +173,19 @@ export async function serveArtifact(
   }
   try {
     if (!(await Deno.stat(full)).isFile) throw new Error("not a file");
+    const type = contentType(full);
+    // Top-level HTML documents get the comment layer injected at serve time
+    // (comments.ts) — the on-disk artifact stays clean/portable; the layer only
+    // lives where you'd use it (inside bough). Other resources serve as-is.
+    if (type.startsWith("text/html")) {
+      const html = await Deno.readTextFile(full);
+      return new Response(injectCommentWidget(html), {
+        headers: { "content-type": type, "cache-control": "no-cache" },
+      });
+    }
     const body = await Deno.readFile(full);
     return new Response(body, {
-      headers: { "content-type": contentType(full), "cache-control": "no-cache" },
+      headers: { "content-type": type, "cache-control": "no-cache" },
     });
   } catch {
     return new Response(JSON.stringify({ error: "not found" }), {
