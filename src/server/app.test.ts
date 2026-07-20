@@ -179,8 +179,9 @@ Deno.test("GET /sessions/:id includes token usage (zero before any turn)", async
       cachedTokens: number;
       cacheReadTotal: number;
       cacheWriteTotal: number;
+      costUsd: number;
       lastLlmAt: number | null;
-      tree: { inputTokens: number; outputTokens: number; sessions: number };
+      tree: { inputTokens: number; outputTokens: number; costUsd: number; sessions: number };
     };
   };
   assertEquals(got.usage, {
@@ -190,8 +191,9 @@ Deno.test("GET /sessions/:id includes token usage (zero before any turn)", async
     cachedTokens: 0,
     cacheReadTotal: 0,
     cacheWriteTotal: 0,
+    costUsd: 0,
     lastLlmAt: null,
-    tree: { inputTokens: 0, outputTokens: 0, sessions: 0 },
+    tree: { inputTokens: 0, outputTokens: 0, costUsd: 0, sessions: 0 },
   });
   c.db.close();
 });

@@ -72,6 +72,10 @@ export interface Usage {
   inputTokens: number;
   cachedTokens?: number;
   lastLlmAt?: number | null;
+  /** Cumulative dollars, priced server-side (pricing.ts); 0/absent when unpriced. */
+  costUsd?: number;
+  /** Rollup incl. the subagent subtree — the number a root session's spend should show. */
+  tree?: { inputTokens: number; outputTokens: number; costUsd?: number; sessions: number };
 }
 export const USAGE_ZERO: Usage = { contextTokens: 0, outputTokens: 0, inputTokens: 0 };
 export interface SkillInfo {

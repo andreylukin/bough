@@ -34,6 +34,7 @@ import {
   type ToolRunCtx,
 } from "./tools/mod.ts";
 import { runOracle } from "./tools/oracle.ts";
+import { usageCostUsd } from "./pricing.ts";
 import {
   clientFor,
   type Effort,
@@ -165,21 +166,19 @@ export interface ModelRow {
   id: string;
   label: string;
   provider: "anthropic" | "openai" | "openrouter";
-  /** USD per million tokens (input/output) — drives the UI's cost estimate. */
-  pricing?: { in: number; out: number };
 }
 export const MODELS: ModelRow[] = [
-  { id: "claude-opus-4-8", label: "Opus 4.8", provider: "anthropic", pricing: { in: 5, out: 25 } },
-  { id: "claude-fable-5", label: "Fable 5", provider: "anthropic", pricing: { in: 10, out: 50 } },
-  { id: "claude-sonnet-5", label: "Sonnet 5", provider: "anthropic", pricing: { in: 3, out: 15 } },
-  { id: "claude-haiku-4-5", label: "Haiku 4.5", provider: "anthropic", pricing: { in: 1, out: 5 } },
+  { id: "claude-opus-4-8", label: "Opus 4.8", provider: "anthropic" },
+  { id: "claude-fable-5", label: "Fable 5", provider: "anthropic" },
+  { id: "claude-sonnet-5", label: "Sonnet 5", provider: "anthropic" },
+  { id: "claude-haiku-4-5", label: "Haiku 4.5", provider: "anthropic" },
   { id: "openai:gpt-5", label: "GPT-5 (OpenAI)", provider: "openai" },
   { id: "openai:gpt-5-mini", label: "GPT-5 mini (OpenAI)", provider: "openai" },
   { id: "openai/gpt-5", label: "GPT-5 (OpenRouter)", provider: "openrouter" },
   { id: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro (OpenRouter)", provider: "openrouter" },
   { id: "z-ai/glm-5.2", label: "GLM 5.2 (OpenRouter)", provider: "openrouter" },
   { id: "deepseek/deepseek-v4-flash", label: "DeepSeek V4 Flash (OpenRouter)", provider: "openrouter" },
-  { id: "moonshotai/kimi-k3", label: "Kimi K3 (OpenRouter)", provider: "openrouter", pricing: { in: 3, out: 15 } },
+  { id: "moonshotai/kimi-k3", label: "Kimi K3 (OpenRouter)", provider: "openrouter" },
 ];
 
 const MAX_TOKENS = 64_000;
@@ -414,6 +413,11 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
   let cacheReadTokens = 0; // cumulative this turn — reads bill ~0.1x
   let cacheWriteTokens = 0; // cumulative this turn — writes bill ~1.25x
   let lastLlmAt = 0;
+  // Dollars this turn, priced per round at the round's model (pricing.ts) — the
+  // session model can change mid-session and the oracle bills at its own rate,
+  // so cumulative token totals can't be priced after the fact. Models missing
+  // from the catalog contribute 0.
+  let costUsd = 0;
 
   const turn = startTurn(db, sessionId, messageId);
   // Time-to-first-output metric: stamp the moment ANYTHING from this turn becomes
@@ -457,7 +461,11 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       // worker and bash kills its child — stop means stop, not "after this step".
       signal,
       sandbox: prepared.sandboxed
-        ? { sessionDir: prepared.sessionDir, scratchDir: prepared.scratchDir }
+        ? {
+          sessionDir: prepared.sessionDir,
+          scratchDir: prepared.scratchDir,
+          gitWriteDirs: prepared.gitWriteDirs,
+        }
         : undefined,
       // Per-turn harness state: run_steps commits the CHECK here (SPEC §5 gating).
       // Multi-rule requests (≥2 numbered rules) additionally carry their text so
@@ -492,6 +500,7 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
         onUsage: (u) => {
           inputTokens += u.inputTokens;
           outputTokens += u.outputTokens;
+          costUsd += usageCostUsd(oracleModel(), u) ?? 0;
         },
       });
     // Recall: semantic search over all past conversations (recall.ts), host-side —
@@ -670,6 +679,7 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
           (result.usage.cacheCreationTokens ?? 0);
         cacheReadTokens += result.usage.cacheReadTokens ?? 0;
         cacheWriteTokens += result.usage.cacheCreationTokens ?? 0;
+        costUsd += usageCostUsd(model, result.usage) ?? 0;
         lastLlmAt = Date.now();
       }
 
@@ -814,8 +824,15 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       const totals = {
         outputTokens: prev.outputTokens + outputTokens,
         inputTokens: prev.inputTokens + inputTokens,
+        costUsd: prev.costUsd + costUsd,
       };
-      db.setSessionUsage(sessionId, contextTokens, totals.outputTokens, totals.inputTokens);
+      db.setSessionUsage(
+        sessionId,
+        contextTokens,
+        totals.outputTokens,
+        totals.inputTokens,
+        totals.costUsd,
+      );
       if (lastLlmAt > 0) {
         db.setSessionCache(sessionId, cachedTokens, lastLlmAt, cacheReadTokens, cacheWriteTokens);
       }

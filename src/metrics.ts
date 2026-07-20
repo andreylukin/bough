@@ -42,12 +42,14 @@ export interface SessionMetrics {
   /** First message → last message activity in the session. */
   wallClockMs: number;
   /** Cumulative session tokens (input includes cache reads+writes; the cache
-   * splits let callers price at discounted rates). */
+   * splits let callers price at discounted rates). costUsd is priced per round
+   * at the round's model (pricing.ts) — 0 for catalog-unknown models. */
   usage: {
     inputTokens: number;
     outputTokens: number;
     cacheReadTokens: number;
     cacheWriteTokens: number;
+    costUsd: number;
   };
 }
 
@@ -122,11 +124,12 @@ export function sessionMetrics(db: Db, sessionId: string): SessionMetrics {
     firstOutput: stats(firstOutputSamples),
     turnDuration: stats(durationSamples),
     wallClockMs,
-    usage: (({ inputTokens, outputTokens, cacheReadTotal, cacheWriteTotal }) => ({
+    usage: (({ inputTokens, outputTokens, cacheReadTotal, cacheWriteTotal, costUsd }) => ({
       inputTokens,
       outputTokens,
       cacheReadTokens: cacheReadTotal,
       cacheWriteTokens: cacheWriteTotal,
+      costUsd,
     }))(db.sessionUsage(sessionId)),
   };
 }

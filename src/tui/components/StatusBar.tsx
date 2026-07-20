@@ -2,7 +2,7 @@ import { palette } from "../theme.ts";
 import { useEffect, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import type { Usage } from "../api.ts";
-import { coldCacheNote, fmtTokens } from "../format.ts";
+import { coldCacheNote, fmtTokens, fmtUsd } from "../format.ts";
 import type { UiMode } from "../keys.ts";
 import type { TuiSession } from "../store.ts";
 
@@ -85,6 +85,8 @@ export function StatusBar(
   const isSub = session?.kind === "subagent";
   const spinner = useSpinner(busy, isSub ? "esc ↩ back" : "esc interrupts");
   const cold = useColdCache(usage);
+  // Session spend: tree rollup (incl. subagents) when present, else own total.
+  const spend = usage.tree?.costUsd ?? usage.costUsd ?? 0;
   const status = spinner
     ? { text: spinner, color: palette.warn }
     : session?.lastTurnStatus === "error"
@@ -129,6 +131,7 @@ export function StatusBar(
                 ? <Text color={palette.warn}>{"  "}{cold}</Text>
                 : <Text dimColor>{"  "}{fmtTokens(usage.contextTokens)} ctx</Text>
               : null}
+            {spend > 0 ? <Text dimColor>{"  "}{fmtUsd(spend)}</Text> : null}
             {pendingCount > 0
               ? (
                 <Text color={palette.warn}>

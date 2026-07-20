@@ -38,7 +38,7 @@ import {
 } from "../api.ts";
 import { useStore } from "../store.ts";
 import { type Branch, buildLines, parseSubagentNote, type SubagentNote } from "../lines.ts";
-import { fmtTokens, fuzzyScore, linkAt, segmentParts, wordLeft, wordRight } from "../format.ts";
+import { fmtTokens, fmtUsd, fuzzyScore, linkAt, segmentParts, wordLeft, wordRight } from "../format.ts";
 import { type MouseEvent, onMouse, onPaste } from "../mouse.ts";
 import { extractSpan, highlightSpan, rowSpan, type Selection, selRows } from "../selection.ts";
 import { findMatches, markLine } from "../search.ts";
@@ -1666,6 +1666,12 @@ export function App(
         : "";
       const display = `${fmtTokens(s.contextTokens)} tokens${cached}`;
       rows.push(["context", display, display]);
+    }
+    const spend = store.usage.tree?.costUsd ?? store.usage.costUsd ?? 0;
+    if (spend > 0) {
+      const subs = store.usage.tree?.sessions ?? 0;
+      const display = fmtUsd(spend) + (subs > 0 ? ` incl. ${subs} subagent${subs > 1 ? "s" : ""}` : "");
+      rows.push(["cost", display, display]);
     }
     return rows;
   })();

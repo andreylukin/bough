@@ -73,15 +73,30 @@ Deno.test("treeUsage sums the subagent subtree only (forks excluded, archived in
     originId: "root",
     originMessageId: "m3",
   });
-  db.setSessionUsage("root", 10_000, 100, 1_000);
-  db.setSessionUsage("sub", 5_000, 200, 2_000);
-  db.setSessionUsage("grand", 2_000, 400, 4_000);
-  db.setSessionUsage("fork", 9_000, 999, 9_999); // fork lineage — NOT part of the cost tree
+  db.setSessionUsage("root", 10_000, 100, 1_000, 0.5);
+  db.setSessionUsage("sub", 5_000, 200, 2_000, 0.25);
+  db.setSessionUsage("grand", 2_000, 400, 4_000, 0.125);
+  db.setSessionUsage("fork", 9_000, 999, 9_999, 9.99); // fork lineage — NOT part of the cost tree
   db.archiveSession("grand"); // archived descendants still cost money
 
-  assertEquals(db.treeUsage("root"), { inputTokens: 7_000, outputTokens: 700, sessions: 2 });
-  assertEquals(db.treeUsage("sub"), { inputTokens: 6_000, outputTokens: 600, sessions: 1 });
-  assertEquals(db.treeUsage("grand"), { inputTokens: 4_000, outputTokens: 400, sessions: 0 });
+  assertEquals(db.treeUsage("root"), {
+    inputTokens: 7_000,
+    outputTokens: 700,
+    costUsd: 0.875,
+    sessions: 2,
+  });
+  assertEquals(db.treeUsage("sub"), {
+    inputTokens: 6_000,
+    outputTokens: 600,
+    costUsd: 0.375,
+    sessions: 1,
+  });
+  assertEquals(db.treeUsage("grand"), {
+    inputTokens: 4_000,
+    outputTokens: 400,
+    costUsd: 0.125,
+    sessions: 0,
+  });
   // sessionUsage round-trips the cumulative input column alongside the old fields.
   assertEquals(db.sessionUsage("root"), {
     contextTokens: 10_000,
@@ -90,6 +105,7 @@ Deno.test("treeUsage sums the subagent subtree only (forks excluded, archived in
     cachedTokens: 0,
     cacheReadTotal: 0,
     cacheWriteTotal: 0,
+    costUsd: 0.5,
     lastLlmAt: null,
   });
   db.close();

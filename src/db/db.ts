@@ -227,6 +227,7 @@ export class Db {
         "cached_tokens INTEGER",
         "cache_read_total INTEGER",
         "cache_write_total INTEGER",
+        "cost_usd REAL",
         "last_llm_at INTEGER",
         "model TEXT",
         "effort TEXT",
@@ -337,12 +338,14 @@ export class Db {
     contextTokens: number,
     outputTokens: number,
     inputTokens: number,
+    costUsd = 0,
   ): void {
     this.#db
       .prepare(
-        `UPDATE sessions SET context_tokens = ?, output_tokens = ?, input_tokens = ? WHERE id = ?`,
+        `UPDATE sessions SET context_tokens = ?, output_tokens = ?, input_tokens = ?,
+           cost_usd = ? WHERE id = ?`,
       )
-      .run(contextTokens, outputTokens, inputTokens, id);
+      .run(contextTokens, outputTokens, inputTokens, costUsd, id);
   }
 
   /**
@@ -374,12 +377,13 @@ export class Db {
     cachedTokens: number;
     cacheReadTotal: number;
     cacheWriteTotal: number;
+    costUsd: number;
     lastLlmAt: number | null;
   } {
     const r = this.#db
       .prepare(
         `SELECT context_tokens, output_tokens, input_tokens, cached_tokens,
-                cache_read_total, cache_write_total, last_llm_at
+                cache_read_total, cache_write_total, cost_usd, last_llm_at
          FROM sessions WHERE id = ?`,
       )
       .get(id) as {
@@ -389,6 +393,7 @@ export class Db {
         cached_tokens: number | null;
         cache_read_total: number | null;
         cache_write_total: number | null;
+        cost_usd: number | null;
         last_llm_at: number | null;
       } | undefined;
     return {
@@ -398,6 +403,7 @@ export class Db {
       cachedTokens: r?.cached_tokens ?? 0,
       cacheReadTotal: r?.cache_read_total ?? 0,
       cacheWriteTotal: r?.cache_write_total ?? 0,
+      costUsd: r?.cost_usd ?? 0,
       lastLlmAt: r?.last_llm_at ?? null,
     };
   }
@@ -408,7 +414,9 @@ export class Db {
    * don't count into a session's spend. Includes archived descendants — they cost
    * money too. `sessions` = descendant count (0 for a leaf).
    */
-  treeUsage(id: string): { inputTokens: number; outputTokens: number; sessions: number } {
+  treeUsage(
+    id: string,
+  ): { inputTokens: number; outputTokens: number; costUsd: number; sessions: number } {
     const r = this.#db
       .prepare(
         `WITH RECURSIVE tree(id) AS (
@@ -419,11 +427,12 @@ export class Db {
          )
          SELECT COUNT(*) - 1 AS descendants,
                 COALESCE(SUM(input_tokens), 0) AS input,
-                COALESCE(SUM(output_tokens), 0) AS output
+                COALESCE(SUM(output_tokens), 0) AS output,
+                COALESCE(SUM(cost_usd), 0) AS cost
          FROM sessions WHERE id IN (SELECT id FROM tree)`,
       )
-      .get(id) as { descendants: number; input: number; output: number };
-    return { inputTokens: r.input, outputTokens: r.output, sessions: r.descendants };
+      .get(id) as { descendants: number; input: number; output: number; cost: number };
+    return { inputTokens: r.input, outputTokens: r.output, costUsd: r.cost, sessions: r.descendants };
   }
 
   /** Sessions with a turn in flight (any message still pending) — sidebar busy dots. */

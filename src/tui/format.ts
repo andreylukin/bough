@@ -257,6 +257,11 @@ export function fmtTokens(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : `${n}`;
 }
 
+/** 1.234 → "$1.23", 0.0042 → "$0.004" — sub-dollar spend keeps a visible digit. */
+export function fmtUsd(n: number): string {
+  return `$${n >= 1 ? n.toFixed(2) : n >= 0.001 ? n.toFixed(3) : n.toFixed(4)}`;
+}
+
 // ---- cache warmth -------------------------------------------------------------
 // The conversation prefix rides Anthropic's default 5-minute sliding TTL
 // (supervisor/llm.ts); the system+tools prefix is on the 1-hour tier but is small
