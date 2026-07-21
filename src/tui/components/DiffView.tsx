@@ -47,12 +47,19 @@ function DiffLine({ line }: { line: string }) {
 // Changes review: file list on top, the selected file's hunks in a scrollable
 // window below. Long diffs scroll with j/k; apply/revert act via the store.
 // Content-only — the unified panel container owns the border + tab bar.
+function statusColor(status: WireFileDiff["status"]): string {
+  return status === "deleted" ? palette.error : status === "added" ? palette.accent : palette.warn;
+}
+
 export function DiffView(
-  { entries, fileSel, scroll, rows }: {
+  { entries, fileSel, scroll, rows, focused }: {
     entries: DiffEntry[];
     fileSel: number;
     scroll: number;
     rows: number;
+    // Focused mode hides the file list so the selected file's hunks get the whole
+    // panel (with many changed files the shared layout leaves them barely visible).
+    focused: boolean;
   },
 ) {
   const fileRows = Math.max(2, Math.min(entries.length, 6));
@@ -62,42 +69,47 @@ export function DiffView(
   );
   const sel = entries[fileSel];
   const lines = sel ? sel.file.hunks.flatMap((h) => [h.header, ...h.lines]) : [];
-  const bodyRows = Math.max(4, rows - fileRows - 8);
+  const bodyRows = focused ? Math.max(4, rows - 4) : Math.max(4, rows - fileRows - 8);
   const at = Math.max(0, Math.min(scroll, lines.length - bodyRows));
   return (
     <Box flexDirection="column" marginTop={1}>
-      <Text bold>
-        changes{" "}
-        <Text dimColor>
-          {entries.length} file{entries.length === 1 ? "" : "s"}
-        </Text>
-      </Text>
-      {entries.slice(fileStart, fileStart + fileRows).map((e, i) => {
-        const { add, del } = stats(e.file);
-        const sel = fileStart + i === fileSel;
-        return (
-          // Selected rows drop custom span colors: under inverse a colored fg
-          // becomes a colored bg speck inside the light bar.
-          <SelRow key={`${e.source}:${e.file.path}`} sel={sel}>
-            <Text
-              color={sel ? undefined : e.file.status === "deleted"
-                ? palette.error
-                : e.file.status === "added"
-                ? palette.accent
-                : palette.warn}
-            >
-              {STATUS_MARK[e.file.status]}
-            </Text>{" "}
-            {e.file.path}
-            <Text color={sel ? undefined : palette.accent}>{"  "}+{add}</Text>
-            <Text color={sel ? undefined : palette.error}>{" "}-{del}</Text>
-            {e.label
-              ? <Text color={sel ? undefined : palette.warn}>{"  "}◆ {e.label}</Text>
-              : <Text dimColor>{"  "}{e.source}</Text>}
-          </SelRow>
-        );
-      })}
-      {entries.length === 0 && <Text dimColor>no changes on this session's branch</Text>}
+      {focused && sel
+        ? (
+          <Text bold>
+            <Text color={statusColor(sel.file.status)}>{STATUS_MARK[sel.file.status]}</Text>{" "}
+            {sel.file.path}
+          </Text>
+        )
+        : (
+          <Box flexDirection="column">
+            <Text bold>
+              changes{" "}
+              <Text dimColor>
+                {entries.length} file{entries.length === 1 ? "" : "s"}
+              </Text>
+            </Text>
+            {entries.slice(fileStart, fileStart + fileRows).map((e, i) => {
+              const { add, del } = stats(e.file);
+              const rowSel = fileStart + i === fileSel;
+              return (
+                // Selected rows drop custom span colors: under inverse a colored fg
+                // becomes a colored bg speck inside the light bar.
+                <SelRow key={`${e.source}:${e.file.path}`} sel={rowSel}>
+                  <Text color={rowSel ? undefined : statusColor(e.file.status)}>
+                    {STATUS_MARK[e.file.status]}
+                  </Text>{" "}
+                  {e.file.path}
+                  <Text color={rowSel ? undefined : palette.accent}>{"  "}+{add}</Text>
+                  <Text color={rowSel ? undefined : palette.error}>{" "}-{del}</Text>
+                  {e.label
+                    ? <Text color={rowSel ? undefined : palette.warn}>{"  "}◆ {e.label}</Text>
+                    : <Text dimColor>{"  "}{e.source}</Text>}
+                </SelRow>
+              );
+            })}
+            {entries.length === 0 && <Text dimColor>no changes on this session's branch</Text>}
+          </Box>
+        )}
       {sel && (
         <Box flexDirection="column" marginTop={1}>
           {lines.slice(at, at + bodyRows).map((l, i) => <DiffLine key={at + i} line={l} />)}
@@ -109,9 +121,11 @@ export function DiffView(
         </Box>
       )}
       <Text dimColor>
-        {sel?.subagentId
-          ? "a adopt this subagent's changes · j/k scroll"
-          : "a apply · A all · R revert · j/k scroll"}
+        {focused
+          ? "← back · j/k scroll"
+          : sel?.subagentId
+          ? "a adopt this subagent's changes · → focus · j/k scroll"
+          : "a apply · A all · R revert · → focus · j/k scroll"}
       </Text>
     </Box>
   );

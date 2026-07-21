@@ -38,6 +38,23 @@ function snapBase(opts: ChangesOpts): string {
   return opts.snapshotBase ?? Deno.env.get("BOUGH_SNAPSHOT_BASE") ?? clonefile.snapshotBase();
 }
 
+// Display noise: build/cache artifacts that clutter the review list. Filtered
+// from what the Changes rail shows AND from the apply "covers everything" seal
+// check, so they neither distract the reviewer nor block sealing. Apply/revert
+// otherwise read paths straight from the client's selection or shadow.diff, and
+// parseGitDiff is untouched, so nothing here changes what a materialize can touch.
+const NOISE_SEGMENTS = ["__pycache__", "node_modules", ".pytest_cache", ".mypy_cache"];
+const NOISE_BASENAMES = [".DS_Store"];
+const NOISE_SUFFIXES = [".pyc", ".pyo"];
+
+function isNoise(path: string): boolean {
+  const segs = path.split("/");
+  const base = segs.at(-1) ?? "";
+  return NOISE_SEGMENTS.some((s) => segs.includes(s)) ||
+    NOISE_BASENAMES.includes(base) ||
+    NOISE_SUFFIXES.some((s) => base.endsWith(s));
+}
+
 async function isFile(path: string): Promise<boolean> {
   try {
     return (await Deno.stat(path)).isFile;
@@ -103,7 +120,8 @@ export async function sessionChanges(
     }
   }
 
-  return diffs;
+  // Display filter only — drop build/cache noise from each section's file list.
+  return diffs.map((d) => ({ ...d, files: d.files.filter((f) => !isNoise(f.path)) }));
 }
 
 /** What an apply actually did — the UI's feedback line is built from this. */
@@ -146,7 +164,10 @@ export async function applyChanges(
     if (!dir) throw new ChangesError(400, "no shadow workspace to apply");
     const origin = await shadow.originRepo(dir);
     if (!origin) throw new ChangesError(400, "shadow workspace has no origin");
-    const changed = (await shadow.diff(dir, sessionId)).files.map((f) => f.path);
+    // Match the display filter: noise files are never shown/selected, so they
+    // must not count toward "covers everything" (else the seal never fires).
+    const changed = (await shadow.diff(dir, sessionId)).files
+      .map((f) => f.path).filter((p) => !isNoise(p));
     const paths = body.paths.length > 0 ? body.paths.filter((p) => changed.includes(p)) : changed;
     if (paths.length === 0) return { applied: [], origin, branch: null, sealed: false };
     try {

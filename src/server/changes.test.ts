@@ -343,6 +343,47 @@ Deno.test({
   },
 });
 
+Deno.test({
+  name: "changes: build/cache noise (__pycache__/*.pyc/.DS_Store) is filtered from the diff",
+  ignore: !gitAvailable,
+  fn: async () => {
+    await withShadowRoots(async () => {
+      const repo = await tempGitRepo();
+      const c = ctx();
+      const h = createHandler(c);
+      try {
+        const s = await (await h(jsonReq("POST", "/sessions", { title: "s", workspace: repo })))
+          .json() as Session;
+        const dir = await attachWorkspace(c.db, repo, s.id);
+        await Deno.writeTextFile(`${dir}/real.py`, "x = 1\n");
+        await Deno.mkdir(`${dir}/__pycache__`, { recursive: true });
+        await Deno.writeTextFile(`${dir}/__pycache__/real.cpython-312.pyc`, "junk\n");
+        await Deno.writeTextFile(`${dir}/mod.pyc`, "junk\n");
+        await Deno.writeTextFile(`${dir}/.DS_Store`, "junk\n");
+
+        const { diffs } = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
+          diffs: Diff[];
+        };
+        // Only the real source file survives; the noise is filtered from display.
+        assertEquals(diffs[0].files.map((f) => f.path), ["real.py"]);
+
+        // Apply-all still seals (noise doesn't count toward "covers everything").
+        const applied = await h(
+          jsonReq("POST", `/sessions/${s.id}/changes/apply`, { source: "shadow", paths: [] }),
+        );
+        assertEquals(applied.status, 200);
+        const after = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
+          diffs: Diff[];
+        };
+        assertEquals(after.diffs[0]?.files ?? [], []);
+      } finally {
+        await Deno.remove(repo, { recursive: true });
+        c.db.close();
+      }
+    });
+  },
+});
+
 // ---- clonefile-backed changes (self-skips without cp/git) ------------------
 
 Deno.test({

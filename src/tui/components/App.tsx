@@ -285,6 +285,9 @@ export function App(
   // diff state
   const [fileSel, setFileSel] = useState(0);
   const [diffScroll, setDiffScroll] = useState(0);
+  // Focused review: hide the file list so the selected file's hunks get the full
+  // panel height. Enter/→ enters, ←/Esc leaves (Esc via the panel-close handler).
+  const [diffFocus, setDiffFocus] = useState(false);
   // model state
   const [cfg, setCfg] = useState<BoughConfig | null>(null);
   const [modelSel, setModelSel] = useState(0);
@@ -1707,6 +1710,17 @@ export function App(
       }
       // ---- changes: the run's uncommitted diffs (was the ^d modal) ----
       if (panelTab === "changes") {
+        // Enter/→ focus the selected file's hunks (full-height); ← returns to the
+        // list. (Esc leaves the panel entirely, via the shared close handler.)
+        if (key.return) {
+          if (diffEntries[fileSel]) setDiffFocus((f) => !f);
+          return;
+        }
+        if (key.rightArrow) {
+          if (diffEntries[fileSel]) setDiffFocus(true);
+          return;
+        }
+        if (key.leftArrow) return setDiffFocus(false);
         if (key.upArrow) {
           setDiffScroll(0);
           return setFileSel((i) => Math.max(0, i - 1));
@@ -2441,7 +2455,15 @@ export function App(
             />
           )
           : panelTab === "changes"
-          ? <DiffView entries={diffEntries} fileSel={fileSel} scroll={diffScroll} rows={rows} />
+          ? (
+            <DiffView
+              entries={diffEntries}
+              fileSel={fileSel}
+              scroll={diffScroll}
+              rows={rows}
+              focused={diffFocus}
+            />
+          )
           : panelTab === "model"
           ? (cfg
             ? (
