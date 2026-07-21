@@ -509,6 +509,21 @@ export function App(
   const viewH = Math.max(3, rows - chromeH);
   // The "N more lines below" indicator takes a viewport row while scrolled up.
   const bodyH = Math.max(2, viewH - (scrollOff > 0 ? 1 : 0));
+  // While scrolled away from the bottom, anchor the viewport to CONTENT, not
+  // the bottom: scrollOff counts lines up from the end, so transcript growth
+  // (streaming) dragged the reading position down, and collapsing a fold
+  // yanked the view away from its header. Absorb the length delta during
+  // render (React's derived-state pattern) so a drifted frame is never
+  // painted; at the bottom (scrollOff 0) the viewport keeps following output.
+  const prevLineCount = useRef(lines.length);
+  if (lines.length !== prevLineCount.current) {
+    const delta = lines.length - prevLineCount.current;
+    prevLineCount.current = lines.length;
+    if (scrollOff > 0) {
+      const next = Math.max(0, Math.min(scrollOff + delta, Math.max(0, lines.length - bodyH)));
+      if (next !== scrollOff) setScrollOff(next);
+    }
+  }
   const maxOff = Math.max(0, lines.length - bodyH);
   const off = Math.min(scrollOff, maxOff);
   // Re-anchor the stored offset when the transcript shrinks (collapsing a long
@@ -2132,7 +2147,10 @@ export function App(
                       // Tail of the output (errors live at the end), capped so
                       // the card can't swallow the viewport.
                       const all = shellOut.out ? shellOut.out.split("\n") : [];
-                      const CAP = 12;
+                      // Shrinks with the terminal: a card taller than the
+                      // chrome's room makes Ink paint rows over each other
+                      // (dropped lines, the label colliding with the echo).
+                      const CAP = Math.max(3, Math.min(12, rows - 15));
                       const shown = all.slice(-CAP);
                       const skipped = all.length - shown.length;
                       return (

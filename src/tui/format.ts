@@ -120,7 +120,12 @@ function mdInline(line: string): string {
     // bold) from being taken as the link opener and swallowing the escape.
     .replace(
       /(?<!\x1b)\[([^\]]+)\]\((\S+?)\)/g,
-      (_m, text, url) => guard(osc8(url, `${UL}${text}${UL_OFF} ${DIM}(${url})${B_OFF}`)),
+      // A label that IS the url skips the parenthetical — "url (url)" was noise.
+      (_m, text, url) =>
+        guard(osc8(
+          url,
+          text === url ? `${UL}${text}${UL_OFF}` : `${UL}${text}${UL_OFF} ${DIM}(${url})${B_OFF}`,
+        )),
     )
     // Bare URLs become clickable as themselves; trailing punctuation stays prose.
     .replace(/https?:\/\/[^\s)\]>'"]+/g, (m) => {

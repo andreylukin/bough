@@ -37,6 +37,13 @@ Deno.test("md: markdown links wrap in an OSC 8 hyperlink", () => {
   assertEquals(out.split("]8;;").length - 1, 2); // one open + one close
 });
 
+Deno.test("md: a link whose label IS the url renders without the parenthetical", () => {
+  if (!COLOR) return;
+  const out = md("see [https://git-scm.com](https://git-scm.com)");
+  assertStringIncludes(out, LINK_OPEN("https://git-scm.com"));
+  assertEquals(out.includes("(https://git-scm.com)"), false); // no "url (url)" dup
+});
+
 Deno.test("md: bare URLs become clickable, trailing punctuation stays prose", () => {
   if (!COLOR) return;
   const out = md("try https://example.com/a.");
