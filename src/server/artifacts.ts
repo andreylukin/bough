@@ -81,6 +81,42 @@ function specTitle(spec: unknown, fallback: string): string {
   return typeof title === "string" && title ? title : fallback;
 }
 
+/**
+ * Browser-facing 404. Artifact links are opened by the non-technical audience
+ * artifacts exist for, and a mistyped/replaced link answered with raw JSON is a
+ * dead end in Chrome — so requests that prefer text/html get a plain-language
+ * page in the viewer's footer aesthetic (styles.ts palette, self-contained).
+ */
+const NOT_FOUND_PAGE = `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>This page isn't here</title>
+<style>
+:root { color-scheme: light dark; }
+body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  background: #fcfcfb; color: #0b0b0b; font: 14px/1.55 system-ui, sans-serif; }
+main { max-width: 34em; padding: 32px 28px; }
+.eyebrow { font: 600 11.5px ui-monospace, "SF Mono", Menlo, monospace; text-transform: uppercase;
+  letter-spacing: 0.08em; color: #52514e; margin: 0 0 14px; }
+h1 { font-size: 21px; font-weight: 650; letter-spacing: -0.01em; margin: 0 0 10px; }
+p { margin: 0; color: #52514e; }
+@media (prefers-color-scheme: dark) {
+  body { background: #1a1a19; color: #f4f3ef; }
+  .eyebrow, p { color: #c3c2b7; }
+}
+</style>
+</head>
+<body>
+<main>
+<p class="eyebrow">404 · not found</p>
+<h1>This page isn't here</h1>
+<p>It may have moved or been replaced. Ask bough to share it again.</p>
+</main>
+</body>
+</html>`;
+
 /** Splice the comment layer in before </body> (or append if there's no body tag). */
 function injectCommentWidget(html: string): string {
   const widget = commentWidget();
@@ -199,13 +235,15 @@ export async function listArtifacts(sessionId: string, base?: string): Promise<A
  * Serve one artifact file. Traversal / bad-id → 403; missing → 404; else the file with
  * its content type and a no-cache header (artifacts are overwritten in place).
  * A `*.ui.json` spec serves as its rendered viewer page (comment layer included);
- * `raw` skips the wrapper and returns the spec JSON itself.
+ * `raw` skips the wrapper and returns the spec JSON itself. `accept` is the
+ * request's Accept header: a client that prefers text/html gets an HTML 404,
+ * anything else keeps the JSON body.
  */
 export async function serveArtifact(
   sessionId: string,
   name: string,
   base?: string,
-  opts?: { raw?: boolean },
+  opts?: { raw?: boolean; accept?: string },
 ): Promise<Response> {
   let full: string;
   try {
@@ -242,6 +280,12 @@ export async function serveArtifact(
       headers: { "content-type": type, "cache-control": "no-cache" },
     });
   } catch {
+    if (opts?.accept?.includes("text/html")) {
+      return new Response(NOT_FOUND_PAGE, {
+        status: 404,
+        headers: { "content-type": "text/html; charset=utf-8" },
+      });
+    }
     return new Response(JSON.stringify({ error: "not found" }), {
       status: 404,
       headers: { "content-type": "application/json" },

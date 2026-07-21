@@ -101,7 +101,8 @@ export const catalog = defineCatalog(schema, {
         bars: z.array(z.object({ label: z.string(), value: z.number() })),
       }),
       description:
-        "Horizontal bar chart for one measure across categories; values are direct-labeled.",
+        "Horizontal bar chart for one measure across categories; values are direct-labeled. " +
+        'unit renders as a suffix, except currency symbols ("$", "€", "£", "¥") which prefix.',
     },
     Link: {
       props: z.object({ label: z.string(), href: z.string() }),
