@@ -77,7 +77,7 @@ import {
 import { DiffView, flattenDiffs } from "./DiffView.tsx";
 import { modelEntries, ModelPicker } from "./ModelPicker.tsx";
 import { Panel, PANEL_TABS, type PanelTab, PanelTabs } from "./Panel.tsx";
-import { Help } from "./Help.tsx";
+import { Help, helpMaxScroll } from "./Help.tsx";
 import { appendHistory, loadHistory, saveLastSession } from "../state.ts";
 import { copyToClipboard } from "../clipboard.ts";
 import { progressEnd, progressStart, setTitle, tabColor, termBackground } from "../term.ts";
@@ -395,6 +395,11 @@ export function App(
 
   const rows = stdout?.rows || 24;
   const width = stdout?.columns || 80;
+  // Help-overlay scroll offset (short terminals) — the max lives in a ref so
+  // the stable mouse subscription can clamp wheel scrolling without resubscribing.
+  const [helpScroll, setHelpScroll] = useState(0);
+  const helpMaxScrollRef = useRef(0);
+  helpMaxScrollRef.current = helpMaxScroll(rows, width);
 
   // ---- the conversation viewport ------------------------------------------
   const isExpanded = useCallback(
@@ -741,10 +746,18 @@ export function App(
     onMouse((ev: MouseEvent) => {
       const l = layout.current;
       if (ev.kind === "wheel-up") {
+        if (l.mode === "help") {
+          setHelpScroll((o) => Math.max(0, o - 3));
+          return;
+        }
         setScrollOff((o) => Math.min(l.maxOff, o + 3));
         return;
       }
       if (ev.kind === "wheel-down") {
+        if (l.mode === "help") {
+          setHelpScroll((o) => Math.min(helpMaxScrollRef.current, o + 3));
+          return;
+        }
         setScrollOff((o) => Math.max(0, o - 3));
         return;
       }
@@ -807,13 +820,40 @@ export function App(
 
   // The conversation tree: user turns as nodes with every child session (forks,
   // compactions, subagents) that split off during the turn attached to it.
+  // Inside a subagent branch the tree re-roots at the SPAWNER — the same full
+  // tree as from the parent — instead of a tree of the subagent alone, which
+  // left the parent thread invisible/unreachable (UX audit). The parent thread
+  // is fetched when the tab opens; message-level ops then act on the parent.
+  const parentId = store.session?.kind === "subagent" ? store.session.originId ?? null : null;
+  const treeRootId = parentId && store.sessions.some((s) => s.id === parentId)
+    ? parentId
+    : currentId;
+  const [parentThread, setParentThread] = useState<{ id: string; thread: Message[] } | null>(null);
+  useEffect(() => {
+    if (mode !== "panel" || panelTab !== "conversation") return;
+    if (!treeRootId || treeRootId === currentId) return;
+    let stale = false;
+    api.getSession(treeRootId)
+      .then(({ thread }) => {
+        if (!stale) setParentThread({ id: treeRootId, thread });
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [mode, panelTab, treeRootId, currentId]);
+  const treeThread = treeRootId === currentId
+    ? store.thread
+    : parentThread?.id === treeRootId
+    ? parentThread.thread
+    : [];
   const childSessions = useMemo(
     () =>
-      store.sessions.filter((s) => s.originId === currentId && (showDeprecated || !s.deprecatedAt)),
-    [store.sessions, currentId, showDeprecated],
+      store.sessions.filter((s) => s.originId === treeRootId && (showDeprecated || !s.deprecatedAt)),
+    [store.sessions, treeRootId, showDeprecated],
   );
-  const convItems = useMemo(() => treeItems(buildTree(store.thread, childSessions), sections), [
-    store.thread,
+  const convItems = useMemo(() => treeItems(buildTree(treeThread, childSessions), sections), [
+    treeThread,
     childSessions,
     sections,
   ]);
@@ -823,14 +863,19 @@ export function App(
   // ^f opens on the live tip, but branch rows can stream in after the open and
   // strand the initial "end" index mid-list — keep following the tip until the
   // user takes the cursor over; after that only clamp to a shrinking list.
+  // Re-rooted at the spawner (inside a subagent), the cursor starts on the
+  // current subagent's own row instead — "you are here" in the parent's tree.
   useEffect(() => {
     if (mode !== "panel" || panelTab !== "conversation") return;
     if (forkNavTouched.current) {
       moveForkSel((i) => Math.min(i, Math.max(0, convItems.length - 1)));
+    } else if (treeRootId !== currentId) {
+      const own = convItems.findIndex((it) => it.type === "branch" && it.session.id === currentId);
+      moveForkSel(own >= 0 ? own : Math.max(0, convItems.length - 1));
     } else {
       moveForkSel(Math.max(0, convItems.length - 1));
     }
-  }, [mode, panelTab, convItems.length, moveForkSel]);
+  }, [mode, panelTab, convItems, treeRootId, currentId, moveForkSel]);
 
   // `!cmd` runs locally in the session's workspace — a quick look (git status,
   // ls) shouldn't cost an agent turn. Output lands in a card above the composer;
@@ -1087,10 +1132,10 @@ export function App(
             setSections(null);
             return;
           }
-          const id = store.currentId;
+          const id = treeRootId;
           const nodes = convItems.flatMap((it) => (it.type === "node" ? [it.node] : []));
           if (!id || nodes.length === 0) return;
-          const byId = new Map(store.thread.map((m) => [m.id, m]));
+          const byId = new Map(treeThread.map((m) => [m.id, m]));
           const firstLine = (m: Message | undefined): string => {
             const t = m?.parts.find((p) => p.type === "text");
             return t && "text" in t ? (t.text.split("\n").find((l) => l.trim()) ?? "") : "";
@@ -1115,7 +1160,13 @@ export function App(
           return;
         }
         // Range selection (v): highlight turns, then compact/extract them. On a
-        // section header, v (like enter) selects the whole section.
+        // section header, v (like enter) selects the whole section. The range
+        // ops edit a session's OWN turns, so they need the parent open — not
+        // the re-rooted view from inside one of its subagents.
+        if (ch === "v" && treeRootId !== currentId) {
+          setPanelMsg("this is the parent's tree — open the parent to edit its turns");
+          return;
+        }
         if (ch === "v") {
           forkNavTouched.current = true;
           const it = convItems[forkSelRef.current];
@@ -1177,7 +1228,8 @@ export function App(
           };
           if (it.type === "branch") openSession(it.session);
           else if (it.type === "step") {
-            store.fork(it.step.point.msgId, it.step.point.atPart).then(forked);
+            store.fork(it.step.point.msgId, it.step.point.atPart, undefined, treeRootId ?? undefined)
+              .then(forked);
           } else {
             // Rewind-to-edit: the branch cuts BEFORE this turn and its user message
             // lands back in the composer, ready to edit & resend (Claude Code's
@@ -1186,7 +1238,7 @@ export function App(
               .filter((p) => p.type === "text")
               .map((p) => p.text)
               .join("\n");
-            store.fork(it.node.point.msgId, undefined, true).then((s) => {
+            store.fork(it.node.point.msgId, undefined, true, treeRootId ?? undefined).then((s) => {
               if (!s) return;
               if (text) {
                 setComp({ text, cursor: text.length });
@@ -1213,8 +1265,12 @@ export function App(
         }
         if (ch === "h") return setShowDeprecated((v) => !v);
         // C: compact the WHOLE session onto a summary branch (a v-range + c
-        // compacts just the selected span).
+        // compacts just the selected span). Same own-turns rule as v above.
         if (ch === "C") {
+          if (treeRootId !== currentId) {
+            setPanelMsg("this is the parent's tree — open the parent to compact it");
+            return;
+          }
           store.compact().then((s) => s && openSession(s));
           return;
         }
@@ -1350,7 +1406,17 @@ export function App(
     }
 
     if (mode === "help") {
-      setMode("chat"); // any key closes
+      // A list taller than the terminal scrolls (j/k, arrows, page keys — the
+      // overlay used to cut off with "enlarge the window"); anything else closes.
+      const maxS = helpMaxScrollRef.current;
+      if (maxS > 0) {
+        if (key.downArrow || ch === "j") return setHelpScroll((o) => Math.min(maxS, o + 1));
+        if (key.upArrow || ch === "k") return setHelpScroll((o) => Math.max(0, o - 1));
+        if (key.pageDown) return setHelpScroll((o) => Math.min(maxS, o + 10));
+        if (key.pageUp) return setHelpScroll((o) => Math.max(0, o - 10));
+      }
+      setHelpScroll(0);
+      setMode("chat"); // any other key closes
       // …but a ctrl-chord typed right behind the closing key shouldn't be
       // swallowed — fall through to the chat handlers below (Esc+^p chording).
       if (!(key.ctrl && ch)) return;
@@ -1936,6 +2002,7 @@ export function App(
                 keyInput={keyInput}
                 sessionModel={store.session?.model}
                 sessionEffort={store.session?.effort}
+                rows={rows}
               />
             )
             : <Text dimColor>loading config…</Text>)
@@ -1967,7 +2034,7 @@ export function App(
 
   const modal = panel ??
     (mode === "help"
-      ? <Help rows={rows} width={width} />
+      ? <Help rows={rows} width={width} scroll={helpScroll} />
       : mode === "new"
       ? <NewSession query={newQuery} hits={dirHits} selected={newSel} />
       : null);

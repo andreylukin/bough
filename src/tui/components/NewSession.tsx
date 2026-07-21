@@ -24,7 +24,8 @@ export function NewSession(
       </Text>
       {hits.map((h, i) => (
         <Text key={h.path} inverse={i === selected} wrap="truncate">
-          {h.repo ? <Text color={palette.accent}>{"◆ "}</Text> : <Text dimColor>{"◇ "}</Text>}
+          {/* ⎇ = git repo (◆ is taken: it means "subagent" in the conversation tree). */}
+          {h.repo ? <Text color={palette.accent}>{"⎇ "}</Text> : <Text dimColor>{"◇ "}</Text>}
           {h.display}
         </Text>
       ))}

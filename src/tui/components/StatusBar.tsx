@@ -108,22 +108,45 @@ export function StatusBar(
       }
       <Box minWidth={0} flexShrink={1}>
         <Box minWidth={4} flexShrink={1}>
-          <Text wrap="truncate">
-            <Text color={connected ? palette.accent : palette.error}>{connected ? "●" : "○"}</Text>
-            <Text dimColor>{connected ? "" : " reconnecting…"}</Text>
-            {session?.kind === "subagent" ? <Text color={palette.accent}>{" "}◆</Text> : null}
-            {session
-              ? (
-                <Text bold>
-                  {" "}
-                  {(session.title || "(untitled)").replace(/^subagent · /, "")}
-                </Text>
-              )
-              : draftLabel
-              ? <Text dimColor>{" "}{draftLabel}</Text>
-              : null}
-            {parentTitle ? <Text dimColor>{"  "}branch of {parentTitle} · esc ↩ back</Text> : null}
-          </Text>
+          <Box flexShrink={0}>
+            <Text>
+              <Text color={connected ? palette.accent : palette.error}>{connected ? "●" : "○"}</Text>
+              <Text dimColor>{connected ? "" : " reconnecting…"}</Text>
+            </Text>
+          </Box>
+          {
+            /* Inside a subagent the title is a breadcrumb — ● parent › ◆ sub — so
+            the thread visibly hangs under its spawner. The parent crumb shrinks
+            first (higher flexShrink) so the subagent title survives narrow widths. */
+          }
+          {isSub && parentTitle
+            ? (
+              <>
+                <Box flexShrink={10} minWidth={2}>
+                  <Text wrap="truncate" dimColor>{" "}{parentTitle}</Text>
+                </Box>
+                <Box flexShrink={0}>
+                  <Text dimColor>{" ›"}</Text>
+                </Box>
+              </>
+            )
+            : null}
+          <Box flexShrink={1} minWidth={0}>
+            <Text wrap="truncate">
+              {isSub ? <Text color={palette.accent}>{" "}◆</Text> : null}
+              {session
+                ? (
+                  <Text bold>
+                    {" "}
+                    {(session.title || "(untitled)").replace(/^subagent · /, "")}
+                  </Text>
+                )
+                : draftLabel
+                ? <Text dimColor>{" "}{draftLabel}</Text>
+                : null}
+              {isSub && parentTitle ? <Text dimColor>{"  "}esc ↩ back</Text> : null}
+            </Text>
+          </Box>
         </Box>
         <Box flexShrink={0}>
           <Text>
