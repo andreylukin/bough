@@ -2,7 +2,7 @@ import { palette } from "../theme.ts";
 import { useEffect, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import type { Usage } from "../api.ts";
-import { coldCacheNote, ctxPctLeft, fmtTokens, fmtUsd } from "../format.ts";
+import { coldCacheNote, ctxPctLeft, disconnectNote, fmtTokens, fmtUsd } from "../format.ts";
 import type { UiMode } from "../keys.ts";
 import type { TuiSession } from "../store.ts";
 
@@ -17,6 +17,25 @@ function useColdCache(usage: Usage): string | null {
     return () => clearInterval(t);
   }, []);
   return coldCacheNote(usage, Date.now());
+}
+
+/** Tracks how long the event stream has been down and ticks once a second while
+ * disconnected, so the chip escalates from "reconnecting…" to a server-unreachable
+ * line whose elapsed time counts up. Reconnect resets it (App resyncs state). */
+function useDisconnectNote(connected: boolean): { text: string; urgent: boolean } | null {
+  const since = useRef<number | null>(null);
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (connected) {
+      since.current = null;
+      return;
+    }
+    since.current ??= Date.now();
+    const t = setInterval(() => setTick((x) => x + 1), 1000);
+    return () => clearInterval(t);
+  }, [connected]);
+  if (connected) return null;
+  return disconnectNote(since.current ?? Date.now(), Date.now());
 }
 
 /** Animated spinner + elapsed seconds while a turn runs. `escHint` closes the
@@ -84,6 +103,7 @@ export function StatusBar(
 ) {
   const isSub = session?.kind === "subagent";
   const spinner = useSpinner(busy, isSub ? "esc ↩ back" : "esc interrupts");
+  const down = useDisconnectNote(connected);
   const cold = useColdCache(usage);
   // Session spend: tree rollup (incl. subagents) when present, else own total.
   const spend = usage.tree?.costUsd ?? usage.costUsd ?? 0;
@@ -110,7 +130,14 @@ export function StatusBar(
         <Box minWidth={4} flexShrink={1}>
           <Text wrap="truncate">
             <Text color={connected ? palette.accent : palette.error}>{connected ? "●" : "○"}</Text>
-            <Text dimColor>{connected ? "" : " reconnecting…"}</Text>
+            {down
+              ? (
+                <Text color={down.urgent ? palette.error : undefined} dimColor={!down.urgent}>
+                  {" "}
+                  {down.text}
+                </Text>
+              )
+              : null}
             {session?.kind === "subagent" ? <Text color={palette.accent}>{" "}◆</Text> : null}
             {session
               ? (

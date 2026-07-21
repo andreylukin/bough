@@ -299,6 +299,41 @@ export function coldCacheNote(
   return `❄ re-caches ~${fmtTokens(usage.contextTokens)}`;
 }
 
+// ---- session row labels --------------------------------------------------------
+// Shadow worktrees are per-session dirs NAMED BY SESSION UUID
+// (~/.bough/workspaces/<id> — vcs/shadow.ts), and a fork inherits its origin's
+// worktree path until its own first turn, so a workspace basename can be a
+// DIFFERENT session's uuid. Never surface those as a label.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Row label for a session: its title, else the workspace dir basename, else
+ * "(untitled)". "untitled" is the server's placeholder for sessions still
+ * awaiting the title worker (supervisor/title.ts UNTITLED). */
+export function sessionLabel(title: string | null | undefined, workspace?: string | null): string {
+  const t = (title ?? "").trim();
+  if (t && t !== "untitled") return t;
+  const base = (workspace ?? "").replace(/\/+$/, "").split("/").pop() ?? "";
+  if (base && !UUID_RE.test(base)) return base;
+  return "(untitled)";
+}
+
+// ---- connection chip -----------------------------------------------------------
+/** How long a disconnect stays a quiet "reconnecting…" before escalating. */
+export const DISCONNECT_ESCALATE_MS = 15_000;
+
+/** Status-bar text while the event stream is down: a routine blip for the first
+ * DISCONNECT_ESCALATE_MS, then an escalated line with the elapsed time counting
+ * up — a dead server must not read like a blip forever (live-crash finding). */
+export function disconnectNote(sinceMs: number, now: number): { text: string; urgent: boolean } {
+  if (now - sinceMs < DISCONNECT_ESCALATE_MS) return { text: "reconnecting…", urgent: false };
+  const secs = Math.floor((now - sinceMs) / 1000);
+  return {
+    text: `server unreachable for ${secs}s — is it running? ` +
+      `(bough serves the TUI; restart it and this will reconnect)`,
+    urgent: true,
+  };
+}
+
 /**
  * Fuzzy rank for the composer popups: exact prefix beats word-boundary prefix
  * beats substring beats in-order subsequence; non-matches drop out (score 0).

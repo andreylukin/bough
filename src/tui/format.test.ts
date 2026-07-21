@@ -1,5 +1,14 @@
 import { assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
-import { COLOR, fuzzyScore, linkAt, md, wordLeft, wordRight } from "./format.ts";
+import {
+  COLOR,
+  disconnectNote,
+  fuzzyScore,
+  linkAt,
+  md,
+  sessionLabel,
+  wordLeft,
+  wordRight,
+} from "./format.ts";
 
 Deno.test("wordLeft/wordRight: readline word boundaries", () => {
   const t = "what does this do";
@@ -84,4 +93,30 @@ Deno.test("coldCacheNote: fires only for stale, substantial contexts", async () 
   assertEquals(coldCacheNote(small, now), null); // trivial cost — no noise
   assertEquals(coldCacheNote({ contextTokens: 180_000, lastLlmAt: null }, now), null);
   assertEquals(coldCacheNote({ contextTokens: 180_000 }, now), null); // never ran
+});
+
+Deno.test("sessionLabel: title wins; untitled falls back to the workspace basename", () => {
+  assertEquals(sessionLabel("Fix the bug", "/Users/x/repos/ws"), "Fix the bug");
+  assertEquals(sessionLabel("untitled", "/Users/x/repos/ws"), "ws"); // server placeholder
+  assertEquals(sessionLabel("", "/Users/x/repos/ws/"), "ws"); // trailing slash
+  assertEquals(sessionLabel(undefined, null), "(untitled)");
+  assertEquals(sessionLabel("  ", ""), "(untitled)");
+});
+
+Deno.test("sessionLabel: uuid-named shadow worktrees never leak as labels", () => {
+  // A fork inherits its origin's worktree (~/.bough/workspaces/<origin-id>)
+  // until its own first turn — the basename is ANOTHER session's uuid.
+  assertEquals(
+    sessionLabel("untitled", "/Users/x/.bough/workspaces/d54a0527-0c52-4326-a539-32de20780c13"),
+    "(untitled)",
+  );
+});
+
+Deno.test("disconnectNote: quiet blip first, then escalates with elapsed seconds", () => {
+  const t0 = 1_000_000;
+  assertEquals(disconnectNote(t0, t0 + 5_000), { text: "reconnecting…", urgent: false });
+  const late = disconnectNote(t0, t0 + 42_000);
+  assertEquals(late.urgent, true);
+  assertStringIncludes(late.text, "server unreachable for 42s");
+  assertStringIncludes(late.text, "restart it and this will reconnect");
 });

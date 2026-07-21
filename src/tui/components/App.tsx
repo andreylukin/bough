@@ -805,6 +805,17 @@ export function App(
       .map(({ s }) => ({ s, depth: 0, prefix: "" }))
     : flattenTree(pickerSessions);
 
+  // The sessions tab's per-row age column only moves when something re-renders,
+  // so a working session read as stalled between events. While the panel is open
+  // AND a visible session is working, tick once a second; otherwise no timer.
+  const anyVisibleBusy = pickerSessions.some((s) => s.busy);
+  const [, setPanelClock] = useState(0);
+  useEffect(() => {
+    if (mode !== "panel" || !anyVisibleBusy) return;
+    const t = setInterval(() => setPanelClock((x) => x + 1), 1000);
+    return () => clearInterval(t);
+  }, [mode, anyVisibleBusy]);
+
   // The conversation tree: user turns as nodes with every child session (forks,
   // compactions, subagents) that split off during the turn attached to it.
   const childSessions = useMemo(
