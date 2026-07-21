@@ -4,6 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import type { BoughEvent } from "../schema/parts.ts";
 import { authHeaders, BASE } from "./api.ts";
 
+// Every event type the server publishes must be listed here or the TUI silently
+// drops it (the drain loop skips unknown frames) — check this list whenever a
+// new bus event is added; tool.log shipped without it and live output never
+// rendered while the backend streamed perfectly.
 const KNOWN_TYPES = new Set([
   "session.created",
   "session.updated",
@@ -13,6 +17,7 @@ const KNOWN_TYPES = new Set([
   "message.retry",
   "message.part",
   "message.finished",
+  "tool.log",
   "turn.finished",
   "changes.updated",
   "usage.updated",
