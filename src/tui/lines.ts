@@ -155,6 +155,7 @@ function pushBlock(
 // else in an output block reads dim (it's the result, not the intent).
 function styleOutputLine(line: string, isError: boolean): string {
   if (isError) return red(line);
+  if (line.startsWith("[program error]")) return red(line);
   if (line.startsWith("[done] accepted")) return green(line);
   if (line.startsWith("[done] rejected")) return red(line);
   if (line.startsWith("[check]")) return yellow(line);
@@ -209,7 +210,13 @@ function toolGroupLines(
   if (!expanded) return;
   for (const call of calls) {
     const res = results.get(call.id);
-    const status = res ? (res.isError ? red("✗ error") : green("✓ done")) : yellow("⚙ running");
+    const status = !res
+      ? yellow("⚙ running")
+      : res.isError
+      ? red("✗ error")
+      : res.interrupted
+      ? yellow("⏹ interrupted")
+      : green("✓ done");
     push(out, `${green("◇")} ${call.name} ${status}`, width, key);
     // What ran, bright; what came back, dim — the brightness IS the boundary,
     // with an ↳ seam between the two.

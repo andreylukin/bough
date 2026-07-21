@@ -123,7 +123,12 @@ export function runProgram(
 
   return new Promise<ProgramResult>((resolve) => {
     let settled = false;
-    const onAbort = () => finish({ ok: false, logs: [], error: "program interrupted by the user" });
+    // Console lines already streamed out of the worker — an interrupt terminates
+    // the worker before it can post its batched logs, so this copy is what keeps
+    // the partial output in the tool result.
+    const streamed: string[] = [];
+    const onAbort = () =>
+      finish({ ok: false, logs: streamed, error: "program interrupted by the user" });
     const finish = (result: ProgramResult) => {
       if (settled) return;
       settled = true;
@@ -147,6 +152,7 @@ export function runProgram(
         | { type: "done"; logs: string[] }
         | { type: "error"; message: string; logs: string[] };
       if (msg.type === "log") {
+        streamed.push(msg.line);
         onLog?.(msg.line);
         return;
       }

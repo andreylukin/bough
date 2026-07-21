@@ -39,6 +39,9 @@ export const ToolResultPart = z.object({
   callId: z.string(),
   output: z.unknown(),
   isError: z.boolean(),
+  // The call was stopped by a user interrupt, not completed — the output holds
+  // whatever partial work it produced. The UI renders this distinctly from done.
+  interrupted: z.boolean().optional(),
 });
 // A user-attached image (composer `@shot.png`). The bytes live OUTSIDE the parts
 // JSON: composing the message copies the referenced file to
