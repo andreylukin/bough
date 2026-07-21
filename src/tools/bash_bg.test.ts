@@ -54,10 +54,11 @@ Deno.test("bashKill terminates a running shell and reports its end", async () =>
   try {
     const { id } = JSON.parse(await bashBg("sleep 30", ctx));
     assertStringIncludes(bashOutput(id, ctx), "[running]");
-    assertStringIncludes(bashKill(id, ctx), "SIGTERM");
-    await pollUntil(() => bashOutput(id, ctx), (s) => s.includes("[exited"));
+    // The kill resolves only once the process is dead, reporting the real outcome.
+    assertStringIncludes(await bashKill(id, ctx), `killed ${id} (SIGTERM)`);
+    assertStringIncludes(bashOutput(id, ctx), "[exited");
     // A second kill is a no-op report, not an error.
-    assertStringIncludes(bashKill(id, ctx), "already exited");
+    assertStringIncludes(await bashKill(id, ctx), "already exited");
   } finally {
     await Deno.remove(workspace, { recursive: true }).catch(() => {});
   }

@@ -101,6 +101,7 @@ import { extract, ExtractBody } from "../extract.ts";
 import { handoff, HandoffBody } from "../handoff.ts";
 import { move, MoveBody } from "../move.ts";
 import { adoptSubagent } from "../subagent.ts";
+import { listJobs, onJobEvent } from "../tools/bash_bg.ts";
 import type { LlmClient } from "../supervisor/llm.ts";
 import { applyChanges, revertChanges, sessionChanges } from "./changes.ts";
 import { ChangesApplyBody, ChangesRevertBody } from "../schema/changes.ts";
@@ -538,6 +539,16 @@ const emitChangesUpdated = (ctx: AppCtx, sessionId: string) =>
 const getMetrics: Handler = (_req, ctx, params) => {
   if (!ctx.db.getSession(params.id)) return error(404, "session not found");
   return json(sessionMetrics(ctx.db, params.id));
+};
+
+// GET /sessions/:id/jobs → live + recent background shells of the session AND its
+// subagent branches (the TUI's status-bar chip and live job cards). Each row
+// carries its owning sessionId so subagent jobs are attributable.
+const getJobs: Handler = (_req, ctx, params) => {
+  if (!ctx.db.getSession(params.id)) return error(404, "session not found");
+  const subagents = ctx.db.listSessions()
+    .filter((s) => s.kind === "subagent" && s.originId === params.id);
+  return json({ jobs: [...listJobs(params.id), ...subagents.flatMap((s) => listJobs(s.id))] });
 };
 
 // GET /sessions/:id/changes → { diffs } across active snapshot sources (shadow + clonefile).
@@ -1333,6 +1344,11 @@ const routes: Route[] = [
     handler: getMetrics,
   },
   {
+    method: "GET",
+    pattern: new URLPattern({ pathname: "/sessions/:id/jobs" }),
+    handler: getJobs,
+  },
+  {
     method: "POST",
     pattern: new URLPattern({ pathname: "/sessions/:id/changes/apply" }),
     handler: applyChangesH,
@@ -1496,6 +1512,9 @@ const routes: Route[] = [
 /** Build the fetch handler bound to a ctx (used by main.ts and by tests). */
 export function createHandler(ctx: AppCtx): (req: Request) => Response | Promise<Response> {
   const auth = createAuth(ctx.password);
+  // Background-shell lifecycle (bash_bg.ts) → bus, so the TUI hears job spawns
+  // and exits live (status-bar chip + job cards) without polling blind.
+  onJobEvent((ev) => ctx.bus.publish({ type: ev.type, sessionId: ev.sessionId, data: ev.job }));
   return async (req) => {
     const denied = await auth.gate(req);
     if (denied) return denied;

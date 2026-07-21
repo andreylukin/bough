@@ -38,6 +38,7 @@ import {
   type ToolRunCtx,
 } from "./tools/mod.ts";
 import { runOracle } from "./tools/oracle.ts";
+import { runningIds } from "./tools/bash_bg.ts";
 import { contextWindowFor, usageCostUsd } from "./pricing.ts";
 import {
   clientFor,
@@ -1024,8 +1025,17 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     // cleanly with a marker, not a failure — the user asked it to stop.
     const interrupted = err instanceof InterruptedError || signal?.aborted ||
       (err as Error)?.name === "APIUserAbortError" || (err as Error)?.name === "AbortError";
+    // Background shells are detached on purpose — say which ones outlive the stop.
+    const survivors = interrupted ? runningIds(sessionId) : [];
     const note: Part = interrupted
-      ? { type: "text", text: "⏹ Stopped." }
+      ? {
+        type: "text",
+        text: "⏹ Stopped." + (survivors.length
+          ? `\n${survivors.join(", ")} still running — ${
+            survivors.length === 1 ? "it survives" : "they survive"
+          } the interrupt`
+          : ""),
+      }
       : { type: "text", text: `⚠︎ Turn failed: ${friendlyTurnError(err, model)}` };
     parts.push(note);
     db.updateMessage(messageId, parts, false);

@@ -465,6 +465,45 @@ function branchCardLines(
   );
 }
 
+/** A background shell of the open session (GET /sessions/:id/jobs row). */
+export interface BgJob {
+  id: string;
+  command: string;
+  startedAt: number;
+  status: "running" | "exited" | "killed";
+  tailLines: string[];
+}
+
+function fmtElapsed(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+
+// A background shell's card: alive while it runs (⋯ marker + output tail,
+// refreshed as the jobs poll lands), an honest ✗ once killed. Natural exits get
+// no card — their completion note already lands in the transcript.
+function jobCardLines(out: VLine[], job: BgJob, width: number) {
+  const w = width - 2;
+  const body: VLine[] = [];
+  if (job.status === "running") {
+    body.push({
+      text: `${yellow("⚙")} ${bold(job.id)} ${yellow("⋯ running")}  ${
+        dim(`${clip(job.command, 60)} · ${fmtElapsed(Date.now() - job.startedAt)}`)
+      }`,
+    });
+    for (const line of job.tailLines) {
+      for (const l of wrap(line, w - 2)) body.push({ text: `${dim("│")} ${dim(l)}` });
+    }
+  } else {
+    body.push({
+      text: `${red("⚙")} ${bold(job.id)} ${red("✗ killed")}  ${dim(clip(job.command, 60))}`,
+    });
+  }
+  const copy = [`${job.id} · ${job.command}`, ...job.tailLines].join("\n");
+  out.push({ text: "" });
+  out.push(...body.map((l) => ({ ...l, copy, text: "  " + l.text })));
+}
+
 export function buildLines(
   thread: Message[],
   streaming: Record<string, string>,
@@ -473,6 +512,7 @@ export function buildLines(
   width: number,
   branches: Branch[] = [],
   toolLogs?: Record<string, string[]>,
+  jobs: BgJob[] = [],
 ): VLine[] {
   // Branches draw under the turn that spawned them; a completion note that already
   // renders as a card is dropped from the raw thread (it's a system message).
@@ -499,5 +539,9 @@ export function buildLines(
   }
   // Branches whose spawn point isn't in the current thread fall to the tail.
   for (const b of orphans) branchCardLines(out, b, width, isFull);
+  // Background shells at the tail: running jobs look alive, killed ones honest.
+  for (const job of jobs) {
+    if (job.status !== "exited") jobCardLines(out, job, width);
+  }
   return out;
 }

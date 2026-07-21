@@ -31,6 +31,12 @@ const KILL_GRACE_MS = 2_000;
 interface BgShell {
   id: string;
   command: string;
+  /** The session key this shell was promoted under (job events carry it). */
+  sessionKey: string;
+  startedAt: number;
+  endedAt: number | null;
+  /** Set by bashKill so the registry reports "killed", not a plain exit. */
+  killed: boolean;
   child: Deno.ChildProcess;
   /** Combined stdout+stderr in arrival order; capped at MAX_BUF. */
   buf: string;
@@ -52,6 +58,84 @@ interface BgShell {
 /** sessionKey → shellId → shell. Module-level: shells outlive turns, not the server. */
 const sessions = new Map<string, Map<string, BgShell>>();
 let seq = 0;
+
+// ---- job registry surface (jobs API + TUI visibility) ------------------------
+
+/** How long an exited shell stays in listJobs — long enough for the UI to show
+ * the outcome, short enough that old jobs don't pile up in the response. */
+const RECENT_MS = 5 * 60_000;
+/** Lines of output tail a job row carries (the TUI's live-card preview). */
+const TAIL_LINES = 3;
+
+export interface JobInfo {
+  id: string;
+  sessionId: string;
+  command: string;
+  startedAt: number;
+  status: "running" | "exited" | "killed";
+  exitCode?: number;
+  /** Last few non-empty output lines — the live-card preview. */
+  tailLines: string[];
+}
+
+export type JobEvent = { type: "job.spawned" | "job.exited"; sessionId: string; job: JobInfo };
+
+/** Job lifecycle listeners (the server republishes these on its event bus). */
+const jobListeners = new Set<(ev: JobEvent) => void>();
+export function onJobEvent(cb: (ev: JobEvent) => void): () => void {
+  jobListeners.add(cb);
+  return () => jobListeners.delete(cb);
+}
+
+function jobInfo(sh: BgShell): JobInfo {
+  const status = sh.status === null ? "running" : sh.killed ? "killed" : "exited";
+  const tail = sh.buf.trimEnd().split("\n").filter((l) => l.trim()).slice(-TAIL_LINES);
+  return {
+    id: sh.id,
+    sessionId: sh.sessionKey,
+    command: sh.command,
+    startedAt: sh.startedAt,
+    status,
+    ...(sh.status ? { exitCode: sh.status.code } : {}),
+    tailLines: tail,
+  };
+}
+
+function emitJob(type: JobEvent["type"], sh: BgShell) {
+  const ev: JobEvent = { type, sessionId: sh.sessionKey, job: jobInfo(sh) };
+  for (const cb of jobListeners) {
+    try {
+      cb(ev);
+    } catch {
+      // a broken listener must not break the shell lifecycle
+    }
+  }
+}
+
+/** Registered jobs of a session: everything running, plus shells that ended in
+ * the last RECENT_MS (so the UI can show the outcome). Running first, then newest. */
+export function listJobs(sessionId: string): JobInfo[] {
+  const shells = sessions.get(sessionId);
+  if (!shells) return [];
+  const now = Date.now();
+  return [...shells.values()]
+    .filter((sh) => sh.status === null || (sh.endedAt !== null && now - sh.endedAt < RECENT_MS))
+    .sort((a, b) =>
+      (a.status === null) === (b.status === null)
+        ? b.startedAt - a.startedAt
+        : a.status === null
+        ? -1
+        : 1
+    )
+    .map(jobInfo);
+}
+
+/** Ids of the session's still-running shells (the interrupt-survivor note). */
+export function runningIds(sessionId: string): string[] {
+  return [...(sessions.get(sessionId)?.values() ?? [])]
+    .filter((sh) => sh.status === null)
+    .map((sh) => sh.id);
+}
 
 function shellsOf(ctx: ToolRunCtx): Map<string, BgShell> {
   const key = ctx.sessionId ?? "(no-session)";
@@ -88,6 +172,10 @@ export function newShell(command: string, child: Deno.ChildProcess): BgShell {
   const sh: BgShell = {
     id: "",
     command,
+    sessionKey: "",
+    startedAt: Date.now(),
+    endedAt: null,
+    killed: false,
     child,
     buf: "",
     readAt: 0,
@@ -100,6 +188,7 @@ export function newShell(command: string, child: Deno.ChildProcess): BgShell {
   sh.pumps = Promise.all([pump(child.stdout, sh), pump(child.stderr, sh)]).then(() => {});
   child.status.then((s) => {
     sh.status = s;
+    sh.endedAt = Date.now();
     sh.onExit?.();
   });
   return sh;
@@ -116,26 +205,27 @@ export function promote(ctx: ToolRunCtx, sh: BgShell): string | null {
   const running = [...shells.values()].filter((s) => s.status === null).length;
   if (running >= MAX_RUNNING) return null;
   sh.id = `bg_${++seq}`;
+  sh.sessionKey = ctx.sessionId ?? "(no-session)";
   shells.set(sh.id, sh);
   const notify = ctx.notify;
-  if (notify) {
-    sh.onExit = () => {
-      // Claimed (bashWait) or already-noted → the model has/will get the result in
-      // band; don't also wake it with a note.
-      if (sh.notified || sh.claimed) return;
-      sh.notified = true;
-      const st = sh.status;
-      const lines = sh.buf ? sh.buf.trimEnd().split("\n").filter(Boolean).length : 0;
-      notify(
-        `[background] ${sh.id} finished (exit ${st?.code ?? "?"}${
-          st?.signal ? ` on ${st.signal}` : ""
-        }) — command "${sh.command.slice(0, 60)}", ${lines} line${lines === 1 ? "" : "s"} of ` +
-          `output. Read it with bashOutput("${sh.id}").`,
-      );
-    };
-    // Raced a near-instant exit between the caller's threshold and here.
-    if (sh.status !== null) sh.onExit();
-  }
+  sh.onExit = () => {
+    emitJob("job.exited", sh);
+    // Claimed (bashWait/bashKill) or already-noted → the model has/will get the
+    // result in band; don't also wake it with a note.
+    if (!notify || sh.notified || sh.claimed) return;
+    sh.notified = true;
+    const st = sh.status;
+    const lines = sh.buf ? sh.buf.trimEnd().split("\n").filter(Boolean).length : 0;
+    notify(
+      `[background] ${sh.id} finished (exit ${st?.code ?? "?"}${
+        st?.signal ? ` on ${st.signal}` : ""
+      }) — command "${sh.command.slice(0, 60)}", ${lines} line${lines === 1 ? "" : "s"} of ` +
+        `output. Read it with bashOutput("${sh.id}").`,
+    );
+  };
+  // Raced a near-instant exit between the caller's threshold and here.
+  if (sh.status !== null) sh.onExit();
+  else emitJob("job.spawned", sh);
   return sh.id;
 }
 
@@ -215,12 +305,15 @@ export async function bashWait(id: string, ctx: ToolRunCtx): Promise<string> {
   return bashOutput(id, ctx);
 }
 
-/** SIGTERM the shell (graceful for servers that forward it), SIGKILL backstop. */
-export function bashKill(id: string, ctx: ToolRunCtx): string {
+/** SIGTERM the shell (graceful for servers that forward it), SIGKILL backstop.
+ * Waits for the process to actually die (bounded by the backstop) so the result
+ * reports the real outcome — `killed bg_3 (SIGTERM)` — not just intent. */
+export async function bashKill(id: string, ctx: ToolRunCtx): Promise<string> {
   const sh = shellsOf(ctx).get(id);
   if (!sh) throw new Error(`no background shell ${id} in this session`);
   if (sh.status !== null) return `${id} already exited with code ${sh.status.code}`;
   sh.claimed = true; // deliberate kill — don't also post a completion note
+  sh.killed = true; // the registry reports "killed", not a plain exit
   try {
     sh.child.kill("SIGTERM");
   } catch {
@@ -238,7 +331,6 @@ export function bashKill(id: string, ctx: ToolRunCtx): string {
     }
   }, KILL_GRACE_MS);
   Deno.unrefTimer(backstop);
-  return `sent SIGTERM to ${id} (pid ${sh.child.pid}); SIGKILL follows in ${
-    KILL_GRACE_MS / 1000
-  }s if ignored`;
+  const st = await sh.child.status; // bounded: SIGKILL lands after the grace
+  return `killed ${id} (${st.signal ?? `exit ${st.code}`})`;
 }

@@ -10,7 +10,7 @@ import type {
   Part,
   Session,
 } from "../schema/parts.ts";
-import { api, type Usage, USAGE_ZERO, type WireDiff } from "./api.ts";
+import { api, type JobRow, type Usage, USAGE_ZERO, type WireDiff } from "./api.ts";
 import { useEvents } from "./events.ts";
 import { notifyDesktop } from "./term.ts";
 
@@ -59,6 +59,9 @@ export interface Store {
   usage: Usage;
   // Recent gated requests, newest first (net panel feed) — all verdicts, not just holds.
   feed: NetRequest[];
+  // Background shells of the open session (and its subagents): live + recently
+  // ended, refetched on job.* events and polled while any runs (tail lines move).
+  jobs: JobRow[];
   open: (id: string) => Promise<void>;
   newSession: (workspace?: string) => Promise<Session>;
   /** Post a message. While busy: posts immediately (steer) unless queue=true.
@@ -116,6 +119,7 @@ export function useStore(initialSessions: Session[]): Store {
   const [changes, setChanges] = useState<WireDiff[]>([]);
   const [usage, setUsage] = useState<Usage>(USAGE_ZERO);
   const [feed, setFeed] = useState<NetRequest[]>([]);
+  const [jobs, setJobs] = useState<JobRow[]>([]);
 
   // currentId in a ref so the stable event handler can filter without re-subscribing.
   const currentRef = useRef<string | null>(null);
@@ -210,6 +214,17 @@ export function useStore(initialSessions: Session[]): Store {
   const refreshChangesRef = useRef(refreshChanges);
   refreshChangesRef.current = refreshChanges;
 
+  const refreshJobs = useCallback(async (id: string | null) => {
+    if (!id) return setJobs([]);
+    try {
+      setJobs(await api.jobs(id));
+    } catch {
+      setJobs([]);
+    }
+  }, []);
+  const refreshJobsRef = useRef(refreshJobs);
+  refreshJobsRef.current = refreshJobs;
+
   const open = useCallback(async (id: string) => {
     setCurrentId(id);
     setStreaming({});
@@ -217,13 +232,15 @@ export function useStore(initialSessions: Session[]): Store {
     setActivity(null); // a blurb describes the session it was born in
     setChanges([]);
     setUsage(USAGE_ZERO);
+    setJobs([]);
     setSessions((prev) => prev.map((s) => (s.id === id && s.unseen ? { ...s, unseen: false } : s)));
     const { session, thread, usage } = await api.getSession(id);
     setSession(session);
     setThread(thread);
     setUsage(usage);
     refreshChanges(id);
-  }, [refreshChanges]);
+    refreshJobs(id);
+  }, [refreshChanges, refreshJobs]);
 
   const newSession = useCallback(async (workspace?: string) => {
     // No title — the backend's title worker names the session from its first message.
@@ -582,6 +599,20 @@ export function useStore(initialSessions: Session[]): Store {
         if (u.sessionId === currentRef.current) setUsage(u);
         break;
       }
+      case "job.spawned":
+      case "job.exited": {
+        // Refetch when the job belongs to the open session or one of its
+        // subagent branches (the jobs endpoint aggregates both).
+        const cur = currentRef.current;
+        if (!cur) break;
+        const sid = ev.sessionId;
+        const relevant = sid === cur ||
+          sessionsRef.current.some((s) =>
+            s.id === sid && s.kind === "subagent" && s.originId === cur
+          );
+        if (relevant) refreshJobsRef.current(cur).catch(() => {});
+        break;
+      }
       case "net.request": {
         const r = ev.data as NetRequest;
         // Feed: upsert by id (verdict flips re-emit the row), newest first.
@@ -640,6 +671,7 @@ export function useStore(initialSessions: Session[]): Store {
       setUsage(usage);
       setStreaming({});
       refreshChangesRef.current(id);
+      refreshJobsRef.current(id).catch(() => {});
     } catch {
       // server unreachable — the next reconnect will resync again
     }
@@ -654,6 +686,15 @@ export function useStore(initialSessions: Session[]): Store {
 
   const busy = thread.some((m) => m.pending);
   busyRef.current = busy;
+
+  // While a background shell runs, poll its tail so the live card actually moves
+  // (job.* events only mark spawn/exit; the output between them has no event).
+  const jobsRunning = jobs.some((j) => j.status === "running");
+  useEffect(() => {
+    if (!jobsRunning || !currentId) return;
+    const t = setInterval(() => refreshJobsRef.current(currentId).catch(() => {}), 2_000);
+    return () => clearInterval(t);
+  }, [jobsRunning, currentId]);
 
   // Flush staged messages once the turn finishes (the server queues rapid posts into
   // a single follow-up turn). Guard on currentId so a switch mid-turn doesn't send
@@ -685,6 +726,7 @@ export function useStore(initialSessions: Session[]): Store {
     changes,
     usage,
     feed,
+    jobs,
     open,
     newSession,
     send,

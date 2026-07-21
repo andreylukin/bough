@@ -565,6 +565,16 @@ export function App(
         })),
     [store.sessions, currentId, noteById],
   );
+  // Background shells: cards render only the open session's own jobs (a
+  // subagent's jobs show inside its branch); the status-bar chip counts all.
+  const ownJobs = useMemo(
+    () => store.jobs.filter((j) => j.sessionId === currentId),
+    [store.jobs, currentId],
+  );
+  const runningJobs = useMemo(
+    () => store.jobs.filter((j) => j.status === "running").length,
+    [store.jobs],
+  );
   const lines = useMemo(
     () =>
       buildLines(
@@ -575,6 +585,7 @@ export function App(
         width,
         branches,
         store.toolLogs,
+        ownJobs,
       ),
     // palette.epoch: an applied theme must recolor the pre-rendered SGR lines.
     [
@@ -585,6 +596,7 @@ export function App(
       isFull,
       width,
       branches,
+      ownJobs,
       palette.epoch,
     ],
   );
@@ -2733,6 +2745,7 @@ export function App(
           quitHint={quitHint}
           mode={mode === "chat" && (store.pending || store.ask) ? "approval" : mode}
           usage={store.usage}
+          bgJobs={runningJobs}
           draftLabel={isDraft ? `new · ${shortWs}` : null}
           dir={sessionDir}
           model={cfg
