@@ -10,7 +10,7 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
       ["esc esc", "clear the draft · rewind when empty"],
       ["↑/↓", "recall sent messages"],
       ["^s", "search the conversation"],
-      ["! cmd", "run a local shell command — history opens fzf-style, ↑/↓ pick"],
+      ["! cmd", "run in a local shell · ↑/↓ picks history"],
       ["/", "skill autocomplete · @ workspace files"],
       ["tab", "accept the gray autocomplete preview"],
       ["^e", "expand/collapse all tool calls"],
@@ -28,9 +28,9 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
     ],
   },
   {
-    section: "panel — ^t toggles · tab cycles · esc backs out",
+    section: "panel — ^t toggle · tab cycle · esc back",
     keys: [
-      ["^p ^f ^d ^o", "jump: sessions · conversation · changes · model"],
+      ["^p ^f ^d ^o", "sessions · conversation · changes · model"],
       ["↑↓ or j/k", "move · enter acts"],
     ],
   },
@@ -48,10 +48,10 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
     section: "conversation tab",
     keys: [
       ["enter", "rewind to a turn · open a branch"],
-      ["v", "select a range → c compact · e extract · m move · d delete"],
+      ["v", "select a range → compact/extract/move/delete"],
       ["s", "label sections by topic"],
       ["C", "compact the whole session"],
-      ["glyphs", "● root · ⑂ fork · ◆ subagent · ≣ compacted · ◇ tool step"],
+      ["glyphs", "● root ⑂ fork ◆ subagent ≣ compacted ◇ tool"],
     ],
   },
   {

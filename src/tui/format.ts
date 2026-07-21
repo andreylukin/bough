@@ -323,6 +323,30 @@ export function fuzzyScore(candidate: string, query: string): number {
   return 0;
 }
 
+/**
+ * The candidate indices fuzzyScore matched, for highlighting popup rows —
+ * same tier order, so the marked chars are the ones that made it match.
+ * Empty query or no match → no positions.
+ */
+export function fuzzyPositions(candidate: string, query: string): number[] {
+  if (!query) return [];
+  const c = candidate.toLowerCase();
+  const q = query.toLowerCase();
+  const run = (start: number) => Array.from(q, (_, i) => start + i);
+  if (c.startsWith(q)) return run(0);
+  for (const b of ["-", "_", " "]) {
+    const i = c.indexOf(b + q);
+    if (i >= 0) return run(i + 1);
+  }
+  const sub = c.indexOf(q);
+  if (sub >= 0) return run(sub);
+  const pos: number[] = [];
+  for (let j = 0; j < c.length && pos.length < q.length; j++) {
+    if (c[j] === q[pos.length]) pos.push(j);
+  }
+  return pos.length === q.length ? pos : [];
+}
+
 // Readline-style word boundaries for the composer (⌥b/⌥f, ctrl+w).
 export function wordLeft(text: string, cursor: number): number {
   let i = cursor;
