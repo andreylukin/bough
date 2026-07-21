@@ -219,6 +219,15 @@ const STOP_TOOL = {
     unknown
   >,
 };
+/**
+ * A literal "<stop/>" ending the text (possibly whitespace-padded / repeated):
+ * the model sometimes EMITS the sentinel as text instead of calling the stop
+ * tool, which used to render verbatim in transcripts and cost a nudge round.
+ * Tolerant parse: strip it (loop control, not content — same rule as the stop
+ * call itself) and honor it as a stop request. End-anchored on purpose so text
+ * merely mentioning the token (code spans, docs) is never touched.
+ */
+const TRAILING_STOP_SENTINEL = /(?:\s*<stop\s*\/>)+\s*$/i;
 /** Re-prompts before the harness gives up on an explicit stop (runaway brake). */
 const MAX_STOP_NUDGES = 3;
 const STOP_NUDGE = "[harness] Your turn is still open — it only ends when you call the stop " +
@@ -869,8 +878,17 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       const assistant: LlmContentBlock[] = [];
       for (const block of result.content) {
         if (block.type === "text") {
-          append({ type: "text", text: block.text });
-          assistant.push({ type: "text", text: block.text });
+          // Emitted-sentinel stop (see TRAILING_STOP_SENTINEL): strip it from
+          // what is stored/replayed and treat it as the stop call it meant.
+          let text = block.text;
+          if (TRAILING_STOP_SENTINEL.test(text)) {
+            stopRequested = true;
+            text = text.replace(TRAILING_STOP_SENTINEL, "");
+          }
+          if (text) {
+            append({ type: "text", text });
+            assistant.push({ type: "text", text });
+          }
         } else if (block.type === "reasoning") {
           // Persisted for display (when there's a summary to show) and replayed
           // in-memory within this turn — the OpenAI Responses client must echo a

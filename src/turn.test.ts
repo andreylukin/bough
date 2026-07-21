@@ -1099,6 +1099,48 @@ Deno.test("honesty gate: no nudge when the text makes no parallel claim", async 
   assertEquals(db.turnsByStatus("done").length, 1);
 });
 
+// ---- <stop/> sentinel leak -------------------------------------------------
+
+Deno.test("a literal <stop/> in the text is stripped and honored as a stop (no nudge round)", async () => {
+  const { db, bus, sessionId } = seed();
+  const llm = fakeLlm([
+    // No stop tool call — the model emitted the sentinel as text instead.
+    { content: [{ type: "text", text: "all done.\n<stop/>" }], stopReason: "end_turn" },
+  ]);
+  const { message, done } = beginTurn({ db, bus, llm, tools: [] }, sessionId);
+  await done;
+
+  assertEquals(llm.calls.length, 1); // counted as stop — the STOP_NUDGE round is saved
+  const final = finalMessage(db, message.id);
+  assertEquals(final.parts, [{ type: "text", text: "all done." }] as Part[]);
+  assertEquals(db.turnsByStatus("done").length, 1);
+});
+
+Deno.test("repeated / whitespace-padded <stop/> copies are all stripped", async () => {
+  const { db, bus, sessionId } = seed();
+  const llm = fakeLlm([
+    { content: [{ type: "text", text: "done. <stop/> <stop/>\n<stop/>" }], stopReason: "end_turn" },
+  ]);
+  const { message, done } = beginTurn({ db, bus, llm, tools: [] }, sessionId);
+  await done;
+
+  assertEquals(llm.calls.length, 1);
+  assertEquals(finalMessage(db, message.id).parts, [{ type: "text", text: "done." }] as Part[]);
+  assertEquals(db.turnsByStatus("done").length, 1);
+});
+
+Deno.test("<stop/> mentioned mid-text (code span) is content, not a stop — left verbatim", async () => {
+  const { db, bus, sessionId } = seed();
+  const text = "the sentinel is `<stop/>` — never emit it as text.";
+  const llm = fakeLlm([stopWith(text)]);
+  const { message, done } = beginTurn({ db, bus, llm, tools: [] }, sessionId);
+  await done;
+
+  assertEquals(llm.calls.length, 1);
+  assertEquals(finalMessage(db, message.id).parts, [{ type: "text", text }] as Part[]);
+  assertEquals(db.turnsByStatus("done").length, 1);
+});
+
 Deno.test("ask(): turn interrupt rejects the hold and the turn ends interrupted", async () => {
   const { db, bus, sessionId } = seed();
   const llm = fakeLlm([
