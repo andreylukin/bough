@@ -1,6 +1,7 @@
 import { palette } from "../theme.ts";
 import { Box } from "ink";
 import { Text } from "./Text.tsx";
+import { SelRow } from "./SelRow.tsx";
 import type { WireDiff, WireFileDiff } from "../api.ts";
 
 export interface DiffEntry {
@@ -64,14 +65,13 @@ export function DiffView(
       </Text>
       {entries.slice(fileStart, fileStart + fileRows).map((e, i) => {
         const { add, del } = stats(e.file);
+        const sel = fileStart + i === fileSel;
         return (
-          <Text
-            key={`${e.source}:${e.file.path}`}
-            inverse={fileStart + i === fileSel}
-            wrap="truncate"
-          >
+          // Selected rows drop custom span colors: under inverse a colored fg
+          // becomes a colored bg speck inside the light bar.
+          <SelRow key={`${e.source}:${e.file.path}`} sel={sel}>
             <Text
-              color={e.file.status === "deleted"
+              color={sel ? undefined : e.file.status === "deleted"
                 ? palette.error
                 : e.file.status === "added"
                 ? palette.accent
@@ -80,13 +80,13 @@ export function DiffView(
               {STATUS_MARK[e.file.status]}
             </Text>{" "}
             {e.file.path}
-            <Text color={palette.accent}>{"  "}+{add}</Text>
-            <Text color={palette.error}>{" "}-{del}</Text>
+            <Text color={sel ? undefined : palette.accent}>{"  "}+{add}</Text>
+            <Text color={sel ? undefined : palette.error}>{" "}-{del}</Text>
             <Text dimColor>{"  "}{e.source}</Text>
-          </Text>
+          </SelRow>
         );
       })}
-      {entries.length === 0 && <Text dimColor>no pending changes</Text>}
+      {entries.length === 0 && <Text dimColor>no changes on this session's branch</Text>}
       {sel && (
         <Box flexDirection="column" marginTop={1}>
           {lines.slice(at, at + bodyRows).map((l, i) => <DiffLine key={at + i} line={l} />)}
