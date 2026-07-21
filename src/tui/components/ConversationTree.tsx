@@ -3,7 +3,7 @@ import { Box, Text } from "ink";
 import type { Message, Part } from "../../schema/parts.ts";
 import type { WireSection } from "../api.ts";
 import type { TuiSession } from "../store.ts";
-import { clip, toolSummary } from "../format.ts";
+import { clip, fmtUsd, toolSummary } from "../format.ts";
 import { parseSubagentNote } from "../lines.ts";
 
 // The conversation as a branchable tree (pi's /tree model). Each user turn is a
@@ -221,19 +221,25 @@ export function ConversationTree(
           const s = it.session;
           const dep = !!s.deprecatedAt;
           return (
-            <Text key={`b-${s.id}`} inverse={sel} wrap="truncate">
-              {gutter}{"   "}
-              <Text
-                color={s.kind === "subagent" ? palette.accent : undefined}
-                dimColor={s.kind !== "subagent"}
-              >
-                {KIND_GLYPH[s.kind] ?? "•"}
-              </Text>{" "}
-              <Text dimColor strikethrough={dep}>
-                {(s.title || "(untitled)").replace(/^(fork|compacted|subagent) · /, "")}
-              </Text>
-              {dep ? <Text dimColor>{"  deprecated"}</Text> : null}
-            </Text>
+            <Box key={`b-${s.id}`}>
+              <Box flexGrow={1} minWidth={0}>
+                <Text inverse={sel} wrap="truncate">
+                  {gutter}{"   "}
+                  <Text
+                    color={s.kind === "subagent" ? palette.accent : undefined}
+                    dimColor={s.kind !== "subagent"}
+                  >
+                    {KIND_GLYPH[s.kind] ?? "•"}
+                  </Text>{" "}
+                  <Text dimColor strikethrough={dep}>
+                    {(s.title || "(untitled)").replace(/^(fork|compacted|subagent) · /, "")}
+                  </Text>
+                  {dep ? <Text dimColor>{"  deprecated"}</Text> : null}
+                </Text>
+              </Box>
+              {/* Right-aligned per-branch spend, when priced usage exists. */}
+              {s.costUsd ? <Text dimColor>{"  "}{fmtUsd(s.costUsd)}</Text> : null}
+            </Box>
           );
         }
         const n = it.node;
