@@ -598,8 +598,12 @@ export function App(
           .slice(0, 6)
           .map(({ s }) => ({ label: `/${s.name}`, detail: s.description, insert: `/${s.name} ` }));
         dbg?.(`skill-popup q=${JSON.stringify(q)} items=${items.length}`);
+        // A filter that matches nothing still shows the menu (as a "no matching
+        // commands" row) — silently hiding it read as "/ is broken".
         setPopup(
-          items.length ? { kind: "skill", items, sel: 0, tokenStart: 0, tokenEnd: end } : null,
+          items.length || q
+            ? { kind: "skill", items, sel: 0, tokenStart: 0, tokenEnd: end }
+            : null,
         );
       };
       if (skillsCache.current) apply(skillsCache.current);
@@ -900,6 +904,21 @@ export function App(
         store.notify("⤳ handoff drafted — review the prompt, edit, send");
       });
       return;
+    }
+    // A command-shaped "/word" that matches no command or skill must not leak
+    // to the LLM as chat — say so instead. /theme is deliberately hidden from
+    // the menu (theming lives in the panel), so point there.
+    const slash = /^\/([A-Za-z][\w-]*)(\s|$)/.exec(text);
+    if (slash) {
+      const name = slash[1];
+      if (name === "theme") {
+        return setErr("theming lives in the panel — press ^t, then the theme tab");
+      }
+      const known = ["handoff", "conversation", "schedule", "schedules"].includes(name) ||
+        skillsCache.current?.some((s) => s.name === name);
+      if (skillsCache.current && !known) {
+        return setErr(`unknown command: /${name} — tab completes from the / menu`);
+      }
     }
     if (store.currentId) {
       store.send(text, queue).catch((e) => setErr(String(e)));
@@ -1537,7 +1556,13 @@ export function App(
     // enter that merely re-inserted the text you already typed read as "/ is
     // broken" — nothing visibly happened). @-file selections always just insert:
     // they're part of a message being composed, not a command.
-    if (popup) {
+    if (popup && popup.items.length === 0) {
+      // The "no matching commands" row: nothing to navigate or complete. Esc
+      // dismisses; enter falls through so submit() answers with the unknown-
+      // command hint; other keys keep typing/filtering.
+      if (key.escape) return setPopup(null);
+      if (key.tab || key.upArrow || key.downArrow) return;
+    } else if (popup) {
       const completed = (c: { text: string; cursor: number }) => {
         const it = popup.items[popup.sel];
         return {
@@ -2180,12 +2205,14 @@ export function App(
                     borderColor={palette.border}
                     paddingX={1}
                   >
-                    {popup.items.map((it, i) => (
-                      <Text key={it.label} inverse={i === popup.sel} wrap="truncate">
-                        {it.label}
-                        {it.detail ? <Text dimColor>{"  "}{it.detail}</Text> : null}
-                      </Text>
-                    ))}
+                    {popup.items.length === 0
+                      ? <Text dimColor>no matching commands</Text>
+                      : popup.items.map((it, i) => (
+                        <Text key={it.label} inverse={i === popup.sel} wrap="truncate">
+                          {it.label}
+                          {it.detail ? <Text dimColor>{"  "}{it.detail}</Text> : null}
+                        </Text>
+                      ))}
                   </Box>
                 )
                 : null}

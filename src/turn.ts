@@ -294,6 +294,36 @@ const steering = new Set<string>();
 const running = new Map<string, AbortController>();
 
 /**
+ * First-message text awaiting auto-title, keyed by session. Flushed at the
+ * turn's first output (markFirstOutput): a turn that fails with nothing to
+ * show must not name the session from its user message.
+ */
+const pendingTitles = new Map<string, string>();
+
+/**
+ * Map known auth/key failures to plain language with the fix at hand (^o is
+ * the API-keys tab). Anything unrecognized keeps the raw SDK message.
+ */
+export function friendlyTurnError(err: unknown, model: string): string {
+  const msg = (err as Error)?.message ?? String(err);
+  const provider = model.startsWith("openai:")
+    ? "OpenAI"
+    : model.includes("/")
+    ? "OpenRouter"
+    : "Anthropic";
+  // Missing key: the Anthropic SDK's "Could not resolve authentication method…"
+  // or llm.ts's "<ENV>_API_KEY is not set" for the bearer-token providers.
+  if (/Could not resolve authentication method|apiKey or authToken|API_KEY is not set/i.test(msg)) {
+    return `No ${provider} API key set — press ^o to add one.`;
+  }
+  // Key present but rejected (401 bodies from any of the three providers).
+  if (/invalid x-api-key|authentication_error|Incorrect API key/i.test(msg)) {
+    return `${provider} rejected the API key — press ^o to update it.`;
+  }
+  return msg;
+}
+
+/**
  * Cascade hooks fired when a session is interrupted — how a stop reaches work not
  * tied to the turn's own signal. subagent.ts registers one per DETACHED child so an
  * explicit interrupt of the spawner stops the whole subtree (a runaway detached
@@ -365,8 +395,10 @@ export function startUserTurn(
   };
   ctx.db.createMessage(userMessage);
   ctx.bus.publish({ type: "message.started", sessionId, data: userMessage });
-  // Fire-and-forget: name an untitled session from its first message (title worker).
-  maybeAutoTitle({ db: ctx.db, bus: ctx.bus, titler: ctx.titler }, sessionId, text);
+  // Name an untitled session from its first message (title worker) — but only
+  // once its turn produces output (see markFirstOutput): a failed "hello" must
+  // not leave the session titled "Hello".
+  pendingTitles.set(sessionId, text);
   // One turn per session: if one is already running, the message is persisted and
   // shown now, and it STEERS — the live turn yields at its next round boundary and
   // the follow-up turn (which sees this message) starts immediately. Clients that
@@ -456,6 +488,12 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     if (sawOutput) return;
     sawOutput = true;
     db.setTurnFirstOutput(turn.id, Date.now());
+    // Proof of life: fire the deferred auto-title now (see startUserTurn).
+    const titleText = pendingTitles.get(sessionId);
+    if (titleText !== undefined) {
+      pendingTitles.delete(sessionId);
+      maybeAutoTitle({ db, bus, titler: ctx.titler }, sessionId, titleText);
+    }
   };
   const parts: Part[] = [];
   // Set right before the message's final write. A late ask() settle (program
@@ -930,10 +968,12 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       (err as Error)?.name === "APIUserAbortError" || (err as Error)?.name === "AbortError";
     const note: Part = interrupted
       ? { type: "text", text: "⏹ Stopped." }
-      : { type: "text", text: `⚠︎ Turn failed: ${(err as Error).message}` };
+      : { type: "text", text: `⚠︎ Turn failed: ${friendlyTurnError(err, model)}` };
     parts.push(note);
     db.updateMessage(messageId, parts, false);
     const status = interrupted ? "interrupted" : "error";
+    // The UI must never know more than the server log does.
+    if (!interrupted) console.error(`turn failed [${sessionId}]:`, err);
     finishTurn(db, turn.id, status);
     bus.publish({ type: "message.part", sessionId, data: { messageId, part: note } });
     bus.publish({ type: "message.finished", sessionId, data: { messageId } });

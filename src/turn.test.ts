@@ -7,6 +7,7 @@ import { answerAsk, declineAsk, pendingAsks } from "./asks.ts";
 import type { LlmClient, LlmMessage, LlmParams, LlmResult } from "./supervisor/llm.ts";
 import type { ToolDef, ToolRunCtx } from "./tools/mod.ts";
 import { beginTurn, interruptTurn, isTurnRunning, startUserTurn, type TurnCtx } from "./turn.ts";
+import { UNTITLED } from "./supervisor/title.ts";
 import { recoverOrphanedTurns } from "./supervisor/turns.ts";
 
 // ---- harness ---------------------------------------------------------------
@@ -417,6 +418,44 @@ Deno.test("a failing API call surfaces an error part and marks the turn error", 
   assertStringIncludes((final.parts[0] as { text: string }).text, "boom");
   assertEquals(db.turnsByStatus("error").length, 1);
   assertEquals(eventTypes(events, message.id).includes("message.finished"), true);
+});
+
+Deno.test("a missing-key auth failure maps to a plain-language pointer", async () => {
+  const { db, bus, sessionId } = seed();
+  const llm: LlmClient = {
+    run: () =>
+      Promise.reject(
+        new Error(
+          "Could not resolve authentication method. Expected either apiKey or authToken to be set.",
+        ),
+      ),
+  };
+  const { message, done } = beginTurn({ db, bus, llm, tools: [] }, sessionId);
+  await done;
+  const text = (finalMessage(db, message.id).parts[0] as { text: string }).text;
+  assertStringIncludes(text, "No Anthropic API key set — press ^o to add one.");
+});
+
+Deno.test("a turn that fails with zero output does not auto-title the session", async () => {
+  const { db, bus, sessionId } = seed();
+  db.setSessionTitle(sessionId, UNTITLED);
+  const titler = (_text: string) => Promise.resolve("Named");
+  const llm: LlmClient = { run: () => Promise.reject(new Error("boom")) };
+  const { done } = startUserTurn({ db, bus, llm, tools: [], titler }, sessionId, "hello");
+  await done;
+  await new Promise((r) => setTimeout(r, 0)); // any stray title task settles
+  assertEquals(db.getSession(sessionId)?.title, UNTITLED);
+});
+
+Deno.test("auto-title fires once the turn produces output", async () => {
+  const { db, bus, sessionId } = seed();
+  db.setSessionTitle(sessionId, UNTITLED);
+  const titler = (_text: string) => Promise.resolve("Named");
+  const llm = fakeLlm([{ content: [{ type: "text", text: "hi there" }], stopReason: "end_turn" }]);
+  const { done } = startUserTurn({ db, bus, llm, tools: [], titler }, sessionId, "hello");
+  await done;
+  await new Promise((r) => setTimeout(r, 0)); // titling is fire-and-forget
+  assertEquals(db.getSession(sessionId)?.title, "Named");
 });
 
 Deno.test("a tool that throws yields an error tool_result but the turn continues", async () => {
