@@ -34,6 +34,11 @@ export interface WireFileDiff {
 export interface WireDiff {
   source: ChangeSource;
   files: WireFileDiff[];
+  /** Set on a direct subagent's unadopted branch diff (spawner's rail): the
+   * session to adopt. Review-only — apply/revert skip these groups. */
+  subagentId?: string;
+  /** Display label for a grouped section (`<subagent title> (unadopted)`). */
+  label?: string;
 }
 /** What POST changes/apply reports back — feeds the panel's feedback toast. */
 export interface ApplyOutcome {
@@ -240,6 +245,10 @@ export const api = {
   applyChanges: (id: string, source: ChangeSource, paths: string[]) =>
     jmsg<ApplyOutcome>(`/sessions/${id}/changes/apply`, postJson({ source, paths })),
   revertChanges: (id: string) => j(`/sessions/${id}/changes/revert`, postJson({})),
+  // Fold a finished subagent's branch into its spawner's workspace (the UI
+  // affordance mirroring the program's adopt() host function).
+  adoptSubagent: (subId: string) =>
+    jmsg<{ message: string }>(`/sessions/${subId}/adopt`, { method: "POST" }),
 
   // Branching. Both return the new branch's Session (or throw the server's message).
   fork: (

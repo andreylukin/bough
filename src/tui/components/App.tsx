@@ -819,6 +819,23 @@ export function App(
   ]);
   const diffEntries = flattenDiffs(store.changes);
   const cfgEntries = cfg ? modelEntries(cfg) : [];
+  // Direct subagents whose branch work hasn't been adopted yet — drives the `a`
+  // adopt affordance in both the changes tab and the conversation tree.
+  const unadopted = useMemo(
+    () => new Set(store.changes.flatMap((d) => (d.subagentId ? [d.subagentId] : []))),
+    [store.changes],
+  );
+  // Fold a subagent's branch into the open session's workspace — the USER-side
+  // of the model's adopt() host fn (the finish note asks the model, which
+  // rarely obliges; without this key the work is stranded on its branch).
+  const adoptSub = useCallback((subId: string) => {
+    const n = diffEntries.filter((e) => e.subagentId === subId).length;
+    const title = store.sessions.find((s) => s.id === subId)?.title || "subagent";
+    api.adoptSubagent(subId).then(
+      () => store.notify(`✓ adopted: ${n} file${n === 1 ? "" : "s"} from ${title}`),
+      (e) => setErr(e instanceof Error ? e.message : String(e)),
+    );
+  }, [diffEntries, store.sessions, store.notify]);
 
   // ^f opens on the live tip, but branch rows can stream in after the open and
   // strand the initial "end" index mid-list — keep following the tip until the
@@ -1211,6 +1228,12 @@ export function App(
           if (it?.type === "branch") store.deprecate(it.session.id, !it.session.deprecatedAt);
           return;
         }
+        // a: adopt the selected ◆ subagent's unadopted branch into this session.
+        if (ch === "a") {
+          const it = convItems[forkSelRef.current];
+          if (it?.type === "branch" && unadopted.has(it.session.id)) adoptSub(it.session.id);
+          return;
+        }
         if (ch === "h") return setShowDeprecated((v) => !v);
         // C: compact the WHOLE session onto a summary branch (a v-range + c
         // compacts just the selected span).
@@ -1294,23 +1317,31 @@ export function App(
         if (ch === "k") return setDiffScroll((s) => Math.max(0, s - 3));
         if (ch === "a") {
           const e = diffEntries[fileSel];
-          if (e) store.applyChanges(e.source, [e.file.path]);
+          if (!e) return;
+          // On a subagent's unadopted group, a adopts the whole branch — its
+          // files aren't in this session's workspace, so per-file apply can't.
+          if (e.subagentId) adoptSub(e.subagentId);
+          else store.applyChanges(e.source, [e.file.path]);
           return;
         }
         if (ch === "A") {
-          // Apply everything, one call per source (a session can have shadow + clonefile).
-          for (const source of new Set(diffEntries.map((e) => e.source))) {
+          // Apply everything of the session's OWN diffs, one call per source (a
+          // session can have shadow + clonefile). Subagent groups are review-only
+          // here — adopt them with a first.
+          const own = diffEntries.filter((e) => !e.subagentId);
+          for (const source of new Set(own.map((e) => e.source))) {
             store.applyChanges(
               source,
-              diffEntries.filter((e) => e.source === source).map((e) => e.file.path),
+              own.filter((e) => e.source === source).map((e) => e.file.path),
             );
           }
           return;
         }
         if (ch === "R") {
           // Nothing listed → nothing to revert; the raw call 400s ("no
-          // workspace") into a confusing error line.
-          if (diffEntries.length > 0) store.revertChanges();
+          // workspace") into a confusing error line. Subagent groups don't
+          // count — revert acts on the session's own change only.
+          if (diffEntries.some((e) => !e.subagentId)) store.revertChanges();
           return;
         }
         return;
@@ -1922,6 +1953,7 @@ export function App(
               range={rangeAnchor === null
                 ? null
                 : [Math.min(rangeAnchor, forkSel), Math.max(rangeAnchor, forkSel)]}
+              unadopted={unadopted}
             />
           )
           : panelTab === "changes"

@@ -46,6 +46,7 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
     keys: [
       ["enter", "rewind to a turn · open a branch"],
       ["v", "select a range → c compact · e extract · m move · d delete"],
+      ["a", "adopt a ◆ subagent's unadopted changes"],
       ["s", "label sections by topic"],
       ["C", "compact the whole session"],
       ["glyphs", "● root · ⑂ fork · ◆ subagent · ≣ compacted · ◇ tool step"],
@@ -55,6 +56,7 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
     section: "changes tab",
     keys: [
       ["a / A / R", "apply file · apply all · revert all"],
+      ["a", "on a subagent's unadopted group: adopt its branch"],
       ["j/k", "scroll the diff"],
     ],
   },

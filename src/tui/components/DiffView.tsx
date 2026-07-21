@@ -5,10 +5,19 @@ import type { WireDiff, WireFileDiff } from "../api.ts";
 export interface DiffEntry {
   source: WireDiff["source"];
   file: WireFileDiff;
+  /** Carried from a subagent's unadopted group — `a` adopts instead of applying. */
+  subagentId?: string;
+  label?: string;
 }
 
 export function flattenDiffs(diffs: WireDiff[]): DiffEntry[] {
-  return diffs.flatMap((d) => d.files.map((file) => ({ source: d.source, file })));
+  return diffs.flatMap((d) =>
+    d.files.map((file) => ({
+      source: d.source,
+      file,
+      ...(d.subagentId ? { subagentId: d.subagentId, label: d.label } : {}),
+    }))
+  );
 }
 
 function stats(f: WireFileDiff): { add: number; del: number } {
@@ -81,7 +90,9 @@ export function DiffView(
             {e.file.path}
             <Text color={palette.accent}>{"  "}+{add}</Text>
             <Text color={palette.error}>{" "}-{del}</Text>
-            <Text dimColor>{"  "}{e.source}</Text>
+            {e.label
+              ? <Text color={palette.warn}>{"  "}◆ {e.label}</Text>
+              : <Text dimColor>{"  "}{e.source}</Text>}
           </Text>
         );
       })}
@@ -96,6 +107,11 @@ export function DiffView(
           )}
         </Box>
       )}
+      <Text dimColor>
+        {sel?.subagentId
+          ? "a adopt this subagent's changes · j/k scroll"
+          : "a apply · A all · R revert · j/k scroll"}
+      </Text>
     </Box>
   );
 }

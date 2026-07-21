@@ -37,6 +37,12 @@ export type FileDiff = z.infer<typeof FileDiff>;
 export const Diff = z.object({
   source: z.enum(["clonefile", "shadow"]),
   files: z.array(FileDiff),
+  /** Set when this is a direct subagent's unadopted branch surfaced in its
+   * SPAWNER's rail: the subagent session to adopt (POST /sessions/:id/adopt).
+   * These entries are review-only for the spawner — apply/revert don't take them. */
+  subagentId: z.string().optional(),
+  /** Display label for a grouped diff section (e.g. `<subagent title> (unadopted)`). */
+  label: z.string().optional(),
 });
 export type Diff = z.infer<typeof Diff>;
 

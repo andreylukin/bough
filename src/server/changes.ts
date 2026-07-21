@@ -62,7 +62,8 @@ async function hasShadowWorkspace(db: Db, sessionId: string): Promise<string | n
   return (await shadow.originRepo(workspace)) !== null ? workspace : null;
 }
 
-/** All review payloads for a session (0..2), one per active snapshot source. */
+/** All review payloads for a session: one per active snapshot source (0..2),
+ * plus one labeled section per direct subagent with unadopted branch work. */
 export async function sessionChanges(
   db: Db,
   sessionId: string,
@@ -85,6 +86,29 @@ export async function sessionChanges(
       diffs.push(await clonefile.diff(sessionId, base));
     } catch (e) {
       console.error(`changes: clonefile diff failed for ${sessionId}: ${(e as Error).message}`);
+    }
+  }
+
+  // Direct subagents with a branched workspace: their unadopted work is invisible
+  // to the spawner's rail otherwise (the finish note asks the MODEL to adopt(),
+  // which rarely happens). Each contributes a labeled, review-only section the UI
+  // can adopt from; an adopted branch's diff is empty (its base advanced), so it
+  // naturally drops out here.
+  const spawnerDir = db.getSessionRuntime(sessionId).workspace;
+  for (const sub of db.listSessions()) {
+    if (sub.kind !== "subagent" || sub.originId !== sessionId) continue;
+    const subDir = await hasShadowWorkspace(db, sub.id);
+    if (!subDir || subDir === spawnerDir) continue;
+    try {
+      const d = await shadow.diff(subDir, sub.id);
+      if (d.files.length === 0) continue;
+      diffs.push({
+        ...d,
+        subagentId: sub.id,
+        label: `${sub.title || "subagent"} (unadopted)`,
+      });
+    } catch (e) {
+      console.error(`changes: subagent diff failed for ${sub.id}: ${(e as Error).message}`);
     }
   }
 
