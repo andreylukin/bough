@@ -81,8 +81,15 @@ export interface Store {
   /** Decline it — the program's ask() rejects with a "user declined" error. */
   declineAsk: () => void;
   // Branch off the current session at a message (optionally cut mid-message at a
-  // tool run via atPart); opens the new branch (or notices).
-  fork: (atMessageId: string, atPart?: number, exclusive?: boolean) => Promise<Session | null>;
+  // tool run via atPart); opens the new branch (or notices). `id` overrides the
+  // current session (the conversation tree re-roots at the spawner inside a
+  // subagent, so its rewind/branch ops act on the parent).
+  fork: (
+    atMessageId: string,
+    atPart?: number,
+    exclusive?: boolean,
+    id?: string,
+  ) => Promise<Session | null>;
   // Compact the current session's own turns onto a summary branch; opens it.
   compact: () => Promise<Session | null>;
   compactPicks: (msgIds: string[]) => Promise<Session | null>;
@@ -262,8 +269,13 @@ export function useStore(initialSessions: Session[]): Store {
     }, 5000);
   }, []);
 
-  const fork = useCallback(async (atMessageId: string, atPart?: number, exclusive?: boolean) => {
-    const id = currentRef.current;
+  const fork = useCallback(async (
+    atMessageId: string,
+    atPart?: number,
+    exclusive?: boolean,
+    idArg?: string,
+  ) => {
+    const id = idArg ?? currentRef.current;
     if (!id) return null;
     try {
       return await api.fork(id, {

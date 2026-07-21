@@ -52,7 +52,7 @@ const SECTION: Record<ModelEntry["kind"], string> = {
 // key rows show set/missing. Selecting a key row opens a masked input.
 // Content-only — the unified panel container owns the border + tab bar.
 export function ModelPicker(
-  { cfg, entries, selected, keyInput, sessionModel, sessionEffort }: {
+  { cfg, entries, selected, keyInput, sessionModel, sessionEffort, rows }: {
     cfg: BoughConfig;
     entries: ModelEntry[];
     selected: number;
@@ -63,16 +63,34 @@ export function ModelPicker(
     sessionModel?: string | null;
     /** The open session's pinned thinking depth (same semantics as the model). */
     sessionEffort?: string | null;
+    /** Terminal rows — the list windows itself around the selection so it never
+     * overflows the panel (Ink clips an overflowing background Box by merging
+     * rows into garbage: overlapped labels at 80x26). */
+    rows: number;
   },
 ) {
-  let lastKind: string | null = null;
   const effectiveModel = sessionModel ?? cfg.model;
   const effectiveEffort = sessionEffort ?? cfg.effort ?? "";
+  // Flat display list (section headers interleaved with entries), then a window
+  // around the selection: panel chrome (border, tab bar, margin, status bar,
+  // message line) plus the two ↑/↓ overflow markers ≈ 9 rows.
+  const display: ({ header: string } | { e: ModelEntry; i: number })[] = [];
+  let lastKind: string | null = null;
+  entries.forEach((e, i) => {
+    if (e.kind !== lastKind) display.push({ header: SECTION[e.kind] });
+    lastKind = e.kind;
+    display.push({ e, i });
+  });
+  const max = Math.max(3, rows - 9);
+  const selAt = Math.max(0, display.findIndex((d) => "i" in d && d.i === selected));
+  const start = Math.max(0, Math.min(selAt - Math.floor(max / 2), display.length - max));
+  const win = display.slice(start, start + max);
   return (
     <Box flexDirection="column" marginTop={1}>
-      {entries.map((e, i) => {
-        const header = e.kind !== lastKind;
-        lastKind = e.kind;
+      {start > 0 ? <Text dimColor>↑ {start} more</Text> : null}
+      {win.map((d) => {
+        if ("header" in d) return <Text key={`h-${d.header}`} bold>{d.header}</Text>;
+        const { e, i } = d;
         const active = e.kind === "model"
           ? effectiveModel === e.id
           : e.kind === "effort"
@@ -84,7 +102,6 @@ export function ModelPicker(
         const sel = i === selected && !editing;
         return (
           <Box key={`${e.kind}:${e.id}`} flexDirection="column">
-            {header && <Text bold>{SECTION[e.kind]}</Text>}
             {/* The active dot drops its color under selection: an inverse
                 colored fg reads as a colored bg speck inside the light bar. */}
             <SelRow sel={sel}>
@@ -109,6 +126,9 @@ export function ModelPicker(
           </Box>
         );
       })}
+      {start + max < display.length
+        ? <Text dimColor>↓ {display.length - start - max} more</Text>
+        : null}
     </Box>
   );
 }

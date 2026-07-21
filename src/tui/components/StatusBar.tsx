@@ -135,31 +135,54 @@ export function StatusBar(
       }
       <Box minWidth={0} flexShrink={1}>
         <Box minWidth={4} flexShrink={1}>
-          <Text wrap="truncate">
-            <Text color={connected ? palette.accent : palette.error}>{connected ? "●" : "○"}</Text>
-            {down
-              ? (
-                <Text color={down.urgent ? palette.error : undefined} dimColor={!down.urgent}>
-                  {" "}
-                  {down.text}
-                </Text>
-              )
-              : null}
-            {/* Location cue, not a success mark — info blue, distinct from a done card's accent ◆. */}
-            {session?.kind === "subagent" ? <Text color={palette.info}>{" "}◆</Text> : null}
-            {session
-              ? (
-                <Text bold>
-                  {" "}
-                  {(session.title || "(untitled)").replace(/^subagent · /, "")}
-                </Text>
-              )
-              : draftLabel
-              ? <Text dimColor>{" "}{draftLabel}</Text>
-              : null}
-            {session && dir ? <Text dimColor>{"  "}{dir}</Text> : null}
-            {parentTitle ? <Text dimColor>{"  "}branch of {parentTitle} · esc ↩ back</Text> : null}
-          </Text>
+          <Box flexShrink={0}>
+            <Text>
+              <Text color={connected ? palette.accent : palette.error}>{connected ? "â" : "â"}</Text>
+              {down
+                ? (
+                  <Text color={down.urgent ? palette.error : undefined} dimColor={!down.urgent}>
+                    {" "}
+                    {down.text}
+                  </Text>
+                )
+                : null}
+            </Text>
+          </Box>
+          {
+            /* Inside a subagent the title is a breadcrumb â â parent âº â sub â so
+            the thread visibly hangs under its spawner. The parent crumb shrinks
+            first (higher flexShrink) so the subagent title survives narrow widths. */
+          }
+          {isSub && parentTitle
+            ? (
+              <>
+                <Box flexShrink={10} minWidth={2}>
+                  <Text wrap="truncate" dimColor>{" "}{parentTitle}</Text>
+                </Box>
+                <Box flexShrink={0}>
+                  <Text dimColor>{" ›"}</Text>
+                </Box>
+              </>
+            )
+            : null}
+          <Box flexShrink={1} minWidth={0}>
+            <Text wrap="truncate">
+              {/* Location cue, not a success mark â info blue, distinct from a done card's accent ◆. */}
+              {isSub ? <Text color={palette.info}>{" "}◆</Text> : null}
+              {session
+                ? (
+                  <Text bold>
+                    {" "}
+                    {(session.title || "(untitled)").replace(/^subagent · /, "")}
+                  </Text>
+                )
+                : draftLabel
+                ? <Text dimColor>{" "}{draftLabel}</Text>
+                : null}
+              {session && dir ? <Text dimColor>{"  "}{dir}</Text> : null}
+              {isSub && parentTitle ? <Text dimColor>{"  "}esc ↩ back</Text> : null}
+            </Text>
+          </Box>
         </Box>
         <Box flexShrink={0}>
           <Text>
