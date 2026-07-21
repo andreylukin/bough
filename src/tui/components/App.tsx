@@ -2022,9 +2022,16 @@ export function App(
               })}
               {off > 0
                 ? (
-                  <Text dimColor>
-                    ↓ {off} more line{off === 1 ? "" : "s"} below ·{" "}
-                    {Math.round(((lines.length - off) / Math.max(1, lines.length)) * 100)}%
+                  // Chrome, not content: dim base with the arrow+count emphasized.
+                  // The % is the viewport TOP's position in the thread (top = 0%),
+                  // not the bottom's — the old form never read near 0 when fully
+                  // scrolled up (visual audit).
+                  <Text>
+                    <Text color={palette.info}>↓ {off}</Text>
+                    <Text dimColor>
+                      {" "}more line{off === 1 ? "" : "s"} below ·{" "}
+                      {Math.round((start / Math.max(1, maxOff)) * 100)}%
+                    </Text>
                   </Text>
                 )
                 : null}
@@ -2160,14 +2167,13 @@ export function App(
                     <Text color={palette.accent}>⌕{" "}</Text>
                     {searchQ}
                     <Text color={palette.accent}>▌</Text>
-                    <Text dimColor>
-                      {"  "}
-                      {matches.length
-                        ? `${curMatch + 1}/${matches.length}`
-                        : searchQ
-                        ? "no matches"
-                        : "type to search"} · enter/↓ next · ↑ prev · esc close
-                    </Text>
+                    {"  "}
+                    {matches.length
+                      ? <Text dimColor>{curMatch + 1}/{matches.length}</Text>
+                      : searchQ
+                      ? <Text color={palette.warn}>no matches</Text>
+                      : <Text dimColor>type to search</Text>}
+                    <Text dimColor>{" "}· enter/↓ next · ↑ prev · esc close</Text>
                   </Text>
                 )
                 : null}
