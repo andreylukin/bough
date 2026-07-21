@@ -43,6 +43,7 @@ import {
 } from "../turn.ts";
 import { type Effort, EFFORTS } from "../supervisor/llm.ts";
 import { setWorkerChoice, WORKER_OPTIONS, workerChoice } from "../worker/frontier.ts";
+import { SuggestBody, suggestNextStep } from "../worker/suggest.ts";
 import { sessionMetrics } from "../metrics.ts";
 import { normalizeWorkspace, prepareWorkspace, workspaceProblem } from "../supervisor/workspace.ts";
 import { UNTITLED } from "../supervisor/title.ts";
@@ -106,7 +107,7 @@ import type { LlmClient } from "../supervisor/llm.ts";
 import { applyChanges, revertChanges, sessionChanges } from "./changes.ts";
 import { ChangesApplyBody, ChangesRevertBody } from "../schema/changes.ts";
 import { clearTheme, loadTheme, saveTheme, Theme, THEME_DEFAULTS, THEME_TOKENS } from "./theme.ts";
-import { KeysBody, keyStatus, persistEnvVar, setKey } from "./keys.ts";
+import { deleteKey, KeyDeleteBody, KeysBody, keyStatus, persistEnvVar, setKey } from "./keys.ts";
 import {
   ensureOpenAIModels,
   mergeModels,
@@ -204,6 +205,13 @@ const putKeys: Handler = async (req) => {
   return json({ ok: true, keys });
 };
 
+// Remove a provider's API key: from the live process env and from ~/.bough/env,
+// so the deletion also survives a restart. Returns the refreshed booleans.
+const deleteKeys: Handler = async (req) => {
+  const body = await parseBody(req, KeyDeleteBody);
+  return json({ ok: true, keys: deleteKey(body.provider) });
+};
+
 // Recall: semantic search over the whole session forest via the LOCAL embedder
 // (recall.ts) — lazily indexes a batch of new messages on each call.
 const recallSearch: Handler = async (req, ctx) => {
@@ -290,6 +298,25 @@ const patchConfig: Handler = async (req, ctx) => {
 // Installed skills (name + description) for composer autocomplete / discovery.
 const getSkills: Handler = () => json({ skills: listSkills() });
 
+// Composer ghost text: the worker predicts the user's NEXT message from the
+// conversation so far (shown dim on the idle composer, tab accepts). Null
+// suggestion = nothing usable (no worker, empty thread) — no ghost, no error.
+const postSuggest: Handler = async (req, ctx) => {
+  const body = await parseBody(req, SuggestBody);
+  const session = ctx.db.getSession(body.sessionId);
+  if (!session) return error(404, "session not found");
+  const lines = ctx.db.threadFor(session.id)
+    .filter((m) => !m.pending)
+    .map((m) => ({
+      role: m.role === "user" ? "user" as const : "agent" as const,
+      // The prose only: tool calls/results are the agent's scratch work, and
+      // reasoning is hidden from the user — neither is what they'd reply to.
+      text: m.parts.flatMap((p) => p.type === "text" ? [p.text] : []).join("\n").trim(),
+    }))
+    .filter((l) => l.text.length > 0);
+  return json({ suggestion: await suggestNextStep(lines) });
+};
+
 const searchFiles: Handler = async (req, ctx, params) => {
   const session = ctx.db.getSession(params.id);
   if (!session) return error(404, "session not found");
@@ -329,11 +356,14 @@ const searchDirs: Handler = (req, ctx) => {
 
 // Each session carries `busy` (a turn in flight) so the sidebar can show it at a
 // glance; the UI keeps it live from message.started/finished events after this read.
-const listSessions: Handler = (_req, ctx) => {
+const listSessions: Handler = (req, ctx) => {
   const busy = ctx.db.busySessionIds();
   const statuses = ctx.db.latestTurnStatuses();
+  // ?archived=1 → the soft-deleted rows only, so a UI can reveal and restore
+  // them (they were set archived_at but unreachable over HTTP before).
+  const archived = new URL(req.url).searchParams.get("archived") === "1";
   return json(
-    ctx.db.listSessions().map((s) => {
+    (archived ? ctx.db.listArchivedSessions() : ctx.db.listSessions()).map((s) => {
       // Per-row spend (own turns only) — the tree views' cost column.
       const { costUsd } = ctx.db.sessionUsage(s.id);
       return {
@@ -367,7 +397,9 @@ const createSession: Handler = async (req, ctx) => {
     createdAt: Date.now(),
     // Absent when not supplied, so responses/events stay byte-identical (toSession
     // only surfaces workspace when non-null; createSession persists it in one insert).
-    ...(workspace ? { workspace } : {}),
+    // originDir records the project dir permanently — the workspace column gets
+    // repointed at the session's shadow worktree on the first turn.
+    ...(workspace ? { workspace, originDir: workspace } : {}),
   };
   if (session.parentId && !ctx.db.getSession(session.parentId)) {
     return error(400, `parent ${session.parentId} not found`);
@@ -430,6 +462,30 @@ const archiveSession: Handler = (_req, ctx, params) => {
     sessionId: params.id,
     data: { sessionId: params.id },
   });
+  return json({ ok: true });
+};
+
+// Undo the soft-delete: the session returns to GET /sessions. session.updated
+// (archivedAt now absent) tells open UIs the row is live again.
+const unarchiveSession: Handler = (_req, ctx, params) => {
+  if (!ctx.db.getSession(params.id)) return error(404, "session not found");
+  ctx.db.unarchiveSession(params.id);
+  const updated = ctx.db.getSession(params.id)!;
+  ctx.bus.publish({ type: "session.updated", sessionId: params.id, data: updated });
+  return json({ ok: true });
+};
+
+// Persist a session's composer draft (the TUI stashes it on session switch so a
+// half-typed prompt stays with its conversation — same column handoff prefills).
+// Body {draft: string | null}; null clears. No event on purpose: the writer is
+// switching away, and a session.updated here would race the client's prefill.
+const putSessionDraft: Handler = async (req, ctx, params) => {
+  if (!ctx.db.getSession(params.id)) return error(404, "session not found");
+  const body = await req.json().catch(() => null) as { draft?: string | null } | null;
+  if (!body || (body.draft !== null && typeof body.draft !== "string")) {
+    return error(400, "body {draft: string | null} required");
+  }
+  ctx.db.setSessionDraft(params.id, body.draft);
   return json({ ok: true });
 };
 
@@ -1172,12 +1228,10 @@ const listArtifactsH: Handler = async (_req, _ctx, params) =>
 
 // Serve one hosted artifact by path (rendered HTML/JS/CSS/…). Same origin as the UI so
 // links open in the browser; traversal + bad ids are rejected inside serveArtifact.
-// ?raw=1 skips the viewer wrapper on *.ui.json spec artifacts; the Accept header
-// picks the 404 shape (browsers get a humane HTML page, API clients keep JSON).
+// ?raw=1 skips the viewer wrapper on *.ui.json spec artifacts.
 const getArtifact: Handler = (req, _ctx, params) =>
   serveArtifact(params.id, params.path ?? "", undefined, {
     raw: new URL(req.url).searchParams.get("raw") === "1",
-    accept: req.headers.get("accept") ?? undefined,
   });
 
 // The spec-viewer bundle every *.ui.json wrapper page loads (jsonrender/bundle.ts).
@@ -1238,7 +1292,9 @@ const routes: Route[] = [
   { method: "GET", pattern: new URLPattern({ pathname: "/config" }), handler: getConfig },
   { method: "PATCH", pattern: new URLPattern({ pathname: "/config" }), handler: patchConfig },
   { method: "PUT", pattern: new URLPattern({ pathname: "/config/keys" }), handler: putKeys },
+  { method: "DELETE", pattern: new URLPattern({ pathname: "/config/keys" }), handler: deleteKeys },
   { method: "GET", pattern: new URLPattern({ pathname: "/skills" }), handler: getSkills },
+  { method: "POST", pattern: new URLPattern({ pathname: "/suggest" }), handler: postSuggest },
   { method: "GET", pattern: new URLPattern({ pathname: "/theme" }), handler: getTheme },
   { method: "PUT", pattern: new URLPattern({ pathname: "/theme" }), handler: putTheme },
   { method: "DELETE", pattern: new URLPattern({ pathname: "/theme" }), handler: deleteTheme },
@@ -1256,6 +1312,16 @@ const routes: Route[] = [
     method: "POST",
     pattern: new URLPattern({ pathname: "/sessions/:id/archive" }),
     handler: archiveSession,
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/sessions/:id/unarchive" }),
+    handler: unarchiveSession,
+  },
+  {
+    method: "PUT",
+    pattern: new URLPattern({ pathname: "/sessions/:id/draft" }),
+    handler: putSessionDraft,
   },
   {
     method: "POST",
