@@ -26,8 +26,6 @@ import * as clonefile from "../vcs/clonefile.ts";
 import type { Db } from "../db/db.ts";
 import type { ChangesApplyBody, Diff } from "../schema/changes.ts";
 
-const MANIFEST = ".bough-manifest.json";
-
 export interface ChangesOpts {
   /** clonefile snapshot root override (tests); else BOUGH_SNAPSHOT_BASE, else default. */
   snapshotBase?: string;
@@ -40,13 +38,6 @@ function snapBase(opts: ChangesOpts): string {
   return opts.snapshotBase ?? Deno.env.get("BOUGH_SNAPSHOT_BASE") ?? clonefile.snapshotBase();
 }
 
-async function isDir(path: string): Promise<boolean> {
-  try {
-    return (await Deno.stat(path)).isDirectory;
-  } catch {
-    return false;
-  }
-}
 async function isFile(path: string): Promise<boolean> {
   try {
     return (await Deno.stat(path)).isFile;
@@ -81,7 +72,7 @@ export async function sessionChanges(
   }
 
   const base = snapBase(opts);
-  if (await isFile(`${clonefile.sessionDir(sessionId, base)}/${MANIFEST}`)) {
+  if (await isFile(`${clonefile.sessionDir(sessionId, base)}/${clonefile.MANIFEST}`)) {
     try {
       diffs.push(await clonefile.diff(sessionId, base));
     } catch (e) {
@@ -123,18 +114,18 @@ export interface ApplyResult {
   origin: string | null;
   /** The session's git branch in the origin repo, when one exists. */
   branch: string | null;
-  /** True when the whole change was covered and the jj change was sealed. */
+  /** True when every changed path was covered, so the change was also sealed. */
   sealed: boolean;
 }
 
 /**
- * Apply reviewed changes. clonefile copies approved originals back. jj delivers:
- * for an external-mode session (isolated workspace, user's checkout elsewhere)
- * the selected paths are materialized into the origin checkout's working tree
- * (3-way, so user edits merge rather than clobber); when every changed path is
- * covered the change is also sealed (accept & advance, commit message = session
- * title) so the rail clears. Colocated sessions keep the legacy whole-change
- * accept — the edits are already on disk there.
+ * Apply reviewed changes, by source. `clonefile` copies the approved originals
+ * back over the real config paths. `shadow` sessions are always external-style —
+ * the session edits an isolated workspace and the user's checkout lives
+ * elsewhere — so the selected paths are materialized into the origin checkout's
+ * working tree (3-way, so concurrent user edits merge rather than clobber); when
+ * the selection covers every changed path the change is also sealed (accept &
+ * advance, commit message = session title) so the rail clears.
  */
 export async function applyChanges(
   db: Db,
@@ -176,11 +167,11 @@ export async function applyChanges(
 }
 
 /**
- * Revert a jj-workspace session. With a non-empty `paths`, restore ONLY those paths
- * of the change back to its parent (`jj.revertPaths`), leaving the rest of the change
- * intact. With empty/absent `paths`, undo the whole change (`jj undo`). Returns the
- * list of paths actually reverted (empty for a whole-change undo). Throws if there's
- * no repo.
+ * Revert a shadow-workspace session. With a non-empty `paths`, restore ONLY those
+ * paths of the change back to its parent (`shadow.revertPaths`), leaving the rest
+ * of the change intact. With empty/absent `paths`, undo the whole change
+ * (`shadow.undoAll`). Returns the list of paths actually reverted. Throws if the
+ * session has no shadow workspace.
  */
 export async function revertChanges(
   db: Db,

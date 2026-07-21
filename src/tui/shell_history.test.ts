@@ -1,4 +1,4 @@
-import { assertEquals } from "jsr:@std/assert";
+import { assertEquals } from "jsr:@std/assert@1";
 import { parseShellHistory } from "./shell_history.ts";
 
 Deno.test("parseShellHistory: plain bash-style lines pass through", () => {

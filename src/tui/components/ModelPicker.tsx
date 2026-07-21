@@ -4,13 +4,13 @@ import { Text } from "./Text.tsx";
 import { SelRow } from "./SelRow.tsx";
 import type { BoughConfig, KeyProvider } from "../api.ts";
 
-export interface ModelEntry {
+interface ModelEntry {
   kind: "model" | "effort" | "worker" | "key";
   id: string;
   label: string;
 }
 
-export const KEY_PROVIDERS: KeyProvider[] = ["anthropic", "openrouter", "openai"];
+const KEY_PROVIDERS: KeyProvider[] = ["anthropic", "openrouter", "openai"];
 
 // "default" leaves the request untouched (the provider decides); the rest map to
 // the API's output_config.effort levels (adaptive thinking on, summaries shown).

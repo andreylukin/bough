@@ -5,7 +5,7 @@ import type { Message, Part } from "../../schema/parts.ts";
 import type { WireSection } from "../api.ts";
 import type { TuiSession } from "../store.ts";
 import { SelRow } from "./SelRow.tsx";
-import { clip, fmtUsd, toolSummary } from "../format.ts";
+import { clip, fmtUsd } from "../format.ts";
 import { parseSubagentNote } from "../lines.ts";
 
 // The conversation as a branchable tree (pi's /tree model). Each user turn is a
@@ -15,14 +15,14 @@ import { parseSubagentNote } from "../lines.ts";
 // into a NEW session, so there is no in-place leaf — the last turn is the live tip.
 
 /** A branch point: a message id and an optional mid-message part cut (a tool run). */
-export interface BranchPoint {
+interface BranchPoint {
   msgId: string;
   /** Cut inside the message — keep parts[0..atPart]. Absent = the whole message. */
   atPart?: number;
 }
 
 /** A tool run within a turn: a labeled branch point after that run. */
-export interface ToolStep {
+interface ToolStep {
   label: string;
   point: BranchPoint;
 }
@@ -38,7 +38,7 @@ export interface TreeNode {
   msgIds: string[];
 }
 
-export type TreeItem =
+type TreeItem =
   | { type: "node"; node: TreeNode; sectionColor?: string }
   | { type: "step"; step: ToolStep; sectionColor?: string }
   | { type: "branch"; session: TuiSession; sectionColor?: string }
@@ -46,7 +46,7 @@ export type TreeItem =
 
 /** Sections are topics, not categories — the color only tells adjacent sections
  * apart, so hues cycle by section order (theme-independent, distinct hues). */
-export const SECTION_COLORS = [
+const SECTION_COLORS = [
   "#5c88c9", // blue
   "#4ec98f", // green
   "#d9b45f", // amber
@@ -56,7 +56,7 @@ export const SECTION_COLORS = [
   "#d97a8e", // rose
 ] as const;
 
-export const sectionColor = (i: number): string => SECTION_COLORS[i % SECTION_COLORS.length];
+const sectionColor = (i: number): string => SECTION_COLORS[i % SECTION_COLORS.length];
 
 // The tool runs in a reply span → labeled branch points. atPart cuts through the
 // run's result (kept inclusive) so the completed call is retained in the branch.
@@ -163,12 +163,14 @@ const KIND_GLYPH: Record<string, string> = {
 };
 
 /** Compact outcome marker for subagent rows — interrupted/failed/check-failed
- * were indistinguishable from done in the tree. Mirrors branchCardLines. */
+ * were indistinguishable from done in the tree. Outcome hues match
+ * branchCardLines; an unrun row gets no marker. */
 function subagentMark(s: TuiSession): { glyph: string; color: string } | null {
   if (s.kind !== "subagent") return null;
   if (s.busy) return { glyph: "⋯", color: palette.warn };
   if (s.lastTurnStatus === "interrupted") return { glyph: "◼", color: palette.warn };
-  if (s.lastTurnStatus === "error" || s.lastTurnStatus === "orphaned" || s.outcomeOk === false) {
+  if (s.lastTurnStatus === "orphaned") return { glyph: "◼", color: palette.warn };
+  if (s.lastTurnStatus === "error" || s.outcomeOk === false) {
     return { glyph: "✗", color: palette.error };
   }
   if (s.outcomeOk === true && s.outcomeCheckPassed === false) {

@@ -15,7 +15,7 @@ export interface TreeRow {
 const VISIBLE_KINDS = new Set(["root", "fork", "compaction", "subagent"]);
 
 // A session's lineage parent is what it BRANCHED FROM: originId (forks, compactions,
-// subagents, extracted roots all record it). parentId is a jj sibling artifact and
+// subagents, extracted roots all record it). parentId is a legacy sibling field,
 // only used as a fallback. A root has neither → it's a trunk.
 function parentOf(s: TuiSession): string | null {
   return s.originId ?? s.parentId ?? null;

@@ -1,6 +1,6 @@
 /**
  * Non-git config snapshots via APFS `clonefile` (`cp -c`). For files outside a
- * repo — `~/.zshrc`, `~/.config`, etc. — there's no jj history, so we snapshot by
+ * repo — `~/.zshrc`, `~/.config`, etc. — there's no git history, so we snapshot by
  * cloning the originals into a per-session dir. The agent edits the *clones* (the
  * seatbelt sandbox denies writes to the real config paths but allows the snapshot
  * dir), the reviewer sees a `git diff --no-index` of pristine-original vs. edited
@@ -14,10 +14,10 @@
  * `<originalAbsPath>`. A small manifest records which top-level paths were
  * snapshotted so `diff` knows what to compare.
  */
-import { parseGitDiff } from "../schema/changes.ts";
-import type { Diff } from "../schema/changes.ts";
+import { type Diff, parseGitDiff } from "../schema/changes.ts";
+import { pathExists } from "../fsutil.ts";
 
-const MANIFEST = ".bough-manifest.json";
+export const MANIFEST = ".bough-manifest.json";
 
 /** Default snapshots root: `~/.bough/snapshots`. */
 export function snapshotBase(): string {
@@ -56,15 +56,6 @@ async function run(bin: string, args: string[]): Promise<RunResult> {
     stdout: new TextDecoder().decode(stdout),
     stderr: new TextDecoder().decode(stderr),
   };
-}
-
-async function exists(path: string): Promise<boolean> {
-  try {
-    await Deno.stat(path);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function parentOf(path: string): string {
@@ -148,9 +139,9 @@ export async function applyBack(
 ): Promise<void> {
   for (const orig of approvedFiles) {
     const cl = cloneOf(sessionId, orig, base);
-    if (await exists(cl)) {
+    if (await pathExists(cl)) {
       await clone(cl, orig);
-    } else if (await exists(orig)) {
+    } else if (await pathExists(orig)) {
       await Deno.remove(orig);
     }
   }

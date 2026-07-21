@@ -44,7 +44,7 @@ export function NewSession(
             no matching folder — enter does nothing; clear the query to create without one
           </Text>
         ))}
-      <Text dimColor>◆ git repo · ◇ plain folder</Text>
+      <Text dimColor>⎇ git repo · ◇ plain folder</Text>
       {/* The status bar no longer carries per-mode hints — the modal owns its keys. */}
       {/* "enter create" would lie while a no-match query makes enter inert. */}
       {hits.length === 0 && query.trim() !== ""

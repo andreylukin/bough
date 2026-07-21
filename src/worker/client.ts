@@ -15,9 +15,8 @@ export interface WorkerParams {
   user: string;
   maxTokens: number;
   /** Left off unless set, so the server's default sampling applies. Reasoning-tuned
-   * workers need their recommended decoding (often temp 1.0 / top_p 0.95). */
+   * workers need their recommended decoding (often temp 1.0). */
   temperature?: number;
-  topP?: number;
   /** JSON Schema the reply must conform to. llama-server compiles it to a grammar
    * and constrains decoding — small-model format drift becomes impossible. */
   jsonSchema?: Record<string, unknown>;
@@ -37,7 +36,6 @@ export async function workerComplete(baseUrl: string, params: WorkerParams): Pro
       { role: "user", content: params.user },
     ],
     ...(params.temperature !== undefined ? { temperature: params.temperature } : {}),
-    ...(params.topP !== undefined ? { top_p: params.topP } : {}),
     ...(params.jsonSchema
       ? {
         response_format: {

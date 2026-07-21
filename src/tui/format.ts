@@ -35,9 +35,7 @@ export function segmentParts(parts: Part[]): Segment[] {
   return segs;
 }
 
-export function clip(s: string, n: number): string {
-  return s.length > n ? `${s.slice(0, n)}…` : s;
-}
+export { clip } from "../text.ts";
 
 export function outputText(r: ToolResult): string {
   return typeof r.output === "string" ? r.output : JSON.stringify(r.output);
@@ -79,7 +77,7 @@ const FG_OFF = sgr("\x1b[39m");
 // attribute is emulator-dependent and fails contrast on light profiles. A
 // function (not a const) so an applied theme recolors freshly-built lines;
 // closes with FG_OFF so the themed <Text color> around the line resumes.
-const dim = (s: string) => (COLOR ? `\x1b[${fgParams(palette.muted)}m${s}${FG_OFF}` : s);
+export const dim = (s: string) => (COLOR ? `\x1b[${fgParams(palette.muted)}m${s}${FG_OFF}` : s);
 
 // OSC 8 hyperlink — supporting terminals make the wrapped text clickable, the
 // rest ignore the sequence. Zero-width for wrap-ansi/slice-ansi/strip-ansi
@@ -96,6 +94,7 @@ const osc8 = (url: string, text: string) =>
  * because wrap-ansi re-opens the link (full target) on each continuation line.
  */
 export function linkAt(text: string, col: number): string | null {
+  // deno-lint-ignore no-control-regex -- OSC 8 hyperlinks are literal escapes.
   const re = /\x1b\]8;;([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
   let url: string | null = null;
   let width = 0;
@@ -124,6 +123,7 @@ function mdInline(line: string): string {
     // lookbehind keeps "[" of an earlier-inserted SGR escape (\x1b[1m from
     // bold) from being taken as the link opener and swallowing the escape.
     .replace(
+      // deno-lint-ignore no-control-regex -- the SGR lookbehind needs a literal ESC.
       /(?<!\x1b)\[([^\]]+)\]\((\S+?)\)/g,
       // A label that IS the url skips the parenthetical — "url (url)" was noise.
       (_m, text, url) =>
@@ -135,6 +135,7 @@ function mdInline(line: string): string {
     // Bare URLs become clickable as themselves (underlined like rendered links);
     // trailing punctuation stays prose.
     .replace(/https?:\/\/[^\s)\]>'"]+/g, (m) => guard(linkifyUrl(m)))
+    // deno-lint-ignore no-control-regex -- NUL fences the guarded-span placeholders.
     .replace(/\x00(\d+)\x00/g, (_, i) => spans[+i]);
 }
 

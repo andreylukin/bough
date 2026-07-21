@@ -21,31 +21,40 @@ const EXPIRY_SLACK_MS = 60_000;
 const DEFAULT_TTL_MS = 5 * 60_000;
 
 /**
- * Container-credentials env for the exec plugin's OWN AWS auth, pointing at the
- * broker's admin endpoint. Post-cutover the agent user has no ~/.aws, so
+ * Container-credentials env pointing an AWS SDK/CLI at the local broker
+ * (scripts/cred-broker.ts, run in the operator's account). Every AWS tool honors
+ * these natively, so `aws`/terraform/boto3 get IAM-enforced creds without the SSO
+ * cache ever entering the sandbox. Empty unless BOUGH_AWS_BROKER_URL is set; the
+ * bearer is read fresh from the group-readable token file per call, so a broker
+ * token rotation (per boot) needs no restart.
+ *
+ * With `admin`, the RO `/aws` URL is rewritten to `/aws-admin`: that's the exec
+ * plugin's OWN AWS auth. Post-cutover the agent user has no ~/.aws, so
  * `aws eks get-token` (run here, host-side) gets its credentials from the broker
  * — the resulting admin k8s token is then demoted at the proxy via Impersonate-User.
- * Empty unless the broker is configured; the RO `/aws` URL is rewritten to `/aws-admin`.
  */
-export function brokerAdminEnv(): Record<string, string> {
+export function brokerEnv(admin = false): Record<string, string> {
   const url = Deno.env.get("BOUGH_AWS_BROKER_URL");
   if (!url) return {};
-  const adminUrl = url.replace(/\/aws$/, "/aws-admin");
+  const fullUri = admin ? url.replace(/\/aws$/, "/aws-admin") : url;
   const tokenFile = Deno.env.get("BOUGH_AWS_BROKER_TOKEN_FILE");
   let token = Deno.env.get("BOUGH_AWS_BROKER_TOKEN") ?? "";
   if (!token && tokenFile) {
     try {
       token = Deno.readTextFileSync(tokenFile).trim();
     } catch {
-      return {};
+      return {}; // broker not up / token unreadable — leave AWS unconfigured
     }
   }
   if (!token) return {};
   return {
-    AWS_CONTAINER_CREDENTIALS_FULL_URI: adminUrl,
+    AWS_CONTAINER_CREDENTIALS_FULL_URI: fullUri,
     AWS_CONTAINER_AUTHORIZATION_TOKEN: token,
   };
 }
+
+/** The broker env for the exec plugin's own (admin) AWS auth. */
+const brokerAdminEnv = (): Record<string, string> => brokerEnv(true);
 
 async function mint(spec: ExecCredSpec): Promise<{ header: string; expires: number }> {
   let out: Deno.CommandOutput;

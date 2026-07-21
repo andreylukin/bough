@@ -4,6 +4,7 @@
     "jsr:@std/assert@*": "1.0.19",
     "jsr:@std/assert@1": "1.0.19",
     "jsr:@std/cli@*": "1.0.32",
+    "jsr:@std/cli@1": "1.0.32",
     "jsr:@std/internal@^1.0.12": "1.0.14",
     "jsr:@std/yaml@1": "1.1.2",
     "npm:@anthropic-ai/sdk@0.68.0": "0.68.0_zod@4.3.6",

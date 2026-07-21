@@ -36,6 +36,7 @@ import type { Bus } from "./bus.ts";
 import type { Message, Part, Session } from "./schema/parts.ts";
 import { anthropicClient, completeText, type LlmClient } from "./supervisor/llm.ts";
 import { mergePicks, openBranch, PartPick, pickParts } from "./branch.ts";
+import { clip } from "./text.ts";
 
 export const CompactBody = z.object({
   /** The session's OWN messages to compact; each contiguous run becomes one summary. */
@@ -75,9 +76,9 @@ function renderPart(role: string, p: Part): string {
     case "reasoning":
       return `${role}: ${p.text}`;
     case "tool_call":
-      return `${role}: [tool ${p.name}] ${clip(JSON.stringify(p.input))}`;
+      return `${role}: [tool ${p.name}] ${clip(JSON.stringify(p.input), PART_CLIP)}`;
     case "tool_result":
-      return `tool_result${p.isError ? " (error)" : ""}: ${clip(stringify(p.output))}`;
+      return `tool_result${p.isError ? " (error)" : ""}: ${clip(stringify(p.output), PART_CLIP)}`;
     case "image":
       return `${role}: [image ${p.name}]`;
     case "ask":
@@ -88,9 +89,6 @@ function renderPart(role: string, p: Part): string {
   }
 }
 
-function clip(s: string): string {
-  return s.length > PART_CLIP ? s.slice(0, PART_CLIP) + "…" : s;
-}
 function stringify(v: unknown): string {
   return typeof v === "string" ? v : JSON.stringify(v);
 }

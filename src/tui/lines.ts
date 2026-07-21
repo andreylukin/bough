@@ -7,6 +7,7 @@ import type { Message, Role } from "../schema/parts.ts";
 import {
   clip,
   COLOR,
+  dim,
   highlightCode,
   linkifyUrls,
   md,
@@ -34,9 +35,6 @@ export interface VLine {
 const SGR = (n: number | string, s: string) =>
   COLOR ? `\x1b[${n}m${s}\x1b[${String(n).startsWith("38;") ? "39" : "22"}m` : s;
 const bold = (s: string) => SGR(1, s);
-// Secondary text renders palette.muted truecolor, not SGR faint — the dim
-// attribute is emulator-dependent and fails contrast on light profiles.
-const dim = (s: string) => SGR(fgParams(palette.muted), s);
 // Hue helpers read the live theme palette (truecolor) — evaluated per call, so
 // an applied theme recolors rebuilt lines without a restart.
 const green = (s: string) => SGR(fgParams(palette.accent), s);
@@ -52,8 +50,6 @@ const roleLabel = (role: Role): string =>
     ? bold("you")
     : role === "supervisor"
     ? bold(green("bough"))
-    : role === "worker"
-    ? dim("worker")
     : bold(yellow("system"));
 
 function wrap(text: string, width: number): string[] {

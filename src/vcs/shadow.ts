@@ -36,8 +36,8 @@
  * the work-tree is.
  */
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { parseGitDiff } from "../schema/changes.ts";
-import type { Diff } from "../schema/changes.ts";
+import { type Diff, parseGitDiff } from "../schema/changes.ts";
+import { pathExists } from "../fsutil.ts";
 
 const USER = "bough";
 const EMAIL = "bough@localhost";
@@ -48,7 +48,7 @@ export function refFor(sessionId: string): string {
 }
 
 /** Session base ref (branch point) inside the shadow repo. */
-export function baseRefFor(sessionId: string): string {
+function baseRefFor(sessionId: string): string {
   return `refs/bough/base/${sessionId}`;
 }
 
@@ -61,7 +61,7 @@ export function baseRefFor(sessionId: string): string {
  * (phantom delete/modify conflicts), and a fork created after the work exists
  * (base == tip) sees nothing to ship at all.
  */
-export function originBaseRefFor(sessionId: string): string {
+function originBaseRefFor(sessionId: string): string {
   return `refs/bough/originbase/${sessionId}`;
 }
 
@@ -131,13 +131,6 @@ async function originGit(
     throw new Error(`git ${args.join(" ")} failed (${r.code}): ${r.stderr.trim()}`);
   }
   return r.stdout;
-}
-
-/** `git --version` (or throws). Callers use this to gate on install. */
-export async function version(): Promise<string> {
-  const r = await run("git", ["--version"], Deno.cwd());
-  if (!r.ok) throw new Error("git not installed");
-  return r.stdout.trim();
 }
 
 /** Root for shadow stores: `$BOUGH_SHADOW_BASE` or `~/.bough/shadow`. */
@@ -238,22 +231,13 @@ export async function quarantineStore(origin: string): Promise<string | null> {
   }
 }
 
-async function pathExists(p: string): Promise<boolean> {
-  try {
-    await Deno.stat(p);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Ensure the shadow repo for `origin` exists: a bare git dir under `storeBase()`
  * plus a `bough-origin` pointer file back to the origin. Identity, EOL, and gc
  * are pinned locally so snapshots are deterministic regardless of user config.
  * Losing an init race to a concurrently starting session is fine.
  */
-export async function ensureStore(origin: string): Promise<string> {
+async function ensureStore(origin: string): Promise<string> {
   const store = await storeDirFor(origin);
   if (!(await pathExists(`${store}/HEAD`))) {
     await Deno.mkdir(store, { recursive: true });

@@ -8,7 +8,7 @@
  * concern (the Claw Patrol gateway). The policy is default-deny at the host layer
  * and fail-closed on unrecognised actions.
  *
- * What "action" means per provider (unchanged from policy.py):
+ * What "action" means per provider:
  *   - AWS   — JSON-protocol services carry `X-Amz-Target: Service_Ver.Operation`;
  *             query-protocol services (ec2/sts/iam) carry `Action=Foo` in the
  *             body or query string. Read ops start with describe/list/get/... .
@@ -17,10 +17,10 @@
  *   - GitHub— REST is verb+path; GraphQL is one `POST /graphql` with the operation
  *             in the body, so we peek for a `mutation` (coarse — see the note).
  *
- * Delta from policy.py: the boolean allow/deny becomes a three-valued Verdict so
- * the design's "hold-and-ask" (human-approval) gate is first-class. Parity is
- * preserved: `holdVerbs` is empty by default, so with no hold config `decide`
- * yields the exact allow/deny outcomes policy.py did (see test_policy.ts).
+ * Verdict is three-valued rather than a boolean allow/deny so the design's
+ * "hold-and-ask" (human-approval) gate is first-class. `holdVerbs` is empty by
+ * default, so with no hold config `decide` reduces to plain allow/deny
+ * (see policy.test.ts).
  */
 
 import { compile, type ExprEnv, ExprError } from "./expr.ts";
@@ -121,7 +121,7 @@ export interface Rule {
   reason?: string;
 }
 
-export interface CompiledRule extends Rule {
+interface CompiledRule extends Rule {
   test(env: ExprEnv): boolean;
 }
 
@@ -272,7 +272,7 @@ function awsKind(op: string): Kind {
   return AWS_READ_PREFIXES.some((p) => lower.startsWith(p)) ? READ : WRITE;
 }
 
-export function classifyAws(req: Request): Action {
+function classifyAws(req: Request): Action {
   const service = "aws:" + req.host.split(".")[0];
   const target = header(req, "X-Amz-Target");
   if (target) {
@@ -363,7 +363,7 @@ export function classifyGraphql(req: Request): Action | undefined {
   };
 }
 
-export function classifyGithub(req: Request): Action {
+function classifyGithub(req: Request): Action {
   const gql = classifyGraphql(req);
   if (gql) return { ...gql, service: "github" };
   const path = req.path.split("?")[0];

@@ -1,6 +1,14 @@
 import { assertEquals } from "jsr:@std/assert@1";
-import { AskQuestion, BoughEvent, Message, NetRequest, Part, Session } from "./parts.ts";
-import type { Message as TMessage, Session as TSession } from "./parts.ts";
+import {
+  AskQuestion,
+  BoughEvent,
+  Message,
+  type Message as TMessage,
+  NetRequest,
+  Part,
+  Session,
+  type Session as TSession,
+} from "./parts.ts";
 
 // Round-trip the exact wire shapes clients pin. If the schema drifts, these fail.
 

@@ -25,6 +25,7 @@ import https from "node:https";
 import net from "node:net";
 import tls from "node:tls";
 import type { CertAuthority } from "./ca.ts";
+import { hostMatches } from "./policy.ts";
 import type { Decision, Request as GateRequest } from "./policy.ts";
 
 /** classify → decide → hold-and-ask; resolves to a FINAL allow/deny (never hold). */
@@ -78,10 +79,6 @@ function stripPort(hostHeader = ""): string {
   if (h.startsWith("[")) return h.slice(1, h.indexOf("]"));
   const colon = h.lastIndexOf(":");
   return colon > 0 ? h.slice(0, colon) : h;
-}
-
-function hostMatches(host: string, pattern: string): boolean {
-  return host === pattern || (pattern.startsWith("*.") && host.endsWith(pattern.slice(1)));
 }
 
 /** Coerce node's string|string[] header bag to the flat map policy.ts expects. */
@@ -239,7 +236,7 @@ export class ProxyServer {
     }
     // Stamp credentials for this host — the token never entered the sandbox.
     for (const cred of this.#opts.credentials ?? []) {
-      if (!hostMatches(host, cred.host)) continue;
+      if (!hostMatches(host, [cred.host])) continue;
       try {
         headers[cred.header] = typeof cred.value === "string" ? cred.value : await cred.value();
       } catch (e) {

@@ -24,7 +24,7 @@ import type { SpawnCtx } from "./manager.ts";
 const EXTRA_BIN_DIRS = ["/opt/homebrew/bin", "/usr/local/bin"];
 
 /** Absolute path to the leta binary, or undefined when not installed. */
-export function letaBin(): string | undefined {
+function letaBin(): string | undefined {
   const dirs = [...(Deno.env.get("PATH")?.split(":") ?? []), ...EXTRA_BIN_DIRS];
   for (const dir of dirs) {
     if (!dir) continue;

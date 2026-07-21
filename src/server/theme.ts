@@ -1,18 +1,19 @@
 /**
- * UI theme: a named partial palette over the web UI's semantic tokens, persisted
- * at ~/.bough/theme.json and served via GET/PUT/DELETE /theme. The web client
- * fetches it on boot and applies each color as a `--bough-<token>` CSS variable,
- * overriding the defaults baked into web/src/global.css `:root` — so a theme is
- * pure data, no rebuild. DEFAULTS below mirrors that :root block (kept in sync by
- * hand; it exists server-side so the /theme skill can ground drafts in the real
- * default palette without reading the web bundle).
+ * UI theme: a named partial palette over the semantic tokens below, persisted at
+ * ~/.bough/theme.json and served via GET/PUT/DELETE /theme. The TUI fetches it on
+ * boot (src/tui/theme.ts) and paints the tokens it consumes as truecolor — so a
+ * theme is pure data, no rebuild. THEME_DEFAULTS is the built-in palette, kept
+ * server-side so the /theme skill can ground drafts in the real defaults.
+ *
+ * The token list is a fixed contract and stays wider than what the TUI reads
+ * today: it is what PUT /theme validates against and what the skill documents.
  */
 import { z } from "zod/v4";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 
-/** The semantic tokens the web UI reads (web/src/theme.ts). Fixed contract. */
+/** The semantic tokens a theme may set. Fixed contract. */
 export const THEME_TOKENS = [
   "bg",
   "panel",
@@ -35,7 +36,7 @@ export const THEME_TOKENS = [
 ] as const;
 export type ThemeToken = (typeof THEME_TOKENS)[number];
 
-/** The default (built-in) palette — mirror of web/src/global.css :root. */
+/** The default (built-in) palette. */
 export const THEME_DEFAULTS: Record<ThemeToken, string> = {
   bg: "#0e1013",
   panel: "#14161a",

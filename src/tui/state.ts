@@ -3,7 +3,6 @@
 const STATE_PATH = `${Deno.env.get("HOME")}/.bough/tui.json`;
 
 interface TuiState {
-  lastSessionId?: string;
   /** bough_session auth cookie ("name=token") from a previous login. */
   cookie?: string;
   /** Composer history (sent messages, oldest first) — survives restarts. */
@@ -30,14 +29,6 @@ function save(patch: Partial<TuiState>): void {
   } catch {
     // read-only fs or missing --allow-write — skip silently.
   }
-}
-
-export function loadLastSession(): string | null {
-  return load().lastSessionId ?? null;
-}
-
-export function saveLastSession(id: string): void {
-  save({ lastSessionId: id });
 }
 
 export function loadCookie(): string | null {

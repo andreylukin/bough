@@ -74,7 +74,7 @@ import { netDir } from "./install.ts";
 const KindSchema = z.enum(["read", "write", "unknown"]);
 
 /** One row of the declarative classifier table. `match` is "METHOD /path-glob" ("*" wildcards). */
-export const OpRule = z.object({
+const OpRule = z.object({
   match: z.string().regex(
     /^\S+ \S.*$/,
     'match must be "METHOD /path-glob", e.g. "POST /v1/refunds*"',
@@ -83,17 +83,17 @@ export const OpRule = z.object({
   /** Rule-set verb this op classifies as; default "<METHOD> <path>" of the actual request. */
   verb: z.string().optional(),
 });
-export type OpRule = z.infer<typeof OpRule>;
+type OpRule = z.infer<typeof OpRule>;
 
-export const PluginMeta = z.object({
+const PluginMeta = z.object({
   name: z.string().regex(/^[a-z0-9][a-z0-9-]*$/, "name must be a lowercase slug"),
   description: z.string().optional(),
   /** Hosts this plugin classifies (exact or "*.suffix"). It owns these entirely. */
   hosts: z.array(z.string().min(1)).min(1),
 });
-export type PluginMeta = z.infer<typeof PluginMeta>;
+type PluginMeta = z.infer<typeof PluginMeta>;
 
-export const PluginFixture = z.object({
+const PluginFixture = z.object({
   name: z.string().optional(),
   req: z.object({
     method: z.string().min(1),
@@ -104,7 +104,7 @@ export const PluginFixture = z.object({
   expect: z.object({ kind: KindSchema.optional(), verb: z.string().optional() })
     .refine((e) => e.kind !== undefined || e.verb !== undefined, "expect kind and/or verb"),
 });
-export type PluginFixture = z.infer<typeof PluginFixture>;
+type PluginFixture = z.infer<typeof PluginFixture>;
 
 /** The declarative plugin — what the LLM drafts and the install endpoint accepts. */
 export const PluginSpec = z.object({
@@ -115,7 +115,7 @@ export const PluginSpec = z.object({
 export type PluginSpec = z.infer<typeof PluginSpec>;
 
 /** What a plugin's gate() sees alongside the raw request. */
-export interface GuardCtx {
+interface GuardCtx {
   sessionId?: string;
   /** The classified action ("s3:delete", "GET /x", …). */
   action: Action;
@@ -128,8 +128,8 @@ export interface GuardCtx {
   fetch: typeof fetch;
 }
 
-export type GuardResult = { verdict: Verdict; reason?: string } | undefined;
-export type GuardFn = (req: Request, ctx: GuardCtx) => GuardResult | Promise<GuardResult>;
+type GuardResult = { verdict: Verdict; reason?: string } | undefined;
+type GuardFn = (req: Request, ctx: GuardCtx) => GuardResult | Promise<GuardResult>;
 
 /** A live gate() hook an approve chain can name ("plugin:<name>" — see gate.ts). */
 export interface PluginGuard {
@@ -199,7 +199,7 @@ function compileOps(ops: OpRule[]): CompiledOp[] {
  * plugin owns its hosts). A classify()-only plugin returning undefined falls through
  * to the built-in chain, mirroring classifyGraphql.
  */
-export type ExtractFn = (req: Request) => Record<string, unknown> | undefined;
+type ExtractFn = (req: Request) => Record<string, unknown> | undefined;
 
 export function buildClassifier(
   name: string,
@@ -321,7 +321,7 @@ export const fixtures = ${JSON.stringify(spec.fixtures, null, 2)};
 }
 
 /** A runnable starter plugin, ready to edit. Gates nothing until hosts are real. */
-export function scaffoldSpec(name: string): PluginSpec {
+function scaffoldSpec(name: string): PluginSpec {
   return {
     meta: {
       name,

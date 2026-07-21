@@ -20,6 +20,7 @@ import type { Db } from "../db/db.ts";
 import { join } from "node:path";
 import { sessionDir as snapshotSessionDir, snapshotBase } from "../vcs/clonefile.ts";
 import * as shadow from "../vcs/shadow.ts";
+import { pathExists } from "../fsutil.ts";
 
 export interface PreparedWorkspace {
   /** The resolved read-write root (bash cwd + file-tool root). */
@@ -29,7 +30,7 @@ export interface PreparedWorkspace {
   /**
    * Per-session scratchpad dir — a writable dir OUTSIDE the workspace and the snapshot
    * dir, for temp files/scripts/outputs. It lives under the OS temp root so the OS
-   * reaps it, and being outside the repo means scratch files never get jj-snapshotted,
+   * reaps it, and being outside the repo means scratch files never get snapshotted,
    * built by the live server, or turn up in `git diff main HEAD`. "" when not sandboxed.
    */
   scratchDir: string;
@@ -42,8 +43,8 @@ export interface PreparedWorkspace {
    */
   gitWriteDirs?: string[];
   /**
-   * Set when workspace isolation was expected but could not be provided (external
-   * jj prep failed on a first turn): the turn runs directly in the user's checkout.
+   * Set when workspace isolation was expected but could not be provided (shadow
+   * prep failed on a first turn): the turn runs directly in the user's checkout.
    * The caller surfaces it in the thread — a silent fallback let sessions pollute
    * the real repo with nothing visible outside the server log (user-testing bug).
    */
@@ -59,15 +60,6 @@ function scratchBase(): string {
   const override = Deno.env.get("BOUGH_SCRATCH_BASE");
   if (override) return override;
   return join(Deno.env.get("TMPDIR") ?? "/tmp", "bough-scratch");
-}
-
-async function pathExists(p: string): Promise<boolean> {
-  try {
-    await Deno.stat(p);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 /**
@@ -115,9 +107,9 @@ export async function prepareWorkspace(
   // Normalize even though createSession validates: legacy rows and env values
   // predate validation and may still carry a literal `~`.
   const explicit = rawExplicit === undefined ? undefined : normalizeWorkspace(rawExplicit);
-  let cwd = override ?? explicit ?? Deno.cwd();
+  const cwd = override ?? explicit ?? Deno.cwd();
   // BOUGH_NO_SANDBOX=1 is a debugging escape hatch: run the turn against the real
-  // workspace with no jj tracking and no Seatbelt wrap.
+  // workspace with no shadow worktree and no Seatbelt wrap.
   const noSandbox = Deno.env.get("BOUGH_NO_SANDBOX") === "1";
   const sandboxed = override === undefined && explicit !== undefined && !noSandbox;
 
@@ -161,8 +153,8 @@ export async function prepareWorkspace(
  * repos that still carry a legacy `.jj`). First turn branches the worktree —
  * off the parent session's tip for forks, else off a captured snapshot of the
  * repo's working tree — and repoints the session's workspace column at it.
- * Resumes run where the column already points. Failures degrade exactly like
- * the jj path: sandboxed turn in the user's checkout, with a loud warning.
+ * Resumes run where the column already points. Failures degrade gracefully:
+ * sandboxed turn in the user's checkout, with a loud warning.
  */
 async function prepareShadow(
   db: Db,

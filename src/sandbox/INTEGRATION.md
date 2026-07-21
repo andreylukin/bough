@@ -85,7 +85,7 @@ await applyBack(sessionId, approvedPaths); // copy approved clones back over ori
 `src/schema/changes.ts`:
 
 ```ts
-Diff     = { source: "jj" | "clonefile" | "shadow", files: FileDiff[] }
+Diff     = { source: "clonefile" | "shadow", files: FileDiff[] }
 FileDiff = { path: string, status: "added" | "modified" | "deleted", hunks: Hunk[] }
 Hunk     = { header: string, lines: string[] }   // "@@ … @@" + body lines with ` `/`+`/`-` markers
 ```

@@ -121,7 +121,7 @@ import { DiffView, flattenDiffs } from "./DiffView.tsx";
 import { modelEntries, ModelPicker } from "./ModelPicker.tsx";
 import { Panel, PANEL_TABS, type PanelTab, PanelTabs } from "./Panel.tsx";
 import { Help, helpMaxScroll } from "./Help.tsx";
-import { appendHistory, appendShellHistory, loadHistory, saveLastSession } from "../state.ts";
+import { appendHistory, appendShellHistory, loadHistory } from "../state.ts";
 import { shellHistoryCorpus } from "../shell_history.ts";
 import { copyToClipboard } from "../clipboard.ts";
 import { progressEnd, progressStart, setTitle, tabColor, termBackground } from "../term.ts";
@@ -369,7 +369,6 @@ export function App(
     setShellOut(null);
     setSections(null); // labels describe the session they were computed for
     if (currentIdRef.current !== s.id) stashDraft();
-    saveLastSession(s.id);
     open(s.id).catch((e) => setErr(String(e)));
   }, [open, stashDraft]);
 
@@ -1274,7 +1273,6 @@ export function App(
     }
     store.newSession(defaultWorkspace).then(
       (s) => {
-        saveLastSession(s.id);
         return store.send(text, false, s.id);
       },
       (e) => setErr(String(e)),

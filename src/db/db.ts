@@ -135,7 +135,7 @@ type SessionRow = {
  * workspace (null = fall back to BOUGH_WORKSPACE/cwd) and its persisted snapshot base.
  * Kept off the wire `Session` type so the UI mirror in schema/parts.ts is untouched.
  */
-export interface SessionRuntime {
+interface SessionRuntime {
   workspace: string | null;
   base: string | null;
 }
@@ -943,7 +943,7 @@ function toNetRequest(r: NetEventRow): NetRequest {
 }
 
 /** Resolve the DB path: BOUGH_DB override, else ~/.bough/bough.db (dir created). */
-export function defaultDbPath(): string {
+function defaultDbPath(): string {
   const override = Deno.env.get("BOUGH_DB");
   if (override) return override;
   const dir = join(homedir(), ".bough");

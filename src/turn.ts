@@ -277,14 +277,10 @@ const STOP_GATE_NUDGE = "[harness] You changed files this turn but never passed 
   "a `check` that encodes the request's acceptance criteria and set done:true, or, " +
   "if these changes genuinely need no verification, call stop again to end anyway.";
 
-/** Kick off the supervisor turn for `sessionId`. Returns the placeholder message. */
-export function runTurn(ctx: TurnCtx, sessionId: string): Message {
-  return beginTurn(ctx, sessionId).message;
-}
-
 /**
- * Like runTurn, but also hands back the promise that resolves when the turn is
- * fully done. runTurn discards it (fire-and-forget for the 202 path); tests await it.
+ * Kick off the supervisor turn for `sessionId`. Returns the placeholder message
+ * plus the promise that resolves when the turn is fully done — the 202 path
+ * discards it (fire-and-forget); tests await it.
  */
 export function beginTurn(
   ctx: TurnCtx,
@@ -344,7 +340,7 @@ const pendingTitles = new Map<string, string>();
  * Map known auth/key failures to plain language with the fix at hand (^o is
  * the API-keys tab). Anything unrecognized keeps the raw SDK message.
  */
-export function friendlyTurnError(err: unknown, model: string): string {
+function friendlyTurnError(err: unknown, model: string): string {
   const msg = (err as Error)?.message ?? String(err);
   const provider = model.startsWith("openai:")
     ? "OpenAI"
@@ -442,7 +438,7 @@ export function startUserTurn(
   // One turn per session: if one is already running, the message is persisted and
   // shown now, and it STEERS — the live turn yields at its next round boundary and
   // the follow-up turn (which sees this message) starts immediately. Clients that
-  // want plain queueing hold the message until the turn finishes (the web UI does).
+  // want plain queueing instead hold the message until the turn finishes.
   if (isTurnRunning(sessionId)) {
     queued.add(sessionId);
     steering.add(sessionId);

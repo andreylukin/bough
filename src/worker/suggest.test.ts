@@ -1,4 +1,4 @@
-import { assertEquals } from "jsr:@std/assert";
+import { assertEquals } from "jsr:@std/assert@1";
 import { renderConvo, sanitizeSuggestion } from "./suggest.ts";
 
 Deno.test("renderConvo: roles label lines, oldest first", () => {

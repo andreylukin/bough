@@ -22,8 +22,15 @@
  * bash egress running unrouted when Claw Patrol is off.
  */
 import { activeGateway } from "../net/gateway.ts";
-import { READ, UNKNOWN, WRITE } from "../net/policy.ts";
-import type { Action, Classifier, Kind, Request } from "../net/policy.ts";
+import {
+  type Action,
+  type Classifier,
+  type Kind,
+  READ,
+  type Request,
+  UNKNOWN,
+  WRITE,
+} from "../net/policy.ts";
 
 /** Kind seeded from MCP tool annotations — a hint for classification, not a grant. */
 export function kindFromAnnotations(annotations: Record<string, unknown> | undefined): Kind {

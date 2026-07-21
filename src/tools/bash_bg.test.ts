@@ -1,5 +1,6 @@
-import { assert, assertStringIncludes } from "jsr:@std/assert@1";
-import { bashBg, bashKill, bashOutput } from "./bash_bg.ts";
+import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
+import { bashBg, bashKill, bashOutput, bashWait } from "./bash_bg.ts";
+import { bash } from "./bash.ts";
 
 /** Poll `fn` until `pred` holds, collecting every returned chunk. */
 async function pollUntil(
@@ -83,10 +84,6 @@ Deno.test("background shells are scoped to their session; unknown ids reject", a
     await Deno.remove(workspace, { recursive: true }).catch(() => {});
   }
 });
-
-import { bashWait } from "./bash_bg.ts";
-import { bash } from "./bash.ts";
-import { assertEquals } from "jsr:@std/assert@1";
 
 Deno.test("bashBg: exit posts a completion note via ctx.notify (no polling needed)", async () => {
   const workspace = await Deno.makeTempDir({ prefix: "bough-bg-notify-" });

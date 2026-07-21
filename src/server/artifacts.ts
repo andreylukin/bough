@@ -148,7 +148,7 @@ export function artifactsRoot(base?: string): string {
  * to 0.0.0.0 for LAN/tunnel use: the `href` is what the LOCAL user clicks; the UI uses
  * the relative `url` and so is origin-agnostic.
  */
-export function serverBaseUrl(): string {
+function serverBaseUrl(): string {
   const port = Deno.env.get("BOUGH_PORT") ?? "4321";
   return `http://127.0.0.1:${port}`;
 }
@@ -201,7 +201,7 @@ export async function publishArtifact(
 }
 
 /** Every artifact a session has published, newest first. Absent dir → []. */
-export async function listArtifacts(sessionId: string, base?: string): Promise<Artifact[]> {
+export function listArtifacts(sessionId: string, base?: string): Artifact[] {
   let dir: string;
   try {
     dir = sessionDir(sessionId, base);

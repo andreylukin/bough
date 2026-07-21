@@ -1,12 +1,13 @@
 /**
- * TUI palette: the terminal consumes the same stored theme as the web UI
- * (GET /theme — see server/theme.ts). Hue tokens: green → accent (identity,
- * active markers), amber → warnings/holds, red → errors, blue → info,
- * hairline → panel borders. Surface tokens paint real backgrounds (ink 7 Box
- * backgroundColor): bg → the whole screen, panel → bordered containers,
- * panelInset → the composer — so surface presets like Midnight restyle the
- * terminal, not just the web. Colors render as truecolor, both through ink
- * (hex props) and the hand-rolled SGR line renderer (fgParams).
+ * TUI palette: the terminal applies the stored theme (GET /theme — see
+ * server/theme.ts). Hue tokens: green → accent (identity, active markers),
+ * amber → warnings/holds, red → errors, blue → info, hairline → panel borders.
+ * Surface tokens paint real backgrounds (ink 7 Box backgroundColor): bg → the
+ * whole screen, panel → bordered containers, panelInset → the composer — so
+ * surface presets like Midnight restyle the terminal wholesale. Colors render
+ * as truecolor, both through ink (hex props) and the hand-rolled SGR line
+ * renderer (fgParams). Tokens the server defines but applyTheme does not read
+ * are simply inert here.
  *
  * A mutable singleton, not React state: every component reads `palette` at
  * render time, and `epoch` (bumped on each apply) is the dependency that

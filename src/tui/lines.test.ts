@@ -1,5 +1,9 @@
-import { assertEquals } from "jsr:@std/assert@1";
-import { parseSubagentNote } from "./lines.ts";
+import { assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
+import { type Branch, buildLines, messageLines, parseSubagentNote } from "./lines.ts";
+import { flattenTree } from "./components/SessionPicker.tsx";
+import type { TuiSession } from "./store.ts";
+import { buildTree, treeItems } from "./components/ConversationTree.tsx";
+import type { Message } from "../schema/parts.ts";
 
 Deno.test("parseSubagentNote: extracts fields from the completion note", () => {
   const note = [
@@ -47,9 +51,6 @@ Deno.test("parseSubagentNote: an orphan's 'unknown' file list is unknown, not a 
   assertEquals(p?.filesUnknown, true);
 });
 
-import { flattenTree } from "./components/SessionPicker.tsx";
-import type { TuiSession } from "./store.ts";
-
 function sess(p: Partial<TuiSession> & { id: string; kind: string }): TuiSession {
   return { title: p.id, createdAt: 1, ...p } as TuiSession;
 }
@@ -88,9 +89,6 @@ Deno.test("flattenTree: a root with an unknown origin surfaces as a trunk", () =
   assertEquals(rows.length, 1);
   assertEquals(rows[0].depth, 0);
 });
-
-import { buildTree, treeItems } from "./components/ConversationTree.tsx";
-import type { Message } from "../schema/parts.ts";
 
 function msg(id: string, role: string, text = ""): Message {
   return {
@@ -154,8 +152,6 @@ Deno.test("treeItems: node, then its tool steps, then its branches", () => {
     ["node", "step", "branch"],
   );
 });
-
-import { messageLines } from "./lines.ts";
 
 Deno.test("collapsed tool fold carries a gist of what ran", () => {
   const msg: Message = {
@@ -236,8 +232,6 @@ Deno.test("image part renders as a compact placeholder line", () => {
   // Right-click copy yields the attachment path.
   assertEquals(img.copy, "/home/u/.bough/attachments/x.png");
 });
-
-import { type Branch, buildLines } from "./lines.ts";
 
 Deno.test("finished-subagent card caps the report; !full lifts the cap", () => {
   const sessionId = "sub-1";
@@ -387,8 +381,6 @@ Deno.test("branch card: persisted {ok, checkPassed} gates the green ✓ — fail
   assertEquals(card({ status: "done" }).includes("✓ done"), true);
   assertEquals(card({ status: "done" }).includes("check failed"), false);
 });
-
-import { assertStringIncludes } from "jsr:@std/assert@1";
 
 Deno.test("messageLines renders a settled ask part as an always-visible Q → A line", () => {
   const msg: Message = {

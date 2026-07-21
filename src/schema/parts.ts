@@ -237,29 +237,20 @@ export const AnswerQuestionBody = z.object({
 export type AnswerQuestionBody = z.infer<typeof AnswerQuestionBody>;
 
 // ---- typed event payloads --------------------------------------------------
-// The shapes the TUI store reduces. Kept here so emitters can be
-// checked against the same contract the UI consumes. `data` of each named event:
-
-/** `session.created` → a Session (the full row). */
-export const SessionCreatedData = Session;
-/** `session.updated` → a Session (the full row after a change, e.g. the title worker). */
-export const SessionUpdatedData = Session;
-/** `message.started` → a Message (created pending). */
-export const MessageStartedData = Message;
-/** `message.delta` → an incremental text chunk for a streaming message. */
-export const MessageDeltaData = z.object({ messageId: z.string(), delta: z.string() });
-/** `message.retry` → the LLM round failed transiently and is being re-attempted;
- * the message will re-stream from the top (UIs drop their streaming buffer). */
-export const MessageRetryData = z.object({ messageId: z.string() });
-/** `message.part` → a finalized Part appended to a message. */
-export const MessagePartData = z.object({ messageId: z.string(), part: Part });
-/** `tool.log` → one console.* line from a running program, keyed to its tool_call. */
-export const ToolLogData = z.object({
-  messageId: z.string(),
-  callId: z.string(),
-  line: z.string(),
-});
-/** `message.finished` → the message is complete (flip pending → false). */
-export const MessageFinishedData = z.object({ messageId: z.string() });
-/** `ask.question` → an AskQuestion (pending on raise; re-emitted with its final status). */
-export const AskQuestionData = AskQuestion;
+// The shapes the TUI store reduces — `BoughEvent.data` per event name. Recorded
+// as prose, not schemas: nothing validates the bus, so a schema here would be an
+// unenforced second source of truth. The `bus.publish` calls in turn.ts are
+// canonical; src/tui/store.ts reduces them.
+//
+//   session.created  → Session (the full row)
+//   session.updated  → Session (the full row after a change, e.g. the title worker)
+//   message.started  → Message (created pending)
+//   message.delta    → { messageId, delta } — incremental text for a streaming message
+//   message.retry    → { messageId } — the LLM round failed transiently and is being
+//                      re-attempted; the message re-streams from the top, so UIs
+//                      drop their streaming buffer
+//   message.part     → { messageId, part: Part } — a finalized Part appended
+//   tool.log         → { messageId, callId, line } — one console.* line from a
+//                      running program, keyed to its tool_call
+//   message.finished → { messageId } — the message is complete (pending → false)
+//   ask.question     → AskQuestion (pending on raise; re-emitted with its final status)

@@ -29,7 +29,7 @@ export const ServerConfig = z.object({
   /** Extra seatbelt write roots for the server child (a leading ~ expands to the
    * user's home) — for servers that keep state outside the workspace. */
   allowWrite: z.array(z.string()).default([]),
-  /** Remote transport (phase 2 — accepted by the schema, rejected by the manager). */
+  /** Remote transport — the manager connects these over McpRemoteClient. */
   url: z.string().optional(),
 }).superRefine((s, ctx) => {
   if (!s.command === !s.url) ctx.addIssue("a server needs exactly one of command or url");

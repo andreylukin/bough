@@ -251,7 +251,7 @@ const IMAGE_TYPES: Record<string, string> = {
 };
 
 /** Media type for a path with a supported image extension, else undefined. */
-export function imageMediaType(path: string): string | undefined {
+function imageMediaType(path: string): string | undefined {
   return IMAGE_TYPES[path.slice(path.lastIndexOf(".") + 1).toLowerCase()];
 }
 
@@ -259,7 +259,7 @@ export function imageMediaType(path: string): string | undefined {
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
 /** Where attached images are copied: ~/.bough/attachments. */
-export function attachmentsDir(): string {
+function attachmentsDir(): string {
   return `${Deno.env.get("HOME") ?? "."}/.bough/attachments`;
 }
 

@@ -26,7 +26,7 @@ type Cert = any;
 type Key = any;
 
 /** A minted leaf as the PEM pair node:tls wants. */
-export interface LeafPem {
+interface LeafPem {
   key: string;
   cert: string;
 }
@@ -62,7 +62,7 @@ function generateCA(): { cert: Cert; key: Key } {
 }
 
 /** The default net dir (BOUGH_NET_DIR overrides in tests); CA lives in its `ca/` subdir. */
-export function caDir(): string {
+function caDir(): string {
   const base = Deno.env.get("BOUGH_NET_DIR") ?? join(homedir(), ".bough", "net");
   const dir = join(base, "ca");
   mkdirSync(dir, { recursive: true });

@@ -38,6 +38,7 @@ import { DONE_ACCEPTED } from "./tools/mod.ts";
 import { maybeAutoTitle, UNTITLED } from "./supervisor/title.ts";
 import { normalizeWorkspace } from "./supervisor/workspace.ts";
 import * as shadow from "./vcs/shadow.ts";
+import { pathExists } from "./fsutil.ts";
 
 export interface SpawnCtx {
   spawnerId: string;
@@ -164,15 +165,6 @@ export function taskStubTitle(task: string): string {
   const at = cut.lastIndexOf(" ");
   // Cut at the last word boundary unless that throws away most of the budget.
   return `${(at > 20 ? cut.slice(0, at) : cut).trimEnd()}…`;
-}
-
-async function pathExists(p: string): Promise<boolean> {
-  try {
-    await Deno.stat(p);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 /**

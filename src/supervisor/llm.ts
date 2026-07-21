@@ -699,12 +699,10 @@ interface OpenAICompatOpts {
   /** Read at run() time, so a key set at runtime applies without a restart. */
   apiKeyEnv: string;
   extraHeaders?: Record<string, string>;
-  /** Map our model id to the provider's wire id. */
-  mapModel?: (model: string) => string;
 }
 
-// The shared OpenAI chat-completions streaming client behind both OpenRouter and
-// OpenAI proper — same wire shape; only the URL, key, and headers differ.
+// The OpenAI chat-completions streaming client behind OpenRouter (OpenAI proper
+// goes through openaiClient / the Responses API instead).
 function openAICompatClient(opts: OpenAICompatOpts): LlmClient {
   return {
     async run(params, onText, signal) {
@@ -719,7 +717,7 @@ function openAICompatClient(opts: OpenAICompatOpts): LlmClient {
           ...opts.extraHeaders,
         },
         body: JSON.stringify({
-          model: opts.mapModel ? opts.mapModel(params.model) : params.model,
+          model: params.model,
           max_tokens: params.maxTokens,
           stream: true,
           stream_options: { include_usage: true },

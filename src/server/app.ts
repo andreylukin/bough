@@ -41,7 +41,7 @@ import {
   startUserTurn,
   usableContextLimit,
 } from "../turn.ts";
-import { type Effort, EFFORTS } from "../supervisor/llm.ts";
+import { clientFor, type Effort, EFFORTS, type LlmClient } from "../supervisor/llm.ts";
 import { setWorkerChoice, WORKER_OPTIONS, workerChoice } from "../worker/frontier.ts";
 import { SuggestBody, suggestNextStep } from "../worker/suggest.ts";
 import { sessionMetrics } from "../metrics.ts";
@@ -76,9 +76,8 @@ import {
 import { mcpManager } from "../mcp/manager.ts";
 import { mcpStatusFor } from "../mcp/status.ts";
 import { beginAuth, clearAuth, completeAuth } from "../mcp/oauth.ts";
-import { clientFor } from "../supervisor/llm.ts";
 import { listArtifacts, serveArtifact } from "./artifacts.ts";
-import { viewerBundle } from "./jsonrender/bundle.ts";
+import { VIEWER_JS_PATH, viewerBundle } from "./jsonrender/bundle.ts";
 import {
   addComment,
   AddCommentBody,
@@ -103,7 +102,6 @@ import { handoff, HandoffBody } from "../handoff.ts";
 import { move, MoveBody } from "../move.ts";
 import { adoptSubagent } from "../subagent.ts";
 import { listJobs, onJobEvent } from "../tools/bash_bg.ts";
-import type { LlmClient } from "../supervisor/llm.ts";
 import { applyChanges, revertChanges, sessionChanges } from "./changes.ts";
 import { ChangesApplyBody, ChangesRevertBody } from "../schema/changes.ts";
 import { clearTheme, loadTheme, saveTheme, Theme, THEME_DEFAULTS, THEME_TOKENS } from "./theme.ts";
@@ -873,7 +871,7 @@ const pluginFromRequestsH: Handler = async (req, ctx) => {
   const sessionId = body?.sessionId ?? undefined;
   if (sessionId && !ctx.db.getSession(sessionId)) return error(404, "unknown session");
   try {
-    const result = await ctx.gateway.pluginFromRequests(samples, sessionId, (name) => {
+    const result = await ctx.gateway.pluginFromRequests(samples, (name) => {
       setPluginActivation(ctx.db, sessionId, name, true, undefined, ctx.netDir);
       ctx.gate?.invalidate();
     });
@@ -1575,7 +1573,7 @@ const routes: Route[] = [
   },
   {
     method: "GET",
-    pattern: new URLPattern({ pathname: "/artifact-viewer.js" }),
+    pattern: new URLPattern({ pathname: VIEWER_JS_PATH }),
     handler: getViewerJs,
   },
 ];

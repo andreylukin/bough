@@ -28,40 +28,14 @@ import { caTrustCommand, isCaTrusted } from "./catrust.ts";
 import { augmentCloudPolicy, type KubeSetup, setupKube } from "./cloud.ts";
 import { loadConfig, type NetConfig, resolveConfig, toPolicy } from "./config.ts";
 import { resolveCredentials } from "./credentials.ts";
+import { brokerEnv } from "./execcred.ts";
 import type { Db } from "../db/db.ts";
 import type { Bus } from "../bus.ts";
 import { annotateNet } from "../worker/annotate.ts";
 
 /** Whether bough should run the egress proxy (on by default — opt out with =0). */
-export function clawpatrolEnabled(): boolean {
+function clawpatrolEnabled(): boolean {
   return Deno.env.get("BOUGH_CLAWPATROL") !== "0";
-}
-
-/**
- * Container-credentials env pointing the sandbox's AWS SDK/CLI at the local
- * read-only broker (scripts/cred-broker.ts, run in the operator's account). Every
- * AWS tool honors these natively, so `aws`/terraform/boto3 get IAM-enforced
- * read-only creds without the SSO cache ever entering the sandbox. Empty unless
- * BOUGH_AWS_BROKER_URL is set; the bearer is read fresh from the group-readable
- * token file per exec, so a broker token rotation (per boot) needs no restart.
- */
-function awsBrokerEnv(): Record<string, string> {
-  const url = Deno.env.get("BOUGH_AWS_BROKER_URL");
-  if (!url) return {};
-  const tokenFile = Deno.env.get("BOUGH_AWS_BROKER_TOKEN_FILE");
-  let token = Deno.env.get("BOUGH_AWS_BROKER_TOKEN") ?? "";
-  if (!token && tokenFile) {
-    try {
-      token = Deno.readTextFileSync(tokenFile).trim();
-    } catch {
-      return {}; // broker not up / token unreadable — leave AWS unconfigured
-    }
-  }
-  if (!token) return {};
-  return {
-    AWS_CONTAINER_CREDENTIALS_FULL_URI: url,
-    AWS_CONTAINER_AUTHORIZATION_TOKEN: token,
-  };
 }
 
 /**
@@ -96,7 +70,7 @@ function githubSentinelEnv(config: NetConfig): Record<string, string> {
   return hasGithub ? { GH_TOKEN: GH_SENTINEL, GITHUB_TOKEN: GH_SENTINEL } : {};
 }
 
-export interface GatewayStatus {
+interface GatewayStatus {
   enabled: boolean;
   running: boolean;
   /** Live per-session listeners (informational; each session gets its own port). */
@@ -183,12 +157,12 @@ export class ClawpatrolGateway {
   }
 
   /**
-   * Build a plugin from selected feed requests, install it (unique name), and enable
-   * it for `sessionId` (or globally) so it gates immediately. Returns the new name.
+   * Build a plugin from selected feed requests and install it (unique name). The
+   * `activate` callback owns the enable scope — session or global — and runs before
+   * the return so the plugin gates immediately. Returns the new name.
    */
   async pluginFromRequests(
     samples: RequestSample[],
-    sessionId: string | undefined,
     activate: (name: string) => void,
   ): Promise<{ name: string; path: string; plugins: PluginInfo[] }> {
     if (!this.#plugins) throw new Error("Claw Patrol is off");
@@ -196,7 +170,6 @@ export class ClawpatrolGateway {
       uniqueName: true,
     });
     activate(name);
-    void sessionId;
     return { name, path, plugins: this.#plugins.list() };
   }
 
@@ -347,7 +320,8 @@ export class ClawpatrolGateway {
         : {}),
       // AWS read-only creds via the local broker (container-credentials protocol).
       // Direct-to-loopback (NO_PROXY covers 127.0.0.1); absent unless configured.
-      ...awsBrokerEnv(),
+      // The sandbox gets the RO `/aws` endpoint (no admin rewrite).
+      ...brokerEnv(),
       // GitHub sentinel: when a github credential binding is installed, gh needs *a*
       // token to send an authenticated request at all — the proxy overwrites the
       // Authorization header with the real PAT for github hosts. The sentinel itself

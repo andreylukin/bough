@@ -17,7 +17,7 @@
  *       --timeout SECS    give up after SECS (default 900); exits 1
  *       --port N          server port (default BOUGH_PORT or 4321)
  */
-import { parseArgs } from "jsr:@std/cli/parse-args";
+import { parseArgs } from "jsr:@std/cli@1/parse-args";
 
 const args = parseArgs(Deno.args, {
   string: ["workspace", "model", "timeout", "port"],

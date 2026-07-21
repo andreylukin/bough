@@ -22,7 +22,7 @@ import { frontierWorkerModel } from "../worker/frontier.ts";
 export const UNTITLED = "untitled";
 
 /** Frontier backstop model when the local worker is unavailable/unusable. */
-export function titleBackstopModel(): string {
+function titleBackstopModel(): string {
   return Deno.env.get("BOUGH_TITLE_MODEL") ?? frontierWorkerModel() ?? "claude-haiku-4-5";
 }
 
@@ -34,7 +34,7 @@ const SYSTEM = [
 /** Produces a raw title for the given first-message text. Injectable for tests. */
 export type Titler = (text: string) => Promise<string>;
 
-export interface TitleCtx {
+interface TitleCtx {
   db: Db;
   bus: Bus;
   /** Injected for tests; defaults to local worker → frontier backstop. */
