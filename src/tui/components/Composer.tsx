@@ -21,10 +21,14 @@ export function Composer(
   // Wrap ourselves (fixed-width chunks) so the cursor→row mapping is exact;
   // each row is its own truncated line, so ink never re-flows the block.
   const innerW = Math.max(4, width - 4); // border + paddingX
-  // Empty + no ghost: a dim in-box placeholder so the first action is visible
-  // (first-run audit: the composer read as decoration without one).
-  const placeholder = input === "" && ghost === "" ? "type a message · enter sends" : "";
-  const full = "› " + input + ghost;
+  // Empty composer: a dim in-box placeholder so the first action is visible
+  // (first-run audit: the composer read as decoration without one). Kept even
+  // when a ghost exists — a ghost only shows once you've started typing, so the
+  // two never collide, and coupling them let a prediction eat the guidance.
+  const placeholder = input === "" ? "type a message · enter sends" : "";
+  // A shown ghost gets a subtle keycap so tab-accept is discoverable.
+  const ghostHint = ghost ? "  ⇥ tab" : "";
+  const full = "› " + input + ghost + ghostHint;
   const ghostStart = 2 + input.length;
   const cur = cursor + 2;
   const rows: { start: number; text: string }[] = [];
@@ -50,6 +54,14 @@ export function Composer(
     ? Math.max(0, Math.min(curRow - (shownCount >> 1), rows.length - shownCount))
     : 0;
   const shown = rows.slice(top, top + shownCount);
+  // A context hint under the box: `!` arms a real local-shell run (say so, and
+  // how to back out); a plain Enter mid-turn steers the running turn rather than
+  // starting a new one.
+  const hint = input.startsWith("!")
+    ? "local shell — enter runs · esc esc clears"
+    : busy && input !== ""
+    ? "enter interjects this turn"
+    : "";
   return (
     <Box
       flexDirection="column"
@@ -99,6 +111,7 @@ export function Composer(
           </Text>
         )
         : null}
+      {hint ? <Text dimColor>{hint}</Text> : null}
     </Box>
   );
 }

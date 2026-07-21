@@ -749,10 +749,11 @@ export function App(
       const ws = text.slice(cursor).search(/\s/);
       return ws < 0 ? text.length : cursor + ws;
     })();
-    if (text.startsWith("!") && cursor >= 1) {
-      // Backwards fzf over shell history: fuzzy filter, most recent first (an
-      // empty query lists the latest runs, like an empty ctrl-r). Completing
-      // replaces the whole input — a `!` line IS the command.
+    if (text.startsWith("!") && cursor >= 2) {
+      // Backwards fzf over shell history: fuzzy filter, most recent first.
+      // Requires at least one char after `!` — a bare `!` popping the whole
+      // corpus buried the shell-mode label under an unbidden dropdown.
+      // Completing replaces the whole input — a `!` line IS the command.
       const q = text.slice(1, cursor);
       const corpus = shellHist.current ??= shellHistoryCorpus();
       const items = corpus
@@ -781,6 +782,8 @@ export function App(
           { name: "conversation", description: "show this conversation's id and details" },
           { name: "schedule", description: "recurring agent runs — list, toggle, create" },
           { name: "theme", description: "pick a color theme — opens the theme tab" },
+          { name: "model", description: "switch the model — opens the model panel" },
+          { name: "effort", description: "set thinking depth — opens the model panel" },
         ];
         const items = [...local, ...skills.filter((s) => s.name !== "theme")]
           .map((s, i) => ({ s, local: i < local.length, score: fuzzyScore(s.name, q) }))
@@ -859,7 +862,10 @@ export function App(
       if (!completed.startsWith(comp.text)) return null;
       return completed.slice(comp.text.length).trimEnd() || null;
     }
-    if (!ghost || store.busy || store.pending || store.ask) return null;
+    // Only surface the worker prediction once the user has started typing —
+    // on an empty composer it clobbered the guiding placeholder with a whole
+    // sentence. Typing a prefix of it still reveals the remainder.
+    if (!ghost || comp.text === "" || store.busy || store.pending || store.ask) return null;
     return ghost.startsWith(comp.text) && ghost.length > comp.text.length
       ? ghost.slice(comp.text.length)
       : null;
@@ -1240,6 +1246,26 @@ export function App(
       setMode("panel");
       return;
     }
+    if (/^\/model\s*$/.test(text)) {
+      // Model switcher lives in the panel's model tab; land on the first model
+      // row (openTab is defined below, so inline its model-entry reset here).
+      setPanelMsg(null);
+      setModelSel(0);
+      setKeyInput(null);
+      setPanelTab("model");
+      setMode("panel");
+      return;
+    }
+    if (/^\/effort\s*$/.test(text)) {
+      // Same panel, cursor on the first thinking-depth row — the efforts
+      // section follows the models in the flat list.
+      setPanelMsg(null);
+      setModelSel(cfg ? cfg.models.length : 0);
+      setKeyInput(null);
+      setPanelTab("model");
+      setMode("panel");
+      return;
+    }
     if (/^\/handoff\b/.test(text)) {
       const goal = text.slice("/handoff".length).trim();
       if (!goal) return setErr("usage: /handoff <goal for the new conversation>");
@@ -1261,7 +1287,7 @@ export function App(
       if (name === "theme") {
         return setErr("theming lives in the panel — press ^t, then the theme tab");
       }
-      const known = ["handoff", "conversation", "schedule", "schedules"].includes(name) ||
+      const known = ["handoff", "conversation", "schedule", "schedules", "model", "effort"].includes(name) ||
         skillsCache.current?.some((s) => s.name === name);
       if (skillsCache.current && !known) {
         return setErr(`unknown command: /${name} — tab completes from the / menu`);
@@ -1287,6 +1313,7 @@ export function App(
     defaultWorkspace,
     runShell,
     loadSchedules,
+    cfg,
   ]);
 
   // Open the panel on a tab, resetting that tab's transient state. One entry
@@ -2760,6 +2787,13 @@ export function App(
                           </Text>
                         );
                       })}
+                    <Text dimColor>
+                      {popup.kind === "file"
+                        ? "files — ↑↓ select · tab insert · esc close"
+                        : popup.kind === "shell"
+                        ? "local shell — ↑↓ pick · enter runs · esc close"
+                        : "commands — ↑↓ select · enter runs · esc close"}
+                    </Text>
                   </Box>
                 )
                 : null}
