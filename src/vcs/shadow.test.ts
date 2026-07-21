@@ -296,6 +296,98 @@ Deno.test("shipToOrigin: commits on the origin branch without touching its index
   });
 });
 
+Deno.test("shipToOrigin: a fork ships work inherited from its parent", async () => {
+  await withRoots(async () => {
+    const repo = await makeRepo();
+    const parent = await shadow.createSessionWorkspace(repo, "shp");
+    await Deno.writeTextFile(`${parent}/feature.txt`, "from parent\n");
+    const child = await shadow.addWorkspace(parent, "shc", shadow.workspaceDirFor("shc"), "shp");
+    // The child made no edits of its own, so its rail is empty (base == tip)...
+    assertEquals((await shadow.diff(child, "shc")).files, []);
+    // ...but ship still delivers the inherited work: delivery diffs against the
+    // origin branch point, not the rail base.
+    const res = await shadow.shipToOrigin(child, "shc", repo, { message: "ship inherited" });
+    assert(res.commit, "expected a commit");
+    assertEquals(res.paths, ["feature.txt"]);
+    assertEquals(await Deno.readTextFile(`${repo}/feature.txt`), "from parent\n");
+  });
+});
+
+Deno.test("shipToOrigin: ships the complete change after adopt advanced the rail base", async () => {
+  await withRoots(async () => {
+    const repo = await makeRepo();
+    const parent = await shadow.createSessionWorkspace(repo, "adp");
+    const sub = await shadow.addWorkspace(parent, "ads", shadow.workspaceDirFor("ads"), "adp");
+    await Deno.writeTextFile(`${sub}/committed.txt`, "committed+dirty\nstage one\n");
+    await shadow.adoptChanges(parent, sub, "ads", "adp"); // clears the sub's rail: base → tip
+    await Deno.writeTextFile(`${sub}/committed.txt`, "committed+dirty\nstage one\nstage two\n");
+    // The advanced rail base contains stage one; merging against IT would read
+    // the origin as having deleted those lines (phantom delete/modify). The
+    // originbase merge sees the true branch point and delivers both stages.
+    const res = await shadow.shipToOrigin(sub, "ads", repo, { message: "ship all" });
+    assert(res.commit, "expected a commit");
+    assertEquals(
+      await Deno.readTextFile(`${repo}/committed.txt`),
+      "committed+dirty\nstage one\nstage two\n",
+    );
+  });
+});
+
+Deno.test("shipToOrigin: nothing-to-ship says why", async () => {
+  await withRoots(async () => {
+    const repo = await makeRepo();
+    const dir = await shadow.createSessionWorkspace(repo, "why");
+    const res = await shadow.shipToOrigin(dir, "why", repo, { message: "m" });
+    assertEquals(res.commit, null);
+    assertStringIncludes(res.note ?? "", "origin branch point");
+  });
+});
+
+Deno.test("shipToOrigin: keeps a diverged-but-superset origin file out of the commit", async () => {
+  await withRoots(async () => {
+    const repo = await makeRepo();
+    const dir = await shadow.createSessionWorkspace(repo, "nop");
+    await Deno.writeTextFile(`${dir}/new.txt`, "session work\n");
+    await Deno.writeTextFile(`${dir}/committed.txt`, "committed+dirty\nsession line\n");
+    // The user's copy already carries the session's line PLUS their own edit:
+    // the merge delivers nothing, so committing the path would only sweep the
+    // user's own edit into the session's commit.
+    await Deno.writeTextFile(`${repo}/committed.txt`, "user line\ncommitted+dirty\nsession line\n");
+    const res = await shadow.shipToOrigin(dir, "nop", repo, { message: "ship" });
+    assert(res.commit, "expected a commit");
+    assertEquals(res.paths, ["new.txt"]);
+    const shown = await sh(repo, "git", "show", "--stat", "--format=", "HEAD");
+    assertEquals(shown.includes("committed.txt"), false);
+    assertEquals(
+      await Deno.readTextFile(`${repo}/committed.txt`),
+      "user line\ncommitted+dirty\nsession line\n",
+    );
+  });
+});
+
+Deno.test("materialize: a conflict anywhere leaves the origin fully untouched", async () => {
+  await withRoots(async () => {
+    const repo = await makeRepo();
+    const dir = await shadow.createSessionWorkspace(repo, "atm");
+    await Deno.writeTextFile(`${dir}/clean.txt`, "would deliver\n");
+    await Deno.writeTextFile(`${dir}/committed.txt`, "session version\n");
+    // The user rewrote the same file in origin — unmergeable.
+    await Deno.writeTextFile(`${repo}/committed.txt`, "user version\n");
+    const before = await originState(repo);
+    let err = "";
+    try {
+      await shadow.materialize(dir, "atm", repo, []);
+    } catch (e) {
+      err = (e as Error).message;
+    }
+    assertStringIncludes(err, "committed.txt");
+    assertStringIncludes(err, "origin untouched");
+    // The cleanly-applying file was NOT half-delivered.
+    assertEquals(await Deno.stat(`${repo}/clean.txt`).catch(() => null), null);
+    assertEquals(await originState(repo), before);
+  });
+});
+
 Deno.test("sandboxGitWriteDirs: store worktree+objects for shadow sessions, empty otherwise", async () => {
   await withRoots(async () => {
     const repo = await makeRepo();

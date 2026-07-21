@@ -14,6 +14,9 @@
  *     per `track()` (working-tree snapshot). Worktree HEAD rides along detached.
  *   - `refs/bough/base/<id>` — where the session branched. `diff()` is always
  *     base..tip; `accept()` seals by advancing base onto tip.
+ *   - `refs/bough/originbase/<id>` — the origin's tree at branch time, never
+ *     moved (forks/subagents inherit it). materialize/ship diff and merge
+ *     against THIS ref; the base ref is the rail cursor and moves under it.
  *   - Linked worktrees give every session an isolated working copy with its own
  *     index for free (no shared-index cross-session bleed — the opencode #7774
  *     failure class is structurally impossible here).
@@ -47,6 +50,19 @@ export function refFor(sessionId: string): string {
 /** Session base ref (branch point) inside the shadow repo. */
 export function baseRefFor(sessionId: string): string {
   return `refs/bough/base/${sessionId}`;
+}
+
+/**
+ * Session origin-base ref: the origin's tree at the moment the session's chain
+ * branched off it. NEVER advanced — unlike the base ref, which doubles as the
+ * Changes-rail cursor and is moved by accept/adopt. Delivery to the origin
+ * (materialize/ship) must diff and 3-way against THIS ref: using the rail
+ * cursor as a merge base makes half-shipped work look like origin deletions
+ * (phantom delete/modify conflicts), and a fork created after the work exists
+ * (base == tip) sees nothing to ship at all.
+ */
+export function originBaseRefFor(sessionId: string): string {
+  return `refs/bough/originbase/${sessionId}`;
 }
 
 interface RunResult {
@@ -352,6 +368,7 @@ export async function createSessionWorkspace(origin: string, sessionId: string):
   return await withLock(store, async () => {
     const base = await captureBase(store, origin);
     await git(store, ["update-ref", baseRefFor(sessionId), base]);
+    await git(store, ["update-ref", originBaseRefFor(sessionId), base]);
     await git(store, ["update-ref", refFor(sessionId), base]);
     await Deno.mkdir(workspacesRoot(), { recursive: true });
     await git(store, ["worktree", "add", "--detach", dir, base]);
@@ -384,8 +401,16 @@ export async function addWorkspace(
   const tip = fromSessionId !== null
     ? await track(fromDir, fromSessionId)
     : (await git(fromDir, ["rev-parse", "HEAD"])).trim();
+  // The child inherits the parent's origin branch point, so delivery still
+  // diffs against what the origin actually had — a fork's rail base (= parent
+  // tip) would make inherited work unshippable. Falls back to the tip for
+  // parents that pre-date originbase refs and for branch-off-HEAD spawns.
+  const originBase = (fromSessionId !== null
+    ? await refSha(fromDir, originBaseRefFor(fromSessionId))
+    : null) ?? tip;
   return await withLock(store, async () => {
     await git(store, ["update-ref", baseRefFor(sessionId), tip]);
+    await git(store, ["update-ref", originBaseRefFor(sessionId), originBase]);
     await git(store, ["update-ref", refFor(sessionId), tip]);
     await Deno.mkdir(workspacesRoot(), { recursive: true });
     await git(store, ["worktree", "add", "--detach", dir, tip]);
@@ -592,40 +617,43 @@ function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
   return true;
 }
 
+/** One path's planned delivery, computed BEFORE anything is written. */
+type PlannedFile =
+  | { kind: "skip" } // origin already has the session's content — nothing to write, but a ship commit still includes it
+  | { kind: "noop" } // origin diverged but already contains the session's change — deliver and commit nothing
+  | { kind: "write"; content: Uint8Array }
+  | { kind: "delete" };
+
 /**
- * Merge one file's base→tip change into the origin's current copy, touching
- * ONLY the working tree (no index — `git apply --3way` refuses on unstaged
- * origin edits, which is the normal state of a user's checkout). Modify/modify
- * merges via `git merge-file`; conflicts throw with the reason.
+ * Plan one file's base→tip delivery into the origin's current copy: exact-copy
+ * fast path when the origin still matches the base, else a content-level 3-way
+ * via `git merge-file` (never the index — `git apply --3way` refuses on
+ * unstaged origin edits, which is the normal state of a user's checkout).
+ * Conflicts throw with the reason; nothing is written here — materialize only
+ * writes once EVERY selected path has planned cleanly.
  */
-async function threeWayFile(
+async function planFile(
   dir: string,
   base: string,
   tip: string,
   origin: string,
   path: string,
-): Promise<void> {
+): Promise<PlannedFile> {
   const baseBlob = await blobAt(dir, base, path);
   const tipBlob = await blobAt(dir, tip, path);
-  const target = join(origin, path);
-  const cur = await Deno.readFile(target).catch(() => null);
+  const cur = await Deno.readFile(join(origin, path)).catch(() => null);
   if (!tipBlob) {
     // Deleted in the session.
-    if (cur === null) return;
-    if (baseBlob && bytesEqual(cur, baseBlob)) {
-      await Deno.remove(target);
-      return;
-    }
+    if (cur === null) return { kind: "skip" };
+    if (baseBlob && bytesEqual(cur, baseBlob)) return { kind: "delete" };
     throw new Error("deleted in session but modified in origin");
   }
+  if (cur !== null && bytesEqual(cur, tipBlob)) return { kind: "skip" };
   if (cur === null || (baseBlob && bytesEqual(cur, baseBlob))) {
-    await Deno.mkdir(dirname(target), { recursive: true });
-    await Deno.writeFile(target, tipBlob);
-    return;
+    return { kind: "write", content: tipBlob };
   }
   if (!baseBlob) {
     // Added in the session AND independently present in the origin.
-    if (bytesEqual(cur, tipBlob)) return;
     throw new Error("added in session but a different file exists in origin");
   }
   const tmp = await Deno.makeTempDir({ prefix: "bough-merge-" });
@@ -633,7 +661,7 @@ async function threeWayFile(
     await Deno.writeFile(`${tmp}/base`, baseBlob);
     await Deno.writeFile(`${tmp}/ours`, cur);
     await Deno.writeFile(`${tmp}/theirs`, tipBlob);
-    // -p prints the merge to stdout; the origin file is only written on success.
+    // -p prints the merge to stdout; nothing on disk changes on conflict.
     const r = await run("git", [
       "merge-file",
       "-p",
@@ -648,53 +676,78 @@ async function threeWayFile(
       `${tmp}/theirs`,
     ], origin);
     if (r.code !== 0) throw new Error("conflicts with origin edits");
-    await Deno.writeTextFile(target, r.stdout);
+    const merged = new TextEncoder().encode(r.stdout);
+    // The merge added nothing (the origin already carries the session's change
+    // plus its own edits) — leave the user's copy alone, keep it out of commits.
+    if (bytesEqual(merged, cur)) return { kind: "noop" };
+    return { kind: "write", content: merged };
   } finally {
     await Deno.remove(tmp, { recursive: true }).catch(() => {});
   }
 }
 
 /**
+ * The baseline delivery diffs and merges against: the immovable origin branch
+ * point (originbase), falling back to the rail base for sessions created
+ * before originbase refs existed.
+ */
+async function deliveryBase(dir: string, sessionId: string): Promise<string | null> {
+  return (await refSha(dir, originBaseRefFor(sessionId))) ??
+    (await refSha(dir, baseRefFor(sessionId)));
+}
+
+/**
  * Deliver a session's reviewed edits into the origin's working tree: the
- * base..tip diff, limited to `paths`, applied per file — plain `git apply`
- * first (clean case), a content-level 3-way merge as the fallback for files
- * the user changed since the session branched (conflicts surface as an error
- * naming the file). The origin's HEAD, index, and branch stay put — the
- * fallback never touches the index, so unstaged origin edits merge fine.
- * Already-delivered files (working copy hash == tip blob) are skipped, so a
- * re-press is a clean no-op.
+ * originbase..tip diff, limited to `paths`, planned per file first (exact copy
+ * or content-level 3-way — see planFile) and written ONLY when every selected
+ * path plans cleanly: a conflict throws with the files named and the origin
+ * untouched, never half-delivered. The origin's HEAD, index, and branch stay
+ * put, so unstaged origin edits merge fine. Already-delivered files (working
+ * copy == tip blob) skip the write, so a re-press is a clean no-op. Returns
+ * the paths a ship commit should include: everything now carrying the
+ * session's content (writes, deletions, and already-delivered skips) but NOT
+ * paths whose merge added nothing to a diverged origin copy — committing those
+ * would sweep the user's own edits into the session's commit.
  */
 export async function materialize(
   dir: string,
   sessionId: string,
   origin: string,
   paths: string[],
-): Promise<void> {
+): Promise<string[]> {
   await track(dir, sessionId);
-  const base = await refSha(dir, baseRefFor(sessionId));
+  const base = await deliveryBase(dir, sessionId);
   const tip = await refSha(dir, refFor(sessionId));
-  if (!base || !tip) return;
+  if (!base || !tip) return [];
   const all = (await git(dir, ["diff", "--name-only", base, tip]))
     .split("\n").map((s) => s.trim()).filter(Boolean);
   const targets = paths.length > 0 ? all.filter((p) => paths.includes(p)) : all;
+  const plan: Array<[string, PlannedFile]> = [];
   const failed: string[] = [];
   for (const p of targets) {
-    const tipBlob = await run("git", ["rev-parse", `${tip}:${p}`], dir, ISOLATED);
-    const cur = await run("git", ["hash-object", "--", p], origin);
-    if (tipBlob.ok ? cur.ok && cur.stdout.trim() === tipBlob.stdout.trim() : !cur.ok) continue;
-    const patch = await git(dir, ["diff", "--binary", base, tip, "--", p]);
-    if (!patch.trim()) continue;
     try {
-      await originGit(origin, ["apply", "--whitespace=nowarn"], undefined, patch);
-    } catch {
-      try {
-        await threeWayFile(dir, base, tip, origin, p);
-      } catch (e) {
-        failed.push(`${p}: ${(e as Error).message.trim().split("\n").at(-1)}`);
-      }
+      plan.push([p, await planFile(dir, base, tip, origin, p)]);
+    } catch (e) {
+      failed.push(`${p}: ${(e as Error).message.trim().split("\n").at(-1)}`);
     }
   }
-  if (failed.length > 0) throw new Error(`could not apply ${failed.join("; ")}`);
+  if (failed.length > 0) {
+    throw new Error(
+      `could not apply (origin untouched; merge base ${base.slice(0, 7)}) ${failed.join("; ")}`,
+    );
+  }
+  const delivered: string[] = [];
+  for (const [p, action] of plan) {
+    if (action.kind === "noop") continue;
+    const target = join(origin, p);
+    if (action.kind === "delete") await Deno.remove(target).catch(() => {});
+    else if (action.kind === "write") {
+      await Deno.mkdir(dirname(target), { recursive: true });
+      await Deno.writeFile(target, action.content);
+    }
+    delivered.push(p);
+  }
+  return delivered;
 }
 
 export interface ShipResult {
@@ -712,8 +765,10 @@ export interface ShipResult {
 
 /**
  * Ship a session's work into the origin as a real commit: materialize the
- * selected paths into the origin's working tree (content-level 3-way; conflicts
- * throw), build the commit through a THROWAWAY index seeded from HEAD — the
+ * selected paths into the origin's working tree (content-level 3-way against
+ * the immovable originbase, so adopted/forked/partially-shipped sessions still
+ * deliver their complete change; conflicts throw with the origin untouched),
+ * build the commit through a THROWAWAY index seeded from HEAD — the
  * user's own index/staging is never read or written — advance the origin's
  * current branch, seal the session (base → tip), and optionally `git push`.
  * The commit is authored with the origin's own git identity/config, and the
@@ -727,7 +782,7 @@ export async function shipToOrigin(
   opts: { message: string; paths?: string[]; push?: boolean },
 ): Promise<ShipResult> {
   await track(dir, sessionId);
-  const base = await refSha(dir, baseRefFor(sessionId));
+  const base = await deliveryBase(dir, sessionId);
   const tip = await refSha(dir, refFor(sessionId));
   if (!base || !tip) throw new Error(`ship: unknown session refs for ${sessionId}`);
   const branchR = await run("git", ["symbolic-ref", "--short", "-q", "HEAD"], origin);
@@ -741,9 +796,25 @@ export async function shipToOrigin(
     ? all.filter((p) => opts.paths!.includes(p))
     : all;
   if (paths.length === 0) {
-    return { commit: null, branch, paths: [], pushed: false, note: "nothing to ship" };
+    // With an originbase ref, an empty diff really means the tree matches the
+    // origin branch point. Legacy sessions diff against the rail base, which
+    // accept/adopt/fork-creation move — an empty diff there can hide real work.
+    const note = (await refSha(dir, originBaseRefFor(sessionId)))
+      ? "nothing to ship: the session tree matches the origin branch point"
+      : "nothing to ship: base == tip — this pre-originbase session's base ref may have been " +
+        "advanced by a seal, adopt, or fork; inherited work would sit below the base, not be absent";
+    return { commit: null, branch, paths: [], pushed: false, note };
   }
-  await materialize(dir, sessionId, origin, paths);
+  const delivered = await materialize(dir, sessionId, origin, paths);
+  if (delivered.length === 0) {
+    return {
+      commit: null,
+      branch,
+      paths: [],
+      pushed: false,
+      note: "nothing to commit: the origin already contains this work merged with its own edits",
+    };
+  }
   // Commit exactly HEAD + the shipped paths via a temp index. `git add` there
   // reads the just-materialized working files; the user's index stays untouched,
   // so anything they had staged remains staged.
@@ -754,11 +825,11 @@ export async function shipToOrigin(
     const headR = await run("git", ["rev-parse", "--verify", "-q", "HEAD"], origin, env);
     const head = headR.ok ? headR.stdout.trim() : null;
     await originGit(origin, head ? ["read-tree", "HEAD"] : ["read-tree", "--empty"], env);
-    await originGit(origin, ["add", "--", ...paths], env);
+    await originGit(origin, ["add", "--", ...delivered], env);
     const tree = (await originGit(origin, ["write-tree"], env)).trim();
     if (head && tree === (await originGit(origin, ["rev-parse", "HEAD^{tree}"])).trim()) {
       await accept(dir, sessionId, opts.message);
-      return { commit: null, branch, paths, pushed: false, note: "already committed" };
+      return { commit: null, branch, paths: delivered, pushed: false, note: "already committed" };
     }
     const args = ["commit-tree", tree, "-m", opts.message];
     if (head) args.push("-p", head);
@@ -773,12 +844,12 @@ export async function shipToOrigin(
     // without this, the advanced HEAD reads the stale index as phantom staged
     // deletions in `git status`. Everything else the user staged stays staged —
     // the end state is exactly `git add <paths> && git commit`.
-    await originGit(origin, ["add", "--all", "--", ...paths]);
+    await originGit(origin, ["add", "--all", "--", ...delivered]);
   } finally {
     await Deno.remove(idx).catch(() => {});
   }
   await accept(dir, sessionId, opts.message);
-  if (!opts.push) return { commit, branch, paths, pushed: false };
+  if (!opts.push) return { commit, branch, paths: delivered, pushed: false };
   const remote = (await run("git", ["config", `branch.${branch}.remote`], origin)).stdout.trim() ||
     "origin";
   const hasRemote = (await run("git", ["remote"], origin)).stdout.split("\n").includes(remote);
@@ -786,7 +857,7 @@ export async function shipToOrigin(
     return { commit, branch, paths, pushed: false, note: `no remote "${remote}" to push to` };
   }
   await originGit(origin, ["push", remote, branch]);
-  return { commit, branch, paths, pushed: true };
+  return { commit, branch, paths: delivered, pushed: true };
 }
 
 /** Restore `path` in the worktree to its state at `rev` (delete if absent there). */
