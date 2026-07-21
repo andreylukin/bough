@@ -44,13 +44,25 @@ Deno.test("md: a link whose label IS the url renders without the parenthetical",
   assertEquals(out.includes("(https://git-scm.com)"), false); // no "url (url)" dup
 });
 
-Deno.test("md: bare URLs become clickable, trailing punctuation stays prose", () => {
+Deno.test("md: bare URLs become clickable and underlined, trailing punctuation stays prose", () => {
   if (!COLOR) return;
   const out = md("try https://example.com/a.");
+  // Underlined like rendered [text](url) links, so a pasted URL reads as a link.
   assertStringIncludes(
     out,
-    `${LINK_OPEN("https://example.com/a")}https://example.com/a${LINK_CLOSE}.`,
+    `${LINK_OPEN("https://example.com/a")}\x1b[4mhttps://example.com/a\x1b[24m${LINK_CLOSE}.`,
   );
+});
+
+Deno.test("md: fenced code sits on a raised surface when a width is given", async () => {
+  if (!COLOR) return;
+  const { surface } = await import("./format.ts");
+  const out = md("```js\nconst x = 1\n```", 40);
+  assertStringIncludes(out, "\x1b[48;2;"); // truecolor bg behind the block
+  assertEquals(md("plain prose", 40).includes("\x1b[48;2;"), false); // prose stays bare
+  // surface() pads to the width and closes the bg at the end of the line.
+  const line = surface("hi", 10);
+  assertEquals(line.endsWith(" ".repeat(8) + "\x1b[0m"), true);
 });
 
 Deno.test("md: URLs inside code spans are not linkified", () => {

@@ -4,7 +4,16 @@
 // any tool group, however old, can be expanded in place.
 import wrapAnsi from "wrap-ansi";
 import type { Message, Role } from "../schema/parts.ts";
-import { clip, COLOR, highlightCode, md, outputText, segmentParts, toolSummary } from "./format.ts";
+import {
+  clip,
+  COLOR,
+  highlightCode,
+  md,
+  outputText,
+  segmentParts,
+  surface,
+  toolSummary,
+} from "./format.ts";
 import { fgParams, palette } from "./theme.ts";
 
 export interface VLine {
@@ -25,6 +34,7 @@ const dim = (s: string) => SGR(2, s);
 const green = (s: string) => SGR(fgParams(palette.accent), s);
 const yellow = (s: string) => SGR(fgParams(palette.warn), s);
 const red = (s: string) => SGR(fgParams(palette.error), s);
+const blue = (s: string) => SGR(fgParams(palette.info), s);
 
 // One accent: green is bough's color (identity + affirmative status); the user
 // speaks in plain bright text. A function (not a const map) so labels pick up
@@ -51,6 +61,8 @@ export interface SubagentNote {
   status: string;
   ok: boolean;
   files: string[];
+  /** An orphan note can't recover its file list ("unknown", not "none"). */
+  filesUnknown: boolean;
   report: string | null;
 }
 
@@ -59,13 +71,16 @@ export function parseSubagentNote(text: string): SubagentNote | null {
   if (!head) return null;
   const [, title, sessionId, status] = head;
   const filesLine = text.match(/^Changed files on its branch: (.+)\.$/m);
-  const files = filesLine && filesLine[1] !== "none"
+  // An orphan note says "unknown" (the server restarted; the list is gone) —
+  // that's a fact about our knowledge, not a file named "unknown".
+  const filesUnknown = filesLine?.[1] === "unknown";
+  const files = filesLine && filesLine[1] !== "none" && !filesUnknown
     ? filesLine[1].split(", ").map((f) => f.trim())
     : [];
   const reportMatch = text.match(/^Report:\n([\s\S]*?)\nIts changes stay on its own branch/m);
   const report = reportMatch ? reportMatch[1].trim() : null;
   // Only a "finished…" note is a success; FAILED / STOPPED / ORPHANED are not.
-  return { title, sessionId, status, ok: status.startsWith("finished"), files, report };
+  return { title, sessionId, status, ok: status.startsWith("finished"), files, filesUnknown, report };
 }
 
 // How many report lines a finished-subagent card shows before "+N more"; the
@@ -79,10 +94,22 @@ const REPORT_LINES = 6;
 // next action. `full` lifts the report cap (set by clicking its "+N more" line).
 function subagentNoteLines(out: VLine[], note: SubagentNote, width: number, full: boolean) {
   const open = `open:${note.sessionId}`;
-  const dot = note.ok ? green("◆") : red("◆");
-  const statusTag = note.ok ? green(note.status) : red(note.status);
-  out.push({ text: `${dot} ${bold(note.title)}  ${statusTag}`, click: open });
-  const fileNote = note.files.length
+  // Amber = stopped/attention (interrupted or orphaned — an infra restart, not
+  // the agent's fault); red stays reserved for a genuine failure.
+  const halted = note.status.startsWith("ORPHANED") || note.status.startsWith("STOPPED");
+  const dot = note.ok ? green("◆") : halted ? yellow("◆") : red("◆");
+  const statusTag = note.ok
+    ? green(note.status)
+    : note.status.startsWith("ORPHANED")
+    ? yellow("◼ interrupted — server restarted")
+    : halted
+    ? yellow(note.status)
+    : red(note.status);
+  const title = note.title.replace(/^subagent · /, "");
+  out.push({ text: `${dot} ${bold(title)}  ${statusTag}`, click: open });
+  const fileNote = note.filesUnknown
+    ? "changed files unknown"
+    : note.files.length
     ? `${note.files.length} file${note.files.length === 1 ? "" : "s"} on its branch · ${
       note.files.join(", ")
     }`
@@ -126,26 +153,35 @@ const OUTPUT_LINES = 20;
  * every physical line carries a dim `│` (clickable — anywhere in the block
  * collapses it). `style` colors the content; the gutter stays dim. A truncated
  * block ends on a "+N more · click to show all" line whose click target is
- * `fullKey` — toggling it re-renders the block uncapped.
+ * `fullKey` — toggling it re-renders the block uncapped. `surface: true` paints
+ * a subtly raised background across the block (tool input/output; thinking
+ * stays bare — it's process, kept quiet).
  */
 function pushBlock(
   out: VLine[],
   text: string,
   width: number,
-  opts: { maxLines: number; style: (l: string) => string; click: string; fullKey?: string },
+  opts: {
+    maxLines: number;
+    style: (l: string) => string;
+    click: string;
+    fullKey?: string;
+    surface?: boolean;
+  },
 ) {
+  const finish = (l: string) => (opts.surface ? surface(l, width) : l);
   const logical = text.split("\n");
   const shown = logical.slice(0, opts.maxLines);
   for (const line of shown) {
     for (const l of wrap(line, width - 2)) {
-      out.push({ text: `${dim("│")} ${l ? opts.style(l) : ""}`, click: opts.click });
+      out.push({ text: finish(`${dim("│")} ${l ? opts.style(l) : ""}`), click: opts.click });
     }
   }
   if (logical.length > shown.length) {
     out.push({
-      text: `${dim("│")} ${
+      text: finish(`${dim("│")} ${
         dim(`… +${logical.length - shown.length} more lines · click to show all`)
-      }`,
+      }`),
       click: opts.fullKey ?? opts.click,
     });
   }
@@ -190,8 +226,10 @@ function toolGroupLines(
   const capOut = full ? Infinity : OUTPUT_LINES;
   const { calls, results, running, verdict, hasError } = toolSummary(parts);
   if (calls.length === 0) return;
-  let head = dim(
-    `${expanded ? "▾" : "▸"} ${calls.length} tool ${calls.length === 1 ? "call" : "calls"}  ${
+  // The fold glyph stays at text weight (not dim) — it's the affordance that
+  // says "expandable"; an all-dim header reads as inert.
+  let head = `${expanded ? "▾" : "▸"} ` + dim(
+    `${calls.length} tool ${calls.length === 1 ? "call" : "calls"}  ${
       calls.map((c) => c.name).join(" · ")
     }`,
   );
@@ -217,7 +255,10 @@ function toolGroupLines(
       : res.interrupted
       ? yellow("⏹ interrupted")
       : green("✓ done");
-    push(out, `${green("◇")} ${call.name} ${status}`, width, key);
+    // The ◇ marker takes the call's status color — accent green next to red
+    // error text misreads as success.
+    const mark = res?.isError ? red("◇") : res?.interrupted ? yellow("◇") : green("◇");
+    push(out, `${mark} ${call.name} ${status}`, width, key);
     // What ran, bright; what came back, dim — the brightness IS the boundary,
     // with an ↳ seam between the two.
     const raw = call.input as Record<string, unknown> | null | undefined;
@@ -230,6 +271,7 @@ function toolGroupLines(
         style: (l) => highlightCode(l, "js"),
         click: key,
         fullKey: `${key}!full`,
+        surface: true,
       });
     }
     if (res && outputText(res) !== "") {
@@ -239,6 +281,7 @@ function toolGroupLines(
         style: (l) => styleOutputLine(l, res.isError),
         click: key,
         fullKey: `${key}!full`,
+        surface: true,
       });
     } else {
       // Still running: show the program's console lines as they stream in
@@ -252,6 +295,7 @@ function toolGroupLines(
           style: (l) => styleOutputLine(l, false),
           click: key,
           fullKey: `${key}!full`,
+          surface: true,
         });
       }
     }
@@ -295,7 +339,8 @@ export function messageLines(
     const seg: VLine[] = [];
     let copy: string;
     if (s.kind === "text") {
-      push(seg, md(s.text), w);
+      // The width lets md() paint fenced code on a raised surface.
+      push(seg, md(s.text, w), w);
       copy = s.text;
     } else if (s.kind === "reasoning") {
       // Thinking folds like a tool group: a long reasoning wall is process, not
@@ -305,7 +350,9 @@ export function messageLines(
       if (!s.text.trim()) return;
       const logical = s.text.split("\n");
       if (isExpanded(key)) {
-        seg.push({ text: dim(`▾ thinking (${logical.length} lines)`), click: key });
+        // Fold glyph at text weight (see toolGroupLines) — the header must read
+        // as clickable; the thinking itself stays dim.
+        seg.push({ text: "▾ " + dim(`thinking (${logical.length} lines)`), click: key });
         pushBlock(seg, s.text, w, {
           maxLines: isFull(key) ? Infinity : OUTPUT_LINES,
           style: dim,
@@ -314,7 +361,7 @@ export function messageLines(
         });
       } else {
         const gist = logical.map((l) => l.trim()).find((l) => l.length > 0) ?? "";
-        seg.push({ text: dim(`▸ thinking · ${clip(gist, 60)}`), click: key });
+        seg.push({ text: "▸ " + dim(`thinking · ${clip(gist, 60)}`), click: key });
       }
       copy = s.text;
     } else if (s.kind === "image") {
@@ -379,10 +426,14 @@ function branchCardLines(
   } else {
     // A finished blocking subagent has no completion note — reflect its real
     // outcome from the session status instead of always showing "✓ done".
+    // Hue semantics: blue = in flight, amber = stopped/attention (interrupted,
+    // or orphaned by a server restart — infra, not failure), red = failed.
     const { dot, tail } = b.busy
-      ? { dot: yellow("◆"), tail: yellow(" ⋯ working") }
-      : b.status === "error" || b.status === "orphaned"
+      ? { dot: blue("◆"), tail: blue(" ⋯ working") }
+      : b.status === "error"
       ? { dot: red("◆"), tail: red(" ✗ failed") }
+      : b.status === "orphaned"
+      ? { dot: yellow("◆"), tail: yellow(" ◼ interrupted — server restarted") }
       : b.status === "interrupted"
       ? { dot: yellow("◆"), tail: yellow(" ◼ interrupted") }
       : { dot: green("◆"), tail: green(" ✓ done") };
