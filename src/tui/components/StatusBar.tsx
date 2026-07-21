@@ -64,6 +64,7 @@ export function StatusBar(
     mode,
     usage,
     draftLabel,
+    dir,
     model,
     parentTitle,
   }: {
@@ -76,6 +77,8 @@ export function StatusBar(
     usage: Usage;
     /** Shown instead of a session title while no session exists yet. */
     draftLabel?: string | null;
+    /** The open session's project dir (~-shortened) — which project this is. */
+    dir?: string | null;
     /** Active model's label (global, from /config). */
     model?: string | null;
     /** Spawner's title when the open session is a subagent branch. */
@@ -122,6 +125,7 @@ export function StatusBar(
               : draftLabel
               ? <Text dimColor>{" "}{draftLabel}</Text>
               : null}
+            {session && dir ? <Text dimColor>{"  "}{dir}</Text> : null}
             {parentTitle ? <Text dimColor>{"  "}branch of {parentTitle} · esc ↩ back</Text> : null}
           </Text>
         </Box>

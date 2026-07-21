@@ -260,6 +260,7 @@ async function launch(
     title: UNTITLED,
     kind: "subagent",
     workspace: explicit ?? null,
+    originDir: db.getSession(spawn.spawnerId)?.originDir ?? null,
     originId: spawn.spawnerId,
     originMessageId: spawn.spawnerMessageId,
   });

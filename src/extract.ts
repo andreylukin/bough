@@ -52,6 +52,7 @@ export function extract(ctx: BranchCtx, sessionId: string, args: ExtractBody): S
     title: args.replaceSource ? session.title : `extract · ${baseTitle(session.title)}`,
     kind: "root",
     workspace: session.workspace ?? null,
+    originDir: session.originDir ?? null,
     // Lineage: normally the source session + the last picked node; a replacement
     // instead inherits the source's own origin link (see ExtractBody.replaceSource).
     originId: args.replaceSource ? session.originId ?? null : session.id,

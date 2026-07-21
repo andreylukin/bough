@@ -114,6 +114,7 @@ type SessionRow = {
   kind: string;
   created_at: number;
   workspace: string | null;
+  origin_dir: string | null;
   base: string | null;
   origin_id: string | null;
   origin_message_id: string | null;
@@ -225,6 +226,7 @@ function toSession(r: SessionRow): Session {
     createdAt: r.created_at,
     // Only surface optional fields when set, so responses stay byte-identical otherwise.
     ...(r.workspace ? { workspace: r.workspace } : {}),
+    ...(r.origin_dir ? { originDir: r.origin_dir } : {}),
     ...(r.origin_id ? { originId: r.origin_id } : {}),
     ...(r.origin_message_id ? { originMessageId: r.origin_message_id } : {}),
     ...(r.deprecated_at != null ? { deprecatedAt: r.deprecated_at } : {}),
@@ -268,6 +270,7 @@ export class Db {
     for (
       const col of [
         "workspace TEXT",
+        "origin_dir TEXT",
         "base TEXT",
         "origin_id TEXT",
         "origin_message_id TEXT",
@@ -313,8 +316,8 @@ export class Db {
   createSession(s: Session): Session {
     this.#db
       .prepare(
-        `INSERT INTO sessions (id, parent_id, title, kind, created_at, workspace, origin_id, origin_message_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO sessions (id, parent_id, title, kind, created_at, workspace, origin_dir, origin_id, origin_message_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         s.id,
@@ -323,6 +326,7 @@ export class Db {
         s.kind,
         s.createdAt,
         s.workspace ?? null,
+        s.originDir ?? null,
         s.originId ?? null,
         s.originMessageId ?? null,
       );

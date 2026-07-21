@@ -952,7 +952,8 @@ export function App(
       setFilter("");
       setMovePicks(null);
     } else if (t === "conversation") {
-      if (store.thread.length === 0) return;
+      // Open even on an empty thread (the tab says "no turns yet") — bailing here
+      // made ^f a silent no-op in a fresh session while ^p/^d/^o all worked.
       // Start on the live tip (last selectable row); ↑ walks back through history.
       forkNavTouched.current = false;
       moveForkSel(Math.max(0, convItems.length - 1));
@@ -1827,6 +1828,12 @@ export function App(
 
   const shortWs = defaultWorkspace.replace(new RegExp(`^${Deno.env.get("HOME")}`), "~");
   const isDraft = !store.currentId;
+  // The open session's project dir, ~-shortened for the status bar. originDir
+  // survives the workspace column being repointed at the shadow worktree; null
+  // for pre-originDir sessions (the internal worktree path would only mislead).
+  const sessionDir = store.session?.originDir
+    ? store.session.originDir.replace(new RegExp(`^${Deno.env.get("HOME")}`), "~")
+    : null;
 
   // /conversation card rows — derived at render so they track live session state.
   // [label, display, copy] — copy is the raw value a click puts on the clipboard
@@ -2000,8 +2007,11 @@ export function App(
   return (
     <Box flexDirection="column" height={rows} width={width} backgroundColor={palette.bg}>
       <Box flexDirection="column" flexGrow={1} overflow="hidden">
-        {modal ?? (isDraft && store.thread.length === 0
+        {modal ?? (lines.length === 0
           ? (
+            // Any empty conversation gets the hint — a freshly created session
+            // used to show a blank void while only the pre-creation draft screen
+            // said "type to start" (user-testing).
             <>
               {Array.from(
                 { length: Math.max(0, Math.floor((bodyH - 5) / 2)) },
@@ -2011,9 +2021,15 @@ export function App(
                 <Text>
                   <Text color={palette.accent}>●</Text> <Text bold>bough</Text>
                 </Text>
-                <Text dimColor>new session in {shortWs}</Text>
+                <Text dimColor>
+                  {isDraft
+                    ? `new session in ${shortWs}`
+                    : sessionDir
+                    ? `new conversation in ${sessionDir}`
+                    : "new conversation"}
+                </Text>
                 <Text>{" "}</Text>
-                <Text dimColor>type to start · ^p resume · ? help</Text>
+                <Text dimColor>type to start · ^p sessions & new project · ? help</Text>
               </Box>
             </>
           )
@@ -2245,6 +2261,7 @@ export function App(
           mode={mode === "chat" && (store.pending || store.ask) ? "approval" : mode}
           usage={store.usage}
           draftLabel={isDraft ? `new · ${shortWs}` : null}
+          dir={sessionDir}
           model={cfg
             ? (() => {
               // The session's pinned model (and depth) win over the globals.

@@ -76,6 +76,7 @@ export async function handoff(
     title: `handoff · ${baseTitle(session.title)}`,
     kind: "root",
     workspace: session.workspace ?? null,
+    originDir: session.originDir ?? null,
     originId: session.id,
     originMessageId: thread[thread.length - 1].id,
   });

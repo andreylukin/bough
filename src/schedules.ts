@@ -227,7 +227,7 @@ export function fireSchedule(ctx: TurnCtx, s: Schedule): Session {
     title: s.title,
     kind: "root",
     createdAt: Date.now(),
-    ...(s.workspace ? { workspace: s.workspace } : {}),
+    ...(s.workspace ? { workspace: s.workspace, originDir: s.workspace } : {}),
   };
   ctx.db.createSession(session);
   ctx.bus.publish({ type: "session.created", sessionId: session.id, data: session });

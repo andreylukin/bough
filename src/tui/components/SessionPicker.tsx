@@ -106,6 +106,10 @@ export function SessionPicker(
         const dot = s.busy ? "⋯" : s.unseen ? "●" : here ? "▸" : " ";
         const dotColor = s.busy ? palette.warn : palette.accent;
         const title = (s.title || "(untitled)").replace(k.strip ?? /^\b$/, "");
+        // Project-dir basename — two sessions on different projects were
+        // indistinguishable by title alone (user-testing). originDir is the
+        // stable project path (workspace gets repointed at the shadow worktree).
+        const dir = s.originDir?.split("/").pop() ?? null;
         return (
           <Box key={s.id} justifyContent="space-between" gap={2}>
             <Text inverse={sel} wrap="truncate">
@@ -117,6 +121,7 @@ export function SessionPicker(
               <Text bold={here} dimColor={!!s.deprecatedAt} strikethrough={!!s.deprecatedAt}>
                 {title}
               </Text>
+              {dir ? <Text dimColor>{"  "}{dir}</Text> : null}
             </Text>
             <Text inverse={sel} dimColor>
               {s.deprecatedAt ? "deprecated" : relTime(s.createdAt)}
