@@ -32,31 +32,31 @@ macOS only (the sandbox is Seatbelt). One line clones to `~/bough` and sets ever
 
 ## Use it
 
-Point a session at a repo and ask. The supervisor plans, the sandbox runs the work, `CHECK` stamps the verdict — every turn snapshotted.
+Point a session at a repo and ask in plain language. bough plans by writing a small program, runs it in the sandbox, and answers — folded reasoning, the code it ran, live cost and context all in one view. It even predicts your likely next message.
 
 <p align="center">
   <img src="assets/shots/02-chat.png" alt="a bough conversation" width="800">
 </p>
 
-**Fork anything.** Edit a past turn to branch from that point; history and files fork together. The session tree shows every root, fork, and subagent at a glance.
+**Fork anything.** Edit a past turn to branch from that point; history and files fork together. Sessions spawn subagents as real branches, and the tree shows the whole forest — every root, fork, and subagent — at a glance.
 
 <p align="center">
-  <img src="assets/shots/08-fork-tree.png" alt="session tree with a forked branch" width="800">
+  <img src="assets/shots/08-fork-tree.png" alt="session tree with subagent branches" width="800">
 </p>
 
-**Own the network.** Gated egress is a live feed: requests outside policy pause as holds you allow or deny, and policy bundles grant scoped access with credential injection at the proxy — tokens never enter the sandbox.
+**Own the network.** Every outbound request is caught at the proxy and shown as a live feed — allow, deny, or hold it. Policy bundles grant scoped access with credential injection at the proxy, so tokens never enter the sandbox.
 
 <p align="center">
-  <img src="assets/shots/06-net.png" alt="network panel" width="800">
+  <img src="assets/shots/06-net.png" alt="network panel with a live request feed" width="800">
 </p>
 
-**Everything else in one panel.** Sessions, tree, changes review, model picker, net, MCP, skills, themes — `^t` toggles it, `^p`/`^f`/`^d`/`^o` jump straight to a tab.
+**Everything else in one panel.** Sessions, tree, changes review, model picker, net, MCP, skills, themes — `^t` toggles it, `^p`/`^f`/`^d`/`^o` jump straight to a tab. Swap the frontier model or thinking depth mid-session; a tiny local model handles the harness's micro-tasks for free.
 
 <p align="center">
   <img src="assets/shots/05-model.png" alt="model picker" width="800">
 </p>
 
-Plus: subagents that fork as real branches, an `oracle()` second opinion, `ship()` to land commits in your repo with your credentials, artifact publishing at a URL, transcript search, `@` files and `/` skills, and a tiny local model handling the harness's micro-tasks for free.
+Plus: an `oracle()` second opinion, `ship()` to land commits in your own repo with your credentials, artifact publishing at a URL, transcript search, and `@` files / `/` skills in the composer.
 
 ## How it works
 
