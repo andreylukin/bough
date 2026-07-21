@@ -850,3 +850,54 @@ Deno.test("questions: GET lists pending asks; POST answers/declines; stale ids 4
   );
   c.db.close();
 });
+
+Deno.test("GET /sessions/:id/jobs lists live bg shells; job events reach the bus", async () => {
+  const { bashBg, bashKill, bashWait } = await import("../tools/bash_bg.ts");
+  const c = ctx();
+  const h = createHandler(c);
+  c.db.createSession({ id: "J", parentId: null, title: "j", kind: "root", createdAt: 1 });
+  const events: string[] = [];
+  c.bus.subscribe((e) => {
+    if (e.type === "job.spawned" || e.type === "job.exited") events.push(e.type);
+  });
+
+  // Missing session → 404; a session with no shells → empty list.
+  assertEquals((await h(req("GET", "/sessions/zzz/jobs"))).status, 404);
+  assertEquals(await (await h(req("GET", "/sessions/J/jobs"))).json(), { jobs: [] });
+
+  const workspace = Deno.makeTempDirSync({ prefix: "app-jobs-" });
+  const toolCtx = { workspace, sessionId: "J" };
+  // `exec`: the SIGTERM must reach the sleeper itself, or the orphaned child
+  // keeps the output pipe open for the full 30s after bash dies.
+  const { id } = JSON.parse(await bashBg("echo hi; exec sleep 30", toolCtx)) as { id: string };
+  try {
+    // The running job is listed with its command and (eventually) an output tail.
+    let job: { id: string; sessionId: string; status: string; tailLines: string[] } | undefined;
+    const deadline = Date.now() + 10_000;
+    for (;;) {
+      const { jobs } = await (await h(req("GET", "/sessions/J/jobs"))).json() as {
+        jobs: NonNullable<typeof job>[];
+      };
+      job = jobs.find((j) => j.id === id);
+      if (job?.tailLines.includes("hi")) break;
+      if (Date.now() > deadline) throw new Error("job tail never showed up");
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    assertEquals(job.sessionId, "J");
+    assertEquals(job.status, "running");
+    assertEquals(events, ["job.spawned"]);
+
+    // Kill reports the real outcome; the registry flips to "killed"; exit hits the bus.
+    const killed = await bashKill(id, toolCtx);
+    assert(killed.startsWith(`killed ${id} (`), killed);
+    const after = await (await h(req("GET", "/sessions/J/jobs"))).json() as {
+      jobs: { id: string; status: string }[];
+    };
+    assertEquals(after.jobs.find((j) => j.id === id)?.status, "killed");
+    assertEquals(events, ["job.spawned", "job.exited"]);
+  } finally {
+    await bashWait(id, toolCtx).catch(() => {}); // drain the pumps for the sanitizer
+    await Deno.remove(workspace, { recursive: true }).catch(() => {});
+    c.db.close();
+  }
+});

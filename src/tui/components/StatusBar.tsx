@@ -63,6 +63,7 @@ export function StatusBar(
     quitHint,
     mode,
     usage,
+    bgJobs,
     draftLabel,
     model,
     parentTitle,
@@ -74,6 +75,8 @@ export function StatusBar(
     quitHint: boolean;
     mode: UiMode;
     usage: Usage;
+    /** Running background shells in this session (incl. its subagents). */
+    bgJobs?: number;
     /** Shown instead of a session title while no session exists yet. */
     draftLabel?: string | null;
     /** Active model's label (global, from /config). */
@@ -134,12 +137,14 @@ export function StatusBar(
                 ? <Text color={palette.warn}>{"  "}{cold}</Text>
                 : (
                   <Text dimColor={!ctxLow} color={ctxLow ? palette.warn : undefined}>
-                    {"  "}{fmtTokens(usage.contextTokens)} ctx
+                    {"  "}
+                    {fmtTokens(usage.contextTokens)} ctx
                     {pctLeft !== null ? ` · ${pctLeft}% left` : ""}
                   </Text>
                 )
               : null}
             {spend > 0 ? <Text dimColor>{"  "}{fmtUsd(spend)}</Text> : null}
+            {(bgJobs ?? 0) > 0 ? <Text color={palette.warn}>{"  "}⚙ {bgJobs} bg</Text> : null}
             {pendingCount > 0
               ? (
                 <Text color={palette.warn}>

@@ -49,8 +49,8 @@ import {
 import { useStore } from "../store.ts";
 import { type Branch, buildLines, parseSubagentNote, type SubagentNote } from "../lines.ts";
 import {
-  fmtTokens,
   ctxPctLeft,
+  fmtTokens,
   fmtUsd,
   fuzzyScore,
   linkAt,
@@ -436,11 +436,40 @@ export function App(
         })),
     [store.sessions, currentId, noteById],
   );
+  // Background shells: cards render only the open session's own jobs (a
+  // subagent's jobs show inside its branch); the status-bar chip counts all.
+  const ownJobs = useMemo(
+    () => store.jobs.filter((j) => j.sessionId === currentId),
+    [store.jobs, currentId],
+  );
+  const runningJobs = useMemo(
+    () => store.jobs.filter((j) => j.status === "running").length,
+    [store.jobs],
+  );
   const lines = useMemo(
     () =>
-      buildLines(store.thread, store.streaming, isExpanded, isFull, width, branches, store.toolLogs),
+      buildLines(
+        store.thread,
+        store.streaming,
+        isExpanded,
+        isFull,
+        width,
+        branches,
+        store.toolLogs,
+        ownJobs,
+      ),
     // palette.epoch: an applied theme must recolor the pre-rendered SGR lines.
-    [store.thread, store.streaming, store.toolLogs, isExpanded, isFull, width, branches, palette.epoch],
+    [
+      store.thread,
+      store.streaming,
+      store.toolLogs,
+      isExpanded,
+      isFull,
+      width,
+      branches,
+      ownJobs,
+      palette.epoch,
+    ],
   );
   // Search matches over the current lines; the index clamps as lines rebuild
   // (streaming appends, folds toggling) so the counter never dangles.
@@ -2217,6 +2246,7 @@ export function App(
           quitHint={quitHint}
           mode={mode === "chat" && (store.pending || store.ask) ? "approval" : mode}
           usage={store.usage}
+          bgJobs={runningJobs}
           draftLabel={isDraft ? `new · ${shortWs}` : null}
           model={cfg
             ? (() => {

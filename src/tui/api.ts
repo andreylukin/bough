@@ -81,6 +81,16 @@ export interface Usage {
   tree?: { inputTokens: number; outputTokens: number; costUsd?: number; sessions: number };
 }
 export const USAGE_ZERO: Usage = { contextTokens: 0, outputTokens: 0, inputTokens: 0 };
+/** A background shell as GET /sessions/:id/jobs reports it (bash_bg.ts JobInfo). */
+export interface JobRow {
+  id: string;
+  sessionId: string;
+  command: string;
+  startedAt: number;
+  status: "running" | "exited" | "killed";
+  exitCode?: number;
+  tailLines: string[];
+}
 export interface SkillInfo {
   name: string;
   description: string;
@@ -237,6 +247,9 @@ export const api = {
 
   // Review payloads for a session's workspace changes.
   getChanges: (id: string) => j<{ diffs: WireDiff[] }>(`/sessions/${id}/changes`),
+
+  // Live + recent background shells of a session (and its subagent branches).
+  jobs: (id: string) => j<{ jobs: JobRow[] }>(`/sessions/${id}/jobs`).then((r) => r.jobs),
   applyChanges: (id: string, source: ChangeSource, paths: string[]) =>
     jmsg<ApplyOutcome>(`/sessions/${id}/changes/apply`, postJson({ source, paths })),
   revertChanges: (id: string) => j(`/sessions/${id}/changes/revert`, postJson({})),

@@ -25,6 +25,8 @@ const KNOWN_TYPES = new Set([
   "net.request",
   "ask.question",
   "session.activity",
+  "job.spawned",
+  "job.exited",
 ]);
 
 const RETRY_MS = 2000;

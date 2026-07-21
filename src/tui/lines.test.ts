@@ -389,3 +389,49 @@ Deno.test("messageLines shows streamed log lines under a running tool call", () 
   assertStringIncludes(doneJoined, "first");
 });
 
+Deno.test("bg job cards: a running shell looks alive (marker + tail), a killed one honest, exits skip", () => {
+  const thread = [
+    {
+      id: "u1",
+      sessionId: "s",
+      role: "user",
+      parts: [{ type: "text", text: "start the server" }],
+      pending: false,
+    },
+  ] as unknown as Message[];
+  const jobs = [
+    {
+      id: "bg_1",
+      command: "npm run dev",
+      startedAt: Date.now() - 5_000,
+      status: "running" as const,
+      tailLines: ["listening on :3000"],
+    },
+    {
+      id: "bg_2",
+      command: "sleep 999",
+      startedAt: Date.now(),
+      status: "killed" as const,
+      tailLines: [],
+    },
+    {
+      id: "bg_3",
+      command: "make build",
+      startedAt: Date.now(),
+      status: "exited" as const,
+      tailLines: ["done"],
+    },
+  ];
+  const joined = buildLines(thread, {}, () => false, () => false, 100, [], undefined, jobs)
+    .map((l) => l.text).join("\n");
+  // Running: alive marker + command + output tail.
+  assertStringIncludes(joined, "bg_1");
+  assertStringIncludes(joined, "⋯ running");
+  assertStringIncludes(joined, "npm run dev");
+  assertStringIncludes(joined, "listening on :3000");
+  // Killed: honest outcome, not "done".
+  assertStringIncludes(joined, "bg_2");
+  assertStringIncludes(joined, "✗ killed");
+  // A natural exit renders no card — its completion note is already in the thread.
+  assertEquals(joined.includes("bg_3"), false);
+});
