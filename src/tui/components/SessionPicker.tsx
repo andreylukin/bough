@@ -146,10 +146,10 @@ export function SessionPicker(
         );
       })}
       {rowsList.length === 0 && <Text dimColor>no sessions — n creates one</Text>}
-      <Text dimColor>● root · ⑂ fork · ◆ subagent · ≣ compacted</Text>
+      <Text dimColor>● root · ⑂ fork · ◆ subagent · ≣ compacted · ⋯ running</Text>
       <Text dimColor>
-        j/k move · / filter · enter open · n new · ^x archive · x deprecate · h show hidden · u
-        restore
+        ⇥ tab · j/k move · / filter · enter open · n new · ^x archive · x deprecate · h show hidden ·
+        u restore
       </Text>
     </Box>
   );
