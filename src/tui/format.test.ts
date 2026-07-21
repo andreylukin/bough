@@ -94,10 +94,21 @@ Deno.test("linkifyUrls: raw output lines get clickable OSC 8 URLs", async () => 
   assertEquals(linkifyUrls("no links here"), "no links here");
 });
 
-Deno.test("md: URLs inside code spans are not linkified", () => {
+Deno.test("md: a URL inside a longer code span stays literal", () => {
   if (!COLOR) return;
   const out = md("run `curl https://example.com`");
-  assertEquals(out.includes("]8;;"), false);
+  assertEquals(out.includes("]8;;"), false); // a command example, not a link
+});
+
+Deno.test("md: a code span / bold that IS a URL is clickable (artifact links)", () => {
+  if (!COLOR) return;
+  // Models present artifact links as `http://…` or **http://…** — both must open.
+  const url = "http://localhost:4321/artifacts/s1/x.html";
+  for (const src of [`\`${url}\``, `**${url}**`]) {
+    const out = md(src);
+    assertStringIncludes(out, LINK_OPEN(url)); // OSC 8 wrapper = clickable
+    assertStringIncludes(out, `\x1b[4m${url}\x1b[24m`); // underlined like a link
+  }
 });
 
 Deno.test("linkAt: resolves the hyperlink under a display column", () => {

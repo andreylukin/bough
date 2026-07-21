@@ -117,7 +117,13 @@ function mdInline(line: string): string {
   const spans: string[] = [];
   const guard = (rendered: string) => `\x00${spans.push(rendered) - 1}\x00`;
   return line
-    .replace(/`[^`]+`/g, (m) => guard(`${CYAN}${m.slice(1, -1)}${FG_OFF}`))
+    // A code span that IS a bare URL renders clickable — models present artifact
+    // links as `http://…`, and a dead link there is the common failure. A URL
+    // *inside* a longer span (a `curl https://…` example) stays literal code.
+    .replace(/`([^`]+)`/g, (_m, inner) =>
+      BARE_URL.test(inner)
+        ? guard(linkifyUrl(inner))
+        : guard(`${CYAN}${inner}${FG_OFF}`))
     .replace(/\*\*([^*]+)\*\*/g, `${B}$1${B_OFF}`)
     // [text](url) → clickable underlined text, url dimmed alongside. The
     // lookbehind keeps "[" of an earlier-inserted SGR escape (\x1b[1m from
@@ -133,11 +139,16 @@ function mdInline(line: string): string {
         )),
     )
     // Bare URLs become clickable as themselves (underlined like rendered links);
-    // trailing punctuation stays prose.
-    .replace(/https?:\/\/[^\s)\]>'"]+/g, (m) => guard(linkifyUrl(m)))
+    // trailing punctuation stays prose. The \x1b stop keeps a bolded URL
+    // (**http://…** → ESC-wrapped) from swallowing its own reset code.
+    // deno-lint-ignore no-control-regex -- \x1b bounds a URL wrapped in SGR.
+    .replace(/https?:\/\/[^\s)\]>'"\x1b]+/g, (m) => guard(linkifyUrl(m)))
     // deno-lint-ignore no-control-regex -- NUL fences the guarded-span placeholders.
     .replace(/\x00(\d+)\x00/g, (_, i) => spans[+i]);
 }
+
+// A string that is entirely one bare URL (used to promote `code`-span URLs).
+const BARE_URL = /^https?:\/\/[^\s)\]>'"]+$/;
 
 function linkifyUrl(m: string): string {
   const url = m.replace(/[.,;:!?]+$/, "");
