@@ -43,10 +43,14 @@ export const THEME_DEFAULTS: Record<ThemeToken, string> = {
   panel3: "#191c21",
   panelInset: "#1f2329",
   canvas: "#111318",
-  border: "#2b3038",
-  border2: "#23272e",
-  border3: "#1c2026",
-  hairline: "#3a414c",
+  // Borders sit ≥3:1 against bg (hairline higher — it outlines the TUI's
+  // panels); border2/border3 step down for layering. Visual audit 2026-07-21:
+  // the old set (#2b3038/#3a414c) measured 1.4–1.9:1 — invisible on many
+  // displays.
+  border: "#5a616c",
+  border2: "#484e57",
+  border3: "#3c4149",
+  hairline: "#666d79",
   text: "#e7e9ed",
   text2: "#c9cdd4",
   muted: "#9aa1ac",

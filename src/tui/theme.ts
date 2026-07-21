@@ -20,10 +20,14 @@ const FALLBACK = {
   amber: "#d9b45f",
   red: "#e2776e",
   blue: "#5c88c9",
-  hairline: "#3a414c",
+  hairline: "#666d79",
   bg: "#0e1013",
   panel: "#14161a",
   panelInset: "#1f2329",
+  text: "#e7e9ed",
+  text2: "#c9cdd4",
+  muted: "#9aa1ac",
+  muted2: "#656c77",
 };
 
 export interface TuiPalette {
@@ -38,6 +42,14 @@ export interface TuiPalette {
   panel: string;
   /** The composer's slightly-raised surface. */
   panelInset: string;
+  /** Primary foreground — the default for all text (components/Text.tsx). */
+  text: string;
+  /** Slightly-recessed prose. */
+  text2: string;
+  /** Secondary text: hints, metadata, folded summaries (replaces SGR dim). */
+  muted: string;
+  /** The most de-emphasized text — barely-there metadata. */
+  muted2: string;
   /** Bumped on every applyTheme — a React dep for memoized renders. */
   epoch: number;
 }
@@ -51,6 +63,10 @@ export const palette: TuiPalette = {
   bg: FALLBACK.bg,
   panel: FALLBACK.panel,
   panelInset: FALLBACK.panelInset,
+  text: FALLBACK.text,
+  text2: FALLBACK.text2,
+  muted: FALLBACK.muted,
+  muted2: FALLBACK.muted2,
   epoch: 0,
 };
 
@@ -64,6 +80,10 @@ export function applyTheme(state: ThemeState | null): void {
   palette.bg = c.bg ?? FALLBACK.bg;
   palette.panel = c.panel ?? FALLBACK.panel;
   palette.panelInset = c.panelInset ?? FALLBACK.panelInset;
+  palette.text = c.text ?? FALLBACK.text;
+  palette.text2 = c.text2 ?? FALLBACK.text2;
+  palette.muted = c.muted ?? FALLBACK.muted;
+  palette.muted2 = c.muted2 ?? FALLBACK.muted2;
   palette.epoch++;
 }
 
@@ -94,10 +114,13 @@ export const THEME_PRESETS: ThemePreset[] = [
   { name: "Default", note: "built-in palette", colors: {} },
   { name: "Fjord", note: "accent #5c88c9", colors: { green: "#5c88c9" } },
   { name: "Iris", note: "accent #9a7fd1", colors: { green: "#9a7fd1" } },
-  { name: "Ember", note: "accent #d9a04f", colors: { green: "#d9a04f" } },
-  { name: "Rosewood", note: "accent #d97a8e", colors: { green: "#d97a8e" } },
+  // Ember/Rosewood accents sit near the reserved warn/error hues, so those
+  // presets also move the colliding semantic token — accent, warn, and error
+  // must stay three distinguishable hues (visual audit P2).
+  { name: "Ember", note: "accent #d9a04f", colors: { green: "#d9a04f", amber: "#e6d47c" } },
+  { name: "Rosewood", note: "accent #d97a8e", colors: { green: "#d97a8e", red: "#e2694a" } },
   { name: "Lagoon", note: "accent #3fbdb0", colors: { green: "#3fbdb0" } },
-  { name: "Graphite", note: "accent #aeb4bd", colors: { green: "#aeb4bd" } },
+  { name: "Graphite", note: "accent #a7b5c8", colors: { green: "#a7b5c8" } },
   {
     name: "Midnight",
     note: "deeper surfaces",
@@ -108,9 +131,10 @@ export const THEME_PRESETS: ThemePreset[] = [
       panel2: "#12151a",
       panel3: "#15181d",
       panelInset: "#1a1e24",
-      border: "#262b33",
-      border2: "#1f242b",
-      border3: "#181c22",
+      border: "#585e69",
+      border2: "#464b54",
+      border3: "#3b4048",
+      hairline: "#636a76",
     },
   },
   {
@@ -126,10 +150,12 @@ export const THEME_PRESETS: ThemePreset[] = [
       panel2: "#2e2b44",
       panel3: "#322f49",
       panelInset: "#393552",
-      border: "#44415a",
-      border2: "#393552",
-      border3: "#2a283e",
-      hairline: "#56526e",
+      // Borders lifted above the official highlight hexes (1.6–2.1:1 on base)
+      // to clear ~3:1 for border/hairline; muted #6e6a86 anchors the ramp.
+      border: "#6e6a86",
+      border2: "#5a566f",
+      border3: "#4c4a5d",
+      hairline: "#7d7996",
       text: "#e0def4",
       text2: "#c8c5dd",
       muted: "#908caa",

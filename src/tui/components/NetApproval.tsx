@@ -1,5 +1,6 @@
 import { palette } from "../theme.ts";
-import { Box, Text } from "ink";
+import { Box } from "ink";
+import { Text } from "./Text.tsx";
 import type { NetRequest } from "../../schema/parts.ts";
 import { APPROVAL_HINT } from "../keys.ts";
 import { clip } from "../format.ts";

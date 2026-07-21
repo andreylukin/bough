@@ -1,5 +1,6 @@
 import { palette } from "../theme.ts";
-import { Box, Text } from "ink";
+import { Box } from "ink";
+import { Text } from "./Text.tsx";
 
 // The input box: multiline-capable, with a real cursor (block over the character
 // at the cursor position; a marker at end-of-text/end-of-line).

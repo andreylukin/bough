@@ -1,5 +1,6 @@
 import { palette } from "../theme.ts";
-import { Box, Text } from "ink";
+import { Box } from "ink";
+import { Text } from "./Text.tsx";
 import type { WireDiff, WireFileDiff } from "../api.ts";
 
 export interface DiffEntry {
