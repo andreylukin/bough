@@ -11,7 +11,12 @@
  *   main → worker  {type:"run", code}
  *   worker → main  {type:"host", id, fn, args}          host-function call
  *   main → worker  {type:"host_result", id, ok, value}  its result / error
+ *   worker → main  {type:"log", line}                     one console.* line, as printed
  *   worker → main  {type:"done", logs} | {type:"error", message, logs}
+ *
+ * console lines are BOTH streamed ({type:"log"} — the TUI renders them live) and
+ * batched into `logs` (the model still receives the full output in the tool
+ * result). Display-only streaming: context contents are unchanged.
  */
 
 type HostName =
@@ -57,12 +62,14 @@ function show(v: unknown): string {
   }
 }
 
-const sandboxConsole = {
-  log: (...args: unknown[]) => logs.push(args.map(show).join(" ")),
-  error: (...args: unknown[]) => logs.push(args.map(show).join(" ")),
-  warn: (...args: unknown[]) => logs.push(args.map(show).join(" ")),
-  info: (...args: unknown[]) => logs.push(args.map(show).join(" ")),
+// A console.* call emits its line immediately (live progress in the TUI) AND
+// keeps it in the batch (the model-facing tool result ships the joined logs).
+const print = (...args: unknown[]) => {
+  const line = args.map(show).join(" ");
+  logs.push(line);
+  self.postMessage({ type: "log", line });
 };
+const sandboxConsole = { log: print, error: print, warn: print, info: print };
 
 async function run(code: string): Promise<void> {
   const bash = (cmd: string) => hostCall("bash", [cmd]);

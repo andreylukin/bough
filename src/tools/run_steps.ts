@@ -193,6 +193,7 @@ export const runSteps: ToolDef = {
         ? DELEGATING_TIMEOUT_MS
         : undefined,
       ctx.signal,
+      ctx.onLog,
     );
 
     const out: string[] = [];

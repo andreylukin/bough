@@ -22,14 +22,13 @@ const bold = (s: string) => SGR(1, s);
 const dim = (s: string) => SGR(2, s);
 // Hue helpers read the live theme palette (truecolor) — evaluated per call, so
 // an applied theme recolors rebuilt lines without a restart.
-const cyan = (s: string) => SGR(fgParams(palette.info), s);
 const green = (s: string) => SGR(fgParams(palette.accent), s);
 const yellow = (s: string) => SGR(fgParams(palette.warn), s);
 const red = (s: string) => SGR(fgParams(palette.error), s);
 
 // One accent: green is bough's color (identity + affirmative status); the user
-// speaks in plain bright text, cyan is reserved for code. A function (not a
-// const map) so labels pick up the palette active at render time.
+// speaks in plain bright text. A function (not a const map) so labels pick up
+// the palette active at render time.
 const roleLabel = (role: Role): string =>
   role === "user"
     ? bold("you")
@@ -181,6 +180,7 @@ function toolGroupLines(
   expanded: boolean,
   full: boolean,
   width: number,
+  toolLogs?: Record<string, string[]>,
 ) {
   // `full` lifts the per-block line caps (set by clicking a "+N more" line; its
   // toggle key is `${key}!full`, kept separate from the fold state so ^e
@@ -233,6 +233,20 @@ function toolGroupLines(
         click: key,
         fullKey: `${key}!full`,
       });
+    } else {
+      // Still running: show the program's console lines as they stream in
+      // (tool.log events); the finalized tool_result replaces them with the
+      // same lines joined into its output.
+      const live = toolLogs?.[call.id];
+      if (live?.length) {
+        out.push({ text: dim("↳ output (live)"), click: key });
+        pushBlock(out, live.join("\n"), width, {
+          maxLines: capOut,
+          style: (l) => styleOutputLine(l, false),
+          click: key,
+          fullKey: `${key}!full`,
+        });
+      }
     }
   }
 }
@@ -260,6 +274,7 @@ export function messageLines(
   isFull: (key: string) => boolean,
   width: number,
   streaming?: string,
+  toolLogs?: Record<string, string[]>,
 ): VLine[] {
   const out: VLine[] = [];
   const body: VLine[] = [];
@@ -311,7 +326,7 @@ export function messageLines(
       push(seg, `${yellow("?")} ${a.question} ${dim("→")} ${outcome}`, w);
       copy = `${a.question} → ${a.answer ?? a.status}`;
     } else {
-      toolGroupLines(seg, s.parts, key, isExpanded(key), isFull(key), w);
+      toolGroupLines(seg, s.parts, key, isExpanded(key), isFull(key), w, toolLogs);
       copy = toolGroupCopy(s.parts);
     }
     for (const l of seg) body.push({ ...l, copy });
@@ -383,6 +398,7 @@ export function buildLines(
   isFull: (key: string) => boolean,
   width: number,
   branches: Branch[] = [],
+  toolLogs?: Record<string, string[]>,
 ): VLine[] {
   // Branches draw under the turn that spawned them; a completion note that already
   // renders as a card is dropped from the raw thread (it's a system message).
@@ -404,7 +420,7 @@ export function buildLines(
       const parsed = parseSubagentNote(t);
       if (parsed && notedIds.has(parsed.sessionId)) continue;
     }
-    out.push(...messageLines(m, isExpanded, isFull, width, streaming[m.id]));
+    out.push(...messageLines(m, isExpanded, isFull, width, streaming[m.id], toolLogs));
     for (const b of byOrigin.get(m.id) ?? []) branchCardLines(out, b, width, isFull);
   }
   // Branches whose spawn point isn't in the current thread fall to the tail.

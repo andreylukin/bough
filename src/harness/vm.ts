@@ -112,6 +112,9 @@ export function runProgram(
   host: HostFns,
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
   signal?: AbortSignal,
+  /** Fires for each console.* line as the program prints it (display-only
+   * streaming — the batched `logs` in the result are unaffected). */
+  onLog?: (line: string) => void,
 ): Promise<ProgramResult> {
   const worker = new Worker(new URL("./vm_worker.ts", import.meta.url).href, {
     type: "module",
@@ -140,8 +143,13 @@ export function runProgram(
     worker.onmessage = async (e: MessageEvent) => {
       const msg = e.data as
         | { type: "host"; id: number; fn: keyof HostFns; args: unknown[] }
+        | { type: "log"; line: string }
         | { type: "done"; logs: string[] }
         | { type: "error"; message: string; logs: string[] };
+      if (msg.type === "log") {
+        onLog?.(msg.line);
+        return;
+      }
       if (msg.type === "done") return finish({ ok: true, logs: msg.logs });
       if (msg.type === "error") return finish({ ok: false, logs: msg.logs, error: msg.message });
       // Host-function call: run it here, send the result (or the error) back in.

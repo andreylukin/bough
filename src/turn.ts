@@ -486,6 +486,9 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       db.createMessage(note);
       bus.publish({ type: "message.started", sessionId, data: note });
     }
+    // The tool_use id currently executing — rebound each iteration so ctx.onLog
+    // attributes streamed lines to the right tool_call part.
+    let currentCallId = "";
     const toolCtx: ToolRunCtx = {
       workspace: prepared.cwd,
       sessionId,
@@ -521,6 +524,18 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       // the session with a one-line note, so the model never polls. Same wake path
       // as a subagent's report — starts a turn if idle, else rides the queued-drain.
       notify: (text) => postSystemNote(ctx, sessionId, text),
+      // Live program output: each console.* line becomes a tool.log event the TUI
+      // renders under the running call. Display-only — the model's tool_result
+      // still carries the joined logs when the program finishes. The executing
+      // call's id is rebound per tool_use below (tools run sequentially).
+      onLog: (line) => {
+        markFirstOutput();
+        bus.publish({
+          type: "tool.log",
+          sessionId,
+          data: { messageId, callId: currentCallId, line },
+        });
+      },
     };
     // The oracle: read-only consult of a stronger reasoning model (tools/oracle.ts).
     // Wired for every supervisor turn; its tokens bill into this turn's cumulative
@@ -827,6 +842,8 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
           if (tu.type !== "tool_use") continue;
           // Don't start new tools once interrupted — stop before side effects.
           if (signal?.aborted) throw new InterruptedError();
+          // Rebind the streaming attribution to this call, then run it.
+          currentCallId = tu.id;
           const { output, isError } = await executeTool(tools, tu.name, tu.input, toolCtx);
           append({ type: "tool_result", callId: tu.id, output, isError });
           toolResults.push({ type: "tool_result", toolUseId: tu.id, content: output, isError });

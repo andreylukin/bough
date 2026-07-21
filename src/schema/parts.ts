@@ -236,6 +236,12 @@ export const MessageDeltaData = z.object({ messageId: z.string(), delta: z.strin
 export const MessageRetryData = z.object({ messageId: z.string() });
 /** `message.part` → a finalized Part appended to a message. */
 export const MessagePartData = z.object({ messageId: z.string(), part: Part });
+/** `tool.log` → one console.* line from a running program, keyed to its tool_call. */
+export const ToolLogData = z.object({
+  messageId: z.string(),
+  callId: z.string(),
+  line: z.string(),
+});
 /** `message.finished` → the message is complete (flip pending → false). */
 export const MessageFinishedData = z.object({ messageId: z.string() });
 /** `ask.question` → an AskQuestion (pending on raise; re-emitted with its final status). */

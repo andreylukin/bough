@@ -32,6 +32,10 @@ export interface Store {
   // messageId -> live text accumulated from message.delta, shown until the finalized
   // text part lands (then cleared to avoid double-rendering).
   streaming: Record<string, string>;
+  // toolCallId -> console lines streamed live from the running program (tool.log
+  // events). Cleared when the message finishes; the final tool_result part then
+  // carries the same lines in its output.
+  toolLogs: Record<string, string[]>;
   connected: boolean;
   busy: boolean;
   // Oldest pending net hold (the card shows one at a time) + how many wait in total.
@@ -91,6 +95,7 @@ export function useStore(initialSessions: Session[]): Store {
   const [session, setSession] = useState<TuiSession | null>(null);
   const [thread, setThread] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState<Record<string, string>>({});
+  const [toolLogs, setToolLogs] = useState<Record<string, string[]>>({});
   // ALL holds awaiting approval, oldest first.
   const [pendings, setPendings] = useState<NetRequest[]>([]);
   const pending = pendings[0] ?? null;
@@ -471,6 +476,13 @@ export function useStore(initialSessions: Session[]): Store {
         }
         break;
       }
+      case "tool.log": {
+        // A console line from the running program — accumulate under its tool
+        // call; the group renders these while the call has no result yet.
+        const { callId, line } = ev.data as { messageId: string; callId: string; line: string };
+        setToolLogs((prev) => ({ ...prev, [callId]: [...(prev[callId] ?? []), line] }));
+        break;
+      }
       case "session.activity": {
         const { text } = ev.data as { text: string };
         if (ev.sessionId === currentRef.current) setActivity(text);
@@ -499,6 +511,21 @@ export function useStore(initialSessions: Session[]): Store {
           const next = { ...prev };
           delete next[messageId];
           return next;
+        });
+        // The turn is over — drop live log buffers (their lines now live in the
+        // finalized tool_result outputs).
+        setToolLogs((prev) => {
+          const done = new Set(
+            threadRef.current
+              .filter((m) => m.id === messageId)
+              .flatMap((m) => m.parts)
+              .filter((p) => p.type === "tool_call")
+              .map((p) => p.id),
+          );
+          const next = Object.fromEntries(
+            Object.entries(prev).filter(([id]) => !done.has(id)),
+          );
+          return Object.keys(next).length === Object.keys(prev).length ? prev : next;
         });
         break;
       }
@@ -611,6 +638,7 @@ export function useStore(initialSessions: Session[]): Store {
     session,
     thread,
     streaming,
+    toolLogs,
     connected,
     busy,
     pending,

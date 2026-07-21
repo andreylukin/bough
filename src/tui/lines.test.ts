@@ -358,3 +358,34 @@ Deno.test("messageLines renders a declined ask part", () => {
   assertStringIncludes(joined, "Push to main?");
   assertStringIncludes(joined, "declined");
 });
+
+Deno.test("messageLines shows streamed log lines under a running tool call", () => {
+  const msg: Message = {
+    id: "m1",
+    sessionId: "s1",
+    role: "supervisor",
+    parts: [
+      { type: "tool_call", id: "c1", name: "run_steps", input: { code: "console.log()" } },
+    ],
+    pending: true,
+    createdAt: 1,
+  };
+  const toolLogs = { c1: ["first", "second"] };
+  const joined = messageLines(msg, () => true, () => false, 80, undefined, toolLogs)
+    .map((l) => l.text).join("\n");
+  assertStringIncludes(joined, "first");
+  assertStringIncludes(joined, "second");
+  // Once the result lands, the live buffer is replaced by the finalized output —
+  // the same lines render once, from the tool_result, not duplicated.
+  const done: Message = {
+    ...msg,
+    parts: [
+      ...msg.parts,
+      { type: "tool_result", callId: "c1", output: "first\nsecond", isError: false },
+    ],
+  };
+  const doneJoined = messageLines(done, () => true, () => false, 80, undefined, toolLogs)
+    .map((l) => l.text).join("\n");
+  assertStringIncludes(doneJoined, "first");
+});
+

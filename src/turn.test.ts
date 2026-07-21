@@ -1,4 +1,4 @@
-import { assertEquals, assertExists, assertStringIncludes } from "jsr:@std/assert@1";
+import { assert, assertEquals, assertExists, assertStringIncludes } from "jsr:@std/assert@1";
 import { z } from "zod/v4";
 import { Db } from "./db/db.ts";
 import { Bus } from "./bus.ts";
@@ -169,6 +169,51 @@ Deno.test("tool-call turn runs a tool, appends the result, and loops to completi
   const results = round2.find((m: LlmMessage) => m.content.some((b) => b.type === "tool_result"));
   assertExists(assistant);
   assertExists(results);
+});
+
+Deno.test("a tool's onLog streams tool.log events keyed to the running call", async () => {
+  const { db, bus, events, sessionId } = seed();
+  // A stand-in for run_steps: emits two console lines via ctx.onLog mid-run,
+  // exactly as runProgram's onLog callback does per printed line.
+  const fakeSteps: ToolDef = {
+    name: "run_steps",
+    description: "fake run_steps",
+    schema: z.object({ code: z.string() }),
+    run: (_input, ctx) => {
+      ctx.onLog?.("first line");
+      ctx.onLog?.("second line");
+      return Promise.resolve("first line\nsecond line");
+    },
+  };
+  const llm = fakeLlm([
+    {
+      content: [{
+        type: "tool_use",
+        id: "t1",
+        name: "run_steps",
+        input: { code: "console.log()" },
+      }],
+      stopReason: "tool_use",
+    },
+    { content: [{ type: "text", text: "done" }], stopReason: "end_turn" },
+  ]);
+  const { message, done } = beginTurn({ db, bus, llm, tools: [fakeSteps] }, sessionId);
+  await done;
+
+  const logs = events
+    .filter((e) => e.type === "tool.log")
+    .map((e) => e.data as { messageId: string; callId: string; line: string });
+  assertEquals(logs.map((l) => l.line), ["first line", "second line"]);
+  // Keyed to the executing tool_call part (t1), not the fake id the tool passed
+  // as a placeholder — the turn runner stamps the real call id.
+  assert(logs.every((l) => l.callId === "t1"), "log events carry the tool_call id");
+  assert(logs.every((l) => l.messageId === message.id), "log events carry the message id");
+  // And the turn still completed with the batched output as the tool_result.
+  const final = finalMessage(db, message.id);
+  assertStringIncludes(
+    (final.parts.find((p) => p.type === "tool_result") as { output: string }).output,
+    "first line",
+  );
 });
 
 Deno.test("a session pinned to a model runs its turns on it; unpinned follows the default", async () => {

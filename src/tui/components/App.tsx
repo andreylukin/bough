@@ -437,9 +437,10 @@ export function App(
     [store.sessions, currentId, noteById],
   );
   const lines = useMemo(
-    () => buildLines(store.thread, store.streaming, isExpanded, isFull, width, branches),
+    () =>
+      buildLines(store.thread, store.streaming, isExpanded, isFull, width, branches, store.toolLogs),
     // palette.epoch: an applied theme must recolor the pre-rendered SGR lines.
-    [store.thread, store.streaming, isExpanded, isFull, width, branches, palette.epoch],
+    [store.thread, store.streaming, store.toolLogs, isExpanded, isFull, width, branches, palette.epoch],
   );
   // Search matches over the current lines; the index clamps as lines rebuild
   // (streaming appends, folds toggling) so the counter never dangles.

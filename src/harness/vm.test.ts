@@ -55,6 +55,34 @@ Deno.test("program calls host functions and its console output comes back in ord
   assertEquals(h.calls, ["bash:ls", "read:a.txt", "write:b.txt"]);
 });
 
+Deno.test("console lines stream via onLog as printed, and still batch into logs", async () => {
+  const h = hosts();
+  const live: string[] = [];
+  const res = await runProgram(
+    'console.log("one"); await bash("x"); console.log("two")',
+    h,
+    undefined,
+    undefined,
+    (line) => live.push(line),
+  );
+  assertEquals(live, ["one", "two"]);
+  assertEquals(res, { ok: true, logs: ["one", "two"] });
+});
+
+Deno.test("lines printed before a failure stream too", async () => {
+  const live: string[] = [];
+  const res = await runProgram(
+    'console.log("before"); throw new Error("boom")',
+    hosts(),
+    undefined,
+    undefined,
+    (line) => live.push(line),
+  );
+  assertEquals(live, ["before"]);
+  assertEquals(res.ok, false);
+  assertEquals(res.logs, ["before"]);
+});
+
 Deno.test("host-function failure rejects inside the program as a catchable exception", async () => {
   const h = hosts({ edit: () => Promise.reject(new Error("old_string not found")) });
   const res = await runProgram(

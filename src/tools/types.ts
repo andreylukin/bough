@@ -137,6 +137,14 @@ export interface ToolRunCtx {
     call: (verb: string, args: unknown) => Promise<unknown>;
   };
   /**
+   * Live program output, wired by the turn runner: fires for each console.*
+   * line as run_steps' program prints it (→ a `tool.log` bus event the TUI
+   * renders under the running tool call). Display-only — the model still
+   * receives the joined logs in the tool result. The turn runner rebinds this
+   * to the executing call before each tool runs, so it takes only the line.
+   */
+  onLog?: (line: string) => void;
+  /**
    * Ship the session's work into the origin repo as a real commit (+ optional push)
    * — vcs/shadow.ts shipToOrigin via the turn runner. Wired only for root-session
    * turns whose workspace is a shadow worktree with a resolvable origin.
