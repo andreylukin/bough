@@ -58,7 +58,7 @@ import {
   wordLeft,
   wordRight,
 } from "../format.ts";
-import { type MouseEvent, onMouse, onPaste } from "../mouse.ts";
+import { type MouseEvent, onMouse, onNavKey, onPaste } from "../mouse.ts";
 import { extractSpan, highlightSpan, rowSpan, type Selection, selRows } from "../selection.ts";
 import { findMatches, markLine } from "../search.ts";
 import { Composer } from "./Composer.tsx";
@@ -212,8 +212,10 @@ export function App(
   const [policy, setPolicy] = useState<NetConfig | null>(null);
   const [mcpStat, setMcpStat] = useState<McpStatus | null>(null);
   const [skillsList, setSkillsList] = useState<SkillInfo[] | null>(null);
-  // new-session state
-  const [newQuery, setNewQuery] = useState("");
+  // new-session state. The workspace query is a cursor-ed line edit like the
+  // composer (^u appending instead of clearing was a triple-repro'd user bug).
+  const [newComp, setNewComp] = useState({ text: "", cursor: 0 });
+  const newQuery = newComp.text;
   const [newSel, setNewSel] = useState(0);
   const [dirHits, setDirHits] = useState<DirHit[]>([]);
   // conversation-tree state: cursor + a range-selection anchor (v starts/ends it).
@@ -687,6 +689,22 @@ export function App(
     return () => onPaste(null);
   }, [insertAtCursor]);
 
+  // Physical Home/End: ink drops their sequences, so mouse.ts decodes them —
+  // route to the same cursor moves as ^a/^e (composer + new-session query).
+  // Ref-current like copyRef so the subscription stays stable.
+  const navKeyRef = useRef<(k: "home" | "end") => void>(() => {});
+  navKeyRef.current = (k) => {
+    if (mode === "new") {
+      return setNewComp((c) => ({ ...c, cursor: k === "home" ? 0 : c.text.length }));
+    }
+    if (mode !== "chat" || store.pending || store.ask || searchQ !== null || sched) return;
+    moveCursor((c) => (k === "home" ? 0 : c.text.length));
+  };
+  useEffect(() => {
+    onNavKey((k) => navKeyRef.current(k));
+    return () => onNavKey(null);
+  }, []);
+
   // Copy feedback is a blinking overlay chip over the bottom viewport row — it
   // must not take a layout row of its own (a toast above the status bar changes
   // the measured chrome height and shoves the whole transcript up).
@@ -1110,7 +1128,7 @@ export function App(
         if (!filterActive && ch === "/") return setFilterActive(true);
         // n: new session via the workspace-autocomplete dialog (esc returns here).
         if (!filterActive && ch === "n") {
-          setNewQuery("");
+          setNewComp({ text: "", cursor: 0 });
           setNewSel(0);
           setDirHits([]);
           setMode("new");
@@ -1426,13 +1444,44 @@ export function App(
       }
       if (key.upArrow) return setNewSel((i) => Math.max(0, i - 1));
       if (key.downArrow) return setNewSel((i) => Math.min(dirHits.length - 1, i + 1));
+      // The query is a line edit with the composer's keys (Home/End arrive via
+      // onNavKey below); edits reset the pick to the top hit.
+      if (key.leftArrow) return setNewComp((c) => ({ ...c, cursor: Math.max(0, c.cursor - 1) }));
+      if (key.rightArrow) {
+        return setNewComp((c) => ({ ...c, cursor: Math.min(c.text.length, c.cursor + 1) }));
+      }
+      if (key.ctrl && ch === "a") return setNewComp((c) => ({ ...c, cursor: 0 }));
+      if (key.ctrl && ch === "e") return setNewComp((c) => ({ ...c, cursor: c.text.length }));
+      if (key.ctrl && ch === "u") {
+        setNewSel(0);
+        return setNewComp({ text: "", cursor: 0 });
+      }
+      if (key.ctrl && ch === "w") {
+        setNewSel(0);
+        return setNewComp((c) => {
+          const from = wordLeft(c.text, c.cursor);
+          return { text: c.text.slice(0, from) + c.text.slice(c.cursor), cursor: from };
+        });
+      }
+      if (key.ctrl && ch === "k") {
+        setNewSel(0);
+        return setNewComp((c) => ({ text: c.text.slice(0, c.cursor), cursor: c.cursor }));
+      }
       if (key.backspace || key.delete) {
         setNewSel(0);
-        return setNewQuery((q) => q.slice(0, -1));
+        return setNewComp((c) =>
+          c.cursor === 0 ? c : {
+            text: c.text.slice(0, c.cursor - 1) + c.text.slice(c.cursor),
+            cursor: c.cursor - 1,
+          }
+        );
       }
       if (ch && !key.ctrl && !key.meta) {
         setNewSel(0);
-        setNewQuery((q) => q + ch);
+        setNewComp((c) => ({
+          text: c.text.slice(0, c.cursor) + ch + c.text.slice(c.cursor),
+          cursor: c.cursor + ch.length,
+        }));
       }
       return;
     }
@@ -1718,6 +1767,8 @@ export function App(
           setHistIdx(null);
           draft.current = "";
           setComp({ text: "", cursor: 0 });
+          // Silent clearing read as data loss (and help sells ↑ as history-only).
+          flashMsg("draft cleared · ↑ restores");
         } else if (store.thread.length > 0) {
           forkNavTouched.current = false;
           moveForkSel(Math.max(0, convItems.length - 1));
@@ -2037,7 +2088,7 @@ export function App(
     (mode === "help"
       ? <Help rows={rows} width={width} />
       : mode === "new"
-      ? <NewSession query={newQuery} hits={dirHits} selected={newSel} />
+      ? <NewSession query={newQuery} cursor={newComp.cursor} hits={dirHits} selected={newSel} />
       : null);
 
   return (
@@ -2067,6 +2118,19 @@ export function App(
                 <Text>{" "}</Text>
                 <Text dimColor>type to start · ^p sessions & new project · ? help</Text>
               </Box>
+              {/* The welcome screen has no transcript row for the copy-flash
+                 chip to blink over — give it one (draft-cleared feedback). */}
+              {flash?.on
+                ? (
+                  <Box justifyContent="flex-end">
+                    <Text bold color={palette.accent} backgroundColor={palette.panel}>
+                      {" "}
+                      {flash.msg}
+                      {" "}
+                    </Text>
+                  </Box>
+                )
+                : null}
             </>
           )
           : (
@@ -2279,7 +2343,17 @@ export function App(
                     typing={askTyping}
                   />
                 )
-                : <Composer input={input} cursor={comp.cursor} busy={store.busy} />}
+                : (
+                  <Composer
+                    input={input}
+                    cursor={comp.cursor}
+                    busy={store.busy}
+                    width={width}
+                    // A paste must not grow the box past the viewport: cap the
+                    // rendered rows at a third of the terminal.
+                    maxRows={Math.max(4, Math.floor(rows / 3))}
+                  />
+                )}
             </>
           )
           : null}

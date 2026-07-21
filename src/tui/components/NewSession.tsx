@@ -6,8 +6,14 @@ import type { DirHit } from "../api.ts";
 // sibling of the web's new-session modal). Enter on a hit creates the session
 // with that workspace; enter with nothing picked creates a workspace-less one.
 export function NewSession(
-  { query, hits, selected }: { query: string; hits: DirHit[]; selected: number },
+  { query, cursor, hits, selected }: {
+    query: string;
+    cursor: number;
+    hits: DirHit[];
+    selected: number;
+  },
 ) {
+  const at = query[cursor];
   return (
     <Box
       flexDirection="column"
@@ -19,8 +25,9 @@ export function NewSession(
       <Text bold>new session</Text>
       <Text>
         <Text dimColor>{"project folder: "}</Text>
-        {query}
-        <Text inverse>{" "}</Text>
+        {query.slice(0, cursor)}
+        <Text inverse>{at ?? " "}</Text>
+        {at === undefined ? "" : query.slice(cursor + 1)}
       </Text>
       {hits.map((h, i) => (
         <Text key={h.path} inverse={i === selected} wrap="truncate">
