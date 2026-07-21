@@ -581,11 +581,13 @@ export function App(
       const q = text.slice(1, cursor);
       const apply = (skills: SkillInfo[]) => {
         // Composer-local commands complete alongside server skills. The server's
-        // `theme` skill is hidden here — theming lives in the panel's theme tab.
+        // `theme` skill is hidden here — the local /theme opens the panel's
+        // theme tab instead.
         const local: SkillInfo[] = [
           { name: "handoff", description: "draft a fresh conversation focused on a goal" },
           { name: "conversation", description: "show this conversation's id and details" },
           { name: "schedule", description: "recurring agent runs — list, toggle, create" },
+          { name: "theme", description: "pick a color theme — opens the theme tab" },
         ];
         const items = [...local, ...skills.filter((s) => s.name !== "theme")]
           .map((s, i) => ({ s, local: i < local.length, score: fuzzyScore(s.name, q) }))
@@ -887,6 +889,14 @@ export function App(
     }
     if (/^\/schedules?\s*$/.test(text)) {
       loadSchedules();
+      return;
+    }
+    if (/^\/theme\s*$/.test(text)) {
+      // The theme picker is the panel's theme tab; the refreshPanel effect
+      // fetches state + snaps the cursor onto the current theme on entry.
+      setPanelMsg(null);
+      setPanelTab("theme");
+      setMode("panel");
       return;
     }
     if (/^\/handoff\b/.test(text)) {

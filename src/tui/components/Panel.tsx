@@ -4,6 +4,7 @@ import { palette, THEME_PRESETS } from "../theme.ts";
 import { Box, Text } from "ink";
 import type { NetRequest } from "../../schema/parts.ts";
 import type { McpStatus, NetConfig, NetStatus, SkillInfo, ThemeState } from "../api.ts";
+import { SelFill, SelRow } from "./SelRow.tsx";
 import { clip, relTime } from "../format.ts";
 
 // The management view is ONE tabbed panel — every non-chat surface is a tab:
@@ -124,10 +125,13 @@ function McpTab(
         const conn = mcp.connections.find((c) => c.server === name);
         const auth = mcp.auth[name];
         const entry = mcp.registry.servers[name];
+        const sel = i === selected;
         return (
-          <Text key={name} inverse={i === selected} wrap="truncate">
+          // The status glyph drops its color under selection: an inverse colored
+          // fg reads as a colored bg speck inside the light bar.
+          <SelRow key={name} sel={sel}>
             <Text
-              color={conn?.alive ? palette.accent : active ? palette.warn : undefined}
+              color={sel ? undefined : conn?.alive ? palette.accent : active ? palette.warn : undefined}
               dimColor={!active}
             >
               {conn?.alive ? "●" : active ? "◐" : "○"}
@@ -140,7 +144,7 @@ function McpTab(
               {auth ? (auth.authorized ? " · authed" : " · needs auth") : ""}{"  "}
               {entry.url ?? entry.command ?? ""}
             </Text>
-          </Text>
+          </SelRow>
         );
       })}
       {msg ? <Text color={palette.warn} wrap="wrap">{msg}</Text> : null}
@@ -148,8 +152,11 @@ function McpTab(
   );
 }
 
-/** Swatch tokens shown per preset row, in order: surfaces, accent, text. */
+/** Swatch tokens shown per preset row, in order: surfaces, accent, text.
+ * Surfaces get the wider cells — near-identical dark presets (Default vs
+ * Midnight) differ only there, so they need the extra area to be tellable. */
 const SWATCH_TOKENS = ["bg", "panel", "panelInset", "green", "text"];
+const SURFACE_TOKENS = new Set(["bg", "panel", "panelInset"]);
 
 // The theme tab auto-applies: moving the cursor IS the action (App PUTs the
 // hovered preset and the whole TUI recolors live), so rows carry no extra
@@ -170,12 +177,30 @@ function ThemeTab(
         // The row's own resolved colors — distinct from the live TUI `palette`.
         const row = { ...state.defaults, ...p.colors };
         const active = currentName === p.name;
+        const sel = i === selected;
+        // The swatch strip stays OUTSIDE the inverse run: inverse would swap the
+        // cell colors into the background and flatten the very preview the
+        // selected row is applying. Hairline separators keep adjacent
+        // near-identical surfaces tellable apart.
         return (
-          <Text key={p.name} inverse={i === selected} wrap="truncate">
-            <Text color={palette.accent}>{active ? "●" : " "}</Text> {p.name.padEnd(15)}{" "}
-            {SWATCH_TOKENS.map((t) => <Text key={t} color={row[t]}>██</Text>)}
-            <Text dimColor>{"  "}{p.note}</Text>
-          </Text>
+          <Box key={p.name}>
+            <Text inverse={sel} wrap="truncate">
+              <Text color={sel ? undefined : palette.accent}>{active ? "●" : " "}</Text>{" "}
+              {p.name.padEnd(15)}{" "}
+            </Text>
+            <Text wrap="truncate">
+              {SWATCH_TOKENS.map((t, j) => (
+                <Text key={t}>
+                  {j > 0 ? <Text color={palette.border}>▏</Text> : null}
+                  <Text color={row[t]}>{SURFACE_TOKENS.has(t) ? "███" : "██"}</Text>
+                </Text>
+              ))}
+            </Text>
+            <Text inverse={sel} wrap="truncate">
+              <Text dimColor>{"  "}{p.note}</Text>
+            </Text>
+            <SelFill sel={sel} />
+          </Box>
         );
       })}
     </Box>
@@ -216,8 +241,10 @@ export function Panel(
     },
 ) {
   // Content only — the unified panel container owns the border + tab bar.
+  // Column direction so the active tab stretches to the panel's full width —
+  // in a row box the tab sizes to content and selection bars stop short.
   return (
-    <Box marginTop={1}>
+    <Box marginTop={1} flexDirection="column">
       {tab === "net"
         ? (
           <NetTab

@@ -1,5 +1,6 @@
 import { palette } from "../theme.ts";
 import { Box, Text } from "ink";
+import { SelRow } from "./SelRow.tsx";
 import { relTime } from "../format.ts";
 import type { TuiSession } from "../store.ts";
 
@@ -107,21 +108,26 @@ export function SessionPicker(
         const dotColor = s.busy ? palette.warn : palette.accent;
         const title = (s.title || "(untitled)").replace(k.strip ?? /^\b$/, "");
         return (
-          <Box key={s.id} justifyContent="space-between" gap={2}>
-            <Text inverse={sel} wrap="truncate">
-              <Text color={dotColor} dimColor={dot === " "}>{dot}</Text>{" "}
-              <Text dimColor>{prefix}</Text>
-              <Text color={k.accent ? palette.accent : undefined} dimColor={!k.accent}>
-                {k.glyph}
-              </Text>{" "}
-              <Text bold={here} dimColor={!!s.deprecatedAt} strikethrough={!!s.deprecatedAt}>
-                {title}
+          // Selected rows drop custom span colors: under inverse a colored fg
+          // becomes a colored bg speck inside the light bar.
+          <SelRow
+            key={s.id}
+            sel={sel}
+            right={
+              <Text dimColor>
+                {s.deprecatedAt ? "deprecated" : relTime(s.createdAt)}
               </Text>
+            }
+          >
+            <Text color={sel ? undefined : dotColor} dimColor={dot === " "}>{dot}</Text>{" "}
+            <Text dimColor>{prefix}</Text>
+            <Text color={k.accent && !sel ? palette.accent : undefined} dimColor={!k.accent}>
+              {k.glyph}
+            </Text>{" "}
+            <Text bold={here} dimColor={!!s.deprecatedAt} strikethrough={!!s.deprecatedAt}>
+              {title}
             </Text>
-            <Text inverse={sel} dimColor>
-              {s.deprecatedAt ? "deprecated" : relTime(s.createdAt)}
-            </Text>
-          </Box>
+          </SelRow>
         );
       })}
       {rowsList.length === 0 && <Text dimColor>no sessions — n creates one</Text>}

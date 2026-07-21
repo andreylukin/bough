@@ -1,5 +1,6 @@
 import { palette } from "../theme.ts";
 import { Box, Text } from "ink";
+import { SelRow } from "./SelRow.tsx";
 import type { BoughConfig, KeyProvider } from "../api.ts";
 
 export interface ModelEntry {
@@ -79,11 +80,14 @@ export function ModelPicker(
           ? cfg.worker === e.id
           : !!cfg.keys?.[e.id as KeyProvider];
         const editing = e.kind === "key" && i === selected && keyInput !== null;
+        const sel = i === selected && !editing;
         return (
           <Box key={`${e.kind}:${e.id}`} flexDirection="column">
             {header && <Text bold>{SECTION[e.kind]}</Text>}
-            <Text inverse={i === selected && !editing} wrap="truncate">
-              <Text color={palette.accent}>{active ? "●" : " "}</Text> {e.label}
+            {/* The active dot drops its color under selection: an inverse
+                colored fg reads as a colored bg speck inside the light bar. */}
+            <SelRow sel={sel}>
+              <Text color={sel ? undefined : palette.accent}>{active ? "●" : " "}</Text> {e.label}
               {editing
                 ? (
                   <Text>
@@ -100,7 +104,7 @@ export function ModelPicker(
                   </Text>
                 )
                 : <Text dimColor>{"  "}{e.id}</Text>}
-            </Text>
+            </SelRow>
           </Box>
         );
       })}

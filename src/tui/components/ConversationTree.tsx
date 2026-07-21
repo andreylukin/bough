@@ -3,6 +3,7 @@ import { Box, Text } from "ink";
 import type { Message, Part } from "../../schema/parts.ts";
 import type { WireSection } from "../api.ts";
 import type { TuiSession } from "../store.ts";
+import { SelRow } from "./SelRow.tsx";
 import { clip, toolSummary } from "../format.ts";
 import { parseSubagentNote } from "../lines.ts";
 
@@ -195,36 +196,38 @@ export function ConversationTree(
           const s = it.section;
           const turns = s.end - s.start + 1;
           return (
-            <Text key={`h-${idx}`} inverse={sel} wrap="truncate">
+            <SelRow key={`h-${idx}`} sel={sel}>
               {" "}
-              <Text color={it.color} bold>■ {s.label}</Text>
+              <Text color={sel ? undefined : it.color} bold>■ {s.label}</Text>
               <Text dimColor>{`  ${turns} turn${turns === 1 ? "" : "s"}`}</Text>
-            </Text>
+            </SelRow>
           );
         }
         // While sections are shown, every turn row carries its section's color
         // as a left gutter bar (range selection overrides it with the accent).
+        // Selected rows drop custom span colors: under inverse a colored fg
+        // becomes a colored bg speck inside the light bar.
         const gutter = inRange
-          ? <Text color={palette.accent}>▍</Text>
+          ? <Text color={sel ? undefined : palette.accent}>▍</Text>
           : it.sectionColor
-          ? <Text color={it.sectionColor}>▏</Text>
+          ? <Text color={sel ? undefined : it.sectionColor}>▏</Text>
           : <Text>{" "}</Text>;
         if (it.type === "step") {
           return (
-            <Text key={`s-${i}`} inverse={sel} wrap="truncate">
-              {gutter}{"    "}<Text color={palette.accent}>◇</Text>{" "}
+            <SelRow key={`s-${i}`} sel={sel}>
+              {gutter}{"    "}<Text color={sel ? undefined : palette.accent}>◇</Text>{" "}
               <Text dimColor>{it.step.label}</Text>
-            </Text>
+            </SelRow>
           );
         }
         if (it.type === "branch") {
           const s = it.session;
           const dep = !!s.deprecatedAt;
           return (
-            <Text key={`b-${s.id}`} inverse={sel} wrap="truncate">
+            <SelRow key={`b-${s.id}`} sel={sel}>
               {gutter}{"   "}
               <Text
-                color={s.kind === "subagent" ? palette.accent : undefined}
+                color={s.kind === "subagent" && !sel ? palette.accent : undefined}
                 dimColor={s.kind !== "subagent"}
               >
                 {KIND_GLYPH[s.kind] ?? "•"}
@@ -233,18 +236,18 @@ export function ConversationTree(
                 {(s.title || "(untitled)").replace(/^(fork|compacted|subagent) · /, "")}
               </Text>
               {dep ? <Text dimColor>{"  deprecated"}</Text> : null}
-            </Text>
+            </SelRow>
           );
         }
         const n = it.node;
         const text = n.msg.parts.find((p) => p.type === "text");
         const preview = text && "text" in text ? clip(text.text.split("\n")[0], 66) : "(no text)";
         return (
-          <Text key={`n-${n.msg.id}`} inverse={sel} wrap="truncate">
+          <SelRow key={`n-${n.msg.id}`} sel={sel}>
             {gutter}
-            <Text color={palette.info} bold>you</Text> {preview}
-            {n.tip ? <Text color={palette.accent}>{"  "}← here</Text> : null}
-          </Text>
+            <Text color={sel ? undefined : palette.info} bold>you</Text> {preview}
+            {n.tip ? <Text color={sel ? undefined : palette.accent}>{"  "}← here</Text> : null}
+          </SelRow>
         );
       })}
       {items.length === 0 && <Text dimColor>no turns yet</Text>}
