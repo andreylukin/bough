@@ -119,6 +119,7 @@ type SessionRow = {
   origin_id: string | null;
   origin_message_id: string | null;
   deprecated_at: number | null;
+  archived_at: number | null;
   context_tokens: number | null;
   cached_tokens: number | null;
   last_llm_at: number | null;
@@ -230,6 +231,7 @@ function toSession(r: SessionRow): Session {
     ...(r.origin_id ? { originId: r.origin_id } : {}),
     ...(r.origin_message_id ? { originMessageId: r.origin_message_id } : {}),
     ...(r.deprecated_at != null ? { deprecatedAt: r.deprecated_at } : {}),
+    ...(r.archived_at != null ? { archivedAt: r.archived_at } : {}),
     ...(r.model ? { model: r.model } : {}),
     ...(r.effort ? { effort: r.effort } : {}),
     // Prompt-cache visibility: last prompt size, its cached share, and when the
@@ -384,6 +386,14 @@ export class Db {
     return rows.map(toSession);
   }
 
+  /** Archived (soft-deleted) sessions, newest first — the reveal/restore drawer. */
+  listArchivedSessions(): Session[] {
+    const rows = this.#db
+      .prepare(`SELECT * FROM sessions WHERE archived_at IS NOT NULL ORDER BY created_at DESC`)
+      .all() as SessionRow[];
+    return rows.map(toSession);
+  }
+
   /**
    * Token usage: last turn's prompt size (context meter) + cumulative output and
    * cumulative input across the session (cost accounting — input dominates cost
@@ -510,6 +520,11 @@ export class Db {
    */
   archiveSession(id: string): void {
     this.#db.prepare(`UPDATE sessions SET archived_at = ? WHERE id = ?`).run(Date.now(), id);
+  }
+
+  /** Undo archiveSession: the row returns to the sidebar list. */
+  unarchiveSession(id: string): void {
+    this.#db.prepare(`UPDATE sessions SET archived_at = NULL WHERE id = ?`).run(id);
   }
 
   /** Deprecate (hide-by-default in the tree) or un-deprecate a branch. */

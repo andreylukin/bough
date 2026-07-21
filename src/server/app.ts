@@ -334,11 +334,14 @@ const searchDirs: Handler = (req, ctx) => {
 
 // Each session carries `busy` (a turn in flight) so the sidebar can show it at a
 // glance; the UI keeps it live from message.started/finished events after this read.
-const listSessions: Handler = (_req, ctx) => {
+const listSessions: Handler = (req, ctx) => {
   const busy = ctx.db.busySessionIds();
   const statuses = ctx.db.latestTurnStatuses();
+  // ?archived=1 → the soft-deleted rows only, so a UI can reveal and restore
+  // them (they were set archived_at but unreachable over HTTP before).
+  const archived = new URL(req.url).searchParams.get("archived") === "1";
   return json(
-    ctx.db.listSessions().map((s) => ({
+    (archived ? ctx.db.listArchivedSessions() : ctx.db.listSessions()).map((s) => ({
       ...s,
       busy: busy.has(s.id),
       ...(statuses.has(s.id) ? { lastTurnStatus: statuses.get(s.id) } : {}),
@@ -432,6 +435,30 @@ const archiveSession: Handler = (_req, ctx, params) => {
     sessionId: params.id,
     data: { sessionId: params.id },
   });
+  return json({ ok: true });
+};
+
+// Undo the soft-delete: the session returns to GET /sessions. session.updated
+// (archivedAt now absent) tells open UIs the row is live again.
+const unarchiveSession: Handler = (_req, ctx, params) => {
+  if (!ctx.db.getSession(params.id)) return error(404, "session not found");
+  ctx.db.unarchiveSession(params.id);
+  const updated = ctx.db.getSession(params.id)!;
+  ctx.bus.publish({ type: "session.updated", sessionId: params.id, data: updated });
+  return json({ ok: true });
+};
+
+// Persist a session's composer draft (the TUI stashes it on session switch so a
+// half-typed prompt stays with its conversation — same column handoff prefills).
+// Body {draft: string | null}; null clears. No event on purpose: the writer is
+// switching away, and a session.updated here would race the client's prefill.
+const putSessionDraft: Handler = async (req, ctx, params) => {
+  if (!ctx.db.getSession(params.id)) return error(404, "session not found");
+  const body = await req.json().catch(() => null) as { draft?: string | null } | null;
+  if (!body || (body.draft !== null && typeof body.draft !== "string")) {
+    return error(400, "body {draft: string | null} required");
+  }
+  ctx.db.setSessionDraft(params.id, body.draft);
   return json({ ok: true });
 };
 
@@ -1226,6 +1253,16 @@ const routes: Route[] = [
     method: "POST",
     pattern: new URLPattern({ pathname: "/sessions/:id/archive" }),
     handler: archiveSession,
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/sessions/:id/unarchive" }),
+    handler: unarchiveSession,
+  },
+  {
+    method: "PUT",
+    pattern: new URLPattern({ pathname: "/sessions/:id/draft" }),
+    handler: putSessionDraft,
   },
   {
     method: "POST",

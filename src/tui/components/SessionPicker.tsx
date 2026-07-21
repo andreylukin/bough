@@ -86,7 +86,11 @@ export function SessionPicker(
         : msg
         ? <Text color={palette.warn}>{msg}</Text>
         : showDeprecated
-        ? <Text dimColor>(showing deprecated)</Text>
+        ? (
+          <Text dimColor>
+            (showing hidden — deprecated + archived · u restores an archived row)
+          </Text>
+        )
         : null}
       {filterActive
         ? (
@@ -118,13 +122,17 @@ export function SessionPicker(
               <Text color={k.accent ? palette.accent : undefined} dimColor={!k.accent}>
                 {k.glyph}
               </Text>{" "}
-              <Text bold={here} dimColor={!!s.deprecatedAt} strikethrough={!!s.deprecatedAt}>
+              <Text
+                bold={here}
+                dimColor={!!s.deprecatedAt || !!s.archivedAt}
+                strikethrough={!!s.deprecatedAt}
+              >
                 {title}
               </Text>
               {dir ? <Text dimColor>{"  "}{dir}</Text> : null}
             </Text>
             <Text inverse={sel} dimColor>
-              {s.deprecatedAt ? "deprecated" : relTime(s.createdAt)}
+              {s.archivedAt ? "archived" : s.deprecatedAt ? "deprecated" : relTime(s.createdAt)}
             </Text>
           </Box>
         );
@@ -132,7 +140,8 @@ export function SessionPicker(
       {rowsList.length === 0 && <Text dimColor>no sessions — n creates one</Text>}
       <Text dimColor>● root · ⑂ fork · ◆ subagent · ≣ compacted</Text>
       <Text dimColor>
-        j/k move · / filter · enter open · n new · ^x archive · x deprecate · h show hidden
+        j/k move · / filter · enter open · n new · ^x archive · x deprecate · h show hidden · u
+        restore
       </Text>
     </Box>
   );
