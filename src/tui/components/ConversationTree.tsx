@@ -162,6 +162,24 @@ const KIND_GLYPH: Record<string, string> = {
   root: "●",
 };
 
+/** Compact outcome marker for subagent rows — interrupted/failed/check-failed
+ * were indistinguishable from done in the tree. Mirrors branchCardLines. */
+function subagentMark(s: TuiSession): { glyph: string; color: string } | null {
+  if (s.kind !== "subagent") return null;
+  if (s.busy) return { glyph: "⋯", color: palette.warn };
+  if (s.lastTurnStatus === "interrupted") return { glyph: "◼", color: palette.warn };
+  if (s.lastTurnStatus === "error" || s.lastTurnStatus === "orphaned" || s.outcomeOk === false) {
+    return { glyph: "✗", color: palette.error };
+  }
+  if (s.outcomeOk === true && s.outcomeCheckPassed === false) {
+    return { glyph: "✓!", color: palette.warn };
+  }
+  if (s.lastTurnStatus === "done" || s.outcomeOk === true) {
+    return { glyph: "✓", color: palette.accent };
+  }
+  return null; // never ran / legacy row — no marker
+}
+
 export function ConversationTree(
   { items, selected, rows, showDeprecated, range, unadopted }: {
     items: TreeItem[];
@@ -227,6 +245,7 @@ export function ConversationTree(
         if (it.type === "branch") {
           const s = it.session;
           const dep = !!s.deprecatedAt;
+          const mark = subagentMark(s);
           return (
             <SelRow key={`b-${s.id}`} sel={sel}>
               {gutter}{"   "}
@@ -235,7 +254,8 @@ export function ConversationTree(
                 dimColor={s.kind !== "subagent"}
               >
                 {KIND_GLYPH[s.kind] ?? "•"}
-              </Text>{" "}
+              </Text>
+              {mark ? <Text color={mark.color}>{` ${mark.glyph}`}</Text> : null}{" "}
               <Text dimColor strikethrough={dep}>
                 {(s.title || "(untitled)").replace(/^(fork|compacted|subagent) · /, "")}
               </Text>

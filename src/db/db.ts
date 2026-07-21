@@ -126,6 +126,8 @@ type SessionRow = {
   model: string | null;
   effort: string | null;
   draft: string | null;
+  outcome_ok: number | null;
+  outcome_check_passed: number | null;
 };
 
 /**
@@ -240,6 +242,9 @@ function toSession(r: SessionRow): Session {
     ...(r.cached_tokens != null ? { cachedTokens: r.cached_tokens } : {}),
     ...(r.last_llm_at != null ? { lastLlmAt: r.last_llm_at } : {}),
     ...(r.draft != null ? { draft: r.draft } : {}),
+    // Delegation outcome (subagents only; see setSessionOutcome).
+    ...(r.outcome_ok != null ? { outcomeOk: r.outcome_ok === 1 } : {}),
+    ...(r.outcome_check_passed != null ? { outcomeCheckPassed: r.outcome_check_passed === 1 } : {}),
   };
 }
 
@@ -289,6 +294,8 @@ export class Db {
         "model TEXT",
         "effort TEXT",
         "draft TEXT",
+        "outcome_ok INTEGER",
+        "outcome_check_passed INTEGER",
       ]
     ) {
       try {
@@ -371,6 +378,15 @@ export class Db {
   /** Per-session thinking-depth override; null clears back to the global default. */
   setSessionEffort(id: string, effort: string | null): void {
     this.#db.prepare(`UPDATE sessions SET effort = ? WHERE id = ?`).run(effort, id);
+  }
+
+  /** Persist a finished subagent's delegation outcome (see subagent.ts buildResult):
+   * the in-band agent() result only reaches the parent program, so the branch row
+   * carries {ok, checkPassed} for the UI to render failed/check-failed states. */
+  setSessionOutcome(id: string, ok: boolean, checkPassed: boolean): void {
+    this.#db
+      .prepare(`UPDATE sessions SET outcome_ok = ?, outcome_check_passed = ? WHERE id = ?`)
+      .run(ok ? 1 : 0, checkPassed ? 1 : 0, id);
   }
 
   /** Record the base commit captured on a session's first turn (see supervisor/workspace.ts). */

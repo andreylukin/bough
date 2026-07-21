@@ -558,6 +558,8 @@ export function App(
           title: s.title || "(untitled)",
           busy: !!s.busy,
           status: s.lastTurnStatus,
+          ok: s.outcomeOk,
+          checkPassed: s.outcomeCheckPassed,
           originMessageId: s.originMessageId,
           note: noteById.get(s.id) ?? null,
         })),
