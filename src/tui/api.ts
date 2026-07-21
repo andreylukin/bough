@@ -277,6 +277,11 @@ export const api = {
       ...postJson({ provider, key }),
       method: "PUT",
     }),
+  deleteKey: (provider: KeyProvider) =>
+    j<{ ok: boolean; keys: Record<KeyProvider, boolean> }>("/config/keys", {
+      ...postJson({ provider }),
+      method: "DELETE",
+    }),
   // With sessionId: pins that session to the model AND moves the default for
   // new sessions; other existing sessions keep their own.
   setModel: (model: string, sessionId?: string) =>

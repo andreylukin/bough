@@ -36,6 +36,11 @@ export const KeysBody = z.object({
   ),
 });
 
+/** DELETE /config/keys body: just the provider. */
+export const KeyDeleteBody = z.object({
+  provider: z.enum(["anthropic", "openrouter", "openai"]),
+});
+
 /** Which provider keys are configured right now (non-empty env var). Never values. */
 export function keyStatus(): Record<KeyProvider, boolean> {
   const out = {} as Record<KeyProvider, boolean>;
@@ -71,6 +76,18 @@ export function setEnvVar(text: string, varName: string, value: string): string 
   return out.join("\n") + "\n";
 }
 
+/**
+ * Drop every `VAR=value` line from env-file text, preserving the rest (comments
+ * and templates stay). Pure, like setEnvVar.
+ */
+export function deleteEnvVar(text: string, varName: string): string {
+  const lines = text.split("\n");
+  if (lines.length > 0 && lines.at(-1) === "") lines.pop();
+  const re = new RegExp(`^${escapeRe(varName)}=`);
+  const out = lines.filter((line) => !re.test(line));
+  return out.length ? out.join("\n") + "\n" : "";
+}
+
 function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -97,6 +114,24 @@ export function setKey(
   }
   writeFileSync(path, setEnvVar(current, varName, value), { mode: 0o600 });
   chmodSync(path, 0o600); // writeFileSync's mode only applies on create
+  return keyStatus();
+}
+
+/**
+ * Remove a provider key: live process env (immediate) plus ~/.bough/env, so the
+ * removal survives a restart. Returns the refreshed status.
+ */
+export function deleteKey(provider: KeyProvider, dir?: string): Record<KeyProvider, boolean> {
+  const varName = KEY_ENV[provider];
+  Deno.env.delete(varName);
+  const path = envPath(dir);
+  try {
+    const current = readFileSync(path, "utf8");
+    writeFileSync(path, deleteEnvVar(current, varName), { mode: 0o600 });
+    chmodSync(path, 0o600);
+  } catch {
+    // no env file — nothing persisted to remove
+  }
   return keyStatus();
 }
 

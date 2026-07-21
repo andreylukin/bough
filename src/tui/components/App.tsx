@@ -21,6 +21,17 @@ const dbg = Deno.env.get("BOUGH_TUI_DEBUG")
     }
   }
   : null;
+/** Slash-popup description: skill frontmatter arrives raw, so strip wrapping
+ * quotes and cap on a word boundary with … (never cut mid-word). */
+function popupDetail(desc: string, max = 72): string {
+  let d = desc.trim();
+  const q = d[0];
+  if ((q === '"' || q === "'") && d.length > 1 && d.at(-1) === q) d = d.slice(1, -1).trim();
+  if (d.length <= max) return d;
+  const cut = d.lastIndexOf(" ", max);
+  return d.slice(0, cut > 0 ? cut : max).replace(/[\s.,;:·—-]+$/, "") + "…";
+}
+
 /** "due" / "in 5m" / "in 3h" / "in 2d" — the schedule list's next-run column. */
 function nextIn(ts: number): string {
   const d = ts - Date.now();
@@ -248,6 +259,9 @@ export function App(
   const [themeSel, setThemeSel] = useState(0);
   const themeSelRef = useRef(0);
   const themeApplyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The theme held on tab entry (or last Enter-confirmed): browsing previews
+  // live, but Escape puts this one back. null = default; undefined = unknown.
+  const themeEntryRef = useRef<ThemeState["theme"] | undefined>(undefined);
   const applyPreset = useCallback((idx: number) => {
     const p = THEME_PRESETS[idx];
     if (!p) return;
@@ -255,6 +269,21 @@ export function App(
       .then(() => api.getTheme())
       .then((next) => {
         applyTheme(next); // the running TUI recolors now
+        setThemeState(next);
+      })
+      .catch((e) => setPanelMsg(String(e)));
+  }, []);
+  // Escape from the theme tab: re-apply the entry (or Enter-confirmed) theme so
+  // browsing never commits. Unconditional re-PUT — a debounced preview may still
+  // be in flight, so "current == entry" can't be trusted.
+  const revertTheme = useCallback(() => {
+    if (themeApplyTimer.current) clearTimeout(themeApplyTimer.current);
+    const entry = themeEntryRef.current;
+    if (entry === undefined) return;
+    (entry === null ? api.resetTheme() : api.putTheme(entry.name, entry.colors))
+      .then(() => api.getTheme())
+      .then((next) => {
+        applyTheme(next);
         setThemeState(next);
       })
       .catch((e) => setPanelMsg(String(e)));
@@ -374,11 +403,15 @@ export function App(
       // steps (and auto-applies) from where the user actually is.
       api.getTheme().then((t) => {
         setThemeState(t);
+        themeEntryRef.current = t.theme; // what Escape restores
         const cur = t.theme?.name ?? "Default";
         const idx = Math.max(0, THEME_PRESETS.findIndex((p) => p.name === cur));
         themeSelRef.current = idx;
         setThemeSel(idx);
-      }, () => setThemeState(null));
+      }, () => {
+        setThemeState(null);
+        themeEntryRef.current = undefined;
+      });
     }
     // sessions / conversation read from the store — nothing to fetch.
   }, [currentId]);
@@ -634,7 +667,11 @@ export function App(
             a.s.name.localeCompare(b.s.name)
           )
           .slice(0, 6)
-          .map(({ s }) => ({ label: `/${s.name}`, detail: s.description, insert: `/${s.name} ` }));
+          .map(({ s }) => ({
+            label: `/${s.name}`,
+            detail: popupDetail(s.description),
+            insert: `/${s.name} `,
+          }));
         dbg?.(`skill-popup q=${JSON.stringify(q)} items=${items.length}`);
         // A filter that matches nothing still shows the menu (as a "no matching
         // commands" row) — silently hiding it read as "/ is broken".
@@ -1064,7 +1101,12 @@ export function App(
           setMovePicks(null); // cancel a pending move
         } else if (panelTab === "conversation" && rangeAnchor !== null) {
           setRangeAnchor(null);
-        } else setMode("chat");
+        } else {
+          // Theme browsing must not commit: put back the tab-entry theme
+          // (Enter while in the tab moved that baseline to the confirmed one).
+          if (panelTab === "theme") revertTheme();
+          setMode("chat");
+        }
         return;
       }
       // Tab cycles tabs (but while typing a session filter, let it type).
@@ -1305,11 +1347,19 @@ export function App(
         return;
       }
       if (panelTab === "theme") {
-        // Moving the cursor IS applying: the hovered preset lands (debounced) on
-        // the server and the TUI recolors under the cursor.
+        // Moving the cursor previews live (the hovered preset lands, debounced,
+        // on the server and the TUI recolors); Enter keeps it, Escape reverts.
         if (key.upArrow || ch === "k") return moveThemeSel((i) => i - 1);
         if (key.downArrow || ch === "j") return moveThemeSel((i) => i + 1);
-        if (key.return) return applyPreset(themeSelRef.current);
+        if (key.return) {
+          const p = THEME_PRESETS[themeSelRef.current];
+          if (p) {
+            themeEntryRef.current = p.name === "Default"
+              ? null
+              : { name: p.name, colors: p.colors };
+          }
+          return applyPreset(themeSelRef.current);
+        }
       }
       if (panelTab === "mcp") {
         const names = mcpStat ? Object.keys(mcpStat.registry.servers).sort() : [];
@@ -1394,6 +1444,16 @@ export function App(
         if (key.upArrow || ch === "k") return setModelSel((i) => Math.max(0, i - 1));
         if (key.downArrow || ch === "j") {
           return setModelSel((i) => Math.min(cfgEntries.length - 1, i + 1));
+        }
+        // d on a set key row removes that provider's key (the row hint says so).
+        if (ch === "d" && !key.ctrl && !key.meta) {
+          const e = cfgEntries[modelSel];
+          if (e?.kind === "key" && cfg?.keys?.[e.id as KeyProvider]) {
+            api.deleteKey(e.id as KeyProvider)
+              .then(() => api.getConfig().then(setCfg))
+              .catch((err) => setErr(String(err)));
+          }
+          return;
         }
         if (key.return) {
           const e = cfgEntries[modelSel];
