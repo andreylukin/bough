@@ -388,8 +388,12 @@ export function useStore(initialSessions: Session[]): Store {
   const revertChanges = useCallback(() => {
     const id = currentRef.current;
     if (!id) return;
-    api.revertChanges(id).catch((e) => setNotice(e instanceof Error ? e.message : String(e)));
-  }, []);
+    // Confirm the undo — like apply, silence here reads as a failed no-op.
+    api.revertChanges(id).then(
+      () => notify("↩ reverted — session files restored to base"),
+      (e) => setNotice(e instanceof Error ? e.message : String(e)),
+    );
+  }, [notify]);
 
   const send = useCallback(async (text: string, queue = false, idArg?: string) => {
     const id = idArg ?? currentRef.current;

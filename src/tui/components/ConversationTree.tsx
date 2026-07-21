@@ -163,13 +163,16 @@ const KIND_GLYPH: Record<string, string> = {
 };
 
 export function ConversationTree(
-  { items, selected, rows, showDeprecated, range }: {
+  { items, selected, rows, showDeprecated, range, unadopted }: {
     items: TreeItem[];
     selected: number;
     rows: number;
     showDeprecated: boolean;
     /** Inclusive [lo, hi] item indices highlighted for a range op, or null. */
     range: [number, number] | null;
+    /** Subagent session ids with unadopted branch work — their ◆ rows get a
+     * marker and the `a adopt` footer key. */
+    unadopted: ReadonlySet<string>;
   },
 ) {
   const max = Math.max(3, rows - 9);
@@ -236,6 +239,7 @@ export function ConversationTree(
               <Text dimColor strikethrough={dep}>
                 {(s.title || "(untitled)").replace(/^(fork|compacted|subagent) · /, "")}
               </Text>
+              {unadopted.has(s.id) ? <Text color={palette.warn}>{"  unadopted"}</Text> : null}
               {dep ? <Text dimColor>{"  deprecated"}</Text> : null}
             </SelRow>
           );
@@ -253,7 +257,8 @@ export function ConversationTree(
       })}
       {items.length === 0 && <Text dimColor>no turns yet</Text>}
       <Text dimColor>
-        ↑↓ move · enter rewind/branch/open · x deprecate · h hidden · v select · esc
+        ↑↓ move · enter rewind/branch/open ·{" "}
+        {unadopted.size > 0 ? "a adopt · " : ""}x deprecate · h hidden · v select · esc
       </Text>
     </Box>
   );

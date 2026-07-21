@@ -282,6 +282,67 @@ Deno.test({
   },
 });
 
+Deno.test({
+  name: "changes: a subagent's unadopted branch surfaces in the spawner's rail; adopt clears it",
+  ignore: !gitAvailable,
+  fn: async () => {
+    await withShadowRoots(async () => {
+      const repo = await tempGitRepo();
+      const c = ctx();
+      const h = createHandler(c);
+      try {
+        const s = await (await h(jsonReq("POST", "/sessions", { title: "s", workspace: repo })))
+          .json() as Session;
+        const dir = await attachWorkspace(c.db, repo, s.id);
+
+        // A finished subagent with a branched worktree and an un-adopted edit —
+        // what launch() sets up, minus the turn.
+        c.db.createSession({
+          id: "sub1",
+          parentId: null,
+          title: "essay writer",
+          kind: "subagent",
+          createdAt: 1,
+          originId: s.id,
+          originMessageId: "m1",
+        });
+        const subDir = await shadow.addWorkspace(dir, "sub1", shadow.workspaceDirFor("sub1"), s.id);
+        c.db.setSessionWorkspace("sub1", subDir);
+        await Deno.writeTextFile(`${subDir}/essay.txt`, "words\n");
+
+        // The SPAWNER's rail carries the subagent's diff as a labeled section.
+        const { diffs } = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
+          diffs: Diff[];
+        };
+        const sub = diffs.find((d) => d.subagentId === "sub1");
+        assert(sub, "expected an unadopted subagent section");
+        assertEquals(sub.label, "essay writer (unadopted)");
+        assertEquals(sub.files.map((f) => f.path), ["essay.txt"]);
+
+        const events: BoughEvent[] = [];
+        c.bus.subscribe((e) => events.push(e));
+
+        // Adopt (happy path): the branch folds into the spawner's worktree, both
+        // rails move, and the subagent section drops out of the spawner's rail.
+        const adopted = await h(jsonReq("POST", "/sessions/sub1/adopt"));
+        assertEquals(adopted.status, 200);
+        assertEquals(await Deno.readTextFile(`${dir}/essay.txt`), "words\n");
+        assert(events.some((e) => e.type === "changes.updated" && e.sessionId === s.id));
+        assert(events.some((e) => e.type === "changes.updated" && e.sessionId === "sub1"));
+        const after = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
+          diffs: Diff[];
+        };
+        assertEquals(after.diffs.filter((d) => d.subagentId).length, 0);
+        // The work now rides the spawner's own diff.
+        assert(after.diffs.some((d) => d.files.some((f) => f.path === "essay.txt")));
+      } finally {
+        await Deno.remove(repo, { recursive: true });
+        c.db.close();
+      }
+    });
+  },
+});
+
 // ---- clonefile-backed changes (self-skips without cp/git) ------------------
 
 Deno.test({
