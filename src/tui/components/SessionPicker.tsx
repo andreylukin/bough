@@ -2,7 +2,7 @@ import { palette } from "../theme.ts";
 import { Box } from "ink";
 import { Text } from "./Text.tsx";
 import { SelRow } from "./SelRow.tsx";
-import { relTime } from "../format.ts";
+import { relTime, sessionLabel } from "../format.ts";
 import type { TuiSession } from "../store.ts";
 
 export interface TreeRow {
@@ -111,7 +111,8 @@ export function SessionPicker(
         // Status dot: busy pulse, unseen result, or "you are here"; else blank.
         const dot = s.busy ? "⋯" : s.unseen ? "●" : here ? "▸" : " ";
         const dotColor = s.busy ? palette.warn : palette.accent;
-        const title = (s.title || "(untitled)").replace(k.strip ?? /^\b$/, "");
+        // Untitled rows fall back to the workspace basename, never a raw uuid.
+        const title = sessionLabel((s.title || "").replace(k.strip ?? /^\b$/, ""), s.workspace);
         // Project-dir basename — two sessions on different projects were
         // indistinguishable by title alone (user-testing). originDir is the
         // stable project path (workspace gets repointed at the shadow worktree).
