@@ -1029,6 +1029,225 @@ Deno.test("ask(): a decline rejects catchably in the program and persists as dec
   assertEquals(db.turnsByStatus("done").length, 1);
 });
 
+// ---- end-gates: adopt ------------------------------------------------------
+
+/** A stand-in for run_steps whose program ran delegation host fns: the real
+ * delegate wiring records into ctx.turn, so the fake writes the same state. */
+function fakeDelegateSteps(): ToolDef {
+  return {
+    name: "run_steps",
+    description: "fake run_steps",
+    schema: z.object({ code: z.string() }),
+    run: (input, ctx) => {
+      const op = (input as { code: string }).code;
+      if (op === "agent") {
+        (ctx.turn!.unadopted ??= new Map()).set("sub1", "fix the tests");
+      }
+      if (op === "adopt") ctx.turn!.unadopted?.delete("sub1");
+      return Promise.resolve("ok");
+    },
+  };
+}
+
+const stopWith = (text: string): LlmResult => ({
+  content: [
+    { type: "text", text },
+    { type: "tool_use", id: `s-${text.length}`, name: "stop", input: {} },
+  ],
+  stopReason: "tool_use",
+});
+
+Deno.test("adopt gate: stop with unadopted subagent changes is nudged once, then ends", async () => {
+  const { db, bus, sessionId } = seed();
+  const llm = fakeLlm([
+    {
+      content: [{ type: "tool_use", id: "t1", name: "run_steps", input: { code: "agent" } }],
+      stopReason: "tool_use",
+    },
+    stopWith("delegated the fix."),
+    // Answers the nudge by declining explicitly — the gate is one-shot, so this ends.
+    stopWith("leaving the branch for review; the diff needs a human look."),
+  ]);
+  const { message, done } = beginTurn({ db, bus, llm, tools: [fakeDelegateSteps()] }, sessionId);
+  await done;
+
+  assertEquals(llm.calls.length, 3); // exactly one adopt nudge round
+  assertStringIncludes(
+    JSON.stringify(llm.calls[2].messages.filter((m) => m.role === "user")),
+    "(sub1) changed files that are not adopted",
+  );
+  // The nudge stays in-memory — nothing [harness] persists to the thread.
+  assertEquals(
+    db.threadFor(sessionId).some((m) => JSON.stringify(m.parts).includes("[harness]")),
+    false,
+  );
+  assertEquals(finalMessage(db, message.id).pending, false);
+  assertEquals(db.turnsByStatus("done").length, 1);
+});
+
+Deno.test("adopt gate: an adopted subagent does not trip the nudge", async () => {
+  const { db, bus, sessionId } = seed();
+  const llm = fakeLlm([
+    {
+      content: [{ type: "tool_use", id: "t1", name: "run_steps", input: { code: "agent" } }],
+      stopReason: "tool_use",
+    },
+    {
+      content: [{ type: "tool_use", id: "t2", name: "run_steps", input: { code: "adopt" } }],
+      stopReason: "tool_use",
+    },
+    stopWith("adopted; all merged."),
+  ]);
+  const { done } = beginTurn({ db, bus, llm, tools: [fakeDelegateSteps()] }, sessionId);
+  await done;
+
+  assertEquals(llm.calls.length, 3); // no extra nudge round
+  assertEquals(JSON.stringify(llm.calls.at(-1)!.messages).includes("not adopted"), false);
+  assertEquals(db.turnsByStatus("done").length, 1);
+});
+
+Deno.test("adopt gate: a subagent with no file changes does not trip the nudge", async () => {
+  const { db, bus, sessionId } = seed();
+  const llm = fakeLlm([
+    // The fake records nothing for this op — an agent() whose changedFiles was empty.
+    {
+      content: [{ type: "tool_use", id: "t1", name: "run_steps", input: { code: "agent-clean" } }],
+      stopReason: "tool_use",
+    },
+    stopWith("the subagent only reported findings."),
+  ]);
+  const { done } = beginTurn({ db, bus, llm, tools: [fakeDelegateSteps()] }, sessionId);
+  await done;
+
+  assertEquals(llm.calls.length, 2);
+  assertEquals(JSON.stringify(llm.calls.at(-1)!.messages).includes("not adopted"), false);
+  assertEquals(db.turnsByStatus("done").length, 1);
+});
+
+// ---- end-gates: parallelism honesty ----------------------------------------
+
+Deno.test("honesty gate: a parallel claim with no parallel primitive gets one corrective nudge", async () => {
+  const { db, bus, sessionId } = seed();
+  const inlineSteps: ToolDef = {
+    name: "run_steps",
+    description: "fake run_steps",
+    schema: z.object({ code: z.string() }),
+    run: () => Promise.resolve("ok"), // everything ran inline — no agent/spawn/bashBg
+  };
+  const llm = fakeLlm([
+    {
+      content: [{ type: "tool_use", id: "t1", name: "run_steps", input: { code: "work" } }],
+      stopReason: "tool_use",
+    },
+    stopWith("Ran both migrations concurrently."),
+    stopWith("Correction: they ran inline, one after the other."),
+  ]);
+  const { done } = beginTurn({ db, bus, llm, tools: [inlineSteps] }, sessionId);
+  await done;
+
+  assertEquals(llm.calls.length, 3); // exactly one honesty nudge round
+  assertStringIncludes(
+    JSON.stringify(llm.calls[2].messages.filter((m) => m.role === "user")),
+    "no subagent or background shell ran this turn",
+  );
+  assertEquals(
+    db.threadFor(sessionId).some((m) => JSON.stringify(m.parts).includes("[harness]")),
+    false,
+  );
+  assertEquals(db.turnsByStatus("done").length, 1);
+});
+
+Deno.test("honesty gate: no nudge when a parallel primitive actually ran", async () => {
+  const { db, bus, sessionId } = seed();
+  const parallelSteps: ToolDef = {
+    name: "run_steps",
+    description: "fake run_steps",
+    schema: z.object({ code: z.string() }),
+    run: (_input, ctx) => {
+      ctx.turn!.ranParallel = true; // what agent()/spawn()/bashBg record
+      return Promise.resolve("ok");
+    },
+  };
+  const llm = fakeLlm([
+    {
+      content: [{ type: "tool_use", id: "t1", name: "run_steps", input: { code: "work" } }],
+      stopReason: "tool_use",
+    },
+    stopWith("Kicked both checks off in parallel."),
+  ]);
+  const { done } = beginTurn({ db, bus, llm, tools: [parallelSteps] }, sessionId);
+  await done;
+
+  assertEquals(llm.calls.length, 2); // no nudge round
+  assertEquals(JSON.stringify(llm.calls.at(-1)!.messages).includes("[harness]"), false);
+  assertEquals(db.turnsByStatus("done").length, 1);
+});
+
+Deno.test("honesty gate: no nudge when the text makes no parallel claim", async () => {
+  const { db, bus, sessionId } = seed();
+  const inlineSteps: ToolDef = {
+    name: "run_steps",
+    description: "fake run_steps",
+    schema: z.object({ code: z.string() }),
+    run: () => Promise.resolve("ok"),
+  };
+  const llm = fakeLlm([
+    {
+      content: [{ type: "tool_use", id: "t1", name: "run_steps", input: { code: "work" } }],
+      stopReason: "tool_use",
+    },
+    stopWith("Ran both migrations, one after the other."),
+  ]);
+  const { done } = beginTurn({ db, bus, llm, tools: [inlineSteps] }, sessionId);
+  await done;
+
+  assertEquals(llm.calls.length, 2);
+  assertEquals(JSON.stringify(llm.calls.at(-1)!.messages).includes("[harness]"), false);
+  assertEquals(db.turnsByStatus("done").length, 1);
+});
+
+// ---- <stop/> sentinel leak -------------------------------------------------
+
+Deno.test("a literal <stop/> in the text is stripped and honored as a stop (no nudge round)", async () => {
+  const { db, bus, sessionId } = seed();
+  const llm = fakeLlm([
+    // No stop tool call — the model emitted the sentinel as text instead.
+    { content: [{ type: "text", text: "all done.\n<stop/>" }], stopReason: "end_turn" },
+  ]);
+  const { message, done } = beginTurn({ db, bus, llm, tools: [] }, sessionId);
+  await done;
+
+  assertEquals(llm.calls.length, 1); // counted as stop — the STOP_NUDGE round is saved
+  const final = finalMessage(db, message.id);
+  assertEquals(final.parts, [{ type: "text", text: "all done." }] as Part[]);
+  assertEquals(db.turnsByStatus("done").length, 1);
+});
+
+Deno.test("repeated / whitespace-padded <stop/> copies are all stripped", async () => {
+  const { db, bus, sessionId } = seed();
+  const llm = fakeLlm([
+    { content: [{ type: "text", text: "done. <stop/> <stop/>\n<stop/>" }], stopReason: "end_turn" },
+  ]);
+  const { message, done } = beginTurn({ db, bus, llm, tools: [] }, sessionId);
+  await done;
+
+  assertEquals(llm.calls.length, 1);
+  assertEquals(finalMessage(db, message.id).parts, [{ type: "text", text: "done." }] as Part[]);
+  assertEquals(db.turnsByStatus("done").length, 1);
+});
+
+Deno.test("<stop/> mentioned mid-text (code span) is content, not a stop — left verbatim", async () => {
+  const { db, bus, sessionId } = seed();
+  const text = "the sentinel is `<stop/>` — never emit it as text.";
+  const llm = fakeLlm([stopWith(text)]);
+  const { message, done } = beginTurn({ db, bus, llm, tools: [] }, sessionId);
+  await done;
+
+  assertEquals(llm.calls.length, 1);
+  assertEquals(finalMessage(db, message.id).parts, [{ type: "text", text }] as Part[]);
+  assertEquals(db.turnsByStatus("done").length, 1);
+});
+
 Deno.test("ask(): turn interrupt rejects the hold and the turn ends interrupted", async () => {
   const { db, bus, sessionId } = seed();
   const llm = fakeLlm([
