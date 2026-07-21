@@ -8,9 +8,12 @@ interface TuiState {
   cookie?: string;
   /** Composer history (sent messages, oldest first) — survives restarts. */
   history?: string[];
+  /** `!` shell commands (oldest first) — the backwards-fzf corpus. */
+  shellHistory?: string[];
 }
 
 const HISTORY_CAP = 50;
+const SHELL_HISTORY_CAP = 200;
 
 function load(): TuiState {
   try {
@@ -52,4 +55,16 @@ export function loadHistory(): string[] {
 
 export function appendHistory(entry: string): void {
   save({ history: [...loadHistory(), entry].slice(-HISTORY_CAP) });
+}
+
+export function loadShellHistory(): string[] {
+  const h = load().shellHistory;
+  return Array.isArray(h) ? h.filter((x) => typeof x === "string") : [];
+}
+
+/** Append a `!` command, fzf-style: an earlier duplicate moves to the tip. */
+export function appendShellHistory(cmd: string): void {
+  save({
+    shellHistory: [...loadShellHistory().filter((c) => c !== cmd), cmd].slice(-SHELL_HISTORY_CAP),
+  });
 }

@@ -89,7 +89,8 @@ import { DiffView, flattenDiffs } from "./DiffView.tsx";
 import { modelEntries, ModelPicker } from "./ModelPicker.tsx";
 import { Panel, PANEL_TABS, type PanelTab, PanelTabs } from "./Panel.tsx";
 import { Help } from "./Help.tsx";
-import { appendHistory, loadHistory, saveLastSession } from "../state.ts";
+import { appendHistory, appendShellHistory, loadHistory, saveLastSession } from "../state.ts";
+import { shellHistoryCorpus } from "../shell_history.ts";
 import { copyToClipboard } from "../clipboard.ts";
 import { progressEnd, progressStart, setTitle, tabColor, termBackground } from "../term.ts";
 
@@ -457,10 +458,11 @@ export function App(
   const width = stdout?.columns || 80;
 
   // ---- the conversation viewport ------------------------------------------
-  // The ACTIVE tool group of a running turn (a call still awaiting its result)
-  // auto-expands so the live-streamed output is visible without ^e, and falls
-  // back to default (collapsed) once the step completes. `touched` records a
-  // manual toggle on an active card — the user's choice wins over the auto.
+  // The ACTIVE tool group of a running turn (a call still awaiting its result,
+  // or the turn's trailing group) auto-expands so the live-streamed output is
+  // visible without ^e, and falls back to default (collapsed) once the turn
+  // moves past it. `touched` records a manual toggle on an active card — the
+  // user's choice wins over the auto.
   const activeKeys = useMemo(() => {
     const keys = new Set<string>();
     for (const m of store.thread) {
@@ -468,9 +470,14 @@ export function App(
       const done = new Set(
         m.parts.filter((p) => p.type === "tool_result").map((p) => p.callId),
       );
-      segmentParts(m.parts).forEach((s, i) => {
+      const segs = segmentParts(m.parts);
+      segs.forEach((s, i) => {
+        if (s.kind !== "tools") return;
+        // The trailing group also stays open after its last result lands —
+        // collapsing the instant output arrives read as a blink; it folds when
+        // the turn moves on (next prose part / next group) instead.
         if (
-          s.kind === "tools" &&
+          i === segs.length - 1 ||
           s.parts.some((p) => p.type === "tool_call" && !done.has(p.id))
         ) keys.add(`${m.id}:${i}`);
       });
@@ -573,26 +580,27 @@ export function App(
   // A turn that ends on a tool group has its whole answer inside the fold —
   // auto-expand it when the message finishes (user-testing finding). Only for
   // messages watched live (seen pending), so opening an old session doesn't
-  // pop open its history.
+  // pop open its history. Runs during render (derived-state pattern, like the
+  // scroll anchoring below): the trailing group is auto-expanded while the
+  // turn runs, and an effect would let Ink paint one collapsed frame between
+  // pending flipping off and the toggle landing — a visible blink.
   const isExpandedRef = useRef(isExpanded);
   isExpandedRef.current = isExpanded;
   const watchedPending = useRef(new Set<string>());
-  useEffect(() => {
-    for (const m of store.thread) {
-      if (m.pending) {
-        watchedPending.current.add(m.id);
-        continue;
-      }
-      if (!watchedPending.current.delete(m.id)) continue;
-      const segs = segmentParts(m.parts);
-      const last = segs[segs.length - 1];
-      if (last?.kind === "tools") {
-        const key = `${m.id}:${segs.length - 1}`;
-        // A card the user collapsed while it ran stays collapsed — their call.
-        if (!isExpandedRef.current(key) && !touchedRef.current.has(key)) toggleGroup(key);
-      }
+  for (const m of store.thread) {
+    if (m.pending) {
+      watchedPending.current.add(m.id);
+      continue;
     }
-  }, [store.thread, toggleGroup]);
+    if (!watchedPending.current.delete(m.id)) continue;
+    const segs = segmentParts(m.parts);
+    const last = segs[segs.length - 1];
+    if (last?.kind === "tools") {
+      const key = `${m.id}:${segs.length - 1}`;
+      // A card the user collapsed while it ran stays collapsed — their call.
+      if (!isExpandedRef.current(key) && !touchedRef.current.has(key)) toggleGroup(key);
+    }
+  }
 
   // Clicking the activity line ("⠴ running the test suite…") opens the fold it
   // describes: the running turn's trailing tool group. Ref'd so the mouse
@@ -684,9 +692,10 @@ export function App(
   // plus the rows themselves. Synced post-render alongside activityRowRef.
   const infoClickRef = useRef<{ firstRow: number; rows: [string, string, string][] } | null>(null);
   // Composer autocomplete: "/" at the start completes skills, "@" completes
-  // workspace files (in a draft, the prospective workspace's files by path).
+  // workspace files (in a draft, the prospective workspace's files by path),
+  // "!" fuzzy-searches shell history backwards (ctrl-r muscle memory).
   interface Popup {
-    kind: "skill" | "file";
+    kind: "skill" | "file" | "shell";
     items: { label: string; detail: string; insert: string }[];
     sel: number;
     tokenStart: number;
@@ -694,6 +703,9 @@ export function App(
   }
   const [popup, setPopup] = useState<Popup | null>(null);
   const skillsCache = useRef<SkillInfo[] | null>(null);
+  // The `!` corpus (own runs + seeded shell files), read once per run; new runs
+  // are appended in place so the popup stays fresh without re-reading files.
+  const shellHist = useRef<string[] | null>(null);
   useEffect(() => {
     if (mode !== "chat") {
       setPopup(null);
@@ -705,6 +717,27 @@ export function App(
       const ws = text.slice(cursor).search(/\s/);
       return ws < 0 ? text.length : cursor + ws;
     })();
+    if (text.startsWith("!") && cursor >= 1) {
+      // Backwards fzf over shell history: fuzzy filter, most recent first (an
+      // empty query lists the latest runs, like an empty ctrl-r). Completing
+      // replaces the whole input — a `!` line IS the command.
+      const q = text.slice(1, cursor);
+      const corpus = shellHist.current ??= shellHistoryCorpus();
+      const items = corpus
+        .map((cmd, i) => ({ cmd, i, score: fuzzyScore(cmd, q) }))
+        .filter((x) => x.score > 0)
+        .sort((a, b) => b.score - a.score || b.i - a.i)
+        .slice(0, 6)
+        .map(({ cmd }) => ({ label: cmd, detail: "", insert: `!${cmd}` }));
+      // sel -1 = browsing, nothing picked: enter keeps running the TYPED line;
+      // only an explicit ↑/↓ pick makes enter run a listed command instead.
+      setPopup(
+        items.length
+          ? { kind: "shell", items, sel: -1, tokenStart: 0, tokenEnd: text.length }
+          : null,
+      );
+      return;
+    }
     if (text.startsWith("/") && cursor >= 1 && !/\s/.test(text.slice(0, cursor))) {
       const q = text.slice(1, cursor);
       const apply = (skills: SkillInfo[]) => {
@@ -772,6 +805,50 @@ export function App(
     }
     setPopup(null);
   }, [comp, mode, currentId, defaultWorkspace]);
+
+  // Ghost text: a dim inline preview after the cursor, accepted with tab. Two
+  // sources — the open popup's selected item (previewing what tab would insert)
+  // and, with no popup, a worker prediction of the user's NEXT message from the
+  // conversation (fetched when a turn ends, shown on the idle composer). A ghost
+  // only shows with the cursor at end-of-input; typing through it keeps the
+  // remainder, diverging hides it.
+  const [ghost, setGhost] = useState<string | null>(null);
+  const suggestSeq = useRef(0);
+  const ghostText = (() => {
+    if (mode !== "chat" || comp.cursor !== comp.text.length) return null;
+    if (popup) {
+      const it = popup.items[popup.sel];
+      if (!it) return null;
+      const completed = comp.text.slice(0, popup.tokenStart) + it.insert;
+      if (!completed.startsWith(comp.text)) return null;
+      return completed.slice(comp.text.length).trimEnd() || null;
+    }
+    if (!ghost || store.busy || store.pending || store.ask) return null;
+    return ghost.startsWith(comp.text) && ghost.length > comp.text.length
+      ? ghost.slice(comp.text.length)
+      : null;
+  })();
+  // Fetch on the idle edge (turn end, session open). Typing must NOT re-run this
+  // — comp is read through compRef (declared above) so a ghost survives being
+  // typed through.
+  useEffect(() => {
+    ++suggestSeq.current; // context changed — invalidate any in-flight fetch
+    setGhost(null); //     …and the prediction it would have refreshed
+    if (mode !== "chat" || !currentId || store.busy || store.pending || store.ask) return;
+    const sid = currentId;
+    const seq = suggestSeq.current;
+    // A beat after idle so the turn's final message is committed server-side.
+    const t = setTimeout(() => {
+      if (compRef.current.text !== "") return; // mid-draft: not ours to finish
+      api.suggest(sid).then(
+        (s) => {
+          if (s && suggestSeq.current === seq) setGhost(s);
+        },
+        () => {}, // no suggestion is fine; never surface an error for sugar
+      );
+    }, 400);
+    return () => clearTimeout(t);
+  }, [mode, currentId, store.busy, store.pending, store.ask]);
 
   // Bracketed pastes land whole in the composer (chat mode only), newlines intact.
   const modeRef = useRef(mode);
@@ -994,6 +1071,12 @@ export function App(
   const shellWorkspace = store.session?.workspace ?? defaultWorkspace;
   const runShell = useCallback((cmd: string) => {
     const seq = ++shellSeq.current;
+    // Into the backwards-fzf corpus (persisted + the in-memory copy, deduped
+    // to the tip like fzf) before it even finishes — reruns are the point.
+    appendShellHistory(cmd);
+    if (shellHist.current) {
+      shellHist.current = [...shellHist.current.filter((c) => c !== cmd), cmd];
+    }
     setShellOut({ cmd, out: "", code: null });
     (async () => {
       try {
@@ -1803,7 +1886,8 @@ export function App(
       if (key.tab || key.upArrow || key.downArrow) return;
     } else if (popup) {
       const completed = (c: { text: string; cursor: number }) => {
-        const it = popup.items[popup.sel];
+        // Tab on an unselected (sel -1) shell list completes the top match.
+        const it = popup.items[Math.max(0, popup.sel)];
         return {
           text: c.text.slice(0, popup.tokenStart) + it.insert + c.text.slice(popup.tokenEnd),
           cursor: popup.tokenStart + it.insert.length,
@@ -1811,18 +1895,25 @@ export function App(
       };
       if (key.escape) return setPopup(null);
       if (key.upArrow) {
-        return setPopup((p) => p && { ...p, sel: (p.sel - 1 + p.items.length) % p.items.length });
+        return setPopup((p) =>
+          p && { ...p, sel: p.sel < 0 ? p.items.length - 1 : (p.sel - 1 + p.items.length) % p.items.length }
+        );
       }
       if (key.downArrow) {
-        return setPopup((p) => p && { ...p, sel: (p.sel + 1) % p.items.length });
+        return setPopup((p) => p && { ...p, sel: p.sel < 0 ? 0 : (p.sel + 1) % p.items.length });
       }
       if (key.tab) {
         setComp(completed);
         setPopup(null);
         return;
       }
-      if (key.return) {
-        if (popup.kind === "skill") {
+      if (key.return && popup.kind === "shell" && popup.sel < 0) {
+        // Browsing, nothing picked: close the list and fall through — enter
+        // sends the TYPED line (sendNow below), never a command you didn't pick.
+        setPopup(null);
+      } else if (key.return) {
+        if (popup.kind !== "file") {
+          // Skills and shell picks RUN on enter (fzf/ctrl-r muscle memory).
           // Resolve inside the updater (same stale-closure guard as sendNow).
           setComp((c) => {
             const text = completed(c).text.trim();
@@ -1841,6 +1932,12 @@ export function App(
         setPopup(null);
         return;
       }
+    }
+    // Tab accepts the worker ghost (the popup's tab wins above when one is open).
+    if (key.tab && !popup && ghostText && !store.pending && !store.ask) {
+      const add = ghostText;
+      setGhost(null);
+      return setComp((c) => ({ text: c.text + add, cursor: c.text.length + add.length }));
     }
     if (key.pageUp) return setScrollOff((o) => Math.min(maxOff, o + Math.max(1, viewH - 2)));
     if (key.pageDown) return setScrollOff((o) => Math.max(0, o - Math.max(1, viewH - 2)));
@@ -2504,6 +2601,7 @@ export function App(
                     input={input}
                     cursor={comp.cursor}
                     busy={store.busy}
+                    ghost={ghostText ?? ""}
                     width={width}
                     // A paste must not grow the box past the viewport: cap the
                     // rendered rows at a third of the terminal.

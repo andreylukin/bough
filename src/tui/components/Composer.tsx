@@ -6,18 +6,22 @@ import { Box, Text } from "ink";
 // capped at maxRows — a large paste must not grow the box past the viewport —
 // with an internal window that follows the cursor; the text itself is intact.
 export function Composer(
-  { input, cursor, busy, width, maxRows }: {
+  { input, cursor, busy, width, maxRows, ghost = "" }: {
     input: string;
     cursor: number;
     busy: boolean;
     width: number;
     maxRows: number;
+    /** Dim autocomplete preview appended after the input (caller guarantees the
+     * cursor sits at end-of-input while one is shown; tab accepts it). */
+    ghost?: string;
   },
 ) {
   // Wrap ourselves (fixed-width chunks) so the cursor→row mapping is exact;
   // each row is its own truncated line, so ink never re-flows the block.
   const innerW = Math.max(4, width - 4); // border + paddingX
-  const full = "› " + input;
+  const full = "› " + input + ghost;
+  const ghostStart = 2 + input.length;
   const cur = cursor + 2;
   const rows: { start: number; text: string }[] = [];
   let off = 0;
@@ -55,6 +59,8 @@ export function Composer(
         const col = cur - r.start;
         const at = hasCursor ? r.text[col] : undefined;
         const prefix = r.start === 0 ? 2 : 0; // the accent "› " on the first row
+        // Where this row crosses into ghost text — everything from there is dim.
+        const gcol = Math.max(prefix, Math.min(ghostStart - r.start, r.text.length));
         return (
           <Text key={r.start} wrap="truncate">
             {prefix ? <Text color={palette.accent}>{"› "}</Text> : null}
@@ -63,10 +69,19 @@ export function Composer(
                 <>
                   {r.text.slice(prefix, col)}
                   <Text inverse>{at ?? " "}</Text>
-                  {at === undefined ? "" : r.text.slice(col + 1)}
+                  {at === undefined ? "" : (
+                    <Text dimColor={col + 1 >= gcol}>{r.text.slice(col + 1)}</Text>
+                  )}
                 </>
               )
-              : (r.text.slice(prefix) || " ")}
+              : r.text.length <= prefix
+              ? " "
+              : (
+                <>
+                  {r.text.slice(prefix, gcol)}
+                  {gcol < r.text.length ? <Text dimColor>{r.text.slice(gcol)}</Text> : null}
+                </>
+              )}
           </Text>
         );
       })}
