@@ -142,6 +142,11 @@ export const THEME_PRESETS: ThemePreset[] = [
   },
 ];
 
+/** hex → SGR truecolor background params ("48;2;r;g;b") for block surfaces. */
+export function bgParams(hex: string): string {
+  return fgParams(hex).replace(/^38/, "48");
+}
+
 /** hex → SGR truecolor foreground params ("38;2;r;g;b") for lines.ts. */
 export function fgParams(hex: string): string {
   const h = hex.replace("#", "");

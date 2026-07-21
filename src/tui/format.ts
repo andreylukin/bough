@@ -2,6 +2,7 @@
 // rules originally ported from the retired web UI's Conversation view.
 import stringWidth from "string-width";
 import type { Part } from "../schema/parts.ts";
+import { bgParams, palette } from "./theme.ts";
 
 export type ToolCall = Extract<Part, { type: "tool_call" }>;
 export type ToolResult = Extract<Part, { type: "tool_result" }>;
@@ -122,10 +123,11 @@ function mdInline(line: string): string {
       /(?<!\x1b)\[([^\]]+)\]\((\S+?)\)/g,
       (_m, text, url) => guard(osc8(url, `${UL}${text}${UL_OFF} ${DIM}(${url})${B_OFF}`)),
     )
-    // Bare URLs become clickable as themselves; trailing punctuation stays prose.
+    // Bare URLs become clickable as themselves (underlined like rendered links);
+    // trailing punctuation stays prose.
     .replace(/https?:\/\/[^\s)\]>'"]+/g, (m) => {
       const url = m.replace(/[.,;:!?]+$/, "");
-      return guard(osc8(url, url)) + m.slice(url.length);
+      return guard(osc8(url, `${UL}${url}${UL_OFF}`)) + m.slice(url.length);
     })
     .replace(/\x00(\d+)\x00/g, (_, i) => spans[+i]);
 }
@@ -236,20 +238,36 @@ export function highlightCode(line: string, langTag: string): string {
   return styled + (comment ? `${DIM}${comment}${B_OFF}` : "");
 }
 
-export function md(text: string): string {
+/**
+ * Paint a subtly raised background (palette.panelInset) behind one rendered
+ * line, padded to `width` so the block reads as a contained surface. Any full
+ * reset inside the line re-opens the background so styled spans can't punch
+ * holes in it.
+ */
+export function surface(line: string, width: number): string {
+  if (!COLOR) return line;
+  const bg = `\x1b[${bgParams(palette.panelInset)}m`;
+  const pad = Math.max(0, width - stringWidth(line));
+  return `${bg}${line.replaceAll("\x1b[0m", `\x1b[0m${bg}`)}${" ".repeat(pad)}\x1b[0m`;
+}
+
+export function md(text: string, codeWidth?: number): string {
   let fence: string | null = null; // the open fence's language tag
+  // With a width, fenced blocks sit on a raised surface (they otherwise sit on
+  // the page bg and don't visually contain).
+  const raise = (line: string) => (codeWidth ? surface(line, codeWidth) : line);
   return text.split("\n").map((line) => {
     const open = line.match(/^\s*```(\S*)\s*$/);
     if (open) {
       // Fence markers frame the block instead of rendering as raw backticks.
       if (fence === null) {
         fence = open[1];
-        return `${DIM}╭ ${fence || "code"}${B_OFF}`;
+        return raise(`${DIM}╭ ${fence || "code"}${B_OFF}`);
       }
       fence = null;
-      return `${DIM}╰${B_OFF}`;
+      return raise(`${DIM}╰${B_OFF}`);
     }
-    if (fence !== null) return `${DIM}│${B_OFF} ${highlightCode(line, fence)}`;
+    if (fence !== null) return raise(`${DIM}│${B_OFF} ${highlightCode(line, fence)}`);
     const h = line.match(/^(#{1,6})\s+(.*)$/);
     if (h) return h[1].length === 1 ? `${B}${UL}${h[2]}${UL_OFF}${B_OFF}` : `${B}${h[2]}${B_OFF}`;
     if (/^\s*(-{3,}|\*{3,})\s*$/.test(line)) return `${DIM}${"─".repeat(24)}${B_OFF}`;

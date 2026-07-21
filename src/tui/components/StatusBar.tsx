@@ -111,7 +111,8 @@ export function StatusBar(
           <Text wrap="truncate">
             <Text color={connected ? palette.accent : palette.error}>{connected ? "●" : "○"}</Text>
             <Text dimColor>{connected ? "" : " reconnecting…"}</Text>
-            {session?.kind === "subagent" ? <Text color={palette.accent}>{" "}◆</Text> : null}
+            {/* Location cue, not a success mark — info blue, distinct from a done card's accent ◆. */}
+            {session?.kind === "subagent" ? <Text color={palette.info}>{" "}◆</Text> : null}
             {session
               ? (
                 <Text bold>

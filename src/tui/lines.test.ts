@@ -34,6 +34,19 @@ Deno.test("parseSubagentNote: non-note text returns null", () => {
   assertEquals(parseSubagentNote("just a normal message"), null);
 });
 
+Deno.test("parseSubagentNote: an orphan's 'unknown' file list is unknown, not a file", () => {
+  const note = [
+    '[subagent finished] "Stranded" (abc-123) — ORPHANED — the server restarted before it finished.',
+    "Changed files on its branch: unknown.",
+    "No report.",
+    'Its changes stay on its own branch — adopt("abc-123") in run_steps merges them into this workspace; or leave the branch for review.',
+  ].join("\n");
+  const p = parseSubagentNote(note);
+  assertEquals(p?.ok, false);
+  assertEquals(p?.files, []);
+  assertEquals(p?.filesUnknown, true);
+});
+
 import { flattenTree } from "./components/SessionPicker.tsx";
 import type { TuiSession } from "./store.ts";
 
@@ -191,7 +204,11 @@ Deno.test("reasoning folds: collapsed gist line, expanded gutter block", () => {
   // Body lines are hidden while collapsed.
   assertEquals(collapsed.some((l) => l.text.includes("Second thought.")), false);
   const expanded = messageLines(msg, () => true, () => false, 120);
-  assertEquals(expanded.some((l) => l.text.includes("▾ thinking (3 lines)")), true);
+  // The ▾ glyph sits outside the dim span (fold affordance), so match parts.
+  assertEquals(
+    expanded.some((l) => l.text.includes("▾") && l.text.includes("thinking (3 lines)")),
+    true,
+  );
   assertEquals(expanded.some((l) => l.text.includes("Second thought.")), true);
 });
 
@@ -312,7 +329,9 @@ Deno.test("branch card: a finished blocking subagent reflects its real status (f
     return lines.find((l) => l.text.includes("do the risky thing"))!.text;
   };
   assertEquals(card("error").includes("failed"), true);
-  assertEquals(card("orphaned").includes("failed"), true);
+  // Orphaned = the server restarted, not the agent's fault — never "failed"/red.
+  assertEquals(card("orphaned").includes("interrupted — server restarted"), true);
+  assertEquals(card("orphaned").includes("failed"), false);
   assertEquals(card("interrupted").includes("interrupted"), true);
   assertEquals(card("done").includes("done"), true);
   // A failed one must NOT read as done.
