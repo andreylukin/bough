@@ -42,24 +42,36 @@ export interface TitleCtx {
 }
 
 /**
- * If the session still carries the UNTITLED placeholder, generate a title from the
+ * If the session still carries its placeholder title, generate a title from the
  * first user message in the background. Never throws; never blocks the turn.
+ * `placeholder` defaults to UNTITLED; subagents pass their spawn-time task stub
+ * (subagent.ts) so the worker's content-derived name still replaces it.
  */
-export function maybeAutoTitle(ctx: TitleCtx, sessionId: string, text: string): void {
+export function maybeAutoTitle(
+  ctx: TitleCtx,
+  sessionId: string,
+  text: string,
+  placeholder: string = UNTITLED,
+): void {
   const session = ctx.db.getSession(sessionId);
-  if (!session || session.title !== UNTITLED) return;
-  generate(ctx, sessionId, text).catch((err) => {
+  if (!session || session.title !== placeholder) return;
+  generate(ctx, sessionId, text, placeholder).catch((err) => {
     console.error("title worker failed:", err);
   });
 }
 
-async function generate(ctx: TitleCtx, sessionId: string, text: string): Promise<void> {
+async function generate(
+  ctx: TitleCtx,
+  sessionId: string,
+  text: string,
+  placeholder: string,
+): Promise<void> {
   // Truncate: a title needs the gist, not a 50KB paste.
   const raw = await (ctx.titler ?? defaultTitler)(text.slice(0, 2000));
   const title = sanitize(raw);
   if (!title) return;
   // The user may have renamed/re-titled meanwhile — don't clobber.
-  if (ctx.db.getSession(sessionId)?.title !== UNTITLED) return;
+  if (ctx.db.getSession(sessionId)?.title !== placeholder) return;
   ctx.db.setSessionTitle(sessionId, title);
   const updated = ctx.db.getSession(sessionId);
   if (updated) ctx.bus.publish({ type: "session.updated", sessionId, data: updated });
