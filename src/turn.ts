@@ -620,8 +620,21 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       // Subagents inherit this turn's MCP grant (captured now, not at call time).
       const subCtx: TurnCtx = { ...ctx, mcpGrant: grantedMcp };
       toolCtx.delegate = {
-        run: (task) => runSubagent(subCtx, sctx, task),
-        adopt: (subId) => adoptSubagent(ctx, sessionId, subId),
+        // Blocking delegation records what came back so the adopt stop-gate
+        // below can see stranded work: a subagent that changed files sits in
+        // turn.unadopted until an adopt() clears it.
+        run: async (task) => {
+          const r = await runSubagent(subCtx, sctx, task);
+          if (r.changedFiles.length > 0 && toolCtx.turn) {
+            (toolCtx.turn.unadopted ??= new Map<string, string>()).set(r.sessionId, r.title);
+          }
+          return r;
+        },
+        adopt: async (subId) => {
+          const out = await adoptSubagent(ctx, sessionId, subId);
+          toolCtx.turn?.unadopted?.delete(subId);
+          return out;
+        },
         ...(isSub ? {} : {
           spawn: (task) => spawnSubagentDetached(subCtx, sctx, task),
           join: (subId) => joinSubagent(sctx, subId),
@@ -760,6 +773,23 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       stopGateNudged = true;
       return true;
     };
+    // Adopt gate: blocking agent() calls whose subagents changed files land in
+    // turn.unadopted (delegate wiring above); adopt() clears them. A turn ending
+    // with entries left strands that work on branches — nudge once, then the
+    // model either adopts or says why it's leaving them.
+    let adoptGateNudged = false;
+    const adoptGateNudge = (): string | null => {
+      const unadopted = toolCtx.turn?.unadopted;
+      if (adoptGateNudged || !unadopted?.size) return null;
+      adoptGateNudged = true;
+      const names = [...unadopted].map(([id, title]) => `"${title}" (${id})`).join(", ");
+      return `[harness] Subagent(s) ${names} changed files that are not adopted — ` +
+        `adopt("<id>") to merge them into this workspace, or state explicitly that ` +
+        `you're leaving them on the branch and why.`;
+    };
+    /** End-gates, checked when the turn is about to end having said something:
+     * each is one-shot and returns its nudge text, or null to let the end stand. */
+    const endGateNudge = (): string | null => adoptGateNudge();
     // Last resort against a mute turn end: a round with tools forbidden
     // (toolChoice "none"), which reliably yields plain text where a second nudge
     // would just get another empty-thinking + stop.
@@ -881,6 +911,14 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
           }
           continue;
         }
+        if (wantsEnd) {
+          const gate = endGateNudge();
+          if (gate) {
+            toolResults.push({ type: "text", text: gate });
+            messages.push({ role: "user", content: toolResults });
+            continue;
+          }
+        }
         messages.push({ role: "user", content: toolResults });
         if (wantsEnd) break;
         continue;
@@ -892,7 +930,14 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
           messages.push({ role: "user", content: [{ type: "text", text: STOP_GATE_NUDGE }] });
           continue;
         }
-        if (saidSomething()) break;
+        if (saidSomething()) {
+          const gate = endGateNudge();
+          if (gate) {
+            messages.push({ role: "user", content: [{ type: "text", text: gate }] });
+            continue;
+          }
+          break;
+        }
         if (reportNudges < 1) {
           reportNudges++;
           messages.push({ role: "user", content: [{ type: "text", text: REPORT_NUDGE }] });

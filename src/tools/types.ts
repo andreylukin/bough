@@ -49,6 +49,10 @@ export interface ToolRunCtx {
      * enables the one-time spec-recheck bounce at done-time. */
     requestText?: string;
     specEchoed?: boolean;
+    /** Subagents whose blocking agent() result carried changed files and that
+     * were not adopt()ed yet this turn (id → title) — recorded by the turn
+     * runner's delegate wiring, read by its adopt stop-gate. */
+    unadopted?: Map<string, string>;
   };
   /**
    * Delegation, wired by the turn runner for sessions below the depth cap (absent
