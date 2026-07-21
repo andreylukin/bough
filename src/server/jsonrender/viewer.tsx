@@ -20,4 +20,7 @@ if (specEl?.textContent && rootEl) {
       <Renderer spec={spec} registry={registry} />
     </JSONUIProvider>,
   );
+  // The wrapper ships the root at opacity:0 (bundle.ts) so the ~1s deferred
+  // hydration never flashes; reveal one frame after the render has committed.
+  requestAnimationFrame(() => requestAnimationFrame(() => (rootEl.style.opacity = "1")));
 }

@@ -80,6 +80,25 @@ Deno.test("serveArtifact 404s a missing file, not HTML", async () => {
   await Deno.remove(base, { recursive: true });
 });
 
+Deno.test("a browser 404 is a humane HTML page; API clients keep JSON", async () => {
+  const base = tmp();
+  const accept = "text/html,application/xhtml+xml,*/*;q=0.8"; // what Chrome sends
+  // missing file under a valid session, and a session that never published anything
+  for (const [sid, name] of [["s4", "ghost.html"], ["never-existed", "index.html"]]) {
+    const res = await serveArtifact(sid, name, base, { accept });
+    assertEquals(res.status, 404);
+    assertEquals(res.headers.get("content-type"), "text/html; charset=utf-8");
+    const html = await res.text();
+    assert(html.includes("This page isn't here"), "plain-language explanation");
+    assert(html.includes("Ask bough to share it again"), "tells the user what to do");
+  }
+  // a non-browser Accept keeps the JSON body
+  const api = await serveArtifact("s4", "ghost.html", base, { accept: "application/json" });
+  assertEquals(api.headers.get("content-type"), "application/json");
+  assertEquals((await api.json() as { error: string }).error, "not found");
+  await Deno.remove(base, { recursive: true });
+});
+
 const UI_SPEC = JSON.stringify({
   root: "page",
   elements: {

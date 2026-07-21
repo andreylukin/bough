@@ -15,6 +15,16 @@ interface Column {
 }
 type Cell = string | number | boolean | null;
 
+/** "412$" reads wrong for money: a currency-symbol unit renders as a prefix
+ * ("$412", "-$42") the way a Stat value would be written; other units stay suffixes. */
+function withUnit(value: number, unit?: string): string {
+  if (!unit) return String(value);
+  if (/^[$€£¥]/.test(unit)) {
+    return value < 0 ? `-${unit}${Math.abs(value)}` : `${unit}${value}`;
+  }
+  return `${value}${unit}`;
+}
+
 function SortableTable(
   { columns, rows, caption }: { columns: Column[]; rows: Record<string, Cell>[]; caption?: string },
 ) {
@@ -132,13 +142,10 @@ export const { registry } = defineRegistry(catalog, {
         <div className="b-chart">
           {props.title && <div className="b-title">{props.title}</div>}
           {props.bars.map((b, i) => (
-            <div key={i} className="b-row" title={`${b.label}: ${b.value}${props.unit ?? ""}`}>
+            <div key={i} className="b-row" title={`${b.label}: ${withUnit(b.value, props.unit)}`}>
               <span className="b-barlabel">{b.label}</span>
               <span className="b-bar" style={{ width: `${(Math.abs(b.value) / max) * 100}%` }} />
-              <span className="b-barvalue">
-                {b.value}
-                {props.unit ?? ""}
-              </span>
+              <span className="b-barvalue">{withUnit(b.value, props.unit)}</span>
             </div>
           ))}
         </div>

@@ -94,9 +94,13 @@ export function viewerPage(specJson: string, title: string): string {
 <style>${VIEWER_CSS}</style>
 </head>
 <body>
-<div id="root"></div>
+<!-- The root starts invisible so the deferred bundle's hydration never flashes a
+     half-styled page; viewer.tsx reveals it after the first committed paint, and
+     the timeout below is the fallback so a failed bundle can't leave it hidden. -->
+<div id="root" style="opacity:0;transition:opacity .12s"></div>
 <script id="__ui_spec__" type="application/json">${safeSpec}</script>
 <script type="module" src="${VIEWER_JS_PATH}"></script>
+<script>setTimeout(function(){var r=document.getElementById("root");if(r)r.style.opacity="1";},2000);</script>
 <footer class="b-foot"><span>AI-generated — verify anything important</span><a href="?raw=1">spec</a></footer>
 </body>
 </html>`;

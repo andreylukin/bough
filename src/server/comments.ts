@@ -183,7 +183,9 @@ export function commentWidget(): string {
   var sendBtn = document.getElementById("bgh-cmt-send");
   var toastEl = document.getElementById("bgh-cmt-toast");
 
-  function toast(t){ toastEl.textContent=t; toastEl.classList.add("show"); setTimeout(function(){toastEl.classList.remove("show");},1800); }
+  var toastTimer=null, placed=false;
+  function toast(t,ms){ toastEl.textContent=t; toastEl.classList.add("show"); clearTimeout(toastTimer); toastTimer=setTimeout(function(){toastEl.classList.remove("show");},ms||1800); }
+  function hideToast(){ clearTimeout(toastTimer); toastEl.classList.remove("show"); }
   function docW(){ return Math.max(document.documentElement.scrollWidth, document.body.scrollWidth); }
   function docH(){ return Math.max(document.documentElement.scrollHeight, document.body.scrollHeight); }
 
@@ -203,7 +205,10 @@ export function commentWidget(): string {
   function setMode(on){
     mode=on; toggle.classList.toggle("on",on); toggle.textContent=on?"✓ Done":"💬 Comment";
     document.body.classList.toggle("bgh-cmt-mode",on);
-    if(!on) closePop();
+    // The chip alone doesn't say what comment mode IS — until the first note is
+    // placed, activating it explains the one move it wants.
+    if(on && !placed) toast("Click anywhere on the page to leave a note for bough.", 4000);
+    if(!on){ closePop(); hideToast(); }
   }
   toggle.addEventListener("click",function(){ setMode(!mode); });
 
@@ -217,7 +222,7 @@ export function commentWidget(): string {
   function closePop(){ if(pending){ pending.remove(); pending=null; } }
 
   function openEditor(anchor, x, y){
-    closePop();
+    closePop(); placed=true; hideToast();
     var pop=document.createElement("div"); pop.className="bgh-pop";
     pop.style.left=Math.min(x, docW()-280)+"px"; pop.style.top=(y+8)+"px";
     pop.innerHTML='<textarea placeholder="Note for bough…"></textarea>'+

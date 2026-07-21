@@ -7,6 +7,8 @@ Deno.test("viewerPage inlines the spec safely and carries the viewer contract", 
   assert(html.includes('src="/artifact-viewer.js"'));
   assert(html.includes("AI-generated"));
   assert(html.includes("</body>"), "widget injection point present");
+  assert(html.includes('id="root" style="opacity:0'), "root gated until the viewer mounts");
+  assert(html.includes('r.style.opacity="1"'), "timeout fallback reveals on bundle failure");
   assert(html.includes("<title>A &lt;&quot;title&quot;&gt;</title>"), "title escaped");
   // spec content can never close its script tag
   const sneaky = viewerPage('{"x":"</script><script>alert(1)"}', "t");

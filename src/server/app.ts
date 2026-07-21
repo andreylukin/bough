@@ -77,6 +77,7 @@ import { mcpStatusFor } from "../mcp/status.ts";
 import { beginAuth, clearAuth, completeAuth } from "../mcp/oauth.ts";
 import { clientFor } from "../supervisor/llm.ts";
 import { listArtifacts, serveArtifact } from "./artifacts.ts";
+import { viewerBundle } from "./jsonrender/bundle.ts";
 import {
   addComment,
   AddCommentBody,
@@ -1155,7 +1156,30 @@ const listArtifactsH: Handler = async (_req, _ctx, params) =>
 
 // Serve one hosted artifact by path (rendered HTML/JS/CSS/…). Same origin as the UI so
 // links open in the browser; traversal + bad ids are rejected inside serveArtifact.
-const getArtifact: Handler = (_req, _ctx, params) => serveArtifact(params.id, params.path ?? "");
+// ?raw=1 skips the viewer wrapper on *.ui.json spec artifacts; the Accept header
+// picks the 404 shape (browsers get a humane HTML page, API clients keep JSON).
+const getArtifact: Handler = (req, _ctx, params) =>
+  serveArtifact(params.id, params.path ?? "", undefined, {
+    raw: new URL(req.url).searchParams.get("raw") === "1",
+    accept: req.headers.get("accept") ?? undefined,
+  });
+
+// The spec-viewer bundle every *.ui.json wrapper page loads (jsonrender/bundle.ts).
+// Built lazily and cached by source hash; the hash is the ETag so browsers revalidate
+// with a cheap 304 while a changed viewer lands immediately.
+const getViewerJs: Handler = async (req) => {
+  const { js, etag } = await viewerBundle();
+  if (req.headers.get("if-none-match") === `"${etag}"`) {
+    return new Response(null, { status: 304, headers: { etag: `"${etag}"` } });
+  }
+  return new Response(js, {
+    headers: {
+      "content-type": "text/javascript; charset=utf-8",
+      "cache-control": "no-cache",
+      etag: `"${etag}"`,
+    },
+  });
+};
 
 // ---- artifact comments -----------------------------------------------------
 // The comment layer injected into every served HTML artifact (comments.ts) talks
@@ -1461,6 +1485,11 @@ const routes: Route[] = [
     method: "GET",
     pattern: new URLPattern({ pathname: "/artifacts/:id/:path*" }),
     handler: getArtifact,
+  },
+  {
+    method: "GET",
+    pattern: new URLPattern({ pathname: "/artifact-viewer.js" }),
+    handler: getViewerJs,
   },
 ];
 
