@@ -411,6 +411,9 @@ export function buildLines(
     } else orphans.push(b);
   }
   const out: VLine[] = [];
+  // True once a pending (in-flight) reply has rendered: any user message after it
+  // was steered into the running turn and is only *queued* server-side.
+  let midTurn = false;
   for (const m of thread) {
     // Skip the raw [subagent finished] system message — its card renders at the
     // spawn point instead.
@@ -421,6 +424,14 @@ export function buildLines(
       if (parsed && notedIds.has(parsed.sessionId)) continue;
     }
     out.push(...messageLines(m, isExpanded, isFull, width, streaming[m.id], toolLogs));
+    // Honest ack under a steered message: the turn yields only at its next round
+    // boundary, and a blocking host call (a parallel fan-out) can hold that off
+    // for minutes — silence reads as being ignored. The marker disappears once a
+    // later reply follows the message.
+    if (midTurn && m.role === "user") {
+      out.push({ text: "  " + dim("⏳ queued — the agent will see this after the current step") });
+    }
+    if (m.pending) midTurn = true;
     for (const b of byOrigin.get(m.id) ?? []) branchCardLines(out, b, width, isFull);
   }
   // Branches whose spawn point isn't in the current thread fall to the tail.
