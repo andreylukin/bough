@@ -628,30 +628,11 @@ export function App(
     });
   }, []);
 
-  // A turn that ends on a tool group has its whole answer inside the fold —
-  // auto-expand it when the message finishes (user-testing finding). Only for
-  // messages watched live (seen pending), so opening an old session doesn't
-  // pop open its history. Runs during render (derived-state pattern, like the
-  // scroll anchoring below): the trailing group is auto-expanded while the
-  // turn runs, and an effect would let Ink paint one collapsed frame between
-  // pending flipping off and the toggle landing — a visible blink.
-  const isExpandedRef = useRef(isExpanded);
-  isExpandedRef.current = isExpanded;
-  const watchedPending = useRef(new Set<string>());
-  for (const m of store.thread) {
-    if (m.pending) {
-      watchedPending.current.add(m.id);
-      continue;
-    }
-    if (!watchedPending.current.delete(m.id)) continue;
-    const segs = segmentParts(m.parts);
-    const last = segs[segs.length - 1];
-    if (last?.kind === "tools") {
-      const key = `${m.id}:${segs.length - 1}`;
-      // A card the user collapsed while it ran stays collapsed — their call.
-      if (!isExpandedRef.current(key) && !touchedRef.current.has(key)) toggleGroup(key);
-    }
-  }
+  // Tool cards are CLOSED once a turn finishes — the running turn's trailing
+  // group still auto-expands live (activeKeys above), but it folds when the
+  // turn moves on. The collapsed header keeps the gist + status tag, and
+  // anything the user must act on (an artifact link, an answer) belongs in the
+  // reply prose, not inside a fold.
 
   // Clicking the activity line ("⠴ running the test suite…") opens the fold it
   // describes: the running turn's trailing tool group. Ref'd so the mouse

@@ -85,6 +85,15 @@ Deno.test("md: fenced code sits on a raised surface when a width is given", asyn
   assertEquals(line.endsWith(" ".repeat(8) + "\x1b[0m"), true);
 });
 
+Deno.test("linkifyUrls: raw output lines get clickable OSC 8 URLs", async () => {
+  if (!COLOR) return;
+  const { linkifyUrls } = await import("./format.ts");
+  const out = linkifyUrls("artifact published: http://localhost:4321/artifacts/s1/report.html");
+  assertStringIncludes(out, LINK_OPEN("http://localhost:4321/artifacts/s1/report.html"));
+  assertStringIncludes(out, "\x1b[4mhttp://localhost:4321/artifacts/s1/report.html\x1b[24m");
+  assertEquals(linkifyUrls("no links here"), "no links here");
+});
+
 Deno.test("md: URLs inside code spans are not linkified", () => {
   if (!COLOR) return;
   const out = md("run `curl https://example.com`");

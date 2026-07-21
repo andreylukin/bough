@@ -134,11 +134,19 @@ function mdInline(line: string): string {
     )
     // Bare URLs become clickable as themselves (underlined like rendered links);
     // trailing punctuation stays prose.
-    .replace(/https?:\/\/[^\s)\]>'"]+/g, (m) => {
-      const url = m.replace(/[.,;:!?]+$/, "");
-      return guard(osc8(url, `${UL}${url}${UL_OFF}`)) + m.slice(url.length);
-    })
+    .replace(/https?:\/\/[^\s)\]>'"]+/g, (m) => guard(linkifyUrl(m)))
     .replace(/\x00(\d+)\x00/g, (_, i) => spans[+i]);
+}
+
+function linkifyUrl(m: string): string {
+  const url = m.replace(/[.,;:!?]+$/, "");
+  return osc8(url, `${UL}${url}${UL_OFF}`) + m.slice(url.length);
+}
+
+/** Make bare URLs in raw (non-markdown) text clickable — tool output prints
+ * served links (artifact(), ship notes) and those must open on click too. */
+export function linkifyUrls(line: string): string {
+  return line.replace(/https?:\/\/[^\s)\]>'"]+/g, linkifyUrl);
 }
 
 const UL = sgr("\x1b[4m");

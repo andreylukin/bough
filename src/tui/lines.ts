@@ -8,6 +8,7 @@ import {
   clip,
   COLOR,
   highlightCode,
+  linkifyUrls,
   md,
   outputText,
   segmentParts,
@@ -197,12 +198,15 @@ function pushBlock(
 // Harness verdict lines inside run_steps output get their own colors; everything
 // else in an output block reads dim (it's the result, not the intent).
 function styleOutputLine(line: string, isError: boolean): string {
-  if (isError) return red(line);
-  if (line.startsWith("[program error]")) return red(line);
-  if (line.startsWith("[done] accepted")) return green(line);
-  if (line.startsWith("[done] rejected")) return red(line);
-  if (line.startsWith("[check]")) return yellow(line);
-  return dim(line);
+  // URLs first: output is where served links land (artifact(), ship notes),
+  // and a printed link must open on click like one in prose.
+  const l = linkifyUrls(line);
+  if (isError) return red(l);
+  if (line.startsWith("[program error]")) return red(l);
+  if (line.startsWith("[done] accepted")) return green(l);
+  if (line.startsWith("[done] rejected")) return red(l);
+  if (line.startsWith("[check]")) return yellow(l);
+  return dim(l);
 }
 
 // One-line excerpt of a call's input for the collapsed fold header: the first
