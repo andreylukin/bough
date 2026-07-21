@@ -348,6 +348,11 @@ export interface Branch {
   /** The subagent's last turn status, so a finished blocking subagent (no note)
    * still shows failed/interrupted rather than a blanket "✓ done". */
   status?: "done" | "error" | "interrupted" | "orphaned";
+  /** Persisted delegation outcome (session.outcomeOk/outcomeCheckPassed) — the
+   * in-band agent() result the parent program saw. Nullable: absent on legacy
+   * rows and sessions that never finished a spawned turn. */
+  ok?: boolean | null;
+  checkPassed?: boolean | null;
   /** The assistant message whose turn called spawn — where the card is drawn. */
   originMessageId?: string | null;
   /** Parsed completion note once the subagent finished (report/files/status). */
@@ -371,13 +376,16 @@ function branchCardLines(
     copy = b.note.report ?? b.note.title;
   } else {
     // A finished blocking subagent has no completion note — reflect its real
-    // outcome from the session status instead of always showing "✓ done".
+    // outcome from the session status + persisted {ok, checkPassed} instead of
+    // always showing "✓ done": green is reserved for ok AND check passed.
     const { dot, tail } = b.busy
       ? { dot: yellow("◆"), tail: yellow(" ⋯ working") }
-      : b.status === "error" || b.status === "orphaned"
-      ? { dot: red("◆"), tail: red(" ✗ failed") }
       : b.status === "interrupted"
       ? { dot: yellow("◆"), tail: yellow(" ◼ interrupted") }
+      : b.status === "error" || b.status === "orphaned" || b.ok === false
+      ? { dot: red("◆"), tail: red(" ✗ failed") }
+      : b.ok === true && b.checkPassed === false
+      ? { dot: yellow("◆"), tail: yellow(" ✓ done (check failed)") }
       : { dot: green("◆"), tail: green(" ✓ done") };
     body.push({
       text: `${dot} ${b.title.replace(/^subagent · /, "")}${dim(tail)}`,

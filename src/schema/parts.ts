@@ -125,6 +125,12 @@ export const Session = z.object({
   // A drafted-but-unsent opening prompt (additive; set by handoff). The UI prefills
   // the composer with it; posting the session's first message clears it server-side.
   draft: z.string().nullish(),
+  // Delegation outcome (additive; stamped on a subagent when its spawned turn
+  // finishes). The blocking agent() result returns in-band to the parent PROGRAM
+  // only — persisting {ok, checkPassed} here lets the UI render failed/check-failed
+  // branches. Absent for non-subagents and legacy rows.
+  outcomeOk: z.boolean().nullish(),
+  outcomeCheckPassed: z.boolean().nullish(),
 });
 export type Session = z.infer<typeof Session>;
 

@@ -983,6 +983,10 @@ Deno.test("A1 blocking agent(): a subagent whose turn errors returns ok:false wi
   const sub = db.listSessions().find((s) => s.kind === "subagent")!;
   const subMsg = db.messagesFor(sub.id).at(-1)!;
   assertEquals(subMsg.pending, false);
+  // The outcome is persisted on the branch row — the TUI renders "✗ failed" from
+  // it (the in-band result above only reached the spawner's program).
+  assertEquals(sub.outcomeOk, false);
+  assertEquals(sub.outcomeCheckPassed, false);
 });
 
 Deno.test("A2 detached spawn(): a subagent that errors posts a FAILED completion note that wakes the spawner", async () => {
@@ -1030,6 +1034,37 @@ Deno.test("A4 partial success: a subagent that finishes without passing a check 
   // "finished but unverified" must be distinguishable from a hard failure.
   assertStringIncludes(out, "ok=true");
   assertStringIncludes(out, "check=false");
+  // Persisted on the branch row too — the TUI's check-failed card reads these.
+  const sub = db.listSessions().find((s) => s.kind === "subagent")!;
+  assertEquals(sub.outcomeOk, true);
+  assertEquals(sub.outcomeCheckPassed, false);
+});
+
+Deno.test("A5 full success: a subagent that commits done persists ok:true + checkPassed:true on its row", async () => {
+  const db = new Db(":memory:");
+  const bus = new Bus();
+  const spawner = seed(db);
+  const llm = dispatchLlm({
+    "hi": [
+      program(`const r = await agent("task"); console.log("ok=" + r.ok + " check=" + r.checkPassed);`),
+      textRound("done"),
+    ],
+    // The first check-less done bounces (check nudge); the second is accepted —
+    // the DONE_ACCEPTED path.
+    "task": [
+      program(`console.log("did it");`, { done: true }),
+      program(`console.log("still done");`, { done: true }),
+    ],
+  });
+  const { message, done } = beginTurn(failCtx(db, bus, llm), spawner.id);
+  await done;
+  const out = lastToolResult(db.getMessage(message.id)!);
+  assertStringIncludes(out, "ok=true");
+  assertStringIncludes(out, "check=true");
+  // The only combination the TUI may paint green "✓ done".
+  const sub = db.listSessions().find((s) => s.kind === "subagent")!;
+  assertEquals(sub.outcomeOk, true);
+  assertEquals(sub.outcomeCheckPassed, true);
 });
 
 Deno.test("B1 interrupt cascades: interrupting the spawner while agent() blocks interrupts the subagent (ok:false)", async () => {

@@ -319,6 +319,56 @@ Deno.test("branch card: a finished blocking subagent reflects its real status (f
   assertEquals(card("error").includes("✗"), true);
 });
 
+Deno.test("branch card: persisted {ok, checkPassed} gates the green ✓ — failed work never reads done", () => {
+  // The harness catches program errors at the subagent boundary, so a subagent
+  // whose work FAILED can still end its turn status=done. The persisted agent()
+  // outcome breaks the tie: green "✓ done" only for ok && checkPassed.
+  const thread = [
+    {
+      id: "u1",
+      sessionId: "s",
+      role: "user",
+      parts: [{ type: "text", text: "go" }],
+      pending: false,
+    },
+    {
+      id: "a1",
+      sessionId: "s",
+      role: "supervisor",
+      parts: [{ type: "text", text: "delegating" }],
+      pending: false,
+    },
+  ] as unknown as Message[];
+  const card = (outcome: Pick<Branch, "status" | "ok" | "checkPassed">) => {
+    const branch: Branch = {
+      id: "sub-x",
+      title: "subagent · do the risky thing",
+      busy: false,
+      note: null,
+      ...outcome,
+    };
+    const lines = buildLines(thread, {}, () => false, () => false, 100, [branch]);
+    return lines.find((l) => l.text.includes("do the risky thing"))!.text;
+  };
+  // ok + check passed: the only green "✓ done".
+  assertEquals(card({ status: "done", ok: true, checkPassed: true }).includes("✓ done"), true);
+  // ok but unchecked: done, flagged.
+  assertEquals(
+    card({ status: "done", ok: true, checkPassed: false }).includes("✓ done (check failed)"),
+    true,
+  );
+  // !ok reads failed even when the turn status alone says done.
+  assertEquals(card({ status: "done", ok: false, checkPassed: false }).includes("✗ failed"), true);
+  // interrupted keeps its own marker (ok:false must not repaint it as failed).
+  assertEquals(
+    card({ status: "interrupted", ok: false, checkPassed: false }).includes("◼ interrupted"),
+    true,
+  );
+  // Legacy rows (no persisted outcome) keep the status-only mapping.
+  assertEquals(card({ status: "done" }).includes("✓ done"), true);
+  assertEquals(card({ status: "done" }).includes("check failed"), false);
+});
+
 import { assertStringIncludes } from "jsr:@std/assert@1";
 
 Deno.test("messageLines renders a settled ask part as an always-visible Q → A line", () => {

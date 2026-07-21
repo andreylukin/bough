@@ -300,7 +300,18 @@ async function launch(
     // Re-read the title at completion — the title worker has usually named it by then.
     .then(() =>
       buildResult(db, session.id, db.getSession(session.id)?.title ?? UNTITLED, message.id, subDir)
-    );
+    )
+    .then((r) => {
+      // Persist the outcome on the branch row: the in-band result only reaches the
+      // spawning PROGRAM, so without this a failed/unchecked blocking subagent
+      // renders as a green "✓ done" card (its turn ended status=done).
+      db.setSessionOutcome(session.id, r.ok, r.checkPassed);
+      const updated = db.getSession(session.id);
+      if (updated) {
+        bus.publish({ type: "session.updated", sessionId: session.id, data: updated });
+      }
+      return r;
+    });
   return { sessionId: session.id, title: db.getSession(session.id)?.title ?? UNTITLED, result };
 }
 
