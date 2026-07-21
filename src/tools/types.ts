@@ -53,6 +53,9 @@ export interface ToolRunCtx {
      * were not adopt()ed yet this turn (id → title) — recorded by the turn
      * runner's delegate wiring, read by its adopt stop-gate. */
     unadopted?: Map<string, string>;
+    /** True once this turn ran a parallel/background primitive (agent, spawn,
+     * bashBg) — read by the turn runner's parallelism-honesty stop-gate. */
+    ranParallel?: boolean;
   };
   /**
    * Delegation, wired by the turn runner for sessions below the depth cap (absent

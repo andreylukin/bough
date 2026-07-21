@@ -92,7 +92,10 @@ export const runSteps: ToolDef = {
         bash: (command) => bash.run({ command }, ctx),
         // Background shells: detached from the turn on purpose (no ctx.signal) —
         // they persist across rounds and turns of this session until killed.
-        bashBg: (command) => bg.bashBg(command, ctx),
+        bashBg: (command) => {
+          if (ctx.turn) ctx.turn.ranParallel = true; // honesty gate input (turn.ts)
+          return bg.bashBg(command, ctx);
+        },
         bashOutput: (id) => Promise.resolve(bg.bashOutput(id, ctx)),
         bashWait: (id) => bg.bashWait(id, ctx),
         bashKill: (id) => Promise.resolve(bg.bashKill(id, ctx)),

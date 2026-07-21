@@ -1017,6 +1017,88 @@ Deno.test("adopt gate: a subagent with no file changes does not trip the nudge",
   assertEquals(db.turnsByStatus("done").length, 1);
 });
 
+// ---- end-gates: parallelism honesty ----------------------------------------
+
+Deno.test("honesty gate: a parallel claim with no parallel primitive gets one corrective nudge", async () => {
+  const { db, bus, sessionId } = seed();
+  const inlineSteps: ToolDef = {
+    name: "run_steps",
+    description: "fake run_steps",
+    schema: z.object({ code: z.string() }),
+    run: () => Promise.resolve("ok"), // everything ran inline — no agent/spawn/bashBg
+  };
+  const llm = fakeLlm([
+    {
+      content: [{ type: "tool_use", id: "t1", name: "run_steps", input: { code: "work" } }],
+      stopReason: "tool_use",
+    },
+    stopWith("Ran both migrations concurrently."),
+    stopWith("Correction: they ran inline, one after the other."),
+  ]);
+  const { done } = beginTurn({ db, bus, llm, tools: [inlineSteps] }, sessionId);
+  await done;
+
+  assertEquals(llm.calls.length, 3); // exactly one honesty nudge round
+  assertStringIncludes(
+    JSON.stringify(llm.calls[2].messages.filter((m) => m.role === "user")),
+    "no subagent or background shell ran this turn",
+  );
+  assertEquals(
+    db.threadFor(sessionId).some((m) => JSON.stringify(m.parts).includes("[harness]")),
+    false,
+  );
+  assertEquals(db.turnsByStatus("done").length, 1);
+});
+
+Deno.test("honesty gate: no nudge when a parallel primitive actually ran", async () => {
+  const { db, bus, sessionId } = seed();
+  const parallelSteps: ToolDef = {
+    name: "run_steps",
+    description: "fake run_steps",
+    schema: z.object({ code: z.string() }),
+    run: (_input, ctx) => {
+      ctx.turn!.ranParallel = true; // what agent()/spawn()/bashBg record
+      return Promise.resolve("ok");
+    },
+  };
+  const llm = fakeLlm([
+    {
+      content: [{ type: "tool_use", id: "t1", name: "run_steps", input: { code: "work" } }],
+      stopReason: "tool_use",
+    },
+    stopWith("Kicked both checks off in parallel."),
+  ]);
+  const { done } = beginTurn({ db, bus, llm, tools: [parallelSteps] }, sessionId);
+  await done;
+
+  assertEquals(llm.calls.length, 2); // no nudge round
+  assertEquals(JSON.stringify(llm.calls.at(-1)!.messages).includes("[harness]"), false);
+  assertEquals(db.turnsByStatus("done").length, 1);
+});
+
+Deno.test("honesty gate: no nudge when the text makes no parallel claim", async () => {
+  const { db, bus, sessionId } = seed();
+  const inlineSteps: ToolDef = {
+    name: "run_steps",
+    description: "fake run_steps",
+    schema: z.object({ code: z.string() }),
+    run: () => Promise.resolve("ok"),
+  };
+  const llm = fakeLlm([
+    {
+      content: [{ type: "tool_use", id: "t1", name: "run_steps", input: { code: "work" } }],
+      stopReason: "tool_use",
+    },
+    stopWith("Ran both migrations, one after the other."),
+  ]);
+  const { done } = beginTurn({ db, bus, llm, tools: [inlineSteps] }, sessionId);
+  await done;
+
+  assertEquals(llm.calls.length, 2);
+  assertEquals(JSON.stringify(llm.calls.at(-1)!.messages).includes("[harness]"), false);
+  assertEquals(db.turnsByStatus("done").length, 1);
+});
+
 Deno.test("ask(): turn interrupt rejects the hold and the turn ends interrupted", async () => {
   const { db, bus, sessionId } = seed();
   const llm = fakeLlm([

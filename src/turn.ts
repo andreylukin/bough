@@ -232,6 +232,18 @@ const REPORT_NUDGE = "[harness] Your turn is about to end but you have written n
   "Reply now with 1-3 short lines (the answer, or what changed and the check result), " +
   "then call stop in the same response.";
 
+// Parallelism-claim honesty: text that claims concurrent/background execution
+// when no parallel primitive (agent/spawn/bashBg — turn.ranParallel) ran this
+// turn. Conservative on purpose: bare "background" is excluded (too common as a
+// noun — "background info", "background: …"); missing a phrasing is fine, a
+// false positive is not, and the no-primitive-ran condition already limits the
+// blast radius to turns that did tool work while describing it as parallel.
+const PARALLEL_CLAIM =
+  /\b(?:in parallel|concurrent(?:ly)?|simultaneous(?:ly)?|in the background|backgrounded)\b/i;
+const PARALLEL_CLAIM_NUDGE =
+  "[harness] You described work as parallel/background, but no subagent or background " +
+  "shell ran this turn — correct the description, or actually parallelize.";
+
 const STOP_GATE_NUDGE = "[harness] You changed files this turn but never passed a " +
   "committed check — stop would end the turn with the work unverified. Either commit " +
   "a `check` that encodes the request's acceptance criteria and set done:true, or, " +
@@ -624,6 +636,7 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
         // below can see stranded work: a subagent that changed files sits in
         // turn.unadopted until an adopt() clears it.
         run: async (task) => {
+          if (toolCtx.turn) toolCtx.turn.ranParallel = true;
           const r = await runSubagent(subCtx, sctx, task);
           if (r.changedFiles.length > 0 && toolCtx.turn) {
             (toolCtx.turn.unadopted ??= new Map<string, string>()).set(r.sessionId, r.title);
@@ -636,7 +649,10 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
           return out;
         },
         ...(isSub ? {} : {
-          spawn: (task) => spawnSubagentDetached(subCtx, sctx, task),
+          spawn: (task) => {
+            if (toolCtx.turn) toolCtx.turn.ranParallel = true;
+            return spawnSubagentDetached(subCtx, sctx, task);
+          },
           join: (subId) => joinSubagent(sctx, subId),
         }),
       };
@@ -764,6 +780,8 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     // gate accepts done; interruptTurn is the user's brake on a runaway.
     let nudges = 0;
     let reportNudges = 0;
+    // Any real tool ran this turn — arms the parallelism-honesty gate below.
+    let ranTools = false;
     // Stop-gate: a turn that wrote files must exit through the check gate (done)
     // or explicitly decline it twice — stop is not a side door around verification.
     let anyDoneAccepted = false;
@@ -787,9 +805,23 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
         `adopt("<id>") to merge them into this workspace, or state explicitly that ` +
         `you're leaving them on the branch and why.`;
     };
+    // Parallelism honesty: fires only when the turn did tool work (a pure
+    // conversation turn can mention these words legitimately — advice, not a
+    // claim about work it just did), no parallel primitive ran, and the turn's
+    // text claims otherwise. One corrective nudge.
+    let honestyNudged = false;
+    const honestyGateNudge = (): string | null => {
+      if (honestyNudged || !ranTools || toolCtx.turn?.ranParallel) return null;
+      const said = parts
+        .filter((p): p is Extract<Part, { type: "text" }> => p.type === "text")
+        .map((p) => p.text).join("\n");
+      if (!PARALLEL_CLAIM.test(said)) return null;
+      honestyNudged = true;
+      return PARALLEL_CLAIM_NUDGE;
+    };
     /** End-gates, checked when the turn is about to end having said something:
      * each is one-shot and returns its nudge text, or null to let the end stand. */
-    const endGateNudge = (): string | null => adoptGateNudge();
+    const endGateNudge = (): string | null => adoptGateNudge() ?? honestyGateNudge();
     // Last resort against a mute turn end: a round with tools forbidden
     // (toolChoice "none"), which reliably yields plain text where a second nudge
     // would just get another empty-thinking + stop.
@@ -866,6 +898,7 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
         (b) => b.type === "tool_use" && b.name !== STOP_NAME,
       );
       if (toolUses.length > 0) {
+        ranTools = true;
         const toolResults: LlmContentBlock[] = [];
         let doneAccepted = false;
         for (const tu of toolUses) {
