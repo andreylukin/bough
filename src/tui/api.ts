@@ -183,7 +183,8 @@ const postJson = (body: unknown): RequestInit => ({
 });
 
 export const api = {
-  listSessions: () => j<Session[]>("/sessions"),
+  // archived=true → the soft-deleted rows only (the picker's reveal/restore).
+  listSessions: (archived = false) => j<Session[]>(`/sessions${archived ? "?archived=1" : ""}`),
   createSession: (body: { title?: string; workspace?: string } = {}) =>
     j<Session>("/sessions", {
       method: "POST",
@@ -205,8 +206,13 @@ export const api = {
   interrupt: (id: string) =>
     j<{ ok: boolean; interrupted: boolean }>(`/sessions/${id}/interrupt`, { method: "POST" }),
   archiveSession: (id: string) => post(`/sessions/${id}/archive`),
+  unarchiveSession: (id: string) => post(`/sessions/${id}/unarchive`),
   deprecateSession: (id: string, on: boolean) =>
     j<{ ok: boolean }>(`/sessions/${id}/deprecate`, postJson({ on })),
+  // Persist the composer draft on its session (stashed when switching away; the
+  // prefill on open reads it back via getSession). null clears.
+  putDraft: (id: string, draft: string | null) =>
+    j<{ ok: boolean }>(`/sessions/${id}/draft`, { ...postJson({ draft }), method: "PUT" }),
   netRequests: (sessionId?: string) =>
     j<NetRequest[]>(`/net/requests${sessionId ? `?sessionId=${sessionId}` : ""}`),
   allowRequest: (id: string, scope: "once" | "session" = "once") =>

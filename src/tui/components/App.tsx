@@ -49,8 +49,8 @@ import {
 import { useStore } from "../store.ts";
 import { type Branch, buildLines, parseSubagentNote, type SubagentNote } from "../lines.ts";
 import {
-  fmtTokens,
   ctxPctLeft,
+  fmtTokens,
   fmtUsd,
   fuzzyScore,
   linkAt,
@@ -163,8 +163,11 @@ export function App(
   }, []);
   const [filter, setFilter] = useState("");
   const [filterActive, setFilterActive] = useState(false);
-  // Deprecated branches are hidden by default in both trees; `h` reveals them.
+  // Deprecated branches (and, in the sessions tab, archived sessions) are hidden
+  // by default in both trees; `h` reveals them.
   const [showDeprecated, setShowDeprecated] = useState(false);
+  // ^x archive confirm (double-tap, like ctrl+c quit): first press arms this.
+  const archiveArm = useRef({ id: "", at: 0 });
   // composer history (sent messages, oldest first, persisted across runs);
   // null idx = editing the draft
   const history = useRef<string[]>(loadHistory());
@@ -268,6 +271,27 @@ export function App(
   }, [applyPreset]);
 
   const { open } = store;
+  // Per-session drafts: the composer buffer belongs to the conversation it was
+  // typed in. On the way out of a session, stash its text server-side
+  // (session.draft — the same column handoff prefills from) and clear the
+  // buffer; the incoming session's own draft prefills via the effect below.
+  const compRef = useRef(comp);
+  compRef.current = comp;
+  const currentIdRef = useRef<string | null>(null);
+  currentIdRef.current = store.currentId;
+  const stashDraft = useCallback(() => {
+    const from = currentIdRef.current;
+    const text = compRef.current.text;
+    if (from) api.putDraft(from, text.trim() ? text : null).catch(() => {});
+    else if (text.trim()) {
+      // The launch draft has no session row to carry it — keep it recallable (↑).
+      history.current.push(text);
+      appendHistory(text);
+    }
+    setComp({ text: "", cursor: 0 });
+    setHistIdx(null);
+    draft.current = "";
+  }, []);
   const openSession = useCallback((s: Session) => {
     setErr(null);
     setShowInfo(false);
@@ -280,9 +304,10 @@ export function App(
     setSearchQ(null);
     setShellOut(null);
     setSections(null); // labels describe the session they were computed for
+    if (currentIdRef.current !== s.id) stashDraft();
     saveLastSession(s.id);
     open(s.id).catch((e) => setErr(String(e)));
-  }, [open]);
+  }, [open, stashDraft]);
 
   // The spawner of the open session, when it's a subagent branch (else null).
   // Peeking into a running subagent must be reversible in one key, and — the trap
@@ -438,9 +463,26 @@ export function App(
   );
   const lines = useMemo(
     () =>
-      buildLines(store.thread, store.streaming, isExpanded, isFull, width, branches, store.toolLogs),
+      buildLines(
+        store.thread,
+        store.streaming,
+        isExpanded,
+        isFull,
+        width,
+        branches,
+        store.toolLogs,
+      ),
     // palette.epoch: an applied theme must recolor the pre-rendered SGR lines.
-    [store.thread, store.streaming, store.toolLogs, isExpanded, isFull, width, branches, palette.epoch],
+    [
+      store.thread,
+      store.streaming,
+      store.toolLogs,
+      isExpanded,
+      isFull,
+      width,
+      branches,
+      palette.epoch,
+    ],
   );
   // Search matches over the current lines; the index clamps as lines rebuild
   // (streaming appends, folds toggling) so the counter never dangles.
@@ -795,9 +837,13 @@ export function App(
     return () => onMouse(null);
   }, []);
 
-  // Deprecated branches are hidden from the picker unless revealed with `h`.
+  // Deprecated branches (and archived sessions) are hidden from the picker
+  // unless revealed with `h`.
   const pickerSessions = showDeprecated
-    ? store.sessions
+    ? [
+      ...store.sessions,
+      ...store.archived.filter((a) => !store.sessions.some((s) => s.id === a.id)),
+    ]
     : store.sessions.filter((s) => !s.deprecatedAt);
   const treeRows: TreeRow[] = filter
     ? flattenTree(pickerSessions)
@@ -1062,7 +1108,21 @@ export function App(
         }
         if (key.ctrl && ch === "x") {
           const sel = treeRows[pickSelRef.current];
-          if (sel) store.archive(sel.s.id);
+          if (!sel) return;
+          // A conversation with any turns in it wants a second ^x (same
+          // double-tap as ctrl+c quit) — one keypress silently losing work was
+          // a persona-testing finding. Empty sessions archive at once.
+          const hasTurns = !!(sel.s.lastTurnStatus || sel.s.busy);
+          const armed = archiveArm.current.id === sel.s.id &&
+            Date.now() - archiveArm.current.at < 3000;
+          if (hasTurns && !armed) {
+            archiveArm.current = { id: sel.s.id, at: Date.now() };
+            setPanelMsg(`^x again to archive "${sel.s.title || "(untitled)"}"`);
+            return;
+          }
+          archiveArm.current = { id: "", at: 0 };
+          setPanelMsg("archived — h reveals archived sessions, u restores one");
+          store.archive(sel.s.id);
           return;
         }
         if (!filterActive && ch === "x") {
@@ -1074,7 +1134,20 @@ export function App(
           } else setPanelMsg("roots can't be deprecated — ^x archives"); // was a silent no-op
           return;
         }
-        if (!filterActive && ch === "h") return setShowDeprecated((v) => !v);
+        if (!filterActive && ch === "h") {
+          // Revealing also lists archived sessions — fetch them on the way in.
+          if (!showDeprecated) store.loadArchived().catch(() => {});
+          setPanelMsg(null); // let the "(showing hidden…)" header show
+          return setShowDeprecated((v) => !v);
+        }
+        if (!filterActive && ch === "u") {
+          const sel = treeRows[pickSelRef.current];
+          if (sel?.s.archivedAt) {
+            setPanelMsg(null);
+            store.unarchive(sel.s.id);
+          } else setPanelMsg("u restores an archived session — h reveals them");
+          return;
+        }
         return;
       }
 
@@ -1188,12 +1261,14 @@ export function App(
               .join("\n");
             store.fork(it.node.point.msgId, undefined, true).then((s) => {
               if (!s) return;
+              // Open first — openSession stashes/clears the composer for the
+              // per-session draft; the rewound text must land after that.
+              forked(s);
               if (text) {
                 setComp({ text, cursor: text.length });
                 setHistIdx(null);
                 draft.current = "";
               }
-              forked(s);
             });
           }
           return;
@@ -1365,6 +1440,9 @@ export function App(
         // would run turns in the server's cwd (the live repo). Clear the query to
         // create one deliberately.
         if (!hit && newQuery.trim() !== "") return;
+        // Stash now: newSession switches currentId before openSession runs, so
+        // the openSession stash would miss and the new composer inherit old text.
+        stashDraft();
         store.newSession(hit?.path).then((s) => openSession(s), (e) => setErr(String(e)));
         return;
       }

@@ -38,7 +38,9 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
     keys: [
       ["n", "new session"],
       ["/", "filter · g/G first/last"],
-      ["^x / x / h", "archive · deprecate · show hidden"],
+      ["^x", "archive — ^x again confirms · recoverable"],
+      ["x", "deprecate (hide) a branch"],
+      ["h / u", "show hidden incl. archived · restore archived"],
     ],
   },
   {

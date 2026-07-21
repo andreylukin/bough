@@ -107,6 +107,9 @@ export const Session = z.object({
   // Set when a branch is deprecated — hidden by default in the tree views, shown
   // on toggle. Distinct from archive (which removes it from the list entirely).
   deprecatedAt: z.number().nullish(),
+  // Set when a session is archived (soft delete). Absent from the default
+  // GET /sessions; ?archived=1 returns these rows so a UI can reveal/restore them.
+  archivedAt: z.number().nullish(),
   // Per-session model override (additive). Absent = the process-global default.
   // Set by the model picker: switching models pins THIS session and moves the
   // default new sessions start on; other existing sessions keep theirs.

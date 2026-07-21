@@ -427,6 +427,44 @@ Deno.test("archive hides a session from the list but keeps it addressable", asyn
   c.db.close();
 });
 
+Deno.test("archived sessions list via ?archived=1 and unarchive restores them", async () => {
+  const c = ctx();
+  const h = createHandler(c);
+  const s = await (await h(req("POST", "/sessions", { title: "resurrect me" }))).json() as Session;
+  await h(req("POST", `/sessions/${s.id}/archive`, {}));
+  // Reachable in the archived drawer, with archivedAt set.
+  const drawer = await (await h(req("GET", "/sessions?archived=1"))).json() as Session[];
+  const row = drawer.find((x) => x.id === s.id);
+  assert(row && typeof row.archivedAt === "number");
+  // Unarchive: back in the default list, out of the drawer.
+  assertEquals((await h(req("POST", `/sessions/${s.id}/unarchive`, {}))).status, 200);
+  const list = await (await h(req("GET", "/sessions"))).json() as Session[];
+  assertEquals(list.some((x) => x.id === s.id && x.archivedAt == null), true);
+  const drawer2 = await (await h(req("GET", "/sessions?archived=1"))).json() as Session[];
+  assertEquals(drawer2.some((x) => x.id === s.id), false);
+  assertEquals((await h(req("POST", "/sessions/nope/unarchive", {}))).status, 404);
+  c.db.close();
+});
+
+Deno.test("PUT /sessions/:id/draft stores and clears the composer draft", async () => {
+  const c = ctx();
+  const h = createHandler(c);
+  const s = await (await h(req("POST", "/sessions", { title: "drafty" }))).json() as Session;
+  assertEquals(
+    (await h(req("PUT", `/sessions/${s.id}/draft`, { draft: "half a thought" }))).status,
+    200,
+  );
+  const got = await (await h(req("GET", `/sessions/${s.id}`))).json() as { session: Session };
+  assertEquals(got.session.draft, "half a thought");
+  // null clears; bad bodies 400; unknown session 404s.
+  assertEquals((await h(req("PUT", `/sessions/${s.id}/draft`, { draft: null }))).status, 200);
+  const cleared = await (await h(req("GET", `/sessions/${s.id}`))).json() as { session: Session };
+  assertEquals(cleared.session.draft, undefined);
+  assertEquals((await h(req("PUT", `/sessions/${s.id}/draft`, { draft: 5 }))).status, 400);
+  assertEquals((await h(req("PUT", "/sessions/nope/draft", { draft: "x" }))).status, 404);
+  c.db.close();
+});
+
 Deno.test("invalid body → 400", async () => {
   const c = ctx();
   const h = createHandler(c);

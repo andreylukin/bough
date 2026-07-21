@@ -26,6 +26,9 @@ export type TuiSession = Session & {
 
 export interface Store {
   sessions: TuiSession[];
+  // Archived (soft-deleted) sessions — empty until loadArchived(); the picker's
+  // "show hidden" reveal lists them and `u` restores one.
+  archived: TuiSession[];
   currentId: string | null;
   session: TuiSession | null;
   thread: Message[];
@@ -64,6 +67,10 @@ export interface Store {
   send: (text: string, queue?: boolean, id?: string) => Promise<void>;
   interrupt: () => void;
   archive: (id: string) => void;
+  /** Fetch the archived list (the picker's reveal loads it on demand). */
+  loadArchived: () => Promise<void>;
+  /** Restore an archived session to the live list. */
+  unarchive: (id: string) => void;
   deprecate: (id: string, on: boolean) => void;
   resolvePending: (approve: boolean, scope?: "once" | "session") => void;
   /** Answer the surfaced ask() question (chosen option or typed free text). */
@@ -91,6 +98,7 @@ export interface Store {
 
 export function useStore(initialSessions: Session[]): Store {
   const [sessions, setSessions] = useState<TuiSession[]>(initialSessions);
+  const [archived, setArchived] = useState<TuiSession[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [session, setSession] = useState<TuiSession | null>(null);
   const [thread, setThread] = useState<Message[]>([]);
@@ -403,6 +411,18 @@ export function useStore(initialSessions: Session[]): Store {
     api.archiveSession(id).catch(() => {});
   }, []);
 
+  const loadArchived = useCallback(async () => {
+    setArchived(await api.listSessions(true));
+  }, []);
+
+  const unarchive = useCallback((id: string) => {
+    api.unarchiveSession(id).then(() => {
+      // Refetch both lists — the row moves from one to the other.
+      reload().catch(() => {});
+      loadArchived().catch(() => {});
+    }, () => {});
+  }, [reload, loadArchived]);
+
   const deprecate = useCallback((id: string, on: boolean) => {
     api.deprecateSession(id, on).catch(() => {}); // session.updated event reflects it
   }, []);
@@ -418,7 +438,16 @@ export function useStore(initialSessions: Session[]): Store {
       }
       case "session.archived": {
         const { sessionId } = ev.data as { sessionId: string };
+        // Keep the row reachable in the archived drawer without a refetch.
+        const row = sessionsRef.current.find((p) => p.id === sessionId);
         setSessions((prev) => prev.filter((p) => p.id !== sessionId));
+        if (row) {
+          setArchived((prev) =>
+            prev.some((p) => p.id === sessionId)
+              ? prev
+              : [{ ...row, archivedAt: Date.now() }, ...prev]
+          );
+        }
         break;
       }
       case "session.updated": {
@@ -634,6 +663,7 @@ export function useStore(initialSessions: Session[]): Store {
 
   return {
     sessions,
+    archived,
     currentId,
     session,
     thread,
@@ -656,6 +686,8 @@ export function useStore(initialSessions: Session[]): Store {
     send,
     interrupt,
     archive,
+    loadArchived,
+    unarchive,
     deprecate,
     resolvePending,
     answerAsk,
