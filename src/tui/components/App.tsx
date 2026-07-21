@@ -397,9 +397,37 @@ export function App(
   const width = stdout?.columns || 80;
 
   // ---- the conversation viewport ------------------------------------------
+  // The ACTIVE tool group of a running turn (a call still awaiting its result)
+  // auto-expands so the live-streamed output is visible without ^e, and falls
+  // back to default (collapsed) once the step completes. `touched` records a
+  // manual toggle on an active card — the user's choice wins over the auto.
+  const activeKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const m of store.thread) {
+      if (!m.pending) continue;
+      const done = new Set(
+        m.parts.filter((p) => p.type === "tool_result").map((p) => p.callId),
+      );
+      segmentParts(m.parts).forEach((s, i) => {
+        if (
+          s.kind === "tools" &&
+          s.parts.some((p) => p.type === "tool_call" && !done.has(p.id))
+        ) keys.add(`${m.id}:${i}`);
+      });
+    }
+    return keys;
+  }, [store.thread]);
+  const [touched, setTouched] = useState<Set<string>>(new Set());
+  const activeKeysRef = useRef(activeKeys);
+  activeKeysRef.current = activeKeys;
+  const touchedRef = useRef(touched);
+  touchedRef.current = touched;
+  const expandAllRef = useRef(expandAll);
+  expandAllRef.current = expandAll;
   const isExpanded = useCallback(
-    (key: string) => (expandAll !== toggled.has(key)),
-    [expandAll, toggled],
+    (key: string) =>
+      (activeKeys.has(key) && !touched.has(key)) || (expandAll !== toggled.has(key)),
+    [activeKeys, touched, expandAll, toggled],
   );
   // "Show all N lines" state for truncated blocks ("<groupKey>!full" entries in
   // the same toggled set). Plain membership, no expandAll XOR — ^e expand-all
@@ -450,7 +478,14 @@ export function App(
   );
   const curMatch = matches.length ? Math.min(searchIdx, matches.length - 1) : -1;
   const toggleGroup = useCallback((key: string) => {
+    // Collapsing an auto-expanded active card records the touch (auto stops
+    // applying for it) so the card returns to plain defaults once its step
+    // completes; the override only flips when the card would stay open on its
+    // own (^e expand-all or an earlier manual expand).
+    const auto = activeKeysRef.current.has(key) && !touchedRef.current.has(key);
+    if (auto) setTouched((prev) => new Set(prev).add(key));
     setToggled((prev) => {
+      if (auto && expandAllRef.current === prev.has(key)) return prev;
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
@@ -476,7 +511,8 @@ export function App(
       const last = segs[segs.length - 1];
       if (last?.kind === "tools") {
         const key = `${m.id}:${segs.length - 1}`;
-        if (!isExpandedRef.current(key)) toggleGroup(key);
+        // A card the user collapsed while it ran stays collapsed — their call.
+        if (!isExpandedRef.current(key) && !touchedRef.current.has(key)) toggleGroup(key);
       }
     }
   }, [store.thread, toggleGroup]);

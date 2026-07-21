@@ -845,7 +845,16 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
           // Rebind the streaming attribution to this call, then run it.
           currentCallId = tu.id;
           const { output, isError } = await executeTool(tools, tu.name, tu.input, toolCtx);
-          append({ type: "tool_result", callId: tu.id, output, isError });
+          // An abort mid-tool means this result is a stopped run, not a completed
+          // one — mark it so the UI renders ⏹ instead of ✓ over the partial output.
+          const wasInterrupted = signal?.aborted === true;
+          append({
+            type: "tool_result",
+            callId: tu.id,
+            output,
+            isError,
+            ...(wasInterrupted ? { interrupted: true } : {}),
+          });
           toolResults.push({ type: "tool_result", toolUseId: tu.id, content: output, isError });
           checkpoint(db, turn.id, `tool:${tu.name}`);
           // CHECK-gated completion (SPEC §5): the harness — not the model's say-so —

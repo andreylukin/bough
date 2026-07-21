@@ -130,6 +130,27 @@ Deno.test("interrupt: aborting the signal terminates an in-flight program prompt
   assertEquals(Date.now() - started < 5_000, true);
 });
 
+Deno.test("interrupt: logs already streamed survive in the aborted result", async () => {
+  const controller = new AbortController();
+  // Prints, then parks on a never-resolving host call — like a long bash loop
+  // that already produced output when the user hits interrupt.
+  const stuck = hosts({ bash: () => new Promise<string>(() => {}) });
+  const live: string[] = [];
+  const result = await runProgram(
+    'console.log("tick-1"); console.log("tick-2"); await bash("sleep forever");',
+    stuck,
+    60_000,
+    controller.signal,
+    (line) => {
+      live.push(line);
+      if (live.length === 2) controller.abort();
+    },
+  );
+  assertEquals(result.ok, false);
+  assertStringIncludes(result.error!, "interrupted");
+  assertEquals(result.logs, ["tick-1", "tick-2"]);
+});
+
 Deno.test("interrupt: an already-aborted signal refuses to run the program at all", async () => {
   const controller = new AbortController();
   controller.abort();

@@ -389,3 +389,31 @@ Deno.test("messageLines shows streamed log lines under a running tool call", () 
   assertStringIncludes(doneJoined, "first");
 });
 
+Deno.test("interrupted tool result: partial output kept, ⏹ interrupted instead of ✓ done", () => {
+  const msg: Message = {
+    id: "m1",
+    sessionId: "s1",
+    role: "supervisor",
+    parts: [
+      { type: "tool_call", id: "c1", name: "run_steps", input: { code: "loop()" } },
+      {
+        type: "tool_result",
+        callId: "c1",
+        output: "tick-1\ntick-2\n[program error] program interrupted by the user",
+        isError: false,
+        interrupted: true,
+      },
+    ],
+    pending: false,
+    createdAt: 1,
+  };
+  const joined = messageLines(msg, () => true, () => false, 80)
+    .map((l) => l.text).join("\n");
+  // The ticks the program already printed survive the interrupt…
+  assertStringIncludes(joined, "tick-1");
+  assertStringIncludes(joined, "tick-2");
+  // …under an interrupted marker, not a green check.
+  assertStringIncludes(joined, "⏹ interrupted");
+  assertEquals(joined.includes("✓ done"), false);
+});
+
