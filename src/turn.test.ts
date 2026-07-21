@@ -808,6 +808,74 @@ Deno.test("mcp end-to-end: /skill grant connects the server, prompts tools, brid
   }
 });
 
+Deno.test("prewalk: first edit swaps to the cheap model and prunes the planning instruction", async () => {
+  const { db, bus, events, sessionId } = seed();
+  db.createMessage({
+    id: "u2",
+    sessionId,
+    role: "user",
+    parts: [{ type: "text", text: "/prewalk add a helper to lib.ts" }],
+    pending: false,
+    createdAt: 3,
+  });
+  // Stand-in for run_steps that lands an edit (sets everWrote) — the swap trigger.
+  const edit: ToolDef = {
+    name: "run_steps",
+    description: "fake run_steps",
+    schema: z.object({ code: z.string() }),
+    run: (_i, c) => {
+      if (c.turn) c.turn.everWrote = true;
+      return Promise.resolve("wrote lib.ts");
+    },
+  };
+  const llm = fakeLlm([
+    {
+      content: [
+        { type: "reasoning", text: "deep plan", meta: { type: "thinking" } },
+        { type: "text", text: "plan: 1. edit lib.ts 2. verify" },
+        { type: "tool_use", id: "t1", name: "run_steps", input: { code: "await write(...)" } },
+      ],
+      stopReason: "tool_use",
+    },
+    { content: [{ type: "text", text: "continuing on the todos" }], stopReason: "end_turn" },
+  ]);
+  const { done } = beginTurn({ db, bus, llm, tools: [edit], model: "claude-fable-5" }, sessionId);
+  await done;
+
+  // Round 1 planned on the frontier model with the skill instruction in-prompt…
+  assertEquals(llm.calls[0].model, "claude-fable-5");
+  assertStringIncludes(llm.calls[0].systemVolatile ?? "", "Active skill: /prewalk");
+  // …and the post-edit round runs on the cheap model, instruction pruned,
+  // frontier thinking stripped from the replayed exchange.
+  assertEquals(llm.calls[1].model, "claude-haiku-4-5");
+  assertEquals((llm.calls[1].systemVolatile ?? "").includes("/prewalk"), false);
+  const blocks = llm.calls[1].messages.flatMap((m) => m.content.map((b) => b.type));
+  assertEquals(blocks.includes("reasoning"), false);
+  assert(
+    events.some((e) =>
+      e.type === "session.activity" && (e.data as { text: string }).text.includes("prewalk")
+    ),
+  );
+});
+
+Deno.test("prewalk: a turn that never edits never swaps", async () => {
+  const { db, bus, sessionId } = seed();
+  db.createMessage({
+    id: "u2",
+    sessionId,
+    role: "user",
+    parts: [{ type: "text", text: "/prewalk what does turn.ts do?" }],
+    pending: false,
+    createdAt: 3,
+  });
+  const llm = fakeLlm([
+    { content: [{ type: "text", text: "it runs turns" }], stopReason: "end_turn" },
+  ]);
+  const { done } = beginTurn({ db, bus, llm, tools: [], model: "claude-fable-5" }, sessionId);
+  await done;
+  for (const call of llm.calls) assertEquals(call.model, "claude-fable-5");
+});
+
 Deno.test("an @image ref composes an image part and replays as a base64 image block", async () => {
   // 1×1 PNG; HOME is swapped to a temp dir so the attachment copy lands there.
   const PNG_B64 =

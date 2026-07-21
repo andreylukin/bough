@@ -24,7 +24,7 @@ TASKS=("$@")
 "$BENCH/server.sh" stop >&2 || true
 "$BENCH/server.sh" start >&2
 mkdir -p "$RESULTS"
-OUT="$RESULTS/results.jsonl"
+OUT="${BENCH_RESULTS_FILE:-$RESULTS/results.jsonl}"
 
 for task in "${TASKS[@]}"; do
   for trial in $(seq 1 "$TRIALS"); do

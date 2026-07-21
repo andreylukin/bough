@@ -36,6 +36,7 @@ case "${1:-status}" in
       BOUGH_SNAPSHOT_BASE="$STATE/snapshots" \
       BOUGH_MODEL="$MODEL_BOUGH" \
       BOUGH_EFFORT="" \
+      BOUGH_PROMPT_DIR="${BOUGH_PROMPT_DIR:-}" \
       nohup deno run --allow-net --allow-env --allow-read --allow-write \
         --allow-ffi --allow-sys --allow-run src/server/main.ts >"$LOG_FILE" 2>&1 &
       echo $! >"$PID_FILE"

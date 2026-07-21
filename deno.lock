@@ -1,21 +1,26 @@
 {
   "version": "5",
   "specifiers": {
+    "jsr:@std/assert@*": "1.0.19",
     "jsr:@std/assert@1": "1.0.19",
     "jsr:@std/cli@*": "1.0.32",
     "jsr:@std/internal@^1.0.12": "1.0.14",
     "jsr:@std/yaml@1": "1.1.2",
-    "npm:@anthropic-ai/sdk@0.68.0": "0.68.0_zod@3.25.76",
-    "npm:@modelcontextprotocol/sdk@1.29.0": "1.29.0_zod@3.25.76",
+    "npm:@anthropic-ai/sdk@0.68.0": "0.68.0_zod@4.3.6",
+    "npm:@json-render/core@0.19.0": "0.19.0_zod@4.3.6",
+    "npm:@json-render/react@0.19.0": "0.19.0_react@19.2.7_zod@4.3.6",
+    "npm:@modelcontextprotocol/sdk@1.29.0": "1.29.0_zod@4.3.6",
     "npm:@types/react@19": "19.2.17",
     "npm:ink@7.1.0": "7.1.0_@types+react@19.2.17_react@19.2.7",
     "npm:node-forge@1.4.0": "1.4.0",
+    "npm:react-dom@19.2.7": "19.2.7_react@19.2.7",
     "npm:react@19.2.7": "19.2.7",
     "npm:slice-ansi@9.0.0": "9.0.0",
     "npm:string-width@7.2.0": "7.2.0",
     "npm:strip-ansi@7.2.0": "7.2.0",
     "npm:wrap-ansi@9.0.2": "9.0.2",
-    "npm:zod@3.25.76": "3.25.76"
+    "npm:zod@3.25.76": "3.25.76",
+    "npm:zod@4.3.6": "4.3.6"
   },
   "jsr": {
     "@std/assert@1.0.19": {
@@ -42,14 +47,14 @@
         "is-fullwidth-code-point"
       ]
     },
-    "@anthropic-ai/sdk@0.68.0_zod@3.25.76": {
+    "@anthropic-ai/sdk@0.68.0_zod@4.3.6": {
       "integrity": "sha512-SMYAmbbiprG8k1EjEPMTwaTqssDT7Ae+jxcR5kWXiqTlbwMR2AthXtscEVWOHkRfyAV5+y3PFYTJRNa3OJWIEw==",
       "dependencies": [
         "json-schema-to-ts",
-        "zod"
+        "zod@4.3.6"
       ],
       "optionalPeers": [
-        "zod"
+        "zod@4.3.6"
       ],
       "bin": true
     },
@@ -62,7 +67,20 @@
         "hono"
       ]
     },
-    "@modelcontextprotocol/sdk@1.29.0_zod@3.25.76": {
+    "@json-render/core@0.19.0_zod@4.3.6": {
+      "integrity": "sha512-vvcyZ+10EDZKbEyB1J2kXOGfDaiZR2LurZGSqi2r5STHyKr+Te85DWaBxTwRGgM7U1LtIvNx85BzzjElRKoAIg==",
+      "dependencies": [
+        "zod@4.3.6"
+      ]
+    },
+    "@json-render/react@0.19.0_react@19.2.7_zod@4.3.6": {
+      "integrity": "sha512-kTW6b6cSNRrlEfCUf/69SLoLn+CufC968ruge9tnQlp9pDTGG/SK8pgM541FdgwMFA4zm3s5mpM3G8rdODKc/A==",
+      "dependencies": [
+        "@json-render/core",
+        "react"
+      ]
+    },
+    "@modelcontextprotocol/sdk@1.29.0_zod@4.3.6": {
       "integrity": "sha512-zo37mZA9hJWpULgkRpowewez1y6ML5GsXJPY8FI0tBBCd77HEvza4jDqRKOXgHNn867PVGCyTdzqpz0izu5ZjQ==",
       "dependencies": [
         "@hono/node-server",
@@ -80,7 +98,7 @@
         "json-schema-typed",
         "pkce-challenge",
         "raw-body",
-        "zod",
+        "zod@4.3.6",
         "zod-to-json-schema"
       ]
     },
@@ -580,6 +598,13 @@
         "unpipe"
       ]
     },
+    "react-dom@19.2.7_react@19.2.7": {
+      "integrity": "sha512-t0BRVXvbiE/o20Hfw669rLbMCDWtYZLvmJigy2f0MxsXF+71pxhR3xOkspmsO8h3ZlNzyibAmtCa3l4lYKk6gQ==",
+      "dependencies": [
+        "react",
+        "scheduler"
+      ]
+    },
     "react-reconciler@0.33.0_react@19.2.7": {
       "integrity": "sha512-KetWRytFv1epdpJc3J4G75I4WrplZE5jOL7Yq0p34+OVOKF4Se7WrdIdVC45XsSSmUTlht2FM/fM1FZb1mfQeA==",
       "dependencies": [
@@ -799,30 +824,37 @@
     "yoga-layout@3.2.1": {
       "integrity": "sha512-0LPOt3AxKqMdFBZA3HBAt/t/8vIKq7VaQYbuA8WxCgung+p9TVyKRYdpvCb80HcdTN2NkbIKbhNwKUfm3tQywQ=="
     },
-    "zod-to-json-schema@3.25.2_zod@3.25.76": {
+    "zod-to-json-schema@3.25.2_zod@4.3.6": {
       "integrity": "sha512-O/PgfnpT1xKSDeQYSCfRI5Gy3hPf91mKVDuYLUHZJMiDFptvP41MSnWofm8dnCm0256ZNfZIM7DSzuSMAFnjHA==",
       "dependencies": [
-        "zod"
+        "zod@4.3.6"
       ]
     },
     "zod@3.25.76": {
       "integrity": "sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ=="
+    },
+    "zod@4.3.6": {
+      "integrity": "sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg=="
     }
   },
   "workspace": {
     "dependencies": [
       "jsr:@std/yaml@1",
       "npm:@anthropic-ai/sdk@0.68.0",
+      "npm:@json-render/core@0.19.0",
+      "npm:@json-render/react@0.19.0",
       "npm:@modelcontextprotocol/sdk@1.29.0",
       "npm:@types/react@19",
       "npm:ink@7.1.0",
       "npm:node-forge@1.4.0",
+      "npm:react-dom@19.2.7",
       "npm:react@19.2.7",
       "npm:slice-ansi@9.0.0",
       "npm:string-width@7.2.0",
       "npm:strip-ansi@7.2.0",
       "npm:wrap-ansi@9.0.2",
-      "npm:zod@3.25.76"
+      "npm:zod@3.25.76",
+      "npm:zod@4.3.6"
     ]
   }
 }

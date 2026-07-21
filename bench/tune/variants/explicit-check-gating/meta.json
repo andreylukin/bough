@@ -1,0 +1,24 @@
+{
+  "name": "explicit-check-gating",
+  "hypothesis": "output-mismatch failures stem from implicit or incorrect checks; explicit gate-by-task-type (exact-output \u2192 byte-diff, behavior-preservation \u2192 baseline-test, etc.) clarifies what 'passing' means and surfaces mismatches earlier before done: true",
+  "prediction": "output-mismatch failures drop from 5 to ~2\u20133; bugfix-statemachine and refactor-behavior-preserving improve by 1\u20132 passes each by forcing model to think about check *before* implementing",
+  "parent": "baseline",
+  "changed": [
+    "system.md"
+  ],
+  "ts": 1784607699,
+  "score": {
+    "n": 42,
+    "passes": 32,
+    "pass_rate": 0.7619047619047619,
+    "cost_usd": 1.8045,
+    "cost_per_solved": 0.0564,
+    "fail_reasons": {
+      "timeout": 2,
+      "output-mismatch": 6,
+      "tests-fail": 1,
+      "missing-file": 1
+    }
+  },
+  "outcome": "refuted"
+}

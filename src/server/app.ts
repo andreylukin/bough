@@ -43,6 +43,7 @@ import {
 } from "../turn.ts";
 import { type Effort, EFFORTS } from "../supervisor/llm.ts";
 import { setWorkerChoice, WORKER_OPTIONS, workerChoice } from "../worker/frontier.ts";
+import { SuggestBody, suggestNextStep } from "../worker/suggest.ts";
 import { sessionMetrics } from "../metrics.ts";
 import { normalizeWorkspace, prepareWorkspace, workspaceProblem } from "../supervisor/workspace.ts";
 import { UNTITLED } from "../supervisor/title.ts";
@@ -77,6 +78,7 @@ import { mcpStatusFor } from "../mcp/status.ts";
 import { beginAuth, clearAuth, completeAuth } from "../mcp/oauth.ts";
 import { clientFor } from "../supervisor/llm.ts";
 import { listArtifacts, serveArtifact } from "./artifacts.ts";
+import { viewerBundle } from "./jsonrender/bundle.ts";
 import {
   addComment,
   AddCommentBody,
@@ -294,6 +296,25 @@ const patchConfig: Handler = async (req, ctx) => {
 
 // Installed skills (name + description) for composer autocomplete / discovery.
 const getSkills: Handler = () => json({ skills: listSkills() });
+
+// Composer ghost text: the worker predicts the user's NEXT message from the
+// conversation so far (shown dim on the idle composer, tab accepts). Null
+// suggestion = nothing usable (no worker, empty thread) — no ghost, no error.
+const postSuggest: Handler = async (req, ctx) => {
+  const body = await parseBody(req, SuggestBody);
+  const session = ctx.db.getSession(body.sessionId);
+  if (!session) return error(404, "session not found");
+  const lines = ctx.db.threadFor(session.id)
+    .filter((m) => !m.pending)
+    .map((m) => ({
+      role: m.role === "user" ? "user" as const : "agent" as const,
+      // The prose only: tool calls/results are the agent's scratch work, and
+      // reasoning is hidden from the user — neither is what they'd reply to.
+      text: m.parts.flatMap((p) => p.type === "text" ? [p.text] : []).join("\n").trim(),
+    }))
+    .filter((l) => l.text.length > 0);
+  return json({ suggestion: await suggestNextStep(lines) });
+};
 
 const searchFiles: Handler = async (req, ctx, params) => {
   const session = ctx.db.getSession(params.id);
@@ -1191,7 +1212,28 @@ const listArtifactsH: Handler = async (_req, _ctx, params) =>
 
 // Serve one hosted artifact by path (rendered HTML/JS/CSS/…). Same origin as the UI so
 // links open in the browser; traversal + bad ids are rejected inside serveArtifact.
-const getArtifact: Handler = (_req, _ctx, params) => serveArtifact(params.id, params.path ?? "");
+// ?raw=1 skips the viewer wrapper on *.ui.json spec artifacts.
+const getArtifact: Handler = (req, _ctx, params) =>
+  serveArtifact(params.id, params.path ?? "", undefined, {
+    raw: new URL(req.url).searchParams.get("raw") === "1",
+  });
+
+// The spec-viewer bundle every *.ui.json wrapper page loads (jsonrender/bundle.ts).
+// Built lazily and cached by source hash; the hash is the ETag so browsers revalidate
+// with a cheap 304 while a changed viewer lands immediately.
+const getViewerJs: Handler = async (req) => {
+  const { js, etag } = await viewerBundle();
+  if (req.headers.get("if-none-match") === `"${etag}"`) {
+    return new Response(null, { status: 304, headers: { etag: `"${etag}"` } });
+  }
+  return new Response(js, {
+    headers: {
+      "content-type": "text/javascript; charset=utf-8",
+      "cache-control": "no-cache",
+      etag: `"${etag}"`,
+    },
+  });
+};
 
 // ---- artifact comments -----------------------------------------------------
 // The comment layer injected into every served HTML artifact (comments.ts) talks
@@ -1236,6 +1278,7 @@ const routes: Route[] = [
   { method: "PUT", pattern: new URLPattern({ pathname: "/config/keys" }), handler: putKeys },
   { method: "DELETE", pattern: new URLPattern({ pathname: "/config/keys" }), handler: deleteKeys },
   { method: "GET", pattern: new URLPattern({ pathname: "/skills" }), handler: getSkills },
+  { method: "POST", pattern: new URLPattern({ pathname: "/suggest" }), handler: postSuggest },
   { method: "GET", pattern: new URLPattern({ pathname: "/theme" }), handler: getTheme },
   { method: "PUT", pattern: new URLPattern({ pathname: "/theme" }), handler: putTheme },
   { method: "DELETE", pattern: new URLPattern({ pathname: "/theme" }), handler: deleteTheme },
@@ -1508,6 +1551,11 @@ const routes: Route[] = [
     method: "GET",
     pattern: new URLPattern({ pathname: "/artifacts/:id/:path*" }),
     handler: getArtifact,
+  },
+  {
+    method: "GET",
+    pattern: new URLPattern({ pathname: "/artifact-viewer.js" }),
+    handler: getViewerJs,
   },
 ];
 

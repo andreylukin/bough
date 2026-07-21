@@ -17,6 +17,8 @@
  */
 import { dirname, join, normalize, resolve } from "node:path";
 import { commentWidget } from "./comments.ts";
+import { validateUiSpec } from "./jsonrender/catalog.ts";
+import { viewerPage } from "./jsonrender/bundle.ts";
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -44,6 +46,39 @@ const MIME: Record<string, string> = {
 function contentType(path: string): string {
   const dot = path.lastIndexOf(".");
   return (dot >= 0 && MIME[path.slice(dot).toLowerCase()]) || "application/octet-stream";
+}
+
+/**
+ * Agents sometimes publish an HTML page under a bare name ("my-explorer"), which
+ * would otherwise serve as octet-stream and download instead of render. For
+ * extensionless files, sniff the head: markup → text/html.
+ */
+async function sniffedType(full: string): Promise<string | null> {
+  const head = new Uint8Array(64);
+  const f = await Deno.open(full);
+  let n: number | null;
+  try {
+    n = await f.read(head);
+  } finally {
+    f.close();
+  }
+  const text = new TextDecoder().decode(head.subarray(0, n ?? 0)).trimStart();
+  return text.startsWith("<") ? "text/html; charset=utf-8" : null;
+}
+
+/**
+ * `*.ui.json` artifacts are json-render UI specs (jsonrender/catalog.ts): validated
+ * against the component catalog at publish time and served as a rendered viewer page.
+ */
+function isUiSpec(name: string): boolean {
+  return name.toLowerCase().endsWith(".ui.json");
+}
+
+/** Page title for a spec artifact: the root element's title prop when it has one. */
+function specTitle(spec: unknown, fallback: string): string {
+  const s = spec as { root?: string; elements?: Record<string, { props?: { title?: unknown } }> };
+  const title = s.elements?.[s.root ?? ""]?.props?.title;
+  return typeof title === "string" && title ? title : fallback;
 }
 
 /** Splice the comment layer in before </body> (or append if there's no body tag). */
@@ -109,7 +144,10 @@ function toArtifact(sessionId: string, name: string, bytes: number, ts: number):
 
 /**
  * Write `content` to the session's artifact store and return its {url, href, …}.
- * Creates parent dirs; overwrites an existing artifact of the same name.
+ * Creates parent dirs; overwrites an existing artifact of the same name. A
+ * `*.ui.json` spec is validated against the catalog first — an off-catalog spec
+ * throws (the message reaches the agent through the artifact() host call), and a
+ * valid one is stored in its normalized auto-fixed form.
  */
 export async function publishArtifact(
   sessionId: string,
@@ -119,6 +157,7 @@ export async function publishArtifact(
 ): Promise<Artifact> {
   const rel = name.replace(/^\/+/, "");
   const full = resolveArtifact(sessionId, rel, base);
+  if (isUiSpec(rel)) content = JSON.stringify(validateUiSpec(content));
   await Deno.mkdir(dirname(full), { recursive: true });
   await Deno.writeTextFile(full, content);
   const info = await Deno.stat(full);
@@ -159,11 +198,14 @@ export async function listArtifacts(sessionId: string, base?: string): Promise<A
 /**
  * Serve one artifact file. Traversal / bad-id → 403; missing → 404; else the file with
  * its content type and a no-cache header (artifacts are overwritten in place).
+ * A `*.ui.json` spec serves as its rendered viewer page (comment layer included);
+ * `raw` skips the wrapper and returns the spec JSON itself.
  */
 export async function serveArtifact(
   sessionId: string,
   name: string,
   base?: string,
+  opts?: { raw?: boolean },
 ): Promise<Response> {
   let full: string;
   try {
@@ -173,7 +215,19 @@ export async function serveArtifact(
   }
   try {
     if (!(await Deno.stat(full)).isFile) throw new Error("not a file");
-    const type = contentType(full);
+    if (isUiSpec(full) && !opts?.raw) {
+      const specJson = await Deno.readTextFile(full);
+      const html = viewerPage(specJson, specTitle(JSON.parse(specJson), name));
+      return new Response(injectCommentWidget(html), {
+        headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" },
+      });
+    }
+    let type = contentType(full);
+    if (
+      type === "application/octet-stream" && !full.slice(full.lastIndexOf("/") + 1).includes(".")
+    ) {
+      type = (await sniffedType(full)) ?? type;
+    }
     // Top-level HTML documents get the comment layer injected at serve time
     // (comments.ts) — the on-disk artifact stays clean/portable; the layer only
     // lives where you'd use it (inside bough). Other resources serve as-is.

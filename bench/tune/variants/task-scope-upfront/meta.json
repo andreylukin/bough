@@ -1,0 +1,24 @@
+{
+  "name": "task-scope-upfront",
+  "hypothesis": "Require explicit statement of which files will/won't change and what output is expected BEFORE writing code, catching silent scope misunderstandings in refactor/migrate/bugfix tasks that fail from wrong assumptions.",
+  "prediction": "refactor-behavior-preserving: 0\u21922/3 (fewer output-mismatch from clearer scope), migrate-format: 1\u21922/3 (protected-file-modified prevented by explicit 'must not change' statement), bugfix-statemachine: 0\u21921/3 if comprehension was root cause",
+  "parent": "baseline",
+  "changed": [
+    "system.md"
+  ],
+  "ts": 1784604283,
+  "score": {
+    "n": 42,
+    "passes": 31,
+    "pass_rate": 0.7380952380952381,
+    "cost_usd": 1.6816,
+    "cost_per_solved": 0.0542,
+    "fail_reasons": {
+      "timeout": 1,
+      "output-mismatch": 7,
+      "missing-file": 1,
+      "content-check": 2
+    }
+  },
+  "outcome": "refuted"
+}

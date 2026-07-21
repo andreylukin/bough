@@ -22,8 +22,24 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import type { Session } from "../schema/parts.ts";
 import { MAX_SPAWNS_PER_TURN, MAX_TREE_CONCURRENT } from "../subagent.ts";
+import { SPEC_GUIDE } from "../server/jsonrender/catalog.ts";
 
-export const SYSTEM = [
+// ---- prompt override hook (bench/tune) --------------------------------------
+// BOUGH_PROMPT_DIR: when set, a <name>.md file present in that directory
+// replaces the matching section export (suffix sections keep their "\n\n"
+// lead-in). Read once at module load; unset in normal operation — the prompt
+// tuner (bench/tune) sets it per variant so sweeps never edit this file.
+const PROMPT_DIR = Deno.env.get("BOUGH_PROMPT_DIR");
+function promptOverride(file: string, builtin: string, prefix = ""): string {
+  if (!PROMPT_DIR) return builtin;
+  try {
+    return prefix + Deno.readTextFileSync(join(PROMPT_DIR, file)).trim();
+  } catch {
+    return builtin;
+  }
+}
+
+const SYSTEM_BUILTIN = [
   "You are bough, a coding agent. You act ONLY through the run_steps tool: each call",
   "carries one JavaScript program that a deterministic harness executes in a sealed V8",
   "sandbox — you never touch the machine directly.",
@@ -66,19 +82,38 @@ export const SYSTEM = [
   "",
   "await artifact(name, content) publishes a file for browser viewing: it writes",
   "content to the session's artifact store, hosts it on the bough server, and returns",
-  "{ url, href } — a link the user opens. Call it once per file (index.html, then any",
-  "style.css / app.js by relative path), then share the href in your reply. Artifacts",
-  "live outside the workspace, so they never pollute the diff you ship. Use one only",
+  "{ url, href } — a link the user opens; share the href in your reply. Artifacts live",
+  "outside the workspace, so they never pollute the diff you ship. Use one only",
   "when the user will SCAN, COMPARE, INTERACT WITH, or KEEP the result — a diff review,",
   "a filterable comparison, a chart, a diagram, a plan, a clickable prototype. A short",
   "answer or a plain list stays in your reply text; do not dress thin content up as a",
-  "page. When you do build one, hold this bar: SELF-CONTAINED — inline all CSS/JS, no",
-  "CDN, external fonts, or remote images (it must render offline). DENSITY over",
-  "decoration — real structure, tables, and working controls, never gradient/rounded",
-  "'markdown-in-a-card' filler or dead buttons; avoid the AI-slop look (purple",
-  "gradients, centered card, Inter). Responsive to ~375px, and key text selectable so",
-  "the user can copy it. End the page with a small 'AI-generated — verify anything",
-  "important' note, and never print model names, token counts, or other process metadata.",
+  "page.",
+  "",
+  "PREFER the spec form: a name ending in .ui.json whose content is a UI spec object",
+  "(pass the object itself; it is stringified for you). bough validates it against a",
+  "fixed component catalog and serves it as a styled, dense, light/dark page — you",
+  "write structure, never HTML/CSS. Spec shape: {root: <key>, elements: {<key>: {type:",
+  '<Component>, props: {…}, children: [<key>…]}}}. Example: {root:"p",elements:{p:',
+  '{type:"Page",props:{title:"Bench"},children:["t"]},t:{type:"Stat",props:{label:',
+  '"solved",value:"14/16"},children:[]}}}. Components (props, ? = optional):',
+  SPEC_GUIDE,
+  "An invalid spec is rejected with the exact issues in the thrown error — fix them",
+  "and publish again under the same name; republishing a name updates the page in place.",
+  "Page chrome (title, styling, the AI-note footer) comes from the viewer — never add",
+  "elements for it. Vary the components — Stats in Columns, BarChart, Callout, KeyValue",
+  "— rather than stacking look-alike tables.",
+  "",
+  "Raw files (index.html plus any style.css / app.js by relative path, one artifact()",
+  "call per file) are the fallback for what the catalog cannot express — bespoke",
+  "interactivity, diagrams, prototypes. Then hold this bar: SELF-CONTAINED — inline",
+  "all CSS/JS, no CDN, external fonts, or remote images (it must render offline).",
+  "DENSITY over decoration — real structure, tables, and working controls, never",
+  "gradient/rounded 'markdown-in-a-card' filler or dead buttons; avoid the AI-slop",
+  "look (purple gradients, centered card, Inter). Responsive to ~375px, and key text",
+  "selectable so the user can copy it. End the page with a small 'AI-generated —",
+  "verify anything important' note, and never print model names, token counts, or",
+  "other process metadata.",
+  "",
   "Every artifact you publish carries a built-in comment layer: the user can pin notes",
   "anywhere on the page and send them to you, arriving as a '[artifact comments]' message",
   "— treat those as direct feedback on that artifact and act on them.",
@@ -188,9 +223,11 @@ export const SYSTEM = [
   "comes from content, not phrasing. Act, then stop.",
 ].join("\n");
 
+export const SYSTEM = promptOverride("system.md", SYSTEM_BUILTIN);
+
 // Ship section, appended only when the turn runner wired ship() (root session,
 // repo workspace with a resolvable origin).
-export const SHIP_NOTE = "\n\n" + [
+const SHIP_NOTE_BUILTIN = "\n\n" + [
   "## Shipping to the user's repo",
   "",
   "Another granted host function: await ship({message, paths?, push?}) lands this",
@@ -215,8 +252,10 @@ export const SHIP_NOTE = "\n\n" + [
   "half-fail, and the automatic snapshots already cover what they would.",
 ].join("\n");
 
+export const SHIP_NOTE = promptOverride("ship-note.md", SHIP_NOTE_BUILTIN, "\n\n");
+
 // Delegation section, appended only for sessions that may spawn (not subagents).
-export const SYSTEM_DELEGATION = "\n\n" + [
+const SYSTEM_DELEGATION_BUILTIN = "\n\n" + [
   "## Delegation to subagents",
   "",
   "More host functions enable delegation to subagents — separate sessions, each working",
@@ -246,9 +285,15 @@ export const SYSTEM_DELEGATION = "\n\n" + [
   "Delegate only genuinely separable work; do small things yourself.",
 ].join("\n");
 
+export const SYSTEM_DELEGATION = promptOverride(
+  "delegation.md",
+  SYSTEM_DELEGATION_BUILTIN,
+  "\n\n",
+);
+
 // Appended for every subagent turn: its final text is the report consumed by the
 // spawner, so cap it — verbose reports bloat the parent's context.
-export const SYSTEM_SUBAGENT = "\n\n" + [
+const SYSTEM_SUBAGENT_BUILTIN = "\n\n" + [
   "## You are a subagent",
   "",
   "You are a subagent: your final text is the report returned to your spawner, not a",
@@ -256,9 +301,11 @@ export const SYSTEM_SUBAGENT = "\n\n" + [
   "check status, and any surprises — in a few short lines.",
 ].join("\n");
 
+export const SYSTEM_SUBAGENT = promptOverride("subagent.md", SYSTEM_SUBAGENT_BUILTIN, "\n\n");
+
 // Reduced delegation section for subagent turns: blocking only. A detached spawn
 // could outlive this turn and mutate the branch after its report went upward.
-export const SYSTEM_DELEGATION_NESTED = "\n\n" + [
+const SYSTEM_DELEGATION_NESTED_BUILTIN = "\n\n" + [
   "## Delegation (nested)",
   "",
   "More host functions enable delegation: await agent(task) runs a nested subagent to",
@@ -273,6 +320,12 @@ export const SYSTEM_DELEGATION_NESTED = "\n\n" + [
   "at once across the whole tree — a spawn beyond a cap fails with an error. Delegate",
   "only genuinely separable work; do small things yourself.",
 ].join("\n");
+
+export const SYSTEM_DELEGATION_NESTED = promptOverride(
+  "delegation-nested.md",
+  SYSTEM_DELEGATION_NESTED_BUILTIN,
+  "\n\n",
+);
 
 // ---- delegation fit gate ---------------------------------------------------
 // Bench finding (predictions.jsonl, 2026-07-20): the supervisor NEVER delegates

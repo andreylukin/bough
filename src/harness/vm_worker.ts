@@ -112,9 +112,15 @@ async function run(code: string): Promise<void> {
     ),
   );
   // Artifacts: write a file to the session's artifact store and host it; returns the
-  // artifact object ({url, href, …}). JSON round-trip like agent()/mcp().
-  const artifact = async (name: string, content: string) =>
-    JSON.parse(await hostCall("artifact", [name, content]));
+  // artifact object ({url, href, …}). JSON round-trip like agent()/mcp(). A non-string
+  // content (a *.ui.json spec object) is stringified so programs can pass it directly.
+  const artifact = async (name: string, content: unknown) =>
+    JSON.parse(
+      await hostCall("artifact", [
+        name,
+        typeof content === "string" ? content : JSON.stringify(content),
+      ]),
+    );
   // Recall: semantic search over past conversations; returns {hits, indexed}.
   const recall = async (query: string, k?: number) =>
     JSON.parse(await hostCall("recall", k === undefined ? [query] : [query, k]));

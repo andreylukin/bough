@@ -32,7 +32,7 @@ STATUS="$(printf '%s' "$ENVELOPE" | python3 -c 'import json,sys; print(json.load
 curl -sf -X POST "$API/sessions/$SID/archive" >/dev/null 2>&1 || true
 
 ENVELOPE="$ENVELOPE" TASK="$TASK" TRIAL="$TRIAL" PASS="$PASS" REASON="$REASON" \
-WALL=$((T1 - T0)) MODEL="$MODEL_BOUGH" \
+WALL=$((T1 - T0)) MODEL="$MODEL_BOUGH" VARIANT="${BENCH_VARIANT:-}" \
 python3 - <<'PY'
 import json, os, time
 
@@ -44,7 +44,8 @@ cwrite = e.get("cache_write_tokens") or 0
 # $/Mtok (in, out) by model prefix; cache reads bill 0.1x in, writes 1.25x in.
 # Sonnet 5 uses the intro price (through 2026-08-31) to match CC's provider-
 # reported actuals. bough's input_tokens is total prompt (uncached+reads+writes).
-PRICES = [("claude-haiku-4-5", 1, 5), ("claude-sonnet-5", 2, 10), ("claude-opus-4-8", 5, 25)]
+PRICES = [("claude-haiku-4-5", 1, 5), ("claude-sonnet-5", 2, 10), ("claude-opus-4-8", 5, 25),
+          ("openai/gpt-oss-120b", 0.037, 0.17)]
 pin, pout = next(((i, o) for k, i, o in PRICES if os.environ["MODEL"].startswith(k)), (1, 5))
 uncached = max(0, tin - cread - cwrite)
 cost = (uncached + cread * 0.1 + cwrite * 1.25) * pin * 1e-6 + tout * pout * 1e-6
@@ -65,5 +66,6 @@ print(json.dumps({
     "turns": e.get("turns"),
     "tool_calls": e.get("tool_calls"),
     "session": e.get("session"),
+    "variant": os.environ.get("VARIANT") or None,
 }))
 PY

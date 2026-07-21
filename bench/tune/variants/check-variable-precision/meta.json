@@ -1,0 +1,23 @@
+{
+  "name": "check-variable-precision",
+  "hypothesis": "Explicitly requiring check definition as `const checkCmd = '...'` and upgrading byte-diff from 'only trustworthy' to 'MUST-BE' with explicit prohibition of alternatives forces check precision and reuse, preventing check-definition drift that allows spurious passes on output-mismatch tasks.",
+  "prediction": "Output-mismatch failures (6 cases) decrease as models create stricter byte-diff checks defined once and reused throughout. Expected: 37\u201338/42 (2\u20133 additional passes), particularly bugfix-statemachine, feature-topwords, wiring-stats.",
+  "parent": "iterative-check-execution",
+  "changed": [
+    "system.md"
+  ],
+  "ts": 1784621492,
+  "score": {
+    "n": 42,
+    "passes": 33,
+    "pass_rate": 0.7857142857142857,
+    "cost_usd": 1.4218,
+    "cost_per_solved": 0.0431,
+    "fail_reasons": {
+      "output-mismatch": 4,
+      "missing-file": 4,
+      "content-check": 1
+    }
+  },
+  "outcome": "refuted"
+}

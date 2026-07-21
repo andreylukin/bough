@@ -1,0 +1,25 @@
+{
+  "name": "transform-three-phase-verify",
+  "hypothesis": "Decompose transformational verification into three isolated phases (test logic on simple example, apply to full dataset, verify output matches spec) to catch errors early and extend check-execution discipline benefits for migration and format-conversion tasks.",
+  "prediction": "migrate-format tasks improve from ~4/9 baseline to ~7-8/9; bugfix-inventory and feature-topwords maintain 2/2 performance.",
+  "parent": "baseline",
+  "mode": "mutate",
+  "changed": [
+    "system.md"
+  ],
+  "ts": 1784638745,
+  "score": {
+    "n": 4,
+    "passes": 4,
+    "pass_rate": 1.0,
+    "cost_usd": 0.0522,
+    "cost_per_solved": 0.013,
+    "fail_reasons": {}
+  },
+  "paired": {
+    "stable_delta": 0,
+    "noisy_delta": 0,
+    "moved": []
+  },
+  "outcome": "refuted"
+}

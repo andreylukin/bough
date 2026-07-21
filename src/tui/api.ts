@@ -226,6 +226,12 @@ export const api = {
   declineQuestion: (sessionId: string, qid: string) =>
     j<{ ok: boolean }>(`/sessions/${sessionId}/questions/${qid}`, postJson({ decline: true })),
 
+  // Worker-predicted ghost text: the user's likely next message, from the
+  // conversation so far. Null when the worker has nothing usable.
+  suggest: (sessionId: string) =>
+    j<{ suggestion: string | null }>(`/suggest`, postJson({ sessionId }))
+      .then((r) => r.suggestion),
+
   // Fuzzy directory search for the new-session workspace autocomplete.
   searchDirs: (q: string) =>
     j<{ dirs: DirHit[] }>(`/fs/dirs?q=${encodeURIComponent(q)}`).then((r) => r.dirs),

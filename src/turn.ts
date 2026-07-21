@@ -46,6 +46,7 @@ import {
   type LlmClient,
   type LlmContentBlock,
   type LlmMessage,
+  type RetryOpts,
 } from "./supervisor/llm.ts";
 import { checkpoint, finishTurn, startTurn } from "./supervisor/turns.ts";
 import {
@@ -182,6 +183,7 @@ export const MODELS: ModelRow[] = [
   { id: "openai:gpt-5", label: "GPT-5 (OpenAI)", provider: "openai" },
   { id: "openai:gpt-5-mini", label: "GPT-5 mini (OpenAI)", provider: "openai" },
   { id: "openai/gpt-5", label: "GPT-5 (OpenRouter)", provider: "openrouter" },
+  { id: "openai/gpt-oss-120b", label: "GPT-OSS 120B (OpenRouter)", provider: "openrouter" },
   { id: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro (OpenRouter)", provider: "openrouter" },
   { id: "z-ai/glm-5.2", label: "GLM 5.2 (OpenRouter)", provider: "openrouter" },
   {
@@ -193,6 +195,22 @@ export const MODELS: ModelRow[] = [
 ];
 
 const MAX_TOKENS = 64_000;
+
+/**
+ * Prewalk (/prewalk skill): the turn opens on the session's own (frontier) model
+ * carrying the skill's plan-deeply instruction; the moment the first edit lands
+ * (run_steps sets turn.everWrote) the loop swaps to this cheaper model for the
+ * remaining rounds. The cheap model inherits the whole exploration trajectory
+ * in-context — no plan document, no re-reads — with the planning instruction
+ * pruned from its prompt and the frontier's signed thinking stripped (another
+ * model's signatures don't validate).
+ */
+function prewalkModel(): string {
+  return Deno.env.get("BOUGH_PREWALK_MODEL") ?? "claude-haiku-4-5";
+}
+
+/** `/prewalk` at a word boundary — mirrors skills.ts mentions(). */
+const PREWALK_RE = /(^|\s)\/prewalk(\s|$)/;
 
 /**
  * Usable prompt budget for a model: its catalog context window (pricing.ts)
@@ -438,13 +456,14 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
   const messageId = message.id;
   // Model precedence: explicit ctx override (tests/embedders) → the session's own
   // pinned model (set when the user switches models with this session open) → the
-  // process-global default (what new sessions start on).
-  const model = ctx.model ?? db.getSession(sessionId)?.model ?? activeModel();
+  // process-global default (what new sessions start on). Mutable: a prewalk
+  // handoff swaps it (and the client) mid-turn at a round boundary.
+  let model = ctx.model ?? db.getSession(sessionId)?.model ?? activeModel();
   // Thinking depth: the session's pin wins over the global default; "" = unset
   // (the request carries no thinking/effort fields at all).
   const effort = (db.getSession(sessionId)?.effort as Effort | undefined) ??
     (activeEffort() || undefined);
-  const llm = ctx.llm ?? clientFor(model, {
+  const retryOpts: RetryOpts = {
     onRetry: ({ attempt, maxAttempts, error, delayMs }) => {
       // A retried round re-streams from the top: tell the UI to drop this
       // message's partial streamed text, and say what's happening.
@@ -460,7 +479,8 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
         },
       });
     },
-  });
+  };
+  let llm = ctx.llm ?? clientFor(model, retryOpts);
   const tools = ctx.tools ?? defaultTools;
   // Newest round's input_tokens ≈ the live context size; output accumulates, and
   // input accumulates too (cost: every round re-sends the whole thread).
@@ -753,7 +773,7 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       (isSub ? SYSTEM_SUBAGENT : "") +
       (mayDelegate ? (isSub ? SYSTEM_DELEGATION_NESTED : SYSTEM_DELEGATION) : "") +
       lspNote;
-    const systemVolatile =
+    const volatileBase =
       // Delegation fit gate: a decomposable-shaped request gets the decision rule
       // + spawn() code shape injected once (root sessions only — spawn exists
       // there). Cohesive requests see a byte-identical prompt (see prompt.ts).
@@ -770,7 +790,22 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       workspaceNote(prepared.cwd) +
       (prepared.sandboxed ? scratchpadNote(prepared.scratchDir) : "") +
       (agents ?? "") +
-      mcpNote + skills.sections;
+      mcpNote;
+    let systemVolatile = volatileBase + skills.sections;
+    // Prewalk: armed when the /prewalk skill resolved into the prompt and the
+    // cheap target differs from this turn's model. `volatile` is the prompt to
+    // adopt at handoff — the same build minus the prewalk section, so the cheap
+    // model never sees the planning instruction it didn't follow.
+    const prewalkTarget = prewalkModel();
+    const prewalk =
+      skills.sections.includes("Active skill: /prewalk") && prewalkTarget !== model
+        ? {
+          target: prewalkTarget,
+          volatile: volatileBase +
+            activeSkills(triggerText.replace(PREWALK_RE, " ")).sections,
+        }
+        : null;
+    let prewalkDone = false;
     // Tool defs precede system in the API's cache order, so they're part of the
     // shared prefix: defaultTools + STOP_TOOL is process-constant and jsonSchema
     // is deterministic, keeping the array byte-stable across sessions. A
@@ -809,6 +844,20 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       // every tool_use already has its tool_result) and let the follow-up turn
       // continue with the new message in history.
       if (steering.has(sessionId)) break;
+      // Prewalk handoff: the first landed edit is the swap point — from here the
+      // cheap model continues the same in-context trajectory.
+      if (prewalk && !prewalkDone && toolCtx.turn?.everWrote) {
+        prewalkDone = true;
+        model = prewalk.target;
+        if (!ctx.llm) llm = clientFor(model, retryOpts);
+        systemVolatile = prewalk.volatile;
+        stripReasoning(messages);
+        bus.publish({
+          type: "session.activity",
+          sessionId,
+          data: { text: `⇄ prewalk: first edit landed — handing off to ${model}` },
+        });
+      }
       const result = await llm.run(
         {
           model,
@@ -1069,6 +1118,21 @@ async function executeTool(
     return { output: await tool.run(parsed, ctx), isError: false };
   } catch (e) {
     return { output: `${name} failed: ${(e as Error).message}`, isError: true };
+  }
+}
+
+/**
+ * Drop reasoning blocks from the in-memory exchange (prewalk handoff): the
+ * frontier's signed thinking fails signature validation under the swapped model,
+ * so cross-model replay drops reasoning exactly as cross-turn replay does
+ * (toLlmMessages). An assistant message left empty vanishes with its thinking.
+ */
+function stripReasoning(messages: LlmMessage[]): void {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role !== "assistant") continue;
+    m.content = m.content.filter((b) => b.type !== "reasoning");
+    if (m.content.length === 0) messages.splice(i, 1);
   }
 }
 

@@ -1,0 +1,34 @@
+{
+  "name": "explicit-edit-verification",
+  "hypothesis": "Require supervisor to show before-and-after code or explicit change confirmation when making edits. This catches silent failures and wrong fixes before full verification runs waste tokens on broken fixes.",
+  "prediction": "bugfix-statemachine output-mismatch failures drop from 0/3 to 2-3/3; feature-config-priority stays flat (already ~2/3). Net: +1-2 passing tasks.",
+  "parent": "baseline",
+  "mode": "mutate",
+  "changed": [
+    "system.md"
+  ],
+  "ts": 1784641692,
+  "score": {
+    "n": 42,
+    "passes": 36,
+    "pass_rate": 0.8571428571428571,
+    "cost_usd": 1.7639,
+    "cost_per_solved": 0.049,
+    "fail_reasons": {
+      "output-mismatch": 4,
+      "protected-file-modified": 1,
+      "missing-file": 1
+    }
+  },
+  "paired": {
+    "stable_delta": 1,
+    "noisy_delta": 1,
+    "moved": [
+      "fanout-heavy",
+      "feature-config-priority",
+      "feature-pipeline",
+      "migrate-format"
+    ]
+  },
+  "outcome": "refuted"
+}

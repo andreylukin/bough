@@ -151,7 +151,11 @@ export interface RetryOpts {
   baseDelayMs?: number;
 }
 
-const MAX_ATTEMPTS = 4;
+// 6 attempts ≈ 15–31s of jittered backoff (1+2+4+8+16s halved-to-full): long
+// enough to ride out a network-path flap (e.g. a TLS BadRecordMac streak on a
+// bad IPv6 route), short enough that a truly dead network fails the turn in
+// under a minute. The backoff sleep is abort-aware, so Esc still cuts it short.
+const MAX_ATTEMPTS = 6;
 const BASE_DELAY_MS = 1000;
 
 /**

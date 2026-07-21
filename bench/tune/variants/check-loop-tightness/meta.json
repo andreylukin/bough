@@ -1,0 +1,22 @@
+{
+  "name": "check-loop-tightness",
+  "hypothesis": "Models understand checks should run iteratively but misinterpret 'iterate' as occasional verification rather than a tight loop (change\u2192check\u2192change\u2192check). Restructuring to make the loop pattern explicit\u2014'change one thing \u2192 RUN check immediately \u2192 if fail, modify and check again'\u2014forces checking after every single code change instead of batching changes between checks.",
+  "prediction": "Output-mismatch failures decrease from 6 to 3-4; bugfix-statemachine improves from 0/3 (currently completely failing). Explicit loop structure prevents the common pattern of making multiple changes without re-validating.",
+  "parent": "iterative-check-execution",
+  "changed": [
+    "system.md"
+  ],
+  "ts": 1784615871,
+  "score": {
+    "n": 42,
+    "passes": 33,
+    "pass_rate": 0.7857142857142857,
+    "cost_usd": 1.8533,
+    "cost_per_solved": 0.0562,
+    "fail_reasons": {
+      "output-mismatch": 8,
+      "content-check": 1
+    }
+  },
+  "outcome": "refuted"
+}

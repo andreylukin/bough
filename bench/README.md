@@ -1,5 +1,26 @@
 # Harness bench: bough vs Claude Code, same model
 
+## Overnight prompt tuner (bench/tune/)
+
+`bench/tune/tune.py --hours 8 --trials 3` evolves the system prompt against
+this bench, unattended: propose a variant (`claude -p`, contract in
+`tune/proposer.md`) → pre-register its falsifiable prediction (variant
+`meta.json`, then `predictions.jsonl`) → race it (`run.sh -H bough` with
+`BOUGH_PROMPT_DIR` pointing at the variant's section files — no source edits).
+Night-2 loop (each mechanism mapped to a night-1 failure, see tune.py's
+docstring): failed-trial transcripts from the bench DB feed the proposer
+(GEPA-style reflection); challengers screen at n=1 before earning full trials
+(TRIPLE racing); `tune/learnings.md` persists verdicts across campaigns; a
+task-variance ledger downweights coin-flip tasks in the paired promotion rule;
+every 3rd proposal merges two Pareto-frontier variants; and the night's final
+champion must survive an n=6 confirmation vs baseline before the report calls
+it promoted. Guards: +5% growth cap (prompt-dilution lesson), campaign-scoped
+results files (`results/tune-<campaign>.jsonl` — different trial counts never
+pool). Morning after: `bench/tune/report.py`, then adopt a winner by porting
+its section files into `src/supervisor/prompt.ts` and re-verifying with a
+normal sweep. `variants/baseline/` is dumped from the built-ins by
+`tune/dump-prompt.ts`; reseed it after any prompt.ts change.
+
 Fixed-model A/B harness comparison. Both harnesses run **claude-haiku-4-5** —
 a deliberately weak model, because harness gains are largest on weak models
 (AHE, arXiv 2604.25850) — over the same task bank, and an oracle `verify.sh`
