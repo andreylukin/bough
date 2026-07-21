@@ -4,7 +4,8 @@
 // into two columns when even that overflows — Ink's clipping of an overflowing
 // background Box merges rows into garbage, so overflow must never happen.
 import { palette } from "../theme.ts";
-import { Box, Text } from "ink";
+import { Box } from "ink";
+import { Text } from "./Text.tsx";
 import { KEYMAP } from "../keys.ts";
 
 // Key column sized to the longest binding so descriptions always keep a gutter.

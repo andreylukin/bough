@@ -1,6 +1,7 @@
 import { palette } from "../theme.ts";
 import { useEffect, useRef, useState } from "react";
-import { Box, Text } from "ink";
+import { Box } from "ink";
+import { Text } from "./Text.tsx";
 import type { Usage } from "../api.ts";
 import { coldCacheNote, ctxPctLeft, fmtTokens, fmtUsd } from "../format.ts";
 import type { UiMode } from "../keys.ts";

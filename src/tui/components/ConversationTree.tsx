@@ -1,5 +1,6 @@
 import { palette } from "../theme.ts";
-import { Box, Text } from "ink";
+import { Box } from "ink";
+import { Text } from "./Text.tsx";
 import type { Message, Part } from "../../schema/parts.ts";
 import type { WireSection } from "../api.ts";
 import type { TuiSession } from "../store.ts";

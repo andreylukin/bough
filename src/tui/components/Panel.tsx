@@ -1,7 +1,8 @@
 // The tabbed side-panel: net (Claw Patrol feed + policy), mcp (server registry),
 // skills. App owns the data and key handling.
 import { palette, THEME_PRESETS } from "../theme.ts";
-import { Box, Text } from "ink";
+import { Box } from "ink";
+import { Text } from "./Text.tsx";
 import type { NetRequest } from "../../schema/parts.ts";
 import type { McpStatus, NetConfig, NetStatus, SkillInfo, ThemeState } from "../api.ts";
 import { clip, relTime } from "../format.ts";

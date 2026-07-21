@@ -72,7 +72,8 @@ function nextIn(ts: number): string {
   return h < 24 ? `in ${h}h` : `in ${Math.round(h / 24)}d`;
 }
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Box, type DOMElement, measureElement, Text, useApp, useInput, useStdout } from "ink";
+import { Box, type DOMElement, measureElement, useApp, useInput, useStdout } from "ink";
+import { Text } from "./Text.tsx";
 import type { Message, Session } from "../../schema/parts.ts";
 import {
   api,

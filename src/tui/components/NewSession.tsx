@@ -1,5 +1,6 @@
 import { palette } from "../theme.ts";
-import { Box, Text } from "ink";
+import { Box } from "ink";
+import { Text } from "./Text.tsx";
 import type { DirHit } from "../api.ts";
 
 // New-session dialog: fuzzy workspace autocomplete over GET /fs/dirs (the TUI

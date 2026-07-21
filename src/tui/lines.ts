@@ -26,9 +26,16 @@ export interface VLine {
   copy?: string;
 }
 
-const SGR = (n: number | string, s: string) => (COLOR ? `\x1b[${n}m${s}\x1b[0m` : s);
+// Spans close with the attribute-specific reset (39m for fg, 22m for bold) —
+// not a full \x1b[0m: the themed <Text color> wrapping every viewport row
+// re-opens only its own close code (chalk), so a full reset would strip the
+// base text color for the rest of the line.
+const SGR = (n: number | string, s: string) =>
+  COLOR ? `\x1b[${n}m${s}\x1b[${String(n).startsWith("38;") ? "39" : "22"}m` : s;
 const bold = (s: string) => SGR(1, s);
-const dim = (s: string) => SGR(2, s);
+// Secondary text renders palette.muted truecolor, not SGR faint — the dim
+// attribute is emulator-dependent and fails contrast on light profiles.
+const dim = (s: string) => SGR(fgParams(palette.muted), s);
 // Hue helpers read the live theme palette (truecolor) — evaluated per call, so
 // an applied theme recolors rebuilt lines without a restart.
 const green = (s: string) => SGR(fgParams(palette.accent), s);

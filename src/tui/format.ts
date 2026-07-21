@@ -2,7 +2,7 @@
 // rules originally ported from the retired web UI's Conversation view.
 import stringWidth from "string-width";
 import type { Part } from "../schema/parts.ts";
-import { bgParams, palette } from "./theme.ts";
+import { bgParams, fgParams, palette } from "./theme.ts";
 
 export type ToolCall = Extract<Part, { type: "tool_call" }>;
 export type ToolResult = Extract<Part, { type: "tool_result" }>;
@@ -73,9 +73,13 @@ const sgr = (code: string) => (COLOR ? code : "");
 
 const B = sgr("\x1b[1m");
 const B_OFF = sgr("\x1b[22m");
-const DIM = sgr("\x1b[2m");
 const CYAN = sgr("\x1b[36m");
 const FG_OFF = sgr("\x1b[39m");
+// De-emphasized spans render palette.muted truecolor, not SGR faint — the dim
+// attribute is emulator-dependent and fails contrast on light profiles. A
+// function (not a const) so an applied theme recolors freshly-built lines;
+// closes with FG_OFF so the themed <Text color> around the line resumes.
+const dim = (s: string) => (COLOR ? `\x1b[${fgParams(palette.muted)}m${s}${FG_OFF}` : s);
 
 // OSC 8 hyperlink — supporting terminals make the wrapped text clickable, the
 // rest ignore the sequence. Zero-width for wrap-ansi/slice-ansi/strip-ansi
@@ -125,7 +129,7 @@ function mdInline(line: string): string {
       (_m, text, url) =>
         guard(osc8(
           url,
-          text === url ? `${UL}${text}${UL_OFF}` : `${UL}${text}${UL_OFF} ${DIM}(${url})${B_OFF}`,
+          text === url ? `${UL}${text}${UL_OFF}` : `${UL}${text}${UL_OFF} ${dim(`(${url})`)}`,
         )),
     )
     // Bare URLs become clickable as themselves (underlined like rendered links);
@@ -240,7 +244,7 @@ export function highlightCode(line: string, langTag: string): string {
         ? `${MAGENTA}${kw}${FG_OFF}`
         : `${YELLOW}${num}${FG_OFF}`,
   );
-  return styled + (comment ? `${DIM}${comment}${B_OFF}` : "");
+  return styled + (comment ? dim(comment) : "");
 }
 
 /**
@@ -267,17 +271,17 @@ export function md(text: string, codeWidth?: number): string {
       // Fence markers frame the block instead of rendering as raw backticks.
       if (fence === null) {
         fence = open[1];
-        return raise(`${DIM}╭ ${fence || "code"}${B_OFF}`);
+        return raise(dim(`╭ ${fence || "code"}`));
       }
       fence = null;
-      return raise(`${DIM}╰${B_OFF}`);
+      return raise(dim("╰"));
     }
-    if (fence !== null) return raise(`${DIM}│${B_OFF} ${highlightCode(line, fence)}`);
+    if (fence !== null) return raise(`${dim("│")} ${highlightCode(line, fence)}`);
     const h = line.match(/^(#{1,6})\s+(.*)$/);
     if (h) return h[1].length === 1 ? `${B}${UL}${h[2]}${UL_OFF}${B_OFF}` : `${B}${h[2]}${B_OFF}`;
-    if (/^\s*(-{3,}|\*{3,})\s*$/.test(line)) return `${DIM}${"─".repeat(24)}${B_OFF}`;
+    if (/^\s*(-{3,}|\*{3,})\s*$/.test(line)) return dim("─".repeat(24));
     const quoted = line.match(/^>\s?(.*)$/);
-    if (quoted) return `${DIM}│ ${quoted[1]}${B_OFF}`;
+    if (quoted) return dim(`│ ${quoted[1]}`);
     return mdInline(line.replace(/^(\s*)- /, "$1• "));
   }).join("\n");
 }

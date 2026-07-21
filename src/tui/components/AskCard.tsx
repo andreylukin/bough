@@ -1,5 +1,6 @@
 import { palette } from "../theme.ts";
-import { Box, Text } from "ink";
+import { Box } from "ink";
+import { Text } from "./Text.tsx";
 import type { AskQuestion } from "../../schema/parts.ts";
 import { ASK_OPTIONS_HINT, ASK_TYPING_BACK_HINT, ASK_TYPING_HINT } from "../keys.ts";
 
