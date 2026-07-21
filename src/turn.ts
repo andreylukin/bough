@@ -83,7 +83,7 @@ import { publishArtifact } from "./server/artifacts.ts";
 import { recall as recallSearch } from "./recall.ts";
 import { expireAsks, raiseAsk } from "./asks.ts";
 import { scheduleVerb } from "./schedules.ts";
-import { originRepo as shadowOrigin, shipToOrigin } from "./vcs/shadow.ts";
+import { awaitHydration, originRepo as shadowOrigin, shipToOrigin } from "./vcs/shadow.ts";
 
 export interface TurnCtx {
   db: Db;
@@ -905,6 +905,12 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     // (toolChoice "none"), which reliably yields plain text where a second nudge
     // would just get another empty-thinking + stop.
     let forceText = false;
+    // Runtime artifacts (node_modules, venvs) hydrate in the background while the
+    // model streams its first response (shadow.ts). Block once, at the first tool,
+    // so nothing executes against a half-populated worktree — by then the LLM
+    // round has usually already overlapped the copy. A no-op on resume turns and
+    // non-sandboxed sessions (no hydration was ever registered for prepared.cwd).
+    let hydrationGated = false;
     const saidSomething = () => parts.some((p) => p.type === "text");
     for (let round = 0;; round++) {
       if (signal?.aborted) throw new InterruptedError();
@@ -1000,6 +1006,10 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
         (b) => b.type === "tool_use" && b.name !== STOP_NAME,
       );
       if (toolUses.length > 0) {
+        if (!hydrationGated) {
+          hydrationGated = true;
+          await awaitHydration(prepared.cwd);
+        }
         ranTools = true;
         const toolResults: LlmContentBlock[] = [];
         let doneAccepted = false;

@@ -243,6 +243,8 @@ Deno.test("hydrate: gitignored runtime artifacts clone into the worktree", async
     await Deno.writeTextFile(`${repo}/web/app.ts`, "app\n"); // tracked sibling
     await Deno.writeTextFile(`${repo}/.env`, "SECRET=1\n");
     const dir = await shadow.createSessionWorkspace(repo, "h1");
+    // Hydration is backgrounded now — the turn awaits it before the first tool.
+    await shadow.awaitHydration(dir);
     assertEquals(await Deno.readTextFile(`${dir}/node_modules/pkg/index.js`), "dep\n");
     assertEquals(await Deno.readTextFile(`${dir}/web/node_modules/wpkg/index.js`), "webdep\n");
     assertEquals(await Deno.readTextFile(`${dir}/.env`), "SECRET=1\n");

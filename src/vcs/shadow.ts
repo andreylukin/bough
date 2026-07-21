@@ -356,7 +356,7 @@ export async function createSessionWorkspace(origin: string, sessionId: string):
     await git(store, ["update-ref", refFor(sessionId), base]);
     await Deno.mkdir(workspacesRoot(), { recursive: true });
     await git(store, ["worktree", "add", "--detach", dir, base]);
-    await hydrate(origin, dir);
+    startHydration(origin, dir);
     return dir;
   });
 }
@@ -398,7 +398,7 @@ export async function addWorkspace(
     await git(store, ["update-ref", refFor(sessionId), tip]);
     await Deno.mkdir(workspacesRoot(), { recursive: true });
     await git(store, ["worktree", "add", "--detach", dir, tip]);
-    await hydrate(fromDir, dir); // the parent's runtime artifacts, already hydrated once
+    startHydration(fromDir, dir); // the parent's runtime artifacts, already hydrated once
     return dir;
   });
 }
@@ -434,6 +434,31 @@ const HYDRATE_CANDIDATES = [
  * cross-volume) skips that artifact — the session still starts; the agent can
  * reinstall deps itself.
  */
+/**
+ * Runtime-artifact hydration runs in the BACKGROUND: the worktree itself is
+ * ready in ~0.1s (git checkout), but cloning node_modules et al. takes ~1-2s
+ * (many small inodes, even with clonefile). Starting it detached lets the turn's
+ * first LLM round overlap the copy; `awaitHydration()` gates the turn's first
+ * tool on completion so code never runs against a half-populated tree. Keyed by
+ * worktree dir. hydrate() swallows its own errors, so this promise never rejects.
+ */
+const hydrations = new Map<string, Promise<void>>();
+
+function startHydration(source: string, dir: string): void {
+  hydrations.set(dir, hydrate(source, dir));
+}
+
+/** Await (and forget) a worktree's background hydration, if one is in flight. */
+export async function awaitHydration(dir: string): Promise<void> {
+  const p = hydrations.get(dir);
+  if (!p) return;
+  try {
+    await p;
+  } finally {
+    hydrations.delete(dir);
+  }
+}
+
 async function hydrate(source: string, dir: string): Promise<void> {
   const targets: string[] = [...HYDRATE_CANDIDATES];
   // One level deep: <subdir>/node_modules (e.g. web/node_modules).
