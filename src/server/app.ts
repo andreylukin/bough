@@ -104,7 +104,7 @@ import type { LlmClient } from "../supervisor/llm.ts";
 import { applyChanges, revertChanges, sessionChanges } from "./changes.ts";
 import { ChangesApplyBody, ChangesRevertBody } from "../schema/changes.ts";
 import { clearTheme, loadTheme, saveTheme, Theme, THEME_DEFAULTS, THEME_TOKENS } from "./theme.ts";
-import { KeysBody, keyStatus, persistEnvVar, setKey } from "./keys.ts";
+import { deleteKey, KeyDeleteBody, KeysBody, keyStatus, persistEnvVar, setKey } from "./keys.ts";
 import {
   ensureOpenAIModels,
   mergeModels,
@@ -200,6 +200,13 @@ const putKeys: Handler = async (req) => {
   const keys = setKey(body.provider, body.key);
   if (body.provider === "openai") await refreshOpenAIModels();
   return json({ ok: true, keys });
+};
+
+// Remove a provider's API key: from the live process env and from ~/.bough/env,
+// so the deletion also survives a restart. Returns the refreshed booleans.
+const deleteKeys: Handler = async (req) => {
+  const body = await parseBody(req, KeyDeleteBody);
+  return json({ ok: true, keys: deleteKey(body.provider) });
 };
 
 // Recall: semantic search over the whole session forest via the LOCAL embedder
@@ -1198,6 +1205,7 @@ const routes: Route[] = [
   { method: "GET", pattern: new URLPattern({ pathname: "/config" }), handler: getConfig },
   { method: "PATCH", pattern: new URLPattern({ pathname: "/config" }), handler: patchConfig },
   { method: "PUT", pattern: new URLPattern({ pathname: "/config/keys" }), handler: putKeys },
+  { method: "DELETE", pattern: new URLPattern({ pathname: "/config/keys" }), handler: deleteKeys },
   { method: "GET", pattern: new URLPattern({ pathname: "/skills" }), handler: getSkills },
   { method: "GET", pattern: new URLPattern({ pathname: "/theme" }), handler: getTheme },
   { method: "PUT", pattern: new URLPattern({ pathname: "/theme" }), handler: putTheme },

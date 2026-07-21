@@ -151,9 +151,9 @@ function McpTab(
 /** Swatch tokens shown per preset row, in order: surfaces, accent, text. */
 const SWATCH_TOKENS = ["bg", "panel", "panelInset", "green", "text"];
 
-// The theme tab auto-applies: moving the cursor IS the action (App PUTs the
-// hovered preset and the whole TUI recolors live), so rows carry no extra
-// "enter to apply" affordance.
+// The theme tab previews live: moving the cursor PUTs the hovered preset and
+// the whole TUI recolors. Enter keeps it; Escape restores the theme held on
+// tab entry (App reverts), so browsing never commits.
 function ThemeTab(
   { state, selected }: { state: ThemeState | null; selected: number },
 ) {
@@ -164,7 +164,7 @@ function ThemeTab(
     <Box flexDirection="column">
       <Text dimColor>
         current: {currentName}
-        {isPreset ? "" : " (custom)"} — ↑↓ applies live
+        {isPreset ? "" : " (custom)"} — ↑↓ preview · enter keep · esc revert
       </Text>
       {THEME_PRESETS.map((p, i) => {
         // The row's own resolved colors — distinct from the live TUI `palette`.

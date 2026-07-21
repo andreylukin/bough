@@ -96,7 +96,7 @@ export function ModelPicker(
                 ? (
                   <Text dimColor>
                     {"  "}
-                    {active ? "set · enter replaces" : "not set · enter adds"}
+                    {active ? "set · enter replaces · d deletes" : "not set · enter adds"}
                   </Text>
                 )
                 : <Text dimColor>{"  "}{e.id}</Text>}
