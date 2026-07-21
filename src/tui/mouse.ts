@@ -29,8 +29,19 @@ export function onPaste(h: PasteHandler | null) {
   pasteHandler = h;
 }
 
+/** Physical Home/End keys: ink's parser drops their sequences, so they're
+ * decoded here (all three encodings terminals use) and dispatched like paste. */
+type NavKeyHandler = (k: "home" | "end") => void;
+let navKeyHandler: NavKeyHandler | null = null;
+export function onNavKey(h: NavKeyHandler | null) {
+  navKeyHandler = h;
+}
+
 // deno-lint-ignore no-control-regex -- ESC is the point: SGR mouse sequences
 const SGR = /\x1b\[<(\d+);(\d+);(\d+)([Mm])/g;
+// Home = \x1b[H | \x1bOH | \x1b[1~ · End = \x1b[F | \x1bOF | \x1b[4~
+// deno-lint-ignore no-control-regex -- ESC is the point
+const NAV_KEY = /\x1b(?:\[(?:[HF]|[14]~)|O[HF])/g;
 const PASTE_START = "\x1b[200~";
 const PASTE_END = "\x1b[201~";
 // A trailing fragment that could grow into one of our sequences next chunk.
@@ -58,6 +69,10 @@ function dispatchReports(s: string): string {
     })
     .replace(BG_REPORT, (_all, spec) => {
       reportTermBg(spec);
+      return "";
+    })
+    .replace(NAV_KEY, (m) => {
+      navKeyHandler?.(m.includes("H") || m.includes("1") ? "home" : "end");
       return "";
     });
 }
