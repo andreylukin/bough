@@ -304,6 +304,21 @@ Deno.test("GET /sessions marks a session busy while a turn is pending", async ()
   c.db.close();
 });
 
+Deno.test("GET /sessions carries per-row costUsd when priced usage exists (omitted at zero)", async () => {
+  const c = ctx();
+  const h = createHandler(c);
+  const spent = await (await h(req("POST", "/sessions", { title: "s" }))).json() as Session;
+  const fresh = await (await h(req("POST", "/sessions", { title: "f" }))).json() as Session;
+  c.db.setSessionUsage(spent.id, 100, 50, 200, 0.0123);
+
+  const rows = await (await h(req("GET", "/sessions"))).json() as (Session & {
+    costUsd?: number;
+  })[];
+  assertEquals(rows.find((r) => r.id === spent.id)?.costUsd, 0.0123);
+  assertEquals(rows.find((r) => r.id === fresh.id)?.costUsd, undefined);
+  c.db.close();
+});
+
 Deno.test("GET /sessions/:id returns session + thread-through-parents; 404 unknown", async () => {
   const c = ctx();
   const h = createHandler(c);

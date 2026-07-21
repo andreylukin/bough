@@ -5,7 +5,7 @@ import type { Message, Part } from "../../schema/parts.ts";
 import type { WireSection } from "../api.ts";
 import type { TuiSession } from "../store.ts";
 import { SelRow } from "./SelRow.tsx";
-import { clip, toolSummary } from "../format.ts";
+import { clip, fmtUsd, toolSummary } from "../format.ts";
 import { parseSubagentNote } from "../lines.ts";
 
 // The conversation as a branchable tree (pi's /tree model). Each user turn is a
@@ -246,8 +246,13 @@ export function ConversationTree(
           const s = it.session;
           const dep = !!s.deprecatedAt;
           const mark = subagentMark(s);
+          // `right` pins per-branch spend to the row's right edge, when priced.
           return (
-            <SelRow key={`b-${s.id}`} sel={sel}>
+            <SelRow
+              key={`b-${s.id}`}
+              sel={sel}
+              right={s.costUsd ? fmtUsd(s.costUsd) : undefined}
+            >
               {gutter}{"   "}
               <Text
                 color={s.kind === "subagent" && !sel ? palette.accent : undefined}

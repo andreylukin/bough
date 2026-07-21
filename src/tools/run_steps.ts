@@ -13,7 +13,7 @@
  */
 import { z } from "zod/v4";
 import type { ToolDef, ToolRunCtx } from "./types.ts";
-import { bash } from "./bash.ts";
+import { bash, inflightForegroundOutput } from "./bash.ts";
 import * as bg from "./bash_bg.ts";
 import { readFile } from "./read_file.ts";
 import { writeFile } from "./write_file.ts";
@@ -203,7 +203,16 @@ export const runSteps: ToolDef = {
     // Oversized printed output is digested (head + local-worker summary + tail)
     // before it reaches the model; the program itself always saw the full text.
     if (result.logs.length) out.push(await digestOutput(result.logs.join("\n")));
-    if (!result.ok) out.push(`[program error] ${result.error}`);
+    if (!result.ok) {
+      // An interrupt terminates the worker mid-host-call, so a foreground bash's
+      // result never comes back — surface what it had already printed instead of
+      // discarding it under the bare interrupt marker.
+      if (ctx.signal?.aborted) {
+        const partial = inflightForegroundOutput(ctx.sessionId);
+        if (partial) out.push(partial);
+      }
+      out.push(`[program error] ${result.error}`);
+    }
 
     if (done) {
       const committed = ctx.turn?.check ?? check;

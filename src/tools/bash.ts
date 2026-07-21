@@ -73,6 +73,28 @@ export async function shellInvocation(
   return { argv, env: Object.keys(env).length ? env : undefined };
 }
 
+/**
+ * Foreground shells currently inside bash.run, by session. An interrupt terminates
+ * the program's worker before the host call can return, so output the command
+ * already produced would vanish with it — run_steps reads these buffers at
+ * interrupt time and attaches them to the tool record instead.
+ */
+const inflight = new Map<string, Set<{ command: string; buf: string }>>();
+
+/** Partial output of this session's in-flight foreground bash calls (one block per
+ * command), or null when there is none. Read-only; the buffers keep filling. */
+export function inflightForegroundOutput(sessionId: string | undefined): string | null {
+  const set = inflight.get(sessionId ?? "(no-session)");
+  if (!set?.size) return null;
+  const blocks = [...set]
+    .filter((sh) => sh.buf.trim().length > 0)
+    .map((sh) =>
+      `[interrupted] bash "${sh.command.slice(0, 60)}" — output before the interrupt:\n` +
+      sh.buf.trimEnd()
+    );
+  return blocks.length ? blocks.join("\n") : null;
+}
+
 export const bash: ToolDef = {
   name: "bash",
   description:
@@ -95,33 +117,41 @@ export const bash: ToolDef = {
       signal: ctx.signal,
     }).spawn();
     const sh = newShell(command, child);
-
-    const soft = bgAfterMs();
-    const first = await raceExit(sh, soft);
-    if (first === "exit") {
-      await sh.pumps;
-      if (ctx.signal?.aborted) throw new Error("command killed: turn interrupted");
-      return formatFinal(sh);
-    }
-    // Still running at the threshold — stopped mid-wait dies like any interrupt.
-    if (ctx.signal?.aborted) throw new Error("command killed: turn interrupted");
-    // Hand the running child to the background registry (auto-background). The
-    // program continues; the model reads it via bashOutput/bashWait and is notified
-    // when it exits — it no longer waits (or writes a poll loop) for a long command.
-    const id = promote(ctx, sh);
-    if (id) return backgroundNote(sh, id, soft);
-    // Registry full — fall back to blocking up to the hard cap, then kill.
-    const hard = (timeout_ms ?? 120_000) - soft;
-    if ((await raceExit(sh, Math.max(0, hard))) === "exit") {
-      await sh.pumps;
-      if (ctx.signal?.aborted) throw new Error("command killed: turn interrupted");
-      return formatFinal(sh);
-    }
+    const key = ctx.sessionId ?? "(no-session)";
+    let fg = inflight.get(key);
+    if (!fg) inflight.set(key, fg = new Set());
+    fg.add(sh);
     try {
-      child.kill("SIGKILL");
-    } catch { /* raced a natural exit */ }
-    return `command killed after ${(timeout_ms ?? 120_000) / 1000}s ` +
-      `(background registry full, could not detach)`;
+      const soft = bgAfterMs();
+      const first = await raceExit(sh, soft);
+      if (first === "exit") {
+        await sh.pumps;
+        if (ctx.signal?.aborted) throw new Error("command killed: turn interrupted");
+        return formatFinal(sh);
+      }
+      // Still running at the threshold — stopped mid-wait dies like any interrupt.
+      if (ctx.signal?.aborted) throw new Error("command killed: turn interrupted");
+      // Hand the running child to the background registry (auto-background). The
+      // program continues; the model reads it via bashOutput/bashWait and is notified
+      // when it exits — it no longer waits (or writes a poll loop) for a long command.
+      const id = promote(ctx, sh);
+      if (id) return backgroundNote(sh, id, soft);
+      // Registry full — fall back to blocking up to the hard cap, then kill.
+      const hard = (timeout_ms ?? 120_000) - soft;
+      if ((await raceExit(sh, Math.max(0, hard))) === "exit") {
+        await sh.pumps;
+        if (ctx.signal?.aborted) throw new Error("command killed: turn interrupted");
+        return formatFinal(sh);
+      }
+      try {
+        child.kill("SIGKILL");
+      } catch { /* raced a natural exit */ }
+      return `command killed after ${(timeout_ms ?? 120_000) / 1000}s ` +
+        `(background registry full, could not detach)`;
+    } finally {
+      fg.delete(sh);
+      if (fg.size === 0) inflight.delete(key);
+    }
   },
 };
 

@@ -333,11 +333,16 @@ const listSessions: Handler = (_req, ctx) => {
   const busy = ctx.db.busySessionIds();
   const statuses = ctx.db.latestTurnStatuses();
   return json(
-    ctx.db.listSessions().map((s) => ({
-      ...s,
-      busy: busy.has(s.id),
-      ...(statuses.has(s.id) ? { lastTurnStatus: statuses.get(s.id) } : {}),
-    })),
+    ctx.db.listSessions().map((s) => {
+      // Per-row spend (own turns only) — the tree views' cost column.
+      const { costUsd } = ctx.db.sessionUsage(s.id);
+      return {
+        ...s,
+        busy: busy.has(s.id),
+        ...(statuses.has(s.id) ? { lastTurnStatus: statuses.get(s.id) } : {}),
+        ...(costUsd > 0 ? { costUsd } : {}),
+      };
+    }),
   );
 };
 

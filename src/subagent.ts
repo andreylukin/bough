@@ -150,6 +150,22 @@ const detached = new Map<string, {
   claimed: boolean;
 }>();
 
+/**
+ * Spawn-time label: the task's first line, word-truncated to ~40 chars. During a
+ * parallel fan-out every card would otherwise read "untitled" until the title
+ * worker backfills — the stub makes siblings tellable apart immediately, and it
+ * doubles as the placeholder the worker's content-derived name replaces.
+ */
+export function taskStubTitle(task: string): string {
+  const line = task.trim().split("\n")[0]?.replace(/\s+/g, " ").trim() ?? "";
+  if (!line) return UNTITLED;
+  if (line.length <= 40) return line;
+  const cut = line.slice(0, 40);
+  const at = cut.lastIndexOf(" ");
+  // Cut at the last word boundary unless that throws away most of the budget.
+  return `${(at > 20 ? cut.slice(0, at) : cut).trimEnd()}…`;
+}
+
 async function pathExists(p: string): Promise<boolean> {
   try {
     await Deno.stat(p);
@@ -253,11 +269,12 @@ async function launch(
     (await pathExists(joinPath(explicit!, ".git")) ||
       await pathExists(joinPath(explicit!, ".jj")));
 
+  const stub = taskStubTitle(task);
   const seeder = openBranch({ db, bus }, {
     parentId: null, // fresh context: the task text is the subagent's whole briefing
-    // The placeholder: the title worker names the branch from the task below. A raw
-    // task prefix made parallel subagents indistinguishable (all sharing boilerplate).
-    title: UNTITLED,
+    // Immediate task-derived stub, so parallel spawns never all read "untitled";
+    // the title worker names the branch properly from the task below.
+    title: stub,
     kind: "subagent",
     workspace: explicit ?? null,
     originDir: db.getSession(spawn.spawnerId)?.originDir ?? null,
@@ -291,8 +308,9 @@ async function launch(
   }
 
   seeder.add("user", [{ type: "text", text: task }]);
-  // Fire-and-forget: name the branch from its task (same worker path as sessions).
-  maybeAutoTitle({ db, bus, titler: ctx.titler }, session.id, task);
+  // Fire-and-forget: name the branch from its task (same worker path as sessions);
+  // the stub is the placeholder it replaces.
+  maybeAutoTitle({ db, bus, titler: ctx.titler }, session.id, task, stub);
   const { message, done } = beginTurn({ ...ctx, model: spawn.model ?? ctx.model }, session.id);
 
   const timer = setTimeout(() => interruptTurn(session.id), turnTimeoutMs());

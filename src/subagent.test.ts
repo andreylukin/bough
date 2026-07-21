@@ -12,6 +12,7 @@ import type { Message, Session } from "./schema/parts.ts";
 import type { LlmClient, LlmParams, LlmResult } from "./supervisor/llm.ts";
 import { defaultTools } from "./tools/mod.ts";
 import { beginTurn, interruptTurn, startUserTurn, type TurnCtx } from "./turn.ts";
+import { taskStubTitle } from "./subagent.ts";
 import * as shadow from "./vcs/shadow.ts";
 import { saveRegistry, setActivation } from "./mcp/config.ts";
 import { mcpManager } from "./mcp/manager.ts";
@@ -1228,4 +1229,21 @@ Deno.test("D1 orphan recovery: a subagent stranded by a restart surfaces in the 
   assertStringIncludes(text, "[subagent finished]");
   assertStringIncludes(text, "ORPHANED");
   assertStringIncludes(text, subId);
+});
+
+// ---- spawn-time title stub -------------------------------------------------
+
+Deno.test("taskStubTitle: short task passes through, long task word-truncates to ~40 chars", () => {
+  assertEquals(taskStubTitle("Fix the login bug"), "Fix the login bug");
+  // First line only, whitespace collapsed.
+  assertEquals(taskStubTitle("  Fix   the\tlogin bug\nwith lots of detail"), "Fix the login bug");
+  // Word-truncated: cut lands at the last word boundary inside 40 chars.
+  const stub = taskStubTitle(
+    "Refactor the authentication middleware to support refresh tokens",
+  );
+  assertEquals(stub, "Refactor the authentication middleware…");
+  // A single unbroken word keeps the hard cut instead of collapsing to nothing.
+  assertEquals(taskStubTitle("x".repeat(60)), "x".repeat(40) + "…");
+  // Empty/whitespace tasks fall back to the untitled placeholder.
+  assertEquals(taskStubTitle("   \n  "), "untitled");
 });

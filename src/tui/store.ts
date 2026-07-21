@@ -22,6 +22,8 @@ export type TuiSession = Session & {
   busy?: boolean;
   unseen?: boolean;
   lastTurnStatus?: "done" | "error" | "interrupted" | "orphaned";
+  /** Own cumulative spend (server-priced) — the tree views' per-row cost column. */
+  costUsd?: number;
 };
 
 export interface Store {
@@ -155,11 +157,14 @@ export function useStore(initialSessions: Session[]): Store {
         // persisted schema type) — read it via a cast and prefer it over memory.
         const serverStatus = (n as { lastTurnStatus?: TuiSession["lastTurnStatus"] })
           .lastTurnStatus;
+        // costUsd is a runtime augmentation too (usage column, not the schema).
+        const serverCost = (n as { costUsd?: number }).costUsd;
         return {
           ...n,
           busy: old?.busy,
           unseen: old?.unseen,
           lastTurnStatus: serverStatus ?? old?.lastTurnStatus,
+          costUsd: serverCost ?? old?.costUsd,
         };
       })
     );
@@ -488,7 +493,13 @@ export function useStore(initialSessions: Session[]): Store {
         setSessions((prev) =>
           prev.map((p) =>
             p.id === s.id
-              ? { ...s, busy: p.busy, unseen: p.unseen, lastTurnStatus: p.lastTurnStatus }
+              ? {
+                ...s,
+                busy: p.busy,
+                unseen: p.unseen,
+                lastTurnStatus: p.lastTurnStatus,
+                costUsd: p.costUsd,
+              }
               : p
           )
         );
@@ -609,6 +620,13 @@ export function useStore(initialSessions: Session[]): Store {
       case "usage.updated": {
         const u = ev.data as { sessionId: string } & Usage;
         if (u.sessionId === currentRef.current) setUsage(u);
+        // Keep the per-row cost live too — subagent rows in the trees move with
+        // their own spend during a fan-out, not only on the next full reload.
+        if (u.costUsd !== undefined) {
+          setSessions((prev) =>
+            prev.map((s) => (s.id === u.sessionId ? { ...s, costUsd: u.costUsd } : s))
+          );
+        }
         break;
       }
       case "job.spawned":

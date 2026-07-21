@@ -532,3 +532,41 @@ Deno.test("bg job cards: a running shell looks alive (marker + tail), a killed o
   // A natural exit renders no card — its completion note is already in the thread.
   assertEquals(joined.includes("bg_3"), false);
 });
+Deno.test("a user message steered into a running turn carries a queued ack; it clears once a reply follows", () => {
+  const msg = (id: string, role: string, text: string, pending = false) =>
+    ({ id, sessionId: "s", role, parts: [{ type: "text", text }], pending }) as unknown as Message;
+  const ACK = "queued — the agent will see this after the current step";
+  // Mid-flight: the reply is pending and the user message landed after it.
+  const midFlight = buildLines(
+    [msg("u1", "user", "go"), msg("a1", "supervisor", "working", true), msg("u2", "user", "also do X")],
+    {},
+    () => false,
+    () => false,
+    100,
+  ).map((l) => l.text).join("\n");
+  assertStringIncludes(midFlight, ACK);
+  // Once the follow-up turn starts, its reply follows the message — no ack.
+  const drained = buildLines(
+    [
+      msg("u1", "user", "go"),
+      msg("a1", "supervisor", "done"),
+      msg("u2", "user", "also do X"),
+      msg("a2", "supervisor", "on it", true),
+    ],
+    {},
+    () => false,
+    () => false,
+    100,
+  ).map((l) => l.text).join("\n");
+  assertEquals(drained.includes(ACK), false);
+  // A user message before the pending reply (the turn's own prompt) gets no ack.
+  const normal = buildLines(
+    [msg("u1", "user", "go"), msg("a1", "supervisor", "working", true)],
+    {},
+    () => false,
+    () => false,
+    100,
+  ).map((l) => l.text).join("\n");
+  assertEquals(normal.includes(ACK), false);
+});
+

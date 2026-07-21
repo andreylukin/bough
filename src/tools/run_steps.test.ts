@@ -1,5 +1,6 @@
 import { assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
 import { DONE_ACCEPTED, DONE_REJECTED, runSteps } from "./run_steps.ts";
+import { inflightForegroundOutput } from "./bash.ts";
 import type { ToolRunCtx } from "./types.ts";
 
 function ctx(): ToolRunCtx {
@@ -337,4 +338,23 @@ Deno.test("a declined ask() rejects inside the program as a catchable error", as
   );
   assertStringIncludes(out, "caught: user declined to answer: Proceed?");
   assertStringIncludes(out, "still running");
+});
+
+Deno.test("interrupted foreground bash: pre-interrupt output survives on the tool record", async () => {
+  const ac = new AbortController();
+  const c: ToolRunCtx = { ...ctx(), sessionId: "s-interrupt", signal: ac.signal };
+  const running = runSteps.run(
+    { code: `await bash("echo before-interrupt; sleep 30");` },
+    c,
+  );
+  // Wait until the command's early output has been captured, then interrupt.
+  for (let i = 0; i < 100; i++) {
+    if (inflightForegroundOutput("s-interrupt")?.includes("before-interrupt")) break;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  ac.abort();
+  const out = await running;
+  assertStringIncludes(out, "[program error] program interrupted by the user");
+  assertStringIncludes(out, "before-interrupt");
+  assertStringIncludes(out, "[interrupted] bash");
 });
