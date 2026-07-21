@@ -137,7 +137,7 @@ export function StatusBar(
         <Box minWidth={4} flexShrink={1}>
           <Box flexShrink={0}>
             <Text>
-              <Text color={connected ? palette.accent : palette.error}>{connected ? "â" : "â"}</Text>
+              <Text color={connected ? palette.accent : palette.error}>{connected ? "●" : "○"}</Text>
               {down
                 ? (
                   <Text color={down.urgent ? palette.error : undefined} dimColor={!down.urgent}>
@@ -149,7 +149,7 @@ export function StatusBar(
             </Text>
           </Box>
           {
-            /* Inside a subagent the title is a breadcrumb â â parent âº â sub â so
+            /* Inside a subagent the title is a breadcrumb — ● parent › ◆ sub — so
             the thread visibly hangs under its spawner. The parent crumb shrinks
             first (higher flexShrink) so the subagent title survives narrow widths. */
           }
@@ -167,7 +167,7 @@ export function StatusBar(
             : null}
           <Box flexShrink={1} minWidth={0}>
             <Text wrap="truncate">
-              {/* Location cue, not a success mark â info blue, distinct from a done card's accent ◆. */}
+              {/* Location cue, not a success mark — info blue, distinct from a done card's accent ◆. */}
               {isSub ? <Text color={palette.info}>{" "}◆</Text> : null}
               {session
                 ? (
