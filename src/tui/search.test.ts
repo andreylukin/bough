@@ -1,6 +1,7 @@
 import { assertEquals } from "jsr:@std/assert@1";
 import stripAnsi from "strip-ansi";
 import { findMatches, markLine, markSpan } from "./search.ts";
+import { fgParams, palette } from "./theme.ts";
 
 Deno.test("findMatches: case-insensitive, across styled lines, multiple per line", () => {
   const lines = [
@@ -26,16 +27,16 @@ Deno.test("markSpan: current match is inverse and colorless", () => {
   assertEquals(stripAnsi(marked), "say hello there");
 });
 
-Deno.test("markSpan: other matches underline, keeping their colors", () => {
+Deno.test("markSpan: other matches underline in warn, own colors dropped", () => {
   const marked = markSpan("say \x1b[36mhello\x1b[39m there", 4, 9, false);
-  assertEquals(marked.includes("\x1b[4m"), true);
-  assertEquals(marked.includes("\x1b[36m"), true);
+  assertEquals(marked.includes(`\x1b[4;${fgParams(palette.warn)}mhello\x1b[24;39m`), true);
   assertEquals(stripAnsi(marked), "say hello there");
 });
 
 Deno.test("markLine: marks every span on the line, current one inverse", () => {
   const matches = findMatches([{ text: "foo bar foo" }], "foo");
   const marked = markLine("foo bar foo", matches, 0, 1);
-  // First foo underlined, second (current) inverse; text unchanged when stripped.
-  assertEquals(marked, "\x1b[4mfoo\x1b[24m bar \x1b[7mfoo\x1b[27m");
+  // First foo warn-underlined, second (current) inverse; text unchanged when stripped.
+  const warn = fgParams(palette.warn);
+  assertEquals(marked, `\x1b[4;${warn}mfoo\x1b[24;39m bar \x1b[7mfoo\x1b[27m`);
 });

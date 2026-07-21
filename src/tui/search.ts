@@ -3,6 +3,7 @@
 // SGR line by display column (same slice-ansi discipline as selection.ts).
 import sliceAnsi from "slice-ansi";
 import stripAnsi from "strip-ansi";
+import { fgParams, palette } from "./theme.ts";
 
 export interface SearchMatch {
   /** Index into the lines array. */
@@ -30,16 +31,20 @@ export function findMatches(lines: { text: string }[], query: string): SearchMat
 
 /**
  * `text` with one match span re-styled: the current match reads inverse (a
- * solid band, own colors dropped), other matches underline in place. Spans on
- * one line must be marked right-to-left so earlier columns stay valid — the
- * inserted codes are zero-width but sliceAnsi's slicing is cheapest unshifted.
+ * solid band, own colors dropped), other matches underline in warn-amber (own
+ * colors dropped too — a bare underline on default fg was near-invisible, so
+ * the non-current hits read as a colored trail). Spans on one line must be
+ * marked right-to-left so earlier columns stay valid — the inserted codes are
+ * zero-width but sliceAnsi's slicing is cheapest unshifted.
  */
 export function markSpan(text: string, from: number, to: number, current: boolean): string {
   const before = sliceAnsi(text, 0, from);
   const midRaw = sliceAnsi(text, from, to);
   if (!stripAnsi(midRaw)) return text;
   const after = sliceAnsi(text, to);
-  const mid = current ? `\x1b[7m${stripAnsi(midRaw)}\x1b[27m` : `\x1b[4m${midRaw}\x1b[24m`;
+  const mid = current
+    ? `\x1b[7m${stripAnsi(midRaw)}\x1b[27m`
+    : `\x1b[4;${fgParams(palette.warn)}m${stripAnsi(midRaw)}\x1b[24;39m`;
   return `${before}${mid}${after}`;
 }
 
