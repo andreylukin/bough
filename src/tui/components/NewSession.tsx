@@ -18,7 +18,7 @@ export function NewSession(
     >
       <Text bold>new session</Text>
       <Text>
-        <Text dimColor>{"workspace: "}</Text>
+        <Text dimColor>{"project folder: "}</Text>
         {query}
         <Text inverse>{" "}</Text>
       </Text>
@@ -28,15 +28,19 @@ export function NewSession(
           {h.display}
         </Text>
       ))}
-      {hits.length === 0 && (
-        <Text dimColor>
-          {query.trim() === ""
-            ? "enter creates without a workspace (runs in the server cwd)"
-            : "no matches — clear the query to create without a workspace"}
-        </Text>
-      )}
+      {hits.length === 0 && (query.trim() === ""
+        ? <Text dimColor>enter creates without a project folder (runs in the server cwd)</Text>
+        : (
+          <Text color={palette.warn}>
+            no matching folder — enter does nothing; clear the query to create without one
+          </Text>
+        ))}
+      <Text dimColor>◆ git repo · ◇ plain folder</Text>
       {/* The status bar no longer carries per-mode hints — the modal owns its keys. */}
-      <Text dimColor>↑↓ pick · enter create · esc back</Text>
+      {/* "enter create" would lie while a no-match query makes enter inert. */}
+      {hits.length === 0 && query.trim() !== ""
+        ? <Text dimColor>↑↓ pick · esc back</Text>
+        : <Text dimColor>↑↓ pick · enter create · esc back</Text>}
     </Box>
   );
 }

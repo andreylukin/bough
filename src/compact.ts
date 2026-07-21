@@ -165,6 +165,7 @@ export async function compact(
     parentId: session.parentId,
     title: `compacted · ${picked.length} turns`,
     kind: "compaction",
+    originDir: session.originDir ?? null,
     originId: session.id, // lineage: the compacted session…
     originMessageId: own[picked[picked.length - 1].idx].id, // …and the last picked message
   });

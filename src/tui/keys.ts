@@ -63,7 +63,7 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
     keys: [["enter", "set model/effort · edit API keys"]],
   },
   {
-    section: "net · mcp · theme tabs",
+    section: "net · mcp · skills · theme tabs",
     keys: [
       ["g / y", "net: feed scope · yolo mode"],
       ["c e r a", "mcp: connect · enable · restart · auth"],

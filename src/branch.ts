@@ -102,6 +102,8 @@ export interface BranchSpec {
   kind: SessionKind;
   /** Inherited onto the branch when set (fork carries the origin's workspace). */
   workspace?: string | null;
+  /** The project dir the lineage is for (inherited; see Session.originDir). */
+  originDir?: string | null;
   /** Lineage: the session this branch came from (fork source / compacted session). */
   originId?: string | null;
   /** Lineage: the at-message (fork) / span-end message (compaction). */
@@ -119,6 +121,7 @@ export function openBranch(ctx: BranchCtx, spec: BranchSpec): Seeder {
     // Absent when unset, so responses/events stay byte-identical (toSession only
     // surfaces these when non-null).
     ...(spec.workspace ? { workspace: spec.workspace } : {}),
+    ...(spec.originDir ? { originDir: spec.originDir } : {}),
     ...(spec.originId ? { originId: spec.originId } : {}),
     ...(spec.originMessageId ? { originMessageId: spec.originMessageId } : {}),
   };

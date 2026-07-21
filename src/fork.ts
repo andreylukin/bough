@@ -89,6 +89,7 @@ export function fork(ctx: TurnCtx, sessionId: string, body: ForkBody): ForkResul
     title: `fork · ${excerpt || baseTitle(session.title)}`,
     kind: "fork",
     workspace: session.workspace ?? null,
+    originDir: session.originDir ?? null,
     originId: session.id, // lineage: the forked-from session…
     originMessageId: body.atMessageId, // …and the at-message
   });

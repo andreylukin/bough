@@ -360,7 +360,9 @@ const createSession: Handler = async (req, ctx) => {
     createdAt: Date.now(),
     // Absent when not supplied, so responses/events stay byte-identical (toSession
     // only surfaces workspace when non-null; createSession persists it in one insert).
-    ...(workspace ? { workspace } : {}),
+    // originDir records the project dir permanently — the workspace column gets
+    // repointed at the session's shadow worktree on the first turn.
+    ...(workspace ? { workspace, originDir: workspace } : {}),
   };
   if (session.parentId && !ctx.db.getSession(session.parentId)) {
     return error(400, `parent ${session.parentId} not found`);
