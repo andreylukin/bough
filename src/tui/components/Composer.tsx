@@ -20,6 +20,9 @@ export function Composer(
   // Wrap ourselves (fixed-width chunks) so the cursor→row mapping is exact;
   // each row is its own truncated line, so ink never re-flows the block.
   const innerW = Math.max(4, width - 4); // border + paddingX
+  // Empty + no ghost: a dim in-box placeholder so the first action is visible
+  // (first-run audit: the composer read as decoration without one).
+  const placeholder = input === "" && ghost === "" ? "type a message · enter sends" : "";
   const full = "› " + input + ghost;
   const ghostStart = 2 + input.length;
   const cur = cursor + 2;
@@ -51,7 +54,9 @@ export function Composer(
       flexDirection="column"
       borderStyle="round"
       backgroundColor={palette.panelInset}
-      borderColor={busy ? palette.warn : palette.border}
+      // Accent when awaiting input: the composer is the focused element in chat
+      // mode, and a hairline border made the first action invisible (audit).
+      borderColor={busy ? palette.warn : palette.accent}
       paddingX={1}
     >
       {shown.map((r, i) => {
@@ -69,6 +74,7 @@ export function Composer(
                 <>
                   {r.text.slice(prefix, col)}
                   <Text inverse>{at ?? " "}</Text>
+                  {placeholder ? <Text dimColor>{placeholder}</Text> : null}
                   {at === undefined ? "" : (
                     <Text dimColor={col + 1 >= gcol}>{r.text.slice(col + 1)}</Text>
                   )}

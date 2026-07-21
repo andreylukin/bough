@@ -1,5 +1,5 @@
 import { assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
-import { COLOR, fuzzyScore, linkAt, md, wordLeft, wordRight } from "./format.ts";
+import { COLOR, fuzzyPositions, fuzzyScore, linkAt, md, wordLeft, wordRight } from "./format.ts";
 
 Deno.test("wordLeft/wordRight: readline word boundaries", () => {
   const t = "what does this do";
@@ -22,6 +22,16 @@ Deno.test("fuzzyScore: prefix > word-boundary > substring > subsequence > none",
   assertEquals(fuzzyScore("wiki", "wk"), 1); // in-order subsequence
   assertEquals(fuzzyScore("commit", "xyz"), 0);
   assertEquals(fuzzyScore("anything", ""), 1); // empty query matches everything
+});
+
+Deno.test("fuzzyPositions: marks the chars fuzzyScore matched, tier by tier", () => {
+  assertEquals(fuzzyPositions("exa", "ex"), [0, 1]); // prefix
+  assertEquals(fuzzyPositions("user-testing", "test"), [5, 6, 7, 8]); // word boundary
+  assertEquals(fuzzyPositions("restish", "tish"), [3, 4, 5, 6]); // substring
+  assertEquals(fuzzyPositions("wiki", "wk"), [0, 2]); // greedy subsequence
+  assertEquals(fuzzyPositions("bench/server.sh", "server"), [6, 7, 8, 9, 10, 11]);
+  assertEquals(fuzzyPositions("commit", "xyz"), []); // no match
+  assertEquals(fuzzyPositions("anything", ""), []); // empty query: nothing to mark
 });
 
 // OSC 8 assertions only make sense when escapes are emitted (COLOR honors NO_COLOR).

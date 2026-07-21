@@ -32,6 +32,36 @@ function popupDetail(desc: string, max = 72): string {
   return d.slice(0, cut > 0 ? cut : max).replace(/[\s.,;:·—-]+$/, "") + "…";
 }
 
+/** Popup row label: fuzzy-matched chars in accent+bold (so results don't look
+ * arbitrary), and for @ rows the directory prefix dimmed (`dimTo`) so basenames
+ * stand out. Runs of same-styled chars render as one Text chunk. */
+function PopupLabel({ label, hl = [], dimTo = 0 }: {
+  label: string;
+  hl?: number[];
+  dimTo?: number;
+}) {
+  if (hl.length === 0 && dimTo === 0) return <>{label}</>;
+  const set = new Set(hl);
+  const segs: { text: string; style: "match" | "dim" | "plain" }[] = [];
+  for (let i = 0; i < label.length; i++) {
+    const style = set.has(i) ? "match" : i < dimTo ? "dim" : "plain";
+    const last = segs.at(-1);
+    if (last?.style === style) last.text += label[i];
+    else segs.push({ text: label[i], style });
+  }
+  return (
+    <>
+      {segs.map((s, i) =>
+        s.style === "match"
+          ? <Text key={i} bold color={palette.accent}>{s.text}</Text>
+          : s.style === "dim"
+          ? <Text key={i} dimColor>{s.text}</Text>
+          : <Text key={i}>{s.text}</Text>
+      )}
+    </>
+  );
+}
+
 /** "due" / "in 5m" / "in 3h" / "in 2d" — the schedule list's next-run column. */
 function nextIn(ts: number): string {
   const d = ts - Date.now();
@@ -63,6 +93,7 @@ import {
   ctxPctLeft,
   fmtTokens,
   fmtUsd,
+  fuzzyPositions,
   fuzzyScore,
   linkAt,
   segmentParts,
@@ -696,7 +727,8 @@ export function App(
   // "!" fuzzy-searches shell history backwards (ctrl-r muscle memory).
   interface Popup {
     kind: "skill" | "file" | "shell";
-    items: { label: string; detail: string; insert: string }[];
+    /** hl: label indices of the fuzzy-matched chars (accent+bold in the row). */
+    items: { label: string; detail: string; insert: string; hl?: number[] }[];
     sel: number;
     tokenStart: number;
     tokenEnd: number;
@@ -728,7 +760,7 @@ export function App(
         .filter((x) => x.score > 0)
         .sort((a, b) => b.score - a.score || b.i - a.i)
         .slice(0, 6)
-        .map(({ cmd }) => ({ label: cmd, detail: "", insert: `!${cmd}` }));
+        .map(({ cmd }) => ({ label: cmd, detail: "", insert: `!${cmd}`, hl: fuzzyPositions(cmd, q) }));
       // sel -1 = browsing, nothing picked: enter keeps running the TYPED line;
       // only an explicit ↑/↓ pick makes enter run a listed command instead.
       setPopup(
@@ -795,6 +827,8 @@ export function App(
             label: `@${f}`,
             detail: "",
             insert: `@${f} `,
+            // Positions are vs the path; the label's leading "@" shifts them by 1.
+            hl: fuzzyPositions(f, q).map((p) => p + 1),
           }));
           setPopup(
             items.length ? { kind: "file", items, sel: 0, tokenStart: at, tokenEnd: end } : null,
@@ -2366,7 +2400,12 @@ export function App(
                     : "new conversation"}
                 </Text>
                 <Text>{" "}</Text>
-                <Text dimColor>type to start · ^p sessions & new project · ? help</Text>
+                {/* The hint clears once a draft exists — leaving it up read as
+                   "my typing didn't register" (visual audit). Blank keeps the
+                   block's height so nothing shifts on the first keystroke. */}
+                {input
+                  ? <Text>{" "}</Text>
+                  : <Text dimColor>type to start · ^p sessions & new project · ? help</Text>}
               </Box>
               {/* The welcome screen has no transcript row for the copy-flash
                  chip to blink over — give it one (draft-cleared feedback). */}
@@ -2582,12 +2621,31 @@ export function App(
                   >
                     {popup.items.length === 0
                       ? <Text dimColor>no matching commands</Text>
-                      : popup.items.map((it, i) => (
-                        <Text key={it.label} inverse={i === popup.sel} wrap="truncate">
-                          {it.label}
-                          {it.detail ? <Text dimColor>{"  "}{it.detail}</Text> : null}
-                        </Text>
-                      ))}
+                      : popup.items.map((it, i) => {
+                        const sel = i === popup.sel;
+                        // @ rows: dim the directory prefix so basenames stand
+                        // out (skipped on the selected row — dim under the
+                        // inverse bar goes illegible).
+                        const dimTo = popup.kind === "file" && !sel
+                          ? it.label.lastIndexOf("/") + 1
+                          : 0;
+                        return (
+                          <Text key={it.label} inverse={sel} wrap="truncate">
+                            <PopupLabel label={it.label} hl={it.hl} dimTo={dimTo} />
+                            {it.detail
+                              ? (
+                                // Selected row: mid-tone, not dim — dim+inverse
+                                // collapsed name and description into one
+                                // near-black on the bar (visual audit).
+                                <Text dimColor={!sel} color={sel ? "#8a919c" : undefined}>
+                                  {"  "}
+                                  {it.detail}
+                                </Text>
+                              )
+                              : null}
+                          </Text>
+                        );
+                      })}
                   </Box>
                 )
                 : null}
