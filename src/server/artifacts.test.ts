@@ -53,11 +53,65 @@ Deno.test("serveArtifact returns the file with the right content-type", async ()
   await Deno.remove(base, { recursive: true });
 });
 
+Deno.test("serveArtifact sniffs extensionless HTML as text/html", async () => {
+  const base = tmp();
+  await publishArtifact("s7", "my-explorer", "<!doctype html>\n<title>x</title>", base);
+  const res = await serveArtifact("s7", "my-explorer", base);
+  assertEquals(res.status, 200);
+  assertEquals(res.headers.get("content-type"), "text/html; charset=utf-8");
+  await res.body?.cancel();
+  await Deno.remove(base, { recursive: true });
+});
+
+Deno.test("serveArtifact leaves extensionless non-HTML as octet-stream", async () => {
+  const base = tmp();
+  await publishArtifact("s8", "notes", "just some text", base);
+  const res = await serveArtifact("s8", "notes", base);
+  assertEquals(res.headers.get("content-type"), "application/octet-stream");
+  await res.body?.cancel();
+  await Deno.remove(base, { recursive: true });
+});
+
 Deno.test("serveArtifact 404s a missing file, not HTML", async () => {
   const base = tmp();
   const res = await serveArtifact("s4", "ghost.html", base);
   assertEquals(res.status, 404);
   assertEquals(res.headers.get("content-type"), "application/json");
+  await Deno.remove(base, { recursive: true });
+});
+
+const UI_SPEC = JSON.stringify({
+  root: "page",
+  elements: {
+    page: { type: "Page", props: { title: "Sweep" }, children: ["s"] },
+    s: { type: "Stat", props: { label: "solved", value: "14/16" }, children: [] },
+  },
+});
+
+Deno.test("publishArtifact rejects an off-catalog *.ui.json spec", async () => {
+  const base = tmp();
+  await assertRejects(
+    () => publishArtifact("s9", "bad.ui.json", '{"root":"x","elements":{}}', base),
+    Error,
+    "ui spec rejected",
+  );
+  await Deno.remove(base, { recursive: true });
+});
+
+Deno.test("a *.ui.json spec serves as the viewer page; ?raw returns the spec", async () => {
+  const base = tmp();
+  await publishArtifact("s9", "report.ui.json", UI_SPEC, base);
+  const page = await serveArtifact("s9", "report.ui.json", base);
+  assertEquals(page.headers.get("content-type"), "text/html; charset=utf-8");
+  const html = await page.text();
+  assert(html.includes('id="__ui_spec__"'), "spec inlined");
+  assert(html.includes('src="/artifact-viewer.js"'), "viewer bundle referenced");
+  assert(html.includes("<title>Sweep</title>"), "title from the root element");
+  assert(html.includes("/comments"), "comment layer injected");
+
+  const raw = await serveArtifact("s9", "report.ui.json", base, { raw: true });
+  assertEquals(raw.headers.get("content-type"), "application/json; charset=utf-8");
+  assertEquals(((await raw.json()) as { root: string }).root, "page");
   await Deno.remove(base, { recursive: true });
 });
 
