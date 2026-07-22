@@ -88,6 +88,7 @@ export function StatusBar(
     dir,
     model,
     parentTitle,
+    composerEmpty = true,
   }: {
     connected: boolean;
     busy: boolean;
@@ -106,6 +107,9 @@ export function StatusBar(
     model?: string | null;
     /** Spawner's title when the open session is a subagent branch. */
     parentTitle?: string | null;
+    /** The composer is empty — the `?`→help chord only fires then, so the hint
+     * is suppressed while there's text (a lone "?" would still route to help). */
+    composerEmpty?: boolean;
   },
 ) {
   const isSub = session?.kind === "subagent";
@@ -199,7 +203,9 @@ export function StatusBar(
                   </Text>
                 )
               : null}
-            {spend > 0 ? <Text dimColor>{"  "}{fmtUsd(spend)}</Text> : null}
+            {/* Cost carries its own weight so it doesn't read as more gray
+                metadata — bold lifts it out of the dim chip run. */}
+            {spend > 0 ? <Text bold>{"  "}{fmtUsd(spend)}</Text> : null}
             {(bgJobs ?? 0) > 0 ? <Text color={palette.warn}>{"  "}⚙ {bgJobs} bg</Text> : null}
             {pendingCount > 0
               ? (
@@ -220,7 +226,7 @@ export function StatusBar(
           ? "ctrl+c again to quit"
           : mode === "help"
           ? "any key closes"
-          : mode === "chat" || mode === "panel"
+          : (mode === "chat" || mode === "panel") && composerEmpty
           ? "? help"
           : ""}
       </Text>

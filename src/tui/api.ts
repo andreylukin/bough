@@ -267,6 +267,9 @@ export const api = {
 
   // Live + recent background shells of a session (and its subagent branches).
   jobs: (id: string) => j<{ jobs: JobRow[] }>(`/sessions/${id}/jobs`).then((r) => r.jobs),
+  // Kill a running background shell directly (no LLM round-trip).
+  killJob: (id: string, jobId: string) =>
+    jmsg<{ message: string }>(`/sessions/${id}/jobs/${jobId}/kill`, { method: "POST" }),
   applyChanges: (id: string, source: ChangeSource, paths: string[]) =>
     jmsg<ApplyOutcome>(`/sessions/${id}/changes/apply`, postJson({ source, paths })),
   revertChanges: (id: string) => j(`/sessions/${id}/changes/revert`, postJson({})),
