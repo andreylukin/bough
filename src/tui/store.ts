@@ -64,6 +64,9 @@ export interface Store {
   // Background shells of the open session (and its subagents): live + recently
   // ended, refetched on job.* events and polled while any runs (tail lines move).
   jobs: JobRow[];
+  // Signals a background (non-active) session finishing a turn; App flashes a
+  // toast on each new value. `seq` makes repeat finishes distinct references.
+  bgFinish: { title: string; seq: number } | null;
   open: (id: string) => Promise<void>;
   newSession: (workspace?: string) => Promise<Session>;
   /** Post a message. While busy: posts immediately (steer) unless queue=true.
@@ -129,6 +132,11 @@ export function useStore(initialSessions: Session[]): Store {
   const [usage, setUsage] = useState<Usage>(USAGE_ZERO);
   const [feed, setFeed] = useState<NetRequest[]>([]);
   const [jobs, setJobs] = useState<JobRow[]>([]);
+  // Bumped whenever a NON-active (background) session finishes a turn — App
+  // watches it to flash an in-TUI toast (the desktop banner self-gates on focus
+  // and the picker dot needs ^p, so a focused terminal would otherwise miss it).
+  const [bgFinish, setBgFinish] = useState<{ title: string; seq: number } | null>(null);
+  const bgSeq = useRef(0);
 
   // currentId in a ref so the stable event handler can filter without re-subscribing.
   const currentRef = useRef<string | null>(null);
@@ -366,14 +374,14 @@ export function useStore(initialSessions: Session[]): Store {
       .filter((m) => m.sessionId === id && !cut.has(m.id))
       .map((m) => ({ messageId: m.id }));
     if (keep.length === 0) {
-      setNotice("that's the whole conversation — archive it from the sessions tab instead");
+      setNotice("that's the whole session — archive it from the sessions tab instead");
       return null;
     }
     try {
       // replaceSource: the new session takes the original's title + lineage spot.
       const s = await api.extract(id, keep, true);
       await api.archiveSession(id);
-      notify("turns deleted — the original conversation is archived (recoverable)");
+      notify("turns deleted — the original session is archived (recoverable)");
       return s;
     } catch (e) {
       setNotice(e instanceof Error ? e.message : String(e));
@@ -577,6 +585,9 @@ export function useStore(initialSessions: Session[]): Store {
           const fin = sessionsRef.current.find((s) => s.id === ev.sessionId);
           if (fin?.busy && fin.kind !== "subagent") {
             notifyDesktop(`${fin.title || "bough"} — turn finished`);
+            // In-TUI toast for a background session finishing while you watch
+            // another (notifyDesktop is a no-op when the terminal is focused).
+            if (!seen) setBgFinish({ title: fin.title || "session", seq: ++bgSeq.current });
           }
         }
         setThread((prev) => prev.map((m) => (m.id === messageId ? { ...m, pending: false } : m)));
@@ -757,6 +768,7 @@ export function useStore(initialSessions: Session[]): Store {
     usage,
     feed,
     jobs,
+    bgFinish,
     open,
     newSession,
     send,

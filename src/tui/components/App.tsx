@@ -948,6 +948,11 @@ export function App(
     flashTimers.current = seq.map(([ms, v]) => setTimeout(() => setFlash(v), ms));
   }, []);
   useEffect(() => () => flashTimers.current.forEach(clearTimeout), []);
+  // A background session finishing while you're looking elsewhere is otherwise
+  // invisible (the desktop banner self-gates on focus, the picker dot needs ^p).
+  useEffect(() => {
+    if (store.bgFinish) flashMsg(`✓ ${store.bgFinish.title} finished`);
+  }, [store.bgFinish, flashMsg]);
 
   // Copy handler, kept in a ref so the mouse subscription stays stable.
   // Info-card rows copy on any click; everything else copies on right-click.
@@ -1383,8 +1388,10 @@ export function App(
   };
 
   useInput((ch, key) => {
-    // Quit: double ctrl+c.
+    // Quit: double ctrl+c — but during a turn the first ctrl+c interrupts
+    // (Claude-Code parity); it only arms quit once idle.
     if (key.ctrl && ch === "c") {
+      if (store.busy) return store.interrupt();
       const now = Date.now();
       if (now - lastCtrlC.current < 2000) exit();
       lastCtrlC.current = now;
@@ -2892,6 +2899,7 @@ export function App(
           session={store.session}
           pendingCount={store.pendingCount + store.askCount}
           quitHint={quitHint}
+          composerEmpty={input === ""}
           mode={mode === "chat" && (store.pending || store.ask) ? "approval" : mode}
           usage={store.usage}
           bgJobs={runningJobs}

@@ -275,10 +275,17 @@ export function ConversationTree(
         const text = n.msg.parts.find((p) => p.type === "text");
         const preview = text && "text" in text ? clip(text.text.split("\n")[0], 66) : "(no text)";
         return (
-          <SelRow key={`n-${n.msg.id}`} sel={sel}>
+          <SelRow
+            key={`n-${n.msg.id}`}
+            sel={sel}
+            // Pin "← here" to the right edge (its own Text) instead of appending
+            // it to the truncated content run, where it clipped to "← her".
+            right={n.tip
+              ? <Text color={sel ? undefined : palette.accent}>← here</Text>
+              : undefined}
+          >
             {gutter}
             <Text color={sel ? undefined : palette.info} bold>you</Text> {preview}
-            {n.tip ? <Text color={sel ? undefined : palette.accent}>{"  "}← here</Text> : null}
           </SelRow>
         );
       })}

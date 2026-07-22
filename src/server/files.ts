@@ -140,7 +140,15 @@ export function searchDirectories(query: string, known: string[] = []): DirHit[]
       return false;
     }
   };
-  const isRepo = (p: string) => isDir(`${p}/.git`);
+  // Require .git/HEAD, not merely a .git node — a bare/empty `.git` dir (or a
+  // stray one) would otherwise mislabel a plain folder as a repo.
+  const isRepo = (p: string): boolean => {
+    try {
+      return Deno.statSync(`${p}/.git/HEAD`).isFile;
+    } catch {
+      return false;
+    }
+  };
 
   // Rank: basename subsequence beats path-only subsequence; prefix on the
   // basename beats both; repos beat plain dirs; then shorter paths.

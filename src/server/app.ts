@@ -101,7 +101,7 @@ import { extract, ExtractBody } from "../extract.ts";
 import { handoff, HandoffBody } from "../handoff.ts";
 import { move, MoveBody } from "../move.ts";
 import { adoptSubagent } from "../subagent.ts";
-import { listJobs, onJobEvent } from "../tools/bash_bg.ts";
+import { bashKill, listJobs, onJobEvent } from "../tools/bash_bg.ts";
 import { applyChanges, revertChanges, sessionChanges } from "./changes.ts";
 import { ChangesApplyBody, ChangesRevertBody } from "../schema/changes.ts";
 import { clearTheme, loadTheme, saveTheme, Theme, THEME_DEFAULTS, THEME_TOKENS } from "./theme.ts";
@@ -608,6 +608,19 @@ const getJobs: Handler = (_req, ctx, params) => {
   const subagents = ctx.db.listSessions()
     .filter((s) => s.kind === "subagent" && s.originId === params.id);
   return json({ jobs: [...listJobs(params.id), ...subagents.flatMap((s) => listJobs(s.id))] });
+};
+
+// POST /sessions/:id/jobs/:jobId/kill → SIGTERM a running background shell of
+// the session directly (the tool-only bashKill, reachable from the TUI so a kill
+// doesn't cost a full LLM turn). bashKill keys the registry off ctx.sessionId.
+const killJob: Handler = async (_req, ctx, params) => {
+  if (!ctx.db.getSession(params.id)) return error(404, "session not found");
+  try {
+    const message = await bashKill(params.jobId, { workspace: "", sessionId: params.id });
+    return json({ message });
+  } catch (e) {
+    return error(404, e instanceof Error ? e.message : String(e));
+  }
 };
 
 // GET /sessions/:id/changes → { diffs } across active snapshot sources (shadow + clonefile).
@@ -1416,6 +1429,11 @@ const routes: Route[] = [
     method: "GET",
     pattern: new URLPattern({ pathname: "/sessions/:id/jobs" }),
     handler: getJobs,
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/sessions/:id/jobs/:jobId/kill" }),
+    handler: killJob,
   },
   {
     method: "POST",

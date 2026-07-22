@@ -50,6 +50,7 @@ Deno.test("searchDirectories: fzf fragment under a base, repos ranked and marked
   const root = await Deno.makeTempDir({ prefix: "dirsearch-" });
   try {
     await Deno.mkdir(`${root}/repos/bough/.git`, { recursive: true });
+    await Deno.writeTextFile(`${root}/repos/bough/.git/HEAD`, "ref: refs/heads/main\n"); // a real repo has HEAD
     await Deno.mkdir(`${root}/repos/bough/src`, { recursive: true }); // inside a repo — never offered
     await Deno.mkdir(`${root}/repos/wordbook`, { recursive: true });
     await Deno.mkdir(`${root}/notes`, { recursive: true });
