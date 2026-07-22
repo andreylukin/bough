@@ -1050,11 +1050,13 @@ Deno.test("A5 full success: a subagent that commits done persists ok:true + chec
       program(`const r = await agent("task"); console.log("ok=" + r.ok + " check=" + r.checkPassed);`),
       textRound("done"),
     ],
-    // The first check-less done bounces (check nudge); the second is accepted —
-    // the DONE_ACCEPTED path.
+    // The first check-less done bounces (check nudge); the second commits a real
+    // check that passes, so the harness accepts via the "— check passed" path —
+    // the ONLY path that earns a green checkPassed:true (an unchecked done is
+    // "— no check declared", which is not-verified/amber).
     "task": [
       program(`console.log("did it");`, { done: true }),
-      program(`console.log("still done");`, { done: true }),
+      program(`console.log("still done");`, { done: true, check: "true" }),
     ],
   });
   const { message, done } = beginTurn(failCtx(db, bus, llm), spawner.id);

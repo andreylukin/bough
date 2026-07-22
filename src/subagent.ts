@@ -194,8 +194,13 @@ async function buildResult(
     .map((p) => p.text)
     .join("\n")
     .trim();
+  // Only a REAL passed check earns a green ✓. run_steps emits DONE_ACCEPTED in two
+  // cases — "— check passed" (a committed check exited 0) and "— no check declared"
+  // (nothing was verified). Match the former specifically so an unchecked subagent
+  // renders as not-verified (amber), never over-claiming.
   const checkPassed = parts.some((p) =>
-    p.type === "tool_result" && typeof p.output === "string" && p.output.includes(DONE_ACCEPTED)
+    p.type === "tool_result" && typeof p.output === "string" &&
+    p.output.includes(`${DONE_ACCEPTED} — check passed`)
   );
   let changedFiles: string[] = [];
   if (subDir) {
@@ -338,7 +343,13 @@ export async function runSubagent(
 ): Promise<SubagentResult> {
   if (spawn.signal?.aborted) throw new Error("turn interrupted");
   const h = await launch(ctx, spawn, task);
-  const onAbort = () => interruptTurn(h.sessionId);
+  // Only cascade a parent stop into a subagent whose turn is STILL running — a
+  // blocking subagent that already resolved has its report + outcome persisted on
+  // its own branch (launch()'s completion hook), and killing it now would flip a
+  // finished session to "interrupted" and erase already-accepted work.
+  const onAbort = () => {
+    if (isTurnRunning(h.sessionId)) interruptTurn(h.sessionId);
+  };
   spawn.signal?.addEventListener("abort", onAbort, { once: true });
   try {
     return await h.result;
@@ -420,6 +431,10 @@ function formatNote(r: SubagentResult): string {
 /**
  * Adopt a finished subagent's changes: fold its diff into the spawner's worktree.
  * The subagent's branch stays on the map (emptied, still continuable).
+ *
+ * KNOWN GAP: this (and changedFiles above) only sees writes inside the shadow
+ * worktree — absolute-path writes a subagent made OUTSIDE its workspace are not
+ * captured and would need a separate snapshot source (out of scope here).
  */
 export async function adoptSubagent(
   ctx: TurnCtx,

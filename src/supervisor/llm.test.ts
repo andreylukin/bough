@@ -131,6 +131,12 @@ Deno.test("isRetryable: transport and server faults yes; aborts and 4xx no", () 
   assertEquals(isRetryable(new LlmError("server", 500)), true);
   assertEquals(isRetryable(new LlmError("bad request", 400)), false);
   assertEquals(isRetryable(new LlmError("bad key", 401)), false);
+  // The tool-protocol 400 (assistant tool_calls not followed by a tool message)
+  // IS retried — toOpenAIMessages self-heals the wire, so a re-send succeeds.
+  assertEquals(
+    isRetryable(new LlmError("openrouter: 400 assistant message with 'tool_calls' must be followed by tool messages", 400)),
+    true,
+  );
   assertEquals(isRetryable(new DOMException("gone", "AbortError")), false);
   assertEquals(isRetryable(new TypeError("network error")), true); // fetch failure
   assertEquals(isRetryable(new Error("plain")), false);
@@ -373,4 +379,35 @@ Deno.test("toOpenAIMessages: image → image_url data URL parts; no image keeps 
     { role: "user", content: [{ type: "text", text: "hi" }] },
   ]);
   assertEquals(plain, [{ role: "user", content: "hi" }]);
+});
+
+Deno.test("toOpenAIMessages: orphan assistant tool_call gets a synthesized tool message", async () => {
+  const { toOpenAIMessages } = await import("./llm.ts");
+  // An assistant tool_call whose matching tool result never arrived (e.g. a crash
+  // mid-round) would make OpenRouter/Moonshot reject the whole request with a 400.
+  const out = toOpenAIMessages(undefined, [
+    {
+      role: "assistant",
+      content: [{ type: "tool_use", id: "call_1", name: "bash", input: { cmd: "ls" } }],
+    },
+    // no tool_result for call_1 → the encoder must synthesize one
+    { role: "user", content: [{ type: "text", text: "next" }] },
+  ]) as Array<{ role: string; tool_call_id?: string; content?: unknown }>;
+  // The synthesized tool message immediately follows the assistant, before the user.
+  assertEquals(out[0].role, "assistant");
+  assertEquals(out[1], { role: "tool", tool_call_id: "call_1", content: "(interrupted)" });
+  assertEquals(out[2].role, "user");
+  // A tool_call WITH its result is left alone (no duplicate synthesized message).
+  const paired = toOpenAIMessages(undefined, [
+    {
+      role: "assistant",
+      content: [{ type: "tool_use", id: "call_2", name: "bash", input: {} }],
+    },
+    {
+      role: "user",
+      content: [{ type: "tool_result", toolUseId: "call_2", content: "ok", isError: false }],
+    },
+  ]) as Array<{ role: string }>;
+  assertEquals(paired.length, 2);
+  assertEquals(paired[1].role, "tool");
 });

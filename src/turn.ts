@@ -356,6 +356,22 @@ function friendlyTurnError(err: unknown, model: string): string {
   if (/invalid x-api-key|authentication_error|Incorrect API key/i.test(msg)) {
     return `${provider} rejected the API key — press ^o to update it.`;
   }
+  // Provider HTTP errors surface as "<provider>: <status> <body>", where the body
+  // is often a multi-line escaped-JSON blob (e.g. Kimi/OpenRouter's tool-protocol
+  // 400). Fold it to ONE human line so cards AND upward subagent reports stay
+  // readable instead of dumping 6 lines of raw JSON.
+  const http = /:\s*(\d{3})\s+([\s\S]+)$/.exec(msg);
+  if (http) {
+    const status = Number(http[1]);
+    const body = http[2];
+    if (/tool_calls|tool_call_id|must be followed by tool/i.test(body)) {
+      return `${provider} rejected the tool-call formatting (${status}); a repaired retry usually clears it.`;
+    }
+    if (status >= 400) {
+      const brief = body.replace(/\s+/g, " ").trim();
+      return `${provider} error ${status}: ${brief.length > 120 ? brief.slice(0, 120) + "…" : brief}`;
+    }
+  }
   return msg;
 }
 

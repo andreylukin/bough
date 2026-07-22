@@ -213,9 +213,18 @@ export function promote(ctx: ToolRunCtx, sh: BgShell): string | null {
     // Claimed (bashWait/bashKill) or already-noted → the model has/will get the
     // result in band; don't also wake it with a note.
     if (!notify || sh.notified || sh.claimed) return;
-    sh.notified = true;
     const st = sh.status;
     const lines = sh.buf ? sh.buf.trimEnd().split("\n").filter(Boolean).length : 0;
+    // A clean, silent fire-and-forget exit (code 0, no signal, no output) has
+    // nothing to report — posting a note here wakes an IDLE session into a whole
+    // LLM turn just to say "bg_N finished". Suppress the wake in that case; the
+    // job.exited event above still surfaces the outcome in the jobs panel, and
+    // non-zero exits, signal deaths, and any output all still notify.
+    if ((st?.code ?? 0) === 0 && !st?.signal && lines === 0) {
+      sh.notified = true;
+      return;
+    }
+    sh.notified = true;
     notify(
       `[background] ${sh.id} finished (exit ${st?.code ?? "?"}${
         st?.signal ? ` on ${st.signal}` : ""

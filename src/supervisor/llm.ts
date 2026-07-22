@@ -133,11 +133,22 @@ export class LlmError extends Error {
 
 const retryableStatus = (s: number): boolean => s === 408 || s === 429 || s >= 500;
 
+/** The OpenRouter/Moonshot 400 thrown when an assistant `tool_calls` lacks its
+ * following tool message. toOpenAIMessages now self-heals the wire encoding, so a
+ * re-send of the (now well-formed) request succeeds — hence retry this specific
+ * 400, without blanket-retrying every 400 (real caller mistakes stay fatal). */
+export function isToolProtocol400(err: unknown): boolean {
+  return err instanceof LlmError && err.status === 400 &&
+    /tool_calls|tool_call_id|must be followed by tool/i.test(err.message);
+}
+
 /** Should this failure be re-attempted? User aborts and caller mistakes (4xx) never are. */
 export function isRetryable(err: unknown): boolean {
   const e = err as { name?: string; status?: unknown } | null;
   if (e?.name === "AbortError" || e?.name === "APIUserAbortError") return false;
-  if (err instanceof LlmError) return err.status === undefined || retryableStatus(err.status);
+  if (err instanceof LlmError) {
+    return err.status === undefined || retryableStatus(err.status) || isToolProtocol400(err);
+  }
   // Anthropic SDK: APIError carries `.status`; connection failures carry none.
   if (typeof e?.status === "number") return retryableStatus(e.status);
   if (e?.name === "APIConnectionError" || e?.name === "APIConnectionTimeoutError") return true;
@@ -488,7 +499,29 @@ export function toOpenAIMessages(system: string | undefined, messages: LlmMessag
       }
     }
   }
-  return out;
+  // Wire-protocol repair: every assistant `tool_calls` id MUST be followed by a
+  // matching {role:"tool",tool_call_id} before the next non-tool message, or
+  // OpenRouter/Moonshot rejects the whole request with a 400. Synthesize a short
+  // interrupted-result for any orphan (mirrors turn.ts's per-message repair), so
+  // the request is always well-formed even if history assembly left a gap.
+  const repaired: unknown[] = [];
+  for (let i = 0; i < out.length; i++) {
+    const msg = out[i] as { role: string; tool_calls?: { id: string }[] };
+    repaired.push(msg);
+    if (msg.role !== "assistant" || !msg.tool_calls?.length) continue;
+    const provided = new Set<string>();
+    for (let j = i + 1; j < out.length; j++) {
+      const t = out[j] as { role: string; tool_call_id?: string };
+      if (t.role !== "tool") break;
+      if (t.tool_call_id) provided.add(t.tool_call_id);
+    }
+    for (const call of msg.tool_calls) {
+      if (!provided.has(call.id)) {
+        repaired.push({ role: "tool", tool_call_id: call.id, content: "(interrupted)" });
+      }
+    }
+  }
+  return repaired;
 }
 
 export function openrouterClient(): LlmClient {
