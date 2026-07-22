@@ -788,6 +788,7 @@ export function App(
           { name: "handoff", description: "draft a fresh conversation focused on a goal" },
           { name: "conversation", description: "show this conversation's id and details" },
           { name: "schedule", description: "recurring agent runs — list, toggle, create" },
+          { name: "workflows", description: "workflow runs — watch, stop, pause, rerun" },
           { name: "theme", description: "pick a color theme — opens the theme tab" },
           { name: "model", description: "switch the model — opens the model panel" },
           { name: "effort", description: "set thinking depth — opens the model panel" },
