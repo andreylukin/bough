@@ -71,6 +71,24 @@ const print = (...args: unknown[]) => {
 };
 const sandboxConsole = { log: print, error: print, warn: print, info: print };
 
+// Node-ism guard: Deno exposes a `process` global even in permissions-none
+// workers, and process.exit()/Deno.exit() TERMINATE THE WORKER SILENTLY — the
+// host's runProgram promise never settles, freezing the turn until its wall
+// timeout (45 min for delegating turns; bench trials burned 900s each on
+// exactly this). Weak models emit `process.exit(1)` as an "assertion failed"
+// idiom, so make it throw a catchable error the round can report instead.
+const exitTrap = (code?: unknown) => {
+  throw new Error(
+    `exit(${code ?? 0}) is not available in this sandbox — a program ends by ` +
+      `returning; throw an Error to signal failure`,
+  );
+};
+try {
+  const g = globalThis as { process?: { exit?: unknown }; Deno?: { exit?: unknown } };
+  if (g.process) g.process.exit = exitTrap;
+  if (g.Deno) g.Deno.exit = exitTrap;
+} catch { /* frozen globals — nothing to guard */ }
+
 async function run(code: string): Promise<void> {
   const bash = (cmd: string) => hostCall("bash", [cmd]);
   // Background shells: the spawn handle comes back as JSON ({id, pid} — the

@@ -5,7 +5,7 @@ import type { Message, Part } from "../../schema/parts.ts";
 import type { WireSection } from "../api.ts";
 import type { TuiSession } from "../store.ts";
 import { SelRow } from "./SelRow.tsx";
-import { clip, fmtUsd } from "../format.ts";
+import { clip, fmtUsd, windowAround } from "../format.ts";
 import { parseSubagentNote } from "../lines.ts";
 
 // The conversation as a branchable tree (pi's /tree model). Each user turn is a
@@ -196,7 +196,7 @@ export function ConversationTree(
   },
 ) {
   const max = Math.max(3, rows - 9);
-  const start = Math.max(0, Math.min(selected - Math.floor(max / 2), items.length - max));
+  const { start } = windowAround(selected, items.length, max);
   const win = items.slice(start, start + max);
   const rangeCount = range
     ? items.slice(range[0], range[1] + 1).filter((it) => it.type === "node").length

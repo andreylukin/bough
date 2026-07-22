@@ -10,7 +10,7 @@
  */
 import { z } from "zod/v4";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { boughHome } from "../paths.ts";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 
 /** The semantic tokens a theme may set. Fixed contract. */
@@ -75,7 +75,7 @@ export const Theme = z.object({
 export type Theme = z.infer<typeof Theme>;
 
 function themePath(dir?: string): string {
-  return join(dir ?? join(homedir(), ".bough"), "theme.json");
+  return join(dir ?? boughHome(), "theme.json");
 }
 
 /** The stored theme, or null when none is set (default palette applies). */

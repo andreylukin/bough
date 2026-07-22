@@ -143,6 +143,15 @@ Deno.test("isRetryable: transport and server faults yes; aborts and 4xx no", () 
   // Anthropic SDK shape: `.status` rides the error object.
   assertEquals(isRetryable(Object.assign(new Error("overloaded"), { status: 529 })), true);
   assertEquals(isRetryable(Object.assign(new Error("invalid"), { status: 400 })), false);
+  // The SDK's error classes never set `.name` (it stays "Error") — the class
+  // name is the only signal. Regression: these were misread as non-retryable,
+  // so a connection flap killed the turn with zero retries.
+  class APIConnectionError extends Error {}
+  class APIConnectionTimeoutError extends APIConnectionError {}
+  class APIUserAbortError extends Error {}
+  assertEquals(isRetryable(new APIConnectionError("Connection error.")), true);
+  assertEquals(isRetryable(new APIConnectionTimeoutError("Request timed out.")), true);
+  assertEquals(isRetryable(new APIUserAbortError("Request was aborted.")), false);
 });
 
 Deno.test("withRetries: transient failures retry, then succeed", async () => {

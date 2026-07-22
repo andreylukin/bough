@@ -262,6 +262,28 @@ def pick_merge_partner(champion):
 
 # ---- sweeps ---------------------------------------------------------------------
 
+def collect_online_seeds():
+    """Queued online-ACE candidates not yet raced in this campaign: variant dirs
+    with meta source=='online' and no rows in the current results file. Ordered by
+    the queue manifest online.py writes, newest campaigns first, then by name."""
+    queue = VARIANTS / "_online-queue.json"
+    order = []
+    if queue.exists():
+        try:
+            order = json.loads(queue.read_text())
+        except ValueError:
+            order = []
+    seeds = []
+    for name in list(order) + sorted(p.name for p in VARIANTS.iterdir() if p.is_dir()):
+        if name in seeds:
+            continue
+        d = VARIANTS / name
+        m = read_meta(d)
+        if m and m.get("source") == "online" and not rows_for(name):
+            seeds.append(name)
+    return seeds
+
+
 def seed_baseline():
     d = VARIANTS / "baseline"
     if not (d / "system.md").exists():
@@ -284,7 +306,10 @@ def sweep(name, trials, tasks):
     env = dict(os.environ,
                BOUGH_PROMPT_DIR=str(d),
                BENCH_VARIANT=name,
-               BENCH_RESULTS_FILE=str(results_file))
+               BENCH_RESULTS_FILE=str(results_file),
+               # Reuse the campaign's one server; the variant's prompt rides per
+               # session via exec.ts --prompt-dir (run-bough.sh), so no restart.
+               BENCH_KEEP_SERVER="1")
     cmd = [str(BENCH / "run.sh"), "-n", str(trials), "-H", "bough", *tasks]
     log(f"sweep {name}: {trials} trial(s) x {len(tasks) or 'all'} tasks -> {logf.name}")
     t0 = time.time()
@@ -442,6 +467,9 @@ def main():
     ap.add_argument("--max-variants", type=int, default=20, help="challenger cap for the night")
     ap.add_argument("--proposer-model", default=None, help="model for claude -p proposer")
     ap.add_argument("--sweep-only", metavar="NAME", help="just (re-)sweep an existing variant and exit")
+    ap.add_argument("--seed-online", action="store_true",
+                    help="race queued online-ACE candidates (bench/tune/online.py) as the "
+                         "first challengers, before LLM-proposing new ones")
     ap.add_argument("--campaign", default=time.strftime("%Y-%m-%d"),
                     help="results bucket (default: today); sweeps append to results/tune-<campaign>.jsonl")
     args = ap.parse_args()
@@ -451,6 +479,13 @@ def main():
     deadline = time.time() + args.hours * 3600
     VARIANTS.mkdir(parents=True, exist_ok=True)
     seed_baseline()
+
+    # One server for the whole campaign: restart ONCE now so it runs current code,
+    # then keep it (sweeps set BENCH_KEEP_SERVER=1). Per-variant prompts ride
+    # exec.ts --prompt-dir, so no variant pays a server restart — the old loop
+    # restarted per sweep.
+    subprocess.run([str(BENCH / "server.sh"), "stop"], capture_output=True)
+    subprocess.run([str(BENCH / "server.sh"), "start"], check=True)
 
     if args.sweep_only:
         s, _ = sweep(args.sweep_only, args.trials, args.tasks)
@@ -467,26 +502,38 @@ def main():
         log(f"baseline: {s['passes']}/{s['n']} @ ${s['cost_per_solved']}/solved")
 
     champion = "baseline"
+    seeds = collect_online_seeds() if args.seed_online else []
+    if seeds:
+        log(f"seeding {len(seeds)} queued online candidate(s): {', '.join(seeds)}")
     sweep_est, tried, failures = 1500.0, 0, 0
     while time.time() + sweep_est * 1.2 < deadline and tried < args.max_variants:
-        merge_partner = pick_merge_partner(champion) if tried and tried % 3 == 2 else None
-        try:
-            prop = propose(champion, noisy, args.proposer_model, merge_partner)
-            name, d = materialize(champion, prop)
-        except Exception as e:  # noqa: BLE001 — overnight loop must survive one bad reply
-            failures += 1
-            log(f"proposer failed ({failures}): {e}")
-            if failures >= 3:
-                log("3 consecutive proposer failures — stopping")
-                break
-            continue
+        # Queued online-ACE candidates race first (their dir + meta already exist);
+        # once drained, fall back to LLM-proposing fresh challengers.
+        seed = seeds.pop(0) if seeds else None
+        merge_partner = None if seed else (
+            pick_merge_partner(champion) if tried and tried % 3 == 2 else None)
+        if seed:
+            name, d = seed, VARIANTS / seed
+            meta = read_meta(d) or {"name": name, "hypothesis": "", "prediction": "",
+                                    "mode": "online", "ts": int(time.time())}
+            meta["parent"] = champion  # judged against the current champion
+        else:
+            try:
+                prop = propose(champion, noisy, args.proposer_model, merge_partner)
+                name, d = materialize(champion, prop)
+            except Exception as e:  # noqa: BLE001 — overnight loop must survive one bad reply
+                failures += 1
+                log(f"proposer failed ({failures}): {e}")
+                if failures >= 3:
+                    log("3 consecutive proposer failures — stopping")
+                    break
+                continue
+            meta = {"name": name, "hypothesis": prop.get("hypothesis", ""),
+                    "prediction": prop.get("prediction", ""), "parent": champion,
+                    "mode": "merge" if merge_partner else "mutate",
+                    "changed": sorted(prop.get("files", {}).keys()), "ts": int(time.time())}
         failures = 0
         tried += 1
-
-        meta = {"name": name, "hypothesis": prop.get("hypothesis", ""),
-                "prediction": prop.get("prediction", ""), "parent": champion,
-                "mode": "merge" if merge_partner else "mutate",
-                "changed": sorted(prop.get("files", {}).keys()), "ts": int(time.time())}
         champ_chars = variant_chars(VARIANTS / champion)
         if variant_chars(d) > champ_chars * GROWTH_CAP:
             meta["outcome"] = "rejected-growth"
@@ -541,6 +588,7 @@ def main():
             champion = name
 
     # End-of-night: a champion only survives its n=6 confirmation.
+    confirmed, confirm_detail = False, "no challenger beat baseline"
     if champion != "baseline":
         ok, detail = confirm_champion(champion, args.campaign)
         meta = read_meta(VARIANTS / champion) or {"name": champion, "ts": int(time.time()),
@@ -551,12 +599,28 @@ def main():
         append_prediction(meta, meta["outcome"], f"n=6 confirmation: {detail}")
         learn(f"{champion} end-of-night confirmation: {detail} -> "
               f"{'CONFIRMED, adoption-grade' if ok else 'REFUTED — night gain was variance'}")
+        confirmed, confirm_detail = ok, detail
         if not ok:
             log(f"champion {champion} FAILED confirmation ({detail}) — reverting to baseline")
             champion = "baseline"
 
+    # Machine-readable outcome for the continuous pipeline (bench/tune/nightly.sh):
+    # a confirmed, non-baseline champion is the signal to open an adoption PR.
+    summary = {
+        "campaign": args.campaign,
+        "champion": champion,
+        "confirmed": bool(confirmed and champion != "baseline"),
+        "detail": confirm_detail,
+        "challengers": tried,
+        "results_file": results_file.name,
+        "hypothesis": (read_meta(VARIANTS / champion) or {}).get("hypothesis", ""),
+    }
+    (BENCH / "results" / f"tune-{args.campaign}-summary.json").write_text(
+        json.dumps(summary, indent=2) + "\n")
+
     subprocess.run([str(BENCH / "server.sh"), "stop"], capture_output=True)
-    log(f"done: {tried} challenger(s), final champion = {champion}")
+    log(f"done: {tried} challenger(s), final champion = {champion} "
+        f"(confirmed={summary['confirmed']})")
     subprocess.run([sys.executable, str(TUNE / "report.py"), str(results_file)])
 
 

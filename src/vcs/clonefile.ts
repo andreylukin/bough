@@ -16,14 +16,13 @@
  */
 import { type Diff, parseGitDiff } from "../schema/changes.ts";
 import { pathExists } from "../fsutil.ts";
+import { homeStrict } from "../paths.ts";
 
 export const MANIFEST = ".bough-manifest.json";
 
 /** Default snapshots root: `~/.bough/snapshots`. */
 export function snapshotBase(): string {
-  const home = Deno.env.get("HOME");
-  if (!home) throw new Error("clonefile: no $HOME");
-  return `${home}/.bough/snapshots`;
+  return `${homeStrict("clonefile")}/.bough/snapshots`;
 }
 
 /** The dir holding one session's clones. `base` overrides the default root (tests). */

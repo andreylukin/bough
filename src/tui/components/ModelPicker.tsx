@@ -3,6 +3,7 @@ import { Box } from "ink";
 import { Text } from "./Text.tsx";
 import { SelRow } from "./SelRow.tsx";
 import type { BoughConfig, KeyProvider } from "../api.ts";
+import { windowAround } from "../format.ts";
 
 interface ModelEntry {
   kind: "model" | "effort" | "worker" | "key";
@@ -83,8 +84,8 @@ export function ModelPicker(
   });
   const max = Math.max(3, rows - 9);
   const selAt = Math.max(0, display.findIndex((d) => "i" in d && d.i === selected));
-  const start = Math.max(0, Math.min(selAt - Math.floor(max / 2), display.length - max));
-  const win = display.slice(start, start + max);
+  const { start, end } = windowAround(selAt, display.length, max);
+  const win = display.slice(start, end);
   return (
     <Box flexDirection="column" marginTop={1}>
       {start > 0 ? <Text dimColor>↑ {start} more</Text> : null}
@@ -126,8 +127,8 @@ export function ModelPicker(
           </Box>
         );
       })}
-      {start + max < display.length
-        ? <Text dimColor>↓ {display.length - start - max} more</Text>
+      {end < display.length
+        ? <Text dimColor>↓ {display.length - end} more</Text>
         : null}
     </Box>
   );

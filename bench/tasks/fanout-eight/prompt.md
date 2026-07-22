@@ -1,0 +1,3 @@
+This repo has EIGHT independent modules — roman.py, matrix.py, calendar_days.py, bank.py, graph.py, flatten.py, stats.py, base_convert.py — and each one has its own distinct, non-obvious bug that makes tests in test_all.py fail. The eight modules are unrelated: different domains, no shared code, no shared imports. Each bug takes real reading of that module's logic to find (a boundary condition, an index swap, a leap-year rule, a BFS-vs-DFS mistake, an off-by-one, a sample-vs-population divisor) — none is a one-line typo you can spot from the test name alone.
+
+Fix the bug in each module so the whole suite passes (`python3 -m unittest`). Do not change test_all.py — the tests encode the intended behavior. Keep each fix minimal and scoped to its own module.

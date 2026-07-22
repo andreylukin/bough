@@ -44,6 +44,8 @@ import {
   clientFor,
   type Effort,
   EFFORTS,
+  errName,
+  isRetryable,
   type LlmClient,
   type LlmContentBlock,
   type LlmMessage,
@@ -63,12 +65,8 @@ import {
   delegationHintNote,
   readAgentsFile,
   runningSubagentsNote,
+  resolveSystemSections,
   scratchpadNote,
-  SHIP_NOTE,
-  SYSTEM,
-  SYSTEM_DELEGATION,
-  SYSTEM_DELEGATION_NESTED,
-  SYSTEM_SUBAGENT,
   workspaceNote,
 } from "./supervisor/prompt.ts";
 import { activeSkills } from "./supervisor/skills.ts";
@@ -249,6 +247,13 @@ const STOP_TOOL = {
 const TRAILING_STOP_SENTINEL = /(?:\s*<stop\s*\/>)+\s*$/i;
 /** Re-prompts before the harness gives up on an explicit stop (runaway brake). */
 const MAX_STOP_NUDGES = 3;
+
+// Turn-level recovery ring: how many times a turn survives a round whose inner
+// withRetries window was exhausted by a transient failure, and how long it
+// pauses before resuming. 2 × 60s rides out a multi-minute network flap while a
+// truly dead network still fails the turn in a few minutes.
+const TURN_RING_MAX = 2;
+const TURN_RING_DELAY_MS = 60_000;
 const STOP_NUDGE = "[harness] Your turn is still open — it only ends when you call the stop " +
   "tool. Continue if there is more to do, or call stop now (alone, no other output) if you " +
   "are finished.";
@@ -652,11 +657,9 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       call: (verb, args) => scheduleVerb(db, verb, args, db.getSessionRuntime(sessionId).workspace),
     };
     // Artifacts: the program publishes a file for browser viewing; we host it on the
-    // server (server/artifacts.ts) and announce it so the open UI lists it live.
+    // server (server/artifacts.ts). The TUI lists it via GET /sessions/:id/artifacts.
     toolCtx.artifact = async (name, content) => {
-      const art = await publishArtifact(sessionId, name, content);
-      bus.publish({ type: "artifact.published", sessionId, data: { sessionId, ...art } });
-      return art;
+      return await publishArtifact(sessionId, name, content);
     };
     // ask(): park the program on a question to the human (asks.ts — the net gate's
     // hold-and-ask pattern). The settled Q/A is appended to THIS message as an
@@ -780,6 +783,11 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       toolCtx.lsp = createLspBridge({ workspace: prepared.cwd, sandbox: toolCtx.sandbox });
       lspNote = lspSection();
     }
+    // Supervisor prompt sections, resolved for this session's optional promptDir
+    // override (bough exec --prompt-dir) — read per turn, so a pinned variant needs
+    // no server restart. Undefined override = the process default sections.
+    const { SYSTEM, SHIP_NOTE, SYSTEM_DELEGATION, SYSTEM_DELEGATION_NESTED, SYSTEM_SUBAGENT } =
+      resolveSystemSections(db.getSession(sessionId)?.promptDir ?? undefined);
     // Ship (root sessions running in a shadow worktree only): commit + optional
     // push into the origin repo, executed HOST-side — the sandbox itself never
     // gains write access to the user's checkout. Subagents don't ship; their work
@@ -875,6 +883,7 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     // gate accepts done; interruptTurn is the user's brake on a runaway.
     let nudges = 0;
     let reportNudges = 0;
+    let ringRetries = 0; // turn-level recovery ring (see TURN_RING_MAX)
     // Any real tool ran this turn — arms the parallelism-honesty gate below.
     let ranTools = false;
     // Stop-gate: a turn that wrote files must exit through the check gate (done)
@@ -948,23 +957,60 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
           data: { text: `⇄ prewalk: first edit landed — handing off to ${model}` },
         });
       }
-      const result = await llm.run(
-        {
-          model,
-          system,
-          systemVolatile,
-          maxTokens: MAX_TOKENS,
-          messages,
-          tools: toolDefs,
-          ...(forceText ? { toolChoice: "none" as const } : {}),
-          ...(effort ? { effort } : {}),
-        },
-        (delta) => {
-          markFirstOutput();
-          bus.publish({ type: "message.delta", sessionId, data: { messageId, delta } });
-        },
-        signal,
-      );
+      // Outer recovery ring: when a round exhausts withRetries' ~30s window on a
+      // transient failure (connection drop, provider blip), pause and resume the
+      // turn instead of killing it — a bench trial died with all its work intact
+      // because 30s of network flap outlived the inner retries. Capped per turn;
+      // non-retryable errors and aborts still fail/stop immediately.
+      let result: Awaited<ReturnType<typeof llm.run>>;
+      for (;;) {
+        try {
+          result = await llm.run(
+            {
+              model,
+              system,
+              systemVolatile,
+              maxTokens: MAX_TOKENS,
+              messages,
+              tools: toolDefs,
+              ...(forceText ? { toolChoice: "none" as const } : {}),
+              ...(effort ? { effort } : {}),
+            },
+            (delta) => {
+              markFirstOutput();
+              bus.publish({ type: "message.delta", sessionId, data: { messageId, delta } });
+            },
+            signal,
+          );
+          break;
+        } catch (err) {
+          if (ringRetries >= TURN_RING_MAX || signal?.aborted || !isRetryable(err)) throw err;
+          ringRetries++;
+          // A retried round re-streams from the top — drop the partial stream.
+          bus.publish({ type: "message.retry", sessionId, data: { messageId } });
+          const reason = (err as Error).message?.replace(/\s+/g, " ").slice(0, 80);
+          bus.publish({
+            type: "session.activity",
+            sessionId,
+            data: {
+              text: `⟳ provider unreachable (${reason}) — pausing ${
+                TURN_RING_DELAY_MS / 1000
+              }s, then resuming the turn (${ringRetries}/${TURN_RING_MAX})`,
+            },
+          });
+          await new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(() => {
+              signal?.removeEventListener("abort", onAbort);
+              resolve();
+            }, TURN_RING_DELAY_MS);
+            const onAbort = () => {
+              clearTimeout(timer);
+              reject(new InterruptedError());
+            };
+            signal?.addEventListener("abort", onAbort, { once: true });
+          });
+        }
+      }
 
       if (result.usage) {
         contextTokens = result.usage.inputTokens; // last round = current context size
@@ -1142,7 +1188,7 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     // An interrupt (explicit abort, or the SDK's abort error) ends the turn
     // cleanly with a marker, not a failure — the user asked it to stop.
     const interrupted = err instanceof InterruptedError || signal?.aborted ||
-      (err as Error)?.name === "APIUserAbortError" || (err as Error)?.name === "AbortError";
+      errName(err) === "APIUserAbortError" || errName(err) === "AbortError";
     // Background shells are detached on purpose — say which ones outlive the stop.
     const survivors = interrupted ? runningIds(sessionId) : [];
     const note: Part = interrupted

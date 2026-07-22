@@ -20,7 +20,7 @@
  * child is spawned detached and lives past this process.
  */
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { boughPath } from "../paths.ts";
 
 const DEFAULT_GGUF = "qwen2.5-coder-3b-instruct-q4_k_m.gguf";
 const DEFAULT_PORT = 8080;
@@ -98,7 +98,7 @@ async function ensureModel(): Promise<string> {
   const filename = Deno.env.get("BOUGH_WORKER_GGUF") ?? DEFAULT_GGUF;
   const ggufUrl = Deno.env.get("BOUGH_WORKER_GGUF_URL");
   if (!ggufUrl) {
-    const path = join(homedir(), ".bough", "models", filename);
+    const path = boughPath("models", filename);
     try {
       const stat = await Deno.stat(path);
       if (stat.isFile) return path;
@@ -115,7 +115,7 @@ async function ensureModel(): Promise<string> {
 
 /** The GGUF's path under ~/.bough/models, downloading it (resumable) if missing. */
 async function ensureFile(filename: string, ggufUrl: string): Promise<string> {
-  const dir = join(homedir(), ".bough", "models");
+  const dir = boughPath("models");
   const path = join(dir, filename);
   try {
     const stat = await Deno.stat(path);

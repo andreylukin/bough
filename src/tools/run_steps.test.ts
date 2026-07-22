@@ -47,6 +47,24 @@ Deno.test("done with no check bounces once with a nudge, then is accepted", asyn
   assertStringIncludes(r2, "no check declared");
 });
 
+Deno.test("check-less done cites the last passing command in the bounce", async () => {
+  const c = ctx();
+  // The agent verified with a real command (exit 0) but never committed a check.
+  await runSteps.run(
+    { code: `await write("ok.txt", "y"); await bash("test -f ok.txt");` },
+    c,
+  );
+  const r = await runSteps.run({ code: `console.log("done now");`, done: true }, c);
+  assertStringIncludes(r, DONE_REJECTED);
+  assertStringIncludes(r, "check: test -f ok.txt");
+  // Mutating commands are never recorded as the candidate.
+  const c2 = ctx();
+  await runSteps.run({ code: `await write("a.txt", "x"); await bash("rm a.txt");` }, c2);
+  const r2 = await runSteps.run({ code: `console.log("done");`, done: true }, c2);
+  assertStringIncludes(r2, DONE_REJECTED);
+  if (r2.includes("rm a.txt")) throw new Error("mutating command cited as check candidate");
+});
+
 Deno.test("todo commits on the turn and is echoed on every later result", async () => {
   const c = ctx();
   const r1 = await runSteps.run(

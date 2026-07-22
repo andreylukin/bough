@@ -16,10 +16,53 @@ every 3rd proposal merges two Pareto-frontier variants; and the night's final
 champion must survive an n=6 confirmation vs baseline before the report calls
 it promoted. Guards: +5% growth cap (prompt-dilution lesson), campaign-scoped
 results files (`results/tune-<campaign>.jsonl` — different trial counts never
-pool). Morning after: `bench/tune/report.py`, then adopt a winner by porting
-its section files into `src/supervisor/prompt.ts` and re-verifying with a
-normal sweep. `variants/baseline/` is dumped from the built-ins by
-`tune/dump-prompt.ts`; reseed it after any prompt.ts change.
+pool). Morning after: `bench/tune/report.py`, then adopt a winner with
+`bench/tune/adopt.sh <variant>`, which copies its section files into the
+checked-in default prompt dir `src/supervisor/prompt/` — where
+`promptOverride()` reads them in normal operation, so adoption is a reviewable
+`.md` diff, not a TS-array edit. `variants/baseline/` and `src/supervisor/prompt/`
+are both dumped from the built-in TS arrays by `tune/dump-prompt.ts`; reseed
+after any change to the builtins in `prompt.ts`.
+
+**No restart per variant.** A prompt variant is pinned per session via
+`bough exec --prompt-dir` (→ `session.promptDir` → the turn runner resolves the
+sections for that session), so one long-lived bench server serves every variant.
+`run-bough.sh` passes `--prompt-dir "$BOUGH_PROMPT_DIR"`; `run.sh` honors
+`BENCH_KEEP_SERVER=1` (reuse a running server); the tuner starts one fresh server
+per campaign and keeps it. Manual `run.sh` still restarts by default (stale-code
+guard). This is what makes the loop fast enough to run continuously.
+
+## Continuous pipeline (bench/tune/)
+
+The tuner runs as a standing loop, not a one-off. Two halves feed the same
+haiku-bench adoption gate — nothing ships without beating baseline at n=6.
+
+- **Offline (nightly):** `bench/tune/nightly.sh` runs one campaign and, on a
+  *confirmed* champion (machine-readable in `results/tune-<campaign>-summary.json`),
+  opens an adoption PR — built in a throwaway `git worktree` off `origin/main`
+  (never the dirty dev checkout), `adopt.sh`'d, pushed, `gh pr create`'d. A human
+  merge is the actual prompt change. Schedule it with
+  `com.bough.prompt-tune.plist` (launchd, 02:30; `launchctl load` it). Knobs:
+  `HOURS`/`TRIALS`/`TASKS`/`PROPOSER_MODEL`, `NO_PR=1` to build the branch without
+  pushing.
+- **Online (ACE):** `bench/tune/online.py` mines real daily-driver sessions
+  (`~/.bough/bough.db`) for recurring friction — failed checks, tool-error bursts,
+  rework loops — and a `claude -p` reflector (contract in `tune/online.md`) turns
+  patterns into candidate prompt deltas (ACE, arXiv 2510.04618: generator →
+  reflector → curator, incremental deltas, no monolithic rewrite). Candidates are
+  materialized under `variants/` tagged `source=online`, growth-capped, and queued
+  (`variants/_online-queue.json`). They are only HYPOTHESES: `tune.py --seed-online`
+  (which `nightly.sh` passes) races queued candidates as the first challengers.
+  Real sessions run on a stronger model than the bench, so a delta that doesn't
+  move the weak-model bench is dropped — the friction is the idea source, the
+  bench is the judge. `--dry-run` prints the friction summary without an LLM call.
+
+Not yet in the bank (deferred, honest gaps): a *real-repo* bugfix task (needs a
+vendored fixture repo) and a *tool-use/MCP* task (needs an MCP server wired into
+both headless runners). Add tasks the same way — `fixture/` + `prompt.md` +
+`verify.sh` grading final workspace state; keep the `decomposableRequest`
+calibration in `prompt.test.ts` honest by prefixing any genuinely fan-out task
+`fanout-`.
 
 Fixed-model A/B harness comparison. Both harnesses run **claude-haiku-4-5** —
 a deliberately weak model, because harness gains are largest on weak models
@@ -79,7 +122,9 @@ Edits whose predictions fail get reverted — no vibes-driven prompt growth.
 | bugfix-inventory | failing test, fix impl not tests | tests green + test file byte-identical |
 | fanout-bugs | 4 INDEPENDENT modules, each with a distinct bug | all four suites green + tests untouched — decomposable, so it rewards parallel delegation; grade the *how* with orch_metrics.py |
 | fanout-heavy | 6 INDEPENDENT modules (~265 lines), each with a non-obvious bug needing real reading | all six suites green + tests untouched — the heavy fan-out; still solved serially (~12k parent-ctx), so even this is below the delegation threshold |
+| fanout-eight | 8 INDEPENDENT modules (~230 lines), each with a distinct non-obvious bug (boundary, index swap, leap-year, BFS-vs-DFS, off-by-one, sample-vs-population divisor) | all eight suites green + tests untouched — the heaviest fan-out, by design pushed past where a weak model's later fixes degrade under accumulated context, so delegation should start to move *pass rate*, not just parent-ctx |
 | feature-topwords | add `--top N` flag to a CLI | exact output incl. tie-break, old behavior intact |
+| longhorizon-feature | multi-step CLI extension: `-p/--priority` flag + data-model change + `done`/`top` commands + priority sort with tie-breaks + two error paths | scripted session checks exact stdout, sort order, tie-breaks, and error exit codes — the long-horizon planning shape |
 | refactor-rename | rename across 3 files | no old name remains, tests untouched + green |
 | rename-precise | rename a method whose name recurs as decoys (dict key, string, unrelated class) | only the real call sites change; a global text replace breaks the decoy test — isolates *semantic* rename (lsp.rename) from text search |
 | test-writing | write tests for slugify | tests pass on real impl AND fail on two mutants |
@@ -103,6 +148,14 @@ Per trial it reports, from `state/bough.db`: **delegated** (subagents spawned),
 **parallel** (in-program `Promise.all` / multiple `agent()`/`spawn()`), **bg-used**
 (`bashBg`/`bashWait`/auto-background), **polled** (the sleep/until anti-pattern),
 and **parent-ctx** (the parent's context tokens — delegation should keep it lean).
+
+That is the *quantitative* trajectory view. For the *qualitative* one — was the
+solve clean or a lucky flail — `python3 bench/rate.py <since_ts> [task]` reads each
+trial's transcript and has a strong judge model (`RATE_MODEL`) score it 1..5 on
+approach / efficiency / verification / recovery, with the oracle verdict given as
+ground truth so a pass-by-luck and a clean solve diverge; it flags the
+**verification gap** (claimed success the oracle failed, or a pass with no check
+run) and appends `results/ratings.jsonl`.
 
 The iteration loop is the same AHE protocol: record a prediction, change the
 guidance or mechanism, re-run a task that *rewards* the behavior (`fanout-bugs`),

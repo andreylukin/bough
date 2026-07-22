@@ -3,6 +3,7 @@ import { Box } from "ink";
 import { Text } from "./Text.tsx";
 import { SelRow } from "./SelRow.tsx";
 import type { WireDiff, WireFileDiff } from "../api.ts";
+import { windowAround } from "../format.ts";
 
 export interface DiffEntry {
   source: WireDiff["source"];
@@ -63,10 +64,7 @@ export function DiffView(
   },
 ) {
   const fileRows = Math.max(2, Math.min(entries.length, 6));
-  const fileStart = Math.max(
-    0,
-    Math.min(fileSel - Math.floor(fileRows / 2), entries.length - fileRows),
-  );
+  const { start: fileStart } = windowAround(fileSel, entries.length, fileRows);
   const sel = entries[fileSel];
   const lines = sel ? sel.file.hunks.flatMap((h) => [h.header, ...h.lines]) : [];
   const bodyRows = focused ? Math.max(4, rows - 4) : Math.max(4, rows - fileRows - 8);

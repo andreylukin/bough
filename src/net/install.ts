@@ -11,8 +11,7 @@
  * Fully native: no HCL, no external binary. The gate hot-swaps from the merged config
  * (the server handler calls setPolicy after install).
  */
-import { join } from "node:path";
-import { homedir } from "node:os";
+import { boughPath } from "../paths.ts";
 import { mkdirSync } from "node:fs";
 import { compileRule, decide, policy as makePolicy, type Request, type Rule } from "./policy.ts";
 import { loadConfig, type NetConfig, saveConfig } from "./config.ts";
@@ -44,7 +43,7 @@ export class InstallError extends Error {
 /** The net config dir. BOUGH_NET_DIR overrides (tests); else ~/.bough/net. */
 export function netDir(): string {
   const override = Deno.env.get("BOUGH_NET_DIR");
-  const dir = override ?? join(homedir(), ".bough", "net");
+  const dir = override ?? boughPath("net");
   mkdirSync(dir, { recursive: true });
   return dir;
 }

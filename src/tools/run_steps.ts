@@ -89,7 +89,20 @@ export const runSteps: ToolDef = {
     const result = await runProgram(
       code,
       {
-        bash: (command) => bash.run({ command }, ctx),
+        bash: async (command) => {
+          const out = await bash.run({ command }, ctx);
+          // Remember the turn's latest passing command: it is the ready-made
+          // `check` candidate a check-less done auto-adopts (and the done-gate
+          // messages cite). Pure navigation (ls/cat/…) is skipped — a vacuous
+          // check; mutating prefixes (rm/mv/git/…) are skipped — the adopted
+          // command re-runs at done-time, so it must be safe to repeat.
+          if (
+            ctx.turn && exitCodeOf(out) === 0 &&
+            !/^\s*(ls|cat|head|tail|find|pwd|echo|which|wc)\b[^|&;]*$/.test(command) &&
+            !/^\s*(rm|mv|cp|mkdir|touch|chmod|chown|ln|git|kill)\b/.test(command)
+          ) ctx.turn.lastGreenCmd = command;
+          return out;
+        },
         // Background shells: detached from the turn on purpose (no ctx.signal) —
         // they persist across rounds and turns of this session until killed.
         bashBg: (command) => {
@@ -215,6 +228,10 @@ export const runSteps: ToolDef = {
     }
 
     if (done) {
+      // Measured and rejected: auto-adopting lastGreenCmd as the check here
+      // (skipping the bounce) cost pass rate — the check-writing rounds are
+      // where the model re-compares its output against the literal spec, and
+      // removing that forcing function shipped format bugs. Cite, don't adopt.
       const committed = ctx.turn?.check ?? check;
       if (!committed && ctx.turn && !ctx.turn.checkNudged) {
         // First check-less done bounces: a completion claim with no committed
@@ -224,7 +241,12 @@ export const runSteps: ToolDef = {
         out.push(
           `${DONE_REJECTED} — no check committed. Commit a \`check\` command that ` +
             `exits 0 iff the request's acceptance criteria hold, then set done:true ` +
-            `again. If the work is genuinely uncheckable, set done:true once more.`,
+            `again.` +
+            (ctx.turn.lastGreenCmd
+              ? ` Your last passing command is a ready-made candidate — commit it ` +
+                `as-is, do NOT re-run it first: check: ${ctx.turn.lastGreenCmd}`
+              : "") +
+            ` If the work is genuinely uncheckable, set done:true once more.`,
         );
       } else if (!committed) {
         out.push(`${DONE_ACCEPTED} — no check declared`);
@@ -265,12 +287,20 @@ export const runSteps: ToolDef = {
       if (wrote) ctx.turn.everWrote = true;
       const probeOnly = ctx.turn.everWrote === true && !wrote && !check && !done;
       ctx.turn.probeRounds = probeOnly ? (ctx.turn.probeRounds ?? 0) + 1 : 0;
+      // Threshold 3, measured: firing on the first probe round cut cost ~20%
+      // but dropped pass rate 91%→81% on the bench (premature finishes) —
+      // the probe tail is partly productive settling time for a weak model.
       if (ctx.turn.probeRounds >= 3) {
         ctx.turn.probeRounds = 0;
         out.push(
           "[verification note] 3 rounds without a file change or a committed check. " +
-            "If behavior is confirmed, encode that verification as your `check` command " +
-            "and set done:true; if something is wrong, fix it now instead of probing further.",
+            "STOP re-verifying — you have already seen the result. " +
+            (ctx.turn.lastGreenCmd
+              ? `THIS round, commit your last passing command verbatim as the check ` +
+                `and finish: { check: ${JSON.stringify(ctx.turn.lastGreenCmd)}, done: true }. `
+              : "If behavior is confirmed, encode that verification as your `check` " +
+                "command and set done:true this round. ") +
+            "If something is actually wrong, fix it now instead of probing further.",
         );
       }
     }

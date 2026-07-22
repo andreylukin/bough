@@ -19,21 +19,41 @@
  * compose directly.
  */
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { boughPath } from "../paths.ts";
 import type { Session } from "../schema/parts.ts";
 import { MAX_SPAWNS_PER_TURN, MAX_TREE_CONCURRENT } from "../subagent.ts";
 import { SPEC_GUIDE } from "../server/jsonrender/catalog.ts";
 
-// ---- prompt override hook (bench/tune) --------------------------------------
-// BOUGH_PROMPT_DIR: when set, a <name>.md file present in that directory
-// replaces the matching section export (suffix sections keep their "\n\n"
-// lead-in). Read once at module load; unset in normal operation — the prompt
-// tuner (bench/tune) sets it per variant so sweeps never edit this file.
+// ---- prompt override hook ---------------------------------------------------
+// Two layers sit on top of the TS builtins below, resolved per section at module
+// load:
+//   1. BOUGH_PROMPT_DIR — the prompt tuner (bench/tune) points this at a variant's
+//      section dir during a sweep, so a candidate is measured without editing this
+//      file. Highest precedence; unset in normal operation.
+//   2. ./prompt/<name>.md — the checked-in ADOPTED prompt. When the nightly tuner
+//      confirms a champion, `bench/tune/adopt.sh` copies its winning section files
+//      here, so adoption is a reviewable `.md` diff rather than TS-array surgery.
+//      Present in normal operation once anything has ever been adopted.
+// The builtins are the seed/fallback: `dump-prompt.ts` writes ./prompt/ from them,
+// and a missing/unreadable file at either layer falls through to the builtin.
 const PROMPT_DIR = Deno.env.get("BOUGH_PROMPT_DIR");
-function promptOverride(file: string, builtin: string, prefix = ""): string {
-  if (!PROMPT_DIR) return builtin;
+const DEFAULT_PROMPT_DIR = new URL("./prompt/", import.meta.url);
+// Resolve one section, per-file precedence: an explicit per-session overrideDir
+// (bough exec --prompt-dir / session.promptDir) > BOUGH_PROMPT_DIR (process env,
+// tuner sweeps) > the checked-in ./prompt dir (adopted) > the built-in. A missing
+// file at any layer falls through to the next, so an override dir may carry only
+// the sections it changes.
+function promptOverride(file: string, builtin: string, prefix = "", overrideDir?: string): string {
+  const read = (path: string | URL) => prefix + Deno.readTextFileSync(path).trim();
+  for (const dir of [overrideDir, PROMPT_DIR]) {
+    if (dir) {
+      try {
+        return read(join(dir, file));
+      } catch { /* missing in this dir — fall through */ }
+    }
+  }
   try {
-    return prefix + Deno.readTextFileSync(join(PROMPT_DIR, file)).trim();
+    return read(new URL(file, DEFAULT_PROMPT_DIR));
   } catch {
     return builtin;
   }
@@ -329,6 +349,36 @@ export const SYSTEM_DELEGATION_NESTED = promptOverride(
   "\n\n",
 );
 
+/** The five supervisor prompt sections, resolved for a specific session's
+ * `promptDir` override (undefined = the module-level exports above). The turn
+ * runner calls this per turn so a prompt variant pinned on the session takes
+ * effect with NO server restart. Passing undefined returns the process defaults,
+ * byte-identical to the SYSTEM/… consts, so cache sharing is unaffected in normal
+ * operation. */
+export function resolveSystemSections(overrideDir?: string) {
+  if (!overrideDir) {
+    return {
+      SYSTEM,
+      SHIP_NOTE,
+      SYSTEM_DELEGATION,
+      SYSTEM_DELEGATION_NESTED,
+      SYSTEM_SUBAGENT,
+    };
+  }
+  return {
+    SYSTEM: promptOverride("system.md", SYSTEM_BUILTIN, "", overrideDir),
+    SHIP_NOTE: promptOverride("ship-note.md", SHIP_NOTE_BUILTIN, "\n\n", overrideDir),
+    SYSTEM_DELEGATION: promptOverride("delegation.md", SYSTEM_DELEGATION_BUILTIN, "\n\n", overrideDir),
+    SYSTEM_DELEGATION_NESTED: promptOverride(
+      "delegation-nested.md",
+      SYSTEM_DELEGATION_NESTED_BUILTIN,
+      "\n\n",
+      overrideDir,
+    ),
+    SYSTEM_SUBAGENT: promptOverride("subagent.md", SYSTEM_SUBAGENT_BUILTIN, "\n\n", overrideDir),
+  };
+}
+
 // ---- delegation fit gate ---------------------------------------------------
 // Bench finding (predictions.jsonl, 2026-07-20): the supervisor NEVER delegates
 // on its own initiative (0 self-initiated subagents across 240+ sessions), and
@@ -469,8 +519,7 @@ async function readOneAgentsFile(path: string): Promise<string | null> {
  * path, chiefly for tests.)
  */
 export async function readAgentsFile(cwd: string): Promise<string | null> {
-  const globalPath = Deno.env.get("BOUGH_GLOBAL_AGENTS") ??
-    join(homedir(), ".bough", "AGENTS.md");
+  const globalPath = Deno.env.get("BOUGH_GLOBAL_AGENTS") ?? boughPath("AGENTS.md");
   const [global, project] = await Promise.all([
     readOneAgentsFile(globalPath),
     readOneAgentsFile(join(cwd, "AGENTS.md")),

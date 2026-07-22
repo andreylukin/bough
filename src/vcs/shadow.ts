@@ -38,6 +38,7 @@
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { type Diff, parseGitDiff } from "../schema/changes.ts";
 import { pathExists } from "../fsutil.ts";
+import { homeStrict } from "../paths.ts";
 
 const USER = "bough";
 const EMAIL = "bough@localhost";
@@ -137,9 +138,7 @@ async function originGit(
 export function storeBase(): string {
   const env = Deno.env.get("BOUGH_SHADOW_BASE");
   if (env) return env;
-  const home = Deno.env.get("HOME");
-  if (!home) throw new Error("shadow: no $HOME");
-  return `${home}/.bough/shadow`;
+  return `${homeStrict("shadow")}/.bough/shadow`;
 }
 
 /**
@@ -150,9 +149,7 @@ export function storeBase(): string {
 export function workspacesRoot(): string {
   const env = Deno.env.get("BOUGH_SUBAGENT_BASE");
   if (env) return env;
-  const home = Deno.env.get("HOME");
-  if (!home) throw new Error("shadow: no $HOME");
-  return `${home}/.bough/workspaces`;
+  return `${homeStrict("shadow")}/.bough/workspaces`;
 }
 
 /** A session's own working-copy dir under `workspacesRoot()`. */

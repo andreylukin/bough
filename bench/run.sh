@@ -19,10 +19,18 @@ shift $((OPTIND - 1))
 TASKS=("$@")
 [ ${#TASKS[@]} -gt 0 ] || TASKS=($(ls "$BENCH/tasks"))
 
-# Always restart: a server left over from a previous sweep runs stale code,
-# which silently invalidates any harness-edit verification (burned twice).
-"$BENCH/server.sh" stop >&2 || true
-"$BENCH/server.sh" start >&2
+# Default: restart, because a server left over from a previous sweep runs stale
+# CODE, which silently invalidates any harness-edit verification (burned twice).
+# BENCH_KEEP_SERVER=1 opts out — reuse a running server (start it if down). Safe
+# ONLY when the source is unchanged and prompt variation rides per-session
+# --prompt-dir (run-bough.sh): the prompt tuner starts one fresh server per
+# campaign and keeps it, so variants no longer pay a restart each.
+if [ "${BENCH_KEEP_SERVER:-}" = "1" ]; then
+  "$BENCH/server.sh" start >&2   # idempotent: start if down, else reuse
+else
+  "$BENCH/server.sh" stop >&2 || true
+  "$BENCH/server.sh" start >&2
+fi
 mkdir -p "$RESULTS"
 OUT="${BENCH_RESULTS_FILE:-$RESULTS/results.jsonl}"
 

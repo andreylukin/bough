@@ -13,7 +13,7 @@
  * this module hands out (via SNICallback → tls.createSecureContext).
  */
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { boughPath } from "../paths.ts";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import forge from "node-forge";
 
@@ -63,7 +63,7 @@ function generateCA(): { cert: Cert; key: Key } {
 
 /** The default net dir (BOUGH_NET_DIR overrides in tests); CA lives in its `ca/` subdir. */
 function caDir(): string {
-  const base = Deno.env.get("BOUGH_NET_DIR") ?? join(homedir(), ".bough", "net");
+  const base = Deno.env.get("BOUGH_NET_DIR") ?? boughPath("net");
   const dir = join(base, "ca");
   mkdirSync(dir, { recursive: true });
   return dir;

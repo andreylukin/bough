@@ -5,41 +5,28 @@ import type { AskQuestion, Message, NetRequest, Session } from "../schema/parts.
 const PORT = Deno.env.get("BOUGH_PORT") ?? "4321";
 export const BASE = `http://127.0.0.1:${PORT}`;
 
-// Small response shapes, mirrored from the server routes (src/server/app.ts is the
-// reference; these cover only what the TUI consumes).
-export interface DirHit {
-  path: string;
-  display: string;
-  repo: boolean;
-}
+// Server response shapes. Where the TUI consumes a server type verbatim, it
+// re-exports the canonical definition (type-only, so nothing server-side is
+// pulled into the TUI bundle) rather than re-declaring it — that keeps the TUI's
+// view from silently drifting from what the server actually sends. Shapes with no
+// single canonical source (assembled inline in app.ts) stay declared below.
+import type { DirHit } from "../server/files.ts";
+import type { Section as WireSection } from "../sections.ts";
+import type {
+  Diff as WireDiff,
+  FileDiff as WireFileDiff,
+  Hunk as WireHunk,
+} from "../schema/changes.ts";
+import type { KeyProvider } from "../server/keys.ts";
+import type { JobInfo as JobRow } from "../tools/bash_bg.ts";
+import type { Schedule as WireSchedule } from "../db/db.ts";
+// An LLM-labeled topic section over the conversation tree's turns (Section), the
+// change-review diff family (Diff/FileDiff/Hunk), a dir picker hit, a provider
+// key name, a background-shell row, and a recurring-run row — re-exported (type
+// only) so the TUI can't drift from what the server sends.
+export type { DirHit, JobRow, WireDiff, WireFileDiff, WireHunk, WireSchedule, WireSection };
+export type { KeyProvider };
 export type ChangeSource = "clonefile" | "shadow";
-
-/** An LLM-labeled topic section over the conversation tree's turns — the label
- * says what that stretch of work was about (inclusive 0-based turn indexes;
- * mirror of the server's Section). */
-export interface WireSection {
-  start: number;
-  end: number;
-  label: string;
-}
-export interface WireHunk {
-  header: string;
-  lines: string[];
-}
-export interface WireFileDiff {
-  path: string;
-  status: "added" | "modified" | "deleted";
-  hunks: WireHunk[];
-}
-export interface WireDiff {
-  source: ChangeSource;
-  files: WireFileDiff[];
-  /** Set on a direct subagent's unadopted branch diff (spawner's rail): the
-   * session to adopt. Review-only — apply/revert skip these groups. */
-  subagentId?: string;
-  /** Display label for a grouped section (`<subagent title> (unadopted)`). */
-  label?: string;
-}
 /** What POST changes/apply reports back — feeds the panel's feedback toast. */
 export interface ApplyOutcome {
   applied: string[];
@@ -52,7 +39,6 @@ export interface ModelOption {
   id: string;
   label: string;
 }
-export type KeyProvider = "anthropic" | "openrouter" | "openai";
 export interface BoughConfig {
   model: string;
   models: ModelOption[];
@@ -86,31 +72,9 @@ export interface Usage {
   tree?: { inputTokens: number; outputTokens: number; costUsd?: number; sessions: number };
 }
 export const USAGE_ZERO: Usage = { contextTokens: 0, outputTokens: 0, inputTokens: 0 };
-/** A background shell as GET /sessions/:id/jobs reports it (bash_bg.ts JobInfo). */
-export interface JobRow {
-  id: string;
-  sessionId: string;
-  command: string;
-  startedAt: number;
-  status: "running" | "exited" | "killed";
-  exitCode?: number;
-  tailLines: string[];
-}
 export interface SkillInfo {
   name: string;
   description: string;
-}
-/** A recurring agent run (mirror of the server's Schedule — schedules.ts). */
-export interface WireSchedule {
-  id: string;
-  title: string;
-  prompt: string;
-  workspace: string | null;
-  spec: string;
-  enabled: boolean;
-  createdAt: number;
-  lastRunAt: number | null;
-  nextRunAt: number;
 }
 export interface NetStatus {
   enabled: boolean;

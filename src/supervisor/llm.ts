@@ -142,16 +142,30 @@ export function isToolProtocol400(err: unknown): boolean {
     /tool_calls|tool_call_id|must be followed by tool/i.test(err.message);
 }
 
+/**
+ * An error's effective type name. The Anthropic SDK's error classes never set
+ * `this.name`, so `.name` is "Error" for all of them while the console prints
+ * the class name — matching on `.name` alone silently misclassified every SDK
+ * connection error as non-retryable (bench: instant turn deaths on a network
+ * flap). The constructor name is the reliable signal in unbundled Deno.
+ */
+export function errName(err: unknown): string {
+  const e = err as { name?: string; constructor?: { name?: string } } | null;
+  if (e?.name && e.name !== "Error") return e.name;
+  return e?.constructor?.name ?? "";
+}
+
 /** Should this failure be re-attempted? User aborts and caller mistakes (4xx) never are. */
 export function isRetryable(err: unknown): boolean {
-  const e = err as { name?: string; status?: unknown } | null;
-  if (e?.name === "AbortError" || e?.name === "APIUserAbortError") return false;
+  const name = errName(err);
+  if (name === "AbortError" || name === "APIUserAbortError") return false;
   if (err instanceof LlmError) {
     return err.status === undefined || retryableStatus(err.status) || isToolProtocol400(err);
   }
   // Anthropic SDK: APIError carries `.status`; connection failures carry none.
+  const e = err as { status?: unknown } | null;
   if (typeof e?.status === "number") return retryableStatus(e.status);
-  if (e?.name === "APIConnectionError" || e?.name === "APIConnectionTimeoutError") return true;
+  if (name === "APIConnectionError" || name === "APIConnectionTimeoutError") return true;
   return err instanceof TypeError; // fetch network failure
 }
 
@@ -235,6 +249,33 @@ function readWithStallGuard(
     }, STALL_TIMEOUT_MS);
     reader.read().then(resolve, reject).finally(() => clearTimeout(timer));
   });
+}
+
+/** Yield each SSE `data:` payload (raw, INCLUDING the `[DONE]` sentinel — callers
+ * treat it differently) from a streaming response body. Splits on `\n`, trims,
+ * and skips non-`data:` lines (SSE comments / keepalives). Reads through
+ * readWithStallGuard so a silently dead connection surfaces as a retryable
+ * LlmError. A trailing un-newlined fragment at stream end is dropped, matching
+ * the hand-rolled loops this replaced. */
+async function* sseEvents(
+  body: ReadableStream<Uint8Array>,
+  provider: string,
+): AsyncIterable<string> {
+  const reader = body.getReader();
+  const dec = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await readWithStallGuard(reader, provider);
+    if (done) break;
+    buffer += dec.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, nl).trim();
+      buffer = buffer.slice(nl + 1);
+      if (!line.startsWith("data:")) continue;
+      yield line.slice(5).trim();
+    }
+  }
 }
 
 /** Map a non-2xx provider response to a classified LlmError (never returns). */
@@ -670,40 +711,27 @@ export function openaiClient(): LlmClient {
           input_tokens_details?: { cached_tokens?: number };
         };
       } | undefined;
-      const reader = res.body.getReader();
-      const dec = new TextDecoder();
-      let buffer = "";
-      for (;;) {
-        const { done, value } = await readWithStallGuard(reader, "openai");
-        if (done) break;
-        buffer += dec.decode(value, { stream: true });
-        let nl: number;
-        while ((nl = buffer.indexOf("\n")) >= 0) {
-          const line = buffer.slice(0, nl).trim();
-          buffer = buffer.slice(nl + 1);
-          if (!line.startsWith("data:")) continue;
-          const data = line.slice(5).trim();
-          if (data === "[DONE]") continue;
-          let ev: { type?: string; delta?: string; response?: typeof final; message?: string };
-          try {
-            ev = JSON.parse(data);
-          } catch {
-            continue;
-          }
-          if (ev.type === "response.output_text.delta" && ev.delta) onText(ev.delta);
-          else if (ev.type === "response.completed" && ev.response) final = ev.response;
-          else if (
-            (ev.type === "response.failed" || ev.type === "error") && !final
-          ) {
-            // Mid-stream failure events are server-side (the request itself was
-            // accepted) — classify retryable, rate limits by their error code.
-            const code = ev.response?.error?.code ?? "";
-            throw new LlmError(
-              `openai: ${JSON.stringify(ev)}`,
-              code.includes("rate_limit") ? 429 : 500,
-            );
-          } else if (ev.type === "response.incomplete" && ev.response) final = ev.response;
+      for await (const data of sseEvents(res.body, "openai")) {
+        if (data === "[DONE]") continue;
+        let ev: { type?: string; delta?: string; response?: typeof final; message?: string };
+        try {
+          ev = JSON.parse(data);
+        } catch {
+          continue;
         }
+        if (ev.type === "response.output_text.delta" && ev.delta) onText(ev.delta);
+        else if (ev.type === "response.completed" && ev.response) final = ev.response;
+        else if (
+          (ev.type === "response.failed" || ev.type === "error") && !final
+        ) {
+          // Mid-stream failure events are server-side (the request itself was
+          // accepted) — classify retryable, rate limits by their error code.
+          const code = ev.response?.error?.code ?? "";
+          throw new LlmError(
+            `openai: ${JSON.stringify(ev)}`,
+            code.includes("rate_limit") ? 429 : 500,
+          );
+        } else if (ev.type === "response.incomplete" && ev.response) final = ev.response;
       }
       // No status → transport fault → retryable.
       if (!final) throw new LlmError("openai: stream ended without response.completed");
@@ -774,80 +802,67 @@ function openAICompatClient(opts: OpenAICompatOpts): LlmClient {
       // round as success would run half-assembled tool calls.
       let ended = false;
 
-      const reader = res.body.getReader();
-      const dec = new TextDecoder();
-      let buffer = "";
-      for (;;) {
-        const { done, value } = await readWithStallGuard(reader, opts.provider);
-        if (done) break;
-        buffer += dec.decode(value, { stream: true });
-        let nl: number;
-        while ((nl = buffer.indexOf("\n")) >= 0) {
-          const line = buffer.slice(0, nl).trim();
-          buffer = buffer.slice(nl + 1);
-          if (!line.startsWith("data:")) continue;
-          const data = line.slice(5).trim();
-          if (data === "[DONE]") {
-            ended = true;
-            continue;
-          }
-          let chunk: {
-            choices?: {
-              delta?: { content?: string; tool_calls?: OpenAIToolCall[] };
-              finish_reason?: string;
-            }[];
-            error?: { message?: string; code?: number | string };
-            usage?: {
-              prompt_tokens?: number;
-              completion_tokens?: number;
-              prompt_tokens_details?: { cached_tokens?: number };
-            };
+      for await (const data of sseEvents(res.body, opts.provider)) {
+        if (data === "[DONE]") {
+          ended = true;
+          continue;
+        }
+        let chunk: {
+          choices?: {
+            delta?: { content?: string; tool_calls?: OpenAIToolCall[] };
+            finish_reason?: string;
+          }[];
+          error?: { message?: string; code?: number | string };
+          usage?: {
+            prompt_tokens?: number;
+            completion_tokens?: number;
+            prompt_tokens_details?: { cached_tokens?: number };
           };
-          try {
-            chunk = JSON.parse(data);
-          } catch {
-            continue;
-          }
-          // OpenRouter surfaces an upstream provider failure as a terminal `error`
-          // chunk on an otherwise-200 stream; without this it would silently pass
-          // the partial round off as success.
-          if (chunk.error) {
-            throw new LlmError(
-              `${opts.provider}: ${chunk.error.message ?? JSON.stringify(chunk.error)}`,
-              typeof chunk.error.code === "number" ? chunk.error.code : undefined,
-            );
-          }
-          if (chunk.usage) {
-            usage = {
-              inputTokens: chunk.usage.prompt_tokens ?? 0,
-              outputTokens: chunk.usage.completion_tokens ?? 0,
-              // OpenRouter relays the upstream provider's cache hits (OpenAI-shape).
-              cacheReadTokens: chunk.usage.prompt_tokens_details?.cached_tokens ?? 0,
+        };
+        try {
+          chunk = JSON.parse(data);
+        } catch {
+          continue;
+        }
+        // OpenRouter surfaces an upstream provider failure as a terminal `error`
+        // chunk on an otherwise-200 stream; without this it would silently pass
+        // the partial round off as success.
+        if (chunk.error) {
+          throw new LlmError(
+            `${opts.provider}: ${chunk.error.message ?? JSON.stringify(chunk.error)}`,
+            typeof chunk.error.code === "number" ? chunk.error.code : undefined,
+          );
+        }
+        if (chunk.usage) {
+          usage = {
+            inputTokens: chunk.usage.prompt_tokens ?? 0,
+            outputTokens: chunk.usage.completion_tokens ?? 0,
+            // OpenRouter relays the upstream provider's cache hits (OpenAI-shape).
+            cacheReadTokens: chunk.usage.prompt_tokens_details?.cached_tokens ?? 0,
+          };
+        }
+        const choice = chunk.choices?.[0];
+        if (!choice) continue;
+        if (choice.finish_reason) {
+          finishReason = choice.finish_reason;
+          ended = true;
+        }
+        const delta = choice.delta;
+        if (delta?.content) {
+          text += delta.content;
+          onText(delta.content);
+        }
+        for (const tc of delta?.tool_calls ?? []) {
+          const cur = toolCalls.get(tc.index) ?? { index: tc.index };
+          if (tc.id) cur.id = tc.id;
+          if (tc.function?.name) cur.function = { ...cur.function, name: tc.function.name };
+          if (tc.function?.arguments) {
+            cur.function = {
+              ...cur.function,
+              arguments: (cur.function?.arguments ?? "") + tc.function.arguments,
             };
           }
-          const choice = chunk.choices?.[0];
-          if (!choice) continue;
-          if (choice.finish_reason) {
-            finishReason = choice.finish_reason;
-            ended = true;
-          }
-          const delta = choice.delta;
-          if (delta?.content) {
-            text += delta.content;
-            onText(delta.content);
-          }
-          for (const tc of delta?.tool_calls ?? []) {
-            const cur = toolCalls.get(tc.index) ?? { index: tc.index };
-            if (tc.id) cur.id = tc.id;
-            if (tc.function?.name) cur.function = { ...cur.function, name: tc.function.name };
-            if (tc.function?.arguments) {
-              cur.function = {
-                ...cur.function,
-                arguments: (cur.function?.arguments ?? "") + tc.function.arguments,
-              };
-            }
-            toolCalls.set(tc.index, cur);
-          }
+          toolCalls.set(tc.index, cur);
         }
       }
       // No status → transport fault → retryable.

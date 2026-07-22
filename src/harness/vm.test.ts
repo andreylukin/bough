@@ -110,6 +110,28 @@ Deno.test("a syntax/runtime error is reported, not thrown", async () => {
   assertStringIncludes(res.error ?? "", "nope");
 });
 
+Deno.test("process.exit() throws a catchable error instead of hanging the program", async () => {
+  // Regression: Deno's Node-compat `process` global exists even in a
+  // permissions-none worker, and exit() killed the worker silently — the
+  // program promise never settled and the turn froze until its wall timeout.
+  const res = await runProgram(
+    `console.log("before"); process.exit(1); console.log("after");`,
+    hosts(),
+    5_000,
+  );
+  assertEquals(res.ok, false);
+  assertStringIncludes(res.error ?? "", "exit(1) is not available");
+  assertEquals(res.logs, ["before"]);
+  // The failure idiom the guard suggests still works, and prior output survives.
+  const caught = await runProgram(
+    `try { process.exit(2); } catch (e) { console.log("caught:", e.message); }`,
+    hosts(),
+    5_000,
+  );
+  assertEquals(caught.ok, true);
+  assertStringIncludes(caught.logs[0], "caught:");
+});
+
 Deno.test("runaway program is terminated at the timeout", async () => {
   const res = await runProgram(`for (;;) {}`, hosts(), 600);
   assertEquals(res.ok, false);

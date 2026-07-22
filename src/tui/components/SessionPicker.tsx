@@ -2,7 +2,7 @@ import { palette } from "../theme.ts";
 import { Box } from "ink";
 import { Text } from "./Text.tsx";
 import { SelRow } from "./SelRow.tsx";
-import { relTime, sessionLabel } from "../format.ts";
+import { relTime, sessionLabel, windowAround } from "../format.ts";
 import type { TuiSession } from "../store.ts";
 
 export interface TreeRow {
@@ -75,7 +75,7 @@ export function SessionPicker(
   },
 ) {
   const max = Math.max(3, rows - 10);
-  const start = Math.max(0, Math.min(selected - Math.floor(max / 2), rowsList.length - max));
+  const { start } = windowAround(selected, rowsList.length, max);
   const win = rowsList.slice(start, start + max);
   return (
     <Box flexDirection="column">

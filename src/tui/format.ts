@@ -37,6 +37,22 @@ export function segmentParts(parts: Part[]): Segment[] {
 
 export { clip } from "../text.ts";
 
+/**
+ * Slice bounds for a viewport of `height` rows that keeps `selected` centered,
+ * clamped so the window never runs past either edge. `end` is `start + height`
+ * (unclamped, matching every caller's `arr.slice(start, start + height)` and
+ * `end < total` scroll-indicator test). A list shorter than the viewport yields
+ * `start = 0` and the whole list — no blank-row padding.
+ */
+export function windowAround(
+  selected: number,
+  total: number,
+  height: number,
+): { start: number; end: number } {
+  const start = Math.max(0, Math.min(selected - Math.floor(height / 2), total - height));
+  return { start, end: start + height };
+}
+
 export function outputText(r: ToolResult): string {
   return typeof r.output === "string" ? r.output : JSON.stringify(r.output);
 }
@@ -120,10 +136,11 @@ function mdInline(line: string): string {
     // A code span that IS a bare URL renders clickable — models present artifact
     // links as `http://…`, and a dead link there is the common failure. A URL
     // *inside* a longer span (a `curl https://…` example) stays literal code.
-    .replace(/`([^`]+)`/g, (_m, inner) =>
-      BARE_URL.test(inner)
-        ? guard(linkifyUrl(inner))
-        : guard(`${CYAN}${inner}${FG_OFF}`))
+    .replace(
+      /`([^`]+)`/g,
+      (_m, inner) =>
+        BARE_URL.test(inner) ? guard(linkifyUrl(inner)) : guard(`${CYAN}${inner}${FG_OFF}`),
+    )
     .replace(/\*\*([^*]+)\*\*/g, `${B}$1${B_OFF}`)
     // [text](url) → clickable underlined text, url dimmed alongside. The
     // lookbehind keeps "[" of an earlier-inserted SGR escape (\x1b[1m from

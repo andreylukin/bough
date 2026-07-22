@@ -19,6 +19,7 @@ import { z } from "zod/v4";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { boughPath } from "../paths.ts";
 
 export const ServerConfig = z.object({
   /** stdio transport: the executable + args to spawn (seatbelt-wrapped when sandboxed). */
@@ -54,7 +55,7 @@ const Activations = z.object({
 type Activations = z.infer<typeof Activations>;
 
 export function mcpDir(): string {
-  return Deno.env.get("BOUGH_MCP_DIR") ?? join(homedir(), ".bough", "mcp");
+  return Deno.env.get("BOUGH_MCP_DIR") ?? boughPath("mcp");
 }
 
 function readJson(path: string): unknown {

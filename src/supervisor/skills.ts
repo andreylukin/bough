@@ -18,7 +18,7 @@
  */
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { homedir } from "node:os";
+import { boughPath } from "../paths.ts";
 
 export interface Skill {
   name: string;
@@ -32,7 +32,7 @@ export interface Skill {
 }
 
 function dir(): string {
-  return Deno.env.get("BOUGH_SKILLS_DIR") ?? join(homedir(), ".bough", "skills");
+  return Deno.env.get("BOUGH_SKILLS_DIR") ?? boughPath("skills");
 }
 
 /** The repo's skills/ dir — skills that ship with bough as files, not code. */

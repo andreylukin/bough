@@ -12,6 +12,8 @@
  *
  *   -w, --workspace DIR   workspace for the session (default: cwd)
  *   -m, --model ID        pin the session's model
+ *       --prompt-dir DIR  pin a system-prompt variant (section .md dir) on this
+ *                         session — no server restart needed; used by the tuner
  *       --yolo            auto-approve this session's network holds
  *       --json            suppress streaming; print one result envelope
  *       --timeout SECS    give up after SECS (default 900); exits 1
@@ -20,7 +22,7 @@
 import { parseArgs } from "jsr:@std/cli@1/parse-args";
 
 const args = parseArgs(Deno.args, {
-  string: ["workspace", "model", "timeout", "port"],
+  string: ["workspace", "model", "prompt-dir", "timeout", "port"],
   boolean: ["yolo", "json"],
   alias: { w: "workspace", m: "model" },
 });
@@ -51,10 +53,12 @@ async function post(path: string, body: unknown): Promise<Response> {
 let session: { id: string };
 try {
   const workspace = args.workspace ? await Deno.realPath(args.workspace) : Deno.cwd();
+  const promptDir = args["prompt-dir"] ? await Deno.realPath(args["prompt-dir"]) : undefined;
   const res = await post("/sessions", {
     title: "exec: " + prompt.slice(0, 48),
     workspace,
     ...(args.model ? { model: args.model } : {}),
+    ...(promptDir ? { promptDir } : {}),
   });
   session = await res.json();
 } catch (e) {

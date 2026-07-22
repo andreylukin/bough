@@ -15,7 +15,7 @@
  */
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { boughHome } from "../paths.ts";
 import { mkdirSync } from "node:fs";
 import type { Message, NetRequest, Part, Role, Session, SessionKind } from "../schema/parts.ts";
 
@@ -125,6 +125,7 @@ type SessionRow = {
   last_llm_at: number | null;
   model: string | null;
   effort: string | null;
+  prompt_dir: string | null;
   draft: string | null;
   outcome_ok: number | null;
   outcome_check_passed: number | null;
@@ -236,6 +237,7 @@ function toSession(r: SessionRow): Session {
     ...(r.archived_at != null ? { archivedAt: r.archived_at } : {}),
     ...(r.model ? { model: r.model } : {}),
     ...(r.effort ? { effort: r.effort } : {}),
+    ...(r.prompt_dir ? { promptDir: r.prompt_dir } : {}),
     // Prompt-cache visibility: last prompt size, its cached share, and when the
     // last LLM round finished (the client derives warm/cold from this + the TTL).
     ...(r.context_tokens != null ? { contextTokens: r.context_tokens } : {}),
@@ -293,6 +295,7 @@ export class Db {
         "last_llm_at INTEGER",
         "model TEXT",
         "effort TEXT",
+        "prompt_dir TEXT",
         "draft TEXT",
         "outcome_ok INTEGER",
         "outcome_check_passed INTEGER",
@@ -378,6 +381,13 @@ export class Db {
   /** Per-session thinking-depth override; null clears back to the global default. */
   setSessionEffort(id: string, effort: string | null): void {
     this.#db.prepare(`UPDATE sessions SET effort = ? WHERE id = ?`).run(effort, id);
+  }
+
+  /** Per-session system-prompt override dir; null clears back to the process default.
+   * Lets a prompt variant be pinned per session (bough exec --prompt-dir) with no
+   * server restart — the turn runner reads it via getSession each turn. */
+  setSessionPromptDir(id: string, promptDir: string | null): void {
+    this.#db.prepare(`UPDATE sessions SET prompt_dir = ? WHERE id = ?`).run(promptDir, id);
   }
 
   /** Persist a finished subagent's delegation outcome (see subagent.ts buildResult):
@@ -946,7 +956,7 @@ function toNetRequest(r: NetEventRow): NetRequest {
 function defaultDbPath(): string {
   const override = Deno.env.get("BOUGH_DB");
   if (override) return override;
-  const dir = join(homedir(), ".bough");
+  const dir = boughHome();
   mkdirSync(dir, { recursive: true });
   return join(dir, "bough.db");
 }

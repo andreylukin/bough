@@ -45,6 +45,11 @@ export interface ToolRunCtx {
     todo?: string;
     probeRounds?: number;
     everWrote?: boolean;
+    /** Last agent-run bash command that exited 0 — cited verbatim by the probe
+     * nag and the check-less done bounce as the ready-made `check` candidate,
+     * so the model commits the verification it already ran instead of
+     * re-verifying for more rounds (bench: the post-success probe tail). */
+    lastGreenCmd?: string;
     /** Set (to the triggering request text) only for multi-rule requests —
      * enables the one-time spec-recheck bounce at done-time. */
     requestText?: string;
@@ -123,8 +128,8 @@ export interface ToolRunCtx {
   /**
    * Publish an artifact for browser viewing (server/artifacts.ts), wired by the turn
    * runner for every supervisor turn. Writes `content` under the session's artifact
-   * dir, hosts it on the bough server, emits an `artifact.published` event, and
-   * returns the artifact — its same-origin `url` and absolute local `href`.
+   * dir, hosts it on the bough server, and returns the artifact — its same-origin
+   * `url` and absolute local `href`.
    */
   artifact?: (name: string, content: string) => Promise<Artifact>;
   /**

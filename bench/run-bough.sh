@@ -13,8 +13,12 @@ trap 'rm -rf "$WORK"' EXIT
 # The whole session-create → net-yolo → stream → wait dance lives in the CLI now
 # (src/cli/exec.ts); the bench keeps only staging, grading, and pricing.
 T0="$(now_ms)"
+# --prompt-dir pins the variant's prompt on THIS session (no server restart), so a
+# single long-lived bench server can serve every variant in a campaign. Falls back
+# to the server's default prompt when BOUGH_PROMPT_DIR is unset.
 ENVELOPE="$(BOUGH_PORT="$PORT" deno run --no-prompt --allow-net=127.0.0.1 --allow-env --allow-read \
   "$BENCH/../src/cli/exec.ts" --json --yolo --timeout "$TRIAL_TIMEOUT" -w "$WORK" \
+  ${BOUGH_PROMPT_DIR:+--prompt-dir "$BOUGH_PROMPT_DIR"} \
   "$(cat "$BENCH/tasks/$TASK/prompt.md")")" || true
 T1="$(now_ms)"
 

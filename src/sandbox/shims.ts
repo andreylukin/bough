@@ -11,6 +11,7 @@
  * agent knows what it's looking at.
  */
 import { join } from "node:path";
+import { homeStrict } from "../paths.ts";
 
 const PS_SHIM = `#!/bin/sh
 # bough sandbox shim: /bin/ps is setuid root and macOS refuses to exec setuid
@@ -28,9 +29,7 @@ exec /usr/bin/pgrep -a -lf .
 `;
 
 function shimDir(): string {
-  const home = Deno.env.get("HOME");
-  if (!home) throw new Error("shims: no $HOME");
-  return join(home, ".bough", "shims");
+  return join(homeStrict("shims"), ".bough", "shims");
 }
 
 let ensured: Promise<string> | null = null;

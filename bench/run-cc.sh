@@ -12,11 +12,16 @@ T0="$(now_ms)"
 set +e
 # --setting-sources project: exclude the operator's global ~/.claude config so
 # both harnesses see only what's in the fixture (auth still applies).
-OUT="$(cd "$WORK" && timeout "$TRIAL_TIMEOUT" claude -p "$(cat "$BENCH/tasks/$TASK/prompt.md")" \
-  --model "$MODEL_CC" --output-format json \
+# stream-json (NDJSON) captures the full trajectory for behave.py; the final
+# "result" line carries the same envelope the old json format did.
+mkdir -p "$RESULTS/cc-traj"
+TRAJ="$RESULTS/cc-traj/$TASK-$TRIAL-$(now_ms).jsonl"
+(cd "$WORK" && timeout "$TRIAL_TIMEOUT" claude -p "$(cat "$BENCH/tasks/$TASK/prompt.md")" \
+  --model "$MODEL_CC" --output-format stream-json --verbose \
   --dangerously-skip-permissions --setting-sources project \
-  --max-budget-usd 2 2>/dev/null)"
+  --max-budget-usd 2 2>/dev/null) >"$TRAJ"
 RC=$?
+OUT="$(grep '"type":"result"' "$TRAJ" | tail -1 || true)"
 set -e
 T1="$(now_ms)"
 PASS="$(verify_task "$TASK" "$WORK")"
@@ -26,7 +31,7 @@ if [ "$PASS" = 0 ]; then
   REASON="$(fail_reason "$TASK" "$WORK" "$ST")"
 fi
 
-OUT="$OUT" TASK="$TASK" TRIAL="$TRIAL" PASS="$PASS" RC="$RC" REASON="$REASON" WALL=$((T1 - T0)) MODEL="$MODEL_CC" \
+OUT="$OUT" TASK="$TASK" TRIAL="$TRIAL" PASS="$PASS" RC="$RC" REASON="$REASON" WALL=$((T1 - T0)) MODEL="$MODEL_CC" TRAJ="$TRAJ" \
 python3 - <<'PY'
 import json, os, time
 
@@ -51,5 +56,6 @@ print(json.dumps({
     "tokens_out": usage.get("output_tokens"),
     "cost_usd": r.get("total_cost_usd"),
     "turns": r.get("num_turns"),
+    "transcript": os.environ.get("TRAJ") or None,
 }))
 PY

@@ -125,6 +125,12 @@ export const Session = z.object({
   // Per-session thinking-depth override (additive; same pinning semantics as
   // model). One of low/medium/high/xhigh/max; absent = the global default.
   effort: z.string().nullish(),
+  // Per-session system-prompt override dir (additive). When set, the turn runner
+  // resolves the supervisor prompt's section files from this directory instead of
+  // the checked-in default — so prompt variants can be swapped per session with NO
+  // server restart (used by `bough exec --prompt-dir` and the tuner). Absent = the
+  // process default (BOUGH_PROMPT_DIR env, else the built-in ./prompt dir).
+  promptDir: z.string().nullish(),
   // Prompt-cache visibility (additive; stamped after each turn's last LLM round).
   // contextTokens = that round's full prompt size; cachedTokens = the share of it
   // served from / written to the provider's prompt cache; lastLlmAt = when the round
@@ -222,6 +228,10 @@ export const CreateSessionBody = z.object({
   // Optional model pin (same semantics as the picker's per-session pin). Used by
   // `bough exec -m`; absent = the process-global default.
   model: z.string().optional(),
+  // Optional system-prompt override dir (section .md files). Pins a prompt variant
+  // on this session with no server restart. Used by `bough exec --prompt-dir` and
+  // the prompt tuner; absent = the process default.
+  promptDir: z.string().optional(),
 });
 export type CreateSessionBody = z.infer<typeof CreateSessionBody>;
 

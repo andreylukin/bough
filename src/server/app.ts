@@ -64,7 +64,6 @@ import {
   toPolicy,
 } from "../net/config.ts";
 import { ttlToExpires } from "../net/plugins.ts";
-import { suggestPolicy } from "../net/suggest.ts";
 import {
   activationsFor as mcpActivationsFor,
   loadRegistry as loadMcpRegistry,
@@ -96,7 +95,6 @@ import {
   scheduleRemove,
 } from "../schedules.ts";
 import { sectionize, SectionsBody } from "../sections.ts";
-import { type Embedder, recall } from "../recall.ts";
 import { extract, ExtractBody } from "../extract.ts";
 import { handoff, HandoffBody } from "../handoff.ts";
 import { move, MoveBody } from "../move.ts";
@@ -136,8 +134,6 @@ export interface AppCtx {
   password?: string;
   /** Retitler for compaction branches (production: local title worker); absent in tests. */
   retitler?: (text: string) => Promise<string | null>;
-  /** Embedder override for /recall (tests); defaults to the local embedding server. */
-  embedder?: Embedder;
 }
 
 type Handler = (
@@ -208,20 +204,6 @@ const putKeys: Handler = async (req) => {
 const deleteKeys: Handler = async (req) => {
   const body = await parseBody(req, KeyDeleteBody);
   return json({ ok: true, keys: deleteKey(body.provider) });
-};
-
-// Recall: semantic search over the whole session forest via the LOCAL embedder
-// (recall.ts) — lazily indexes a batch of new messages on each call.
-const recallSearch: Handler = async (req, ctx) => {
-  const q = new URL(req.url).searchParams.get("q")?.trim();
-  if (!q) return error(400, "q required");
-  const rawK = Number(new URL(req.url).searchParams.get("k") ?? "8");
-  const k = Number.isFinite(rawK) ? Math.min(Math.max(1, rawK), 50) : 8;
-  try {
-    return json(await recall(ctx.db, q, k, ctx.embedder));
-  } catch (e) {
-    return error(503, `recall unavailable: ${(e as Error).message}`);
-  }
 };
 
 // Switch the model new turns run on and/or the worker micro-tasks run on. Any id
@@ -408,6 +390,12 @@ const createSession: Handler = async (req, ctx) => {
   if (body.model) {
     ctx.db.setSessionModel(session.id, body.model);
     session.model = body.model;
+  }
+  // Prompt-variant pin (bough exec --prompt-dir / tuner). Like the model pin, it is
+  // not a createSession column — persist it so the turn runner reads it per turn.
+  if (body.promptDir) {
+    ctx.db.setSessionPromptDir(session.id, body.promptDir);
+    session.promptDir = body.promptDir;
   }
   ctx.bus.publish({ type: "session.created", sessionId: session.id, data: session });
   return json(session, 201);
@@ -732,15 +720,6 @@ const deleteTheme: Handler = (_req, ctx) => {
 const netStatus: Handler = (_req, ctx) =>
   json(ctx.gateway?.status() ?? { enabled: false, running: false, listeners: 0, caPath: "" });
 
-// Re-run the macOS keychain-trust check after the operator runs the trust command,
-// so the CA hint clears without a server restart.
-const recheckCaH: Handler = async (_req, ctx) => {
-  await ctx.gateway?.refreshCaTrust();
-  return json(
-    ctx.gateway?.status() ?? { enabled: false, running: false, listeners: 0, caPath: "" },
-  );
-};
-
 // The editable rule set (allow/deny/hold config) the gate compiles + enforces.
 // ?session=<id> scopes to that branch: GET returns its effective config plus where it
 // came from (own override / inherited from an ancestor / global); PUT writes the
@@ -768,49 +747,6 @@ const putPolicy: Handler = async (req, ctx) => {
   const saved = saveConfig(parsed.data, ctx.netDir);
   ctx.gate?.setPolicy(toPolicy(saved));
   return json(saved);
-};
-
-// Draft a rule set with the model: intent in, proposed NetConfig + rationale out.
-// Nothing is enforced here — the proposal lands in the rule editor for review, and
-// only the user's Save (PUT /net/policy) makes it live. With ?session semantics in
-// the body, the proposal starts from that branch's effective config and sees its
-// recent egress (including any pending hold) as context.
-const suggestPolicyH: Handler = async (req, ctx) => {
-  const body = await req.json().catch(() => null) as
-    | { prompt?: string; sessionId?: string; requestIds?: string[] }
-    | null;
-  const selected = Array.isArray(body?.requestIds) && body.requestIds.length
-    ? ctx.db.netEventsByIds(body.requestIds.filter((id) => typeof id === "string"))
-    : undefined;
-  // Grouping feed rows into rules needs no prose — a sensible default intent kicks in.
-  const intent = body?.prompt?.trim() ||
-    (selected?.length
-      ? "Group the selected requests into rules that allow this kind of traffic, " +
-        "generalizing no further than the pattern they form. Keep everything else as strict as the base config."
-      : "");
-  if (!intent) return error(400, "prompt or requestIds required");
-  const sessionId = body?.sessionId ?? undefined;
-  const base = sessionId
-    ? resolveConfig(ctx.db, sessionId, ctx.netDir).config
-    : loadConfig(ctx.netDir);
-  const recent = ctx.db.recentNetEvents(sessionId, 20);
-  const llm = ctx.llm ?? clientFor(activeModel());
-  try {
-    const suggestion = await suggestPolicy({
-      llm,
-      model: activeModel(),
-      intent,
-      base,
-      recent,
-      selected,
-    });
-    // Plugin activations are managed by their own enable/disable flow — a drafted
-    // rule set must never silently drop (or invent) them, so pin the base's.
-    suggestion.config.plugins = base.plugins;
-    return json(suggestion);
-  } catch (e) {
-    return error(502, (e as Error).message);
-  }
 };
 
 // Open a plugin's definition file in Zed on the machine bough runs on.
@@ -1233,7 +1169,7 @@ const installBundleH: Handler = async (req, ctx, params) => {
 };
 
 // List a session's published artifacts (server/artifacts.ts). Filesystem-backed, so
-// it survives restarts with no DB row; the UI merges live `artifact.published` events on top.
+// it survives restarts with no DB row; the TUI fetches this on demand.
 const listArtifactsH: Handler = async (_req, _ctx, params) =>
   json({ artifacts: await listArtifacts(params.id) });
 
@@ -1351,11 +1287,6 @@ const routes: Route[] = [
     handler: compactSession,
   },
   {
-    method: "GET",
-    pattern: new URLPattern({ pathname: "/recall" }),
-    handler: recallSearch,
-  },
-  {
     method: "POST",
     pattern: new URLPattern({ pathname: "/sessions/:id/sections" }),
     handler: sectionsSession,
@@ -1465,20 +1396,10 @@ const routes: Route[] = [
   },
   { method: "GET", pattern: new URLPattern({ pathname: "/events" }), handler: events },
   { method: "GET", pattern: new URLPattern({ pathname: "/net/status" }), handler: netStatus },
-  {
-    method: "POST",
-    pattern: new URLPattern({ pathname: "/net/ca/recheck" }),
-    handler: recheckCaH,
-  },
   { method: "GET", pattern: new URLPattern({ pathname: "/net/policy" }), handler: getPolicy },
   { method: "PUT", pattern: new URLPattern({ pathname: "/net/policy" }), handler: putPolicy },
   { method: "DELETE", pattern: new URLPattern({ pathname: "/net/policy" }), handler: deletePolicy },
   { method: "POST", pattern: new URLPattern({ pathname: "/net/yolo" }), handler: setYoloH },
-  {
-    method: "POST",
-    pattern: new URLPattern({ pathname: "/net/policy/suggest" }),
-    handler: suggestPolicyH,
-  },
   { method: "GET", pattern: new URLPattern({ pathname: "/net/plugins" }), handler: listPluginsH },
   {
     method: "POST",

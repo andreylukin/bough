@@ -14,7 +14,7 @@
  * scripts/bough. Not built for that now.
  */
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { boughHome } from "../paths.ts";
 import { join } from "node:path";
 import { z } from "zod";
 
@@ -51,7 +51,7 @@ export function keyStatus(): Record<KeyProvider, boolean> {
 }
 
 function envPath(dir?: string): string {
-  return join(dir ?? join(homedir(), ".bough"), "env");
+  return join(dir ?? boughHome(), "env");
 }
 
 /**

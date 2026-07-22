@@ -505,43 +505,16 @@ export function App(
   helpMaxScrollRef.current = helpMaxScroll(rows, width);
 
   // ---- the conversation viewport ------------------------------------------
-  // The ACTIVE tool group of a running turn (a call still awaiting its result,
-  // or the turn's trailing group) auto-expands so the live-streamed output is
-  // visible without ^e, and falls back to default (collapsed) once the turn
-  // moves past it. `touched` records a manual toggle on an active card — the
-  // user's choice wins over the auto.
-  const activeKeys = useMemo(() => {
-    const keys = new Set<string>();
-    for (const m of store.thread) {
-      if (!m.pending) continue;
-      const done = new Set(
-        m.parts.filter((p) => p.type === "tool_result").map((p) => p.callId),
-      );
-      const segs = segmentParts(m.parts);
-      segs.forEach((s, i) => {
-        if (s.kind !== "tools") return;
-        // The trailing group also stays open after its last result lands —
-        // collapsing the instant output arrives read as a blink; it folds when
-        // the turn moves on (next prose part / next group) instead.
-        if (
-          i === segs.length - 1 ||
-          s.parts.some((p) => p.type === "tool_call" && !done.has(p.id))
-        ) keys.add(`${m.id}:${i}`);
-      });
-    }
-    return keys;
-  }, [store.thread]);
-  const [touched, setTouched] = useState<Set<string>>(new Set());
-  const activeKeysRef = useRef(activeKeys);
-  activeKeysRef.current = activeKeys;
-  const touchedRef = useRef(touched);
-  touchedRef.current = touched;
+  // Tool groups stay COLLAPSED by default — even the running turn's trailing
+  // group. Expansion is explicit (click a header, click the activity line, or
+  // ^e expand-all). The collapsed header keeps the gist + ⚙ running tag, and
+  // the activity line streams a live running summary, so live output is legible
+  // without dumping every card open.
   const expandAllRef = useRef(expandAll);
   expandAllRef.current = expandAll;
   const isExpanded = useCallback(
-    (key: string) =>
-      (activeKeys.has(key) && !touched.has(key)) || (expandAll !== toggled.has(key)),
-    [activeKeys, touched, expandAll, toggled],
+    (key: string) => expandAll !== toggled.has(key),
+    [expandAll, toggled],
   );
   // "Show all N lines" state for truncated blocks ("<groupKey>!full" entries in
   // the same toggled set). Plain membership, no expandAll XOR — ^e expand-all
@@ -623,14 +596,9 @@ export function App(
   );
   const curMatch = matches.length ? Math.min(searchIdx, matches.length - 1) : -1;
   const toggleGroup = useCallback((key: string) => {
-    // Collapsing an auto-expanded active card records the touch (auto stops
-    // applying for it) so the card returns to plain defaults once its step
-    // completes; the override only flips when the card would stay open on its
-    // own (^e expand-all or an earlier manual expand).
-    const auto = activeKeysRef.current.has(key) && !touchedRef.current.has(key);
-    if (auto) setTouched((prev) => new Set(prev).add(key));
+    // A group's expanded state is the XOR of expand-all and its membership in
+    // `toggled`, so flipping membership toggles the card either way.
     setToggled((prev) => {
-      if (auto && expandAllRef.current === prev.has(key)) return prev;
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
@@ -638,11 +606,10 @@ export function App(
     });
   }, []);
 
-  // Tool cards are CLOSED once a turn finishes — the running turn's trailing
-  // group still auto-expands live (activeKeys above), but it folds when the
-  // turn moves on. The collapsed header keeps the gist + status tag, and
-  // anything the user must act on (an artifact link, an answer) belongs in the
-  // reply prose, not inside a fold.
+  // Tool cards are CLOSED by default and stay closed while a turn runs. The
+  // collapsed header keeps the gist + status tag, and anything the user must
+  // act on (an artifact link, an answer) belongs in the reply prose, not
+  // inside a fold.
 
   // Clicking the activity line ("⠴ running the test suite…") opens the fold it
   // describes: the running turn's trailing tool group. Ref'd so the mouse
