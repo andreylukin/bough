@@ -58,8 +58,11 @@ import {
   MAX_SUBAGENT_DEPTH,
   runSubagent,
   spawnSubagentDetached,
+  startSubagent,
   subagentDepth,
 } from "./subagent.ts";
+import { workflowVerb, type WorkflowCtx } from "./workflow.ts";
+import { clip } from "./text.ts";
 import { maybeAutoTitle, type Titler } from "./supervisor/title.ts";
 import {
   delegationHintNote,
@@ -474,6 +477,50 @@ export function startUserTurn(
  * starts one if the session is idle, else the queued-drain follow-up picks it up.
  * This is how a background subagent's finished report wakes its spawner.
  */
+/**
+ * The production WorkflowCtx: agent() calls become real subagent sessions
+ * branched off `sessionId`, anchored to `spawnerMessageId` on the map. Used by
+ * the turn runner's workflow.* wiring AND the REST workflow routes; the runner
+ * observes the RUN's abort signal (a workflow outlives the turn that started it).
+ */
+export function workflowCtxFor(
+  ctx: TurnCtx,
+  sessionId: string,
+  spawnerMessageId: string,
+  model?: string,
+): WorkflowCtx {
+  return {
+    db: ctx.db,
+    bus: ctx.bus,
+    runner: async (call, signal, onSpawned) => {
+      const h = await startSubagent(ctx, {
+        spawnerId: sessionId,
+        spawnerMessageId,
+        model: call.model ?? model,
+        signal,
+        capsExempt: true,
+      }, call.prompt);
+      onSpawned(h.sessionId);
+      // Stop cascades into a subagent whose turn is still running, same
+      // containment as runSubagent's blocking mode.
+      const onAbort = () => {
+        if (isTurnRunning(h.sessionId)) interruptTurn(h.sessionId);
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      try {
+        const r = await h.result;
+        if (!r.ok) {
+          throw new Error(`subagent ${r.status}: ${clip(r.report || "(no report)", 400)}`);
+        }
+        return r.report;
+      } finally {
+        signal.removeEventListener("abort", onAbort);
+      }
+    },
+    notify: (sid, text) => postSystemNote(ctx, sid, text),
+  };
+}
+
 export function postSystemNote(ctx: TurnCtx, sessionId: string, text: string): void {
   const msg: Message = {
     id: crypto.randomUUID(),
@@ -739,6 +786,14 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
           join: (subId) => joinSubagent(sctx, subId),
         }),
       };
+      // Workflows (root sessions only): scripted orchestration over the same
+      // subagent machinery. A run is DETACHED from this turn — its runner uses
+      // the RUN's abort signal, not the turn's, so ending the turn doesn't kill
+      // the run; its finished report arrives as a system note.
+      if (!isSub) {
+        const wctx = workflowCtxFor(subCtx, sessionId, messageId, model);
+        toolCtx.workflow = { call: (verb, args) => workflowVerb(wctx, sessionId, verb, args) };
+      }
     }
 
     const messages = buildHistory(db, sessionId, messageId);

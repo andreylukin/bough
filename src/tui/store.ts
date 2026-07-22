@@ -10,7 +10,7 @@ import type {
   Part,
   Session,
 } from "../schema/parts.ts";
-import { api, type JobRow, type Usage, USAGE_ZERO, type WireDiff } from "./api.ts";
+import { api, type JobRow, type Usage, USAGE_ZERO, type WfSummary, type WireDiff } from "./api.ts";
 import { useEvents } from "./events.ts";
 import { notifyDesktop } from "./term.ts";
 
@@ -64,6 +64,13 @@ export interface Store {
   // Background shells of the open session (and its subagents): live + recently
   // ended, refetched on job.* events and polled while any runs (tail lines move).
   jobs: JobRow[];
+  // Workflow runs of the open session (newest first) — refetched on workflow.*
+  // events; drives the workflows panel tab and the running-workflow status chip.
+  workflows: WfSummary[];
+  // Bumps on every workflow.* event — the panel's open-run detail refetches on it.
+  wfSeq: number;
+  // Last narrator log() line per running workflow (memory-only, chip + run view).
+  wfLogs: Record<string, string>;
   // Signals a background (non-active) session finishing a turn; App flashes a
   // toast on each new value. `seq` makes repeat finishes distinct references.
   bgFinish: { title: string; seq: number } | null;
@@ -132,6 +139,9 @@ export function useStore(initialSessions: Session[]): Store {
   const [usage, setUsage] = useState<Usage>(USAGE_ZERO);
   const [feed, setFeed] = useState<NetRequest[]>([]);
   const [jobs, setJobs] = useState<JobRow[]>([]);
+  const [workflows, setWorkflows] = useState<WfSummary[]>([]);
+  const [wfSeq, setWfSeq] = useState(0);
+  const [wfLogs, setWfLogs] = useState<Record<string, string>>({});
   // Bumped whenever a NON-active (background) session finishes a turn — App
   // watches it to flash an in-TUI toast (the desktop banner self-gates on focus
   // and the picker dot needs ^p, so a focused terminal would otherwise miss it).
@@ -245,6 +255,17 @@ export function useStore(initialSessions: Session[]): Store {
   const refreshJobsRef = useRef(refreshJobs);
   refreshJobsRef.current = refreshJobs;
 
+  const refreshWorkflows = useCallback(async (id: string | null) => {
+    if (!id) return setWorkflows([]);
+    try {
+      setWorkflows(await api.workflows(id));
+    } catch {
+      setWorkflows([]);
+    }
+  }, []);
+  const refreshWorkflowsRef = useRef(refreshWorkflows);
+  refreshWorkflowsRef.current = refreshWorkflows;
+
   const open = useCallback(async (id: string) => {
     setCurrentId(id);
     setStreaming({});
@@ -253,6 +274,7 @@ export function useStore(initialSessions: Session[]): Store {
     setChanges([]);
     setUsage(USAGE_ZERO);
     setJobs([]);
+    setWorkflows([]);
     setSessions((prev) => prev.map((s) => (s.id === id && s.unseen ? { ...s, unseen: false } : s)));
     const { session, thread, usage } = await api.getSession(id);
     setSession(session);
@@ -260,7 +282,8 @@ export function useStore(initialSessions: Session[]): Store {
     setUsage(usage);
     refreshChanges(id);
     refreshJobs(id);
-  }, [refreshChanges, refreshJobs]);
+    refreshWorkflows(id);
+  }, [refreshChanges, refreshJobs, refreshWorkflows]);
 
   const newSession = useCallback(async (workspace?: string) => {
     // No title — the backend's title worker names the session from its first message.
@@ -654,6 +677,19 @@ export function useStore(initialSessions: Session[]): Store {
         if (relevant) refreshJobsRef.current(cur).catch(() => {});
         break;
       }
+      case "workflow.updated":
+      case "workflow.agent": {
+        setWfSeq((n) => n + 1);
+        if (ev.sessionId === currentRef.current) {
+          refreshWorkflowsRef.current(ev.sessionId).catch(() => {});
+        }
+        break;
+      }
+      case "workflow.log": {
+        const { runId, line } = ev.data as { runId: string; line: string };
+        setWfLogs((prev) => ({ ...prev, [runId]: line }));
+        break;
+      }
       case "net.request": {
         const r = ev.data as NetRequest;
         // Feed: upsert by id (verdict flips re-emit the row), newest first.
@@ -713,6 +749,7 @@ export function useStore(initialSessions: Session[]): Store {
       setStreaming({});
       refreshChangesRef.current(id);
       refreshJobsRef.current(id).catch(() => {});
+      refreshWorkflowsRef.current(id).catch(() => {});
     } catch {
       // server unreachable — the next reconnect will resync again
     }
@@ -768,6 +805,9 @@ export function useStore(initialSessions: Session[]): Store {
     usage,
     feed,
     jobs,
+    workflows,
+    wfSeq,
+    wfLogs,
     bgFinish,
     open,
     newSession,

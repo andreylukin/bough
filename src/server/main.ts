@@ -8,6 +8,7 @@ import { mcpManager } from "../mcp/manager.ts";
 import { bus } from "../bus.ts";
 import { createHandler, PURGE_RETENTION_MS } from "./app.ts";
 import { recoverOrphanedTurns } from "../supervisor/turns.ts";
+import { recoverOrphanedWorkflows } from "../workflow.ts";
 import { startScheduleTicker } from "../schedules.ts";
 import { watchActivity } from "../worker/activity.ts";
 import { workerTitle } from "../supervisor/title.ts";
@@ -19,6 +20,9 @@ const db = openDb();
 // finish its pending message so the UI doesn't show a turn stuck forever.
 const orphaned = recoverOrphanedTurns(db, bus);
 if (orphaned > 0) console.log(`recovered ${orphaned} orphaned turn(s)`);
+// Workflow runs are in-memory like turns — a row still `running` at boot is stale.
+const orphanedWf = recoverOrphanedWorkflows(db);
+if (orphanedWf > 0) console.log(`recovered ${orphanedWf} orphaned workflow(s)`);
 // Same idea for the net gate: no hold survives a restart, so a `pending` row at
 // startup is an orphan whose approval card would otherwise haunt every session.
 const swept = db.expirePendingNetEvents("expired — server restarted before approval");

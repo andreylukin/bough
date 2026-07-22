@@ -27,6 +27,9 @@ const KNOWN_TYPES = new Set([
   "session.activity",
   "job.spawned",
   "job.exited",
+  "workflow.updated",
+  "workflow.agent",
+  "workflow.log",
 ]);
 
 const RETRY_MS = 2000;

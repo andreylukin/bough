@@ -87,6 +87,8 @@ import {
   type ThemeState,
   type WireSchedule,
   type WireSection,
+  type WireWorkflowAgent,
+  type WireWorkflowRun,
 } from "../api.ts";
 import { useStore } from "../store.ts";
 import { type Branch, buildLines, parseSubagentNote, type SubagentNote } from "../lines.ts";
@@ -120,6 +122,7 @@ import {
 import { DiffView, flattenDiffs } from "./DiffView.tsx";
 import { modelEntries, ModelPicker } from "./ModelPicker.tsx";
 import { Panel, PANEL_TABS, type PanelTab, PanelTabs } from "./Panel.tsx";
+import { orderAgents, type WfLevel, wfGlyph, Workflows } from "./Workflows.tsx";
 import { Help, helpMaxScroll } from "./Help.tsx";
 import { appendHistory, appendShellHistory, loadHistory } from "../state.ts";
 import { shellHistoryCorpus } from "../shell_history.ts";
@@ -229,6 +232,32 @@ export function App(
   const [panelTab, setPanelTab] = useState<PanelTab>("sessions");
   const [mcpSel, setMcpSel] = useState(0);
   const [panelMsg, setPanelMsg] = useState<string | null>(null);
+  // Workflows tab: run-list cursor, drill level (runs → run → agent), the opened
+  // run's fetched detail (journal rows), agent cursor, and detail scroll.
+  const [wfSel, setWfSel] = useState(0);
+  const [wfLevel, setWfLevel] = useState<WfLevel>(0);
+  const [wfOpenId, setWfOpenId] = useState<string | null>(null);
+  const [wfDetail, setWfDetail] = useState<
+    { run: WireWorkflowRun; agents: WireWorkflowAgent[] } | null
+  >(null);
+  const [wfAgentSel, setWfAgentSel] = useState(0);
+  const [wfScroll, setWfScroll] = useState(0);
+  // The opened run's agents in display order (selection indexes this).
+  const wfAgents = wfDetail ? orderAgents(wfDetail.run, wfDetail.agents) : [];
+  // Refetch the opened run's detail on every workflow.* event (store.wfSeq bumps).
+  useEffect(() => {
+    if (mode !== "panel" || panelTab !== "workflows" || !wfOpenId) return;
+    let dead = false;
+    api.getWorkflow(wfOpenId).then(
+      (d) => {
+        if (!dead) setWfDetail({ run: d.workflow, agents: d.agents });
+      },
+      () => {},
+    );
+    return () => {
+      dead = true;
+    };
+  }, [mode, panelTab, wfOpenId, store.wfSeq]);
   // Net feed scope: this session by default — the feed is an audit trail, and a
   // global default buried "what did THIS session just do" in unrelated history
   // (user-testing). `g` widens to all sessions.
@@ -1248,6 +1277,20 @@ export function App(
       loadSchedules();
       return;
     }
+    if (/^\/workflows?\s*$/.test(text)) {
+      // The workflows browser is the panel's workflows tab (openTab is defined
+      // below, so inline its drill-state reset here, like /model does).
+      setPanelMsg(null);
+      setWfSel(0);
+      setWfLevel(0);
+      setWfOpenId(null);
+      setWfDetail(null);
+      setWfAgentSel(0);
+      setWfScroll(0);
+      setPanelTab("workflows");
+      setMode("panel");
+      return;
+    }
     if (/^\/theme\s*$/.test(text)) {
       // The theme picker is the panel's theme tab; the refreshPanel effect
       // fetches state + snaps the cursor onto the current theme on entry.
@@ -1297,7 +1340,7 @@ export function App(
       if (name === "theme") {
         return setErr("theming lives in the panel — press ^t, then the theme tab");
       }
-      const known = ["handoff", "conversation", "schedule", "schedules", "model", "effort"].includes(name) ||
+      const known = ["handoff", "conversation", "schedule", "schedules", "model", "effort", "workflow", "workflows"].includes(name) ||
         skillsCache.current?.some((s) => s.name === name);
       if (skillsCache.current && !known) {
         return setErr(`unknown command: /${name} — tab completes from the / menu`);
@@ -1349,6 +1392,13 @@ export function App(
       setKeyInput(null);
     } else if (t === "net") {
       setMcpSel(0);
+    } else if (t === "workflows") {
+      setWfSel(0);
+      setWfLevel(0);
+      setWfOpenId(null);
+      setWfDetail(null);
+      setWfAgentSel(0);
+      setWfScroll(0);
     }
     setPanelTab(t);
     setMode("panel");
@@ -1395,6 +1445,16 @@ export function App(
           setMovePicks(null); // cancel a pending move
         } else if (panelTab === "conversation" && rangeAnchor !== null) {
           setRangeAnchor(null);
+        } else if (panelTab === "workflows" && wfLevel > 0) {
+          // Back out one drill level; only esc at the top level leaves the panel.
+          if (wfLevel === 2) {
+            setWfLevel(1);
+            setWfScroll(0);
+          } else {
+            setWfLevel(0);
+            setWfOpenId(null);
+            setWfDetail(null);
+          }
         } else {
           // Theme browsing must not commit: put back the tab-entry theme
           // (Enter while in the tab moved that baseline to the confirmed one).
@@ -1833,6 +1893,83 @@ export function App(
             .catch((err) => setErr(String(err)));
           return;
         }
+        return;
+      }
+      // ---- workflows: runs → one run's agents → one agent's detail ----
+      if (panelTab === "workflows") {
+        const runs = store.workflows;
+        // Shared run actions; feedback lands in the panel message line. The
+        // list/detail refresh rides the workflow.* events, not these responses.
+        const action = (id: string, act: "stop" | "pause" | "resume") =>
+          api.workflowAction(id, act).then(
+            (r) => setPanelMsg(`${act}: run is now ${r.status}`),
+            (e) => setPanelMsg(String(e)),
+          );
+        const rerun = (id: string) =>
+          api.rerunWorkflow(id).then(
+            (r) => setPanelMsg(`rerun started: ${r.name} (${r.id.slice(0, 8)})`),
+            (e) => setPanelMsg(String(e)),
+          );
+        const openAgentSession = (sid: string | null) => {
+          const s = store.sessions.find((x) => x.id === sid);
+          if (s) openSession(s);
+          else setPanelMsg("that agent has no session yet");
+        };
+        if (wfLevel === 0) {
+          if (key.upArrow || ch === "k") return setWfSel((i) => Math.max(0, i - 1));
+          if (key.downArrow || ch === "j") {
+            return setWfSel((i) => Math.min(Math.max(0, runs.length - 1), i + 1));
+          }
+          const r = runs[wfSel];
+          if (!r) return;
+          if (key.return || key.rightArrow) {
+            setWfOpenId(r.id);
+            setWfDetail(null);
+            setWfAgentSel(0);
+            setWfLevel(1);
+            return;
+          }
+          if (ch === "x") return void action(r.id, "stop");
+          if (ch === "p") return void action(r.id, r.status === "paused" ? "resume" : "pause");
+          if (ch === "r") return void rerun(r.id);
+          return;
+        }
+        const run = wfDetail?.run;
+        if (wfLevel === 1) {
+          if (key.upArrow || ch === "k") return setWfAgentSel((i) => Math.max(0, i - 1));
+          if (key.downArrow || ch === "j") {
+            return setWfAgentSel((i) => Math.min(Math.max(0, wfAgents.length - 1), i + 1));
+          }
+          if (key.leftArrow) {
+            setWfLevel(0);
+            setWfOpenId(null);
+            setWfDetail(null);
+            return;
+          }
+          if ((key.return || key.rightArrow) && wfAgents[wfAgentSel]) {
+            setWfScroll(0);
+            setWfLevel(2);
+            return;
+          }
+          if (ch === "o") return openAgentSession(wfAgents[wfAgentSel]?.sessionId ?? null);
+          if (run) {
+            if (ch === "x") return void action(run.id, "stop");
+            if (ch === "p") {
+              return void action(run.id, run.status === "paused" ? "resume" : "pause");
+            }
+            if (ch === "r") return void rerun(run.id);
+          }
+          return;
+        }
+        // Level 2: the agent detail — j/k scroll, o opens its session, ← backs out.
+        if (ch === "j") return setWfScroll((s) => s + 3);
+        if (ch === "k") return setWfScroll((s) => Math.max(0, s - 3));
+        if (key.leftArrow) {
+          setWfLevel(1);
+          setWfScroll(0);
+          return;
+        }
+        if (ch === "o") return openAgentSession(wfAgents[wfAgentSel]?.sessionId ?? null);
         return;
       }
       // Unbound printable key while a panel tab has focus: say where typing goes
@@ -2501,6 +2638,20 @@ export function App(
               focused={diffFocus}
             />
           )
+          : panelTab === "workflows"
+          ? (
+            <Workflows
+              runs={store.workflows}
+              sel={wfSel}
+              level={wfLevel}
+              run={wfDetail?.run ?? null}
+              agents={wfAgents}
+              agentSel={wfAgentSel}
+              scroll={wfScroll}
+              rows={rows}
+              lastLog={wfOpenId ? store.wfLogs[wfOpenId] : undefined}
+            />
+          )
           : panelTab === "model"
           ? (cfg
             ? (
@@ -2860,6 +3011,26 @@ export function App(
             apply from the diff panel that reports nowhere reads as a silent no-op. */
         }
         {store.notice ? <Text color={palette.warn} wrap="truncate">{store.notice}</Text> : null}
+        {/* Live workflow chip(s): one row per running/paused run of this
+            conversation, always visible in chat mode — /workflows drills in. */}
+        {mode === "chat"
+          ? store.workflows.filter((w) => w.status === "running" || w.status === "paused")
+            .slice(0, 2)
+            .map((w) => (
+              <Text key={w.id} wrap="truncate">
+                <Text color={wfGlyph(w.status).color}>{wfGlyph(w.status).glyph}</Text>{" "}
+                <Text bold>{w.name}</Text>
+                <Text dimColor>
+                  {"  "}
+                  {w.agents.done}/{w.agents.total} agents
+                  {w.agents.failed ? ` (${w.agents.failed} failed)` : ""}
+                  {w.currentPhase ? ` · ${w.currentPhase}` : ""}
+                  {store.wfLogs[w.id] ? ` · ${store.wfLogs[w.id]}` : ""}
+                  {" · /workflows"}
+                </Text>
+              </Text>
+            ))
+          : null}
         <StatusBar
           connected={store.connected}
           busy={store.busy}

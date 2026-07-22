@@ -40,7 +40,8 @@ type HostName =
   | "artifact"
   | "recall"
   | "ship"
-  | "schedule";
+  | "schedule"
+  | "workflow";
 
 const pending = new Map<number, { resolve: (v: string) => void; reject: (e: Error) => void }>();
 let seq = 0;
@@ -155,6 +156,14 @@ async function run(code: string): Promise<void> {
       (verb) => [verb, (args?: unknown) => scheduleCall(verb, args)],
     ),
   );
+  // Workflows: one host function fanned out as a method object, like schedule.*.
+  const workflowCall = async (verb: string, args?: unknown) =>
+    JSON.parse(await hostCall("workflow", [verb, JSON.stringify(args ?? null)]));
+  const workflow = Object.fromEntries(
+    ["start", "rerun", "stop", "pause", "resume", "status", "list"].map(
+      (verb) => [verb, (args?: unknown) => workflowCall(verb, args)],
+    ),
+  );
 
   // deno-lint-ignore no-explicit-any
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as any;
@@ -180,6 +189,7 @@ async function run(code: string): Promise<void> {
     "recall",
     "ship",
     "schedule",
+    "workflow",
     "console",
     code,
   );
@@ -205,6 +215,7 @@ async function run(code: string): Promise<void> {
     recall,
     ship,
     schedule,
+    workflow,
     sandboxConsole,
   );
 }

@@ -201,6 +201,14 @@ export const runSteps: ToolDef = {
               JSON.stringify(await ctx.schedule!.call(verb, JSON.parse(argsJson))) ?? "null",
           }
           : {}),
+        // Workflows (wired for delegating root-session turns): verb-dispatched
+        // like schedule; the worker side fans this out as workflow.*.
+        ...(ctx.workflow
+          ? {
+            workflow: async (verb: string, argsJson: string) =>
+              JSON.stringify(await ctx.workflow!.call(verb, JSON.parse(argsJson))) ?? "null",
+          }
+          : {}),
       },
       // agent() blocks on whole subagent turns; a held mcp()/lsp() call blocks on a
       // human approval; an oracle() consult can reason for many minutes; an ask()

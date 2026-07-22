@@ -264,3 +264,6 @@ export type AnswerQuestionBody = z.infer<typeof AnswerQuestionBody>;
 //                      running program, keyed to its tool_call
 //   message.finished → { messageId } — the message is complete (pending → false)
 //   ask.question     → AskQuestion (pending on raise; re-emitted with its final status)
+//   workflow.updated → WorkflowRun (db/db.ts) — a run's row after any change
+//   workflow.agent   → WorkflowAgent — one agent() call's journal row after any change
+//   workflow.log     → { runId, line } — one narrator log() line from a running script

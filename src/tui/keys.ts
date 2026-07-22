@@ -64,6 +64,16 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
     ],
   },
   {
+    section: "workflows tab — /workflows opens it",
+    keys: [
+      ["enter / →", "open a run · then an agent"],
+      ["esc / ←", "back out one level"],
+      ["x / p", "stop · pause/resume the run"],
+      ["r", "rerun — edit its script file first to change it; unchanged agents replay from the journal"],
+      ["o", "open the selected agent's conversation"],
+    ],
+  },
+  {
     section: "model tab",
     keys: [["enter", "set model/effort · edit API keys"]],
   },

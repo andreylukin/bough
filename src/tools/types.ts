@@ -149,6 +149,16 @@ export interface ToolRunCtx {
     call: (verb: string, args: unknown) => Promise<unknown>;
   };
   /**
+   * Workflows (workflow.ts), wired by the turn runner for root-session turns that
+   * may delegate: scripted multi-agent orchestration, fanned out in the program as
+   * the `workflow.*` method object (start/rerun/stop/pause/resume/status/list).
+   * A started run is DETACHED from this turn — it survives the turn ending, and
+   * its finished report arrives as a system note like a background subagent's.
+   */
+  workflow?: {
+    call: (verb: string, args: unknown) => Promise<unknown>;
+  };
+  /**
    * Live program output, wired by the turn runner: fires for each console.*
    * line as run_steps' program prints it (→ a `tool.log` bus event the TUI
    * renders under the running tool call). Display-only — the model still

@@ -25,3 +25,18 @@ Caps: at most 8 spawns per turn and 4 subagents
 running at once across the whole tree — a spawn beyond a cap fails with an error,
 so plan batches accordingly.
 Delegate only genuinely separable work; do small things yourself.
+
+For LARGE fan-outs (an audit across many files, a many-item migration, cross-checked
+research — more agents than the caps above allow), write a workflow instead:
+await workflow.start({script}) runs a JavaScript orchestration script DETACHED from
+this turn and returns {id} immediately; the finished report arrives as a system note.
+The script must begin with `export const meta = {name, description, phases: [{title,
+detail?}]}` (a pure literal), then a body using: await agent(prompt, {label?, phase?,
+model?}) → the subagent's report text (throws on failure); parallel(thunks) → results
+with failures as null; pipeline(items, ...stages) → per-item stage chains, no barrier;
+phase(title); log(msg); args. Caps don't apply inside a workflow (its own semaphore
+runs 4 agents at once; queue as many calls as needed). Other verbs:
+workflow.status({id}), workflow.stop({id}), workflow.list(), and
+workflow.rerun({id, script?}) — a rerun replays unchanged agent() calls from the
+previous run's journal instantly, so edit the script and only changed calls re-run.
+Workflow agents get NO context beyond their prompt string, like subagents.

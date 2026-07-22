@@ -19,12 +19,43 @@ import type {
 } from "../schema/changes.ts";
 import type { KeyProvider } from "../server/keys.ts";
 import type { JobInfo as JobRow } from "../tools/bash_bg.ts";
-import type { Schedule as WireSchedule } from "../db/db.ts";
+import type {
+  Schedule as WireSchedule,
+  WorkflowAgent as WireWorkflowAgent,
+  WorkflowRun as WireWorkflowRun,
+} from "../db/db.ts";
 // An LLM-labeled topic section over the conversation tree's turns (Section), the
 // change-review diff family (Diff/FileDiff/Hunk), a dir picker hit, a provider
 // key name, a background-shell row, and a recurring-run row — re-exported (type
 // only) so the TUI can't drift from what the server sends.
-export type { DirHit, JobRow, WireDiff, WireFileDiff, WireHunk, WireSchedule, WireSection };
+export type {
+  DirHit,
+  JobRow,
+  WireDiff,
+  WireFileDiff,
+  WireHunk,
+  WireSchedule,
+  WireSection,
+  WireWorkflowAgent,
+  WireWorkflowRun,
+};
+
+/** GET /workflows list rows — the server's workflowSummary shape (workflow.ts). */
+export interface WfSummary {
+  id: string;
+  name: string;
+  description: string;
+  status: WireWorkflowRun["status"];
+  currentPhase: string | null;
+  phases: { title: string; detail?: string }[];
+  agents: { total: number; done: number; running: number; failed: number };
+  result: unknown;
+  error: string | null;
+  resumeOf: string | null;
+  createdAt: number;
+  finishedAt: number | null;
+  scriptFile: string;
+}
 export type { KeyProvider };
 export type ChangeSource = "clonefile" | "shadow";
 /** What POST changes/apply reports back — feeds the panel's feedback toast. */
@@ -228,6 +259,21 @@ export const api = {
 
   // Review payloads for a session's workspace changes.
   getChanges: (id: string) => j<{ diffs: WireDiff[] }>(`/sessions/${id}/changes`),
+
+  // Workflow runs of a session (newest first) + one run's full detail.
+  workflows: (sessionId?: string) =>
+    j<{ workflows: WfSummary[] }>(`/workflows${sessionId ? `?session=${sessionId}` : ""}`)
+      .then((r) => r.workflows),
+  getWorkflow: (id: string) =>
+    j<{ workflow: WireWorkflowRun; agents: WireWorkflowAgent[]; scriptFile: string }>(
+      `/workflows/${id}`,
+    ),
+  // stop / pause / resume — jmsg surfaces the 409 reason ("not running").
+  workflowAction: (id: string, action: "stop" | "pause" | "resume") =>
+    jmsg<WireWorkflowRun>(`/workflows/${id}/${action}`, { method: "POST" }),
+  // Rerun with journal replay; no body = the run's (possibly edited) script mirror.
+  rerunWorkflow: (id: string) =>
+    jmsg<WireWorkflowRun>(`/workflows/${id}/rerun`, postJson({})),
 
   // Live + recent background shells of a session (and its subagent branches).
   jobs: (id: string) => j<{ jobs: JobRow[] }>(`/sessions/${id}/jobs`).then((r) => r.jobs),

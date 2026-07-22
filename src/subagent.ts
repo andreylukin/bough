@@ -48,6 +48,10 @@ export interface SpawnCtx {
   model?: string;
   /** The spawner turn's abort signal; interrupting it interrupts BLOCKING waits. */
   signal?: AbortSignal;
+  /** Skip the width caps (per-turn spawns + tree concurrency) — workflow runs
+   * (workflow.ts) bound their own fan-out with a semaphore, and a whole run
+   * would not fit under MAX_SPAWNS_PER_TURN. The depth cap still applies. */
+  capsExempt?: boolean;
 }
 
 export interface SubagentResult {
@@ -235,22 +239,25 @@ async function launch(
     throw new Error(`subagent depth limit (${MAX_SUBAGENT_DEPTH}) reached`);
   }
   // Width caps: bound concurrency across the tree and total spawns per turn.
-  const spawnedThisTurn =
-    db.listSessions().filter((s) =>
-      s.kind === "subagent" && s.originMessageId === spawn.spawnerMessageId
-    ).length;
-  if (spawnedThisTurn >= MAX_SPAWNS_PER_TURN) {
-    throw new Error(
-      `spawn cap reached: this turn already spawned ${MAX_SPAWNS_PER_TURN} subagents — ` +
-        `do the remaining work yourself or continue in a later turn`,
-    );
-  }
-  const running = runningInTree(db, treeRootOf(db, spawn.spawnerId));
-  if (running >= MAX_TREE_CONCURRENT) {
-    throw new Error(
-      `subagent concurrency cap reached (${running} running in this tree, max ${MAX_TREE_CONCURRENT}) — ` +
-        `wait for or join() running subagents before spawning more`,
-    );
+  // Workflow runs are exempt — the engine's own semaphore bounds their fan-out.
+  if (!spawn.capsExempt) {
+    const spawnedThisTurn =
+      db.listSessions().filter((s) =>
+        s.kind === "subagent" && s.originMessageId === spawn.spawnerMessageId
+      ).length;
+    if (spawnedThisTurn >= MAX_SPAWNS_PER_TURN) {
+      throw new Error(
+        `spawn cap reached: this turn already spawned ${MAX_SPAWNS_PER_TURN} subagents — ` +
+          `do the remaining work yourself or continue in a later turn`,
+      );
+    }
+    const running = runningInTree(db, treeRootOf(db, spawn.spawnerId));
+    if (running >= MAX_TREE_CONCURRENT) {
+      throw new Error(
+        `subagent concurrency cap reached (${running} running in this tree, max ${MAX_TREE_CONCURRENT}) — ` +
+          `wait for or join() running subagents before spawning more`,
+      );
+    }
   }
 
   const explicit = explicitWorkspace(ctx, spawn.spawnerId);
@@ -329,6 +336,19 @@ async function launch(
       return r;
     });
   return { sessionId: session.id, title: db.getSession(session.id)?.title ?? UNTITLED, result };
+}
+
+/**
+ * Launch a subagent and return its handle plus a result promise — the workflow
+ * engine's runner (turn.ts wires it) needs the session id BEFORE completion so
+ * the journal row and the TUI can point at the branch while it runs.
+ */
+export function startSubagent(
+  ctx: TurnCtx,
+  spawn: SpawnCtx,
+  task: string,
+): Promise<{ sessionId: string; title: string; result: Promise<SubagentResult> }> {
+  return launch(ctx, spawn, task);
 }
 
 /**

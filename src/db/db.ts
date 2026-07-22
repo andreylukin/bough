@@ -103,6 +103,42 @@ CREATE TABLE IF NOT EXISTS schedules (
   last_run_at INTEGER,
   next_run_at INTEGER NOT NULL
 );
+-- Workflow runs (see workflow.ts): a script orchestrating many subagents. The
+-- script text is persisted verbatim (also mirrored to ~/.bough/workflows/<id>.js
+-- for out-of-band editing); each agent() call journals into workflow_agents so a
+-- rerun can replay unchanged calls from cache instead of re-running them.
+CREATE TABLE IF NOT EXISTS workflows (
+  id           TEXT PRIMARY KEY,
+  session_id   TEXT NOT NULL REFERENCES sessions(id),
+  name         TEXT NOT NULL,
+  description  TEXT NOT NULL,
+  script       TEXT NOT NULL,
+  phases       TEXT NOT NULL,         -- JSON [{title, detail?}] from the script's meta
+  status       TEXT NOT NULL,         -- running | paused | done | error | stopped | orphaned
+  current_phase TEXT,
+  result       TEXT,                  -- JSON: the script's return value (status done)
+  error        TEXT,                  -- the failure message (status error)
+  args         TEXT,                  -- JSON: the run's args input
+  resume_of    TEXT,                  -- run id this rerun replays its journal from
+  created_at   INTEGER NOT NULL,
+  finished_at  INTEGER
+);
+CREATE TABLE IF NOT EXISTS workflow_agents (
+  id          TEXT PRIMARY KEY,
+  run_id      TEXT NOT NULL REFERENCES workflows(id),
+  idx         INTEGER NOT NULL,       -- call order within the run
+  key         TEXT NOT NULL,          -- hash(prompt|opts) — the journal replay key
+  label       TEXT NOT NULL,
+  phase       TEXT,
+  prompt      TEXT NOT NULL,
+  model       TEXT,
+  status      TEXT NOT NULL,          -- running | done | error | stopped | cached
+  result      TEXT,                   -- the agent's report text (done/cached)
+  session_id  TEXT,                   -- the subagent session (TUI drill-in)
+  started_at  INTEGER NOT NULL,
+  finished_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS workflow_agents_run ON workflow_agents(run_id, idx);
 `;
 
 // ---- row <-> domain mapping ------------------------------------------------
@@ -206,6 +242,118 @@ function toSchedule(r: ScheduleRow): Schedule {
     createdAt: r.created_at,
     lastRunAt: r.last_run_at,
     nextRunAt: r.next_run_at,
+  };
+}
+
+export type WorkflowStatus = "running" | "paused" | "done" | "error" | "stopped" | "orphaned";
+export type WorkflowAgentStatus = "running" | "done" | "error" | "stopped" | "cached";
+
+/** One workflow run: the script, its meta (name/description/phases), and outcome. */
+export interface WorkflowRun {
+  id: string;
+  sessionId: string;
+  name: string;
+  description: string;
+  script: string;
+  /** From the script's meta: [{title, detail?}]. */
+  phases: { title: string; detail?: string }[];
+  status: WorkflowStatus;
+  currentPhase: string | null;
+  /** The script's return value (status "done"). */
+  result: unknown;
+  error: string | null;
+  args: unknown;
+  /** Run id this rerun replays its journal from. */
+  resumeOf: string | null;
+  createdAt: number;
+  finishedAt: number | null;
+}
+
+/** One agent() call's journal row — the unit the TUI drills into and reruns replay. */
+export interface WorkflowAgent {
+  id: string;
+  runId: string;
+  idx: number;
+  key: string;
+  label: string;
+  phase: string | null;
+  prompt: string;
+  model: string | null;
+  status: WorkflowAgentStatus;
+  /** The agent's report text (done), or the cached copy of it (cached). */
+  result: string | null;
+  /** The subagent session backing this call (absent for cached replays). */
+  sessionId: string | null;
+  startedAt: number;
+  finishedAt: number | null;
+}
+
+type WorkflowRow = {
+  id: string;
+  session_id: string;
+  name: string;
+  description: string;
+  script: string;
+  phases: string;
+  status: string;
+  current_phase: string | null;
+  result: string | null;
+  error: string | null;
+  args: string | null;
+  resume_of: string | null;
+  created_at: number;
+  finished_at: number | null;
+};
+type WorkflowAgentRow = {
+  id: string;
+  run_id: string;
+  idx: number;
+  key: string;
+  label: string;
+  phase: string | null;
+  prompt: string;
+  model: string | null;
+  status: string;
+  result: string | null;
+  session_id: string | null;
+  started_at: number;
+  finished_at: number | null;
+};
+
+function toWorkflow(r: WorkflowRow): WorkflowRun {
+  return {
+    id: r.id,
+    sessionId: r.session_id,
+    name: r.name,
+    description: r.description,
+    script: r.script,
+    phases: JSON.parse(r.phases),
+    status: r.status as WorkflowStatus,
+    currentPhase: r.current_phase,
+    result: r.result === null ? null : JSON.parse(r.result),
+    error: r.error,
+    args: r.args === null ? null : JSON.parse(r.args),
+    resumeOf: r.resume_of,
+    createdAt: r.created_at,
+    finishedAt: r.finished_at,
+  };
+}
+
+function toWorkflowAgent(r: WorkflowAgentRow): WorkflowAgent {
+  return {
+    id: r.id,
+    runId: r.run_id,
+    idx: r.idx,
+    key: r.key,
+    label: r.label,
+    phase: r.phase,
+    prompt: r.prompt,
+    model: r.model,
+    status: r.status as WorkflowAgentStatus,
+    result: r.result,
+    sessionId: r.session_id,
+    startedAt: r.started_at,
+    finishedAt: r.finished_at,
   };
 }
 
@@ -827,6 +975,143 @@ export class Db {
 
   deleteSchedule(id: string): void {
     this.#db.prepare(`DELETE FROM schedules WHERE id = ?`).run(id);
+  }
+
+  // workflows ---------------------------------------------------------------
+
+  createWorkflow(w: WorkflowRun): WorkflowRun {
+    this.#db
+      .prepare(
+        `INSERT INTO workflows (id, session_id, name, description, script, phases, status, current_phase, result, error, args, resume_of, created_at, finished_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        w.id,
+        w.sessionId,
+        w.name,
+        w.description,
+        w.script,
+        JSON.stringify(w.phases),
+        w.status,
+        w.currentPhase,
+        w.result === null ? null : JSON.stringify(w.result),
+        w.error,
+        w.args === null || w.args === undefined ? null : JSON.stringify(w.args),
+        w.resumeOf,
+        w.createdAt,
+        w.finishedAt,
+      );
+    return w;
+  }
+
+  getWorkflow(id: string): WorkflowRun | undefined {
+    const r = this.#db.prepare(`SELECT * FROM workflows WHERE id = ?`).get(id) as
+      | WorkflowRow
+      | undefined;
+    return r && toWorkflow(r);
+  }
+
+  listWorkflows(sessionId?: string): WorkflowRun[] {
+    const rows = (sessionId
+      ? this.#db.prepare(`SELECT * FROM workflows WHERE session_id = ? ORDER BY created_at DESC`)
+        .all(sessionId)
+      : this.#db.prepare(`SELECT * FROM workflows ORDER BY created_at DESC`).all()) as
+        WorkflowRow[];
+    return rows.map(toWorkflow);
+  }
+
+  /** Overwrite the run's mutable outcome fields (status/phase/result/error/finished). */
+  updateWorkflow(
+    id: string,
+    patch: {
+      status?: WorkflowStatus;
+      currentPhase?: string | null;
+      result?: unknown;
+      error?: string | null;
+      finishedAt?: number | null;
+    },
+  ): void {
+    const cur = this.getWorkflow(id);
+    if (!cur) return;
+    this.#db
+      .prepare(
+        `UPDATE workflows SET status = ?, current_phase = ?, result = ?, error = ?, finished_at = ? WHERE id = ?`,
+      )
+      .run(
+        patch.status ?? cur.status,
+        patch.currentPhase !== undefined ? patch.currentPhase : cur.currentPhase,
+        patch.result !== undefined
+          ? (patch.result === null ? null : JSON.stringify(patch.result))
+          : (cur.result === null ? null : JSON.stringify(cur.result)),
+        patch.error !== undefined ? patch.error : cur.error,
+        patch.finishedAt !== undefined ? patch.finishedAt : cur.finishedAt,
+        id,
+      );
+  }
+
+  /** Running/paused runs — the orphan-recovery set after a server restart. */
+  unfinishedWorkflows(): WorkflowRun[] {
+    const rows = this.#db
+      .prepare(`SELECT * FROM workflows WHERE status IN ('running', 'paused')`)
+      .all() as WorkflowRow[];
+    return rows.map(toWorkflow);
+  }
+
+  createWorkflowAgent(a: WorkflowAgent): WorkflowAgent {
+    this.#db
+      .prepare(
+        `INSERT INTO workflow_agents (id, run_id, idx, key, label, phase, prompt, model, status, result, session_id, started_at, finished_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        a.id,
+        a.runId,
+        a.idx,
+        a.key,
+        a.label,
+        a.phase,
+        a.prompt,
+        a.model,
+        a.status,
+        a.result,
+        a.sessionId,
+        a.startedAt,
+        a.finishedAt,
+      );
+    return a;
+  }
+
+  updateWorkflowAgent(
+    id: string,
+    patch: {
+      status?: WorkflowAgentStatus;
+      result?: string | null;
+      sessionId?: string | null;
+      finishedAt?: number | null;
+    },
+  ): void {
+    const r = this.#db.prepare(`SELECT * FROM workflow_agents WHERE id = ?`).get(id) as
+      | WorkflowAgentRow
+      | undefined;
+    if (!r) return;
+    this.#db
+      .prepare(
+        `UPDATE workflow_agents SET status = ?, result = ?, session_id = ?, finished_at = ? WHERE id = ?`,
+      )
+      .run(
+        patch.status ?? r.status,
+        patch.result !== undefined ? patch.result : r.result,
+        patch.sessionId !== undefined ? patch.sessionId : r.session_id,
+        patch.finishedAt !== undefined ? patch.finishedAt : r.finished_at,
+        id,
+      );
+  }
+
+  listWorkflowAgents(runId: string): WorkflowAgent[] {
+    const rows = this.#db
+      .prepare(`SELECT * FROM workflow_agents WHERE run_id = ? ORDER BY idx`)
+      .all(runId) as WorkflowAgentRow[];
+    return rows.map(toWorkflowAgent);
   }
 
   // net_policies ------------------------------------------------------------

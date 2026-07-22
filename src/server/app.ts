@@ -40,7 +40,19 @@ import {
   setOracleModel,
   startUserTurn,
   usableContextLimit,
+  workflowCtxFor,
 } from "../turn.ts";
+import {
+  pauseWorkflow,
+  rerunWorkflow,
+  resumeWorkflow,
+  scriptPath as workflowScriptPath,
+  startWorkflow,
+  stopWorkflow,
+  WorkflowCreateBody,
+  WorkflowRerunBody,
+  workflowSummary,
+} from "../workflow.ts";
 import { clientFor, type Effort, EFFORTS, type LlmClient } from "../supervisor/llm.ts";
 import { setWorkerChoice, WORKER_OPTIONS, workerChoice } from "../worker/frontier.ts";
 import { SuggestBody, suggestNextStep } from "../worker/suggest.ts";
@@ -651,6 +663,55 @@ const patchScheduleH: Handler = async (req, ctx, params) => {
 const deleteScheduleH: Handler = (_req, ctx, params) => {
   scheduleRemove(ctx.db, params.id);
   return json({ ok: true });
+};
+
+// ---- workflows (scripted multi-agent orchestration — workflow.ts owns the engine)
+
+/** The production WorkflowCtx for REST-started runs: agents spawn as subagents
+ * of the run's session, anchored to its latest message on the map. */
+function restWorkflowCtx(ctx: AppCtx, sessionId: string) {
+  const anchor = ctx.db.threadFor(sessionId).at(-1)?.id ?? `rest:${sessionId}`;
+  const model = ctx.db.getSession(sessionId)?.model ?? ctx.model ?? activeModel();
+  return workflowCtxFor(ctx, sessionId, anchor, model);
+}
+
+const listWorkflowsH: Handler = (req, ctx) => {
+  const sessionId = new URL(req.url).searchParams.get("session") ?? undefined;
+  return json({
+    workflows: ctx.db.listWorkflows(sessionId).map((r) => workflowSummary(ctx.db, r)),
+  });
+};
+
+const getWorkflowH: Handler = (_req, ctx, params) => {
+  const run = ctx.db.getWorkflow(params.id);
+  if (!run) return error(404, "workflow not found");
+  return json({
+    workflow: run,
+    agents: ctx.db.listWorkflowAgents(run.id),
+    scriptFile: workflowScriptPath(run.id),
+  });
+};
+
+const createWorkflowH: Handler = async (req, ctx) => {
+  const body = await parseBody(req, WorkflowCreateBody);
+  const run = await startWorkflow(restWorkflowCtx(ctx, body.sessionId), {
+    sessionId: body.sessionId,
+    script: body.script,
+    args: body.args,
+  });
+  return json(run, 201);
+};
+
+const stopWorkflowH: Handler = (_req, ctx, params) => json(stopWorkflow(ctx, params.id));
+const pauseWorkflowH: Handler = (_req, ctx, params) => json(pauseWorkflow(ctx, params.id));
+const resumeWorkflowH: Handler = (_req, ctx, params) => json(resumeWorkflow(ctx, params.id));
+
+const rerunWorkflowH: Handler = async (req, ctx, params) => {
+  const body = await parseBody(req, WorkflowRerunBody, {});
+  const src = ctx.db.getWorkflow(params.id);
+  if (!src) return error(404, "workflow not found");
+  const run = await rerunWorkflow(restWorkflowCtx(ctx, src.sessionId), params.id, body);
+  return json(run, 201);
 };
 
 const events: Handler = (req, ctx) => {
@@ -1393,6 +1454,29 @@ const routes: Route[] = [
     method: "DELETE",
     pattern: new URLPattern({ pathname: "/schedules/:id" }),
     handler: deleteScheduleH,
+  },
+  { method: "GET", pattern: new URLPattern({ pathname: "/workflows" }), handler: listWorkflowsH },
+  { method: "POST", pattern: new URLPattern({ pathname: "/workflows" }), handler: createWorkflowH },
+  { method: "GET", pattern: new URLPattern({ pathname: "/workflows/:id" }), handler: getWorkflowH },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/workflows/:id/stop" }),
+    handler: stopWorkflowH,
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/workflows/:id/pause" }),
+    handler: pauseWorkflowH,
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/workflows/:id/resume" }),
+    handler: resumeWorkflowH,
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/workflows/:id/rerun" }),
+    handler: rerunWorkflowH,
   },
   { method: "GET", pattern: new URLPattern({ pathname: "/events" }), handler: events },
   { method: "GET", pattern: new URLPattern({ pathname: "/net/status" }), handler: netStatus },

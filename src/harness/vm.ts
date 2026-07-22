@@ -89,6 +89,13 @@ export interface HostFns {
    * `schedule.*` method object (list/add/enable/disable/remove).
    */
   schedule?(verb: string, argsJson: string): Promise<string>;
+  /**
+   * Workflows (workflow.ts): scripted multi-agent orchestration, verb-dispatched
+   * like schedule() — the worker side exposes it as the `workflow.*` method
+   * object (start/rerun/stop/pause/resume/status/list). Bridged only for
+   * root-session turns that may delegate.
+   */
+  workflow?(verb: string, argsJson: string): Promise<string>;
 }
 
 export interface ProgramResult {
