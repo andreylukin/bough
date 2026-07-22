@@ -169,8 +169,8 @@ function RunView(
                   sel={sel}
                   right={
                     <Text dimColor>
-                      {a.model ?? ""}
-                      {a.finishedAt ? ` · ${elapsed(a.startedAt, a.finishedAt)}` : " · running"}
+                      {[a.model, a.finishedAt ? elapsed(a.startedAt, a.finishedAt) : "running"]
+                        .filter(Boolean).join(" · ")}
                     </Text>
                   }
                 >

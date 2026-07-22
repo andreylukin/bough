@@ -371,6 +371,11 @@ export async function startWorkflow(ctx: WorkflowCtx, opts: StartOpts): Promise<
       if (at >= MAX_AGENTS_PER_RUN) {
         throw new Error(`workflow agent cap reached (${MAX_AGENTS_PER_RUN})`);
       }
+      // Pause parks the call BEFORE it journals: a parked call has no row, so
+      // the UI never shows a "running" agent that hasn't actually started
+      // (live-test finding — a sequential script's next call surfaced as
+      // running, session-less, while the run sat paused).
+      await awaitGate();
       const key = callKey(call);
       const cached = replay.get(key)?.shift();
       const row = db.createWorkflowAgent({
@@ -390,7 +395,6 @@ export async function startWorkflow(ctx: WorkflowCtx, opts: StartOpts): Promise<
       });
       publishAgent(ctx, run, row.id);
       if (cached !== undefined) return reply(true, JSON.stringify(cached));
-      await awaitGate();
       await acquire();
       try {
         if (ctrl.signal.aborted) throw new Error("workflow stopped");

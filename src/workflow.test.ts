@@ -250,6 +250,9 @@ Deno.test("pause parks new agent() calls; resume releases them", async () => {
   releaseFirst();
   await new Promise((r) => setTimeout(r, 150));
   assertEquals(ran, ["first"]);
+  // A parked call must not journal: the UI would show a session-less "running"
+  // agent while the run sits paused (live-test finding).
+  assertEquals(db.listWorkflowAgents(run.id).length, 1);
   resumeWorkflow(ctx, run.id);
   assertEquals(await finished(events, run.id), "done");
   assertEquals(ran, ["first", "second"]);
