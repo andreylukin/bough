@@ -199,11 +199,19 @@ export function App(
   // behind a ↓ would act on the pre-movement selection if it read the state var.
   const [pickSel, setPickSel] = useState(0);
   const pickSelRef = useRef(0);
+  // The cursor is anchored to a session IDENTITY, not just this index: forks and
+  // subagents stream into the list live and reorder the rows, so a raw index
+  // would slide onto whatever row shifted under it. movePickSel records the id it
+  // lands on; a re-anchor effect (below, near treeRows) re-resolves that id to
+  // its new index whenever the row set changes.
+  const pickSelIdRef = useRef<string | null>(null);
+  const treeRowsRef = useRef<TreeRow[]>([]);
   const movePickSel = useCallback((v: number | ((i: number) => number)) => {
     // Resolve against the ref NOW (not in the updater): state updaters run at
     // flush, so a same-chunk follow-up key would still read the stale position.
     pickSelRef.current = typeof v === "number" ? v : v(pickSelRef.current);
     setPickSel(pickSelRef.current);
+    pickSelIdRef.current = treeRowsRef.current[pickSelRef.current]?.s.id ?? null;
   }, []);
   const [filter, setFilter] = useState("");
   const [filterActive, setFilterActive] = useState(false);
@@ -1070,17 +1078,44 @@ export function App(
 
   // Deprecated branches (and archived sessions) are hidden from the picker
   // unless revealed with `h`.
-  const pickerSessions = showDeprecated
-    ? [
-      ...store.sessions,
-      ...store.archived.filter((a) => !store.sessions.some((s) => s.id === a.id)),
-    ]
-    : store.sessions.filter((s) => !s.deprecatedAt);
-  const treeRows: TreeRow[] = filter
-    ? flattenTree(pickerSessions)
-      .filter(({ s }) => (s.title || "").toLowerCase().includes(filter.toLowerCase()))
-      .map(({ s }) => ({ s, depth: 0, prefix: "" }))
-    : flattenTree(pickerSessions);
+  const pickerSessions = useMemo(
+    () =>
+      showDeprecated
+        ? [
+          ...store.sessions,
+          ...store.archived.filter((a) => !store.sessions.some((s) => s.id === a.id)),
+        ]
+        : store.sessions.filter((s) => !s.deprecatedAt),
+    [store.sessions, store.archived, showDeprecated],
+  );
+  // Memoized so its reference is stable across unrelated re-renders (the 1s age
+  // clock below), which keeps the re-anchor effect from firing every render.
+  const treeRows: TreeRow[] = useMemo(
+    () =>
+      filter
+        ? flattenTree(pickerSessions)
+          .filter(({ s }) => (s.title || "").toLowerCase().includes(filter.toLowerCase()))
+          .map(({ s }) => ({ s, depth: 0, prefix: "" }))
+        : flattenTree(pickerSessions),
+    [pickerSessions, filter],
+  );
+  treeRowsRef.current = treeRows;
+  // Keep the picker cursor on the SAME session when the row set changes: a fork
+  // or subagent streaming in (store prepends) or a reload reordering rows must
+  // not slide the cursor onto a different session. While filtering, the cursor
+  // stays pinned to the top match instead (the keystroke handlers own that).
+  useEffect(() => {
+    if (filter) return;
+    const wantId = pickSelIdRef.current;
+    if (wantId === null) return;
+    const idx = treeRows.findIndex((r) => r.s.id === wantId);
+    if (idx >= 0) {
+      if (idx !== pickSelRef.current) movePickSel(idx);
+    } else {
+      // The anchored session vanished (archived/deprecated) — clamp and re-seed.
+      movePickSel((i) => Math.min(i, Math.max(0, treeRows.length - 1)));
+    }
+  }, [treeRows, filter, movePickSel]);
 
   // The sessions tab's per-row age column only moves when something re-renders,
   // so a working session read as stalled between events. While the panel is open
@@ -1389,12 +1424,13 @@ export function App(
       // ---- sessions: the lineage tree (was ^p) ----
       if (panelTab === "sessions") {
         if (filterActive) {
-          if (key.return) return setFilterActive(false);
-          if (key.backspace || key.delete) {
+          // Enter opens the top match (fzf convention): exit filter mode and fall
+          // through to the open handler below, cursor still pinned to row 0.
+          if (key.return) setFilterActive(false);
+          else if (key.backspace || key.delete) {
             movePickSel(0);
             return setFilter((f) => f.slice(0, -1));
-          }
-          if (ch && !key.ctrl && !key.meta && !key.upArrow && !key.downArrow) {
+          } else if (ch && !key.ctrl && !key.meta && !key.upArrow && !key.downArrow) {
             movePickSel(0);
             return setFilter((f) => f + ch);
           }
