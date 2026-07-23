@@ -29,7 +29,9 @@ set -eu
 # ---------------------------------------------------------------------------
 SMOLVM="${BOUGH_SMOLVM_BIN:-smolvm}"
 BASE_IMAGE="${BASE_IMAGE:-alpine:3.22}"
-WF="$(cd "$(dirname "$0")" && pwd)"
+# Intermediates (pack, extraction stage, throwaway CA) go to a temp dir — never the
+# script's own directory, so a repo checkout stays clean. Removed by cleanup().
+WF="$(mktemp -d "${TMPDIR:-/tmp}/bough-golden.XXXXXX")"
 
 CA_CERT=""                       # empty => generate a throwaway CA
 OUT_DIR="$WF/golden-rootfs"
@@ -50,9 +52,10 @@ STAGE="$WF/pack-extract"                # where we crack the sidecar open
 
 log() { printf '\n=== %s ===\n' "$*"; }
 
-# Best-effort cleanup of the temp machine on any exit path.
+# Best-effort cleanup of the temp machine + intermediates on any exit path.
 cleanup() {
   "$SMOLVM" machine delete --name "$MACHINE" -f >/dev/null 2>&1 || true
+  rm -rf "$WF" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 
@@ -176,6 +179,7 @@ echo "golden rootfs size: $(du -sh "$OUT_DIR" | cut -f1)"
 # ---------------------------------------------------------------------------
 log "delete build machine"
 "$SMOLVM" machine delete --name "$MACHINE" -f
+rm -rf "$WF" 2>/dev/null || true
 trap - EXIT INT TERM
 
 log "DONE"
