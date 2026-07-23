@@ -61,14 +61,14 @@ import {
   startSubagent,
   subagentDepth,
 } from "./subagent.ts";
-import { workflowVerb, type WorkflowCtx } from "./workflow.ts";
+import { type WorkflowCtx, workflowVerb } from "./workflow.ts";
 import { clip } from "./text.ts";
 import { maybeAutoTitle, type Titler } from "./supervisor/title.ts";
 import {
   delegationHintNote,
   readAgentsFile,
-  runningSubagentsNote,
   resolveSystemSections,
+  runningSubagentsNote,
   scratchpadNote,
   workspaceNote,
 } from "./supervisor/prompt.ts";
@@ -377,7 +377,9 @@ function friendlyTurnError(err: unknown, model: string): string {
     }
     if (status >= 400) {
       const brief = body.replace(/\s+/g, " ").trim();
-      return `${provider} error ${status}: ${brief.length > 120 ? brief.slice(0, 120) + "…" : brief}`;
+      return `${provider} error ${status}: ${
+        brief.length > 120 ? brief.slice(0, 120) + "…" : brief
+      }`;
     }
   }
   return msg;
@@ -643,7 +645,6 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
         ? {
           sessionDir: prepared.sessionDir,
           scratchDir: prepared.scratchDir,
-          gitWriteDirs: prepared.gitWriteDirs,
         }
         : undefined,
       // Per-turn harness state: run_steps commits the CHECK here (SPEC §5 gating).
@@ -911,14 +912,13 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     // adopt at handoff — the same build minus the prewalk section, so the cheap
     // model never sees the planning instruction it didn't follow.
     const prewalkTarget = prewalkModel();
-    const prewalk =
-      skills.sections.includes("Active skill: /prewalk") && prewalkTarget !== model
-        ? {
-          target: prewalkTarget,
-          volatile: volatileBase +
-            activeSkills(triggerText.replace(PREWALK_RE, " ")).sections,
-        }
-        : null;
+    const prewalk = skills.sections.includes("Active skill: /prewalk") && prewalkTarget !== model
+      ? {
+        target: prewalkTarget,
+        volatile: volatileBase +
+          activeSkills(triggerText.replace(PREWALK_RE, " ")).sections,
+      }
+      : null;
     let prewalkDone = false;
     // Tool defs precede system in the API's cache order, so they're part of the
     // shared prefix: defaultTools + STOP_TOOL is process-constant and jsonSchema

@@ -1,7 +1,5 @@
 /** Run a shell command in the session workspace, capturing combined output. */
 import { z } from "zod/v4";
-import { sandboxActive, wrapChild } from "../sandbox/seatbelt.ts";
-import { ensureShims } from "../sandbox/shims.ts";
 import { ensureVm, execCommand, GUEST_WORKSPACE, sandboxVm } from "../sandbox/vmsession.ts";
 import { clawpatrolEnv } from "../net/gateway.ts";
 import type { ToolDef, ToolRunCtx } from "./types.ts";
@@ -55,37 +53,24 @@ export async function shellInvocation(
 ): Promise<{ argv: string[]; env?: Record<string, string> }> {
   const netEnv = await clawpatrolEnv(ctx.sessionId);
   const env: Record<string, string> = { ...netEnv };
-  let argv = ["/bin/sh", "-c", command];
+  const argv = ["/bin/sh", "-c", command];
 
   // VM backend: run the shell INSIDE the session's guest. The workspace is virtiofs-
   // mounted at GUEST_WORKSPACE (bash's cwd); netEnv (proxy/CA) is injected into the
   // guest via `-e`, so the host `machine exec` child carries no secrets. bash.run
   // spawns the returned argv with its own streaming/background/kill machinery — a
   // `machine exec` is just a host subprocess, so that all works unchanged.
+  // `opts.readOnly` (the oracle's shell) shares the session VM; the workspace mount
+  // is rw, so read-only isn't enforced there yet (TODO: a ro fork or bind).
   if (ctx.sandbox && ctx.sessionId && sandboxVm()) {
     await ensureVm(ctx.sessionId, { workspace: ctx.workspace });
-    argv = execCommand(ctx.sessionId, ["/bin/sh", "-c", command], {
-      cwd: GUEST_WORKSPACE,
-      env: netEnv,
-    });
-    return { argv };
+    return {
+      argv: execCommand(ctx.sessionId, argv, { cwd: GUEST_WORKSPACE, env: netEnv }),
+    };
   }
 
-  if (ctx.sandbox) {
-    argv = wrapChild(argv, {
-      workspace: opts?.readOnly ? ctx.sandbox.scratchDir : ctx.workspace,
-      allowWrite: opts?.readOnly
-        ? []
-        : [ctx.sandbox.sessionDir, ctx.sandbox.scratchDir, ...(ctx.sandbox.gitWriteDirs ?? [])],
-      confineNetwork: Object.keys(netEnv).length > 0,
-    });
-    // Shim commands the profile can't fix (setuid /bin/ps) — see sandbox/shims.ts.
-    // Best-effort: an unwritable shim dir must not take bash down with it.
-    if (sandboxActive()) {
-      const shims = await ensureShims().catch(() => null);
-      if (shims) env.PATH = `${shims}:${Deno.env.get("PATH") ?? "/usr/bin:/bin"}`;
-    }
-  }
+  // No VM (tests / CI / BOUGH_SANDBOX_VM=0): run unwrapped on the host with the proxy
+  // env. Subprocess confinement is the VM's job — there is no Seatbelt fallback.
   return { argv, env: Object.keys(env).length ? env : undefined };
 }
 

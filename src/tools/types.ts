@@ -25,15 +25,13 @@ export interface ToolRunCtx {
    */
   signal?: AbortSignal;
   /**
-   * When set, the turn is sandboxed: bash wraps its argv in the Seatbelt profile
-   * (darwin), and the in-process file tools may also write under `sessionDir` (the
-   * clonefile snapshot dir) and `scratchDir` (the per-session scratchpad — outside
-   * the repo, so temp files don't pollute what the server builds or what ships).
-   * Absent for tests and non-sandboxed runs. `gitWriteDirs` (shadow worktree
-   * sessions only) are the store dirs the SHELL may additionally write so
-   * in-session git works — they are sandbox-profile state, not file-tool roots.
+   * When set, the turn is sandboxed: bash runs inside the session's VM, and the
+   * in-process file tools may also write under `sessionDir` (the clonefile snapshot
+   * dir) and `scratchDir` (the per-session scratchpad — outside the repo, so temp
+   * files don't pollute what the server builds or what ships). Absent for tests and
+   * non-sandboxed runs.
    */
-  sandbox?: { sessionDir: string; scratchDir: string; gitWriteDirs?: string[] };
+  sandbox?: { sessionDir: string; scratchDir: string };
   /**
    * Per-turn harness state, created by the turn runner. `check` is the committed
    * completion gate (SPEC §5): the shell command `run_steps` re-runs before

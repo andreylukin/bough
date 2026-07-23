@@ -4,6 +4,7 @@
  */
 import { openDb } from "../db/db.ts";
 import { ClawpatrolGateway, setActiveGateway } from "../net/gateway.ts";
+import { goldenDir } from "../sandbox/vmsession.ts";
 import { mcpManager } from "../mcp/manager.ts";
 import { bus } from "../bus.ts";
 import { createHandler, PURGE_RETENTION_MS } from "./app.ts";
@@ -31,6 +32,22 @@ if (swept > 0) console.log(`swept ${swept} orphaned pending net request(s)`);
 // longer than the retention period are hard-removed on boot (and via `bough purge`).
 const purged = db.purgeArchivedBefore(Date.now() - PURGE_RETENTION_MS);
 if (purged > 0) console.log(`purged ${purged} session(s) archived over 30 days ago`);
+// Sandbox backend: bash runs inside a per-session smolvm VM whenever the golden
+// rootfs is present (built by scripts/guest-image/build-golden.sh). Explicit
+// BOUGH_SANDBOX_VM wins; without a golden, sandboxed bash runs UNSANDBOXED on the
+// host (surfaced loudly) until one is built.
+if (!Deno.env.get("BOUGH_SANDBOX_VM")) {
+  try {
+    Deno.statSync(goldenDir());
+    Deno.env.set("BOUGH_SANDBOX_VM", "1");
+    console.log(`sandbox: VM backend (golden ${goldenDir()})`);
+  } catch {
+    console.warn(
+      `sandbox: no golden rootfs at ${goldenDir()} — sandboxed bash runs UNSANDBOXED; ` +
+        `build one with scripts/guest-image/build-golden.sh`,
+    );
+  }
+}
 // Claw Patrol is bough's native egress firewall (opt-in via BOUGH_CLAWPATROL=1): it
 // runs an in-process intercepting proxy and routes sandboxed commands through it.
 const gateway = new ClawpatrolGateway({ db, bus });

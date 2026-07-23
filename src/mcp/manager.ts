@@ -13,8 +13,6 @@
  * Grant scoping (which servers a turn may call) is the turn runner's job — the
  * manager connects and executes; it does not decide who may ask.
  */
-import { wrapChild } from "../sandbox/seatbelt.ts";
-import { sandboxVm } from "../sandbox/vmsession.ts";
 import { clawpatrolEnv } from "../net/gateway.ts";
 import { expandEnv, expandHome, loadRegistry, type ServerConfig } from "./config.ts";
 import {
@@ -191,21 +189,12 @@ export class McpManager {
       }
     }
     // Same egress routing as a bash child: this session's proxy + the MITM CA.
+    // MCP servers (user-configured, semi-trusted) run on the host — egress still
+    // routes through the session proxy via netEnv. Subprocess FS confinement is the
+    // VM's job for agent bash; stdio MCP servers in the guest are a follow-up (bash
+    // is one-shot, MCP is a long-lived bidirectional pipe).
     const netEnv = await clawpatrolEnv(sessionId);
-    let argv = [cfg.command!, ...cfg.args];
-    // VM mode: MCP servers (user-configured, semi-trusted) run on the host without
-    // the Seatbelt wrap — egress still routes through the session proxy via netEnv.
-    // (Running stdio MCP servers inside the guest is a follow-up; bash is one-shot,
-    // MCP is a long-lived bidirectional pipe.)
-    if (spawn.sandbox && !sandboxVm()) {
-      argv = wrapChild(argv, {
-        workspace: spawn.workspace,
-        // The snapshot dir plus the entry's declared write roots — servers that
-        // keep state outside the workspace need them.
-        allowWrite: [spawn.sandbox.sessionDir, ...cfg.allowWrite.map(expandHome)],
-        confineNetwork: Object.keys(netEnv).length > 0,
-      });
-    }
+    const argv = [cfg.command!, ...cfg.args];
     const home = Deno.env.get("HOME");
     const client = await McpStdioClient.connect({
       argv,

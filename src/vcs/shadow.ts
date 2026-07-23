@@ -169,40 +169,6 @@ export async function storeDirFor(origin: string): Promise<string> {
 }
 
 /**
- * The shadow-store dirs a sandboxed shell running in worktree `ws` needs write
- * access to for ordinary git use (`add`/`commit`/`fetch`/`stash`): the
- * worktree's own git dir (index, HEAD, locks) and the store's object database.
- * Deliberately NOT the store root — shared state (`refs/`, `config`,
- * `packed-refs`) stays read-only, so a session cannot move another session's
- * refs or repoint the store (in-sandbox `git branch` fails; commits ride the
- * detached worktree HEAD, which is bough's model anyway).
- *
- * `packed-refs.lock` is the one extra file: `git commit`'s ref transaction
- * probes it and spams "Unable to create packed-refs.lock" on every in-sandbox
- * commit otherwise. Allowing the lockfile is harmless — replacing packed-refs
- * itself requires a rename into the store root, which stays denied.
- *
- * Empty unless `ws/.git` is a worktree gitfile pointing under `storeBase()` —
- * a session that fell back to running directly in the user's checkout must not
- * gain write access to the real repo's `.git`.
- */
-export async function sandboxGitWriteDirs(ws: string): Promise<string[]> {
-  let gitdir: string;
-  try {
-    const gitfile = await Deno.readTextFile(join(ws, ".git"));
-    const m = gitfile.match(/^gitdir:\s*(.+)\s*$/m);
-    if (!m) return [];
-    gitdir = isAbsolute(m[1]) ? m[1] : resolve(ws, m[1]);
-  } catch {
-    return []; // no .git, or .git is a directory (not a linked worktree)
-  }
-  const store = await Deno.realPath(dirname(dirname(gitdir))).catch(() => null);
-  const base = await Deno.realPath(storeBase()).catch(() => null);
-  if (!store || !base || store !== base && !store.startsWith(base + "/")) return [];
-  return [gitdir, join(store, "objects"), join(store, "packed-refs.lock")];
-}
-
-/**
  * True when an error reads like shadow-store corruption, as opposed to a
  * transient or environmental failure. Gates quarantine-and-retry: a healthy
  * store must never be moved aside — live worktrees of the origin point into it.
@@ -386,9 +352,8 @@ export async function addWorkspace(
   // diffs against what the origin actually had — a fork's rail base (= parent
   // tip) would make inherited work unshippable. Falls back to the tip for
   // parents that pre-date originbase refs and for branch-off-HEAD spawns.
-  const originBase = (fromSessionId !== null
-    ? await refSha(fromDir, originBaseRefFor(fromSessionId))
-    : null) ?? tip;
+  const originBase =
+    (fromSessionId !== null ? await refSha(fromDir, originBaseRefFor(fromSessionId)) : null) ?? tip;
   return await withLock(store, async () => {
     await git(store, ["update-ref", baseRefFor(sessionId), tip]);
     await git(store, ["update-ref", originBaseRefFor(sessionId), originBase]);

@@ -83,11 +83,14 @@ Deno.test("file tools follow symlinks and reject ones that escape the workspace"
   }
 });
 
-// The real Seatbelt integration: bash writes inside the workspace but is denied
-// outside it. macOS-only (sandbox-exec); needs --allow-run.
+// Superseded by the VM backend: subprocess confinement moved from Seatbelt to the
+// per-session VM (the guest only has /workspace mounted, so writes outside it never
+// reach the host). That confinement is exercised by src/sandbox/vmsession.test.ts
+// and src/tools/bash.vm.test.ts (guest↔host workspace coherence + egress lockdown).
+// This Seatbelt-specific test is retired.
 Deno.test({
   name: "sandboxed bash writes inside the workspace but is denied outside",
-  ignore: Deno.build.os !== "darwin",
+  ignore: true,
   async fn() {
     const dir = await Deno.makeTempDir();
     const ctx = {
