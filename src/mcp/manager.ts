@@ -14,6 +14,7 @@
  * manager connects and executes; it does not decide who may ask.
  */
 import { wrapChild } from "../sandbox/seatbelt.ts";
+import { sandboxVm } from "../sandbox/vmsession.ts";
 import { clawpatrolEnv } from "../net/gateway.ts";
 import { expandEnv, expandHome, loadRegistry, type ServerConfig } from "./config.ts";
 import {
@@ -192,7 +193,11 @@ export class McpManager {
     // Same egress routing as a bash child: this session's proxy + the MITM CA.
     const netEnv = await clawpatrolEnv(sessionId);
     let argv = [cfg.command!, ...cfg.args];
-    if (spawn.sandbox) {
+    // VM mode: MCP servers (user-configured, semi-trusted) run on the host without
+    // the Seatbelt wrap — egress still routes through the session proxy via netEnv.
+    // (Running stdio MCP servers inside the guest is a follow-up; bash is one-shot,
+    // MCP is a long-lived bidirectional pipe.)
+    if (spawn.sandbox && !sandboxVm()) {
       argv = wrapChild(argv, {
         workspace: spawn.workspace,
         // The snapshot dir plus the entry's declared write roots — servers that

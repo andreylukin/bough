@@ -86,11 +86,16 @@ log "apk add toolchain"
 
 # ---------------------------------------------------------------------------
 # 3. Install the CA into the guest system trust store.
-#    Generate a throwaway CA if none supplied.
+#    Prefer bough's real per-install Claw Patrol CA (so every guest trusts the live
+#    MITM proxy natively — no per-session delivery). Fall back to a throwaway.
 # ---------------------------------------------------------------------------
-if [ -z "$CA_CERT" ]; then
+BOUGH_CA="${BOUGH_HOME:-$HOME/.bough}/net/ca/ca.crt"
+if [ -z "$CA_CERT" ] && [ -f "$BOUGH_CA" ]; then
+  CA_CERT="$BOUGH_CA"
+  log "using bough's Claw Patrol CA -> $CA_CERT"
+elif [ -z "$CA_CERT" ]; then
   CA_CERT="$WF/throwaway-ca.crt"
-  log "generate throwaway CA -> $CA_CERT"
+  log "no bough CA at $BOUGH_CA — generating throwaway -> $CA_CERT"
   openssl req -x509 -newkey rsa:2048 -nodes \
     -keyout "$WF/throwaway-ca.key" -out "$CA_CERT" -days 3650 \
     -subj "/CN=bough-clawpatrol-golden-throwaway-CA" 2>/dev/null
@@ -105,6 +110,14 @@ log "install CA into guest trust store"
 # ---------------------------------------------------------------------------
 log "git config --system safe.directory '*'"
 "$SMOLVM" machine exec --name "$MACHINE" -- git config --system safe.directory '*'
+
+# ---------------------------------------------------------------------------
+# 4b. Pre-create the workspace mount point. A local-dir image's lower layer is
+#     read-only, so smolvm can't create /workspace itself at --volume time
+#     (fails "Read-only file system"); the mount target must exist in the rootfs.
+# ---------------------------------------------------------------------------
+log "pre-create /workspace mount point"
+"$SMOLVM" machine exec --name "$MACHINE" -- mkdir -p /workspace
 
 # ---------------------------------------------------------------------------
 # 5. Flatten + extract the machine's rootfs into OUT_DIR.
