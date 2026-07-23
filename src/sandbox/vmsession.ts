@@ -59,6 +59,25 @@ export interface EnsureOpts {
   golden?: string;
 }
 
+/** Loopback→gate bridge for the AWS creds broker. AWS SDKs reject a non-loopback
+ *  plain-http container-credentials URI, so the guest keeps the loopback URI and a
+ *  socat daemon (baked into the golden) forwards 127.0.0.1:<port> to the broker at
+ *  the gate host — the one address `--allow-cidr` permits. Best-effort: without a
+ *  broker (or socat) sessions just run without AWS creds, as before. */
+async function startBrokerBridge(name: string): Promise<void> {
+  const url = Deno.env.get("BOUGH_AWS_BROKER_URL");
+  if (!url) return;
+  let port: string;
+  try {
+    port = new URL(url).port || "80";
+  } catch {
+    return;
+  }
+  const fwd =
+    `socat TCP-LISTEN:${port},bind=127.0.0.1,fork,reuseaddr TCP:${gateHostIp()}:${port}`;
+  await exec(name, ["sh", "-c", `nohup ${fwd} >/dev/null 2>&1 & sleep 0.2`]).catch(() => {});
+}
+
 /**
  * Ensure the session's VM is running with `opts.workspace` mounted, creating it if
  * absent. Idempotent and concurrency-safe: parallel calls in a turn await one
@@ -83,6 +102,7 @@ export async function ensureVm(sessionId: string, opts: EnsureOpts): Promise<voi
         mounts: [{ host: opts.workspace, guest: GUEST_WORKSPACE }],
         env: opts.env,
       });
+      await startBrokerBridge(name);
       live.set(sessionId, { workspace: opts.workspace });
     })();
     starting.set(sessionId, s.finally(() => starting.delete(sessionId)));

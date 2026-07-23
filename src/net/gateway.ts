@@ -66,21 +66,10 @@ function kubeCacheDir(sessionId: string): string {
 const GUEST_KUBECONFIG = "/etc/bough/kubeconfig";
 const GUEST_KUBECACHE = "/tmp/bough-kube-cache";
 
-/** brokerEnv for the guest: the AWS container-credentials URI is repointed from the
- *  host loopback (unreachable from the guest) to the gate host IP the guest CAN
- *  reach under `--allow-cidr`. The broker itself must bind that address. */
-function guestBrokerEnv(): Record<string, string> {
-  const env = brokerEnv();
-  const uri = env.AWS_CONTAINER_CREDENTIALS_FULL_URI;
-  if (!uri) return env;
-  try {
-    const u = new URL(uri);
-    if (u.hostname === "127.0.0.1" || u.hostname === "localhost") u.hostname = gateHostIp();
-    return { ...env, AWS_CONTAINER_CREDENTIALS_FULL_URI: u.toString() };
-  } catch {
-    return env; // non-URL broker value — leave as configured
-  }
-}
+/** The guest's system CA bundle (baked bough CA included, via build-golden.sh).
+ *  Go/curl/etc. read the system store natively; aws-cli (bundled certifi) needs
+ *  the explicit env to trust the MITM proxy. */
+const GUEST_CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt";
 
 /** Useless placeholder token; the proxy overwrites the header with the real PAT. */
 const GH_SENTINEL = "__bough_github_pat__";
@@ -342,14 +331,16 @@ export class ClawpatrolGateway {
       // is useless (fails closed at github if the MITM is ever bypassed).
       ...githubSentinelEnv(resolveConfig(this.#db, sessionId).config),
       // kubectl/AWS: the durable creds stay host-side. In the VM the CA is baked into
-      // the guest trust store (no caEnv), the rewritten kubeconfig is baked into the
-      // golden at GUEST_KUBECONFIG, and the AWS broker URI is repointed at the gate IP
-      // (the guest reaches only that). On the host (Seatbelt/no-VM) path they use the
-      // real host paths + loopback broker + the CA-trust env.
+      // the guest trust store, the rewritten kubeconfig is baked into the golden at
+      // GUEST_KUBECONFIG, and the AWS broker URI stays on loopback — a socat bridge
+      // in the guest (vmsession.startBrokerBridge) forwards it to the gate host,
+      // because AWS SDKs reject non-loopback plain-http credential URIs. On the host
+      // (no-VM) path they use the real host paths + loopback broker + CA-trust env.
       ...(sandboxVm()
         ? {
           ...(this.#kube ? { KUBECONFIG: GUEST_KUBECONFIG, KUBECACHEDIR: GUEST_KUBECACHE } : {}),
-          ...guestBrokerEnv(),
+          ...brokerEnv(),
+          AWS_CA_BUNDLE: GUEST_CA_BUNDLE,
         }
         : {
           // kubectl reads clusters from KUBECONFIG; point it at the CA-rewritten copy so
