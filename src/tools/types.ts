@@ -140,6 +140,12 @@ export interface ToolRunCtx {
    */
   artifact?: (name: string, content: string) => Promise<Artifact>;
   /**
+   * Publish the turn's marked-up answer: appends a "prose" part (rendered as
+   * styled markdown in the UI) to the pending supervisor message. Wired by the
+   * turn runner for every supervisor turn.
+   */
+  prose?: (text: string) => void;
+  /**
    * Semantic search over ALL past conversations (recall.ts, local embeddings),
    * wired by the turn runner for every supervisor turn. Runs host-side — the
    * sandbox never touches the DB or the embedder. Lazily indexes a batch of new

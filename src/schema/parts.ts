@@ -69,6 +69,13 @@ export const AskPart = z.object({
   answer: z.string().optional(),
 });
 
+// The turn's marked-up answer, published via the prose() host function: markdown
+// the UI renders with full styling, visually set off from tool chatter. Appended
+// mid-program (between a tool_call and its tool_result) like an ask part. Dropped
+// on replay — the text already replays verbatim inside its program's tool_call
+// input, so echoing it would double-bill the answer.
+export const ProsePart = z.object({ type: z.literal("prose"), text: z.string() });
+
 export const Part = z.discriminatedUnion("type", [
   TextPart,
   ReasoningPart,
@@ -76,6 +83,7 @@ export const Part = z.discriminatedUnion("type", [
   ToolResultPart,
   ImagePart,
   AskPart,
+  ProsePart,
 ]);
 export type Part = z.infer<typeof Part>;
 

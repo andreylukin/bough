@@ -14,6 +14,7 @@ export type Segment =
   | { kind: "reasoning"; text: string }
   | { kind: "image"; part: ImagePart }
   | { kind: "ask"; part: AskPart }
+  | { kind: "prose"; text: string }
   | { kind: "tools"; parts: Part[] };
 
 // Group a turn's parts into renderable segments, preserving their order. Consecutive
@@ -26,6 +27,7 @@ export function segmentParts(parts: Part[]): Segment[] {
     else if (p.type === "reasoning") segs.push({ kind: "reasoning", text: p.text });
     else if (p.type === "image") segs.push({ kind: "image", part: p });
     else if (p.type === "ask") segs.push({ kind: "ask", part: p });
+    else if (p.type === "prose") segs.push({ kind: "prose", text: p.text });
     else {
       const last = segs[segs.length - 1];
       if (last?.kind === "tools") last.parts.push(p);

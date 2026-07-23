@@ -377,6 +377,12 @@ export function messageLines(
       const kb = Math.max(1, Math.round(s.part.size / 1024));
       seg.push({ text: dim(`🖼 ${s.part.name} (${kb} KB)`) });
       copy = s.part.path;
+    } else if (s.kind === "prose") {
+      // prose() — the turn's marked-up answer: full markdown treatment behind an
+      // accent gutter, so the final answer stands out from interstitial chatter.
+      const physical = md(s.text, w - 2).split("\n").flatMap((line) => wrap(line, w - 2));
+      for (const l of physical) seg.push({ text: `${green("▎")} ${l}` });
+      copy = s.text;
     } else if (s.kind === "ask") {
       // A settled ask() Q/A — one always-visible line: the question, then how it
       // ended (chosen/typed answer, declined, or interrupted).

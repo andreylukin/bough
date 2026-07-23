@@ -420,6 +420,23 @@ Deno.test("messageLines renders a declined ask part", () => {
   assertStringIncludes(joined, "declined");
 });
 
+Deno.test("messageLines renders a prose part behind the accent gutter", () => {
+  const msg: Message = {
+    id: "m3",
+    sessionId: "s1",
+    role: "supervisor",
+    parts: [{ type: "prose", text: "# Done\n- fixed the bug" }],
+    pending: false,
+    createdAt: 1,
+  };
+  const lines = messageLines(msg, () => false, () => false, 80);
+  const joined = lines.map((l) => l.text).join("\n");
+  assertStringIncludes(joined, "▎"); // every prose line carries the accent gutter
+  assertStringIncludes(joined, "Done");
+  // Right-click copy yields the raw markdown, not the styled render.
+  assertEquals(lines.find((l) => l.copy)?.copy, "# Done\n- fixed the bug");
+});
+
 Deno.test("messageLines shows streamed log lines under a running tool call", () => {
   const msg: Message = {
     id: "m1",

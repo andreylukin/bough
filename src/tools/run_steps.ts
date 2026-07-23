@@ -43,7 +43,9 @@ const schema = z.object({
       "recall(query, k?) → {hits, indexed} (semantic search over past bough conversations), " +
       "ask(question, {options?: string[]}) → string (pause and ask the USER a clarifying " +
       "question; blocks until they answer in the TUI — they pick an option or type freely — " +
-      "and throws a catchable 'user declined' error if dismissed) and any " +
+      "and throws a catchable 'user declined' error if dismissed), " +
+      "prose(markdown) → string (render your marked-up answer in the chat — the LAST " +
+      "host call of your turn's final program) and any " +
       "oracle(question) → string, delegation (agent/spawn/join/adopt), mcp(server, tool, args), and lsp.* symbol " +
       "navigation host functions your system prompt grants. Node globals (process, " +
       "require) do not exist. Use console.log(...) to see " +
@@ -183,6 +185,16 @@ export const runSteps: ToolDef = {
           ? {
             artifact: async (name: string, content: string) =>
               JSON.stringify(await ctx.artifact!(name, content)),
+          }
+          : {}),
+        // Prose (wired for supervisor turns): render the turn's marked-up answer
+        // in the chat as a styled markdown block.
+        ...(ctx.prose
+          ? {
+            prose: (text: string) => {
+              ctx.prose!(text);
+              return Promise.resolve("[prose] rendered to the user");
+            },
           }
           : {}),
         // Ship (wired for root-session repo turns): commit + optional push into the

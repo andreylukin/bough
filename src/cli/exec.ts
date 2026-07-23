@@ -105,6 +105,13 @@ outer: while (Date.now() < deadline) {
     if (dataName === "message.delta" && !args.json) {
       const delta = (data as { delta?: string }).delta;
       if (delta) await Deno.stdout.write(new TextEncoder().encode(delta));
+    } else if (dataName === "message.part" && !args.json) {
+      // A prose() answer block — the marked-up final answer never streams as
+      // deltas, so print it whole (raw markdown; styling is the TUI's job).
+      const part = (data as { part?: { type?: string; text?: string } }).part;
+      if (part?.type === "prose" && part.text) {
+        await Deno.stdout.write(new TextEncoder().encode(part.text + "\n"));
+      }
     } else if (dataName === "turn.finished") {
       status = String((data as { status?: string }).status ?? "done");
       break outer;

@@ -733,6 +733,12 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     toolCtx.artifact = async (name, content) => {
       return await publishArtifact(sessionId, name, content);
     };
+    // prose(): the turn's marked-up answer, appended to THIS message as a "prose"
+    // part the UI renders as a styled markdown block. Guarded like a late ask()
+    // settle — never append into a finished message.
+    toolCtx.prose = (text) => {
+      if (!finalized) append({ type: "prose", text });
+    };
     // ask(): park the program on a question to the human (asks.ts — the net gate's
     // hold-and-ask pattern). The settled Q/A is appended to THIS message as an
     // "ask" part, so the transcript keeps it and replay renders it as plain text
@@ -1506,6 +1512,9 @@ function toLlmMessages(m: Message): LlmMessage[] {
       assistant.push({ type: "text", text: p.text });
     } else if (p.type === "reasoning") {
       // dropped on replay (see module header)
+    } else if (p.type === "prose") {
+      // dropped on replay — the prose text already replays verbatim inside its
+      // program's tool_call input, so echoing it would double-bill the answer
     } else if (p.type === "ask") {
       const outcome = p.status === "answered"
         ? `the user answered: ${p.answer}`
