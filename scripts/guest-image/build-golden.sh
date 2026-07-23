@@ -123,6 +123,18 @@ log "pre-create /workspace mount point"
 "$SMOLVM" machine exec --name "$MACHINE" -- mkdir -p /workspace
 
 # ---------------------------------------------------------------------------
+# 4c. Bake bough's CA-rewritten kubeconfig (if present) at the guest path the
+#     gateway points KUBECONFIG at in VM mode. kubectl's EKS token is stamped by
+#     the host proxy — the guest carries no cluster credential, only this config.
+# ---------------------------------------------------------------------------
+BOUGH_KUBECONFIG="${BOUGH_HOME:-$HOME/.bough}/net/kubeconfig"
+if [ -f "$BOUGH_KUBECONFIG" ]; then
+  log "bake kubeconfig -> /etc/bough/kubeconfig"
+  "$SMOLVM" machine exec --name "$MACHINE" -- mkdir -p /etc/bough
+  "$SMOLVM" machine cp "$BOUGH_KUBECONFIG" "$MACHINE:/etc/bough/kubeconfig"
+fi
+
+# ---------------------------------------------------------------------------
 # 5. Flatten + extract the machine's rootfs into OUT_DIR.
 #    Method: pack the (stopped) VM to a .smolmachine, whose sidecar is a
 #    zstd(tar) holding a single flattened OCI layer `layers/<sha>.tar`

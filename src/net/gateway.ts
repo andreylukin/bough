@@ -61,6 +61,27 @@ function kubeCacheDir(sessionId: string): string {
   return dir;
 }
 
+/** Guest paths for kube in VM mode: the kubeconfig is baked into the golden by
+ *  build-golden.sh; the cache is a guest tmpfs dir. */
+const GUEST_KUBECONFIG = "/etc/bough/kubeconfig";
+const GUEST_KUBECACHE = "/tmp/bough-kube-cache";
+
+/** brokerEnv for the guest: the AWS container-credentials URI is repointed from the
+ *  host loopback (unreachable from the guest) to the gate host IP the guest CAN
+ *  reach under `--allow-cidr`. The broker itself must bind that address. */
+function guestBrokerEnv(): Record<string, string> {
+  const env = brokerEnv();
+  const uri = env.AWS_CONTAINER_CREDENTIALS_FULL_URI;
+  if (!uri) return env;
+  try {
+    const u = new URL(uri);
+    if (u.hostname === "127.0.0.1" || u.hostname === "localhost") u.hostname = gateHostIp();
+    return { ...env, AWS_CONTAINER_CREDENTIALS_FULL_URI: u.toString() };
+  } catch {
+    return env; // non-URL broker value — leave as configured
+  }
+}
+
 /** Useless placeholder token; the proxy overwrites the header with the real PAT. */
 const GH_SENTINEL = "__bough_github_pat__";
 
@@ -320,20 +341,26 @@ export class ClawpatrolGateway {
       // Authorization header with the real PAT for github hosts. The sentinel itself
       // is useless (fails closed at github if the MITM is ever bypassed).
       ...githubSentinelEnv(resolveConfig(this.#db, sessionId).config),
-      // Host-path / loopback env is meaningful only for a host-side (Seatbelt) child.
-      // In the VM guest the CA is baked into the trust store (so no caEnv), and the
-      // kube/broker host paths and loopback aren't reachable — kubectl/AWS get their
-      // own guest-side delivery (kubeconfig/CA into the guest, broker on the gate IP).
-      ...(sandboxVm() ? {} : {
-        // kubectl reads clusters from KUBECONFIG; point it at the CA-rewritten copy so
-        // it trusts the proxy's leaf. Absent when there's no kubeconfig to rewrite.
-        ...(this.#kube
-          ? { KUBECONFIG: this.#kube.configPath, KUBECACHEDIR: kubeCacheDir(sessionId ?? "") }
-          : {}),
-        // AWS read-only creds via the local broker (container-credentials protocol).
-        ...brokerEnv(),
-        ...caEnv(this.#ca.caCertPath),
-      }),
+      // kubectl/AWS: the durable creds stay host-side. In the VM the CA is baked into
+      // the guest trust store (no caEnv), the rewritten kubeconfig is baked into the
+      // golden at GUEST_KUBECONFIG, and the AWS broker URI is repointed at the gate IP
+      // (the guest reaches only that). On the host (Seatbelt/no-VM) path they use the
+      // real host paths + loopback broker + the CA-trust env.
+      ...(sandboxVm()
+        ? {
+          ...(this.#kube ? { KUBECONFIG: GUEST_KUBECONFIG, KUBECACHEDIR: GUEST_KUBECACHE } : {}),
+          ...guestBrokerEnv(),
+        }
+        : {
+          // kubectl reads clusters from KUBECONFIG; point it at the CA-rewritten copy so
+          // it trusts the proxy's leaf. Absent when there's no kubeconfig to rewrite.
+          ...(this.#kube
+            ? { KUBECONFIG: this.#kube.configPath, KUBECACHEDIR: kubeCacheDir(sessionId ?? "") }
+            : {}),
+          // AWS read-only creds via the local broker (container-credentials protocol).
+          ...brokerEnv(),
+          ...caEnv(this.#ca.caCertPath),
+        }),
     };
   }
 }
