@@ -158,8 +158,21 @@ if [ -f "$TOOLS_FILE" ]; then
       bin)
         [ $# -eq 3 ] || { echo "bad bin line in $TOOLS_FILE: $*" >&2; exit 2; }
         echo "fetch $2 <- $3"
-        curl -fsSL -o "$WF/tool-$2" "$3"
-        "$SMOLVM" machine cp "$WF/tool-$2" "$MACHINE:/usr/local/bin/$2"
+        case "$3" in
+          *.tar.gz | *.tgz)
+            # Release tarball: extract the member named after the tool.
+            curl -fsSL -o "$WF/tool-$2.tgz" "$3"
+            mkdir -p "$WF/tool-$2-x"
+            tar -xzf "$WF/tool-$2.tgz" -C "$WF/tool-$2-x"
+            TOOL_BIN="$(find "$WF/tool-$2-x" -type f -name "$2" | head -1)"
+            [ -n "$TOOL_BIN" ] || { echo "no '$2' binary inside $3" >&2; exit 2; }
+            ;;
+          *)
+            curl -fsSL -o "$WF/tool-$2" "$3"
+            TOOL_BIN="$WF/tool-$2"
+            ;;
+        esac
+        "$SMOLVM" machine cp "$TOOL_BIN" "$MACHINE:/usr/local/bin/$2"
         "$SMOLVM" machine exec --name "$MACHINE" -- chmod 755 "/usr/local/bin/$2"
         BIN_NAMES="$BIN_NAMES $2"
         ;;

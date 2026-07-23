@@ -72,6 +72,24 @@ const GUEST_KUBECACHE = "/tmp/bough-kube-cache";
  *  the explicit env to trust the MITM proxy. */
 const GUEST_CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt";
 
+/** The host's default AWS region: $BOUGH_AWS_REGION, else `aws configure get
+ *  region` (resolves env/profile/config the way the CLI itself would). Best
+ *  effort — undefined when aws is absent or unconfigured. */
+async function resolveAwsRegion(): Promise<string | undefined> {
+  const override = Deno.env.get("BOUGH_AWS_REGION");
+  if (override) return override;
+  try {
+    const out = await new Deno.Command("aws", {
+      args: ["configure", "get", "region"],
+      stdout: "piped",
+      stderr: "null",
+    }).output();
+    return new TextDecoder().decode(out.stdout).trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Useless placeholder token; the proxy overwrites the header with the real PAT. */
 const GH_SENTINEL = "__bough_github_pat__";
 
@@ -109,6 +127,9 @@ export class ClawpatrolGateway {
   // kubectl integration: rewritten kubeconfig + per-cluster upstream CA (cloud.ts).
   #kube?: KubeSetup;
   #argocd?: ArgocdSetup;
+  // Host default AWS region, injected into guest env — a VM guest has no ~/.aws
+  // at all, and a regionless CLI makes agents guess (and sweep) regions.
+  #awsRegion?: string;
   // Live listeners keyed by sessionId ("" = a caller with no session, e.g. tests).
   #proxies = new Map<string, ProxyServer>();
   // In-flight starts, so concurrent tool calls in one turn share one listener.
@@ -206,6 +227,7 @@ export class ClawpatrolGateway {
     // argocd server mode: host-held token stamped by the proxy; the sandbox gets
     // ARGOCD_SERVER + a placeholder token (argocd.ts). No CA rewrite needed.
     this.#argocd = setupArgocd();
+    this.#awsRegion = await resolveAwsRegion();
     const argoHosts = this.#argocd?.hosts ?? [];
     if (this.#argocd) {
       console.log(`[clawpatrol] argocd: ${argoHosts.length} server(s) trusted + token-stamped`);
@@ -350,6 +372,9 @@ export class ClawpatrolGateway {
           ...(this.#kube ? { KUBECONFIG: GUEST_KUBECONFIG, KUBECACHEDIR: GUEST_KUBECACHE } : {}),
           ...brokerEnv(),
           AWS_CA_BUNDLE: GUEST_CA_BUNDLE,
+          ...(this.#awsRegion
+            ? { AWS_REGION: this.#awsRegion, AWS_DEFAULT_REGION: this.#awsRegion }
+            : {}),
           // argocd: use --core (kube API + the upgrade passthrough) — the CLI's
           // server mode ignores HTTPS_PROXY and dials the origin directly, which
           // the egress lockdown refuses. The argocd hosts stay trusted + token-

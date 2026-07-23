@@ -233,11 +233,13 @@ seed_guest_tools() {
 # Extra tools baked into bough's sandbox guest image (Alpine linux/arm64).
 # Edit, then `bough update` rebuilds the golden. One entry per line:
 #   pkg <name>        apk package — search https://pkgs.alpinelinux.org
-#   bin <name> <url>  linux/arm64 binary, installed as /usr/local/bin/<name>
+#   bin <name> <url>  linux/arm64 binary (raw or .tar.gz containing <name>),
+#                     installed as /usr/local/bin/<name>
 pkg kubectl
 pkg aws-cli
 pkg github-cli
 bin argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-arm64
+bin gcx https://github.com/grafana/gcx/releases/download/v0.5.0/gcx_0.5.0_linux_arm64.tar.gz
 EOF
 }
 
