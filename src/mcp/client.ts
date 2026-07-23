@@ -1,7 +1,7 @@
 /**
  * Minimal MCP client over the stdio transport: newline-delimited JSON-RPC 2.0 to a
  * child process we spawn ourselves. Hand-rolled (like the proxy and the CA) because
- * owning the spawn is the point — the manager passes seatbelt-wrapped argv and a
+ * owning the spawn is the point — the manager passes the exact argv and a
  * minimal, proxy-routed env, which an SDK's own child_process spawn would bypass.
  *
  * Speaks the v1 slice we use: initialize handshake, tools/list (paginated),
@@ -73,7 +73,7 @@ export class McpStdioClient implements McpConnection {
   }
 
   /**
-   * Spawn `argv` (already seatbelt-wrapped by the caller when sandboxed) and run the
+   * Spawn `argv` (composed by the caller) and run the
    * MCP initialize handshake. `env` is the child's ENTIRE environment (clearEnv) —
    * the caller composes the minimal set: PATH/HOME, the server's declared env, and
    * the Claw Patrol proxy env.

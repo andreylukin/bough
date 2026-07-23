@@ -264,17 +264,54 @@ const SHIP_NOTE_BUILTIN = "\n\n" + [
   "user explicitly asks you to commit/push/ship — never as a routine end-of-task",
   "step — and report the returned commit and branch afterward.",
   "",
+  "The workspace is this session's own git clone, snapshotted automatically every",
+  "round: your edits get committed as `bough: snapshot` and pushed to the session's",
+  "private store, so a clean `git status`/`git diff` does NOT mean your work was",
+  "lost — it lives in the snapshot chain, and ship() reads it from there. See the",
+  "session's cumulative change with `git diff refs/bough/originbase`. Local git",
+  "(branch, stash, reset) works normally here, but the automatic snapshots already",
+  "cover what it would — and only what is on disk at the end of a round gets",
+  "snapshotted, so leave your final state checked out, never parked in a stash or",
+  "an unmerged branch.",
+].join("\n");
+
+export const SHIP_NOTE = promptOverride("ship-note.md", SHIP_NOTE_BUILTIN, "\n\n");
+
+// Host-worktree variant (no-VM fallback, BOUGH_SANDBOX_VM=0 / no golden): the
+// workspace is a shadow worktree, not a guest clone — the cumulative-diff ref is
+// session-qualified there and stash/branch parking is still a foot-gun. Same
+// first paragraph; only the workspace-mechanics paragraph differs.
+const SHIP_NOTE_WORKTREE_BUILTIN = "\n\n" + [
+  "## Shipping to the user's repo",
+  "",
+  "Another granted host function: await ship({message, paths?, push?}) lands this",
+  "session's work in the user's real repository checkout as a git commit. It delivers",
+  "the changed files into the origin's working tree (3-way merged with any edits the",
+  "user made meanwhile; a conflict fails with the file named), commits them on the",
+  "origin's current branch with `message` — the user's own staged changes stay",
+  "staged and untouched — and with push:true also pushes the branch to its remote",
+  "with the user's credentials. `paths` limits the commit to those files; omitted",
+  "means everything this session changed. Returns {commit, branch, paths, pushed,",
+  "note?}. Shipping publishes work outside your workspace: call it ONLY when the",
+  "user explicitly asks you to commit/push/ship — never as a routine end-of-task",
+  "step — and report the returned commit and branch afterward.",
+  "",
   "The workspace itself is a shadow-git worktree that bough snapshots automatically",
   "every round: your edits get committed as `bough: snapshot` and HEAD moves along,",
   "so a clean `git status`/`git diff` does NOT mean your work was lost — it lives in",
   "the snapshot chain, and ship() reads it from there. See the session's cumulative",
-  'change with `git diff "refs/bough/originbase/$(basename "$PWD")"`. Never reach for',
-  "`git stash`, `git branch`, `git worktree add`, or `git reset` here: shared refs",
-  "outside this worktree are write-denied by the sandbox, so those commands fail or",
-  "half-fail, and the automatic snapshots already cover what they would.",
+  'change with `git diff "refs/bough/originbase/$(basename "$PWD")"`. Avoid',
+  "`git stash`, `git branch`, `git worktree add`, and `git reset` here: the",
+  "automatic snapshots already cover what they would, and only what is on disk at",
+  "the end of a round gets snapshotted — leave your final state checked out, never",
+  "parked in a stash or an unmerged branch.",
 ].join("\n");
 
-export const SHIP_NOTE = promptOverride("ship-note.md", SHIP_NOTE_BUILTIN, "\n\n");
+export const SHIP_NOTE_WORKTREE = promptOverride(
+  "ship-note-worktree.md",
+  SHIP_NOTE_WORKTREE_BUILTIN,
+  "\n\n",
+);
 
 // Delegation section, appended only for sessions that may spawn (not subagents).
 const SYSTEM_DELEGATION_BUILTIN = "\n\n" + [
@@ -360,6 +397,7 @@ export function resolveSystemSections(overrideDir?: string) {
     return {
       SYSTEM,
       SHIP_NOTE,
+      SHIP_NOTE_WORKTREE,
       SYSTEM_DELEGATION,
       SYSTEM_DELEGATION_NESTED,
       SYSTEM_SUBAGENT,
@@ -368,7 +406,18 @@ export function resolveSystemSections(overrideDir?: string) {
   return {
     SYSTEM: promptOverride("system.md", SYSTEM_BUILTIN, "", overrideDir),
     SHIP_NOTE: promptOverride("ship-note.md", SHIP_NOTE_BUILTIN, "\n\n", overrideDir),
-    SYSTEM_DELEGATION: promptOverride("delegation.md", SYSTEM_DELEGATION_BUILTIN, "\n\n", overrideDir),
+    SHIP_NOTE_WORKTREE: promptOverride(
+      "ship-note-worktree.md",
+      SHIP_NOTE_WORKTREE_BUILTIN,
+      "\n\n",
+      overrideDir,
+    ),
+    SYSTEM_DELEGATION: promptOverride(
+      "delegation.md",
+      SYSTEM_DELEGATION_BUILTIN,
+      "\n\n",
+      overrideDir,
+    ),
     SYSTEM_DELEGATION_NESTED: promptOverride(
       "delegation-nested.md",
       SYSTEM_DELEGATION_NESTED_BUILTIN,

@@ -2,7 +2,7 @@
  * The Claw Patrol border for MCP: every tool call is gated BEFORE it reaches the
  * server, through the same decide()/hold machinery as HTTP egress (net/gate.ts).
  *
- * Why here and not the proxy: seatbelt + proxy confinement borders the server's own
+ * Why here and not the proxy: sandbox + proxy confinement borders the server's own
  * process, but MCP effects happen elsewhere — a stdio server drives an unsandboxed
  * app over loopback (chrome-devtools → Chrome via CDP), and a remote server acts
  * server-side behind one opaque JSON-RPC POST. The tool call is the only point where

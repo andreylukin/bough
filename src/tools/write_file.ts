@@ -1,7 +1,9 @@
 /** Create or overwrite a file, resolved relative to the session workspace. */
 import { z } from "zod/v4";
-import { dirname } from "node:path";
-import { resolveInWorkspace, type ToolDef, type ToolRunCtx } from "./types.ts";
+import { dirname, posix } from "node:path";
+import { resolveInGuest, resolveInWorkspace, type ToolDef, type ToolRunCtx } from "./types.ts";
+import { writeFile as vmWriteFile } from "../sandbox/vm.ts";
+import { ensureVm, execIn, machineName } from "../sandbox/vmsession.ts";
 
 const schema = z.object({
   path: z.string().describe("File path, absolute or relative to the workspace."),
@@ -14,6 +16,20 @@ export const writeFile: ToolDef = {
   schema,
   async run(input: unknown, ctx: ToolRunCtx): Promise<string> {
     const { path, content } = input as z.infer<typeof schema>;
+    // Guest-owned workspace: the file lands in the session VM, not on the host.
+    if (ctx.guestFs) {
+      const full = resolveInGuest(ctx, path);
+      const sid = ctx.guestFs.sessionId;
+      await ensureVm(sid, { origin: ctx.workspace, gitOrigin: true });
+      try {
+        const dir = posix.dirname(full).replaceAll("'", `'\\''`);
+        await execIn(sid, ["/bin/sh", "-c", `mkdir -p '${dir}'`]);
+        await vmWriteFile(machineName(sid), full, content);
+      } catch (e) {
+        throw new Error(`cannot write ${path}: ${(e as Error).message}`);
+      }
+      return `wrote ${content.length} bytes to ${path}`;
+    }
     const full = resolveInWorkspace(ctx, path);
     try {
       await Deno.mkdir(dirname(full), { recursive: true });

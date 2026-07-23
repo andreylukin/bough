@@ -57,7 +57,12 @@ import { clientFor, type Effort, EFFORTS, type LlmClient } from "../supervisor/l
 import { setWorkerChoice, WORKER_OPTIONS, workerChoice } from "../worker/frontier.ts";
 import { SuggestBody, suggestNextStep } from "../worker/suggest.ts";
 import { sessionMetrics } from "../metrics.ts";
-import { normalizeWorkspace, prepareWorkspace, workspaceProblem } from "../supervisor/workspace.ts";
+import {
+  hostReadRoot,
+  normalizeWorkspace,
+  prepareWorkspace,
+  workspaceProblem,
+} from "../supervisor/workspace.ts";
 import { UNTITLED } from "../supervisor/title.ts";
 import { listSkills } from "../supervisor/skills.ts";
 import { grantedDirs, searchDirectories, searchWorkspaceFiles } from "./files.ts";
@@ -315,7 +320,12 @@ const searchFiles: Handler = async (req, ctx, params) => {
   const workspace = ctx.db.getSessionRuntime(session.id).workspace;
   if (!workspace) return json({ files: [] }); // chat-only session — nothing to reference
   const q = new URL(req.url).searchParams.get("q") ?? "";
-  const files = await searchWorkspaceFiles(normalizeWorkspace(workspace), q);
+  // Read-only walk of the session's host-side view: the mirror checkout in
+  // guest-owned VM mode (fresh as of the last snapshot push), else the workspace.
+  const files = await searchWorkspaceFiles(
+    hostReadRoot(session.id, normalizeWorkspace(workspace)),
+    q,
+  );
   return json({ files });
 };
 
@@ -982,11 +992,11 @@ const connectMcpServer: Handler = async (req, ctx, params) => {
     return error(400, `no registered mcp server named "${params.name}" — register it first`);
   }
   try {
-    // Same spawn context a turn would use (workspace cwd + snapshot dir), so the
-    // probe exercises the REAL seatbelt/proxy confinement, not a lenient variant.
+    // Same spawn context a turn would use (host-side workspace view + snapshot
+    // dir), so the probe exercises the REAL proxy routing, not a lenient variant.
     const prepared = await prepareWorkspace(ctx.db, sessionId);
     const [catalog] = await mcpManager().ensure(sessionId, [params.name], {
-      workspace: prepared.cwd,
+      workspace: prepared.hostView,
       sandbox: prepared.sandboxed ? { sessionDir: prepared.sessionDir } : undefined,
     });
     if (catalog.error) return json({ server: params.name, connected: false, error: catalog.error });

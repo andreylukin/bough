@@ -9,7 +9,7 @@ async function canRun(): Promise<boolean> {
 
 const FIXTURE = new URL("./testdata/echo_server.ts", import.meta.url).pathname;
 
-/** Temp BOUGH_MCP_DIR with the fixture registered as "echo"; no seatbelt (no sandbox). */
+/** Temp BOUGH_MCP_DIR with the fixture registered as "echo"; no sandbox. */
 async function withManager(fn: (m: McpManager, workspace: string) => Promise<void>) {
   const dir = Deno.makeTempDirSync({ prefix: "bough-mcp-" });
   const workspace = Deno.makeTempDirSync({ prefix: "bough-ws-" });

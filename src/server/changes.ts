@@ -23,6 +23,8 @@
 import { HttpError } from "../errors.ts";
 import * as shadow from "../vcs/shadow.ts";
 import * as clonefile from "../vcs/clonefile.ts";
+import { guestRevert, guestTrack } from "../vcs/guestgit.ts";
+import { attachVm, sandboxVm } from "../sandbox/vmsession.ts";
 import type { Db } from "../db/db.ts";
 import type { ChangesApplyBody, Diff } from "../schema/changes.ts";
 
@@ -63,11 +65,47 @@ async function isFile(path: string): Promise<boolean> {
   }
 }
 
-/** The session's shadow worktree, or null (its `.git` file resolves to a bough store). */
-async function hasShadowWorkspace(db: Db, sessionId: string): Promise<string | null> {
+/**
+ * Where a session's shadow snapshots live, or null when it has none. Two shapes:
+ *   - worktree (host-worktree mode): the workspace column is a shadow worktree —
+ *     its `.git` file resolves to a bough store; git ops run in the worktree.
+ *   - store (guest-owned VM mode): the workspace column is the ORIGIN path; git
+ *     ops run against the bare store directly, on the last guest-pushed tip
+ *     (guestTrack a live VM first for freshness).
+ */
+interface ShadowSource {
+  dir: string;
+  store: boolean;
+}
+
+async function shadowSource(db: Db, sessionId: string): Promise<ShadowSource | null> {
   const { workspace } = db.getSessionRuntime(sessionId);
   if (!workspace) return null;
-  return (await shadow.originRepo(workspace)) !== null ? workspace : null;
+  if ((await shadow.originRepo(workspace)) !== null) return { dir: workspace, store: false };
+  if (!sandboxVm()) return null;
+  try {
+    const store = await shadow.storeForSession(sessionId);
+    if (await isFile(`${store}/HEAD`)) return { dir: store, store: true };
+  } catch {
+    // no origin dir recorded / origin gone — no snapshots to read
+  }
+  return null;
+}
+
+/** Flush a session VM's on-disk work to the store before a store-side git op.
+ * attachVm, not hasVm: after a server restart the machine (and its unpushed
+ * edits) persists while nothing is attached — serving the stale last-pushed
+ * tip then would silently hide real work. Best-effort: a machine that's truly
+ * gone leaves the last-pushed tip, the freshest host-visible state. */
+async function flushGuest(db: Db, sessionId: string): Promise<void> {
+  const origin = db.getSession(sessionId)?.originDir;
+  if (!origin) return;
+  try {
+    if (!(await attachVm(sessionId, { origin, gitOrigin: true }))) return;
+    await guestTrack(sessionId);
+  } catch (e) {
+    console.error(`changes: guest flush failed for ${sessionId}: ${(e as Error).message}`);
+  }
 }
 
 /** All review payloads for a session: one per active snapshot source (0..2),
@@ -79,10 +117,11 @@ export async function sessionChanges(
 ): Promise<Diff[]> {
   const diffs: Diff[] = [];
 
-  const sdir = await hasShadowWorkspace(db, sessionId);
-  if (sdir) {
+  const src = await shadowSource(db, sessionId);
+  if (src) {
     try {
-      diffs.push(await shadow.diff(sdir, sessionId));
+      if (src.store) await flushGuest(db, sessionId);
+      diffs.push(await shadow.diff(src.dir, sessionId));
     } catch (e) {
       console.error(`changes: shadow diff failed for ${sessionId}: ${(e as Error).message}`);
     }
@@ -105,10 +144,13 @@ export async function sessionChanges(
   const spawnerDir = db.getSessionRuntime(sessionId).workspace;
   for (const sub of db.listSessions()) {
     if (sub.kind !== "subagent" || sub.originId !== sessionId) continue;
-    const subDir = await hasShadowWorkspace(db, sub.id);
-    if (!subDir || subDir === spawnerDir) continue;
+    const subSrc = await shadowSource(db, sub.id);
+    // Worktree mode: a sub sharing the spawner's dir has no branch of its own.
+    // Store mode: every sub has its own refs in the shared store — never skip.
+    if (!subSrc || (!subSrc.store && subSrc.dir === spawnerDir)) continue;
     try {
-      const d = await shadow.diff(subDir, sub.id);
+      if (subSrc.store) await flushGuest(db, sub.id);
+      const d = await shadow.diff(subSrc.dir, sub.id);
       if (d.files.length === 0) continue;
       diffs.push({
         ...d,
@@ -160,10 +202,14 @@ export async function applyChanges(
   if (body.source === "shadow") {
     // Shadow sessions are always external-style: materialize into the origin,
     // seal when every changed path was covered.
-    const dir = await hasShadowWorkspace(db, sessionId);
-    if (!dir) throw new ChangesError(400, "no shadow workspace to apply");
+    const src = await shadowSource(db, sessionId);
+    if (!src) throw new ChangesError(400, "no shadow workspace to apply");
+    const dir = src.dir;
+    // Works for both shapes: a worktree resolves through its common dir, a bare
+    // store reads its own bough-origin pointer.
     const origin = await shadow.originRepo(dir);
     if (!origin) throw new ChangesError(400, "shadow workspace has no origin");
+    if (src.store) await flushGuest(db, sessionId);
     // Match the display filter: noise files are never shown/selected, so they
     // must not count toward "covers everything" (else the seal never fires).
     const changed = (await shadow.diff(dir, sessionId)).files
@@ -199,13 +245,38 @@ export async function revertChanges(
   sessionId: string,
   paths?: string[],
 ): Promise<string[]> {
-  const sdir = await hasShadowWorkspace(db, sessionId);
-  if (sdir) {
-    if (paths && paths.length > 0) {
-      await shadow.revertPaths(sdir, sessionId, paths);
-      return paths;
+  const src = await shadowSource(db, sessionId);
+  if (!src) throw new ChangesError(400, "no workspace to revert");
+  if (src.store) {
+    // Guest-owned: the working copy lives in the VM, so revert executes there
+    // (in-guest checkout back to the base, then snapshot+push). attachVm — a
+    // machine surviving a server restart counts as running; only a machine
+    // that's genuinely gone (archived) can't revert.
+    const origin = db.getSession(sessionId)?.originDir;
+    const attached = origin
+      ? await attachVm(sessionId, { origin, gitOrigin: true }).catch(() => false)
+      : false;
+    if (!attached) {
+      throw new ChangesError(
+        400,
+        "revert needs the session's VM — it isn't running (archived sessions can't revert)",
+      );
     }
-    return await shadow.undoAll(sdir, sessionId);
+    // Flush first so a whole-change revert's target list covers edits made
+    // since the last push, not just the pushed tip.
+    await flushGuest(db, sessionId);
+    const base = await shadow.baseSha(src.dir, sessionId);
+    if (!base) throw new ChangesError(400, `no base ref for session ${sessionId}`);
+    const targets = paths && paths.length > 0
+      ? paths
+      : (await shadow.diff(src.dir, sessionId)).files.map((f) => f.path);
+    if (targets.length === 0) return [];
+    await guestRevert(sessionId, base, targets);
+    return targets;
   }
-  throw new ChangesError(400, "no workspace to revert");
+  if (paths && paths.length > 0) {
+    await shadow.revertPaths(src.dir, sessionId, paths);
+    return paths;
+  }
+  return await shadow.undoAll(src.dir, sessionId);
 }

@@ -2,7 +2,7 @@
  * Non-git config snapshots via APFS `clonefile` (`cp -c`). For files outside a
  * repo — `~/.zshrc`, `~/.config`, etc. — there's no git history, so we snapshot by
  * cloning the originals into a per-session dir. The agent edits the *clones* (the
- * seatbelt sandbox denies writes to the real config paths but allows the snapshot
+ * sandbox keeps the real config paths out of reach but exposes the snapshot
  * dir), the reviewer sees a `git diff --no-index` of pristine-original vs. edited
  * clone, and approved files are copied back over the originals.
  *

@@ -1,6 +1,7 @@
 /** Run a shell command in the session workspace, capturing combined output. */
 import { z } from "zod/v4";
 import { ensureVm, execCommand, GUEST_WORKSPACE, sandboxVm } from "../sandbox/vmsession.ts";
+import { GUEST_REPO } from "../vcs/guestgit.ts";
 import { clawpatrolEnv } from "../net/gateway.ts";
 import type { ToolDef, ToolRunCtx } from "./types.ts";
 import { backgroundNote, formatFinal, newShell, promote } from "./bash_bg.ts";
@@ -28,50 +29,52 @@ function bgAfterMs(): number {
 }
 
 /**
- * Argv + env for running `command` under this ctx's confinement — shared by the
- * blocking bash tool and the background shells (bash_bg.ts).
+ * Argv + env + cwd for running `command` under this ctx's confinement — shared by
+ * the blocking bash tool and the background shells (bash_bg.ts).
  *
  * Egress routes through Claw Patrol when the proxy is running (opt-in): the proxy
  * env points the command's HTTP(S) client at THIS SESSION's intercepting proxy
  * (per-branch policy + attribution) and trusts its MITM CA. Empty when off.
  *
- * The shell is wrapped in the Seatbelt profile when sandboxed (darwin only). The
- * profile confines writes to the workspace + the session snapshot dir. When the
- * proxy is running we ALSO confine network to loopback, so the proxy is the only
- * egress route — a subprocess can't `--noproxy`/`env -u http_proxy` its way to the
- * open internet. On other platforms we run unwrapped (the sandbox is macOS-only).
+ * VM mode: the shell runs INSIDE the session's guest, which is the whole
+ * confinement story — writes land on the guest's own disk and network is locked to
+ * the gate host, so the proxy is the only egress route.
  *
- * `readOnly` (the oracle's shell): the Seatbelt write-allow shrinks to the scratch
- * dir alone — the profile's "workspace" (its write root) is pointed AT the scratch
- * dir, so the real workspace is readable but not writable. Reads stay allow-default
- * either way.
+ * `readOnly` (the oracle's shell) shares the session VM; read-only is not enforced
+ * in-guest yet (TODO: a ro clone in the session VM — cheap now that the workspace
+ * is a git clone).
  */
 export async function shellInvocation(
   command: string,
   ctx: ToolRunCtx,
-  opts?: { readOnly?: boolean },
-): Promise<{ argv: string[]; env?: Record<string, string> }> {
+  _opts?: { readOnly?: boolean },
+): Promise<{ argv: string[]; env?: Record<string, string>; cwd?: string }> {
   const netEnv = await clawpatrolEnv(ctx.sessionId);
   const env: Record<string, string> = { ...netEnv };
   const argv = ["/bin/sh", "-c", command];
 
-  // VM backend: run the shell INSIDE the session's guest. The workspace is virtiofs-
-  // mounted at GUEST_WORKSPACE (bash's cwd); netEnv (proxy/CA) is injected into the
-  // guest via `-e`, so the host `machine exec` child carries no secrets. bash.run
-  // spawns the returned argv with its own streaming/background/kill machinery — a
-  // `machine exec` is just a host subprocess, so that all works unchanged.
-  // `opts.readOnly` (the oracle's shell) shares the session VM; the workspace mount
-  // is rw, so read-only isn't enforced there yet (TODO: a ro fork or bind).
+  // VM backend: run the shell INSIDE the session's guest. Guest cwd is the
+  // guest-owned clone (GUEST_REPO) for git origins, the virtiofs mount
+  // (GUEST_WORKSPACE) for non-git origin dirs; netEnv (proxy/CA) is injected into
+  // the guest via `-e`, so the host `machine exec` child carries no secrets.
+  // bash.run spawns the returned argv with its own streaming/background/kill
+  // machinery — a `machine exec` is just a host subprocess, so that all works
+  // unchanged. No host cwd: the child is a smolvm client, and pinning it to a host
+  // path throws NotFound once no host worktree exists.
   if (ctx.sandbox && ctx.sessionId && sandboxVm()) {
-    await ensureVm(ctx.sessionId, { workspace: ctx.workspace });
+    await ensureVm(ctx.sessionId, { origin: ctx.workspace, gitOrigin: !!ctx.guestFs });
     return {
-      argv: execCommand(ctx.sessionId, argv, { cwd: GUEST_WORKSPACE, env: netEnv }),
+      argv: execCommand(ctx.sessionId, argv, {
+        cwd: ctx.guestFs ? GUEST_REPO : GUEST_WORKSPACE,
+        env: netEnv,
+      }),
     };
   }
 
-  // No VM (tests / CI / BOUGH_SANDBOX_VM=0): run unwrapped on the host with the proxy
-  // env. Subprocess confinement is the VM's job — there is no Seatbelt fallback.
-  return { argv, env: Object.keys(env).length ? env : undefined };
+  // No VM (tests / CI / BOUGH_SANDBOX_VM=0): run unwrapped on the host, in the
+  // workspace, with the proxy env. Subprocess confinement is the VM's job — there
+  // is no host-side sandbox fallback.
+  return { argv, env: Object.keys(env).length ? env : undefined, cwd: ctx.workspace };
 }
 
 /**
@@ -104,13 +107,13 @@ export const bash: ToolDef = {
   schema,
   async run(input: unknown, ctx: ToolRunCtx): Promise<string> {
     const { command, timeout_ms } = input as z.infer<typeof schema>;
-    const { argv, env } = await shellInvocation(command, ctx);
+    const { argv, env, cwd } = await shellInvocation(command, ctx);
     // Spawn bound to the turn's interrupt only (the user's stop button must kill the
     // actual process). We stream the output so a long command can be handed to the
     // background registry mid-run rather than blocked-then-killed.
     const child = new Deno.Command(argv[0], {
       args: argv.slice(1),
-      cwd: ctx.workspace,
+      cwd,
       env,
       stdin: "null",
       stdout: "piped",

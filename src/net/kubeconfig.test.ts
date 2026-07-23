@@ -46,7 +46,7 @@ Deno.test("rewrite: exec auth is lifted out — stripped from the sandbox copy, 
   const { rewritten, execCreds } = rewriteKubeconfig(eksConfig(), BOUGH_CA);
 
   // the sandbox copy carries no exec block (the plugin couldn't run in-sandbox anyway:
-  // it reads ~/.aws, which the seatbelt denies) — the host mints, the proxy stamps
+  // it reads ~/.aws, which stays host-side) — the host mints, the proxy stamps
   assertEquals(rewritten.includes("exec:"), false);
   assertEquals(rewritten.includes("get-token"), false);
   // the host learns what to run, keyed by cluster host via the context pairing

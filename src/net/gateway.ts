@@ -43,11 +43,10 @@ function clawpatrolEnabled(): boolean {
 }
 
 /**
- * Per-session kubectl cache dir (KUBECACHEDIR). kubectl's discovery/HTTP cache
- * defaults to ~/.kube/cache, which the Seatbelt read-denylist covers wholesale —
- * without this, every kubectl run stalls on cache read/write denials. Temp paths
- * are already in the profile's write-allow. Created eagerly: kubectl won't mkdir -p
- * a missing parent chain itself.
+ * Per-session kubectl cache dir (KUBECACHEDIR) for the host (no-VM) path.
+ * kubectl's discovery/HTTP cache defaults to ~/.kube/cache; a per-session temp
+ * dir keeps sessions from sharing (and fighting over) the operator's cache.
+ * Created eagerly: kubectl won't mkdir -p a missing parent chain itself.
  */
 function kubeCacheDir(sessionId: string): string {
   const dir = join(
@@ -356,13 +355,18 @@ export class ClawpatrolGateway {
     if (!this.#running || !this.#ca || !this.#gate) return {};
     const proxy = await this.#acquire(sessionId ?? "");
     const url = proxy.url;
+    // VM mode: the gate host IP goes direct — the guest's git store gateway
+    // (vcs/gitgateway.ts) listens there, and snapshot pushes to bough's own
+    // store are the snapshot mechanism, not egress. Routing them through the
+    // proxy would classify UNKNOWN and hold every push in review mode.
+    const noProxy = sandboxVm() ? `localhost,127.0.0.1,${gateHostIp()}` : "localhost,127.0.0.1";
     return {
       HTTP_PROXY: url,
       HTTPS_PROXY: url,
       http_proxy: url,
       https_proxy: url,
-      NO_PROXY: "localhost,127.0.0.1",
-      no_proxy: "localhost,127.0.0.1",
+      NO_PROXY: noProxy,
+      no_proxy: noProxy,
       // The owning branch, so in-session tooling (e.g. the /net-plugin skill) can
       // scope its API calls (?session=$BOUGH_SESSION) without guessing.
       ...(sessionId ? { BOUGH_SESSION: sessionId } : {}),
@@ -384,6 +388,10 @@ export class ClawpatrolGateway {
       ...(sandboxVm()
         ? {
           ...(this.#kube ? { KUBECONFIG: GUEST_KUBECONFIG, KUBECACHEDIR: GUEST_KUBECACHE } : {}),
+          // In-guest git must fail fast on a 401 (github push without a credential
+          // binding, or a stale store-gateway token) instead of hanging on an
+          // interactive credential prompt no one will answer.
+          GIT_TERMINAL_PROMPT: "0",
           ...brokerEnv(),
           AWS_CA_BUNDLE: GUEST_CA_BUNDLE,
           ...(this.#awsRegion
@@ -418,7 +426,7 @@ export function activeGateway(): ClawpatrolGateway | undefined {
   return active;
 }
 
-/** The sandbox-exec env from the active gateway; empty when the proxy isn't running. */
+/** The sandboxed-command env from the active gateway; empty when the proxy isn't running. */
 export function clawpatrolEnv(sessionId?: string): Promise<Record<string, string>> {
   return active?.envFor(sessionId) ?? Promise.resolve({});
 }

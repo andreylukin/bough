@@ -2,10 +2,11 @@
  * The oracle — a read-only consult of a stronger reasoning model (Amp's `oracle`
  * pattern). The supervisor's program calls `await oracle(question)` when it hits
  * something genuinely hard: the oracle runs its own bounded agentic loop on the
- * oracle model with exactly two tools — a READ-ONLY shell (Seatbelt write-allow
- * shrunk to the scratch dir; see shellInvocation readOnly) and file read — gathers
- * its own context from the workspace, and returns prose advice. It never writes,
- * edits, or delegates, so it cannot conflict with the calling turn's work.
+ * oracle model with exactly two tools — a shell held to a read-only CONTRACT (see
+ * shellInvocation readOnly; in VM mode it shares the session guest, where
+ * read-only is not yet enforced) and file read — gathers its own context from the
+ * workspace, and returns prose advice. It never writes, edits, or delegates, so it
+ * cannot conflict with the calling turn's work.
  *
  * The loop is deliberately small: direct tool calls (not code-mode — two tools
  * don't need a program), a hard round cap, and the turn's interrupt signal
@@ -64,11 +65,11 @@ const TOOLS: LlmToolDef[] = [
 
 /** The oracle's shell: same confinement pipeline as bash, minus write access. */
 async function readOnlyBash(command: string, ctx: ToolRunCtx): Promise<string> {
-  const { argv, env } = await shellInvocation(command, ctx, { readOnly: true });
+  const { argv, env, cwd } = await shellInvocation(command, ctx, { readOnly: true });
   const timeout = AbortSignal.timeout(BASH_TIMEOUT_MS);
   const out = await new Deno.Command(argv[0], {
     args: argv.slice(1),
-    cwd: ctx.workspace,
+    cwd,
     env,
     stdout: "piped",
     stderr: "piped",
@@ -104,7 +105,9 @@ export async function runOracle(
   const messages: { role: "user" | "assistant"; content: LlmContentBlock[] }[] = [
     { role: "user", content: [{ type: "text", text: question }] },
   ];
-  const system = `${SYSTEM} The workspace root is ${ctx.workspace}.`;
+  // Guest-owned sessions: the shell and file reads see the GUEST clone, so the
+  // advertised root must be the guest path, not the host origin.
+  const system = `${SYSTEM} The workspace root is ${ctx.guestFs?.root ?? ctx.workspace}.`;
 
   const answer: string[] = [];
   for (let round = 0; round < MAX_ROUNDS; round++) {

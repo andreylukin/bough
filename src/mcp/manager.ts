@@ -1,10 +1,11 @@
 /**
- * The MCP connection manager: one stdio client per (session, server), spawned under
- * the SAME confinement as a bash child — seatbelt-wrapped (writes → workspace +
- * session snapshot dir, loopback-only network when the proxy runs) with the
- * session's Claw Patrol env, so the server's own egress is proxied and attributed.
- * The child's environment is minimal and explicit: PATH/HOME, the registry entry's
- * declared env (${VAR}-expanded — secrets reach the child only), and the proxy env.
+ * The MCP connection manager: one stdio client per (session, server). Children run
+ * host-side with the session's Claw Patrol env, so the server's own egress is
+ * proxied and attributed; their cwd is the session's host-side workspace view —
+ * in guest-owned VM mode that is the read-only mirror checkout, fresh as of the
+ * session's last snapshot push. The child's environment is minimal and explicit:
+ * PATH/HOME, the registry entry's declared env (${VAR}-expanded — secrets reach
+ * the child only), and the proxy env.
  *
  * Connections are cached across turns and reaped when idle (opportunistic sweep on
  * use — no background timer), on restart/disable, or on a registry change. Every
@@ -28,7 +29,8 @@ import { gateMcpCall } from "./gate.ts";
 const IDLE_MS = 30 * 60_000;
 
 export interface SpawnCtx {
-  /** Session workspace — the child's cwd and the seatbelt rw root. */
+  /** The child's cwd: the session's host-side workspace view (the mirror
+   * checkout in guest-owned VM mode). */
   workspace: string;
   /** Present when the turn is sandboxed (see ToolRunCtx.sandbox). */
   sandbox?: { sessionDir: string };
@@ -176,8 +178,8 @@ export class McpManager {
     cfg: ServerConfig,
     spawn: SpawnCtx,
   ): Promise<Conn> {
-    // Remote server: the SDK transport + OAuth provider (remote.ts). No spawn, no
-    // seatbelt — the call-layer gate is the border; 401 surfaces as "not authorized".
+    // Remote server: the SDK transport + OAuth provider (remote.ts). No spawn —
+    // the call-layer gate is the border; 401 surfaces as "not authorized".
     if (cfg.url) {
       const client = await McpRemoteClient.connect({ server, url: cfg.url });
       try {

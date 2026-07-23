@@ -1,7 +1,7 @@
 /**
  * Claw Patrol's native egress proxy — the on-the-wire enforcement bough runs in
  * place of the retired Go `clawpatrol gateway`. Sandboxed shell commands are pointed
- * at it via HTTPS_PROXY + the CA-trust env (see ca.ts `caEnv`); Seatbelt still
+ * at it via HTTPS_PROXY + the CA-trust env (see ca.ts `caEnv`); the VM sandbox
  * confines the filesystem.
  *
  * Shape (proven in the Phase-0 spike, relies on Deno 2.9 node:tls):

@@ -22,13 +22,14 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { boughPath } from "../paths.ts";
 
 export const ServerConfig = z.object({
-  /** stdio transport: the executable + args to spawn (seatbelt-wrapped when sandboxed). */
+  /** stdio transport: the executable + args to spawn (host-side, minimal env). */
   command: z.string().min(1).optional(),
   args: z.array(z.string()).default([]),
   /** Extra child env; values may reference ${VAR} from bough's environment. */
   env: z.record(z.string(), z.string()).default({}),
-  /** Extra seatbelt write roots for the server child (a leading ~ expands to the
-   * user's home) — for servers that keep state outside the workspace. */
+  /** Extra write roots for the server child (a leading ~ expands to the user's
+   * home) — for servers that keep state outside the workspace. Seatbelt-era
+   * enforcement is gone; kept for config compatibility. */
   allowWrite: z.array(z.string()).default([]),
   /** Remote transport — the manager connects these over McpRemoteClient. */
   url: z.string().optional(),

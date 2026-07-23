@@ -30,7 +30,7 @@ export interface ClusterCa {
 /**
  * An exec credential plugin lifted out of a kubeconfig user (aws eks get-token,
  * gke-gcloud-auth-plugin, ...). The HOST runs it — the sandbox can't (the plugin
- * reads ~/.aws etc., which the seatbelt denies) — and the proxy stamps the minted
+ * reads ~/.aws etc., which never enter the sandbox) — and the proxy stamps the minted
  * bearer token onto requests to `host` (see cloud.ts / proxy.ts CredentialRule).
  */
 export interface ExecCredSpec {
@@ -142,8 +142,8 @@ export function rewriteKubeconfig(text: string, boughCaPem: string, baseDir = ""
   }
 
   // Lift every credential out of users so the sandbox copy carries NONE:
-  //  - exec plugins: the sandbox can't run them (they read ~/.aws etc., seatbelt-
-  //    denied) — the HOST mints, the proxy stamps (cloud.ts / execcred.ts).
+  //  - exec plugins: the sandbox can't run them (they read ~/.aws etc., which
+  //    stay host-side) — the HOST mints, the proxy stamps (cloud.ts / execcred.ts).
   //  - static bearer tokens (token / tokenFile): stripped and injected host-side by
   //    the proxy, so a compromised sandbox can't read or exfiltrate them.
   //  - client-certificate(-data)/client-key(-data): can't survive MITM anyway;

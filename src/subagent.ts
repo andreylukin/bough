@@ -38,6 +38,8 @@ import { DONE_ACCEPTED } from "./tools/mod.ts";
 import { maybeAutoTitle, UNTITLED } from "./supervisor/title.ts";
 import { normalizeWorkspace } from "./supervisor/workspace.ts";
 import * as shadow from "./vcs/shadow.ts";
+import { guestAdopt, guestTrack } from "./vcs/guestgit.ts";
+import { attachVm, ensureVm, sandboxVm } from "./sandbox/vmsession.ts";
 import { pathExists } from "./fsutil.ts";
 
 export interface SpawnCtx {
@@ -241,10 +243,9 @@ async function launch(
   // Width caps: bound concurrency across the tree and total spawns per turn.
   // Workflow runs are exempt — the engine's own semaphore bounds their fan-out.
   if (!spawn.capsExempt) {
-    const spawnedThisTurn =
-      db.listSessions().filter((s) =>
-        s.kind === "subagent" && s.originMessageId === spawn.spawnerMessageId
-      ).length;
+    const spawnedThisTurn = db.listSessions().filter((s) =>
+      s.kind === "subagent" && s.originMessageId === spawn.spawnerMessageId
+    ).length;
     if (spawnedThisTurn >= MAX_SPAWNS_PER_TURN) {
       throw new Error(
         `spawn cap reached: this turn already spawned ${MAX_SPAWNS_PER_TURN} subagents — ` +
@@ -289,7 +290,39 @@ async function launch(
 
   // A repo workspace gets its own working copy, branched off the spawner's tip.
   let subDir: string | undefined;
-  if (isRepo) {
+  if (isRepo && sandboxVm()) {
+    // Guest-owned mode: refs only, off the spawner's pushed tip — the child VM
+    // bootstraps its own clone from the store gateway, and the workspace column
+    // keeps the ORIGIN path (already seeded above). `subDir` is the STORE:
+    // changedFiles diffs run store-side against the pushed refs.
+    try {
+      const originDir = db.getSession(spawn.spawnerId)?.originDir ?? explicit!;
+      // attachVm, not hasVm: a spawner machine surviving a server restart still
+      // holds unpushed edits the child must branch from.
+      if (await attachVm(spawn.spawnerId, { origin: originDir, gitOrigin: true })) {
+        await guestTrack(spawn.spawnerId);
+      }
+      const store = await shadow.storeDirFor(originDir);
+      await shadow.addWorkspace(
+        store,
+        session.id,
+        shadow.workspaceDirFor(session.id),
+        spawn.spawnerId,
+        { worktree: false },
+      );
+      subDir = store;
+    } catch (e) {
+      // Without its own branch the subagent's work would be untracked and
+      // unadoptable — fail the spawn, same policy as the worktree path below.
+      db.archiveSession(session.id);
+      bus.publish({
+        type: "session.archived",
+        sessionId: session.id,
+        data: { sessionId: session.id },
+      });
+      throw new Error(`could not branch a workspace for the subagent: ${(e as Error).message}`);
+    }
+  } else if (isRepo) {
     try {
       const dir = shadow.workspaceDirFor(session.id);
       await Deno.mkdir(shadow.workspacesRoot(), { recursive: true });
@@ -468,10 +501,35 @@ export async function adoptSubagent(
   }
   const subDir = db.getSessionRuntime(subagentId).workspace;
   const repo = explicitWorkspace(ctx, spawnerId);
-  if (!subDir || !repo || subDir === repo) {
-    throw new Error("this subagent has no branched workspace to adopt");
+  if (sandboxVm() && sub.originDir && repo && (await shadow.originRepo(repo)) === null) {
+    // Guest-owned mode (the workspace column is the origin, not a worktree):
+    // flush the sub's clone if its VM still runs (else its last push stands),
+    // 3-way the sub's base..tip into the PARENT's guest clone, then advance the
+    // sub's base ref store-side so its own rail clears (branch continuable) —
+    // same split as host adoptChanges.
+    const store = await shadow.storeDirFor(sub.originDir);
+    const subBase = await shadow.baseSha(store, subagentId);
+    if (!subBase) throw new Error("this subagent has no branched workspace to adopt");
+    // attachVm, not hasVm: a sub machine surviving a server restart still holds
+    // work its last push missed — skipping the flush would adopt a stale tip.
+    if (await attachVm(subagentId, { origin: sub.originDir, gitOrigin: true })) {
+      await guestTrack(subagentId);
+    }
+    // The PARENT's clone receives the 3-way, so its VM must be live too —
+    // ensureVm reattaches a surviving machine (re-stamping the gateway remote,
+    // which a restart invalidated) or bootstraps a fresh clone off the store.
+    await ensureVm(spawnerId, {
+      origin: db.getSession(spawnerId)?.originDir ?? sub.originDir,
+      gitOrigin: true,
+    });
+    await guestAdopt(spawnerId, subagentId, subBase);
+    await shadow.accept(store, subagentId);
+  } else {
+    if (!subDir || !repo || subDir === repo) {
+      throw new Error("this subagent has no branched workspace to adopt");
+    }
+    await shadow.adoptChanges(repo, subDir, subagentId, spawnerId);
   }
-  await shadow.adoptChanges(repo, subDir, subagentId, spawnerId);
   // Both Changes rails move: the spawner gains the diff, the subagent's empties.
   bus.publish({ type: "changes.updated", sessionId: spawnerId, data: { sessionId: spawnerId } });
   bus.publish({ type: "changes.updated", sessionId: subagentId, data: { sessionId: subagentId } });

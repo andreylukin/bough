@@ -3,7 +3,9 @@
 #
 # Output: an unpacked Alpine rootfs dir carrying the full agent toolchain
 # (git, deno, nodejs/npm, python3, build-base/gcc, socat, openssl, coreutils),
-# a CA baked into the system trust store, and `git safe.directory = *`.
+# a CA baked into the system trust store, a system-wide git identity
+# (bough <bough@localhost>, matching the shadow store's snapshot identity),
+# and `git safe.directory = *`.
 # The dir is consumed later as `smolvm machine create --image <dir>/ ...`.
 #
 # Design constraints honoured:
@@ -113,16 +115,33 @@ log "install CA into guest trust store"
 "$SMOLVM" machine exec --name "$MACHINE" -- update-ca-certificates
 
 # ---------------------------------------------------------------------------
-# 4. git safe.directory '*' — worktrees will be host-user-owned inside the VM,
-#    so git must not refuse to operate on them.
+# 4. git safe.directory '*' — non-git origin dirs are still virtiofs-mounted
+#    host-owned paths, so git must not refuse to operate on them. (Guest-owned
+#    git clones don't need this: the guest owns /workspace/repo outright.)
 # ---------------------------------------------------------------------------
 log "git config --system safe.directory '*'"
 "$SMOLVM" machine exec --name "$MACHINE" -- git config --system safe.directory '*'
 
 # ---------------------------------------------------------------------------
-# 4b. Pre-create the workspace mount point. A local-dir image's lower layer is
-#     read-only, so smolvm can't create /workspace itself at --volume time
-#     (fails "Read-only file system"); the mount target must exist in the rootfs.
+# 4a. Baked git identity + /etc/hosts self-entry. Without an identity, every
+#     ref/reflog-writing git op in-guest stalls 5s on ident auto-detection
+#     (hostname "container" resolves against unreachable DNS under egress
+#     lockdown) and `git commit` fails outright. The identity matches the
+#     shadow store's pinned snapshot identity (vcs/shadow.ts), so guest
+#     commits are byte-compatible with host track() commits. The hosts entry
+#     is belt-and-suspenders for any other hostname-resolving tool.
+# ---------------------------------------------------------------------------
+log "git identity (bough <bough@localhost>) + /etc/hosts container entry"
+"$SMOLVM" machine exec --name "$MACHINE" -- git config --system user.name bough
+"$SMOLVM" machine exec --name "$MACHINE" -- git config --system user.email bough@localhost
+"$SMOLVM" machine exec --name "$MACHINE" -- sh -c 'echo "127.0.0.1 container" >> /etc/hosts'
+
+# ---------------------------------------------------------------------------
+# 4b. Pre-create /workspace. Non-git origin dirs still virtiofs-mount there,
+#     and a local-dir image's lower layer is read-only, so smolvm can't create
+#     the mount target itself at --volume time (fails "Read-only file system").
+#     For git origins it's the persistent /dev/vda mount point where the
+#     guest-owned clone lives (/workspace/repo).
 # ---------------------------------------------------------------------------
 log "pre-create /workspace mount point"
 "$SMOLVM" machine exec --name "$MACHINE" -- mkdir -p /workspace
@@ -255,6 +274,12 @@ done
   && echo "OK   CA baked" || { echo "MISS CA"; MISSING="$MISSING ca"; }
 grep -q 'directory = \*' "$OUT_DIR/etc/gitconfig" 2>/dev/null \
   && echo "OK   git safe.directory" || { echo "MISS git safe.directory"; MISSING="$MISSING gitconfig"; }
+grep -q 'name = bough' "$OUT_DIR/etc/gitconfig" 2>/dev/null \
+  && echo "OK   git user.name" || { echo "MISS git user.name"; MISSING="$MISSING git-user-name"; }
+grep -q 'email = bough@localhost' "$OUT_DIR/etc/gitconfig" 2>/dev/null \
+  && echo "OK   git user.email" || { echo "MISS git user.email"; MISSING="$MISSING git-user-email"; }
+grep -q '127.0.0.1 container' "$OUT_DIR/etc/hosts" 2>/dev/null \
+  && echo "OK   /etc/hosts container" || { echo "MISS /etc/hosts container"; MISSING="$MISSING etc-hosts"; }
 [ -z "$MISSING" ] || { echo "FATAL: missing:$MISSING" >&2; exit 1; }
 
 echo "golden rootfs size: $(du -sh "$OUT_DIR" | cut -f1)"

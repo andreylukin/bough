@@ -44,6 +44,9 @@ export interface CreateOpts {
   /** Baked-in env for the persistent workload (`-e KEY=VALUE`). Per-turn proxy/CA
    *  vars go on `exec` instead — they change every turn. */
   env?: Record<string, string>;
+  /** Storage disk size in GiB (`--storage`) — the guest's persistent /dev/vda,
+   *  where guest-owned clones live. smolvm's default (20G) when unset. */
+  storageGiB?: number;
 }
 
 export interface ExecResult {
@@ -125,6 +128,7 @@ export async function createSession(opts: CreateOpts): Promise<void> {
   }
   if (opts.cpus !== undefined) args.push("--cpus", String(opts.cpus));
   if (opts.mem !== undefined) args.push("--mem", String(opts.mem));
+  if (opts.storageGiB !== undefined) args.push("--storage", String(opts.storageGiB));
   args.push(...envFlags(opts.env));
   args.push("--", "/bin/sh", "-c", "sleep infinity");
   await cliOk(args);
@@ -207,7 +211,7 @@ async function execStreaming(
 /**
  * Read a guest file into bytes, via a base64 round-trip over `exec` (busybox
  * `base64` encodes by default). This is the seam the in-process file tools route
- * through — Seatbelt-style path confinement stays the caller's job.
+ * through — guest-path confinement stays the caller's job.
  */
 export async function readFile(sid: string, path: string): Promise<Uint8Array> {
   const r = await exec(sid, ["/bin/sh", "-c", `base64 ${shq(path)}`]);

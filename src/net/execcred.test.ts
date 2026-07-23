@@ -3,7 +3,7 @@ import { execBearerProvider } from "./execcred.ts";
 import type { ExecCredSpec } from "./kubeconfig.ts";
 
 // These shell out (the provider runs the exec plugin), so they self-skip without
-// --allow-run — same posture as the seatbelt enforcement smokes.
+// --allow-run — same posture as the other run-gated smokes.
 const canRun = (await Deno.permissions.query({ name: "run" })).state === "granted";
 
 /** A fake exec plugin: /bin/sh printing an ExecCredential with the given token. */

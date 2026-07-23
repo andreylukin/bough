@@ -1,7 +1,7 @@
 /**
  * Host-side exec credential minting for the kubectl MITM path. A kubeconfig's exec
  * plugin (`aws eks get-token`, `gke-gcloud-auth-plugin`, ...) can't run in the
- * sandbox — it reads credential stores the seatbelt denies (~/.aws, ~/.config/gcloud).
+ * sandbox — it reads credential stores that never enter it (~/.aws, ~/.config/gcloud).
  * So the bough server runs it here, with its own (unsandboxed) environment, and the
  * proxy stamps the minted bearer token onto requests to the cluster host
  * (proxy.ts CredentialRule). The AWS/GCP secrets never enter the sandbox; the only

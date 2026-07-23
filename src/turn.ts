@@ -73,7 +73,12 @@ import {
   workspaceNote,
 } from "./supervisor/prompt.ts";
 import { activeSkills } from "./supervisor/skills.ts";
-import { normalizeWorkspace, prepareWorkspace } from "./supervisor/workspace.ts";
+import {
+  hostReadRoot,
+  normalizeWorkspace,
+  type PreparedWorkspace,
+  prepareWorkspace,
+} from "./supervisor/workspace.ts";
 import { activationsFor } from "./mcp/config.ts";
 import { createLspBridge, lspAvailable, lspSection } from "./mcp/lsp.ts";
 import { mcpManager } from "./mcp/manager.ts";
@@ -84,7 +89,14 @@ import { publishArtifact } from "./server/artifacts.ts";
 import { recall as recallSearch } from "./recall.ts";
 import { expireAsks, raiseAsk } from "./asks.ts";
 import { scheduleVerb } from "./schedules.ts";
-import { awaitHydration, originRepo as shadowOrigin, shipToOrigin } from "./vcs/shadow.ts";
+import {
+  awaitHydration,
+  originRepo as shadowOrigin,
+  shipToOrigin,
+  storeForSession,
+} from "./vcs/shadow.ts";
+import { GUEST_REPO, guestTrack } from "./vcs/guestgit.ts";
+import { attachVm, hasVm } from "./sandbox/vmsession.ts";
 
 export interface TurnCtx {
   db: Db;
@@ -445,8 +457,13 @@ export function startUserTurn(
   // Image @refs become attachment-backed image parts NOW (the file is copied to
   // ~/.bough/attachments, so the message replays after the original moves);
   // text @refs keep inlining lazily at replay time (inlineFileReferences).
+  // Relative refs resolve against the session's host-side view: the mirror
+  // checkout when one exists (guest-owned VM mode), else the workspace itself.
   const ws = ctx.db.getSessionRuntime(sessionId).workspace;
-  const images = collectImageAttachments(text, ws ? normalizeWorkspace(ws) : null);
+  const images = collectImageAttachments(
+    text,
+    ws ? hostReadRoot(sessionId, normalizeWorkspace(ws)) : null,
+  );
   const userMessage: Message = {
     id: crypto.randomUUID(),
     sessionId,
@@ -615,9 +632,13 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     bus.publish({ type: "message.part", sessionId, data: { messageId, part } });
   };
 
+  // Guest-owned (VM) session — set once prepared resolves; read by the finally
+  // block's end-of-turn snapshot flush (the crash-loss bound on guest work).
+  let guestOwned = false;
   try {
     // Resolve the workspace and (if sandboxed) set up snapshots + the snapshot dir once.
-    const prepared = await prepareWorkspace(db, sessionId, ctx.workspace);
+    const prepared: PreparedWorkspace = await prepareWorkspace(db, sessionId, ctx.workspace);
+    guestOwned = prepared.guestOwned === true;
     if (prepared.warning) {
       // Isolation degraded — surface it in the thread (plain insert, not
       // postSystemNote: we're already inside a turn, nothing to wake).
@@ -637,6 +658,9 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     let currentCallId = "";
     const toolCtx: ToolRunCtx = {
       workspace: prepared.cwd,
+      // Guest-owned mode: file tools route through vm.readFile/writeFile with
+      // guest-path confinement under the session clone.
+      ...(prepared.guestOwned ? { guestFs: { sessionId, root: GUEST_REPO } } : {}),
       sessionId,
       // Interrupt reaches INTO a running tool: run_steps terminates its program's
       // worker and bash kills its child — stop means stop, not "after this step".
@@ -805,10 +829,12 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     steering.delete(sessionId);
     // Inline any @path references in the triggering message so the model sees the
     // file content, not just the name. Only for workspace sessions (files exist).
-    if (prepared.sandboxed) inlineFileReferences(messages, prepared.cwd);
+    // hostView = the mirror checkout in guest-owned mode (fresh as of the last
+    // push), else the workspace itself.
+    if (prepared.sandboxed) inlineFileReferences(messages, prepared.hostView);
     // Project rules: a global ~/.bough/AGENTS.md plus the workspace root's AGENTS.md are
     // authoritative for build/test commands, conventions, and what "done" means — inject them.
-    const agents = prepared.sandboxed ? await readAgentsFile(prepared.cwd) : null;
+    const agents = prepared.sandboxed ? await readAgentsFile(prepared.hostView) : null;
     // MCP: connect the turn's granted servers (grantedMcp, resolved above) so the
     // prompt can list real tools; a server that fails to connect is named
     // UNAVAILABLE instead of vanishing. Subagent turns connect their inherited
@@ -817,7 +843,7 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     let mcpNote = "";
     if (grantedMcp.length > 0) {
       const catalog = await mcpManager().ensure(sessionId, grantedMcp, {
-        workspace: prepared.cwd,
+        workspace: prepared.hostView,
         sandbox: toolCtx.sandbox,
       });
       mcpNote = mcpSection(catalog);
@@ -836,31 +862,61 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     // first lsp.* call (see mcp/lsp.ts for the host-side confinement trade-off).
     let lspNote = "";
     if (lspAvailable()) {
-      toolCtx.lsp = createLspBridge({ workspace: prepared.cwd, sandbox: toolCtx.sandbox });
+      toolCtx.lsp = createLspBridge({
+        workspace: prepared.hostView,
+        sandbox: toolCtx.sandbox,
+        // The mirror is read-only: rename would silently lose its edits there.
+        readOnly: prepared.guestOwned,
+      });
       lspNote = lspSection();
     }
     // Supervisor prompt sections, resolved for this session's optional promptDir
     // override (bough exec --prompt-dir) — read per turn, so a pinned variant needs
     // no server restart. Undefined override = the process default sections.
-    const { SYSTEM, SHIP_NOTE, SYSTEM_DELEGATION, SYSTEM_DELEGATION_NESTED, SYSTEM_SUBAGENT } =
-      resolveSystemSections(db.getSession(sessionId)?.promptDir ?? undefined);
+    const {
+      SYSTEM,
+      SHIP_NOTE,
+      SHIP_NOTE_WORKTREE,
+      SYSTEM_DELEGATION,
+      SYSTEM_DELEGATION_NESTED,
+      SYSTEM_SUBAGENT,
+    } = resolveSystemSections(db.getSession(sessionId)?.promptDir ?? undefined);
     // Ship (root sessions running in a shadow worktree only): commit + optional
     // push into the origin repo, executed HOST-side — the sandbox itself never
     // gains write access to the user's checkout. Subagents don't ship; their work
     // flows upward via adopt.
     let shipNote = "";
     if (!isSub && prepared.sandboxed) {
-      const shipOrigin = await shadowOrigin(prepared.cwd);
-      if (shipOrigin) {
+      // Guest-owned mode: ship reads the bare store (the session's pushed tip),
+      // resolved from the DB origin dir; host-worktree mode reads the worktree.
+      const shipDir = prepared.guestOwned
+        ? await storeForSession(sessionId).catch(() => null)
+        : prepared.cwd;
+      const shipOrigin = shipDir ? await shadowOrigin(shipDir) : null;
+      if (shipDir && shipOrigin) {
         toolCtx.ship = async (opts) => {
           if (!opts || typeof opts.message !== "string" || !opts.message.trim()) {
             throw new Error("ship({message, paths?, push?}): a commit message is required");
           }
-          const res = await shipToOrigin(prepared.cwd, sessionId, shipOrigin, opts);
+          // Flush the guest clone first — shipping the last-pushed tip would
+          // silently drop this round's edits. attachVm, not hasVm: after a
+          // server restart the machine (holding unflushed pre-restart work)
+          // persists while nothing is attached yet, and "ship it" may well be
+          // the first tool-free turn after the restart.
+          if (
+            prepared.guestOwned &&
+            (await attachVm(sessionId, { origin: prepared.cwd, gitOrigin: true }))
+          ) {
+            await guestTrack(sessionId);
+          }
+          const res = await shipToOrigin(shipDir, sessionId, shipOrigin, opts);
           bus.publish({ type: "changes.updated", sessionId, data: { sessionId } });
           return res;
         };
-        shipNote = SHIP_NOTE;
+        // The workspace-mechanics paragraph differs by mode: the guest clone's
+        // refs are private (`git diff refs/bough/originbase` works, local git is
+        // fine), the host worktree's are session-qualified and shared.
+        shipNote = prepared.guestOwned ? SHIP_NOTE : SHIP_NOTE_WORKTREE;
       }
     }
     // System prompt in two tiers for prompt caching — llm.ts places a cache
@@ -902,7 +958,10 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
           ),
         )
         : "") +
-      workspaceNote(prepared.cwd) +
+      // Guest-owned mode: bash runs in the guest clone, so the note names the
+      // GUEST path — the host origin path would send the model chasing a cwd
+      // its shell doesn't have.
+      workspaceNote(prepared.guestOwned ? GUEST_REPO : prepared.cwd) +
       (prepared.sandboxed ? scratchpadNote(prepared.scratchDir) : "") +
       (agents ?? "") +
       mcpNote;
@@ -1125,7 +1184,9 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       if (toolUses.length > 0) {
         if (!hydrationGated) {
           hydrationGated = true;
-          await awaitHydration(prepared.cwd);
+          // Guest-owned mode has no hydration: the working copy is the guest
+          // clone and the agent installs deps in-guest.
+          if (!prepared.guestOwned) await awaitHydration(prepared.cwd);
         }
         ranTools = true;
         const toolResults: LlmContentBlock[] = [];
@@ -1319,6 +1380,21 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
             tree: db.treeUsage(cur.originId),
           },
         });
+      }
+    }
+    // Guest-owned snapshot flush on turn end: push the clone's on-disk work to
+    // the store, bounding crash loss to mid-turn edits and keeping the mirror
+    // (and every compose-time read off it) start-of-turn fresh. hasVm is the
+    // right predicate HERE (unlike ship/changes/adopt): a turn that never
+    // attached the VM ran no guest tool, so it produced no new edits — any
+    // pre-restart backlog is flushed by the next attach, changes read, ship,
+    // or teardown, and reattaching a stopped machine on every chat turn just
+    // to push nothing would be pure churn.
+    if (guestOwned && hasVm(sessionId)) {
+      try {
+        await guestTrack(sessionId);
+      } catch (e) {
+        console.error(`turn flush: guestTrack failed for ${sessionId}: ${(e as Error).message}`);
       }
     }
     // A workspace session may have new file edits after the turn — nudge the Changes

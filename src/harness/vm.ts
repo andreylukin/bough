@@ -3,7 +3,7 @@
  * Deno Worker with `permissions: "none"`: an isolated V8 heap that cannot reach the
  * filesystem, network, env, or Deno APIs. The ONLY capabilities are the async host
  * functions we bridge in — and those run here on the host, where the real tool
- * implementations enforce workspace confinement and the Seatbelt sandbox.
+ * implementations enforce workspace confinement and sandboxing (the session VM).
  *
  * A program is disposable compute: fresh isolate per round, hard wall-clock timeout,
  * terminated (not awaited) on overrun. Host-function failures reject inside the

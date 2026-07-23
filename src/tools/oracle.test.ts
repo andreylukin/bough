@@ -82,15 +82,10 @@ Deno.test("oracle: a failing tool surfaces as an is_error result, not a crash", 
   }
 });
 
-// The real read-only enforcement: the oracle's shell reads the workspace but its
-// writes are denied by the Seatbelt profile. macOS-only (sandbox-exec). The
-// workspace must live OUTSIDE the profile's baseline write-allow (temp, caches),
-// like real workspaces do — hence $HOME, following the tools.test.ts precedent.
-// TODO(vm-rewrite): the oracle's read-only shell was enforced by the Seatbelt
-// profile (write-allow shrunk to the scratch dir). The VM backend shares the
-// session's rw workspace mount, so read-only isn't enforced there yet — it needs a
-// ro workspace bind or a dedicated ro ephemeral VM for the oracle. Skipped until
-// that lands; the guarantee is currently NOT provided in VM mode.
+// Retired with the Seatbelt backend, which enforced the oracle's read-only shell
+// (write-allow shrunk to the scratch dir). The VM backend runs the oracle in the
+// session's guest with a rw clone, so read-only is a contract, not enforced —
+// see oracle.ts. Re-enable only when a ro clone / dedicated ro VM lands.
 Deno.test({
   name: "oracle: sandboxed shell is read-only in the workspace",
   ignore: true,

@@ -215,9 +215,6 @@ async function ensureStore(origin: string): Promise<string> {
     await Deno.writeTextFile(`${store}/bough-origin`, await Deno.realPath(origin));
   }
   // Pinned on every call (not just init) so pre-existing stores pick up additions.
-  // maintenance.auto: in-sandbox `git commit` otherwise spawns `maintenance run
-  // --auto`, whose pack-refs task hits the write-protected store refs and spams
-  // "Unable to create packed-refs.lock" (gc.auto=0 does not cover it).
   for (
     const [k, v] of [
       ["user.name", USER],
@@ -226,13 +223,38 @@ async function ensureStore(origin: string): Promise<string> {
       ["core.quotepath", "false"],
       ["commit.gpgsign", "false"],
       ["gc.auto", "0"],
-      ["maintenance.auto", "false"],
     ]
   ) {
     await git(store, ["config", k, v]);
   }
+  await writePreReceiveHook(store);
   await linkOriginObjects(store, origin);
   return store;
+}
+
+/**
+ * The store's pre-receive hook: gateway pushes (the only receive-pack path —
+ * host plumbing moves refs via update-ref, which never runs hooks) may touch
+ * ONLY the session ref the gateway stamped into BOUGH_RECEIVE_REF. A direct
+ * receive-pack without the stamp refuses everything. Rewritten on every
+ * ensureStore so pre-existing stores pick it up.
+ */
+async function writePreReceiveHook(store: string): Promise<void> {
+  const hook = `#!/bin/sh
+# bough: pushes land only via the store gateway, which stamps
+# BOUGH_RECEIVE_REF=refs/bough/sessions/<sid>. Any other ref is refused.
+status=0
+while read old new ref; do
+  if [ "$ref" != "$BOUGH_RECEIVE_REF" ]; then
+    echo "bough: ref $ref refused (only \\$BOUGH_RECEIVE_REF may be pushed)" >&2
+    status=1
+  fi
+done
+exit $status
+`;
+  await Deno.mkdir(`${store}/hooks`, { recursive: true });
+  await Deno.writeTextFile(`${store}/hooks/pre-receive`, hook);
+  await Deno.chmod(`${store}/hooks/pre-receive`, 0o755);
 }
 
 /**
@@ -293,9 +315,12 @@ async function captureBase(store: string, origin: string): Promise<string> {
   }
 }
 
-/** Per-store serialization for ref-moving ops (parallel subagents adopt into one parent). */
+/** Per-store serialization for ref-moving ops (parallel subagents adopt into one parent).
+ * Exported for the store gateway: guest receive-pack and host accept/adopt move the
+ * same refs and must interleave through one queue. In-process only — a second bough
+ * server on the same BOUGH_HOME would race (pre-existing risk, unchanged in kind). */
 const locks = new Map<string, Promise<unknown>>();
-function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+export function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const prev = locks.get(key) ?? Promise.resolve();
   const next = prev.then(fn, fn);
   locks.set(key, next.catch(() => {}));
@@ -307,16 +332,27 @@ function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
  * the session base, point `refs/bough/{base,sessions}/<id>` at it, and check
  * out a detached linked worktree under `workspacesRoot()`. The origin is never
  * modified. Idempotent: an existing worktree dir is reused as-is.
+ *
+ * `worktree: false` (guest-owned VM mode): refs only — no host worktree, no
+ * hydration (the guest clones from the store gateway and installs deps itself).
+ * Returns the STORE path in that mode; idempotency keys on the session ref.
  */
-export async function createSessionWorkspace(origin: string, sessionId: string): Promise<string> {
+export async function createSessionWorkspace(
+  origin: string,
+  sessionId: string,
+  opts: { worktree?: boolean } = {},
+): Promise<string> {
+  const worktree = opts.worktree ?? true;
   const dir = workspaceDirFor(sessionId);
-  if (await pathExists(`${dir}/.git`)) return dir;
+  if (worktree && (await pathExists(`${dir}/.git`))) return dir;
   const store = await ensureStore(origin);
+  if (!worktree && (await refSha(store, refFor(sessionId)))) return store;
   return await withLock(store, async () => {
     const base = await captureBase(store, origin);
     await git(store, ["update-ref", baseRefFor(sessionId), base]);
     await git(store, ["update-ref", originBaseRefFor(sessionId), base]);
     await git(store, ["update-ref", refFor(sessionId), base]);
+    if (!worktree) return store;
     await Deno.mkdir(workspacesRoot(), { recursive: true });
     await git(store, ["worktree", "add", "--detach", dir, base]);
     startHydration(origin, dir);
@@ -336,8 +372,10 @@ export async function addWorkspace(
   sessionId: string,
   dir: string,
   fromSessionId: string | null,
+  opts: { worktree?: boolean } = {},
 ): Promise<string> {
-  if (await pathExists(`${dir}/.git`)) return dir;
+  const worktree = opts.worktree ?? true;
+  if (worktree && (await pathExists(`${dir}/.git`))) return dir;
   const store = await gitCommonDir(fromDir);
   // The bough-origin pointer marks a bough shadow store. Never branch inside an
   // arbitrary git dir — a spawn from an un-tracked repo must fail, not write
@@ -345,6 +383,10 @@ export async function addWorkspace(
   if (!store || !(await pathExists(`${store}/bough-origin`))) {
     throw new Error(`not a shadow worktree: ${fromDir}`);
   }
+  if (!worktree && (await refSha(store, refFor(sessionId)))) return store;
+  // Guest-owned mode passes the STORE as fromDir: the caller has already
+  // snapshotted the parent (guestTrack pushed its tip), so the ref is current —
+  // a host-side track would need a worktree that doesn't exist.
   const tip = fromSessionId !== null
     ? await track(fromDir, fromSessionId)
     : (await git(fromDir, ["rev-parse", "HEAD"])).trim();
@@ -358,6 +400,7 @@ export async function addWorkspace(
     await git(store, ["update-ref", baseRefFor(sessionId), tip]);
     await git(store, ["update-ref", originBaseRefFor(sessionId), originBase]);
     await git(store, ["update-ref", refFor(sessionId), tip]);
+    if (!worktree) return store;
     await Deno.mkdir(workspacesRoot(), { recursive: true });
     await git(store, ["worktree", "add", "--detach", dir, tip]);
     startHydration(fromDir, dir); // the parent's runtime artifacts, already hydrated once
@@ -451,7 +494,23 @@ async function hydrate(source: string, dir: string): Promise<void> {
  * one worktree collide on its index.lock.
  */
 export function track(dir: string, sessionId: string, message?: string): Promise<string> {
-  return withLock(dir, () => trackInner(dir, sessionId, message));
+  return withLock(dir, async () => {
+    // Store-dir call (guest-owned VM mode): snapshots are guest-side pushes via
+    // the gateway; the ref is already current — resolve the tip, stage nothing.
+    // This one branch lets diff/accept/materialize/ship take the bare store as
+    // `dir` unchanged.
+    if (await isStoreDir(dir)) {
+      const tip = await refSha(dir, refFor(sessionId));
+      if (!tip) throw new Error(`shadow: unknown session ref ${refFor(sessionId)}`);
+      return tip;
+    }
+    return trackInner(dir, sessionId, message);
+  });
+}
+
+/** True when `dir` is a bare shadow store itself (not a worktree of one). */
+async function isStoreDir(dir: string): Promise<boolean> {
+  return await pathExists(`${dir}/bough-origin`);
 }
 
 async function trackInner(dir: string, sessionId: string, message?: string): Promise<string> {
@@ -479,6 +538,15 @@ async function trackInner(dir: string, sessionId: string, message?: string): Pro
 async function refSha(dir: string, ref: string): Promise<string | null> {
   const r = await run("git", ["rev-parse", "--verify", "-q", ref], dir, ISOLATED);
   return r.ok ? r.stdout.trim() : null;
+}
+
+/**
+ * A session's base-ref sha resolved against `dir` (worktree or bare store), or
+ * null. Store-side callers (changes revert, subagent adopt) use this instead of
+ * hand-rolling the refs/bough/base/<sid> layout.
+ */
+export async function baseSha(dir: string, sessionId: string): Promise<string | null> {
+  return await refSha(dir, baseRefFor(sessionId));
 }
 
 /**
@@ -567,6 +635,33 @@ export async function originRepo(dir: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Session → store resolution for VM-mode callers that hold no worktree: the
+ * session's originDir (DB) mapped through storeDirFor. The server registers its
+ * Db as the resolver at boot; without one (standalone tools), a connection to
+ * the default DB is opened lazily. Tests with private Db instances must
+ * register — a fresh openDb() cannot see their in-memory rows.
+ */
+let originResolver: ((sessionId: string) => string | null) | null = null;
+let fallbackDb: { getSession(id: string): { originDir?: string | null } | undefined } | null = null;
+
+export function setOriginResolver(fn: (sessionId: string) => string | null): void {
+  originResolver = fn;
+}
+
+export async function storeForSession(sessionId: string): Promise<string> {
+  let origin = originResolver?.(sessionId) ?? null;
+  if (!origin && !originResolver) {
+    if (!fallbackDb) {
+      const { openDb } = await import("../db/db.ts");
+      fallbackDb = openDb();
+    }
+    origin = fallbackDb.getSession(sessionId)?.originDir ?? null;
+  }
+  if (!origin) throw new Error(`shadow: no origin dir recorded for session ${sessionId}`);
+  return await storeDirFor(origin);
 }
 
 /** A path's blob bytes at `rev` in the worktree's shadow repo, or null if absent. */

@@ -10,11 +10,10 @@ changed. Returns {commit, branch, paths, pushed, note?}. Shipping publishes work
 workspace: call it ONLY when the user explicitly asks you to commit/push/ship — never as a routine
 end-of-task step — and report the returned commit and branch afterward.
 
-The workspace is this session's own git clone, snapshotted automatically every round: your edits get
-committed as `bough: snapshot` and pushed to the session's private store, so a clean
-`git status`/`git diff` does NOT mean your work was lost — it lives in the snapshot chain, and
-ship() reads it from there. See the session's cumulative change with
-`git diff refs/bough/originbase`. Local git (branch, stash, reset) works normally here, but the
-automatic snapshots already cover what it would — and only what is on disk at the end of a round
-gets snapshotted, so leave your final state checked out, never parked in a stash or an unmerged
-branch.
+The workspace itself is a shadow-git worktree that bough snapshots automatically every round: your
+edits get committed as `bough: snapshot` and HEAD moves along, so a clean `git status`/`git diff`
+does NOT mean your work was lost — it lives in the snapshot chain, and ship() reads it from there.
+See the session's cumulative change with `git diff "refs/bough/originbase/$(basename "$PWD")"`.
+Avoid `git stash`, `git branch`, `git worktree add`, and `git reset` here: the automatic snapshots
+already cover what they would, and only what is on disk at the end of a round gets snapshotted —
+leave your final state checked out, never parked in a stash or an unmerged branch.

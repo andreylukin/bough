@@ -26,7 +26,12 @@ CREATE TABLE IF NOT EXISTS sessions (
   title       TEXT NOT NULL,
   kind        TEXT NOT NULL,
   created_at  INTEGER NOT NULL,
-  workspace   TEXT,                   -- read-write root for this session; null = BOUGH_WORKSPACE/cwd
+  workspace   TEXT,                   -- the session's workspace root; null = BOUGH_WORKSPACE/cwd.
+                                      -- VM (guest-owned) mode: permanently the ORIGIN dir — the
+                                      -- working copy is the guest clone, and legacy rows pointing
+                                      -- at ~/.bough/workspaces worktrees are rewritten to origin_dir
+                                      -- at startup (see #migrate). Host-worktree mode still repoints
+                                      -- this at the session worktree on the first turn.
   base        TEXT,                   -- persisted snapshot/git base commit, captured on the first turn
   origin_id         TEXT,             -- lineage: session this fork/compaction branched from (null for root/plain)
   origin_message_id TEXT,             -- lineage: the fork-at message / compaction span-end message
@@ -414,6 +419,12 @@ function toMessage(r: MessageRow): Message {
 export class Db {
   #db: DatabaseSync;
 
+  /** Session ids whose workspace column was rewritten to the origin by THIS
+   *  open's legacy migration. The migration is one-shot (rewritten rows no
+   *  longer match), so main.ts must retire each session's leftover host
+   *  worktree now — it still squats on the mirror path otherwise. */
+  readonly migratedLegacyWorkspaces: string[] = [];
+
   constructor(path: string) {
     this.#db = new DatabaseSync(path);
     this.#db.exec("PRAGMA foreign_keys = ON");
@@ -465,6 +476,38 @@ export class Db {
     } catch {
       // column already exists
     }
+    this.#migrateLegacyWorkspaces();
+  }
+
+  /**
+   * Guest-owned semantic change (docs/guest-owned-workspace.md): in VM mode the
+   * workspace column stores the ORIGIN path, never a per-session worktree. Legacy
+   * rows repointed at ~/.bough/workspaces/<id> are rewritten to the session's
+   * origin_dir here. Gated on the VM backend being active — host-worktree mode
+   * (no golden / BOUGH_SANDBOX_VM=0) still runs sessions IN those worktrees, and
+   * rewriting its rows would send resumed sessions into the origin directly.
+   * (main.ts resolves BOUGH_SANDBOX_VM before opening the DB.)
+   */
+  #migrateLegacyWorkspaces(): void {
+    if (Deno.env.get("BOUGH_SANDBOX_VM") !== "1") return;
+    const root = (Deno.env.get("BOUGH_SUBAGENT_BASE") ??
+      `${Deno.env.get("HOME") ?? ""}/.bough/workspaces`).replace(/\/+$/, "");
+    if (root === "/.bough/workspaces") return; // no HOME — nothing sane to match
+    const rows = this.#db
+      .prepare(
+        `SELECT id, workspace, origin_dir FROM sessions
+         WHERE workspace IS NOT NULL AND origin_dir IS NOT NULL`,
+      )
+      .all() as Array<{ id: string; workspace: string; origin_dir: string }>;
+    const legacy = rows.filter((r) => r.workspace.startsWith(root + "/"));
+    if (legacy.length === 0) return;
+    const set = this.#db.prepare(`UPDATE sessions SET workspace = ? WHERE id = ?`);
+    for (const r of legacy) set.run(r.origin_dir, r.id);
+    this.migratedLegacyWorkspaces.push(...legacy.map((r) => r.id));
+    console.log(
+      `migrated ${legacy.length} legacy workspace row(s) to their origin dir: ` +
+        legacy.map((r) => `${r.id} → ${r.origin_dir}`).join(", "),
+    );
   }
 
   close(): void {
@@ -1012,11 +1055,12 @@ export class Db {
   }
 
   listWorkflows(sessionId?: string): WorkflowRun[] {
-    const rows = (sessionId
-      ? this.#db.prepare(`SELECT * FROM workflows WHERE session_id = ? ORDER BY created_at DESC`)
-        .all(sessionId)
-      : this.#db.prepare(`SELECT * FROM workflows ORDER BY created_at DESC`).all()) as
-        WorkflowRow[];
+    const rows =
+      (sessionId
+        ? this.#db.prepare(`SELECT * FROM workflows WHERE session_id = ? ORDER BY created_at DESC`)
+          .all(sessionId)
+        : this.#db.prepare(`SELECT * FROM workflows ORDER BY created_at DESC`)
+          .all()) as WorkflowRow[];
     return rows.map(toWorkflow);
   }
 

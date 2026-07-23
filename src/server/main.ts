@@ -4,7 +4,10 @@
  */
 import { openDb } from "../db/db.ts";
 import { ClawpatrolGateway, setActiveGateway } from "../net/gateway.ts";
-import { goldenDir, teardownVm } from "../sandbox/vmsession.ts";
+import { goldenDir, sandboxVm, teardownVm } from "../sandbox/vmsession.ts";
+import { setOriginResolver } from "../vcs/shadow.ts";
+import { startGitGateway } from "../vcs/gitgateway.ts";
+import { retireLegacyWorktree } from "../vcs/mirror.ts";
 import { mcpManager } from "../mcp/manager.ts";
 import { bus } from "../bus.ts";
 import { createHandler, PURGE_RETENTION_MS } from "./app.ts";
@@ -15,6 +18,25 @@ import { watchActivity } from "../worker/activity.ts";
 import { workerTitle } from "../supervisor/title.ts";
 
 const PORT = Number(Deno.env.get("BOUGH_PORT") ?? 4321);
+
+// Sandbox backend, resolved BEFORE the DB opens: bash runs inside a per-session
+// smolvm VM whenever the golden rootfs is present (built by
+// scripts/guest-image/build-golden.sh). Explicit BOUGH_SANDBOX_VM wins; without
+// a golden, sandboxed bash runs UNSANDBOXED on the host (surfaced loudly) until
+// one is built. The DB's legacy-workspace migration is gated on this flag, so
+// the order matters.
+if (!Deno.env.get("BOUGH_SANDBOX_VM")) {
+  try {
+    Deno.statSync(goldenDir());
+    Deno.env.set("BOUGH_SANDBOX_VM", "1");
+    console.log(`sandbox: VM backend (golden ${goldenDir()})`);
+  } catch {
+    console.warn(
+      `sandbox: no golden rootfs at ${goldenDir()} — sandboxed bash runs UNSANDBOXED; ` +
+        `build one with scripts/guest-image/build-golden.sh`,
+    );
+  }
+}
 
 const db = openDb();
 // Any turn left `running` by a previous process crashed mid-flight — orphan it and
@@ -32,20 +54,24 @@ if (swept > 0) console.log(`swept ${swept} orphaned pending net request(s)`);
 // longer than the retention period are hard-removed on boot (and via `bough purge`).
 const purged = db.purgeArchivedBefore(Date.now() - PURGE_RETENTION_MS);
 if (purged > 0) console.log(`purged ${purged} session(s) archived over 30 days ago`);
-// Sandbox backend: bash runs inside a per-session smolvm VM whenever the golden
-// rootfs is present (built by scripts/guest-image/build-golden.sh). Explicit
-// BOUGH_SANDBOX_VM wins; without a golden, sandboxed bash runs UNSANDBOXED on the
-// host (surfaced loudly) until one is built.
-if (!Deno.env.get("BOUGH_SANDBOX_VM")) {
-  try {
-    Deno.statSync(goldenDir());
-    Deno.env.set("BOUGH_SANDBOX_VM", "1");
-    console.log(`sandbox: VM backend (golden ${goldenDir()})`);
-  } catch {
-    console.warn(
-      `sandbox: no golden rootfs at ${goldenDir()} — sandboxed bash runs UNSANDBOXED; ` +
-        `build one with scripts/guest-image/build-golden.sh`,
-    );
+// Guest-owned workspace plumbing (VM mode only): store-side git ops resolve a
+// session's shadow store through its origin dir (this DB is the authority), and
+// the store gateway serves each session's store to its guest clone over smart
+// HTTP on the gate host IP (fetch at bootstrap, push per snapshot).
+setOriginResolver((sid) => db.getSession(sid)?.originDir ?? null);
+if (sandboxVm()) {
+  startGitGateway();
+  // Sessions the migration just flipped to guest-owned still have their host
+  // worktree squatting on the mirror path — flush its remaining edits to the
+  // session ref and retire it so mirror refreshes (and every read off the
+  // mirror) work. One-shot: the migration never matches these rows again, so
+  // a failure here is only recovered by refreshMirror's fallback retirement.
+  for (const sid of db.migratedLegacyWorkspaces) {
+    try {
+      await retireLegacyWorktree(sid);
+    } catch (e) {
+      console.error(`legacy worktree retirement failed for ${sid}: ${(e as Error).message}`);
+    }
   }
 }
 // Claw Patrol is bough's native egress firewall (opt-in via BOUGH_CLAWPATROL=1): it
@@ -55,8 +81,10 @@ setActiveGateway(gateway);
 await gateway.start();
 // A session's VM persists across its turns (unlike the turn-scoped proxy) and is
 // torn down when the session is archived — covers both root sessions (app.ts) and
-// subagents (subagent.ts), which both publish session.archived. Idempotent no-op
-// when the session never booted a VM.
+// subagents (subagent.ts), which both publish session.archived. teardownVm is
+// flush-then-delete: unpushed guest work is guestTracked (best-effort) before the
+// machine goes, so post-archive diff/ship still see it. Idempotent no-op when the
+// session never booted a VM.
 bus.subscribe((e) => {
   if (e.type === "session.archived" && e.sessionId) void teardownVm(e.sessionId);
 });

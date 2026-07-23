@@ -9,9 +9,11 @@
  * server: a per-user daemon keeps language servers warm across sessions and
  * answers in milliseconds, which removes the MCP initialize-timeout failure
  * class the serena backend had. The confinement trade-off is deliberate: leta
- * and the language servers its daemon spawns run host-side, outside seatbelt
+ * and the language servers its daemon spawns run host-side, outside the sandbox
  * and the egress gate — acceptable because every verb except `rename` only
  * reads the workspace, and leta talks to its local daemon, never the network.
+ * In guest-owned VM mode the registered workspace is the session's read-only
+ * mirror checkout — fresh as of the last snapshot push (accepted v1 staleness).
  *
  * Lazy by design: nothing is spawned at turn start. The first lsp.* call
  * registers the session workspace with the daemon (`leta workspace add`,
@@ -140,7 +142,7 @@ const defaultRun: LetaRun = async (args, cwd) => {
  * language server already warm.
  */
 export function createLspBridge(
-  spawn: SpawnCtx,
+  spawn: SpawnCtx & { readOnly?: boolean },
   run: LetaRun = defaultRun,
 ): { call: (verb: string, args: unknown) => Promise<unknown> } {
   let ready: Promise<void> | undefined;
@@ -156,6 +158,15 @@ export function createLspBridge(
       const build = VERBS[verb];
       if (!build) {
         throw new Error(`unknown lsp verb "${verb}" (has: ${Object.keys(VERBS).join(", ")})`);
+      }
+      // Guest-owned sessions register the read-only mirror checkout: a rename
+      // would edit the mirror, be wiped by the next refresh, and never reach
+      // the guest clone — refuse loudly instead of losing the edit silently.
+      if (verb === "rename" && spawn.readOnly) {
+        throw new Error(
+          "lsp.rename is unavailable in this session (the LSP sees a read-only mirror); " +
+            "use lsp.refs to find every call site and edit the files directly",
+        );
       }
       const argv = build((args ?? {}) as Args);
       // Memoize the in-flight registration, but let a failed one be retried next call.

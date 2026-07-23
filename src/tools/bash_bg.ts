@@ -266,11 +266,11 @@ export async function bashBg(command: string, ctx: ToolRunCtx): Promise<string> 
       `this session already has ${running} running background shells; bashKill one first`,
     );
   }
-  const { argv, env } = await shellInvocation(command, ctx);
+  const { argv, env, cwd } = await shellInvocation(command, ctx);
   // No ctx.signal: an explicit background shell survives the turn's stop button.
   const child = new Deno.Command(argv[0], {
     args: argv.slice(1),
-    cwd: ctx.workspace,
+    cwd,
     env,
     stdin: "null",
     stdout: "piped",
