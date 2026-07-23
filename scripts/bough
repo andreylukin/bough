@@ -221,6 +221,7 @@ golden_fingerprint() {
   shasum -a 256 "$ROOT/scripts/guest-image/build-golden.sh" 2>/dev/null | cut -d' ' -f1 || true
   shasum -a 256 "$BOUGH_HOME/net/ca/ca.crt" 2>/dev/null | cut -d' ' -f1 || true
   shasum -a 256 "$BOUGH_HOME/net/kubeconfig" 2>/dev/null | cut -d' ' -f1 || true
+  shasum -a 256 "$BOUGH_HOME/net/gcx-config" 2>/dev/null | cut -d' ' -f1 || true
   shasum -a 256 "$BOUGH_HOME/guest-tools" 2>/dev/null | cut -d' ' -f1 || true
 }
 

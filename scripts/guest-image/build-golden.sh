@@ -134,6 +134,15 @@ if [ -f "$BOUGH_KUBECONFIG" ]; then
   "$SMOLVM" machine cp "$BOUGH_KUBECONFIG" "$MACHINE:/etc/bough/kubeconfig"
 fi
 
+# Sanitized gcx (Grafana CLI) config, if bough's gateway wrote one: placeholder
+# tokens only — the proxy stamps the real ones on the wire.
+BOUGH_GCX="${BOUGH_HOME:-$HOME/.bough}/net/gcx-config"
+if [ -f "$BOUGH_GCX" ]; then
+  log "bake gcx config -> /root/.config/gcx/config.yaml"
+  "$SMOLVM" machine exec --name "$MACHINE" -- mkdir -p /root/.config/gcx
+  "$SMOLVM" machine cp "$BOUGH_GCX" "$MACHINE:/root/.config/gcx/config.yaml"
+fi
+
 # ---------------------------------------------------------------------------
 # 4d. Extra guest tools from the user's ~/.bough/guest-tools (seeded by
 #     `bough update`; edit it to add tools to the sandbox). One entry per line:

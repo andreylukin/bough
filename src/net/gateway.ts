@@ -29,6 +29,7 @@ import { PluginHost, type PluginInfo, type RequestSample, specFromRequests } fro
 import { caTrustCommand, isCaTrusted } from "./catrust.ts";
 import { augmentCloudPolicy, type KubeSetup, setupKube } from "./cloud.ts";
 import { type ArgocdSetup, setupArgocd } from "./argocd.ts";
+import { type GcxSetup, setupGcx } from "./grafana.ts";
 import { loadConfig, type NetConfig, resolveConfig, toPolicy } from "./config.ts";
 import { resolveCredentials } from "./credentials.ts";
 import { brokerEnv } from "./execcred.ts";
@@ -127,6 +128,7 @@ export class ClawpatrolGateway {
   // kubectl integration: rewritten kubeconfig + per-cluster upstream CA (cloud.ts).
   #kube?: KubeSetup;
   #argocd?: ArgocdSetup;
+  #gcx?: GcxSetup;
   // Host default AWS region, injected into guest env — a VM guest has no ~/.aws
   // at all, and a regionless CLI makes agents guess (and sweep) regions.
   #awsRegion?: string;
@@ -228,9 +230,16 @@ export class ClawpatrolGateway {
     // ARGOCD_SERVER + a placeholder token (argocd.ts). No CA rewrite needed.
     this.#argocd = setupArgocd();
     this.#awsRegion = await resolveAwsRegion();
+    // gcx: sanitized config (placeholder tokens) written for the golden to bake;
+    // the proxy stamps the real Grafana token per server host.
+    this.#gcx = setupGcx();
     const argoHosts = this.#argocd?.hosts ?? [];
     if (this.#argocd) {
       console.log(`[clawpatrol] argocd: ${argoHosts.length} server(s) trusted + token-stamped`);
+    }
+    const gcxHosts = this.#gcx?.hosts ?? [];
+    if (this.#gcx) {
+      console.log(`[clawpatrol] gcx: ${gcxHosts.length} grafana host(s) trusted + token-stamped`);
     }
     const kubeHosts = this.#kube?.hosts ?? [];
     if (this.#kube) {
@@ -244,12 +253,13 @@ export class ClawpatrolGateway {
     }
     // Trust + classify the cloud CLI hosts (k8s clusters + *.amazonaws.com) on every
     // compiled policy, so reads flow and only writes gate — see cloud.augmentCloudPolicy.
+    const trusted = [...argoHosts, ...gcxHosts];
     const compile = (sessionId?: string) =>
-      augmentCloudPolicy(toPolicy(resolveConfig(this.#db, sessionId).config), kubeHosts, argoHosts);
+      augmentCloudPolicy(toPolicy(resolveConfig(this.#db, sessionId).config), kubeHosts, trusted);
     this.#gate = createGate({
       db: this.#db,
       bus: this.#bus,
-      policy: augmentCloudPolicy(toPolicy(loadConfig()), kubeHosts, argoHosts),
+      policy: augmentCloudPolicy(toPolicy(loadConfig()), kubeHosts, trusted),
       // Branch policy: a session's own net_policies row, else the nearest
       // ancestor's, else the global rule set (config.ts resolveConfig).
       resolve: compile,
@@ -311,7 +321,11 @@ export class ClawpatrolGateway {
         // kubeconfig/tools carry no auth — the proxy is the sole credential holder.
         credentials: resolveCredentials(
           resolveConfig(this.#db, key || undefined).config,
-          [...(this.#kube?.credentials ?? []), ...(this.#argocd?.credentials ?? [])],
+          [
+            ...(this.#kube?.credentials ?? []),
+            ...(this.#argocd?.credentials ?? []),
+            ...(this.#gcx?.credentials ?? []),
+          ],
         ),
       });
       starting = proxy.start().then(() => {
