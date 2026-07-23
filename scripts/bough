@@ -681,6 +681,7 @@ cmd_broker() {
     <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     <key>HOME</key><string>$HOME</string>
     <key>BOUGH_AWS_BROKER_PORT</key><string>$BROKER_PORT</string>
+    <key>BOUGH_AWS_BROKER_BIND</key><string>0.0.0.0</string>
     <key>BOUGH_AWS_BROKER_TOKEN_FILE</key><string>$BROKER_TOKEN_FILE</string>
     <key>BOUGH_AWS_RO_PROFILE</key><string>$profile</string>
   </dict>

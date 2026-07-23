@@ -143,6 +143,9 @@ if (import.meta.main) {
   };
   const profileFor: Record<string, string> = { "/aws": RO_PROFILE, "/aws-admin": ADMIN_PROFILE };
   const token = await installToken();
-  console.log(`[cred-broker] listening on 127.0.0.1:${PORT}; token at ${TOKEN_PATH}`);
-  Deno.serve({ port: PORT, hostname: "127.0.0.1" }, makeHandler(token, providers, profileFor));
+  // VM-mode guests reach the broker at the gate host IP, not loopback — bind
+  // 0.0.0.0 via BOUGH_AWS_BROKER_BIND (requests stay bearer-token gated).
+  const bind = Deno.env.get("BOUGH_AWS_BROKER_BIND") ?? "127.0.0.1";
+  console.log(`[cred-broker] listening on ${bind}:${PORT}; token at ${TOKEN_PATH}`);
+  Deno.serve({ port: PORT, hostname: bind }, makeHandler(token, providers, profileFor));
 }
