@@ -4,7 +4,7 @@
  */
 import { openDb } from "../db/db.ts";
 import { ClawpatrolGateway, setActiveGateway } from "../net/gateway.ts";
-import { goldenDir } from "../sandbox/vmsession.ts";
+import { goldenDir, teardownVm } from "../sandbox/vmsession.ts";
 import { mcpManager } from "../mcp/manager.ts";
 import { bus } from "../bus.ts";
 import { createHandler, PURGE_RETENTION_MS } from "./app.ts";
@@ -53,6 +53,13 @@ if (!Deno.env.get("BOUGH_SANDBOX_VM")) {
 const gateway = new ClawpatrolGateway({ db, bus });
 setActiveGateway(gateway);
 await gateway.start();
+// A session's VM persists across its turns (unlike the turn-scoped proxy) and is
+// torn down when the session is archived — covers both root sessions (app.ts) and
+// subagents (subagent.ts), which both publish session.archived. Idempotent no-op
+// when the session never booted a VM.
+bus.subscribe((e) => {
+  if (e.type === "session.archived" && e.sessionId) void teardownVm(e.sessionId);
+});
 globalThis.addEventListener("unload", () => void gateway.stop());
 // MCP server children (mcp/manager.ts) get an orderly SIGTERM on shutdown.
 globalThis.addEventListener("unload", () => void mcpManager().dropAll());
