@@ -239,7 +239,6 @@ seed_guest_tools() {
 pkg kubectl
 pkg aws-cli
 pkg github-cli
-pkg helm
 bin argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-arm64
 bin gcx https://github.com/grafana/gcx/releases/download/v0.5.0/gcx_0.5.0_linux_arm64.tar.gz
 # workload extras (uncomment / add as needed):
