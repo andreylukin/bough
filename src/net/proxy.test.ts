@@ -321,3 +321,110 @@ Deno.test("credentials: a provider that throws fails the request with a 502 nami
     origin.server.close();
   }
 });
+
+/** A TLS origin that answers an Upgrade request with 101, then echoes raw bytes
+ *  back prefixed with the authorization header it saw (proves the stamp). */
+function fakeUpgradeOrigin(serverCa: CertAuthority) {
+  const leaf = serverCa.leafFor("localhost");
+  const server = tls.createServer({ key: leaf.key, cert: leaf.cert }, (sock: tls.TLSSocket) => {
+    let upgraded = false;
+    let auth = "";
+    sock.on("data", (d: Uint8Array) => {
+      const text = new TextDecoder().decode(d);
+      if (!upgraded) {
+        upgraded = true;
+        auth = text.match(/authorization: ([^\r\n]+)/i)?.[1] ?? "(none)";
+        sock.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: SPDY/3.1\r\nConnection: Upgrade\r\n\r\n");
+        return;
+      }
+      sock.write(`echo[${auth}]:${text}`);
+    });
+    sock.on("error", () => {});
+  });
+  const ready = new Promise<number>((r) =>
+    server.listen(0, "localhost", () => r((server.address() as net.AddressInfo).port))
+  );
+  return { server, ready };
+}
+
+/** CONNECT + TLS to the proxy, send an Upgrade request, then `payload` after the 101. */
+function connectMitmUpgrade(
+  proxyPort: number,
+  targetPort: number,
+  downstreamCaPem: string,
+  payload: string,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const raw = net.connect(proxyPort, "127.0.0.1", () => {
+      raw.write(`CONNECT localhost:${targetPort} HTTP/1.1\r\nHost: localhost:${targetPort}\r\n\r\n`);
+    });
+    let acked = false;
+    raw.on("data", () => {
+      if (acked) return;
+      acked = true;
+      const t = tls.connect({ socket: raw, servername: "localhost", ca: [downstreamCaPem] }, () => {
+        t.write(
+          `POST /api/v1/pods/x/portforward HTTP/1.1\r\nHost: localhost\r\n` +
+            `Authorization: Bearer bough-proxy-placeholder\r\n` +
+            `Connection: Upgrade\r\nUpgrade: SPDY/3.1\r\n\r\n`,
+        );
+      });
+      let buf = "";
+      let sent = false;
+      t.on("data", (b: Uint8Array) => {
+        buf += new TextDecoder().decode(b);
+        if (!sent && buf.includes("101 Switching Protocols")) {
+          sent = true;
+          t.write(payload);
+        }
+        if (buf.includes(`:${payload}`) || buf.includes("403")) t.end();
+      });
+      t.on("close", () => resolve(buf));
+      t.on("error", reject);
+    });
+    raw.on("error", reject);
+  });
+}
+
+Deno.test("MITM upgrade: splices SPDY streams through, stamping the credential", async () => {
+  const ca = await makeCA();
+  const originCa = await makeCA();
+  const origin = fakeUpgradeOrigin(originCa);
+  const oport = await origin.ready;
+  const proxy = new ProxyServer({
+    ca,
+    gate: () => Promise.resolve(allow()),
+    upstreamCa: new Map([["localhost", originCa.caCertPem]]),
+    credentials: [{ host: "localhost", header: "authorization", value: "Bearer real-token" }],
+  });
+  await proxy.start();
+  try {
+    const out = await connectMitmUpgrade(proxy.port, oport, ca.caCertPem, "ping");
+    assertStringIncludes(out, "101 Switching Protocols");
+    assertStringIncludes(out, "echo[Bearer real-token]:ping"); // stamped, not the placeholder
+  } finally {
+    await proxy.stop();
+    origin.server.close();
+  }
+});
+
+Deno.test("MITM upgrade: deny answers 403 and never contacts the origin", async () => {
+  const ca = await makeCA();
+  const originCa = await makeCA();
+  const origin = fakeUpgradeOrigin(originCa);
+  const oport = await origin.ready;
+  const proxy = new ProxyServer({
+    ca,
+    gate: () => Promise.resolve(deny("no upgrades for you")),
+    upstreamCa: new Map([["localhost", originCa.caCertPem]]),
+  });
+  await proxy.start();
+  try {
+    const out = await connectMitmUpgrade(proxy.port, oport, ca.caCertPem, "ping");
+    assertStringIncludes(out, "403 Forbidden");
+    assertStringIncludes(out, "no upgrades for you");
+  } finally {
+    await proxy.stop();
+    origin.server.close();
+  }
+});

@@ -142,6 +142,21 @@ export class ProxyServer {
         cb(null, tls.createSecureContext({ key: leaf.key, cert: leaf.cert }));
       },
     });
+    // HTTP Upgrade (SPDY/WebSocket — kubectl exec/port-forward, argocd --core):
+    // gate + stamp like any request, then splice raw byte streams both ways; the
+    // 101 and everything after flow unparsed. Without this listener node closes
+    // upgrade connections (or #forward strips the Upgrade header and the origin
+    // rejects with "Upgrade request required").
+    this.#mitmHttp.on(
+      "upgrade",
+      (creq: http.IncomingMessage, socket: net.Socket, head: Uint8Array) => {
+        // deno-lint-ignore no-explicit-any
+        const sock = creq.socket as any;
+        const host = (sock.servername as string | undefined) ?? stripPort(creq.headers.host);
+        const port = (sock._parent?.__cpTargetPort as number | undefined) ?? 443;
+        this.#upgrade(creq, socket, head, host, port).catch(() => socket.destroy());
+      },
+    );
     this.#mitm.on(
       "secureConnection",
       (sock: unknown) => this.#mitmHttp.emit("connection", sock),
@@ -278,6 +293,82 @@ export class ProxyServer {
     });
     if (body.length) oreq.write(body);
     oreq.end();
+  }
+
+  /**
+   * Gate + splice an Upgrade request. The original request line + headers go
+   * upstream over a fresh TLS socket (credentials stamped; Connection/Upgrade
+   * preserved — the origin needs them), then bytes pipe both ways with no HTTP
+   * re-parsing. Denials answer with a plain 403 before any upgrade happens.
+   */
+  async #upgrade(
+    creq: http.IncomingMessage,
+    socket: net.Socket,
+    head: Uint8Array,
+    host: string,
+    port: number,
+  ): Promise<void> {
+    socket.on("error", () => socket.destroy());
+    const gateReq: GateRequest = {
+      host,
+      method: creq.method ?? "GET",
+      path: creq.url ?? "/",
+      headers: flatHeaders(creq.headers),
+      body: new Uint8Array(),
+    };
+    let decision: Decision;
+    try {
+      decision = await this.#opts.gate(gateReq, { sessionId: this.#opts.sessionId });
+    } catch {
+      socket.destroy();
+      return;
+    }
+    if (decision.verdict !== "allow") {
+      socket.end(
+        `HTTP/1.1 403 Forbidden\r\ncontent-type: text/plain\r\nconnection: close\r\n\r\n` +
+          `Blocked by Claw Patrol: ${decision.reason}\n`,
+      );
+      return;
+    }
+    if (socket.destroyed) return; // client gave up while the hold sat unanswered
+
+    // Lowercased keys so a stamped credential REPLACES the client's header instead
+    // of serializing alongside it. Keep connection/upgrade; drop proxy noise.
+    const headers: Record<string, string> = {};
+    for (const [k, v] of Object.entries(flatHeaders(creq.headers))) {
+      const lk = k.toLowerCase();
+      if (lk === "proxy-connection" || lk === "keep-alive") continue;
+      headers[lk] = v;
+    }
+    for (const cred of this.#opts.credentials ?? []) {
+      if (!hostMatches(host, [cred.host])) continue;
+      try {
+        headers[cred.header.toLowerCase()] = typeof cred.value === "string"
+          ? cred.value
+          : await cred.value();
+      } catch {
+        socket.destroy();
+        return;
+      }
+    }
+
+    const extraCa = this.#opts.upstreamCa?.get(host);
+    const up = tls.connect({
+      host,
+      port,
+      servername: host,
+      ...(extraCa ? { ca: [tls.rootCertificates.join("\n"), extraCa].join("\n") } : {}),
+    });
+    up.on("secureConnect", () => {
+      const lines = [`${creq.method} ${creq.url ?? "/"} HTTP/1.1`];
+      for (const [k, v] of Object.entries(headers)) lines.push(`${k}: ${v}`);
+      up.write(lines.join("\r\n") + "\r\n\r\n");
+      if (head?.length) up.write(head);
+      up.pipe(socket);
+      socket.pipe(up);
+    });
+    up.on("error", () => socket.destroy());
+    socket.on("close", () => up.destroy());
   }
 
   #deny(cres: http.ServerResponse, reason: string): void {
