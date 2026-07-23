@@ -358,6 +358,10 @@ cmd_update() {
     echo "==> installing typescript-language-server + typescript@5 (npm global)"
     npm install -g typescript-language-server typescript@5
   fi
+  if ! command -v basedpyright-langserver >/dev/null; then
+    echo "==> installing basedpyright (Python LSP server, npm global)"
+    npm install -g basedpyright
+  fi
 
   # shellcheck source=/dev/null
   . "$ROOT/scripts/worker-model.sh"
