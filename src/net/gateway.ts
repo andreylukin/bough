@@ -30,6 +30,7 @@ import { caTrustCommand, isCaTrusted } from "./catrust.ts";
 import { augmentCloudPolicy, type KubeSetup, setupKube } from "./cloud.ts";
 import { type ArgocdSetup, setupArgocd } from "./argocd.ts";
 import { type GcxSetup, setupGcx } from "./grafana.ts";
+import { type GithubSetup, setupGithub } from "./github.ts";
 import { loadConfig, type NetConfig, resolveConfig, toPolicy } from "./config.ts";
 import { resolveCredentials } from "./credentials.ts";
 import { brokerEnv } from "./execcred.ts";
@@ -93,9 +94,9 @@ async function resolveAwsRegion(): Promise<string | undefined> {
 /** Useless placeholder token; the proxy overwrites the header with the real PAT. */
 const GH_SENTINEL = "__bough_github_pat__";
 
-/** GH_TOKEN/GITHUB_TOKEN sentinel iff the session has a github credential binding. */
-function githubSentinelEnv(config: NetConfig): Record<string, string> {
-  const hasGithub = config.credentials.some((c) =>
+/** GH_TOKEN/GITHUB_TOKEN sentinel iff a github credential binding or the host gh login exists. */
+function githubSentinelEnv(config: NetConfig, hostAuth: boolean): Record<string, string> {
+  const hasGithub = hostAuth || config.credentials.some((c) =>
     c.host === "github.com" || c.host === "api.github.com" || c.host.endsWith(".github.com")
   );
   return hasGithub ? { GH_TOKEN: GH_SENTINEL, GITHUB_TOKEN: GH_SENTINEL } : {};
@@ -128,6 +129,8 @@ export class ClawpatrolGateway {
   #kube?: KubeSetup;
   #argocd?: ArgocdSetup;
   #gcx?: GcxSetup;
+  // Host gh login stamped on github hosts (github.ts) — no PAT setup needed.
+  #github?: GithubSetup;
   // Host default AWS region, injected into guest env — a VM guest has no ~/.aws
   // at all, and a regionless CLI makes agents guess (and sweep) regions.
   #awsRegion?: string;
@@ -240,6 +243,12 @@ export class ClawpatrolGateway {
     if (this.#gcx) {
       console.log(`[clawpatrol] gcx: ${gcxHosts.length} grafana host(s) trusted + token-stamped`);
     }
+    // github: the operator's own gh login, stamped at the proxy (writes stay
+    // gated by the github verb rules; this only authenticates what's allowed).
+    this.#github = await setupGithub();
+    if (this.#github) {
+      console.log(`[clawpatrol] github: host gh login found — github.com token-stamped`);
+    }
     const kubeHosts = this.#kube?.hosts ?? [];
     if (this.#kube) {
       console.log(`[clawpatrol] kubectl: ${kubeHosts.length} cluster host(s) trusted + gated`);
@@ -318,14 +327,19 @@ export class ClawpatrolGateway {
         // resolved config (env-var tokens, read per request) plus the kube exec creds
         // (aws eks get-token, ...) and the argocd server token. The sandbox's
         // kubeconfig/tools carry no auth — the proxy is the sole credential holder.
-        credentials: resolveCredentials(
-          resolveConfig(this.#db, key || undefined).config,
-          [
-            ...(this.#kube?.credentials ?? []),
-            ...(this.#argocd?.credentials ?? []),
-            ...(this.#gcx?.credentials ?? []),
-          ],
-        ),
+        credentials: [
+          // Host gh login first: the proxy stamps in order and later wins, so an
+          // explicit github bundle binding (or kube/argocd/gcx rule) overrides it.
+          ...(this.#github?.credentials ?? []),
+          ...resolveCredentials(
+            resolveConfig(this.#db, key || undefined).config,
+            [
+              ...(this.#kube?.credentials ?? []),
+              ...(this.#argocd?.credentials ?? []),
+              ...(this.#gcx?.credentials ?? []),
+            ],
+          ),
+        ],
       });
       starting = proxy.start().then(() => {
         this.#starting.delete(key);
@@ -378,7 +392,7 @@ export class ClawpatrolGateway {
       // token to send an authenticated request at all — the proxy overwrites the
       // Authorization header with the real PAT for github hosts. The sentinel itself
       // is useless (fails closed at github if the MITM is ever bypassed).
-      ...githubSentinelEnv(resolveConfig(this.#db, sessionId).config),
+      ...githubSentinelEnv(resolveConfig(this.#db, sessionId).config, this.#github !== undefined),
       // kubectl/AWS: the durable creds stay host-side. In the VM the CA is baked into
       // the guest trust store, the rewritten kubeconfig is baked into the golden at
       // GUEST_KUBECONFIG, and the AWS broker URI stays on loopback — a socat bridge
