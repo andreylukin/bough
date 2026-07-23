@@ -195,6 +195,12 @@ export function rewriteKubeconfig(text: string, boughCaPem: string, baseDir = ""
     if (token && name) tokenByUser.set(name, token);
     delete user.token;
     delete user.tokenFile;
+
+    // A credential-less user makes kubectl prompt interactively for basic auth
+    // before sending any request. Leave a placeholder bearer so the request
+    // always goes out — the proxy overwrites Authorization with the real
+    // minted credential on the wire (proxy.ts stamps unconditionally).
+    if (!user.username && !user["auth-provider"]) user.token = "bough-proxy-placeholder";
   }
 
   // Pair users with clusters via contexts (first pairing per host wins — matches

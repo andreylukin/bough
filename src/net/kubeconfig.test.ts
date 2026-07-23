@@ -58,6 +58,14 @@ Deno.test("rewrite: exec auth is lifted out — stripped from the sandbox copy, 
   }]);
 });
 
+Deno.test("rewrite: stripped users keep a placeholder bearer (a bare user makes kubectl prompt for a username)", () => {
+  const { rewritten } = rewriteKubeconfig(eksConfig(), BOUGH_CA);
+  const doc = parse(rewritten) as { users: { user: Record<string, string> }[] };
+  // The real credential is gone, but kubectl must still send the request —
+  // the proxy overwrites Authorization with the minted token on the wire.
+  assertEquals(doc.users[0].user.token, "bough-proxy-placeholder");
+});
+
 Deno.test("rewrite: exec env flattens to a map; static bearer is lifted host-side, stripped from the copy", () => {
   const cfg = [
     "clusters:",
