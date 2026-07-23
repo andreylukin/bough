@@ -74,3 +74,4 @@ deno task tui     # the terminal UI against the local server
 ```
 
 `bench/` A/B-tests the harness against Claude Code on a fixed task bank; `probes/` measures TUI responsiveness against the live server. More in `docs/`.
+<!-- guest-owned workspace live push test 2026-07-23 -->
