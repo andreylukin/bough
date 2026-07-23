@@ -108,9 +108,13 @@ export function setupKube(boughCaPem: string, dir = netDir()): KubeSetup | undef
  * already in force (a non-empty allowHosts) — an empty allowHosts means "allow every
  * host", so adding entries there would wrongly flip it into allowlist mode.
  */
-export function augmentCloudPolicy(pol: Policy, kubeHosts: readonly string[]): Policy {
+export function augmentCloudPolicy(
+  pol: Policy,
+  kubeHosts: readonly string[],
+  trustedHosts: readonly string[] = [],
+): Policy {
   const allowHosts = pol.allowHosts.size > 0
-    ? new Set([...pol.allowHosts, AWS_HOST_SUFFIX, ...kubeHosts])
+    ? new Set([...pol.allowHosts, AWS_HOST_SUFFIX, ...kubeHosts, ...trustedHosts])
     : pol.allowHosts;
   return {
     ...pol,

@@ -28,6 +28,7 @@ import { createGate, type Gate } from "./gate.ts";
 import { PluginHost, type PluginInfo, type RequestSample, specFromRequests } from "./plugins.ts";
 import { caTrustCommand, isCaTrusted } from "./catrust.ts";
 import { augmentCloudPolicy, type KubeSetup, setupKube } from "./cloud.ts";
+import { ARGOCD_SENTINEL, type ArgocdSetup, setupArgocd } from "./argocd.ts";
 import { loadConfig, type NetConfig, resolveConfig, toPolicy } from "./config.ts";
 import { resolveCredentials } from "./credentials.ts";
 import { brokerEnv } from "./execcred.ts";
@@ -107,6 +108,7 @@ export class ClawpatrolGateway {
   #caTrusted?: boolean;
   // kubectl integration: rewritten kubeconfig + per-cluster upstream CA (cloud.ts).
   #kube?: KubeSetup;
+  #argocd?: ArgocdSetup;
   // Live listeners keyed by sessionId ("" = a caller with no session, e.g. tests).
   #proxies = new Map<string, ProxyServer>();
   // In-flight starts, so concurrent tool calls in one turn share one listener.
@@ -201,6 +203,13 @@ export class ClawpatrolGateway {
     // and learn each cluster's real CA for upstream trust (cloud.ts). aws needs no
     // rewrite — AWS_CA_BUNDLE (ca.caEnv) + public roots cover it.
     this.#kube = setupKube(this.#ca.caCertPem);
+    // argocd server mode: host-held token stamped by the proxy; the sandbox gets
+    // ARGOCD_SERVER + a placeholder token (argocd.ts). No CA rewrite needed.
+    this.#argocd = setupArgocd();
+    const argoHosts = this.#argocd?.hosts ?? [];
+    if (this.#argocd) {
+      console.log(`[clawpatrol] argocd: ${argoHosts.length} server(s) trusted + token-stamped`);
+    }
     const kubeHosts = this.#kube?.hosts ?? [];
     if (this.#kube) {
       console.log(`[clawpatrol] kubectl: ${kubeHosts.length} cluster host(s) trusted + gated`);
@@ -214,11 +223,11 @@ export class ClawpatrolGateway {
     // Trust + classify the cloud CLI hosts (k8s clusters + *.amazonaws.com) on every
     // compiled policy, so reads flow and only writes gate — see cloud.augmentCloudPolicy.
     const compile = (sessionId?: string) =>
-      augmentCloudPolicy(toPolicy(resolveConfig(this.#db, sessionId).config), kubeHosts);
+      augmentCloudPolicy(toPolicy(resolveConfig(this.#db, sessionId).config), kubeHosts, argoHosts);
     this.#gate = createGate({
       db: this.#db,
       bus: this.#bus,
-      policy: augmentCloudPolicy(toPolicy(loadConfig()), kubeHosts),
+      policy: augmentCloudPolicy(toPolicy(loadConfig()), kubeHosts, argoHosts),
       // Branch policy: a session's own net_policies row, else the nearest
       // ancestor's, else the global rule set (config.ts resolveConfig).
       resolve: compile,
@@ -276,11 +285,11 @@ export class ClawpatrolGateway {
         upstreamCa: this.#kube?.upstreamCa,
         // All host-side credential injection for this session: bundle bindings from the
         // resolved config (env-var tokens, read per request) plus the kube exec creds
-        // (aws eks get-token, ...). The sandbox's kubeconfig/tools carry no auth — the
-        // proxy is the sole credential holder (credentials.ts).
+        // (aws eks get-token, ...) and the argocd server token. The sandbox's
+        // kubeconfig/tools carry no auth — the proxy is the sole credential holder.
         credentials: resolveCredentials(
           resolveConfig(this.#db, key || undefined).config,
-          this.#kube?.credentials,
+          [...(this.#kube?.credentials ?? []), ...(this.#argocd?.credentials ?? [])],
         ),
       });
       starting = proxy.start().then(() => {
@@ -341,6 +350,16 @@ export class ClawpatrolGateway {
           ...(this.#kube ? { KUBECONFIG: GUEST_KUBECONFIG, KUBECACHEDIR: GUEST_KUBECACHE } : {}),
           ...brokerEnv(),
           AWS_CA_BUNDLE: GUEST_CA_BUNDLE,
+          // argocd server mode: placeholder token (proxy stamps the real one);
+          // grpc-web = plain HTTPS unary calls, which survive the MITM. Core
+          // mode is not usable in the guest (SPDY port-forward).
+          ...(this.#argocd
+            ? {
+              ARGOCD_SERVER: this.#argocd.server,
+              ARGOCD_AUTH_TOKEN: ARGOCD_SENTINEL,
+              ARGOCD_OPTS: "--grpc-web",
+            }
+            : {}),
         }
         : {
           // kubectl reads clusters from KUBECONFIG; point it at the CA-rewritten copy so
