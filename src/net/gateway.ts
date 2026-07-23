@@ -28,7 +28,7 @@ import { createGate, type Gate } from "./gate.ts";
 import { PluginHost, type PluginInfo, type RequestSample, specFromRequests } from "./plugins.ts";
 import { caTrustCommand, isCaTrusted } from "./catrust.ts";
 import { augmentCloudPolicy, type KubeSetup, setupKube } from "./cloud.ts";
-import { ARGOCD_SENTINEL, type ArgocdSetup, setupArgocd } from "./argocd.ts";
+import { type ArgocdSetup, setupArgocd } from "./argocd.ts";
 import { loadConfig, type NetConfig, resolveConfig, toPolicy } from "./config.ts";
 import { resolveCredentials } from "./credentials.ts";
 import { brokerEnv } from "./execcred.ts";
@@ -350,16 +350,10 @@ export class ClawpatrolGateway {
           ...(this.#kube ? { KUBECONFIG: GUEST_KUBECONFIG, KUBECACHEDIR: GUEST_KUBECACHE } : {}),
           ...brokerEnv(),
           AWS_CA_BUNDLE: GUEST_CA_BUNDLE,
-          // argocd server mode: placeholder token (proxy stamps the real one);
-          // grpc-web = plain HTTPS unary calls, which survive the MITM. Core
-          // mode is not usable in the guest (SPDY port-forward).
-          ...(this.#argocd
-            ? {
-              ARGOCD_SERVER: this.#argocd.server,
-              ARGOCD_AUTH_TOKEN: ARGOCD_SENTINEL,
-              ARGOCD_OPTS: "--grpc-web",
-            }
-            : {}),
+          // argocd: use --core (kube API + the upgrade passthrough) — the CLI's
+          // server mode ignores HTTPS_PROXY and dials the origin directly, which
+          // the egress lockdown refuses. The argocd hosts stay trusted + token-
+          // stamped (argocd.ts) so raw HTTPS (curl) to the argocd API still works.
         }
         : {
           // kubectl reads clusters from KUBECONFIG; point it at the CA-rewritten copy so

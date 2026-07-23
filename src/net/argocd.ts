@@ -1,24 +1,22 @@
 /**
- * Argo CD CLI integration — make `argocd` work from the sandbox in SERVER mode
- * without the auth token ever entering it. The operator logs in on the host as
- * usual (`argocd login <server> --sso`); the CLI stores a bearer token in
- * `~/.config/argocd/config`. The sandbox gets only ARGOCD_SERVER plus a useless
- * placeholder ARGOCD_AUTH_TOKEN, and the proxy overwrites Authorization with the
- * host token on the wire (same pattern as the GitHub PAT and EKS exec tokens).
+ * Argo CD integration — the sandbox path for `argocd` is CORE mode
+ * (`argocd --core`): it rides the kube API through the proxy, including the
+ * SPDY port-forward via the Upgrade passthrough (proxy.ts #upgrade). The
+ * argocd CLI's own server mode is a dead end in the sandbox — its transport
+ * ignores HTTPS_PROXY, dials the origin directly, and the egress lockdown
+ * refuses it — so no ARGOCD_* env is injected.
  *
- * The token provider re-reads the config on every mint, so a host-side re-login
- * (SSO expiry) takes effect without a server restart. Server mode over
- * `--grpc-web` is plain HTTPS unary POSTs, which the MITM proxy handles; core
- * mode is NOT usable from the sandbox (its kube port-forward needs a SPDY
- * upgrade the proxy doesn't pass).
+ * This module additionally trusts the operator's argocd server hosts and
+ * stamps their Authorization from the host `~/.config/argocd/config` token
+ * (same pattern as the GitHub PAT), so raw HTTPS (curl) against the argocd
+ * REST API works from the sandbox without the token ever entering it. The
+ * token is re-read per mint, so a host-side re-login (`argocd login --sso`)
+ * takes effect without a server restart.
  */
 import { parse } from "@std/yaml";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CredentialRule } from "./proxy.ts";
-
-/** Placeholder the sandbox holds; fails closed if the MITM is ever bypassed. */
-export const ARGOCD_SENTINEL = "__bough_argocd_token__";
 
 interface ArgocdLocalConfig {
   "current-context"?: string;
