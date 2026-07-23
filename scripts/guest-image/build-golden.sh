@@ -79,12 +79,17 @@ log "create + start build machine $MACHINE on $BASE_IMAGE"
 #    If any package is unavailable on some future base, apk fails loudly here.
 # ---------------------------------------------------------------------------
 log "apk add toolchain"
+# Base = the tools agents actually reach for (mined from Claude/bough history):
+# runtimes + build chain, then the everyday CLI layer (bash itself — the bash
+# tool writes bashisms; ash breaks them), curl, jq/yq, ripgrep/fd, sqlite,
+# expect, archive + inspection utilities.
 "$SMOLVM" machine exec --name "$MACHINE" -- sh -c '
   set -e
   apk update
   apk add --no-cache \
-    git deno nodejs npm python3 build-base socat \
-    ca-certificates openssl coreutils
+    git deno nodejs npm python3 py3-pip build-base socat \
+    ca-certificates openssl coreutils \
+    bash curl jq yq-go ripgrep fd sqlite expect file tree unzip zip
 '
 
 # ---------------------------------------------------------------------------
@@ -238,7 +243,9 @@ tar xf "$LAYER_TAR" -C "$OUT_DIR"
 log "verify baked contents"
 MISSING=""
 for b in usr/bin/git usr/bin/deno usr/bin/node usr/bin/npm \
-         usr/bin/python3 usr/bin/gcc usr/bin/socat usr/bin/openssl; do
+         usr/bin/python3 usr/bin/gcc usr/bin/socat usr/bin/openssl \
+         bin/bash usr/bin/curl usr/bin/jq usr/bin/yq usr/bin/rg \
+         usr/bin/fd usr/bin/sqlite3 usr/bin/expect; do
   if [ -e "$OUT_DIR/$b" ]; then echo "OK   $b"; else echo "MISS $b"; MISSING="$MISSING $b"; fi
 done
 for b in $BIN_NAMES; do
