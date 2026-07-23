@@ -58,6 +58,7 @@ import { setWorkerChoice, WORKER_OPTIONS, workerChoice } from "../worker/frontie
 import { SuggestBody, suggestNextStep } from "../worker/suggest.ts";
 import { sessionMetrics } from "../metrics.ts";
 import { normalizeWorkspace, prepareWorkspace, workspaceProblem } from "../supervisor/workspace.ts";
+import { teardownVm } from "../sandbox/vmsession.ts";
 import { UNTITLED } from "../supervisor/title.ts";
 import { listSkills } from "../supervisor/skills.ts";
 import { grantedDirs, searchDirectories, searchWorkspaceFiles } from "./files.ts";
@@ -455,6 +456,9 @@ const archiveSession: Handler = (_req, ctx, params) => {
   // also expires its parked net holds and reaps its proxy (gateway's turn.finished).
   interruptTurn(params.id);
   ctx.db.archiveSession(params.id);
+  // Tear down the session's sandbox VM (persists across turns, unlike the proxy).
+  // Best-effort + idempotent; no-op when the VM backend isn't in use.
+  void teardownVm(params.id);
   ctx.bus.publish({
     type: "session.archived",
     sessionId: params.id,

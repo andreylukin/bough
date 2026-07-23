@@ -22,6 +22,8 @@
 import { join } from "node:path";
 import { caEnv, CertAuthority } from "./ca.ts";
 import { ProxyServer } from "./proxy.ts";
+import { gateHostIp } from "../sandbox/gatehost.ts";
+import { sandboxVm } from "../sandbox/vmsession.ts";
 import { createGate, type Gate } from "./gate.ts";
 import { PluginHost, type PluginInfo, type RequestSample, specFromRequests } from "./plugins.ts";
 import { caTrustCommand, isCaTrusted } from "./catrust.ts";
@@ -256,6 +258,9 @@ export class ClawpatrolGateway {
         ca: this.#ca!,
         gate: (req, opts) => gate.gate(req, opts),
         sessionId: key || undefined,
+        // VM backend: bind the gate host so the guest can reach it (loopback is the
+        // guest's own, not the host's). `proxy.url` then advertises that address.
+        host: sandboxVm() ? gateHostIp() : undefined,
         // Trust each k8s cluster's private CA when re-originating (EKS serving certs
         // aren't public-rooted). Empty/absent for everyone else = default trust.
         upstreamCa: this.#kube?.upstreamCa,
@@ -310,24 +315,25 @@ export class ClawpatrolGateway {
       // ${BOUGH_PORT:-4321} shell-default form breaks inside the JS template
       // literals run_steps programs are written in.
       BOUGH_PORT: Deno.env.get("BOUGH_PORT") ?? "4321",
-      // kubectl reads clusters from KUBECONFIG; point it at the CA-rewritten copy so
-      // it trusts the proxy's leaf. Absent when there's no kubeconfig to rewrite.
-      // KUBECACHEDIR moves kubectl's discovery/HTTP cache off ~/.kube/cache (which
-      // Seatbelt denies wholesale — ~/.kube is credential-adjacent) into a
-      // per-session temp dir the write-allow already covers.
-      ...(this.#kube
-        ? { KUBECONFIG: this.#kube.configPath, KUBECACHEDIR: kubeCacheDir(sessionId ?? "") }
-        : {}),
-      // AWS read-only creds via the local broker (container-credentials protocol).
-      // Direct-to-loopback (NO_PROXY covers 127.0.0.1); absent unless configured.
-      // The sandbox gets the RO `/aws` endpoint (no admin rewrite).
-      ...brokerEnv(),
       // GitHub sentinel: when a github credential binding is installed, gh needs *a*
       // token to send an authenticated request at all — the proxy overwrites the
       // Authorization header with the real PAT for github hosts. The sentinel itself
       // is useless (fails closed at github if the MITM is ever bypassed).
       ...githubSentinelEnv(resolveConfig(this.#db, sessionId).config),
-      ...caEnv(this.#ca.caCertPath),
+      // Host-path / loopback env is meaningful only for a host-side (Seatbelt) child.
+      // In the VM guest the CA is baked into the trust store (so no caEnv), and the
+      // kube/broker host paths and loopback aren't reachable — kubectl/AWS get their
+      // own guest-side delivery (kubeconfig/CA into the guest, broker on the gate IP).
+      ...(sandboxVm() ? {} : {
+        // kubectl reads clusters from KUBECONFIG; point it at the CA-rewritten copy so
+        // it trusts the proxy's leaf. Absent when there's no kubeconfig to rewrite.
+        ...(this.#kube
+          ? { KUBECONFIG: this.#kube.configPath, KUBECACHEDIR: kubeCacheDir(sessionId ?? "") }
+          : {}),
+        // AWS read-only creds via the local broker (container-credentials protocol).
+        ...brokerEnv(),
+        ...caEnv(this.#ca.caCertPath),
+      }),
     };
   }
 }

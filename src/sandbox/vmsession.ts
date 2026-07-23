@@ -8,12 +8,26 @@
  * The host worktree is the same filesystem the in-process file tools (read/write/
  * edit) operate on, so bash-in-guest and the host-side file tools see one workspace.
  */
-import { createSession, exec, type ExecOpts, type ExecResult, remove } from "./vm.ts";
+import {
+  createSession,
+  exec,
+  execArgs,
+  type ExecOpts,
+  type ExecResult,
+  remove,
+  smolvmBin,
+} from "./vm.ts";
 import { gateHostIp } from "./gatehost.ts";
 import { join } from "node:path";
 
 /** Guest mount point for the session's host workspace. Bash's cwd. */
 export const GUEST_WORKSPACE = "/workspace";
+
+/** Whether the VM sandbox backend is active (opt-in during the seatbelt→VM cutover;
+ *  becomes the default once seatbelt is removed). */
+export function sandboxVm(): boolean {
+  return Deno.env.get("BOUGH_SANDBOX_VM") === "1";
+}
 
 /** The golden rootfs directory (`--image`): $BOUGH_GOLDEN_DIR, else ~/.bough/golden-rootfs. */
 export function goldenDir(): string {
@@ -83,6 +97,19 @@ export function execIn(
   opts?: ExecOpts,
 ): Promise<ExecResult> {
   return exec(machineName(sessionId), argv, opts);
+}
+
+/**
+ * The full command vector — `[smolvmBin, machine, exec, …, --, …argv]` — to run
+ * `argv` in the session's VM. For callers (bash.ts) that spawn the child with their
+ * own streaming / background / kill machinery. `ensureVm` must have run first.
+ */
+export function execCommand(
+  sessionId: string,
+  argv: string[],
+  opts?: ExecOpts,
+): string[] {
+  return [smolvmBin(), ...execArgs(machineName(sessionId), argv, opts)];
 }
 
 /** Whether the session currently has a live VM (no smolvm call). */

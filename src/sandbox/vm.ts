@@ -143,14 +143,26 @@ export async function exec(
   argv: string[],
   opts?: ExecOpts,
 ): Promise<ExecResult> {
+  const pre = execArgs(sid, argv, opts);
+  if (opts?.stream) pre.push("--stream");
+  if (!opts?.stream) return await cli(pre, opts?.signal);
+  return await execStreaming(pre, opts.stream, opts?.signal);
+}
+
+/** The `machine exec` argument vector (no `--stream`) for running `argv` in `sid`.
+ *  Callers that spawn the child themselves (bash.ts reuses its own streaming/bg/
+ *  kill machinery) prepend {@link smolvmBin}. */
+export function execArgs(sid: string, argv: string[], opts?: ExecOpts): string[] {
   const pre = ["machine", "exec", "--name", sid];
   if (opts?.cwd) pre.push("-w", opts.cwd);
   pre.push(...envFlags(opts?.env));
-  if (opts?.stream) pre.push("--stream");
   pre.push("--", ...argv);
+  return pre;
+}
 
-  if (!opts?.stream) return await cli(pre, opts?.signal);
-  return await execStreaming(pre, opts.stream, opts?.signal);
+/** The resolved smolvm binary (for callers building their own child process). */
+export function smolvmBin(): string {
+  return bin();
 }
 
 /** Spawn `machine exec --stream`, forward each stdout line to `onLine`, and
