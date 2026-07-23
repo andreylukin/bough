@@ -61,6 +61,9 @@ export interface ExecOpts {
    *  arrives (the long-running / background variant, mirroring ctx.onLog). The
    *  promise still resolves with the full accumulated result. */
   stream?: (line: string) => void;
+  /** The turn's interrupt. On abort we kill the host `machine exec` child (which
+   *  detaches the guest command); mirrors bash.ts threading ctx.signal. */
+  signal?: AbortSignal;
 }
 
 const dec = new TextDecoder();
@@ -68,12 +71,13 @@ const enc = new TextEncoder();
 
 /** Run the smolvm CLI, capturing output. Never throws on non-zero exit — the
  *  caller decides (a failed guest command is data, like a non-zero shell exit). */
-async function cli(args: string[]): Promise<ExecResult> {
+async function cli(args: string[], signal?: AbortSignal): Promise<ExecResult> {
   const { code, stdout, stderr } = await new Deno.Command(bin(), {
     args,
     stdin: "null",
     stdout: "piped",
     stderr: "piped",
+    signal,
   }).output();
   return { code, stdout: dec.decode(stdout), stderr: dec.decode(stderr) };
 }
@@ -145,8 +149,8 @@ export async function exec(
   if (opts?.stream) pre.push("--stream");
   pre.push("--", ...argv);
 
-  if (!opts?.stream) return await cli(pre);
-  return await execStreaming(pre, opts.stream);
+  if (!opts?.stream) return await cli(pre, opts?.signal);
+  return await execStreaming(pre, opts.stream, opts?.signal);
 }
 
 /** Spawn `machine exec --stream`, forward each stdout line to `onLine`, and
@@ -154,12 +158,14 @@ export async function exec(
 async function execStreaming(
   args: string[],
   onLine: (line: string) => void,
+  signal?: AbortSignal,
 ): Promise<ExecResult> {
   const child = new Deno.Command(bin(), {
     args,
     stdin: "null",
     stdout: "piped",
     stderr: "piped",
+    signal,
   }).spawn();
 
   const outChunks: string[] = [];
@@ -200,25 +206,43 @@ export async function readFile(sid: string, path: string): Promise<Uint8Array> {
   return Uint8Array.from(atob(r.stdout.replace(/\s+/g, "")), (c) => c.charCodeAt(0));
 }
 
+/** base64 without spreading the byte array (a spread blows the call stack on
+ *  large inputs) and without embedded newlines. */
+function b64encode(bytes: Uint8Array): string {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(bin);
+}
+
+/** Max base64 chars per `machine exec` call — bounded well under ARG_MAX so the
+ *  embedded-in-argv command never overflows; larger files stream in chunks. */
+const WRITE_CHUNK = 96 * 1024;
+
 /**
- * Write bytes (or a UTF-8 string) to a guest file, via base64 embedded in the
- * command string (no stdin plumbing through `machine exec`). Fine for the file
- * sizes the file tools deal in; very large payloads would hit ARG_MAX.
+ * Write bytes (or a UTF-8 string) to a guest file, base64-embedded in the command
+ * (no stdin plumbing through `machine exec`). Large payloads are split into
+ * ARG_MAX-safe chunks: the first truncates the target, the rest append.
  */
 export async function writeFile(
   sid: string,
   path: string,
   data: Uint8Array | string,
 ): Promise<void> {
-  const bytes = typeof data === "string" ? enc.encode(data) : data;
-  const b64 = btoa(String.fromCharCode(...bytes));
-  const r = await exec(sid, [
-    "/bin/sh",
-    "-c",
-    `echo ${shq(b64)} | base64 -d > ${shq(path)}`,
-  ]);
-  if (r.code !== 0) {
-    throw new Error(`writeFile ${path} failed (${r.code}): ${r.stderr.trim()}`);
+  const b64 = b64encode(typeof data === "string" ? enc.encode(data) : data);
+  const qp = shq(path);
+  for (let off = 0, first = true; off < b64.length || first; off += WRITE_CHUNK, first = false) {
+    const part = b64.slice(off, off + WRITE_CHUNK);
+    const redir = off === 0 ? ">" : ">>";
+    const r = await exec(sid, [
+      "/bin/sh",
+      "-c",
+      `printf %s ${shq(part)} | base64 -d ${redir} ${qp}`,
+    ]);
+    if (r.code !== 0) {
+      throw new Error(`writeFile ${path} failed (${r.code}): ${r.stderr.trim()}`);
+    }
   }
 }
 

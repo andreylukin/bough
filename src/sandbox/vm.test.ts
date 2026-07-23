@@ -71,6 +71,15 @@ Deno.test({
       const back = await readFile(sid, "/root/rt.txt");
       assertEquals(back, payload);
 
+      // 3b. a large payload (> the write chunk) exercises multi-chunk writeFile
+      //     (append path) and proves the base64 group alignment holds.
+      const big = new Uint8Array(200_000);
+      for (let i = 0; i < big.length; i++) big[i] = (i * 7 + 13) & 0xff;
+      await writeFile(sid, "/root/big.bin", big);
+      const bigBack = await readFile(sid, "/root/big.bin");
+      assertEquals(bigBack.length, big.length);
+      assertEquals(bigBack, big);
+
       // 4a. ro mount is readable from the guest...
       const roRead = await exec(sid, ["cat", "/mnt/ro/seed.txt"]);
       assertEquals(roRead.code, 0, roRead.stderr);
