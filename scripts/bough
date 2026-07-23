@@ -134,7 +134,8 @@ wait_up() {
 # What launchd executes (also handy for a manual foreground run). launchd starts
 # with a bare environment, so put Homebrew on PATH for deno/git/llama-server.
 cmd_run() {
-  export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+  # ~/.local/bin: smolvm's installer target — the VM sandbox backend needs it.
+  export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"
   if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
     # Exit 0 so launchd doesn't relaunch-loop while the machine is unconfigured.
     echo "ANTHROPIC_API_KEY is not set — put it in $ENV_FILE; not starting"
@@ -206,6 +207,60 @@ cmd_restart() {
     wait_up
   else
     cmd_start
+  fi
+}
+
+# VM sandbox setup: smolvm + the golden guest rootfs the server boots sessions
+# from. Runs on every update; a no-op when both are present and fresh. The golden
+# is stamped with a fingerprint of its inputs (build script, Claw Patrol CA,
+# kubeconfig) so it rebuilds exactly when one of them changes.
+GOLDEN_DIR="$BOUGH_HOME/golden-rootfs"
+GOLDEN_STAMP="$GOLDEN_DIR/.bough-golden-stamp"
+
+golden_fingerprint() {
+  shasum -a 256 "$ROOT/scripts/guest-image/build-golden.sh" 2>/dev/null | cut -d' ' -f1 || true
+  shasum -a 256 "$BOUGH_HOME/net/ca/ca.crt" 2>/dev/null | cut -d' ' -f1 || true
+  shasum -a 256 "$BOUGH_HOME/net/kubeconfig" 2>/dev/null | cut -d' ' -f1 || true
+}
+
+ensure_vm_sandbox() {
+  if [ -n "$AGENT_USER" ]; then
+    echo "==> agent-user mode: VM sandbox setup not automated yet — build the golden as $AGENT_USER:"
+    echo "    sudo -u $AGENT_USER BOUGH_HOME=$BOUGH_HOME $ROOT/scripts/guest-image/build-golden.sh --out $GOLDEN_DIR"
+    return 0
+  fi
+
+  export PATH="$HOME/.local/bin:$PATH"
+  local smolvm="${BOUGH_SMOLVM_BIN:-smolvm}"
+  if ! command -v "$smolvm" >/dev/null; then
+    echo "==> installing smolvm (VM sandbox backend)"
+    curl -sSL https://smolmachines.com/install.sh | bash
+    if ! command -v "$smolvm" >/dev/null; then
+      echo "WARNING: smolvm install failed — sandboxed bash will run UNSANDBOXED until it's installed" >&2
+      return 0
+    fi
+  fi
+
+  local want
+  want="$(golden_fingerprint)"
+  if [ -d "$GOLDEN_DIR" ] && [ "$(cat "$GOLDEN_STAMP" 2>/dev/null)" = "$want" ]; then
+    echo "==> golden rootfs up to date ($GOLDEN_DIR)"
+    return 0
+  fi
+  [ -f "$BOUGH_HOME/net/ca/ca.crt" ] ||
+    echo "note: no Claw Patrol CA at $BOUGH_HOME/net/ca/ca.crt yet (first server start creates it) — golden gets a throwaway CA and will rebuild on the next update"
+  echo "==> building golden guest rootfs -> $GOLDEN_DIR (a few minutes; needs network)"
+  # Build to a staging dir and swap on success, so a failed build never
+  # destroys a working golden.
+  rm -rf "$GOLDEN_DIR.new"
+  if BOUGH_HOME="$BOUGH_HOME" sh "$ROOT/scripts/guest-image/build-golden.sh" --out "$GOLDEN_DIR.new"; then
+    printf '%s\n' "$want" > "$GOLDEN_DIR.new/.bough-golden-stamp"
+    rm -rf "$GOLDEN_DIR"
+    mv "$GOLDEN_DIR.new" "$GOLDEN_DIR"
+  else
+    rm -rf "$GOLDEN_DIR.new"
+    echo "WARNING: golden rootfs build failed — keeping the existing golden (if any); sandboxed bash" >&2
+    echo "         runs UNSANDBOXED without one. Re-run: bough update" >&2
   fi
 }
 
@@ -284,6 +339,8 @@ cmd_update() {
     ensure_worker_model || echo "warning: worker model download failed — re-run update to resume" >&2
   fi
   prune_stale_worker_models
+
+  ensure_vm_sandbox
 
   if [ -n "$was_running" ]; then
     echo "==> restarting server"
@@ -722,7 +779,7 @@ usage() {
   echo "  start    install + start the launchd service (auto-starts at login)"
   echo "  kill     stop the service and keep it stopped (across logins)"
   echo "  restart  pick up code changes explicitly"
-  echo "  update   fast-forward to origin/main, rebuild, restart"
+  echo "  update   fast-forward to origin/main, rebuild, set up the VM sandbox, restart"
   echo "  run      run the server in the foreground (what launchd executes)"
   echo "  exec     headless one-shot turn (auto-starts the server; alias: prompt):"
   echo "           bough exec [-w dir] [-m model] [--yolo] [--json] \"...\" — or prompt on stdin"
