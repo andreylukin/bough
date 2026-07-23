@@ -2452,7 +2452,15 @@ export function App(
     if (key.meta && (ch === "f" || key.rightArrow)) {
       return moveCursor((c) => wordRight(c.text, c.cursor));
     }
-    if (key.leftArrow) return moveCursor((c) => c.cursor - 1);
+    if (key.leftArrow) {
+      // Empty composer inside a subagent branch: ← pops back to the spawner
+      // (same exit as esc). With text it stays plain cursor movement.
+      if (input === "") {
+        const spawner = spawnerSession();
+        if (spawner) return openSession(spawner);
+      }
+      return moveCursor((c) => c.cursor - 1);
+    }
     if (key.rightArrow) return moveCursor((c) => c.cursor + 1);
     if (key.ctrl && ch === "a") return moveCursor(() => 0);
     if (key.ctrl && ch === "e") return moveCursor((c) => c.text.length);

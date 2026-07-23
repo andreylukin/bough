@@ -113,7 +113,7 @@ export function StatusBar(
   },
 ) {
   const isSub = session?.kind === "subagent";
-  const spinner = useSpinner(busy, isSub ? "esc ↩ back" : "esc interrupts");
+  const spinner = useSpinner(busy, isSub ? "esc/← ↩ back" : "esc interrupts");
   const down = useDisconnectNote(connected);
   const cold = useColdCache(usage);
   // Session spend: tree rollup (incl. subagents) when present, else own total.
@@ -184,7 +184,7 @@ export function StatusBar(
                 ? <Text dimColor>{" "}{draftLabel}</Text>
                 : null}
               {session && dir ? <Text dimColor>{"  "}{dir}</Text> : null}
-              {isSub && parentTitle ? <Text dimColor>{"  "}esc ↩ back</Text> : null}
+              {isSub && parentTitle ? <Text dimColor>{"  "}esc/← ↩ back</Text> : null}
             </Text>
           </Box>
         </Box>
