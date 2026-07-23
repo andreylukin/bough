@@ -221,6 +221,24 @@ golden_fingerprint() {
   shasum -a 256 "$ROOT/scripts/guest-image/build-golden.sh" 2>/dev/null | cut -d' ' -f1 || true
   shasum -a 256 "$BOUGH_HOME/net/ca/ca.crt" 2>/dev/null | cut -d' ' -f1 || true
   shasum -a 256 "$BOUGH_HOME/net/kubeconfig" 2>/dev/null | cut -d' ' -f1 || true
+  shasum -a 256 "$BOUGH_HOME/guest-tools" 2>/dev/null | cut -d' ' -f1 || true
+}
+
+# The user-editable list of extra tools baked into the guest image. Seeded once;
+# edit it and run `bough update` to rebuild the golden with the new tools.
+seed_guest_tools() {
+  [ -f "$BOUGH_HOME/guest-tools" ] && return 0
+  echo "==> seeding $BOUGH_HOME/guest-tools (edit it to add tools to the sandbox)"
+  cat > "$BOUGH_HOME/guest-tools" <<'EOF'
+# Extra tools baked into bough's sandbox guest image (Alpine linux/arm64).
+# Edit, then `bough update` rebuilds the golden. One entry per line:
+#   pkg <name>        apk package — search https://pkgs.alpinelinux.org
+#   bin <name> <url>  linux/arm64 binary, installed as /usr/local/bin/<name>
+pkg kubectl
+pkg aws-cli
+pkg github-cli
+bin argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-arm64
+EOF
 }
 
 ensure_vm_sandbox() {
@@ -229,6 +247,8 @@ ensure_vm_sandbox() {
     echo "    sudo -u $AGENT_USER BOUGH_HOME=$BOUGH_HOME $ROOT/scripts/guest-image/build-golden.sh --out $GOLDEN_DIR"
     return 0
   fi
+
+  seed_guest_tools
 
   export PATH="$HOME/.local/bin:$PATH"
   local smolvm="${BOUGH_SMOLVM_BIN:-smolvm}"

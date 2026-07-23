@@ -135,6 +135,47 @@ if [ -f "$BOUGH_KUBECONFIG" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# 4d. Extra guest tools from the user's ~/.bough/guest-tools (seeded by
+#     `bough update`; edit it to add tools to the sandbox). One entry per line:
+#       pkg <name>        apk package (Alpine community)
+#       bin <name> <url>  linux/arm64 binary, fetched host-side -> /usr/local/bin
+# ---------------------------------------------------------------------------
+TOOLS_FILE="${BOUGH_HOME:-$HOME/.bough}/guest-tools"
+BIN_NAMES=""
+if [ -f "$TOOLS_FILE" ]; then
+  log "extra guest tools from $TOOLS_FILE"
+  PKGS=""
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%%#*}"
+    # shellcheck disable=SC2086
+    set -- $line
+    [ $# -eq 0 ] && continue
+    case "$1" in
+      pkg)
+        [ $# -eq 2 ] || { echo "bad pkg line in $TOOLS_FILE: $*" >&2; exit 2; }
+        PKGS="$PKGS $2"
+        ;;
+      bin)
+        [ $# -eq 3 ] || { echo "bad bin line in $TOOLS_FILE: $*" >&2; exit 2; }
+        echo "fetch $2 <- $3"
+        curl -fsSL -o "$WF/tool-$2" "$3"
+        "$SMOLVM" machine cp "$WF/tool-$2" "$MACHINE:/usr/local/bin/$2"
+        "$SMOLVM" machine exec --name "$MACHINE" -- chmod 755 "/usr/local/bin/$2"
+        BIN_NAMES="$BIN_NAMES $2"
+        ;;
+      *)
+        echo "unknown directive in $TOOLS_FILE (want 'pkg NAME' or 'bin NAME URL'): $*" >&2
+        exit 2
+        ;;
+    esac
+  done < "$TOOLS_FILE"
+  if [ -n "$PKGS" ]; then
+    echo "apk add:$PKGS"
+    "$SMOLVM" machine exec --name "$MACHINE" -- sh -c "apk add --no-cache$PKGS"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # 5. Flatten + extract the machine's rootfs into OUT_DIR.
 #    Method: pack the (stopped) VM to a .smolmachine, whose sidecar is a
 #    zstd(tar) holding a single flattened OCI layer `layers/<sha>.tar`
@@ -177,6 +218,9 @@ MISSING=""
 for b in usr/bin/git usr/bin/deno usr/bin/node usr/bin/npm \
          usr/bin/python3 usr/bin/gcc usr/bin/socat usr/bin/openssl; do
   if [ -e "$OUT_DIR/$b" ]; then echo "OK   $b"; else echo "MISS $b"; MISSING="$MISSING $b"; fi
+done
+for b in $BIN_NAMES; do
+  if [ -e "$OUT_DIR/usr/local/bin/$b" ]; then echo "OK   usr/local/bin/$b"; else echo "MISS usr/local/bin/$b"; MISSING="$MISSING $b"; fi
 done
 [ -e "$OUT_DIR/usr/local/share/ca-certificates/clawpatrol-ca.crt" ] \
   && echo "OK   CA baked" || { echo "MISS CA"; MISSING="$MISSING ca"; }
