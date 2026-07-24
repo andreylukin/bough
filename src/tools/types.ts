@@ -9,7 +9,7 @@
  * bash reports the code in its text so Claude can react to it.
  */
 import { z } from "zod/v4";
-import { basename, dirname, join, posix, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import type { Artifact } from "../server/artifacts.ts";
 
 export interface ToolRunCtx {
@@ -32,15 +32,6 @@ export interface ToolRunCtx {
    * non-sandboxed runs.
    */
   sandbox?: { sessionDir: string; scratchDir: string };
-  /**
-   * Guest-owned workspace mode (VM sessions on git origins): the session's working
-   * copy lives INSIDE the guest at `root` (/workspace/repo), not on the host. When
-   * set, the file tools route through vm.readFile/vm.writeFile so they see the same
-   * filesystem as bash-in-guest (read-your-writes), and bash's guest cwd is `root`.
-   * Paths resolve via {@link resolveInGuest}; host mode keeps
-   * {@link resolveInWorkspace}.
-   */
-  guestFs?: { sessionId: string; root: string };
   /**
    * Per-turn harness state, created by the turn runner. `check` is the committed
    * completion gate (SPEC §5): the shell command `run_steps` re-runs before
@@ -226,28 +217,6 @@ export function resolveInWorkspace(ctx: ToolRunCtx, path: string): string {
   for (const root of roots) {
     const realRoot = realPath(resolve(root));
     if (realFull === realRoot || realFull.startsWith(realRoot + sep)) return full;
-  }
-  throw new Error(`path escapes the workspace: ${path}`);
-}
-
-/**
- * Resolve `path` for the GUEST filesystem (guest-owned workspace mode) and confine
- * it lexically: the normalized result must sit under the guest repo root (or the
- * session scratch dir, when sandboxed — scratch paths are simply created inside the
- * guest's own fs). The VM itself is the security boundary; this check keeps the
- * agent's file ops inside the workspace contract, it does not defend the host, so
- * lexical normalization (no host-side symlink walk of a guest fs) is enough.
- * Guest paths are always POSIX.
- */
-export function resolveInGuest(ctx: ToolRunCtx, path: string): string {
-  const g = ctx.guestFs;
-  if (!g) throw new Error("resolveInGuest called without ctx.guestFs");
-  const full = posix.resolve(g.root, path);
-  const roots = [g.root];
-  if (ctx.sandbox) roots.push(ctx.sandbox.scratchDir);
-  for (const root of roots) {
-    const r = posix.resolve(root);
-    if (full === r || full.startsWith(r + "/")) return full;
   }
   throw new Error(`path escapes the workspace: ${path}`);
 }

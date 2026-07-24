@@ -1,15 +1,15 @@
 /**
- * agentfs sandbox backend — the copy-on-write overlay analog of the smolvm VM
- * (sandbox/vm.ts + vmsession.ts). Each bough session shares one `agentfs run
- * --session <id>` delta: every invocation overlays the CURRENT WORKING DIR
- * copy-on-write (macOS: NFS mount + sandbox-exec), so writes land in the
- * session's delta and the real tree is untouched. Runs on the same session id
- * JOIN the same overlay, giving read-your-writes across bash + the file tools.
+ * agentfs sandbox backend — the copy-on-write overlay that isolates every
+ * sandboxed session. Each bough session shares one `agentfs run --session <id>`
+ * delta: every invocation overlays the CURRENT WORKING DIR copy-on-write (macOS:
+ * NFS mount + sandbox-exec), so writes land in the session's delta and the real
+ * tree is untouched. Runs on the same session id JOIN the same overlay, giving
+ * read-your-writes across bash + the file tools.
  *
- * This module exposes the SAME seam the tools consume from vmsession.ts —
+ * This is the ONLY sandbox backend. It exposes the seam the tools consume —
  * ensure/execCommand/execIn/readFile/writeFile/teardown plus the
- * {@link sandboxAgentfs} gate — so bash.ts and the file tools can drive it behind
- * BOUGH_SANDBOX_AGENTFS=1 while smolvm still exists (phase 4 removes smolvm).
+ * {@link sandboxAgentfs} gate — so bash.ts and the file tools drive it whenever a
+ * turn is sandboxed (on by default; opt out with BOUGH_SANDBOX_AGENTFS=0).
  *
  * Every fs op runs the host `agentfs` CLI with its cwd set to the session origin —
  * the copy-on-write base is whatever dir the run starts in. agentfs presents that
@@ -36,10 +36,10 @@ function bin(): string {
   return Deno.env.get("BOUGH_AGENTFS_BIN") ?? "agentfs";
 }
 
-/** Whether the agentfs sandbox backend is active. Coexists with smolvm during the
- *  migration; when both gates are set, bash.ts prefers agentfs. */
+/** Whether the agentfs sandbox backend is active. On by default; opt out with
+ *  BOUGH_SANDBOX_AGENTFS=0 (a sandboxed turn then runs bash UNSANDBOXED on the host). */
 export function sandboxAgentfs(): boolean {
-  return Deno.env.get("BOUGH_SANDBOX_AGENTFS") === "1";
+  return Deno.env.get("BOUGH_SANDBOX_AGENTFS") !== "0";
 }
 
 export interface ExecResult {
@@ -70,7 +70,7 @@ const live = new Map<string, Handle>();
 
 /**
  * Record the session's origin so later fs ops overlay the right dir. Idempotent
- * and cheap: unlike smolvm there is no machine to boot — the first `agentfs run`
+ * and cheap: there is no machine to boot — the first `agentfs run`
  * creates the delta lazily, and subsequent runs join it.
  */
 export function ensure(sessionId: string, opts: { origin: string }): void {
@@ -212,7 +212,7 @@ export async function writeFile(
 /**
  * Drop the session's in-process handle (session archived). The on-disk delta
  * persists — phase 5 reads it with `agentfs diff` and cleans it up afterward; a
- * lingering delta is harmless. Async to match the smolvm teardown seam.
+ * lingering delta is harmless. Async so the teardown seam can await it.
  */
 export function teardown(sessionId: string): Promise<void> {
   live.delete(sessionId);

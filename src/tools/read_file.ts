@@ -1,8 +1,6 @@
 /** Read a UTF-8 file, resolved relative to the session workspace. */
 import { z } from "zod/v4";
-import { resolveInGuest, resolveInWorkspace, type ToolDef, type ToolRunCtx } from "./types.ts";
-import { readFile as vmReadFile } from "../sandbox/vm.ts";
-import { ensureVm, machineName } from "../sandbox/vmsession.ts";
+import { resolveInWorkspace, type ToolDef, type ToolRunCtx } from "./types.ts";
 import {
   ensure as ensureAgentfs,
   readFile as agentfsReadFile,
@@ -27,18 +25,6 @@ export const readFile: ToolDef = {
       ensureAgentfs(ctx.sessionId, { origin: ctx.workspace });
       try {
         return new TextDecoder().decode(await agentfsReadFile(ctx.sessionId, full));
-      } catch (e) {
-        throw new Error(`cannot read ${path}: ${(e as Error).message}`);
-      }
-    }
-    // Guest-owned workspace: the file lives in the session VM, not on the host.
-    if (ctx.guestFs) {
-      const full = resolveInGuest(ctx, path);
-      await ensureVm(ctx.guestFs.sessionId, { origin: ctx.workspace, gitOrigin: true });
-      try {
-        return new TextDecoder().decode(
-          await vmReadFile(machineName(ctx.guestFs.sessionId), full),
-        );
       } catch (e) {
         throw new Error(`cannot read ${path}: ${(e as Error).message}`);
       }

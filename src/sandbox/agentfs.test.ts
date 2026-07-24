@@ -31,13 +31,15 @@ Deno.test("execCommand wraps argv to run under a session and suppress the banner
   assert(argv.includes("echo hi"));
 });
 
-Deno.test("sandboxAgentfs reflects the gate env var", () => {
+Deno.test("sandboxAgentfs is on by default, off only when explicitly disabled", () => {
   const prior = Deno.env.get("BOUGH_SANDBOX_AGENTFS");
   try {
     Deno.env.delete("BOUGH_SANDBOX_AGENTFS");
-    assertEquals(sandboxAgentfs(), false);
+    assertEquals(sandboxAgentfs(), true);
     Deno.env.set("BOUGH_SANDBOX_AGENTFS", "1");
     assertEquals(sandboxAgentfs(), true);
+    Deno.env.set("BOUGH_SANDBOX_AGENTFS", "0");
+    assertEquals(sandboxAgentfs(), false);
   } finally {
     if (prior === undefined) Deno.env.delete("BOUGH_SANDBOX_AGENTFS");
     else Deno.env.set("BOUGH_SANDBOX_AGENTFS", prior);

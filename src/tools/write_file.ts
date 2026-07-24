@@ -1,9 +1,7 @@
 /** Create or overwrite a file, resolved relative to the session workspace. */
 import { z } from "zod/v4";
-import { dirname, posix } from "node:path";
-import { resolveInGuest, resolveInWorkspace, type ToolDef, type ToolRunCtx } from "./types.ts";
-import { writeFile as vmWriteFile } from "../sandbox/vm.ts";
-import { ensureVm, execIn, machineName } from "../sandbox/vmsession.ts";
+import { dirname } from "node:path";
+import { resolveInWorkspace, type ToolDef, type ToolRunCtx } from "./types.ts";
 import {
   ensure as ensureAgentfs,
   sandboxAgentfs,
@@ -28,20 +26,6 @@ export const writeFile: ToolDef = {
       ensureAgentfs(ctx.sessionId, { origin: ctx.workspace });
       try {
         await agentfsWriteFile(ctx.sessionId, full, content);
-      } catch (e) {
-        throw new Error(`cannot write ${path}: ${(e as Error).message}`);
-      }
-      return `wrote ${content.length} bytes to ${path}`;
-    }
-    // Guest-owned workspace: the file lands in the session VM, not on the host.
-    if (ctx.guestFs) {
-      const full = resolveInGuest(ctx, path);
-      const sid = ctx.guestFs.sessionId;
-      await ensureVm(sid, { origin: ctx.workspace, gitOrigin: true });
-      try {
-        const dir = posix.dirname(full).replaceAll("'", `'\\''`);
-        await execIn(sid, ["/bin/sh", "-c", `mkdir -p '${dir}'`]);
-        await vmWriteFile(machineName(sid), full, content);
       } catch (e) {
         throw new Error(`cannot write ${path}: ${(e as Error).message}`);
       }

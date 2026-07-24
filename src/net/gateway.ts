@@ -22,8 +22,6 @@
 import { join } from "node:path";
 import { caEnv, CertAuthority } from "./ca.ts";
 import { ProxyServer } from "./proxy.ts";
-import { gateHostIp } from "../sandbox/gatehost.ts";
-import { sandboxVm } from "../sandbox/vmsession.ts";
 import { createGate, type Gate } from "./gate.ts";
 import { PluginHost, type PluginInfo, type RequestSample, specFromRequests } from "./plugins.ts";
 import { caTrustCommand, isCaTrusted } from "./catrust.ts";
@@ -63,16 +61,6 @@ function kubeCacheDir(sessionId: string): string {
   return dir;
 }
 
-/** Guest paths for kube in VM mode: the kubeconfig is baked into the golden by
- *  build-golden.sh; the cache is a guest tmpfs dir. */
-const GUEST_KUBECONFIG = "/etc/bough/kubeconfig";
-const GUEST_KUBECACHE = "/tmp/bough-kube-cache";
-
-/** The guest's system CA bundle (baked bough CA included, via build-golden.sh).
- *  Go/curl/etc. read the system store natively; aws-cli (bundled certifi) needs
- *  the explicit env to trust the MITM proxy. */
-const GUEST_CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt";
-
 /** The host's default AWS region: $BOUGH_AWS_REGION, else `aws configure get
  *  region` (resolves env/profile/config the way the CLI itself would). Best
  *  effort — undefined when aws is absent or unconfigured. */
@@ -96,9 +84,10 @@ const GH_SENTINEL = "__bough_github_pat__";
 
 /** GH_TOKEN/GITHUB_TOKEN sentinel iff a github credential binding or the host gh login exists. */
 function githubSentinelEnv(config: NetConfig, hostAuth: boolean): Record<string, string> {
-  const hasGithub = hostAuth || config.credentials.some((c) =>
-    c.host === "github.com" || c.host === "api.github.com" || c.host.endsWith(".github.com")
-  );
+  const hasGithub = hostAuth ||
+    config.credentials.some((c) =>
+      c.host === "github.com" || c.host === "api.github.com" || c.host.endsWith(".github.com")
+    );
   return hasGithub ? { GH_TOKEN: GH_SENTINEL, GITHUB_TOKEN: GH_SENTINEL } : {};
 }
 
@@ -317,9 +306,6 @@ export class ClawpatrolGateway {
         ca: this.#ca!,
         gate: (req, opts) => gate.gate(req, opts),
         sessionId: key || undefined,
-        // VM backend: bind the gate host so the guest can reach it (loopback is the
-        // guest's own, not the host's). `proxy.url` then advertises that address.
-        host: sandboxVm() ? gateHostIp() : undefined,
         // Trust each k8s cluster's private CA when re-originating (EKS serving certs
         // aren't public-rooted). Empty/absent for everyone else = default trust.
         upstreamCa: this.#kube?.upstreamCa,
@@ -369,11 +355,7 @@ export class ClawpatrolGateway {
     if (!this.#running || !this.#ca || !this.#gate) return {};
     const proxy = await this.#acquire(sessionId ?? "");
     const url = proxy.url;
-    // VM mode: the gate host IP goes direct — the guest's git store gateway
-    // (vcs/gitgateway.ts) listens there, and snapshot pushes to bough's own
-    // store are the snapshot mechanism, not egress. Routing them through the
-    // proxy would classify UNKNOWN and hold every push in review mode.
-    const noProxy = sandboxVm() ? `localhost,127.0.0.1,${gateHostIp()}` : "localhost,127.0.0.1";
+    const noProxy = "localhost,127.0.0.1";
     return {
       HTTP_PROXY: url,
       HTTPS_PROXY: url,
@@ -393,39 +375,16 @@ export class ClawpatrolGateway {
       // Authorization header with the real PAT for github hosts. The sentinel itself
       // is useless (fails closed at github if the MITM is ever bypassed).
       ...githubSentinelEnv(resolveConfig(this.#db, sessionId).config, this.#github !== undefined),
-      // kubectl/AWS: the durable creds stay host-side. In the VM the CA is baked into
-      // the guest trust store, the rewritten kubeconfig is baked into the golden at
-      // GUEST_KUBECONFIG, and the AWS broker URI stays on loopback — a socat bridge
-      // in the guest (vmsession.startBrokerBridge) forwards it to the gate host,
-      // because AWS SDKs reject non-loopback plain-http credential URIs. On the host
-      // (no-VM) path they use the real host paths + loopback broker + CA-trust env.
-      ...(sandboxVm()
-        ? {
-          ...(this.#kube ? { KUBECONFIG: GUEST_KUBECONFIG, KUBECACHEDIR: GUEST_KUBECACHE } : {}),
-          // In-guest git must fail fast on a 401 (github push without a credential
-          // binding, or a stale store-gateway token) instead of hanging on an
-          // interactive credential prompt no one will answer.
-          GIT_TERMINAL_PROMPT: "0",
-          ...brokerEnv(),
-          AWS_CA_BUNDLE: GUEST_CA_BUNDLE,
-          ...(this.#awsRegion
-            ? { AWS_REGION: this.#awsRegion, AWS_DEFAULT_REGION: this.#awsRegion }
-            : {}),
-          // argocd: use --core (kube API + the upgrade passthrough) — the CLI's
-          // server mode ignores HTTPS_PROXY and dials the origin directly, which
-          // the egress lockdown refuses. The argocd hosts stay trusted + token-
-          // stamped (argocd.ts) so raw HTTPS (curl) to the argocd API still works.
-        }
-        : {
-          // kubectl reads clusters from KUBECONFIG; point it at the CA-rewritten copy so
-          // it trusts the proxy's leaf. Absent when there's no kubeconfig to rewrite.
-          ...(this.#kube
-            ? { KUBECONFIG: this.#kube.configPath, KUBECACHEDIR: kubeCacheDir(sessionId ?? "") }
-            : {}),
-          // AWS read-only creds via the local broker (container-credentials protocol).
-          ...brokerEnv(),
-          ...caEnv(this.#ca.caCertPath),
-        }),
+      // kubectl/AWS: the durable creds stay host-side; commands use the real host
+      // paths + loopback broker + CA-trust env.
+      // kubectl reads clusters from KUBECONFIG; point it at the CA-rewritten copy so
+      // it trusts the proxy's leaf. Absent when there's no kubeconfig to rewrite.
+      ...(this.#kube
+        ? { KUBECONFIG: this.#kube.configPath, KUBECACHEDIR: kubeCacheDir(sessionId ?? "") }
+        : {}),
+      // AWS read-only creds via the local broker (container-credentials protocol).
+      ...brokerEnv(),
+      ...caEnv(this.#ca.caCertPath),
     };
   }
 }

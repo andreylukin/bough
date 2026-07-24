@@ -20,9 +20,6 @@ import type { Db } from "../db/db.ts";
 import { join } from "node:path";
 import { sessionDir as snapshotSessionDir, snapshotBase } from "../vcs/clonefile.ts";
 import * as shadow from "../vcs/shadow.ts";
-import { guestTrack } from "../vcs/guestgit.ts";
-import { refreshMirror } from "../vcs/mirror.ts";
-import { attachVm, sandboxVm } from "../sandbox/vmsession.ts";
 import { pathExists } from "../fsutil.ts";
 
 export interface PreparedWorkspace {
@@ -30,16 +27,9 @@ export interface PreparedWorkspace {
   cwd: string;
   /**
    * Host-side read root for compose-time consumers (@ refs, AGENTS.md, LSP/MCP
-   * cwd): the read-only mirror checkout in guest-owned mode (fresh as of the
-   * last guest push), else `cwd`.
+   * cwd): the session's host checkout, same as `cwd`.
    */
   hostView: string;
-  /**
-   * Guest-owned (VM) session: the working copy is the guest clone at
-   * /workspace/repo; `cwd` stays the ORIGIN path and file tools route through
-   * the VM (ToolRunCtx.guestFs).
-   */
-  guestOwned?: boolean;
   /** The clonefile snapshot dir for this session (bash gets write access to it). */
   sessionDir: string;
   /**
@@ -86,17 +76,17 @@ export function normalizeWorkspace(raw: string): string {
 }
 
 /**
- * Host-side read root for a session's files: the mirror checkout under
- * `workspacesRoot()` when one exists — the guest-owned mirror, or a legacy
- * host worktree at the same path — else the given workspace. Sync so the
+ * Host-side read root for a session's files: the session's host worktree under
+ * `workspacesRoot()` when one exists, else the given workspace (first turn before
+ * the worktree is branched, or a non-repo/unsandboxed session). Sync so the
  * compose-time callers (@ image attachments, the file picker) stay sync.
  */
 export function hostReadRoot(sessionId: string, workspace: string): string {
-  const mirror = shadow.workspaceDirFor(sessionId);
+  const worktree = shadow.workspaceDirFor(sessionId);
   try {
-    if (Deno.statSync(mirror).isDirectory) return mirror;
+    if (Deno.statSync(worktree).isDirectory) return worktree;
   } catch {
-    // no mirror — non-repo or unsandboxed session; read the workspace itself
+    // no worktree — non-repo or unsandboxed session; read the workspace itself
   }
   return workspace;
 }
@@ -156,15 +146,13 @@ export async function prepareWorkspace(
     const isGit = await pathExists(`${cwd}/.git`);
     const isJj = await pathExists(`${cwd}/.jj`); // legacy jj-era workspace dirs still count as repos
     if (isGit || isJj) {
-      // VM mode: refs + mirror only (the working copy is the guest clone).
-      // Host-worktree mode: may relocate the turn into the session's own
-      // worktree (first turn).
-      const prepped = await prepareShadow(db, sessionId, cwd, runtime.base === null, sandboxVm());
-      const guestOwned = prepped.guestOwned === true;
+      // Relocate the turn into the session's own shadow worktree (first turn);
+      // resumes run where the workspace column already points. agentfs then
+      // overlays that worktree copy-on-write.
+      const prepped = await prepareShadow(db, sessionId, cwd, runtime.base === null);
       return {
         cwd: prepped.dir,
-        hostView: guestOwned ? shadow.workspaceDirFor(sessionId) : prepped.dir,
-        ...(guestOwned ? { guestOwned } : {}),
+        hostView: prepped.dir,
         sessionDir: dir,
         scratchDir,
         sandboxed,
@@ -207,74 +195,23 @@ async function createWithQuarantine(
  * colocated mode: every repo session gets an isolated working copy, even on
  * repos that still carry a legacy `.jj`).
  *
- * Guest-owned (VM) mode: the working copy is the guest clone at /workspace/repo
- * (vmsession bootstrapClone) — the first turn only sets the session's store
- * refs (no host worktree, no hydration) and seeds the read-only mirror; the
- * workspace column permanently keeps the ORIGIN path, and `cwd` stays the
- * origin (bash cwd is resolved guest-side).
+ * First turn branches a host worktree — off the parent session's tip for forks,
+ * else off a captured snapshot of the repo's working tree — and repoints the
+ * session's workspace column at it. Resumes run where the column already points.
+ * agentfs overlays that worktree copy-on-write at exec time.
  *
- * Host-worktree mode (no VM backend): first turn branches a worktree — off the
- * parent session's tip for forks, else off a captured snapshot of the repo's
- * working tree — and repoints the session's workspace column at it. Resumes
- * run where the column already points.
- *
- * Failures degrade gracefully either way: sandboxed turn in the user's
- * checkout, with a loud warning.
+ * Failures degrade gracefully: sandboxed turn in the user's checkout, with a
+ * loud warning.
  */
 async function prepareShadow(
   db: Db,
   sessionId: string,
   repo: string,
   firstTurn: boolean,
-  vmMode: boolean,
-): Promise<{ dir: string; warning?: string; guestOwned?: boolean }> {
+): Promise<{ dir: string; warning?: string }> {
   const session = db.getSession(sessionId);
   try {
-    if (!firstTurn) return { dir: repo, ...(vmMode ? { guestOwned: true } : {}) };
-    if (vmMode) {
-      if (session?.kind === "fork" && session.originId) {
-        // Branch off the forked-from session's pushed tip (guestTrack flushes
-        // the parent VM first — attachVm so a machine surviving a server
-        // restart is flushed too; best-effort: a failed flush still leaves the
-        // last-pushed tip); fall back to a fresh root capture only if the
-        // parent's refs vanished.
-        try {
-          if (await attachVm(session.originId, { origin: repo, gitOrigin: true })) {
-            await guestTrack(session.originId);
-          }
-        } catch (e) {
-          console.error(
-            `fork ${sessionId}: parent flush failed, branching off the last push: ${
-              (e as Error).message
-            }`,
-          );
-        }
-        try {
-          await shadow.addWorkspace(
-            await shadow.storeDirFor(repo),
-            sessionId,
-            shadow.workspaceDirFor(sessionId),
-            session.originId,
-            { worktree: false },
-          );
-        } catch {
-          await createWithQuarantine(repo, sessionId, { worktree: false });
-        }
-      } else {
-        await createWithQuarantine(repo, sessionId, { worktree: false });
-      }
-      // Initial mirror = the session base tree; the gateway refreshes it on
-      // every received push. Non-fatal: the mirror only feeds read-side
-      // consumers (@ refs, AGENTS.md, LSP) — the session itself is intact.
-      try {
-        await refreshMirror(sessionId);
-      } catch (e) {
-        console.error(`mirror seed failed for ${sessionId}: ${(e as Error).message}`);
-      }
-      // The workspace column keeps the ORIGIN path — only the base sentinel moves.
-      db.setSessionBase(sessionId, (await gitHead(repo)) ?? "shadow");
-      return { dir: repo, guestOwned: true };
-    }
+    if (!firstTurn) return { dir: repo };
     let dir: string;
     if (
       session?.kind === "fork" && session.originId &&

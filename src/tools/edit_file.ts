@@ -1,8 +1,6 @@
 /** Exact-string replace in a file. Requires a unique match, like a surgical edit. */
 import { z } from "zod/v4";
-import { resolveInGuest, resolveInWorkspace, type ToolDef, type ToolRunCtx } from "./types.ts";
-import { readFile as vmReadFile, writeFile as vmWriteFile } from "../sandbox/vm.ts";
-import { ensureVm, machineName } from "../sandbox/vmsession.ts";
+import { resolveInWorkspace, type ToolDef, type ToolRunCtx } from "./types.ts";
 import {
   ensure as ensureAgentfs,
   readFile as agentfsReadFile,
@@ -28,25 +26,16 @@ export const editFile: ToolDef = {
     // The edit logic (match, reconcile, replace) is identical across backends;
     // only how the file bytes are read/written differs.
     //   - agentfs overlay: route through the session's copy-on-write delta.
-    //   - guest-owned workspace: route through the session VM.
     //   - host: plain Deno fs.
     const afs = !!(ctx.sandbox && ctx.sessionId && sandboxAgentfs());
-    const guest = ctx.guestFs;
-    const full = guest && !afs ? resolveInGuest(ctx, path) : resolveInWorkspace(ctx, path);
+    const full = resolveInWorkspace(ctx, path);
     if (afs) ensureAgentfs(ctx.sessionId!, { origin: ctx.workspace });
-    else if (guest) await ensureVm(guest.sessionId, { origin: ctx.workspace, gitOrigin: true });
     const readText = async (): Promise<string> =>
       afs
         ? new TextDecoder().decode(await agentfsReadFile(ctx.sessionId!, full))
-        : guest
-        ? new TextDecoder().decode(await vmReadFile(machineName(guest.sessionId), full))
         : await Deno.readTextFile(full);
     const writeText = (text: string): Promise<void> =>
-      afs
-        ? agentfsWriteFile(ctx.sessionId!, full, text)
-        : guest
-        ? vmWriteFile(machineName(guest.sessionId), full, text)
-        : Deno.writeTextFile(full, text);
+      afs ? agentfsWriteFile(ctx.sessionId!, full, text) : Deno.writeTextFile(full, text);
 
     let text: string;
     try {
