@@ -59,6 +59,13 @@ connected servers and calling convention appear in a '# MCP tools' section), and
 lsp.* symbol navigation (a '## Symbol navigation (lsp)' section). A host
 function exists ONLY when this prompt grants it — never guess at others.
 
+await extract(text, instruction, schema?) hands text the program ALREADY HOLDS to a
+cheap local model and returns just the answer — a trimmed string, or an object
+conforming to `schema` when you pass a JSON Schema. Use it to keep a large blob (a
+lockfile, a config dump, a long log) out of your context when you only need one value
+from it; console.log the extracted value, not the blob. It throws (catchably) when no
+worker is reachable or the text exceeds ~12000 chars — then read the text yourself.
+
 await recall(query, k?) semantically searches ALL past bough conversations (local
 embeddings, nothing leaves the machine) and returns {hits, indexed} — each hit has
 {sessionId, title, snippet, score, ts}. Use it when the user references earlier

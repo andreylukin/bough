@@ -24,6 +24,13 @@ export interface HostFns {
    * exposes it as the variadic sh(...cmds). Always wired by run_steps, like bash.
    */
   sh(cmdsJson: string): Promise<string>;
+  /**
+   * Cheap-model extraction over text the program already holds (worker/extract.ts):
+   * the optional JSON Schema travels in as JSON and the result comes back as JSON
+   * — the worker side exposes it as extract(text, instruction, schema?). Always
+   * wired by run_steps, like bash.
+   */
+  extract(text: string, instruction: string, schemaJson: string): Promise<string>;
   bashBg(cmd: string): Promise<string>;
   bashOutput(id: string): Promise<string>;
   bashWait(id: string): Promise<string>;

@@ -14,6 +14,10 @@ function hosts(overrides: Partial<HostFns> = {}): HostFns & { calls: string[] } 
       const cmds = JSON.parse(cmdsJson) as string[];
       return Promise.resolve(JSON.stringify(cmds.map((c) => ({ code: 0, out: `out of ${c}` }))));
     },
+    extract: (text, instruction, schemaJson) => {
+      calls.push(`extract:${text}|${instruction}|${schemaJson}`);
+      return Promise.resolve(JSON.stringify(`${instruction} of ${text}`));
+    },
     bashBg: (cmd) => {
       calls.push(`bashBg:${cmd}`);
       return Promise.resolve(`{"id":"bg_1","pid":1}`);
@@ -185,4 +189,20 @@ Deno.test("interrupt: an already-aborted signal refuses to run the program at al
   const result = await runProgram('await bash("x");', h, 60_000, controller.signal);
   assertEquals(result.ok, false);
   assertEquals(h.calls, []);
+});
+
+Deno.test("extract bridges text, instruction and an optional schema, parsing the reply", async () => {
+  const h = hosts();
+  const result = await runProgram(
+    `console.log(await extract("deno 2.1.4", "the version"));
+     console.log(await extract("deno 2.1.4", "the version", {type: "object"}));`,
+    h,
+    60_000,
+  );
+  assertEquals(result.ok, true);
+  assertEquals(result.logs, ["the version of deno 2.1.4", "the version of deno 2.1.4"]);
+  assertEquals(h.calls, [
+    "extract:deno 2.1.4|the version|null",
+    `extract:deno 2.1.4|the version|{"type":"object"}`,
+  ]);
 });

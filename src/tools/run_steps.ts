@@ -15,6 +15,7 @@ import { z } from "zod/v4";
 import type { ToolDef, ToolRunCtx } from "./types.ts";
 import { bash, inflightForegroundOutput, shConcurrent } from "./bash.ts";
 import * as bg from "./bash_bg.ts";
+import { extractFrom } from "../worker/extract.ts";
 import { readFile } from "./read_file.ts";
 import { writeFile } from "./write_file.ts";
 import { editFile } from "./edit_file.ts";
@@ -42,7 +43,11 @@ const schema = z.object({
       "write(path, content), edit(path, oldText, newText), and background jobs (a slow " +
       "bash auto-backgrounds after ~60s) — bashBg(cmd) → {id, pid}, bashOutput(id) → " +
       "string (progress, safe while running), bashWait(id) → string (block until done), bashKill(id) " +
-      "— plus mcpStatus() (always available: this session's MCP management state), " +
+      "— plus extract(text, instruction, schema?) → string, or the schema-shaped object " +
+      "when a JSON Schema is passed (a cheap local model pulls one value out of text you " +
+      "already hold, so a big blob never enters your context; throws if no worker is " +
+      "reachable, so read the text yourself then), " +
+      "mcpStatus() (always available: this session's MCP management state), " +
       "recall(query, k?) → {hits, indexed} (semantic search over past bough conversations), " +
       "ask(question, {options?: string[]}) → string (pause and ask the USER a clarifying " +
       "question; blocks until they answer in the TUI — they pick an option or type freely — " +
@@ -114,6 +119,15 @@ export const runSteps: ToolDef = {
           const cmds = JSON.parse(cmdsJson) as string[];
           if (cmds.length > 1 && ctx.turn) ctx.turn.ranParallel = true; // honesty gate (turn.ts)
           return JSON.stringify(await shConcurrent(cmds, ctx));
+        },
+        // Cheap-model extraction (worker/extract.ts): the program hands over text it
+        // already holds and gets back one value, so the blob never has to enter the
+        // supervisor's context. null schema = free-form string. Throws (catchably)
+        // when no worker is reachable rather than inventing an answer.
+        extract: async (text: string, instruction: string, schemaJson: string) => {
+          const schema = JSON.parse(schemaJson) as Record<string, unknown> | null;
+          return JSON.stringify(await extractFrom(text, instruction, schema ?? undefined)) ??
+            "null";
         },
         // Background shells: detached from the turn on purpose (no ctx.signal) —
         // they persist across rounds and turns of this session until killed.

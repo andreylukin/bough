@@ -22,6 +22,7 @@
 type HostName =
   | "bash"
   | "sh"
+  | "extract"
   | "bashBg"
   | "bashOutput"
   | "bashWait"
@@ -96,6 +97,11 @@ async function run(code: string): Promise<void> {
   // Concurrent shells: the commands ride out as a JSON array and the results come
   // back as JSON [{code, out}, …] — a non-zero code is data here, never a throw.
   const sh = async (...cmds: string[]) => JSON.parse(await hostCall("sh", [JSON.stringify(cmds)]));
+  // Cheap-model extraction: the optional JSON Schema rides out as JSON and the
+  // result (a string, or the schema-shaped object) comes back as JSON. Rejects
+  // catchably when no worker is reachable — read the text yourself then.
+  const extract = async (text: string, instruction: string, schema?: unknown) =>
+    JSON.parse(await hostCall("extract", [text, instruction, JSON.stringify(schema ?? null)]));
   // Background shells: the spawn handle comes back as JSON ({id, pid} — the
   // postMessage protocol stays string-only); output/kill return plain text.
   const bashBg = async (cmd: string) => JSON.parse(await hostCall("bashBg", [cmd]));
@@ -176,6 +182,7 @@ async function run(code: string): Promise<void> {
   const program = new AsyncFunction(
     "bash",
     "sh",
+    "extract",
     "bashBg",
     "bashOutput",
     "bashWait",
@@ -203,6 +210,7 @@ async function run(code: string): Promise<void> {
   await program(
     bash,
     sh,
+    extract,
     bashBg,
     bashOutput,
     bashWait,
