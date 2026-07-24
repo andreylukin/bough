@@ -47,6 +47,8 @@ const schema = z.object({
       "when a JSON Schema is passed (a cheap local model pulls one value out of text you " +
       "already hold, so a big blob never enters your context; throws if no worker is " +
       "reachable, so read the text yourself then), " +
+      "image(path, note?) (attach an image file — a screenshot, a rendered chart — so " +
+      "you SEE it; it reaches you on the next turn, not inside this program), " +
       "mcpStatus() (always available: this session's MCP management state), " +
       "recall(query, k?) → {hits, indexed} (semantic search over past bough conversations), " +
       "ask(question, {options?: string[]}) → string (pause and ask the USER a clarifying " +
@@ -193,6 +195,10 @@ export const runSteps: ToolDef = {
               JSON.stringify(await ctx.recall!(query, k)),
           }
           : {}),
+        // image() (wired for supervisor turns): attach an image file so the model
+        // can SEE it. Plain string in, plain confirmation out — the bytes stay
+        // host-side (attachment store), they never cross the bridge.
+        ...(ctx.image ? { image: (path: string, note?: string) => ctx.image!(path, note) } : {}),
         // LSP symbol verbs (wired when the backing server is registered): same
         // JSON round-trip as mcp(); the worker side fans this out as lsp.*.
         ...(ctx.lsp

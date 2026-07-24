@@ -86,6 +86,13 @@ export interface HostFns {
    */
   recall?(query: string, k?: number): Promise<string>;
   /**
+   * Show an image file to the model (turn.ts): the file is copied into the
+   * attachment store and posted as a system note carrying the picture. Returns a
+   * plain confirmation line (no JSON) — the image itself never crosses the
+   * postMessage bridge. Bridged for every supervisor turn.
+   */
+  image?(path: string, note?: string): Promise<string>;
+  /**
    * Ship the session's work into the origin repo as a real commit (+ optional
    * push) — vcs/agentdiff.ts shipToOrigin. Options in and ShipResult back travel
    * as JSON. Bridged only for root-session turns with a repo workspace.

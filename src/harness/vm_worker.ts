@@ -40,6 +40,7 @@ type HostName =
   | "lsp"
   | "artifact"
   | "recall"
+  | "image"
   | "ship"
   | "pr"
   | "schedule"
@@ -151,6 +152,10 @@ async function run(code: string): Promise<void> {
   // Recall: semantic search over past conversations; returns {hits, indexed}.
   const recall = async (query: string, k?: number) =>
     JSON.parse(await hostCall("recall", k === undefined ? [query] : [query, k]));
+  // Show an image to the model: the host copies the file into the attachment
+  // store and posts it as a system note; a plain confirmation line comes back.
+  const image = (path: string, note?: string) =>
+    hostCall("image", note === undefined ? [path] : [path, note]);
   // Ship: commit (+push) the session's work into the origin repo; options and the
   // result object both travel as JSON, like mcp().
   const ship = async (opts?: unknown) =>
@@ -200,6 +205,7 @@ async function run(code: string): Promise<void> {
     "lsp",
     "artifact",
     "recall",
+    "image",
     "ship",
     "pr",
     "schedule",
@@ -228,6 +234,7 @@ async function run(code: string): Promise<void> {
     lsp,
     artifact,
     recall,
+    image,
     ship,
     pr,
     schedule,

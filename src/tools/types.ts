@@ -130,6 +130,15 @@ export interface ToolRunCtx {
    */
   recall?: (query: string, k?: number) => Promise<unknown>;
   /**
+   * Show an image file to the model (turn.ts), wired for every supervisor turn.
+   * The program has no vision of its own — this copies the file into the
+   * attachment store and posts it as a system note, so the picture reaches the
+   * model with the same wake path as a background shell's completion note (i.e.
+   * on the next turn, not inside the running program). Returns a one-line
+   * confirmation; throws when the file is missing, unsupported, or too large.
+   */
+  image?: (path: string, note?: string) => Promise<string>;
+  /**
    * Recurring runs (schedules.ts), wired by the turn runner for every supervisor
    * turn: the same validated CRUD the REST routes use, fanned out in the program
    * as the `schedule.*` method object (list/add/enable/disable/remove).

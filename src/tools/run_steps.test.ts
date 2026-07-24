@@ -211,6 +211,33 @@ Deno.test("recall() bridges semantic search when wired; absent otherwise", async
   assertStringIncludes(bare, "unknown host function: recall");
 });
 
+Deno.test("image() bridges attachment when wired; absent otherwise", async () => {
+  const shown: unknown[] = [];
+  const c: ToolRunCtx = {
+    ...ctx(),
+    image: (path, note) => {
+      shown.push([path, note]);
+      return Promise.resolve(`attached ${path}`);
+    },
+  };
+  const out = await runSteps.run(
+    { code: `console.log(await image("shot.png", "the failing dialog"));` },
+    c,
+  );
+  assertStringIncludes(out, "attached shot.png");
+  assertEquals(shown, [["shot.png", "the failing dialog"]]);
+
+  // note omitted → forwarded as undefined (a shorter args array, not a literal).
+  await runSteps.run({ code: `await image("plot.png");` }, c);
+  assertEquals(shown[1], ["plot.png", undefined]);
+
+  const bare = await runSteps.run(
+    { code: `try { await image("x.png"); } catch (e) { console.log("no fn:", e.message); }` },
+    ctx(),
+  );
+  assertStringIncludes(bare, "unknown host function: image");
+});
+
 Deno.test("lsp.* bridges verbs into the program when wired; absent otherwise", async () => {
   const calls: unknown[] = [];
   const c: ToolRunCtx = {

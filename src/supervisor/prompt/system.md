@@ -66,6 +66,13 @@ lockfile, a config dump, a long log) out of your context when you only need one 
 from it; console.log the extracted value, not the blob. It throws (catchably) when no
 worker is reachable or the text exceeds ~12000 chars — then read the text yourself.
 
+await image(path, note?) attaches an image file so you can SEE it — a screenshot
+you just captured, a chart or diagram your program rendered, a failing UI. Path is
+absolute, ~/, or workspace-relative; png/jpg/gif/webp up to 5MB. The picture arrives
+as a system note on your NEXT turn, not inside the running program, so attach it and
+end the turn rather than waiting on it. Use it only when looking at the pixels
+decides something; it throws (catchably) if the file is missing or unsupported.
+
 await recall(query, k?) semantically searches ALL past bough conversations (local
 embeddings, nothing leaves the machine) and returns {hits, indexed} — each hit has
 {sessionId, title, snippet, score, ts}. Use it when the user references earlier

@@ -83,7 +83,12 @@ import { createLspBridge, lspAvailable, lspSection } from "./mcp/lsp.ts";
 import { mcpManager } from "./mcp/manager.ts";
 import { mcpSection } from "./mcp/prompt.ts";
 import { mcpStatusFor } from "./mcp/status.ts";
-import { collectImageAttachments, expandFileReferences, imagePartToBlock } from "./server/files.ts";
+import {
+  attachImageFile,
+  collectImageAttachments,
+  expandFileReferences,
+  imagePartToBlock,
+} from "./server/files.ts";
 import { publishArtifact } from "./server/artifacts.ts";
 import { recall as recallSearch } from "./recall.ts";
 import { expireAsks, raiseAsk } from "./asks.ts";
@@ -516,12 +521,19 @@ export function workflowCtxFor(
   };
 }
 
-export function postSystemNote(ctx: TurnCtx, sessionId: string, text: string): void {
+export function postSystemNote(
+  ctx: TurnCtx,
+  sessionId: string,
+  text: string,
+  // Extra parts riding along with the note — image() attaches a picture this way,
+  // which is the only route a picture has into the model (a tool_result is text).
+  extra: Part[] = [],
+): void {
   const msg: Message = {
     id: crypto.randomUUID(),
     sessionId,
     role: "system",
-    parts: [{ type: "text", text }],
+    parts: [{ type: "text", text }, ...extra],
     pending: false,
     createdAt: Date.now(),
   };
@@ -682,6 +694,27 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     // defaults to this session's persisted workspace.
     toolCtx.schedule = {
       call: (verb, args) => scheduleVerb(db, verb, args, db.getSessionRuntime(sessionId).workspace),
+    };
+    // image(): the program has no eyes — this is how a screenshot or a rendered
+    // chart it just produced actually reaches the model. Host-side we copy the
+    // file into ~/.bough/attachments (so the message replays after the file moves)
+    // and post it as a system note carrying an image part. History is assembled
+    // once per turn, so the picture lands on the NEXT turn — the same wake path a
+    // background shell's completion note uses; the confirmation says so.
+    toolCtx.image = (path, note) => {
+      const rel = path.startsWith("/")
+        ? path
+        : path.startsWith("~/")
+        ? `${Deno.env.get("HOME") ?? "."}${path.slice(1)}`
+        : `${prepared.cwd.replace(/\/+$/, "")}/${path}`;
+      const part = attachImageFile(rel, path);
+      if (!part) {
+        throw new Error(
+          `image(): cannot attach ${path} — missing, unreadable, not a png/jpg/gif/webp, or over 5MB`,
+        );
+      }
+      postSystemNote(ctx, sessionId, `[image] ${path}${note ? ` — ${note}` : ""}`, [part]);
+      return Promise.resolve(`attached ${path} (${part.size} bytes); you will see it next turn`);
     };
     // Artifacts: the program publishes a file for browser viewing; we host it on the
     // server (server/artifacts.ts). The TUI lists it via GET /sessions/:id/artifacts.

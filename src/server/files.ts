@@ -300,21 +300,39 @@ export function collectImageAttachments(
     else if (home && ref.startsWith("~/")) abs = home + ref.slice(1);
     else if (workspace && !ref.includes("..")) abs = `${workspace.replace(/\/+$/, "")}/${ref}`;
     else continue;
-    try {
-      const info = Deno.statSync(abs);
-      if (!info.isFile || info.size > MAX_IMAGE_BYTES) continue;
-      Deno.mkdirSync(destDir, { recursive: true });
-      const dest = `${destDir}/${crypto.randomUUID()}.${
-        abs.slice(abs.lastIndexOf(".") + 1)
-          .toLowerCase()
-      }`;
-      Deno.copyFileSync(abs, dest);
-      parts.push({ type: "image", path: dest, mediaType, name: ref, size: info.size });
-    } catch {
-      // unreadable — leave the @reference as plain text
-    }
+    const part = attachImageFile(abs, ref, destDir);
+    if (part) parts.push(part);
   }
   return parts;
+}
+
+/**
+ * Copy one image file into the attachment store and describe it as an ImagePart.
+ * The single place that enforces the attachment rules (supported extension,
+ * regular file, ≤ MAX_IMAGE_BYTES) and the copy-then-store-the-copy discipline.
+ * Returns null — never throws — when the file cannot be attached; callers decide
+ * whether that is a skip (composer @refs) or an error (the image() host fn).
+ * `abs` must already be absolute; `name` is the label shown in the transcript.
+ */
+export function attachImageFile(
+  abs: string,
+  name: string,
+  destDir: string = attachmentsDir(),
+): ImagePart | null {
+  const mediaType = imageMediaType(abs);
+  if (!mediaType) return null;
+  try {
+    const info = Deno.statSync(abs);
+    if (!info.isFile || info.size > MAX_IMAGE_BYTES) return null;
+    Deno.mkdirSync(destDir, { recursive: true });
+    const dest = `${destDir}/${crypto.randomUUID()}.${
+      abs.slice(abs.lastIndexOf(".") + 1).toLowerCase()
+    }`;
+    Deno.copyFileSync(abs, dest);
+    return { type: "image", path: dest, mediaType, name, size: info.size };
+  } catch {
+    return null; // missing / unreadable
+  }
 }
 
 /**
