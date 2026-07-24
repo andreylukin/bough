@@ -15,7 +15,7 @@ import type { Artifact } from "../server/artifacts.ts";
 export interface ToolRunCtx {
   /** Absolute path the tool runs against (cwd for bash, root for file paths). */
   workspace: string;
-  /** Session this turn belongs to — keys egress to its Claw Patrol listener + policy. */
+  /** Session this turn belongs to — keys the sandbox overlay this turn runs in. */
   sessionId?: string;
   /**
    * The turn's interrupt signal. Long-running tools MUST observe it so the user's
@@ -100,10 +100,8 @@ export interface ToolRunCtx {
   /**
    * MCP tool calls, wired by the turn runner when the triggering message's skills,
    * the session's manual activations, or a spawning turn's inherited grant
-   * (subagents) granted servers. `call` runs the
-   * session's Claw Patrol gate BEFORE the server sees the call — a deny rejects
-   * with the policy reason, a hold blocks on human approval — and rejects for
-   * servers outside the turn's grant. Absent = the program has no mcp().
+   * (subagents) granted servers. `call` rejects for servers outside the turn's
+   * grant. Absent = the program has no mcp().
    */
   mcp?: {
     call: (server: string, tool: string, args: unknown) => Promise<unknown>;
@@ -116,9 +114,8 @@ export interface ToolRunCtx {
   mcpStatus?: () => Promise<unknown>;
   /**
    * LSP symbol verbs (mcp/lsp.ts), wired by the turn runner whenever the backing
-   * language-intelligence server is registered — always-on, no skill grant, but
-   * every call still passes the Claw Patrol gate like an `mcp` call. Lazy: the
-   * first call connects the server and activates the session workspace.
+   * language-intelligence server is registered — always-on, no skill grant. Lazy:
+   * the first call connects the server and activates the session workspace.
    */
   lsp?: {
     call: (verb: string, args: unknown) => Promise<unknown>;

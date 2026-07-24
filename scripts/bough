@@ -349,15 +349,6 @@ cmd_setup() {
         ANTHROPIC_API_KEY="$key"
       fi
     fi
-    # Claw Patrol is on by default now; offer to opt out (writes =0).
-    if [ "${BOUGH_CLAWPATROL:-}" != "0" ]; then
-      printf "Claw Patrol (egress firewall: approvals, rules, plugins) is ON. Disable it? [y/N] "
-      local cp
-      read -r cp
-      case "$cp" in
-        y | Y) env_set BOUGH_CLAWPATROL 0 && export BOUGH_CLAWPATROL=0 ;;
-      esac
-    fi
   fi
 
   if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
@@ -661,21 +652,6 @@ EOF
   esac
 }
 
-# Claw Patrol offline checks. `net validate` runs the same load path the server
-# does (policy.json + the plugin library) and reports every problem loudly.
-cmd_net() {
-  case "${1:-}" in
-    validate)
-      cd "$ROOT"
-      exec deno run --allow-read --allow-write --allow-env --allow-sys src/net/validate.ts
-      ;;
-    *)
-      echo "usage: bough net validate" >&2
-      exit 1
-      ;;
-  esac
-}
-
 # The terminal client — what bare `bough` runs. The server is a launchd service
 # that should already be up; if it isn't, start it and wait briefly.
 ensure_up() {
@@ -730,9 +706,8 @@ usage() {
   echo "  update   fast-forward to origin/main, rebuild, set up the VM sandbox, restart"
   echo "  run      run the server in the foreground (what launchd executes)"
   echo "  exec     headless one-shot turn (auto-starts the server; alias: prompt):"
-  echo "           bough exec [-w dir] [-m model] [--yolo] [--json] \"...\" — or prompt on stdin"
+  echo "           bough exec [-w dir] [-m model] [--json] \"...\" — or prompt on stdin"
   echo "  broker   AWS credential broker: 'bough broker {install [--profile NAME]|uninstall|status}'"
-  echo "  net      Claw Patrol checks: 'bough net validate' verifies policy + plugins"
   echo "  purge    hard-delete sessions archived over 30 days ago (also runs on boot)"
 }
 
@@ -771,10 +746,6 @@ case "${1:-}" in
   broker)
     shift
     cmd_broker "$@"
-    ;;
-  net)
-    shift
-    cmd_net "$@"
     ;;
   purge)
     cmd_purge

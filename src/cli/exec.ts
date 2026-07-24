@@ -14,7 +14,6 @@
  *   -m, --model ID        pin the session's model
  *       --prompt-dir DIR  pin a system-prompt variant (section .md dir) on this
  *                         session — no server restart needed; used by the tuner
- *       --yolo            auto-approve this session's network holds
  *       --json            suppress streaming; print one result envelope
  *       --timeout SECS    give up after SECS (default 900); exits 1
  *       --port N          server port (default BOUGH_PORT or 4321)
@@ -23,7 +22,7 @@ import { parseArgs } from "jsr:@std/cli@1/parse-args";
 
 const args = parseArgs(Deno.args, {
   string: ["workspace", "model", "prompt-dir", "timeout", "port"],
-  boolean: ["yolo", "json"],
+  boolean: ["json"],
   alias: { w: "workspace", m: "model" },
 });
 let prompt = String(args._[0] ?? "").trim();
@@ -32,7 +31,7 @@ if (prompt === "-" || (!prompt && !Deno.stdin.isTerminal())) {
 }
 if (!prompt) {
   console.error(
-    'usage: bough exec [-w dir] [-m model] [--yolo] [--json] "..." (or prompt on stdin)',
+    'usage: bough exec [-w dir] [-m model] [--json] "..." (or prompt on stdin)',
   );
   Deno.exit(2);
 }
@@ -64,10 +63,6 @@ try {
 } catch (e) {
   console.error(`cannot reach bough server on :${port} — is it running? (${(e as Error).message})`);
   Deno.exit(2);
-}
-
-if (args.yolo) {
-  await post("/net/yolo", { sessionId: session.id, on: true });
 }
 
 // Stream first, then send: the tail must be attached before the turn can end.

@@ -1,12 +1,11 @@
 /**
  * Per-session usability metrics, derived from what the server already persists
- * (messages, turns, net_events) plus the turns.first_output_at stamp (turn.ts).
+ * (messages, turns) plus the turns.first_output_at stamp (turn.ts).
  *
  * These operationalize the collaboration metrics from the HCI literature the
  * probes/ suite is built around:
  *   - time-to-first-output  — how long the user stares at a blank turn (HALIE's
  *     process metrics; Claude Code's "interrupt within 3s" design target)
- *   - approval prompts      — interruption cost of the Claw Patrol hold-and-ask gate
  *   - turns-to-done         — refinement convergence across a session (TCR)
  *   - interruptions         — how often the user had to pull the brake
  *
@@ -33,8 +32,6 @@ export interface SessionMetrics {
   interrupted: number;
   /** Turns that ended in error or were orphaned by a restart. */
   failed: number;
-  /** Net-gate holds that asked a human (resolved or still pending). */
-  approvalPrompts: number;
   /** user message → first visible output of the turn it started. */
   firstOutput: DurationStats | null;
   /** user message → turn finished. */
@@ -63,23 +60,6 @@ function stats(samples: number[]): DurationStats | null {
   };
 }
 
-/**
- * A net event that parked (or is parked) for HUMAN approval, recognized by the
- * gate's outcome reasons (gate.ts / main.ts boot sweep). Reason-string matching
- * is a heuristic — the gate doesn't persist a "was held" flag — but every string
- * here is emitted only on the hold path, so false positives can't come from
- * plain allow/deny rules.
- */
-const HOLD_REASONS = [
-  "approved by human",
-  "denied by human",
-  "approved by chain:",
-  "held for approval",
-  "approved — retry to proceed",
-  "expired — turn ended before approval",
-  "expired — server restarted before approval",
-];
-
 export function sessionMetrics(db: Db, sessionId: string): SessionMetrics {
   const messages = db.messagesFor(sessionId);
   const userTurns = messages.filter((m) => m.role === "user").length;
@@ -104,12 +84,6 @@ export function sessionMetrics(db: Db, sessionId: string): SessionMetrics {
     if (t.status !== "running") durationSamples.push(t.updatedAt - at);
   }
 
-  const approvalPrompts =
-    db.recentNetEvents(sessionId, 10_000).filter((e) =>
-      e.verdict === "pending" ||
-      (e.reason !== undefined && HOLD_REASONS.some((r) => e.reason!.includes(r)))
-    ).length;
-
   const wallClockMs = messages.length < 2
     ? 0
     : messages[messages.length - 1].createdAt - messages[0].createdAt;
@@ -121,7 +95,6 @@ export function sessionMetrics(db: Db, sessionId: string): SessionMetrics {
     toolCalls,
     interrupted,
     failed,
-    approvalPrompts,
     firstOutput: stats(firstOutputSamples),
     turnDuration: stats(durationSamples),
     wallClockMs,

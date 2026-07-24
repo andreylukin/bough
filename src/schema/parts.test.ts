@@ -4,7 +4,6 @@ import {
   BoughEvent,
   Message,
   type Message as TMessage,
-  NetRequest,
   Part,
   Session,
   type Session as TSession,
@@ -100,11 +99,9 @@ Deno.test("Session round-trips with nullable parent", () => {
   assertEquals(Session.parse(sub), sub);
 });
 
-Deno.test("BoughEvent + NetRequest round-trip", () => {
-  const ev = { type: "net.request", sessionId: "s1", seq: 3, ts: 9, data: { any: true } };
+Deno.test("BoughEvent round-trip", () => {
+  const ev = { type: "ask.question", sessionId: "s1", seq: 3, ts: 9, data: { any: true } };
   assertEquals(BoughEvent.parse(ev), ev);
-  const r = { id: "r1", host: "api.github.com", action: "GET /repos", verdict: "allowed", ts: 5 };
-  assertEquals(NetRequest.parse(r), r);
 });
 
 Deno.test("bad Part is rejected", () => {

@@ -1,22 +1,11 @@
 // App state + event reduction — originally a port of the retired web UI's store, trimmed to the TUI's P1
-// scope (sessions, open thread, streaming buffers, net holds, queued messages).
+// scope (sessions, open thread, streaming buffers, ask() holds, queued messages).
 // Policy/changes/usage/fork land with their panels in later phases.
 import { useCallback, useEffect, useRef, useState } from "react";
-import type {
-  AskQuestion,
-  BoughEvent,
-  Message,
-  NetRequest,
-  Part,
-  Session,
-} from "../schema/parts.ts";
+import type { AskQuestion, BoughEvent, Message, Part, Session } from "../schema/parts.ts";
 import { api, type JobRow, type Usage, USAGE_ZERO, type WfSummary, type WireDiff } from "./api.ts";
 import { useEvents } from "./events.ts";
 import { notifyDesktop } from "./term.ts";
-
-// Client-side decorations the wire Session doesn't carry.
-// Net-feed rows kept in memory for the panel.
-const FEED_CAP = 50;
 
 export type TuiSession = Session & {
   busy?: boolean;
@@ -43,10 +32,7 @@ export interface Store {
   toolLogs: Record<string, string[]>;
   connected: boolean;
   busy: boolean;
-  // Oldest pending net hold (the card shows one at a time) + how many wait in total.
-  pending: NetRequest | null;
-  pendingCount: number;
-  // Oldest pending ask() question (net holds take precedence in the UI) + total.
+  // Oldest pending ask() question (the card shows one at a time) + total.
   ask: AskQuestion | null;
   askCount: number;
   // Messages typed while a turn was running — staged locally, flushed once idle.
@@ -59,8 +45,6 @@ export interface Store {
   changes: WireDiff[];
   // Token usage for the open session (status-bar meter); zeroed on session switch.
   usage: Usage;
-  // Recent gated requests, newest first (net panel feed) — all verdicts, not just holds.
-  feed: NetRequest[];
   // Background shells of the open session (and its subagents): live + recently
   // ended, refetched on job.* events and polled while any runs (tail lines move).
   jobs: JobRow[];
@@ -87,7 +71,6 @@ export interface Store {
   /** Restore an archived session to the live list. */
   unarchive: (id: string) => void;
   deprecate: (id: string, on: boolean) => void;
-  resolvePending: (approve: boolean, scope?: "once" | "session") => void;
   /** Answer the surfaced ask() question (chosen option or typed free text). */
   answerAsk: (answer: string) => void;
   /** Decline it — the program's ask() rejects with a "user declined" error. */
@@ -126,9 +109,6 @@ export function useStore(initialSessions: Session[]): Store {
   const [thread, setThread] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState<Record<string, string>>({});
   const [toolLogs, setToolLogs] = useState<Record<string, string[]>>({});
-  // ALL holds awaiting approval, oldest first.
-  const [pendings, setPendings] = useState<NetRequest[]>([]);
-  const pending = pendings[0] ?? null;
   // ALL ask() questions awaiting an answer, oldest first.
   const [asks, setAsks] = useState<AskQuestion[]>([]);
   const ask = asks[0] ?? null;
@@ -137,7 +117,6 @@ export function useStore(initialSessions: Session[]): Store {
   const [activity, setActivity] = useState<string | null>(null);
   const [changes, setChanges] = useState<WireDiff[]>([]);
   const [usage, setUsage] = useState<Usage>(USAGE_ZERO);
-  const [feed, setFeed] = useState<NetRequest[]>([]);
   const [jobs, setJobs] = useState<JobRow[]>([]);
   const [workflows, setWorkflows] = useState<WfSummary[]>([]);
   const [wfSeq, setWfSeq] = useState(0);
@@ -157,8 +136,6 @@ export function useStore(initialSessions: Session[]): Store {
   const sessionsRef = useRef<TuiSession[]>([]);
   sessionsRef.current = sessions;
   const busyRef = useRef(false);
-  const pendingRef = useRef<NetRequest | null>(null);
-  pendingRef.current = pending;
   const askRef = useRef<AskQuestion | null>(null);
   askRef.current = ask;
 
@@ -188,32 +165,14 @@ export function useStore(initialSessions: Session[]): Store {
     );
   }, []);
 
-  const refreshPendings = useCallback(async () => {
-    const all = await api.netRequests();
-    setFeed(all.slice(0, FEED_CAP)); // server returns newest first
-    setPendings(all.filter((r) => r.verdict === "pending").reverse()); // oldest first
-  }, []);
-
   // Rebuild the ask() hold card after (re)attach — the server returns pending
   // questions oldest first, so a reconnecting client sees the same hold.
   const refreshAsks = useCallback(async () => {
     setAsks(await api.questions());
   }, []);
 
-  const resolvePending = useCallback((approve: boolean, scope: "once" | "session" = "once") => {
-    const req = pendingRef.current;
-    // Drop this card optimistically — the next parked hold surfaces right away; the
-    // gate re-emits the row with its final verdict, reconciled by id.
-    setPendings((prev) => prev.filter((p) => p.id !== req?.id));
-    if (!req) return;
-    (approve ? api.allowRequest(req.id, scope) : api.denyRequest(req.id)).catch(() => {
-      // The hold may have already resolved/expired server-side — re-sync.
-      refreshPendings().catch(() => {});
-    });
-  }, [refreshPendings]);
-
-  // Same optimistic-drop shape as resolvePending: the next question surfaces right
-  // away; the settle re-emits the row (final status), reconciled by id.
+  // Optimistic-drop: the next question surfaces right away; the settle re-emits the
+  // row (final status), reconciled by id.
   const settleAsk = useCallback((run: (q: AskQuestion) => Promise<unknown>) => {
     const q = askRef.current;
     if (!q) return;
@@ -690,33 +649,12 @@ export function useStore(initialSessions: Session[]): Store {
         setWfLogs((prev) => ({ ...prev, [runId]: line }));
         break;
       }
-      case "net.request": {
-        const r = ev.data as NetRequest;
-        // Feed: upsert by id (verdict flips re-emit the row), newest first.
-        setFeed((prev) => {
-          const rest = prev.filter((p) => p.id !== r.id);
-          return [r, ...rest].slice(0, FEED_CAP);
-        });
-        setPendings((prev) => {
-          if (r.verdict === "pending") {
-            // A NEW hold (not a refresh) wants eyes on it — desktop banner if
-            // the terminal is unfocused (notifyDesktop self-gates on focus).
-            if (!prev.some((p) => p.id === r.id)) {
-              notifyDesktop(`bough — approval needed: ${r.host}`);
-              return [...prev, r];
-            }
-            return prev.map((p) => (p.id === r.id ? r : p));
-          }
-          return prev.filter((p) => p.id !== r.id); // resolved/expired → next surfaces
-        });
-        break;
-      }
       case "ask.question": {
         const q = ev.data as AskQuestion;
         setAsks((prev) => {
           if (q.status === "pending") {
             // A NEW question wants eyes on it — banner if the terminal is
-            // unfocused (notifyDesktop self-gates on focus), like a net hold.
+            // unfocused (notifyDesktop self-gates on focus).
             if (!prev.some((p) => p.id === q.id)) {
               notifyDesktop(`bough — question: ${q.question}`);
               return [...prev, q];
@@ -737,7 +675,6 @@ export function useStore(initialSessions: Session[]): Store {
   // real parts (and the server marks orphaned turns, so stale `pending` clears too).
   const resync = useCallback(async () => {
     reload().catch(() => {});
-    refreshPendings().catch(() => {});
     refreshAsks().catch(() => {});
     const id = currentRef.current;
     if (!id) return;
@@ -753,14 +690,13 @@ export function useStore(initialSessions: Session[]): Store {
     } catch {
       // server unreachable — the next reconnect will resync again
     }
-  }, [reload, refreshPendings, refreshAsks]);
+  }, [reload, refreshAsks]);
 
   const connected = useEvents(onEvent, resync);
 
   useEffect(() => {
-    refreshPendings().catch(() => {});
     refreshAsks().catch(() => {});
-  }, [refreshPendings, refreshAsks]);
+  }, [refreshAsks]);
 
   const busy = thread.some((m) => m.pending);
   busyRef.current = busy;
@@ -794,8 +730,6 @@ export function useStore(initialSessions: Session[]): Store {
     toolLogs,
     connected,
     busy,
-    pending,
-    pendingCount: pendings.length,
     ask,
     askCount: asks.length,
     queued,
@@ -803,7 +737,6 @@ export function useStore(initialSessions: Session[]): Store {
     activity,
     changes,
     usage,
-    feed,
     jobs,
     workflows,
     wfSeq,
@@ -817,7 +750,6 @@ export function useStore(initialSessions: Session[]): Store {
     loadArchived,
     unarchive,
     deprecate,
-    resolvePending,
     answerAsk,
     declineAsk,
     fork,

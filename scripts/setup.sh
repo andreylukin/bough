@@ -128,10 +128,8 @@ ANTHROPIC_API_KEY=
 # BOUGH_PASSWORD=          # set to enable auth + LAN bind (needed for tunnel)
 # BOUGH_PORT=4321
 # BOUGH_HOST=
-# BOUGH_CLAWPATROL=0       # opt OUT of the native egress firewall (on by default)
 # BOUGH_WORKER_FRONTIER=1  # worker micro-tasks on claude-haiku-4-5 instead of the local Qwen (or set a model id)
 # BOUGH_AGENT_USER=bough   # run the server as a dedicated non-admin user (see scripts/agent-user.sh)
-# BOUGH_KUBE_IMPERSONATE=bough  # stamp Impersonate-User on kubectl reqs → API server demotes to that principal
 EOF
   chmod 600 "$ENV_FILE"
 fi

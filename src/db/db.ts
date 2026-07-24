@@ -1,14 +1,14 @@
 /**
- * SQLite persistence for sessions, messages, and the two side-channels (net_events,
- * snapshots). Tree history lives here: sessions form a parent_id forest and a session's
- * "thread" is the concatenation of messages along the root→self path (see threadFor).
+ * SQLite persistence for sessions, messages, and turns. Tree history lives here:
+ * sessions form a parent_id forest and a session's "thread" is the concatenation of
+ * messages along the root→self path (see threadFor).
  *
  * Driver decision: plain SQL over Deno's built-in `node:sqlite` (DatabaseSync),
  * wrapped in a thin typed layer below. We deliberately skip Drizzle — on Deno its
  * SQLite story means pulling a second native driver (better-sqlite3/libsql) when the
  * runtime already ships one, and our query surface is a handful of statements that read
  * clearer as SQL. The Zod schemas in schema/parts.ts already give us the type safety
- * Drizzle would. Net/snapshot owners extend the minimal columns here later.
+ * Drizzle would.
  *
  * Storage: JSON columns for message `parts`; booleans as 0/1; timestamps as epoch ms.
  * DB file at ~/.bough/bough.db, overridable via BOUGH_DB (":memory:" for tests).
@@ -17,7 +17,7 @@ import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { boughHome } from "../paths.ts";
 import { mkdirSync } from "node:fs";
-import type { Message, NetRequest, Part, Role, Session, SessionKind } from "../schema/parts.ts";
+import type { Message, Part, Role, Session, SessionKind } from "../schema/parts.ts";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS sessions (
@@ -53,26 +53,6 @@ CREATE TABLE IF NOT EXISTS messages (
   created_at  INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS messages_session ON messages(session_id, created_at);
--- Side-channels: minimal columns; the net-gate / snapshot owners extend these.
-CREATE TABLE IF NOT EXISTS net_events (
-  id           TEXT PRIMARY KEY,
-  session_id   TEXT,
-  host         TEXT NOT NULL,
-  verb         TEXT,
-  action       TEXT NOT NULL,
-  verdict      TEXT NOT NULL,
-  reason       TEXT,
-  requested_by TEXT,
-  fields       TEXT,                   -- JSON facet fields (classifier's parsed view)
-  ts           INTEGER NOT NULL
-);
--- Per-session egress policy overrides (Claw Patrol). A session with no row inherits
--- the nearest ancestor's row, falling back to the global ~/.bough/net/policy.json.
-CREATE TABLE IF NOT EXISTS net_policies (
-  session_id  TEXT PRIMARY KEY REFERENCES sessions(id),
-  config      TEXT NOT NULL,          -- JSON NetConfig
-  updated_at  INTEGER NOT NULL
-);
 -- The supervisor state machine: one row per in-flight (or finished) turn. The
 -- runner checkpoints the step after each API round + each tool result so a restart
 -- can find turns still marked running and orphan them (see turns.ts).
@@ -467,11 +447,6 @@ export class Db {
       }
     }
     try {
-      this.#db.exec(`ALTER TABLE net_events ADD COLUMN fields TEXT`);
-    } catch {
-      // column already exists
-    }
-    try {
       this.#db.exec(`ALTER TABLE turns ADD COLUMN first_output_at INTEGER`);
     } catch {
       // column already exists
@@ -765,9 +740,7 @@ export class Db {
     const ph = ids.map(() => "?").join(",");
     this.#db.exec("PRAGMA foreign_keys = OFF");
     try {
-      for (
-        const t of ["message_embeddings", "turns", "net_events", "net_policies"]
-      ) {
+      for (const t of ["message_embeddings", "turns"]) {
         this.#db.prepare(`DELETE FROM ${t} WHERE session_id IN (${ph})`).run(...ids);
       }
       this.#db.prepare(`DELETE FROM messages WHERE session_id IN (${ph})`).run(...ids);
@@ -1157,128 +1130,6 @@ export class Db {
       .all(runId) as WorkflowAgentRow[];
     return rows.map(toWorkflowAgent);
   }
-
-  // net_policies ------------------------------------------------------------
-
-  /** The raw NetConfig JSON overriding the policy for this session, if any. */
-  getNetPolicy(sessionId: string): string | undefined {
-    const row = this.#db
-      .prepare(`SELECT config FROM net_policies WHERE session_id = ?`)
-      .get(sessionId) as { config: string } | undefined;
-    return row?.config;
-  }
-
-  setNetPolicy(sessionId: string, config: string): void {
-    this.#db
-      .prepare(
-        `INSERT OR REPLACE INTO net_policies (session_id, config, updated_at) VALUES (?, ?, ?)`,
-      )
-      .run(sessionId, config, Date.now());
-  }
-
-  deleteNetPolicy(sessionId: string): void {
-    this.#db.prepare(`DELETE FROM net_policies WHERE session_id = ?`).run(sessionId);
-  }
-
-  // net_events --------------------------------------------------------------
-
-  /**
-   * Upsert (by id) one net-gate decision. A held request is written twice — first
-   * `pending`, then resolved to allowed/denied — so INSERT OR REPLACE keeps the row
-   * at its latest verdict, which is what the rail and approval card render.
-   */
-  recordNetEvent(sessionId: string | undefined, r: NetRequest): void {
-    this.#db
-      .prepare(
-        `INSERT OR REPLACE INTO net_events
-           (id, session_id, host, verb, action, verdict, reason, requested_by, fields, ts)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        r.id,
-        sessionId ?? null,
-        r.host,
-        r.verb ?? null,
-        r.action,
-        r.verdict,
-        r.reason ?? null,
-        r.requestedBy ?? null,
-        r.fields ? JSON.stringify(r.fields) : null,
-        r.ts,
-      );
-  }
-
-  /** Specific net-gate rows by id (order preserved); unknown ids are skipped. */
-  netEventsByIds(ids: string[]): NetRequest[] {
-    if (ids.length === 0) return [];
-    const marks = ids.map(() => "?").join(",");
-    const rows = this.#db
-      .prepare(`SELECT * FROM net_events WHERE id IN (${marks})`)
-      .all(...ids) as NetEventRow[];
-    const byId = new Map(rows.map((r) => [r.id, toNetRequest(r)]));
-    return ids.map((id) => byId.get(id)).filter((r): r is NetRequest => r !== undefined);
-  }
-
-  /**
-   * Flip every still-`pending` net event to denied (boot sweep): no hold survives a
-   * restart, so a pending row at startup is an orphan that would otherwise show an
-   * unanswerable approval card forever. Returns how many were swept.
-   */
-  expirePendingNetEvents(reason: string): number {
-    const out = this.#db
-      .prepare(`UPDATE net_events SET verdict = 'denied', reason = ? WHERE verdict = 'pending'`)
-      .run(reason);
-    return Number(out.changes);
-  }
-
-  /** Recent net-gate decisions, newest first; filtered by session when given. */
-  recentNetEvents(sessionId?: string, limit = 100): NetRequest[] {
-    const rows = (sessionId
-      ? this.#db
-        .prepare(
-          `SELECT * FROM net_events WHERE session_id = ? ORDER BY ts DESC, rowid DESC LIMIT ?`,
-        )
-        .all(sessionId, limit)
-      : this.#db
-        .prepare(`SELECT * FROM net_events ORDER BY ts DESC, rowid DESC LIMIT ?`)
-        .all(limit)) as NetEventRow[];
-    return rows.map(toNetRequest);
-  }
-}
-
-type NetEventRow = {
-  id: string;
-  session_id: string | null;
-  host: string;
-  verb: string | null;
-  action: string;
-  verdict: string;
-  reason: string | null;
-  requested_by: string | null;
-  fields: string | null;
-  ts: number;
-};
-
-function toNetRequest(r: NetEventRow): NetRequest {
-  const out: NetRequest = {
-    id: r.id,
-    host: r.host,
-    action: r.action,
-    verdict: r.verdict as NetRequest["verdict"],
-    ts: r.ts,
-  };
-  if (r.session_id != null) out.sessionId = r.session_id;
-  if (r.verb != null) out.verb = r.verb;
-  if (r.reason != null) out.reason = r.reason;
-  if (r.requested_by != null) out.requestedBy = r.requested_by;
-  if (r.fields != null) {
-    try {
-      out.fields = JSON.parse(r.fields);
-    } catch {
-      // corrupt fields blob — drop it, the row still renders
-    }
-  }
-  return out;
 }
 
 /** Resolve the DB path: BOUGH_DB override, else ~/.bough/bough.db (dir created). */

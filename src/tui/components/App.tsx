@@ -81,8 +81,6 @@ import {
   type DirHit,
   type KeyProvider,
   type McpStatus,
-  type NetConfig,
-  type NetStatus,
   type SkillInfo,
   type ThemeState,
   type WireSchedule,
@@ -109,7 +107,6 @@ import { findMatches, markLine } from "../search.ts";
 import { Composer } from "./Composer.tsx";
 import { ActivityLine, StatusBar } from "./StatusBar.tsx";
 import { flattenTree, SessionPicker, type TreeRow } from "./SessionPicker.tsx";
-import { NetApproval } from "./NetApproval.tsx";
 import { AskCard } from "./AskCard.tsx";
 import { NewSession } from "./NewSession.tsx";
 import {
@@ -122,14 +119,14 @@ import {
 import { DiffView, flattenDiffs } from "./DiffView.tsx";
 import { modelEntries, ModelPicker } from "./ModelPicker.tsx";
 import { Panel, PANEL_TABS, type PanelTab, PanelTabs } from "./Panel.tsx";
-import { orderAgents, type WfLevel, wfGlyph, Workflows } from "./Workflows.tsx";
+import { orderAgents, wfGlyph, type WfLevel, Workflows } from "./Workflows.tsx";
 import { Help, helpMaxScroll } from "./Help.tsx";
 import { appendHistory, appendShellHistory, loadHistory } from "../state.ts";
 import { shellHistoryCorpus } from "../shell_history.ts";
 import { copyToClipboard } from "../clipboard.ts";
 import { progressEnd, progressStart, setTitle, tabColor, termBackground } from "../term.ts";
 
-// picker + conversation + net/mcp/skills are all tabs of the one "panel" view.
+// picker + conversation + mcp/skills are all tabs of the one "panel" view.
 type Mode = "chat" | "new" | "panel" | "help";
 
 export function App(
@@ -258,26 +255,10 @@ export function App(
       dead = true;
     };
   }, [mode, panelTab, wfOpenId, store.wfSeq]);
-  // Net feed scope: this session by default — the feed is an audit trail, and a
-  // global default buried "what did THIS session just do" in unrelated history
-  // (user-testing). `g` widens to all sessions.
-  const [netGlobal, setNetGlobal] = useState(false);
-  // Approval-card detail view (v): inspect the held request before deciding.
-  // Reset per hold so one card's expansion doesn't leak onto the next.
-  const [holdDetail, setHoldDetail] = useState(false);
-  const pendingId = store.pending?.id;
-  // Anti-misclick guard: a card that just replaced the composer must not eat a
-  // keystroke that was already in flight for the composer — a/A/d arm after a
-  // short delay (same idea as Claude Code's 200ms permission-dialog guard).
-  const pendingSince = useRef(0);
-  useEffect(() => {
-    setHoldDetail(false);
-    if (pendingId) pendingSince.current = Date.now();
-  }, [pendingId]);
   // ask() question-hold state: the free-text draft + whether the text line is
-  // active. Reset per question (same leak-guard as holdDetail); an option-less
-  // question starts in typing mode — free text is its only input. Same arm-delay
-  // idea as the net card so an in-flight composer keystroke can't answer unseen.
+  // active. Reset per question; an option-less question starts in typing mode —
+  // free text is its only input. An arm-delay (askSince) so an in-flight composer
+  // keystroke can't answer unseen.
   const askId = store.ask?.id;
   const askHasOptions = (store.ask?.options?.length ?? 0) > 0;
   const [askText, setAskText] = useState("");
@@ -292,8 +273,6 @@ export function App(
   // its own arms the pair — an esc that interrupted or dismissed something
   // already spent itself.
   const lastEscAt = useRef(0);
-  const [netStat, setNetStat] = useState<NetStatus | null>(null);
-  const [policy, setPolicy] = useState<NetConfig | null>(null);
   const [mcpStat, setMcpStat] = useState<McpStatus | null>(null);
   const [skillsList, setSkillsList] = useState<SkillInfo[] | null>(null);
   // new-session state. The workspace query is a cursor-ed line edit like the
@@ -446,7 +425,7 @@ export function App(
   useEffect(() => {
     setTitle(sessionTitle ? `bough — ${sessionTitle}` : "bough");
   }, [sessionTitle]);
-  const hasPending = !!store.pending || !!store.ask;
+  const hasPending = !!store.ask;
   useEffect(() => {
     tabColor(hasPending ? palette.warn : null);
   }, [hasPending]);
@@ -482,10 +461,7 @@ export function App(
   // Fetch panel data when the panel opens or its tab switches.
   const { currentId } = store;
   const refreshPanel = useCallback((tab: PanelTab) => {
-    if (tab === "net") {
-      api.netStatus().then(setNetStat, () => setNetStat(null));
-      api.getPolicy().then(setPolicy, () => setPolicy(null));
-    } else if (tab === "mcp") {
+    if (tab === "mcp") {
       api.mcpStatus(currentId).then(setMcpStat, (e) => {
         setMcpStat(null);
         setPanelMsg(String(e));
@@ -768,7 +744,12 @@ export function App(
         .filter((x) => x.score > 0)
         .sort((a, b) => b.score - a.score || b.i - a.i)
         .slice(0, 6)
-        .map(({ cmd }) => ({ label: cmd, detail: "", insert: `!${cmd}`, hl: fuzzyPositions(cmd, q) }));
+        .map(({ cmd }) => ({
+          label: cmd,
+          detail: "",
+          insert: `!${cmd}`,
+          hl: fuzzyPositions(cmd, q),
+        }));
       // sel -1 = browsing, nothing picked: enter keeps running the TYPED line;
       // only an explicit ↑/↓ pick makes enter run a listed command instead.
       setPopup(
@@ -811,9 +792,7 @@ export function App(
         // A filter that matches nothing still shows the menu (as a "no matching
         // commands" row) — silently hiding it read as "/ is broken".
         setPopup(
-          items.length || q
-            ? { kind: "skill", items, sel: 0, tokenStart: 0, tokenEnd: end }
-            : null,
+          items.length || q ? { kind: "skill", items, sel: 0, tokenStart: 0, tokenEnd: end } : null,
         );
       };
       if (skillsCache.current) apply(skillsCache.current);
@@ -873,7 +852,7 @@ export function App(
     // Only surface the worker prediction once the user has started typing —
     // on an empty composer it clobbered the guiding placeholder with a whole
     // sentence. Typing a prefix of it still reveals the remainder.
-    if (!ghost || comp.text === "" || store.busy || store.pending || store.ask) return null;
+    if (!ghost || comp.text === "" || store.busy || store.ask) return null;
     return ghost.startsWith(comp.text) && ghost.length > comp.text.length
       ? ghost.slice(comp.text.length)
       : null;
@@ -884,7 +863,7 @@ export function App(
   useEffect(() => {
     ++suggestSeq.current; // context changed — invalidate any in-flight fetch
     setGhost(null); //     …and the prediction it would have refreshed
-    if (mode !== "chat" || !currentId || store.busy || store.pending || store.ask) return;
+    if (mode !== "chat" || !currentId || store.busy || store.ask) return;
     const sid = currentId;
     const seq = suggestSeq.current;
     // A beat after idle so the turn's final message is committed server-side.
@@ -898,7 +877,7 @@ export function App(
       );
     }, 400);
     return () => clearTimeout(t);
-  }, [mode, currentId, store.busy, store.pending, store.ask]);
+  }, [mode, currentId, store.busy, store.ask]);
 
   // Bracketed pastes land whole in the composer (chat mode only), newlines intact.
   const modeRef = useRef(mode);
@@ -918,7 +897,7 @@ export function App(
     if (mode === "new") {
       return setNewComp((c) => ({ ...c, cursor: k === "home" ? 0 : c.text.length }));
     }
-    if (mode !== "chat" || store.pending || store.ask || searchQ !== null || sched) return;
+    if (mode !== "chat" || store.ask || searchQ !== null || sched) return;
     moveCursor((c) => (k === "home" ? 0 : c.text.length));
   };
   useEffect(() => {
@@ -1170,7 +1149,9 @@ export function App(
     : [];
   const childSessions = useMemo(
     () =>
-      store.sessions.filter((s) => s.originId === treeRootId && (showDeprecated || !s.deprecatedAt)),
+      store.sessions.filter((s) =>
+        s.originId === treeRootId && (showDeprecated || !s.deprecatedAt)
+      ),
     [store.sessions, treeRootId, showDeprecated],
   );
   const convItems = useMemo(() => treeItems(buildTree(treeThread, childSessions), sections), [
@@ -1341,7 +1322,16 @@ export function App(
       if (name === "theme") {
         return setErr("theming lives in the panel — press ^t, then the theme tab");
       }
-      const known = ["handoff", "conversation", "schedule", "schedules", "model", "effort", "workflow", "workflows"].includes(name) ||
+      const known = [
+        "handoff",
+        "conversation",
+        "schedule",
+        "schedules",
+        "model",
+        "effort",
+        "workflow",
+        "workflows",
+      ].includes(name) ||
         skillsCache.current?.some((s) => s.name === name);
       if (skillsCache.current && !known) {
         return setErr(`unknown command: /${name} — tab completes from the / menu`);
@@ -1391,7 +1381,7 @@ export function App(
     } else if (t === "model") {
       setModelSel(0);
       setKeyInput(null);
-    } else if (t === "net") {
+    } else if (t === "mcp") {
       setMcpSel(0);
     } else if (t === "workflows") {
       setWfSel(0);
@@ -1682,7 +1672,12 @@ export function App(
           };
           if (it.type === "branch") openSession(it.session);
           else if (it.type === "step") {
-            store.fork(it.step.point.msgId, it.step.point.atPart, undefined, treeRootId ?? undefined)
+            store.fork(
+              it.step.point.msgId,
+              it.step.point.atPart,
+              undefined,
+              treeRootId ?? undefined,
+            )
               .then(forked);
           } else {
             // Rewind-to-edit: the branch cuts BEFORE this turn and its user message
@@ -1739,15 +1734,6 @@ export function App(
         return;
       }
 
-      if (panelTab === "net" && ch === "g") {
-        setNetGlobal((v) => !v);
-        return;
-      }
-      if (panelTab === "net" && ch === "y") {
-        const on = policy?.mode !== "yolo";
-        api.setYolo(on).then(({ config }) => setPolicy(config), (e) => setPanelMsg(String(e)));
-        return;
-      }
       if (panelTab === "theme") {
         // Moving the cursor previews live (the hovered preset lands, debounced,
         // on the server and the TUI recolors); Enter keeps it, Escape reverts.
@@ -2204,7 +2190,7 @@ export function App(
       setExpandAll((v) => !v);
       return;
     }
-    if (ch === "?" && !key.ctrl && !key.meta && input === "" && !store.pending && !store.ask) {
+    if (ch === "?" && !key.ctrl && !key.meta && input === "" && !store.ask) {
       setMode("help");
       return;
     }
@@ -2231,7 +2217,11 @@ export function App(
       if (key.escape) return setPopup(null);
       if (key.upArrow) {
         return setPopup((p) =>
-          p && { ...p, sel: p.sel < 0 ? p.items.length - 1 : (p.sel - 1 + p.items.length) % p.items.length }
+          p &&
+          {
+            ...p,
+            sel: p.sel < 0 ? p.items.length - 1 : (p.sel - 1 + p.items.length) % p.items.length,
+          }
         );
       }
       if (key.downArrow) {
@@ -2269,34 +2259,18 @@ export function App(
       }
     }
     // Tab accepts the worker ghost (the popup's tab wins above when one is open).
-    if (key.tab && !popup && ghostText && !store.pending && !store.ask) {
+    if (key.tab && !popup && ghostText && !store.ask) {
       const add = ghostText;
       setGhost(null);
       return setComp((c) => ({ text: c.text + add, cursor: c.text.length + add.length }));
     }
     if (key.pageUp) return setScrollOff((o) => Math.min(maxOff, o + Math.max(1, viewH - 2)));
     if (key.pageDown) return setScrollOff((o) => Math.max(0, o - Math.max(1, viewH - 2)));
-    if (store.pending) {
-      // The approval card replaces the composer; plain keys act on the hold.
-      // Deciding keys are dead for the first beat after the card appears so a
-      // keystroke aimed at the composer can't approve a request unseen ('v'
-      // stays live — inspecting is always safe).
-      const armed = Date.now() - pendingSince.current > 250;
-      if (ch === "a" && armed) return store.resolvePending(true, "once");
-      if (ch === "A" && armed) return store.resolvePending(true, "session");
-      if (ch === "d" && armed) return store.resolvePending(false);
-      if (ch === "v") return setHoldDetail((v) => !v);
-      // Esc stays the brake even while a hold card is up: stop the whole turn
-      // (the hold dies with it) instead of being dead until a/A/d. No arm-delay:
-      // stopping is always safe.
-      if (key.escape) return store.interrupt();
-      return;
-    }
     if (store.ask) {
-      // The question card replaces the composer (net holds outrank it above).
-      // Deciding keys arm after the same beat as the net card; esc DECLINES the
-      // question — the program catches a "user declined" error and continues, so
-      // the turn keeps running (interrupt still reachable once the card clears).
+      // The question card replaces the composer. Deciding keys arm after a short
+      // beat so an in-flight composer keystroke can't answer unseen; esc DECLINES
+      // the question — the program catches a "user declined" error and continues,
+      // so the turn keeps running (interrupt still reachable once the card clears).
       const armed = Date.now() - askSince.current > 250;
       if (askTyping) {
         if (key.return) {
@@ -2599,7 +2573,7 @@ export function App(
   });
 
   // The unified management view: one bordered container, a tab bar, and the active
-  // tab's content (sessions/conversation trees, or net/mcp/skills).
+  // tab's content (sessions/conversation trees, or mcp/skills).
   const panel = mode === "panel"
     ? (
       <Box
@@ -2678,17 +2652,11 @@ export function App(
           : (
             <Panel
               tab={panelTab}
-              status={netStat}
-              policy={policy}
-              feed={netGlobal ? store.feed : store.feed.filter((r) => r.sessionId === currentId)}
               mcp={mcpStat}
               mcpSel={mcpSel}
               mcpMsg={panelMsg}
               skills={skillsList}
               rows={rows}
-              netScopeLabel={netGlobal
-                ? "all sessions · g scopes to this session"
-                : "this session · g shows all sessions"}
               theme={themeState}
               themeSel={themeSel}
             />
@@ -2733,15 +2701,19 @@ export function App(
                     : "new conversation"}
                 </Text>
                 <Text>{" "}</Text>
-                {/* The hint clears once a draft exists — leaving it up read as
+                {
+                  /* The hint clears once a draft exists — leaving it up read as
                    "my typing didn't register" (visual audit). Blank keeps the
-                   block's height so nothing shifts on the first keystroke. */}
+                   block's height so nothing shifts on the first keystroke. */
+                }
                 {input
                   ? <Text>{" "}</Text>
                   : <Text dimColor>type to start · ^p sessions & new project · ? help</Text>}
               </Box>
-              {/* The welcome screen has no transcript row for the copy-flash
-                 chip to blink over — give it one (draft-cleared feedback). */}
+              {
+                /* The welcome screen has no transcript row for the copy-flash
+                 chip to blink over — give it one (draft-cleared feedback). */
+              }
               {flash?.on
                 ? (
                   <Box justifyContent="flex-end">
@@ -2932,9 +2904,7 @@ export function App(
                   <Text wrap="truncate">
                     <Text color={palette.accent}>⌕{" "}</Text>
                     {searchQ}
-                    <Text color={palette.accent}>▌</Text>
-                    {"  "}
-                    {matches.length
+                    <Text color={palette.accent}>▌</Text>{"  "}{matches.length
                       ? <Text dimColor>{curMatch + 1}/{matches.length}</Text>
                       : searchQ
                       ? <Text color={palette.warn}>no matches</Text>
@@ -2943,7 +2913,7 @@ export function App(
                   </Text>
                 )
                 : null}
-              {popup && !store.pending && !store.ask
+              {popup && !store.ask
                 ? (
                   <Box
                     flexDirection="column"
@@ -2989,9 +2959,7 @@ export function App(
                   </Box>
                 )
                 : null}
-              {store.pending
-                ? <NetApproval req={store.pending} count={store.pendingCount} detail={holdDetail} />
-                : store.ask
+              {store.ask
                 ? (
                   <AskCard
                     q={store.ask}
@@ -3020,8 +2988,10 @@ export function App(
             apply from the diff panel that reports nowhere reads as a silent no-op. */
         }
         {store.notice ? <Text color={palette.warn} wrap="truncate">{store.notice}</Text> : null}
-        {/* Live workflow chip(s): one row per running/paused run of this
-            conversation, always visible in chat mode — /workflows drills in. */}
+        {
+          /* Live workflow chip(s): one row per running/paused run of this
+            conversation, always visible in chat mode — /workflows drills in. */
+        }
         {mode === "chat"
           ? store.workflows.filter((w) => w.status === "running" || w.status === "paused")
             .slice(0, 2)
@@ -3044,10 +3014,10 @@ export function App(
           connected={store.connected}
           busy={store.busy}
           session={store.session}
-          pendingCount={store.pendingCount + store.askCount}
+          pendingCount={store.askCount}
           quitHint={quitHint}
           composerEmpty={input === ""}
-          mode={mode === "chat" && (store.pending || store.ask) ? "approval" : mode}
+          mode={mode === "chat" && store.ask ? "approval" : mode}
           usage={store.usage}
           bgJobs={runningJobs}
           draftLabel={isDraft ? `new · ${shortWs}` : null}

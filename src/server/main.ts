@@ -3,7 +3,6 @@
  * process the `dev` task runs; tests build their own ctx + handler instead.
  */
 import { openDb } from "../db/db.ts";
-import { ClawpatrolGateway, setActiveGateway } from "../net/gateway.ts";
 import { teardown as teardownSandbox } from "../sandbox/agentfs.ts";
 import { setOriginResolver } from "../vcs/shadow.ts";
 import { mcpManager } from "../mcp/manager.ts";
@@ -25,10 +24,6 @@ if (orphaned > 0) console.log(`recovered ${orphaned} orphaned turn(s)`);
 // Workflow runs are in-memory like turns — a row still `running` at boot is stale.
 const orphanedWf = recoverOrphanedWorkflows(db);
 if (orphanedWf > 0) console.log(`recovered ${orphanedWf} orphaned workflow(s)`);
-// Same idea for the net gate: no hold survives a restart, so a `pending` row at
-// startup is an orphan whose approval card would otherwise haunt every session.
-const swept = db.expirePendingNetEvents("expired — server restarted before approval");
-if (swept > 0) console.log(`swept ${swept} orphaned pending net request(s)`);
 // Long-term purge: archive is a soft delete with a grace window; sessions archived
 // longer than the retention period are hard-removed on boot (and via `bough purge`).
 const purged = db.purgeArchivedBefore(Date.now() - PURGE_RETENTION_MS);
@@ -36,18 +31,12 @@ if (purged > 0) console.log(`purged ${purged} session(s) archived over 30 days a
 // Store-side git ops resolve a session's shadow store through its origin dir
 // (this DB is the authority).
 setOriginResolver((sid) => db.getSession(sid)?.originDir ?? null);
-// Claw Patrol is bough's native egress firewall (opt-in via BOUGH_CLAWPATROL=1): it
-// runs an in-process intercepting proxy and routes sandboxed commands through it.
-const gateway = new ClawpatrolGateway({ db, bus });
-setActiveGateway(gateway);
-await gateway.start();
 // Drop a session's agentfs handle when it's archived — covers both root sessions
 // (app.ts) and subagents (subagent.ts), which both publish session.archived. The
 // on-disk delta persists (harmless); this only frees the in-process bookkeeping.
 bus.subscribe((e) => {
   if (e.type === "session.archived" && e.sessionId) void teardownSandbox(e.sessionId);
 });
-globalThis.addEventListener("unload", () => void gateway.stop());
 // MCP server children (mcp/manager.ts) get an orderly SIGTERM on shutdown.
 globalThis.addEventListener("unload", () => void mcpManager().dropAll());
 // Live-map blurbs: the local worker narrates each session's current program round
@@ -58,8 +47,6 @@ if (password) console.log("auth: password required (BOUGH_PASSWORD is set)");
 const handler = createHandler({
   db,
   bus,
-  gateway,
-  gate: gateway.gate,
   password,
   retitler: workerTitle,
 });

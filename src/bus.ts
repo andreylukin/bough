@@ -2,7 +2,7 @@
  * In-process event bus. One instance fans every BoughEvent out to all live SSE
  * subscribers. It is deliberately memory-only and persistence-agnostic: the bus
  * stamps a process-monotonic `seq` and a `ts`, then notifies listeners — persisting
- * the event (to net_events, messages, …) is the caller's job, done before publish.
+ * the event (to messages, …) is the caller's job, done before publish.
  *
  * Contract:
  *   - publish(e) takes the event minus its stamp fields, assigns `seq`/`ts`, delivers

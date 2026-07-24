@@ -726,8 +726,8 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     toolCtx.prose = (text) => {
       if (!finalized) append({ type: "prose", text });
     };
-    // ask(): park the program on a question to the human (asks.ts — the net gate's
-    // hold-and-ask pattern). The settled Q/A is appended to THIS message as an
+    // ask(): park the program on a question to the human (asks.ts — a hold-and-ask
+    // pattern). The settled Q/A is appended to THIS message as an
     // "ask" part, so the transcript keeps it and replay renders it as plain text
     // (toLlmMessages) — replay never re-blocks.
     toolCtx.ask = async (question, opts) => {
@@ -1294,8 +1294,7 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     bus.publish({ type: "turn.finished", sessionId, data: { sessionId, status } });
   } finally {
     // A question the turn never got answered (program timed out around it, or the
-    // turn died some other way) must not haunt the TUI as a live hold — same
-    // reasoning as gate.expireHolds for an interrupted turn's net holds.
+    // turn died some other way) must not haunt the TUI as a live hold.
     expireAsks(sessionId);
     // Persist token usage for the context meter and announce it (usage.updated).
     // contextTokens stays 0 for a stream that errored before its first usage report.

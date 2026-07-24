@@ -5,7 +5,6 @@ import {
   execCommand as agentfsExecCommand,
   sandboxAgentfs,
 } from "../sandbox/agentfs.ts";
-import { clawpatrolEnv } from "../net/gateway.ts";
 import type { ToolDef, ToolRunCtx } from "./types.ts";
 import { backgroundNote, formatFinal, newShell, promote } from "./bash_bg.ts";
 
@@ -35,9 +34,8 @@ function bgAfterMs(): number {
  * Argv + env + cwd for running `command` under this ctx's confinement — shared by
  * the blocking bash tool and the background shells (bash_bg.ts).
  *
- * Egress routes through Claw Patrol when the proxy is running (opt-in): the proxy
- * env points the command's HTTP(S) client at THIS SESSION's intercepting proxy
- * (per-branch policy + attribution) and trusts its MITM CA. Empty when off.
+ * Egress goes DIRECT: there is no proxy or egress firewall. Commands use the host's
+ * own credentials (gh/git resolve the host login) and reach the network unrouted.
  *
  * agentfs mode: the shell runs inside the session's copy-on-write overlay of the
  * host workspace, which is the whole confinement story — writes land in the
@@ -46,13 +44,11 @@ function bgAfterMs(): number {
  * `readOnly` (the oracle's shell) shares the session overlay; read-only is not
  * enforced yet (agentfs has no per-run ro overlay).
  */
-export async function shellInvocation(
+export function shellInvocation(
   command: string,
   ctx: ToolRunCtx,
   _opts?: { readOnly?: boolean },
-): Promise<{ argv: string[]; env?: Record<string, string>; cwd?: string }> {
-  const netEnv = await clawpatrolEnv(ctx.sessionId);
-  const env: Record<string, string> = { ...netEnv };
+): { argv: string[]; env?: Record<string, string>; cwd?: string } {
   const argv = ["/bin/sh", "-c", command];
 
   // agentfs backend (the only sandbox; on by default): run the shell inside the
@@ -65,14 +61,13 @@ export async function shellInvocation(
     ensureAgentfs(ctx.sessionId, { origin: ctx.workspace });
     return {
       argv: agentfsExecCommand(ctx.sessionId, argv),
-      env: Object.keys(env).length ? env : undefined,
       cwd: ctx.workspace,
     };
   }
 
   // No sandbox (tests / CI / BOUGH_SANDBOX_AGENTFS=0): run unwrapped on the host,
-  // in the workspace, with the proxy env.
-  return { argv, env: Object.keys(env).length ? env : undefined, cwd: ctx.workspace };
+  // in the workspace.
+  return { argv, cwd: ctx.workspace };
 }
 
 /**

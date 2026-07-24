@@ -6,7 +6,7 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
     keys: [
       ["enter", "send — steers a running turn"],
       ["⌥enter", "queue for after this turn"],
-      ["esc", "interrupt the turn (also during a net hold)"],
+      ["esc", "interrupt the turn (also during a question hold)"],
       ["esc esc", "clear the draft · rewind when empty"],
       ["↑/↓", "recall sent messages"],
       ["^s", "search the conversation"],
@@ -69,7 +69,10 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
       ["enter / →", "open a run · then an agent"],
       ["esc / ←", "back out one level"],
       ["x / p", "stop · pause/resume the run"],
-      ["r", "rerun — edit its script file first to change it; unchanged agents replay from the journal"],
+      [
+        "r",
+        "rerun — edit its script file first to change it; unchanged agents replay from the journal",
+      ],
       ["o", "open the selected agent's conversation"],
     ],
   },
@@ -78,18 +81,10 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
     keys: [["enter", "set model/effort · edit API keys"]],
   },
   {
-    section: "net · mcp · skills · theme tabs",
+    section: "mcp · skills · theme tabs",
     keys: [
-      ["g / y", "net: feed scope · yolo mode"],
       ["c e r a", "mcp: connect · enable · restart · auth"],
       ["↑↓", "theme: applies live"],
-    ],
-  },
-  {
-    section: "net hold",
-    keys: [
-      ["a / A / d", "allow once · allow for the session · deny"],
-      ["v", "show request details"],
     ],
   },
   {
@@ -106,10 +101,7 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
   },
 ];
 
-/** Shown inside the net-hold card (it replaces the composer, so it carries its own keys). */
-export const APPROVAL_HINT = "a allow once · A allow session · d deny · v details";
-
-/** Question-hold card hints (same convention: the card carries its own keys). */
+/** Question-hold card hints (the card replaces the composer, so it carries its own keys). */
 export const ASK_OPTIONS_HINT = "1-9 choose · t type an answer · esc decline";
 export const ASK_TYPING_HINT = "enter send · esc decline";
 export const ASK_TYPING_BACK_HINT = "enter send · esc back to options";

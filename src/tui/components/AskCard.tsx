@@ -4,7 +4,7 @@ import { Text } from "./Text.tsx";
 import type { AskQuestion } from "../../schema/parts.ts";
 import { ASK_OPTIONS_HINT, ASK_TYPING_BACK_HINT, ASK_TYPING_HINT } from "../keys.ts";
 
-// The question-hold card — NetApproval's sibling for ask() (asks.ts): a program is
+// The question-hold card for ask() (asks.ts): a program is
 // parked mid-turn on a question to the human, so the card replaces the composer
 // until it's answered or declined. Number keys pick an option; `t` (or an
 // option-less question, which starts there) switches to the free-text line.

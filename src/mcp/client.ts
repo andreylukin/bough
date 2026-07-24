@@ -75,8 +75,7 @@ export class McpStdioClient implements McpConnection {
   /**
    * Spawn `argv` (composed by the caller) and run the
    * MCP initialize handshake. `env` is the child's ENTIRE environment (clearEnv) —
-   * the caller composes the minimal set: PATH/HOME, the server's declared env, and
-   * the Claw Patrol proxy env.
+   * the caller composes the minimal set: PATH/HOME and the server's declared env.
    */
   static async connect(
     opts: { argv: string[]; cwd?: string; env: Record<string, string> },

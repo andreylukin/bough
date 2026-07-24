@@ -177,3 +177,11 @@ export function setActivation(
   else delete acts.sessions[scope];
   writeJson(join(mcpDir(), "activations.json"), acts);
 }
+
+/** Parse a "90m" | "2h" | "7d" TTL into an absolute ISO expiry (activation TTLs). */
+export function ttlToExpires(ttl: string, now = Date.now()): string {
+  const m = ttl.trim().match(/^(\d+)\s*(m|h|d)$/);
+  if (!m) throw new Error(`invalid ttl "${ttl}" — use e.g. "90m", "2h", "7d"`);
+  const unit = { m: 60_000, h: 3_600_000, d: 86_400_000 }[m[2] as "m" | "h" | "d"];
+  return new Date(now + Number(m[1]) * unit).toISOString();
+}

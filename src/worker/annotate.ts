@@ -5,7 +5,6 @@
  * cold, timeout, junk reply) and never throw; callers publish only non-null
  * results. Schema-constrained decoding keeps the replies structurally parseable.
  */
-import type { NetRequest } from "../schema/parts.ts";
 import { workerIfRunning } from "./runtime.ts";
 import { workerComplete } from "./client.ts";
 import { frontierComplete, frontierWorkerModel } from "./frontier.ts";
@@ -18,28 +17,6 @@ const SUMMARY_SCHEMA = {
   required: ["summary"],
   additionalProperties: false,
 };
-
-const NET_SYSTEM = [
-  "A sandboxed coding agent made an HTTP request that is HELD for human approval.",
-  "In one short plain-English sentence, tell the human what the request does and to",
-  "what, naming the concrete resource from the path when there is one — e.g.",
-  '"Creates a fork of the anthropics/claude-code repo", "Fetches the /status/health',
-  'endpoint". Never restate just the hostname. Reply as JSON {"summary": "..."}.',
-  'No hedging, no "this request appears to".',
-].join(" ");
-
-/** One-liner for a held egress request, shown on the approval card. */
-export function annotateNet(record: NetRequest): Promise<string | null> {
-  const user = [
-    // The full request line — without the path the worker can only paraphrase the
-    // hostname, which read as useless boilerplate on the card (user-testing).
-    `${record.verb ?? "?"} ${record.host}${record.path ?? ""}`,
-    `classified action: ${record.action}`,
-    record.fields ? `parsed fields: ${JSON.stringify(record.fields)}` : "",
-    record.requestedBy ? `requested by: ${record.requestedBy}` : "",
-  ].filter(Boolean).join("\n");
-  return oneLiner(NET_SYSTEM, user, 140);
-}
 
 const ACTIVITY_SYSTEM = [
   "In 3 to 8 words, present tense, say what this coding-agent step is doing —",
