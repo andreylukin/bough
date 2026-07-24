@@ -4,6 +4,7 @@ import { Db } from "./db/db.ts";
 import type { BoughEvent } from "./schema/parts.ts";
 import {
   type AgentCall,
+  assertBodyParses,
   callKey,
   controlWorkflowAgent,
   evalMeta,
@@ -15,6 +16,7 @@ import {
   resumeWorkflow,
   startWorkflow,
   stopWorkflow,
+  unterminatedString,
   workflowAgentViews,
   type WorkflowCtx,
   workflowVerb,
@@ -513,4 +515,42 @@ Deno.test("controlWorkflowAgent: stop fails ONE agent; the rest of the run conti
   const after = db.listWorkflowAgents(run.id);
   assertEquals(after.find((a) => a.label === "a")!.status, "stopped");
   assertEquals(after.find((a) => a.label === "b")!.status, "done");
+});
+
+Deno.test("unterminatedString: finds a newline-closed quote, ignores legal newlines", () => {
+  // The field failure: a template literal ate the \n meant for this string.
+  const hit = unterminatedString(`const a = 1;\nconst p = "hello\nworld";\n`)!;
+  assertEquals(hit.line, 2);
+  assertEquals(hit.quote, '"');
+  assertEquals(hit.text.includes('"hello'), true);
+  // Template literals, comments and escaped quotes all span/contain newlines legally.
+  assertEquals(unterminatedString("const t = `line one\nline two`;\n"), null);
+  assertEquals(unterminatedString("// a comment\nconst s = 'ok';\n"), null);
+  assertEquals(unterminatedString('/* multi\nline */\nconst s = "ok";\n'), null);
+  assertEquals(unterminatedString(`const s = "she said \\"hi\\"";\n`), null);
+  assertEquals(unterminatedString("const t = `a ${ {x: 'y'} } b`;\n"), null);
+});
+
+Deno.test("startWorkflow: a body that does not parse is rejected BEFORE the run exists", async () => {
+  const { db, session, ctx } = fixture();
+  await assertRejects(
+    () =>
+      startWorkflow(ctx, {
+        sessionId: session.id,
+        script: META + `const p = "one\ntwo";\nreturn await agent(p)`,
+      }),
+    Error,
+    "line 6",
+  );
+  // Nothing persisted, nothing launched — the author can fix it in the same turn.
+  assertEquals(db.listWorkflows(session.id).length, 0);
+});
+
+Deno.test("assertBodyParses: passes valid bodies, explains the template-literal trap", () => {
+  assertBodyParses(`const p = "one\\ntwo";\nreturn await agent(p)`);
+  const err = assertThrows(
+    () => assertBodyParses(`const p = "one\ntwo";`),
+    Error,
+  ) as Error;
+  assertEquals(err.message.includes("consumed by the outer literal"), true);
 });

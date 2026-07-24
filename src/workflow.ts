@@ -96,6 +96,126 @@ export async function evalMeta(script: string): Promise<WorkflowMeta> {
   return parsed.data;
 }
 
+// ---- body syntax check (pure) ----------------------------------------------
+
+/**
+ * Locate a string literal closed by a raw newline. This is THE failure mode for
+ * a generated workflow: the supervisor assembles the script inside a template
+ * literal, and every `\n` meant for a string in the GENERATED script is consumed
+ * by the outer literal, leaving a real newline inside `"..."`. Field case
+ * (2026-07-24): a 57-line Rust-rewrite plan died at parse time, 0/0 agents.
+ *
+ * Written as a scanner rather than a regex because it has to skip comments and
+ * template literals, where a raw newline is perfectly legal.
+ */
+export function unterminatedString(
+  src: string,
+): { line: number; col: number; text: string; quote: string } | null {
+  let line = 1, col = 1, depth = 0;
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i], next = src[i + 1];
+    const bump = () => {
+      if (c === "\n") {
+        line++;
+        col = 1;
+      } else col++;
+    };
+    if (c === "/" && next === "/") {
+      while (i < src.length && src[i] !== "\n") i++;
+      line++;
+      col = 1;
+      continue;
+    }
+    if (c === "/" && next === "*") {
+      const end = src.indexOf("*/", i + 2);
+      const skipped = src.slice(i, end < 0 ? src.length : end + 2);
+      line += (skipped.match(/\n/g) ?? []).length;
+      col = 1;
+      i = end < 0 ? src.length : end + 1;
+      continue;
+    }
+    // Template literals may span lines legally; walk them (with ${} nesting) so
+    // their newlines never look like an unterminated quote.
+    if (c === "`") {
+      i++;
+      for (; i < src.length; i++) {
+        if (src[i] === "\\") {
+          i++;
+          continue;
+        }
+        if (src[i] === "\n") {
+          line++;
+          col = 1;
+          continue;
+        }
+        if (src[i] === "$" && src[i + 1] === "{") depth++;
+        else if (src[i] === "}" && depth > 0) depth--;
+        else if (src[i] === "`" && depth === 0) break;
+      }
+      col++;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      const startLine = line, startCol = col;
+      for (i++; i < src.length; i++) {
+        if (src[i] === "\\") {
+          i++;
+          continue;
+        }
+        if (src[i] === "\n" || i === src.length - 1 && src[i] !== c) {
+          return {
+            line: startLine,
+            col: startCol,
+            text: src.split("\n")[startLine - 1] ?? "",
+            quote: c,
+          };
+        }
+        if (src[i] === c) break;
+      }
+      col++;
+      continue;
+    }
+    bump();
+  }
+  return null;
+}
+
+const AsyncFunctionCtor = Object.getPrototypeOf(async function () {}).constructor as // deno-lint-ignore no-explicit-any
+any;
+
+/**
+ * Compile-check the script body BEFORE the run is persisted and launched.
+ *
+ * Without this a syntax error only surfaced from inside the worker, minutes into
+ * a detached run, as a bare "SyntaxError: Invalid or unexpected token" over ten
+ * frames of Deno internals — no line, no column, no source. The author (usually
+ * the supervisor, mid-turn) could do nothing with that but burn another run.
+ * Compiling here is side-effect free: the Function constructor parses, it does
+ * not execute, and the body never touches the host's scope.
+ */
+export function assertBodyParses(body: string): void {
+  try {
+    new AsyncFunctionCtor("agent", "parallel", "pipeline", "phase", "log", "args", "console", body);
+  } catch (err) {
+    if ((err as Error)?.name !== "SyntaxError") throw err;
+    const why = (err as Error).message;
+    // V8 gives the Function constructor no position, so say where ourselves when
+    // we can recognize the shape.
+    const hit = unterminatedString(body);
+    if (!hit) throw new HttpError(400, `workflow script does not parse: ${why}`);
+    throw new HttpError(
+      400,
+      `workflow script does not parse: ${why} — line ${hit.line}: a ${
+        hit.quote === '"' ? "double" : "single"
+      }-quoted string is closed by a real newline.\n  ${hit.line} | ${
+        clip(hit.text.trim(), 90)
+      }\n` +
+        `If you built this script inside a template literal, write \\\\n (escaped) for newlines ` +
+        `that belong to the GENERATED script's strings — a bare \\n is consumed by the outer literal.`,
+    );
+  }
+}
+
 // ---- engine ----------------------------------------------------------------
 
 /** What one agent() call asks for, parsed from the worker's bridged JSON. */
@@ -224,6 +344,9 @@ export async function startWorkflow(ctx: WorkflowCtx, opts: StartOpts): Promise<
     throw new HttpError(400, "workflow: script must be a non-empty string");
   }
   const meta = await evalMeta(opts.script);
+  // Same demotion the worker gets (line numbers are preserved, so positions in
+  // the error match the script the author wrote).
+  assertBodyParses(opts.script.replace(/export\s+const\s+meta\s*=/, "const meta ="));
   const replay = new Map<string, string[]>();
   let args: unknown = opts.args ?? null;
   if (opts.resumeOf) {
