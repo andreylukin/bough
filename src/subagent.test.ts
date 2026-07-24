@@ -14,10 +14,19 @@ import { defaultTools } from "./tools/mod.ts";
 import { beginTurn, interruptTurn, startUserTurn, type TurnCtx } from "./turn.ts";
 import { taskStubTitle } from "./subagent.ts";
 import * as shadow from "./vcs/shadow.ts";
+import * as agentdiff from "./vcs/agentdiff.ts";
+import * as agentfs from "./sandbox/agentfs.ts";
 import { saveRegistry, setActivation } from "./mcp/config.ts";
 import { mcpManager } from "./mcp/manager.ts";
 
 // ---- harness ---------------------------------------------------------------
+
+/** Read a file through a session's agentfs overlay — adopted/written content lives
+ *  in the session's delta, not the on-disk worktree, until a ship/pr materializes it. */
+async function readOverlay(sessionId: string, dir: string, rel: string): Promise<string> {
+  agentfs.ensure(sessionId, { origin: dir });
+  return new TextDecoder().decode(await agentfs.readFile(sessionId, `${dir}/${rel}`));
+}
 
 /**
  * Scripted rounds per conversation, keyed by the LAST text-bearing user message
@@ -673,7 +682,7 @@ Deno.test({
       assertStringIncludes(out, 'subchanged:["nested.txt"]');
       assertStringIncludes(out, "adopted");
       const spawnerDir = db.getSessionRuntime(spawner.id).workspace!;
-      assertEquals(await Deno.readTextFile(`${spawnerDir}/nested.txt`), "from-nested\n");
+      assertEquals(await readOverlay(spawner.id, spawnerDir, "nested.txt"), "from-nested\n");
 
       // Three tiers of sessions; the grandchild's lineage points at the subagent.
       const subs = db.listSessions().filter((s) => s.kind === "subagent");
@@ -688,8 +697,8 @@ Deno.test({
       assert(grandDir.startsWith(subBase), `grandchild dir ${grandDir} outside ${subBase}`);
       assert(grandDir !== subDir, "grandchild shared the subagent's working copy");
       // Both branches emptied by their adoptions but survive — still continuable.
-      assertEquals((await shadow.diff(grandDir, grandchild.id)).files.length, 0);
-      assertEquals((await shadow.diff(subDir, sub.id)).files.length, 0);
+      assertEquals((await agentdiff.diff(grandDir, grandchild.id)).files.length, 0);
+      assertEquals((await agentdiff.diff(subDir, sub.id)).files.length, 0);
     } finally {
       if (prevSub === undefined) Deno.env.delete("BOUGH_SUBAGENT_BASE");
       else Deno.env.set("BOUGH_SUBAGENT_BASE", prevSub);
@@ -760,7 +769,7 @@ Deno.test({
       assertEquals(own[3].pending, false);
       // …and its edit stacked onto the subagent's branch, not the spawner's.
       const subDir = db.getSessionRuntime(sub.id).workspace!;
-      const files = (await shadow.diff(subDir, sub.id)).files.map((f) => f.path).sort();
+      const files = (await agentdiff.diff(subDir, sub.id)).files.map((f) => f.path).sort();
       assertEquals(files, ["more.txt", "sub.txt"]);
       let leaked = true;
       try {
@@ -1047,7 +1056,9 @@ Deno.test("A5 full success: a subagent that commits done persists ok:true + chec
   const spawner = seed(db);
   const llm = dispatchLlm({
     "hi": [
-      program(`const r = await agent("task"); console.log("ok=" + r.ok + " check=" + r.checkPassed);`),
+      program(
+        `const r = await agent("task"); console.log("ok=" + r.ok + " check=" + r.checkPassed);`,
+      ),
       textRound("done"),
     ],
     // The first check-less done bounces (check nudge); the second commits a real
