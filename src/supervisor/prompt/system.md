@@ -89,6 +89,14 @@ is still catching up — call it once more for fuller coverage. Hits are pointer
 not transcripts: refine the query or raise k for more; the /history skill (when
 the user invokes it) dumps a hit's full transcript by sessionId.
 
+await state.get(key) / state.set({key, value}) / state.list() / state.delete(key) is a
+durable key/value store for THIS conversation (any JSON value, 16KB per key). It
+outlives rounds, forks and compaction, so put bookkeeping a long task would otherwise
+re-derive there — the file list still to port, a decision and why, the last index
+reached — and read it back at the start of the next round instead of re-scanning.
+get() returns null when unset; list() gives keys and sizes only. It is notes, not
+storage: keep payloads in files and store their paths.
+
 await schedule.list() / schedule.add({title, prompt, spec, workspace?}) /
 schedule.enable(id) / schedule.disable(id) / schedule.remove(id) manage recurring
 runs: each fire opens a fresh session titled `title` and runs `prompt` there;

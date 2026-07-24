@@ -124,6 +124,17 @@ CREATE TABLE IF NOT EXISTS workflow_agents (
   finished_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS workflow_agents_run ON workflow_agents(run_id, idx);
+-- Durable key/value notes the program writes for ITSELF (see state.ts). Scoped to
+-- the ROOT session of a lineage so forks, compactions and subagents of the same
+-- conversation read the same store — the point is surviving a context that the
+-- turn loop will eventually truncate or compact away.
+CREATE TABLE IF NOT EXISTS session_state (
+  root_id     TEXT NOT NULL,
+  key         TEXT NOT NULL,
+  value       TEXT NOT NULL,         -- JSON: whatever the program stored
+  updated_at  INTEGER NOT NULL,
+  PRIMARY KEY (root_id, key)
+);
 `;
 
 // ---- row <-> domain mapping ------------------------------------------------
@@ -991,6 +1002,44 @@ export class Db {
 
   deleteSchedule(id: string): void {
     this.#db.prepare(`DELETE FROM schedules WHERE id = ?`).run(id);
+  }
+
+  // session state (durable key/value notes — see state.ts) --------------------
+
+  /** The stored JSON text for a key, or undefined when unset. */
+  getState(rootId: string, key: string): string | undefined {
+    const r = this.#db
+      .prepare(`SELECT value FROM session_state WHERE root_id = ? AND key = ?`)
+      .get(rootId, key) as { value: string } | undefined;
+    return r?.value;
+  }
+
+  /** Upsert: a re-set overwrites in place and re-stamps updated_at. */
+  setState(rootId: string, key: string, value: string, now: number): void {
+    this.#db
+      .prepare(
+        `INSERT INTO session_state (root_id, key, value, updated_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT(root_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+      )
+      .run(rootId, key, value, now);
+  }
+
+  /** Keys only (with sizes) — listing never drags whole values into context. */
+  listState(rootId: string): { key: string; bytes: number; updatedAt: number }[] {
+    const rows = this.#db
+      .prepare(
+        `SELECT key, length(value) AS bytes, updated_at FROM session_state
+         WHERE root_id = ? ORDER BY key`,
+      )
+      .all(rootId) as { key: string; bytes: number; updated_at: number }[];
+    return rows.map((r) => ({ key: r.key, bytes: r.bytes, updatedAt: r.updated_at }));
+  }
+
+  /** True when a row was actually removed (the program learns "there was nothing"). */
+  deleteState(rootId: string, key: string): boolean {
+    const before = this.getState(rootId, key) !== undefined;
+    this.#db.prepare(`DELETE FROM session_state WHERE root_id = ? AND key = ?`).run(rootId, key);
+    return before;
   }
 
   // workflows ---------------------------------------------------------------

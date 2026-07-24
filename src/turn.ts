@@ -93,6 +93,7 @@ import { publishArtifact } from "./server/artifacts.ts";
 import { recall as recallSearch } from "./recall.ts";
 import { expireAsks, raiseAsk } from "./asks.ts";
 import { scheduleVerb } from "./schedules.ts";
+import { stateVerb } from "./state.ts";
 import { awaitHydration, originRepo as shadowOrigin } from "./vcs/shadow.ts";
 import { openPr, shipToOrigin } from "./vcs/agentdiff.ts";
 
@@ -692,6 +693,11 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     // Schedules: the model manages recurring runs through the SAME validated code
     // path as the REST CRUD (schedules.ts). schedule.add() without a workspace
     // defaults to this session's persisted workspace.
+    // Durable notes (state.ts): scoped to the lineage's ROOT session so a fork,
+    // a compaction child and a subagent all read the same store — the store is
+    // there precisely for facts the transcript will not keep.
+    const stateRoot = db.ancestorChain(sessionId)[0]?.id ?? sessionId;
+    toolCtx.state = { call: (verb, args) => Promise.resolve(stateVerb(db, stateRoot, verb, args)) };
     toolCtx.schedule = {
       call: (verb, args) => scheduleVerb(db, verb, args, db.getSessionRuntime(sessionId).workspace),
     };

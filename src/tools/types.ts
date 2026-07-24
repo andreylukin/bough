@@ -147,6 +147,15 @@ export interface ToolRunCtx {
     call: (verb: string, args: unknown) => Promise<unknown>;
   };
   /**
+   * Durable key/value notes for this conversation (state.ts), wired by the turn
+   * runner for every supervisor turn: fanned out in the program as the `state.*`
+   * method object (get/set/list/delete). Scoped to the lineage's ROOT session, so
+   * the notes outlive compaction, forks and the context cap.
+   */
+  state?: {
+    call: (verb: string, args: unknown) => Promise<unknown>;
+  };
+  /**
    * Workflows (workflow.ts), wired by the turn runner for root-session turns that
    * may delegate: scripted multi-agent orchestration, fanned out in the program as
    * the `workflow.*` method object (start/rerun/stop/pause/resume/status/list).

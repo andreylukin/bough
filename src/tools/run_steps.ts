@@ -55,6 +55,9 @@ const schema = z.object({
       "you SEE it; it reaches you on the next turn, not inside this program), " +
       "mcpStatus() (always available: this session's MCP management state), " +
       "recall(query, k?) → {hits, indexed} (semantic search over past bough conversations), " +
+      "state.get(key) → the stored value or null / state.set({key, value}) / state.list() / " +
+      "state.delete(key) (durable notes for THIS conversation — they survive rounds and " +
+      "compaction, so long tasks keep bookkeeping there instead of re-deriving it), " +
       "ask(question, {options?: string[]}) → string (pause and ask the USER a clarifying " +
       "question; blocks until they answer in the TUI — they pick an option or type freely — " +
       "and throws a catchable 'user declined' error if dismissed) and any " +
@@ -246,6 +249,14 @@ export const runSteps: ToolDef = {
           ? {
             schedule: async (verb: string, argsJson: string) =>
               JSON.stringify(await ctx.schedule!.call(verb, JSON.parse(argsJson))) ?? "null",
+          }
+          : {}),
+        // Durable notes (wired for supervisor turns): verb-dispatched like
+        // schedule; the worker side fans this out as state.*.
+        ...(ctx.state
+          ? {
+            state: async (verb: string, argsJson: string) =>
+              JSON.stringify(await ctx.state!.call(verb, JSON.parse(argsJson))) ?? "null",
           }
           : {}),
         // Workflows (wired for delegating root-session turns): verb-dispatched

@@ -118,6 +118,13 @@ export interface HostFns {
    */
   schedule?(verb: string, argsJson: string): Promise<string>;
   /**
+   * Durable per-conversation key/value notes (state.ts): one verb-dispatched
+   * function like schedule() — args in and result back travel as JSON; the worker
+   * side exposes it as the `state.*` method object (get/set/list/delete). Bridged
+   * for every supervisor turn.
+   */
+  state?(verb: string, argsJson: string): Promise<string>;
+  /**
    * Workflows (workflow.ts): scripted multi-agent orchestration, verb-dispatched
    * like schedule() — the worker side exposes it as the `workflow.*` method
    * object (start/rerun/stop/pause/resume/status/list). Bridged only for

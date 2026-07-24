@@ -45,6 +45,7 @@ type HostName =
   | "ship"
   | "pr"
   | "schedule"
+  | "state"
   | "workflow";
 
 const pending = new Map<number, { resolve: (v: string) => void; reject: (e: Error) => void }>();
@@ -179,6 +180,15 @@ async function run(code: string): Promise<void> {
       (verb) => [verb, (args?: unknown) => scheduleCall(verb, args)],
     ),
   );
+  // Durable notes for this conversation: one host function fanned out as a method
+  // object, like schedule.*; get() returns null for an unset key.
+  const stateCall = async (verb: string, args?: unknown) =>
+    JSON.parse(await hostCall("state", [verb, JSON.stringify(args ?? null)]));
+  const state = Object.fromEntries(
+    ["get", "set", "list", "delete"].map(
+      (verb) => [verb, (args?: unknown) => stateCall(verb, args)],
+    ),
+  );
   // Workflows: one host function fanned out as a method object, like schedule.*.
   const workflowCall = async (verb: string, args?: unknown) =>
     JSON.parse(await hostCall("workflow", [verb, JSON.stringify(args ?? null)]));
@@ -216,6 +226,7 @@ async function run(code: string): Promise<void> {
     "ship",
     "pr",
     "schedule",
+    "state",
     "workflow",
     "console",
     code,
@@ -246,6 +257,7 @@ async function run(code: string): Promise<void> {
     ship,
     pr,
     schedule,
+    state,
     workflow,
     sandboxConsole,
   );
