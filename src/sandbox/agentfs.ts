@@ -31,8 +31,9 @@
 
 import { dirname, isAbsolute, relative } from "node:path";
 
-/** The agentfs binary: `$BOUGH_AGENTFS_BIN`, else `agentfs` on PATH. */
-function bin(): string {
+/** The agentfs binary: `$BOUGH_AGENTFS_BIN`, else `agentfs` on PATH. Exported so
+ *  the diff/ship substrate (vcs/agentdiff.ts) drives the same CLI. */
+export function bin(): string {
   return Deno.env.get("BOUGH_AGENTFS_BIN") ?? "agentfs";
 }
 

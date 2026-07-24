@@ -89,7 +89,8 @@ import { publishArtifact } from "./server/artifacts.ts";
 import { recall as recallSearch } from "./recall.ts";
 import { expireAsks, raiseAsk } from "./asks.ts";
 import { scheduleVerb } from "./schedules.ts";
-import { awaitHydration, originRepo as shadowOrigin, shipToOrigin } from "./vcs/shadow.ts";
+import { awaitHydration, originRepo as shadowOrigin } from "./vcs/shadow.ts";
+import { shipToOrigin } from "./vcs/agentdiff.ts";
 
 export interface TurnCtx {
   db: Db;

@@ -38,6 +38,7 @@ import { DONE_ACCEPTED } from "./tools/mod.ts";
 import { maybeAutoTitle, UNTITLED } from "./supervisor/title.ts";
 import { normalizeWorkspace } from "./supervisor/workspace.ts";
 import * as shadow from "./vcs/shadow.ts";
+import * as agentdiff from "./vcs/agentdiff.ts";
 import { pathExists } from "./fsutil.ts";
 
 export interface SpawnCtx {
@@ -209,7 +210,7 @@ async function buildResult(
   let changedFiles: string[] = [];
   if (subDir) {
     try {
-      changedFiles = (await shadow.diff(subDir, sessionId)).files.map((f) => f.path);
+      changedFiles = (await agentdiff.diff(subDir, sessionId)).files.map((f) => f.path);
     } catch {
       // diff is best-effort reporting; the branch itself is intact
     }
@@ -470,7 +471,7 @@ export async function adoptSubagent(
   if (!subDir || !repo || subDir === repo) {
     throw new Error("this subagent has no branched workspace to adopt");
   }
-  await shadow.adoptChanges(repo, subDir, subagentId, spawnerId);
+  await agentdiff.adopt(repo, spawnerId, subDir, subagentId);
   // Both Changes rails move: the spawner gains the diff, the subagent's empties.
   bus.publish({ type: "changes.updated", sessionId: spawnerId, data: { sessionId: spawnerId } });
   bus.publish({ type: "changes.updated", sessionId: subagentId, data: { sessionId: subagentId } });
