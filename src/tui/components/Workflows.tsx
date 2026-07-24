@@ -6,11 +6,9 @@
 // read as "that's the whole run" on anything bigger than a handful of agents.
 // App owns the data and key handling; this renders the level it is given.
 import { Box } from "ink";
-import type { ReactNode } from "react";
 import { Text } from "./Text.tsx";
 import { palette } from "../theme.ts";
 import type { WfAgentView, WfSummary, WireWorkflowRun } from "../api.ts";
-import { SelRow } from "./SelRow.tsx";
 import { clip, relTime } from "../format.ts";
 
 /** 0 runs · 1 phases · 2 a phase's agents · 3 one agent's detail. */
@@ -20,7 +18,11 @@ export type WfLevel = 0 | 1 | 2 | 3;
 export const WF_FILTERS = [null, "running", "queued", "done", "error"] as const;
 export type WfFilter = (typeof WF_FILTERS)[number];
 
-const LEFT_W = 26;
+/** Phases-pane width. The panel draws its own border+padding around this view,
+ * so every frame measurement works off `inner` (cols minus that chrome) — using
+ * the raw terminal width overflowed and Ink truncated the right-hand column. */
+const LEFT_W = 20;
+const PANEL_CHROME = 4;
 
 /**
  * The run's agents grouped under their phase, in script order: meta-declared
@@ -105,36 +107,281 @@ function windowed<T>(items: T[], sel: number, rows: number): { slice: T[]; from:
   return { slice: items.slice(from, from + rows), from };
 }
 
-/** A pane's title line — the border can't carry text, so it sits above the rows. */
-function PaneTitle({ text }: { text: string }) {
-  return <Text dimColor wrap="truncate">{text}</Text>;
+/**
+ * The pane frame, drawn by hand. Ink cannot put text inside a border, and here
+ * the titles ARE the border — `╭ Phases ────┬ Explore · 9 agents ────╮` — so the
+ * box is emitted as plain rows with each pane's contents pre-rendered into
+ * fixed-width cells. Selection is a `❯` cursor, not an inverse bar; that is what
+ * makes hand-drawing viable, since no row needs a painted full-width fill.
+ */
+type Cell = { text: string; color?: string; dim?: boolean; bold?: boolean };
+type Row = Cell[];
+
+/** Visible width of a row — frame math is done on plain text, not on elements. */
+function rowWidth(row: Row): number {
+  return row.reduce((n, c) => n + c.text.length, 0);
 }
 
-/** Left column + vertical rule + right column: the miller layout every level uses. */
-function Panes(
-  { left, right, rows }: { left: ReactNode; right: ReactNode; rows: number },
-) {
+/** Pad (or hard-truncate) a row to exactly `width`, so the seams stay aligned. */
+function fit(row: Row, width: number): Row {
+  const w = rowWidth(row);
+  if (w === width) return row;
+  if (w < width) return [...row, { text: " ".repeat(width - w) }];
+  const out: Row = [];
+  let left = width;
+  for (const c of row) {
+    if (left <= 0) break;
+    out.push(c.text.length <= left ? c : { ...c, text: c.text.slice(0, left) });
+    left -= c.text.length;
+  }
+  return out;
+}
+
+/** Right-align `right` against `width` with at least one space of gap. */
+function columns(left: Row, right: Row, width: number): Row {
+  const gap = width - rowWidth(left) - rowWidth(right);
+  return gap > 0
+    ? [...left, { text: " ".repeat(gap) }, ...right]
+    : [...left, { text: " " }, ...right];
+}
+
+function Line({ row }: { row: Row }) {
   return (
-    <Box marginTop={1} height={Math.max(4, rows)}>
-      <Box
-        flexDirection="column"
-        width={LEFT_W}
-        flexShrink={0}
-        borderStyle="round"
-        borderColor={palette.muted2}
-        borderTop={false}
-        borderBottom={false}
-        borderLeft={false}
-        paddingRight={1}
-        overflowY="hidden"
-      >
-        {left}
-      </Box>
-      <Box flexDirection="column" flexGrow={1} paddingLeft={1} overflowY="hidden">
-        {right}
-      </Box>
+    <Text wrap="truncate">
+      {row.map((c, i) => (
+        <Text key={i} color={c.color} dimColor={c.dim} bold={c.bold}>{c.text}</Text>
+      ))}
+    </Text>
+  );
+}
+
+/** `╭ Phases ─────┬ Explore · 9 agents ─────╮` */
+function frameTop(leftTitle: string, rightTitle: string, leftW: number, rightW: number): string {
+  const l = `╭ ${clip(leftTitle, leftW)} `;
+  const r = `┬ ${clip(rightTitle, rightW)} `;
+  return l + "─".repeat(Math.max(0, leftW + 3 - l.length)) +
+    r + "─".repeat(Math.max(0, rightW + 3 - r.length)) + "╮";
+}
+
+function Panes(
+  { leftTitle, rightTitle, left, right, rows, cols }: {
+    leftTitle: string;
+    rightTitle: string;
+    left: Row[];
+    right: Row[];
+    rows: number;
+    cols: number;
+  },
+) {
+  const leftW = LEFT_W;
+  const rightW = Math.max(20, cols - PANEL_CHROME - leftW - 7);
+  return (
+    <Box flexDirection="column">
+      <Text dimColor wrap="truncate">{frameTop(leftTitle, rightTitle, leftW, rightW)}</Text>
+      {Array.from({ length: rows }, (_, i) => (
+        <Line
+          key={i}
+          row={[
+            { text: "│ ", dim: true },
+            ...fit(left[i] ?? [], leftW),
+            { text: " │ ", dim: true },
+            ...fit(right[i] ?? [], rightW),
+            { text: " │", dim: true },
+          ]}
+        />
+      ))}
+      <Text dimColor wrap="truncate">
+        {"╰" + "─".repeat(leftW + 2) + "┴" + "─".repeat(rightW + 2) + "╯"}
+      </Text>
     </Box>
   );
+}
+
+/** The run header both pane levels sit under. */
+function RunHeader(
+  { run, agents, cols, lastLog }: {
+    run: WireWorkflowRun;
+    agents: WfAgentView[];
+    cols: number;
+    lastLog?: string;
+  },
+) {
+  const done = agents.filter((a) => a.status === "done" || a.status === "cached").length;
+  const failed = agents.filter((a) => a.status === "error").length;
+  const width = Math.max(20, cols - PANEL_CHROME);
+  const right = `${done}/${agents.length} agents${failed ? ` (${failed} failed)` : ""} · ${
+    elapsed(run.createdAt, run.finishedAt)
+  }`;
+  return (
+    <Box flexDirection="column">
+      <Text dimColor wrap="truncate">{"─".repeat(width)}</Text>
+      <Text wrap="truncate">
+        <Text bold color={palette.accent}>{run.name}</Text>
+        {run.status !== "running" ? <Text dimColor>{"  "}{run.status}</Text> : null}
+        {run.resumeOf ? <Text dimColor>{"  rerun (≡ = replayed)"}</Text> : null}
+      </Text>
+      <Line
+        row={columns(
+          [{ text: clip(run.description, Math.max(12, width - right.length - 2)), dim: true }],
+          [{ text: right, dim: true }],
+          width,
+        )}
+      />
+      {run.error
+        ? <Text color={palette.error} wrap="truncate">{clip(run.error, width)}</Text>
+        : null}
+      {lastLog && run.status === "running"
+        ? <Text dimColor wrap="truncate">▸ {clip(lastLog, width - 2)}</Text>
+        : null}
+    </Box>
+  );
+}
+
+/**
+ * The Phases pane. A phase keeps its ORDINAL until it completes — the number is
+ * how you read the run's shape before it gets there — and only then becomes ✓
+ * (or ✗ if it settled with a failure; a red ◐ would say "still going", which is
+ * the opposite of what happened).
+ */
+function phaseRows(
+  groups: ReturnType<typeof phaseGroups>,
+  selected: number,
+  cursor: boolean,
+  current: string | null,
+): Row[] {
+  return groups.map((g, i) => {
+    const done = g.agents.filter((a) => a.status === "done" || a.status === "cached").length;
+    const failed = g.agents.some((a) => a.status === "error");
+    const busy = g.agents.some((a) => a.status === "running" || a.status === "queued");
+    const complete = g.agents.length > 0 && !busy;
+    const mark = complete
+      ? { text: failed ? "✗" : "✓", color: failed ? palette.error : palette.accent }
+      : { text: String(i + 1), dim: true };
+    return [
+      { text: cursor && i === selected ? "❯ " : "  ", color: palette.accent },
+      mark,
+      { text: " " },
+      { text: clip(g.title || "agents", 13), bold: g.title === current },
+      ...(g.agents.length ? [{ text: ` ${done}/${g.agents.length}`, dim: true }] : []),
+    ];
+  });
+}
+
+/**
+ * One phase's agents: the right pane at level 2, the left pane at level 3.
+ * Columns are aligned — label, then model · tokens, then the clock hard against
+ * the right edge — so a fan-out reads as a table instead of ragged text.
+ */
+function agentRows(
+  agents: WfAgentView[],
+  selected: number,
+  cursor: boolean,
+  width: number,
+  compact: boolean,
+): Row[] {
+  const labelW = compact
+    ? Math.max(8, width - 4)
+    : Math.min(34, Math.max(14, ...agents.map((a) => a.label.length + 1)));
+  return agents.map((a, i) => {
+    const s = wfGlyph(a.status);
+    const head: Row = [
+      { text: cursor && i === selected ? "❯ " : "  ", color: palette.accent },
+      { text: s.glyph, color: s.color },
+      { text: " " },
+      ...fit([{ text: clip(a.label, labelW) }], compact ? Math.max(1, width - 4) : labelW),
+    ];
+    if (compact) return head;
+    // A running agent shows its live clock, not the word "running" — the glyph
+    // already says running, and the number is what tells you it is wedged.
+    const time = a.status === "queued" ? "queued" : elapsed(a.startedAt, a.finishedAt);
+    const mid = [a.model, tokenChip(a.tokens)].filter(Boolean).join(" · ");
+    return columns([...head, { text: mid, dim: true }], [{ text: time, dim: true }], width);
+  });
+}
+
+/**
+ * Level 3's right pane, as frame rows. The prompt is COLLAPSED by default — it
+ * is the one thing here you already know (you wrote the workflow); the outcome
+ * is what you opened this for, and a 30-line prompt used to push it off the
+ * bottom.
+ */
+function detailRows(
+  agent: WfAgentView,
+  scroll: number,
+  rows: number,
+  promptOpen: boolean,
+  width: number,
+): Row[] {
+  const s = wfGlyph(agent.status);
+  const promptLines = agent.prompt.split("\n");
+  const body: Row[] = [];
+  const head = (text: string): Row => [{ text, bold: true }];
+  const line = (
+    text: string,
+  ): Row => [{ text: "  " + clip(text, Math.max(8, width - 2)), dim: true }];
+
+  body.push([
+    { text: s.glyph, color: s.color },
+    { text: " " + agent.status },
+    {
+      text: "  " + [
+        agent.model,
+        tokenChip(agent.tokens),
+        agent.toolCalls ? `${agent.toolCalls} tool call${agent.toolCalls === 1 ? "" : "s"}` : "",
+        agent.status === "queued"
+          ? "waiting on the run's concurrency limit"
+          : elapsed(agent.startedAt, agent.finishedAt),
+      ].filter(Boolean).join(" · "),
+      dim: true,
+    },
+  ]);
+  if (agent.sessionId) {
+    body.push([{ text: `session ${agent.sessionId.slice(0, 8)} — o opens it`, dim: true }]);
+  }
+  body.push([]);
+  body.push(head(
+    promptOpen
+      ? "Prompt · ⏎ collapse"
+      : `Prompt · ${promptLines.length} line${promptLines.length === 1 ? "" : "s"} · ⏎ expand`,
+  ));
+  for (const l of promptOpen ? promptLines : promptLines.slice(0, 2)) body.push(line(l));
+  if (!promptOpen && promptLines.length > 2) {
+    body.push(line(`… ${promptLines.length - 2} more lines`));
+  }
+  if (agent.activity.length > 0) {
+    body.push([]);
+    body.push(head("Activity"));
+    for (const l of agent.activity) body.push(line(l));
+  }
+  body.push([]);
+  body.push(head(
+    agent.status === "error"
+      ? "Error"
+      : agent.status === "cached"
+      ? "Outcome (replayed from the previous run)"
+      : "Outcome",
+  ));
+  for (const l of (agent.result ?? "(none yet)").split("\n")) {
+    body.push([{ text: "  " + clip(l, Math.max(8, width - 2)) }]);
+  }
+
+  const visible = body.slice(scroll, scroll + rows);
+  if (body.length > rows) {
+    visible[visible.length - 1] = [{
+      text: `${scroll + visible.length}/${body.length} · j/k scroll`,
+      dim: true,
+    }];
+  }
+  return visible;
+}
+
+/** How many body lines detailRows can produce — App clamps j/k against this. */
+export function agentDetailLines(agent: WfAgentView, promptOpen: boolean): number {
+  const prompt = agent.prompt.split("\n").length;
+  const promptRows = promptOpen ? prompt : Math.min(2, prompt) + (prompt > 2 ? 1 : 0);
+  const activityRows = agent.activity.length ? agent.activity.length + 2 : 0;
+  const outcomeRows = (agent.result ?? "(none yet)").split("\n").length;
+  return 3 + promptRows + activityRows + 2 + outcomeRows;
 }
 
 function RunsList({ runs, selected, rows }: { runs: WfSummary[]; selected: number; rows: number }) {
@@ -152,24 +399,22 @@ function RunsList({ runs, selected, rows }: { runs: WfSummary[]; selected: numbe
         const sel = from + i === selected;
         const { glyph, color } = wfGlyph(r.status);
         return (
-          <SelRow
+          <Line
             key={r.id}
-            sel={sel}
-            right={
-              <Text dimColor>
-                {agentCounts(r.agents)} · {elapsed(r.createdAt, r.finishedAt)} ·{" "}
-                {relTime(r.createdAt)} ago
-              </Text>
-            }
-          >
-            <Text color={sel ? undefined : color}>{glyph}</Text> <Text bold>{r.name}</Text>
-            <Text dimColor>
-              {"  "}
-              {clip(r.description, 48)}
-              {r.status === "running" && r.currentPhase ? ` · ${r.currentPhase}` : ""}
-              {r.resumeOf ? " · rerun" : ""}
-            </Text>
-          </SelRow>
+            row={[
+              { text: sel ? "❯ " : "  ", color: palette.accent },
+              { text: glyph, color },
+              { text: " " },
+              { text: r.name, bold: true, color: sel ? palette.accent : undefined },
+              { text: "  " + clip(r.description, 44), dim: true },
+              {
+                text: `  ${agentCounts(r.agents)} · ${elapsed(r.createdAt, r.finishedAt)} · ${
+                  relTime(r.createdAt)
+                } ago`,
+                dim: true,
+              },
+            ]}
+          />
         );
       })}
       {runs.length > slice.length
@@ -179,226 +424,16 @@ function RunsList({ runs, selected, rows }: { runs: WfSummary[]; selected: numbe
   );
 }
 
-/** The run header both pane levels sit under. */
-function RunHeader({ run, lastLog }: { run: WireWorkflowRun; lastLog?: string }) {
-  const { glyph, color } = wfGlyph(run.status);
-  return (
-    <Box flexDirection="column">
-      <Text wrap="truncate">
-        <Text color={color}>{glyph}</Text> <Text bold>{run.name}</Text>
-        <Text dimColor>
-          {"  "}
-          {run.status} · {elapsed(run.createdAt, run.finishedAt)}
-          {run.resumeOf ? " · rerun (≡ = replayed from journal)" : ""}
-        </Text>
-      </Text>
-      <Text dimColor wrap="truncate">{run.description}</Text>
-      {run.error ? <Text color={palette.error} wrap="truncate">{run.error}</Text> : null}
-      {lastLog && run.status === "running"
-        ? <Text dimColor wrap="truncate">▸ {lastLog}</Text>
-        : null}
-    </Box>
-  );
-}
-
-/** The Phases pane: unstarted phases keep their ordinal so the plan reads ahead. */
-function PhaseList(
-  { groups, selected, cursor, current }: {
-    groups: ReturnType<typeof phaseGroups>;
-    selected: number;
-    /** Draw the selection bar (level 1) vs just mark which phase is open. */
-    cursor: boolean;
-    current: string | null;
-  },
-) {
-  return (
-    <Box flexDirection="column">
-      <PaneTitle text="Phases" />
-      {groups.map((g, i) => {
-        const done = g.agents.filter((a) => a.status === "done" || a.status === "cached").length;
-        const sel = i === selected;
-        const started = g.agents.length > 0;
-        // A phase that finished with a failure reads as ✗, not a red ◐ — the
-        // half-moon says "still going", which is the opposite of what happened.
-        const failed = g.agents.some((a) => a.status === "error");
-        const settled = !g.agents.some((a) => a.status === "running");
-        const state = failed && settled ? "error" : done === g.agents.length ? "done" : "running";
-        const glyph = wfGlyph(state);
-        return (
-          <SelRow key={g.title || "(none)"} sel={sel && cursor}>
-            {started
-              ? (
-                <Text color={sel && cursor ? undefined : glyph.color}>
-                  {glyph.glyph}
-                </Text>
-              )
-              : <Text dimColor>{i + 1}</Text>}{" "}
-            <Text bold={g.title === current}>{clip(g.title || "agents", 13)}</Text>
-            {started ? <Text dimColor>{`  ${done}/${g.agents.length}`}</Text> : null}
-          </SelRow>
-        );
-      })}
-    </Box>
-  );
-}
-
-/** One phase's agents: the right pane at level 2, the left pane at level 3. */
-function AgentList(
-  { group, agents, selected, cursor, rows, filter, compact }: {
-    group: { title: string; detail?: string };
-    agents: WfAgentView[];
-    selected: number;
-    cursor: boolean;
-    rows: number;
-    filter: WfFilter;
-    /** Left-pane mode: labels only, no model/token/time column. */
-    compact?: boolean;
-  },
-) {
-  const title = `${group.title || "agents"} · ${
-    filter ? `showing ${agents.length} ${filter}` : `${agents.length} agents`
-  }`;
-  const { slice, from } = windowed(agents, selected, Math.max(2, rows - 2));
-  return (
-    <Box flexDirection="column">
-      <PaneTitle text={compact ? clip(title, LEFT_W - 2) : title} />
-      {agents.length === 0
-        ? <Text dimColor>{filter ? "none with that status — f cycles" : "no agents yet"}</Text>
-        : null}
-      {slice.map((a, i) => {
-        const sel = from + i === selected;
-        const s = wfGlyph(a.status);
-        return (
-          <SelRow
-            key={a.id}
-            sel={sel && cursor}
-            right={compact ? undefined : (
-              <Text dimColor>
-                {[
-                  a.model,
-                  tokenChip(a.tokens),
-                  a.status === "queued"
-                    ? "queued"
-                    : a.finishedAt
-                    ? elapsed(a.startedAt, a.finishedAt)
-                    : "running",
-                ].filter(Boolean).join(" · ")}
-              </Text>
-            )}
-          >
-            <Text color={sel && cursor ? undefined : s.color}>{s.glyph}</Text>{" "}
-            {clip(a.label, compact ? LEFT_W - 6 : 48)}
-          </SelRow>
-        );
-      })}
-      {agents.length > slice.length
-        ? <Text dimColor>… {agents.length - slice.length} more · ↑↓ scrolls</Text>
-        : null}
-    </Box>
-  );
-}
-
-/**
- * How many body lines an agent's detail has, so App can clamp j/k at the last
- * screenful instead of scrolling off into a blank pane. Kept next to the render
- * that builds those lines — the two must not drift.
- */
-export function agentDetailLines(agent: WfAgentView, promptOpen: boolean): number {
-  const prompt = agent.prompt.split("\n").length;
-  const promptRows = promptOpen ? prompt : Math.min(2, prompt) + (prompt > 2 ? 1 : 0);
-  const activityRows = agent.activity.length ? agent.activity.length + 2 : 0;
-  const outcomeRows = (agent.result ?? "(none yet)").split("\n").length;
-  return 1 + promptRows + activityRows + 2 + outcomeRows;
-}
-
-/**
- * Level 3's right pane. The prompt is COLLAPSED by default — it is the one thing
- * here you already know (you wrote the workflow); the outcome is what you opened
- * this for, and a 30-line prompt used to push it off the bottom.
- */
-function AgentDetail(
-  { agent, scroll, rows, promptOpen }: {
-    agent: WfAgentView;
-    scroll: number;
-    rows: number;
-    promptOpen: boolean;
-  },
-) {
-  const s = wfGlyph(agent.status);
-  const promptLines = agent.prompt.split("\n");
-  const body: Array<{ text: string; head?: boolean }> = [];
-  body.push({
-    text: promptOpen
-      ? "Prompt · ⏎ collapse"
-      : `Prompt · ${promptLines.length} line${promptLines.length === 1 ? "" : "s"} · ⏎ expand`,
-    head: true,
-  });
-  for (const l of promptOpen ? promptLines : promptLines.slice(0, 2)) body.push({ text: "  " + l });
-  if (!promptOpen && promptLines.length > 2) {
-    body.push({ text: `  … ${promptLines.length - 2} more lines` });
-  }
-  if (agent.activity.length > 0) {
-    body.push({ text: " " });
-    body.push({ text: "Activity", head: true });
-    for (const l of agent.activity) body.push({ text: "  " + l });
-  }
-  body.push({ text: " " });
-  body.push({
-    text: agent.status === "error"
-      ? "Error"
-      : agent.status === "cached"
-      ? "Outcome (replayed from the previous run)"
-      : "Outcome",
-    head: true,
-  });
-  for (const l of (agent.result ?? "(none yet)").split("\n")) body.push({ text: "  " + l });
-
-  const budget = Math.max(3, rows - 4);
-  const visible = body.slice(scroll, scroll + budget);
-  return (
-    <Box flexDirection="column">
-      <PaneTitle text={clip(agent.label, 60)} />
-      <Text wrap="truncate">
-        <Text color={s.color}>{s.glyph}</Text> <Text>{agent.status}</Text>
-        <Text dimColor>
-          {"  "}
-          {[
-            agent.model,
-            tokenChip(agent.tokens),
-            agent.toolCalls
-              ? `${agent.toolCalls} tool call${agent.toolCalls === 1 ? "" : "s"}`
-              : "",
-            agent.status === "queued"
-              ? "waiting on the run's concurrency limit"
-              : agent.finishedAt
-              ? elapsed(agent.startedAt, agent.finishedAt)
-              : "running",
-          ].filter(Boolean).join(" · ")}
-        </Text>
-      </Text>
-      {agent.sessionId
-        ? <Text dimColor wrap="truncate">session {agent.sessionId.slice(0, 8)} — o opens it</Text>
-        : null}
-      <Box flexDirection="column" marginTop={1}>
-        {visible.map((l, i) => <Text key={i} wrap="truncate" bold={l.head}>{l.text}</Text>)}
-      </Box>
-      {body.length > budget
-        ? <Text dimColor>{scroll + visible.length}/{body.length} · j/k scroll</Text>
-        : null}
-    </Box>
-  );
-}
-
 /** Per-level footer — the keys that actually do something HERE. */
 function footer(level: WfLevel, running: boolean): string {
   if (level === 0) return `enter open · r rerun${running ? " · x stop · p pause" : ""}`;
   if (level === 1) {
-    return `↑↓ phase · enter agents · esc back${running ? " · x stop · p pause" : ""}`;
+    return `↑↓ select · enter agents${running ? " · x stop workflow · p pause" : ""} · esc back`;
   }
   if (level === 2) {
-    return `↑↓ agent · enter open · f filter · o session · esc back${
+    return `↑↓ select · enter open · f filter · o session${
       running ? " · x stop agent · r restart agent · p pause" : ""
-    }`;
+    } · esc back`;
   }
   return "↑↓ agent · ⏎ prompt · j/k scroll · o session · esc back";
 }
@@ -416,6 +451,7 @@ export function Workflows(
     filter,
     promptOpen,
     rows,
+    cols,
     lastLog,
   }: {
     runs: WfSummary[];
@@ -430,6 +466,7 @@ export function Workflows(
     filter: WfFilter;
     promptOpen: boolean;
     rows: number;
+    cols: number;
     lastLog?: string;
   },
 ) {
@@ -447,65 +484,39 @@ export function Workflows(
   const group = groups[Math.min(phaseSel, Math.max(0, groups.length - 1))] ??
     { title: "", agents: [] };
   const shown = visibleAgents(group.agents, filter);
-  // Panel chrome (border, tab bar) + this view's own header/footer/margins come
-  // off the top before the panes get their height; overflowing pushes the run
-  // header off the TOP of the clipped panel, which is how it went missing.
-  const paneRows = Math.max(4, rows - 13);
+  // Panel chrome + this view's header/footer/margins come off the top before the
+  // panes get their height; overflowing pushes the run header off the TOP of the
+  // clipped panel, which is how it once went missing entirely.
+  const paneRows = Math.max(4, rows - 15);
+  const rightW = Math.max(20, cols - PANEL_CHROME - LEFT_W - 7);
   const running = run.status === "running" || run.status === "paused";
+  const agentTitle = `${group.title || "agents"} · ${
+    filter ? `showing ${shown.length} ${filter}` : `${shown.length} agents`
+  }`;
+
+  const detail = level === 3 ? shown[agentSel] : undefined;
+  const leftRows = detail
+    ? agentRows(shown, agentSel, true, LEFT_W, true)
+    : phaseRows(groups, phaseSel, level === 1, run.currentPhase);
+  const win = windowed(leftRows, detail ? agentSel : phaseSel, paneRows);
+  const rightRows = detail ? detailRows(detail, scroll, paneRows, promptOpen, rightW) : windowed(
+    agentRows(shown, agentSel, level === 2, rightW, false),
+    agentSel,
+    paneRows,
+  ).slice;
+
   return (
     <Box marginTop={1} flexDirection="column">
-      <RunHeader run={run} lastLog={lastLog} />
-      {level === 3 && shown[agentSel]
-        ? (
-          <Panes
-            rows={paneRows}
-            left={
-              <AgentList
-                group={group}
-                agents={shown}
-                selected={agentSel}
-                cursor
-                rows={paneRows}
-                filter={filter}
-                compact
-              />
-            }
-            right={
-              <AgentDetail
-                agent={shown[agentSel]}
-                scroll={scroll}
-                rows={paneRows}
-                promptOpen={promptOpen}
-              />
-            }
-          />
-        )
-        : (
-          <Panes
-            rows={paneRows}
-            left={
-              <PhaseList
-                groups={groups}
-                selected={phaseSel}
-                cursor={level === 1}
-                current={run.currentPhase}
-              />
-            }
-            right={
-              <AgentList
-                group={group}
-                agents={shown}
-                selected={agentSel}
-                cursor={level === 2}
-                rows={paneRows}
-                filter={filter}
-              />
-            }
-          />
-        )}
-      <Box marginTop={1}>
-        <Text dimColor wrap="truncate">{footer(level, running)}</Text>
-      </Box>
+      <RunHeader run={run} agents={agents} cols={cols} lastLog={lastLog} />
+      <Panes
+        leftTitle={detail ? clip(group.title || "agents", 14) : "Phases"}
+        rightTitle={detail ? clip(detail.label, rightW - 4) : agentTitle}
+        left={win.slice}
+        right={rightRows}
+        rows={paneRows}
+        cols={cols}
+      />
+      <Text dimColor wrap="truncate">{footer(level, running)}</Text>
     </Box>
   );
 }

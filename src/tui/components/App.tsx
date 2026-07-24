@@ -2037,7 +2037,7 @@ export function App(
           // Clamp at the last screenful — unclamped j walked off the end into a
           // blank pane reading "45/44".
           const total = agent ? agentDetailLines(agent, wfPromptOpen) : 0;
-          const max = Math.max(0, total - Math.max(3, rows - 17));
+          const max = Math.max(0, total - Math.max(4, rows - 15));
           return setWfScroll((s) => Math.min(max, s + 3));
         }
         if (ch === "k") return setWfScroll((s) => Math.max(0, s - 3));
@@ -2746,6 +2746,7 @@ export function App(
               filter={wfFilter}
               promptOpen={wfPromptOpen}
               rows={rows}
+              cols={width}
               lastLog={wfOpenId ? store.wfLogs[wfOpenId] : undefined}
             />
           )
