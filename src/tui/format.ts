@@ -37,7 +37,7 @@ export function segmentParts(parts: Part[]): Segment[] {
   return segs;
 }
 
-export { clip } from "../text.ts";
+export { clip, codeGist } from "../text.ts";
 
 /**
  * Slice bounds for a viewport of `height` rows that keeps `selected` centered,

@@ -40,6 +40,15 @@ export type {
   WireWorkflowRun,
 };
 
+/** One agent row enriched for the run view: tokens/tool-call count and the last
+ * few call gists, so a running agent shows WHAT it is doing without drilling
+ * into its session (workflow.ts's workflowAgentViews). */
+export interface WfAgentView extends WireWorkflowAgent {
+  tokens: number;
+  toolCalls: number;
+  activity: string[];
+}
+
 /** GET /workflows list rows — the server's workflowSummary shape (workflow.ts). */
 export interface WfSummary {
   id: string;
@@ -240,7 +249,7 @@ export const api = {
     j<{ workflows: WfSummary[] }>(`/workflows${sessionId ? `?session=${sessionId}` : ""}`)
       .then((r) => r.workflows),
   getWorkflow: (id: string) =>
-    j<{ workflow: WireWorkflowRun; agents: WireWorkflowAgent[]; scriptFile: string }>(
+    j<{ workflow: WireWorkflowRun; agents: WfAgentView[]; scriptFile: string }>(
       `/workflows/${id}`,
     ),
   // stop / pause / resume — jmsg surfaces the 409 reason ("not running").
@@ -248,7 +257,9 @@ export const api = {
     jmsg<WireWorkflowRun>(`/workflows/${id}/${action}`, { method: "POST" }),
   // Rerun with journal replay; no body = the run's (possibly edited) script mirror.
   rerunWorkflow: (id: string) => jmsg<WireWorkflowRun>(`/workflows/${id}/rerun`, postJson({})),
-
+  // The run view's x/r scoped to ONE selected agent — the run keeps going.
+  workflowAgentAction: (id: string, agentId: string, action: "stop" | "restart") =>
+    jmsg<WireWorkflowAgent>(`/workflows/${id}/agents/${agentId}/${action}`, { method: "POST" }),
   // Live + recent background shells of a session (and its subagent branches).
   jobs: (id: string) => j<{ jobs: JobRow[] }>(`/sessions/${id}/jobs`).then((r) => r.jobs),
   // Kill a running background shell directly (no LLM round-trip).

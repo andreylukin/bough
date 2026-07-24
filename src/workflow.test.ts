@@ -1,10 +1,11 @@
-import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
+import { assert, assertEquals, assertRejects, assertThrows } from "jsr:@std/assert@1";
 import { Bus } from "./bus.ts";
 import { Db } from "./db/db.ts";
 import type { BoughEvent } from "./schema/parts.ts";
 import {
   type AgentCall,
   callKey,
+  controlWorkflowAgent,
   evalMeta,
   isWorkflowLive,
   metaLiteral,
@@ -14,6 +15,7 @@ import {
   resumeWorkflow,
   startWorkflow,
   stopWorkflow,
+  workflowAgentViews,
   type WorkflowCtx,
   workflowVerb,
 } from "./workflow.ts";
@@ -141,9 +143,11 @@ Deno.test("startWorkflow: runs the script, journals agents, returns the result",
   assert(notes[0].includes('[workflow done] "test-flow"'));
   assert(notes[0].includes("4/4 agents succeeded"));
   // log() reached the bus.
-  assert(events.some((e) =>
-    e.type === "workflow.log" && (e.data as { line: string }).line === "all done"
-  ));
+  assert(
+    events.some((e) =>
+      e.type === "workflow.log" && (e.data as { line: string }).line === "all done"
+    ),
+  );
 });
 
 Deno.test("agent failure: rejects into the script; parallel maps it to null", async () => {
@@ -375,5 +379,138 @@ Deno.test("workflowVerb: start/status/list/stop dispatch; unknown verb rejects",
   assertEquals(status.agentRows.length, 1);
   const list = await workflowVerb(ctx, session.id, "list", {}) as unknown[];
   assertEquals(list.length, 1);
-  await assertRejects(() => workflowVerb(ctx, session.id, "explode", {}), Error, "unknown workflow verb");
+  await assertRejects(
+    () => workflowVerb(ctx, session.id, "explode", {}),
+    Error,
+    "unknown workflow verb",
+  );
+});
+
+Deno.test("workflowAgentViews: tokens, tool-call count and the activity trail", async () => {
+  const { db, events, session, ctx } = fixture((_call, _sig, onSpawned) => {
+    const sub = db.createSession({
+      id: crypto.randomUUID(),
+      parentId: session.id,
+      title: "sub",
+      kind: "subagent",
+      createdAt: Date.now(),
+    });
+    // What a real subagent leaves behind: token usage and its tool calls.
+    db.setSessionUsage(sub.id, 100, 400, 1200);
+    db.createMessage({
+      id: crypto.randomUUID(),
+      sessionId: sub.id,
+      role: "supervisor",
+      parts: [{
+        type: "tool_call",
+        id: "c1",
+        name: "run_steps",
+        input: { code: "// note\nread('a.ts')" },
+      }],
+      pending: false,
+      createdAt: Date.now(),
+    });
+    onSpawned(sub.id);
+    return Promise.resolve("ok");
+  });
+  const run = await startWorkflow(ctx, {
+    sessionId: session.id,
+    script: META + `return await agent('go')`,
+  });
+  assertEquals(await finished(events, run.id), "done");
+  const view = workflowAgentViews(db, run.id)[0];
+  assertEquals(view.tokens, 1600);
+  assertEquals(view.toolCalls, 1);
+  // The gist skips the comment — a bare "run_steps" says nothing about what ran.
+  assertEquals(view.activity, ["run_steps(read('a.ts'))"]);
+});
+
+Deno.test("controlWorkflowAgent: restart re-runs a live call in place", async () => {
+  let attempts = 0;
+  let live!: { id: string; release: () => void };
+  const { db, events, session, ctx } = fixture((_call, signal, onSpawned) => {
+    attempts++;
+    const sub = db.createSession({
+      id: crypto.randomUUID(),
+      parentId: session.id,
+      title: `try${attempts}`,
+      kind: "subagent",
+      createdAt: Date.now(),
+    });
+    onSpawned(sub.id);
+    // Park until the test either aborts this attempt (stop/restart) or lets it
+    // through — mimicking a long subagent turn the user reaches for x/r on.
+    return new Promise<string>((resolve, reject) => {
+      const row = db.listWorkflowAgents(db.listWorkflows(session.id)[0].id)
+        .find((a) => a.sessionId === sub.id)!;
+      live = { id: row.id, release: () => resolve(`ok after ${attempts}`) };
+      signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+    });
+  });
+  const run = await startWorkflow(ctx, {
+    sessionId: session.id,
+    script: META + `return await agent('go')`,
+  });
+  // Wait for the first attempt to be parked and journaled.
+  while (!live) await new Promise((r) => setTimeout(r, 10));
+
+  controlWorkflowAgent(ctx, run.id, live.id, "restart");
+  // The restarted call re-runs on a FRESH session; the script is still parked.
+  while (attempts < 2) await new Promise((r) => setTimeout(r, 10));
+  assertEquals(db.getWorkflow(run.id)!.status, "running");
+  assertEquals(db.listWorkflowAgents(run.id).length, 1); // re-used, not duplicated
+  assertEquals(db.listWorkflowAgents(run.id)[0].status, "running");
+
+  live.release();
+  assertEquals(await finished(events, run.id), "done");
+  const row = db.listWorkflowAgents(run.id)[0];
+  assertEquals(row.status, "done");
+  assertEquals(row.result, "ok after 2");
+});
+
+Deno.test("controlWorkflowAgent: rejects a settled agent and one that is not live", async () => {
+  const { db, events, session, ctx } = fixture();
+  const run = await startWorkflow(ctx, {
+    sessionId: session.id,
+    script: META + `return await agent('go')`,
+  });
+  assertEquals(await finished(events, run.id), "done");
+  const row = db.listWorkflowAgents(run.id)[0];
+  assertThrows(() => controlWorkflowAgent(ctx, run.id, row.id, "stop"), Error, "not running");
+  assertThrows(() => controlWorkflowAgent(ctx, run.id, "nope", "stop"), Error, "not found");
+});
+
+Deno.test("controlWorkflowAgent: stop fails ONE agent; the rest of the run continues", async () => {
+  const parked = new Map<string, () => void>();
+  const { db, events, session, ctx } = fixture((call, signal, onSpawned) => {
+    const sub = db.createSession({
+      id: crypto.randomUUID(),
+      parentId: session.id,
+      title: call.label,
+      kind: "subagent",
+      createdAt: Date.now(),
+    });
+    onSpawned(sub.id);
+    return new Promise<string>((resolve, reject) => {
+      parked.set(call.label, () => resolve(`ok:${call.label}`));
+      signal.addEventListener("abort", () => reject(new Error("stopped by user")), { once: true });
+    });
+  });
+  const run = await startWorkflow(ctx, {
+    sessionId: session.id,
+    script: META +
+      `return await parallel([() => agent('a', {label: 'a'}), () => agent('b', {label: 'b'})])`,
+  });
+  while (parked.size < 2) await new Promise((r) => setTimeout(r, 10));
+
+  const rows = db.listWorkflowAgents(run.id);
+  controlWorkflowAgent(ctx, run.id, rows.find((a) => a.label === "a")!.id, "stop");
+  parked.get("b")!();
+
+  // parallel() maps the stopped slot to null and the run still finishes done.
+  assertEquals(await finished(events, run.id), "done");
+  assertEquals(db.getWorkflow(run.id)!.result, [null, "ok:b"]);
+  const after = db.listWorkflowAgents(run.id);
+  assertEquals(after.find((a) => a.label === "a")!.status, "stopped");
+  assertEquals(after.find((a) => a.label === "b")!.status, "done");
 });

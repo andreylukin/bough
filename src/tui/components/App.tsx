@@ -83,9 +83,9 @@ import {
   type McpStatus,
   type SkillInfo,
   type ThemeState,
+  type WfAgentView,
   type WireSchedule,
   type WireSection,
-  type WireWorkflowAgent,
   type WireWorkflowRun,
 } from "../api.ts";
 import { useStore } from "../store.ts";
@@ -120,7 +120,16 @@ import {
 import { DiffView, flattenDiffs } from "./DiffView.tsx";
 import { modelEntries, ModelPicker } from "./ModelPicker.tsx";
 import { Panel, PANEL_TABS, type PanelTab, PanelTabs } from "./Panel.tsx";
-import { orderAgents, wfGlyph, type WfLevel, Workflows } from "./Workflows.tsx";
+import {
+  agentDetailLines,
+  phaseGroups,
+  visibleAgents,
+  WF_FILTERS,
+  type WfFilter,
+  type WfLevel,
+  WorkflowChip,
+  Workflows,
+} from "./Workflows.tsx";
 import { Help, helpMaxScroll } from "./Help.tsx";
 import { appendHistory, appendShellHistory, loadHistory } from "../state.ts";
 import { shellHistoryCorpus } from "../shell_history.ts";
@@ -233,18 +242,26 @@ export function App(
   const [panelTab, setPanelTab] = useState<PanelTab>("sessions");
   const [mcpSel, setMcpSel] = useState(0);
   const [panelMsg, setPanelMsg] = useState<string | null>(null);
-  // Workflows tab: run-list cursor, drill level (runs → run → agent), the opened
-  // run's fetched detail (journal rows), agent cursor, and detail scroll.
+  // Workflows tab: run-list cursor, drill level (runs → phases → that phase's
+  // agents → one agent), the opened run's fetched detail (journal rows), the two
+  // pane cursors, the `f` status filter, and the detail's scroll/prompt fold.
   const [wfSel, setWfSel] = useState(0);
   const [wfLevel, setWfLevel] = useState<WfLevel>(0);
   const [wfOpenId, setWfOpenId] = useState<string | null>(null);
   const [wfDetail, setWfDetail] = useState<
-    { run: WireWorkflowRun; agents: WireWorkflowAgent[] } | null
+    { run: WireWorkflowRun; agents: WfAgentView[] } | null
   >(null);
+  const [wfPhaseSel, setWfPhaseSel] = useState(0);
   const [wfAgentSel, setWfAgentSel] = useState(0);
   const [wfScroll, setWfScroll] = useState(0);
-  // The opened run's agents in display order (selection indexes this).
-  const wfAgents = wfDetail ? orderAgents(wfDetail.run, wfDetail.agents) : [];
+  const [wfFilter, setWfFilter] = useState<WfFilter>(null);
+  const [wfPromptOpen, setWfPromptOpen] = useState(false);
+  // The selected phase's agents after `f` — BOTH panes and every key that acts on
+  // "the selected agent" index this same list, so a filtered view can never act
+  // on a row it isn't showing.
+  const wfGroups = wfDetail ? phaseGroups(wfDetail.run, wfDetail.agents) : [];
+  const wfGroup = wfGroups[Math.min(wfPhaseSel, Math.max(0, wfGroups.length - 1))];
+  const wfAgents = visibleAgents(wfGroup?.agents ?? [], wfFilter);
   // Refetch the opened run's detail on every workflow.* event (store.wfSeq bumps).
   useEffect(() => {
     if (mode !== "panel" || panelTab !== "workflows" || !wfOpenId) return;
@@ -1278,8 +1295,11 @@ export function App(
       setWfLevel(0);
       setWfOpenId(null);
       setWfDetail(null);
+      setWfPhaseSel(0);
       setWfAgentSel(0);
       setWfScroll(0);
+      setWfFilter(null);
+      setWfPromptOpen(false);
       setPanelTab("workflows");
       setMode("panel");
       return;
@@ -1449,9 +1469,11 @@ export function App(
           setRangeAnchor(null);
         } else if (panelTab === "workflows" && wfLevel > 0) {
           // Back out one drill level; only esc at the top level leaves the panel.
-          if (wfLevel === 2) {
-            setWfLevel(1);
+          if (wfLevel === 3) {
+            setWfLevel(2);
             setWfScroll(0);
+          } else if (wfLevel === 2) {
+            setWfLevel(1);
           } else {
             setWfLevel(0);
             setWfOpenId(null);
@@ -1903,6 +1925,11 @@ export function App(
             (r) => setPanelMsg(`${act}: run is now ${r.status}`),
             (e) => setPanelMsg(String(e)),
           );
+        const agentAction = (id: string, agentId: string, act: "stop" | "restart") =>
+          api.workflowAgentAction(id, agentId, act).then(
+            (a) => setPanelMsg(`${act}: ${a.label}`),
+            (e) => setPanelMsg(String(e)),
+          );
         const rerun = (id: string) =>
           api.rerunWorkflow(id).then(
             (r) => setPanelMsg(`rerun started: ${r.name} (${r.id.slice(0, 8)})`),
@@ -1913,6 +1940,14 @@ export function App(
           if (s) openSession(s);
           else setPanelMsg("that agent has no session yet");
         };
+        const openRun = (id: string) => {
+          setWfOpenId(id);
+          setWfDetail(null);
+          setWfPhaseSel(0);
+          setWfAgentSel(0);
+          setWfFilter(null);
+          setWfLevel(1);
+        };
         if (wfLevel === 0) {
           if (key.upArrow || ch === "k") return setWfSel((i) => Math.max(0, i - 1));
           if (key.downArrow || ch === "j") {
@@ -1920,23 +1955,22 @@ export function App(
           }
           const r = runs[wfSel];
           if (!r) return;
-          if (key.return || key.rightArrow) {
-            setWfOpenId(r.id);
-            setWfDetail(null);
-            setWfAgentSel(0);
-            setWfLevel(1);
-            return;
-          }
+          if (key.return || key.rightArrow) return openRun(r.id);
           if (ch === "x") return void action(r.id, "stop");
           if (ch === "p") return void action(r.id, r.status === "paused" ? "resume" : "pause");
           if (ch === "r") return void rerun(r.id);
           return;
         }
         const run = wfDetail?.run;
+        const agent = wfAgents[wfAgentSel];
         if (wfLevel === 1) {
-          if (key.upArrow || ch === "k") return setWfAgentSel((i) => Math.max(0, i - 1));
+          if (key.upArrow || ch === "k") {
+            setWfAgentSel(0);
+            return setWfPhaseSel((i) => Math.max(0, i - 1));
+          }
           if (key.downArrow || ch === "j") {
-            return setWfAgentSel((i) => Math.min(Math.max(0, wfAgents.length - 1), i + 1));
+            setWfAgentSel(0);
+            return setWfPhaseSel((i) => Math.min(Math.max(0, wfGroups.length - 1), i + 1));
           }
           if (key.leftArrow) {
             setWfLevel(0);
@@ -1944,12 +1978,11 @@ export function App(
             setWfDetail(null);
             return;
           }
-          if ((key.return || key.rightArrow) && wfAgents[wfAgentSel]) {
-            setWfScroll(0);
+          if (key.return || key.rightArrow) {
+            setWfAgentSel(0);
             setWfLevel(2);
             return;
           }
-          if (ch === "o") return openAgentSession(wfAgents[wfAgentSel]?.sessionId ?? null);
           if (run) {
             if (ch === "x") return void action(run.id, "stop");
             if (ch === "p") {
@@ -1959,11 +1992,57 @@ export function App(
           }
           return;
         }
-        // Level 2: the agent detail — j/k scroll, o opens its session, ← backs out.
-        if (ch === "j") return setWfScroll((s) => s + 3);
+        if (wfLevel === 2) {
+          if (key.upArrow || ch === "k") return setWfAgentSel((i) => Math.max(0, i - 1));
+          if (key.downArrow || ch === "j") {
+            return setWfAgentSel((i) => Math.min(Math.max(0, wfAgents.length - 1), i + 1));
+          }
+          if (key.leftArrow) return setWfLevel(1);
+          if ((key.return || key.rightArrow) && agent) {
+            setWfScroll(0);
+            setWfPromptOpen(false);
+            setWfLevel(3);
+            return;
+          }
+          // f cycles the status filter; the cursor goes home so it can never
+          // point past the end of the newly-filtered list.
+          if (ch === "f") {
+            setWfAgentSel(0);
+            return setWfFilter((cur) =>
+              WF_FILTERS[(WF_FILTERS.indexOf(cur) + 1) % WF_FILTERS.length]
+            );
+          }
+          if (ch === "o") return openAgentSession(agent?.sessionId ?? null);
+          // x/r are SCOPED to the selected agent here — the run keeps going.
+          if ((ch === "x" || ch === "r") && run && agent) {
+            return void agentAction(run.id, agent.id, ch === "x" ? "stop" : "restart");
+          }
+          if (ch === "p" && run) {
+            return void action(run.id, run.status === "paused" ? "resume" : "pause");
+          }
+          return;
+        }
+        // Level 3: one agent's detail — the list cursor still moves so you can
+        // read down a phase without backing out.
+        if (key.upArrow) {
+          setWfScroll(0);
+          return setWfAgentSel((i) => Math.max(0, i - 1));
+        }
+        if (key.downArrow) {
+          setWfScroll(0);
+          return setWfAgentSel((i) => Math.min(Math.max(0, wfAgents.length - 1), i + 1));
+        }
+        if (key.return) return setWfPromptOpen((o) => !o);
+        if (ch === "j") {
+          // Clamp at the last screenful — unclamped j walked off the end into a
+          // blank pane reading "45/44".
+          const total = agent ? agentDetailLines(agent, wfPromptOpen) : 0;
+          const max = Math.max(0, total - Math.max(3, rows - 17));
+          return setWfScroll((s) => Math.min(max, s + 3));
+        }
         if (ch === "k") return setWfScroll((s) => Math.max(0, s - 3));
         if (key.leftArrow) {
-          setWfLevel(1);
+          setWfLevel(2);
           setWfScroll(0);
           return;
         }
@@ -2660,9 +2739,12 @@ export function App(
               sel={wfSel}
               level={wfLevel}
               run={wfDetail?.run ?? null}
-              agents={wfAgents}
+              agents={wfDetail?.agents ?? []}
+              phaseSel={wfPhaseSel}
               agentSel={wfAgentSel}
               scroll={wfScroll}
+              filter={wfFilter}
+              promptOpen={wfPromptOpen}
               rows={rows}
               lastLog={wfOpenId ? store.wfLogs[wfOpenId] : undefined}
             />
@@ -3027,20 +3109,7 @@ export function App(
         {mode === "chat"
           ? store.workflows.filter((w) => w.status === "running" || w.status === "paused")
             .slice(0, 2)
-            .map((w) => (
-              <Text key={w.id} wrap="truncate">
-                <Text color={wfGlyph(w.status).color}>{wfGlyph(w.status).glyph}</Text>{" "}
-                <Text bold>{w.name}</Text>
-                <Text dimColor>
-                  {"  "}
-                  {w.agents.done}/{w.agents.total} agents
-                  {w.agents.failed ? ` (${w.agents.failed} failed)` : ""}
-                  {w.currentPhase ? ` · ${w.currentPhase}` : ""}
-                  {store.wfLogs[w.id] ? ` · ${store.wfLogs[w.id]}` : ""}
-                  {" · /workflows"}
-                </Text>
-              </Text>
-            ))
+            .map((w) => <WorkflowChip key={w.id} run={w} log={store.wfLogs[w.id]} />)
           : null}
         <StatusBar
           connected={store.connected}

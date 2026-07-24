@@ -20,12 +20,12 @@
  */
 import { z } from "zod";
 import { HttpError } from "./errors.ts";
-import type { Db, WorkflowRun } from "./db/db.ts";
+import type { Db, WorkflowAgent, WorkflowRun } from "./db/db.ts";
 import type { Bus } from "./bus.ts";
 import { type HostFns, runProgram } from "./harness/vm.ts";
 import { join } from "node:path";
 import { boughPath } from "./paths.ts";
-import { clip } from "./text.ts";
+import { clip, codeGist } from "./text.ts";
 
 // ---- meta extraction (pure) ------------------------------------------------
 
@@ -167,6 +167,10 @@ interface LiveRun {
   paused: boolean;
   /** Resolvers parked on the pause gate — resumed in FIFO order. */
   gate: Array<() => void>;
+  /** Per-agent handles for the selection-scoped stop/restart keys: aborting one
+   * agent's controller leaves the rest of the run alone, and `restart` tells the
+   * catch arm to re-issue the same call instead of failing it. */
+  agents: Map<string, { ctrl: AbortController; restart: boolean }>;
   timer?: ReturnType<typeof setTimeout>;
 }
 
@@ -185,7 +189,11 @@ function publishRun(ctx: Pick<WorkflowCtx, "db" | "bus">, id: string): WorkflowR
   return run;
 }
 
-function publishAgent(ctx: Pick<WorkflowCtx, "db" | "bus">, run: WorkflowRun, agentId: string): void {
+function publishAgent(
+  ctx: Pick<WorkflowCtx, "db" | "bus">,
+  run: WorkflowRun,
+  agentId: string,
+): void {
   const rows = ctx.db.listWorkflowAgents(run.id);
   const row = rows.find((a) => a.id === agentId);
   if (row) {
@@ -264,7 +272,7 @@ export async function startWorkflow(ctx: WorkflowCtx, opts: StartOpts): Promise<
     type: "module",
     deno: { permissions: "none" },
   });
-  const state: LiveRun = { ctrl, worker, paused: false, gate: [] };
+  const state: LiveRun = { ctrl, worker, paused: false, gate: [], agents: new Map() };
   live.set(id, state);
 
   // The body keeps the meta statement (demoted to a plain const) — removal would
@@ -310,7 +318,8 @@ export async function startWorkflow(ctx: WorkflowCtx, opts: StartOpts): Promise<
     if (ctx.notify && updated) {
       const agents = db.listWorkflowAgents(id);
       const okCount = agents.filter((a) => a.status === "done" || a.status === "cached").length;
-      const head = `[workflow ${status}] "${updated.name}" (${id}) — ${okCount}/${agents.length} agents succeeded.`;
+      const head =
+        `[workflow ${status}] "${updated.name}" (${id}) — ${okCount}/${agents.length} agents succeeded.`;
       const tail = status === "done"
         ? `Result:\n${clip(JSON.stringify(result ?? null, null, 2), 4000)}`
         : status === "error"
@@ -397,26 +406,54 @@ export async function startWorkflow(ctx: WorkflowCtx, opts: StartOpts): Promise<
       if (cached !== undefined) return reply(true, JSON.stringify(cached));
       await acquire();
       try {
-        if (ctrl.signal.aborted) throw new Error("workflow stopped");
-        const report = await ctx.runner(call, ctrl.signal, (sid) => {
-          db.updateWorkflowAgent(row.id, { sessionId: sid });
-          publishAgent(ctx, run, row.id);
-        });
-        db.updateWorkflowAgent(row.id, {
-          status: "done",
-          result: report,
-          finishedAt: Date.now(),
-        });
-        publishAgent(ctx, run, row.id);
-        reply(true, JSON.stringify(report));
-      } catch (err) {
-        db.updateWorkflowAgent(row.id, {
-          status: ctrl.signal.aborted ? "stopped" : "error",
-          result: (err as Error).message ?? String(err),
-          finishedAt: Date.now(),
-        });
-        publishAgent(ctx, run, row.id);
-        reply(false, (err as Error).message ?? String(err));
+        // Loop so `r` on a running agent can re-issue the SAME call on a fresh
+        // subagent session: restartWorkflowAgent aborts this attempt's own
+        // controller with the restart flag set, and we come back around instead
+        // of failing the call (the script is still parked on this one promise).
+        for (;;) {
+          if (ctrl.signal.aborted) throw new Error("workflow stopped");
+          const own = new AbortController();
+          const relay = () => own.abort();
+          ctrl.signal.addEventListener("abort", relay, { once: true });
+          const handle = { ctrl: own, restart: false };
+          state.agents.set(row.id, handle);
+          try {
+            const report = await ctx.runner(call, own.signal, (sid) => {
+              db.updateWorkflowAgent(row.id, { sessionId: sid });
+              publishAgent(ctx, run, row.id);
+            });
+            db.updateWorkflowAgent(row.id, {
+              status: "done",
+              result: report,
+              finishedAt: Date.now(),
+            });
+            publishAgent(ctx, run, row.id);
+            reply(true, JSON.stringify(report));
+            break;
+          } catch (err) {
+            if (handle.restart && !ctrl.signal.aborted) {
+              db.updateWorkflowAgent(row.id, {
+                status: "running",
+                result: null,
+                sessionId: null,
+                finishedAt: null,
+              });
+              publishAgent(ctx, run, row.id);
+              continue;
+            }
+            db.updateWorkflowAgent(row.id, {
+              status: own.signal.aborted ? "stopped" : "error",
+              result: (err as Error).message ?? String(err),
+              finishedAt: Date.now(),
+            });
+            publishAgent(ctx, run, row.id);
+            reply(false, (err as Error).message ?? String(err));
+            break;
+          } finally {
+            ctrl.signal.removeEventListener("abort", relay);
+            state.agents.delete(row.id);
+          }
+        }
       } finally {
         release();
       }
@@ -462,6 +499,29 @@ export function stopWorkflow(ctx: Pick<WorkflowCtx, "db" | "bus">, id: string): 
   };
   finishViaState();
   return publishRun(ctx, id)!;
+}
+
+/**
+ * Selection-scoped agent control (the run view's x/r on a single agent). Stop
+ * fails just that agent() call — the script sees the rejection and its
+ * parallel()/pipeline() slot goes null, the rest of the run continues. Restart
+ * re-issues the same call on a fresh subagent session, leaving the script parked
+ * on the promise it is already awaiting.
+ */
+export function controlWorkflowAgent(
+  ctx: Pick<WorkflowCtx, "db" | "bus">,
+  runId: string,
+  agentId: string,
+  action: "stop" | "restart",
+): WorkflowAgent {
+  const row = ctx.db.listWorkflowAgents(runId).find((a) => a.id === agentId);
+  if (!row) throw new HttpError(404, "workflow agent not found");
+  if (row.status !== "running") throw new HttpError(409, `agent is ${row.status}, not running`);
+  const handle = live.get(runId)?.agents.get(agentId);
+  if (!handle) throw new HttpError(409, "agent is not live in this process");
+  handle.restart = action === "restart";
+  handle.ctrl.abort();
+  return row;
 }
 
 /** Pause: new agent() calls park on the gate; running agents finish normally. */
@@ -558,6 +618,37 @@ const RerunArgs = z.object({
 });
 const IdArgs = z.object({ id: z.string().min(1) });
 
+/**
+ * One agent row plus what the run view needs to show WITHOUT opening its
+ * session: cumulative tokens, how many tool calls it made, and the last few
+ * call gists. The activity trail is the difference between "running" and
+ * "running, and here is what it is doing" — a stuck agent used to be
+ * indistinguishable from a slow one.
+ */
+export interface WorkflowAgentView extends WorkflowAgent {
+  tokens: number;
+  toolCalls: number;
+  activity: string[];
+}
+
+const ACTIVITY_LINES = 4;
+
+export function workflowAgentViews(db: Db, runId: string): WorkflowAgentView[] {
+  return db.listWorkflowAgents(runId).map((a) => {
+    if (!a.sessionId) return { ...a, tokens: 0, toolCalls: 0, activity: [] };
+    const usage = db.sessionUsage(a.sessionId);
+    const calls = db.messagesFor(a.sessionId)
+      .flatMap((m) => m.parts)
+      .filter((p) => p.type === "tool_call");
+    return {
+      ...a,
+      tokens: usage.inputTokens + usage.outputTokens,
+      toolCalls: calls.length,
+      activity: calls.slice(-ACTIVITY_LINES).map((c) => `${c.name}(${codeGist(c.input, 48)})`),
+    };
+  });
+}
+
 /** Trim a run for program/route consumption (script omitted from lists). */
 export function workflowSummary(db: Db, run: WorkflowRun): Record<string, unknown> {
   const agents = db.listWorkflowAgents(run.id);
@@ -597,13 +688,17 @@ export async function workflowVerb(
   switch (verb) {
     case "start": {
       const a = StartArgs.safeParse(args);
-      if (!a.success) throw new HttpError(400, "workflow.start({script, args?}): " + a.error.message);
+      if (!a.success) {
+        throw new HttpError(400, "workflow.start({script, args?}): " + a.error.message);
+      }
       const run = await startWorkflow(ctx, { sessionId, script: a.data.script, args: a.data.args });
       return workflowSummary(ctx.db, run);
     }
     case "rerun": {
       const a = RerunArgs.safeParse(args);
-      if (!a.success) throw new HttpError(400, "workflow.rerun({id, script?, args?}): " + a.error.message);
+      if (!a.success) {
+        throw new HttpError(400, "workflow.rerun({id, script?, args?}): " + a.error.message);
+      }
       const run = await rerunWorkflow(ctx, a.data.id, { script: a.data.script, args: a.data.args });
       return workflowSummary(ctx.db, run);
     }
@@ -628,6 +723,9 @@ export async function workflowVerb(
     case "list":
       return ctx.db.listWorkflows().map((r) => workflowSummary(ctx.db, r));
     default:
-      throw new HttpError(400, `unknown workflow verb: ${verb} (start|rerun|stop|pause|resume|status|list)`);
+      throw new HttpError(
+        400,
+        `unknown workflow verb: ${verb} (start|rerun|stop|pause|resume|status|list)`,
+      );
   }
 }

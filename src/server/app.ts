@@ -41,12 +41,14 @@ import {
   workflowCtxFor,
 } from "../turn.ts";
 import {
+  controlWorkflowAgent,
   pauseWorkflow,
   rerunWorkflow,
   resumeWorkflow,
   scriptPath as workflowScriptPath,
   startWorkflow,
   stopWorkflow,
+  workflowAgentViews,
   WorkflowCreateBody,
   WorkflowRerunBody,
   workflowSummary,
@@ -671,10 +673,21 @@ const getWorkflowH: Handler = (_req, ctx, params) => {
   if (!run) return error(404, "workflow not found");
   return json({
     workflow: run,
-    agents: ctx.db.listWorkflowAgents(run.id),
+    agents: workflowAgentViews(ctx.db, run.id),
     scriptFile: workflowScriptPath(run.id),
   });
 };
+
+/** The run view's x/r on one selected agent (the whole run keeps going). */
+const workflowAgentH: Handler = (_req, ctx, params) =>
+  json(
+    controlWorkflowAgent(
+      ctx,
+      params.id,
+      params.agentId,
+      params.action === "restart" ? "restart" : "stop",
+    ),
+  );
 
 const createWorkflowH: Handler = async (req, ctx) => {
   const body = await parseBody(req, WorkflowCreateBody);
@@ -1218,6 +1231,11 @@ const routes: Route[] = [
     method: "POST",
     pattern: new URLPattern({ pathname: "/workflows/:id/rerun" }),
     handler: rerunWorkflowH,
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/workflows/:id/agents/:agentId/:action" }),
+    handler: workflowAgentH,
   },
   { method: "GET", pattern: new URLPattern({ pathname: "/events" }), handler: events },
   { method: "GET", pattern: new URLPattern({ pathname: "/mcp/servers" }), handler: getMcpServers },
