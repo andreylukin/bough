@@ -96,9 +96,11 @@ wait_up() {
 }
 
 # What launchd executes (also handy for a manual foreground run). launchd starts
-# with a bare environment, so put Homebrew on PATH for deno/git/llama-server.
+# with a bare environment, so put the toolchain on PATH for deno/git/llama-server
+# and agentfs — the sandbox binary the installer drops in ~/.cargo/bin, without
+# which every sandboxed command exits 127 (command not found).
 cmd_run() {
-  export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"
+  export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
   if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
     # Exit 0 so launchd doesn't relaunch-loop while the machine is unconfigured.
     echo "ANTHROPIC_API_KEY is not set — put it in $ENV_FILE; not starting"
