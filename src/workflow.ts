@@ -434,7 +434,7 @@ export async function startWorkflow(ctx: WorkflowCtx, opts: StartOpts): Promise<
         phase: call.phase ?? db.getWorkflow(id)?.currentPhase ?? null,
         prompt: call.prompt,
         model: call.model ?? null,
-        status: cached !== undefined ? "cached" : "running",
+        status: cached !== undefined ? "cached" : "queued",
         result: cached ?? null,
         sessionId: null,
         startedAt: Date.now(),
@@ -443,6 +443,9 @@ export async function startWorkflow(ctx: WorkflowCtx, opts: StartOpts): Promise<
       publishAgent(ctx, run, row.id);
       if (cached !== undefined) return reply(true, JSON.stringify(cached));
       await acquire();
+      // Off the semaphore: the clock starts HERE, not when the call journaled.
+      db.updateWorkflowAgent(row.id, { status: "running", startedAt: Date.now() });
+      publishAgent(ctx, run, row.id);
       try {
         // Loop so `r` on a running agent can re-issue the SAME call on a fresh
         // subagent session: restartWorkflowAgent aborts this attempt's own
@@ -529,7 +532,7 @@ export function stopWorkflow(ctx: Pick<WorkflowCtx, "db" | "bus">, id: string): 
     state.worker.terminate();
     state.ctrl.abort();
     for (const a of ctx.db.listWorkflowAgents(id)) {
-      if (a.status === "running") {
+      if (a.status === "running" || a.status === "queued") {
         ctx.db.updateWorkflowAgent(a.id, { status: "stopped", finishedAt: Date.now() });
       }
     }
@@ -701,6 +704,7 @@ export function workflowSummary(db: Db, run: WorkflowRun): Record<string, unknow
       total: agents.length,
       done: agents.filter((a) => a.status === "done" || a.status === "cached").length,
       running: agents.filter((a) => a.status === "running").length,
+      queued: agents.filter((a) => a.status === "queued").length,
       failed: agents.filter((a) => a.status === "error").length,
     },
     result: run.result,

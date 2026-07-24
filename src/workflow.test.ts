@@ -19,6 +19,7 @@ import {
   stopWorkflow,
   workflowAgentViews,
   type WorkflowCtx,
+  workflowSummary,
   workflowVerb,
 } from "./workflow.ts";
 
@@ -373,11 +374,11 @@ Deno.test("workflowVerb: start/status/list/stop dispatch; unknown verb rejects",
   assertEquals(await finished(events, started.id), "done");
   const status = await workflowVerb(ctx, session.id, "status", { id: started.id }) as {
     status: string;
-    agents: { done: number; total: number; running: number; failed: number };
+    agents: { done: number; total: number; running: number; queued: number; failed: number };
     agentRows: unknown[];
   };
   assertEquals(status.status, "done");
-  assertEquals(status.agents, { total: 1, done: 1, running: 0, failed: 0 });
+  assertEquals(status.agents, { total: 1, done: 1, running: 0, queued: 0, failed: 0 });
   assertEquals(status.agentRows.length, 1);
   const list = await workflowVerb(ctx, session.id, "list", {}) as unknown[];
   assertEquals(list.length, 1);
@@ -563,4 +564,32 @@ Deno.test("agent labels: siblings sharing a preamble get distinct rows, keys unc
   assertEquals(labels, ["Shared preamble line.", "module B"]);
   // The journal key stays on the deterministic first-line label, so replay works.
   assertEquals(new Set(db.listWorkflowAgents(run.id).map((a) => a.key)).size, 2);
+});
+
+Deno.test("queued: agents parked on the semaphore are not reported as running", async () => {
+  Deno.env.set("BOUGH_WORKFLOW_CONCURRENCY", "2");
+  const release: Array<() => void> = [];
+  try {
+    const { db, session, ctx } = fixture(() =>
+      new Promise<string>((resolve) => release.push(() => resolve("ok")))
+    );
+    const run = await startWorkflow(ctx, {
+      sessionId: session.id,
+      script: META +
+        `return await parallel([0,1,2,3].map((i) => () => agent('go ' + i, {label: 'a' + i})))`,
+    });
+    while (release.length < 2) await new Promise((r) => setTimeout(r, 10));
+    const rows = db.listWorkflowAgents(run.id);
+    assertEquals(rows.length, 4);
+    // Only `concurrency` agents actually hold a slot; the rest are honestly queued.
+    assertEquals(rows.filter((a) => a.status === "running").length, 2);
+    assertEquals(rows.filter((a) => a.status === "queued").length, 2);
+    const summary = workflowSummary(db, db.getWorkflow(run.id)!) as {
+      agents: Record<string, number>;
+    };
+    assertEquals(summary.agents, { total: 4, done: 0, running: 2, queued: 2, failed: 0 });
+    release.splice(0).forEach((r) => r());
+  } finally {
+    Deno.env.set("BOUGH_WORKFLOW_CONCURRENCY", "4");
+  }
 });

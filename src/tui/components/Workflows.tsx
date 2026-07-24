@@ -17,7 +17,7 @@ import { clip, relTime } from "../format.ts";
 export type WfLevel = 0 | 1 | 2 | 3;
 
 /** The `f` cycle: all, then each status worth isolating on a big run. */
-export const WF_FILTERS = [null, "running", "done", "error"] as const;
+export const WF_FILTERS = [null, "running", "queued", "done", "error"] as const;
 export type WfFilter = (typeof WF_FILTERS)[number];
 
 const LEFT_W = 26;
@@ -59,6 +59,9 @@ export function visibleAgents(agents: WfAgentView[], filter: WfFilter): WfAgentV
 /** Status → (glyph, color). One place so every level and the chip agree. */
 export function wfGlyph(status: string): { glyph: string; color: string | undefined } {
   switch (status) {
+    case "queued":
+      // Journaled but waiting on the run's concurrency semaphore — not working yet.
+      return { glyph: "◦", color: palette.muted };
     case "running":
       return { glyph: "◐", color: palette.accent };
     case "paused":
@@ -274,7 +277,11 @@ function AgentList(
                 {[
                   a.model,
                   tokenChip(a.tokens),
-                  a.finishedAt ? elapsed(a.startedAt, a.finishedAt) : "running",
+                  a.status === "queued"
+                    ? "queued"
+                    : a.finishedAt
+                    ? elapsed(a.startedAt, a.finishedAt)
+                    : "running",
                 ].filter(Boolean).join(" · ")}
               </Text>
             )}
@@ -361,7 +368,11 @@ function AgentDetail(
             agent.toolCalls
               ? `${agent.toolCalls} tool call${agent.toolCalls === 1 ? "" : "s"}`
               : "",
-            agent.finishedAt ? elapsed(agent.startedAt, agent.finishedAt) : "running",
+            agent.status === "queued"
+              ? "waiting on the run's concurrency limit"
+              : agent.finishedAt
+              ? elapsed(agent.startedAt, agent.finishedAt)
+              : "running",
           ].filter(Boolean).join(" · ")}
         </Text>
       </Text>

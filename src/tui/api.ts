@@ -57,7 +57,7 @@ export interface WfSummary {
   status: WireWorkflowRun["status"];
   currentPhase: string | null;
   phases: { title: string; detail?: string }[];
-  agents: { total: number; done: number; running: number; failed: number };
+  agents: { total: number; done: number; running: number; queued: number; failed: number };
   result: unknown;
   error: string | null;
   resumeOf: string | null;

@@ -117,7 +117,7 @@ CREATE TABLE IF NOT EXISTS workflow_agents (
   phase       TEXT,
   prompt      TEXT NOT NULL,
   model       TEXT,
-  status      TEXT NOT NULL,          -- running | done | error | stopped | cached
+  status      TEXT NOT NULL,          -- queued | running | done | error | stopped | cached
   result      TEXT,                   -- the agent's report text (done/cached)
   session_id  TEXT,                   -- the subagent session (TUI drill-in)
   started_at  INTEGER NOT NULL,
@@ -242,7 +242,17 @@ function toSchedule(r: ScheduleRow): Schedule {
 }
 
 export type WorkflowStatus = "running" | "paused" | "done" | "error" | "stopped" | "orphaned";
-export type WorkflowAgentStatus = "running" | "done" | "error" | "stopped" | "cached";
+/** `queued` = journaled but parked on the run's concurrency semaphore: no
+ * subagent session yet, and its clock has not started. It used to report
+ * `running` with a ticking elapsed, so a saturated run looked like N agents
+ * working when only `concurrency()` of them were. */
+export type WorkflowAgentStatus =
+  | "queued"
+  | "running"
+  | "done"
+  | "error"
+  | "stopped"
+  | "cached";
 
 /** One workflow run: the script, its meta (name/description/phases), and outcome. */
 export interface WorkflowRun {
@@ -1153,6 +1163,8 @@ export class Db {
       status?: WorkflowAgentStatus;
       result?: string | null;
       sessionId?: string | null;
+      /** Reset when a queued agent actually starts, so elapsed excludes queue time. */
+      startedAt?: number;
       finishedAt?: number | null;
     },
   ): void {
@@ -1162,12 +1174,13 @@ export class Db {
     if (!r) return;
     this.#db
       .prepare(
-        `UPDATE workflow_agents SET status = ?, result = ?, session_id = ?, finished_at = ? WHERE id = ?`,
+        `UPDATE workflow_agents SET status = ?, result = ?, session_id = ?, started_at = ?, finished_at = ? WHERE id = ?`,
       )
       .run(
         patch.status ?? r.status,
         patch.result !== undefined ? patch.result : r.result,
         patch.sessionId !== undefined ? patch.sessionId : r.session_id,
+        patch.startedAt !== undefined ? patch.startedAt : r.started_at,
         patch.finishedAt !== undefined ? patch.finishedAt : r.finished_at,
         id,
       );
