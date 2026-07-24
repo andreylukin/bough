@@ -209,7 +209,7 @@ export async function scheduleVerb(
       return { ok: true, removed: args };
     }
     default:
-      throw new HttpError(400, `unknown schedule verb: ${verb}`);
+      throw new HttpError(400, `unknown schedule verb: ${verb} (list|add|enable|disable|remove)`);
   }
 }
 

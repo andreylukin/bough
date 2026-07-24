@@ -168,7 +168,7 @@ Deno.test("scheduleVerb: add/list/enable/disable/remove through the shared modul
   );
   await assertRejects(() => scheduleVerb(db, "enable", "zzz"), Error, "not found");
   await assertRejects(() => scheduleVerb(db, "remove", ""), Error, "id (string) required");
-  await assertRejects(() => scheduleVerb(db, "explode", null), Error, "unknown schedule verb");
+  await assertRejects(() => scheduleVerb(db, "explode", null), Error, "unknown schedule verb: explode (list|add|enable|disable|remove)");
   db.close();
 });
 
