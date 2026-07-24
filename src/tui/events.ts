@@ -22,7 +22,6 @@ const KNOWN_TYPES = new Set([
   "changes.updated",
   "usage.updated",
   "worker.step",
-  "net.request",
   "ask.question",
   "session.activity",
   "job.spawned",

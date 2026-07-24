@@ -159,43 +159,12 @@ export const Session = z.object({
 });
 export type Session = z.infer<typeof Session>;
 
-// ---- network ---------------------------------------------------------------
-
-// One outbound request row for the Network rail. Mirrors NetRequest in the UI;
-// the net gate owner emits these as `net.request` events.
-export const NetRequest = z.object({
-  id: z.string(),
-  /** Branch that owns this egress; absent for pre-attribution rows. */
-  sessionId: z.string().optional(),
-  host: z.string(),
-  verb: z.string().optional(),
-  /** Request path (+query) — the approval card must show WHAT is being fetched,
-   * not just the hostname (user-testing: a bare host isn't enough to decide on). */
-  path: z.string().optional(),
-  action: z.string(),
-  verdict: z.enum(["allowed", "denied", "pending"]),
-  reason: z.string().optional(),
-  requestedBy: z.string().optional(),
-  /** Facet fields — the classifier's parsed view (e.g. k8s resource/namespace). */
-  fields: z.record(z.string(), z.unknown()).optional(),
-  /** Local-worker one-liner ("Creates a fork of repo X") — advisory, may lag. */
-  annotation: z.string().optional(),
-  /** Request headers with credential values redacted — the approval card's
-   * "show me the raw request" detail view (user-testing: skeptics won't approve
-   * what they can't inspect). */
-  headers: z.record(z.string(), z.string()).optional(),
-  /** First bytes of the request body, if any (clipped at the gate). */
-  bodyPreview: z.string().optional(),
-  ts: z.number(),
-});
-export type NetRequest = z.infer<typeof NetRequest>;
-
 // ---- ask() questions -------------------------------------------------------
 
-// One mid-task question a run_steps program raised via ask() (asks.ts). The hold
-// mirror of NetRequest: emitted as `ask.question` when raised (status "pending")
-// and re-emitted on the same id with its final status. Memory-only server-side —
-// the settled record persists as an AskPart on the supervisor message.
+// One mid-task question a run_steps program raised via ask() (asks.ts): emitted as
+// `ask.question` when raised (status "pending") and re-emitted on the same id with
+// its final status. Memory-only server-side — the settled record persists as an
+// AskPart on the supervisor message.
 export const AskQuestion = z.object({
   id: z.string(),
   sessionId: z.string(),

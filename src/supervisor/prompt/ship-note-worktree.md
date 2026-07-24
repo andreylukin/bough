@@ -10,6 +10,14 @@ changed. Returns {commit, branch, paths, pushed, note?}. Shipping publishes work
 workspace: call it ONLY when the user explicitly asks you to commit/push/ship — never as a routine
 end-of-task step — and report the returned commit and branch afterward.
 
+To open a pull request instead of committing onto the current branch, use await pr({title, body?,
+branch?, base?, paths?, draft?}). It commits this session's changes onto a NEW branch (default
+`bough/<slug>`) on top of the origin's HEAD WITHOUT touching the user's working copy, pushes it, and
+opens a GitHub PR against `base` (default the current branch) via `gh pr create` with the host's gh
+auth. `paths` limits the commit; omitted means everything. Returns {branch, base, commit, url?,
+pushed, paths, note?} — report the returned PR url. Same rule as ship(): call it ONLY when the user
+explicitly asks to open a PR.
+
 The workspace itself is a shadow-git worktree that bough snapshots automatically every round: your
 edits get committed as `bough: snapshot` and HEAD moves along, so a clean `git status`/`git diff`
 does NOT mean your work was lost — it lives in the snapshot chain, and ship() reads it from there.

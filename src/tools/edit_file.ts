@@ -1,8 +1,12 @@
 /** Exact-string replace in a file. Requires a unique match, like a surgical edit. */
 import { z } from "zod/v4";
-import { resolveInGuest, resolveInWorkspace, type ToolDef, type ToolRunCtx } from "./types.ts";
-import { readFile as vmReadFile, writeFile as vmWriteFile } from "../sandbox/vm.ts";
-import { ensureVm, machineName } from "../sandbox/vmsession.ts";
+import { resolveInWorkspace, type ToolDef, type ToolRunCtx } from "./types.ts";
+import {
+  ensure as ensureAgentfs,
+  readFile as agentfsReadFile,
+  sandboxAgentfs,
+  writeFile as agentfsWriteFile,
+} from "../sandbox/agentfs.ts";
 import { reconcileEdit } from "../worker/apply.ts";
 
 const schema = z.object({
@@ -19,19 +23,19 @@ export const editFile: ToolDef = {
   schema,
   async run(input: unknown, ctx: ToolRunCtx): Promise<string> {
     const { path, old_string, new_string } = input as z.infer<typeof schema>;
-    // Guest-owned workspace: read + write route through the session VM; the edit
-    // logic itself (match, reconcile, replace) is identical either way.
-    const guest = ctx.guestFs;
-    const full = guest ? resolveInGuest(ctx, path) : resolveInWorkspace(ctx, path);
-    if (guest) await ensureVm(guest.sessionId, { origin: ctx.workspace, gitOrigin: true });
+    // The edit logic (match, reconcile, replace) is identical across backends;
+    // only how the file bytes are read/written differs.
+    //   - agentfs overlay: route through the session's copy-on-write delta.
+    //   - host: plain Deno fs.
+    const afs = !!(ctx.sandbox && ctx.sessionId && sandboxAgentfs());
+    const full = resolveInWorkspace(ctx, path);
+    if (afs) ensureAgentfs(ctx.sessionId!, { origin: ctx.workspace });
     const readText = async (): Promise<string> =>
-      guest
-        ? new TextDecoder().decode(await vmReadFile(machineName(guest.sessionId), full))
+      afs
+        ? new TextDecoder().decode(await agentfsReadFile(ctx.sessionId!, full))
         : await Deno.readTextFile(full);
     const writeText = (text: string): Promise<void> =>
-      guest
-        ? vmWriteFile(machineName(guest.sessionId), full, text)
-        : Deno.writeTextFile(full, text);
+      afs ? agentfsWriteFile(ctx.sessionId!, full, text) : Deno.writeTextFile(full, text);
 
     let text: string;
     try {

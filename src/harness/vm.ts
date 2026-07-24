@@ -85,10 +85,16 @@ export interface HostFns {
   recall?(query: string, k?: number): Promise<string>;
   /**
    * Ship the session's work into the origin repo as a real commit (+ optional
-   * push) — vcs/shadow.ts shipToOrigin. Options in and ShipResult back travel
+   * push) — vcs/agentdiff.ts shipToOrigin. Options in and ShipResult back travel
    * as JSON. Bridged only for root-session turns with a repo workspace.
    */
   ship?(optsJson: string): Promise<string>;
+  /**
+   * Export the session's work into a git branch and open a GitHub PR — vcs/agentdiff.ts
+   * openPr. Options in and PrResult back travel as JSON. Bridged alongside ship for
+   * root-session repo turns.
+   */
+  pr?(optsJson: string): Promise<string>;
   /**
    * Recurring runs (schedules.ts): one verb-dispatched function like lsp() —
    * args in and result back travel as JSON; the worker side exposes it as the

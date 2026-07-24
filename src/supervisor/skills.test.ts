@@ -27,7 +27,7 @@ Deno.test("listSkills reads frontmatter descriptions; loadBody strips frontmatte
     install(dir, "commit", "make a tidy commit", "Stage and commit with a conventional message.");
     install(dir, "review", "review the diff", "Read the diff and comment.");
     // Installed skills, minus the always-present builtins.
-    const installed = listSkills().filter((s) => !["init", "mcp", "net-plugin"].includes(s.name));
+    const installed = listSkills().filter((s) => !["init", "mcp"].includes(s.name));
     assertEquals(installed, [
       { name: "commit", description: "make a tidy commit" },
       { name: "review", description: "review the diff" },
@@ -40,11 +40,8 @@ Deno.test("the builtins are available without an install", () => {
   Deno.env.set("BOUGH_SKILLS_DIR", "/nonexistent-bough-skills");
   Deno.env.set("BOUGH_BUNDLED_SKILLS_DIR", "/nonexistent-bough-bundled");
   try {
-    assertEquals(listSkills().map((s) => s.name), ["init", "mcp", "net-plugin"]);
+    assertEquals(listSkills().map((s) => s.name), ["init", "mcp"]);
     assertStringIncludes(activeFor("/init"), "AGENTS.md");
-    const plugin = activeFor("/net-plugin gate stripe refunds");
-    assertStringIncludes(plugin, "net/plugins/install");
-    assertStringIncludes(plugin, "Live-test");
   } finally {
     Deno.env.delete("BOUGH_SKILLS_DIR");
   }
@@ -68,7 +65,7 @@ Deno.test("no skills dir → only builtins remain; unknown /names inject nothing
   Deno.env.set("BOUGH_SKILLS_DIR", "/nonexistent-bough-skills");
   Deno.env.set("BOUGH_BUNDLED_SKILLS_DIR", "/nonexistent-bough-bundled");
   try {
-    assertEquals(listSkills().map((s) => s.name), ["init", "mcp", "net-plugin"]);
+    assertEquals(listSkills().map((s) => s.name), ["init", "mcp"]);
     assertEquals(activeFor("/anything at all"), "");
   } finally {
     Deno.env.delete("BOUGH_SKILLS_DIR");

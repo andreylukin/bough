@@ -8,7 +8,7 @@ function byPath(files: FileDiff[]): Map<string, FileDiff> {
 
 // These smokes shell out to cp (APFS clonefile) + git, so they need `--allow-run`.
 // Under the current `deno task test` flags they self-skip; run them for real with
-// `deno test --allow-run` (see src/sandbox/INTEGRATION.md).
+// `deno test --allow-run`.
 async function canRun(cmd: string): Promise<boolean> {
   return (await Deno.permissions.query({ name: "run", command: cmd })).state === "granted";
 }

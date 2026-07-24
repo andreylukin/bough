@@ -1,8 +1,10 @@
 /** Run a shell command in the session workspace, capturing combined output. */
 import { z } from "zod/v4";
-import { ensureVm, execCommand, GUEST_WORKSPACE, sandboxVm } from "../sandbox/vmsession.ts";
-import { GUEST_REPO } from "../vcs/guestgit.ts";
-import { clawpatrolEnv } from "../net/gateway.ts";
+import {
+  ensure as ensureAgentfs,
+  execCommand as agentfsExecCommand,
+  sandboxAgentfs,
+} from "../sandbox/agentfs.ts";
 import type { ToolDef, ToolRunCtx } from "./types.ts";
 import { backgroundNote, formatFinal, newShell, promote } from "./bash_bg.ts";
 
@@ -32,49 +34,40 @@ function bgAfterMs(): number {
  * Argv + env + cwd for running `command` under this ctx's confinement — shared by
  * the blocking bash tool and the background shells (bash_bg.ts).
  *
- * Egress routes through Claw Patrol when the proxy is running (opt-in): the proxy
- * env points the command's HTTP(S) client at THIS SESSION's intercepting proxy
- * (per-branch policy + attribution) and trusts its MITM CA. Empty when off.
+ * Egress goes DIRECT: there is no proxy or egress firewall. Commands use the host's
+ * own credentials (gh/git resolve the host login) and reach the network unrouted.
  *
- * VM mode: the shell runs INSIDE the session's guest, which is the whole
- * confinement story — writes land on the guest's own disk and network is locked to
- * the gate host, so the proxy is the only egress route.
+ * agentfs mode: the shell runs inside the session's copy-on-write overlay of the
+ * host workspace, which is the whole confinement story — writes land in the
+ * session's delta, the real tree is untouched.
  *
- * `readOnly` (the oracle's shell) shares the session VM; read-only is not enforced
- * in-guest yet (TODO: a ro clone in the session VM — cheap now that the workspace
- * is a git clone).
+ * `readOnly` (the oracle's shell) shares the session overlay; read-only is not
+ * enforced yet (agentfs has no per-run ro overlay).
  */
-export async function shellInvocation(
+export function shellInvocation(
   command: string,
   ctx: ToolRunCtx,
   _opts?: { readOnly?: boolean },
-): Promise<{ argv: string[]; env?: Record<string, string>; cwd?: string }> {
-  const netEnv = await clawpatrolEnv(ctx.sessionId);
-  const env: Record<string, string> = { ...netEnv };
+): { argv: string[]; env?: Record<string, string>; cwd?: string } {
   const argv = ["/bin/sh", "-c", command];
 
-  // VM backend: run the shell INSIDE the session's guest. Guest cwd is the
-  // guest-owned clone (GUEST_REPO) for git origins, the virtiofs mount
-  // (GUEST_WORKSPACE) for non-git origin dirs; netEnv (proxy/CA) is injected into
-  // the guest via `-e`, so the host `machine exec` child carries no secrets.
-  // bash.run spawns the returned argv with its own streaming/background/kill
-  // machinery — a `machine exec` is just a host subprocess, so that all works
-  // unchanged. No host cwd: the child is a smolvm client, and pinning it to a host
-  // path throws NotFound once no host worktree exists.
-  if (ctx.sandbox && ctx.sessionId && sandboxVm()) {
-    await ensureVm(ctx.sessionId, { origin: ctx.workspace, gitOrigin: !!ctx.guestFs });
+  // agentfs backend (the only sandbox; on by default): run the shell inside the
+  // session's copy-on-write overlay of the host workspace. The wrapper argv drops
+  // agentfs's banner and merges the command's stderr into stdout; the child's cwd
+  // is the workspace, which is the overlay's copy-on-write base. bash.run spawns
+  // the returned argv with its own streaming/background/kill machinery — it is
+  // just a host `/bin/sh` subprocess, so all of that works unchanged.
+  if (ctx.sandbox && ctx.sessionId && sandboxAgentfs()) {
+    ensureAgentfs(ctx.sessionId, { origin: ctx.workspace });
     return {
-      argv: execCommand(ctx.sessionId, argv, {
-        cwd: ctx.guestFs ? GUEST_REPO : GUEST_WORKSPACE,
-        env: netEnv,
-      }),
+      argv: agentfsExecCommand(ctx.sessionId, argv),
+      cwd: ctx.workspace,
     };
   }
 
-  // No VM (tests / CI / BOUGH_SANDBOX_VM=0): run unwrapped on the host, in the
-  // workspace, with the proxy env. Subprocess confinement is the VM's job — there
-  // is no host-side sandbox fallback.
-  return { argv, env: Object.keys(env).length ? env : undefined, cwd: ctx.workspace };
+  // No sandbox (tests / CI / BOUGH_SANDBOX_AGENTFS=0): run unwrapped on the host,
+  // in the workspace.
+  return { argv, cwd: ctx.workspace };
 }
 
 /**

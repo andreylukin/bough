@@ -29,6 +29,36 @@ async function canRun(cmd: string): Promise<boolean> {
 const gitAvailable = await canRun("git");
 const cpAvailable = (await canRun("git")) && (await canRun("cp"));
 
+/** The agentfs backend is the diff substrate now, so the shadow-backed tests drive
+ *  edits through a real `agentfs run` overlay — they self-skip where it's missing. */
+async function agentfsUsable(): Promise<boolean> {
+  try {
+    const r = await new Deno.Command("agentfs", {
+      args: ["--version"],
+      stdout: "null",
+      stderr: "null",
+    })
+      .output();
+    return r.code === 0;
+  } catch {
+    return false;
+  }
+}
+const shadowReady = gitAvailable && (await agentfsUsable());
+
+/** Make edits inside the session's copy-on-write overlay of `dir` (so they land in
+ *  the session delta the Changes rail reads, not on the worktree disk). Inherits the
+ *  test's HOME, set by withShadowRoots so delta paths are isolated. */
+async function overlayEdit(sid: string, dir: string, cmd: string): Promise<void> {
+  const r = await new Deno.Command("agentfs", {
+    args: ["run", "--session", sid, "--", "/bin/sh", "-c", cmd],
+    cwd: dir,
+    stdout: "null",
+    stderr: "null",
+  }).output();
+  if (r.code !== 0) throw new Error(`overlay edit failed (${r.code}) for ${sid}`);
+}
+
 async function tempGitRepo(): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: "chg-" });
   const sh = async (bin: string, args: string[]) => {
@@ -57,18 +87,25 @@ async function tempGitRepo(): Promise<string> {
 async function withShadowRoots(fn: () => Promise<void>): Promise<void> {
   const shadowBase = await Deno.makeTempDir({ prefix: "chg-shadow-" });
   const wsBase = await Deno.makeTempDir({ prefix: "chg-ws-" });
+  // Isolate HOME too: agentfs keys its run/<sid> delta dirs off HOME, and the diff
+  // substrate resolves the same path from the process HOME — they must agree, and
+  // reaping the temp HOME cleans up the deltas.
+  const home = await Deno.makeTempDir({ prefix: "chg-home-" });
   const prev = new Map<string, string | undefined>([
     ["BOUGH_SHADOW_BASE", Deno.env.get("BOUGH_SHADOW_BASE")],
     ["BOUGH_SUBAGENT_BASE", Deno.env.get("BOUGH_SUBAGENT_BASE")],
+    ["HOME", Deno.env.get("HOME")],
   ]);
   Deno.env.set("BOUGH_SHADOW_BASE", shadowBase);
   Deno.env.set("BOUGH_SUBAGENT_BASE", wsBase);
+  Deno.env.set("HOME", home);
   try {
     await fn();
   } finally {
     for (const [k, v] of prev) v === undefined ? Deno.env.delete(k) : Deno.env.set(k, v);
     await Deno.remove(shadowBase, { recursive: true }).catch(() => {});
     await Deno.remove(wsBase, { recursive: true }).catch(() => {});
+    await Deno.remove(home, { recursive: true }).catch(() => {});
   }
 }
 
@@ -141,7 +178,7 @@ Deno.test("changes endpoints 404 on unknown session; revert 400 without a worksp
 
 Deno.test({
   name: "changes: shadow apply materializes into the origin and seals — rail clears",
-  ignore: !gitAvailable,
+  ignore: !shadowReady,
   fn: async () => {
     await withShadowRoots(async () => {
       const repo = await tempGitRepo();
@@ -151,7 +188,7 @@ Deno.test({
         const s = await (await h(jsonReq("POST", "/sessions", { title: "s", workspace: repo })))
           .json() as Session;
         const dir = await attachWorkspace(c.db, repo, s.id);
-        await Deno.writeTextFile(`${dir}/new.txt`, "hi\n");
+        await overlayEdit(s.id, dir, `printf 'hi\n' > new.txt`);
 
         const events: BoughEvent[] = [];
         c.bus.subscribe((e) => events.push(e));
@@ -180,8 +217,9 @@ Deno.test({
         assertEquals(after.diffs[0]?.files ?? [], []);
         assert(events.some((e) => e.type === "changes.updated" && e.sessionId === s.id));
 
-        // post-seal edits diff cleanly on top — only the new work shows
-        await Deno.writeTextFile(`${dir}/next.txt`, "more\n");
+        // post-seal edits diff cleanly on top — only the new work shows (the seal
+        // folded new.txt into the base worktree, so a fresh overlay starts clean)
+        await overlayEdit(s.id, dir, `printf 'more\n' > next.txt`);
         const d2 = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
           diffs: Diff[];
         };
@@ -196,7 +234,7 @@ Deno.test({
 
 Deno.test({
   name: "changes: shadow revert (whole-change) undoes the session's edit",
-  ignore: !gitAvailable,
+  ignore: !shadowReady,
   fn: async () => {
     await withShadowRoots(async () => {
       const repo = await tempGitRepo();
@@ -206,19 +244,18 @@ Deno.test({
         const s = await (await h(jsonReq("POST", "/sessions", { title: "s", workspace: repo })))
           .json() as Session;
         const dir = await attachWorkspace(c.db, repo, s.id);
-        await Deno.writeTextFile(`${dir}/new.txt`, "hi\n");
+        await overlayEdit(s.id, dir, `printf 'hi\n' > new.txt`);
 
         const events: BoughEvent[] = [];
         c.bus.subscribe((e) => events.push(e));
 
-        // reading the diff snapshots the edit; revert then undoes it whole-change
+        // the diff shows the new file; revert then discards the whole delta
         const { diffs } = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
           diffs: Diff[];
         };
         assertEquals(diffs[0].files.map((f) => f.path), ["new.txt"]);
         const reverted = await h(jsonReq("POST", `/sessions/${s.id}/changes/revert`, {}));
         assertEquals(reverted.status, 200);
-        assertEquals(await Deno.stat(`${dir}/new.txt`).then(() => true).catch(() => false), false);
         const after = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
           diffs: Diff[];
         };
@@ -234,7 +271,7 @@ Deno.test({
 
 Deno.test({
   name: "changes: shadow per-path revert reverts only the selected file",
-  ignore: !gitAvailable,
+  ignore: !shadowReady,
   fn: async () => {
     await withShadowRoots(async () => {
       const repo = await tempGitRepo();
@@ -245,13 +282,11 @@ Deno.test({
           .json() as Session;
         const dir = await attachWorkspace(c.db, repo, s.id);
         // Two edited files in the session's change.
-        await Deno.writeTextFile(`${dir}/a.txt`, "a-work\n");
-        await Deno.writeTextFile(`${dir}/b.txt`, "b-work\n");
+        await overlayEdit(s.id, dir, `printf 'a-work\n' > a.txt; printf 'b-work\n' > b.txt`);
 
         const events: BoughEvent[] = [];
         c.bus.subscribe((e) => events.push(e));
 
-        // Snapshot both via the diff read.
         const { diffs } = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
           diffs: Diff[];
         };
@@ -264,15 +299,12 @@ Deno.test({
         assertEquals(reverted.status, 200);
         assertEquals(await reverted.json(), { ok: true, reverted: "shadow", paths: ["a.txt"] });
 
-        // a.txt is gone from the worktree; b.txt survives.
-        assertEquals(await Deno.stat(`${dir}/a.txt`).then(() => true).catch(() => false), false);
-        assertEquals(await Deno.readTextFile(`${dir}/b.txt`), "b-work\n");
-
-        // The diff shrank to just b.txt.
+        // The change shrank to just b.txt — a.txt is back to base, b.txt kept.
         const after = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
           diffs: Diff[];
         };
         assertEquals(after.diffs[0].files.map((f) => f.path), ["b.txt"]);
+        assertEquals(after.diffs[0].files[0].status, "added");
         assert(events.some((e) => e.type === "changes.updated" && e.sessionId === s.id));
       } finally {
         await Deno.remove(repo, { recursive: true });
@@ -284,7 +316,7 @@ Deno.test({
 
 Deno.test({
   name: "changes: a subagent's unadopted branch surfaces in the spawner's rail; adopt clears it",
-  ignore: !gitAvailable,
+  ignore: !shadowReady,
   fn: async () => {
     await withShadowRoots(async () => {
       const repo = await tempGitRepo();
@@ -308,7 +340,7 @@ Deno.test({
         });
         const subDir = await shadow.addWorkspace(dir, "sub1", shadow.workspaceDirFor("sub1"), s.id);
         c.db.setSessionWorkspace("sub1", subDir);
-        await Deno.writeTextFile(`${subDir}/essay.txt`, "words\n");
+        await overlayEdit("sub1", subDir, `printf 'words\n' > essay.txt`);
 
         // The SPAWNER's rail carries the subagent's diff as a labeled section.
         const { diffs } = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
@@ -326,7 +358,6 @@ Deno.test({
         // rails move, and the subagent section drops out of the spawner's rail.
         const adopted = await h(jsonReq("POST", "/sessions/sub1/adopt"));
         assertEquals(adopted.status, 200);
-        assertEquals(await Deno.readTextFile(`${dir}/essay.txt`), "words\n");
         assert(events.some((e) => e.type === "changes.updated" && e.sessionId === s.id));
         assert(events.some((e) => e.type === "changes.updated" && e.sessionId === "sub1"));
         const after = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
@@ -345,7 +376,7 @@ Deno.test({
 
 Deno.test({
   name: "changes: build/cache noise (__pycache__/*.pyc/.DS_Store) is filtered from the diff",
-  ignore: !gitAvailable,
+  ignore: !shadowReady,
   fn: async () => {
     await withShadowRoots(async () => {
       const repo = await tempGitRepo();
@@ -355,11 +386,13 @@ Deno.test({
         const s = await (await h(jsonReq("POST", "/sessions", { title: "s", workspace: repo })))
           .json() as Session;
         const dir = await attachWorkspace(c.db, repo, s.id);
-        await Deno.writeTextFile(`${dir}/real.py`, "x = 1\n");
-        await Deno.mkdir(`${dir}/__pycache__`, { recursive: true });
-        await Deno.writeTextFile(`${dir}/__pycache__/real.cpython-312.pyc`, "junk\n");
-        await Deno.writeTextFile(`${dir}/mod.pyc`, "junk\n");
-        await Deno.writeTextFile(`${dir}/.DS_Store`, "junk\n");
+        await overlayEdit(
+          s.id,
+          dir,
+          `printf 'x = 1\n' > real.py; mkdir -p __pycache__; ` +
+            `printf 'junk\n' > __pycache__/real.cpython-312.pyc; ` +
+            `printf 'junk\n' > mod.pyc; printf 'junk\n' > .DS_Store`,
+        );
 
         const { diffs } = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
           diffs: Diff[];

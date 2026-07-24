@@ -1,21 +1,16 @@
 /**
  * The MCP connection manager: one stdio client per (session, server). Children run
- * host-side with the session's Claw Patrol env, so the server's own egress is
- * proxied and attributed; their cwd is the session's host-side workspace view —
- * in guest-owned VM mode that is the read-only mirror checkout, fresh as of the
- * session's last snapshot push. The child's environment is minimal and explicit:
- * PATH/HOME, the registry entry's declared env (${VAR}-expanded — secrets reach
- * the child only), and the proxy env.
+ * host-side; their cwd is the session's host-side workspace view. The child's
+ * environment is minimal and explicit: PATH/HOME and the registry entry's declared
+ * env (${VAR}-expanded — secrets reach the child only).
  *
  * Connections are cached across turns and reaped when idle (opportunistic sweep on
- * use — no background timer), on restart/disable, or on a registry change. Every
- * call() is gated through Claw Patrol (mcp/gate.ts) BEFORE it reaches the server.
+ * use — no background timer), on restart/disable, or on a registry change.
  *
  * Grant scoping (which servers a turn may call) is the turn runner's job — the
  * manager connects and executes; it does not decide who may ask.
  */
-import { clawpatrolEnv } from "../net/gateway.ts";
-import { expandEnv, expandHome, loadRegistry, type ServerConfig } from "./config.ts";
+import { expandEnv, loadRegistry, type ServerConfig } from "./config.ts";
 import {
   type McpCallResult,
   type McpConnection,
@@ -23,14 +18,12 @@ import {
   type McpToolInfo,
 } from "./client.ts";
 import { McpRemoteClient } from "./remote.ts";
-import { gateMcpCall } from "./gate.ts";
 
 /** Reap a connection this long after its last use (next manager touch). */
 const IDLE_MS = 30 * 60_000;
 
 export interface SpawnCtx {
-  /** The child's cwd: the session's host-side workspace view (the mirror
-   * checkout in guest-owned VM mode). */
+  /** The child's cwd: the session's host-side workspace. */
   workspace: string;
   /** Present when the turn is sandboxed (see ToolRunCtx.sandbox). */
   sandbox?: { sessionDir: string };
@@ -94,9 +87,9 @@ export class McpManager {
   }
 
   /**
-   * Execute one tool call: gate it through Claw Patrol, then invoke the server.
-   * Reconnects a dead server once (same spawn params as its last ensure). An
-   * `isError` result throws — inside the program it rejects like any host-fn error.
+   * Execute one tool call and invoke the server. Reconnects a dead server once
+   * (same spawn params as its last ensure). An `isError` result throws — inside
+   * the program it rejects like any host-fn error.
    */
   async call(sessionId: string, server: string, tool: string, args: unknown): Promise<unknown> {
     let conn = this.#conns.get(key(sessionId, server));
@@ -110,7 +103,6 @@ export class McpManager {
       const names = conn.tools.map((t) => t.name).join(", ");
       throw new Error(`mcp server "${server}" has no tool "${tool}" (has: ${names})`);
     }
-    await gateMcpCall(sessionId, server, tool, args, info.annotations);
     const result = await conn.client.callTool(tool, args);
     return mapResult(server, tool, result);
   }
@@ -190,12 +182,8 @@ export class McpManager {
         throw e;
       }
     }
-    // Same egress routing as a bash child: this session's proxy + the MITM CA.
-    // MCP servers (user-configured, semi-trusted) run on the host — egress still
-    // routes through the session proxy via netEnv. Subprocess FS confinement is the
-    // VM's job for agent bash; stdio MCP servers in the guest are a follow-up (bash
-    // is one-shot, MCP is a long-lived bidirectional pipe).
-    const netEnv = await clawpatrolEnv(sessionId);
+    // MCP servers (user-configured, semi-trusted) run on the host with direct
+    // egress and the host's own credentials.
     const argv = [cfg.command!, ...cfg.args];
     const home = Deno.env.get("HOME");
     const client = await McpStdioClient.connect({
@@ -205,7 +193,6 @@ export class McpManager {
         PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin",
         ...(home ? { HOME: home } : {}),
         ...expandEnv(cfg.env),
-        ...netEnv,
       },
     });
     try {
@@ -266,9 +253,9 @@ function mapResult(server: string, tool: string, result: McpCallResult): unknown
   return result.structuredContent ?? textOf(result);
 }
 
-// The process-wide manager (mirrors net/gateway.ts's active-gateway pattern): the
-// turn runner and the HTTP endpoints share connections without threading the
-// instance through every signature. Tests construct their own McpManager.
+// The process-wide manager: the turn runner and the HTTP endpoints share
+// connections without threading the instance through every signature. Tests
+// construct their own McpManager.
 let active: McpManager | undefined;
 export function mcpManager(): McpManager {
   active ??= new McpManager();

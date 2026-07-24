@@ -83,11 +83,9 @@ Deno.test("file tools follow symlinks and reject ones that escape the workspace"
   }
 });
 
-// Superseded by the VM backend: subprocess confinement moved from Seatbelt to the
-// per-session VM (the guest only has /workspace mounted, so writes outside it never
-// reach the host). That confinement is exercised by src/sandbox/vmsession.test.ts
-// and src/tools/bash.vm.test.ts (guest↔host workspace coherence + egress lockdown).
-// This Seatbelt-specific test is retired.
+// Superseded by the agentfs backend: subprocess confinement moved from Seatbelt to
+// the per-session agentfs copy-on-write overlay (writes land in the session delta,
+// the real tree is untouched). This Seatbelt-specific test is retired.
 Deno.test({
   name: "sandboxed bash writes inside the workspace but is denied outside",
   ignore: true,

@@ -1,6 +1,6 @@
 // REST client for the TUI. Unlike the retired web client (relative URLs behind a
 // proxy), this talks to the server directly, so every call needs the absolute base.
-import type { AskQuestion, Message, NetRequest, Session } from "../schema/parts.ts";
+import type { AskQuestion, Message, Session } from "../schema/parts.ts";
 
 const PORT = Deno.env.get("BOUGH_PORT") ?? "4321";
 export const BASE = `http://127.0.0.1:${PORT}`;
@@ -107,25 +107,6 @@ export interface SkillInfo {
   name: string;
   description: string;
 }
-export interface NetStatus {
-  enabled: boolean;
-  running: boolean;
-  listeners: number;
-  caPath: string;
-  caTrusted?: boolean;
-  caTrustCommand?: string;
-}
-export type NetMode = "read_only" | "review" | "all" | "yolo";
-export interface NetConfig {
-  mode: NetMode;
-  prevMode?: Exclude<NetMode, "yolo">;
-  allowHosts: string[];
-  denyHosts: string[];
-  hostMiss: "allow" | "deny" | "hold";
-  allowVerbs: string[];
-  denyVerbs: string[];
-  holdVerbs: string[];
-}
 export interface McpConnStatus {
   server: string;
   sessionId: string;
@@ -223,13 +204,7 @@ export const api = {
   // prefill on open reads it back via getSession). null clears.
   putDraft: (id: string, draft: string | null) =>
     j<{ ok: boolean }>(`/sessions/${id}/draft`, { ...postJson({ draft }), method: "PUT" }),
-  netRequests: (sessionId?: string) =>
-    j<NetRequest[]>(`/net/requests${sessionId ? `?sessionId=${sessionId}` : ""}`),
-  allowRequest: (id: string, scope: "once" | "session" = "once") =>
-    post(`/net/requests/${id}/allow${scope === "session" ? "?scope=session" : ""}`),
-  denyRequest: (id: string) => post(`/net/requests/${id}/deny`),
-
-  // ask() question holds — the reconnect/refresh mirror of netRequests.
+  // ask() question holds — rebuilt/refreshed on (re)attach.
   questions: () => j<AskQuestion[]>(`/questions`),
   answerQuestion: (sessionId: string, qid: string, answer: string) =>
     j<{ ok: boolean }>(`/sessions/${sessionId}/questions/${qid}`, postJson({ answer })),
@@ -272,8 +247,7 @@ export const api = {
   workflowAction: (id: string, action: "stop" | "pause" | "resume") =>
     jmsg<WireWorkflowRun>(`/workflows/${id}/${action}`, { method: "POST" }),
   // Rerun with journal replay; no body = the run's (possibly edited) script mirror.
-  rerunWorkflow: (id: string) =>
-    jmsg<WireWorkflowRun>(`/workflows/${id}/rerun`, postJson({})),
+  rerunWorkflow: (id: string) => jmsg<WireWorkflowRun>(`/workflows/${id}/rerun`, postJson({})),
 
   // Live + recent background shells of a session (and its subagent branches).
   jobs: (id: string) => j<{ jobs: JobRow[] }>(`/sessions/${id}/jobs`).then((r) => r.jobs),
@@ -365,12 +339,7 @@ export const api = {
     jmsg<WireSchedule>(`/schedules/${id}`, { ...postJson(body), method: "PATCH" }),
   deleteSchedule: (id: string) => jmsg<{ ok: boolean }>(`/schedules/${id}`, { method: "DELETE" }),
 
-  // Claw Patrol: gateway status, the editable rule set, and the yolo toggle.
-  netStatus: () => j<NetStatus>("/net/status"),
-  getPolicy: () => j<NetConfig>("/net/policy"),
-  setYolo: (on: boolean) => j<{ config: NetConfig }>("/net/yolo", postJson({ on })),
-
-  // MCP management (mirrors the web rail; session-scoped like the web client).
+  // MCP management (session-scoped).
   mcpStatus: (sessionId?: string | null) =>
     j<McpStatus>(`/mcp/servers${sessionId ? `?session=${encodeURIComponent(sessionId)}` : ""}`),
   connectMcp: (name: string, sessionId: string) =>

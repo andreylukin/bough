@@ -62,31 +62,6 @@ function seed(db: Db) {
     updatedAt: 7000,
     firstOutputAt: null,
   });
-  // Net events: a resolved human hold + a still-parked hold count as approval
-  // prompts; a plain policy allow does not.
-  db.recordNetEvent("S", {
-    id: "n1",
-    host: "api.example.com",
-    action: "fetch",
-    verdict: "allowed",
-    reason: "approved by human",
-    ts: 2000,
-  });
-  db.recordNetEvent("S", {
-    id: "n2",
-    host: "cdn.example.com",
-    action: "fetch",
-    verdict: "allowed",
-    reason: "host allowed by rule",
-    ts: 2100,
-  });
-  db.recordNetEvent("S", {
-    id: "n3",
-    host: "held.example.com",
-    action: "push",
-    verdict: "pending",
-    ts: 6500,
-  });
 }
 
 Deno.test("sessionMetrics derives usability metrics from stored rows", () => {
@@ -98,7 +73,6 @@ Deno.test("sessionMetrics derives usability metrics from stored rows", () => {
   assertEquals(m.toolCalls, 1);
   assertEquals(m.interrupted, 1);
   assertEquals(m.failed, 0);
-  assertEquals(m.approvalPrompts, 2);
   assertEquals(m.firstOutput, { count: 1, medianMs: 800, maxMs: 800 });
   assertEquals(m.turnDuration, { count: 2, medianMs: 4000, maxMs: 4000 });
   assertEquals(m.wallClockMs, 5000);

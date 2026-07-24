@@ -154,18 +154,6 @@ Deno.test("ancestorChain is root-first and cycle-safe", () => {
   db.close();
 });
 
-Deno.test("recordNetEvent inserts without throwing (minimal columns)", () => {
-  const db = mkDb();
-  db.recordNetEvent(undefined, {
-    id: "n1",
-    host: "api.github.com",
-    action: "GET /repos",
-    verdict: "allowed",
-    ts: 1,
-  });
-  db.close();
-});
-
 Deno.test("purgeArchivedBefore: removes sessions archived past the cutoff + their rows", () => {
   const db = mkDb();
   db.createSession(session("keep", null, "root", 1));

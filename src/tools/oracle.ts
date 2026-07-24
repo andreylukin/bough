@@ -105,9 +105,7 @@ export async function runOracle(
   const messages: { role: "user" | "assistant"; content: LlmContentBlock[] }[] = [
     { role: "user", content: [{ type: "text", text: question }] },
   ];
-  // Guest-owned sessions: the shell and file reads see the GUEST clone, so the
-  // advertised root must be the guest path, not the host origin.
-  const system = `${SYSTEM} The workspace root is ${ctx.guestFs?.root ?? ctx.workspace}.`;
+  const system = `${SYSTEM} The workspace root is ${ctx.workspace}.`;
 
   const answer: string[] = [];
   for (let round = 0; round < MAX_ROUNDS; round++) {

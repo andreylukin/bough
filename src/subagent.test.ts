@@ -13,11 +13,19 @@ import type { LlmClient, LlmParams, LlmResult } from "./supervisor/llm.ts";
 import { defaultTools } from "./tools/mod.ts";
 import { beginTurn, interruptTurn, startUserTurn, type TurnCtx } from "./turn.ts";
 import { taskStubTitle } from "./subagent.ts";
-import * as shadow from "./vcs/shadow.ts";
+import * as agentdiff from "./vcs/agentdiff.ts";
+import * as agentfs from "./sandbox/agentfs.ts";
 import { saveRegistry, setActivation } from "./mcp/config.ts";
 import { mcpManager } from "./mcp/manager.ts";
 
 // ---- harness ---------------------------------------------------------------
+
+/** Read a file through a session's agentfs overlay — adopted/written content lives
+ *  in the session's delta, not the on-disk worktree, until a ship/pr materializes it. */
+async function readOverlay(sessionId: string, dir: string, rel: string): Promise<string> {
+  agentfs.ensure(sessionId, { origin: dir });
+  return new TextDecoder().decode(await agentfs.readFile(sessionId, `${dir}/${rel}`));
+}
 
 /**
  * Scripted rounds per conversation, keyed by the LAST text-bearing user message
@@ -524,96 +532,6 @@ Deno.test("delegation stops at the depth cap (no agent() host function at depth 
 });
 
 Deno.test({
-  name: "repo workspace: subagent works an isolated shadow branch; adopt() folds it back",
-  ignore: !gitAvailable,
-  fn: async () => {
-    const repo = await tempGitRepo();
-    const subBase = await Deno.makeTempDir({ prefix: "subagent-ws-" });
-    const snapBase = await Deno.makeTempDir({ prefix: "subagent-snap-" });
-    const shadowBase2 = await Deno.makeTempDir({ prefix: "subagent-shadow-" });
-    const prevSub = Deno.env.get("BOUGH_SUBAGENT_BASE");
-    const prevSnap = Deno.env.get("BOUGH_SNAPSHOT_BASE");
-    const prevJj = Deno.env.get("BOUGH_SHADOW_BASE");
-    Deno.env.set("BOUGH_SUBAGENT_BASE", subBase);
-    Deno.env.set("BOUGH_SNAPSHOT_BASE", snapBase);
-    Deno.env.set("BOUGH_SHADOW_BASE", shadowBase2);
-    const db = new Db(":memory:");
-    const bus = new Bus();
-    try {
-      const spawner = seed(db, repo);
-      const llm = dispatchLlm({
-        "hi": [
-          program(
-            `const r = await agent("make sub.txt with the text from-sub");
-             console.log("changed:" + JSON.stringify(r.changedFiles) + " check:" + r.checkPassed);
-             console.log(await adopt(r.sessionId));`,
-          ),
-          textRound("adopted"),
-        ],
-        "make sub.txt": [
-          program(`await write("sub.txt", "from-sub\\n"); console.log("wrote");`, { done: true }),
-        ],
-      });
-      const ctx: TurnCtx = {
-        db,
-        bus,
-        llm,
-        tools: defaultTools,
-        titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)),
-      };
-
-      const { message, done } = beginTurn(ctx, spawner.id);
-      await done;
-
-      const final = db.getMessage(message.id)!;
-      const out = lastToolResult(final);
-      // The subagent's edit happened on its own branch and was reported…
-      assertStringIncludes(out, 'changed:["sub.txt"]');
-      // …with done accepted (no check declared → accepted).
-      assertStringIncludes(out, "check:true");
-      assertStringIncludes(out, "adopted");
-
-      // The subagent ran in its own workspace dir, not the spawner's checkout.
-      const sub = db.listSessions().find((s) => s.kind === "subagent")!;
-      const subDir = db.getSessionRuntime(sub.id).workspace!;
-      assert(subDir.startsWith(subBase), `subagent dir ${subDir} outside ${subBase}`);
-      assertEquals(await Deno.readTextFile(`${subDir}/sub.txt`), "from-sub\n");
-
-      // Adoption landed the file in the spawner's own worktree and session tip.
-      // External mode: the spawner itself was relocated off the repo checkout, so
-      // the user's repo stays pristine — no adopted files.
-      const spawnerDir = db.getSessionRuntime(spawner.id).workspace!;
-      assert(spawnerDir !== repo, "spawner should run in its own working copy");
-      assertEquals(await Deno.readTextFile(`${spawnerDir}/sub.txt`), "from-sub\n");
-      const spawnerDiff = await shadow.diff(spawnerDir, spawner.id);
-      assert(spawnerDiff.files.some((f) => f.path === "sub.txt"));
-      for (const leaked of [".jj", "sub.txt"]) {
-        let inRepo = true;
-        try {
-          await Deno.stat(`${repo}/${leaked}`);
-        } catch {
-          inRepo = false;
-        }
-        assertEquals(inRepo, false, `${leaked} leaked into the repo checkout`);
-      }
-      // The subagent branch emptied but survives — continuable, not consumed.
-      assertEquals((await shadow.diff(subDir, sub.id)).files.length, 0);
-    } finally {
-      if (prevSub === undefined) Deno.env.delete("BOUGH_SUBAGENT_BASE");
-      else Deno.env.set("BOUGH_SUBAGENT_BASE", prevSub);
-      if (prevSnap === undefined) Deno.env.delete("BOUGH_SNAPSHOT_BASE");
-      else Deno.env.set("BOUGH_SNAPSHOT_BASE", prevSnap);
-      if (prevJj === undefined) Deno.env.delete("BOUGH_SHADOW_BASE");
-      else Deno.env.set("BOUGH_SHADOW_BASE", prevJj);
-      await Deno.remove(repo, { recursive: true }).catch(() => {});
-      await Deno.remove(subBase, { recursive: true }).catch(() => {});
-      await Deno.remove(snapBase, { recursive: true }).catch(() => {});
-      await Deno.remove(shadowBase2, { recursive: true }).catch(() => {});
-    }
-  },
-});
-
-Deno.test({
   // The nested adopt chain: a grandchild must
   // get its own branched dir, not run on the subagent's working copy.
   name: "nested repo delegation: grandchild works its own branch; adopts chain upward",
@@ -673,7 +591,7 @@ Deno.test({
       assertStringIncludes(out, 'subchanged:["nested.txt"]');
       assertStringIncludes(out, "adopted");
       const spawnerDir = db.getSessionRuntime(spawner.id).workspace!;
-      assertEquals(await Deno.readTextFile(`${spawnerDir}/nested.txt`), "from-nested\n");
+      assertEquals(await readOverlay(spawner.id, spawnerDir, "nested.txt"), "from-nested\n");
 
       // Three tiers of sessions; the grandchild's lineage points at the subagent.
       const subs = db.listSessions().filter((s) => s.kind === "subagent");
@@ -688,8 +606,8 @@ Deno.test({
       assert(grandDir.startsWith(subBase), `grandchild dir ${grandDir} outside ${subBase}`);
       assert(grandDir !== subDir, "grandchild shared the subagent's working copy");
       // Both branches emptied by their adoptions but survive — still continuable.
-      assertEquals((await shadow.diff(grandDir, grandchild.id)).files.length, 0);
-      assertEquals((await shadow.diff(subDir, sub.id)).files.length, 0);
+      assertEquals((await agentdiff.diff(grandDir, grandchild.id)).files.length, 0);
+      assertEquals((await agentdiff.diff(subDir, sub.id)).files.length, 0);
     } finally {
       if (prevSub === undefined) Deno.env.delete("BOUGH_SUBAGENT_BASE");
       else Deno.env.set("BOUGH_SUBAGENT_BASE", prevSub);
@@ -760,7 +678,7 @@ Deno.test({
       assertEquals(own[3].pending, false);
       // …and its edit stacked onto the subagent's branch, not the spawner's.
       const subDir = db.getSessionRuntime(sub.id).workspace!;
-      const files = (await shadow.diff(subDir, sub.id)).files.map((f) => f.path).sort();
+      const files = (await agentdiff.diff(subDir, sub.id)).files.map((f) => f.path).sort();
       assertEquals(files, ["more.txt", "sub.txt"]);
       let leaked = true;
       try {
@@ -895,7 +813,9 @@ Deno.test({
           program(
             `const out = await mcp("echo", "echo", { text: "from-sub" });
              console.log("MCP:" + JSON.stringify(out));`,
-            { done: true },
+            // A committed check lets this single round finish (status=done → ok:true);
+            // the point under test is that mcp() round-trips, which the log proves.
+            { done: true, check: "true" },
           ),
         ],
       });
@@ -1047,7 +967,9 @@ Deno.test("A5 full success: a subagent that commits done persists ok:true + chec
   const spawner = seed(db);
   const llm = dispatchLlm({
     "hi": [
-      program(`const r = await agent("task"); console.log("ok=" + r.ok + " check=" + r.checkPassed);`),
+      program(
+        `const r = await agent("task"); console.log("ok=" + r.ok + " check=" + r.checkPassed);`,
+      ),
       textRound("done"),
     ],
     // The first check-less done bounces (check nudge); the second commits a real

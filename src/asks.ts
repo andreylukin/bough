@@ -1,14 +1,14 @@
 /**
  * ask() holds — the mid-task question primitive. A run_steps program calls
  * `await ask("Which environment?", {options: ["dev", "prod"]})` and its turn parks
- * here, the way an egress request parks on the net gate (net/gate.ts):
+ * here:
  *
  *   raiseAsk ──▶ register + emit `ask.question` (status "pending")
  *           └──▶ block until answerAsk / declineAsk (POST /sessions/:id/questions/:qid)
  *                or the turn's interrupt signal — then re-emit the SAME id with its
  *                final status and settle the program's promise.
  *
- * Deliberately memory-only, unlike the gate's persisted NetRequest rows: a pending
+ * Deliberately memory-only: a pending
  * ask only means anything while its turn is alive (the hold dies with the process),
  * and the settled Q/A persists as an AskPart on the supervisor message (turn.ts).
  * A freshly-attached TUI rebuilds the hold card from GET /questions and live-updates
@@ -56,7 +56,7 @@ export function raiseAsk(
       signal?.removeEventListener("abort", onAbort);
       record.status = status;
       if (ans !== undefined) record.answer = ans;
-      // Re-emit on the same id so the hold card updates in place (gate convention).
+      // Re-emit on the same id so the hold card updates in place.
       bus.publish({ type: "ask.question", sessionId: record.sessionId, data: { ...record } });
       if (status === "answered") resolve(ans!);
       else if (status === "declined") {
@@ -104,7 +104,7 @@ export function pendingAsks(sessionId?: string): AskQuestion[] {
 
 /**
  * Interrupt-and-clear parked questions whose turn is gone — for one session, or all
- * (sessionId undefined). Mirrors gate.expireHolds: without this, a program that dies
+ * (sessionId undefined). Without this, a program that dies
  * without unwinding its ask (wall-clock timeout terminates the worker, not the host
  * promise) leaves a hold card haunting every session. Returns the count.
  */
