@@ -70,12 +70,17 @@ interface Handle {
 const live = new Map<string, Handle>();
 
 /**
- * Record the session's origin so later fs ops overlay the right dir. Idempotent
- * and cheap: there is no machine to boot — the first `agentfs run`
- * creates the delta lazily, and subsequent runs join it.
+ * Record the session's origin so later fs ops overlay the right dir. Cheap: there
+ * is no machine to boot — the first `agentfs run` creates the delta lazily, and
+ * subsequent runs join it. Always records the CURRENT origin (not first-wins): a
+ * session's on-disk base can relocate within its lifetime (first turn moves a repo
+ * session into its shadow worktree), and pinning the first origin would leave the
+ * overlay pointed at a dir that no longer exists — every fs op then dies with a
+ * "No such cwd" from the agentfs backend. The delta is keyed by session id, not
+ * origin, so refreshing the base cwd is safe.
  */
 export function ensure(sessionId: string, opts: { origin: string }): void {
-  if (!live.has(sessionId)) live.set(sessionId, { origin: opts.origin });
+  live.set(sessionId, { origin: opts.origin });
 }
 
 /** Whether the session has an origin recorded in THIS process. */
