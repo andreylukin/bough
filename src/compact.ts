@@ -81,6 +81,8 @@ function renderPart(role: string, p: Part): string {
       return `tool_result${p.isError ? " (error)" : ""}: ${clip(stringify(p.output), PART_CLIP)}`;
     case "image":
       return `${role}: [image ${p.name}]`;
+    case "prose":
+      return `${role}: ${p.text}`;
     case "ask":
       // A settled ask() Q/A: what was asked and how the human resolved it.
       return `ask: ${p.question} → ${
