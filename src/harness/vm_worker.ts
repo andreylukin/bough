@@ -23,6 +23,7 @@ type HostName =
   | "bash"
   | "sh"
   | "extract"
+  | "fetch"
   | "bashBg"
   | "bashOutput"
   | "bashWait"
@@ -103,6 +104,11 @@ async function run(code: string): Promise<void> {
   // catchably when no worker is reachable — read the text yourself then.
   const extract = async (text: string, instruction: string, schema?: unknown) =>
     JSON.parse(await hostCall("extract", [text, instruction, JSON.stringify(schema ?? null)]));
+  // HTTP: the worker isolate has no network, so this hops to the host. Options ride
+  // out as JSON and the response object comes back as JSON. Rejects catchably on a
+  // transport failure, a non-http(s) URL, the 30s deadline, or an interrupt.
+  const fetch = async (url: string, opts?: unknown) =>
+    JSON.parse(await hostCall("fetch", [url, JSON.stringify(opts ?? {})]));
   // Background shells: the spawn handle comes back as JSON ({id, pid} — the
   // postMessage protocol stays string-only); output/kill return plain text.
   const bashBg = async (cmd: string) => JSON.parse(await hostCall("bashBg", [cmd]));
@@ -188,6 +194,7 @@ async function run(code: string): Promise<void> {
     "bash",
     "sh",
     "extract",
+    "fetch",
     "bashBg",
     "bashOutput",
     "bashWait",
@@ -217,6 +224,7 @@ async function run(code: string): Promise<void> {
     bash,
     sh,
     extract,
+    fetch,
     bashBg,
     bashOutput,
     bashWait,

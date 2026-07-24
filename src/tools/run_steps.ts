@@ -16,6 +16,7 @@ import type { ToolDef, ToolRunCtx } from "./types.ts";
 import { bash, inflightForegroundOutput, shConcurrent } from "./bash.ts";
 import * as bg from "./bash_bg.ts";
 import { extractFrom } from "../worker/extract.ts";
+import { fetchUrl } from "./fetch_url.ts";
 import { readFile } from "./read_file.ts";
 import { writeFile } from "./write_file.ts";
 import { editFile } from "./edit_file.ts";
@@ -47,6 +48,9 @@ const schema = z.object({
       "when a JSON Schema is passed (a cheap local model pulls one value out of text you " +
       "already hold, so a big blob never enters your context; throws if no worker is " +
       "reachable, so read the text yourself then), " +
+      "fetch(url, {method?, headers?, body?}) → {status, ok, url, contentType, body, " +
+      "truncated} (http/https only; body capped at 1MB, 30s deadline, throws on " +
+      "transport failure — a non-2xx status is DATA, not a throw), " +
       "image(path, note?) (attach an image file — a screenshot, a rendered chart — so " +
       "you SEE it; it reaches you on the next turn, not inside this program), " +
       "mcpStatus() (always available: this session's MCP management state), " +
@@ -131,6 +135,11 @@ export const runSteps: ToolDef = {
           return JSON.stringify(await extractFrom(text, instruction, schema ?? undefined)) ??
             "null";
         },
+        // HTTP (fetch_url.ts): host-side egress for a program that has none of its
+        // own. Options in and the response object out travel as JSON; the turn's
+        // interrupt is passed down so an aborted turn doesn't leave a request live.
+        fetch: async (url: string, optsJson: string) =>
+          JSON.stringify(await fetchUrl(url, JSON.parse(optsJson || "{}"), ctx.signal)),
         // Background shells: detached from the turn on purpose (no ctx.signal) —
         // they persist across rounds and turns of this session until killed.
         bashBg: (command) => {

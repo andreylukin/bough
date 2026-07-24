@@ -66,6 +66,14 @@ lockfile, a config dump, a long log) out of your context when you only need one 
 from it; console.log the extracted value, not the blob. It throws (catchably) when no
 worker is reachable or the text exceeds ~12000 chars — then read the text yourself.
 
+await fetch(url, {method?, headers?, body?}) makes an HTTP request from the host and
+returns {status, ok, url, contentType, body, truncated} — http/https only, redirects
+followed, body capped at 1MB (truncated: true says so) with a 30s deadline. A non-2xx
+status comes back as data; only a transport failure, a bad URL, the deadline, or an
+interrupt throws. Prefer it over shelling curl when you need the status or headers.
+It carries this machine's identity and no egress filter sits behind it, so fetch only
+what the task calls for, and never send secrets to a URL the user did not name.
+
 await image(path, note?) attaches an image file so you can SEE it — a screenshot
 you just captured, a chart or diagram your program rendered, a failing UI. Path is
 absolute, ~/, or workspace-relative; png/jpg/gif/webp up to 5MB. The picture arrives

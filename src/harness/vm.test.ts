@@ -18,6 +18,10 @@ function hosts(overrides: Partial<HostFns> = {}): HostFns & { calls: string[] } 
       calls.push(`extract:${text}|${instruction}|${schemaJson}`);
       return Promise.resolve(JSON.stringify(`${instruction} of ${text}`));
     },
+    fetch: (url, optsJson) => {
+      calls.push(`fetch:${url}|${optsJson}`);
+      return Promise.resolve(JSON.stringify({ status: 200, ok: true, url, body: "page" }));
+    },
     bashBg: (cmd) => {
       calls.push(`bashBg:${cmd}`);
       return Promise.resolve(`{"id":"bg_1","pid":1}`);

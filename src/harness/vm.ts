@@ -31,6 +31,13 @@ export interface HostFns {
    * wired by run_steps, like bash.
    */
   extract(text: string, instruction: string, schemaJson: string): Promise<string>;
+  /**
+   * HTTP from the host (tools/fetch_url.ts): the worker isolate has no network of
+   * its own, so this is the program's only egress. Options travel in as JSON and
+   * the {status, ok, url, contentType, body, truncated} result comes back as JSON.
+   * Always wired by run_steps, like bash.
+   */
+  fetch(url: string, optsJson: string): Promise<string>;
   bashBg(cmd: string): Promise<string>;
   bashOutput(id: string): Promise<string>;
   bashWait(id: string): Promise<string>;
