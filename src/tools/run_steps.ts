@@ -205,6 +205,14 @@ export const runSteps: ToolDef = {
               JSON.stringify(await ctx.ship!(JSON.parse(optsJson || "{}"))),
           }
           : {}),
+        // PR (wired for root-session repo turns): export the session's work into a
+        // branch and open a GitHub PR; options and result travel as JSON like ship().
+        ...(ctx.pr
+          ? {
+            pr: async (optsJson: string) =>
+              JSON.stringify(await ctx.pr!(JSON.parse(optsJson || "{}"))),
+          }
+          : {}),
         // Recurring runs (wired for supervisor turns): verb-dispatched like lsp();
         // the worker side fans this out as schedule.*.
         ...(ctx.schedule

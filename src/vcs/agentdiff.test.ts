@@ -160,6 +160,122 @@ Deno.test({
   },
 });
 
+async function git(cwd: string, args: string[], env?: Record<string, string>): Promise<string> {
+  const r = await new Deno.Command("git", {
+    args,
+    cwd,
+    env: { ...Deno.env.toObject(), ...(env ?? {}) },
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  if (r.code !== 0) {
+    throw new Error(`git ${args.join(" ")} failed: ${new TextDecoder().decode(r.stderr)}`);
+  }
+  return new TextDecoder().decode(r.stdout);
+}
+
+Deno.test({
+  name: "openPr commits the delta onto a new branch, pushes, and calls gh",
+  ignore: !AGENTFS,
+  fn: async () => {
+    await withHome(async (home) => {
+      const bin = await Deno.makeTempDir({ prefix: "agentdiff-bin-" });
+      const remote = await Deno.makeTempDir({ prefix: "agentdiff-remote-" });
+      const origin = await Deno.makeTempDir({ prefix: "agentdiff-origin-" });
+      const base = origin; // the session's base worktree IS the origin checkout here
+      const prevPath = Deno.env.get("PATH") ?? "";
+      try {
+        // A fake gh on PATH that records its argv and prints a PR url.
+        const ghLog = join(bin, "gh-args.txt");
+        await Deno.writeTextFile(
+          join(bin, "gh"),
+          `#!/bin/sh\nprintf '%s\\n' "$@" > "${ghLog}"\necho https://github.com/acme/repo/pull/42\n`,
+        );
+        await Deno.chmod(join(bin, "gh"), 0o755);
+        Deno.env.set("PATH", `${bin}:${prevPath}`);
+
+        // A bare remote and an origin checkout with one commit on `main`.
+        await git(remote, ["init", "--bare", "-b", "main", "."]);
+        const cfg = { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" };
+        await git(origin, ["init", "-b", "main", "."], cfg);
+        await git(origin, ["config", "user.email", "t@t"], cfg);
+        await git(origin, ["config", "user.name", "t"], cfg);
+        await Deno.writeTextFile(join(origin, "keep.txt"), "keep\n");
+        await Deno.writeTextFile(join(origin, "mod.txt"), "a\nb\nc\n");
+        await git(origin, ["add", "-A"], cfg);
+        await git(origin, ["commit", "-m", "init"], cfg);
+        await git(origin, ["remote", "add", "origin", remote], cfg);
+        await git(origin, ["push", "-u", "origin", "main"], cfg);
+        const headBefore = (await git(origin, ["rev-parse", "HEAD"], cfg)).trim();
+
+        // Session edits via the overlay: one modify, one add.
+        const sid = `t-pr-${crypto.randomUUID()}`;
+        await overlayRun(home, base, sid, `printf 'a\nB\nc\n' > mod.txt; printf 'new\n' > add.txt`);
+
+        const res = await agentdiff.openPr(base, sid, origin, {
+          title: "My change",
+          body: "does things",
+        });
+
+        assertEquals(res.base, "main");
+        assertEquals(res.pushed, true);
+        assertEquals(res.url, "https://github.com/acme/repo/pull/42");
+        assert(res.commit, "a commit was created");
+        assertEquals(res.paths.sort(), ["add.txt", "mod.txt"]);
+        assert(res.branch.startsWith("bough/"), `derived branch name: ${res.branch}`);
+
+        // The origin's working tree and current branch are untouched.
+        assertEquals((await git(origin, ["rev-parse", "HEAD"], cfg)).trim(), headBefore);
+        assertEquals(await Deno.readTextFile(join(origin, "mod.txt")), "a\nB\nc\n"); // == folded tip (accept)
+
+        // The PR branch exists locally and on the remote, with the session's content.
+        const branchTree = await git(origin, ["show", `${res.branch}:add.txt`], cfg);
+        assertEquals(branchTree, "new\n");
+        const onRemote = await git(remote, ["rev-parse", `refs/heads/${res.branch}`]);
+        assertEquals(onRemote.trim(), res.commit);
+
+        // gh got the right base/head/title.
+        const ghArgs = await Deno.readTextFile(ghLog);
+        assert(ghArgs.includes("--base"), "gh received --base");
+        assert(ghArgs.includes("main"), "gh targets main");
+        assert(ghArgs.includes(res.branch), "gh heads the new branch");
+        assert(ghArgs.includes("My change"), "gh got the title");
+      } finally {
+        Deno.env.set("PATH", prevPath);
+        await Deno.remove(bin, { recursive: true }).catch(() => {});
+        await Deno.remove(remote, { recursive: true }).catch(() => {});
+        await Deno.remove(origin, { recursive: true }).catch(() => {});
+      }
+    });
+  },
+});
+
+Deno.test({
+  name: "openPr with no changes reports nothing to do",
+  ignore: !AGENTFS,
+  fn: async () => {
+    await withHome(async () => {
+      const origin = await Deno.makeTempDir({ prefix: "agentdiff-origin-" });
+      const cfg = { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" };
+      try {
+        await git(origin, ["init", "-b", "main", "."], cfg);
+        await git(origin, ["config", "user.email", "t@t"], cfg);
+        await git(origin, ["config", "user.name", "t"], cfg);
+        await Deno.writeTextFile(join(origin, "f.txt"), "x\n");
+        await git(origin, ["add", "-A"], cfg);
+        await git(origin, ["commit", "-m", "init"], cfg);
+        const sid = `t-pr-empty-${crypto.randomUUID()}`;
+        const res = await agentdiff.openPr(origin, sid, origin, { title: "nothing" });
+        assertEquals(res.commit, null);
+        assertEquals(res.pushed, false);
+        assert(res.note?.includes("nothing to open a PR"), res.note ?? "");
+      } finally {
+        await Deno.remove(origin, { recursive: true }).catch(() => {});
+      }
+    });
+  },
+});
+
 Deno.test({
   name: "undoAll discards the whole delta back to base",
   ignore: !AGENTFS,

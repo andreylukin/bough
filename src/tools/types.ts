@@ -169,10 +169,26 @@ export interface ToolRunCtx {
   onLog?: (line: string) => void;
   /**
    * Ship the session's work into the origin repo as a real commit (+ optional push)
-   * — vcs/shadow.ts shipToOrigin via the turn runner. Wired only for root-session
+   * — vcs/agentdiff.ts shipToOrigin via the turn runner. Wired only for root-session
    * turns whose workspace is a shadow worktree with a resolvable origin.
    */
   ship?: (opts: { message: string; paths?: string[]; push?: boolean }) => Promise<unknown>;
+  /**
+   * Export the session's work into a real git branch and open a GitHub PR for it —
+   * vcs/agentdiff.ts openPr via the turn runner. Builds the commit in git object-land
+   * (the user's checkout is never touched), pushes the branch, and runs `gh pr create`
+   * with the host gh auth. Wired alongside ship for root-session repo turns.
+   */
+  pr?: (
+    opts: {
+      title: string;
+      body?: string;
+      branch?: string;
+      base?: string;
+      paths?: string[];
+      draft?: boolean;
+    },
+  ) => Promise<unknown>;
 }
 
 /**

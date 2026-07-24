@@ -431,6 +431,212 @@ export async function shipToOrigin(
   return { commit, branch, paths: delivered, pushed: true };
 }
 
+// ---- PR output: export the delta into a branch + open a GitHub PR -----------
+
+export interface PrResult {
+  /** The new branch the session's work was committed onto (empty when nothing to do). */
+  branch: string;
+  /** The base branch the PR targets. */
+  base: string;
+  /** The commit sha on the new branch, or null when there was nothing to commit. */
+  commit: string | null;
+  /** Paths included in the commit. */
+  paths: string[];
+  /** True when the branch was pushed to its remote. */
+  pushed: boolean;
+  /** The opened PR's URL (present only when `gh pr create` succeeded). */
+  url?: string;
+  /** Human-readable caveat (nothing to ship, no remote, gh failed, …). */
+  note?: string;
+}
+
+/** Write bytes as a blob into the origin's object store; returns the blob sha. */
+async function hashObject(origin: string, bytes: Uint8Array): Promise<string> {
+  const child = new Deno.Command("git", {
+    args: ["hash-object", "-w", "--stdin"],
+    cwd: origin,
+    stdin: "piped",
+    stdout: "piped",
+    stderr: "piped",
+  }).spawn();
+  const w = child.stdin.getWriter();
+  await w.write(bytes);
+  await w.close();
+  const { code, stdout, stderr } = await child.output();
+  if (code !== 0) {
+    throw new Error(`git hash-object failed (${code}): ${new TextDecoder().decode(stderr).trim()}`);
+  }
+  return new TextDecoder().decode(stdout).trim();
+}
+
+/** A path's file mode in HEAD (`100755` for an executable), or `100644` if absent. */
+async function headMode(origin: string, path: string): Promise<string> {
+  const r = await tryGit(origin, ["ls-tree", "HEAD", "--", path]);
+  const m = /^(\d{6}) /.exec(r.text);
+  return m ? m[1] : "100644";
+}
+
+/** Slug a title into a git-safe branch name suffixed with the session's short id. */
+function defaultBranchName(sessionId: string, title: string): string {
+  const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")
+    .slice(0, 40) || "session";
+  return `bough/${slug}-${sessionId.slice(0, 8)}`;
+}
+
+/**
+ * Export a session's work into a real git branch and open a GitHub PR for it.
+ *
+ * Unlike shipToOrigin (which materializes into the user's working tree and advances
+ * the current branch), this NEVER touches the origin checkout: the commit is built
+ * purely in git object-land — a throwaway index seeded from HEAD, the session's tip
+ * bytes hashed straight into the object store — so the user's working copy and index
+ * stay exactly as they were. The new branch is committed on top of HEAD, pushed to
+ * the base branch's remote (default `origin`), and a PR is opened against `base`
+ * (default the origin's current branch) via `gh pr create` using the host gh auth.
+ * The session is sealed (delta folded into the base) once the commit exists, so the
+ * Changes rail clears just as it does after a ship. A missing remote or a `gh`
+ * failure is reported in `note` with the branch/commit still returned — the work is
+ * captured either way.
+ */
+export async function openPr(
+  baseDir: string,
+  sessionId: string,
+  origin: string,
+  opts: {
+    title: string;
+    body?: string;
+    branch?: string;
+    base?: string;
+    paths?: string[];
+    draft?: boolean;
+  },
+): Promise<PrResult> {
+  const headBranchR = await tryGit(origin, ["symbolic-ref", "--short", "-q", "HEAD"]);
+  const base = opts.base?.trim() || (headBranchR.ok ? headBranchR.text.trim() : "");
+  if (!base) {
+    throw new Error(
+      "pr: the origin checkout is on a detached HEAD — pass base or check out a branch",
+    );
+  }
+  const headR = await tryGit(origin, ["rev-parse", "--verify", "-q", "HEAD"]);
+  if (!headR.ok) throw new Error("pr: the origin has no commits — cannot open a PR");
+  const head = headR.text.trim();
+
+  const entries = await changedEntries(sessionId);
+  const all = entries.map((e) => e.path);
+  const selected = opts.paths && opts.paths.length > 0
+    ? all.filter((p) => opts.paths!.includes(p))
+    : all;
+  if (selected.length === 0) {
+    return {
+      branch: "",
+      base,
+      commit: null,
+      paths: [],
+      pushed: false,
+      note: "nothing to open a PR for: the session made no tracked changes",
+    };
+  }
+  const pick = new Set(selected);
+  const targets = entries.filter((e) => pick.has(e.path));
+
+  const branch = opts.branch?.trim() || defaultBranchName(sessionId, opts.title);
+  if ((await tryGit(origin, ["rev-parse", "--verify", "-q", `refs/heads/${branch}`])).ok) {
+    throw new Error(`pr: branch "${branch}" already exists — pass a different branch name`);
+  }
+
+  // Build the commit in a throwaway index seeded from HEAD; the working tree and the
+  // user's real index are never read or written.
+  const idx = await Deno.makeTempFile({ prefix: "bough-pr-index-" });
+  let commit: string;
+  try {
+    const env = { GIT_INDEX_FILE: idx };
+    await originGit(origin, ["read-tree", "HEAD"], env);
+    for (const e of targets) {
+      if (e.status === "deleted") {
+        await originGit(origin, ["update-index", "--force-remove", "--", e.path], env);
+        continue;
+      }
+      const tip = await tipBytes(sessionId, e.path);
+      if (!tip) continue; // vanished from the delta — nothing to add
+      const sha = await hashObject(origin, tip);
+      const mode = e.status === "modified" ? await headMode(origin, e.path) : "100644";
+      await originGit(
+        origin,
+        ["update-index", "--add", "--cacheinfo", `${mode},${sha},${e.path}`],
+        env,
+      );
+    }
+    const tree = (await originGit(origin, ["write-tree"], env)).trim();
+    if (tree === (await originGit(origin, ["rev-parse", "HEAD^{tree}"])).trim()) {
+      return {
+        branch: "",
+        base,
+        commit: null,
+        paths: [],
+        pushed: false,
+        note: "nothing to open a PR for: the change is already in HEAD",
+      };
+    }
+    const msg = opts.body?.trim() ? `${opts.title}\n\n${opts.body.trim()}\n` : `${opts.title}\n`;
+    commit = (await originGit(origin, ["commit-tree", tree, "-p", head, "-m", msg], env)).trim();
+  } finally {
+    await Deno.remove(idx).catch(() => {});
+  }
+  await originGit(origin, ["update-ref", `refs/heads/${branch}`, commit]);
+  await accept(baseDir, sessionId);
+
+  const remote = (await tryGit(origin, ["config", `branch.${base}.remote`])).text.trim() ||
+    "origin";
+  const remotes = (await tryGit(origin, ["remote"])).text.split("\n").map((s) => s.trim());
+  if (!remotes.includes(remote)) {
+    return {
+      branch,
+      base,
+      commit,
+      paths: selected,
+      pushed: false,
+      note: `no remote "${remote}" to push to — branch "${branch}" created locally`,
+    };
+  }
+  await originGit(origin, ["push", remote, `refs/heads/${branch}:refs/heads/${branch}`]);
+
+  const ghArgs = [
+    "pr",
+    "create",
+    "--head",
+    branch,
+    "--base",
+    base,
+    "--title",
+    opts.title,
+    "--body",
+    opts.body ?? "",
+  ];
+  if (opts.draft) ghArgs.push("--draft");
+  const gh = await new Deno.Command("gh", {
+    args: ghArgs,
+    cwd: origin,
+    stdout: "piped",
+    stderr: "piped",
+  })
+    .output();
+  if (gh.code !== 0) {
+    return {
+      branch,
+      base,
+      commit,
+      paths: selected,
+      pushed: true,
+      note: `branch pushed but \`gh pr create\` failed: ${
+        new TextDecoder().decode(gh.stderr).trim().split("\n").at(-1)
+      }`,
+    };
+  }
+  const url = new TextDecoder().decode(gh.stdout).trim().split("\n").at(-1) ?? "";
+  return { branch, base, commit, paths: selected, pushed: true, url: url || undefined };
+}
+
 // ---- sealing / revert (delta lifecycle) -------------------------------------
 
 /** Remove a session's on-disk delta so the next `agentfs run` rebuilds it fresh from

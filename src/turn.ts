@@ -90,7 +90,7 @@ import { recall as recallSearch } from "./recall.ts";
 import { expireAsks, raiseAsk } from "./asks.ts";
 import { scheduleVerb } from "./schedules.ts";
 import { awaitHydration, originRepo as shadowOrigin } from "./vcs/shadow.ts";
-import { shipToOrigin } from "./vcs/agentdiff.ts";
+import { openPr, shipToOrigin } from "./vcs/agentdiff.ts";
 
 export interface TurnCtx {
   db: Db;
@@ -884,6 +884,16 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
             throw new Error("ship({message, paths?, push?}): a commit message is required");
           }
           const res = await shipToOrigin(shipDir, sessionId, shipOrigin, opts);
+          bus.publish({ type: "changes.updated", sessionId, data: { sessionId } });
+          return res;
+        };
+        toolCtx.pr = async (opts) => {
+          if (!opts || typeof opts.title !== "string" || !opts.title.trim()) {
+            throw new Error(
+              "pr({title, body?, branch?, base?, paths?, draft?}): a title is required",
+            );
+          }
+          const res = await openPr(shipDir, sessionId, shipOrigin, opts);
           bus.publish({ type: "changes.updated", sessionId, data: { sessionId } });
           return res;
         };
