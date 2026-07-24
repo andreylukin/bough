@@ -1,11 +1,13 @@
 import { assert, assertEquals, assertRejects, assertThrows } from "jsr:@std/assert@1";
 import { Bus } from "./bus.ts";
+import { clip } from "./text.ts";
 import { Db } from "./db/db.ts";
 import type { BoughEvent } from "./schema/parts.ts";
 import {
   type AgentCall,
   callKey,
   controlWorkflowAgent,
+  distinctLabel,
   evalMeta,
   isWorkflowLive,
   metaLiteral,
@@ -528,4 +530,37 @@ Deno.test("startWorkflow: a body that does not parse is rejected BEFORE the run 
   );
   // Nothing persisted, nothing launched — the author can fix it in the same turn.
   assertEquals(db.listWorkflows(session.id).length, 0);
+});
+
+Deno.test("distinctLabel: a shared preamble does not collapse a fan-out", () => {
+  const preamble = "You are contributing evidence to a thorough plan to rewrite it in Rust.";
+  const p1 = `${preamble}\n\nAssigned top-level module: settings.py, urls.py, wsgi.py.`;
+  const p2 = `${preamble}\n\nAssigned top-level module: celery.py. Trace every Celery task.`;
+  const taken: string[] = [];
+  const a = distinctLabel(p1, taken);
+  taken.push(a);
+  const b = distinctLabel(p2, taken);
+  taken.push(b);
+  assertEquals(a, clip(preamble, 40));
+  // The second agent falls through to the line that actually distinguishes it.
+  assertEquals(b.startsWith("Assigned top-level module: celery.py"), true);
+  // Genuinely identical prompts stay separable rather than rendering as one row.
+  assertEquals(distinctLabel(p2, taken).endsWith("#1"), true);
+});
+
+Deno.test("agent labels: siblings sharing a preamble get distinct rows, keys unchanged", async () => {
+  const { db, events, session, ctx } = fixture();
+  const pre = "Shared preamble line.";
+  const run = await startWorkflow(ctx, {
+    sessionId: session.id,
+    script: META +
+      `return await parallel([() => agent(${JSON.stringify(pre + "\nmodule A")}), () => agent(${
+        JSON.stringify(pre + "\nmodule B")
+      })])`,
+  });
+  assertEquals(await finished(events, run.id), "done");
+  const labels = db.listWorkflowAgents(run.id).map((a) => a.label).sort();
+  assertEquals(labels, ["Shared preamble line.", "module B"]);
+  // The journal key stays on the deterministic first-line label, so replay works.
+  assertEquals(new Set(db.listWorkflowAgents(run.id).map((a) => a.key)).size, 2);
 });

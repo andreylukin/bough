@@ -145,6 +145,31 @@ function wallTimeoutMs(): number {
 /** Lifetime agent cap per run — a runaway-loop backstop, not a working limit. */
 const MAX_AGENTS_PER_RUN = 200;
 
+/**
+ * The display label for an agent() call that passed none. The naive fallback —
+ * the prompt's first line — collapses a fan-out into N identical rows whenever
+ * the script shares a preamble across its agents, which is the normal way to
+ * write one. Field case (2026-07-24): seven module-discovery agents all read
+ * "You are contributing evidence to a thoro…" in the run view.
+ *
+ * So walk the prompt for the first line that is not already claimed by a sibling
+ * — in a shared-preamble fan-out that is exactly the line carrying this agent's
+ * assignment. `taken` is the labels already in the run.
+ *
+ * Display only: callKey still hashes the deterministic first-line label, so a
+ * rerun's journal replay never depends on which siblings happened to exist.
+ */
+export function distinctLabel(prompt: string, taken: string[]): string {
+  const lines = prompt.trim().split("\n").map((l) => l.trim()).filter(Boolean);
+  for (const line of lines) {
+    const candidate = clip(line, 40);
+    if (!taken.includes(candidate)) return candidate;
+  }
+  // Every line collides (identical prompts): number them so they stay separable.
+  const base = clip(lines[0] ?? "agent", 36);
+  return `${base} #${taken.filter((t) => t.startsWith(base)).length + 1}`;
+}
+
 /** FNV-1a over the canonical call shape — the journal replay key. Two passes with
  * different offsets so an accidental 32-bit collision needs to happen twice. */
 export function callKey(call: AgentCall): string {
@@ -394,13 +419,18 @@ export async function startWorkflow(ctx: WorkflowCtx, opts: StartOpts): Promise<
       // running, session-less, while the run sat paused).
       await awaitGate();
       const key = callKey(call);
+      // Display label: an explicit one wins; otherwise pick a line that this
+      // agent does not share with the siblings already in the run.
+      const shown = typeof raw.label === "string" && raw.label.trim()
+        ? call.label
+        : distinctLabel(call.prompt, db.listWorkflowAgents(id).map((a) => a.label));
       const cached = replay.get(key)?.shift();
       const row = db.createWorkflowAgent({
         id: crypto.randomUUID(),
         runId: id,
         idx: at,
         key,
-        label: call.label,
+        label: shown,
         phase: call.phase ?? db.getWorkflow(id)?.currentPhase ?? null,
         prompt: call.prompt,
         model: call.model ?? null,
