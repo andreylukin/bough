@@ -1,6 +1,11 @@
 /** Run a shell command in the session workspace, capturing combined output. */
 import { z } from "zod/v4";
 import { ensureVm, execCommand, GUEST_WORKSPACE, sandboxVm } from "../sandbox/vmsession.ts";
+import {
+  ensure as ensureAgentfs,
+  execCommand as agentfsExecCommand,
+  sandboxAgentfs,
+} from "../sandbox/agentfs.ts";
 import { GUEST_REPO } from "../vcs/guestgit.ts";
 import { clawpatrolEnv } from "../net/gateway.ts";
 import type { ToolDef, ToolRunCtx } from "./types.ts";
@@ -52,6 +57,21 @@ export async function shellInvocation(
   const netEnv = await clawpatrolEnv(ctx.sessionId);
   const env: Record<string, string> = { ...netEnv };
   const argv = ["/bin/sh", "-c", command];
+
+  // agentfs backend (preferred when its gate is set): run the shell inside the
+  // session's copy-on-write overlay of the host workspace. The wrapper argv drops
+  // agentfs's banner and merges the command's stderr into stdout; the child's cwd
+  // is the workspace, which is the overlay's copy-on-write base. bash.run spawns
+  // the returned argv with its own streaming/background/kill machinery — it is
+  // just a host `/bin/sh` subprocess, so all of that works unchanged.
+  if (ctx.sandbox && ctx.sessionId && sandboxAgentfs()) {
+    ensureAgentfs(ctx.sessionId, { origin: ctx.workspace });
+    return {
+      argv: agentfsExecCommand(ctx.sessionId, argv),
+      env: Object.keys(env).length ? env : undefined,
+      cwd: ctx.workspace,
+    };
+  }
 
   // VM backend: run the shell INSIDE the session's guest. Guest cwd is the
   // guest-owned clone (GUEST_REPO) for git origins, the virtiofs mount
