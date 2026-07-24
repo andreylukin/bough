@@ -101,8 +101,10 @@ outer: while (Date.now() < deadline) {
       const delta = (data as { delta?: string }).delta;
       if (delta) await Deno.stdout.write(new TextEncoder().encode(delta));
     } else if (dataName === "message.part" && !args.json) {
-      // A prose() answer block — the marked-up final answer never streams as
-      // deltas, so print it whole (raw markdown; styling is the TUI's job).
+      // The turn's answer is a plain `text` part, already printed above as it
+      // streamed (message.delta). Legacy sessions may still carry a whole-block
+      // `prose` answer that never streamed as deltas — print those whole (raw
+      // markdown; styling is the TUI's job).
       const part = (data as { part?: { type?: string; text?: string } }).part;
       if (part?.type === "prose" && part.text) {
         await Deno.stdout.write(new TextEncoder().encode(part.text + "\n"));

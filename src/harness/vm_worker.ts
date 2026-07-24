@@ -37,7 +37,6 @@ type HostName =
   | "mcpStatus"
   | "lsp"
   | "artifact"
-  | "prose"
   | "recall"
   | "ship"
   | "pr"
@@ -139,9 +138,6 @@ async function run(code: string): Promise<void> {
         typeof content === "string" ? content : JSON.stringify(content),
       ]),
     );
-  // Prose: render a markdown block in the chat as the turn's answer; plain
-  // strings both ways.
-  const prose = (text: string) => hostCall("prose", [text]);
   // Recall: semantic search over past conversations; returns {hits, indexed}.
   const recall = async (query: string, k?: number) =>
     JSON.parse(await hostCall("recall", k === undefined ? [query] : [query, k]));
@@ -191,7 +187,6 @@ async function run(code: string): Promise<void> {
     "mcpStatus",
     "lsp",
     "artifact",
-    "prose",
     "recall",
     "ship",
     "pr",
@@ -218,7 +213,6 @@ async function run(code: string): Promise<void> {
     mcpStatus,
     lsp,
     artifact,
-    prose,
     recall,
     ship,
     pr,

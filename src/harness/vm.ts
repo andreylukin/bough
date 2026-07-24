@@ -67,12 +67,6 @@ export interface HostFns {
    */
   artifact?(name: string, content: string): Promise<string>;
   /**
-   * Render a markdown block in the chat as the turn's marked-up answer (a
-   * "prose" part on the supervisor message). Bridged for every supervisor turn;
-   * returns a short confirmation string.
-   */
-  prose?(text: string): Promise<string>;
-  /**
    * Semantic search over all past conversations (recall.ts): the RecallResult
    * ({hits, indexed}) returns as JSON — the worker side parses it back. Bridged
    * for every supervisor turn.

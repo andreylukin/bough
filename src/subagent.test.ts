@@ -8,11 +8,12 @@
 import { assert, assertEquals, assertExists, assertStringIncludes } from "jsr:@std/assert@1";
 import { Db } from "./db/db.ts";
 import { Bus } from "./bus.ts";
-import type { Message, Session } from "./schema/parts.ts";
+import type { Message, Part, Session } from "./schema/parts.ts";
+import type { TurnStatus } from "./db/db.ts";
 import type { LlmClient, LlmParams, LlmResult } from "./supervisor/llm.ts";
 import { defaultTools } from "./tools/mod.ts";
 import { beginTurn, interruptTurn, startUserTurn, type TurnCtx } from "./turn.ts";
-import { taskStubTitle } from "./subagent.ts";
+import { buildResult, taskStubTitle } from "./subagent.ts";
 import * as agentdiff from "./vcs/agentdiff.ts";
 import * as agentfs from "./sandbox/agentfs.ts";
 import { saveRegistry, setActivation } from "./mcp/config.ts";
@@ -1170,4 +1171,64 @@ Deno.test("taskStubTitle: short task passes through, long task word-truncates to
   assertEquals(taskStubTitle("x".repeat(60)), "x".repeat(40) + "…");
   // Empty/whitespace tasks fall back to the untitled placeholder.
   assertEquals(taskStubTitle("   \n  "), "untitled");
+});
+
+// ---- report is never empty -------------------------------------------------
+
+Deno.test("buildResult never returns an empty report: guard text when present, status-derived fallback otherwise", async () => {
+  const db = new Db(":memory:");
+
+  const mk = (status: TurnStatus | null, parts: Part[]) => {
+    const sid = `sub-${crypto.randomUUID().slice(0, 8)}`;
+    db.createSession({ id: sid, parentId: null, title: "sub", kind: "subagent", createdAt: 1 });
+    const mid = `m-${crypto.randomUUID().slice(0, 8)}`;
+    db.createMessage({
+      id: mid,
+      sessionId: sid,
+      role: "supervisor",
+      parts,
+      pending: false,
+      createdAt: 2,
+    });
+    if (status) {
+      db.createTurn({
+        id: `t-${crypto.randomUUID().slice(0, 8)}`,
+        sessionId: sid,
+        messageId: mid,
+        status,
+        step: "done",
+        updatedAt: 3,
+        firstOutputAt: null,
+      });
+    }
+    return buildResult(db, sid, "sub", mid, undefined);
+  };
+
+  // (a) Guard path: a normally-completing turn always wrote a text answer — the
+  // turn runner's mute guard (saidSomething → REPORT_NUDGE → forceText, proven in
+  // turn.test.ts) runs for subagents too (they go through the same beginTurn/drive).
+  // buildResult surfaces that text verbatim: a non-empty report, NOT the fallback.
+  const done = await mk("done", [{ type: "text", text: "fixed the parser; check passed" }]);
+  assertEquals(done.report, "fixed the parser; check passed");
+  assertEquals(done.ok, true);
+
+  // (b) Fallbacks: a turn that ended with no text part still hands back a concise,
+  // non-empty, status-derived report — never empty/whitespace (belt-and-suspenders
+  // for done/error/interrupt, the real path for an orphaned turn).
+  assertEquals((await mk("done", [])).report, "Subagent finished without a written report.");
+  assertEquals((await mk("error", [])).report, "Subagent errored before reporting.");
+  assertEquals(
+    (await mk("interrupted", [])).report,
+    "Subagent was interrupted before reporting.",
+  );
+  // No turn row at all reads as orphaned (a server restart lost the running turn).
+  const orphaned = await mk(null, []);
+  assertEquals(orphaned.status, "orphaned");
+  assertEquals(orphaned.report, "Subagent was orphaned (e.g. server restart) before reporting.");
+
+  // Whitespace-only text counts as empty and falls back too (report is .trim()'d).
+  assertEquals(
+    (await mk("done", [{ type: "text", text: "   \n  " }])).report,
+    "Subagent finished without a written report.",
+  );
 });

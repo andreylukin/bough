@@ -182,8 +182,8 @@ function explicitWorkspace(ctx: TurnCtx, sessionId: string): string | undefined 
   return raw === undefined ? undefined : normalizeWorkspace(raw);
 }
 
-/** Assemble the result once a subagent's turn has finished. */
-async function buildResult(
+/** Assemble the result once a subagent's turn has finished. Exported for tests. */
+export async function buildResult(
   db: Db,
   sessionId: string,
   title: string,
@@ -216,7 +216,28 @@ async function buildResult(
     }
   }
   const status = (turn?.status ?? "orphaned") as SubagentResult["status"];
-  return { sessionId, title, ok: status === "done", status, checkPassed, report, changedFiles };
+  // Guarantee a non-empty report. A normally-completing turn always wrote a text
+  // answer (turn.ts's mute guard: saidSomething → REPORT_NUDGE → forceText), and
+  // error/interrupt push a ⚠︎/⏹ text note that `report` also captures — so this
+  // fallback is belt-and-suspenders for those, and the real path only for an
+  // orphaned turn (server restart leaves no note). This string is what the
+  // spawner's `await agent(task)` receives and what the completion note posts.
+  const finalReport = report ||
+    {
+      done: "Subagent finished without a written report.",
+      error: "Subagent errored before reporting.",
+      interrupted: "Subagent was interrupted before reporting.",
+      orphaned: "Subagent was orphaned (e.g. server restart) before reporting.",
+    }[status];
+  return {
+    sessionId,
+    title,
+    ok: status === "done",
+    status,
+    checkPassed,
+    report: finalReport,
+    changedFiles,
+  };
 }
 
 /**
