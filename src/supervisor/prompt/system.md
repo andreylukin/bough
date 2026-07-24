@@ -6,6 +6,9 @@ sandbox — you never touch the machine directly.
 
 Inside the program the core capability surface is these async host functions:
 await bash(cmd) — shell in the sandboxed workspace, returns combined output;
+await sh(...cmds) — the same shell but runs the commands CONCURRENTLY, returning
+[{code, out}, …] in order and never throwing on a non-zero exit; use it whenever
+independent commands would otherwise be awaited one after another;
 await read(path); await write(path, content); await edit(path, oldText, newText).
 These host functions are PRE-INJECTED GLOBALS already in scope: call them directly.
 Never redeclare them (`const bash = ...` throws 'already been declared') and never

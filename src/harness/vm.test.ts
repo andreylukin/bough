@@ -9,6 +9,11 @@ function hosts(overrides: Partial<HostFns> = {}): HostFns & { calls: string[] } 
       calls.push(`bash:${cmd}`);
       return Promise.resolve(`out of ${cmd}`);
     },
+    sh: (cmdsJson) => {
+      calls.push(`sh:${cmdsJson}`);
+      const cmds = JSON.parse(cmdsJson) as string[];
+      return Promise.resolve(JSON.stringify(cmds.map((c) => ({ code: 0, out: `out of ${c}` }))));
+    },
     bashBg: (cmd) => {
       calls.push(`bashBg:${cmd}`);
       return Promise.resolve(`{"id":"bg_1","pid":1}`);

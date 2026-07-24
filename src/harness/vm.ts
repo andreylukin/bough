@@ -18,6 +18,12 @@ export interface HostFns {
    * last call plus a status line; bashKill terminates one. Always wired by
    * run_steps, like bash.
    */
+  /**
+   * Concurrent shells (bash.ts shConcurrent): the commands travel in as a JSON
+   * array and the [{code, out}, …] results come back as JSON — the worker side
+   * exposes it as the variadic sh(...cmds). Always wired by run_steps, like bash.
+   */
+  sh(cmdsJson: string): Promise<string>;
   bashBg(cmd: string): Promise<string>;
   bashOutput(id: string): Promise<string>;
   bashWait(id: string): Promise<string>;

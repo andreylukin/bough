@@ -148,6 +148,61 @@ export const bash: ToolDef = {
   },
 };
 
+/**
+ * Run `commands` CONCURRENTLY under this ctx's confinement, one {code, out} per
+ * command in input order. Backs the sh() host function.
+ *
+ * This deliberately does NOT go through bash.run: sh is the parallel primitive, so
+ * it must not auto-background (a backgrounded shell has no exit code yet) and it
+ * must report the code as data rather than as an "[exit code N]" line the program
+ * would have to parse. A non-zero exit is a normal result, never a throw — the
+ * point of sh is fanning out commands that are ALLOWED to fail (linters, greps,
+ * per-package builds) and inspecting the codes.
+ *
+ * Overlap is real, not simulated: the postMessage bridge is id-keyed and each host
+ * call is awaited independently (harness/vm.ts), and nothing in this file serializes
+ * shells — so the Promise.all below runs N subprocesses at once.
+ */
+export async function shConcurrent(
+  commands: string[],
+  ctx: ToolRunCtx,
+): Promise<{ code: number; out: string }[]> {
+  return await Promise.all(commands.map(async (command) => {
+    const { argv, env, cwd } = shellInvocation(command, ctx);
+    const child = new Deno.Command(argv[0], {
+      args: argv.slice(1),
+      cwd,
+      env,
+      stdin: "null",
+      stdout: "piped",
+      stderr: "piped",
+      signal: ctx.signal,
+    }).spawn();
+    // Hard cap per command: sh has no background escape hatch, so a hung command
+    // must not burn the whole program budget.
+    const timer = setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch { /* raced a natural exit */ }
+    }, SH_TIMEOUT_MS);
+    Deno.unrefTimer(timer);
+    try {
+      const { code, stdout, stderr } = await child.output();
+      const dec = new TextDecoder();
+      const out = (dec.decode(stdout) + dec.decode(stderr)).trimEnd();
+      return { code, out };
+    } catch (err) {
+      // Spawn/IO failure (including the turn's interrupt aborting the child).
+      return { code: -1, out: (err as Error).message ?? String(err) };
+    } finally {
+      clearTimeout(timer);
+    }
+  }));
+}
+
+/** Per-command wall clock for sh(); matches bash's hard cap. */
+const SH_TIMEOUT_MS = 120_000;
+
 /** Resolve "exit" when the child finishes, or "timeout" after `ms`. */
 function raceExit(sh: { child: Deno.ChildProcess }, ms: number): Promise<"exit" | "timeout"> {
   return new Promise((resolve) => {

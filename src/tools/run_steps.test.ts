@@ -376,3 +376,20 @@ Deno.test("interrupted foreground bash: pre-interrupt output survives on the too
   assertStringIncludes(out, "before-interrupt");
   assertStringIncludes(out, "[interrupted] bash");
 });
+
+Deno.test("sh() runs its commands concurrently and reports non-zero exits as data", async () => {
+  const c = ctx();
+  const started = Date.now();
+  const out = await runSteps.run(
+    {
+      code: `const r = await sh("sleep 1; echo a", "sleep 1; echo b", "exit 3");
+             console.log(JSON.stringify(r));`,
+    },
+    c,
+  );
+  const elapsed = Date.now() - started;
+  assertStringIncludes(out, `[{"code":0,"out":"a"},{"code":0,"out":"b"},{"code":3,"out":""}]`);
+  // Serialized, the two sleeps alone would take >=2s.
+  assertEquals(elapsed < 1900, true, `sh did not overlap: ${elapsed}ms`);
+  assertEquals(c.turn?.ranParallel, true);
+});

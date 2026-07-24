@@ -13,7 +13,7 @@
  */
 import { z } from "zod/v4";
 import type { ToolDef, ToolRunCtx } from "./types.ts";
-import { bash, inflightForegroundOutput } from "./bash.ts";
+import { bash, inflightForegroundOutput, shConcurrent } from "./bash.ts";
 import * as bg from "./bash_bg.ts";
 import { readFile } from "./read_file.ts";
 import { writeFile } from "./write_file.ts";
@@ -35,7 +35,10 @@ const schema = z.object({
     "One JavaScript program for this round. It runs in a sealed V8 sandbox; the core " +
       "capability surface is async host functions with these RETURN TYPES: " +
       "bash(cmd) → string (combined stdout+stderr — NOT a {stdout} object; " +
-      "`const {stdout} = await bash(...)` yields undefined), read(path) → string, " +
+      "`const {stdout} = await bash(...)` yields undefined), " +
+      "sh(...cmds) → [{code, out}, …] (the SAME shell, but runs every command " +
+      "CONCURRENTLY and never throws on a non-zero exit — prefer it over sequential " +
+      "bash() calls for independent commands), read(path) → string, " +
       "write(path, content), edit(path, oldText, newText), and background jobs (a slow " +
       "bash auto-backgrounds after ~60s) — bashBg(cmd) → {id, pid}, bashOutput(id) → " +
       "string (progress, safe while running), bashWait(id) → string (block until done), bashKill(id) " +
@@ -76,7 +79,7 @@ function exitCodeOf(bashOutput: string): number {
 export const runSteps: ToolDef = {
   name: "run_steps",
   description:
-    "Execute one JavaScript program in the sealed sandbox (host functions: bash/read/write/edit, " +
+    "Execute one JavaScript program in the sealed sandbox (host functions: bash/sh/read/write/edit, " +
     "background shells via bashBg/bashOutput/bashKill, plus delegation and mcp() when granted), " +
     "optionally committing a `check` command and/or requesting `done`. This is your only way to act.",
   schema,
@@ -102,6 +105,15 @@ export const runSteps: ToolDef = {
             !/^\s*(rm|mv|cp|mkdir|touch|chmod|chown|ln|git|kill)\b/.test(command)
           ) ctx.turn.lastGreenCmd = command;
           return out;
+        },
+        // Concurrent shells: the parallel sibling of bash(). The commands run at the
+        // same time (the host bridge is id-keyed and nothing in bash.ts serializes
+        // shells) and every result carries its own exit code, so a failing command
+        // is data rather than an exception. JSON both ways, like agent()/mcp().
+        sh: async (cmdsJson: string) => {
+          const cmds = JSON.parse(cmdsJson) as string[];
+          if (cmds.length > 1 && ctx.turn) ctx.turn.ranParallel = true; // honesty gate (turn.ts)
+          return JSON.stringify(await shConcurrent(cmds, ctx));
         },
         // Background shells: detached from the turn on purpose (no ctx.signal) —
         // they persist across rounds and turns of this session until killed.

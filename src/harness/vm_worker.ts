@@ -21,6 +21,7 @@
 
 type HostName =
   | "bash"
+  | "sh"
   | "bashBg"
   | "bashOutput"
   | "bashWait"
@@ -92,6 +93,9 @@ try {
 
 async function run(code: string): Promise<void> {
   const bash = (cmd: string) => hostCall("bash", [cmd]);
+  // Concurrent shells: the commands ride out as a JSON array and the results come
+  // back as JSON [{code, out}, …] — a non-zero code is data here, never a throw.
+  const sh = async (...cmds: string[]) => JSON.parse(await hostCall("sh", [JSON.stringify(cmds)]));
   // Background shells: the spawn handle comes back as JSON ({id, pid} — the
   // postMessage protocol stays string-only); output/kill return plain text.
   const bashBg = async (cmd: string) => JSON.parse(await hostCall("bashBg", [cmd]));
@@ -171,6 +175,7 @@ async function run(code: string): Promise<void> {
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as any;
   const program = new AsyncFunction(
     "bash",
+    "sh",
     "bashBg",
     "bashOutput",
     "bashWait",
@@ -197,6 +202,7 @@ async function run(code: string): Promise<void> {
   );
   await program(
     bash,
+    sh,
     bashBg,
     bashOutput,
     bashWait,
