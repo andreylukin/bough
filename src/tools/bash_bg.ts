@@ -21,8 +21,9 @@
 import type { ToolRunCtx } from "./types.ts";
 import { shellInvocation } from "./bash.ts";
 
-/** Retained output per shell; when exceeded, the oldest chars are dropped. */
-const MAX_BUF = 400_000;
+/** Retained output per shell; when exceeded, the oldest chars are dropped.
+ * Shared with sh() (bash.ts) so every shell surface has the same output ceiling. */
+export const MAX_BUF = 400_000;
 /** Running shells per session — a brake on loops that spawn and forget. */
 const MAX_RUNNING = 8;
 /** Grace between SIGTERM and the SIGKILL backstop. */

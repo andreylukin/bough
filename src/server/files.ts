@@ -336,6 +336,33 @@ export function attachImageFile(
 }
 
 /**
+ * Same as attachImageFile, but from bytes already in hand — for images that do
+ * not exist on the host tree at all. The agentfs overlay is the reason: a file the
+ * program just wrote lives in the session's copy-on-write delta, so statting the
+ * host path finds nothing and the bytes have to be read back through the overlay
+ * first. `name` supplies the extension (hence the media type), exactly as the
+ * path does in the file variant.
+ */
+export function attachImageBytes(
+  bytes: Uint8Array,
+  name: string,
+  destDir: string = attachmentsDir(),
+): ImagePart | null {
+  const mediaType = imageMediaType(name);
+  if (!mediaType || bytes.byteLength > MAX_IMAGE_BYTES) return null;
+  try {
+    Deno.mkdirSync(destDir, { recursive: true });
+    const dest = `${destDir}/${crypto.randomUUID()}.${
+      name.slice(name.lastIndexOf(".") + 1).toLowerCase()
+    }`;
+    Deno.writeFileSync(dest, bytes);
+    return { type: "image", path: dest, mediaType, name, size: bytes.byteLength };
+  } catch {
+    return null; // attachment store unwritable
+  }
+}
+
+/**
  * An image part → the base64 block replayed to the LLM (turn.ts history
  * assembly). A missing or unreadable attachment degrades to a text placeholder —
  * history must always replay, never crash the turn.

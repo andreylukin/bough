@@ -29,7 +29,7 @@
  */
 import type { Db } from "./db/db.ts";
 import type { Bus } from "./bus.ts";
-import type { Message, Part } from "./schema/parts.ts";
+import type { ImagePart, Message, Part } from "./schema/parts.ts";
 import {
   defaultTools,
   DONE_ACCEPTED,
@@ -78,12 +78,18 @@ import {
   type PreparedWorkspace,
   prepareWorkspace,
 } from "./supervisor/workspace.ts";
+import {
+  ensure as ensureAgentfs,
+  readFile as agentfsReadFile,
+  sandboxAgentfs,
+} from "./sandbox/agentfs.ts";
 import { activationsFor } from "./mcp/config.ts";
 import { createLspBridge, lspAvailable, lspSection } from "./mcp/lsp.ts";
 import { mcpManager } from "./mcp/manager.ts";
 import { mcpSection } from "./mcp/prompt.ts";
 import { mcpStatusFor } from "./mcp/status.ts";
 import {
+  attachImageBytes,
   attachImageFile,
   collectImageAttachments,
   expandFileReferences,
@@ -707,13 +713,27 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     // and post it as a system note carrying an image part. History is assembled
     // once per turn, so the picture lands on the NEXT turn — the same wake path a
     // background shell's completion note uses; the confirmation says so.
-    toolCtx.image = (path, note) => {
+    toolCtx.image = async (path, note) => {
       const rel = path.startsWith("/")
         ? path
         : path.startsWith("~/")
         ? `${Deno.env.get("HOME") ?? "."}${path.slice(1)}`
         : `${prepared.cwd.replace(/\/+$/, "")}/${path}`;
-      const part = attachImageFile(rel, path);
+      // agentfs overlay first: the primary case is a screenshot/chart the program
+      // JUST rendered, and its write landed in the session's delta — the host tree
+      // has no such file to stat. The overlay reads as base ∪ delta, so this also
+      // covers pre-existing files under the workspace; anything outside it (a
+      // ~/Desktop reference) fails the overlay read and falls back to the host.
+      let part: ImagePart | null = null;
+      if (toolCtx.sandbox && sandboxAgentfs()) {
+        try {
+          ensureAgentfs(sessionId, { origin: prepared.cwd });
+          part = attachImageBytes(await agentfsReadFile(sessionId, rel), path);
+        } catch {
+          part = null; // not in the overlay — try the host tree below
+        }
+      }
+      part ??= attachImageFile(rel, path);
       if (!part) {
         throw new Error(
           `image(): cannot attach ${path} — missing, unreadable, not a png/jpg/gif/webp, or over 5MB`,

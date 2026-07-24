@@ -6,7 +6,7 @@ import {
   sandboxAgentfs,
 } from "../sandbox/agentfs.ts";
 import type { ToolDef, ToolRunCtx } from "./types.ts";
-import { backgroundNote, formatFinal, newShell, promote } from "./bash_bg.ts";
+import { backgroundNote, formatFinal, MAX_BUF, newShell, promote } from "./bash_bg.ts";
 
 const schema = z.object({
   command: z.string().describe("The shell command to run via `sh -c`."),
@@ -187,9 +187,27 @@ export async function shConcurrent(
     }, SH_TIMEOUT_MS);
     Deno.unrefTimer(timer);
     try {
-      const { code, stdout, stderr } = await child.output();
-      const dec = new TextDecoder();
-      const out = (dec.decode(stdout) + dec.decode(stderr)).trimEnd();
+      // Stream into a capped rolling buffer rather than child.output(): sh is the
+      // path the model is told to prefer, and `sh("cat huge.log")` must not pull the
+      // whole file into host memory and then across the bridge. Same MAX_BUF and
+      // same drop-the-oldest rule as a foreground/background bash shell.
+      let out = "";
+      let dropped = false;
+      const pump = async (stream: ReadableStream<Uint8Array>) => {
+        const dec = new TextDecoder();
+        for await (const chunk of stream) {
+          out += dec.decode(chunk, { stream: true });
+          const over = out.length - MAX_BUF;
+          if (over > 0) {
+            dropped = true;
+            out = out.slice(over);
+          }
+        }
+      };
+      await Promise.all([pump(child.stdout), pump(child.stderr)]);
+      const { code } = await child.status;
+      out = out.trimEnd();
+      if (dropped) out = `[oldest output dropped — over ${MAX_BUF} chars]\n${out}`;
       return { code, out };
     } catch (err) {
       // Spawn/IO failure (including the turn's interrupt aborting the child).

@@ -1,6 +1,6 @@
 import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
-import { bashBg, bashKill, bashOutput, bashWait } from "./bash_bg.ts";
-import { bash } from "./bash.ts";
+import { bashBg, bashKill, bashOutput, bashWait, MAX_BUF } from "./bash_bg.ts";
+import { bash, shConcurrent } from "./bash.ts";
 
 /** Poll `fn` until `pred` holds, collecting every returned chunk. */
 async function pollUntil(
@@ -159,5 +159,22 @@ Deno.test("bash: a fast command still returns inline (no backgrounding)", async 
     assertStringIncludes(err, "[exit code 3]");
   } finally {
     await Deno.remove(workspace, { recursive: true }).catch(() => {});
+  }
+});
+
+Deno.test("sh(): a huge command output is capped like a bash shell, not buffered whole", async () => {
+  const workspace = await Deno.makeTempDir({ prefix: "bough-sh-" });
+  try {
+    // ~1.2MB of output — well over MAX_BUF (400k), the case that used to be
+    // buffered in full by child.output() and shipped across the bridge.
+    const [res] = await shConcurrent(
+      [`yes 0123456789abcdefghijklmnopqrstuvwxyz | head -30000`],
+      ctxIn(workspace),
+    );
+    assertEquals(res.code, 0);
+    assert(res.out.length <= MAX_BUF + 100, `expected capped output, got ${res.out.length}`);
+    assertStringIncludes(res.out, "oldest output dropped");
+  } finally {
+    await Deno.remove(workspace, { recursive: true });
   }
 });
