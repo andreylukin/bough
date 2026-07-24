@@ -84,6 +84,18 @@ else
   echo "==> typescript-language-server already installed"
 fi
 
+# agentfs: the Rust FS-sandbox backend (guest filesystem isolation). Installed via
+# the upstream one-liner into ~/.cargo/bin or ~/.local/bin.
+if ! command -v agentfs >/dev/null; then
+  echo "==> installing agentfs (FS sandbox backend)"
+  curl -fsSL https://agentfs.ai/install | bash ||
+    echo "warning: agentfs install failed — re-run setup.sh to retry" >&2
+  command -v agentfs >/dev/null ||
+    echo "warning: agentfs not on PATH after install — add ~/.cargo/bin (or ~/.local/bin) to PATH" >&2
+else
+  echo "==> agentfs already installed"
+fi
+
 # The plugin panel's "✎ Edit" button opens definitions in Zed. Optional but nice.
 if ! command -v zed >/dev/null; then
   echo "warning: zed CLI not found — the Plugins panel's Edit button opens files in Zed." >&2
@@ -129,7 +141,6 @@ ANTHROPIC_API_KEY=
 # BOUGH_PORT=4321
 # BOUGH_HOST=
 # BOUGH_WORKER_FRONTIER=1  # worker micro-tasks on claude-haiku-4-5 instead of the local Qwen (or set a model id)
-# BOUGH_AGENT_USER=bough   # run the server as a dedicated non-admin user (see scripts/agent-user.sh)
 EOF
   chmod 600 "$ENV_FILE"
 fi
