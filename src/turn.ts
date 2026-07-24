@@ -37,7 +37,6 @@ import {
   type ToolDef,
   type ToolRunCtx,
 } from "./tools/mod.ts";
-import { runOracle } from "./tools/oracle.ts";
 import { runningIds } from "./tools/bash_bg.ts";
 import { contextWindowFor, usageCostUsd } from "./pricing.ts";
 import {
@@ -153,23 +152,6 @@ export function activeEffort(): Effort | "" {
 
 export function setActiveEffort(effort: Effort | ""): void {
   currentEffort = effort;
-}
-
-/**
- * The model oracle() consults — should be at least as strong as the main model,
- * ideally a different family (a second opinion catches what the primary is blind
- * to). BOUGH_ORACLE overrides; the default prefers a cross-family reasoner when
- * an OpenAI key is configured and falls back to the strongest Anthropic model.
- */
-let currentOracle = Deno.env.get("BOUGH_ORACLE") ?? "";
-
-export function oracleModel(): string {
-  if (currentOracle) return currentOracle;
-  return Deno.env.get("OPENAI_API_KEY") ? "openai:gpt-5" : "claude-fable-5";
-}
-
-export function setOracleModel(model: string): void {
-  currentOracle = model;
 }
 
 /**
@@ -593,9 +575,8 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
   let cacheWriteTokens = 0; // cumulative this turn — writes bill ~1.25x
   let lastLlmAt = 0;
   // Dollars this turn, priced per round at the round's model (pricing.ts) — the
-  // session model can change mid-session and the oracle bills at its own rate,
-  // so cumulative token totals can't be priced after the fact. Models missing
-  // from the catalog contribute 0.
+  // session model can change mid-session, so cumulative token totals can't be
+  // priced after the fact. Models missing from the catalog contribute 0.
   let costUsd = 0;
 
   const turn = startTurn(db, sessionId, messageId);
@@ -693,19 +674,6 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
         });
       },
     };
-    // The oracle: read-only consult of a stronger reasoning model (tools/oracle.ts).
-    // Wired for every supervisor turn; its tokens bill into this turn's cumulative
-    // accumulators (cost rollup) but never touch contextTokens — the oracle's
-    // conversation is not this session's context.
-    toolCtx.oracle = (question) =>
-      runOracle(question, toolCtx, {
-        model: oracleModel(),
-        onUsage: (u) => {
-          inputTokens += u.inputTokens;
-          outputTokens += u.outputTokens;
-          costUsd += usageCostUsd(oracleModel(), u) ?? 0;
-        },
-      });
     // Recall: semantic search over all past conversations (recall.ts), host-side —
     // the sandbox never sees the DB or the embedder. Lazily indexes as it's used.
     toolCtx.recall = (query, k) => recallSearch(db, query, k);

@@ -46,7 +46,7 @@ const schema = z.object({
       "and throws a catchable 'user declined' error if dismissed), " +
       "prose(markdown) → string (render your marked-up answer in the chat — the LAST " +
       "host call of your turn's final program) and any " +
-      "oracle(question) → string, delegation (agent/spawn/join/adopt), mcp(server, tool, args), and lsp.* symbol " +
+      "delegation (agent/spawn/join/adopt), mcp(server, tool, args), and lsp.* symbol " +
       "navigation host functions your system prompt grants. Node globals (process, " +
       "require) do not exist. Use console.log(...) to see " +
       "anything — printed output is returned to you. Cover inspect → change → verify in " +
@@ -141,8 +141,6 @@ export const runSteps: ToolDef = {
               : {}),
           }
           : {}),
-        // The oracle (wired for supervisor turns): plain strings both ways.
-        ...(ctx.oracle ? { oracle: (question: string) => ctx.oracle!(question) } : {}),
         // ask() (wired for supervisor turns): park the program on a question to
         // the human; options travel as JSON like mcp() args. User-paced — the
         // delegating wall-clock budget below covers the wait.
@@ -231,11 +229,9 @@ export const runSteps: ToolDef = {
           : {}),
       },
       // agent() blocks on whole subagent turns; a held mcp()/lsp() call blocks on a
-      // human approval; an oracle() consult can reason for many minutes; an ask()
-      // waits on the human — all need far more wall-clock than the 3-minute cap.
-      ctx.delegate || ctx.mcp || ctx.lsp || ctx.oracle || ctx.ask
-        ? DELEGATING_TIMEOUT_MS
-        : undefined,
+      // human approval; an ask() waits on the human — all need far more wall-clock
+      // than the 3-minute cap.
+      ctx.delegate || ctx.mcp || ctx.lsp || ctx.ask ? DELEGATING_TIMEOUT_MS : undefined,
       ctx.signal,
       ctx.onLog,
     );

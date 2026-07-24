@@ -78,12 +78,6 @@ export interface ToolRunCtx {
     adopt: (subagentSessionId: string) => Promise<string>;
   };
   /**
-   * The oracle (tools/oracle.ts), wired by the turn runner for every supervisor
-   * turn: a read-only consult of a stronger reasoning model. The callback closes
-   * over the turn's usage accumulators so oracle tokens bill to the session.
-   */
-  oracle?: (question: string) => Promise<string>;
-  /**
    * Ask the HUMAN a mid-task question (asks.ts, wired by the turn runner for every
    * supervisor turn). Blocks user-paced until the TUI answers; resolves with the
    * chosen option or typed free text. Rejects with a catchable "user declined"

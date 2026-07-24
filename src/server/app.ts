@@ -33,11 +33,9 @@ import {
   activeModel,
   interruptTurn,
   MODELS,
-  oracleModel,
   postSystemNote,
   setActiveEffort,
   setActiveModel,
-  setOracleModel,
   startUserTurn,
   usableContextLimit,
   workflowCtxFor,
@@ -178,7 +176,6 @@ const getConfig: Handler = () => {
     // Thinking depth: "" = provider default; the picker offers `efforts`.
     effort: activeEffort(),
     efforts: EFFORTS,
-    oracle: oracleModel(),
     worker: workerChoice(),
     workerOptions: WORKER_OPTIONS,
     // Which provider API keys are configured — booleans only, never the values.
@@ -214,19 +211,18 @@ const deleteKeys: Handler = async (req) => {
 // default persists to ~/.bough/env (BOUGH_MODEL) so it survives a restart.
 const patchConfig: Handler = async (req, ctx) => {
   const body = await req.json().catch(() => null) as
-    | { model?: unknown; worker?: unknown; oracle?: unknown; effort?: unknown; sessionId?: unknown }
+    | { model?: unknown; worker?: unknown; effort?: unknown; sessionId?: unknown }
     | null;
   const model = typeof body?.model === "string" && body.model.trim() ? body.model.trim() : null;
   const worker = typeof body?.worker === "string" && body.worker.trim() ? body.worker.trim() : null;
-  const oracle = typeof body?.oracle === "string" && body.oracle.trim() ? body.oracle.trim() : null;
   // Thinking depth: one of EFFORTS, or "default" to fall back to the provider
   // default (clears the pin when a sessionId rides along).
   const effort = typeof body?.effort === "string" && body.effort.trim() ? body.effort.trim() : null;
   const sessionId = typeof body?.sessionId === "string" && body.sessionId ? body.sessionId : null;
-  if (!model && !worker && !oracle && !effort) {
+  if (!model && !worker && !effort) {
     return error(
       400,
-      "invalid body: { model?: string, worker?: string, oracle?: string, effort?: string } — at least one required",
+      "invalid body: { model?: string, worker?: string, effort?: string } — at least one required",
     );
   }
   if (effort && effort !== "default" && !(EFFORTS as string[]).includes(effort)) {
@@ -260,16 +256,11 @@ const patchConfig: Handler = async (req, ctx) => {
       ctx.bus.publish({ type: "session.updated", sessionId, data: updated });
     }
   }
-  if (oracle) {
-    setOracleModel(oracle);
-    persistEnvVar("BOUGH_ORACLE", oracle, ctx.envDir);
-  }
   if (worker) setWorkerChoice(worker);
   return json({
     model: activeModel(),
     effort: activeEffort(),
     worker: workerChoice(),
-    oracle: oracleModel(),
   });
 };
 

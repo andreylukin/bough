@@ -32,7 +32,6 @@ type HostName =
   | "spawn"
   | "join"
   | "adopt"
-  | "oracle"
   | "ask"
   | "mcp"
   | "mcpStatus"
@@ -111,8 +110,6 @@ async function run(code: string): Promise<void> {
   const spawn = async (task: string) => JSON.parse(await hostCall("spawn", [task]));
   const join = async (sessionId: string) => JSON.parse(await hostCall("join", [sessionId]));
   const adopt = (sessionId: string) => hostCall("adopt", [sessionId]);
-  // The oracle: plain strings both ways (question in, prose advice out).
-  const oracle = (question: string) => hostCall("oracle", [question]);
   // Ask the human: options ride out as JSON (string-only protocol); the answer
   // comes back as a plain string. Rejects on decline/interrupt (catchable).
   const ask = (question: string, opts?: unknown) =>
@@ -189,7 +186,6 @@ async function run(code: string): Promise<void> {
     "spawn",
     "join",
     "adopt",
-    "oracle",
     "ask",
     "mcp",
     "mcpStatus",
@@ -217,7 +213,6 @@ async function run(code: string): Promise<void> {
     spawn,
     join,
     adopt,
-    oracle,
     ask,
     mcp,
     mcpStatus,

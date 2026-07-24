@@ -36,11 +36,6 @@ export interface HostFns {
   join?(sessionId: string): Promise<string>;
   adopt?(sessionId: string): Promise<string>;
   /**
-   * The oracle (bridged for supervisor turns): consult a stronger read-only
-   * reasoning model; question in, prose advice out — plain strings both ways.
-   */
-  oracle?(question: string): Promise<string>;
-  /**
    * Ask the HUMAN a mid-task question (bridged for supervisor turns — asks.ts):
    * the program parks until they answer in the TUI. Options travel in as JSON
    * ({options?: string[]}); the chosen/typed answer returns as a plain string.

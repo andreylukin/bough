@@ -40,14 +40,10 @@ function bgAfterMs(): number {
  * agentfs mode: the shell runs inside the session's copy-on-write overlay of the
  * host workspace, which is the whole confinement story — writes land in the
  * session's delta, the real tree is untouched.
- *
- * `readOnly` (the oracle's shell) shares the session overlay; read-only is not
- * enforced yet (agentfs has no per-run ro overlay).
  */
 export function shellInvocation(
   command: string,
   ctx: ToolRunCtx,
-  _opts?: { readOnly?: boolean },
 ): { argv: string[]; env?: Record<string, string>; cwd?: string } {
   const argv = ["/bin/sh", "-c", command];
 
