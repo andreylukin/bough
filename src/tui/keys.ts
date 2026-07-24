@@ -9,6 +9,7 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
       ["esc", "interrupt the turn (also during a question hold)"],
       ["esc esc", "clear the draft · rewind when empty"],
       ["↑/↓", "recall sent messages"],
+      ["↓ (empty)", "into the subagent rail · enter opens · esc back"],
       ["^s", "search the conversation"],
       ["! cmd", "run in a local shell · ↑/↓ picks history"],
       ["/", "skill autocomplete · @ workspace files"],

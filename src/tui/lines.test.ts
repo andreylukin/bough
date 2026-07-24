@@ -332,6 +332,39 @@ Deno.test("branch card: a finished blocking subagent reflects its real status (f
   assertEquals(card("error").includes("✗"), true);
 });
 
+Deno.test("branch card: a running subagent is left to the rail, not drawn in the transcript", () => {
+  const thread = [
+    {
+      id: "u1",
+      sessionId: "s",
+      role: "user",
+      parts: [{ type: "text", text: "go" }],
+      pending: false,
+    },
+    {
+      id: "a1",
+      sessionId: "s",
+      role: "supervisor",
+      parts: [{ type: "text", text: "delegating" }],
+      pending: false,
+    },
+  ] as unknown as Message[];
+  const branch: Branch = {
+    id: "sub-x",
+    title: "subagent · do the risky thing",
+    busy: true,
+    note: null,
+    originMessageId: "a1",
+  };
+  const running = buildLines(thread, {}, () => false, () => false, 100, [branch]);
+  assertEquals(running.some((l) => l.text.includes("do the risky thing")), false);
+  // Once it finishes, the transcript keeps the card (the report lives there).
+  const done = buildLines(thread, {}, () => false, () => false, 100, [
+    { ...branch, busy: false, status: "done", ok: true, checkPassed: true },
+  ]);
+  assertEquals(done.some((l) => l.text.includes("do the risky thing")), true);
+});
+
 Deno.test("branch card: persisted {ok, checkPassed} gates the green ✓ — failed work never reads done", () => {
   // The harness catches program errors at the subagent boundary, so a subagent
   // whose work FAILED can still end its turn status=done. The persisted agent()
@@ -547,7 +580,11 @@ Deno.test("a user message steered into a running turn carries a queued ack; it c
   const ACK = "queued — the agent will see this after the current step";
   // Mid-flight: the reply is pending and the user message landed after it.
   const midFlight = buildLines(
-    [msg("u1", "user", "go"), msg("a1", "supervisor", "working", true), msg("u2", "user", "also do X")],
+    [
+      msg("u1", "user", "go"),
+      msg("a1", "supervisor", "working", true),
+      msg("u2", "user", "also do X"),
+    ],
     {},
     () => false,
     () => false,
@@ -578,4 +615,3 @@ Deno.test("a user message steered into a running turn carries a queued ack; it c
   ).map((l) => l.text).join("\n");
   assertEquals(normal.includes(ACK), false);
 });
-

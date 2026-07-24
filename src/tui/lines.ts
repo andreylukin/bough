@@ -84,7 +84,15 @@ export function parseSubagentNote(text: string): SubagentNote | null {
   const reportMatch = text.match(/^Report:\n([\s\S]*?)\nIts changes stay on its own branch/m);
   const report = reportMatch ? reportMatch[1].trim() : null;
   // Only a "finished…" note is a success; FAILED / STOPPED / ORPHANED are not.
-  return { title, sessionId, status, ok: status.startsWith("finished"), files, filesUnknown, report };
+  return {
+    title,
+    sessionId,
+    status,
+    ok: status.startsWith("finished"),
+    files,
+    filesUnknown,
+    report,
+  };
 }
 
 // How many report lines a finished-subagent card shows before "+N more"; the
@@ -183,9 +191,9 @@ function pushBlock(
   }
   if (logical.length > shown.length) {
     out.push({
-      text: finish(`${dim("│")} ${
-        dim(`… +${logical.length - shown.length} more lines · click to show all`)
-      }`),
+      text: finish(
+        `${dim("│")} ${dim(`… +${logical.length - shown.length} more lines · click to show all`)}`,
+      ),
       click: opts.fullKey ?? opts.click,
     });
   }
@@ -526,6 +534,9 @@ export function buildLines(
   const byOrigin = new Map<string, Branch[]>();
   const orphans: Branch[] = [];
   for (const b of branches) {
+    // A running subagent lives in the rail under the status bar, not as a card
+    // that scrolls out of view; the transcript keeps the finished report.
+    if (b.busy && !b.note) continue;
     if (b.originMessageId) {
       byOrigin.set(b.originMessageId, [...(byOrigin.get(b.originMessageId) ?? []), b]);
     } else orphans.push(b);

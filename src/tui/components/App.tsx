@@ -106,6 +106,7 @@ import { extractSpan, highlightSpan, rowSpan, type Selection, selRows } from "..
 import { findMatches, markLine } from "../search.ts";
 import { Composer } from "./Composer.tsx";
 import { ActivityLine, StatusBar } from "./StatusBar.tsx";
+import { SubagentRail } from "./SubagentRail.tsx";
 import { flattenTree, SessionPicker, type TreeRow } from "./SessionPicker.tsx";
 import { AskCard } from "./AskCard.tsx";
 import { NewSession } from "./NewSession.tsx";
@@ -136,6 +137,9 @@ export function App(
   const { stdout } = useStdout();
   const store = useStore(initialSessions);
   const [mode, setMode] = useState<Mode>("chat");
+  // Cursor into the subagent rail under the status bar; null = the composer has
+  // focus. ↓ on an empty composer enters the rail, enter opens the branch.
+  const [railSel, setRailSel] = useState<number | null>(null);
   // The composer: text plus a cursor for real line editing (arrows, ctrl+a/e/w/k,
   // word jumps). `set` clamps; helpers keep every mutation cursor-correct.
   const [comp, setComp] = useState({ text: "", cursor: 0 });
@@ -387,6 +391,7 @@ export function App(
     setSearchQ(null);
     setShellOut(null);
     setSections(null); // labels describe the session they were computed for
+    setRailSel(null); // the rail lists the session we're leaving
     if (currentIdRef.current !== s.id) stashDraft();
     open(s.id).catch((e) => setErr(String(e)));
   }, [open, stashDraft]);
@@ -558,6 +563,12 @@ export function App(
         })),
     [store.sessions, currentId, noteById],
   );
+  // The rail's cursor must not dangle past a list that shrank (or emptied).
+  useEffect(() => {
+    setRailSel((s) =>
+      s === null || branches.length === 0 ? null : Math.min(s, branches.length - 1)
+    );
+  }, [branches.length]);
   // Background shells: cards render only the open session's own jobs (a
   // subagent's jobs show inside its branch); the status-bar chip counts all.
   const ownJobs = useMemo(
@@ -2299,6 +2310,22 @@ export function App(
       if (key.escape && armed) return store.declineAsk();
       return;
     }
+    // The subagent rail owns the arrows while it holds the cursor: ↑/↓ walk the
+    // rows (↑ past the top hands focus back to the composer), enter opens the
+    // branch, esc leaves. Anything else drops focus and types as usual.
+    if (railSel !== null && branches.length > 0) {
+      if (key.downArrow) return setRailSel(Math.min(branches.length - 1, railSel + 1));
+      if (key.upArrow) return setRailSel(railSel === 0 ? null : railSel - 1);
+      if (key.return) {
+        const b = branches[Math.min(railSel, branches.length - 1)];
+        const s = store.sessions.find((x) => x.id === b.id);
+        setRailSel(null);
+        if (s) openSession(s);
+        return;
+      }
+      if (key.escape) return setRailSel(null);
+      setRailSel(null);
+    }
     if (key.escape) {
       // Inside a subagent branch, esc means "get me back up" — return to the
       // spawner without touching the subagent's turn. This closes the trap where
@@ -2407,7 +2434,12 @@ export function App(
           return Math.min(nextNl + 1 + col, lineEnd < 0 ? c.text.length : lineEnd);
         });
       }
-      if (histIdx === null) return;
+      // Past the end of history (or with nothing typed), ↓ drops into the
+      // subagent rail under the status bar rather than doing nothing.
+      if (histIdx === null) {
+        if (input === "" && branches.length > 0) setRailSel(0);
+        return;
+      }
       if (histIdx >= history.current.length - 1) {
         setHistIdx(null);
         setInput(draft.current);
@@ -3036,6 +3068,11 @@ export function App(
               .replace(/^subagent · /, "")
             : null}
         />
+        {
+          /* Subagents live under the status bar (Claude Code parity): a pinned
+            rail, not a transcript card that scrolls away while it works. */
+        }
+        {mode === "chat" ? <SubagentRail branches={branches} sel={railSel} /> : null}
       </Box>
     </Box>
   );
