@@ -10,6 +10,46 @@
  * program as ordinary exceptions the supervisor's code may catch.
  */
 
+import { checkSyntax } from "../text.ts";
+
+/**
+ * The program's parameter names, mirroring vm_worker.ts's own AsyncFunction call.
+ * Duplicated rather than imported because the worker runs with `permissions:
+ * "none"` and deliberately imports nothing; vm.test.ts pins the two lists equal.
+ * They must match: a program that shadows a host name (`let bash = 1`) is a
+ * SyntaxError, and the pre-flight check should agree with the worker about it.
+ */
+export const PROGRAM_PARAMS = [
+  "bash",
+  "sh",
+  "extract",
+  "fetch",
+  "bashBg",
+  "bashOutput",
+  "bashWait",
+  "bashKill",
+  "read",
+  "write",
+  "edit",
+  "agent",
+  "spawn",
+  "join",
+  "adopt",
+  "ask",
+  "mcp",
+  "mcpStatus",
+  "lsp",
+  "artifact",
+  "recall",
+  "image",
+  "ship",
+  "pr",
+  "schedule",
+  "state",
+  "workflow",
+  "console",
+];
+
 export interface HostFns {
   bash(cmd: string): Promise<string>;
   /**
@@ -158,6 +198,13 @@ export function runProgram(
    * streaming — the batched `logs` in the result are unaffected). */
   onLog?: (line: string) => void,
 ): Promise<ProgramResult> {
+  // Parse before spawning: a program that cannot compile used to reach the model
+  // as a bare SyntaxError over ten frames of Deno internals, with no line and no
+  // source — nothing it could act on, so it burned the turn guessing. The worker
+  // parses it again for real; this pass exists only to say WHERE.
+  const bad = checkSyntax(code, PROGRAM_PARAMS, "program");
+  if (bad) return Promise.resolve({ ok: false, logs: [], error: bad.message });
+
   const worker = new Worker(new URL("./vm_worker.ts", import.meta.url).href, {
     type: "module",
     deno: { permissions: "none" },
