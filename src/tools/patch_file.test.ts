@@ -114,6 +114,83 @@ Deno.test("PARALLEL: a genuine conflict is refused, with the current text quoted
   }
 });
 
+Deno.test("TAGLESS: [path#] anchors to what this session viewed", async () => {
+  const { dir, ctx } = await fixture();
+  try {
+    const c = ctx("s1");
+    await viewFile.run({ path: "m.ts" }, c);
+    // No hash anywhere in the patch — the whole point.
+    await patchFile.run({ input: `[m.ts#]\nSWAP 2.=2:\n+  return a + b + 1;` }, c);
+    assertStringIncludes(await Deno.readTextFile(`${dir}/m.ts`), "return a + b + 1;");
+    // The bare-bracket spelling works the same way.
+    await patchFile.run({ input: `[m.ts]\nINS.TAIL:\n+// tail` }, c);
+    assertStringIncludes(await Deno.readTextFile(`${dir}/m.ts`), "// tail");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("TAGLESS: still detects and rebases a concurrent edit", async () => {
+  // Dropping the hash must not drop the safety: the tagless form resolves to the
+  // hash of the snapshot, so it is exactly as stale-aware as writing it out.
+  const { dir, ctx } = await fixture();
+  try {
+    const a = ctx("agent-a");
+    await viewFile.run({ path: "m.ts" }, a); // A's snapshot: the pristine file
+    const b = ctx("agent-b");
+    const tagB = tagFrom(await viewFile.run({ path: "m.ts" }, b));
+    await patchFile.run({ input: `[m.ts#${tagB}]\nINS.PRE 5:\n+// B was here` }, b);
+
+    await patchFile.run({ input: `[m.ts#]\nSWAP 2.=2:\n+  return a + b + 1;` }, a);
+    const final = await Deno.readTextFile(`${dir}/m.ts`);
+    assertStringIncludes(final, "return a + b + 1;");
+    assertStringIncludes(final, "// B was here");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("TAGLESS: without a prior view it says to view first", async () => {
+  const { dir, ctx } = await fixture();
+  try {
+    const err = await assertRejects(
+      () => patchFile.run({ input: `[m.ts#]\nSWAP 2.=2:\n+  nope;` }, ctx("s1")),
+      Error,
+    );
+    assertStringIncludes(err.message, "no version on record");
+    assertStringIncludes(err.message, 'view("m.ts")');
+    assertEquals(await Deno.readTextFile(`${dir}/m.ts`), SRC);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("PARALLEL: anchors MOVE when the other write inserts above them", async () => {
+  // The live run never exercised this: charlie's target happened to sit above
+  // echo's append, so the rebased line number was unchanged. Force real
+  // arithmetic — B inserts at the top, so every one of A's anchors shifts.
+  const { dir, ctx } = await fixture();
+  try {
+    const a = ctx("agent-a");
+    await viewFile.run({ path: "m.ts" }, a); // A sees add() on lines 1-3
+    const b = ctx("agent-b");
+    const tagB = tagFrom(await viewFile.run({ path: "m.ts" }, b));
+    await patchFile.run({ input: `[m.ts#${tagB}]\nINS.HEAD:\n+// header line\n+` }, b);
+
+    // A still names line 2 and line 6, which are now lines 4 and 8.
+    await patchFile.run({
+      input: `[m.ts#]\nSWAP 2.=2:\n+  return a + b + 1;\nSWAP 6.=6:\n+  return a - b - 1;`,
+    }, a);
+
+    const lines = (await Deno.readTextFile(`${dir}/m.ts`)).split("\n");
+    assertEquals(lines[0], "// header line"); // B's insert intact
+    assertEquals(lines[3], "  return a + b + 1;"); // A's first edit, shifted by 2
+    assertEquals(lines[7], "  return a - b - 1;"); // A's second edit, shifted by 2
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("a tag with no snapshot to rebase from is refused, not guessed", async () => {
   const { dir, ctx } = await fixture();
   try {

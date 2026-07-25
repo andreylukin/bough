@@ -23,13 +23,19 @@ your lines are untouched, and reported as a conflict when they are not. Reach fo
 edit() when you already know the exact bytes and the file is small or uncontended,
 and write() for new files or a wholesale rewrite.
 
-    const v = await view("src/server/files.ts");   // [src/server/files.ts#A62C]
-    await patch(`[src/server/files.ts#A62C]
+    console.log(await view("src/server/files.ts"));   // read the numbered lines
+    await patch(`[src/server/files.ts#]
     SWAP 74.=76:
     +      if (subseq(q, rel)) hits.push(rel + "/");
     DEL 91.=92
     INS.POST 30:
     +// appended after line 30`);
+
+Leave the tag EMPTY (`[path#]`) and it means the version you just viewed — that is
+the normal way to write a patch. Never pass view()'s output to patch(): the listing
+is for you to read, and the `N:text` lines are not operations. Write out an explicit
+tag (`[path#A62C]`) only to chain a second patch onto the tag a previous patch
+echoed, without viewing again.
 
 Operations: `SWAP A.=B:` replaces lines A..B, `DEL A.=B` removes them, `INS.PRE A:`
 / `INS.POST A:` insert around line A, `INS.HEAD:` / `INS.TAIL:` at the file ends.

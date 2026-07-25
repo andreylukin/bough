@@ -85,7 +85,9 @@ export const viewFile: ToolDef = {
     } catch (e) {
       throw new Error(`cannot read ${path}: ${(e as Error).message}`);
     }
-    recordSnapshot(ctx.sessionId, path, text);
+    // Keyed by the RESOLVED path: the same relative path means different files in
+    // different workspaces, and "m.ts" vs "./m.ts" must not be two records.
+    recordSnapshot(ctx.sessionId, full, text);
     return renderNumbered(path, text);
   },
 };
@@ -115,6 +117,21 @@ function resolveSection(
   const curLines = toLines(current);
   const curTag = tagOf(current);
   let ops: Op[] = sec.ops;
+
+  // Tagless `[path#]`: anchor to whatever this session last viewed. Resolving it
+  // here rather than in the parser keeps every check below identical — a tagless
+  // patch is exactly as stale-detectable as a written-out one, because the tag it
+  // resolves to IS the hash of the base text the rebase would use.
+  if (sec.tag === "") {
+    if (base === undefined) {
+      throw new Error(
+        `${sec.path} has no version on record for this session, so "[${sec.path}#]" ` +
+          `has nothing to anchor to. Call view("${sec.path}") first — its line ` +
+          `numbers are what the operations refer to.`,
+      );
+    }
+    sec = { ...sec, tag: tagOf(base) };
+  }
 
   if (sec.tag !== curTag) {
     // The file moved under this patch. Without the text the agent read there is
@@ -150,8 +167,10 @@ function resolveSection(
 
 const patchSchema = z.object({
   input: z.string().describe(
-    "One or more file sections. Each starts with `[path#TAG]` where TAG is the " +
-      "four-hex tag from view(path), followed by operations: `SWAP A.=B:` " +
+    "One or more file sections. Each starts with `[path#]` — an empty tag means " +
+      "the version this session last viewed, which is the normal form — or an " +
+      "explicit `[path#TAG]` to chain onto a tag a previous patch echoed. Then " +
+      "operations: `SWAP A.=B:` " +
       "(replace lines A..B), `DEL A.=B`, `INS.PRE A:`, `INS.POST A:`, `INS.HEAD:`, " +
       "`INS.TAIL:`. Body rows are `+`-prefixed new text; `+` alone is a blank line. " +
       "Line numbers are always in the coordinates of the tagged version.",
@@ -180,7 +199,7 @@ export const patchFile: ToolDef = {
       } catch (e) {
         throw new Error(`cannot read ${sec.path}: ${(e as Error).message}`);
       }
-      const { text: next } = resolveSection(sec, current, snapshotOf(ctx.sessionId, sec.path));
+      const { text: next } = resolveSection(sec, current, snapshotOf(ctx.sessionId, full));
       staged.push({ path: sec.path, full, text: next });
     }
 
@@ -193,7 +212,7 @@ export const patchFile: ToolDef = {
       }
       // The session's view of the file is now what it just wrote, so a follow-up
       // patch in the same round can anchor to the tag echoed here without re-reading.
-      recordSnapshot(ctx.sessionId, s.path, s.text);
+      recordSnapshot(ctx.sessionId, s.full, s.text);
       out.push(`[${s.path}#${tagOf(s.text)}] patched`);
     }
     return out.join("\n");

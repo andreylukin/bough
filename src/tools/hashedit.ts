@@ -56,6 +56,13 @@ export interface Op {
 
 export interface Section {
   path: string;
+  /**
+   * The four-hex version this patch is written against, or "" for the tagless
+   * form (`[path#]` / `[path]`) meaning "whatever this session last viewed".
+   * Tagless costs nothing in safety — the caller resolves it from the same
+   * snapshot the rebase would use — and it spares the model from plumbing a hash
+   * out of view()'s output, which measurably cost it rounds when it had to.
+   */
   tag: string;
   ops: Op[];
 }
@@ -107,7 +114,15 @@ function bad(msg: string): never {
   throw new PatchError(msg);
 }
 
-const SECTION_RE = /^\[(.+)#([0-9a-fA-F]{4})\]$/;
+// `[path#TAG]`, and the tagless `[path#]` / `[path]`. The path is lazy so a
+// four-hex tag, when present, wins the trailing segment rather than being
+// swallowed into the path.
+const SECTION_RE = /^\[(.+?)(?:#([0-9a-fA-F]{4})?)?\]$/;
+// `12:const x = 1;` — the shape of view()'s own listing. Recognised only to say
+// so: pasting the whole view() output back into patch() is the single most
+// natural mistake the format invites, and a generic parse error sent one
+// subagent through three rounds of guessing before it found the tag.
+const NUMBERED_LINE_RE = /^\s*\d+:/;
 // `SWAP 12.=14:` — also accepts `SWAP 12:` and the `-`/`..` range spellings,
 // which weak models reach for constantly and which are unambiguous anyway.
 const SWAP_RE = /^SWAP\s+(\d+)(?:\s*(?:\.=|\.\.|-|\s)\s*(\d+))?\s*:?\s*$/;
@@ -143,7 +158,7 @@ export function parsePatch(input: string): Section[] {
 
     const sec = SECTION_RE.exec(line.trim());
     if (sec) {
-      cur = { path: sec[1], tag: sec[2].toUpperCase(), ops: [] };
+      cur = { path: sec[1], tag: (sec[2] ?? "").toUpperCase(), ops: [] };
       sections.push(cur);
       open = null;
       continue;
@@ -159,6 +174,14 @@ export function parsePatch(input: string): Section[] {
         `line ${i + 1}: "-" rows are not part of this format. Name the lines to ` +
           `remove with DEL, or replace them with SWAP; write literal text ` +
           `starting with "-" as a body row ("+- like this").`,
+      );
+    }
+    if (NUMBERED_LINE_RE.test(line)) {
+      bad(
+        `line ${i + 1}: "${line.slice(0, 40)}…" looks like a line from view()'s ` +
+          `listing. Do not pass view()'s output to patch() — the listing is for ` +
+          `you to read. Write only the section header and your operations; the ` +
+          `header may be just "[${cur.path}#]" to mean the version you viewed.`,
       );
     }
 

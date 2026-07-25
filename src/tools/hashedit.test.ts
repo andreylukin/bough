@@ -69,6 +69,32 @@ Deno.test("parsePatch tolerates the range spellings models actually emit", () =>
   assertEquals(parsePatch(`[m.ts#AB12]\nSWAP 1:\n+\n+x`)[0].ops[0].body, ["", "x"]);
 });
 
+Deno.test("parsePatch accepts the tagless header in both spellings", () => {
+  for (const header of ["[m.ts#]", "[m.ts]"]) {
+    const [sec] = parsePatch(`${header}\nSWAP 2.=2:\n+x`);
+    assertEquals(sec.path, "m.ts", header);
+    assertEquals(sec.tag, "", header);
+  }
+  // An explicit tag still parses, and the path is not swallowed by the lazy match.
+  const [tagged] = parsePatch(`[src/a/m.ts#ab12]\nSWAP 1:\n+x`);
+  assertEquals([tagged.path, tagged.tag], ["src/a/m.ts", "AB12"]);
+});
+
+Deno.test("parsePatch names the pasted-view mistake instead of a generic error", () => {
+  // Observed: a subagent passed view()'s whole output to patch() and spent three
+  // rounds guessing from "is not an operation". The error must say what it did.
+  const viewOutput = `[m.ts#AB12]
+1:function add(a, b) {
+2:  return a + b;`;
+  assertThrows(
+    () => parsePatch(`${viewOutput}\nSWAP 2.=2:\n+x`),
+    Error,
+    "looks like a line from view()",
+  );
+  // …and it points at the shorthand that avoids the tag entirely.
+  assertThrows(() => parsePatch(`${viewOutput}\nSWAP 2.=2:\n+x`), Error, '"[m.ts#]"');
+});
+
 Deno.test("parsePatch rejects malformed input with a corrective message", () => {
   assertThrows(() => parsePatch("SWAP 1:\n+x"), Error, "section header");
   assertThrows(() => parsePatch(`[m.ts#AB12]\n- old line`), Error, '"-" rows are not');

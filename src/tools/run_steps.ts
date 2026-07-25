@@ -46,8 +46,10 @@ const schema = z.object({
       "sh(...cmds) → [{code, out}, …] (the SAME shell, but runs every command " +
       "CONCURRENTLY and never throws on a non-zero exit — prefer it over sequential " +
       "bash() calls for independent commands), read(path) → string, " +
-      "view(path) → `[path#TAG]` plus numbered lines, " +
-      "patch(input) → applies hash-anchored line edits written against that TAG " +
+      "view(path) → `[path#TAG]` plus numbered lines (read them; never pass this " +
+      "output to patch), " +
+      "patch(input) → applies hash-anchored line edits, headed by `[path#]` to mean " +
+      "the version you just viewed " +
       "(SWAP A.=B: / DEL A.=B / INS.PRE A: / INS.POST A: / INS.HEAD: / INS.TAIL:, with " +
       "`+`-prefixed body rows) — PREFER view+patch for editing existing files: you never " +
       "reproduce the target text, so its backticks and ${...} cannot break the match, and " +
