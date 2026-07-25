@@ -392,7 +392,7 @@ function effortParams(effort?: Effort, model?: string): Record<string, unknown> 
   // Adaptive thinking exists on the Claude 5 family and Opus 4.8+ only — sending
   // it to e.g. Haiku 4.5 is a hard 400, so a set effort must not kill the turn.
   const supported = model === undefined ||
-    /claude-(fable|mythos|sonnet)-5|opus-4-[89]/.test(model);
+    /claude-(fable|mythos|sonnet|opus)-5|opus-4-[89]/.test(model);
   return effort && supported
     ? {
       thinking: { type: "adaptive", display: "summarized" },
