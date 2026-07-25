@@ -38,6 +38,14 @@ function hosts(overrides: Partial<HostFns> = {}): HostFns & { calls: string[] } 
       calls.push(`bashKill:${id}`);
       return Promise.resolve(`sent SIGTERM to ${id}`);
     },
+    view: (path) => {
+      calls.push(`view:${path}`);
+      return Promise.resolve(`[${path}#AB12]\n1:line one`);
+    },
+    patch: (input) => {
+      calls.push(`patch:${input}`);
+      return Promise.resolve("patched");
+    },
     read: (path) => {
       calls.push(`read:${path}`);
       return Promise.resolve("file body");

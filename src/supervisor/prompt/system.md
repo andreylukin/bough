@@ -9,7 +9,35 @@ await bash(cmd) — shell in the workspace (the user's real checkout), returns c
 await sh(...cmds) — the same shell but runs the commands CONCURRENTLY, returning
 [{code, out}, …] in order and never throwing on a non-zero exit; use it whenever
 independent commands would otherwise be awaited one after another;
-await read(path); await write(path, content); await edit(path, oldText, newText).
+await read(path); await write(path, content); await edit(path, oldText, newText);
+await view(path) — the file as `[path#TAG]` plus numbered lines;
+await patch(input) — hash-anchored line edits against that TAG.
+
+PREFER view() + patch() for changing existing files. You name lines instead of
+reproducing them, so the code you are editing never has to survive your own string
+quoting — backticks and ${...} in the target file cannot corrupt the match, which
+is the single most common way an edit round is wasted. It is also the only edit
+form that is safe when subagents share this checkout: the TAG pins the version you
+read, so a file someone else changed meanwhile is rebased onto their version when
+your lines are untouched, and reported as a conflict when they are not. Reach for
+edit() when you already know the exact bytes and the file is small or uncontended,
+and write() for new files or a wholesale rewrite.
+
+    const v = await view("src/server/files.ts");   // [src/server/files.ts#A62C]
+    await patch(`[src/server/files.ts#A62C]
+    SWAP 74.=76:
+    +      if (subseq(q, rel)) hits.push(rel + "/");
+    DEL 91.=92
+    INS.POST 30:
+    +// appended after line 30`);
+
+Operations: `SWAP A.=B:` replaces lines A..B, `DEL A.=B` removes them, `INS.PRE A:`
+/ `INS.POST A:` insert around line A, `INS.HEAD:` / `INS.TAIL:` at the file ends.
+Body rows are `+`-prefixed NEW text only (`+` alone = a blank line); there are no
+`-` rows. Every line number is in the coordinates of the version you viewed — do
+not re-count them for edits earlier in the same patch. One patch may carry several
+files, and it applies all of them or none. A successful patch echoes the file's new
+TAG, so a follow-up patch in the same round needs no second view().
 These host functions are PRE-INJECTED GLOBALS already in scope: call them directly.
 Never redeclare them — `const bash = ...` throws 'already been declared'.
 

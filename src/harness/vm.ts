@@ -37,6 +37,8 @@ export const PROGRAM_PARAMS = [
   "read",
   "write",
   "edit",
+  "view",
+  "patch",
   "agent",
   "spawn",
   "join",
@@ -87,6 +89,14 @@ export interface HostFns {
   bashWait(id: string): Promise<string>;
   bashKill(id: string): Promise<string>;
   read(path: string): Promise<string>;
+  /**
+   * Hash-anchored editing (tools/patch_file.ts): `view` returns the file as
+   * `[path#TAG]` plus numbered lines, `patch` applies ops written against that
+   * tag. Both are plain strings — the format is the payload. Always wired by
+   * run_steps, like read/write/edit.
+   */
+  view(path: string): Promise<string>;
+  patch(input: string): Promise<string>;
   write(path: string, content: string): Promise<string>;
   edit(path: string, oldText: string, newText: string): Promise<string>;
   /**

@@ -18,6 +18,7 @@ import * as bg from "./bash_bg.ts";
 import { extractFrom } from "../worker/extract.ts";
 import { fetchUrl } from "./fetch_url.ts";
 import { readFile } from "./read_file.ts";
+import { patchFile, viewFile } from "./patch_file.ts";
 import { writeFile } from "./write_file.ts";
 import { editFile } from "./edit_file.ts";
 import { runProgram } from "../harness/vm.ts";
@@ -45,6 +46,12 @@ const schema = z.object({
       "sh(...cmds) → [{code, out}, …] (the SAME shell, but runs every command " +
       "CONCURRENTLY and never throws on a non-zero exit — prefer it over sequential " +
       "bash() calls for independent commands), read(path) → string, " +
+      "view(path) → `[path#TAG]` plus numbered lines, " +
+      "patch(input) → applies hash-anchored line edits written against that TAG " +
+      "(SWAP A.=B: / DEL A.=B / INS.PRE A: / INS.POST A: / INS.HEAD: / INS.TAIL:, with " +
+      "`+`-prefixed body rows) — PREFER view+patch for editing existing files: you never " +
+      "reproduce the target text, so its backticks and ${...} cannot break the match, and " +
+      "a file a parallel subagent changed is rebased or reported, never clobbered, " +
       "write(path, content), edit(path, oldText, newText), and background jobs (a slow " +
       "bash auto-backgrounds after ~60s) — bashBg(cmd) → {id, pid}, bashOutput(id) → " +
       "string (progress, safe while running), bashWait(id) → string (block until done), bashKill(id) " +
@@ -159,6 +166,14 @@ export const runSteps: ToolDef = {
         bashWait: (id) => bg.bashWait(id, ctx),
         bashKill: (id) => bg.bashKill(id, ctx),
         read: (path) => readFile.run({ path }, ctx),
+        // Hash-anchored editing: view() records what the session saw so patch()
+        // can rebase a stale anchor instead of refusing it, which is what makes
+        // two subagents editing one file survive each other (hashedit.ts).
+        view: (path) => viewFile.run({ path }, ctx),
+        patch: (input) => {
+          wrote = true;
+          return patchFile.run({ input }, ctx);
+        },
         write: (path, content) => {
           wrote = true;
           return writeFile.run({ path, content }, ctx);

@@ -38,6 +38,8 @@ type HostName =
   | "read"
   | "write"
   | "edit"
+  | "view"
+  | "patch"
   | "agent"
   | "spawn"
   | "join"
@@ -184,6 +186,11 @@ async function run(code: string): Promise<void> {
   const write = (path: string, content: string) => hostCall("write", [path, content]);
   const edit = (path: string, oldText: string, newText: string) =>
     hostCall("edit", [path, oldText, newText]);
+  // Hash-anchored editing: view() returns numbered lines under a content tag and
+  // patch() applies ops anchored to it. Plain strings both ways — the patch text
+  // IS the format, so nothing is JSON-wrapped.
+  const view = (path: string) => hostCall("view", [path]);
+  const patch = (input: string) => hostCall("patch", [input]);
   // Delegation: the host sends subagent results/handles as JSON (postMessage stays
   // string-only); parse them back so the program gets real objects. Sessions that
   // may not delegate have no bridged fn — the call rejects as "unknown host function".
@@ -268,6 +275,8 @@ async function run(code: string): Promise<void> {
     "read",
     "write",
     "edit",
+    "view",
+    "patch",
     "agent",
     "spawn",
     "join",
@@ -297,6 +306,8 @@ async function run(code: string): Promise<void> {
     read,
     write,
     edit,
+    view,
+    patch,
     agent,
     spawn,
     join,
