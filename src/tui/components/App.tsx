@@ -120,6 +120,7 @@ import {
 import { DiffView, flattenDiffs } from "./DiffView.tsx";
 import { modelEntries, ModelPicker } from "./ModelPicker.tsx";
 import { Panel, PANEL_TABS, type PanelTab, PanelTabs } from "./Panel.tsx";
+import { Jobs } from "./Jobs.tsx";
 import {
   agentDetailLines,
   phaseGroups,
@@ -240,6 +241,12 @@ export function App(
   const draft = useRef("");
   // panel state
   const [panelTab, setPanelTab] = useState<PanelTab>("sessions");
+  // Jobs tab: list cursor, the drilled-into job (null = list), its fetched
+  // buffer, and the output scroll offset.
+  const [jobSel, setJobSel] = useState(0);
+  const [jobOpen, setJobOpen] = useState<string | null>(null);
+  const [jobText, setJobText] = useState<string | null>(null);
+  const [jobScroll, setJobScroll] = useState(0);
   const [mcpSel, setMcpSel] = useState(0);
   const [panelMsg, setPanelMsg] = useState<string | null>(null);
   // Workflows tab: run-list cursor, drill level (runs → phases → that phase's
@@ -276,6 +283,24 @@ export function App(
       dead = true;
     };
   }, [mode, panelTab, wfOpenId, store.wfSeq]);
+  // Refetch the opened job's buffer. store.jobs already re-polls every 2s while
+  // anything runs, so keying off it makes the output view tail a live job for
+  // free and settle the moment it exits.
+  useEffect(() => {
+    if (mode !== "panel" || panelTab !== "jobs" || !jobOpen || !store.currentId) return;
+    let dead = false;
+    api.jobOutput(store.currentId, jobOpen).then(
+      (r) => {
+        if (!dead) setJobText(r.output);
+      },
+      () => {
+        if (!dead) setJobText("(output unavailable — the job aged out of the registry)");
+      },
+    );
+    return () => {
+      dead = true;
+    };
+  }, [mode, panelTab, jobOpen, store.currentId, store.jobs]);
   // ask() question-hold state: the free-text draft + whether the text line is
   // active. Reset per question; an option-less question starts in typing mode —
   // free text is its only input. An arm-delay (askSince) so an in-flight composer
@@ -980,6 +1005,9 @@ export function App(
       if (s) openSession(s);
       return;
     }
+    // Clicking a background-job card jumps to the jobs tab — the card is a
+    // summary, the tab is where the whole output and the kill live.
+    if (key === "jobs") return openTab("jobs");
     toggleGroup(key);
   };
   useEffect(() => {
@@ -1414,6 +1442,11 @@ export function App(
       setKeyInput(null);
     } else if (t === "mcp") {
       setMcpSel(0);
+    } else if (t === "jobs") {
+      setJobSel(0);
+      setJobOpen(null);
+      setJobText(null);
+      setJobScroll(0);
     } else if (t === "workflows") {
       setWfSel(0);
       setWfLevel(0);
@@ -1467,6 +1500,11 @@ export function App(
           setMovePicks(null); // cancel a pending move
         } else if (panelTab === "conversation" && rangeAnchor !== null) {
           setRangeAnchor(null);
+        } else if (panelTab === "jobs" && jobOpen) {
+          // Back to the job list; only esc at the list level leaves the panel.
+          setJobOpen(null);
+          setJobText(null);
+          setJobScroll(0);
         } else if (panelTab === "workflows" && wfLevel > 0) {
           // Back out one drill level; only esc at the top level leaves the panel.
           if (wfLevel === 3) {
@@ -1496,9 +1534,17 @@ export function App(
       }
       // The chat-mode chords keep working here: ^p/^f/^d/^o jump tabs, ^t closes.
       if (key.ctrl && ch === "t") return setMode("chat");
-      if (key.ctrl && (ch === "p" || ch === "f" || ch === "d" || ch === "o")) {
+      if (key.ctrl && (ch === "p" || ch === "f" || ch === "d" || ch === "o" || ch === "b")) {
         openTab(
-          ch === "p" ? "sessions" : ch === "f" ? "conversation" : ch === "d" ? "changes" : "model",
+          ch === "p"
+            ? "sessions"
+            : ch === "f"
+            ? "conversation"
+            : ch === "d"
+            ? "changes"
+            : ch === "b"
+            ? "jobs"
+            : "model",
         );
         return;
       }
@@ -1915,6 +1961,43 @@ export function App(
         }
         return;
       }
+      // ---- jobs: background shells → one shell's full output ----
+      if (panelTab === "jobs") {
+        const list = store.jobs;
+        if (jobOpen) {
+          if (key.upArrow || ch === "k") return setJobScroll((n) => Math.max(0, n - 1));
+          if (key.downArrow || ch === "j") return setJobScroll((n) => n + 1);
+          if (key.pageUp) return setJobScroll((n) => Math.max(0, n - (rows - 10)));
+          if (key.pageDown) return setJobScroll((n) => n + (rows - 10));
+          if (ch === "x") {
+            return void api.killJob(currentId!, jobOpen).then(
+              (r) => setPanelMsg(r.message),
+              (e) => setPanelMsg(String(e)),
+            );
+          }
+          return;
+        }
+        if (key.upArrow || ch === "k") return setJobSel((i) => Math.max(0, i - 1));
+        if (key.downArrow || ch === "j") {
+          return setJobSel((i) => Math.min(Math.max(0, list.length - 1), i + 1));
+        }
+        const job = list[jobSel];
+        if (!job) return;
+        if (key.return || key.rightArrow) {
+          setJobOpen(job.id);
+          setJobText(null);
+          setJobScroll(0);
+          return;
+        }
+        if (ch === "x") {
+          if (job.status !== "running") return setPanelMsg(`${job.id} already finished`);
+          return void api.killJob(currentId!, job.id).then(
+            (r) => setPanelMsg(r.message),
+            (e) => setPanelMsg(String(e)),
+          );
+        }
+        return;
+      }
       // ---- workflows: runs → one run's agents → one agent's detail ----
       if (panelTab === "workflows") {
         const runs = store.workflows;
@@ -2265,12 +2348,13 @@ export function App(
       }
       return;
     }
-    // chat mode. Four jump chords open the one panel view on a tab; ^t toggles
+    // chat mode. Five jump chords open the one panel view on a tab; ^t toggles
     // the panel on whatever tab it last showed.
     if (key.ctrl && ch === "p") return openTab("sessions");
     if (key.ctrl && ch === "f") return openTab("conversation");
     if (key.ctrl && ch === "d") return openTab("changes");
     if (key.ctrl && ch === "o") return openTab("model");
+    if (key.ctrl && ch === "b") return openTab("jobs");
     if (key.ctrl && ch === "t") return openTab(panelTab);
     // ^e doubles as readline end-of-line while composing (matching the help's
     // line-editing table) — expand-all only fires on an empty input; toggling
@@ -2748,6 +2832,17 @@ export function App(
               rows={rows}
               cols={width}
               lastLog={wfOpenId ? store.wfLogs[wfOpenId] : undefined}
+            />
+          )
+          : panelTab === "jobs"
+          ? (
+            <Jobs
+              jobs={store.jobs}
+              sel={jobSel}
+              open={jobOpen}
+              output={jobText}
+              scroll={jobScroll}
+              rows={rows}
             />
           )
           : panelTab === "model"

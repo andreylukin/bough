@@ -265,6 +265,9 @@ export const api = {
   // Kill a running background shell directly (no LLM round-trip).
   killJob: (id: string, jobId: string) =>
     jmsg<{ message: string }>(`/sessions/${id}/jobs/${jobId}/kill`, { method: "POST" }),
+  // A shell's whole retained output, for the jobs tab's output view.
+  jobOutput: (id: string, jobId: string) =>
+    j<{ output: string; status: string }>(`/sessions/${id}/jobs/${jobId}/output`),
   applyChanges: (id: string, source: ChangeSource, paths: string[]) =>
     jmsg<ApplyOutcome>(`/sessions/${id}/changes/apply`, postJson({ source, paths })),
   revertChanges: (id: string) => j(`/sessions/${id}/changes/revert`, postJson({})),

@@ -206,7 +206,11 @@ export function StatusBar(
             {/* Cost carries its own weight so it doesn't read as more gray
                 metadata — bold lifts it out of the dim chip run. */}
             {spend > 0 ? <Text bold>{"  "}{fmtUsd(spend)}</Text> : null}
-            {(bgJobs ?? 0) > 0 ? <Text color={palette.warn}>{"  "}⚙ {bgJobs} bg</Text> : null}
+            {/* The chip names its own key: a count with no way to act on it was
+                the whole complaint about background jobs. */}
+            {(bgJobs ?? 0) > 0
+              ? <Text color={palette.warn}>{"  "}⚙ {bgJobs} bg ^b</Text>
+              : null}
             {pendingCount > 0
               ? (
                 <Text color={palette.warn}>

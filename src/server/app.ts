@@ -103,7 +103,7 @@ import { extract, ExtractBody } from "../extract.ts";
 import { handoff, HandoffBody } from "../handoff.ts";
 import { move, MoveBody } from "../move.ts";
 import { adoptSubagent } from "../subagent.ts";
-import { bashKill, listJobs, onJobEvent } from "../tools/bash_bg.ts";
+import { jobOutput, killJobById, listJobs, onJobEvent } from "../tools/bash_bg.ts";
 import { applyChanges, revertChanges, sessionChanges } from "./changes.ts";
 import { ChangesApplyBody, ChangesRevertBody } from "../schema/changes.ts";
 import { clearTheme, loadTheme, saveTheme, Theme, THEME_DEFAULTS, THEME_TOKENS } from "./theme.ts";
@@ -596,17 +596,26 @@ const getJobs: Handler = (_req, ctx, params) => {
   return json({ jobs: [...listJobs(params.id), ...subagents.flatMap((s) => listJobs(s.id))] });
 };
 
-// POST /sessions/:id/jobs/:jobId/kill → SIGTERM a running background shell of
-// the session directly (the tool-only bashKill, reachable from the TUI so a kill
-// doesn't cost a full LLM turn). bashKill keys the registry off ctx.sessionId.
+// POST /sessions/:id/jobs/:jobId/kill → SIGTERM a running background shell
+// directly (the tool-only bashKill, reachable from the TUI so a kill doesn't cost
+// a full LLM turn). Resolves the job by id across sessions: getJobs lists the
+// session's subagents' shells too, and those aren't in this session's registry.
 const killJob: Handler = async (_req, ctx, params) => {
   if (!ctx.db.getSession(params.id)) return error(404, "session not found");
   try {
-    const message = await bashKill(params.jobId, { workspace: "", sessionId: params.id });
-    return json({ message });
+    return json({ message: await killJobById(params.jobId) });
   } catch (e) {
     return error(404, e instanceof Error ? e.message : String(e));
   }
+};
+
+// GET /sessions/:id/jobs/:jobId/output → the shell's whole retained buffer, for
+// the jobs tab's output view. Non-destructive (see jobOutput).
+const getJobOutput: Handler = (_req, ctx, params) => {
+  if (!ctx.db.getSession(params.id)) return error(404, "session not found");
+  const out = jobOutput(params.jobId);
+  if (!out) return error(404, `no background shell ${params.jobId}`);
+  return json(out);
 };
 
 // GET /sessions/:id/changes → { diffs } across active snapshot sources (shadow + clonefile).
@@ -1180,6 +1189,11 @@ const routes: Route[] = [
     method: "POST",
     pattern: new URLPattern({ pathname: "/sessions/:id/jobs/:jobId/kill" }),
     handler: killJob,
+  },
+  {
+    method: "GET",
+    pattern: new URLPattern({ pathname: "/sessions/:id/jobs/:jobId/output" }),
+    handler: getJobOutput,
   },
   {
     method: "POST",

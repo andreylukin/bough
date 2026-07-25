@@ -31,7 +31,7 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
   {
     section: "panel — ^t toggle · tab cycle · esc back",
     keys: [
-      ["^p ^f ^d ^o", "sessions · conversation · changes · model"],
+      ["^p ^f ^d ^b ^o", "sessions · conversation · changes · jobs · model"],
       ["↑↓ or j/k", "move · enter acts"],
     ],
   },
@@ -62,6 +62,14 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
       ["a / A / R", "apply file · apply all · revert all"],
       ["a", "on a subagent's unadopted group: adopt its branch"],
       ["j/k", "scroll the diff"],
+    ],
+  },
+  {
+    section: "jobs tab — ^b · background shells",
+    keys: [
+      ["enter", "open the job's full output · esc back"],
+      ["x", "stop a running job — no LLM turn needed"],
+      ["j/k", "move · scroll the output"],
     ],
   },
   {

@@ -544,6 +544,7 @@ Deno.test("bg job cards: a running shell looks alive (marker + tail), a killed o
       command: "npm run dev",
       startedAt: Date.now() - 5_000,
       status: "running" as const,
+      outputLines: 1,
       tailLines: ["listening on :3000"],
     },
     {
@@ -551,6 +552,7 @@ Deno.test("bg job cards: a running shell looks alive (marker + tail), a killed o
       command: "sleep 999",
       startedAt: Date.now(),
       status: "killed" as const,
+      outputLines: 0,
       tailLines: [],
     },
     {
@@ -558,7 +560,18 @@ Deno.test("bg job cards: a running shell looks alive (marker + tail), a killed o
       command: "make build",
       startedAt: Date.now(),
       status: "exited" as const,
+      exitCode: 0,
+      outputLines: 1,
       tailLines: ["done"],
+    },
+    {
+      id: "bg_4",
+      command: "make test",
+      startedAt: Date.now(),
+      status: "exited" as const,
+      exitCode: 2,
+      outputLines: 1,
+      tailLines: ["FAIL"],
     },
   ];
   const joined = buildLines(thread, {}, () => false, () => false, 100, [], undefined, jobs)
@@ -571,8 +584,44 @@ Deno.test("bg job cards: a running shell looks alive (marker + tail), a killed o
   // Killed: honest outcome, not "done".
   assertStringIncludes(joined, "bg_2");
   assertStringIncludes(joined, "✗ killed");
-  // A natural exit renders no card — its completion note is already in the thread.
-  assertEquals(joined.includes("bg_3"), false);
+  // A finished job KEEPS its card and states the outcome — a vanishing card left
+  // a failed job with no user-visible trace at all.
+  assertStringIncludes(joined, "bg_3");
+  assertStringIncludes(joined, "✓ done");
+  assertStringIncludes(joined, "bg_4");
+  assertStringIncludes(joined, "✗ exit 2");
+  assertStringIncludes(joined, "FAIL");
+});
+
+Deno.test("the [background] wake note is dropped while its job card is showing", () => {
+  const note = (text: string) =>
+    ({
+      id: "s1",
+      sessionId: "s",
+      role: "system",
+      parts: [{ type: "text", text }],
+      pending: false,
+    }) as unknown as Message;
+  const raw = '[background] bg_1 finished (exit 7) — command "make", 4 lines of output. ' +
+    'Read it with bashOutput("bg_1").';
+  const job = {
+    id: "bg_1",
+    command: "make",
+    startedAt: Date.now(),
+    status: "exited" as const,
+    exitCode: 7,
+    outputLines: 4,
+    tailLines: ["boom"],
+  };
+  const build = (jobs: typeof job[]) =>
+    buildLines([note(raw)], {}, () => false, () => false, 100, [], undefined, jobs)
+      .map((l) => l.text).join("\n");
+  // Card present → the model-facing note (and its bashOutput plumbing) is hidden.
+  const withCard = build([job]);
+  assertEquals(withCard.includes("bashOutput"), false);
+  assertStringIncludes(withCard, "✗ exit 7");
+  // Aged out of the registry → the note is the only record left, so it stays.
+  assertStringIncludes(build([]), "bashOutput");
 });
 Deno.test("a user message steered into a running turn carries a queued ack; it clears once a reply follows", () => {
   const msg = (id: string, role: string, text: string, pending = false) =>

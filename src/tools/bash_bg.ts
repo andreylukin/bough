@@ -62,9 +62,10 @@ let seq = 0;
 
 // ---- job registry surface (jobs API + TUI visibility) ------------------------
 
-/** How long an exited shell stays in listJobs — long enough for the UI to show
- * the outcome, short enough that old jobs don't pile up in the response. */
-const RECENT_MS = 5 * 60_000;
+/** How long an exited shell stays in listJobs. Long enough that the outcome of a
+ * job you started is still there when you look up from something else — five
+ * minutes meant a failed build silently aged out before you ever saw it. */
+const RECENT_MS = 30 * 60_000;
 /** Lines of output tail a job row carries (the TUI's live-card preview). */
 const TAIL_LINES = 3;
 
@@ -73,8 +74,14 @@ export interface JobInfo {
   sessionId: string;
   command: string;
   startedAt: number;
+  /** When the shell exited — the card shows a frozen duration, not a live clock. */
+  endedAt?: number;
   status: "running" | "exited" | "killed";
   exitCode?: number;
+  /** Signal that killed it, when it died by one. */
+  signal?: string;
+  /** Total non-empty output lines (the jobs tab shows this next to the tail). */
+  outputLines: number;
   /** Last few non-empty output lines — the live-card preview. */
   tailLines: string[];
 }
@@ -90,15 +97,18 @@ export function onJobEvent(cb: (ev: JobEvent) => void): () => void {
 
 function jobInfo(sh: BgShell): JobInfo {
   const status = sh.status === null ? "running" : sh.killed ? "killed" : "exited";
-  const tail = sh.buf.trimEnd().split("\n").filter((l) => l.trim()).slice(-TAIL_LINES);
+  const lines = sh.buf.trimEnd().split("\n").filter((l) => l.trim());
   return {
     id: sh.id,
     sessionId: sh.sessionKey,
     command: sh.command,
     startedAt: sh.startedAt,
+    ...(sh.endedAt !== null ? { endedAt: sh.endedAt } : {}),
     status,
     ...(sh.status ? { exitCode: sh.status.code } : {}),
-    tailLines: tail,
+    ...(sh.status?.signal ? { signal: sh.status.signal } : {}),
+    outputLines: lines.length,
+    tailLines: lines.slice(-TAIL_LINES),
   };
 }
 
@@ -129,6 +139,62 @@ export function listJobs(sessionId: string): JobInfo[] {
         : 1
     )
     .map(jobInfo);
+}
+
+/** Find a shell by id across every session. The jobs endpoint aggregates a
+ * session's own shells with its subagents', so anything the UI can *list* it must
+ * also be able to read and kill — keying those off the open session 404'd on every
+ * subagent row. */
+function findShell(id: string): BgShell | null {
+  for (const shells of sessions.values()) {
+    const sh = shells.get(id);
+    if (sh) return sh;
+  }
+  return null;
+}
+
+/** The shell's whole retained buffer, for the jobs tab's output view.
+ * Deliberately does NOT advance `readAt`: that cursor belongs to the model's
+ * bashOutput, and a UI read that stole from it would make output vanish from the
+ * agent's context just because someone looked at it. */
+export function jobOutput(id: string): { output: string; status: JobInfo["status"] } | null {
+  const sh = findShell(id);
+  if (!sh) return null;
+  return {
+    output: sh.buf.trimEnd(),
+    status: sh.status === null ? "running" : sh.killed ? "killed" : "exited",
+  };
+}
+
+/** bashKill by id alone — the UI's kill path (see findShell). */
+export function killJobById(id: string): Promise<string> {
+  const sh = findShell(id);
+  if (!sh) throw new Error(`no background shell ${id}`);
+  return bashKill(id, { workspace: "", sessionId: sh.sessionKey } as ToolRunCtx);
+}
+
+/** SIGTERM every running shell, for server shutdown. Background shells are
+ * in-memory by design — killing the server must take their processes with it.
+ * It very nearly did so by accident: a shell that writes output dies of SIGPIPE
+ * when the server's end of its stdout pipe closes. A SILENT one (a bare sleep,
+ * an idle dev server, a build between writes) never touches the broken pipe and
+ * survives, reparented and invisible, with nothing left that knows it exists.
+ * Best-effort and synchronous — a shutdown handler has no time to wait. */
+export function killAllJobs(): number {
+  let n = 0;
+  for (const shells of sessions.values()) {
+    for (const sh of shells.values()) {
+      if (sh.status !== null) continue;
+      sh.killed = true;
+      try {
+        sh.child.kill("SIGTERM");
+        n++;
+      } catch {
+        // raced a natural exit
+      }
+    }
+  }
+  return n;
 }
 
 /** Ids of the session's still-running shells (the interrupt-survivor note). */

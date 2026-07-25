@@ -14,6 +14,7 @@ export type PanelTab =
   | "conversation"
   | "changes"
   | "workflows"
+  | "jobs"
   | "model"
   | "mcp"
   | "skills"
@@ -23,6 +24,7 @@ export const PANEL_TABS: PanelTab[] = [
   "conversation",
   "changes",
   "workflows",
+  "jobs",
   "model",
   "mcp",
   "skills",

@@ -473,7 +473,11 @@ export interface BgJob {
   id: string;
   command: string;
   startedAt: number;
+  endedAt?: number;
   status: "running" | "exited" | "killed";
+  exitCode?: number;
+  signal?: string;
+  outputLines: number;
   tailLines: string[];
 }
 
@@ -482,29 +486,51 @@ function fmtElapsed(ms: number): string {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
-// A background shell's card: alive while it runs (⋯ marker + output tail,
-// refreshed as the jobs poll lands), an honest ✗ once killed. Natural exits get
-// no card — their completion note already lands in the transcript.
-function jobCardLines(out: VLine[], job: BgJob, width: number) {
+/** The status run of a job card — the one thing you actually look for. */
+function jobStatusText(job: BgJob): string {
+  if (job.status === "running") return yellow("⋯ running");
+  if (job.status === "killed") return red("✗ killed");
+  if (job.signal) return red(`✗ ${job.signal}`);
+  return job.exitCode === 0 ? green("✓ done") : red(`✗ exit ${job.exitCode}`);
+}
+
+// A background shell's card. It persists past the exit: a job that ended used to
+// erase its own card and leave nothing but a note written *for the model*
+// ("Read it with bashOutput(...)"), so a build that failed while you were reading
+// something else left no user-visible trace of having failed at all. Now the card
+// stays and states the outcome, and ^b opens the full output.
+export function jobCardLines(out: VLine[], job: BgJob, width: number) {
   const w = width - 2;
   const body: VLine[] = [];
-  if (job.status === "running") {
-    body.push({
-      text: `${yellow("⚙")} ${bold(job.id)} ${yellow("⋯ running")}  ${
-        dim(`${clip(job.command, 60)} · ${fmtElapsed(Date.now() - job.startedAt)}`)
-      }`,
-    });
-    for (const line of job.tailLines) {
-      for (const l of wrap(line, w - 2)) body.push({ text: `${dim("│")} ${dim(l)}` });
-    }
-  } else {
-    body.push({
-      text: `${red("⚙")} ${bold(job.id)} ${red("✗ killed")}  ${dim(clip(job.command, 60))}`,
-    });
+  const glyph = job.status === "running"
+    ? yellow("⚙")
+    : job.status === "exited" && job.exitCode === 0 && !job.signal
+    ? green("⚙")
+    : red("⚙");
+  const took = fmtElapsed((job.endedAt ?? Date.now()) - job.startedAt);
+  body.push({
+    text: `${glyph} ${bold(job.id)} ${jobStatusText(job)}  ${
+      dim(`${clip(job.command, 60)} · ${took}`)
+    }`,
+  });
+  for (const line of job.tailLines) {
+    for (const l of wrap(line, w - 2)) body.push({ text: `${dim("│")} ${dim(l)}` });
+  }
+  // Only worth pointing at the full log when there's more of it than the tail.
+  if (job.outputLines > job.tailLines.length) {
+    body.push({ text: dim(`  ${job.outputLines} lines total · ^b opens the full output`) });
   }
   const copy = [`${job.id} · ${job.command}`, ...job.tailLines].join("\n");
   out.push({ text: "" });
-  out.push(...body.map((l) => ({ ...l, copy, text: "  " + l.text })));
+  out.push(...body.map((l) => ({ ...l, copy, click: "jobs", text: "  " + l.text })));
+}
+
+/** The model-facing background note (`postSystemNote` in turn.ts). It exists to
+ * wake the agent, not to inform the user — its card says the same thing in the
+ * user's language, so the raw note is dropped from the transcript. */
+const BG_NOTE_RE = /^\[background\] (bg_\d+) finished/;
+export function parseBgNote(text: string): string | null {
+  return BG_NOTE_RE.exec(text.trim())?.[1] ?? null;
 }
 
 export function buildLines(
@@ -520,6 +546,9 @@ export function buildLines(
   // Branches draw under the turn that spawned them; a completion note that already
   // renders as a card is dropped from the raw thread (it's a system message).
   const notedIds = new Set(branches.map((b) => b.note?.sessionId).filter(Boolean));
+  // Jobs still in the registry render as cards, so their raw wake notes are dropped.
+  // Once a job ages out of the registry the note is all that's left — keep it then.
+  const jobIds = new Set(jobs.map((j) => j.id));
   const byOrigin = new Map<string, Branch[]>();
   const orphans: Branch[] = [];
   for (const b of branches) {
@@ -542,6 +571,9 @@ export function buildLines(
         .join("\n");
       const parsed = parseSubagentNote(t);
       if (parsed && notedIds.has(parsed.sessionId)) continue;
+      // Same for the [background] wake note: its job card carries the outcome.
+      const bg = parseBgNote(t);
+      if (bg && jobIds.has(bg)) continue;
     }
     out.push(...messageLines(m, isExpanded, isFull, width, streaming[m.id], toolLogs));
     // Honest ack under a steered message: the turn yields only at its next round
@@ -556,9 +588,9 @@ export function buildLines(
   }
   // Branches whose spawn point isn't in the current thread fall to the tail.
   for (const b of orphans) branchCardLines(out, b, width, isFull);
-  // Background shells at the tail: running jobs look alive, killed ones honest.
-  for (const job of jobs) {
-    if (job.status !== "exited") jobCardLines(out, job, width);
-  }
+  // Background shells at the tail — every one of them, including the finished:
+  // the outcome is the whole point, and dropping exited jobs meant a failure
+  // showed up nowhere at all.
+  for (const job of jobs) jobCardLines(out, job, width);
   return out;
 }

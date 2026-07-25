@@ -6,6 +6,7 @@ import { openDb } from "../db/db.ts";
 import { teardown as teardownSandbox } from "../sandbox/agentfs.ts";
 import { setOriginResolver } from "../vcs/shadow.ts";
 import { mcpManager } from "../mcp/manager.ts";
+import { killAllJobs } from "../tools/bash_bg.ts";
 import { bus } from "../bus.ts";
 import { createHandler, PURGE_RETENTION_MS } from "./app.ts";
 import { recoverOrphanedTurns } from "../supervisor/turns.ts";
@@ -39,6 +40,21 @@ bus.subscribe((e) => {
 });
 // MCP server children (mcp/manager.ts) get an orderly SIGTERM on shutdown.
 globalThis.addEventListener("unload", () => void mcpManager().dropAll());
+// Background shells die WITH the server — the registry is in-memory, so anything
+// outliving the process is unreachable by every surface that could stop it.
+// This needs an explicit signal handler: Deno tears down on SIGTERM/SIGINT
+// without running `unload`, and launchd stops us with SIGTERM. Deno.exit() then
+// fires `unload`, so the MCP teardown above still runs on this path.
+// Exit 128+signo, not 0: the launchd job is KeepAlive/SuccessfulExit=false, so a
+// clean exit(0) reads as "meant to stop" and the server never comes back — the
+// whole kill-to-respawn workflow (AGENTS.md) dies with it.
+for (const [sig, code] of [["SIGTERM", 143], ["SIGINT", 130]] as const) {
+  Deno.addSignalListener(sig, () => {
+    const n = killAllJobs();
+    if (n > 0) console.log(`stopped ${n} background shell(s)`);
+    Deno.exit(code);
+  });
+}
 // Live-map blurbs: the local worker narrates each session's current program round
 // as ephemeral session.activity events (production wiring only — tests stay hermetic).
 watchActivity(bus);
