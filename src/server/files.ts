@@ -30,7 +30,7 @@ const SKIP_DIRS = new Set([
 const MAX_SCAN = 20_000; // files walked before we stop
 const MAX_RESULTS = 20;
 
-/** Subsequence match: every char of `q` appears in `s` in order (case-insensitive). */
+/** Subsequence match: every char of q appears in s in order (case-insensitive). */
 function subseq(q: string, s: string): boolean {
   if (!q) return true;
   let i = 0;
@@ -44,22 +44,91 @@ function subseq(q: string, s: string): boolean {
 
 /** Rank: prefer a hit on the basename, then a shorter path. Lower is better. */
 function score(rel: string, q: string): number {
-  const base = rel.slice(rel.lastIndexOf("/") + 1);
+  // Strip trailing slash (dir hits) so the basename is the dir name, not "".
+  const path = rel.endsWith("/") ? rel.slice(0, -1) : rel;
+  const base = path.slice(path.lastIndexOf("/") + 1);
   const onBase = subseq(q, base) ? 0 : 1000;
   return onBase + rel.length;
 }
 
 /**
- * Return up to MAX_RESULTS workspace-relative paths matching `query`. `query` ""
+ * Lightweight .gitignore support for the @ picker walk. A repo can accumulate
+ * large generated/ignored trees (bench shadow worktrees, build output) that
+ * exhaust MAX_SCAN before the walker reaches real source — respecting .gitignore
+ * keeps the walk focused on files the user actually works with. Only the patterns
+ * that matter for pruning a directory walk are supported: exact names, names
+ * with a trailing / (dirs only), * globs, and path patterns (with /).
+ * Negation (!) is parsed but applied as "do not skip" — sufficient for the
+ * picker, not a full git spec.
+ */
+interface IgnorePattern {
+  raw: string;
+  dirOnly: boolean;   // trailing / — match directories only
+  anchored: boolean;  // leading / — match from the .gitignore dir, not any level
+  negate: boolean;    // leading !
+  re: RegExp;         // compiled pattern
+}
+
+function parseGitignore(dir: string): IgnorePattern[] {
+  let text: string;
+  try {
+    text = Deno.readTextFileSync(dir + "/.gitignore");
+  } catch {
+    return [];
+  }
+  const patterns: IgnorePattern[] = [];
+  for (const line of text.split("\n")) {
+    const p = line.trim();
+    if (!p || p.startsWith("#")) continue;
+    const negate = p.startsWith("!");
+    const pat = negate ? p.slice(1) : p;
+    const dirOnly = pat.endsWith("/");
+    const body = dirOnly ? pat.slice(0, -1) : pat;
+    const anchored = body.startsWith("/");
+    const glob = anchored ? body.slice(1) : body;
+    // Build a case-insensitive regex. * → any chars except /, ? → one char,
+    // everything else is literal.
+    let re = "^";
+    if (!anchored) re += "(?:.*/)?"; // match at any level
+    for (const ch of glob) {
+      if (ch === "*") re += "[^/]*";
+      else if (ch === "?") re += "[^/]";
+      else if (".*+?^${}()|[]\\".includes(ch)) re += "\\" + ch;
+      else re += ch;
+    }
+    re += "$";
+    patterns.push({ raw: p, dirOnly, anchored, negate, re: new RegExp(re, "i") });
+  }
+  return patterns;
+}
+
+/** Whether an entry should be skipped given accumulated .gitignore patterns. */
+function isIgnored(
+  name: string,
+  isDir: boolean,
+  patterns: IgnorePattern[],
+): boolean {
+  let ignored = false;
+  for (const p of patterns) {
+    if (p.dirOnly && !isDir) continue;
+    if (p.re.test(name)) ignored = !p.negate;
+  }
+  return ignored;
+}
+
+/**
+ * Return up to MAX_RESULTS workspace-relative paths matching query. query ""
  * lists the first files found (useful for an initial dropdown). Non-existent or
- * unreadable roots yield [].
+ * unreadable roots yield []. Respects .gitignore files encountered during the
+ * walk so large ignored trees (shadow worktrees, build output) do not crowd out
+ * real results.
  */
 export async function searchWorkspaceFiles(root: string, query: string): Promise<string[]> {
   const q = query.trim();
   const hits: string[] = [];
   let scanned = 0;
 
-  async function walk(dir: string, prefix: string): Promise<void> {
+  async function walk(dir: string, prefix: string, ignores: IgnorePattern[]): Promise<void> {
     if (scanned >= MAX_SCAN) return;
     let entries: Deno.DirEntry[];
     try {
@@ -67,14 +136,18 @@ export async function searchWorkspaceFiles(root: string, query: string): Promise
     } catch {
       return;
     }
+    // Layer this dir’s .gitignore on top of inherited patterns.
+    const local = parseGitignore(dir);
+    const patterns = local.length ? [...ignores, ...local] : ignores;
     for (const e of entries) {
       if (scanned >= MAX_SCAN) return;
       if (e.name.startsWith(".") || SKIP_DIRS.has(e.name)) continue;
-      const rel = prefix ? `${prefix}/${e.name}` : e.name;
+      if (isIgnored(e.name, e.isDirectory, patterns)) continue;
+      const rel = prefix ? prefix + "/" + e.name : e.name;
       if (e.isDirectory) {
         scanned++;
         if (subseq(q, rel)) hits.push(rel + "/");
-        await walk(`${dir}/${e.name}`, rel);
+        await walk(dir + "/" + e.name, rel, patterns);
       } else if (e.isFile) {
         scanned++;
         if (subseq(q, rel)) hits.push(rel);
@@ -82,7 +155,7 @@ export async function searchWorkspaceFiles(root: string, query: string): Promise
     }
   }
 
-  await walk(root, "");
+  await walk(root, "", []);
   hits.sort((a, b) => score(a, q) - score(b, q));
   return hits.slice(0, MAX_RESULTS);
 }

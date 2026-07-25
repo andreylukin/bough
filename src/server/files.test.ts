@@ -44,6 +44,37 @@ Deno.test("searchWorkspaceFiles: skips .git/node_modules/dotfiles, empty query l
 Deno.test("searchWorkspaceFiles: missing root yields []", async () => {
   assertEquals(await searchWorkspaceFiles("/no/such/dir/xyz", "a"), []);
 });
+Deno.test("searchWorkspaceFiles: respects .gitignore (skips ignored dirs)", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "gitignore-" });
+  try {
+    // Create a .gitignore that ignores "generated/"
+    await Deno.writeTextFile(dir + "/.gitignore", "generated/\n*.log\n");
+    await Deno.mkdir(dir + "/generated", { recursive: true });
+    await Deno.writeTextFile(dir + "/generated/important.ts", "x");
+    await Deno.writeTextFile(dir + "/real.ts", "y");
+    await Deno.writeTextFile(dir + "/debug.log", "z");
+    const hits = await searchWorkspaceFiles(dir, "");
+    assertEquals(hits.includes("real.ts"), true);
+    // Ignored dir should not appear
+    assertEquals(hits.some((f) => f.includes("generated")), false);
+    // Ignored file should not appear
+    assertEquals(hits.some((f) => f.endsWith(".log")), false);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("searchWorkspaceFiles: directory hits ranked by basename (trailing slash)", async () => {
+  const dir = await fixture();
+  try {
+    // "components" matches the src/components directory basename exactly.
+    const hits = await searchWorkspaceFiles(dir, "components");
+    assertEquals(hits.length > 0, true);
+    assertEquals(hits[0], "src/components/"); // exact basename match ranks first
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
 Deno.test("searchWorkspaceFiles: directory hits returned with trailing slash", async () => {
   const dir = await fixture();
   try {
