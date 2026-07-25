@@ -99,6 +99,8 @@ export interface Store {
   /** Show a transient notice (auto-clears) — feedback for actions that would
    * otherwise be silent (fork created, range deleted, key not applicable). */
   notify: (msg: string) => void;
+  /** Stop the open conversation's turn, subagent subtree, and background shells. */
+  stopAll: () => void;
 }
 
 export function useStore(initialSessions: Session[]): Store {
@@ -435,6 +437,25 @@ export function useStore(initialSessions: Session[]): Store {
     api.interrupt(id).catch(() => {});
   }, []);
 
+  /** ^x: stop the open conversation's turn, its whole subagent subtree, and
+   * their background shells. Reports what it actually stopped — a stop that
+   * silently did nothing is indistinguishable from a stop that failed. */
+  const stopAll = useCallback(() => {
+    const id = currentRef.current;
+    if (!id) return;
+    api.stopAll(id).then(
+      (r) => {
+        const bits = [
+          r.turn ? "the turn" : null,
+          r.subagents > 0 ? `${r.subagents} subagent${r.subagents > 1 ? "s" : ""}` : null,
+          r.jobs > 0 ? `${r.jobs} background shell${r.jobs > 1 ? "s" : ""}` : null,
+        ].filter(Boolean).join(" · ");
+        notify(bits ? `⏹ stopped — ${bits}` : "⏹ nothing was still running");
+      },
+      (e) => notify(`stop failed: ${e}`),
+    );
+  }, []);
+
   const archive = useCallback((id: string) => {
     api.archiveSession(id).catch(() => {});
   }, []);
@@ -763,5 +784,6 @@ export function useStore(initialSessions: Session[]): Store {
     revertChanges,
     dismissNotice,
     notify,
+    stopAll,
   };
 }

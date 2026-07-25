@@ -166,6 +166,10 @@ export function App(
   }, []);
   const [quitHint, setQuitHint] = useState(false);
   const lastCtrlC = useRef(0);
+  // ^x "stop everything here" arms on the first press and fires on the second
+  // (same double-tap as quit and archive — one keypress discarding a subtree of
+  // running work is exactly the reflex those guards exist for).
+  const lastCtrlX = useRef(0);
   const [err, setErr] = useState<string | null>(null);
   // /conversation info card above the composer; esc or the next send dismisses it.
   const [showInfo, setShowInfo] = useState(false);
@@ -2356,6 +2360,29 @@ export function App(
     if (key.ctrl && ch === "o") return openTab("model");
     if (key.ctrl && ch === "b") return openTab("jobs");
     if (key.ctrl && ch === "t") return openTab(panelTab);
+    // ^x: stop this conversation's turn, every subagent under it, and their
+    // background shells. esc only stops a RUNNING turn, so a detached subagent
+    // that outlived its parent's turn had no stop path in the TUI at all —
+    // quitting the TUI doesn't stop it either, since the server outlives it.
+    if (key.ctrl && ch === "x") {
+      const live = branches.filter((b) => b.busy).length;
+      if (!store.currentId) return;
+      if (!store.busy && live === 0 && runningJobs === 0) {
+        return store.notify("nothing running in this conversation");
+      }
+      const now = Date.now();
+      if (now - lastCtrlX.current >= 3000) {
+        lastCtrlX.current = now;
+        const bits = [
+          live > 0 ? `${live} subagent${live > 1 ? "s" : ""}` : null,
+          runningJobs > 0 ? `${runningJobs} job${runningJobs > 1 ? "s" : ""}` : null,
+        ].filter(Boolean).join(" · ");
+        return store.notify(`^x again to stop ${bits || "the running turn"}`);
+      }
+      lastCtrlX.current = 0;
+      store.stopAll();
+      return;
+    }
     // ^e doubles as readline end-of-line while composing (matching the help's
     // line-editing table) — expand-all only fires on an empty input; toggling
     // folds mid-thought on a text-editing chord was a user-testing bug.

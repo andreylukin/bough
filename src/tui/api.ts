@@ -205,6 +205,14 @@ export const api = {
   },
   interrupt: (id: string) =>
     j<{ ok: boolean; interrupted: boolean }>(`/sessions/${id}/interrupt`, { method: "POST" }),
+  // The conversation's kill switch: its turn, every subagent under it, and their
+  // background shells. Unlike interrupt, this works on an idle session — that's
+  // the runaway-detached-subagent case.
+  stopAll: (id: string) =>
+    j<{ ok: boolean; turn: boolean; jobs: number; subagents: number }>(
+      `/sessions/${id}/stop`,
+      { method: "POST" },
+    ),
   archiveSession: (id: string) => post(`/sessions/${id}/archive`),
   unarchiveSession: (id: string) => post(`/sessions/${id}/unarchive`),
   deprecateSession: (id: string, on: boolean) =>

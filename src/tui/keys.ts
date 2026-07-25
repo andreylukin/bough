@@ -6,7 +6,7 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
     keys: [
       ["enter", "send — steers a running turn"],
       ["⌥enter", "queue for after this turn"],
-      ["esc", "interrupt the turn (also during a question hold)"],
+      ["esc", "interrupt a RUNNING turn (also during a question hold) · ^x stops the rest"],
       ["esc esc", "clear the draft · rewind when empty"],
       ["↑/↓", "recall sent messages"],
       ["↓ (empty)", "into the subagent rail · enter opens · esc back"],
@@ -106,7 +106,10 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
   },
   {
     section: "global",
-    keys: [["^c ^c", "quit"]],
+    keys: [
+      ["^x ^x", "stop everything here — turn, subagents, background shells"],
+      ["^c ^c", "quit — leaves subagents running on the server"],
+    ],
   },
 ];
 

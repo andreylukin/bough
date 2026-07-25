@@ -182,17 +182,21 @@ export function killJobById(id: string): Promise<string> {
  * Best-effort and synchronous — a shutdown handler has no time to wait. */
 export function killAllJobs(): number {
   let n = 0;
-  for (const shells of sessions.values()) {
-    for (const sh of shells.values()) {
-      if (sh.status !== null) continue;
-      sh.killed = true;
-      try {
-        sh.child.kill("SIGTERM");
-        n++;
-      } catch {
-        // raced a natural exit
-      }
-    }
+  for (const key of sessions.keys()) n += killJobsOf(key);
+  return n;
+}
+
+/** SIGTERM the session's running shells. The per-session half of killAllJobs:
+ * "stop everything in this conversation" reaches background work the same way
+ * it reaches subagents. Emits job.exited via the kill path so the UI updates. */
+export function killJobsOf(sessionId: string): number {
+  let n = 0;
+  for (const sh of sessions.get(sessionId)?.values() ?? []) {
+    if (sh.status !== null) continue;
+    sh.killed = true;
+    sh.claimed = true; // a deliberate stop — don't also wake the model with a note
+    signalTree(sh, "SIGTERM");
+    n++;
   }
   return n;
 }
@@ -202,6 +206,66 @@ export function runningIds(sessionId: string): string[] {
   return [...(sessions.get(sessionId)?.values() ?? [])]
     .filter((sh) => sh.status === null)
     .map((sh) => sh.id);
+}
+
+/**
+ * Every descendant pid of `root`, deepest first.
+ *
+ * Signalling the shell is not enough: `bash -c 'sleep 900'` does not forward
+ * SIGTERM to its foreground child, so killing the shell orphaned the grandchild
+ * — a stopped `npm run dev` left node holding the port. macOS has no setsid, so
+ * there is no process group to signal; the portable answer is to read the tree
+ * out of ps. Sync because the shutdown handler has no chance to await.
+ */
+function descendantPids(root: number): number[] {
+  let text = "";
+  try {
+    const r = new Deno.Command("ps", {
+      args: ["-Ao", "pid=,ppid="],
+      stdout: "piped",
+      stderr: "null",
+    }).outputSync();
+    text = new TextDecoder().decode(r.stdout);
+  } catch {
+    return []; // no ps (or run permission): fall back to signalling the shell alone
+  }
+  const kids = new Map<number, number[]>();
+  for (const line of text.split("\n")) {
+    const m = /^\s*(\d+)\s+(\d+)\s*$/.exec(line);
+    if (!m) continue;
+    const [pid, ppid] = [Number(m[1]), Number(m[2])];
+    kids.set(ppid, [...(kids.get(ppid) ?? []), pid]);
+  }
+  const out: number[] = [];
+  const seen = new Set<number>([root]);
+  const walk = (p: number) => {
+    for (const c of kids.get(p) ?? []) {
+      if (seen.has(c)) continue; // ps raced a reparent; don't loop
+      seen.add(c);
+      walk(c);
+      out.push(c);
+    }
+  };
+  walk(root);
+  return out;
+}
+
+/** Signal the shell AND everything it spawned. Descendants first, so a parent
+ * can't restart one after we've passed it. */
+export function signalTree(sh: BgShell, sig: Deno.Signal) {
+  for (const pid of descendantPids(sh.child.pid)) {
+    if (pid <= 1 || pid === Deno.pid) continue; // never signal init or ourselves
+    try {
+      Deno.kill(pid, sig);
+    } catch {
+      // already gone
+    }
+  }
+  try {
+    sh.child.kill(sig);
+  } catch {
+    // raced a natural exit
+  }
 }
 
 function shellsOf(ctx: ToolRunCtx): Map<string, BgShell> {
@@ -390,21 +454,11 @@ export async function bashKill(id: string, ctx: ToolRunCtx): Promise<string> {
   if (sh.status !== null) return `${id} already exited with code ${sh.status.code}`;
   sh.claimed = true; // deliberate kill — don't also post a completion note
   sh.killed = true; // the registry reports "killed", not a plain exit
-  try {
-    sh.child.kill("SIGTERM");
-  } catch {
-    // raced a natural exit
-  }
+  signalTree(sh, "SIGTERM");
   // Backstop for processes that ignore SIGTERM. unref: an idle timer must not
   // hold the server's event loop (or a test's op sanitizer) hostage.
   const backstop = setTimeout(() => {
-    if (sh.status === null) {
-      try {
-        sh.child.kill("SIGKILL");
-      } catch {
-        // exited during the grace period
-      }
-    }
+    if (sh.status === null) signalTree(sh, "SIGKILL");
   }, KILL_GRACE_MS);
   Deno.unrefTimer(backstop);
   const st = await sh.child.status; // bounded: SIGKILL lands after the grace

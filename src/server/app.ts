@@ -103,7 +103,7 @@ import { extract, ExtractBody } from "../extract.ts";
 import { handoff, HandoffBody } from "../handoff.ts";
 import { move, MoveBody } from "../move.ts";
 import { adoptSubagent } from "../subagent.ts";
-import { jobOutput, killJobById, listJobs, onJobEvent } from "../tools/bash_bg.ts";
+import { jobOutput, killJobById, killJobsOf, listJobs, onJobEvent } from "../tools/bash_bg.ts";
 import { applyChanges, revertChanges, sessionChanges } from "./changes.ts";
 import { ChangesApplyBody, ChangesRevertBody } from "../schema/changes.ts";
 import { clearTheme, loadTheme, saveTheme, Theme, THEME_DEFAULTS, THEME_TOKENS } from "./theme.ts";
@@ -501,6 +501,47 @@ const interruptSession: Handler = (_req, ctx, params) => {
   // 200 whether or not a turn was live — interrupting an idle session is a no-op,
   // not an error (the UI may race the turn finishing).
   return json({ ok: true, interrupted: stopped });
+};
+
+/** Every subagent session descending from `rootId`, depth-first. A subagent can
+ * spawn its own, so this walks the chain rather than one level. */
+function subagentDescendants(ctx: AppCtx, rootId: string): string[] {
+  const all = ctx.db.listSessions().filter((s) => s.kind === "subagent");
+  const out: string[] = [];
+  const seen = new Set<string>([rootId]);
+  const walk = (id: string) => {
+    for (const s of all) {
+      if (s.originId !== id || seen.has(s.id)) continue;
+      seen.add(s.id);
+      out.push(s.id);
+      walk(s.id);
+    }
+  };
+  walk(rootId);
+  return out;
+}
+
+// POST /sessions/:id/stop → the conversation's kill switch: its turn, every
+// subagent under it (however deep), and their background shells.
+//
+// interruptTurn already cascades to DETACHED subagents through its hooks, and
+// works on an idle session — but the TUI only ever called it while a turn was
+// running, so a detached subagent that outlived its parent's turn could not be
+// stopped from the UI at all. This endpoint interrupts each descendant by id
+// too, so a child whose hook was already unregistered is still reached.
+const stopSession: Handler = (_req, ctx, params) => {
+  if (!ctx.db.getSession(params.id)) return error(404, "session not found");
+  const kids = subagentDescendants(ctx, params.id);
+  // Count what was actually STOPPED, not what exists: reporting every descendant
+  // meant "stopped 1 subagent" for a subagent that had finished minutes ago.
+  const turn = interruptTurn(params.id);
+  let subagents = 0;
+  let jobs = killJobsOf(params.id);
+  for (const id of kids) {
+    if (interruptTurn(id)) subagents++;
+    jobs += killJobsOf(id);
+  }
+  return json({ ok: true, turn, subagents, jobs });
 };
 
 // Compaction-as-a-branch: summarize selected turns onto a new compaction session
@@ -1104,6 +1145,11 @@ const routes: Route[] = [
     method: "POST",
     pattern: new URLPattern({ pathname: "/sessions/:id/interrupt" }),
     handler: interruptSession,
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({ pathname: "/sessions/:id/stop" }),
+    handler: stopSession,
   },
   {
     method: "POST",
