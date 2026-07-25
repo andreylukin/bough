@@ -1,10 +1,5 @@
 /** Run a shell command in the session workspace, capturing combined output. */
 import { z } from "zod/v4";
-import {
-  ensure as ensureAgentfs,
-  execCommand as agentfsExecCommand,
-  sandboxAgentfs,
-} from "../sandbox/agentfs.ts";
 import type { ToolDef, ToolRunCtx } from "./types.ts";
 import { backgroundNote, formatFinal, MAX_BUF, newShell, promote } from "./bash_bg.ts";
 
@@ -31,39 +26,27 @@ function bgAfterMs(): number {
 }
 
 /**
- * Argv + env + cwd for running `command` under this ctx's confinement — shared by
- * the blocking bash tool and the background shells (bash_bg.ts).
+ * Argv + cwd for running `command` — shared by the blocking bash tool and the
+ * background shells (bash_bg.ts).
  *
- * Egress goes DIRECT: there is no proxy or egress firewall. Commands use the host's
- * own credentials (gh/git resolve the host login) and reach the network unrouted.
+ * There is NO confinement of any kind. The shell is a plain host `/bin/sh` running
+ * as the user, starting in the session workspace; it may cd and write anywhere the
+ * user can, and egress goes direct with the host's own credentials (gh/git resolve
+ * the host login). The workspace is a starting point, not a boundary.
  *
- * agentfs mode: the shell runs inside the session's copy-on-write overlay of the
- * host workspace, which is the whole confinement story — writes land in the
- * session's delta, the real tree is untouched.
+ * This is deliberate. The overlay that used to sit here (agentfs copy-on-write)
+ * bought isolation git already provides for a repo, and paid for it by breaking
+ * git: the agent's edits lived in a delta the real tree couldn't see, so
+ * `git status`/`git diff`/`git commit` all reported on the wrong filesystem and
+ * work could only reach the repo through a bespoke ship() host function. Running
+ * in the checkout means `git commit && git push` simply work, which is the whole
+ * point.
  */
 export function shellInvocation(
   command: string,
   ctx: ToolRunCtx,
-): { argv: string[]; env?: Record<string, string>; cwd?: string } {
-  const argv = ["/bin/sh", "-c", command];
-
-  // agentfs backend (the only sandbox; on by default): run the shell inside the
-  // session's copy-on-write overlay of the host workspace. The wrapper argv drops
-  // agentfs's banner and merges the command's stderr into stdout; the child's cwd
-  // is the workspace, which is the overlay's copy-on-write base. bash.run spawns
-  // the returned argv with its own streaming/background/kill machinery — it is
-  // just a host `/bin/sh` subprocess, so all of that works unchanged.
-  if (ctx.sandbox && ctx.sessionId && sandboxAgentfs()) {
-    ensureAgentfs(ctx.sessionId, { origin: ctx.workspace });
-    return {
-      argv: agentfsExecCommand(ctx.sessionId, argv),
-      cwd: ctx.workspace,
-    };
-  }
-
-  // No sandbox (tests / CI / BOUGH_SANDBOX_AGENTFS=0): run unwrapped on the host,
-  // in the workspace.
-  return { argv, cwd: ctx.workspace };
+): { argv: string[]; cwd?: string } {
+  return { argv: ["/bin/sh", "-c", command], cwd: ctx.workspace };
 }
 
 /**
@@ -96,14 +79,13 @@ export const bash: ToolDef = {
   schema,
   async run(input: unknown, ctx: ToolRunCtx): Promise<string> {
     const { command, timeout_ms } = input as z.infer<typeof schema>;
-    const { argv, env, cwd } = await shellInvocation(command, ctx);
+    const { argv, cwd } = await shellInvocation(command, ctx);
     // Spawn bound to the turn's interrupt only (the user's stop button must kill the
     // actual process). We stream the output so a long command can be handed to the
     // background registry mid-run rather than blocked-then-killed.
     const child = new Deno.Command(argv[0], {
       args: argv.slice(1),
       cwd,
-      env,
       stdin: "null",
       stdout: "piped",
       stderr: "piped",
@@ -168,11 +150,10 @@ export async function shConcurrent(
   ctx: ToolRunCtx,
 ): Promise<{ code: number; out: string }[]> {
   return await Promise.all(commands.map(async (command) => {
-    const { argv, env, cwd } = shellInvocation(command, ctx);
+    const { argv, cwd } = shellInvocation(command, ctx);
     const child = new Deno.Command(argv[0], {
       args: argv.slice(1),
       cwd,
-      env,
       stdin: "null",
       stdout: "piped",
       stderr: "piped",

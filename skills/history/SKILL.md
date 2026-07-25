@@ -92,5 +92,5 @@ Line legend:
   `SELECT session_id, id FROM messages WHERE parts LIKE '%some text%';`
 - Timestamps are epoch milliseconds.
 - Override the db path with `BOUGH_DB` if needed.
-- Session snapshots (shadow-git/clonefile refs) live in `snapshots`; workspaces under
-  `~/.bough/workspaces/<id>`.
+- Clonefile snapshots (non-repo workspaces) live in `snapshots`. Repo sessions have
+  no snapshots — their history is the workspace's own git.

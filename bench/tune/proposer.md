@@ -53,6 +53,6 @@ Reply with ONLY a JSON object — no code fences, no surrounding prose:
  "files": {"system.md": "full replacement text for that section file"}}
 
 Include only the files you change; omitted sections inherit the champion's.
-Valid file names: system.md, delegation.md, delegation-nested.md, subagent.md,
-ship-note.md. Each file's content is the full section text (do not include the
+Valid file names: system.md, delegation.md, delegation-nested.md,
+subagent.md. Each file's content is the full section text (do not include the
 leading blank lines; headers stay).

@@ -242,7 +242,8 @@ def cmd_search(args):
         if r["session_id"] != last_session:
             last_session = r["session_id"]
             ws = os.path.basename(r["workspace"] or "")
-            ws = "" if ws == r["session_id"] else ws + "  "  # shadow worktrees are named by session id
+            # Legacy pre-in-place rows recorded a uuid-named worktree as the workspace.
+            ws = "" if ws == r["session_id"] else ws + "  "
             print(f"\n{r['session_id']}  {ws}{r['title'][:60]}")
         print(f"  {fmt_ts(r['created_at'])}  {ROLE_LABEL.get(r['role'], r['role'])}: {snip}")
         shown += 1

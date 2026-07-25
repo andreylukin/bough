@@ -5,8 +5,9 @@
  * inherited context; the task text is the whole briefing, though the spawning
  * turn's MCP grant carries over — see TurnCtx.mcpGrant), lineage pointers back to
  * the spawning turn (originId/originMessageId — exactly what the heads map draws
- * connectors from), and its own shadow worktree branched off the spawner's tip so
- * parallel subagents never fight over one working copy.
+ * connectors from). It works in the SAME checkout as its spawner — bough edits the
+ * user's own working copy in place, so there is no per-subagent working copy and
+ * parallel subagents must be given non-overlapping files to touch.
  *
  * Two delegation modes share one launch path:
  *   - runSubagent (program: `agent(task)`) blocks until the subagent's turn ends and
@@ -18,12 +19,11 @@
  *     fresh turn or rides the queued-drain if one is mid-flight. joinSubagent
  *     (program: `join(sessionId)`) claims the result in-band instead of the note.
  *
- * Results never auto-merge: adoptSubagent squashes the subagent's change into the
- * spawner's, or the branch is simply left on the map for the user to review,
- * continue, or archive. Because the subagent is a plain session with a workspace
+ * There is nothing to merge afterwards: a subagent's writes land in the shared
+ * checkout as it makes them, and its branch is left on the map for the user to
+ * review, continue, or archive. Because the subagent is a plain session with a workspace
  * and a bookmark, "continue off of it" needs nothing new: open it and send a message.
  */
-import { join as joinPath } from "node:path";
 import type { Db } from "./db/db.ts";
 import { openBranch } from "./branch.ts";
 import {
@@ -37,9 +37,7 @@ import {
 import { DONE_ACCEPTED } from "./tools/mod.ts";
 import { maybeAutoTitle, UNTITLED } from "./supervisor/title.ts";
 import { normalizeWorkspace } from "./supervisor/workspace.ts";
-import * as shadow from "./vcs/shadow.ts";
-import * as agentdiff from "./vcs/agentdiff.ts";
-import { pathExists } from "./fsutil.ts";
+import * as repodiff from "./vcs/repodiff.ts";
 
 export interface SpawnCtx {
   spawnerId: string;
@@ -210,7 +208,9 @@ export async function buildResult(
   let changedFiles: string[] = [];
   if (subDir) {
     try {
-      changedFiles = (await agentdiff.diff(subDir, sessionId)).files.map((f) => f.path);
+      const base = db.getSessionRuntime(sessionId).base;
+      changedFiles = (await repodiff.diffSince(subDir, base && base !== "empty" ? base : null))
+        .files.map((f) => f.path);
     } catch {
       // diff is best-effort reporting; the branch itself is intact
     }
@@ -241,10 +241,12 @@ export async function buildResult(
 }
 
 /**
- * Shared launch path: create the subagent session (+ its shadow worktree when the
- * spawner has a repo), seed the task, and begin its turn. Returns immediately with
- * a promise for the assembled result; a timeout interrupts overruns in both modes.
+ * Shared launch path: create the subagent session (pointed at the spawner's own
+ * workspace — the user's checkout), seed the task, and begin its turn. Returns
+ * immediately with a promise for the assembled result; a timeout interrupts
+ * overruns in both modes.
  */
+// deno-lint-ignore require-await -- async only for the Promise-returning contract
 async function launch(
   ctx: TurnCtx,
   spawn: SpawnCtx,
@@ -282,18 +284,6 @@ async function launch(
   }
 
   const explicit = explicitWorkspace(ctx, spawn.spawnerId);
-  // Mirrors prepareWorkspace's sandbox rule: only an explicit workspace (and no
-  // test override / escape hatch) gets snapshot tracking — and only a git repo
-  // gets an isolated shadow worktree of its own.
-  const sandboxed = ctx.workspace === undefined && explicit !== undefined &&
-    Deno.env.get("BOUGH_NO_SANDBOX") !== "1";
-  // A shadow worktree carries a .git FILE; legacy jj-era dirs a .jj dir. Accept
-  // both so a nested spawn never silently runs unisolated on its spawner's copy
-  // (legacy dirs then fail the spawn with a clear error instead).
-  const isRepo = sandboxed &&
-    (await pathExists(joinPath(explicit!, ".git")) ||
-      await pathExists(joinPath(explicit!, ".jj")));
-
   const stub = taskStubTitle(task);
   const seeder = openBranch({ db, bus }, {
     parentId: null, // fresh context: the task text is the subagent's whole briefing
@@ -308,29 +298,9 @@ async function launch(
   });
   const session = seeder.session;
 
-  // A repo workspace gets its own working copy, branched off the spawner's tip.
-  let subDir: string | undefined;
-  if (isRepo) {
-    try {
-      const dir = shadow.workspaceDirFor(session.id);
-      await Deno.mkdir(shadow.workspacesRoot(), { recursive: true });
-      await shadow.addWorkspace(explicit!, session.id, dir, spawn.spawnerId);
-      db.setSessionWorkspace(session.id, dir);
-      const updated = db.getSession(session.id)!;
-      bus.publish({ type: "session.updated", sessionId: session.id, data: updated });
-      subDir = dir;
-    } catch (e) {
-      // Without an isolated working copy the subagent would race the spawner's
-      // checkout — fail the spawn instead of running unisolated.
-      db.archiveSession(session.id);
-      bus.publish({
-        type: "session.archived",
-        sessionId: session.id,
-        data: { sessionId: session.id },
-      });
-      throw new Error(`could not branch a workspace for the subagent: ${(e as Error).message}`);
-    }
-  }
+  // The subagent works in the spawner's own checkout — nothing to provision. Its
+  // reported diff is taken against that same dir (buildResult, via repodiff).
+  const subDir = explicit;
 
   seeder.add("user", [{ type: "text", text: task }]);
   // Fire-and-forget: name the branch from its task (same worker path as sessions);
@@ -463,20 +433,22 @@ function formatNote(r: SubagentResult): string {
   const files = r.changedFiles.length ? r.changedFiles.join(", ") : "none";
   return [
     `[subagent finished] "${r.title}" (${r.sessionId}) — ${status}.`,
-    `Changed files on its branch: ${files}.`,
+    `Changed files: ${files}.`,
     r.report ? `Report:\n${r.report}` : "No report.",
-    `Its changes stay on its own branch — adopt("${r.sessionId}") in run_steps merges them into this workspace; or leave the branch for review.`,
+    `It worked in this same checkout, so those edits are already here — read them before building on top; there is nothing to merge.`,
   ].join("\n");
 }
 
 /**
- * Adopt a finished subagent's changes: fold its diff into the spawner's worktree.
- * The subagent's branch stays on the map (emptied, still continuable).
+ * Adopt is now a no-op explainer, kept because the host fn and the REST route
+ * still exist: a subagent edits the SAME checkout as its spawner, so its work is
+ * already in the tree. Validates the lineage and nudges the rail to refresh.
  *
- * KNOWN GAP: this (and changedFiles above) only sees writes inside the shadow
- * worktree — absolute-path writes a subagent made OUTSIDE its workspace are not
- * captured and would need a separate snapshot source (out of scope here).
+ * KNOWN GAP: this (and changedFiles above) only sees writes under the workspace —
+ * absolute-path writes a subagent made elsewhere on disk are outside `git diff`
+ * and so never show up in the Changes rail.
  */
+// deno-lint-ignore require-await -- async only for the Promise-returning contract
 export async function adoptSubagent(
   ctx: TurnCtx,
   spawnerId: string,
@@ -487,14 +459,13 @@ export async function adoptSubagent(
   if (!sub || sub.kind !== "subagent" || sub.originId !== spawnerId) {
     throw new Error("adopt(sessionId): not a subagent of this session");
   }
+  // Nothing to move: subagents run in the SAME workspace as their spawner now
+  // (there are no per-session branches), so a subagent's edits are already in this
+  // session's tree the moment it makes them.
   const subDir = db.getSessionRuntime(subagentId).workspace;
   const repo = explicitWorkspace(ctx, spawnerId);
-  if (!subDir || !repo || subDir === repo) {
-    throw new Error("this subagent has no branched workspace to adopt");
-  }
-  await agentdiff.adopt(repo, spawnerId, subDir, subagentId);
-  // Both Changes rails move: the spawner gains the diff, the subagent's empties.
+  if (!subDir || !repo) throw new Error("this subagent has no workspace");
   bus.publish({ type: "changes.updated", sessionId: spawnerId, data: { sessionId: spawnerId } });
-  bus.publish({ type: "changes.updated", sessionId: subagentId, data: { sessionId: subagentId } });
-  return `adopted: subagent ${subagentId}'s changes are now in this session's workspace`;
+  return `subagent ${subagentId} shares this session's workspace — its changes are ` +
+    `already here; nothing to adopt`;
 }

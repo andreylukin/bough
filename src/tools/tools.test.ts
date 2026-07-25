@@ -4,6 +4,11 @@ import { readFile } from "./read_file.ts";
 import { writeFile } from "./write_file.ts";
 import { editFile } from "./edit_file.ts";
 import { jsonSchema } from "./types.ts";
+import { dirname } from "node:path";
+
+async function canRun(cmd: string): Promise<boolean> {
+  return (await Deno.permissions.query({ name: "run", command: cmd })).state === "granted";
+}
 
 async function tmp(): Promise<{ dir: string; ctx: { workspace: string } }> {
   const dir = await Deno.makeTempDir();
@@ -48,73 +53,47 @@ Deno.test("jsonSchema emits a draft-7 object schema with required fields", () =>
   assertEquals(schema.required.sort(), ["content", "path"]);
 });
 
-Deno.test("file tools reject paths that escape the workspace", async () => {
+Deno.test("file tools resolve absolute paths anywhere — there is no confinement", async () => {
   const { dir, ctx } = await tmp();
-  try {
-    await assertRejects(() => writeFile.run({ path: "../escape.txt", content: "x" }, ctx));
-    await assertRejects(() => readFile.run({ path: "/etc/hosts" }, ctx));
-    // With a sandbox handle, the snapshot dir and the scratchpad are also writable.
-    const snap = `${dir}-snap`;
-    const scratch = `${dir}-scratch`;
-    await Deno.mkdir(snap, { recursive: true });
-    await Deno.mkdir(scratch, { recursive: true });
-    const sbx = { workspace: dir, sandbox: { sessionDir: snap, scratchDir: scratch } };
-    await writeFile.run({ path: `${snap}/ok.txt`, content: "y" }, sbx);
-    assertEquals(await Deno.readTextFile(`${snap}/ok.txt`), "y");
-    await writeFile.run({ path: `${scratch}/tmp.txt`, content: "z" }, sbx);
-    assertEquals(await Deno.readTextFile(`${scratch}/tmp.txt`), "z");
-    await Deno.remove(snap, { recursive: true });
-    await Deno.remove(scratch, { recursive: true });
-  } finally {
-    await Deno.remove(dir, { recursive: true });
-  }
-});
-
-Deno.test("file tools follow symlinks and reject ones that escape the workspace", async () => {
-  const dir = await Deno.makeTempDir();
   const outside = await Deno.makeTempDir();
   try {
-    await Deno.writeTextFile(`${outside}/secret.txt`, "top secret");
-    await Deno.symlink(outside, `${dir}/link`); // a link inside the workspace → outside
-    await assertRejects(() => readFile.run({ path: "link/secret.txt" }, { workspace: dir }));
+    // The workspace is the ORIGIN for relative paths, not a boundary: the agent's
+    // bash runs unconfined in the user's own account, so the file tools must reach
+    // exactly as far or they'd disagree with it.
+    await writeFile.run({ path: `${outside}/note.txt`, content: "out" }, ctx);
+    assertEquals(await Deno.readTextFile(`${outside}/note.txt`), "out");
+    assertEquals(await readFile.run({ path: `${outside}/note.txt` }, ctx), "out");
+    // ...including via `..` out of the workspace and through a symlink that leaves it.
+    await writeFile.run({ path: "../escape.txt", content: "up" }, ctx);
+    assertEquals(await Deno.readTextFile(`${dirname(dir)}/escape.txt`), "up");
+    await Deno.symlink(outside, `${dir}/link`);
+    assertEquals(await readFile.run({ path: "link/note.txt" }, ctx), "out");
   } finally {
+    await Deno.remove(`${dirname(dir)}/escape.txt`).catch(() => {});
     await Deno.remove(dir, { recursive: true });
     await Deno.remove(outside, { recursive: true });
   }
 });
 
-// Superseded by the agentfs backend: subprocess confinement moved from Seatbelt to
-// the per-session agentfs copy-on-write overlay (writes land in the session delta,
-// the real tree is untouched). This Seatbelt-specific test is retired.
-Deno.test({
-  name: "sandboxed bash writes inside the workspace but is denied outside",
-  ignore: true,
-  async fn() {
-    const dir = await Deno.makeTempDir();
-    const ctx = {
-      workspace: dir,
-      sandbox: { sessionDir: `${dir}/.snap`, scratchDir: `${dir}/.scratch` },
-    };
-    const escape = `${Deno.env.get("HOME")}/bough-seatbelt-escape-${crypto.randomUUID()}.txt`;
-    try {
-      await bash.run({ command: "echo hi > inside.txt" }, ctx);
-      assertEquals(await Deno.readTextFile(`${dir}/inside.txt`), "hi\n");
-
-      const out = await bash.run({ command: `echo pwn > '${escape}'` }, ctx);
-      let leaked = false;
-      try {
-        await Deno.stat(escape);
-        leaked = true;
-      } catch {
-        // denied as expected
-      }
-      assert(!leaked, "write outside the workspace should have been denied");
-      assert(out.includes("exit code"), "denied write should report a non-zero exit");
-    } finally {
-      await Deno.remove(dir, { recursive: true });
-      await Deno.remove(escape).catch(() => {});
-    }
-  },
+Deno.test("bash edits are visible to a later git command in the same workspace", async () => {
+  // The single-view guarantee. Under the old copy-on-write overlay a shell write
+  // landed in a per-session delta that git (running outside it) could not see, so
+  // the agent's own `git status` lied to it. Both now touch the same bytes.
+  if (!(await canRun("git"))) return;
+  const dir = await Deno.makeTempDir({ prefix: "bough-onview-" });
+  const ctx = { workspace: dir };
+  try {
+    await bash.run({ command: "git init -q ." }, ctx);
+    await bash.run({ command: "printf 'hi\n' > tracked.txt" }, ctx);
+    const status = await bash.run({ command: "git status --porcelain" }, ctx);
+    assert(status.includes("tracked.txt"), `git could not see the shell's write:\n${status}`);
+    // ...and the write_file tool shares that same view.
+    await writeFile.run({ path: "viafile.txt", content: "x" }, ctx);
+    const status2 = await bash.run({ command: "git status --porcelain" }, ctx);
+    assert(status2.includes("viafile.txt"), status2);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 Deno.test("bash: the turn's interrupt signal kills the child process", async () => {

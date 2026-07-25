@@ -57,7 +57,7 @@ with `interruptTurn(id)`; shrink the timeout with `BOUGH_SUBAGENT_TIMEOUT_MS`.
 scratch-DB/scratch-port server, drive a real turn (`bough exec`) that spawns a
 subagent scripted to fail (a command that can't pass a check, or a `sleep` you
 interrupt via `POST /sessions/:id/interrupt`), then assert `turnForMessage`
-status, the `[subagent finished]` note, and the shadow-branch state. This is the
+status, the `[subagent finished]` note, and the shared checkout's state. This is the
 only tier that covers D1 (kill + restart mid-subagent → `recoverOrphanedTurns`)
 and the real-git adopt paths (D3/D4).
 

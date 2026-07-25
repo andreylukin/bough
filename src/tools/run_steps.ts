@@ -3,8 +3,8 @@
  * round, executed by the deterministic harness in a sealed V8 sandbox (harness/vm.ts).
  * The supervisor plans and writes; it never touches the machine. The program's whole
  * capability surface is the four host functions, which run here on the host through
- * the confined tool implementations (bash + file ops in the session's agentfs
- * copy-on-write overlay when sandboxed).
+ * the tool implementations (bash + file ops, both unconfined, in the session
+ * workspace).
  *
  * Completion is CHECK-gated, not self-reported: `check` commits a shell command that
  * exits 0 iff the task's acceptance criteria hold; `done: true` asks the harness to
@@ -225,22 +225,6 @@ export const runSteps: ToolDef = {
           ? {
             artifact: async (name: string, content: string) =>
               JSON.stringify(await ctx.artifact!(name, content)),
-          }
-          : {}),
-        // Ship (wired for root-session repo turns): commit + optional push into the
-        // origin repo; options and result travel as JSON like mcp().
-        ...(ctx.ship
-          ? {
-            ship: async (optsJson: string) =>
-              JSON.stringify(await ctx.ship!(JSON.parse(optsJson || "{}"))),
-          }
-          : {}),
-        // PR (wired for root-session repo turns): export the session's work into a
-        // branch and open a GitHub PR; options and result travel as JSON like ship().
-        ...(ctx.pr
-          ? {
-            pr: async (optsJson: string) =>
-              JSON.stringify(await ctx.pr!(JSON.parse(optsJson || "{}"))),
           }
           : {}),
         // Recurring runs (wired for supervisor turns): verb-dispatched like lsp();

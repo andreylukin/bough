@@ -5,8 +5,6 @@
 // back out as if it were the built-in.
 import { join } from "node:path";
 import {
-  SHIP_NOTE,
-  SHIP_NOTE_WORKTREE,
   SYSTEM,
   SYSTEM_DELEGATION,
   SYSTEM_DELEGATION_NESTED,
@@ -25,8 +23,6 @@ if (!out) {
 Deno.mkdirSync(out, { recursive: true });
 const sections: Record<string, string> = {
   "system.md": SYSTEM,
-  "ship-note.md": SHIP_NOTE,
-  "ship-note-worktree.md": SHIP_NOTE_WORKTREE,
   "delegation.md": SYSTEM_DELEGATION,
   "delegation-nested.md": SYSTEM_DELEGATION_NESTED,
   "subagent.md": SYSTEM_SUBAGENT,

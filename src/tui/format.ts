@@ -366,10 +366,9 @@ export function coldCacheNote(
 }
 
 // ---- session row labels --------------------------------------------------------
-// Shadow worktrees are per-session dirs NAMED BY SESSION UUID
-// (~/.bough/workspaces/<id> — vcs/shadow.ts), and a fork inherits its origin's
-// worktree path until its own first turn, so a workspace basename can be a
-// DIFFERENT session's uuid. Never surface those as a label.
+// Legacy pre-in-place sessions recorded a bough-owned worktree NAMED BY SESSION
+// UUID (~/.bough/workspaces/<id>) in their workspace column. Nothing writes those
+// any more, but old DB rows still carry them — never surface a uuid as a label.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Row label for a session: its title, else the workspace dir basename, else

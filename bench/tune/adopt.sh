@@ -21,11 +21,11 @@ DEST="$ROOT/src/supervisor/prompt"
 [ -d "$SRC" ] || { echo "adopt: no such variant: $SRC" >&2; exit 1; }
 [ -d "$DEST" ] || { echo "adopt: no prompt dir: $DEST" >&2; exit 1; }
 
-# The five override-able sections (must match SECTION_FILES in tune.py and the
+# The four override-able sections (must match SECTION_FILES in tune.py and the
 # promptOverride calls in prompt.ts). A variant may omit files it didn't change;
 # only copy the ones it actually carries.
 copied=0
-for f in system.md ship-note.md delegation.md delegation-nested.md subagent.md; do
+for f in system.md delegation.md delegation-nested.md subagent.md; do
   if [ -f "$SRC/$f" ]; then
     cp "$SRC/$f" "$DEST/$f"
     copied=$((copied + 1))

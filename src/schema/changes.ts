@@ -1,12 +1,14 @@
 /**
  * The Changes-tab contract — Zod schemas for a structured diff, shared by both
- * snapshot sources (shadow for repo work, clonefile for non-git config). The UI's
+ * snapshot sources ("repo" for the user's checkout, "clonefile" for non-git config). The UI's
  * Changes rail renders a `Diff` and lets the reviewer approve/apply per file or
  * per hunk, so this shape is deliberately minimal and source-tagged.
  *
  * Design notes:
  *   - A `Diff` carries its `source` so the apply path knows which backend to call
- *     (shadow materialize/restore vs. clonefile copy-back) — the shapes are otherwise identical.
+ *     — the shapes are otherwise identical. "repo" means the user's own checkout,
+ *     diffed against the sha the session started from (vcs/repodiff.ts); there is
+ *     no separate store for the agent's edits any more.
  *   - `FileDiff.status` is the coarse git status (added/modified/deleted). Renames
  *     surface as a delete + add pair (git's default without `-M`), keeping the model flat.
  *   - A `Hunk` is one `@@ ... @@` block: its `header` verbatim plus the body `lines`
@@ -35,14 +37,8 @@ export type FileDiff = z.infer<typeof FileDiff>;
 
 /** A full review payload from one snapshot source. */
 export const Diff = z.object({
-  source: z.enum(["clonefile", "shadow"]),
+  source: z.enum(["clonefile", "repo"]),
   files: z.array(FileDiff),
-  /** Set when this is a direct subagent's unadopted branch surfaced in its
-   * SPAWNER's rail: the subagent session to adopt (POST /sessions/:id/adopt).
-   * These entries are review-only for the spawner — apply/revert don't take them. */
-  subagentId: z.string().optional(),
-  /** Display label for a grouped diff section (e.g. `<subagent title> (unadopted)`). */
-  label: z.string().optional(),
 });
 export type Diff = z.infer<typeof Diff>;
 
@@ -50,11 +46,12 @@ export type Diff = z.infer<typeof Diff>;
 
 /**
  * Apply reviewed changes. For `clonefile`, `paths` are the original absolute paths to
- * copy back over. For `shadow`, `paths` selects which changed files to materialize
- * into the origin; covering every changed path also seals the change.
+ * copy back over. For `shadow` there is nothing to apply — the session edited the
+ * checkout directly, so the files are already in place and `paths` is ignored;
+ * delivery is the reviewer's own `git commit` (see server/changes.ts).
  */
 export const ChangesApplyBody = z.object({
-  source: z.enum(["clonefile", "shadow"]),
+  source: z.enum(["clonefile", "repo"]),
   paths: z.array(z.string()),
 });
 export type ChangesApplyBody = z.infer<typeof ChangesApplyBody>;
@@ -67,14 +64,14 @@ export const ChangesRevertBody = z.object({
 export type ChangesRevertBody = z.infer<typeof ChangesRevertBody>;
 
 /**
- * Parse a unified/`--git` diff into `FileDiff[]`. Shared by shadow.ts (`git diff`)
+ * Parse a unified/`--git` diff into `FileDiff[]`. Shared by repodiff.ts (`git diff`)
  * and clonefile.ts (`git diff --no-index`) so both sources produce byte-identical
  * structure. Pure and dependency-free.
  *
  * `stripPrefix` drops a leading path segment from the `a/`,`b/` names: `git
  * --no-index` reports absolute paths, so callers pass the snapshot/original roots
- * to recover a clean relative path. shadow already emits repo-relative names, so it
- * passes nothing.
+ * to recover a clean relative path. repodiff already emits repo-relative names, so
+ * it passes nothing.
  */
 export function parseGitDiff(text: string, stripPrefix?: (p: string) => string): FileDiff[] {
   const files: FileDiff[] = [];

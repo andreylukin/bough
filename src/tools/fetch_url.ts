@@ -5,8 +5,7 @@
  * works too, but it is a subprocess per request, its errors arrive as exit codes, and
  * the model has to parse headers out of text — this returns one structured value.
  *
- * There is no egress wall behind this (sandbox/agentfs.ts confines the filesystem
- * only): whatever URL the model passes leaves the machine verbatim with the user's
+ * There is no egress wall behind this: whatever URL the model passes leaves the machine verbatim with the user's
  * identity. Hence the deliberate narrowness — http/https only (no file:, data: or
  * other schemes that would read the host through a URL), no credential injection, and
  * headers only as the program spells them out.

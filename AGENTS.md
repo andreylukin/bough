@@ -1,14 +1,14 @@
 # Version control: plain git
 
-This repo is a normal git checkout on `main`. Session snapshotting moved from
-jj colocation to per-project **shadow git repos** (docs/shadow-snapshots.md);
-bough keeps all snapshot state under `~/.bough/shadow` and `~/.bough/workspaces`,
-so nothing here ever detaches HEAD or fights the index anymore.
+This repo is a normal git checkout on `main`, and bough works in it **in place** —
+no shadow store, no per-session worktree, no overlay. Edits land in the real files
+immediately, so git is the only record of what a session changed (each session's
+starting sha is recorded in the db and drives the Changes rail).
 
 - Ship work with ordinary commits on `main` (branch first for anything you'd
   want reviewed as a PR).
-- Session snapshot history, if you ever need to salvage from it, lives in the
-  shadow stores: `git --git-dir ~/.bough/shadow/<name>-<hash> log refs/bough/sessions/<id>`.
+- There is no snapshot store to salvage from: uncommitted work lives only in the
+  working tree.
 - Legacy jj-era session refs may still exist as `bough/<session-id>` branches in
   older repos; they are inert.
 

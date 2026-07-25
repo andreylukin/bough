@@ -78,18 +78,12 @@ import {
   type PreparedWorkspace,
   prepareWorkspace,
 } from "./supervisor/workspace.ts";
-import {
-  ensure as ensureAgentfs,
-  readFile as agentfsReadFile,
-  sandboxAgentfs,
-} from "./sandbox/agentfs.ts";
 import { activationsFor } from "./mcp/config.ts";
 import { createLspBridge, lspAvailable, lspSection } from "./mcp/lsp.ts";
 import { mcpManager } from "./mcp/manager.ts";
 import { mcpSection } from "./mcp/prompt.ts";
 import { mcpStatusFor } from "./mcp/status.ts";
 import {
-  attachImageBytes,
   attachImageFile,
   collectImageAttachments,
   expandFileReferences,
@@ -100,8 +94,6 @@ import { recall as recallSearch } from "./recall.ts";
 import { expireAsks, raiseAsk } from "./asks.ts";
 import { scheduleVerb } from "./schedules.ts";
 import { stateVerb } from "./state.ts";
-import { awaitHydration, originRepo as shadowOrigin } from "./vcs/shadow.ts";
-import { openPr, shipToOrigin } from "./vcs/agentdiff.ts";
 
 export interface TurnCtx {
   db: Db;
@@ -713,27 +705,17 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     // and post it as a system note carrying an image part. History is assembled
     // once per turn, so the picture lands on the NEXT turn — the same wake path a
     // background shell's completion note uses; the confirmation says so.
-    toolCtx.image = async (path, note) => {
+    // Synchronous now that there is no overlay to read the bytes out of: the
+    // attach is a plain host copyFile, so the only Promise here is the return.
+    toolCtx.image = (path, note) => {
       const rel = path.startsWith("/")
         ? path
         : path.startsWith("~/")
         ? `${Deno.env.get("HOME") ?? "."}${path.slice(1)}`
         : `${prepared.cwd.replace(/\/+$/, "")}/${path}`;
-      // agentfs overlay first: the primary case is a screenshot/chart the program
-      // JUST rendered, and its write landed in the session's delta — the host tree
-      // has no such file to stat. The overlay reads as base ∪ delta, so this also
-      // covers pre-existing files under the workspace; anything outside it (a
-      // ~/Desktop reference) fails the overlay read and falls back to the host.
-      let part: ImagePart | null = null;
-      if (toolCtx.sandbox && sandboxAgentfs()) {
-        try {
-          ensureAgentfs(sessionId, { origin: prepared.cwd });
-          part = attachImageBytes(await agentfsReadFile(sessionId, rel), path);
-        } catch {
-          part = null; // not in the overlay — try the host tree below
-        }
-      }
-      part ??= attachImageFile(rel, path);
+      // Plain host read: tools write real files now, so a screenshot the program
+      // just rendered is simply there.
+      const part: ImagePart | null = attachImageFile(rel, path);
       if (!part) {
         throw new Error(
           `image(): cannot attach ${path} — missing, unreadable, not a png/jpg/gif/webp, or over 5MB`,
@@ -801,22 +783,13 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       // Subagents inherit this turn's MCP grant (captured now, not at call time).
       const subCtx: TurnCtx = { ...ctx, mcpGrant: grantedMcp };
       toolCtx.delegate = {
-        // Blocking delegation records what came back so the adopt stop-gate
-        // below can see stranded work: a subagent that changed files sits in
-        // turn.unadopted until an adopt() clears it.
         run: async (task) => {
           if (toolCtx.turn) toolCtx.turn.ranParallel = true;
-          const r = await runSubagent(subCtx, sctx, task);
-          if (r.changedFiles.length > 0 && toolCtx.turn) {
-            (toolCtx.turn.unadopted ??= new Map<string, string>()).set(r.sessionId, r.title);
-          }
-          return r;
+          return await runSubagent(subCtx, sctx, task);
         },
-        adopt: async (subId) => {
-          const out = await adoptSubagent(ctx, sessionId, subId);
-          toolCtx.turn?.unadopted?.delete(subId);
-          return out;
-        },
+        // Kept for compatibility with programs (and prompts) that still call it:
+        // subagents share this session's checkout, so it just says so.
+        adopt: (subId) => adoptSubagent(ctx, sessionId, subId),
         ...(isSub ? {} : {
           spawn: (task) => {
             if (toolCtx.turn) toolCtx.turn.ranParallel = true;
@@ -886,41 +859,14 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     // no server restart. Undefined override = the process default sections.
     const {
       SYSTEM,
-      SHIP_NOTE_WORKTREE,
       SYSTEM_DELEGATION,
       SYSTEM_DELEGATION_NESTED,
       SYSTEM_SUBAGENT,
     } = resolveSystemSections(db.getSession(sessionId)?.promptDir ?? undefined);
-    // Ship (root sessions running in a shadow worktree only): commit + optional
-    // push into the origin repo, executed HOST-side — the sandbox itself never
-    // gains write access to the user's checkout. Subagents don't ship; their work
-    // flows upward via adopt.
-    let shipNote = "";
-    if (!isSub && prepared.sandboxed) {
-      const shipDir = prepared.cwd;
-      const shipOrigin = await shadowOrigin(shipDir);
-      if (shipOrigin) {
-        toolCtx.ship = async (opts) => {
-          if (!opts || typeof opts.message !== "string" || !opts.message.trim()) {
-            throw new Error("ship({message, paths?, push?}): a commit message is required");
-          }
-          const res = await shipToOrigin(shipDir, sessionId, shipOrigin, opts);
-          bus.publish({ type: "changes.updated", sessionId, data: { sessionId } });
-          return res;
-        };
-        toolCtx.pr = async (opts) => {
-          if (!opts || typeof opts.title !== "string" || !opts.title.trim()) {
-            throw new Error(
-              "pr({title, body?, branch?, base?, paths?, draft?}): a title is required",
-            );
-          }
-          const res = await openPr(shipDir, sessionId, shipOrigin, opts);
-          bus.publish({ type: "changes.updated", sessionId, data: { sessionId } });
-          return res;
-        };
-        shipNote = SHIP_NOTE_WORKTREE;
-      }
-    }
+    // No ship()/pr() host functions: bash runs in the user's own checkout, so
+    // committing and pushing is `git commit` / `git push` / `gh pr create` like any
+    // other command. The pair existed only to carry work out of the copy-on-write
+    // overlay that used to sit under the tools (see tools/bash.ts).
     // System prompt in two tiers for prompt caching — llm.ts places a cache
     // breakpoint after each (see anthropicClient's caching comment):
     //
@@ -942,7 +888,6 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     //
     // Relative order within each tier is unchanged from the pre-split prompt.
     const system = SYSTEM +
-      shipNote +
       (isSub ? SYSTEM_SUBAGENT : "") +
       (mayDelegate ? (isSub ? SYSTEM_DELEGATION_NESTED : SYSTEM_DELEGATION) : "") +
       lspNote;
@@ -1008,20 +953,6 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       stopGateNudged = true;
       return true;
     };
-    // Adopt gate: blocking agent() calls whose subagents changed files land in
-    // turn.unadopted (delegate wiring above); adopt() clears them. A turn ending
-    // with entries left strands that work on branches — nudge once, then the
-    // model either adopts or says why it's leaving them.
-    let adoptGateNudged = false;
-    const adoptGateNudge = (): string | null => {
-      const unadopted = toolCtx.turn?.unadopted;
-      if (adoptGateNudged || !unadopted?.size) return null;
-      adoptGateNudged = true;
-      const names = [...unadopted].map(([id, title]) => `"${title}" (${id})`).join(", ");
-      return `[harness] Subagent(s) ${names} changed files that are not adopted — ` +
-        `adopt("<id>") to merge them into this workspace, or state explicitly that ` +
-        `you're leaving them on the branch and why.`;
-    };
     // Parallelism honesty: fires only when the turn did tool work (a pure
     // conversation turn can mention these words legitimately — advice, not a
     // claim about work it just did), no parallel primitive ran, and the turn's
@@ -1038,17 +969,11 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     };
     /** End-gates, checked when the turn is about to end having said something:
      * each is one-shot and returns its nudge text, or null to let the end stand. */
-    const endGateNudge = (): string | null => adoptGateNudge() ?? honestyGateNudge();
+    const endGateNudge = (): string | null => honestyGateNudge();
     // Last resort against a mute turn end: a round with tools forbidden
     // (toolChoice "none"), which reliably yields plain text where a second nudge
     // would just get another empty-thinking + stop.
     let forceText = false;
-    // Runtime artifacts (node_modules, venvs) hydrate in the background while the
-    // model streams its first response (shadow.ts). Block once, at the first tool,
-    // so nothing executes against a half-populated worktree — by then the LLM
-    // round has usually already overlapped the copy. A no-op on resume turns and
-    // non-sandboxed sessions (no hydration was ever registered for prepared.cwd).
-    let hydrationGated = false;
     const saidSomething = () => parts.some((p) => p.type === "text");
     for (let round = 0;; round++) {
       if (signal?.aborted) throw new InterruptedError();
@@ -1181,10 +1106,6 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
         (b) => b.type === "tool_use" && b.name !== STOP_NAME,
       );
       if (toolUses.length > 0) {
-        if (!hydrationGated) {
-          hydrationGated = true;
-          await awaitHydration(prepared.cwd);
-        }
         ranTools = true;
         const toolResults: LlmContentBlock[] = [];
         let doneAccepted = false;

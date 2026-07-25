@@ -1,9 +1,10 @@
 // normalizeWorkspace / workspaceProblem — the two pure helpers that keep a bad
 // workspace path from silently killing every tool in a session — plus the
-// external-mode prepareWorkspace flow (isolated per-session working copies).
+// prepareWorkspace flow, which now runs the turn IN the user's checkout and only
+// records the base sha the Changes rail diffs against.
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { Db } from "../db/db.ts";
-import * as shadow from "../vcs/shadow.ts";
+import * as repodiff from "../vcs/repodiff.ts";
 import { normalizeWorkspace, prepareWorkspace, workspaceProblem } from "./workspace.ts";
 
 Deno.test("normalizeWorkspace expands a leading ~", () => {
@@ -37,8 +38,8 @@ Deno.test("workspaceProblem: ok for a real dir, message for missing/file", async
 });
 
 Deno.test("prepareWorkspace: a sandboxed turn gets a scratch dir created OUTSIDE the workspace", async () => {
-  // A plain (non-repo) dir as the workspace: sandboxed=true, but the git/jj branch
-  // is skipped, so this exercises the scratch-dir creation without needing jj on PATH.
+  // A plain (non-repo) dir as the workspace: sandboxed=true, but the base-sha
+  // capture is skipped, so this exercises scratch-dir creation without needing git.
   const ws = await Deno.makeTempDir({ prefix: "wstest-ws-" });
   const snapBase = await Deno.makeTempDir({ prefix: "wstest-snap-" });
   const scratchBase = await Deno.makeTempDir({ prefix: "wstest-scratch-" });
@@ -92,7 +93,7 @@ Deno.test("prepareWorkspace: a non-sandboxed run (bare cwd) has no scratch dir",
   }
 });
 
-// ---- external-mode prepareWorkspace (needs git on PATH) ----------------------
+// ---- prepareWorkspace on a real repo (needs git on PATH) --------------------
 
 async function sh(bin: string, args: string[], cwd: string): Promise<void> {
   const { code, stderr } = await new Deno.Command(bin, {
@@ -129,31 +130,20 @@ async function canRun(cmd: string): Promise<boolean> {
 
 const gitAvailable = await canRun("git");
 
-async function exists(p: string): Promise<boolean> {
-  try {
-    await Deno.stat(p);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 Deno.test({
-  // External mode end-to-end: a session on a plain git repo runs its turns in an
-  // isolated working copy (workspace column repointed there), resumes into the
-  // same dir, and a fork branches its own copy off the parent's tip. The user's
-  // repo never gains a .jj and never changes checkout.
-  name: "prepareWorkspace: plain git repo → isolated session workspace; fork inherits",
+  // The whole in-place contract in one flow: a session on a git repo runs its
+  // turns in THAT repo (no relocation, workspace column untouched), the first
+  // turn pins the base sha, later turns and forks land in the same dir, and the
+  // Changes rail reads the edits straight out of the checkout.
+  name: "prepareWorkspace: turns run in the user's checkout; base sha pinned once; fork inherits",
   ignore: !gitAvailable,
   fn: async () => {
     const repo = await tempGitRepo();
-    const shadowBase = await Deno.makeTempDir({ prefix: "wstest-store-" });
-    const wsBase = await Deno.makeTempDir({ prefix: "wstest-wsroot-" });
     const snapBase = await Deno.makeTempDir({ prefix: "wstest-snap-" });
+    const scratchBase = await Deno.makeTempDir({ prefix: "wstest-scratch-" });
     const env: Record<string, string> = {
-      BOUGH_SHADOW_BASE: shadowBase,
-      BOUGH_SUBAGENT_BASE: wsBase,
       BOUGH_SNAPSHOT_BASE: snapBase,
+      BOUGH_SCRATCH_BASE: scratchBase,
     };
     const prev = new Map<string, string | undefined>();
     for (const [k, v] of Object.entries(env)) {
@@ -171,26 +161,28 @@ Deno.test({
         workspace: repo,
       });
 
-      // First turn: relocated into the session's own working copy, column repointed.
+      // First turn: runs in the repo itself, and records where it started.
       const p1 = await prepareWorkspace(db, "s1");
       assert(p1.sandboxed);
-      assertEquals(p1.cwd, shadow.workspaceDirFor("s1"));
-      assertEquals(db.getSessionRuntime("s1").workspace, p1.cwd);
-      assert(db.getSessionRuntime("s1").base !== null, "base sentinel persisted");
-      assertEquals(await exists(`${repo}/.jj`), false);
+      assertEquals(p1.cwd, repo);
+      assertEquals(db.getSessionRuntime("s1").workspace, repo);
+      const head = await repodiff.headSha(repo);
+      assertEquals(db.getSessionRuntime("s1").base, head);
 
-      // Session work lands in the isolated dir only.
-      await Deno.writeTextFile(`${p1.cwd}/work.txt`, "s1-work\n");
-      assertEquals((await shadow.diff(p1.cwd, "s1")).files.map((f) => f.path), ["work.txt"]);
-      assertEquals(await exists(`${repo}/work.txt`), false);
+      // Session work lands in the user's tree — that IS the delivery mechanism —
+      // and the rail reports it as this session's change.
+      await Deno.writeTextFile(`${repo}/work.txt`, "s1-work\n");
+      const d1 = await repodiff.diffSince(repo, db.getSessionRuntime("s1").base);
+      assertEquals(d1.files.map((f) => f.path), ["work.txt"]);
 
-      // Resume: later turns run in the same dir.
+      // Resume: the base is pinned once, so later turns keep diffing against the
+      // session's true starting point even as commits land on top.
       const p2 = await prepareWorkspace(db, "s1");
-      assertEquals(p2.cwd, p1.cwd);
+      assertEquals(p2.cwd, repo);
+      assertEquals(db.getSessionRuntime("s1").base, head);
 
-      // Fork: exactly as fork() creates it — a SIBLING (parentId = target's
-      // parent, null here) carrying originId + the target's workspace column —
-      // gets its own working copy branched off the target's tip.
+      // Fork: a sibling carrying the target's workspace column simply shares the
+      // checkout — there is no copy to branch, so it sees the same tree.
       db.createSession({
         id: "s2",
         parentId: null,
@@ -201,28 +193,8 @@ Deno.test({
         originId: "s1",
       });
       const pf = await prepareWorkspace(db, "s2");
-      assertEquals(pf.cwd, shadow.workspaceDirFor("s2"));
-      assertEquals(db.getSessionRuntime("s2").workspace, pf.cwd);
+      assertEquals(pf.cwd, repo);
       assertEquals(await Deno.readTextFile(`${pf.cwd}/work.txt`), "s1-work\n");
-      // ...in the SAME shadow store — not a second store nested on the parent's
-      // worktree — so the grafted real history stays reachable in the fork.
-      const stores = [...Deno.readDirSync(shadowBase)].filter((e) => e.isDirectory);
-      assertEquals(stores.length, 1);
-      const log = new TextDecoder().decode(
-        (await new Deno.Command("git", {
-          args: ["log", "--format=%s"],
-          cwd: pf.cwd,
-          stdout: "piped",
-          stderr: "piped",
-        }).output()).stdout,
-      );
-      assert(log.includes("init"), `real history missing from fork log:\n${log}`);
-
-      // The fork diverges without touching the parent's copy or the repo.
-      await Deno.writeTextFile(`${pf.cwd}/fork.txt`, "s2-work\n");
-      assertEquals((await shadow.diff(pf.cwd, "s2")).files.map((f) => f.path), ["fork.txt"]);
-      assertEquals(await exists(`${p1.cwd}/fork.txt`), false);
-      assertEquals(await exists(`${repo}/.jj`), false);
     } finally {
       db.close();
       for (const [k, v] of prev) {
@@ -230,67 +202,8 @@ Deno.test({
         else Deno.env.set(k, v);
       }
       await Deno.remove(repo, { recursive: true });
-      await Deno.remove(shadowBase, { recursive: true }).catch(() => {});
-      await Deno.remove(wsBase, { recursive: true }).catch(() => {});
       await Deno.remove(snapBase, { recursive: true }).catch(() => {});
+      await Deno.remove(scratchBase, { recursive: true }).catch(() => {});
     }
   },
-});
-
-Deno.test("prepareWorkspace: failed external prep surfaces a warning, not a silent fallback", async () => {
-  // An unwritable store base: the repo looks fine, so external prep runs — and
-  // fails creating the shadow store. The turn must still run, but the isolation
-  // failure has to come back as a warning for the thread instead of only a
-  // server-log line.
-  const ws = await Deno.makeTempDir({ prefix: "wstest-badgit-" });
-  await Deno.mkdir(`${ws}/.git`);
-  const snapBase = await Deno.makeTempDir({ prefix: "wstest-snap-" });
-  const scratchBase = await Deno.makeTempDir({ prefix: "wstest-scratch-" });
-  const storeBase = await Deno.makeTempDir({ prefix: "wstest-store-" });
-  await Deno.chmod(storeBase, 0o555); // store creation fails ⇒ prep fails
-  const wsRoot = await Deno.makeTempDir({ prefix: "wstest-wsroot-" });
-  const env = {
-    BOUGH_SNAPSHOT_BASE: snapBase,
-    BOUGH_SCRATCH_BASE: scratchBase,
-    BOUGH_SHADOW_BASE: storeBase,
-    BOUGH_SUBAGENT_BASE: wsRoot,
-  };
-  const prev = new Map<string, string | undefined>();
-  for (const [k, v] of Object.entries(env)) {
-    prev.set(k, Deno.env.get(k));
-    Deno.env.set(k, v);
-  }
-  const db = new Db(":memory:");
-  try {
-    db.createSession({
-      id: "s-bad",
-      parentId: null,
-      title: "s-bad",
-      kind: "root",
-      createdAt: 1,
-      workspace: ws,
-    });
-    const p = await prepareWorkspace(db, "s-bad");
-    assertEquals(p.cwd, ws); // the turn still runs, in place
-    assert(p.warning, "external prep failure must surface a warning");
-    assert(p.warning!.includes("isolation failed"), p.warning);
-    // The bogus .git isn't a STORE corruption, so nothing may be quarantined —
-    // a healthy-looking store base stays untouched by unrelated failures.
-    const quarantined = [];
-    for await (const e of Deno.readDir(storeBase)) {
-      if (e.name.includes(".broken-")) quarantined.push(e.name);
-    }
-    assertEquals(quarantined, []);
-    // Prep failed before a base was persisted, so the next turn is still a
-    // "first" one: still degraded → warned again, not silenced.
-    const p2 = await prepareWorkspace(db, "s-bad");
-    assert(p2.warning, "still degraded → still warned");
-  } finally {
-    db.close();
-    for (const [k, v] of prev) v === undefined ? Deno.env.delete(k) : Deno.env.set(k, v);
-    await Deno.chmod(storeBase, 0o755).catch(() => {});
-    for (const d of [ws, snapBase, scratchBase, storeBase, wsRoot]) {
-      await Deno.remove(d, { recursive: true }).catch(() => {});
-    }
-  }
 });

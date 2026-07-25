@@ -110,10 +110,10 @@ export const Session = z.object({
   // Changes API (#10) exposes/sets this over HTTP
   // adds it as an optional field to match.
   workspace: z.string().nullish(),
-  // The user's project directory the session was created on (additive). The
-  // workspace column is repointed at the internal shadow worktree on the first
-  // turn, so this is the stable record of WHICH project the session is for —
-  // the UI shows it in the status bar and on session-tree rows.
+  // The user's project directory the session was created on (additive). It mirrors
+  // the workspace column, which is never rewritten, so this is the stable record of
+  // WHICH project the session is for — the UI shows it in the status bar and on
+  // session-tree rows.
   originDir: z.string().nullish(),
   // Lineage (additive; set only on branched sessions). For a fork: the session it was
   // forked from + the at-message. For a compaction: the compacted session + the span-end

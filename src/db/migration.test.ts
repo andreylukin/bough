@@ -56,35 +56,22 @@ function seed(path: string, root: string): void {
   db.close();
 }
 
-Deno.test("startup migration rewrites legacy worktree workspace rows to origin_dir (VM mode)", () => {
+Deno.test("startup migration rewrites legacy worktree workspace rows to origin_dir", () => {
   const tmp = Deno.makeTempDirSync({ prefix: "bough-db-migration-" });
   const root = join(tmp, "workspaces");
   const path = join(tmp, "bough.db");
-  withEnv({ BOUGH_SANDBOX_VM: undefined, BOUGH_SUBAGENT_BASE: root }, () => seed(path, root));
-  withEnv({ BOUGH_SANDBOX_VM: "1", BOUGH_SUBAGENT_BASE: root }, () => {
+  withEnv({ BOUGH_SUBAGENT_BASE: root }, () => {
+    seed(path, root);
     const db = new Db(path);
     // Under the workspaces root + has an origin dir → rewritten to the origin.
     assertEquals(db.getSession("legacy")?.workspace, "/repos/proj");
-    // The rewritten ids are surfaced so main.ts can retire the leftover
-    // worktrees still squatting on the mirror paths (one-shot migration).
+    // The rewritten ids are recorded on the Db for callers that want to report
+    // the repointing (the migration also logs it).
     assertEquals(db.migratedLegacyWorkspaces, ["legacy"]);
     // Not under the workspaces root → untouched.
     assertEquals(db.getSession("outside")?.workspace, "/repos/other");
     // No origin dir recorded → nothing sane to rewrite to; untouched.
     assertEquals(db.getSession("no-origin")?.workspace, join(root, "no-origin"));
-    db.close();
-  });
-  Deno.removeSync(tmp, { recursive: true });
-});
-
-Deno.test("startup migration is a no-op without the VM backend", () => {
-  const tmp = Deno.makeTempDirSync({ prefix: "bough-db-migration-" });
-  const root = join(tmp, "workspaces");
-  const path = join(tmp, "bough.db");
-  withEnv({ BOUGH_SANDBOX_VM: undefined, BOUGH_SUBAGENT_BASE: root }, () => {
-    seed(path, root);
-    const db = new Db(path); // reopen, still host-worktree mode
-    assertEquals(db.getSession("legacy")?.workspace, join(root, "legacy"));
     db.close();
   });
   Deno.removeSync(tmp, { recursive: true });

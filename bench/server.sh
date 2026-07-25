@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Isolated bough server for the bench: own port, DB, shadow store, and worktree
+# Isolated bough server for the bench: own port, DB, and state
 # root under bench/state/ — it never touches ~/.bough or the daily-driver server.
 # The model is pinned via BOUGH_MODEL at launch, so nothing is persisted anywhere.
 #
@@ -31,7 +31,6 @@ case "${1:-status}" in
       cd "$BENCH/.."
       BOUGH_PORT="$PORT" \
       BOUGH_DB="$STATE/bough.db" \
-      BOUGH_SHADOW_BASE="$STATE/shadow" \
       BOUGH_SUBAGENT_BASE="$STATE/workspaces" \
       BOUGH_SNAPSHOT_BASE="$STATE/snapshots" \
       BOUGH_MODEL="$MODEL_BOUGH" \

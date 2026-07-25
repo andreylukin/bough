@@ -421,9 +421,10 @@ export class Db {
   #db: DatabaseSync;
 
   /** Session ids whose workspace column was rewritten to the origin by THIS
-   *  open's legacy migration. The migration is one-shot (rewritten rows no
-   *  longer match), so main.ts must retire each session's leftover host
-   *  worktree now — it still squats on the mirror path otherwise. */
+   *  open's legacy migration. Nothing consumes it since the worktree store went
+   *  away (there is no leftover worktree to retire — scripts/bough deletes the
+   *  whole store); the migration also logs, so this is only for callers that
+   *  want the list rather than the line. */
   readonly migratedLegacyWorkspaces: string[] = [];
 
   constructor(path: string) {
@@ -476,16 +477,15 @@ export class Db {
   }
 
   /**
-   * Guest-owned semantic change (docs/guest-owned-workspace.md): in VM mode the
-   * workspace column stores the ORIGIN path, never a per-session worktree. Legacy
-   * rows repointed at ~/.bough/workspaces/<id> are rewritten to the session's
-   * origin_dir here. Gated on the VM backend being active — host-worktree mode
-   * (no golden / BOUGH_SANDBOX_VM=0) still runs sessions IN those worktrees, and
-   * rewriting its rows would send resumed sessions into the origin directly.
-   * (main.ts resolves BOUGH_SANDBOX_VM before opening the DB.)
+   * The workspace column now always holds the user's real checkout — sessions run
+   * in place, and the per-session worktree store under ~/.bough/workspaces is gone
+   * (scripts/bough reaps it on update). Rows still pointing into that store would
+   * resume a session into a directory that no longer exists, so rewrite them to the
+   * session's origin_dir. Unconditional: there is no mode left in which a row under
+   * the workspaces root is correct. One-shot in practice — after the rewrite the
+   * rows no longer match, so the next open finds nothing.
    */
   #migrateLegacyWorkspaces(): void {
-    if (Deno.env.get("BOUGH_SANDBOX_VM") !== "1") return;
     const root = (Deno.env.get("BOUGH_SUBAGENT_BASE") ??
       `${Deno.env.get("HOME") ?? ""}/.bough/workspaces`).replace(/\/+$/, "");
     if (root === "/.bough/workspaces") return; // no HOME — nothing sane to match

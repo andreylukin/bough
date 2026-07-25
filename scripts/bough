@@ -96,9 +96,7 @@ wait_up() {
 }
 
 # What launchd executes (also handy for a manual foreground run). launchd starts
-# with a bare environment, so put the toolchain on PATH for deno/git/llama-server
-# and agentfs — the sandbox binary the installer drops in ~/.cargo/bin, without
-# which every sandboxed command exits 127 (command not found).
+# with a bare environment, so put the toolchain on PATH for deno/git/llama-server.
 cmd_run() {
   export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
   if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
@@ -244,10 +242,7 @@ cmd_update() {
     npm install -g basedpyright
   fi
 
-  # agentfs: the FS-sandbox backend. Ensure it exists on update, not just setup.
-  ensure_agentfs
-
-  # Reclaim pre-agentfs artifacts (smolvm image, net CA/policy, cred-broker daemon).
+  # Reclaim artifacts from the retired sandbox/snapshot layers.
   migrate_reclaim
 
   # shellcheck source=/dev/null
@@ -292,23 +287,13 @@ env_set() {
   rm -f "$tmp"
 }
 
-# agentfs: the Rust FS-sandbox backend. Installed via the upstream one-liner into
-# ~/.cargo/bin or ~/.local/bin. Best-effort — warn if it still isn't on PATH after.
-ensure_agentfs() {
-  command -v agentfs >/dev/null && return 0
-  echo "==> installing agentfs (FS sandbox backend)"
-  curl -fsSL https://agentfs.ai/install | bash ||
-    echo "warning: agentfs install failed — re-run to retry" >&2
-  command -v agentfs >/dev/null ||
-    echo "warning: agentfs not on PATH after install — add ~/.cargo/bin (or ~/.local/bin) to PATH" >&2
-}
-
-# Reclaim on-disk artifacts from the pre-agentfs backend (smolvm golden image,
-# net-era CA/policy, the AWS cred-broker LaunchAgent). Idempotent — a no-op once
-# clean. Never touches the keychain.
+# Reclaim on-disk artifacts from retired backends: the smolvm golden image, the
+# net-era CA/policy, the AWS cred-broker LaunchAgent, and the shadow-git snapshot
+# store + per-session worktrees (bough now works in the user's checkout directly).
+# Idempotent — a no-op once clean. Never touches the keychain.
 migrate_reclaim() {
   local freed=0 d kb
-  for d in "$BOUGH_HOME/golden-rootfs" "$BOUGH_HOME/net"; do
+  for d in "$BOUGH_HOME/golden-rootfs" "$BOUGH_HOME/net" "$BOUGH_HOME/shadow" "$BOUGH_HOME/workspaces"; do
     [ -e "$d" ] || continue
     kb="$(du -sk "$d" 2>/dev/null | awk '{print $1}')"
     freed=$(( freed + ${kb:-0} ))
@@ -318,7 +303,7 @@ migrate_reclaim() {
   local bplist="$HOME/Library/LaunchAgents/com.bough.credbroker.plist"
   launchctl bootout "gui/$(id -u)/com.bough.credbroker" 2>/dev/null || true
   [ -f "$bplist" ] && rm -f "$bplist"
-  [ "$freed" -gt 0 ] && echo "==> reclaimed $(( freed / 1024 )) MB of pre-agentfs artifacts"
+  [ "$freed" -gt 0 ] && echo "==> reclaimed $(( freed / 1024 )) MB of retired-backend artifacts"
   return 0
 }
 
@@ -328,7 +313,6 @@ migrate_reclaim() {
 # values that are already set.
 cmd_setup() {
   bash "$ROOT/scripts/setup.sh"
-  ensure_agentfs
 
   # setup.sh may have just created the env template — (re)load it.
   if [ -f "$ENV_FILE" ]; then

@@ -42,8 +42,6 @@ export const PROGRAM_PARAMS = [
   "artifact",
   "recall",
   "image",
-  "ship",
-  "pr",
   "schedule",
   "state",
   "workflow",
@@ -139,18 +137,6 @@ export interface HostFns {
    * postMessage bridge. Bridged for every supervisor turn.
    */
   image?(path: string, note?: string): Promise<string>;
-  /**
-   * Ship the session's work into the origin repo as a real commit (+ optional
-   * push) — vcs/agentdiff.ts shipToOrigin. Options in and ShipResult back travel
-   * as JSON. Bridged only for root-session turns with a repo workspace.
-   */
-  ship?(optsJson: string): Promise<string>;
-  /**
-   * Export the session's work into a git branch and open a GitHub PR — vcs/agentdiff.ts
-   * openPr. Options in and PrResult back travel as JSON. Bridged alongside ship for
-   * root-session repo turns.
-   */
-  pr?(optsJson: string): Promise<string>;
   /**
    * Recurring runs (schedules.ts): one verb-dispatched function like lsp() —
    * args in and result back travel as JSON; the worker side exposes it as the

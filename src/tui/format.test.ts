@@ -153,9 +153,9 @@ Deno.test("sessionLabel: title wins; untitled falls back to the workspace basena
   assertEquals(sessionLabel("  ", ""), "(untitled)");
 });
 
-Deno.test("sessionLabel: uuid-named shadow worktrees never leak as labels", () => {
-  // A fork inherits its origin's worktree (~/.bough/workspaces/<origin-id>)
-  // until its own first turn — the basename is ANOTHER session's uuid.
+Deno.test("sessionLabel: legacy uuid-named workspace rows never leak as labels", () => {
+  // Sessions run in place now, but pre-in-place DB rows still record a
+  // bough-owned worktree named by session uuid (~/.bough/workspaces/<id>).
   assertEquals(
     sessionLabel("untitled", "/Users/x/.bough/workspaces/d54a0527-0c52-4326-a539-32de20780c13"),
     "(untitled)",

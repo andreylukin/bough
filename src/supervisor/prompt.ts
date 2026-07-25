@@ -1,6 +1,6 @@
 /**
  * The supervisor's system prompt: the base contract plus the conditional sections
- * the turn runner appends (ship, delegation, subagent reports, workspace/scratchpad
+ * the turn runner appends (delegation, subagent reports, workspace/scratchpad
  * notes, AGENTS.md project rules). Pure text authoring — turn.ts resolves the
  * runtime facts (which capabilities are wired, which subagents run) and assembles
  * the pieces; nothing here touches the db or the loop.
@@ -67,7 +67,7 @@ const SYSTEM_BUILTIN = [
   "## Host functions",
   "",
   "Inside the program the core capability surface is these async host functions:",
-  "await bash(cmd) — shell in the sandboxed workspace, returns combined output;",
+  "await bash(cmd) — shell in the workspace (the user's real checkout), returns combined output;",
   "await read(path); await write(path, content); await edit(path, oldText, newText).",
   "These host functions are PRE-INJECTED GLOBALS already in scope: call them directly.",
   "Never redeclare them (`const bash = ...` throws 'already been declared') and never",
@@ -98,7 +98,7 @@ const SYSTEM_BUILTIN = [
   "{ url, href }. The page is reachable ONLY through that link and tool output stays",
   "folded away, so ALWAYS put the returned href in your reply text as a bare URL —",
   "publishing without handing over the link is a dropped deliverable. Artifacts live",
-  "outside the workspace, so they never pollute the diff you ship. Use one only",
+  "outside the workspace, so they never pollute its diff. Use one only",
   "when the user will SCAN, COMPARE, INTERACT WITH, or KEEP the result — a diff review,",
   "a filterable comparison, a chart, a diagram, a plan, a clickable prototype. A short",
   "answer or a plain list stays in your reply text; do not dress thin content up as a",
@@ -134,7 +134,7 @@ const SYSTEM_BUILTIN = [
   "— treat those as direct feedback on that artifact and act on them.",
   "",
   "Later sections of this prompt may grant more host functions — delegation",
-  "(agent/spawn/join/adopt), await mcp(server, tool, args) for MCP tools (whose",
+  "(agent/spawn/join), await mcp(server, tool, args) for MCP tools (whose",
   "connected servers and calling convention appear in a '# MCP tools' section), and",
   "lsp.* symbol navigation (a '## Symbol navigation (lsp)' section). A host",
   "function exists ONLY when this prompt grants it — never guess at others.",
@@ -241,87 +241,12 @@ const SYSTEM_BUILTIN = [
 
 export const SYSTEM = promptOverride("system.md", SYSTEM_BUILTIN);
 
-// Ship section, appended only when the turn runner wired ship() (root session,
-// repo workspace with a resolvable origin).
-const SHIP_NOTE_BUILTIN = "\n\n" + [
-  "## Shipping to the user's repo",
-  "",
-  "Another granted host function: await ship({message, paths?, push?}) lands this",
-  "session's work in the user's real repository checkout as a git commit. It delivers",
-  "the changed files into the origin's working tree (3-way merged with any edits the",
-  "user made meanwhile; a conflict fails with the file named), commits them on the",
-  "origin's current branch with `message` — the user's own staged changes stay",
-  "staged and untouched — and with push:true also pushes the branch to its remote",
-  "with the user's credentials. `paths` limits the commit to those files; omitted",
-  "means everything this session changed. Returns {commit, branch, paths, pushed,",
-  "note?}. Shipping publishes work outside your workspace: call it ONLY when the",
-  "user explicitly asks you to commit/push/ship — never as a routine end-of-task",
-  "step — and report the returned commit and branch afterward.",
-  "",
-  "The workspace is this session's own git clone, snapshotted automatically every",
-  "round: your edits get committed as `bough: snapshot` and pushed to the session's",
-  "private store, so a clean `git status`/`git diff` does NOT mean your work was",
-  "lost — it lives in the snapshot chain, and ship() reads it from there. See the",
-  "session's cumulative change with `git diff refs/bough/originbase`. Local git",
-  "(branch, stash, reset) works normally here, but the automatic snapshots already",
-  "cover what it would — and only what is on disk at the end of a round gets",
-  "snapshotted, so leave your final state checked out, never parked in a stash or",
-  "an unmerged branch.",
-].join("\n");
-
-export const SHIP_NOTE = promptOverride("ship-note.md", SHIP_NOTE_BUILTIN, "\n\n");
-
-// Host-worktree variant (no-VM fallback, BOUGH_SANDBOX_VM=0 / no golden): the
-// workspace is a shadow worktree, not a guest clone — the cumulative-diff ref is
-// session-qualified there and stash/branch parking is still a foot-gun. Same
-// first paragraph; only the workspace-mechanics paragraph differs.
-const SHIP_NOTE_WORKTREE_BUILTIN = "\n\n" + [
-  "## Shipping to the user's repo",
-  "",
-  "Another granted host function: await ship({message, paths?, push?}) lands this",
-  "session's work in the user's real repository checkout as a git commit. It delivers",
-  "the changed files into the origin's working tree (3-way merged with any edits the",
-  "user made meanwhile; a conflict fails with the file named), commits them on the",
-  "origin's current branch with `message` — the user's own staged changes stay",
-  "staged and untouched — and with push:true also pushes the branch to its remote",
-  "with the user's credentials. `paths` limits the commit to those files; omitted",
-  "means everything this session changed. Returns {commit, branch, paths, pushed,",
-  "note?}. Shipping publishes work outside your workspace: call it ONLY when the",
-  "user explicitly asks you to commit/push/ship — never as a routine end-of-task",
-  "step — and report the returned commit and branch afterward.",
-  "",
-  "To open a pull request instead of committing onto the current branch, use await",
-  "pr({title, body?, branch?, base?, paths?, draft?}). It commits this session's",
-  "changes onto a NEW branch (default `bough/<slug>`) on top of the origin's HEAD",
-  "WITHOUT touching the user's working copy, pushes it, and opens a GitHub PR against",
-  "`base` (default the current branch) via `gh pr create` with the host's gh auth.",
-  "`paths` limits the commit; omitted means everything. Returns {branch, base,",
-  "commit, url?, pushed, paths, note?} — report the returned PR url. Same rule as",
-  "ship(): call it ONLY when the user explicitly asks to open a PR.",
-  "",
-  "The workspace itself is a shadow-git worktree that bough snapshots automatically",
-  "every round: your edits get committed as `bough: snapshot` and HEAD moves along,",
-  "so a clean `git status`/`git diff` does NOT mean your work was lost — it lives in",
-  "the snapshot chain, and ship() reads it from there. See the session's cumulative",
-  'change with `git diff "refs/bough/originbase/$(basename "$PWD")"`. Avoid',
-  "`git stash`, `git branch`, `git worktree add`, and `git reset` here: the",
-  "automatic snapshots already cover what they would, and only what is on disk at",
-  "the end of a round gets snapshotted — leave your final state checked out, never",
-  "parked in a stash or an unmerged branch.",
-].join("\n");
-
-export const SHIP_NOTE_WORKTREE = promptOverride(
-  "ship-note-worktree.md",
-  SHIP_NOTE_WORKTREE_BUILTIN,
-  "\n\n",
-);
-
 // Delegation section, appended only for sessions that may spawn (not subagents).
 const SYSTEM_DELEGATION_BUILTIN = "\n\n" + [
   "## Delegation to subagents",
   "",
   "More host functions enable delegation to subagents — separate sessions, each working",
-  "on its own branched copy of the workspace. await spawn(task) starts one in the",
+  "in the SAME workspace as you. await spawn(task) starts one in the",
   "BACKGROUND and returns {sessionId, title} immediately: keep working, or end your turn —",
   "when it finishes, its report arrives as a [subagent finished] system message and wakes",
   "you if you're idle. await join(sessionId) instead waits for a background subagent and",
@@ -333,9 +258,9 @@ const SYSTEM_DELEGATION_BUILTIN = "\n\n" + [
   "every relevant path, constraint, and acceptance criterion in it. They DO inherit this",
   "turn's MCP servers — a subagent's program can call the same mcp() tools (each call",
   "still passes the egress gate), so delegating MCP-dependent work is fine; name the",
-  "server and tool in the task. Their file changes",
-  "stay on their own branch — call await adopt(sessionId) to merge a subagent's changes",
-  "into your workspace, or leave the branch for the user to review.",
+  "server and tool in the task. They edit the SAME checkout you do — their changes are",
+  "already in your workspace when they report, so give each one a disjoint set of files",
+  "and never have two work the same file at once.",
   "",
   "Prefer spawn for",
   "long tasks so you stay responsive; run independent blocking subtasks concurrently with",
@@ -371,13 +296,13 @@ const SYSTEM_DELEGATION_NESTED_BUILTIN = "\n\n" + [
   "## Delegation (nested)",
   "",
   "More host functions enable delegation: await agent(task) runs a nested subagent to",
-  "completion on its own branched copy of this workspace and returns {sessionId, ok,",
+  "completion in this same workspace and returns {sessionId, ok,",
   "checkPassed, report, changedFiles}. Nested subagents start with NO context beyond the",
   "task string — include every relevant path, constraint, and acceptance criterion in",
   "it — and cannot delegate further. They inherit this turn's MCP servers (their",
-  "programs can call the same mcp() tools). Their file changes stay on their own branch: call",
-  "await adopt(sessionId) to merge them into your workspace so they are part of your",
-  "result. Run independent blocking subtasks concurrently with Promise.allSettled. Caps: at",
+  "programs can call the same mcp() tools). They edit the SAME checkout you do, so their",
+  "changes are already present when they report — give each a disjoint set of files.",
+  "Run independent blocking subtasks concurrently with Promise.allSettled. Caps: at",
   `most ${MAX_SPAWNS_PER_TURN} spawns per turn and ${MAX_TREE_CONCURRENT} subagents running`,
   "at once across the whole tree — a spawn beyond a cap fails with an error. Delegate",
   "only genuinely separable work; do small things yourself.",
@@ -399,8 +324,6 @@ export function resolveSystemSections(overrideDir?: string) {
   if (!overrideDir) {
     return {
       SYSTEM,
-      SHIP_NOTE,
-      SHIP_NOTE_WORKTREE,
       SYSTEM_DELEGATION,
       SYSTEM_DELEGATION_NESTED,
       SYSTEM_SUBAGENT,
@@ -408,13 +331,6 @@ export function resolveSystemSections(overrideDir?: string) {
   }
   return {
     SYSTEM: promptOverride("system.md", SYSTEM_BUILTIN, "", overrideDir),
-    SHIP_NOTE: promptOverride("ship-note.md", SHIP_NOTE_BUILTIN, "\n\n", overrideDir),
-    SHIP_NOTE_WORKTREE: promptOverride(
-      "ship-note-worktree.md",
-      SHIP_NOTE_WORKTREE_BUILTIN,
-      "\n\n",
-      overrideDir,
-    ),
     SYSTEM_DELEGATION: promptOverride(
       "delegation.md",
       SYSTEM_DELEGATION_BUILTIN,
@@ -501,8 +417,8 @@ export function delegationHintNote(userText: string): string {
     "const started = await Promise.allSettled(tasks.map((t) => spawn(t)));\n" +
     "```\n" +
     "Then work on anything left, or end your turn — each [subagent finished] report " +
-    "arrives as a system note and wakes you; adopt(sessionId) merges a branch you " +
-    "accept. Write each task string as a complete briefing (paths, commands, " +
+    "arrives as a system note, wakes you, and its edits are already in the " +
+    "workspace. Write each task string as a complete briefing (paths, commands, " +
     "acceptance criteria — the subagent sees nothing else). If the parts are NOT " +
     "truly independent, or the whole job fits in a program or two, ignore this note " +
     "and do it yourself.";
@@ -530,22 +446,25 @@ export function runningSubagentsNote(running: Session[]): string {
  */
 export function workspaceNote(cwd: string): string {
   return `\n\n# Workspace\nbash starts in ${cwd} and relative file paths resolve ` +
-    "against it. If that directory is a repo, it is the repo the user means — work on " +
-    "it in place.";
+    "against it. This is the user's REAL checkout: your edits are immediately real, " +
+    "nothing is copied or confined, and git is the source of truth for what changed " +
+    "(`git status`, `git diff`). Deliver work with plain git through bash — " +
+    "`git commit`, `git push`, `gh pr create` — but ONLY when the user asks; never " +
+    "commit as a routine end-of-task step.";
 }
 
 /**
  * Point the agent at the per-session scratchpad for throwaway files. The workspace is
- * a repo the live server builds from and the snapshot layer tracks, so a stray `./probe.json`
- * pollutes the build and `git diff main HEAD`. The scratch dir is outside the repo and
- * OS-reaped — the right home for anything not meant to ship.
+ * the user's own checkout, so a stray `./probe.json` really lands in their repo and shows
+ * up in `git status`. The scratch dir is outside the repo and OS-reaped — the right home
+ * for anything not meant to keep.
  */
 export function scratchpadNote(scratchDir: string): string {
   return `\n\n# Scratchpad\n${scratchDir} is a writable per-session temp dir OUTSIDE ` +
     "the workspace. Put ALL throwaway files there — intermediate data, temp scripts, " +
     "probe outputs, downloads — NOT in the workspace and NOT in /tmp. Files written " +
-    "into the workspace are treated as real changes: they get snapshotted, built by " +
-    "the live server, and show up in the diff you're asked to ship. Use absolute paths " +
+    "into the workspace are real changes to the user's repo: they show up in " +
+    "`git status` and in the session's diff. Use absolute paths " +
     "under the scratchpad; it's already created.";
 }
 

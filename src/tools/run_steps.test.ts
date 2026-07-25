@@ -309,31 +309,6 @@ Deno.test("artifact() bridges into the program: publishes and returns the object
   assertStringIncludes(bare, "unknown host function: artifact");
 });
 
-Deno.test("ship() bridges into the program: options in, result object back", async () => {
-  const calls: unknown[] = [];
-  const c: ToolRunCtx = {
-    ...ctx(),
-    ship: (opts) => {
-      calls.push(opts);
-      return Promise.resolve({
-        commit: "abc123",
-        branch: "main",
-        paths: ["a.txt"],
-        pushed: true,
-      });
-    },
-  };
-  const out = await runSteps.run(
-    {
-      code: `const r = await ship({ message: "ship it", paths: ["a.txt"], push: true });
-             console.log("shipped:", r.commit, r.branch, r.pushed);`,
-    },
-    c,
-  );
-  assertStringIncludes(out, "shipped: abc123 main true");
-  assertEquals(calls, [{ message: "ship it", paths: ["a.txt"], push: true }]);
-});
-
 Deno.test("ask() bridges into the program: options in, chosen answer back", async () => {
   const seen: { question: string; opts?: { options?: string[] } }[] = [];
   const c: ToolRunCtx = {

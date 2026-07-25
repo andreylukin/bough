@@ -1,8 +1,8 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { Db } from "../db/db.ts";
 import { Bus } from "../bus.ts";
-import * as shadow from "../vcs/shadow.ts";
 import * as clonefile from "../vcs/clonefile.ts";
+import { headSha } from "../vcs/repodiff.ts";
 import { type AppCtx, createHandler } from "./app.ts";
 import type { BoughEvent, Session } from "../schema/parts.ts";
 import type { Diff } from "../schema/changes.ts";
@@ -29,36 +29,6 @@ async function canRun(cmd: string): Promise<boolean> {
 const gitAvailable = await canRun("git");
 const cpAvailable = (await canRun("git")) && (await canRun("cp"));
 
-/** The agentfs backend is the diff substrate now, so the shadow-backed tests drive
- *  edits through a real `agentfs run` overlay — they self-skip where it's missing. */
-async function agentfsUsable(): Promise<boolean> {
-  try {
-    const r = await new Deno.Command("agentfs", {
-      args: ["--version"],
-      stdout: "null",
-      stderr: "null",
-    })
-      .output();
-    return r.code === 0;
-  } catch {
-    return false;
-  }
-}
-const shadowReady = gitAvailable && (await agentfsUsable());
-
-/** Make edits inside the session's copy-on-write overlay of `dir` (so they land in
- *  the session delta the Changes rail reads, not on the worktree disk). Inherits the
- *  test's HOME, set by withShadowRoots so delta paths are isolated. */
-async function overlayEdit(sid: string, dir: string, cmd: string): Promise<void> {
-  const r = await new Deno.Command("agentfs", {
-    args: ["run", "--session", sid, "--", "/bin/sh", "-c", cmd],
-    cwd: dir,
-    stdout: "null",
-    stderr: "null",
-  }).output();
-  if (r.code !== 0) throw new Error(`overlay edit failed (${r.code}) for ${sid}`);
-}
-
 async function tempGitRepo(): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: "chg-" });
   const sh = async (bin: string, args: string[]) => {
@@ -83,37 +53,18 @@ async function tempGitRepo(): Promise<string> {
   return dir;
 }
 
-/** Shadow store + workspace roots in temp dirs for the duration of `fn`. */
-async function withShadowRoots(fn: () => Promise<void>): Promise<void> {
-  const shadowBase = await Deno.makeTempDir({ prefix: "chg-shadow-" });
-  const wsBase = await Deno.makeTempDir({ prefix: "chg-ws-" });
-  // Isolate HOME too: agentfs keys its run/<sid> delta dirs off HOME, and the diff
-  // substrate resolves the same path from the process HOME — they must agree, and
-  // reaping the temp HOME cleans up the deltas.
-  const home = await Deno.makeTempDir({ prefix: "chg-home-" });
-  const prev = new Map<string, string | undefined>([
-    ["BOUGH_SHADOW_BASE", Deno.env.get("BOUGH_SHADOW_BASE")],
-    ["BOUGH_SUBAGENT_BASE", Deno.env.get("BOUGH_SUBAGENT_BASE")],
-    ["HOME", Deno.env.get("HOME")],
-  ]);
-  Deno.env.set("BOUGH_SHADOW_BASE", shadowBase);
-  Deno.env.set("BOUGH_SUBAGENT_BASE", wsBase);
-  Deno.env.set("HOME", home);
-  try {
-    await fn();
-  } finally {
-    for (const [k, v] of prev) v === undefined ? Deno.env.delete(k) : Deno.env.set(k, v);
-    await Deno.remove(shadowBase, { recursive: true }).catch(() => {});
-    await Deno.remove(wsBase, { recursive: true }).catch(() => {});
-    await Deno.remove(home, { recursive: true }).catch(() => {});
-  }
-}
-
-/** What the turn runner does on first turn: worktree + repointed workspace column. */
-async function attachWorkspace(db: Db, repo: string, sessionId: string): Promise<string> {
-  const dir = await shadow.createSessionWorkspace(repo, sessionId);
-  db.setSessionWorkspace(sessionId, dir);
-  return dir;
+/**
+ * What the turn runner's workspace prep does on a session's first turn: pin the
+ * sha the session started from. There is no relocation and no overlay — the
+ * session's workspace IS `repo`, so "the session's edits" are simply whatever
+ * the tree gained since this sha.
+ */
+async function startSession(c: AppCtx, repo: string, title = "s"): Promise<Session> {
+  const h = createHandler(c);
+  const s = await (await h(jsonReq("POST", "/sessions", { title, workspace: repo })))
+    .json() as Session;
+  c.db.setSessionBase(s.id, (await headSha(repo))!);
+  return s;
 }
 
 // ---- workspace on the API + empty/404 paths (no shell-out) ------------------
@@ -158,262 +109,221 @@ Deno.test("changes endpoints 404 on unknown session; revert 400 without a worksp
   const h = createHandler(c);
   assertEquals((await h(jsonReq("GET", "/sessions/nope/changes"))).status, 404);
   assertEquals(
-    (await h(jsonReq("POST", "/sessions/nope/changes/apply", { source: "shadow", paths: [] })))
+    (await h(jsonReq("POST", "/sessions/nope/changes/apply", { source: "repo", paths: [] })))
       .status,
     404,
   );
   assertEquals((await h(jsonReq("POST", "/sessions/nope/changes/revert", {}))).status, 404);
-  // a real session with no snapshot workspace can't be reverted — or applied
+  // a real session with no repo workspace can't be reverted — or applied
   const s = await (await h(jsonReq("POST", "/sessions", { title: "s" }))).json() as Session;
   assertEquals((await h(jsonReq("POST", `/sessions/${s.id}/changes/revert`, {}))).status, 400);
   assertEquals(
-    (await h(jsonReq("POST", `/sessions/${s.id}/changes/apply`, { source: "shadow", paths: [] })))
+    (await h(jsonReq("POST", `/sessions/${s.id}/changes/apply`, { source: "repo", paths: [] })))
       .status,
     400,
   );
   c.db.close();
 });
 
-// ---- shadow-backed changes (self-skips without git) -------------------------
+// ---- repo-source changes: the user's checkout (self-skips without git) ------
 
 Deno.test({
-  name: "changes: shadow apply materializes into the origin and seals — rail clears",
-  ignore: !shadowReady,
+  name: "changes: the rail is `git diff <base>` — tracked edits AND untracked files",
+  ignore: !gitAvailable,
   fn: async () => {
-    await withShadowRoots(async () => {
-      const repo = await tempGitRepo();
-      const c = ctx();
-      const h = createHandler(c);
-      try {
-        const s = await (await h(jsonReq("POST", "/sessions", { title: "s", workspace: repo })))
-          .json() as Session;
-        const dir = await attachWorkspace(c.db, repo, s.id);
-        await overlayEdit(s.id, dir, `printf 'hi\n' > new.txt`);
+    const repo = await tempGitRepo();
+    const c = ctx();
+    const h = createHandler(c);
+    try {
+      const s = await startSession(c, repo);
+      // The agent works in the checkout, so "making an edit" is just writing there.
+      await Deno.writeTextFile(`${repo}/README.md`, "base\nmore\n");
+      await Deno.writeTextFile(`${repo}/new.txt`, "hi\n");
 
-        const events: BoughEvent[] = [];
-        c.bus.subscribe((e) => events.push(e));
-
-        // diff shows the new file, tagged source shadow
-        const { diffs } = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
-          diffs: Diff[];
-        };
-        assertEquals(diffs.length, 1);
-        assertEquals(diffs[0].source, "shadow");
-        assertEquals(diffs[0].files.map((f) => f.path), ["new.txt"]);
-
-        // apply = materialize into the origin + seal: the file lands in the repo's
-        // working tree, the session diff resets to empty, changes.updated fires.
-        const applied = await h(
-          jsonReq("POST", `/sessions/${s.id}/changes/apply`, {
-            source: "shadow",
-            paths: ["new.txt"],
-          }),
-        );
-        assertEquals(applied.status, 200);
-        assertEquals(await Deno.readTextFile(`${repo}/new.txt`), "hi\n");
-        const after = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
-          diffs: Diff[];
-        };
-        assertEquals(after.diffs[0]?.files ?? [], []);
-        assert(events.some((e) => e.type === "changes.updated" && e.sessionId === s.id));
-
-        // post-seal edits diff cleanly on top — only the new work shows (the seal
-        // folded new.txt into the base worktree, so a fresh overlay starts clean)
-        await overlayEdit(s.id, dir, `printf 'more\n' > next.txt`);
-        const d2 = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
-          diffs: Diff[];
-        };
-        assertEquals(d2.diffs[0].files.map((f) => f.path), ["next.txt"]);
-      } finally {
-        await Deno.remove(repo, { recursive: true });
-        c.db.close();
-      }
-    });
+      const { diffs } = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
+        diffs: Diff[];
+      };
+      assertEquals(diffs.length, 1);
+      assertEquals(diffs[0].source, "repo");
+      const byPath = new Map(diffs[0].files.map((f) => [f.path, f.status]));
+      assertEquals([...byPath.keys()].sort(), ["README.md", "new.txt"]);
+      assertEquals(byPath.get("README.md"), "modified");
+      assertEquals(byPath.get("new.txt"), "added"); // untracked ⇒ all-added
+    } finally {
+      await Deno.remove(repo, { recursive: true });
+      c.db.close();
+    }
   },
 });
 
 Deno.test({
-  name: "changes: shadow revert (whole-change) undoes the session's edit",
-  ignore: !shadowReady,
+  name: "changes: repo apply delivers nothing — the work is already in the checkout",
+  ignore: !gitAvailable,
   fn: async () => {
-    await withShadowRoots(async () => {
-      const repo = await tempGitRepo();
-      const c = ctx();
-      const h = createHandler(c);
-      try {
-        const s = await (await h(jsonReq("POST", "/sessions", { title: "s", workspace: repo })))
-          .json() as Session;
-        const dir = await attachWorkspace(c.db, repo, s.id);
-        await overlayEdit(s.id, dir, `printf 'hi\n' > new.txt`);
+    const repo = await tempGitRepo();
+    const c = ctx();
+    const h = createHandler(c);
+    try {
+      const s = await startSession(c, repo);
+      await Deno.writeTextFile(`${repo}/new.txt`, "hi\n");
 
-        const events: BoughEvent[] = [];
-        c.bus.subscribe((e) => events.push(e));
-
-        // the diff shows the new file; revert then discards the whole delta
-        const { diffs } = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
-          diffs: Diff[];
-        };
-        assertEquals(diffs[0].files.map((f) => f.path), ["new.txt"]);
-        const reverted = await h(jsonReq("POST", `/sessions/${s.id}/changes/revert`, {}));
-        assertEquals(reverted.status, 200);
-        const after = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
-          diffs: Diff[];
-        };
-        assertEquals(after.diffs[0]?.files ?? [], []);
-        assert(events.some((e) => e.type === "changes.updated" && e.sessionId === s.id));
-      } finally {
-        await Deno.remove(repo, { recursive: true });
-        c.db.close();
-      }
-    });
+      // Apply used to materialize a shadow worktree into the origin. There is no
+      // second copy to carry over now: the reviewer commits, or reverts.
+      const applied = await h(
+        jsonReq("POST", `/sessions/${s.id}/changes/apply`, {
+          source: "repo",
+          paths: ["new.txt"],
+        }),
+      );
+      assertEquals(applied.status, 200);
+      const body = await applied.json() as { applied: string[]; origin: string; sealed: boolean };
+      assertEquals(body.applied, []);
+      assertEquals(body.origin, repo);
+      assertEquals(body.sealed, false);
+      // …and the rail still shows the work, because nothing was sealed away.
+      const after = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
+        diffs: Diff[];
+      };
+      assertEquals(after.diffs[0].files.map((f) => f.path), ["new.txt"]);
+    } finally {
+      await Deno.remove(repo, { recursive: true });
+      c.db.close();
+    }
   },
 });
 
 Deno.test({
-  name: "changes: shadow per-path revert reverts only the selected file",
-  ignore: !shadowReady,
+  name: "changes: revert restores a tracked file and deletes a session-created one",
+  ignore: !gitAvailable,
   fn: async () => {
-    await withShadowRoots(async () => {
-      const repo = await tempGitRepo();
-      const c = ctx();
-      const h = createHandler(c);
-      try {
-        const s = await (await h(jsonReq("POST", "/sessions", { title: "s", workspace: repo })))
-          .json() as Session;
-        const dir = await attachWorkspace(c.db, repo, s.id);
-        // Two edited files in the session's change.
-        await overlayEdit(s.id, dir, `printf 'a-work\n' > a.txt; printf 'b-work\n' > b.txt`);
+    const repo = await tempGitRepo();
+    const c = ctx();
+    const h = createHandler(c);
+    try {
+      const s = await startSession(c, repo);
+      await Deno.writeTextFile(`${repo}/README.md`, "clobbered\n");
+      await Deno.writeTextFile(`${repo}/new.txt`, "hi\n");
 
-        const events: BoughEvent[] = [];
-        c.bus.subscribe((e) => events.push(e));
+      const events: BoughEvent[] = [];
+      c.bus.subscribe((e) => events.push(e));
 
-        const { diffs } = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
-          diffs: Diff[];
-        };
-        assertEquals(diffs[0].files.map((f) => f.path).sort(), ["a.txt", "b.txt"]);
+      const reverted = await h(jsonReq("POST", `/sessions/${s.id}/changes/revert`, {}));
+      assertEquals(reverted.status, 200);
+      const { paths } = await reverted.json() as { paths: string[] };
+      assertEquals(paths.sort(), ["README.md", "new.txt"]);
 
-        // Per-path revert of a.txt only.
-        const reverted = await h(
-          jsonReq("POST", `/sessions/${s.id}/changes/revert`, { paths: ["a.txt"] }),
-        );
-        assertEquals(reverted.status, 200);
-        assertEquals(await reverted.json(), { ok: true, reverted: "shadow", paths: ["a.txt"] });
-
-        // The change shrank to just b.txt — a.txt is back to base, b.txt kept.
-        const after = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
-          diffs: Diff[];
-        };
-        assertEquals(after.diffs[0].files.map((f) => f.path), ["b.txt"]);
-        assertEquals(after.diffs[0].files[0].status, "added");
-        assert(events.some((e) => e.type === "changes.updated" && e.sessionId === s.id));
-      } finally {
-        await Deno.remove(repo, { recursive: true });
-        c.db.close();
-      }
-    });
+      // Tracked file back at its base content; created file gone from disk.
+      assertEquals(await Deno.readTextFile(`${repo}/README.md`), "base\n");
+      assertEquals(await exists(`${repo}/new.txt`), false);
+      const after = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
+        diffs: Diff[];
+      };
+      assertEquals(after.diffs[0]?.files ?? [], []);
+      assert(events.some((e) => e.type === "changes.updated" && e.sessionId === s.id));
+    } finally {
+      await Deno.remove(repo, { recursive: true });
+      c.db.close();
+    }
   },
 });
 
 Deno.test({
-  name: "changes: a subagent's unadopted branch surfaces in the spawner's rail; adopt clears it",
-  ignore: !shadowReady,
+  name: "changes: per-path revert reverts only the selected file",
+  ignore: !gitAvailable,
   fn: async () => {
-    await withShadowRoots(async () => {
-      const repo = await tempGitRepo();
-      const c = ctx();
-      const h = createHandler(c);
-      try {
-        const s = await (await h(jsonReq("POST", "/sessions", { title: "s", workspace: repo })))
-          .json() as Session;
-        const dir = await attachWorkspace(c.db, repo, s.id);
+    const repo = await tempGitRepo();
+    const c = ctx();
+    const h = createHandler(c);
+    try {
+      const s = await startSession(c, repo);
+      await Deno.writeTextFile(`${repo}/a.txt`, "a-work\n");
+      await Deno.writeTextFile(`${repo}/b.txt`, "b-work\n");
 
-        // A finished subagent with a branched worktree and an un-adopted edit —
-        // what launch() sets up, minus the turn.
-        c.db.createSession({
-          id: "sub1",
-          parentId: null,
-          title: "essay writer",
-          kind: "subagent",
-          createdAt: 1,
-          originId: s.id,
-          originMessageId: "m1",
-        });
-        const subDir = await shadow.addWorkspace(dir, "sub1", shadow.workspaceDirFor("sub1"), s.id);
-        c.db.setSessionWorkspace("sub1", subDir);
-        await overlayEdit("sub1", subDir, `printf 'words\n' > essay.txt`);
+      const { diffs } = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
+        diffs: Diff[];
+      };
+      assertEquals(diffs[0].files.map((f) => f.path).sort(), ["a.txt", "b.txt"]);
 
-        // The SPAWNER's rail carries the subagent's diff as a labeled section.
-        const { diffs } = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
-          diffs: Diff[];
-        };
-        const sub = diffs.find((d) => d.subagentId === "sub1");
-        assert(sub, "expected an unadopted subagent section");
-        assertEquals(sub.label, "essay writer (unadopted)");
-        assertEquals(sub.files.map((f) => f.path), ["essay.txt"]);
+      const reverted = await h(
+        jsonReq("POST", `/sessions/${s.id}/changes/revert`, { paths: ["a.txt"] }),
+      );
+      assertEquals(reverted.status, 200);
+      assertEquals(await reverted.json(), { ok: true, reverted: "repo", paths: ["a.txt"] });
 
-        const events: BoughEvent[] = [];
-        c.bus.subscribe((e) => events.push(e));
+      // The change shrank to just b.txt — a.txt is gone from the tree, b.txt kept.
+      const after = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
+        diffs: Diff[];
+      };
+      assertEquals(after.diffs[0].files.map((f) => f.path), ["b.txt"]);
+      assertEquals(after.diffs[0].files[0].status, "added");
+      assertEquals(await exists(`${repo}/a.txt`), false);
+    } finally {
+      await Deno.remove(repo, { recursive: true });
+      c.db.close();
+    }
+  },
+});
 
-        // Adopt (happy path): the branch folds into the spawner's worktree, both
-        // rails move, and the subagent section drops out of the spawner's rail.
-        const adopted = await h(jsonReq("POST", "/sessions/sub1/adopt"));
-        assertEquals(adopted.status, 200);
-        assert(events.some((e) => e.type === "changes.updated" && e.sessionId === s.id));
-        assert(events.some((e) => e.type === "changes.updated" && e.sessionId === "sub1"));
-        const after = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
-          diffs: Diff[];
-        };
-        assertEquals(after.diffs.filter((d) => d.subagentId).length, 0);
-        // The work now rides the spawner's own diff.
-        assert(after.diffs.some((d) => d.files.some((f) => f.path === "essay.txt")));
-      } finally {
-        await Deno.remove(repo, { recursive: true });
-        c.db.close();
-      }
-    });
+Deno.test({
+  name: "changes: a subagent's edits ride the spawner's own diff — no adopt section",
+  ignore: !gitAvailable,
+  fn: async () => {
+    const repo = await tempGitRepo();
+    const c = ctx();
+    const h = createHandler(c);
+    try {
+      const s = await startSession(c, repo);
+      // A finished subagent — what launch() sets up, minus the turn. It shares the
+      // spawner's workspace, so there is no branch to surface and nothing to adopt.
+      c.db.createSession({
+        id: "sub1",
+        parentId: null,
+        title: "essay writer",
+        kind: "subagent",
+        createdAt: 1,
+        workspace: repo,
+        originId: s.id,
+        originMessageId: "m1",
+      });
+      await Deno.writeTextFile(`${repo}/essay.txt`, "words\n");
+
+      const { diffs } = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
+        diffs: Diff[];
+      };
+      // One section, not two: there is no separate subagent group to adopt.
+      assertEquals(diffs.length, 1);
+      assert(diffs[0].files.some((f) => f.path === "essay.txt"));
+    } finally {
+      await Deno.remove(repo, { recursive: true });
+      c.db.close();
+    }
   },
 });
 
 Deno.test({
   name: "changes: build/cache noise (__pycache__/*.pyc/.DS_Store) is filtered from the diff",
-  ignore: !shadowReady,
+  ignore: !gitAvailable,
   fn: async () => {
-    await withShadowRoots(async () => {
-      const repo = await tempGitRepo();
-      const c = ctx();
-      const h = createHandler(c);
-      try {
-        const s = await (await h(jsonReq("POST", "/sessions", { title: "s", workspace: repo })))
-          .json() as Session;
-        const dir = await attachWorkspace(c.db, repo, s.id);
-        await overlayEdit(
-          s.id,
-          dir,
-          `printf 'x = 1\n' > real.py; mkdir -p __pycache__; ` +
-            `printf 'junk\n' > __pycache__/real.cpython-312.pyc; ` +
-            `printf 'junk\n' > mod.pyc; printf 'junk\n' > .DS_Store`,
-        );
+    const repo = await tempGitRepo();
+    const c = ctx();
+    const h = createHandler(c);
+    try {
+      const s = await startSession(c, repo);
+      await Deno.writeTextFile(`${repo}/real.py`, "x = 1\n");
+      await Deno.mkdir(`${repo}/__pycache__`, { recursive: true });
+      await Deno.writeTextFile(`${repo}/__pycache__/real.cpython-312.pyc`, "junk\n");
+      await Deno.writeTextFile(`${repo}/mod.pyc`, "junk\n");
+      await Deno.writeTextFile(`${repo}/.DS_Store`, "junk\n");
 
-        const { diffs } = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
-          diffs: Diff[];
-        };
-        // Only the real source file survives; the noise is filtered from display.
-        assertEquals(diffs[0].files.map((f) => f.path), ["real.py"]);
-
-        // Apply-all still seals (noise doesn't count toward "covers everything").
-        const applied = await h(
-          jsonReq("POST", `/sessions/${s.id}/changes/apply`, { source: "shadow", paths: [] }),
-        );
-        assertEquals(applied.status, 200);
-        const after = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
-          diffs: Diff[];
-        };
-        assertEquals(after.diffs[0]?.files ?? [], []);
-      } finally {
-        await Deno.remove(repo, { recursive: true });
-        c.db.close();
-      }
-    });
+      const { diffs } = await (await h(jsonReq("GET", `/sessions/${s.id}/changes`))).json() as {
+        diffs: Diff[];
+      };
+      // Only the real source file survives; the noise is filtered from display.
+      assertEquals(diffs[0].files.map((f) => f.path), ["real.py"]);
+    } finally {
+      await Deno.remove(repo, { recursive: true });
+      c.db.close();
+    }
   },
 });
 
@@ -458,3 +368,12 @@ Deno.test({
     }
   },
 });
+
+async function exists(p: string): Promise<boolean> {
+  try {
+    await Deno.stat(p);
+    return true;
+  } catch {
+    return false;
+  }
+}

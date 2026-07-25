@@ -115,7 +115,7 @@ export function SessionPicker(
         const title = sessionLabel((s.title || "").replace(k.strip ?? /^\b$/, ""), s.workspace);
         // Project-dir basename — two sessions on different projects were
         // indistinguishable by title alone (user-testing). originDir is the
-        // stable project path (workspace gets repointed at the shadow worktree).
+        // stable project path (mirrors workspace, which never moves).
         const dir = s.originDir?.split("/").pop() ?? null;
         return (
           // Selected rows drop custom span colors: under inverse a colored fg

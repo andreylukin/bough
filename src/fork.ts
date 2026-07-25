@@ -9,8 +9,8 @@
  *   - `atMessageId` must be one of the target session's OWN messages (same constraint as
  *     compaction — an ancestor turn is 400: fork the ancestor session instead).
  *   - The fork is a SIBLING (parent = target.parentId) and inherits the target's
- *     workspace, so #9's turn machinery forks the shadow worktree off the shared parent's tip
- *     on the fork's first turn (kind=fork).
+ *     workspace path — the same checkout, worked in place; only the conversation
+ *     branches (kind=fork).
  *   - Seed the fork with copies of the target's own messages STRICTLY BEFORE atMessageId.
  *   - With `editedText`: append a new user message carrying it and run a real turn from
  *     there (streams message.started/delta/part/finished over the bus). `editedText` may

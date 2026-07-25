@@ -102,7 +102,6 @@ import { sectionize, SectionsBody } from "../sections.ts";
 import { extract, ExtractBody } from "../extract.ts";
 import { handoff, HandoffBody } from "../handoff.ts";
 import { move, MoveBody } from "../move.ts";
-import { adoptSubagent } from "../subagent.ts";
 import { jobOutput, killJobById, killJobsOf, listJobs, onJobEvent } from "../tools/bash_bg.ts";
 import { applyChanges, revertChanges, sessionChanges } from "./changes.ts";
 import { ChangesApplyBody, ChangesRevertBody } from "../schema/changes.ts";
@@ -316,7 +315,8 @@ const searchDraftFiles: Handler = async (req) => {
 
 // Directory autocomplete for the new-session dialog: fuzzy dirs under the query's
 // base (fzf-style subsequence), seeded with every workspace a session has ever
-// used — but not the per-session worktrees bough itself creates.
+// used. Legacy rows from before bough worked in place recorded a bough-owned
+// worktree instead of a project dir; those paths are filtered out.
 const searchDirs: Handler = (req, ctx) => {
   const q = new URL(req.url).searchParams.get("q") ?? "";
   const known = [
@@ -373,8 +373,8 @@ const createSession: Handler = async (req, ctx) => {
     createdAt: Date.now(),
     // Absent when not supplied, so responses/events stay byte-identical (toSession
     // only surfaces workspace when non-null; createSession persists it in one insert).
-    // originDir records the project dir permanently — the workspace column gets
-    // repointed at the session's shadow worktree on the first turn.
+    // originDir mirrors workspace and records the project dir permanently; the
+    // workspace column is never rewritten (bough works in the checkout in place).
     ...(workspace ? { workspace, originDir: workspace } : {}),
   };
   if (session.parentId && !ctx.db.getSession(session.parentId)) {
@@ -593,22 +593,6 @@ const moveInto: Handler = async (req, ctx, params) => {
   return json({ session });
 };
 
-// Adopt a subagent's branch: fold its diff into its spawner's workspace —
-// the UI affordance mirroring the supervisor program's adopt() host function.
-const adoptSession: Handler = async (_req, ctx, params) => {
-  const session = ctx.db.getSession(params.id);
-  if (!session) return error(404, "session not found");
-  if (session.kind !== "subagent" || !session.originId) {
-    return error(400, "not a subagent session");
-  }
-  try {
-    const message = await adoptSubagent(ctx, session.originId, session.id);
-    return json({ message });
-  } catch (e) {
-    return error(400, (e as Error).message);
-  }
-};
-
 // Fork-at-message: branch a new session at a past turn (edit & resend or plain branch).
 const forkSession: Handler = async (req, ctx, params) => {
   const body = await parseBody(req, ForkBody);
@@ -659,7 +643,7 @@ const getJobOutput: Handler = (_req, ctx, params) => {
   return json(out);
 };
 
-// GET /sessions/:id/changes → { diffs } across active snapshot sources (shadow + clonefile).
+// GET /sessions/:id/changes → { diffs } across active snapshot sources (repo + clonefile).
 const getChanges: Handler = async (_req, ctx, params) => {
   if (!ctx.db.getSession(params.id)) return error(404, "session not found");
   const diffs = await sessionChanges(ctx.db, params.id, { snapshotBase: ctx.snapshotBase });
@@ -679,7 +663,7 @@ const revertChangesH: Handler = async (req, ctx, params) => {
   const body = await parseBody(req, ChangesRevertBody, {});
   const revertedPaths = await revertChanges(ctx.db, params.id, body.paths);
   emitChangesUpdated(ctx, params.id);
-  return json({ ok: true, reverted: "shadow", paths: revertedPaths });
+  return json({ ok: true, reverted: "repo", paths: revertedPaths });
 };
 
 // ---- schedules (recurring agent runs — schedules.ts owns validation) --------
@@ -1180,11 +1164,6 @@ const routes: Route[] = [
     method: "POST",
     pattern: new URLPattern({ pathname: "/sessions/:id/fork" }),
     handler: forkSession,
-  },
-  {
-    method: "POST",
-    pattern: new URLPattern({ pathname: "/sessions/:id/adopt" }),
-    handler: adoptSession,
   },
   {
     method: "GET",

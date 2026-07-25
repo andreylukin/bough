@@ -42,8 +42,6 @@ type HostName =
   | "artifact"
   | "recall"
   | "image"
-  | "ship"
-  | "pr"
   | "schedule"
   | "state"
   | "workflow";
@@ -163,14 +161,6 @@ async function run(code: string): Promise<void> {
   // store and posts it as a system note; a plain confirmation line comes back.
   const image = (path: string, note?: string) =>
     hostCall("image", note === undefined ? [path] : [path, note]);
-  // Ship: commit (+push) the session's work into the origin repo; options and the
-  // result object both travel as JSON, like mcp().
-  const ship = async (opts?: unknown) =>
-    JSON.parse(await hostCall("ship", [JSON.stringify(opts ?? {})]));
-  // PR: export the session's work into a branch and open a GitHub PR; options and
-  // the PrResult both travel as JSON, like ship().
-  const pr = async (opts?: unknown) =>
-    JSON.parse(await hostCall("pr", [JSON.stringify(opts ?? {})]));
   // Recurring runs: one host function fanned out as a method object, like lsp.*;
   // JSON round-trip both ways.
   const scheduleCall = async (verb: string, args?: unknown) =>
@@ -223,8 +213,6 @@ async function run(code: string): Promise<void> {
     "artifact",
     "recall",
     "image",
-    "ship",
-    "pr",
     "schedule",
     "state",
     "workflow",
@@ -254,8 +242,6 @@ async function run(code: string): Promise<void> {
     artifact,
     recall,
     image,
-    ship,
-    pr,
     schedule,
     state,
     workflow,

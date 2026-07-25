@@ -108,12 +108,12 @@ Edits whose predictions fail get reverted — no vibes-driven prompt growth.
   --setting-sources project` in a fresh fixture copy. Tokens/cost/turns come
   from the result envelope.
 - **bough** (no headless CLI yet): `server.sh` boots an isolated server —
-  own port (4599), `BOUGH_DB`/`BOUGH_SHADOW_BASE`/`BOUGH_SUBAGENT_BASE`/
+  own port (4599), `BOUGH_DB`/`BOUGH_SUBAGENT_BASE`/
   `BOUGH_SNAPSHOT_BASE` under `bench/state/`, model pinned via `BOUGH_MODEL`
   env — so nothing touches `~/.bough` or the daily-driver server. A trial is:
   POST /sessions (workspace = fixture copy) → per-session net yolo →
   POST message → wait for `turn.finished` on the SSE tail → verify against the
-  session's shadow worktree → read tokens from the bench DB.
+  fixture copy (bough edits it in place) → read tokens from the bench DB.
 
 ## Tasks
 

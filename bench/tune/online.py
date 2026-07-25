@@ -37,8 +37,7 @@ TUNE = Path(__file__).resolve().parent
 VARIANTS = TUNE / "variants"
 LEARNINGS = TUNE / "learnings.md"
 PROMPT_DIR = TUNE.parent.parent / "src" / "supervisor" / "prompt"  # live/adopted
-SECTION_FILES = ["system.md", "delegation.md", "delegation-nested.md",
-                 "subagent.md", "ship-note.md"]
+SECTION_FILES = ["system.md", "delegation.md", "delegation-nested.md", "subagent.md"]
 GROWTH_CAP = 1.05  # same dilution guard as the offline tuner
 DEFAULT_DB = Path(os.environ.get("BOUGH_DB", Path.home() / ".bough" / "bough.db"))
 QUEUE = VARIANTS / "_online-queue.json"

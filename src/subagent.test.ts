@@ -1,11 +1,12 @@
 /**
  * Subagent integration: a supervisor program calls agent() (through run_steps and
- * the sealed VM), a real subagent session spins up as a tree branch, works its own
- * shadow worktree, and the spawner adopts its changes. The LLM is a dispatcher keyed
- * by the thread's first user text, because spawner and subagent turns interleave
- * on the same injected client.
+ * the sealed VM) and a real subagent session spins up as a tree branch. It shares
+ * the spawner's workspace — the user's checkout — so its writes are simply there;
+ * there is no branch to adopt. The LLM is a dispatcher keyed by the thread's first
+ * user text, because spawner and subagent turns interleave on the same injected
+ * client.
  */
-import { assert, assertEquals, assertExists, assertStringIncludes } from "jsr:@std/assert@1";
+import { assertEquals, assertExists, assertStringIncludes } from "jsr:@std/assert@1";
 import { Db } from "./db/db.ts";
 import { Bus } from "./bus.ts";
 import type { Message, Part, Session } from "./schema/parts.ts";
@@ -14,19 +15,10 @@ import type { LlmClient, LlmParams, LlmResult } from "./supervisor/llm.ts";
 import { defaultTools } from "./tools/mod.ts";
 import { beginTurn, interruptTurn, startUserTurn, type TurnCtx } from "./turn.ts";
 import { buildResult, taskStubTitle } from "./subagent.ts";
-import * as agentdiff from "./vcs/agentdiff.ts";
-import * as agentfs from "./sandbox/agentfs.ts";
 import { saveRegistry, setActivation } from "./mcp/config.ts";
 import { mcpManager } from "./mcp/manager.ts";
 
 // ---- harness ---------------------------------------------------------------
-
-/** Read a file through a session's agentfs overlay — adopted/written content lives
- *  in the session's delta, not the on-disk worktree, until a ship/pr materializes it. */
-async function readOverlay(sessionId: string, dir: string, rel: string): Promise<string> {
-  agentfs.ensure(sessionId, { origin: dir });
-  return new TextDecoder().decode(await agentfs.readFile(sessionId, `${dir}/${rel}`));
-}
 
 /**
  * Scripted rounds per conversation, keyed by the LAST text-bearing user message
@@ -532,256 +524,210 @@ Deno.test("delegation stops at the depth cap (no agent() host function at depth 
   assertEquals(db.listSessions().filter((s) => s.kind === "subagent").length, 2);
 });
 
+/** Point every session's snapshot/scratch state at temp dirs for `fn`. The
+ *  workspace is NOT redirected — that's the point: the turn runs in `repo`. */
+async function withTempState(fn: () => Promise<void>): Promise<void> {
+  const snapBase = await Deno.makeTempDir({ prefix: "subagent-snap-" });
+  const scratchBase = await Deno.makeTempDir({ prefix: "subagent-scratch-" });
+  const prev = new Map<string, string | undefined>([
+    ["BOUGH_SNAPSHOT_BASE", Deno.env.get("BOUGH_SNAPSHOT_BASE")],
+    ["BOUGH_SCRATCH_BASE", Deno.env.get("BOUGH_SCRATCH_BASE")],
+  ]);
+  Deno.env.set("BOUGH_SNAPSHOT_BASE", snapBase);
+  Deno.env.set("BOUGH_SCRATCH_BASE", scratchBase);
+  try {
+    await fn();
+  } finally {
+    for (const [k, v] of prev) v === undefined ? Deno.env.delete(k) : Deno.env.set(k, v);
+    await Deno.remove(snapBase, { recursive: true }).catch(() => {});
+    await Deno.remove(scratchBase, { recursive: true }).catch(() => {});
+  }
+}
+
 Deno.test({
-  // The nested adopt chain: a grandchild must
-  // get its own branched dir, not run on the subagent's working copy.
-  name: "nested repo delegation: grandchild works its own branch; adopts chain upward",
+  // The nested chain on a repo: spawner, subagent and grandchild all work the ONE
+  // checkout, so a write two tiers down is on disk immediately and adopt() has
+  // nothing to move — it says so rather than pretending it merged a branch.
+  name: "nested repo delegation: the whole chain works the user's checkout in place",
   ignore: !gitAvailable,
-  fn: async () => {
-    const repo = await tempGitRepo();
-    const subBase = await Deno.makeTempDir({ prefix: "subagent-ws-" });
-    const snapBase = await Deno.makeTempDir({ prefix: "subagent-snap-" });
-    const shadowBase2 = await Deno.makeTempDir({ prefix: "subagent-shadow-" });
-    const prevSub = Deno.env.get("BOUGH_SUBAGENT_BASE");
-    const prevSnap = Deno.env.get("BOUGH_SNAPSHOT_BASE");
-    const prevJj = Deno.env.get("BOUGH_SHADOW_BASE");
-    Deno.env.set("BOUGH_SUBAGENT_BASE", subBase);
-    Deno.env.set("BOUGH_SNAPSHOT_BASE", snapBase);
-    Deno.env.set("BOUGH_SHADOW_BASE", shadowBase2);
-    const db = new Db(":memory:");
-    const bus = new Bus();
-    try {
-      const spawner = seed(db, repo);
-      const llm = dispatchLlm({
-        "hi": [
-          program(
-            `const r = await agent("orchestrate: have nested.txt created");
-             console.log("subchanged:" + JSON.stringify(r.changedFiles));
-             console.log(await adopt(r.sessionId));`,
-          ),
-          textRound("all adopted"),
-        ],
-        "orchestrate": [
-          program(
-            `const g = await agent("write nested.txt containing from-nested");
-             console.log("grandchild:" + JSON.stringify(g.changedFiles));
-             console.log(await adopt(g.sessionId));`,
-            { done: true },
-          ),
-        ],
-        "write nested.txt": [
-          program(`await write("nested.txt", "from-nested\\n"); console.log("wrote");`, {
-            done: true,
-          }),
-        ],
-      });
-      const ctx: TurnCtx = {
-        db,
-        bus,
-        llm,
-        tools: defaultTools,
-        titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)),
-      };
+  fn: () =>
+    withTempState(async () => {
+      const repo = await tempGitRepo();
+      const db = new Db(":memory:");
+      const bus = new Bus();
+      try {
+        const spawner = seed(db, repo);
+        const llm = dispatchLlm({
+          "hi": [
+            program(
+              `const r = await agent("orchestrate: have nested.txt created");
+               console.log("subchanged:" + JSON.stringify(r.changedFiles));
+               console.log(await adopt(r.sessionId));`,
+            ),
+            textRound("all done"),
+          ],
+          "orchestrate": [
+            program(
+              `const g = await agent("write nested.txt containing from-nested");
+               console.log("grandchild:" + JSON.stringify(g.changedFiles));
+               console.log(await adopt(g.sessionId));`,
+              { done: true },
+            ),
+          ],
+          "write nested.txt": [
+            program(`await write("nested.txt", "from-nested\\n"); console.log("wrote");`, {
+              done: true,
+            }),
+          ],
+        });
+        const ctx: TurnCtx = {
+          db,
+          bus,
+          llm,
+          tools: defaultTools,
+          titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)),
+        };
 
-      const { message, done } = beginTurn(ctx, spawner.id);
-      await done;
+        const { message, done } = beginTurn(ctx, spawner.id);
+        await done;
 
-      const out = lastToolResult(db.getMessage(message.id)!);
-      // The grandchild's work rode the adopt chain: grandchild → subagent → spawner
-      // (whose working copy is its own relocated dir, not the repo checkout).
-      assertStringIncludes(out, 'subchanged:["nested.txt"]');
-      assertStringIncludes(out, "adopted");
-      const spawnerDir = db.getSessionRuntime(spawner.id).workspace!;
-      assertEquals(await readOverlay(spawner.id, spawnerDir, "nested.txt"), "from-nested\n");
+        const out = lastToolResult(db.getMessage(message.id)!);
+        // Each tier's changedFiles is read off the shared tree, so the grandchild's
+        // write shows up at every level — and adopt is a no-op explainer.
+        assertStringIncludes(out, 'subchanged:["nested.txt"]');
+        assertStringIncludes(out, "nothing to adopt");
+        assertEquals(await Deno.readTextFile(`${repo}/nested.txt`), "from-nested\n");
 
-      // Three tiers of sessions; the grandchild's lineage points at the subagent.
-      const subs = db.listSessions().filter((s) => s.kind === "subagent");
-      assertEquals(subs.length, 2);
-      const sub = subs.find((s) => s.originId === spawner.id)!;
-      const grandchild = subs.find((s) => s.originId === sub.id)!;
-      assertExists(grandchild);
-
-      // The grandchild ran in its OWN branched dir, distinct from the subagent's.
-      const subDir = db.getSessionRuntime(sub.id).workspace!;
-      const grandDir = db.getSessionRuntime(grandchild.id).workspace!;
-      assert(grandDir.startsWith(subBase), `grandchild dir ${grandDir} outside ${subBase}`);
-      assert(grandDir !== subDir, "grandchild shared the subagent's working copy");
-      // Both branches emptied by their adoptions but survive — still continuable.
-      assertEquals((await agentdiff.diff(grandDir, grandchild.id)).files.length, 0);
-      assertEquals((await agentdiff.diff(subDir, sub.id)).files.length, 0);
-    } finally {
-      if (prevSub === undefined) Deno.env.delete("BOUGH_SUBAGENT_BASE");
-      else Deno.env.set("BOUGH_SUBAGENT_BASE", prevSub);
-      if (prevSnap === undefined) Deno.env.delete("BOUGH_SNAPSHOT_BASE");
-      else Deno.env.set("BOUGH_SNAPSHOT_BASE", prevSnap);
-      if (prevJj === undefined) Deno.env.delete("BOUGH_SHADOW_BASE");
-      else Deno.env.set("BOUGH_SHADOW_BASE", prevJj);
-      await Deno.remove(repo, { recursive: true }).catch(() => {});
-      await Deno.remove(subBase, { recursive: true }).catch(() => {});
-      await Deno.remove(snapBase, { recursive: true }).catch(() => {});
-      await Deno.remove(shadowBase2, { recursive: true }).catch(() => {});
-    }
-  },
+        // Three tiers of sessions; the grandchild's lineage points at the subagent…
+        const subs = db.listSessions().filter((s) => s.kind === "subagent");
+        assertEquals(subs.length, 2);
+        const sub = subs.find((s) => s.originId === spawner.id)!;
+        const grandchild = subs.find((s) => s.originId === sub.id)!;
+        assertExists(grandchild);
+        // …and every tier ran in the same dir: no per-session working copies.
+        assertEquals(db.getSessionRuntime(sub.id).workspace, repo);
+        assertEquals(db.getSessionRuntime(grandchild.id).workspace, repo);
+      } finally {
+        db.close();
+        await Deno.remove(repo, { recursive: true }).catch(() => {});
+      }
+    }),
 });
 
 Deno.test({
   // "Continue off of it": a subagent is a plain session — a human message posted to
   // it (the same startUserTurn path behind POST /sessions/:id/messages) runs a new
-  // turn in ITS jj workspace, stacking edits on its branch, spawner untouched.
-  name: "a finished subagent accepts human messages and keeps working its own branch",
+  // turn, and because it shares the spawner's checkout the follow-up edit lands
+  // there too, alongside the first one.
+  name: "a finished subagent accepts human messages and keeps working the shared checkout",
   ignore: !gitAvailable,
-  fn: async () => {
-    const repo = await tempGitRepo();
-    const subBase = await Deno.makeTempDir({ prefix: "subagent-ws-" });
-    const snapBase = await Deno.makeTempDir({ prefix: "subagent-snap-" });
-    const shadowBase2 = await Deno.makeTempDir({ prefix: "subagent-shadow-" });
-    const prevSub = Deno.env.get("BOUGH_SUBAGENT_BASE");
-    const prevSnap = Deno.env.get("BOUGH_SNAPSHOT_BASE");
-    const prevJj = Deno.env.get("BOUGH_SHADOW_BASE");
-    Deno.env.set("BOUGH_SUBAGENT_BASE", subBase);
-    Deno.env.set("BOUGH_SNAPSHOT_BASE", snapBase);
-    Deno.env.set("BOUGH_SHADOW_BASE", shadowBase2);
-    const db = new Db(":memory:");
-    const bus = new Bus();
-    try {
-      const spawner = seed(db, repo);
-      const llm = dispatchLlm({
-        "hi": [
-          program(`const r = await agent("make sub.txt please"); console.log(r.ok);`),
-          textRound("spawned"),
-        ],
-        "make sub.txt": [
-          program(`await write("sub.txt", "v1\\n"); console.log("ok");`, { done: true }),
-        ],
-        "also add more.txt": [
-          program(`await write("more.txt", "v2\\n"); console.log("ok");`, { done: true }),
-        ],
-      });
-      const ctx: TurnCtx = {
-        db,
-        bus,
-        llm,
-        tools: defaultTools,
-        titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)),
-      };
-
-      const { done } = beginTurn(ctx, spawner.id);
-      await done;
-      const sub = db.listSessions().find((s) => s.kind === "subagent")!;
-
-      // A human continues the subagent — same path the composer/API uses.
-      const { done: continued } = startUserTurn(ctx, sub.id, "also add more.txt");
-      await continued;
-
-      // The follow-up turn ran on the subagent's thread…
-      const own = db.messagesFor(sub.id);
-      assertEquals(own.length, 4); // task, reply, human follow-up, reply
-      assertEquals(own[3].pending, false);
-      // …and its edit stacked onto the subagent's branch, not the spawner's.
-      const subDir = db.getSessionRuntime(sub.id).workspace!;
-      const files = (await agentdiff.diff(subDir, sub.id)).files.map((f) => f.path).sort();
-      assertEquals(files, ["more.txt", "sub.txt"]);
-      let leaked = true;
+  fn: () =>
+    withTempState(async () => {
+      const repo = await tempGitRepo();
+      const db = new Db(":memory:");
+      const bus = new Bus();
       try {
-        await Deno.stat(`${repo}/more.txt`);
-      } catch {
-        leaked = false;
+        const spawner = seed(db, repo);
+        const llm = dispatchLlm({
+          "hi": [
+            program(`const r = await agent("make sub.txt please"); console.log(r.ok);`),
+            textRound("spawned"),
+          ],
+          "make sub.txt": [
+            program(`await write("sub.txt", "v1\\n"); console.log("ok");`, { done: true }),
+          ],
+          "also add more.txt": [
+            program(`await write("more.txt", "v2\\n"); console.log("ok");`, { done: true }),
+          ],
+        });
+        const ctx: TurnCtx = {
+          db,
+          bus,
+          llm,
+          tools: defaultTools,
+          titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)),
+        };
+
+        const { done } = beginTurn(ctx, spawner.id);
+        await done;
+        const sub = db.listSessions().find((s) => s.kind === "subagent")!;
+
+        // A human continues the subagent — same path the composer/API uses.
+        const { done: continued } = startUserTurn(ctx, sub.id, "also add more.txt");
+        await continued;
+
+        // The follow-up turn ran on the subagent's thread…
+        const own = db.messagesFor(sub.id);
+        assertEquals(own.length, 4); // task, reply, human follow-up, reply
+        assertEquals(own[3].pending, false);
+        // …and both of its edits are in the one checkout the session works.
+        assertEquals(await Deno.readTextFile(`${repo}/sub.txt`), "v1\n");
+        assertEquals(await Deno.readTextFile(`${repo}/more.txt`), "v2\n");
+        assertEquals(db.getSessionRuntime(sub.id).workspace, repo);
+      } finally {
+        db.close();
+        await Deno.remove(repo, { recursive: true }).catch(() => {});
       }
-      assertEquals(leaked, false, "follow-up edit leaked into the spawner checkout");
-    } finally {
-      if (prevSub === undefined) Deno.env.delete("BOUGH_SUBAGENT_BASE");
-      else Deno.env.set("BOUGH_SUBAGENT_BASE", prevSub);
-      if (prevSnap === undefined) Deno.env.delete("BOUGH_SNAPSHOT_BASE");
-      else Deno.env.set("BOUGH_SNAPSHOT_BASE", prevSnap);
-      if (prevJj === undefined) Deno.env.delete("BOUGH_SHADOW_BASE");
-      else Deno.env.set("BOUGH_SHADOW_BASE", prevJj);
-      await Deno.remove(repo, { recursive: true }).catch(() => {});
-      await Deno.remove(subBase, { recursive: true }).catch(() => {});
-      await Deno.remove(snapBase, { recursive: true }).catch(() => {});
-      await Deno.remove(shadowBase2, { recursive: true }).catch(() => {});
-    }
-  },
+    }),
 });
 
 Deno.test({
-  name: "parallel subagents: two agent() calls in Promise.all work disjoint branches",
+  // Parallel fan-out shares one tree, which is exactly why the delegation prompt
+  // tells the model to give siblings disjoint files: both writes land for real,
+  // and nothing merges them afterwards.
+  name: "parallel subagents: two agent() calls in Promise.all both land in the checkout",
   ignore: !gitAvailable,
-  fn: async () => {
-    const repo = await tempGitRepo();
-    const subBase = await Deno.makeTempDir({ prefix: "subagent-ws-" });
-    const snapBase = await Deno.makeTempDir({ prefix: "subagent-snap-" });
-    const shadowBase2 = await Deno.makeTempDir({ prefix: "subagent-shadow-" });
-    const prevSub = Deno.env.get("BOUGH_SUBAGENT_BASE");
-    const prevSnap = Deno.env.get("BOUGH_SNAPSHOT_BASE");
-    const prevJj = Deno.env.get("BOUGH_SHADOW_BASE");
-    Deno.env.set("BOUGH_SUBAGENT_BASE", subBase);
-    Deno.env.set("BOUGH_SNAPSHOT_BASE", snapBase);
-    Deno.env.set("BOUGH_SHADOW_BASE", shadowBase2);
-    const db = new Db(":memory:");
-    const bus = new Bus();
-    try {
-      const spawner = seed(db, repo);
-      const llm = dispatchLlm({
-        "hi": [
-          program(
-            `const [a, b] = await Promise.all([
-               agent("task alpha: create a.txt"),
-               agent("task beta: create b.txt"),
-             ]);
-             console.log("a:" + JSON.stringify(a.changedFiles) + " b:" + JSON.stringify(b.changedFiles));`,
-          ),
-          textRound("both done"),
-        ],
-        "task alpha": [
-          program(`await write("a.txt", "alpha\\n"); console.log("ok");`, { done: true }),
-        ],
-        "task beta": [
-          program(`await write("b.txt", "beta\\n"); console.log("ok");`, { done: true }),
-        ],
-      });
-      const ctx: TurnCtx = {
-        db,
-        bus,
-        llm,
-        tools: defaultTools,
-        titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)),
-      };
+  fn: () =>
+    withTempState(async () => {
+      const repo = await tempGitRepo();
+      const db = new Db(":memory:");
+      const bus = new Bus();
+      try {
+        const spawner = seed(db, repo);
+        const llm = dispatchLlm({
+          "hi": [
+            program(
+              `const [a, b] = await Promise.all([
+                 agent("task alpha: create a.txt"),
+                 agent("task beta: create b.txt"),
+               ]);
+               console.log("a:" + JSON.stringify(a.changedFiles) + " b:" + JSON.stringify(b.changedFiles));`,
+            ),
+            textRound("both done"),
+          ],
+          "task alpha": [
+            program(`await write("a.txt", "alpha\\n"); console.log("ok");`, { done: true }),
+          ],
+          "task beta": [
+            program(`await write("b.txt", "beta\\n"); console.log("ok");`, { done: true }),
+          ],
+        });
+        const ctx: TurnCtx = {
+          db,
+          bus,
+          llm,
+          tools: defaultTools,
+          titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)),
+        };
 
-      const { message, done } = beginTurn(ctx, spawner.id);
-      await done;
+        const { message, done } = beginTurn(ctx, spawner.id);
+        await done;
 
-      const out = lastToolResult(db.getMessage(message.id)!);
-      assertStringIncludes(out, 'a:["a.txt"]');
-      assertStringIncludes(out, 'b:["b.txt"]');
+        const out = lastToolResult(db.getMessage(message.id)!);
+        assertStringIncludes(out, "a.txt");
+        assertStringIncludes(out, "b.txt");
 
-      // Two subagent lanes, each on its own branch; neither edit leaked into the
-      // spawner's checkout (nothing was adopted).
-      const subs = db.listSessions().filter((s) => s.kind === "subagent");
-      assertEquals(subs.length, 2);
-      const dirs = subs.map((s) => db.getSessionRuntime(s.id).workspace!);
-      assert(dirs[0] !== dirs[1]);
-      for (const f of ["a.txt", "b.txt"]) {
-        let inSpawner = true;
-        try {
-          await Deno.stat(`${repo}/${f}`);
-        } catch {
-          inSpawner = false;
-        }
-        assertEquals(inSpawner, false, `${f} leaked into the spawner checkout`);
+        // Two subagent lanes, one workspace; both files are really there.
+        const subs = db.listSessions().filter((s) => s.kind === "subagent");
+        assertEquals(subs.length, 2);
+        for (const sub of subs) assertEquals(db.getSessionRuntime(sub.id).workspace, repo);
+        assertEquals(await Deno.readTextFile(`${repo}/a.txt`), "alpha\n");
+        assertEquals(await Deno.readTextFile(`${repo}/b.txt`), "beta\n");
+      } finally {
+        db.close();
+        await Deno.remove(repo, { recursive: true }).catch(() => {});
       }
-    } finally {
-      if (prevSub === undefined) Deno.env.delete("BOUGH_SUBAGENT_BASE");
-      else Deno.env.set("BOUGH_SUBAGENT_BASE", prevSub);
-      if (prevSnap === undefined) Deno.env.delete("BOUGH_SNAPSHOT_BASE");
-      else Deno.env.set("BOUGH_SNAPSHOT_BASE", prevSnap);
-      if (prevJj === undefined) Deno.env.delete("BOUGH_SHADOW_BASE");
-      else Deno.env.set("BOUGH_SHADOW_BASE", prevJj);
-      await Deno.remove(repo, { recursive: true }).catch(() => {});
-      await Deno.remove(subBase, { recursive: true }).catch(() => {});
-      await Deno.remove(snapBase, { recursive: true }).catch(() => {});
-      await Deno.remove(shadowBase2, { recursive: true }).catch(() => {});
-    }
-  },
+    }),
 });
 
 Deno.test({

@@ -46,7 +46,7 @@ BENCH_DB = BENCH / "state" / "bough.db"
 # and re-sweeps the baseline under its own conditions.
 results_file = BENCH / "results" / "tune.jsonl"
 LOGS = BENCH / "results" / "tune-logs"
-SECTION_FILES = ["system.md", "delegation.md", "delegation-nested.md", "subagent.md", "ship-note.md"]
+SECTION_FILES = ["system.md", "delegation.md", "delegation-nested.md", "subagent.md"]
 GROWTH_CAP = 1.05  # dilution guard: variant total chars <= champion * cap
 STABLE_LO, STABLE_HI = 0.25, 0.75  # pooled pass-rate band that marks a task noisy
 PROMOTE_BAR = 2.0  # stable_delta + 0.5*noisy_delta must reach this to promote

@@ -2,25 +2,26 @@
  * Per-session workspace preparation, run once at the start of each turn. Two jobs:
  *
  *   1. Resolve the read-write root. Precedence: the session's persisted `workspace`
- *      column, then $BOUGH_WORKSPACE, then the process cwd. Only an *explicit*
- *      workspace (column or env) turns on the sandbox — a bare cwd fallback runs
- *      unsandboxed, which keeps the server- and turn-level tests from touching
- *      snapshot state or booting a sandbox VM.
+ *      column, then $BOUGH_WORKSPACE, then the process cwd.
  *
- *   2. When the root is a repo dir, lazily set up the session's shadow worktree
- *      (docs/shadow-snapshots.md) and resolve the dir the turn actually runs in —
- *      see prepareShadow. The base is captured on the first turn and persisted so
- *      later turns are deterministic. Snapshot failures are non-fatal: the turn
- *      still runs sandboxed, just without snapshot tracking.
+ *   2. When that root is a repo, record the session's starting HEAD once (the
+ *      `base` column) so the Changes rail can report what this session changed —
+ *      `git diff <base>`, see vcs/repodiff.ts.
+ *
+ * The turn runs IN the resolved root: the user's own checkout, on the user's own
+ * branch. There is no per-session worktree and no copy-on-write overlay anymore —
+ * both existed to keep the agent's edits out of the tree and then carry them back
+ * in, which broke git for the agent (see shellInvocation in tools/bash.ts). The
+ * isolation that remains is git's own: the agent commits, and the user reviews,
+ * resets, or pushes like they would any other work.
  *
  * The clonefile snapshot dir (BOUGH_SNAPSHOT_BASE override, else ~/.bough/…) is
- * always created and handed back so bash can be granted write access to it.
+ * still created for the non-git config-edit path.
  */
 import type { Db } from "../db/db.ts";
 import { join } from "node:path";
 import { sessionDir as snapshotSessionDir, snapshotBase } from "../vcs/clonefile.ts";
-import * as shadow from "../vcs/shadow.ts";
-import { pathExists } from "../fsutil.ts";
+import { headSha, isRepo } from "../vcs/repodiff.ts";
 
 export interface PreparedWorkspace {
   /** The resolved read-write root (bash cwd + file-tool root). */
@@ -39,13 +40,19 @@ export interface PreparedWorkspace {
    * built by the live server, or turn up in `git diff main HEAD`. "" when not sandboxed.
    */
   scratchDir: string;
-  /** Whether the turn should run sandboxed (an explicit workspace was configured). */
+  /**
+   * True when this is a real configured session (an explicit workspace, no test
+   * override, no BOUGH_NO_SANDBOX escape hatch). The name is historical — nothing
+   * is sandboxed any more — and it now gates the per-session setup that only a
+   * configured session should get: the snapshot + scratch dirs, the base-sha
+   * capture, and the compose-time reads rooted at the workspace.
+   */
   sandboxed: boolean;
   /**
-   * Set when workspace isolation was expected but could not be provided (shadow
-   * prep failed on a first turn): the turn runs directly in the user's checkout.
-   * The caller surfaces it in the thread — a silent fallback let sessions pollute
-   * the real repo with nothing visible outside the server log (user-testing bug).
+   * Set when the session's base sha could not be recorded on its first turn: the
+   * turn still runs, but the Changes rail has nothing to diff against and will
+   * show the work as if it predates the session. The caller surfaces it in the
+   * thread — a silent degradation is invisible outside the server log.
    */
   warning?: string;
 }
@@ -76,18 +83,11 @@ export function normalizeWorkspace(raw: string): string {
 }
 
 /**
- * Host-side read root for a session's files: the session's host worktree under
- * `workspacesRoot()` when one exists, else the given workspace (first turn before
- * the worktree is branched, or a non-repo/unsandboxed session). Sync so the
- * compose-time callers (@ image attachments, the file picker) stay sync.
+ * Host-side read root for a session's files. The session works in its workspace
+ * directly, so this is just the workspace — kept as a named seam because the
+ * compose-time callers (@ image attachments, the file picker) all go through it.
  */
-export function hostReadRoot(sessionId: string, workspace: string): string {
-  const worktree = shadow.workspaceDirFor(sessionId);
-  try {
-    if (Deno.statSync(worktree).isDirectory) return worktree;
-  } catch {
-    // no worktree — non-repo or unsandboxed session; read the workspace itself
-  }
+export function hostReadRoot(_sessionId: string, workspace: string): string {
   return workspace;
 }
 
@@ -99,16 +99,6 @@ export async function workspaceProblem(p: string): Promise<string | null> {
   } catch {
     return `workspace directory does not exist: ${p}`;
   }
-}
-
-async function gitHead(repo: string): Promise<string | null> {
-  const r = await new Deno.Command("git", {
-    args: ["rev-parse", "HEAD"],
-    cwd: repo,
-    stdout: "piped",
-    stderr: "null",
-  }).output();
-  return r.code === 0 ? new TextDecoder().decode(r.stdout).trim() : null;
 }
 
 /** Resolve + set up the workspace for `sessionId`'s turn. `override` wins for tests. */
@@ -139,110 +129,24 @@ export async function prepareWorkspace(
   const dir = snapshotSessionDir(sessionId, base);
 
   let scratchDir = "";
+  let warning: string | undefined;
   if (sandboxed) {
     await Deno.mkdir(dir, { recursive: true });
     scratchDir = join(scratchBase(), sessionId);
     await Deno.mkdir(scratchDir, { recursive: true });
-    const isGit = await pathExists(`${cwd}/.git`);
-    const isJj = await pathExists(`${cwd}/.jj`); // legacy jj-era workspace dirs still count as repos
-    if (isGit || isJj) {
-      // Relocate the turn into the session's own shadow worktree (first turn);
-      // resumes run where the workspace column already points. agentfs then
-      // overlays that worktree copy-on-write.
-      const prepped = await prepareShadow(db, sessionId, cwd, runtime.base === null);
-      return {
-        cwd: prepped.dir,
-        hostView: prepped.dir,
-        sessionDir: dir,
-        scratchDir,
-        sandboxed,
-        warning: prepped.warning,
-      };
-    }
-  }
-
-  return { cwd, hostView: cwd, sessionDir: dir, scratchDir, sandboxed };
-}
-
-/**
- * Root/refs-only session creation with the broken-store quarantine retry: a
- * store that predates this attempt and now errors with a corruption signature
- * is broken derived state — quarantine (never delete) and retry once fresh.
- */
-async function createWithQuarantine(
-  repo: string,
-  sessionId: string,
-  opts: { worktree?: boolean },
-): Promise<string> {
-  const hadStore = await pathExists(await shadow.storeDirFor(repo));
-  try {
-    return await shadow.createSessionWorkspace(repo, sessionId, opts);
-  } catch (e) {
-    if (!hadStore || !shadow.looksLikeBrokenStore(e as Error)) throw e;
-    const moved = await shadow.quarantineStore(repo);
-    if (!moved) throw e;
-    console.error(
-      `shadow store for ${repo} quarantined to ${moved} (${
-        (e as Error).message.split("\n")[0]
-      }); retrying fresh`,
-    );
-    return await shadow.createSessionWorkspace(repo, sessionId, opts);
-  }
-}
-
-/**
- * Shadow-backend session prep — the single external-style path (there is no
- * colocated mode: every repo session gets an isolated working copy, even on
- * repos that still carry a legacy `.jj`).
- *
- * First turn branches a host worktree — off the parent session's tip for forks,
- * else off a captured snapshot of the repo's working tree — and repoints the
- * session's workspace column at it. Resumes run where the column already points.
- * agentfs overlays that worktree copy-on-write at exec time.
- *
- * Failures degrade gracefully: sandboxed turn in the user's checkout, with a
- * loud warning.
- */
-async function prepareShadow(
-  db: Db,
-  sessionId: string,
-  repo: string,
-  firstTurn: boolean,
-): Promise<{ dir: string; warning?: string }> {
-  const session = db.getSession(sessionId);
-  try {
-    if (!firstTurn) return { dir: repo };
-    let dir: string;
-    if (
-      session?.kind === "fork" && session.originId &&
-      (await shadow.originRepo(repo)) !== null
-    ) {
-      // `repo` is the forked-from session's worktree (forks inherit the
-      // workspace column, and originId names that session — forks are SIBLINGS,
-      // so parentId is null when forking a root session); branch off its tip,
-      // falling back to the worktree's HEAD if its refs vanished.
-      dir = shadow.workspaceDirFor(sessionId);
+    // First turn in a repo: pin the base sha the Changes rail diffs against. The
+    // turn itself runs right here, in the user's checkout. Best-effort — a broken
+    // git install must not cost the user their turn, only their diff.
+    if (runtime.base === null) {
       try {
-        await shadow.addWorkspace(repo, sessionId, dir, session.originId);
-      } catch {
-        await shadow.addWorkspace(repo, sessionId, dir, null);
+        if (await isRepo(cwd)) db.setSessionBase(sessionId, (await headSha(cwd)) ?? "empty");
+      } catch (e) {
+        warning = `Could not record this session's starting commit in ${cwd} ` +
+          `(${(e as Error).message}) — the Changes rail may not show what changed.`;
       }
-    } else {
-      // Root session (also forks whose parent never took a turn): isolated
-      // worktree off a captured snapshot.
-      dir = await createWithQuarantine(repo, sessionId, {});
     }
-    db.setSessionWorkspace(sessionId, dir);
-    // Metadata + the "not first turn" sentinel; "shadow" when the origin has no
-    // resolvable git HEAD (non-git dirs, forks from a parent's worktree).
-    db.setSessionBase(sessionId, (await gitHead(repo)) ?? "shadow");
-    return { dir };
-  } catch (e) {
-    console.error(`shadow workspace prep skipped for ${sessionId}: ${(e as Error).message}`);
-    const warning = firstTurn
-      ? `⚠ workspace isolation failed — this session edits ${repo} DIRECTLY, and the ` +
-        `changes review (^d) can't track it. git said: ${(e as Error).message.split("\n")[0]}`
-      : undefined;
-    return { dir: repo, warning };
   }
+
+  return { cwd, hostView: cwd, sessionDir: dir, scratchDir, sandboxed, ...(warning ? { warning } : {}) };
 }
+

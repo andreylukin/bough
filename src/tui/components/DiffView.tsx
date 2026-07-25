@@ -8,19 +8,10 @@ import { windowAround } from "../format.ts";
 export interface DiffEntry {
   source: WireDiff["source"];
   file: WireFileDiff;
-  /** Carried from a subagent's unadopted group — `a` adopts instead of applying. */
-  subagentId?: string;
-  label?: string;
 }
 
 export function flattenDiffs(diffs: WireDiff[]): DiffEntry[] {
-  return diffs.flatMap((d) =>
-    d.files.map((file) => ({
-      source: d.source,
-      file,
-      ...(d.subagentId ? { subagentId: d.subagentId, label: d.label } : {}),
-    }))
-  );
+  return diffs.flatMap((d) => d.files.map((file) => ({ source: d.source, file })));
 }
 
 function stats(f: WireFileDiff): { add: number; del: number } {
@@ -99,13 +90,11 @@ export function DiffView(
                   {e.file.path}
                   <Text color={rowSel ? undefined : palette.accent}>{"  "}+{add}</Text>
                   <Text color={rowSel ? undefined : palette.error}>{" "}-{del}</Text>
-                  {e.label
-                    ? <Text color={rowSel ? undefined : palette.warn}>{"  "}◆ {e.label}</Text>
-                    : <Text dimColor>{"  "}{e.source}</Text>}
+                  <Text dimColor>{"  "}{e.source}</Text>
                 </SelRow>
               );
             })}
-            {entries.length === 0 && <Text dimColor>no changes on this session's branch</Text>}
+            {entries.length === 0 && <Text dimColor>no changes in this checkout yet</Text>}
           </Box>
         )}
       {sel && (
@@ -119,11 +108,7 @@ export function DiffView(
         </Box>
       )}
       <Text dimColor>
-        {focused
-          ? "← back · j/k scroll"
-          : sel?.subagentId
-          ? "a adopt this subagent's changes · → focus · j/k scroll"
-          : "a apply · A all · R revert · → focus · j/k scroll"}
+        {focused ? "← back · j/k scroll" : "a apply · A all · R revert · → focus · j/k scroll"}
       </Text>
     </Box>
   );

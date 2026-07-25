@@ -1,7 +1,7 @@
 ## Delegation to subagents
 
 More host functions enable delegation to subagents — separate sessions, each working
-on its own branched copy of the workspace. await spawn(task) starts one in the
+in the SAME workspace as you. await spawn(task) starts one in the
 BACKGROUND and returns {sessionId, title} immediately: keep working, or end your turn —
 when it finishes, its report arrives as a [subagent finished] system message and wakes
 you if you're idle. await join(sessionId) instead waits for a background subagent and
@@ -13,9 +13,9 @@ Subagents start with NO context beyond the task string: include
 every relevant path, constraint, and acceptance criterion in it. They DO inherit this
 turn's MCP servers — a subagent's program can call the same mcp() tools (each call
 still passes the egress gate), so delegating MCP-dependent work is fine; name the
-server and tool in the task. Their file changes
-stay on their own branch — call await adopt(sessionId) to merge a subagent's changes
-into your workspace, or leave the branch for the user to review.
+server and tool in the task. They edit the SAME checkout you do — their changes are
+already in your workspace when they report, so give each one a disjoint set of files
+and never have two work the same file at once.
 
 Prefer spawn for
 long tasks so you stay responsive; run independent blocking subtasks concurrently with

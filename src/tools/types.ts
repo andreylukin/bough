@@ -9,13 +9,14 @@
  * bash reports the code in its text so Claude can react to it.
  */
 import { z } from "zod/v4";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { resolve } from "node:path";
 import type { Artifact } from "../server/artifacts.ts";
 
 export interface ToolRunCtx {
   /** Absolute path the tool runs against (cwd for bash, root for file paths). */
   workspace: string;
-  /** Session this turn belongs to — keys the sandbox overlay this turn runs in. */
+  /** Session this turn belongs to — identity/attribution only (the tools all act
+   * directly on the user's checkout; there is nothing per-session to key). */
   sessionId?: string;
   /**
    * The turn's interrupt signal. Long-running tools MUST observe it so the user's
@@ -52,22 +53,18 @@ export interface ToolRunCtx {
      * enables the one-time spec-recheck bounce at done-time. */
     requestText?: string;
     specEchoed?: boolean;
-    /** Subagents whose blocking agent() result carried changed files and that
-     * were not adopt()ed yet this turn (id → title) — recorded by the turn
-     * runner's delegate wiring, read by its adopt stop-gate. */
-    unadopted?: Map<string, string>;
     /** True once this turn ran a parallel/background primitive (agent, spawn,
      * bashBg) — read by the turn runner's parallelism-honesty stop-gate. */
     ranParallel?: boolean;
   };
   /**
    * Delegation, wired by the turn runner for sessions below the depth cap (absent
-   * at MAX_SUBAGENT_DEPTH). Each subagent is a fresh session on its own workspace
-   * branch. `run` blocks to completion; `spawn` starts one in the background and
-   * returns its handle immediately (its finished report is delivered to the session
-   * as a system note unless `join`ed first); `join` waits for a background
-   * subagent's result in-band; `adopt` squashes a subagent's changes back into this
-   * session's workspace. Subagent turns get blocking delegation only: `spawn`/`join`
+   * at MAX_SUBAGENT_DEPTH). Each subagent is a fresh session working in THIS
+   * session's checkout. `run` blocks to completion; `spawn` starts one in the
+   * background and returns its handle immediately (its finished report is delivered
+   * to the session as a system note unless `join`ed first); `join` waits for a
+   * background subagent's result in-band; `adopt` is a no-op explainer kept for
+   * compatibility — there is nothing to merge. Subagent turns get blocking delegation only: `spawn`/`join`
    * are absent because a detached child would outlive the turn whose report was
    * already delivered upward.
    */
@@ -173,71 +170,18 @@ export interface ToolRunCtx {
    * to the executing call before each tool runs, so it takes only the line.
    */
   onLog?: (line: string) => void;
-  /**
-   * Ship the session's work into the origin repo as a real commit (+ optional push)
-   * — vcs/agentdiff.ts shipToOrigin via the turn runner. Wired only for root-session
-   * turns whose workspace is a shadow worktree with a resolvable origin.
-   */
-  ship?: (opts: { message: string; paths?: string[]; push?: boolean }) => Promise<unknown>;
-  /**
-   * Export the session's work into a real git branch and open a GitHub PR for it —
-   * vcs/agentdiff.ts openPr via the turn runner. Builds the commit in git object-land
-   * (the user's checkout is never touched), pushes the branch, and runs `gh pr create`
-   * with the host gh auth. Wired alongside ship for root-session repo turns.
-   */
-  pr?: (
-    opts: {
-      title: string;
-      body?: string;
-      branch?: string;
-      base?: string;
-      paths?: string[];
-      draft?: boolean;
-    },
-  ) => Promise<unknown>;
 }
 
 /**
- * The real path of `p`, resolving symlinks. Since `p` may not exist yet (a file
- * being created), realpath the deepest existing ancestor and re-attach the missing
- * tail — so a symlinked workspace or a symlinked intermediate dir is followed, but a
- * not-yet-created leaf still resolves.
- */
-function realPath(p: string): string {
-  const tail: string[] = [];
-  let cur = p;
-  for (;;) {
-    try {
-      const real = Deno.realPathSync(cur);
-      return tail.length ? join(real, ...tail.reverse()) : real;
-    } catch {
-      const parent = dirname(cur);
-      if (parent === cur) return p; // reached the root; nothing resolved
-      tail.push(basename(cur));
-      cur = parent;
-    }
-  }
-}
-
-/**
- * Resolve `path` against the workspace and confine it: the symlink-resolved result
- * must sit inside the workspace (or the sandbox's sessionDir / scratchDir, when
- * sandboxed). Subprocess confinement is the VM's job, but the read/write/edit tools
- * run in-process on the HOST, so they enforce this boundary themselves — including
- * following symlinks, so a link inside the workspace can't point the tool at a file
- * outside it. Returns the lexical path to operate on. Host mode only; guest-owned
- * sessions resolve via {@link resolveInGuest}.
+ * Resolve `path` against the workspace. The workspace is the ORIGIN for relative
+ * paths, not a boundary: an absolute path anywhere the user can reach resolves
+ * unchanged, matching bash, which runs unconfined in the same places. Confinement
+ * used to live here (and, for subprocesses, in a copy-on-write overlay); both were
+ * removed because they cost more than they bought — see shellInvocation in
+ * tools/bash.ts.
  */
 export function resolveInWorkspace(ctx: ToolRunCtx, path: string): string {
-  const full = resolve(ctx.workspace, path);
-  const realFull = realPath(full);
-  const roots = [ctx.workspace];
-  if (ctx.sandbox) roots.push(ctx.sandbox.sessionDir, ctx.sandbox.scratchDir);
-  for (const root of roots) {
-    const realRoot = realPath(resolve(root));
-    if (realFull === realRoot || realFull.startsWith(realRoot + sep)) return full;
-  }
-  throw new Error(`path escapes the workspace: ${path}`);
+  return resolve(ctx.workspace, path);
 }
 
 export interface ToolDef {

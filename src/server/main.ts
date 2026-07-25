@@ -3,8 +3,6 @@
  * process the `dev` task runs; tests build their own ctx + handler instead.
  */
 import { openDb } from "../db/db.ts";
-import { teardown as teardownSandbox } from "../sandbox/agentfs.ts";
-import { setOriginResolver } from "../vcs/shadow.ts";
 import { mcpManager } from "../mcp/manager.ts";
 import { killAllJobs } from "../tools/bash_bg.ts";
 import { bus } from "../bus.ts";
@@ -29,15 +27,6 @@ if (orphanedWf > 0) console.log(`recovered ${orphanedWf} orphaned workflow(s)`);
 // longer than the retention period are hard-removed on boot (and via `bough purge`).
 const purged = db.purgeArchivedBefore(Date.now() - PURGE_RETENTION_MS);
 if (purged > 0) console.log(`purged ${purged} session(s) archived over 30 days ago`);
-// Store-side git ops resolve a session's shadow store through its origin dir
-// (this DB is the authority).
-setOriginResolver((sid) => db.getSession(sid)?.originDir ?? null);
-// Drop a session's agentfs handle when it's archived — covers both root sessions
-// (app.ts) and subagents (subagent.ts), which both publish session.archived. The
-// on-disk delta persists (harmless); this only frees the in-process bookkeeping.
-bus.subscribe((e) => {
-  if (e.type === "session.archived" && e.sessionId) void teardownSandbox(e.sessionId);
-});
 // MCP server children (mcp/manager.ts) get an orderly SIGTERM on shutdown.
 globalThis.addEventListener("unload", () => void mcpManager().dropAll());
 // Background shells die WITH the server — the registry is in-memory, so anything

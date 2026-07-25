@@ -8,9 +8,9 @@
  * order they were selected in. A pick may carry `parts` (indexes into the message's
  * parts) to copy just those sections — e.g. a turn's prose without its tool calls.
  *
- * The new session keeps the source's workspace so work continues in the same repo
- * (as a root, its first turn branches a shadow worktree off the current working copy, not the
- * source's tip) and records lineage (originId/originMessageId) for the map.
+ * The new session keeps the source's workspace so work continues in the same repo —
+ * literally the same checkout, which the new session edits in place — and records
+ * lineage (originId/originMessageId) for the map.
  *
  * Events: session.created for the new conversation and message.started per copy —
  * the UI's existing reducers render it with no changes (same contract as compact).

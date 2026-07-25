@@ -56,13 +56,13 @@ Point a session at a repo and ask in plain language. bough plans by writing a sm
   <img src="assets/shots/05-model.png" alt="model picker" width="800">
 </p>
 
-Plus: an `oracle()` second opinion, `ship()` to land commits in your own repo with your credentials, artifact publishing at a URL, transcript search, and `@` files / `/` skills in the composer.
+Plus: an `oracle()` second opinion, artifact publishing at a URL, transcript search, and `@` files / `/` skills in the composer.
 
 ## How it works
 
-- **One tool.** The supervisor's only tool is a JS program per turn in a Deno Worker with `permissions: "none"`; host functions bridge out (`bash`, `read`/`write`/`edit`, `oracle`, `agent`/`spawn`/`adopt`, `mcp`, `lsp.*`, `ship`).
-- **Two fences.** The isolate confines the program; a Seatbelt profile confines the processes it launches — workspace-only writes, secret directories denied, network loopback-only while the proxy runs.
-- **Snapshots.** Each turn checkpoints into a per-project shadow git store — one worktree per session, origin history grafted in, `node_modules` hydrated via clonefile. Your repo's `.git` is never touched.
+- **One tool.** The supervisor's only tool is a JS program per turn in a Deno Worker with `permissions: "none"`; host functions bridge out (`bash`, `read`/`write`/`edit`, `oracle`, `agent`/`spawn`, `mcp`, `lsp.*`).
+- **One fence.** The Deno isolate confines the supervisor's program; the processes it launches are not sandboxed — they run as you, in your checkout.
+- **In place.** The agent edits your own checkout directly — no copy, no overlay. The Changes rail is `git diff` against the sha the session started from, and you deliver the work with your own git (`git commit`, `git push`, `gh pr create`).
 - **Headless server + TUI.** One Deno process serves the JSON API, SSE events, and hosted artifacts on `:4321`; the terminal UI drives it. State lives in SQLite at `~/.bough/bough.db`.
 
 ## Develop

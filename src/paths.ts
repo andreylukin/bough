@@ -8,7 +8,7 @@
 //     sandbox and vcs layers use it deliberately: they must hard-fail rather than
 //     silently write to a wrong (getpwuid-derived) root.
 //
-// Callers keep their own env override (BOUGH_NET_DIR, BOUGH_SHADOW_BASE, …) in
+// Callers keep their own env override (BOUGH_NET_DIR, BOUGH_SUBAGENT_BASE, …) in
 // FRONT of these — the overrides point at full subpaths, not the root itself.
 
 import { homedir } from "node:os";

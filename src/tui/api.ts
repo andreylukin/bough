@@ -66,7 +66,9 @@ export interface WfSummary {
   scriptFile: string;
 }
 export type { KeyProvider };
-export type ChangeSource = "clonefile" | "shadow";
+/** "repo" = the user's own checkout, diffed against the session's base sha;
+ * "clonefile" = a snapshot dir for non-git config (see src/schema/changes.ts). */
+export type ChangeSource = "clonefile" | "repo";
 /** What POST changes/apply reports back — feeds the panel's feedback toast. */
 export interface ApplyOutcome {
   applied: string[];
@@ -279,11 +281,6 @@ export const api = {
   applyChanges: (id: string, source: ChangeSource, paths: string[]) =>
     jmsg<ApplyOutcome>(`/sessions/${id}/changes/apply`, postJson({ source, paths })),
   revertChanges: (id: string) => j(`/sessions/${id}/changes/revert`, postJson({})),
-  // Fold a finished subagent's branch into its spawner's workspace (the UI
-  // affordance mirroring the program's adopt() host function).
-  adoptSubagent: (subId: string) =>
-    jmsg<{ message: string }>(`/sessions/${subId}/adopt`, { method: "POST" }),
-
   // Branching. Both return the new branch's Session (or throw the server's message).
   fork: (
     id: string,

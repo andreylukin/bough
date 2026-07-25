@@ -25,7 +25,8 @@ T1="$(now_ms)"
 SID="$(printf '%s' "$ENVELOPE" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("session",""))' 2>/dev/null || true)"
 [ -n "$SID" ] || { echo "prompt CLI returned no session: $ENVELOPE" >&2; exit 5; }
 
-# After the first turn the session's workspace column points at its shadow worktree.
+# The workspace column is the task dir itself (bough works in place) — read it back
+# anyway so an explicitly configured workspace still wins.
 WS="$(curl -sf "$API/sessions/$SID" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session"].get("workspace",""))')"
 [ -n "$WS" ] || WS="$WORK"
 PASS="$(verify_task "$TASK" "$WS")"

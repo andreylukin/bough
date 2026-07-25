@@ -51,5 +51,5 @@ Reply with ONLY a JSON object — no code fences, no prose:
 
 Include only the files a candidate changes; omitted sections inherit the current
 prompt. Valid file names: system.md, delegation.md, delegation-nested.md,
-subagent.md, ship-note.md. Each file's content is the full section text (headers
-stay; no leading blank lines).
+subagent.md. Each file's content is the full section text (headers stay; no
+leading blank lines).
