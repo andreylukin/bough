@@ -72,6 +72,8 @@ export async function searchWorkspaceFiles(root: string, query: string): Promise
       if (e.name.startsWith(".") || SKIP_DIRS.has(e.name)) continue;
       const rel = prefix ? `${prefix}/${e.name}` : e.name;
       if (e.isDirectory) {
+        scanned++;
+        if (subseq(q, rel)) hits.push(rel + "/");
         await walk(`${dir}/${e.name}`, rel);
       } else if (e.isFile) {
         scanned++;
@@ -215,6 +217,43 @@ export function grantedDirs(): string[] {
 }
 
 const MAX_INLINE_BYTES = 64 * 1024;
+const MAX_DIR_ENTRIES = 50;
+
+/**
+ * A one-level directory listing for `@dir/` reference expansion: immediate
+ * children with a size hint, capped at MAX_DIR_ENTRIES (then "…" for the
+ * remainder). NOT recursive — the agent can `@` deeper or read files with its
+ * tools. Subdirectories get a trailing `/`; files get a human-readable size.
+ */
+function dirListing(abs: string): string {
+  let entries: Deno.DirEntry[];
+  try {
+    entries = [...Deno.readDirSync(abs)];
+  } catch {
+    return "(unreadable directory)";
+  }
+  entries.sort((a, b) =>
+    Number(b.isDirectory) - Number(a.isDirectory) || a.name.localeCompare(b.name)
+  );
+  const lines = entries.slice(0, MAX_DIR_ENTRIES).map((e) => {
+    if (e.isDirectory) return `${e.name}/`;
+    try {
+      const sz = Deno.statSync(`${abs}/${e.name}`).size;
+      return `${e.name}\t${humanSize(sz)}`;
+    } catch {
+      return `${e.name}`;
+    }
+  });
+  if (entries.length > MAX_DIR_ENTRIES) lines.push("…");
+  return lines.join("\n");
+}
+
+/** 1.2 KB / 345 B — compact human-readable byte size for directory listings. */
+function humanSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 /**
  * Expand `@path` references in a user message into inlined file content, so the
@@ -237,9 +276,12 @@ export function expandFileReferences(text: string, workspace: string): string {
     const abs = `${root}/${rel}`;
     try {
       const info = Deno.statSync(abs);
-      if (!info.isFile || info.size > MAX_INLINE_BYTES) continue;
-      const content = Deno.readTextFileSync(abs);
-      blocks.push(`<file path="${rel}">\n${content}\n</file>`);
+      if (info.isDirectory) {
+        blocks.push(`<file path="${rel}">\n${dirListing(abs)}\n</file>`);
+      } else if (info.isFile && info.size <= MAX_INLINE_BYTES) {
+        const content = Deno.readTextFileSync(abs);
+        blocks.push(`<file path="${rel}">\n${content}\n</file>`);
+      }
     } catch {
       // missing / unreadable — leave the @reference for the agent's own tools
     }

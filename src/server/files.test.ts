@@ -44,6 +44,58 @@ Deno.test("searchWorkspaceFiles: skips .git/node_modules/dotfiles, empty query l
 Deno.test("searchWorkspaceFiles: missing root yields []", async () => {
   assertEquals(await searchWorkspaceFiles("/no/such/dir/xyz", "a"), []);
 });
+Deno.test("searchWorkspaceFiles: directory hits returned with trailing slash", async () => {
+  const dir = await fixture();
+  try {
+    // "compon" matches the src/components directory.
+    const hits = await searchWorkspaceFiles(dir, "compon");
+    assertEquals(hits.includes("src/components/"), true);
+    // "components" should also match.
+    const hits2 = await searchWorkspaceFiles(dir, "components");
+    assertEquals(hits2.includes("src/components/"), true);
+    // "src" matches the src directory.
+    const hits3 = await searchWorkspaceFiles(dir, "src");
+    assertEquals(hits3.includes("src/"), true);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("searchWorkspaceFiles: empty query lists both files and dirs", async () => {
+  const dir = await fixture();
+  try {
+    const all = await searchWorkspaceFiles(dir, "");
+    assertEquals(all.some((f) => f.endsWith("/")), true); // at least one dir
+    assertEquals(all.includes("src/"), true);
+    assertEquals(all.includes("src/components/"), true);
+    assertEquals(all.includes("README.md"), true); // files still present
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("expandFileReferences inlines a directory listing for @dir/ refs", async () => {
+  const { expandFileReferences } = await import("./files.ts");
+  const dir = await fixture();
+  try {
+    const out = expandFileReferences("look at @src/components/", dir);
+    // Should contain a <file path="src/components/"> block with Button.tsx in it.
+    if (!out.includes('<file path="src/components/">')) {
+      throw new Error("expected dir listing block, got: " + out);
+    }
+    if (!out.includes("Button.tsx")) {
+      throw new Error("expected Button.tsx in listing, got: " + out);
+    }
+    // Without trailing slash, the same path should still be treated as a dir
+    // (statSync detects it's a directory).
+    const out2 = expandFileReferences("look at @src/components", dir);
+    if (!out2.includes('<file path="src/components">')) {
+      throw new Error("expected dir listing for no-slash ref, got: " + out2);
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
 
 Deno.test("searchDirectories: fzf fragment under a base, repos ranked and marked, known seeded", async () => {
   const { searchDirectories } = await import("./files.ts");

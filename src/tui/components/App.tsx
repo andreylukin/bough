@@ -874,7 +874,7 @@ export function App(
         search.then((files) => {
           const items = files.slice(0, 6).map((f) => ({
             label: `@${f}`,
-            detail: "",
+            detail: f.endsWith("/") ? "dir" : "",
             insert: `@${f} `,
             // Positions are vs the path; the label's leading "@" shifts them by 1.
             hl: fuzzyPositions(f, q).map((p) => p + 1),
@@ -3158,7 +3158,7 @@ export function App(
                       })}
                     <Text dimColor>
                       {popup.kind === "file"
-                        ? "files — ↑↓ select · tab insert · esc close"
+                        ? "files & dirs — ↑↓ select · tab insert · esc close"
                         : popup.kind === "shell"
                         ? "local shell — ↑↓ pick · enter runs · esc close"
                         : "commands — ↑↓ select · enter runs · esc close"}
