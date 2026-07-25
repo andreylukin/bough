@@ -1,21 +1,27 @@
 /**
- * The host side of the code-mode VM. Each supervisor round is one JavaScript program executed in a fresh
- * Deno Worker with `permissions: "none"`: an isolated V8 heap that cannot reach the
- * filesystem, network, env, or Deno APIs. The ONLY capabilities are the async host
- * functions we bridge in — and those run here on the host, where the real tool
- * implementations enforce workspace confinement and sandboxing (the session VM).
+ * The host side of the code-mode VM. Each supervisor round is one JavaScript program
+ * executed in a fresh Deno Worker with `permissions: "inherit"` — the program runs as
+ * the user, with the user's full authority: filesystem, network, env, subprocesses,
+ * npm/jsr imports. Nothing here is a security boundary.
+ *
+ * The host functions bridged in are therefore convenience and integration, not
+ * confinement. They earn their place by carrying harness behavior a raw Deno call
+ * cannot: bash() dies on the turn's interrupt, auto-backgrounds past 60s and digests
+ * oversized output; write()/edit() feed the done-gate's write signal; agent(), ask()
+ * and state() reach the session's DB and TUI.
  *
  * A program is disposable compute: fresh isolate per round, hard wall-clock timeout,
- * terminated (not awaited) on overrun. Host-function failures reject inside the
- * program as ordinary exceptions the supervisor's code may catch.
+ * wound down (children killed, then terminated) on overrun or interrupt.
+ * Host-function failures reject inside the program as ordinary exceptions the
+ * supervisor's code may catch.
  */
 
 import { checkSyntax } from "../text.ts";
 
 /**
  * The program's parameter names, mirroring vm_worker.ts's own AsyncFunction call.
- * Duplicated rather than imported because the worker runs with `permissions:
- * "none"` and deliberately imports nothing; vm.test.ts pins the two lists equal.
+ * Duplicated rather than imported to keep the worker module self-contained;
+ * vm.test.ts pins the two lists equal.
  * They must match: a program that shadows a host name (`let bash = 1`) is a
  * SyntaxError, and the pre-flight check should agree with the worker about it.
  */
@@ -170,6 +176,13 @@ export interface ProgramResult {
 const DEFAULT_TIMEOUT_MS = 180_000;
 
 /**
+ * How long a stopping program gets to kill the processes it spawned before the
+ * worker is terminated regardless. Long enough for a SIGTERM sweep, short enough
+ * that the stop button still feels instant.
+ */
+const ABORT_GRACE_MS = 1_000;
+
+/**
  * Run one supervisor program in a sealed V8 isolate with the given host functions.
  * `signal` (the turn's interrupt) terminates the worker mid-program — host functions
  * already in flight are expected to observe the same signal and die on their own
@@ -193,17 +206,53 @@ export function runProgram(
 
   const worker = new Worker(new URL("./vm_worker.ts", import.meta.url).href, {
     type: "module",
-    deno: { permissions: "none" },
+    // The program runs with everything the server itself has: filesystem, network,
+    // env, subprocesses, npm/jsr imports. The host functions below are convenience
+    // and integration (they carry the turn's interrupt, the auto-background, the
+    // output digest, and the session's DB/TUI-backed verbs) — they are NOT a
+    // boundary, and a program is free to reach past them to raw Deno APIs.
+    deno: { permissions: "inherit" },
   });
 
   return new Promise<ProgramResult>((resolve) => {
     let settled = false;
+    /** Set while a stop is in flight: the worker's "aborted" ack calls it. */
+    let onAborted: (() => void) | undefined;
     // Console lines already streamed out of the worker — an interrupt terminates
     // the worker before it can post its batched logs, so this copy is what keeps
     // the partial output in the tool result.
     const streamed: string[] = [];
-    const onAbort = () =>
-      finish({ ok: false, logs: streamed, error: "program interrupted by the user" });
+    const interrupted = (): ProgramResult => ({
+      ok: false,
+      logs: streamed,
+      error: "program interrupted by the user",
+    });
+    /**
+     * Stopping the program is a handshake, not just a terminate(). The program runs
+     * with real permissions, so it may have spawned processes of its own — and those
+     * are children of THIS server process, which worker.terminate() leaves running
+     * forever. So: ask the worker to kill what it spawned, wait briefly for its ack,
+     * then terminate. A worker wedged in a synchronous loop can't answer, hence the
+     * grace timeout — it stops the turn on schedule either way.
+     */
+    const stop = (result: ProgramResult) => {
+      if (settled) return;
+      let acked = false;
+      const done = () => {
+        if (acked) return;
+        acked = true;
+        clearTimeout(grace);
+        finish(result);
+      };
+      onAborted = done;
+      const grace = setTimeout(done, ABORT_GRACE_MS);
+      try {
+        worker.postMessage({ type: "abort" });
+      } catch {
+        done(); // worker already gone — nothing to wind down
+      }
+    };
+    const onAbort = () => stop(interrupted());
     const finish = (result: ProgramResult) => {
       if (settled) return;
       settled = true;
@@ -213,19 +262,26 @@ export function runProgram(
       resolve(result);
     };
 
+    // A timed-out program gets the same wind-down as an interrupted one: whatever
+    // it spawned is killed before the worker goes away.
     const timer = setTimeout(
-      () => finish({ ok: false, logs: [], error: `program timed out after ${timeoutMs}ms` }),
+      () => stop({ ok: false, logs: streamed, error: `program timed out after ${timeoutMs}ms` }),
       timeoutMs,
     );
-    if (signal?.aborted) return onAbort();
+    // Already stopped before we started: the program never ran, so there is nothing
+    // to wind down and no reason to wait on an ack.
+    if (signal?.aborted) return finish(interrupted());
     signal?.addEventListener("abort", onAbort, { once: true });
 
     worker.onmessage = async (e: MessageEvent) => {
       const msg = e.data as
         | { type: "host"; id: number; fn: keyof HostFns; args: unknown[] }
         | { type: "log"; line: string }
+        | { type: "aborted" }
         | { type: "done"; logs: string[] }
         | { type: "error"; message: string; logs: string[] };
+      // The worker finished killing what it spawned — stop waiting on the grace timer.
+      if (msg.type === "aborted") return onAborted?.();
       if (msg.type === "log") {
         streamed.push(msg.line);
         onLog?.(msg.line);

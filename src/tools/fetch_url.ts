@@ -1,7 +1,8 @@
 /**
- * fetch(): the program's ONLY way to reach the network. The sandbox worker runs with
- * `permissions: "none"`, so it has no fetch of its own; this runs here on the host,
- * where the server process holds full network access. Shelling `curl` through bash()
+ * fetch(): the program's structured HTTP verb. The worker has real network of its own
+ * (`globalThis.fetch` reaches past the injected parameter that shadows the name), so
+ * this is a convenience, not the only egress — it adds the 1MB body cap, the 30s
+ * deadline and interrupt wiring the raw global has not. Shelling `curl` through bash()
  * works too, but it is a subprocess per request, its errors arrive as exit codes, and
  * the model has to parse headers out of text — this returns one structured value.
  *

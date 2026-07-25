@@ -3,8 +3,8 @@
   "version": "0.0.0",
   "exports": "./src/server/main.ts",
   "tasks": {
-    "dev": "deno run --watch --allow-net --allow-env --allow-read --allow-write --allow-ffi --allow-sys --allow-run src/server/main.ts",
-    "test": "deno test --allow-net --allow-env --allow-read --allow-write --allow-ffi --allow-sys --allow-run",
+    "dev": "deno run --watch --allow-all src/server/main.ts",
+    "test": "deno test --allow-all",
     "check": "deno check src/**/*.ts src/**/*.tsx",
     "tui": "deno run --no-prompt --allow-net=127.0.0.1 --allow-env --allow-read --allow-write=/dev/tty,$HOME/.bough --allow-sys --allow-run src/tui/main.tsx",
     "tunnel": "deno run --allow-net --allow-env --allow-run=cloudflared scripts/tunnel.ts"

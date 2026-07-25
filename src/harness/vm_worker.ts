@@ -1,17 +1,24 @@
 /// <reference no-default-lib="true" />
 /// <reference lib="deno.worker" />
 /**
- * The sandbox side of the code-mode VM: this module runs
- * as a Deno Worker with `permissions: "none"` — its V8 isolate can touch nothing on
- * the host. The four host functions (bash/read/write/edit) are the entire capability
- * surface, bridged to the main process over postMessage; everything else (fs, net,
- * env, Deno APIs) is denied by the runtime.
+ * The program side of the code-mode VM: this module runs as a Deno Worker with
+ * `permissions: "inherit"` — the program has everything the server itself has
+ * (filesystem, network, env, subprocesses, npm/jsr imports). The host functions
+ * bridged in over postMessage are convenience and session integration, not a
+ * boundary: bash() carries the turn's interrupt and the output digest, agent()/
+ * ask()/state() reach the session's DB and TUI. A program may ignore all of them
+ * and call Deno directly.
+ *
+ * Because the isolate is no longer sealed, two things it spawns must be wound
+ * down deliberately — see the exit trap and the child-process tracking below.
  *
  * Protocol (see vm.ts):
  *   main → worker  {type:"run", code}
  *   worker → main  {type:"host", id, fn, args}          host-function call
  *   main → worker  {type:"host_result", id, ok, value}  its result / error
  *   worker → main  {type:"log", line}                     one console.* line, as printed
+ *   main → worker  {type:"abort"}                         stop: kill what we spawned
+ *   worker → main  {type:"aborted"}                       …swept, safe to terminate
  *   worker → main  {type:"done", logs} | {type:"error", message, logs}
  *
  * console lines are BOTH streamed ({type:"log"} — the TUI renders them live) and
@@ -75,12 +82,12 @@ const print = (...args: unknown[]) => {
 };
 const sandboxConsole = { log: print, error: print, warn: print, info: print };
 
-// Node-ism guard: Deno exposes a `process` global even in permissions-none
-// workers, and process.exit()/Deno.exit() TERMINATE THE WORKER SILENTLY — the
-// host's runProgram promise never settles, freezing the turn until its wall
-// timeout (45 min for delegating turns; bench trials burned 900s each on
-// exactly this). Weak models emit `process.exit(1)` as an "assertion failed"
-// idiom, so make it throw a catchable error the round can report instead.
+// Node-ism guard, and now a load-bearing one: process.exit()/Deno.exit() used to
+// terminate the worker silently, freezing the turn until its wall timeout (45 min
+// for delegating turns; bench trials burned 900s each on exactly this). With
+// inherited permissions the stakes are higher — an exit here can take the whole
+// bough server down with it. Weak models emit `process.exit(1)` as an "assertion
+// failed" idiom, so make it throw a catchable error the round can report instead.
 const exitTrap = (code?: unknown) => {
   throw new Error(
     `exit(${code ?? 0}) is not available in this sandbox — a program ends by ` +
@@ -92,6 +99,65 @@ try {
   if (g.process) g.process.exit = exitTrap;
   if (g.Deno) g.Deno.exit = exitTrap;
 } catch { /* frozen globals — nothing to guard */ }
+
+/**
+ * Every process the program spawns natively (`new Deno.Command(...)`) is a child of
+ * the SERVER process, and worker.terminate() does not touch it — so an interrupted
+ * turn would leak one on every stop, and ^C would look like it worked while the
+ * build kept running. Track them all; the abort handshake sweeps them below.
+ *
+ * Only the async paths are tracked. outputSync()/spawnSync() block the worker's
+ * event loop, so an abort message could not be handled during one anyway.
+ */
+const children = new Set<Deno.ChildProcess>();
+
+function trackChild(child: Deno.ChildProcess): Deno.ChildProcess {
+  children.add(child);
+  // Reap on exit either way — a rejected status is still an exit.
+  child.status.catch(() => {}).finally(() => children.delete(child));
+  return child;
+}
+
+function killChildren(): void {
+  for (const child of children) {
+    try {
+      child.kill("SIGTERM");
+    } catch { /* already exited between the sweep and the signal */ }
+  }
+  children.clear();
+}
+
+try {
+  const RealCommand = Deno.Command;
+  class TrackedCommand extends RealCommand {
+    #cmd: string | URL;
+    #opts?: Deno.CommandOptions;
+    constructor(cmd: string | URL, opts?: Deno.CommandOptions) {
+      super(cmd, opts);
+      this.#cmd = cmd;
+      this.#opts = opts;
+    }
+    override spawn(): Deno.ChildProcess {
+      return trackChild(super.spawn());
+    }
+    override output(): Promise<Deno.CommandOutput> {
+      // output() does not route through spawn(), so re-express it as one to get the
+      // handle. It defaults to piped where spawn() defaults to inherit — preserve
+      // output()'s own defaults so the wrapper is invisible to the caller.
+      const opts = {
+        ...this.#opts,
+        stdout: this.#opts?.stdout ?? "piped",
+        stderr: this.#opts?.stderr ?? "piped",
+      } satisfies Deno.CommandOptions;
+      return trackChild(new RealCommand(this.#cmd, opts).spawn()).output();
+    }
+  }
+  Object.defineProperty(Deno, "Command", {
+    value: TrackedCommand,
+    writable: true,
+    configurable: true,
+  });
+} catch { /* namespace locked down — natively spawned children stay untracked */ }
 
 async function run(code: string): Promise<void> {
   const bash = (cmd: string) => hostCall("bash", [cmd]);
@@ -252,7 +318,16 @@ async function run(code: string): Promise<void> {
 self.onmessage = (e: MessageEvent) => {
   const msg = e.data as
     | { type: "run"; code: string }
+    | { type: "abort" }
     | { type: "host_result"; id: number; ok: boolean; value: string };
+  // Stop requested (interrupt or timeout): kill what the program spawned, then tell
+  // the host it is safe to terminate us. Host-side work (a foreground bash) is
+  // already dying on the turn's own signal.
+  if (msg.type === "abort") {
+    killChildren();
+    self.postMessage({ type: "aborted" });
+    return;
+  }
   if (msg.type === "host_result") {
     const p = pending.get(msg.id);
     pending.delete(msg.id);

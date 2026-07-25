@@ -105,8 +105,10 @@ cmd_run() {
     exit 0
   fi
   cd "$ROOT"
-  exec deno run --allow-net --allow-env --allow-read --allow-write \
-    --allow-ffi --allow-sys --allow-run src/server/main.ts
+  # --allow-all, not a list: the program worker runs with permissions:"inherit",
+  # so whatever is withheld here is withheld from the agent (--allow-import is the
+  # one that bites — it gates the program's npm:/jsr: imports).
+  exec deno run --allow-all src/server/main.ts
 }
 
 cmd_start() {

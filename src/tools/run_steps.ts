@@ -1,10 +1,10 @@
 /**
- * `run_steps` — the supervisor's ONLY tool: one JavaScript program per
- * round, executed by the deterministic harness in a sealed V8 sandbox (harness/vm.ts).
- * The supervisor plans and writes; it never touches the machine. The program's whole
- * capability surface is the four host functions, which run here on the host through
- * the tool implementations (bash + file ops, both unconfined, in the session
- * workspace).
+ * `run_steps` — the supervisor's ONLY tool: one JavaScript program per round, executed
+ * by the deterministic harness in a Deno worker (harness/vm.ts) that inherits the
+ * server's permissions — the program can do anything the user can. The host functions
+ * bridged below are not a boundary; they are where the harness behavior lives (the
+ * turn's interrupt, auto-backgrounding, output digestion, and the write/check signals
+ * that feed the done-gate), which is why ordinary work should still flow through them.
  *
  * Completion is CHECK-gated, not self-reported: `check` commits a shell command that
  * exits 0 iff the task's acceptance criteria hold; `done: true` asks the harness to
@@ -34,8 +34,12 @@ const DELEGATING_TIMEOUT_MS = 45 * 60_000;
 
 const schema = z.object({
   code: z.string().describe(
-    "One JavaScript program for this round. It runs in a sealed V8 sandbox; the core " +
-      "capability surface is async host functions with these RETURN TYPES: " +
+    "One JavaScript program for this round. It runs in a Deno worker with the user's " +
+      "own permissions — the full Deno runtime (Deno.readTextFile, Deno.Command, " +
+      'Deno.env, sockets, `await import("npm:…")`) is available when you need it. ' +
+      "The host functions below are the convenient path and carry harness behavior " +
+      "(interrupts, auto-backgrounding, output digestion), so prefer them for " +
+      "ordinary work. Their RETURN TYPES: " +
       "bash(cmd) → string (combined stdout+stderr — NOT a {stdout} object; " +
       "`const {stdout} = await bash(...)` yields undefined), " +
       "sh(...cmds) → [{code, out}, …] (the SAME shell, but runs every command " +
@@ -62,8 +66,9 @@ const schema = z.object({
       "question; blocks until they answer in the TUI — they pick an option or type freely — " +
       "and throws a catchable 'user declined' error if dismissed) and any " +
       "delegation (agent/spawn/join/adopt), mcp(server, tool, args), and lsp.* symbol " +
-      "navigation host functions your system prompt grants. Node globals (process, " +
-      "require) do not exist. Use console.log(...) to see " +
+      "navigation host functions your system prompt grants. `require` does not exist " +
+      "(use npm: specifiers) and process.exit()/Deno.exit() throw — a program ends by " +
+      "returning. Use console.log(...) to see " +
       "anything — printed output is returned to you. Cover inspect → change → verify in " +
       "one program.",
   ),
@@ -93,7 +98,8 @@ function exitCodeOf(bashOutput: string): number {
 export const runSteps: ToolDef = {
   name: "run_steps",
   description:
-    "Execute one JavaScript program in the sealed sandbox (host functions: bash/sh/read/write/edit, " +
+    "Execute one JavaScript program in a Deno worker running with the user's own permissions " +
+    "(host functions: bash/sh/read/write/edit, " +
     "background shells via bashBg/bashOutput/bashKill, plus delegation and mcp() when granted), " +
     "optionally committing a `check` command and/or requesting `done`. This is your only way to act.",
   schema,

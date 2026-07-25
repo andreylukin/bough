@@ -106,15 +106,45 @@ Deno.test("host-function failure rejects inside the program as a catchable excep
   assertEquals(res.logs, ["caught: old_string not found"]);
 });
 
-Deno.test("the isolate is sealed — Deno APIs are unavailable", async () => {
-  const res = await runProgram(`console.log(typeof Deno);`, hosts());
+Deno.test("the program has real permissions — Deno APIs work", async () => {
+  // The host functions are convenience, not a boundary: a program that wants to
+  // reach past them to the raw runtime may, and this is what makes that true.
+  const res = await runProgram(
+    `const t = await Deno.readTextFile("/etc/hosts"); console.log(t.length > 0);`,
+    hosts(),
+  );
   assertEquals(res.ok, true);
-  // With permissions:"none" the namespace may exist but every op is denied; either
-  // the type is undefined or any use throws. Assert the benign probe result only.
-  const t = res.logs[0];
-  assertEquals(t === "undefined" || t === "object", true);
-  const escape = await runProgram(`await Deno.readTextFile("/etc/hosts");`, hosts());
-  assertEquals(escape.ok, false);
+  assertEquals(res.logs, ["true"]);
+});
+
+Deno.test("an interrupt kills processes the program spawned natively", async () => {
+  // worker.terminate() does not reap the program's children — they are children of
+  // this process. Without the abort handshake a stopped turn leaks the build it
+  // started, and the stop button lies. Pin it: the sleep must be gone afterward.
+  const marker = `bough-vm-test-${crypto.randomUUID()}`;
+  const ctl = new AbortController();
+  const run = runProgram(
+    `new Deno.Command("sh", { args: ["-c", "sleep 60 # ${marker}"] }).spawn();
+     await new Promise((r) => setTimeout(r, 30_000));`,
+    hosts(),
+    60_000,
+    ctl.signal,
+  );
+  // Let it get the child up before stopping.
+  await new Promise((r) => setTimeout(r, 500));
+  ctl.abort();
+  const res = await run;
+  assertEquals(res.ok, false);
+  assertStringIncludes(res.error ?? "", "interrupted");
+
+  const alive = async () =>
+    (await new Deno.Command("sh", {
+      args: ["-c", `ps ax | grep -F '${marker}' | grep -v grep | wc -l`],
+      stdout: "piped",
+    }).output()).stdout;
+  // SIGTERM delivery is not instantaneous; give it a beat before judging.
+  await new Promise((r) => setTimeout(r, 500));
+  assertEquals(new TextDecoder().decode(await alive()).trim(), "0");
 });
 
 Deno.test("a syntax/runtime error is reported, not thrown", async () => {
