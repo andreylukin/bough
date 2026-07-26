@@ -129,12 +129,20 @@ designing the bridge protocol.
 
 ## 2. Disposition of the current tree
 
-The existing `src/` is **reference material, not a starting point.** Build the new
-tree alongside it, then delete in one commit at the end of M9.
+The existing `src/` is **reference material, not a starting point.**
 
-Until that commit, treat every existing file as read-only. Do not edit, do not
-partially migrate, do not leave a half-ported module. The `Port from` column in each
-task says which old file to read.
+**The new tree is built at `next/`**, with its own `next/deno.json`. It is renamed
+to `src/` at cutover (T10.8). This is not cosmetic: the layout below reuses paths
+that already exist (`src/db/db.ts`, `src/schema/parts.ts`, …), so building in place
+would have parallel tasks overwriting live files and each other. `next/` removes the
+collision entirely, and keeps every `Port from` reference readable while you work.
+
+Until cutover, treat everything under `src/` as **read-only**. Do not edit, do not
+partially migrate, do not delete. The `Port from` line in each task says which old
+file to read. The root `deno.json` also stays untouched — the running server builds
+from it.
+
+Paths in §3 are written relative to `next/`.
 
 Also deleted in that final commit: `docs/identity-boundary.md`,
 `docs/mcp.md`, `docs/net-transparent-proxy.md`, `docs/subagent-failure-testing.md`,
@@ -223,7 +231,7 @@ owning task.
 
 | File | Owner | Everyone else |
 |---|---|---|
-| `deno.json` | T0.1 | All dependencies are declared up front in T0.1. If a later task needs a new one, it **stops and asks** rather than editing the import map. |
+| `next/deno.json` | T-1 | All dependencies are declared up front in T-1. If a later task needs a new one, it **stops and asks** rather than editing the import map. |
 | `src/harness/protocol.ts` | T3.1 | Host-function names are declared here once, in one array, at T3.1 — including names whose implementations land later in M6. Later tasks implement against the existing name; they never add one. |
 | `src/db/schema.sql` | T0.3 | Every table for every milestone is created in T0.3. A later task that needs a column stops and asks. |
 | `src/server/app.ts` route table | T1.1 | **Append-only.** A task adds its route entries at the end of the `routes` array and its handler in its own file. It never reorders, never edits another task's entry. |
