@@ -762,9 +762,14 @@ export function App(
   // The /conversation card's clickable region: screen row of its first data row
   // plus the rows themselves. Synced post-render alongside activityRowRef.
   const infoClickRef = useRef<{ firstRow: number; rows: [string, string, string][] } | null>(null);
-  // Composer autocomplete: "/" at the start completes skills, "@" completes
+  // Composer autocomplete: "/" at the start of a line completes skills, "@" completes
   // workspace files (in a draft, the prospective workspace's files by path),
-  // "!" fuzzy-searches shell history backwards (ctrl-r muscle memory).
+  // "!" fuzzy-searches shell history backwards (ctrl-r muscle memory). The "/"
+  // skill picker triggers at the start of any line (after the very first char or
+  // following a newline), so it works mid-multiline-input — not only when "/"
+  // is the absolute first character of the whole composer (the @ picker already
+  // worked mid-line; the / picker was pinned to text startsWith, which made the
+  // fzf vanish as soon as anything preceded it on the line).
   interface Popup {
     kind: "skill" | "file" | "shell";
     /** hl: label indices of the fuzzy-matched chars (accent+bold in the row). */
@@ -816,8 +821,22 @@ export function App(
       );
       return;
     }
-    if (text.startsWith("/") && cursor >= 1 && !/\s/.test(text.slice(0, cursor))) {
-      const q = text.slice(1, cursor);
+    // "/" at the start of a line (position 0 or right after a newline) arms the
+    // skill picker. Mirrors the @ picker's word-boundary test — a "/" mid-word
+    // is not a command and must not eat the line.
+    const slashAt = (() => {
+      // The "/" that arms the picker must be at the start of the line containing
+      // the cursor (column 0): position 0 of the whole text, or right after a
+      // newline. A "/" mid-line is just text and must not eat the line.
+      const before = text.slice(0, cursor);
+      const ln = before.lastIndexOf("\n");
+      const lineStart = ln + 1;
+      const col = cursor - lineStart;
+      if (col < 1 || text[lineStart] !== "/") return -1;
+      return lineStart;
+    })();
+    if (slashAt >= 0 && cursor >= slashAt + 1 && !/\s/.test(text.slice(slashAt + 1, cursor))) {
+      const q = text.slice(slashAt + 1, cursor);
       const apply = (skills: SkillInfo[]) => {
         // Composer-local commands complete alongside server skills. The server's
         // `theme` skill is hidden here — the local /theme opens the panel's
@@ -849,7 +868,7 @@ export function App(
         // A filter that matches nothing still shows the menu (as a "no matching
         // commands" row) — silently hiding it read as "/ is broken".
         setPopup(
-          items.length || q ? { kind: "skill", items, sel: 0, tokenStart: 0, tokenEnd: end } : null,
+          items.length || q ? { kind: "skill", items, sel: 0, tokenStart: slashAt, tokenEnd: end } : null,
         );
       };
       if (skillsCache.current) apply(skillsCache.current);
