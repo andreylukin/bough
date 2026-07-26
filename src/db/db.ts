@@ -27,10 +27,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   kind        TEXT NOT NULL,
   created_at  INTEGER NOT NULL,
   workspace   TEXT,                   -- the session's workspace root; null = BOUGH_WORKSPACE/cwd.
-                                      -- VM (guest-owned) mode: permanently the ORIGIN dir — the
-                                      -- working copy is the guest clone, and legacy rows pointing
-                                      -- at ~/.bough/workspaces worktrees are rewritten to origin_dir
-                                      -- at startup (see #migrate). Host-worktree mode still repoints
+                                      -- The agent works in this directory in place. Legacy rows
+                                      -- pointing at ~/.bough/workspaces worktrees are rewritten to
+                                      -- their origin dir at startup (see #migrate). Older modes
                                       -- this at the session worktree on the first turn.
   base        TEXT,                   -- persisted snapshot/git base commit, captured on the first turn
   origin_id         TEXT,             -- lineage: session this fork/compaction branched from (null for root/plain)
@@ -472,6 +471,11 @@ export class Db {
       this.#db.exec(`ALTER TABLE turns ADD COLUMN first_output_at INTEGER`);
     } catch {
       // column already exists
+    }
+    // Leftovers from the deleted proxy layer: no source reads or writes them, so
+    // drop them rather than carry dead rows in every existing DB file.
+    for (const table of ["net_events", "net_policies", "net_ext_state"]) {
+      this.#db.exec(`DROP TABLE IF EXISTS ${table}`);
     }
     this.#migrateLegacyWorkspaces();
   }

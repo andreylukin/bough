@@ -108,7 +108,7 @@ export function DiffView(
         </Box>
       )}
       <Text dimColor>
-        {focused ? "← back · j/k scroll" : "a apply · A all · R revert · → focus · j/k scroll"}
+        {focused ? "← back · j/k scroll" : "enter apply · A all · x revert · → focus · j/k move"}
       </Text>
     </Box>
   );

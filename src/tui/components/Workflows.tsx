@@ -431,7 +431,7 @@ function footer(level: WfLevel, running: boolean): string {
     return `↑↓ select · enter agents${running ? " · x stop workflow · p pause" : ""} · esc back`;
   }
   if (level === 2) {
-    return `↑↓ select · enter open · f filter · o session${
+    return `↑↓ select · enter open · / filter · o session${
       running ? " · x stop agent · r restart agent · p pause" : ""
     } · esc back`;
   }

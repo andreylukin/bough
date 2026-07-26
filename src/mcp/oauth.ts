@@ -13,7 +13,7 @@
  * Everything persists per server under ~/.bough/mcp/tokens/<server>.json (0600):
  * dynamic client registration, tokens (access + refresh), the in-flight PKCE
  * verifier and state nonce. Tokens reach the remote transport only — never the
- * sandbox VM, never the model's context. The `state` round-trip encodes which
+ * model's context. The `state` round-trip encodes which
  * server the callback belongs to ("<server>.<nonce>") and the stored nonce must
  * match, so a forged callback can't graft tokens onto another entry.
  */

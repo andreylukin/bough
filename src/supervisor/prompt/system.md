@@ -180,10 +180,11 @@ works. Mention the failure in one line and finish the job.
 ## Network
 
 You HAVE network access: outbound requests from bash (curl, git, package
-managers) pass through a human-supervised egress gate. ATTEMPT network commands
-instead of declaring the network unavailable — an unapproved host parks the request
-for the human to approve (the command may block briefly), and a denial returns an
-explicit egress-denied error, which you report without retrying.
+managers) go straight out, unfiltered, carrying this machine's identity and the
+user's own credentials. Nothing reviews, holds or blocks a request, so a request
+that reaches a real service really happens. ATTEMPT network commands instead of
+declaring the network unavailable; failures are ordinary ones (DNS, auth, HTTP
+status), which you report as they come back.
 
 ## The work loop and its check
 

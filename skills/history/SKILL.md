@@ -7,8 +7,7 @@ description: Read and search bough's own conversation history — semantic recal
 
 bough stores everything in a SQLite db at `~/.bough/bough.db`:
 `sessions` (id, parent_id, title, kind, workspace), `messages` (role, parts JSON,
-pending), `turns` (per-turn status/checkpoint), `net_events` (gated network
-requests). Messages within a session are linear; branching is done by creating a
+pending), `turns` (per-turn status/checkpoint). Messages within a session are linear; branching is done by creating a
 child session (kind `fork` / `subagent` / `compaction`) pointing at its parent.
 
 Run the helper (no deps beyond python3; opens the db read-only):
@@ -67,7 +66,6 @@ python3 ${SKILL_DIR}/bough_history.py show <id>
 python3 ${SKILL_DIR}/bough_history.py show <id> -q          # hide system msgs + reasoning
 python3 ${SKILL_DIR}/bough_history.py show <id> --full      # don't truncate
 python3 ${SKILL_DIR}/bough_history.py show <id> --maxlen 200
-python3 ${SKILL_DIR}/bough_history.py show <id> --net       # append gated net requests
 ```
 
 `<id>` may be a full session id or any unambiguous prefix. The header lists the
@@ -81,10 +79,6 @@ Line legend:
 - `▶ <tool>: …` — a tool call (`run_steps` shows the JS code + `[check]`/`[done]`;
   `bash` shows the command; file tools show the path)
 - `← …` / `✗ …` — the tool result (✗ = isError)
-- `# net events` (with `--net`) — host, verdict, reason per gated request.
-  Caveat: bough currently records `net_events.session_id` as NULL, so this is
-  empty until that attribution bug is fixed; query the table directly and
-  correlate by timestamp instead.
 
 ## Tips
 

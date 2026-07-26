@@ -24,30 +24,28 @@ import { sessionDir as snapshotSessionDir, snapshotBase } from "../vcs/clonefile
 import { headSha, isRepo } from "../vcs/repodiff.ts";
 
 export interface PreparedWorkspace {
-  /** The resolved read-write root (bash cwd + file-tool root). */
-  cwd: string;
   /**
-   * Host-side read root for compose-time consumers (@ refs, AGENTS.md, LSP/MCP
-   * cwd): the session's host checkout, same as `cwd`.
+   * The resolved read-write root: bash cwd, file-tool root, and the read root for
+   * the compose-time consumers (@ refs, AGENTS.md, LSP/MCP cwd) too.
    */
-  hostView: string;
+  cwd: string;
   /** The clonefile snapshot dir for this session (bash gets write access to it). */
   sessionDir: string;
   /**
    * Per-session scratchpad dir — a writable dir OUTSIDE the workspace and the snapshot
    * dir, for temp files/scripts/outputs. It lives under the OS temp root so the OS
    * reaps it, and being outside the repo means scratch files never get snapshotted,
-   * built by the live server, or turn up in `git diff main HEAD`. "" when not sandboxed.
+   * built by the live server, or turn up in `git diff main HEAD`. "" when the session
+   * is not session-scoped.
    */
   scratchDir: string;
   /**
-   * True when this is a real configured session (an explicit workspace, no test
-   * override, no BOUGH_NO_SANDBOX escape hatch). The name is historical — nothing
-   * is sandboxed any more — and it now gates the per-session setup that only a
-   * configured session should get: the snapshot + scratch dirs, the base-sha
+   * True when this is a real configured session: an explicit workspace, no test
+   * override, no BOUGH_NO_SANDBOX escape hatch. It gates the per-session setup that
+   * only a configured session should get — the snapshot + scratch dirs, the base-sha
    * capture, and the compose-time reads rooted at the workspace.
    */
-  sandboxed: boolean;
+  sessionScoped: boolean;
   /**
    * Set when the session's base sha could not be recorded on its first turn: the
    * turn still runs, but the Changes rail has nothing to diff against and will
@@ -113,12 +111,13 @@ export async function prepareWorkspace(
   // predate validation and may still carry a literal `~`.
   const explicit = rawExplicit === undefined ? undefined : normalizeWorkspace(rawExplicit);
   const cwd = override ?? explicit ?? Deno.cwd();
-  // BOUGH_NO_SANDBOX=1 is a debugging escape hatch: run the turn against the real
-  // workspace with no snapshot isolation and no sandbox.
+  // BOUGH_NO_SANDBOX=1 is a debugging escape hatch, kept under its historical name
+  // because it may already be set in users' scripts: it skips the per-session setup
+  // (snapshot + scratch dirs, base-sha capture) and runs the turn bare in the workspace.
   const noSandbox = Deno.env.get("BOUGH_NO_SANDBOX") === "1";
-  const sandboxed = override === undefined && explicit !== undefined && !noSandbox;
+  const sessionScoped = override === undefined && explicit !== undefined && !noSandbox;
 
-  if (sandboxed) {
+  if (sessionScoped) {
     // Fail the turn once with one readable message rather than letting every
     // tool die separately on a cwd that doesn't exist.
     const problem = await workspaceProblem(cwd);
@@ -130,7 +129,7 @@ export async function prepareWorkspace(
 
   let scratchDir = "";
   let warning: string | undefined;
-  if (sandboxed) {
+  if (sessionScoped) {
     await Deno.mkdir(dir, { recursive: true });
     scratchDir = join(scratchBase(), sessionId);
     await Deno.mkdir(scratchDir, { recursive: true });
@@ -147,6 +146,5 @@ export async function prepareWorkspace(
     }
   }
 
-  return { cwd, hostView: cwd, sessionDir: dir, scratchDir, sandboxed, ...(warning ? { warning } : {}) };
+  return { cwd, sessionDir: dir, scratchDir, sessionScoped, ...(warning ? { warning } : {}) };
 }
-

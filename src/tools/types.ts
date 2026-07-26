@@ -26,13 +26,13 @@ export interface ToolRunCtx {
    */
   signal?: AbortSignal;
   /**
-   * When set, the turn is sandboxed: bash runs inside the session's VM, and the
-   * in-process file tools may also write under `sessionDir` (the clonefile snapshot
-   * dir) and `scratchDir` (the per-session scratchpad — outside the repo, so temp
-   * files don't pollute what the server builds or what ships). Absent for tests and
-   * non-sandboxed runs.
+   * The session's own directories, present only for a session-scoped turn (see
+   * PreparedWorkspace.sessionScoped): `sessionDir` is the clonefile snapshot dir and
+   * `scratchDir` the per-session scratchpad — outside the repo, so temp files don't
+   * pollute what the server builds or what ships. Tools may write under both in
+   * addition to `workspace`. Absent for tests and bare-cwd runs.
    */
-  sandbox?: { sessionDir: string; scratchDir: string };
+  dirs?: { sessionDir: string; scratchDir: string };
   /**
    * Per-turn harness state, created by the turn runner. `check` is the committed
    * completion gate (SPEC §5): the shell command `run_steps` re-runs before

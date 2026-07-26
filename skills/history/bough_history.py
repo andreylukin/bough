@@ -6,7 +6,6 @@ bough keeps everything in ~/.bough/bough.db (override with BOUGH_DB):
               workspace, origin_id/origin_message_id (lineage for forks/compactions)
   messages  — role (user|supervisor|worker|system), parts (JSON Part[]), pending
   turns     — per-turn status (running|done|error|orphaned) + last checkpoint
-  net_events— gated network requests (host, action, verdict, reason)
 
 Messages within a session are linear; branching happens by creating a child
 session (fork/subagent/compaction) that points at its parent. No server needed —
@@ -178,16 +177,6 @@ def cmd_show(args):
             if line is not None:
                 print(line)
 
-    if args.net:
-        net = db.execute(
-            "SELECT ts, host, verb, action, verdict, reason FROM net_events "
-            "WHERE session_id = ? ORDER BY ts", (s["id"],)
-        ).fetchall()
-        if net:
-            print("\n# net events")
-            for n in net:
-                print(f"  {fmt_ts(n['ts'])}  {n['verdict']:<7}  {n['host']}  {n['action']}  ({n['reason']})")
-
 
 # ---- search -----------------------------------------------------------------
 
@@ -271,7 +260,6 @@ def main():
     ps.add_argument("--full", action="store_true", help="don't truncate long output")
     ps.add_argument("--maxlen", type=int, default=600, help="truncation length (default 600)")
     ps.add_argument("-q", "--quiet", action="store_true", help="hide system messages and reasoning")
-    ps.add_argument("--net", action="store_true", help="append the session's gated network requests")
     ps.set_defaults(func=cmd_show)
 
     pq = sub.add_parser("search", help="keyword search across all messages")

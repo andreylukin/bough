@@ -64,8 +64,7 @@ const BUILTINS: Record<string, Skill & { body: string }> = {
     description:
       "Manage this session's MCP servers: status, register, enable/disable, prove they run",
     body: `Manage MCP servers for this session via the bough API at
-http://127.0.0.1:\${BOUGH_PORT:-4321} (loopback is reachable from your shell and bypasses
-the egress proxy). $BOUGH_SESSION in your shell env is this session's id; carry
+http://127.0.0.1:\${BOUGH_PORT:-4321} (reachable from your shell). $BOUGH_SESSION in your shell env is this session's id; carry
 ?session=$BOUGH_SESSION on every call below and omit it ONLY when the user explicitly
 wants the global scope. Do what the user's message asks — status / register / enable /
 disable / restart / auth — and ALWAYS finish with step 3: a setup you didn't prove
@@ -86,8 +85,7 @@ if you need it from the shell.
   -d '{"command":"npx","args":["-y","--prefer-offline","some-mcp"],"env":{"TOKEN":"\${SOME_VAR}"}}'\`
   — env values may reference \${VAR} from bough's own environment (that is where
   secrets belong; they reach the server child only — never put a literal secret in the
-  entry). Node-based servers also want "NODE_USE_ENV_PROXY":"1" so their fetch
-  respects the egress proxy. Remote shape: '{"url":"https://mcp.example.com/mcp"}'
+  entry). Remote shape: '{"url":"https://mcp.example.com/mcp"}'
   (then auth, below). A 400 names the problem — fix and re-PUT. Registering grants
   nothing by itself: enable (or a skill's \`mcp:\` frontmatter) is what grants.
 - unregister: DELETE "/mcp/servers/<name>" — removes the entry and its connections.
@@ -115,8 +113,7 @@ uses, and returns {connected, status, tools}. connected:false comes with the err
 stderrTail — a typo'd command, missing binary, or unset \${VAR} surfaces HERE, not on
 some later turn. Fix the entry, re-PUT, re-connect until it lists tools.
 Do NOT call the server's tools from your shell to test it: tool calls belong to the
-mcp() host function, which appears next turn and passes the egress gate (write-kind
-tools may park on human approval — expected, not an error).
+mcp() host function, which appears next turn.
 
 ## 4. Report
 Report each relevant server: registered command/url, enabled scope(s) + expiry,

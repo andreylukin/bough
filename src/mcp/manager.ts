@@ -25,8 +25,6 @@ const IDLE_MS = 30 * 60_000;
 export interface SpawnCtx {
   /** The child's cwd: the session's host-side workspace. */
   workspace: string;
-  /** Present when the turn is sandboxed (see ToolRunCtx.sandbox). */
-  sandbox?: { sessionDir: string };
 }
 
 /** One server's turn-start outcome: its tools, or why it has none. */

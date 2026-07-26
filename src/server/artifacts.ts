@@ -12,8 +12,8 @@
  *
  * Trust note: artifacts are agent-authored HTML/JS served same-origin, so an opened
  * artifact runs with the page's origin. That is deliberate — this is explicit agent
- * OUTPUT the user chooses to open, distinct from the sandboxed workspace. It is not a
- * containment boundary; treat an artifact like any file the agent wrote.
+ * OUTPUT the user chooses to open. It is not a containment boundary; treat an
+ * artifact like any file the agent wrote.
  */
 import { dirname, join, normalize, resolve } from "node:path";
 import { commentWidget } from "./comments.ts";

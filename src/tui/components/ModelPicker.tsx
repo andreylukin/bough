@@ -103,8 +103,10 @@ export function ModelPicker(
         const sel = i === selected && !editing;
         return (
           <Box key={`${e.kind}:${e.id}`} flexDirection="column">
-            {/* The active dot drops its color under selection: an inverse
-                colored fg reads as a colored bg speck inside the light bar. */}
+            {
+              /* The active dot drops its color under selection: an inverse
+                colored fg reads as a colored bg speck inside the light bar. */
+            }
             <SelRow sel={sel}>
               <Text color={sel ? undefined : palette.accent}>{active ? "●" : " "}</Text> {e.label}
               {editing
@@ -119,7 +121,7 @@ export function ModelPicker(
                 ? (
                   <Text dimColor>
                     {"  "}
-                    {active ? "set · enter replaces · d deletes" : "not set · enter adds"}
+                    {active ? "set · enter replaces · x deletes" : "not set · enter adds"}
                   </Text>
                 )
                 : <Text dimColor>{"  "}{e.id}</Text>}
@@ -127,9 +129,7 @@ export function ModelPicker(
           </Box>
         );
       })}
-      {end < display.length
-        ? <Text dimColor>↓ {display.length - end} more</Text>
-        : null}
+      {end < display.length ? <Text dimColor>↓ {display.length - end} more</Text> : null}
     </Box>
   );
 }

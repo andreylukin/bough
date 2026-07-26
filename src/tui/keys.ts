@@ -30,53 +30,57 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
     ],
   },
   {
-    section: "panel — ^t toggle · tab cycle · esc back",
+    section: "panel — ^t toggle · tab cycle · these keys mean the same in EVERY tab",
     keys: [
       ["^p ^f ^d ^b ^o", "sessions · conversation · changes · jobs · model"],
-      ["↑↓ or j/k", "move · enter acts"],
+      ["enter", "open / act on the selected row"],
+      ["esc", "back out one level · then out of the panel"],
+      ["x", "the destructive action here (all recoverable)"],
+      ["/", "filter"],
+      ["j/k or ↑↓", "move"],
     ],
   },
   {
-    section: "sessions tab",
+    section: "sessions tab — x archives",
     keys: [
       ["n", "new session"],
-      ["/", "filter · g/G first/last"],
-      ["^x", "archive — ^x again confirms · recoverable"],
-      ["x", "deprecate (hide) a branch"],
+      ["g/G", "first/last row"],
+      ["x", "archive — x again confirms"],
+      ["D", "deprecate (hide) a branch"],
       ["h / u", "show hidden incl. archived · restore archived"],
     ],
   },
   {
-    section: "conversation tab",
+    section: "conversation tab — x deprecates a branch (or deletes a range)",
     keys: [
       ["enter", "rewind to a turn · open a branch"],
-      ["v", "select a range → compact/extract/move/delete"],
+      ["v", "select a range → c compact · e extract · m copy to · x delete"],
       ["s", "label sections by topic"],
       ["C", "compact the whole session"],
+      ["h", "show hidden branches"],
       ["glyphs", "● root ⑂ fork ◆ subagent ≣ compacted ◇ tool"],
     ],
   },
   {
-    section: "changes tab",
+    section: "changes tab — x reverts everything",
     keys: [
-      ["a / A / R", "apply file · apply all · revert all"],
-      ["j/k", "scroll the diff"],
+      ["enter", "apply the selected file"],
+      ["A", "apply every listed file"],
+      ["→ / ←", "focus the hunks pane (j/k scrolls it) · back to the list"],
     ],
   },
   {
-    section: "jobs tab — ^b · background shells",
+    section: "jobs tab — ^b · background shells · x stops a job",
     keys: [
-      ["enter", "open the job's full output · esc back"],
-      ["x", "stop a running job — no LLM turn needed"],
-      ["j/k", "move · scroll the output"],
+      ["enter", "open the job's full output"],
+      ["j/k", "scroll that output"],
     ],
   },
   {
-    section: "workflows tab — /workflows opens it",
+    section: "workflows tab — /workflows opens it · x stops the run (or the agent)",
     keys: [
       ["enter / →", "open a run · then an agent"],
-      ["esc / ←", "back out one level"],
-      ["x / p", "stop · pause/resume the run"],
+      ["p", "pause/resume the run"],
       [
         "r",
         "rerun — edit its script file first to change it; unchanged agents replay from the journal",
@@ -85,7 +89,7 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
     ],
   },
   {
-    section: "model tab",
+    section: "model tab — x removes the selected API key",
     keys: [["enter", "set model/effort · edit API keys"]],
   },
   {

@@ -293,8 +293,7 @@ const searchFiles: Handler = async (req, ctx, params) => {
   const workspace = ctx.db.getSessionRuntime(session.id).workspace;
   if (!workspace) return json({ files: [] }); // chat-only session — nothing to reference
   const q = new URL(req.url).searchParams.get("q") ?? "";
-  // Read-only walk of the session's host-side view: the mirror checkout in
-  // guest-owned VM mode (fresh as of the last snapshot push), else the workspace.
+  // Read-only walk of the session's workspace.
   const files = await searchWorkspaceFiles(
     hostReadRoot(session.id, normalizeWorkspace(workspace)),
     q,
@@ -439,7 +438,7 @@ const archiveSession: Handler = (_req, ctx, params) => {
   // also expires its parked net holds and reaps its proxy (gateway's turn.finished).
   interruptTurn(params.id);
   ctx.db.archiveSession(params.id);
-  // The session's sandbox VM is torn down by the session.archived bus subscription
+  // Per-session teardown hangs off the session.archived bus subscription
   // (server/main.ts) — one hook covering root sessions and subagents alike.
   ctx.bus.publish({
     type: "session.archived",
@@ -873,8 +872,7 @@ const connectMcpServer: Handler = async (req, ctx, params) => {
     // dir), so the probe exercises the REAL proxy routing, not a lenient variant.
     const prepared = await prepareWorkspace(ctx.db, sessionId);
     const [catalog] = await mcpManager().ensure(sessionId, [params.name], {
-      workspace: prepared.hostView,
-      sandbox: prepared.sandboxed ? { sessionDir: prepared.sessionDir } : undefined,
+      workspace: prepared.cwd,
     });
     if (catalog.error) return json({ server: params.name, connected: false, error: catalog.error });
     return json({

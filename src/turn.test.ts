@@ -724,7 +724,7 @@ Deno.test("history from a prior turn is replayed as assistant + tool_result mess
   assertExists(toolResultMsg);
 });
 
-Deno.test("an explicit session workspace makes the turn sandboxed and hands tools a sandbox dir", async () => {
+Deno.test("an explicit session workspace makes the turn session-scoped and hands tools its session dirs", async () => {
   const { db, bus, sessionId } = seed();
   const ws = await Deno.makeTempDir(); // non-repo → snapshot prep is skipped
   const snap = await Deno.makeTempDir();
@@ -757,8 +757,8 @@ Deno.test("an explicit session workspace makes the turn sandboxed and hands tool
   assertExists(seen);
   const ctx = seen as ToolRunCtx;
   assertEquals(ctx.workspace, ws);
-  assertExists(ctx.sandbox);
-  assertEquals(ctx.sandbox.sessionDir, `${snap}/${sessionId}`);
+  assertExists(ctx.dirs);
+  assertEquals(ctx.dirs.sessionDir, `${snap}/${sessionId}`);
 });
 
 Deno.test("recoverOrphanedTurns orphans a stranded turn and finishes its message", () => {

@@ -862,7 +862,9 @@ export function App(
         // A filter that matches nothing still shows the menu (as a "no matching
         // commands" row) — silently hiding it read as "/ is broken".
         setPopup(
-          items.length || q ? { kind: "skill", items, sel: 0, tokenStart: slashAt, tokenEnd: end } : null,
+          items.length || q
+            ? { kind: "skill", items, sel: 0, tokenStart: slashAt, tokenEnd: end }
+            : null,
         );
       };
       if (skillsCache.current) apply(skillsCache.current);
@@ -966,7 +968,10 @@ export function App(
   const navKeyRef = useRef<(k: "home" | "end" | "cmdHome" | "cmdEnd") => void>(() => {});
   navKeyRef.current = (k) => {
     if (mode === "new") {
-      return setNewComp((c) => ({ ...c, cursor: k === "home" || k === "cmdHome" ? 0 : c.text.length }));
+      return setNewComp((c) => ({
+        ...c,
+        cursor: k === "home" || k === "cmdHome" ? 0 : c.text.length,
+      }));
     }
     if (mode !== "chat" || store.ask || searchQ !== null || sched) return;
     if (k === "cmdHome") {
@@ -1615,18 +1620,21 @@ export function App(
           setMode("new");
           return;
         }
-        if (key.ctrl && ch === "x") {
+        // x is the destructive key in every tab; ^x stays as an alias here for
+        // the muscle memory it used to be the only binding for.
+        if ((!filterActive && ch === "x") || (key.ctrl && ch === "x")) {
           const sel = treeRows[pickSelRef.current];
           if (!sel) return;
-          // A conversation with any turns in it wants a second ^x (same
-          // double-tap as ctrl+c quit) — one keypress silently losing work was
-          // a persona-testing finding. Empty sessions archive at once.
-          const hasTurns = !!(sel.s.lastTurnStatus || sel.s.busy);
+          // Always a double-tap (same as ctrl+c quit) — one keypress silently
+          // losing work was a persona-testing finding. The empty-session
+          // exemption that used to live here was safe while archive was ^x, but
+          // plain x used to DEPRECATE: an old reflex now reaches the more
+          // destructive action, so it must not fire on the first press.
           const armed = archiveArm.current.id === sel.s.id &&
             Date.now() - archiveArm.current.at < 3000;
-          if (hasTurns && !armed) {
+          if (!armed) {
             archiveArm.current = { id: sel.s.id, at: Date.now() };
-            setPanelMsg(`^x again to archive "${sel.s.title || "(untitled)"}"`);
+            setPanelMsg(`x again to archive "${sel.s.title || "(untitled)"}"`);
             return;
           }
           archiveArm.current = { id: "", at: 0 };
@@ -1634,13 +1642,13 @@ export function App(
           store.archive(sel.s.id);
           return;
         }
-        if (!filterActive && ch === "x") {
+        if (!filterActive && ch === "D") {
           const sel = treeRows[pickSelRef.current];
           if (!sel) return;
           if (sel.s.kind !== "root") {
             setPanelMsg(null);
             store.deprecate(sel.s.id, !sel.s.deprecatedAt);
-          } else setPanelMsg("roots can't be deprecated — ^x archives"); // was a silent no-op
+          } else setPanelMsg("roots can't be deprecated — x archives"); // was a silent no-op
           return;
         }
         if (!filterActive && ch === "h") {
@@ -1718,7 +1726,8 @@ export function App(
           setRangeAnchor((a) => (a === null ? forkSelRef.current : null));
           return;
         }
-        if (rangeAnchor !== null && (ch === "c" || ch === "e" || ch === "d" || ch === "m")) {
+        // x deletes the range — the destructive key is x in every tab.
+        if (rangeAnchor !== null && (ch === "c" || ch === "e" || ch === "x" || ch === "m")) {
           const lo = Math.min(rangeAnchor, forkSelRef.current);
           const hi = Math.max(rangeAnchor, forkSelRef.current);
           const ids = convItems.slice(lo, hi + 1)
@@ -1881,10 +1890,12 @@ export function App(
       }
       // ---- changes: the run's uncommitted diffs (was the ^d modal) ----
       if (panelTab === "changes") {
-        // Enter/→ focus the selected file's hunks (full-height); ← returns to the
-        // list. (Esc leaves the panel entirely, via the shared close handler.)
+        // enter acts — here that means apply the selected file, like every other
+        // tab's enter. →/← still focus the hunks pane (full-height) and back out.
         if (key.return) {
-          if (diffEntries[fileSel]) setDiffFocus((f) => !f);
+          const e = diffEntries[fileSel];
+          if (!e) return;
+          store.applyChanges(e.source, [e.file.path]);
           return;
         }
         if (key.rightArrow) {
@@ -1892,22 +1903,18 @@ export function App(
           return;
         }
         if (key.leftArrow) return setDiffFocus(false);
-        if (key.upArrow) {
+        if (key.upArrow || (!diffFocus && ch === "k")) {
           setDiffScroll(0);
           return setFileSel((i) => Math.max(0, i - 1));
         }
-        if (key.downArrow) {
+        if (key.downArrow || (!diffFocus && ch === "j")) {
           setDiffScroll(0);
           return setFileSel((i) => Math.min(diffEntries.length - 1, i + 1));
         }
+        // Inside the focused hunks pane j/k scroll it — the same "move" key, one
+        // level down.
         if (ch === "j") return setDiffScroll((s) => s + 3);
         if (ch === "k") return setDiffScroll((s) => Math.max(0, s - 3));
-        if (ch === "a") {
-          const e = diffEntries[fileSel];
-          if (!e) return;
-          store.applyChanges(e.source, [e.file.path]);
-          return;
-        }
         if (ch === "A") {
           // Apply everything, one call per source (a session can have both the
           // repo source and clonefile).
@@ -1920,7 +1927,7 @@ export function App(
           }
           return;
         }
-        if (ch === "R") {
+        if (ch === "x") {
           // Nothing listed → nothing to revert; the raw call 400s ("no
           // workspace") into a confusing error line.
           if (diffEntries.length > 0) store.revertChanges();
@@ -1934,8 +1941,8 @@ export function App(
         if (key.downArrow || ch === "j") {
           return setModelSel((i) => Math.min(cfgEntries.length - 1, i + 1));
         }
-        // d on a set key row removes that provider's key (the row hint says so).
-        if (ch === "d" && !key.ctrl && !key.meta) {
+        // x on a set key row removes that provider's key (the row hint says so).
+        if (ch === "x" && !key.ctrl && !key.meta) {
           const e = cfgEntries[modelSel];
           if (e?.kind === "key" && cfg?.keys?.[e.id as KeyProvider]) {
             api.deleteKey(e.id as KeyProvider)
@@ -2090,9 +2097,9 @@ export function App(
             setWfLevel(3);
             return;
           }
-          // f cycles the status filter; the cursor goes home so it can never
-          // point past the end of the newly-filtered list.
-          if (ch === "f") {
+          // / cycles the status filter (the filter key everywhere); the cursor
+          // goes home so it can never point past the end of the filtered list.
+          if (ch === "/") {
             setWfAgentSel(0);
             return setWfFilter((cur) =>
               WF_FILTERS[(WF_FILTERS.indexOf(cur) + 1) % WF_FILTERS.length]
@@ -3097,7 +3104,7 @@ export function App(
                             ? <Text dimColor>no schedules — n creates one</Text>
                             : null}
                           <Text dimColor>
-                            ↑↓ pick · space toggle · d delete · n new · esc close
+                            ↑↓ pick · space toggle · x delete · n new · esc close
                           </Text>
                         </>
                       )}

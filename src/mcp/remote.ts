@@ -9,12 +9,10 @@
  * Token refresh happens inside the transport via the provider; an expired refresh
  * token degrades the same way.
  *
- * The JSON-RPC channel goes DIRECT (no session proxy) on purpose: the enforcement
- * point for remote servers is the call-layer gate (mcp/gate.ts) — routing the
- * channel through the egress proxy would double-gate every tools/call POST (held
- * at the HTTP layer on top of the mcp-verb layer) and park turn-start connects on
- * approvals. Channel attribution needs a policy carve-out for granted remote
- * hosts first; deferred (see docs/mcp.md).
+ * The JSON-RPC channel goes DIRECT. It once had to be argued for — there was an
+ * egress proxy and a call-layer gate (mcp/gate.ts) that would have double-gated
+ * every tools/call POST — but both are gone, so this is simply how it works now:
+ * the transport talks to the remote server, with no interception anywhere.
  */
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";

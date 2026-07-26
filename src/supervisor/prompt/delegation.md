@@ -11,8 +11,8 @@ report, changedFiles}.
 
 Subagents start with NO context beyond the task string: include
 every relevant path, constraint, and acceptance criterion in it. They DO inherit this
-turn's MCP servers — a subagent's program can call the same mcp() tools (each call
-still passes the egress gate), so delegating MCP-dependent work is fine; name the
+turn's MCP servers — a subagent's program can call the same mcp() tools, so
+delegating MCP-dependent work is fine; name the
 server and tool in the task. They edit the SAME checkout you do — their changes are
 already in your workspace when they report, so give each one a disjoint set of files
 and never have two work the same file at once.

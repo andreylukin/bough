@@ -204,7 +204,7 @@ export function ConversationTree(
         {range
           ? `${rangeCount} turn${
             rangeCount === 1 ? "" : "s"
-          } · c compact · e extract · m copy to · d delete (recoverable) · esc`
+          } · c compact · e extract · m copy to · x delete (recoverable) · esc`
           : `turn: rewind & edit its message · tool: branch after it · v select range · s sections${
             showDeprecated ? " · (showing deprecated)" : ""
           }`}
@@ -276,9 +276,7 @@ export function ConversationTree(
             sel={sel}
             // Pin "← here" to the right edge (its own Text) instead of appending
             // it to the truncated content run, where it clipped to "← her".
-            right={n.tip
-              ? <Text color={sel ? undefined : palette.accent}>← here</Text>
-              : undefined}
+            right={n.tip ? <Text color={sel ? undefined : palette.accent}>← here</Text> : undefined}
           >
             {gutter}
             <Text color={sel ? undefined : palette.info} bold>you</Text> {preview}

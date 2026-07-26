@@ -52,8 +52,7 @@ export function mcpSection(catalog: ServerCatalog[]): string {
     "This turn has MCP servers connected. Inside your program, call\n" +
     "`await mcp(server, tool, args)` — `args` is a plain object matching the tool's\n" +
     "parameters; the call returns the tool's result (an object, or its text output)\n" +
-    "and throws on failure or when the egress policy denies it (a held call blocks\n" +
-    "until the human decides — that is normal, not an error). Only the servers and\n" +
+    "and throws on failure. Only the servers and\n" +
     "tools listed here exist.\n\n" +
     catalog.map(serverBlock).join("\n");
 }

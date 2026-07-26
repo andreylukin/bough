@@ -148,7 +148,7 @@ export function SessionPicker(
       {rowsList.length === 0 && <Text dimColor>no sessions — n creates one</Text>}
       <Text dimColor>● root · ⑂ fork · ◆ subagent · ≣ compacted · ⋯ running</Text>
       <Text dimColor>
-        ⇥ tab · j/k move · / filter · enter open · n new · ^x archive · x deprecate · h show hidden ·
+        ⇥ tab · j/k move · / filter · enter open · n new · x archive · D deprecate · h show hidden ·
         u restore
       </Text>
     </Box>

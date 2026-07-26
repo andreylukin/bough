@@ -627,7 +627,7 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
   };
 
   try {
-    // Resolve the workspace and (if sandboxed) set up snapshots + the snapshot dir once.
+    // Resolve the workspace and (if session-scoped) set up snapshots + the snapshot dir once.
     const prepared: PreparedWorkspace = await prepareWorkspace(db, sessionId, ctx.workspace);
     if (prepared.warning) {
       // Isolation degraded — surface it in the thread (plain insert, not
@@ -652,7 +652,7 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       // Interrupt reaches INTO a running tool: run_steps terminates its program's
       // worker and bash kills its child — stop means stop, not "after this step".
       signal,
-      sandbox: prepared.sandboxed
+      dirs: prepared.sessionScoped
         ? {
           sessionDir: prepared.sessionDir,
           scratchDir: prepared.scratchDir,
@@ -824,11 +824,10 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     steering.delete(sessionId);
     // Inline any @path references in the triggering message so the model sees the
     // file content, not just the name. Only for workspace sessions (files exist).
-    // hostView is the session's host worktree (== cwd).
-    if (prepared.sandboxed) inlineFileReferences(messages, prepared.hostView);
+    if (prepared.sessionScoped) inlineFileReferences(messages, prepared.cwd);
     // Project rules: a global ~/.bough/AGENTS.md plus the workspace root's AGENTS.md are
     // authoritative for build/test commands, conventions, and what "done" means — inject them.
-    const agents = prepared.sandboxed ? await readAgentsFile(prepared.hostView) : null;
+    const agents = prepared.sessionScoped ? await readAgentsFile(prepared.cwd) : null;
     // MCP: connect the turn's granted servers (grantedMcp, resolved above) so the
     // prompt can list real tools; a server that fails to connect is named
     // UNAVAILABLE instead of vanishing. Subagent turns connect their inherited
@@ -837,8 +836,7 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     let mcpNote = "";
     if (grantedMcp.length > 0) {
       const catalog = await mcpManager().ensure(sessionId, grantedMcp, {
-        workspace: prepared.hostView,
-        sandbox: toolCtx.sandbox,
+        workspace: prepared.cwd,
       });
       mcpNote = mcpSection(catalog);
       const usable = new Set(catalog.filter((c) => !c.error).map((c) => c.name));
@@ -856,10 +854,7 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     // first lsp.* call (see mcp/lsp.ts for the host-side confinement trade-off).
     let lspNote = "";
     if (lspAvailable()) {
-      toolCtx.lsp = createLspBridge({
-        workspace: prepared.hostView,
-        sandbox: toolCtx.sandbox,
-      });
+      toolCtx.lsp = createLspBridge({ workspace: prepared.cwd });
       lspNote = lspSection();
     }
     // Supervisor prompt sections, resolved for this session's optional promptDir
@@ -914,7 +909,7 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
         )
         : "") +
       workspaceNote(prepared.cwd) +
-      (prepared.sandboxed ? scratchpadNote(prepared.scratchDir) : "") +
+      (prepared.sessionScoped ? scratchpadNote(prepared.scratchDir) : "") +
       (agents ?? "") +
       mcpNote;
     let systemVolatile = volatileBase + skills.sections;

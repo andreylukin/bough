@@ -8,12 +8,9 @@
  * leta (github.com/andreasjansson/leta) is a plain subprocess, not an MCP
  * server: a per-user daemon keeps language servers warm across sessions and
  * answers in milliseconds, which removes the MCP initialize-timeout failure
- * class the serena backend had. The confinement trade-off is deliberate: leta
- * and the language servers its daemon spawns run host-side, outside the sandbox
- * and the egress gate — acceptable because every verb except `rename` only
- * reads the workspace, and leta talks to its local daemon, never the network.
- * In guest-owned VM mode the registered workspace is the session's read-only
- * mirror checkout — fresh as of the last snapshot push (accepted v1 staleness).
+ * class the serena backend had. leta and the language servers its daemon spawns
+ * run as the user against the workspace itself; every verb except `rename` only
+ * reads, and leta talks to its local daemon, never the network.
  *
  * Lazy by design: nothing is spawned at turn start. The first lsp.* call
  * registers the session workspace with the daemon (`leta workspace add`,

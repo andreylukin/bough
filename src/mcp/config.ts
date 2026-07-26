@@ -13,7 +13,7 @@
  *
  * `env` values support ${VAR} expansion from bough's own environment so secrets
  * live in the env, not in the registry file. Expanded values reach the SERVER CHILD
- * PROCESS only — never the sandbox VM, never the model's context.
+ * PROCESS only — never the model's context.
  */
 import { z } from "zod/v4";
 import { join } from "node:path";
