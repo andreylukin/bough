@@ -1505,6 +1505,7 @@ export function App(
             .catch((err) => setErr(String(err)));
           return;
         }
+        if (key.super && (key.backspace || key.delete)) return setKeyInput(() => "");
         if (key.backspace || key.delete) return setKeyInput((v) => (v ?? "").slice(0, -1));
         if (ch && !key.ctrl && !key.meta) setKeyInput((v) => (v ?? "") + ch);
         return;
@@ -2210,6 +2211,17 @@ export function App(
         setNewSel(0);
         return setNewComp((c) => ({ text: c.text.slice(0, c.cursor), cursor: c.cursor }));
       }
+      // ⌘⌫ deletes to line start — multiline-aware, matching the main composer.
+      if (key.super && (key.backspace || key.delete)) {
+        setNewSel(0);
+        return setNewComp((c) => {
+          const from = c.text.lastIndexOf("\n", c.cursor - 1);
+          const start = from < 0 ? 0 : from + 1;
+          return start === c.cursor
+            ? c
+            : { text: c.text.slice(0, start) + c.text.slice(c.cursor), cursor: start };
+        });
+      }
       if (key.backspace || key.delete) {
         setNewSel(0);
         return setNewComp((c) =>
@@ -2298,6 +2310,13 @@ export function App(
             (e) => setSched((s) => s && { ...s, msg: String((e as Error).message ?? e) }),
           );
           return;
+        }
+        if (key.super && (key.backspace || key.delete)) {
+          return setSched((s) =>
+            s?.form
+              ? { ...s, form: { ...s.form, fields: s.form.fields.map((v, i) => i === s.form!.focus ? "" : v) } }
+              : s
+          );
         }
         if (key.backspace || key.delete) {
           return setSched((s) =>
@@ -2496,6 +2515,7 @@ export function App(
           } else if (armed) store.declineAsk();
           return;
         }
+        if (key.super && (key.backspace || key.delete)) return setAskText(() => "");
         if (key.backspace || key.delete) return setAskText((t) => t.slice(0, -1));
         if (ch && !key.ctrl && !key.meta) return setAskText((t) => t + ch);
         return;
@@ -2701,6 +2721,18 @@ export function App(
     // rule means "send" (user-testing bug: ^j submitted half a message).
     if ((key.ctrl && ch === "j") || (ch === "\n" && !key.return)) {
       return insertAtCursor("\n");
+    }
+    // ⌘⌫ (Cmd+Backspace) deletes to the start of the current line — the macOS
+    // counterpart of the ⌘← jump above. Multiline-aware: the line is bounded by
+    // the preceding newline (or the text start), matching the ⌘← behavior.
+    if (key.super && (key.backspace || key.delete)) {
+      return setComp((c) => {
+        const from = c.text.lastIndexOf("\n", c.cursor - 1);
+        const start = from < 0 ? 0 : from + 1;
+        return start === c.cursor
+          ? c
+          : { text: c.text.slice(0, start) + c.text.slice(c.cursor), cursor: start };
+      });
     }
     if (key.backspace || key.delete) {
       return setComp((c) =>
