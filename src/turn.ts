@@ -778,10 +778,23 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     // names the MCP servers the invocation grants.
     const triggerText = lastUserText(db, sessionId);
     const skills = activeSkills(triggerText);
-    // Surface invoked skills as a persistent system note in the transcript so
-    // the human can see which skills this turn activated.
+    // Surface invoked skills as a tool-call-style part on the supervisor
+    // message — renders like a tool card in the message view and as a ◇ step
+    // in the conversation tree, inline with the turn's other tool runs.
     if (skills.names.length > 0) {
-      postSystemNote(ctx, sessionId, `◆ Skills: ${skills.names.map((n) => `/${n}`).join(" · ")}`);
+      const skillCallId = crypto.randomUUID();
+      append({
+        type: "tool_call",
+        id: skillCallId,
+        name: "skill",
+        input: { names: skills.names.map((n) => "/" + n) },
+      });
+      append({
+        type: "tool_result",
+        callId: skillCallId,
+        output: "Skills activated: " + skills.names.map((n) => "/" + n).join(" · "),
+        isError: false,
+      });
     }
     // The turn's MCP grant: the invoked skills' servers + the session's manual
     // activations (/mcp enable) + servers inherited from the spawning turn (a

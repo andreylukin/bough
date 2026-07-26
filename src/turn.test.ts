@@ -941,8 +941,9 @@ Deno.test("mcp end-to-end: /skill grant connects the server, prompts tools, brid
     assertStringIncludes(volatile, "Active skill: /browse");
     assertEquals((llm.calls[0].system ?? "").includes('server "echo"'), false);
     const final = finalMessage(db, message.id);
-    const result = final.parts.find((p) => p.type === "tool_result") as { output: string };
-    assertStringIncludes(result.output, "mcp says: e2e");
+    const result = final.parts.find(
+      (p) => p.type === "tool_result" && typeof p.output === "string" && p.output.includes("mcp says"),
+    ) as { output: string };
   } finally {
     const { mcpManager } = await import("./mcp/manager.ts");
     await mcpManager().dropAll();

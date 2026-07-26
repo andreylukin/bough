@@ -70,6 +70,8 @@ function stepsOf(span: Message[]): ToolStep[] {
         ? raw.code.split("\n")[0]
         : raw && typeof raw.command === "string"
         ? raw.command
+        : raw && Array.isArray(raw.names)
+        ? (raw.names as string[]).join(" · ")
         : "";
       // Keep through this call's result if present, else through the call itself.
       const resIdx = m.parts.findIndex((q) => q.type === "tool_result" && q.callId === p.id);
