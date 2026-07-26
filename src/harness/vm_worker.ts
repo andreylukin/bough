@@ -194,8 +194,12 @@ async function run(code: string): Promise<void> {
   // Delegation: the host sends subagent results/handles as JSON (postMessage stays
   // string-only); parse them back so the program gets real objects. Sessions that
   // may not delegate have no bridged fn — the call rejects as "unknown host function".
-  const agent = async (task: string) => JSON.parse(await hostCall("agent", [task]));
-  const spawn = async (task: string) => JSON.parse(await hostCall("spawn", [task]));
+  // opts ({name}) rides out as JSON, like ask()/mcp() — the postMessage protocol
+  // is string-only, so an object argument has to be serialized, not passed.
+  const agent = async (task: string, opts?: unknown) =>
+    JSON.parse(await hostCall("agent", [task, JSON.stringify(opts ?? {})]));
+  const spawn = async (task: string, opts?: unknown) =>
+    JSON.parse(await hostCall("spawn", [task, JSON.stringify(opts ?? {})]));
   const join = async (sessionId: string) => JSON.parse(await hostCall("join", [sessionId]));
   const adopt = (sessionId: string) => hostCall("adopt", [sessionId]);
   // Ask the human: options ride out as JSON (string-only protocol); the answer

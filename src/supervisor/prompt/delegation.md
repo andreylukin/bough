@@ -9,6 +9,13 @@ returns its full result in-band. await agent(task) is the blocking shorthand
 (spawn+join): it runs the task to completion and returns {sessionId, ok, checkPassed,
 report, changedFiles}.
 
+ALWAYS pass a name: agent(task, {name}) / spawn(task, {name}). It labels the branch
+everywhere the user sees it — the live rail, the finished card, the session tree.
+Without one the branch is labelled with the task's first 40 characters, which during a
+fan-out makes siblings that share an opening sentence indistinguishable. Name it for
+what it is FOR, a few words, distinct from its siblings: "audit seatbelt profile",
+"port mitmproxy addon".
+
 Subagents start with NO context beyond the task string: include
 every relevant path, constraint, and acceptance criterion in it. They DO inherit this
 turn's MCP servers — a subagent's program can call the same mcp() tools, so

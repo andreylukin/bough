@@ -6,7 +6,7 @@
  * user text, because spawner and subagent turns interleave on the same injected
  * client.
  */
-import { assertEquals, assertExists, assertStringIncludes } from "jsr:@std/assert@1";
+import { assertEquals, assertExists, assertStringIncludes, assertThrows } from "jsr:@std/assert@1";
 import { Db } from "./db/db.ts";
 import { Bus } from "./bus.ts";
 import type { Message, Part, Session } from "./schema/parts.ts";
@@ -14,7 +14,7 @@ import type { TurnStatus } from "./db/db.ts";
 import type { LlmClient, LlmParams, LlmResult } from "./supervisor/llm.ts";
 import { defaultTools } from "./tools/mod.ts";
 import { beginTurn, interruptTurn, startUserTurn, type TurnCtx } from "./turn.ts";
-import { buildResult, taskStubTitle } from "./subagent.ts";
+import { buildResult, cleanSubagentName, taskStubTitle } from "./subagent.ts";
 import { saveRegistry, setActivation } from "./mcp/config.ts";
 import { mcpManager } from "./mcp/manager.ts";
 
@@ -203,6 +203,41 @@ Deno.test("agent() spawns a subagent branch and the program receives its report"
 
   // The title worker names the branch from its task (not a raw task-prefix).
   await until(() => db.getSession(sub.id)!.title.startsWith("titled:"));
+});
+
+Deno.test("agent(task, {name}) names the branch, and the title worker leaves it alone", async () => {
+  const db = new Db(":memory:");
+  const bus = new Bus();
+  const spawner = seed(db);
+  const llm = dispatchLlm({
+    "hi": [
+      program(
+        `const r = await agent("audit the seatbelt profile end to end", ` +
+          `{name: "audit seatbelt"}); console.log("GOT:" + r.ok);`,
+      ),
+      textRound("delegated fine"),
+    ],
+    "audit the seatbelt profile end to end": [textRound("audited")],
+  });
+  const ctx: TurnCtx = {
+    db,
+    bus,
+    llm,
+    tools: defaultTools,
+    titler: (t) => Promise.resolve("titled: " + t.slice(0, 20)),
+  };
+
+  const { done } = beginTurn(ctx, spawner.id);
+  await done;
+
+  const sub = db.listSessions().find((s) => s.kind === "subagent");
+  assertExists(sub);
+  // The caller's name IS the title — not the task's first 40 characters.
+  assertEquals(db.getSession(sub.id)!.title, "audit seatbelt");
+  // And the title worker must not rename it out from under the spawner: give the
+  // fire-and-forget path a chance to run, then assert it did not fire.
+  await new Promise((r) => setTimeout(r, 50));
+  assertEquals(db.getSession(sub.id)!.title, "audit seatbelt");
 });
 
 Deno.test("spawn() is non-blocking: the spawner's turn ends, the finished report wakes it", async () => {
@@ -1177,4 +1212,21 @@ Deno.test("buildResult never returns an empty report: guard text when present, s
     (await mk("done", [{ type: "text", text: "   \n  " }])).report,
     "Subagent finished without a written report.",
   );
+});
+
+Deno.test("cleanSubagentName: trims and flattens, or falls through to the stub", () => {
+  assertEquals(cleanSubagentName("audit seatbelt profile"), "audit seatbelt profile");
+  assertEquals(cleanSubagentName("  port   mitmproxy\naddon "), "port mitmproxy addon");
+  // Absent or blank -> undefined, so launch() falls back to the task stub.
+  assertEquals(cleanSubagentName(undefined), undefined);
+  assertEquals(cleanSubagentName(""), undefined);
+  assertEquals(cleanSubagentName("   \n\t "), undefined);
+  // Rendered straight into the rail/cards/picker, so control bytes never survive.
+  assertEquals(cleanSubagentName("bad\u001b[31mname"), "bad [31mname");
+  // Long names are cut rather than allowed to blow out the rail's row.
+  const long = cleanSubagentName("x".repeat(80))!;
+  assertEquals(long.length, 48);
+  assertEquals(long.endsWith("\u2026"), true);
+  // A non-string is a caller bug worth an error, not a silent coercion.
+  assertThrows(() => cleanSubagentName(42), Error, "must be a string");
 });

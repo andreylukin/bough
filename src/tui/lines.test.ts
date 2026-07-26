@@ -698,3 +698,26 @@ Deno.test("a user message steered into a running turn carries a queued ack; it c
   ).map((l) => l.text).join("\n");
   assertEquals(normal.includes(ACK), false);
 });
+
+Deno.test("an image note collapses to one line: no role label, no repeated path", () => {
+  const lines = buildLines(
+    [{
+      id: "m1",
+      role: "system",
+      parts: [
+        { type: "text", text: "[image] /tmp/long/path/home.png — bough home screen" },
+        { type: "image", name: "/tmp/long/path/home.png", path: "/tmp/x", size: 5120 },
+      ],
+      pending: false,
+    }] as never,
+    {},
+    () => false,
+    () => false,
+    100,
+  );
+  // deno-lint-ignore no-control-regex
+  const painted = lines.map((l) => l.text.replace(/\u001b\[[0-9;]*m/g, ""))
+    .filter((t) => t.trim());
+  assertEquals(painted.length, 1);
+  assertEquals(painted[0].trim(), "🖼 home.png — bough home screen · 5 KB");
+});

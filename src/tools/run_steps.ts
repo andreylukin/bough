@@ -200,10 +200,14 @@ export const runSteps: ToolDef = {
         // budget. spawn/join are absent in subagent turns (blocking delegation only).
         ...(ctx.delegate
           ? {
-            agent: async (task: string) => JSON.stringify(await ctx.delegate!.run(task)),
+            agent: async (task: string, optsJson?: string) =>
+              JSON.stringify(await ctx.delegate!.run(task, JSON.parse(optsJson || "{}"))),
             adopt: (sessionId: string) => ctx.delegate!.adopt(sessionId),
             ...(ctx.delegate.spawn
-              ? { spawn: async (task: string) => JSON.stringify(await ctx.delegate!.spawn!(task)) }
+              ? {
+                spawn: async (task: string, optsJson?: string) =>
+                  JSON.stringify(await ctx.delegate!.spawn!(task, JSON.parse(optsJson || "{}"))),
+              }
               : {}),
             ...(ctx.delegate.join
               ? {

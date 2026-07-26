@@ -155,6 +155,29 @@ const detached = new Map<string, {
 }>();
 
 /**
+ * A caller-supplied subagent name, cleaned for use as a branch title. The
+ * spawner knows what each child is FOR — during a fan-out "audit the seatbelt
+ * profile" beats the first 40 characters of a 2KB briefing, and it is stable
+ * from the instant the branch appears rather than changing under the reader
+ * when the title worker backfills.
+ *
+ * Control characters and newlines are stripped because this string is rendered
+ * straight into the rail, the cards, and the picker. Returns undefined for a
+ * name that is absent or empty once cleaned, so the caller falls back to the
+ * task stub.
+ */
+export function cleanSubagentName(name: unknown): string | undefined {
+  if (name === undefined || name === null) return undefined;
+  if (typeof name !== "string") {
+    throw new Error("agent/spawn(task, {name}): name must be a string");
+  }
+  // deno-lint-ignore no-control-regex
+  const flat = name.replace(/[\x00-\x1f\x7f]/g, " ").replace(/\s+/g, " ").trim();
+  if (!flat) return undefined;
+  return flat.length <= 48 ? flat : `${flat.slice(0, 47).trimEnd()}…`;
+}
+
+/**
  * Spawn-time label: the task's first line, word-truncated to ~40 chars. During a
  * parallel fan-out every card would otherwise read "untitled" until the title
  * worker backfills — the stub makes siblings tellable apart immediately, and it
@@ -251,11 +274,13 @@ async function launch(
   ctx: TurnCtx,
   spawn: SpawnCtx,
   task: string,
+  name?: string,
 ): Promise<{ sessionId: string; title: string; result: Promise<SubagentResult> }> {
   const { db, bus } = ctx;
   if (typeof task !== "string" || !task.trim()) {
     throw new Error("agent/spawn(task): task must be a non-empty string");
   }
+  const given = cleanSubagentName(name);
   const spawner = db.getSession(spawn.spawnerId);
   if (!spawner) throw new Error("spawner session not found");
   // Defense in depth: the turn runner already withholds delegation at the cap.
@@ -287,9 +312,10 @@ async function launch(
   const stub = taskStubTitle(task);
   const seeder = openBranch({ db, bus }, {
     parentId: null, // fresh context: the task text is the subagent's whole briefing
-    // Immediate task-derived stub, so parallel spawns never all read "untitled";
-    // the title worker names the branch properly from the task below.
-    title: stub,
+    // A caller-supplied name wins outright; otherwise an immediate task-derived
+    // stub, so parallel spawns never all read "untitled" and the title worker
+    // names the branch properly from the task below.
+    title: given ?? stub,
     kind: "subagent",
     workspace: explicit ?? null,
     originDir: db.getSession(spawn.spawnerId)?.originDir ?? null,
@@ -304,8 +330,9 @@ async function launch(
 
   seeder.add("user", [{ type: "text", text: task }]);
   // Fire-and-forget: name the branch from its task (same worker path as sessions);
-  // the stub is the placeholder it replaces.
-  maybeAutoTitle({ db, bus, titler: ctx.titler }, session.id, task, stub);
+  // the stub is the placeholder it replaces. A caller-supplied name is the
+  // spawner's own label — never second-guess it with a generated one.
+  if (!given) maybeAutoTitle({ db, bus, titler: ctx.titler }, session.id, task, stub);
   const { message, done } = beginTurn({ ...ctx, model: spawn.model ?? ctx.model }, session.id);
 
   const timer = setTimeout(() => interruptTurn(session.id), turnTimeoutMs());
@@ -338,8 +365,9 @@ export function startSubagent(
   ctx: TurnCtx,
   spawn: SpawnCtx,
   task: string,
+  name?: string,
 ): Promise<{ sessionId: string; title: string; result: Promise<SubagentResult> }> {
-  return launch(ctx, spawn, task);
+  return launch(ctx, spawn, task, name);
 }
 
 /**
@@ -351,9 +379,10 @@ export async function runSubagent(
   ctx: TurnCtx,
   spawn: SpawnCtx,
   task: string,
+  name?: string,
 ): Promise<SubagentResult> {
   if (spawn.signal?.aborted) throw new Error("turn interrupted");
-  const h = await launch(ctx, spawn, task);
+  const h = await launch(ctx, spawn, task, name);
   // Only cascade a parent stop into a subagent whose turn is STILL running — a
   // blocking subagent that already resolved has its report + outcome persisted on
   // its own branch (launch()'s completion hook), and killing it now would flip a
@@ -379,9 +408,10 @@ export async function spawnSubagentDetached(
   ctx: TurnCtx,
   spawn: SpawnCtx,
   task: string,
+  name?: string,
 ): Promise<SubagentHandle> {
   if (spawn.signal?.aborted) throw new Error("turn interrupted");
-  const h = await launch(ctx, spawn, task);
+  const h = await launch(ctx, spawn, task, name);
   const entry = { spawnerId: spawn.spawnerId, result: h.result, claimed: false };
   detached.set(h.sessionId, entry);
   // An explicit interrupt of the spawner cascades to this detached child — the

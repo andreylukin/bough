@@ -337,6 +337,27 @@ export function messageLines(
   const out: VLine[] = [];
   const body: VLine[] = [];
   const w = width - 2;
+  // An image note collapses to ONE line, no role label: the note text repeats an
+  // absolute path the placeholder below it already names, so a program that
+  // attaches a dozen screenshots spent three lines each saying the same thing.
+  if (msg.role === "system") {
+    const texts = msg.parts.filter((p) => p.type === "text");
+    const imgs = msg.parts.filter((p) => p.type === "image");
+    const note = texts.length === 1 && imgs.length === 1
+      ? parseImageNote((texts[0] as { text: string }).text)
+      : null;
+    if (note) {
+      const img = imgs[0] as { name: string; size: number; path: string };
+      const kb = Math.max(1, Math.round(img.size / 1024));
+      const name = (img.name.split("/").pop() || img.name).trim();
+      out.push({ text: "" });
+      out.push({
+        text: "  " + dim(`🖼 ${name}${note.note ? ` — ${note.note}` : ""} · ${kb} KB`),
+        copy: note.path,
+      });
+      return out;
+    }
+  }
   out.push({ text: "" });
   out.push({ text: roleLabel(msg.role) });
   // Bodies hang 2 columns under the role label so turns read as blocks. Each
@@ -540,6 +561,18 @@ export function jobCardLines(out: VLine[], job: BgJob, width: number) {
 const BG_NOTE_RE = /^\[background\] (bg_\d+) finished/;
 export function parseBgNote(text: string): string | null {
   return BG_NOTE_RE.exec(text.trim())?.[1] ?? null;
+}
+
+/** The model-facing image note (`image()` in turn.ts): "[image] <path> — <note>".
+ * The attached part already renders its own `🖼 name (N KB)` placeholder, so the
+ * text would repeat an absolute path directly under it — and a program that
+ * attaches a dozen screenshots then spends three lines each (role label, path
+ * line, placeholder) on saying so. The note's WORDS are the only part worth
+ * keeping; the placeholder carries the rest. */
+const IMAGE_NOTE_RE = /^\[image\] (\S+)(?: — (.*))?$/s;
+export function parseImageNote(text: string): { path: string; note?: string } | null {
+  const m = IMAGE_NOTE_RE.exec(text.trim());
+  return m ? { path: m[1], note: m[2]?.trim() || undefined } : null;
 }
 
 export function buildLines(

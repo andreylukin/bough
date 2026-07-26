@@ -500,13 +500,20 @@ export function workflowCtxFor(
     db: ctx.db,
     bus: ctx.bus,
     runner: async (call, signal, onSpawned) => {
-      const h = await startSubagent(ctx, {
-        spawnerId: sessionId,
-        spawnerMessageId,
-        model: call.model ?? model,
-        signal,
-        capsExempt: true,
-      }, call.prompt);
+      const h = await startSubagent(
+        ctx,
+        {
+          spawnerId: sessionId,
+          spawnerMessageId,
+          model: call.model ?? model,
+          signal,
+          capsExempt: true,
+          // The run's own display label names the branch too, so a workflow agent
+          // reads the same in the session tree as it does in the run's progress.
+        },
+        call.prompt,
+        call.label,
+      );
       onSpawned(h.sessionId);
       // Stop cascades into a subagent whose turn is still running, same
       // containment as runSubagent's blocking mode.
@@ -729,6 +736,8 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
           `image(): cannot attach ${path} — missing, unreadable, not a png/jpg/gif/webp, or over 5MB`,
         );
       }
+      // `path` as given, not the resolved absolute one: the model asked for it by
+      // that name, and the TUI collapses this note onto the image placeholder.
       postSystemNote(ctx, sessionId, `[image] ${path}${note ? ` — ${note}` : ""}`, [part]);
       return Promise.resolve(`attached ${path} (${part.size} bytes); you will see it next turn`);
     };
@@ -809,17 +818,17 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       // Subagents inherit this turn's MCP grant (captured now, not at call time).
       const subCtx: TurnCtx = { ...ctx, mcpGrant: grantedMcp };
       toolCtx.delegate = {
-        run: async (task) => {
+        run: async (task, opts) => {
           if (toolCtx.turn) toolCtx.turn.ranParallel = true;
-          return await runSubagent(subCtx, sctx, task);
+          return await runSubagent(subCtx, sctx, task, opts?.name);
         },
         // Kept for compatibility with programs (and prompts) that still call it:
         // subagents share this session's checkout, so it just says so.
         adopt: (subId) => adoptSubagent(ctx, sessionId, subId),
         ...(isSub ? {} : {
-          spawn: (task) => {
+          spawn: (task, opts) => {
             if (toolCtx.turn) toolCtx.turn.ranParallel = true;
-            return spawnSubagentDetached(subCtx, sctx, task);
+            return spawnSubagentDetached(subCtx, sctx, task, opts?.name);
           },
           join: (subId) => joinSubagent(sctx, subId),
         }),

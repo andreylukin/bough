@@ -78,8 +78,10 @@ export interface ToolRunCtx {
    * already delivered upward.
    */
   delegate?: {
-    run: (task: string) => Promise<unknown>;
-    spawn?: (task: string) => Promise<unknown>;
+    /** `opts.name` labels the branch in the rail/cards/picker instead of the
+     * task's first 40 characters — the spawner knows what each child is for. */
+    run: (task: string, opts?: { name?: string }) => Promise<unknown>;
+    spawn?: (task: string, opts?: { name?: string }) => Promise<unknown>;
     join?: (subagentSessionId: string) => Promise<unknown>;
     adopt: (subagentSessionId: string) => Promise<string>;
   };

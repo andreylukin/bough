@@ -105,8 +105,8 @@ export interface HostFns {
    * (await a background subagent) return JSON — the worker side parses it back into
    * an object; the string keeps the postMessage protocol string-only.
    */
-  agent?(task: string): Promise<string>;
-  spawn?(task: string): Promise<string>;
+  agent?(task: string, optsJson?: string): Promise<string>;
+  spawn?(task: string, optsJson?: string): Promise<string>;
   join?(sessionId: string): Promise<string>;
   adopt?(sessionId: string): Promise<string>;
   /**
