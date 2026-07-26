@@ -1136,6 +1136,22 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
         lastLlmAt = Date.now();
       }
 
+      // An output-cap stop was computed by every provider client and read by
+      // nobody: a round cut off at MAX_TOKENS looked identical to a round that
+      // simply ended, so a half-written tool call surfaced as an unexplained
+      // schema error (or as silence) with no hint that the model had been cut
+      // off. Say so — the round's partial content is kept either way.
+      if (result.stopReason === "max_tokens") {
+        bus.publish({
+          type: "session.activity",
+          sessionId,
+          data: {
+            text: `⚠ the model hit its ${MAX_TOKENS.toLocaleString()}-token output cap mid-round` +
+              ` — this step's output is cut off`,
+          },
+        });
+      }
+
       // The stop call is loop control, not content: honor it, but never persist
       // or replay it — the thread and future prompts must not carry it.
       let stopRequested = false;

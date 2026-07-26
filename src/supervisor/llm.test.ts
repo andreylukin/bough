@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects } from "jsr:@std/assert@1";
+import { assertEquals, assertRejects, assertThrows } from "jsr:@std/assert@1";
 import {
   anthropicSystemBlocks,
   fromResponsesOutput,
@@ -110,10 +110,34 @@ Deno.test("fromResponsesOutput: output items → normalized blocks", () => {
   ]);
 });
 
-Deno.test("fromResponsesOutput: malformed arguments degrade to {}", () => {
-  const [b] = fromResponsesOutput([
-    { type: "function_call", call_id: "c", name: "run_steps", arguments: "{oops" },
-  ]);
+// A cut-off call used to degrade to `{}`, so a truncated stream reached the tool
+// as a bogus schema violation. It must fail as the transport fault it is.
+Deno.test("fromResponsesOutput: malformed arguments throw a retryable error", () => {
+  const err = assertThrows(
+    () =>
+      fromResponsesOutput([
+        { type: "function_call", call_id: "c", name: "run_steps", arguments: "{oops" },
+      ]),
+    LlmError,
+    "truncated mid-call",
+  );
+  assertEquals(isRetryable(err), true);
+});
+
+Deno.test("fromResponsesOutput: absent arguments throw only when the schema requires some", () => {
+  const call = { type: "function_call", call_id: "c", name: "run_steps" };
+  const tool = {
+    name: "run_steps",
+    description: "",
+    inputSchema: { type: "object", required: ["code"] },
+  };
+  assertThrows(() => fromResponsesOutput([call], [tool]), LlmError, "no arguments");
+  // A tool with nothing required is legitimately callable with {}.
+  const [b] = fromResponsesOutput([call], [{
+    name: "run_steps",
+    description: "",
+    inputSchema: {},
+  }]);
   assertEquals(b, { type: "tool_use", id: "c", name: "run_steps", input: {} });
 });
 
@@ -134,7 +158,12 @@ Deno.test("isRetryable: transport and server faults yes; aborts and 4xx no", () 
   // The tool-protocol 400 (assistant tool_calls not followed by a tool message)
   // IS retried — toOpenAIMessages self-heals the wire, so a re-send succeeds.
   assertEquals(
-    isRetryable(new LlmError("openrouter: 400 assistant message with 'tool_calls' must be followed by tool messages", 400)),
+    isRetryable(
+      new LlmError(
+        "openrouter: 400 assistant message with 'tool_calls' must be followed by tool messages",
+        400,
+      ),
+    ),
     true,
   );
   assertEquals(isRetryable(new DOMException("gone", "AbortError")), false);

@@ -133,6 +133,43 @@ export class LlmError extends Error {
 
 const retryableStatus = (s: number): boolean => s === 408 || s === 429 || s >= 500;
 
+/**
+ * Decode a tool call's raw `arguments` JSON.
+ *
+ * A model that streams a call's name but none of (or half of) its payload has
+ * been cut off mid-call — a transport fault, not a model mistake. Both OpenAI
+ * paths used to swallow that into `{}`, which handed the tool an empty input and
+ * turned a truncated stream into a bogus schema complaint ("expected string,
+ * received undefined") that the model then had to make sense of; observed on a
+ * large parallel fan-out whose arguments never arrived at all. Throwing a
+ * status-less LlmError instead puts it back through withRetries / the turn's
+ * retry ring, where a re-streamed round usually lands intact.
+ *
+ * `{}` is still legitimate for a tool with no required fields, so the schema —
+ * not the emptiness — decides.
+ */
+function parseToolArgs(
+  provider: string,
+  raw: string | undefined,
+  tool: { name: string; inputSchema?: Record<string, unknown> } | undefined,
+  name: string,
+): unknown {
+  if (raw) {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      throw new LlmError(
+        `${provider}: ${name} call has malformed arguments (truncated mid-call)`,
+      );
+    }
+  }
+  const required = tool?.inputSchema?.required;
+  if (Array.isArray(required) && required.length > 0) {
+    throw new LlmError(`${provider}: ${name} call arrived with no arguments (truncated mid-call)`);
+  }
+  return {};
+}
+
 /** The OpenRouter/Moonshot 400 thrown when an assistant `tool_calls` lacks its
  * following tool message. toOpenAIMessages now self-heals the wire encoding, so a
  * re-send of the (now well-formed) request succeeds — hence retry this specific
@@ -629,8 +666,13 @@ interface ResponsesItem {
   summary?: { text?: string }[];
 }
 
-/** A Responses `output` array → our normalized blocks. Exported for tests. */
-export function fromResponsesOutput(output: ResponsesItem[]): LlmBlock[] {
+/** A Responses `output` array → our normalized blocks. `tools` lets a truncated
+ * function call be told apart from a legitimately argument-less one. Exported
+ * for tests. */
+export function fromResponsesOutput(
+  output: ResponsesItem[],
+  tools: LlmToolDef[] = [],
+): LlmBlock[] {
   const blocks: LlmBlock[] = [];
   for (const item of output) {
     if (item.type === "message") {
@@ -640,13 +682,14 @@ export function fromResponsesOutput(output: ResponsesItem[]): LlmBlock[] {
         .join("");
       if (text) blocks.push({ type: "text", text });
     } else if (item.type === "function_call") {
-      let input: unknown = {};
-      try {
-        input = JSON.parse(item.arguments ?? "{}");
-      } catch {
-        // leave {} — the tool layer reports the schema violation
-      }
-      blocks.push({ type: "tool_use", id: item.call_id ?? "", name: item.name ?? "", input });
+      const name = item.name ?? "";
+      const input = parseToolArgs(
+        "openai",
+        item.arguments,
+        tools.find((t) => t.name === name),
+        name,
+      );
+      blocks.push({ type: "tool_use", id: item.call_id ?? "", name, input });
     } else if (item.type === "reasoning") {
       const text = (item.summary ?? []).map((s) => s.text ?? "").join("\n");
       blocks.push({ type: "reasoning", text, meta: item });
@@ -736,7 +779,7 @@ export function openaiClient(): LlmClient {
       // No status → transport fault → retryable.
       if (!final) throw new LlmError("openai: stream ended without response.completed");
 
-      const content = fromResponsesOutput(final.output ?? []);
+      const content = fromResponsesOutput(final.output ?? [], params.tools);
       const stopReason = content.some((b) => b.type === "tool_use")
         ? "tool_use"
         : final.status === "incomplete" && final.incomplete_details?.reason === "max_output_tokens"
@@ -871,19 +914,21 @@ function openAICompatClient(opts: OpenAICompatOpts): LlmClient {
       const content: LlmBlock[] = [];
       if (text) content.push({ type: "text", text });
       for (const tc of [...toolCalls.values()].sort((a, b) => a.index - b.index)) {
-        let input: unknown = {};
-        try {
-          input = JSON.parse(tc.function?.arguments || "{}");
-        } catch { /* malformed args → empty object */ }
+        const name = tc.function?.name ?? "";
+        const tool = params.tools.find((t) => t.name === name);
         content.push({
           type: "tool_use",
           id: tc.id ?? crypto.randomUUID(),
-          name: tc.function?.name ?? "",
-          input,
+          name,
+          input: parseToolArgs(opts.provider, tc.function?.arguments, tool, name),
         });
       }
       // Normalize OpenAI's finish_reason to our stopReason vocabulary.
-      const stopReason = finishReason === "tool_calls" ? "tool_use" : finishReason;
+      const stopReason = finishReason === "tool_calls"
+        ? "tool_use"
+        : finishReason === "length"
+        ? "max_tokens"
+        : finishReason;
       return { content, stopReason, usage };
     },
   };
