@@ -48,6 +48,24 @@ A headless server owns all state and execution. Clients are views over it.
   orchestration script. Its only capabilities are `agent()`, `phase()`, `log()`.
 - **Clients** — an Ink TUI and a headless `bough exec` one-shot CLI.
 
+### The event stream
+
+`GET /events[?sessionId=]` is an SSE stream of `BoughEvent`. Every event carries a
+process-monotonic `seq` and a `ts`.
+
+Event types: `session.created` · `session.updated` · `session.activity` ·
+`message.started` · `message.delta` · `message.part` · `message.finished` ·
+`message.retry` · `turn.finished` · `ask.question` · `job.spawned` · `job.exited` ·
+`workflow.updated` · `workflow.agent` · `workflow.log`
+
+**Reconnect.** `seq` is per-process and resets on server restart, so it is a
+*dedupe* key, not a resume cursor. A reconnecting client re-fetches the session
+(`GET /sessions/:id` returns `{session, thread}`) and reconciles against live
+events by message id — it does not replay from a seq. Events are display
+transport; the database is the source of truth. Any state a client cannot
+reconstruct from a fresh fetch is a bug in the event design, not something to fix
+with replay.
+
 ## 4. Data model
 
 ### Sessions
@@ -126,7 +144,99 @@ only tool calls shows the user nothing.
 There is no acceptance gate. The model reports what it did; the user verifies. The
 harness does not re-run a committed check or block completion.
 
+**One turn per session.** A session runs at most one turn at a time. Concurrency
+across the tree comes from subagents and workflows, each of which is its own
+session.
+
+**Retry.** A tool call whose input is cut off mid-stream is retried rather than
+executed with a truncated or empty argument — executing it would run the wrong
+program. The retry emits `message.retry` so the UI can show it happened. Retries
+are bounded; an exhausted retry surfaces as a turn error.
+
+**Context overflow.** When a turn would exceed the model's context window, the turn
+fails with an explicit error naming the limit. Compaction is a deliberate,
+user-initiated branch (§14) — the harness never silently summarizes a conversation
+out from under the user, and never auto-compacts mid-turn.
+
+**Usage.** Token counts and cost are recorded per turn from the provider's usage
+reporting, and aggregated per session for the status bar. Reasoning and cache
+tokens are tracked separately from input and output.
+
 ## 6. The program environment
+
+### The tool surface
+
+The model sees exactly two tools. This is the entire model-facing API.
+
+```jsonc
+{
+  "name": "run_steps",
+  "description": "Run one JavaScript program in the workspace.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "code":  { "type": "string", "description": "The program. Host functions are pre-injected globals." },
+      "done":  { "type": "boolean", "description": "The work is complete after this program." }
+    },
+    "required": ["code"],
+    "additionalProperties": false
+  }
+}
+
+{
+  "name": "stop",
+  "description": "End the turn. Call after your final text, in the same response.",
+  "input_schema": { "type": "object", "properties": {}, "additionalProperties": false }
+}
+```
+
+`run_steps` returns the program's `console` output, or the error that ended it.
+Programs are syntax-checked before execution, so a malformed program costs a fast
+round-trip rather than a worker spawn.
+
+### Error text is a product surface
+
+What a failed host function says to the model determines whether the next round
+recovers or thrashes. Error messages are specified, not incidental. Each names what
+failed, the state that caused it, and the move that resolves it:
+
+| Condition | Must convey |
+|---|---|
+| Patch conflict | The file, the line range, and that someone else changed those lines — so the program re-views rather than retrying blind |
+| Stale tag | That the file moved on, and that an empty tag means "the version I just viewed" |
+| Spawn cap hit | Which cap (per-turn or concurrent), so the program batches instead of retrying immediately |
+| `ask` declined | That the user dismissed it, so the program proceeds on a stated default or stops cleanly |
+| LSP backend down | That the backend failed, not that the symbol is missing — the program drops to `rg` for the rest of the task |
+| Empty LSP result | That this is an ordinary answer, not a failure |
+| Program timeout / interrupt | Which one, and what partial work survived |
+
+A message that says only "failed" is a defect.
+
+### The system prompt
+
+The prompt is a first-class deliverable, not configuration. It is assembled at turn
+start from markdown sections, conditionally by session kind and granted
+capabilities:
+
+| Section | Included when |
+|---|---|
+| Identity and the `run_steps` contract | Always |
+| Host functions — shell, files, session verbs | Always |
+| The patch grammar | Always |
+| Printing and context economy | Always |
+| Searching code | Always |
+| Network posture | Always |
+| Ending the turn, chat style | Always |
+| Delegation (top-level) | Session can spawn — root, fork, compaction |
+| Delegation (nested) | Session is a subagent (blocking `agent()` only) |
+| Subagent framing | Session is a subagent or workflow agent |
+| MCP tools + calling convention | The turn has connected MCP servers |
+| Symbol navigation (`lsp`) | LSP backend is available |
+| Skill bodies | The user's message named a skill |
+
+A host function exists **only** when the prompt grants it. The model never guesses
+at capabilities, and a section that grants one must document its failure mode
+alongside its signature.
 
 Host functions are pre-injected globals. The program also has the full Deno runtime
 at the user's permission level and may ignore every host function.
@@ -377,6 +487,11 @@ from, so the change set is `git diff <base>` plus untracked files.
 
 **Revert** is the only mutation: restore tracked paths from the base sha and delete
 untracked ones, per path, never touching anything the session did not change.
+
+**Non-git workspaces.** A session whose workspace is not a repository has no `base`
+and therefore no change set. The Changes rail says so plainly rather than showing an
+empty diff, and revert is unavailable. The agent still works there — it simply
+produces no reviewable change set, and nothing else degrades.
 
 ## 14. History operations
 
