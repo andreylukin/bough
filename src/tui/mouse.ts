@@ -29,9 +29,11 @@ export function onPaste(h: PasteHandler | null) {
   pasteHandler = h;
 }
 
-/** Physical Home/End keys: ink's parser drops their sequences, so they're
- * decoded here (all three encodings terminals use) and dispatched like paste. */
-type NavKeyHandler = (k: "home" | "end") => void;
+/** Physical Home/End keys and Cmd+←/→ (line start/end): ink's parser drops
+ * Home/End sequences, and on terminals without the kitty keyboard protocol it
+ * misparses Cmd+←/→ (CSI 1;9 C/D) as meta+arrow (bit 3 of the modifier field
+ * leaks into the meta bit). Intercept both here and dispatch like paste. */
+type NavKeyHandler = (k: "home" | "end" | "cmdHome" | "cmdEnd") => void;
 let navKeyHandler: NavKeyHandler | null = null;
 export function onNavKey(h: NavKeyHandler | null) {
   navKeyHandler = h;
@@ -39,18 +41,21 @@ export function onNavKey(h: NavKeyHandler | null) {
 
 // deno-lint-ignore no-control-regex -- ESC is the point: SGR mouse sequences
 const SGR = /\x1b\[<(\d+);(\d+);(\d+)([Mm])/g;
-// Home = \x1b[H | \x1bOH | \x1b[1~ · End = \x1b[F | \x1bOF | \x1b[4~
+// Home = [H | OH | [1~ · End = [F | OF | [4~
+// Cmd+←/→ = [1;9D / [1;9C (xterm modifier 9 = super; iTerm2, others)
 // deno-lint-ignore no-control-regex -- ESC is the point
 const NAV_KEY = /\x1b(?:\[(?:[HF]|[14]~)|O[HF])/g;
+// deno-lint-ignore no-control-regex -- ESC is the point
+const CMD_ARROW = /\x1b\[1;9([CD])/g;
 const PASTE_START = "\x1b[200~";
 const PASTE_END = "\x1b[201~";
 // A trailing fragment that could grow into one of our sequences next chunk.
 // Deliberately requires the distinguishing third byte ("[<" mouse, "[2" paste
-// marker): holding a bare ESC would swallow the Escape KEY until the next
-// keypress (terminals send key sequences atomically; only our two multi-byte
-// sequences ever split across reads in practice).
+// marker, "[1;9" cmd-arrow): holding a bare ESC would swallow the Escape KEY
+// until the next keypress (terminals send key sequences atomically; only our
+// multi-byte sequences ever split across reads in practice).
 // deno-lint-ignore no-control-regex -- ESC is the point
-const PARTIAL_TAIL = /\x1b\[(<[\d;]*|20[01]?)$/;
+const PARTIAL_TAIL = /\x1b\[(<[\d;]*|20[01]?|1;9[CD]?)$/;
 
 // Focus in/out (mode 1004) and the OSC 11 background report are terminal
 // REPLIES, not keystrokes — consumed here (term.ts keeps the state) so they
@@ -69,6 +74,10 @@ function dispatchReports(s: string): string {
     })
     .replace(BG_REPORT, (_all, spec) => {
       reportTermBg(spec);
+      return "";
+    })
+    .replace(CMD_ARROW, (_all, dir) => {
+      navKeyHandler?.(dir === "D" ? "cmdHome" : "cmdEnd");
       return "";
     })
     .replace(NAV_KEY, (m) => {

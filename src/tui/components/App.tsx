@@ -946,15 +946,30 @@ export function App(
     return () => onPaste(null);
   }, [insertAtCursor]);
 
-  // Physical Home/End: ink drops their sequences, so mouse.ts decodes them —
-  // route to the same cursor moves as ^a/^e (composer + new-session query).
+  // Physical Home/End and Cmd+←/→: ink drops Home/End sequences, and on
+  // terminals without the kitty keyboard protocol it misparses Cmd+←/→ as
+  // meta+arrow — so mouse.ts intercepts both and dispatches them here.
   // Ref-current like copyRef so the subscription stays stable.
-  const navKeyRef = useRef<(k: "home" | "end") => void>(() => {});
+  const navKeyRef = useRef<(k: "home" | "end" | "cmdHome" | "cmdEnd") => void>(() => {});
   navKeyRef.current = (k) => {
     if (mode === "new") {
-      return setNewComp((c) => ({ ...c, cursor: k === "home" ? 0 : c.text.length }));
+      return setNewComp((c) => ({ ...c, cursor: k === "home" || k === "cmdHome" ? 0 : c.text.length }));
     }
     if (mode !== "chat" || store.ask || searchQ !== null || sched) return;
+    if (k === "cmdHome") {
+      // Cmd+← jumps to the start of the current line (multiline-aware).
+      return moveCursor((c) => {
+        const nl = c.text.lastIndexOf("\n", c.cursor - 1);
+        return nl < 0 ? 0 : nl + 1;
+      });
+    }
+    if (k === "cmdEnd") {
+      // Cmd+→ jumps to the end of the current line (multiline-aware).
+      return moveCursor((c) => {
+        const nl = c.text.indexOf("\n", c.cursor);
+        return nl < 0 ? c.text.length : nl;
+      });
+    }
     moveCursor((c) => (k === "home" ? 0 : c.text.length));
   };
   useEffect(() => {
@@ -2623,8 +2638,9 @@ export function App(
       return moveCursor((c) => wordRight(c.text, c.cursor));
     }
     // Cmd (super) + ←/→ jumps to start/end of the current line — macOS muscle
-    // memory. Kitty protocol delivers the modifier as key.super; terminals
-    // without it already map Cmd+←/→ to ^a/^e or Home/End (handled above/elsewhere).
+    // memory. Kitty protocol delivers the modifier as key.super; on terminals
+    // without it, mouse.ts intercepts the legacy CSI 1;9 C/D sequences and
+    // dispatches them as cmdHome/cmdEnd nav keys (handled in navKeyRef above).
     if (key.super && key.leftArrow) {
       return moveCursor((c) => {
         const nl = c.text.lastIndexOf("\n", c.cursor - 1);
