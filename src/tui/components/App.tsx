@@ -2151,6 +2151,9 @@ export function App(
       if (key.downArrow) return setNewSel((i) => Math.min(dirHits.length - 1, i + 1));
       // The query is a line edit with the composer's keys (Home/End arrive via
       // onNavKey below); edits reset the pick to the top hit.
+      // Cmd (super) + ←/→ jumps to start/end of the query line (macOS habit).
+      if (key.super && key.leftArrow) return setNewComp((c) => ({ ...c, cursor: 0 }));
+      if (key.super && key.rightArrow) return setNewComp((c) => ({ ...c, cursor: c.text.length }));
       if (key.leftArrow) return setNewComp((c) => ({ ...c, cursor: Math.max(0, c.cursor - 1) }));
       if (key.rightArrow) {
         return setNewComp((c) => ({ ...c, cursor: Math.min(c.text.length, c.cursor + 1) }));
@@ -2618,6 +2621,21 @@ export function App(
     }
     if (key.meta && (ch === "f" || key.rightArrow)) {
       return moveCursor((c) => wordRight(c.text, c.cursor));
+    }
+    // Cmd (super) + ←/→ jumps to start/end of the current line — macOS muscle
+    // memory. Kitty protocol delivers the modifier as key.super; terminals
+    // without it already map Cmd+←/→ to ^a/^e or Home/End (handled above/elsewhere).
+    if (key.super && key.leftArrow) {
+      return moveCursor((c) => {
+        const nl = c.text.lastIndexOf("\n", c.cursor - 1);
+        return nl < 0 ? 0 : nl + 1;
+      });
+    }
+    if (key.super && key.rightArrow) {
+      return moveCursor((c) => {
+        const nl = c.text.indexOf("\n", c.cursor);
+        return nl < 0 ? c.text.length : nl;
+      });
     }
     if (key.leftArrow) {
       // Empty composer inside a subagent branch: ← pops back to the spawner

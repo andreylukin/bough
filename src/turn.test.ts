@@ -269,6 +269,150 @@ Deno.test("a turn that trails off without stop is nudged; nudge + stop never per
   assertEquals(db.turnsByStatus("done").length, 1);
 });
 
+Deno.test("mid-turn narration does not count as a closing report", async () => {
+  // Regression: `saidSomething` used to be "any text part anywhere in the turn",
+  // so an agent that narrated on its way through ("Let me implement the changes:")
+  // satisfied it and the turn ended on a raw tool_result. Observed live — a turn
+  // whose last visible output was an `rg` match dump.
+  const { db, bus, sessionId } = seed();
+  const fakeSteps: ToolDef = {
+    name: "run_steps",
+    description: "fake run_steps",
+    schema: z.object({ code: z.string() }),
+    run: () => Promise.resolve("ok"),
+  };
+  const llm = fakeLlm([
+    // Narrates, THEN works — the ordering that used to defeat the report gate.
+    {
+      content: [
+        { type: "text", text: "Let me implement the changes:" },
+        { type: "tool_use", id: "t1", name: "run_steps", input: { code: "1" } },
+      ],
+      stopReason: "tool_use",
+    },
+    // Tries to end with nothing after the tool call: must be nudged, not accepted.
+    {
+      content: [{ type: "tool_use", id: "s1", name: "stop", input: {} }],
+      stopReason: "tool_use",
+    },
+    {
+      content: [
+        { type: "text", text: "Added the binding to App.tsx; check passed." },
+        { type: "tool_use", id: "s2", name: "stop", input: {} },
+      ],
+      stopReason: "tool_use",
+    },
+  ]);
+  const { message, done } = beginTurn({ db, bus, llm, tools: [fakeSteps] }, sessionId);
+  await done;
+
+  assertEquals(llm.calls.length, 3); // narration round, nudge round, report round
+  assertStringIncludes(
+    JSON.stringify(llm.calls[2].messages.filter((m) => m.role === "user")),
+    "Close the turn now",
+  );
+  // The turn's last word is the summary, not tool output.
+  const final = finalMessage(db, message.id);
+  const last = final.parts.at(-1) as { type: string; text?: string };
+  assertEquals(last.type, "text");
+  assertStringIncludes(last.text ?? "", "check passed");
+});
+
+Deno.test("the harness states what changed and how the check went", async () => {
+  // The footer is rendered from what the harness itself recorded, so the report
+  // does not depend on the model choosing to write one (or writing a true one).
+  const { db, bus, sessionId } = seed();
+  const fakeSteps: ToolDef = {
+    name: "run_steps",
+    description: "fake run_steps",
+    schema: z.object({ code: z.string() }),
+    run: (_input, ctx) => {
+      if (ctx.turn) {
+        ctx.turn.wroteFiles = ["src/a.ts", "src/b.ts"];
+        ctx.turn.checkVerdict = { cmd: "deno test", exit: 0 };
+      }
+      return Promise.resolve("ok");
+    },
+  };
+  const llm = fakeLlm([
+    {
+      content: [{ type: "tool_use", id: "t1", name: "run_steps", input: { code: "1" } }],
+      stopReason: "tool_use",
+    },
+    {
+      content: [
+        { type: "text", text: "all set." },
+        { type: "tool_use", id: "s1", name: "stop", input: {} },
+      ],
+      stopReason: "tool_use",
+    },
+  ]);
+  const { message, done } = beginTurn({ db, bus, llm, tools: [fakeSteps] }, sessionId);
+  await done;
+
+  const final = finalMessage(db, message.id);
+  const footer = final.parts.at(-1) as { type: string; text: string };
+  assertEquals(footer.type, "prose");
+  assertStringIncludes(footer.text, "**changed** 2 files");
+  assertStringIncludes(footer.text, "`src/a.ts`");
+  assertStringIncludes(footer.text, "`src/b.ts`");
+  assertStringIncludes(footer.text, "`deno test` → passed");
+});
+
+Deno.test("a failed check is reported as failed, whatever the model says", async () => {
+  const { db, bus, sessionId } = seed();
+  const fakeSteps: ToolDef = {
+    name: "run_steps",
+    description: "fake run_steps",
+    schema: z.object({ code: z.string() }),
+    run: (_input, ctx) => {
+      if (ctx.turn) {
+        ctx.turn.wroteFiles = ["src/a.ts"];
+        ctx.turn.checkVerdict = { cmd: "deno test", exit: 1 };
+      }
+      return Promise.resolve("ok");
+    },
+  };
+  const llm = fakeLlm([
+    {
+      content: [{ type: "tool_use", id: "t1", name: "run_steps", input: { code: "1" } }],
+      stopReason: "tool_use",
+    },
+    {
+      content: [
+        { type: "text", text: "Everything works great!" }, // …it does not
+        { type: "tool_use", id: "s1", name: "stop", input: {} },
+      ],
+      stopReason: "tool_use",
+    },
+  ]);
+  const { message, done } = beginTurn({ db, bus, llm, tools: [fakeSteps] }, sessionId);
+  await done;
+
+  const footer = finalMessage(db, message.id).parts.at(-1) as { text: string };
+  assertStringIncludes(footer.text, "FAILED (exit 1)");
+  assertStringIncludes(footer.text, "**changed** 1 file\n");
+});
+
+Deno.test("a turn that changed nothing and checked nothing gets no footer", async () => {
+  // Answering a question is not a build report; a footer there is pure noise.
+  const { db, bus, sessionId } = seed();
+  const llm = fakeLlm([
+    {
+      content: [
+        { type: "text", text: "It lives in src/turn.ts." },
+        { type: "tool_use", id: "s1", name: "stop", input: {} },
+      ],
+      stopReason: "tool_use",
+    },
+  ]);
+  const { message, done } = beginTurn({ db, bus, llm, tools: [] }, sessionId);
+  await done;
+
+  const final = finalMessage(db, message.id);
+  assertEquals(final.parts.some((p) => p.type === "prose"), false);
+});
+
 Deno.test("a stop with no text this turn is nudged for a report first", async () => {
   const { db, bus, sessionId } = seed();
   const llm = fakeLlm([
@@ -291,7 +435,7 @@ Deno.test("a stop with no text this turn is nudged for a report first", async ()
   assertEquals(llm.calls.length, 2); // exactly one report nudge round
   assertStringIncludes(
     JSON.stringify(llm.calls[1].messages.filter((m) => m.role === "user")),
-    "user-visible text",
+    "Close the turn now",
   );
   const final = finalMessage(db, message.id);
   assertEquals(final.parts, [{ type: "text", text: "the answer." }] as Part[]);

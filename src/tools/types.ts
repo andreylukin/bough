@@ -44,6 +44,15 @@ export interface ToolRunCtx {
     todo?: string;
     probeRounds?: number;
     everWrote?: boolean;
+    /**
+     * Paths written this turn (write/edit/patch), in first-touch order, and the
+     * committed check's verdict once it has run. Both feed the end-of-turn footer
+     * the harness renders: the model may or may not write a summary, but what it
+     * changed and whether its own check passed are facts the harness already holds,
+     * so they should never depend on it cooperating.
+     */
+    wroteFiles?: string[];
+    checkVerdict?: { cmd: string; exit: number };
     /** Last agent-run bash command that exited 0 — cited verbatim by the probe
      * nag and the check-less done bounce as the ready-made `check` candidate,
      * so the model commits the verification it already ran instead of

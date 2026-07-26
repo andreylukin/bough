@@ -256,10 +256,17 @@ const STOP_NUDGE = "[harness] Your turn is still open — it only ends when you 
 // A turn that ends with no text part shows the user nothing but collapsed tool
 // calls — the agent looks mute. If the model tries to end (stop, or an accepted
 // done-check) without having said anything, re-prompt once for a report.
-const REPORT_NUDGE = "[harness] Your turn is about to end but you have written no " +
-  "user-visible text this turn — the user would see nothing but collapsed tool calls. " +
-  "Reply now with 1-3 short lines (the answer, or what changed and the check result), " +
-  "then call stop in the same response.";
+// Asks for a CLOSING report, not merely "some text". The old wording ("you have
+// written no user-visible text this turn") described the mute case only, and an
+// agent that narrated on its way through would end with its last word being
+// "Let me implement the changes:" over a raw tool dump. What the user needs at
+// the end is the outcome, not the plan.
+const REPORT_NUDGE = "[harness] Your turn is about to end and the last thing the user " +
+  "can see is tool output — anything you wrote earlier was narration of work in " +
+  "progress, not a conclusion. Close the turn now: say what you changed (name the " +
+  "files), what you verified and how it came out, and anything you did NOT do or " +
+  "left uncertain. A few lines is plenty; do not restate your plan or re-explain " +
+  "the code. Then call stop in the same response.";
 
 // Parallelism-claim honesty: text that claims concurrent/background execution
 // when no parallel primitive (agent/spawn/bashBg — turn.ranParallel) ran this
@@ -971,11 +978,64 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     /** End-gates, checked when the turn is about to end having said something:
      * each is one-shot and returns its nudge text, or null to let the end stand. */
     const endGateNudge = (): string | null => honestyGateNudge();
+    /**
+     * What the turn DID, rendered by the harness rather than asked of the model.
+     *
+     * A nudge can only request a summary; this states one. The files written and
+     * the committed check's exit code are already known here, and they are the two
+     * things a reader actually needs to trust the turn — so they are reported even
+     * when the model ends on narration, contradicts itself, or says nothing. Prose
+     * is dropped on replay, so this costs no context: the same facts are already in
+     * the tool results the model can see.
+     */
+    let footerWritten = false;
+    const appendFooter = () => {
+      if (footerWritten) return;
+      const t = toolCtx.turn;
+      const files = t?.wroteFiles ?? [];
+      const verdict = t?.checkVerdict;
+      // Nothing changed and nothing was verified — a question answered, say. The
+      // model's own text is the whole story there; a footer would just be noise.
+      if (!files.length && !verdict) return;
+      footerWritten = true;
+      const lines: string[] = [];
+      if (files.length) {
+        lines.push(`**changed** ${files.length} file${files.length === 1 ? "" : "s"}`);
+        for (const f of files) lines.push(`- \`${f}\``);
+      } else {
+        lines.push("**changed** nothing");
+      }
+      if (verdict) {
+        lines.push(
+          `\n**check** \`${verdict.cmd}\` → ${
+            verdict.exit === 0 ? "passed" : `FAILED (exit ${verdict.exit})`
+          }`,
+        );
+      } else {
+        lines.push("\n**check** none committed — nothing was verified");
+      }
+      append({ type: "prose", text: lines.join("\n") });
+    };
     // Last resort against a mute turn end: a round with tools forbidden
     // (toolChoice "none"), which reliably yields plain text where a second nudge
     // would just get another empty-thinking + stop.
     let forceText = false;
-    const saidSomething = () => parts.some((p) => p.type === "text");
+    /**
+     * Has the model written a CLOSING summary — text the user sees after the work,
+     * not narration from the middle of it?
+     *
+     * This used to be `parts.some(p => p.type === "text")`, which asked "was there
+     * ever any text" and so was satisfied by mid-turn narration like "Let me
+     * implement the changes:". The effect was backwards: the more an agent
+     * explained itself as it worked, the more reliably its turn ended on a raw
+     * tool_result — one observed turn closed on an `rg` match dump with no summary
+     * at all, because it had narrated early. Only text after the last tool call
+     * counts.
+     */
+    const saidSomething = () => {
+      const lastTool = parts.findLastIndex((p) => p.type === "tool_call");
+      return parts.slice(lastTool + 1).some((p) => p.type === "text");
+    };
     for (let round = 0;; round++) {
       if (signal?.aborted) throw new InterruptedError();
       // A user message steered in mid-turn: yield here (a clean round boundary —
@@ -1212,6 +1272,11 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
       nudges++;
       messages.push({ role: "user", content: [{ type: "text", text: STOP_NUDGE }] });
     }
+
+    // Placed after the loop so every normal exit gets it — accepted done, an
+    // explicit stop, a mid-turn steer, or the stop-nudge cap. The catch path below
+    // has its own ⏹/⚠︎ marker and deliberately does not.
+    appendFooter();
 
     finalized = true;
     db.updateMessage(messageId, parts, false);

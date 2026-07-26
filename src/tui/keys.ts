@@ -17,6 +17,7 @@ export const KEYMAP: { section: string; keys: [string, string][] }[] = [
       ["^e", "expand/collapse all tool calls"],
       ["^j", "insert a newline"],
       ["^w ^k ^u", "delete word · to line end · all"],
+      ["⌘←/→", "jump to start/end of the line"],
       ["?", "this help"],
     ],
   },

@@ -117,6 +117,12 @@ export const runSteps: ToolDef = {
     if (check && ctx.turn) ctx.turn.check = check;
     if (todo !== undefined && ctx.turn) ctx.turn.todo = todo;
     let wrote = false;
+    // Record a written path once, in first-touch order, for the end-of-turn footer.
+    const noteWrite = (path: string) => {
+      if (!ctx.turn) return;
+      const files = ctx.turn.wroteFiles ??= [];
+      if (!files.includes(path)) files.push(path);
+    };
 
     const result = await runProgram(
       code,
@@ -172,16 +178,21 @@ export const runSteps: ToolDef = {
         // can rebase a stale anchor instead of refusing it, which is what makes
         // two subagents editing one file survive each other (hashedit.ts).
         view: (path) => viewFile.run({ path }, ctx),
-        patch: (input) => {
+        patch: async (input) => {
           wrote = true;
-          return patchFile.run({ input }, ctx);
+          const out = await patchFile.run({ input }, ctx);
+          // "[path#TAG] patched" per file — the paths the patch actually wrote.
+          for (const m of out.matchAll(/^\[(.+?)#[0-9A-F]{4}\] patched$/gm)) noteWrite(m[1]);
+          return out;
         },
         write: (path, content) => {
           wrote = true;
+          noteWrite(path);
           return writeFile.run({ path, content }, ctx);
         },
         edit: (path, old_string, new_string) => {
           wrote = true;
+          noteWrite(path);
           return editFile.run({ path, old_string, new_string }, ctx);
         },
         // Delegation (present only when the turn runner allows it): agent()/join() can
@@ -326,6 +337,9 @@ export const runSteps: ToolDef = {
           (e: Error) => `check did not run: ${e.message}\n[exit code 1]`,
         );
         const exit = exitCodeOf(checkOut);
+        // The harness ran this, so its verdict is fact, not the model's claim —
+        // the end-of-turn footer reports it whether or not the model says anything.
+        if (ctx.turn) ctx.turn.checkVerdict = { cmd: committed, exit };
         out.push(`[check] ${committed}\n${checkOut}`);
         if (exit === 0 && ctx.turn?.requestText && !ctx.turn.specEchoed) {
           // Multi-rule requests get one spec replay at the decisive moment: a
