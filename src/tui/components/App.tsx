@@ -2366,8 +2366,17 @@ export function App(
       // overlay used to cut off with "enlarge the window"); anything else closes.
       const maxS = helpMaxScrollRef.current;
       if (maxS > 0) {
-        if (key.downArrow || ch === "j") return setHelpScroll((o) => Math.min(maxS, o + 1));
-        if (key.upArrow || ch === "k") return setHelpScroll((o) => Math.max(0, o - 1));
+        // Held j/k coalesce into one chunk ("jjjj"), which an exact === missed —
+        // so holding the documented scroll key CLOSED the help instead. Count
+        // the run and scroll by it.
+        const run = /^(j+|k+)$/.test(ch ?? "") ? ch.length : 0;
+        const step = run || 1;
+        if (key.downArrow || (run && ch[0] === "j")) {
+          return setHelpScroll((o) => Math.min(maxS, o + step));
+        }
+        if (key.upArrow || (run && ch[0] === "k")) {
+          return setHelpScroll((o) => Math.max(0, o - step));
+        }
         if (key.pageDown) return setHelpScroll((o) => Math.min(maxS, o + 10));
         if (key.pageUp) return setHelpScroll((o) => Math.max(0, o - 10));
       }
