@@ -821,21 +821,15 @@ export function App(
       );
       return;
     }
-    // "/" at the start of a line (position 0 or right after a newline) arms the
-    // skill picker. Mirrors the @ picker's word-boundary test — a "/" mid-word
-    // is not a command and must not eat the line.
-    const slashAt = (() => {
-      // The "/" that arms the picker must be at the start of the line containing
-      // the cursor (column 0): position 0 of the whole text, or right after a
-      // newline. A "/" mid-line is just text and must not eat the line.
-      const before = text.slice(0, cursor);
-      const ln = before.lastIndexOf("\n");
-      const lineStart = ln + 1;
-      const col = cursor - lineStart;
-      if (col < 1 || text[lineStart] !== "/") return -1;
-      return lineStart;
-    })();
-    if (slashAt >= 0 && cursor >= slashAt + 1 && !/\s/.test(text.slice(slashAt + 1, cursor))) {
+    // "/" at a word boundary (position 0 or after whitespace) arms the skill
+    // picker — same rule the @ file picker uses, so "foo /commit" autocompletes
+    // just like "foo @file" does. A "/" mid-word (e.g. a/path/b) is not a
+    // command prefix and must not eat the token.
+    const slashAt = text.lastIndexOf("/", cursor - 1);
+    if (
+      slashAt >= 0 && !/\s/.test(text.slice(slashAt + 1, cursor)) &&
+      (slashAt === 0 || /\s/.test(text[slashAt - 1]))
+    ) {
       const q = text.slice(slashAt + 1, cursor);
       const apply = (skills: SkillInfo[]) => {
         // Composer-local commands complete alongside server skills. The server's
