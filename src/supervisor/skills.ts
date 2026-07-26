@@ -185,15 +185,18 @@ export function loadBody(name: string): string | null {
  * Everything the message's `/<name>` invocations activate: the prompt sections for
  * each named skill, and the union of their `mcp:` server references (the turn
  * runner connects those and bridges the mcp() host function — the skill invocation
- * IS the capability grant). Empty when none are named (or installed).
+ * IS the capability grant). `names` lists the matched skills in invocation order
+ * so the TUI can surface them. Empty when none are named (or installed).
  */
-export function activeSkills(message: string): { sections: string; servers: string[] } {
+export function activeSkills(message: string): { sections: string; servers: string[]; names: string[] } {
   const sections: string[] = [];
   const servers = new Set<string>();
+  const names: string[] = [];
   for (const skill of listSkills()) {
     if (!mentions(message, skill.name)) continue;
     const body = loadBody(skill.name);
     if (body === null) continue;
+    names.push(skill.name);
     for (const server of skill.mcp ?? []) servers.add(server);
     sections.push(
       `\n\n# Active skill: /${skill.name}\n` +
@@ -203,7 +206,7 @@ export function activeSkills(message: string): { sections: string; servers: stri
         body.trim(),
     );
   }
-  return { sections: sections.join(""), servers: [...servers] };
+  return { sections: sections.join(""), servers: [...servers], names };
 }
 
 /** The supervisor-prompt sections alone (see activeSkills). */

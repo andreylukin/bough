@@ -183,13 +183,15 @@ function subagentMark(s: TuiSession): { glyph: string; color: string } | null {
 }
 
 export function ConversationTree(
-  { items, selected, rows, showDeprecated, range }: {
+  { items, selected, rows, showDeprecated, range, skillNames }: {
     items: TreeItem[];
     selected: number;
     rows: number;
     showDeprecated: boolean;
     /** Inclusive [lo, hi] item indices highlighted for a range op, or null. */
     range: [number, number] | null;
+    /** Known skill names — used to detect and badge /skill invocations in "you" rows. */
+    skillNames?: Set<string>;
   },
 ) {
   const max = Math.max(3, rows - 9);
@@ -269,7 +271,19 @@ export function ConversationTree(
         }
         const n = it.node;
         const text = n.msg.parts.find((p) => p.type === "text");
-        const preview = text && "text" in text ? clip(text.text.split("\n")[0], 66) : "(no text)";
+        const rawFirst = text && "text" in text ? text.text.split("\n")[0] : "";
+        // Detect /skill invocations in the first line and badge them.
+        const invoked = rawFirst && skillNames
+          ? [...rawFirst.matchAll(/(^|\s)\/(\w+)/g)]
+            .map((m) => m[2])
+            .filter((name) => skillNames.has(name))
+          : [];
+        const badge = invoked.length > 0
+          ? `◆ ${invoked.map((n) => `/${n}`).join(" · ")}`
+          : null;
+        const preview = rawFirst
+          ? clip(badge ? rawFirst.replace(/(^|\s)\/\w+/g, "$1").trim() : rawFirst, 66)
+          : "(no text)";
         return (
           <SelRow
             key={`n-${n.msg.id}`}
@@ -279,7 +293,9 @@ export function ConversationTree(
             right={n.tip ? <Text color={sel ? undefined : palette.accent}>← here</Text> : undefined}
           >
             {gutter}
-            <Text color={sel ? undefined : palette.info} bold>you</Text> {preview}
+            <Text color={sel ? undefined : palette.info} bold>you</Text>
+            {badge ? <Text color={sel ? undefined : palette.accent}> {badge}</Text> : null}
+            {preview ? <Text> {preview}</Text> : null}
           </SelRow>
         );
       })}

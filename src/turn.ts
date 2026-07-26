@@ -778,6 +778,15 @@ async function drive(ctx: TurnCtx, message: Message, signal?: AbortSignal): Prom
     // names the MCP servers the invocation grants.
     const triggerText = lastUserText(db, sessionId);
     const skills = activeSkills(triggerText);
+    // Surface invoked skills in the TUI's activity line so the human can see
+    // which skills this turn activated.
+    if (skills.names.length > 0) {
+      bus.publish({
+        type: "session.activity",
+        sessionId,
+        data: { text: `◆ ${skills.names.map((n) => `/${n}`).join(" · ")}` },
+      });
+    }
     // The turn's MCP grant: the invoked skills' servers + the session's manual
     // activations (/mcp enable) + servers inherited from the spawning turn (a
     // subagent doing part of granted work keeps the grant).

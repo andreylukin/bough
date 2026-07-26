@@ -325,6 +325,15 @@ export function App(
   const lastEscAt = useRef(0);
   const [mcpStat, setMcpStat] = useState<McpStatus | null>(null);
   const [skillsList, setSkillsList] = useState<SkillInfo[] | null>(null);
+  const skillNames = useMemo(
+    () => new Set(skillsList?.map((s) => s.name) ?? []),
+    [skillsList],
+  );
+  // Fetch the skill list once on mount so the conversation tree can badge
+  // /skill invocations even before the skills panel tab is opened.
+  useEffect(() => {
+    if (skillsList === null) api.skills().then(setSkillsList, () => setSkillsList([]));
+  }, []);
   // new-session state. The workspace query is a cursor-ed line edit like the
   // composer (^u appending instead of clearing was a triple-repro'd user bug).
   const [newComp, setNewComp] = useState({ text: "", cursor: 0 });
@@ -2884,6 +2893,7 @@ export function App(
               selected={forkSel}
               rows={rows}
               showDeprecated={showDeprecated}
+              skillNames={skillNames}
               range={rangeAnchor === null
                 ? null
                 : [Math.min(rangeAnchor, forkSel), Math.max(rangeAnchor, forkSel)]}
