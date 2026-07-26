@@ -146,7 +146,10 @@ function subagentNoteLines(out: VLine[], note: SubagentNote, width: number, full
   }
   push(
     out,
-    dim(`  ↳ enter/click to open · adopt("…") in a turn to merge its changes`),
+    // No key opens a card from the transcript (the ◆ header is mouse-only), so
+    // the hint names ^f — the conversation tree lists and opens subagents — and
+    // never promises an enter binding that doesn't exist.
+    dim(`  ↳ click to open (or ^f) · adopt("…") in a turn to merge its changes`),
     width,
     open,
   );
@@ -481,9 +484,15 @@ export interface BgJob {
   tailLines: string[];
 }
 
+// Minutes used to be the largest unit, so a long-lived (or stale-timestamped)
+// job read "527213m 46s". Roll up through hours and days; only the two most
+// significant units show — nobody needs seconds on a two-day run.
 function fmtElapsed(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
-  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+  return `${Math.floor(s / 86400)}d ${Math.floor((s % 86400) / 3600)}h`;
 }
 
 /** The status run of a job card — the one thing you actually look for. */
@@ -585,9 +594,18 @@ export function buildLines(
     }
     if (m.pending) midTurn = true;
     for (const b of byOrigin.get(m.id) ?? []) branchCardLines(out, b, width, isFull);
+    byOrigin.delete(m.id);
   }
-  // Branches whose spawn point isn't in the current thread fall to the tail.
-  for (const b of orphans) branchCardLines(out, b, width, isFull);
+  // Anything left in byOrigin is anchored to a message that isn't in this thread
+  // (a fork or compaction dropped the spawn turn). Those keys are never drained
+  // by the loop above, so the card used to render nowhere at all — and since the
+  // rail was narrowed to busy branches it wasn't a catch-all either. Tail them.
+  const tail = [...orphans, ...[...byOrigin.values()].flat()];
+  if (tail.length) {
+    out.push({ text: "" });
+    out.push({ text: "  " + dim("subagents with no spawn point in this thread") });
+  }
+  for (const b of tail) branchCardLines(out, b, width, isFull);
   // Background shells at the tail — every one of them, including the finished:
   // the outcome is the whole point, and dropping exited jobs meant a failure
   // showed up nowhere at all.

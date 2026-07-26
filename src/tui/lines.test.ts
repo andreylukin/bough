@@ -415,6 +415,40 @@ Deno.test("branch card: persisted {ok, checkPassed} gates the green ✓ — fail
   assertEquals(card({ status: "done" }).includes("check failed"), false);
 });
 
+Deno.test("branch card: a spawn point missing from the thread falls to the tail, not into the void", () => {
+  // A fork or a compaction can drop the turn a subagent was anchored to. Its
+  // originMessageId then matches no message, and since the rail only shows busy
+  // branches the card would render nowhere at all.
+  const thread = [
+    {
+      id: "u1",
+      sessionId: "s",
+      role: "user",
+      parts: [{ type: "text", text: "go" }],
+      pending: false,
+    },
+  ] as unknown as Message[];
+  const branch: Branch = {
+    id: "sub-x",
+    title: "subagent · do the risky thing",
+    busy: false,
+    status: "done",
+    ok: true,
+    checkPassed: true,
+    note: null,
+    originMessageId: "gone",
+  };
+  const lines = buildLines(thread, {}, () => false, () => false, 100, [branch]);
+  assertEquals(lines.some((l) => l.text.includes("do the risky thing")), true);
+  // And it says why it's down here rather than under a turn.
+  assertEquals(lines.some((l) => l.text.includes("no spawn point in this thread")), true);
+  // A branch whose origin IS in the thread stays anchored — no tail header.
+  const anchored = buildLines(thread, {}, () => false, () => false, 100, [
+    { ...branch, originMessageId: "u1" },
+  ]);
+  assertEquals(anchored.some((l) => l.text.includes("no spawn point in this thread")), false);
+});
+
 Deno.test("messageLines renders a settled ask part as an always-visible Q → A line", () => {
   const msg: Message = {
     id: "m1",

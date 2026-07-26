@@ -56,6 +56,27 @@ const KIND: Record<string, { glyph: string; accent?: boolean; strip?: RegExp }> 
   subagent: { glyph: "◆", accent: true, strip: /^subagent · / },
 };
 
+// Ported verbatim from ConversationTree's subagentMark — the picker showed a
+// blank dot for every finished subagent, so the one view you scan to find "what
+// went wrong" was the one view that wouldn't say. Both views must agree on the
+// vocabulary, so keep this in step with ConversationTree.tsx.
+function subagentMark(s: TuiSession): { glyph: string; color: string } | null {
+  if (s.kind !== "subagent") return null;
+  if (s.busy) return { glyph: "⋯", color: palette.warn };
+  if (s.lastTurnStatus === "interrupted") return { glyph: "◼", color: palette.warn };
+  if (s.lastTurnStatus === "orphaned") return { glyph: "◼", color: palette.warn };
+  if (s.lastTurnStatus === "error" || s.outcomeOk === false) {
+    return { glyph: "✗", color: palette.error };
+  }
+  if (s.outcomeOk === true && s.outcomeCheckPassed === false) {
+    return { glyph: "✓!", color: palette.warn };
+  }
+  if (s.lastTurnStatus === "done" || s.outcomeOk === true) {
+    return { glyph: "✓", color: palette.accent };
+  }
+  return null; // never ran / legacy row — no marker
+}
+
 export function SessionPicker(
   { rowsList, selected, filter, filterActive, rows, currentId, showDeprecated, moveHint, msg }: {
     rowsList: TreeRow[];
@@ -74,7 +95,7 @@ export function SessionPicker(
     msg: string | null;
   },
 ) {
-  const max = Math.max(3, rows - 10);
+  const max = Math.max(3, rows - 11); // -11, not -10: the outcome legend adds a line
   const { start } = windowAround(selected, rowsList.length, max);
   const win = rowsList.slice(start, start + max);
   return (
@@ -108,9 +129,13 @@ export function SessionPicker(
         const sel = start + i === selected;
         const here = s.id === currentId;
         const k = KIND[s.kind] ?? { glyph: "•" };
-        // Status dot: busy pulse, unseen result, or "you are here"; else blank.
-        const dot = s.busy ? "⋯" : s.unseen ? "●" : here ? "▸" : " ";
+        // Status dot: busy pulse or unseen result; else blank. "you are here" used
+        // to live here too, but a "▸" in the cursor column competed with the real
+        // selection (an unglyphed inverse bar) — and x archives the SELECTION.
+        // The cursor is now "❯" (matching the workflow list) and here is a right tag.
+        const dot = s.busy ? "⋯" : s.unseen ? "●" : " ";
         const dotColor = s.busy ? palette.warn : palette.accent;
+        const mark = subagentMark(s);
         // Untitled rows fall back to the workspace basename, never a raw uuid.
         const title = sessionLabel((s.title || "").replace(k.strip ?? /^\b$/, ""), s.workspace);
         // Project-dir basename — two sessions on different projects were
@@ -125,10 +150,12 @@ export function SessionPicker(
             sel={sel}
             right={
               <Text dimColor>
+                {here ? "here  " : ""}
                 {s.archivedAt ? "archived" : s.deprecatedAt ? "deprecated" : relTime(s.createdAt)}
               </Text>
             }
           >
+            <Text color={sel ? undefined : palette.accent}>{sel ? "❯" : " "}</Text>
             <Text color={sel ? undefined : dotColor} dimColor={dot === " "}>{dot}</Text>{" "}
             <Text dimColor>{prefix}</Text>
             <Text color={k.accent && !sel ? palette.accent : undefined} dimColor={!k.accent}>
@@ -141,12 +168,14 @@ export function SessionPicker(
             >
               {title}
             </Text>
+            {mark ? <Text color={sel ? undefined : mark.color}>{` ${mark.glyph}`}</Text> : null}
             {dir ? <Text dimColor>{"  "}{dir}</Text> : null}
           </SelRow>
         );
       })}
       {rowsList.length === 0 && <Text dimColor>no sessions — n creates one</Text>}
       <Text dimColor>● root · ⑂ fork · ◆ subagent · ≣ compacted · ⋯ running</Text>
+      <Text dimColor>outcome: ✓ done · ✓! check failed · ✗ failed · ◼ interrupted</Text>
       <Text dimColor>
         ⇥ tab · j/k move · / filter · enter open · n new · x archive · D deprecate · h show hidden ·
         u restore

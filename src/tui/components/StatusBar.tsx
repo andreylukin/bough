@@ -127,6 +127,10 @@ export function StatusBar(
     ? { text: "✗ error", color: palette.error }
     : session?.lastTurnStatus === "interrupted"
     ? { text: "◼ interrupted", color: palette.warn }
+    // An orphaned turn (server restart) otherwise looks finished once the
+    // transcript note scrolls away — say so at session level too.
+    : session?.lastTurnStatus === "orphaned"
+    ? { text: "◼ interrupted — server restarted", color: palette.warn }
     : session?.lastTurnStatus === "done"
     ? { text: "✓", color: palette.accent }
     : null;
@@ -141,7 +145,9 @@ export function StatusBar(
         <Box minWidth={4} flexShrink={1}>
           <Box flexShrink={0}>
             <Text>
-              <Text color={connected ? palette.accent : palette.error}>{connected ? "●" : "○"}</Text>
+              <Text color={connected ? palette.accent : palette.error}>
+                {connected ? "●" : "○"}
+              </Text>
               {down
                 ? (
                   <Text color={down.urgent ? palette.error : undefined} dimColor={!down.urgent}>
@@ -198,19 +204,26 @@ export function StatusBar(
                 : (
                   <Text dimColor={!ctxLow} color={ctxLow ? palette.warn : undefined}>
                     {"  "}
+                    {
+                      /* The low-context alert was hue-only (dim → warn), invisible
+                        to a colorblind user — name it like the neighbouring chips. */
+                    }
+                    {ctxLow ? "⚠ low ctx · " : ""}
                     {fmtTokens(usage.contextTokens)} ctx
                     {pctLeft !== null ? ` · ${pctLeft}% left` : ""}
                   </Text>
                 )
               : null}
-            {/* Cost carries its own weight so it doesn't read as more gray
-                metadata — bold lifts it out of the dim chip run. */}
+            {
+              /* Cost carries its own weight so it doesn't read as more gray
+                metadata — bold lifts it out of the dim chip run. */
+            }
             {spend > 0 ? <Text bold>{"  "}{fmtUsd(spend)}</Text> : null}
-            {/* The chip names its own key: a count with no way to act on it was
-                the whole complaint about background jobs. */}
-            {(bgJobs ?? 0) > 0
-              ? <Text color={palette.warn}>{"  "}⚙ {bgJobs} bg ^b</Text>
-              : null}
+            {
+              /* The chip names its own key: a count with no way to act on it was
+                the whole complaint about background jobs. */
+            }
+            {(bgJobs ?? 0) > 0 ? <Text color={palette.warn}>{"  "}⚙ {bgJobs} bg ^b</Text> : null}
             {pendingCount > 0
               ? (
                 <Text color={palette.warn}>

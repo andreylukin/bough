@@ -48,8 +48,8 @@ function JobOutput(
         </Text>
       </Text>
       <Text dimColor wrap="truncate">
-        {lines.length} lines · {fmtElapsed((job.endedAt ?? Date.now()) - job.startedAt)} · j/k
-        scroll · esc back{job.status === "running" ? " · x stops it" : ""}
+        {lines.length} lines · {fmtElapsed((job.endedAt ?? Date.now()) - job.startedAt)}{" "}
+        · j/k scroll · esc back{job.status === "running" ? " · x stops it" : ""}
       </Text>
       <Box flexDirection="column" marginTop={1}>
         {output === null
@@ -91,7 +91,8 @@ export function Jobs(
       <Box flexDirection="column" marginTop={1}>
         <Text dimColor>no background shells</Text>
         <Text dimColor>
-          long-running commands move here automatically; finished ones stay for 30 minutes
+          the agent's own long-running commands move here automatically (not `!` shell lines);
+          finished ones stay for 30 minutes, until the server restarts
         </Text>
       </Box>
     );
@@ -109,8 +110,7 @@ export function Jobs(
             <Text color={s ? undefined : st.color}>{st.label.padEnd(11)}</Text>
             <Text bold>{job.id.padEnd(7)}</Text>
             <Text dimColor>
-              {fmtElapsed((job.endedAt ?? Date.now()) - job.startedAt).padStart(7)}
-              {"  "}
+              {fmtElapsed((job.endedAt ?? Date.now()) - job.startedAt).padStart(7)}{"  "}
               {String(job.outputLines).padStart(4)}L{"  "}
             </Text>
             {job.command}

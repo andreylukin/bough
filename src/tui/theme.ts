@@ -28,7 +28,9 @@ const FALLBACK = {
   text: "#e7e9ed",
   text2: "#c9cdd4",
   muted: "#9aa1ac",
-  muted2: "#656c77",
+  // muted2 is text, not decoration: #656c77 measured 3.60:1 on bg and missed
+  // WCAG AA; #7a828e clears it at 4.91:1 and still sits under muted (visual audit P3).
+  muted2: "#7a828e",
 };
 
 export interface TuiPalette {
@@ -119,7 +121,12 @@ export const THEME_PRESETS: ThemePreset[] = [
   // presets also move the colliding semantic token — accent, warn, and error
   // must stay three distinguishable hues (visual audit P2).
   { name: "Ember", note: "accent #d9a04f", colors: { green: "#d9a04f", amber: "#e6d47c" } },
-  { name: "Rosewood", note: "accent #d97a8e", colors: { green: "#d97a8e", red: "#e2694a" } },
+  // Rosewood's old red #e2694a broke that invariant instead of fixing it: it sat
+  // at 1.12 contrast against the accent (1.08 deuteranope-simulated), worse than
+  // the Default palette it was correcting. #c85850 is a deeper brick that keeps
+  // the warm identity, clears AA on bg (4.51:1) and separates from both accent
+  // and amber (see theme.test.ts).
+  { name: "Rosewood", note: "accent #d97a8e", colors: { green: "#d97a8e", red: "#c85850" } },
   { name: "Lagoon", note: "accent #3fbdb0", colors: { green: "#3fbdb0" } },
   { name: "Graphite", note: "accent #a7b5c8", colors: { green: "#a7b5c8" } },
   {
@@ -160,7 +167,10 @@ export const THEME_PRESETS: ThemePreset[] = [
       text: "#e0def4",
       text2: "#c8c5dd",
       muted: "#908caa",
-      muted2: "#6e6a86",
+      // Lifted off the official subtle hex (#6e6a86 = 3.03:1 on this base):
+      // muted2 is text, so it owes AA 4.5 like every other preset's. 4.52:1,
+      // still dimmer than muted (4.86:1) so the ramp keeps its order.
+      muted2: "#8b86a8",
       green: "#c4a7e7",
       amber: "#f6c177",
       red: "#eb6f92",

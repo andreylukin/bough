@@ -129,3 +129,19 @@ Deno.test("the /mcp builtin manages servers via the loopback API", () => {
   assertStringIncludes(body, "enable");
   assertStringIncludes(body, "$BOUGH_SESSION");
 });
+
+Deno.test("quoted descriptions lose their YAML quotes, unmatched quotes survive", () => {
+  withSkillsDir((dir) => {
+    install(dir, "dq", `"Search the web, fetch pages"`, "DQ");
+    install(dir, "sq", `'Search the web'`, "SQ");
+    install(dir, "plain", "Search the web", "PLAIN");
+    install(dir, "apos", "Read the user's diff", "APOS");
+
+    const desc = (n: string) => listSkills().find((s) => s.name === n)?.description;
+    assertEquals(desc("dq"), "Search the web, fetch pages");
+    assertEquals(desc("sq"), "Search the web");
+    assertEquals(desc("plain"), "Search the web");
+    // an unmatched inner apostrophe is not a quoting pair — leave it alone
+    assertEquals(desc("apos"), "Read the user's diff");
+  });
+});

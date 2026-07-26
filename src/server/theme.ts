@@ -55,7 +55,10 @@ export const THEME_DEFAULTS: Record<ThemeToken, string> = {
   text: "#e7e9ed",
   text2: "#c9cdd4",
   muted: "#9aa1ac",
-  muted2: "#656c77",
+  // Keep in sync with FALLBACK in src/tui/theme.ts: this is the value that
+  // actually reaches the TUI when the server is up, so leaving the old 3.60:1
+  // hex here would have quietly undone the AA fix.
+  muted2: "#7a828e",
   green: "#4ec98f",
   amber: "#d9b45f",
   red: "#e2776e",

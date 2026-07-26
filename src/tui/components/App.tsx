@@ -21,6 +21,11 @@ const dbg = Deno.env.get("BOUGH_TUI_DEBUG")
     }
   }
   : null;
+/** How long an armed "press it again" confirm stays armed. Every prompt that
+ * arms one names this number — a silent expiry makes a slow second press look
+ * like the confirm is stuck in a loop. */
+const ARM_MS = 4000;
+const ARM_S = `${ARM_MS / 1000}s`;
 /** Slash-popup description: skill frontmatter arrives raw, so strip wrapping
  * quotes and cap on a word boundary with … (never cut mid-word). */
 function popupDetail(desc: string, max = 72): string {
@@ -140,6 +145,25 @@ import { progressEnd, progressStart, setTitle, tabColor, termBackground } from "
 // picker + conversation + mcp/skills are all tabs of the one "panel" view.
 type Mode = "chat" | "new" | "panel" | "help";
 
+// Raw C0 bytes ride along in coalesced stdin chunks (e.g. 0x15 from ^U arriving
+// with an ESC) and would insert as INVISIBLE composer text — that once turned a
+// "!shell" line into a paid LLM turn because startsWith("!") no longer matched.
+// Keep only \t and \n; \r is normalized to \n before this runs.
+export function stripCtl(s: string): string {
+  // deno-lint-ignore no-control-regex
+  return s.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "");
+}
+
+// Decide what a coalesced stdin chunk means for the composer. Terminals send \r
+// for Return, so ONLY a trailing \r means "…then send"; a bare \n can only have
+// come from ^j and is always a literal newline (user-testing bug: fast typing
+// followed by ^j arrived as one "line\n" chunk and sent a half-written message).
+export function chunkInput(ch: string): { body: string; send: boolean } {
+  const send = ch.endsWith("\r");
+  const body = stripCtl((send ? ch.slice(0, -1) : ch).replace(/\r\n?/g, "\n"));
+  return { body, send };
+}
+
 export function App(
   { initialSessions, defaultWorkspace }: { initialSessions: Session[]; defaultWorkspace: string },
 ) {
@@ -183,9 +207,18 @@ export function App(
   const [searchIdx, setSearchIdx] = useState(0);
   // `!cmd` local shell passthrough: last run's card (never touches the thread).
   const [shellOut, setShellOut] = useState<
-    { cmd: string; out: string; code: number | null } | null
+    { cmd: string; out: string; code: number | null; startedAt: number } | null
   >(null);
   const shellSeq = useRef(0);
+  // The live child, so esc can actually kill it: the card used to be dismissable
+  // while the command kept writing files until its 30s SIGKILL.
+  const shellProc = useRef<Deno.ChildProcess | null>(null);
+  // Why the run ended when we ended it (esc, or the 30s cap) — appended to the
+  // output so a killed command doesn't read as "my command failed".
+  const shellNote = useRef<string | null>(null);
+  // Ticks once a second while a `!` command runs so the card's elapsed time
+  // moves (the spinner frames are ActivityLine's own).
+  const [, setShellTick] = useState(0);
   // /schedule popup: recurring runs (list + toggle/delete + a small create form).
   // Owns the keyboard while open; the human mirror of the model's schedule.* fn.
   const SCHED_FIELDS = ["title", "prompt", "spec", "workspace"] as const;
@@ -238,6 +271,18 @@ export function App(
   const [showDeprecated, setShowDeprecated] = useState(false);
   // ^x archive confirm (double-tap, like ctrl+c quit): first press arms this.
   const archiveArm = useRef({ id: "", at: 0 });
+  // Same double-tap for the two genuinely IRREVERSIBLE keys: x in the changes
+  // tab (throws away every file the agent wrote) and x on a set API-key row
+  // (the key is never shown anywhere, so it can't be retyped from memory).
+  // Both used to fire on the first press. The arm holds for ARM_MS and every
+  // prompt says so — an unstated deadline reads as "the confirm is broken".
+  // Targeted like archiveArm/keyArm, not a bare timestamp: an arm raised in one
+  // session must not confirm in another (switching sessions mid-arm would have
+  // discarded the WRONG session's work), and it must not survive the file list
+  // changing underneath it — the prompt names a count, so a different count is a
+  // different blast radius and has to be re-armed.
+  const revertArm = useRef({ id: "", at: 0, n: 0 });
+  const keyArm = useRef({ id: "", at: 0 });
   // composer history (sent messages, oldest first, persisted across runs);
   // null idx = editing the draft
   const history = useRef<string[]>(loadHistory());
@@ -444,6 +489,10 @@ export function App(
     setToggled(new Set());
     setExpandAll(false);
     setSearchQ(null);
+    // Stop it, don't just hide it: the card promises "esc stops it", and once
+    // the card is gone esc can no longer reach the child — it would keep
+    // running to its 30s cap in the workspace we just left, invisibly.
+    killShell();
     setShellOut(null);
     setSections(null); // labels describe the session they were computed for
     setRailSel(null); // the rail lists the session we're leaving
@@ -606,6 +655,10 @@ export function App(
     () =>
       store.sessions
         .filter((s) => s.kind === "subagent" && s.originId === currentId)
+        // Oldest first: the session list arrives newest-first, so a fan-out's
+        // cards reshuffled every time one finished — a subagent physically
+        // jumped position mid-read. Spawn order is stable.
+        .sort((a, b) => a.createdAt - b.createdAt)
         .map((s) => ({
           id: s.id,
           title: s.title || "(untitled)",
@@ -790,6 +843,10 @@ export function App(
     sel: number;
     tokenStart: number;
     tokenEnd: number;
+    /** Matches hidden by the 6-row cap. Shown as a "↓ N more" row — without it
+     * a first-run user reads the menu as "bough has exactly six commands" and
+     * never finds the skills catalogue (newcomer audit). */
+    more?: number;
   }
   const [popup, setPopup] = useState<Popup | null>(null);
   const skillsCache = useRef<SkillInfo[] | null>(null);
@@ -814,10 +871,11 @@ export function App(
       // Completing replaces the whole input — a `!` line IS the command.
       const q = text.slice(1, cursor);
       const corpus = shellHist.current ??= shellHistoryCorpus();
-      const items = corpus
+      const ranked = corpus
         .map((cmd, i) => ({ cmd, i, score: fuzzyScore(cmd, q) }))
         .filter((x) => x.score > 0)
-        .sort((a, b) => b.score - a.score || b.i - a.i)
+        .sort((a, b) => b.score - a.score || b.i - a.i);
+      const items = ranked
         .slice(0, 6)
         .map(({ cmd }) => ({
           label: cmd,
@@ -829,7 +887,14 @@ export function App(
       // only an explicit ↑/↓ pick makes enter run a listed command instead.
       setPopup(
         items.length
-          ? { kind: "shell", items, sel: -1, tokenStart: 0, tokenEnd: text.length }
+          ? {
+            kind: "shell",
+            items,
+            sel: -1,
+            tokenStart: 0,
+            tokenEnd: text.length,
+            more: ranked.length - items.length,
+          }
           : null,
       );
       return;
@@ -857,14 +922,15 @@ export function App(
           { name: "model", description: "switch the model — opens the model panel" },
           { name: "effort", description: "set thinking depth — opens the model panel" },
         ];
-        const items = [...local, ...skills.filter((s) => s.name !== "theme")]
+        const ranked = [...local, ...skills.filter((s) => s.name !== "theme")]
           .map((s, i) => ({ s, local: i < local.length, score: fuzzyScore(s.name, q) }))
           .filter((x) => x.score > 0)
           .sort((a, b) =>
             b.score - a.score || Number(b.local) - Number(a.local) ||
             a.s.name.length - b.s.name.length ||
             a.s.name.localeCompare(b.s.name)
-          )
+          );
+        const items = ranked
           .slice(0, 6)
           .map(({ s }) => ({
             label: `/${s.name}`,
@@ -876,7 +942,14 @@ export function App(
         // commands" row) — silently hiding it read as "/ is broken".
         setPopup(
           items.length || q
-            ? { kind: "skill", items, sel: 0, tokenStart: slashAt, tokenEnd: end }
+            ? {
+              kind: "skill",
+              items,
+              sel: 0,
+              tokenStart: slashAt,
+              tokenEnd: end,
+              more: ranked.length - items.length,
+            }
             : null,
         );
       };
@@ -908,7 +981,16 @@ export function App(
             hl: fuzzyPositions(f, q).map((p) => p + 1),
           }));
           setPopup(
-            items.length ? { kind: "file", items, sel: 0, tokenStart: at, tokenEnd: end } : null,
+            items.length
+              ? {
+                kind: "file",
+                items,
+                sel: 0,
+                tokenStart: at,
+                tokenEnd: end,
+                more: files.length - items.length,
+              }
+              : null,
           );
         }, () => setPopup(null));
       }, 120);
@@ -969,7 +1051,11 @@ export function App(
   modeRef.current = mode;
   useEffect(() => {
     onPaste((text) => {
-      if (modeRef.current === "chat") insertAtCursor(text);
+      // Filtered like every other composer entry point: pasted terminal output
+      // is the likeliest carrier of C0 bytes, and one landing ahead of a leading
+      // "!" is exactly the invisible-character bug that routes a shell line to
+      // the model (stripCtl keeps \n and \t, so multi-line pastes are intact).
+      if (modeRef.current === "chat") insertAtCursor(stripCtl(text));
     });
     return () => onPaste(null);
   }, [insertAtCursor]);
@@ -1296,7 +1382,9 @@ export function App(
     if (shellHist.current) {
       shellHist.current = [...shellHist.current.filter((c) => c !== cmd), cmd];
     }
-    setShellOut({ cmd, out: "", code: null });
+    const startedAt = Date.now();
+    shellNote.current = null;
+    setShellOut({ cmd, out: "", code: null, startedAt });
     (async () => {
       try {
         const child = new Deno.Command("/bin/sh", {
@@ -1306,23 +1394,63 @@ export function App(
           stdout: "piped",
           stderr: "piped",
         }).spawn();
+        shellProc.current = child;
         const timer = setTimeout(() => {
+          shellNote.current = "◼ bough stopped this after 30s — use the agent's bash for long jobs";
           try {
             child.kill("SIGKILL");
           } catch {
             // already exited
           }
         }, 30_000);
-        const { code, stdout, stderr } = await child.output();
+        // Stream both pipes into the card as they arrive: buffering with
+        // child.output() meant a 25s build printed its first line at second 25.
+        let out = "";
+        const pump = async (rs: ReadableStream<Uint8Array>) => {
+          const dec = new TextDecoder();
+          for await (const chunk of rs) {
+            out += dec.decode(chunk, { stream: true });
+            if (shellSeq.current === seq) setShellOut({ cmd, out, code: null, startedAt });
+          }
+        };
+        await Promise.all([pump(child.stdout), pump(child.stderr)]);
+        // Released BEFORE awaiting status: both pipes are closed here, so the
+        // child has exited. Leaving the handle live across that await let an
+        // esc in the gap stamp "stopped (esc)" on a run that had succeeded.
+        if (shellProc.current === child) shellProc.current = null;
+        const { code } = await child.status;
         clearTimeout(timer);
-        const dec = new TextDecoder();
-        const out = (dec.decode(stdout) + dec.decode(stderr)).replace(/\s+$/, "");
-        if (shellSeq.current === seq) setShellOut({ cmd, out, code });
+        const note = shellNote.current;
+        const text = out.replace(/\s+$/, "") + (note ? (out ? "\n" : "") + note : "");
+        if (shellSeq.current === seq) setShellOut({ cmd, out: text, code, startedAt });
       } catch (e) {
-        if (shellSeq.current === seq) setShellOut({ cmd, out: String(e), code: -1 });
+        if (shellSeq.current === seq) {
+          setShellOut({ cmd, out: String(e), code: -1, startedAt });
+        }
       }
     })();
   }, [shellWorkspace]);
+
+  // Esc's stop button for `!` commands. A finished command has no handle left,
+  // so killing one is a no-op and esc falls through to dismissing the card.
+  const killShell = useCallback(() => {
+    const child = shellProc.current;
+    if (!child) return false;
+    shellProc.current = null;
+    shellNote.current = "◼ stopped (esc)";
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      // already exited
+    }
+    return true;
+  }, []);
+
+  useEffect(() => {
+    if (!shellOut || shellOut.code !== null) return;
+    const t = setInterval(() => setShellTick((x) => x + 1), 1000);
+    return () => clearInterval(t);
+  }, [shellOut]);
 
   // Send, creating the draft's session on first use. `/handoff <goal>` is a
   // composer command, not a message: the server drafts a self-contained opening
@@ -1331,12 +1459,16 @@ export function App(
   const submit = useCallback((text: string, queue: boolean) => {
     setScrollOff(0);
     setShowInfo(false);
+    // Defensive: an invisible control byte at the head would hide the leading
+    // "!" or "/" and route a shell line to the model as a paid turn (stripCtl).
+    text = stripCtl(text).trim();
     if (text.startsWith("!")) {
       const cmd = text.slice(1).trim();
       if (!cmd) return setErr("usage: !<command> — runs locally in the workspace");
       runShell(cmd);
       return;
     }
+    killShell(); // superseding the card must not orphan the process behind it
     setShellOut(null); // a real send supersedes the local-shell card
     if (/^\/conversation\s*$/.test(text)) {
       if (!store.currentId) return setErr("no open conversation — send a message first");
@@ -1428,18 +1560,36 @@ export function App(
         return setErr(`unknown command: /${name} — tab completes from the / menu`);
       }
     }
+    // The composer was cleared optimistically on enter, so a rejected send used
+    // to DESTROY the message (user-testing bug: sending while the server was
+    // down lost the draft). Put the text back — or, if something new has been
+    // typed since, stash it where ↑ recalls it.
+    const keepDraft = (msg: string) => {
+      setComp((c) => (c.text ? c : { text, cursor: text.length }));
+      // If something new was typed while the send was in flight, the composer
+      // keeps THAT and the rejected text goes to history — where ↑ genuinely
+      // recalls it. It used to go to `draft.current`, which ↑ overwrites on its
+      // first press, so the message the error promised was "kept" was gone.
+      if (!history.current.includes(text)) history.current.push(text);
+      setErr(msg);
+    };
+    // No pre-emptive connection gate: `connected` tracks the SSE stream, which
+    // is false before the /events handshake and for seconds after any transient
+    // drop, so gating on it refused sends a healthy server would have accepted.
+    // The rejection path below is the honest signal — it fires only on a POST
+    // that actually failed, and keepDraft means nothing is lost either way.
     if (store.currentId) {
-      store.send(text, queue).catch((e) => setErr(String(e)));
+      store.send(text, queue).catch((e) => keepDraft(`send failed: ${e} — message restored`));
       return;
     }
-    store.newSession(defaultWorkspace).then(
-      (s) => {
-        return store.send(text, false, s.id);
-      },
-      (e) => setErr(String(e)),
-    );
+    // .catch (not a second .then arg): the inner send's rejection has to reach
+    // keepDraft too, or a failed first message vanishes.
+    store.newSession(defaultWorkspace)
+      .then((s) => store.send(text, false, s.id))
+      .catch((e) => keepDraft(`send failed: ${e} — message restored`));
   }, [
     store.currentId,
+    store.connected,
     store.send,
     store.newSession,
     store.handoff,
@@ -1497,10 +1647,21 @@ export function App(
     if (key.ctrl && ch === "c") {
       if (store.busy) return store.interrupt();
       const now = Date.now();
-      if (now - lastCtrlC.current < 2000) exit();
+      if (now - lastCtrlC.current < ARM_MS) exit();
       lastCtrlC.current = now;
       setQuitHint(true);
-      setTimeout(() => setQuitHint(false), 2000);
+      setTimeout(() => setQuitHint(false), ARM_MS);
+      // Quitting doesn't stop anything: the server outlives the TUI. That fact
+      // used to live only on the last line of /help — say it at the moment it
+      // matters, with the live count.
+      const live = branches.filter((b) => b.busy).length;
+      store.notify(
+        live > 0
+          ? `ctrl+c again within ${ARM_S} to quit — leaves ${live} subagent${
+            live > 1 ? "s" : ""
+          } running on the server`
+          : `ctrl+c again within ${ARM_S} to quit`,
+      );
       return;
     }
 
@@ -1645,10 +1806,12 @@ export function App(
           // plain x used to DEPRECATE: an old reflex now reaches the more
           // destructive action, so it must not fire on the first press.
           const armed = archiveArm.current.id === sel.s.id &&
-            Date.now() - archiveArm.current.at < 3000;
+            Date.now() - archiveArm.current.at < ARM_MS;
           if (!armed) {
             archiveArm.current = { id: sel.s.id, at: Date.now() };
-            setPanelMsg(`x again to archive "${sel.s.title || "(untitled)"}"`);
+            setPanelMsg(
+              `x again within ${ARM_S} to archive "${sel.s.title || "(untitled)"}"`,
+            );
             return;
           }
           archiveArm.current = { id: "", at: 0 };
@@ -1944,7 +2107,26 @@ export function App(
         if (ch === "x") {
           // Nothing listed → nothing to revert; the raw call 400s ("no
           // workspace") into a confusing error line.
-          if (diffEntries.length > 0) store.revertChanges();
+          if (diffEntries.length === 0) return;
+          // Reverting throws away every file in the list with no undo, so it
+          // takes the same double-tap as archive — and the prompt names the
+          // blast radius, since "x revert" in the footer reads as cheap.
+          const n = diffEntries.length;
+          const arm = revertArm.current;
+          const armed = arm.id === (store.currentId ?? "") && arm.n === n &&
+            Date.now() - arm.at < ARM_MS;
+          if (!armed) {
+            revertArm.current = { id: store.currentId ?? "", at: Date.now(), n };
+            setPanelMsg(
+              `x again within ${ARM_S} to discard all changes to ${n} file${
+                n > 1 ? "s" : ""
+              } — no undo`,
+            );
+            return;
+          }
+          revertArm.current = { id: "", at: 0, n: 0 };
+          setPanelMsg(null);
+          store.revertChanges();
           return;
         }
         return;
@@ -1959,6 +2141,21 @@ export function App(
         if (ch === "x" && !key.ctrl && !key.meta) {
           const e = cfgEntries[modelSel];
           if (e?.kind === "key" && cfg?.keys?.[e.id as KeyProvider]) {
+            // The key is never rendered anywhere, so a deleted one can only be
+            // recovered from the provider's console — and this row sits a few
+            // j-presses below the model list people scroll all the time. Same
+            // double-tap as archive, naming the provider.
+            const armed = keyArm.current.id === e.id &&
+              Date.now() - keyArm.current.at < ARM_MS;
+            if (!armed) {
+              keyArm.current = { id: e.id, at: Date.now() };
+              setPanelMsg(
+                `x again within ${ARM_S} to delete the ${e.id} API key — it can't be shown again`,
+              );
+              return;
+            }
+            keyArm.current = { id: "", at: 0 };
+            setPanelMsg(null);
             api.deleteKey(e.id as KeyProvider)
               .then(() => api.getConfig().then(setCfg))
               .catch((err) => setErr(String(err)));
@@ -2327,7 +2524,13 @@ export function App(
         if (key.super && (key.backspace || key.delete)) {
           return setSched((s) =>
             s?.form
-              ? { ...s, form: { ...s.form, fields: s.form.fields.map((v, i) => i === s.form!.focus ? "" : v) } }
+              ? {
+                ...s,
+                form: {
+                  ...s.form,
+                  fields: s.form.fields.map((v, i) => i === s.form!.focus ? "" : v),
+                },
+              }
               : s
           );
         }
@@ -2394,13 +2597,22 @@ export function App(
       return;
     }
     // chat mode. Five jump chords open the one panel view on a tab; ^t toggles
-    // the panel on whatever tab it last showed.
+    // the panel on whatever tab it last showed. All of them only fire on an
+    // empty composer — ^b/^f/^d/^t are readline motion chords, and yanking a
+    // power user out of a half-written draft is the same user-testing bug the
+    // ^e gate below fixes; with text they fall through to line editing.
+    // Only the three that COLLIDE with readline are gated: ^b/^f/^d are motion
+    // chords, so with text they fall through to line editing below. ^p/^o/^t
+    // mean nothing while editing, and gating them too just made them dead keys
+    // mid-draft with no way to reach those panels short of clearing the line.
     if (key.ctrl && ch === "p") return openTab("sessions");
-    if (key.ctrl && ch === "f") return openTab("conversation");
-    if (key.ctrl && ch === "d") return openTab("changes");
     if (key.ctrl && ch === "o") return openTab("model");
-    if (key.ctrl && ch === "b") return openTab("jobs");
     if (key.ctrl && ch === "t") return openTab(panelTab);
+    if (input === "") {
+      if (key.ctrl && ch === "f") return openTab("conversation");
+      if (key.ctrl && ch === "d") return openTab("changes");
+      if (key.ctrl && ch === "b") return openTab("jobs");
+    }
     // ^x: stop this conversation's turn, every subagent under it, and their
     // background shells. esc only stops a RUNNING turn, so a detached subagent
     // that outlived its parent's turn had no stop path in the TUI at all —
@@ -2412,13 +2624,15 @@ export function App(
         return store.notify("nothing running in this conversation");
       }
       const now = Date.now();
-      if (now - lastCtrlX.current >= 3000) {
+      if (now - lastCtrlX.current >= ARM_MS) {
         lastCtrlX.current = now;
         const bits = [
           live > 0 ? `${live} subagent${live > 1 ? "s" : ""}` : null,
           runningJobs > 0 ? `${runningJobs} job${runningJobs > 1 ? "s" : ""}` : null,
         ].filter(Boolean).join(" · ");
-        return store.notify(`^x again to stop ${bits || "the running turn"}`);
+        return store.notify(
+          `^x again within ${ARM_S} to stop ${bits || "the running turn"}`,
+        );
       }
       lastCtrlX.current = 0;
       store.stopAll();
@@ -2569,6 +2783,9 @@ export function App(
       // Esc is the agent's stop button; when idle it clears a lingering notice
       // (error notices used to sit above the composer with no way to dismiss).
       if (store.busy) store.interrupt();
+      // A running `!` command gets stopped first (esc is the stop button here
+      // too); a second esc then dismisses the finished card.
+      else if (shellOut && shellOut.code === null && killShell()) { /* stopped */ }
       else if (shellOut) setShellOut(null);
       else if (showInfo) setShowInfo(false);
       else if (store.notice) store.dismissNotice();
@@ -2606,7 +2823,10 @@ export function App(
     // closure and silently drop the send.
     const sendNow = (queue: boolean) => {
       setComp((c) => {
-        const text = c.text.trim();
+        // Stripped here, not only in submit(): the un-stripped text was what
+        // got persisted to history, so recalling it with ↑ replayed the same
+        // invisible control bytes back into the composer.
+        const text = stripCtl(c.text).trim();
         if (!text) return c;
         if (text === "?") {
           // A bare "?" sent as a message is a help request, not a prompt — the
@@ -2718,6 +2938,18 @@ export function App(
     if (key.rightArrow) return moveCursor((c) => c.cursor + 1);
     if (key.ctrl && ch === "a") return moveCursor(() => 0);
     if (key.ctrl && ch === "e") return moveCursor((c) => c.text.length);
+    // ^b/^f/^d: the readline motion trio a veteran expects. They only reach here
+    // with text in the composer (empty falls to the panel chords above), so ^d
+    // never needs the readline "EOF on an empty line" behaviour.
+    if (key.ctrl && ch === "b") return moveCursor((c) => c.cursor - 1);
+    if (key.ctrl && ch === "f") return moveCursor((c) => c.cursor + 1);
+    if (key.ctrl && ch === "d") {
+      return setComp((c) =>
+        c.cursor >= c.text.length
+          ? c
+          : { text: c.text.slice(0, c.cursor) + c.text.slice(c.cursor + 1), cursor: c.cursor }
+      );
+    }
     if (key.ctrl && ch === "w") {
       return setComp((c) => {
         const from = wordLeft(c.text, c.cursor);
@@ -2757,18 +2989,16 @@ export function App(
     }
     if (ch && !key.ctrl && !key.meta) {
       // Stream reads can coalesce fast input into one chunk ("text\r"), so a
-      // newline can arrive as DATA rather than a return keypress. Normalize CRs
-      // (a raw \r in the composer corrupts the render) and honor a trailing
-      // newline as "…then send" — that's what the sender meant.
-      const norm = ch.replace(/\r\n?/g, "\n");
-      if (norm.includes("\n")) {
-        const sendAfter = norm.endsWith("\n");
-        const body = sendAfter ? norm.slice(0, -1) : norm;
+      // newline can arrive as DATA rather than a return keypress. chunkInput
+      // decides send-vs-newline (only a trailing \r sends) and strips the
+      // invisible control bytes that can ride along in the same chunk.
+      if (/[\r\n]/.test(ch)) {
+        const { body, send } = chunkInput(ch);
         if (body) insertAtCursor(body);
-        if (sendAfter) sendNow(key.meta);
+        if (send) sendNow(key.meta);
         return;
       }
-      insertAtCursor(ch);
+      insertAtCursor(stripCtl(ch));
     }
   });
 
@@ -3172,7 +3402,18 @@ export function App(
                       <Text color={palette.accent}>${" "}</Text>
                       <Text bold>{shellOut.cmd}</Text>
                       {shellOut.code === null
-                        ? <Text color={palette.warn}>{"  "}⚙ running…</Text>
+                        // Same spinner + elapsed treatment as a running turn —
+                        // a static "⚙ running…" read as a hung screen.
+                        ? (
+                          <>
+                            {"  "}
+                            <ActivityLine
+                              text={` running · ${
+                                Math.floor((Date.now() - shellOut.startedAt) / 1000)
+                              }s`}
+                            />
+                          </>
+                        )
                         : shellOut.code === 0
                         ? <Text color={palette.accent}>{"  "}✓</Text>
                         : <Text color={palette.error}>{"  "}✗ exit {shellOut.code}</Text>}
@@ -3202,7 +3443,10 @@ export function App(
                         </>
                       );
                     })()}
-                    <Text dimColor>local shell · not part of the conversation · esc dismisses</Text>
+                    <Text dimColor>
+                      local shell · not part of the conversation ·{" "}
+                      {shellOut.code === null ? "esc stops it · 30s cap" : "esc dismisses"}
+                    </Text>
                   </Box>
                 )
                 : null}
@@ -3256,6 +3500,17 @@ export function App(
                           </Text>
                         );
                       })}
+                    {popup.more
+                      ? (
+                        // Same idiom as the transcript's "↓ N more lines below":
+                        // accent arrow+count, dim tail. Keeps the cap honest —
+                        // typing narrows the list to what's hidden.
+                        <Text>
+                          <Text color={palette.info}>↓ {popup.more}</Text>
+                          <Text dimColor>{" "}more — keep typing to narrow</Text>
+                        </Text>
+                      )
+                      : null}
                     <Text dimColor>
                       {popup.kind === "file"
                         ? "files & dirs — ↑↓ select · tab insert · esc close"
@@ -3303,6 +3558,19 @@ export function App(
           ? store.workflows.filter((w) => w.status === "running" || w.status === "paused")
             .slice(0, 2)
             .map((w) => <WorkflowChip key={w.id} run={w} log={store.wfLogs[w.id]} />)
+          : null}
+        {
+          /* A running `!` command is invisible outside the chat card (panels
+            cover it), so mirror it as a chip that survives every mode. */
+        }
+        {mode !== "chat" && shellOut && shellOut.code === null
+          ? (
+            <ActivityLine
+              text={`running ! ${shellOut.cmd} · ${
+                Math.floor((Date.now() - shellOut.startedAt) / 1000)
+              }s`}
+            />
+          )
           : null}
         <StatusBar
           connected={store.connected}

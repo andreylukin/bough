@@ -188,7 +188,9 @@ export function loadBody(name: string): string | null {
  * IS the capability grant). `names` lists the matched skills in invocation order
  * so the TUI can surface them. Empty when none are named (or installed).
  */
-export function activeSkills(message: string): { sections: string; servers: string[]; names: string[] } {
+export function activeSkills(
+  message: string,
+): { sections: string; servers: string[]; names: string[] } {
   const sections: string[] = [];
   const servers = new Set<string>();
   const names: string[] = [];
@@ -236,10 +238,24 @@ function descriptionOf(text: string): string {
   for (const line of frontmatterLines(text)) {
     const idx = line.indexOf(":");
     if (idx > 0 && line.slice(0, idx).trim() === "description") {
-      return line.slice(idx + 1).trim();
+      return unquote(line.slice(idx + 1).trim());
     }
   }
   return "";
+}
+
+/**
+ * Strip one matched pair of YAML quotes — most installed skills quote their
+ * description, and the quotes leaked into both the TUI list and the model's
+ * skill-selection prompt. Only a matched pair goes; an apostrophe inside the
+ * text must survive.
+ */
+function unquote(value: string): string {
+  const q = value[0];
+  if ((q === '"' || q === "'") && value.length >= 2 && value.endsWith(q)) {
+    return value.slice(1, -1);
+  }
+  return value;
 }
 
 function frontmatterLines(text: string): string[] {

@@ -152,11 +152,28 @@ export function authHeaders(): Record<string, string> {
   return cookie ? { cookie } : {};
 }
 
+// A dead server otherwise surfaces as Deno's raw Rust-flavoured TypeError
+// ("error sending request ... tcp connect error: Connection refused (os error 61)"),
+// which reads as a bough crash. Every request goes through here so the message
+// matches main.tsx's cold-start advice.
+async function send(path: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(`${BASE}${path}`, {
+      ...init,
+      headers: { ...(init?.headers as Record<string, string>), ...authHeaders() },
+    });
+  } catch (e) {
+    if (e instanceof TypeError) {
+      throw new Error(
+        `can't reach the bough server at ${BASE} — start it with: bough start`,
+      );
+    }
+    throw e;
+  }
+}
+
 async function j<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    ...init,
-    headers: { ...(init?.headers as Record<string, string>), ...authHeaders() },
-  });
+  const res = await send(path, init);
   if (res.status === 401) throw new AuthError();
   if (!res.ok) throw new Error(`${init?.method ?? "GET"} ${path}: ${res.status}`);
   return (await res.json()) as T;
@@ -164,10 +181,7 @@ async function j<T>(path: string, init?: RequestInit): Promise<T> {
 
 // Like j(), but surfaces the server's error message (fork/compact 400s carry one).
 async function jmsg<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    ...init,
-    headers: { ...(init?.headers as Record<string, string>), ...authHeaders() },
-  });
+  const res = await send(path, init);
   if (res.status === 401) throw new AuthError();
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -187,8 +201,10 @@ const postJson = (body: unknown): RequestInit => ({
 export const api = {
   // archived=true → the soft-deleted rows only (the picker's reveal/restore).
   listSessions: (archived = false) => j<Session[]>(`/sessions${archived ? "?archived=1" : ""}`),
+  // jmsg, not j: a bad workspace comes back as a 400 with the real reason
+  // ("workspace does not exist"), which a status-only error would swallow.
   createSession: (body: { title?: string; workspace?: string } = {}) =>
-    j<Session>("/sessions", {
+    jmsg<Session>("/sessions", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
@@ -197,9 +213,9 @@ export const api = {
     j<{ session: Session; thread: Message[]; usage: Usage }>(`/sessions/${id}`),
   // 202 with empty body — fire-and-forget; the turn streams over /events.
   postMessage: async (id: string, text: string) => {
-    const res = await fetch(`${BASE}/sessions/${id}/messages`, {
+    const res = await send(`/sessions/${id}/messages`, {
       method: "POST",
-      headers: { "content-type": "application/json", ...authHeaders() },
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ text }),
     });
     if (res.status === 401) throw new AuthError();
@@ -380,7 +396,7 @@ export const api = {
 
   /** POST /auth/login; on success stores and returns the session cookie. */
   login: async (password: string) => {
-    const res = await fetch(`${BASE}/auth/login`, postJson({ password }));
+    const res = await send("/auth/login", postJson({ password }));
     if (!res.ok) throw new Error("wrong password");
     const tok = res.headers.getSetCookie().find((c) => c.startsWith("bough_session="));
     if (!tok) throw new Error("login succeeded but no cookie in response");
