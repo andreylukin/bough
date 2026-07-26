@@ -618,12 +618,16 @@ export function App(
         })),
     [store.sessions, currentId, noteById],
   );
+  // Only *live* subagents belong in the pinned rail: a finished one already has
+  // its card in the transcript at the turn that spawned it, so keeping it pinned
+  // under the composer both duplicates it and leaves it there forever.
+  const liveBranches = useMemo(() => branches.filter((b) => b.busy), [branches]);
   // The rail's cursor must not dangle past a list that shrank (or emptied).
   useEffect(() => {
     setRailSel((s) =>
-      s === null || branches.length === 0 ? null : Math.min(s, branches.length - 1)
+      s === null || liveBranches.length === 0 ? null : Math.min(s, liveBranches.length - 1)
     );
-  }, [branches.length]);
+  }, [liveBranches.length]);
   // Background shells: cards render only the open session's own jobs (a
   // subagent's jobs show inside its branch); the status-bar chip counts all.
   const ownJobs = useMemo(
@@ -2541,11 +2545,11 @@ export function App(
     // The subagent rail owns the arrows while it holds the cursor: ↑/↓ walk the
     // rows (↑ past the top hands focus back to the composer), enter opens the
     // branch, esc leaves. Anything else drops focus and types as usual.
-    if (railSel !== null && branches.length > 0) {
-      if (key.downArrow) return setRailSel(Math.min(branches.length - 1, railSel + 1));
+    if (railSel !== null && liveBranches.length > 0) {
+      if (key.downArrow) return setRailSel(Math.min(liveBranches.length - 1, railSel + 1));
       if (key.upArrow) return setRailSel(railSel === 0 ? null : railSel - 1);
       if (key.return) {
-        const b = branches[Math.min(railSel, branches.length - 1)];
+        const b = liveBranches[Math.min(railSel, liveBranches.length - 1)];
         const s = store.sessions.find((x) => x.id === b.id);
         setRailSel(null);
         if (s) openSession(s);
@@ -2665,7 +2669,7 @@ export function App(
       // Past the end of history (or with nothing typed), ↓ drops into the
       // subagent rail under the status bar rather than doing nothing.
       if (histIdx === null) {
-        if (input === "" && branches.length > 0) setRailSel(0);
+        if (input === "" && liveBranches.length > 0) setRailSel(0);
         return;
       }
       if (histIdx >= history.current.length - 1) {
@@ -3330,7 +3334,7 @@ export function App(
           /* Subagents live under the status bar (Claude Code parity): a pinned
             rail, not a transcript card that scrolls away while it works. */
         }
-        {mode === "chat" ? <SubagentRail branches={branches} sel={railSel} /> : null}
+        {mode === "chat" ? <SubagentRail branches={liveBranches} sel={railSel} /> : null}
       </Box>
     </Box>
   );
