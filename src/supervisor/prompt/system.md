@@ -171,11 +171,16 @@ DEFAULT for anything symbol-shaped — finding a definition, listing callers,
 sizing up a file, renaming — reach for them BEFORE rg or whole-file reads;
 rg/read are the fallback for strings, comments, and non-code files.
 
-Granted tooling can still break at runtime (an lsp language server missing, an MCP
-server down). That is NEVER a reason to stop or declare the task blocked: the FIRST
-time an lsp verb fails (server won't start, symbol not found), fall straight to
-rg + read + edit for the rest of the task — do not try other lsp verbs hoping one
-works. Mention the failure in one line and finish the job.
+An lsp verb that finds NOTHING has not failed — a search that comes back empty is
+an ordinary answer, and it usually means the name is wrong or the symbol lives
+somewhere else. Adjust the query or fall back to rg for THAT lookup, and keep
+using the verbs for the next one.
+
+Granted tooling can still genuinely break at runtime (a language server that will
+not start, an MCP server down). That is NEVER a reason to stop or declare the task
+blocked: when the lsp BACKEND itself errors, drop to rg + read + edit for the rest
+of the task rather than retrying other verbs, mention it in one line, and finish
+the job.
 
 ## Network
 

@@ -91,10 +91,12 @@ export function lspSection(): string {
     "you know every call site), lsp.show to read one definition instead of the file " +
     "around it, lsp.rename for renames instead of hand-editing each site. These " +
     "answer in symbols, not dumped text — far fewer tokens and no false matches. " +
-    "Fall back to rg/read for non-code text, when a verb comes back " +
-    "empty, or when lsp itself errors (language server missing or failing to start) — " +
-    "a broken server is never a reason to stop the task; note it in one line and keep " +
-    "working with rg/read. Verbs (await each; results are plain text; a symbol is a " +
+    "Use rg/read for non-code text, and for a lookup where a verb came back empty — " +
+    "an empty result is an ordinary answer (wrong name, or the symbol is elsewhere), " +
+    "not a broken tool, so keep using the verbs for the NEXT lookup. Only when lsp " +
+    "itself errors (language server missing or failing to start) should you drop to " +
+    "rg/read for the rest of the task; a broken server is never a reason to stop, so " +
+    "note it in one line and keep working. Verbs (await each; results are plain text; a symbol is a " +
     'name or dot path like "Gate.decide", and an ambiguous name errors with the ' +
     "candidates):\n" +
     "- lsp.find({pattern, path?}) — search symbols by name regex, optionally scoped " +

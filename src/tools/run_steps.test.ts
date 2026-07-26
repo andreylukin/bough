@@ -96,12 +96,13 @@ Deno.test("multi-rule requests get one spec-recheck bounce after a passing check
 Deno.test("probe-round meter nudges after 3 no-write no-check rounds, then resets", async () => {
   const c = ctx();
   const probe = { code: `console.log("looking");` };
-  // Pre-implementation exploration never trips the meter, however long.
+  // Pre-implementation exploration gets a longer leash (8, asserted separately) —
+  // the post-write meter must not fire inside it.
   for (let i = 0; i < 4; i++) {
     const r = await runSteps.run(probe, c);
     if (r.includes("[verification note]")) throw new Error("nudge fired before first write");
   }
-  // First write arms it; then 3 probe-only rounds nudge.
+  // First write arms the tighter threshold; then 3 probe-only rounds nudge.
   await runSteps.run({ code: `await write("f.txt", "x");` }, c);
   const r1 = await runSteps.run(probe, c);
   const r2 = await runSteps.run(probe, c);
@@ -114,6 +115,43 @@ Deno.test("probe-round meter nudges after 3 no-write no-check rounds, then reset
   await runSteps.run({ code: `await write("g.txt", "y");` }, c);
   const r5 = await runSteps.run(probe, c);
   if (r5.includes("[verification note]")) throw new Error("counter did not reset");
+});
+
+Deno.test("a read-only spiral is nudged before the first write ever lands", async () => {
+  // Regression: the meter was disarmed until the first write, so session 5ad242bd
+  // ran 62 consecutive read-only rounds and implemented nothing, un-nudged.
+  const c = ctx();
+  const probe = { code: `console.log("still reading");` };
+  for (let i = 0; i < 7; i++) {
+    const r = await runSteps.run(probe, c);
+    if (r.includes("[progress note]")) throw new Error(`nudge fired early, round ${i + 1}`);
+  }
+  const r8 = await runSteps.run(probe, c);
+  assertStringIncludes(r8, "[progress note]");
+  assertStringIncludes(r8, "smallest real edit");
+  // It is the pre-write wording, not the post-write "stop re-verifying" one.
+  if (r8.includes("[verification note]")) throw new Error("wrong nudge for a pre-write spiral");
+});
+
+Deno.test("committing a check or landing a write resets the pre-write meter", async () => {
+  const c = ctx();
+  const probe = { code: `console.log("reading");` };
+  for (let i = 0; i < 6; i++) await runSteps.run(probe, c);
+  // Committing a check is progress, so the count restarts.
+  await runSteps.run({ code: `console.log("x");`, check: "true" }, c);
+  for (let i = 0; i < 7; i++) {
+    const r = await runSteps.run(probe, c);
+    if (r.includes("[progress note]")) throw new Error(`counter did not reset (round ${i + 1})`);
+  }
+  assertStringIncludes(await runSteps.run(probe, c), "[progress note]");
+});
+
+Deno.test("the pre-write nudge points at the todo list when one exists", async () => {
+  const c = ctx();
+  c.turn = { todo: "1. add the keybinding\n2. update KEYMAP" };
+  const probe = { code: `console.log("reading");` };
+  for (let i = 0; i < 7; i++) await runSteps.run(probe, c);
+  assertStringIncludes(await runSteps.run(probe, c), "todo list above already names");
 });
 
 Deno.test("program errors surface in the output without killing the round", async () => {

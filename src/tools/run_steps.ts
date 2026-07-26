@@ -367,25 +367,48 @@ export const runSteps: ToolDef = {
     // re-confirming a finished implementation by hand). Deterministic and
     // advisory — after 3 consecutive probe-only rounds, nudge toward the check.
     if (ctx.turn) {
-      // Armed only after the first write: pre-implementation exploration rounds
-      // are legitimate; the waste pattern is the post-implementation probe tail.
       if (wrote) ctx.turn.everWrote = true;
-      const probeOnly = ctx.turn.everWrote === true && !wrote && !check && !done;
+      const probeOnly = !wrote && !check && !done;
       ctx.turn.probeRounds = probeOnly ? (ctx.turn.probeRounds ?? 0) + 1 : 0;
-      // Threshold 3, measured: firing on the first probe round cut cost ~20%
-      // but dropped pass rate 91%→81% on the bench (premature finishes) —
-      // the probe tail is partly productive settling time for a weak model.
-      if (ctx.turn.probeRounds >= 3) {
+      // Two thresholds, because the two spirals are different failures.
+      //
+      // AFTER the first write, 3 — measured: firing on the first probe round cut
+      // cost ~20% but dropped pass rate 91%→81% on the bench (premature
+      // finishes), since the probe tail is partly productive settling time for a
+      // weak model. Do not retune this without a sweep.
+      //
+      // BEFORE it, 8. The meter used to be disarmed entirely until the first
+      // write, on the reasoning that early exploration is legitimate. Session
+      // 5ad242bd falsified that: 62 consecutive read-only rounds implementing
+      // nothing, announcing "let me implement the changes" at round 60 and then
+      // grepping twice more. Nothing ever nudged it, because the arming write
+      // never came. Unbenched and deliberately generous — reading a strange
+      // codebase for eight rounds is real work, and the cost of firing early
+      // here is the same premature-commit failure the 91%→81% result measured.
+      const limit = ctx.turn.everWrote === true ? 3 : 8;
+      if (ctx.turn.probeRounds >= limit) {
+        const rounds = ctx.turn.probeRounds;
         ctx.turn.probeRounds = 0;
         out.push(
-          "[verification note] 3 rounds without a file change or a committed check. " +
-            "STOP re-verifying — you have already seen the result. " +
-            (ctx.turn.lastGreenCmd
-              ? `THIS round, commit your last passing command verbatim as the check ` +
-                `and finish: { check: ${JSON.stringify(ctx.turn.lastGreenCmd)}, done: true }. `
-              : "If behavior is confirmed, encode that verification as your `check` " +
-                "command and set done:true this round. ") +
-            "If something is actually wrong, fix it now instead of probing further.",
+          ctx.turn.everWrote === true
+            ? "[verification note] 3 rounds without a file change or a committed check. " +
+              "STOP re-verifying — you have already seen the result. " +
+              (ctx.turn.lastGreenCmd
+                ? `THIS round, commit your last passing command verbatim as the check ` +
+                  `and finish: { check: ${JSON.stringify(ctx.turn.lastGreenCmd)}, done: true }. `
+                : "If behavior is confirmed, encode that verification as your `check` " +
+                  "command and set done:true this round. ") +
+              "If something is actually wrong, fix it now instead of probing further."
+            : `[progress note] ${rounds} rounds of reading with nothing written yet. ` +
+              "You are researching, not building. Make the smallest real edit THIS " +
+              "round — the one you are most confident in — even if the rest is still " +
+              "unclear; a landed edit you refine beats a plan you keep verifying. " +
+              "If you genuinely cannot start, you are missing something only the user " +
+              "knows: ask() them. If the task turned out to need no code change, say " +
+              "so and finish." +
+              (ctx.turn.todo?.trim()
+                ? " Your own todo list above already names the first step — do that one."
+                : ""),
         );
       }
     }
