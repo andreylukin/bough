@@ -9,3 +9,6 @@ __pycache__/
 # smolvm sandbox golden rootfs (build output of scripts/guest-image/build-golden.sh)
 scripts/guest-image/golden-rootfs/
 *.smolmachine
+
+# rewrite tree build artifacts
+next/node_modules/
