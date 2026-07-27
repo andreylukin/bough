@@ -81,7 +81,7 @@ Deno.test("a hard-wrapped block keeps its gutter on every physical line", () => 
 
 // ---- folding: the program that ran ------------------------------------------
 
-Deno.test("a collapsed tool step carries the gist of the program that ran", () => {
+Deno.test("a collapsed tool step says what the program did", () => {
   const m = msg({
     id: "m1",
     parts: [
@@ -93,7 +93,9 @@ Deno.test("a collapsed tool step carries the gist of the program that ran", () =
   const head = collapsed.find((l) => l.text.includes("step"))!;
   assert.ok(head.text.includes("▸"), head.text); // closed
   assert.ok(head.text.includes("run_steps"));
-  assert.ok(head.text.includes("await bash('deno test')"), head.text);
+  // Was the clipped source line; now the operation, the way every comparable
+  // harness labels a step (`Ran 1 shell command`). The code is one keypress away.
+  assert.ok(head.text.includes("ran 1 command"), head.text);
   assert.equal(head.click, "m1:0"); // clicking the header toggles the fold
   // The body is hidden while collapsed — that is the entire point of the fold.
   assert.equal(joined(collapsed).includes("// setup"), false);

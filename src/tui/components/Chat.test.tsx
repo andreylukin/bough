@@ -67,25 +67,27 @@ const thread: Message[] = [
   },
 ];
 
-Deno.test("Chat renders a transcript, its meter and its scroll indicator from fixtures", () => {
+Deno.test("Chat renders a transcript and its scroll indicator from fixtures", () => {
   const lines = buildLines(thread, () => false, () => false, 80);
   const frame = draw(
     <Chat
       lines={lines}
       width={80}
       height={20}
-      meter={{ model: "opus", costUsd: 0.42, contextTokens: 50_000, contextLimit: 200_000 }}
       activity="running the test suite"
       queued={["and fix the lint"]}
     />,
   );
-  assert.ok(frame.includes("opus · $0.420 · 75% ctx left"), frame);
+  // The meter is NOT here any more: it renders BELOW the composer, which is where
+  // every comparable harness puts the session status. `App` owns it now.
+  assert.equal(frame.includes("ctx left"), false, frame);
   assert.ok(frame.includes("running the test suite"));
   assert.ok(frame.includes("⧖ queued: and fix the lint"));
   // Folded by default: the step and a gist of its program are on the header, the
   // output block is behind the fold, and the reply prose is never folded.
   assert.ok(frame.includes("1 step"));
-  assert.ok(frame.includes("await bash('ls')"));
+  // The collapsed header names what the program DID, not its first line of code.
+  assert.ok(frame.includes("ran 1 command"), frame);
   assert.ok(frame.includes("Added"));
   assert.equal(frame.includes("↳ output"), false);
   assert.equal(frame.includes("runner.ts"), false);

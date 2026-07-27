@@ -42,6 +42,7 @@ import {
   md,
   MIN_WRAP,
   outputText,
+  programSummary,
   segmentParts,
   surface,
   toolSummary,
@@ -227,8 +228,13 @@ function toolGroupLines(
   // A collapsed single-call group carries a gist of the program. Expanded shows
   // the real thing; multi-call headers are already crowded with names.
   if (!expanded && calls.length === 1) {
-    const gist = codeGist(calls[0].input);
-    if (gist) head += dim(` · ${gist}`);
+    // WHAT IT DID first, and the code only when nothing was recognized. A clipped
+    // line of source as the headline reads as debug output and answers none of the
+    // questions a reader actually has (`programSummary`).
+    const input = calls[0].input as { code?: unknown } | null | undefined;
+    const code = input && typeof input.code === "string" ? input.code : "";
+    const label = programSummary(code) || codeGist(calls[0].input);
+    if (label) head += dim(` · ${label}`);
   }
   if (hasError) head += "  " + danger("✗ error");
   else if (interrupted) head += "  " + warn("⏹ interrupted");

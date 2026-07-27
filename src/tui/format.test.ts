@@ -18,6 +18,7 @@ import {
   linkAt,
   md,
   meterLine,
+  programSummary,
   rankCompletions,
   segmentParts,
   setColorEnabled,
@@ -521,4 +522,33 @@ Deno.test("a retry reason is reduced to something a person can read", () => {
     const out = humanizeRetryReason(raw);
     assert.ok(!out.includes("{") && !out.includes('"'), `leaked JSON: ${out}`);
   }
+});
+
+Deno.test("a step is headlined by what the program did, not by its first line of code", () => {
+  // The old header was a clipped source line — debug output, not a UI:
+  //   ▸ 1 step  run_steps · const out = await bash(`node --input-type=module -e "
+  assert.equal(
+    programSummary('const out = await bash("node -e 1"); console.log(out);'),
+    "ran 1 command",
+  );
+  assert.equal(programSummary('console.log(await view("/tmp/x/app.mjs"));'), "read app.mjs");
+  assert.equal(
+    programSummary('await write("src/a.ts", body); await bash("deno test");'),
+    "wrote a.ts · ran 1 command",
+  );
+  // Several files collapse rather than running off the row.
+  assert.equal(
+    programSummary('await edit("a.ts", x); await edit("b.ts", y); await edit("c.ts", z);'),
+    "wrote a.ts +2 more",
+  );
+  assert.equal(
+    programSummary('await Promise.all([agent("one"), agent("two")]);'),
+    "2 subagents",
+  );
+  // Unrecognized programs yield "", so the caller falls back to the code gist
+  // rather than to an empty header.
+  assert.equal(programSummary("const x = 1 + 1;"), "");
+  assert.equal(programSummary(""), "");
+  // Always bounded — this shares a row with the step count and the status chips.
+  assert.ok(programSummary('await bash("x");'.repeat(40)).length <= 64);
 });

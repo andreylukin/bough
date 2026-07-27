@@ -45,6 +45,7 @@ import { buildLines } from "../lines.ts";
 import {
   activeTrigger,
   applyCompletion,
+  meterLine,
   rankCompletions,
   sessionLabel,
   shortenPath,
@@ -68,7 +69,7 @@ import {
   type UiMode,
 } from "../keys.ts";
 import { currentAsk, isBusy, type Store, type TuiState } from "../store.ts";
-import { Chat } from "./Chat.tsx";
+import { Chat, type ChatMeter } from "./Chat.tsx";
 import { Composer } from "./Composer.tsx";
 import { type PanelControls, type PanelHostDeps, usePanelHost } from "./PanelHost.tsx";
 import { liveSubagents, SubagentRail } from "./SubagentRail.tsx";
@@ -551,17 +552,6 @@ export function App(
         width={cols}
         height={Math.max(1, rows - composerRows - 4 - rail.length)}
         scrollOff={scrollOff}
-        meter={{
-          model: state.session?.model ?? state.effectiveModel,
-          // The TREE total, not this session's own: delegated work is work you
-          // paid for, and a subagent's spend that appears on no screen is spend
-          // the user cannot see. `tree` collapses every branch under this one.
-          costUsd: state.usage?.tree.costUsd ?? state.usage?.costUsd ?? null,
-          contextTokens: state.session?.contextTokens ?? null,
-          contextLimit: state.contextLimit,
-          workspace,
-          help: true,
-        }}
         activity={state.activity}
         busy={busy}
         elapsedMs={elapsedMs}
@@ -585,8 +575,37 @@ export function App(
             completionMore={Math.max(0, completion.total - completion.items.length)}
           />
         )}
+      <StatusLine
+        width={cols}
+        meter={{
+          model: state.session?.model ?? state.effectiveModel,
+          costUsd: state.usage?.tree.costUsd ?? state.usage?.costUsd ?? null,
+          contextTokens: state.session?.contextTokens ?? null,
+          contextLimit: state.contextLimit,
+          workspace,
+          help: true,
+        }}
+      />
     </Box>
   );
+}
+
+/**
+ * The status line, BELOW the composer.
+ *
+ * Below, because that is where every comparable harness puts it and where the eye
+ * already is: Claude Code prints `cwd git:(branch) | model ctx:N% | in/out` under
+ * its input rule, Codex and OpenCode the same. bough had it above the input, so
+ * the last thing before the box you type into was a row of numbers, and the row
+ * that told you where the turn would run sat on the far side of the transcript.
+ *
+ * The live spinner stays ABOVE, inside `Chat` — that one belongs with the output
+ * it is narrating, not with the static facts about the session.
+ */
+function StatusLine({ width, meter }: { width: number; meter: ChatMeter }) {
+  const text = meterLine({ ...meter, width });
+  if (!text) return null;
+  return <Text dimColor wrap="truncate">{text}</Text>;
 }
 
 /**

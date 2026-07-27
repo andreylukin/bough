@@ -268,6 +268,59 @@ export function toolSummary(parts: Part[]) {
   return { calls, results, running, hasError, interrupted };
 }
 
+/**
+ * What a program DID, named the way a reviewer would name it.
+ *
+ * The collapsed step header used to be the program's first line of code, clipped:
+ *
+ *   ▸ 1 step  run_steps · const out = await bash(`node --input-type=module -e "
+ *
+ * — which reads as debug output rather than as a UI, and answers none of the
+ * questions a reader has (which files did it touch? did it run something?). Every
+ * comparable harness names the operation and its target: `Update(app.mjs)`,
+ * `Read 1 file`, `Ran 1 shell command`.
+ *
+ * bough writes ONE program per round rather than one call, so the equivalent is a
+ * tally of the host functions it called: `read app.mjs · ran 1 command`. Derived
+ * by scanning the source for host-function call sites, which is a heuristic and is
+ * allowed to be — it is a LABEL. When nothing is recognized the code gist is still
+ * the fallback, so an unusual program degrades to what was shown before rather
+ * than to nothing.
+ */
+export function programSummary(code: string, max = 64): string {
+  if (!code) return "";
+  const bits: string[] = [];
+  const files = (re: RegExp): string[] => {
+    const out: string[] = [];
+    for (const m of code.matchAll(re)) {
+      const p = m[1];
+      if (p && !out.includes(p)) out.push(p);
+    }
+    return out;
+  };
+  const name = (p: string) => p.split("/").filter(Boolean).pop() ?? p;
+  const list = (paths: string[]) =>
+    paths.length <= 2 ? paths.map(name).join(", ") : `${name(paths[0])} +${paths.length - 1} more`;
+
+  const wrote = files(/\b(?:write|edit|patch)\s*\(\s*["'`]([^"'`]+)/g);
+  const read = files(/\b(?:view|read)\s*\(\s*["'`]([^"'`]+)/g);
+  if (wrote.length) bits.push(`wrote ${list(wrote)}`);
+  if (read.length) bits.push(`read ${list(read)}`);
+
+  const count = (re: RegExp) => [...code.matchAll(re)].length;
+  const shells = count(/\bbash\s*\(/g) + count(/\bsh\s*\(/g);
+  if (shells) bits.push(`ran ${shells} command${shells === 1 ? "" : "s"}`);
+  const agents = count(/\bagent\s*\(/g);
+  if (agents) bits.push(`${agents} subagent${agents === 1 ? "" : "s"}`);
+  const searches = count(/\b(?:grep|glob|search)\s*\(/g);
+  if (searches && bits.length === 0) bits.push("searched the tree");
+
+  // Nothing recognized: fall back to the old gist rather than to an empty header.
+  if (bits.length === 0) return "";
+  const joined = bits.join(" · ");
+  return joined.length > max ? `${joined.slice(0, max - 1).trimEnd()}…` : joined;
+}
+
 // ---- markdown-lite ----------------------------------------------------------
 // Terminal styling for prose: headings/bold via SGR bold, `code` spans colored,
 // fenced blocks highlighted on a raised surface, "- " bullets prettified.
