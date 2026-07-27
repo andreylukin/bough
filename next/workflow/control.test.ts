@@ -18,6 +18,19 @@
  *     BEFORE it journals, so the run view never shows an agent that has not started.
  *     Both halves are asserted, because a "pause" that killed the in-flight agent
  *     would pass a test that only counted new ones.
+ *   - **pause bites on a FAN-OUT, which is the only case that matters.** Tested twice
+ *     over, sequentially and through one `parallel()` of six at concurrency two,
+ *     because the sequential script is the one shape where a gate consulted only at
+ *     dispatch happens to work: `parallel()` issues all six calls in the first tick,
+ *     so four of them are past that point before a pause can arrive and the gate has
+ *     to meet them again at the semaphore. Spec §8 sells pause as the way to preserve
+ *     the most work before a stop and `workflow/relaunch.ts` repeats it in a
+ *     user-facing 409 — for a fan-out it did nothing and the run billed to completion.
+ *   - **a stop settles every journal row.** Pause-then-stop is the sequence the spec
+ *     recommends, and it is the one that leaves calls parked at both gates. Afterwards
+ *     no row may be `queued` or `running`: a non-terminal row on a dead run is one
+ *     nothing in the process can ever settle, and it reads in the run view as an agent
+ *     still working.
  *
  * The third invariant here is the one spec §8 states and nothing else enforces:
  * **subagent caps do not apply inside a workflow.** The exemption is proved by
@@ -292,6 +305,22 @@ const SEQUENTIAL_SCRIPT = META("one-then-one") +
    const second = await agent('second', { label: 'second' })
    return [first, second]`;
 
+/**
+ * Six agents through ONE `parallel()` — the shape spec §8 says workflows exist for,
+ * and the shape the sequential script above cannot stand in for: `parallel()` issues
+ * every thunk at dispatch, so by the time anyone can press pause all six calls are
+ * already inside the engine and only the semaphore is holding four of them back.
+ */
+const FANOUT_SCRIPT = META("six-at-once") +
+  `return await parallel([0,1,2,3,4,5].map((i) => () => agent('work ' + i, { label: 'w' + i })))`;
+
+/** Settle every child whose turn is still open. */
+function finishAll(h: Harness): void {
+  for (const child of h.children) {
+    if (!child.settled) child.finish({ ok: true, report: `${child.task}-report` });
+  }
+}
+
 function rowsOf(h: Harness, runId: string): WorkflowAgent[] {
   return h.db.listWorkflowAgents(runId);
 }
@@ -405,6 +434,138 @@ Deno.test("pause lets the running agent finish and admits no new ones; resume re
     assert.equal(done.status, "done");
     assert.deepEqual(done.result, ["one", "two"]);
     assert.deepEqual(rowsOf(h, runId).map((a) => a.status), ["done", "done"]);
+  } finally {
+    h.close();
+  }
+});
+
+Deno.test("pause holds a parallel() fan-out at the semaphore; resume releases it", async () => {
+  const h = harness();
+  try {
+    // Two slots, six calls. The engine's own semaphore is the meter, so this is the
+    // saturated state a long run actually spends its life in.
+    const run = await withHome(
+      h.home,
+      () =>
+        startWorkflowRun(
+          h.ctx,
+          { sessionId: h.sessionId, script: FANOUT_SCRIPT, concurrency: 2 },
+          h.control,
+        ),
+    );
+    const runId = run.id;
+
+    await until("two agents to be in flight", () => h.children.length === 2);
+    await until("all six calls to be journaled", () => rowsOf(h, runId).length === 6);
+
+    const paused = await request<WorkflowRun>(h, "POST", `/workflows/${runId}/pause`);
+    assert.equal(paused.status, 200);
+    assert.equal(paused.body.status, "paused");
+
+    // Let the two in flight finish, which is exactly what pause promises: nothing
+    // already paid for is discarded. Under the defect this drained the semaphore
+    // queue and launched the next two, then the next two, and the run billed out.
+    h.children[0].finish({ ok: true, report: "zero" });
+    h.children[1].finish({ ok: true, report: "one" });
+    await until(
+      "the two in-flight agents to land done",
+      () => rowsOf(h, runId).filter((a) => a.status === "done").length === 2,
+    );
+    await delay(80); // the assertion is that something did NOT happen
+
+    assert.equal(h.children.length, 2, "pause started no further agent");
+    assert.deepEqual(
+      rowsOf(h, runId).map((a) => a.status),
+      ["done", "done", "queued", "queued", "queued", "queued"],
+      "the parked calls stay queued — never running, and never launched",
+    );
+    assert.deepEqual(h.registry.runningSessions, [], "no subagent turn is open while paused");
+
+    // The run view agrees, which is the surface a user decides "stop or resume" from.
+    const view = await request<{ workflow: WorkflowRun; agents: { status: string }[] }>(
+      h,
+      "GET",
+      `/workflows/${runId}`,
+    );
+    assert.equal(view.body.workflow.status, "paused");
+    assert.equal(view.body.agents.filter((a) => a.status === "queued").length, 4);
+
+    const resumed = await request<WorkflowRun>(h, "POST", `/workflows/${runId}/resume`);
+    assert.equal(resumed.body.status, "running");
+    await until("two more agents to launch", () => h.children.length === 4);
+
+    const finish = completion(h.bus);
+    while (h.db.getWorkflow(runId)?.status === "running") {
+      finishAll(h);
+      await delay(10);
+    }
+    const done = await finish;
+    assert.equal(done.status, "done");
+    assert.equal(h.children.length, 6, "every call eventually ran — nothing was discarded");
+    assert.deepEqual(
+      rowsOf(h, runId).map((a) => a.status),
+      ["done", "done", "done", "done", "done", "done"],
+    );
+  } finally {
+    h.close();
+  }
+});
+
+Deno.test("stopping a paused fan-out settles every journal row", async () => {
+  const h = harness();
+  try {
+    const run = await withHome(
+      h.home,
+      () =>
+        startWorkflowRun(
+          h.ctx,
+          { sessionId: h.sessionId, script: FANOUT_SCRIPT, concurrency: 2 },
+          h.control,
+        ),
+    );
+    const runId = run.id;
+    await until("two agents to be in flight", () => h.children.length === 2);
+    await until("all six calls to be journaled", () => rowsOf(h, runId).length === 6);
+
+    // The sequence spec §8 recommends, and the one that found the leak: pause so the
+    // dispatched agents are journaled and will replay, THEN stop.
+    await request(h, "POST", `/workflows/${runId}/pause`);
+    h.children[0].finish({ ok: true, report: "zero" });
+    h.children[1].finish({ ok: true, report: "one" });
+    await until(
+      "four calls to be parked",
+      () => rowsOf(h, runId).filter((a) => a.status === "queued").length === 4,
+    );
+
+    const stopped = await request<WorkflowRun>(h, "POST", `/workflows/${runId}/stop`);
+    assert.equal(stopped.status, 200);
+    assert.equal(stopped.body.status, "stopped");
+    await delay(60); // let every parked call unwind
+
+    const rows = rowsOf(h, runId);
+    assert.equal(rows.length, 6, "a stop journals no new row");
+    assert.deepEqual(
+      rows.filter((a) => a.status === "queued" || a.status === "running").map((a) => a.label),
+      [],
+      "a stopped run leaves NO row in a non-terminal state",
+    );
+    assert.deepEqual(rows.map((a) => a.status), [
+      "done",
+      "done",
+      "stopped",
+      "stopped",
+      "stopped",
+      "stopped",
+    ]);
+    // The two that completed keep their reports — that is what a relaunch replays,
+    // and it is the whole reason to pause before stopping.
+    assert.deepEqual(
+      rows.filter((a) => a.status === "done").map((a) => a.result),
+      ["zero", "one"],
+    );
+    assert.equal(h.children.length, 2, "a stop launches nothing");
+    assert.deepEqual(h.registry.runningSessions, []);
+    assert.equal(isWorkflowLive(runId), false);
   } finally {
     h.close();
   }

@@ -16,8 +16,14 @@
  * rather than merely refusing to launch anything new. `pause` is the mirror image:
  * it must NOT reach a running agent, because a paused run is one that stops
  * *admitting* work, not one that discards work already paid for. The engine's gate
- * gives that for free — it parks the next `agent()` call and never touches the ones
- * in flight — so this module's whole contribution to pause is to not undo it.
+ * gives that for free — a paused run admits nothing at the semaphore and never
+ * touches a call already handed to this module's runner — so this module's whole
+ * contribution to pause is to not undo it. "Admits", not "issues": a `parallel()`
+ * fan-out issues every call before anyone can press anything, and a gate that only
+ * met a call on the way in would be a no-op for exactly the runs worth pausing
+ * (`run.ts`, `admit()`). Nothing here may launch a subagent for a call the engine has
+ * not admitted, which is why the runner is invoked *by* the engine rather than
+ * driven from a queue on this side.
  *
  * Two more things follow from "a run outlives the turn that started it":
  *

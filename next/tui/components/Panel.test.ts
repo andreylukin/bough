@@ -25,15 +25,15 @@ import {
   Panel,
   PANEL_TABS,
   type PanelAction,
-  panelAction,
+  panelActionFor,
   type PanelState,
   reducePanel,
   SkillsTab,
   tabForChord,
   TABS,
   ThemeTab,
-  TOGGLE_CHORD,
 } from "./Panel.tsx";
+import { PANEL_TOGGLE } from "../keys.ts";
 import {
   applyTheme,
   createThemePreview,
@@ -89,15 +89,15 @@ Deno.test("^t toggles the panel and every other chord jumps straight to its tab"
   let state = initialPanel;
   assert.equal(state.open, false);
 
-  const toggle = panelAction(TOGGLE_CHORD, { ctrl: true }, state.open);
+  const toggle = panelActionFor("panel.toggle");
   assert.deepEqual(toggle, { type: "toggle" });
   state = reducePanel(state, toggle!);
   assert.deepEqual(state, { open: true, tab: "sessions" });
 
   // A chord is a DIRECT jump: it works from any tab, and from a closed panel.
   for (const tab of TABS) {
-    const action = panelAction(tab.chord, { ctrl: true }, false);
-    assert.deepEqual(action, { type: "jump", tab: tab.id }, `^${tab.chord}`);
+    const action = panelActionFor(`tab.${tab.id}`);
+    assert.deepEqual(action, { type: "jump", tab: tab.id }, tab.chord);
     const next = reducePanel({ open: false, tab: "sessions" }, action!);
     assert.deepEqual(next, { open: true, tab: tab.id });
   }
@@ -119,24 +119,26 @@ Deno.test("tab cycles the bar in both directions and wraps", () => {
   assert.equal(state.tab, first);
 });
 
-Deno.test("a closed panel claims no ordinary key, so the composer keeps typing", () => {
-  assert.equal(panelAction("", { upArrow: true }, false), null);
-  assert.equal(panelAction("", { return: true }, false), null);
-  assert.equal(panelAction("", { escape: true }, false), null);
-  assert.equal(panelAction("j", {}, true), null); // plain letters are the tab's own
-  // Open, it claims exactly the navigation set.
-  assert.deepEqual(panelAction("", { escape: true }, true), { type: "close" });
-  assert.deepEqual(panelAction("", { tab: true }, true), { type: "cycle", delta: 1 });
-  assert.deepEqual(panelAction("", { tab: true, shift: true }, true), { type: "cycle", delta: -1 });
-  assert.deepEqual(panelAction("", { downArrow: true }, true), { type: "move", delta: 1 });
-  assert.deepEqual(panelAction("", { return: true }, true), { type: "confirm" });
+Deno.test("panelActionFor claims the panel's commands and nothing else", () => {
+  assert.deepEqual(panelActionFor("panel.close"), { type: "close" });
+  assert.deepEqual(panelActionFor("panel.next"), { type: "cycle", delta: 1 });
+  assert.deepEqual(panelActionFor("panel.prev"), { type: "cycle", delta: -1 });
+  assert.deepEqual(panelActionFor("move.down"), { type: "move", delta: 1 });
+  assert.deepEqual(panelActionFor("move.up"), { type: "move", delta: -1 });
+  assert.deepEqual(panelActionFor("panel.confirm"), { type: "confirm" });
+  // Chat's own commands pass straight through — the panel is not a key sink.
+  assert.equal(panelActionFor("send"), null);
+  assert.equal(panelActionFor("delete.wordBack"), null);
+  assert.equal(panelActionFor("rail.enter"), null);
+  // Nor are the workflow verbs: they belong to one TAB, and `PanelHost` routes them.
+  assert.equal(panelActionFor("wf.pause"), null);
 });
 
 Deno.test("the keymap is data with no duplicate binding", () => {
-  const chords = [TOGGLE_CHORD, ...TABS.map((t) => t.chord)];
+  const chords = [PANEL_TOGGLE, ...TABS.map((t) => t.chord)];
   assert.equal(new Set(chords).size, chords.length, chords.join(","));
   assert.equal(new Set(TABS.map((t) => t.id)).size, TABS.length);
-  assert.equal(tabForChord(TOGGLE_CHORD), null); // ^t is the toggle, never a tab
+  assert.equal(tabForChord(PANEL_TOGGLE), null); // ^t is the toggle, never a tab
   assert.equal(tabForChord("zzz"), null);
 });
 

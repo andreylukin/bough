@@ -27,8 +27,13 @@ import {
   type KeyContext,
   type LineState,
   lookup,
+  PANEL_TABS,
+  PANEL_TOGGLE,
   resolve,
   stripCtl,
+  tabForChord,
+  tabForCommand,
+  TABS,
   type UiMode,
   UNAVAILABLE,
 } from "./keys.ts";
@@ -120,7 +125,7 @@ Deno.test("every binding is reachable — some real context resolves to it", () 
   // The complement of `deadBindings`, checked the expensive way: walk the whole
   // guard space and record which ROW `lookup` actually picks. A binding no context
   // reaches is a key the user can never press, however plausible the table looks.
-  const modes: UiMode[] = ["chat", "rail", "ask", "tree", "workflows", "help"];
+  const modes: UiMode[] = ["chat", "rail", "ask", "panel", "help"];
   const flags = ["emptyDraft", "multiline", "busy", "doubleEsc", "quitArmed", "railLive"] as const;
   const reached = new Set<number>();
   const firstMatch = (c: KeyContext, chord: string): number =>
@@ -151,7 +156,7 @@ Deno.test("every binding is reachable — some real context resolves to it", () 
 });
 
 Deno.test("the same chord means two things, and the guard decides which", () => {
-  assert.equal(lookup(ctx({ emptyDraft: true }), "ctrl+f"), "view.tree");
+  assert.equal(lookup(ctx({ emptyDraft: true }), "ctrl+f"), "tab.tree");
   assert.equal(lookup(ctx({ emptyDraft: false }), "ctrl+f"), "cursor.right");
   assert.equal(lookup(ctx({ emptyDraft: true }), "ctrl+e"), "fold.all");
   assert.equal(lookup(ctx({ emptyDraft: false }), "ctrl+e"), "cursor.end");
@@ -166,7 +171,7 @@ Deno.test("↓ enters the rail only when a subagent is actually working", () => 
 });
 
 Deno.test("a single ^c arms, a second quits — in every mode", () => {
-  for (const mode of ["chat", "tree", "workflows", "help", "rail", "ask"] as UiMode[]) {
+  for (const mode of ["chat", "panel", "help", "rail", "ask"] as UiMode[]) {
     assert.equal(lookup(ctx({ mode, quitArmed: false }), "ctrl+c"), "quit.arm", mode);
     assert.equal(lookup(ctx({ mode, quitArmed: true }), "ctrl+c"), "quit", mode);
   }
@@ -177,20 +182,47 @@ Deno.test("esc alone cancels; esc esc clears the draft", () => {
   assert.equal(lookup(ctx({ doubleEsc: true }), "esc"), "draft.clear");
 });
 
-Deno.test("panel modes bind their own keys and nothing from chat", () => {
-  assert.equal(lookup(ctx({ mode: "tree" }), "j"), "move.down");
-  assert.equal(lookup(ctx({ mode: "tree" }), "enter"), "open");
-  assert.equal(lookup(ctx({ mode: "tree" }), "ctrl+k"), null);
-  assert.equal(lookup(ctx({ mode: "workflows" }), "p"), "wf.pause");
-  assert.equal(lookup(ctx({ mode: "workflows" }), "x"), "wf.stop");
-  assert.equal(lookup(ctx({ mode: "workflows" }), "r"), "wf.rerun");
+Deno.test("the panel binds its own keys and nothing from chat", () => {
+  assert.equal(lookup(ctx({ mode: "panel" }), "j"), "move.down");
+  assert.equal(lookup(ctx({ mode: "panel" }), "enter"), "panel.confirm");
+  assert.equal(lookup(ctx({ mode: "panel" }), "esc"), "panel.close");
+  assert.equal(lookup(ctx({ mode: "panel" }), "tab"), "panel.next");
+  assert.equal(lookup(ctx({ mode: "panel" }), "shift+tab"), "panel.prev");
+  // Composer chords do NOT leak in — ^a/^u are line editing and chat's alone.
+  assert.equal(lookup(ctx({ mode: "panel" }), "ctrl+a"), null);
+  assert.equal(lookup(ctx({ mode: "panel" }), "ctrl+u"), null);
+  // …but the direct jumps do, because a jump that only works from chat is not one.
+  assert.equal(lookup(ctx({ mode: "panel" }), "ctrl+k"), "tab.skills");
+  assert.equal(lookup(ctx({ mode: "panel" }), "ctrl+t"), "panel.toggle");
+  assert.equal(lookup(ctx({ mode: "panel" }), "p"), "wf.pause");
+  assert.equal(lookup(ctx({ mode: "panel" }), "x"), "wf.stop");
+  assert.equal(lookup(ctx({ mode: "panel" }), "r"), "wf.rerun");
   assert.equal(lookup(ctx({ mode: "ask" }), "3"), "ask.pick");
   assert.equal(lookup(ctx({ mode: "ask" }), "esc"), "ask.decline");
+  // A held question owns the keyboard: no tab chord steals it (spec §6).
+  assert.equal(lookup(ctx({ mode: "ask" }), "ctrl+s"), null);
+});
+
+Deno.test("every tab has exactly one chord, and ^t names no tab", () => {
+  const chords = [PANEL_TOGGLE, ...TABS.map((t) => t.chord)];
+  assert.equal(new Set(chords).size, chords.length, chords.join(","));
+  assert.equal(new Set(PANEL_TABS).size, TABS.length);
+  assert.equal(tabForChord(PANEL_TOGGLE), null);
+  assert.equal(tabForChord("ctrl+zzz"), null);
+  // Every chord resolves to its own tab from chat, and the command names it back.
+  for (const tab of TABS) {
+    const command = lookup(ctx({ mode: "chat", emptyDraft: true }), tab.chord);
+    assert.equal(command, `tab.${tab.id}`, tab.chord);
+    assert.equal(tabForCommand(command!), tab.id);
+    assert.equal(tabForChord(tab.chord), tab.id);
+  }
+  assert.equal(tabForCommand("panel.toggle"), null);
+  assert.equal(tabForCommand("send"), null);
 });
 
 Deno.test("resolve is lookup straight off an ink keypress", () => {
   assert.equal(resolve(ctx(), "", { escape: true, ...{} }), "cancel");
-  assert.equal(resolve(ctx({ mode: "tree" }), "", { downArrow: true }), "move.down");
+  assert.equal(resolve(ctx({ mode: "panel" }), "", { downArrow: true }), "move.down");
   assert.equal(resolve(ctx(), "x"), null);
 });
 
@@ -214,7 +246,9 @@ Deno.test("the overlay documents the table and only the table", () => {
 });
 
 Deno.test('the "not bound" section is true — none of those chords is bound', () => {
-  const unbound = ["ctrl+r", "ctrl+y", "ctrl+z", "meta+d"];
+  // ^y used to be listed here; it is the theme tab's chord now, so it is gone from
+  // the section. That is the section's whole job: it must stay TRUE.
+  const unbound = ["ctrl+r", "ctrl+z", "meta+d"];
   for (const chord of unbound) {
     assert.equal(
       BINDINGS.some((b) => b.chord === chord),

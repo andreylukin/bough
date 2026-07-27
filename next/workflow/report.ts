@@ -56,7 +56,14 @@ import { BadRequestError, NotFoundError } from "../errors.ts";
 import { workflowsDir } from "../paths.ts";
 import type { WorkflowAgent, WorkflowRun } from "../schema/parts.ts";
 import type { Db } from "../types.ts";
-import { replayablePrefix, replayPlan } from "./run.ts";
+import {
+  type CallPos,
+  type Divergence,
+  emptyReplayPlan,
+  replayablePrefix,
+  replayAudit,
+  replayPlan,
+} from "./run.ts";
 
 // ---------------------------------------------------------------------------
 // Replay reporting
@@ -91,6 +98,22 @@ export interface ReplaySummary {
   available: number;
   /** Has the run ended? Until it has, these are counts so far, not a bill. */
   final: boolean;
+  /**
+   * Where replay stopped in the SCRIPT, and why — edited, moved, added, or unanswered.
+   * `null` when the prefix held, or when there was no journal to replay.
+   *
+   * This is the field that turns `replayed: 0, available: 40` from an alarm into a
+   * diagnosis. The four kinds have four different fixes, and the one that used to be
+   * misreported — a call whose key is untouched but whose POSITION moved — read as "its
+   * key changed", which is the opposite of what happened and sent the reader looking at
+   * prompts that were fine.
+   *
+   * Optional rather than required so a client can fabricate a summary — a TUI fixture,
+   * a test — without asserting anything about replay. `summarize` always sets it.
+   */
+  diverged?: Divergence | null;
+  /** `diverged?.pos`, lifted so a client can sort or link on it without unpacking. */
+  divergedPos?: CallPos | null;
   /**
    * The prompts this run did NOT replay, in call order — the ones an agent ran, is
    * running, or is queued to run. On a relaunch this is the edit, made visible: if it
@@ -146,6 +169,10 @@ export function summarize(db: Db, run: WorkflowRun): ReplaySummary {
     counts[where]++;
     if (where !== "replayed") livePrompts.push(row.prompt);
   }
+  // Read through the ENGINE's own fold, for the same reason `available` is: a report
+  // that re-derived where the prefix broke could disagree with the run that broke it.
+  const plan = run.resumeOf ? replayPlan(db, run.resumeOf) : emptyReplayPlan();
+  const audit = replayAudit(plan, rows);
   const summary: Omit<ReplaySummary, "line"> = {
     runId: run.id,
     sourceId: run.resumeOf,
@@ -161,8 +188,10 @@ export function summarize(db: Db, run: WorkflowRun): ReplaySummary {
     // second walk over the rows — a ceiling computed a different way could exceed what
     // the engine would ever hand out, and then `available > replayed` would read as
     // drift on a run that replayed everything it could.
-    available: run.resumeOf ? replayablePrefix(replayPlan(db, run.resumeOf)) : 0,
+    available: run.resumeOf ? replayablePrefix(plan) : 0,
     final: isFinal(run),
+    diverged: audit.diverged,
+    divergedPos: audit.diverged?.pos ?? null,
     livePrompts,
   };
   return { ...summary, line: replayLine(summary) };
@@ -185,7 +214,18 @@ export function replayLine(s: Omit<ReplaySummary, "line">): string {
   if (s.pending > 0) parts.push(`${s.pending} still going`);
   const head = `${parts.join(", ")} of ${s.total}`;
   if (s.sourceId && s.available > 0 && s.replayed === 0) {
-    return `${head} — replayed NOTHING of ${s.available} available: every key changed`;
+    // NOT "every key changed". That sentence was true for an edited script and false —
+    // in the most misleading possible way — for a run whose calls kept their keys and
+    // changed POSITION, which is the shape a barrier-free pipeline used to produce on
+    // every relaunch. The surface that exists to make a key defect visible has to say
+    // which defect it is looking at.
+    return `${head} — replayed NOTHING of ${s.available} available: ${
+      s.diverged?.reason ?? "the first call already differed"
+    }`;
+  }
+  if (s.sourceId && s.diverged) {
+    return `${head} (${s.available} available to replay); replay stopped at ` +
+      `${s.diverged.pos} — ${s.diverged.reason}`;
   }
   if (s.sourceId) return `${head} (${s.available} available to replay)`;
   return head;

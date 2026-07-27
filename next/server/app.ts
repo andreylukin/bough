@@ -72,6 +72,9 @@ import * as move from "../history/move.ts"; // T8.4
 import * as handoff from "../history/handoff.ts"; // T8.4
 import * as changes from "./changes.ts"; // T8.5
 import * as search from "./search.ts"; // T8.6
+import * as skillsApi from "./skills.ts"; // T10.2
+import * as theme from "./theme.ts"; // T10.4
+import * as ghost from "../worker/ghost.ts"; // T10.1
 
 // ---- the route table --------------------------------------------------------
 
@@ -216,6 +219,33 @@ export const routes: Route[] = [
   // behind — search is allowed to fail quietly, never invisibly (`server/search.ts`).
   route("GET", "/search", search.searchH),
   route("POST", "/search/reindex", search.reindexH),
+  // T10.4 — theming. A theme is a NAMED PARTIAL palette over a fixed semantic token set
+  // and is pure DATA: the TUI fetches this at boot and paints truecolor, so adopting one
+  // is a repaint rather than a rebuild (spec §16). Top-level and singular because there
+  // is exactly one theme per install — it is not per-session, and the picker previews it
+  // client-side without touching these routes until the user commits.
+  //
+  // GET is always 200 even with nothing stored: "no theme" is the default palette, which
+  // is an answer. DELETE is idempotent for the same reason.
+  route("GET", "/theme", theme.getThemeH),
+  route("PUT", "/theme", theme.putThemeH),
+  route("DELETE", "/theme", theme.deleteThemeH),
+  // T10.1 — composer ghost text, one of the three cheap-tier micro-tasks (spec §12).
+  // POST rather than GET despite reading nothing: the half-typed prefix is user text
+  // that has no business in a URL or an access log. ALWAYS 200 for a session that
+  // exists, with `{ghost: null}` standing in for every failure there is — a cheap-model
+  // outcome must never reach the composer as an error banner.
+  route("POST", "/sessions/:id/ghost", ghost.ghostTextH),
+  // T10.2 — skills. Top-level and session-less on purpose: a skill is a folder on
+  // disk, not a row (`db/schema.sql`), and what is installed is a property of the
+  // machine rather than of a conversation. Both routes are a fresh walk of the source
+  // directories, so a skill written a second ago is listed a second later.
+  //
+  // GET is always 200 with a possibly-empty list; a malformed SKILL.md is a row with
+  // an `error`, never an omission. `/skills/:name` adds the body with `${SKILL_DIR}`
+  // resolved — the two questions a listing cannot answer (`server/skills.ts`).
+  route("GET", "/skills", skillsApi.listSkillsH),
+  route("GET", "/skills/:name", skillsApi.getSkillH),
 ];
 
 // ---- dispatch ---------------------------------------------------------------

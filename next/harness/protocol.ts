@@ -211,6 +211,31 @@ export interface WorkflowHostCallMessage {
   id: number;
   fn: WorkflowHostFnName;
   args: unknown[];
+  /**
+   * The call's STRUCTURAL COORDINATE in the script — dot-joined slot indexes, e.g.
+   * `"0.1.1.0"`. Present on `agent` calls; absent on `phase`/`log`, which are not
+   * journaled.
+   *
+   * WHY IT IS ON THE WIRE AT ALL. The journal is prefix-bounded: a relaunch replays
+   * the longest unchanged leading run of `agent()` calls and the position of a call is
+   * part of its identity (spec §8). The host used to derive that position from ARRIVAL
+   * ORDER — a monotonic counter incremented as calls came over this bridge. That is
+   * only reproducible when the script is sequential. `pipeline()` has no barrier by
+   * design, so its stage-2 calls are issued in stage-1 COMPLETION order: with one slow
+   * item the same unchanged script journals `[s1 A, s1 B, s2 B, s2 A]` on one run and
+   * `[s1 A, s1 B, s2 A, s2 B]` on the next, the positions transpose, and a relaunch of
+   * a byte-identical script re-bills every call past stage 1.
+   *
+   * Only the worker can fix that, because only the worker knows the SHAPE: `parallel()`
+   * knows its slot index, `pipeline()` knows its (item, stage) cell, and a bare
+   * `agent()` takes the next slot of whichever frame encloses it. So the coordinate is
+   * computed there and travels with the call. The host treats it as opaque, orders by
+   * it, and falls back to its own counter when it is absent — which keeps a direct host
+   * call (a test, a future non-worker driver) working exactly as before.
+   *
+   * Format: `\d+(\.\d+)*`. Compared component-wise as numbers, never as text.
+   */
+  pos?: string;
 }
 
 /** The script returned. `resultJson` is its return value. */

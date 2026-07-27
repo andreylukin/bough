@@ -28,6 +28,11 @@
  * `term.ts`); this file only assembles them.
  */
 import { render } from "ink";
+// The one value imported from the model layer, and the reason it is imported HERE:
+// `llm/client.ts` pulls the provider SDK, so a component that reached for the catalog
+// would drag the whole model layer into the component graph. The composition root is
+// allowed to know about both sides; nothing below it is.
+import { MODELS } from "../llm/client.ts";
 import { api } from "./api.ts";
 import { createStore } from "./store.ts";
 import { enterTui, filteredStdin, leaveTui, type MouseEvent, type NavKey } from "./mouse.ts";
@@ -91,12 +96,20 @@ async function main() {
   });
 
   const store = createStore();
+  // Built once, outside the render, so the panel's "re-read on entry" effect depends
+  // on stable references and does not re-fire on every keystroke.
   const controls: AppControls = {
     listChildren: (originId) => api.listSessions(originId),
+    // Never cached by the caller: grants and connections change between turns, so the
+    // panel re-reads this every time the MCP tab is entered (plan §6.13).
+    loadMcp: (sessionId) => api.mcpStatus(sessionId),
+    setMcpEnabled: (name, on, sessionId) => api.setMcpEnabled(name, on, sessionId),
     pauseWorkflow: async (id) => void (await api.pauseWorkflow(id)),
     resumeWorkflow: async (id) => void (await api.resumeWorkflow(id)),
     stopWorkflow: async (id) => void (await api.stopWorkflow(id)),
     rerunWorkflow: async (id) => void (await api.rerunWorkflow(id)),
+    // `loadSkills` is deliberately absent: skill discovery is T10.2 and there is no
+    // route to read. The tab says so rather than showing an empty list.
   };
 
   enterTui();
@@ -110,6 +123,7 @@ async function main() {
       defaultWorkspace={defaultWorkspace}
       controls={controls}
       input={hooks}
+      models={MODELS}
     />,
     {
       exitOnCtrlC: false,

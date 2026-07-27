@@ -41,6 +41,7 @@ import {
   type AgentCall,
   type AgentRunner,
   callKey,
+  journalKey,
   pauseWorkflow,
   startWorkflow,
   stopWorkflow,
@@ -316,10 +317,12 @@ Deno.test(
         );
       }
       // Stated once more against the key function itself, so the test does not depend
-      // on the engine having written the row it is reading.
+      // on the engine having written the row it is reading. A journal key is the call's
+      // structural coordinate and the hash of what it asks for; this script is
+      // sequential, so the sixth call's coordinate is `5`.
       assert.equal(
         after[5].key,
-        callKey({ prompt: "review f.ts", label: "review f.ts" }),
+        journalKey("5", callKey({ prompt: "review f.ts", label: "review f.ts" })),
         "the last call's key is exactly what an unchanged script produces",
       );
 
@@ -327,9 +330,15 @@ Deno.test(
       assert.equal(report.replayed, 2);
       assert.equal(report.ranLive, 4);
       assert.equal(report.divergedAt, 2, "replay stopped at the edited call");
+      assert.equal(report.divergedPos, "2", "and names where in the script that was");
       assert.equal(report.forced, 3, "three unchanged calls ran live behind the edit");
       assert.equal(report.available, 6);
-      assert.match(relaunchLine(report), /replay stopped at call 2/);
+      // The prompt changed at a position the source also used, so this is an EDIT, and
+      // the report has to say so rather than the generic "its key changed" that a moved
+      // call would (wrongly) have produced too.
+      assert.equal(report.diverged?.kind, "changed");
+      assert.match(relaunchLine(report), /replay stopped at 2 \(call 2\)/);
+      assert.match(relaunchLine(report), /was edited/);
       assert.match(relaunchLine(report), /3 unchanged calls ran live/);
 
       assert.deepEqual(finished.result, [
@@ -377,6 +386,133 @@ Deno.test("a source call that failed ends the prefix — its successors re-run t
     assert.deepEqual(live, ["flaky", "third"]);
     assert.deepEqual(statuses(h.db, run.id), ["first:cached", "flaky:done", "third:done"]);
     assert.equal(relaunchReport(h.db, run.id).forced, 1);
+  } finally {
+    h.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// why replay stopped — the distinction the report exists to draw
+// ---------------------------------------------------------------------------
+//
+// "Replay is always reported" (spec §8) is only worth anything if the report is TRUE.
+// Divergence used to be reported as "its key changed" whenever a call had a stored
+// answer and the position did not match — which is right for an edited prompt and
+// exactly backwards for a call whose key is untouched and whose POSITION moved. That
+// second case is what a barrier-free `pipeline()` produced on every relaunch, so the
+// one surface built to make a key defect visible was actively denying it.
+
+Deno.test("a call whose key is unchanged but whose POSITION moved is reported as moved", async () => {
+  const h = harness();
+  try {
+    // A perfectly ordinary edit: two sequential calls become a parallel fan-out. The
+    // prompts are byte-identical; only the script's shape changed.
+    const sequential = `${META}
+      const a = await agent('review a.ts')
+      const b = await agent('review b.ts')
+      return [a, b]
+    `;
+    const fannedOut = `${META}
+      return await parallel([
+        () => agent('review a.ts'),
+        () => agent('review b.ts'),
+      ])
+    `;
+    const source = await sourceRun(h, echoRunner(), sequential);
+    assert.equal(source.status, "done");
+
+    const live: string[] = [];
+    const { run } = await relaunch(h, source.id, echoRunner(live), { script: fannedOut });
+
+    // Both calls re-run: their coordinates are new, and a coordinate is part of a
+    // call's identity. That is the conservative, correct outcome.
+    assert.deepEqual(live, ["review a.ts", "review b.ts"]);
+
+    const report = relaunchReport(h.db, run.id);
+    assert.equal(report.replayed, 0);
+    assert.equal(report.available, 2, "the source had two answers on offer");
+    assert.equal(report.diverged?.kind, "moved");
+    assert.equal(report.divergedPos, "0.0.0", "where the relaunch puts it");
+    assert.equal(report.diverged?.sourcePos, "0", "where the source ran it");
+    // The words matter as much as the field: this is the sentence a user reads.
+    assert.match(relaunchLine(report), /MOVED/);
+    assert.match(relaunchLine(report), /its key did not change/);
+    assert.doesNotMatch(
+      relaunchLine(report),
+      /key changed/,
+      "reporting a moved call as an edited one is the defect this test pins",
+    );
+
+    // The same distinction on the bus, live, while the run is going.
+    const said = h.events.filter((e) => e.type === "workflow.log")
+      .map((e) => (e.data as { line: string }).line)
+      .filter((l) => l.startsWith("replay ends"));
+    assert.equal(said.length, 1, "one line per divergence, not one per consequence");
+    assert.match(said[0], /replay ends at 0\.0\.0/);
+    assert.match(said[0], /MOVED/);
+  } finally {
+    h.close();
+  }
+});
+
+Deno.test("an edited call and a new call are reported as themselves, not as each other", async () => {
+  const h = harness();
+  try {
+    const source = await sourceRun(h, echoRunner(), sixCalls("review c.ts"));
+
+    // (1) same position, different prompt → edited.
+    const edit = await relaunch(h, source.id, echoRunner(), {
+      script: sixCalls("review c.ts THOROUGHLY"),
+    });
+    const edited = relaunchReport(h.db, edit.run.id);
+    assert.equal(edited.diverged?.kind, "changed");
+    assert.match(edited.diverged?.reason ?? "", /was edited/);
+
+    // (2) a call the source never made, asking for something it never asked → added.
+    const grown = await relaunch(h, source.id, echoRunner(), {
+      script: `${META}
+        const out = []
+        out.push(await agent('review a.ts'))
+        out.push(await agent('review b.ts'))
+        out.push(await agent('review c.ts'))
+        out.push(await agent('review d.ts'))
+        out.push(await agent('review e.ts'))
+        out.push(await agent('review f.ts'))
+        out.push(await agent('review g.ts'))
+        return out
+      `,
+    });
+    const added = relaunchReport(h.db, grown.run.id);
+    assert.equal(added.replayed, 6, "the whole source prefix still replayed");
+    assert.equal(added.diverged?.kind, "added");
+    assert.equal(added.divergedPos, "6");
+    assert.match(added.diverged?.reason ?? "", /never made a call at 6/);
+
+    // (3) the source failed the call → unanswered, which is a fourth thing again.
+    const flaky = await sourceRun(
+      h,
+      (call) =>
+        call.prompt === "review b.ts"
+          ? Promise.reject(new Error("transient"))
+          : Promise.resolve(`report: ${call.prompt}`),
+      `${META}
+        const a = await agent('review a.ts')
+        let b = null
+        try { b = await agent('review b.ts') } catch { b = null }
+        return [a, b]
+      `,
+    );
+    const retried = await relaunch(h, flaky.id, echoRunner(), {
+      script: `${META}
+        const a = await agent('review a.ts')
+        let b = null
+        try { b = await agent('review b.ts') } catch { b = null }
+        return [a, b]
+      `,
+    });
+    const unanswered = relaunchReport(h.db, retried.run.id);
+    assert.equal(unanswered.diverged?.kind, "unanswered");
+    assert.match(unanswered.diverged?.reason ?? "", /has no answer for it/);
   } finally {
     h.close();
   }

@@ -24,13 +24,43 @@
  *     because an upstream agent rewrote the code in between. Replaying the later one
  *     answers about a tree that no longer exists. A miss costs money; a stale hit is a
  *     wrong answer presented as a fresh one, so the engine buys the cheap failure.
- *     `replayPlan` below is therefore an ordered LIST indexed by call position, not a
- *     key→result map: position is part of the identity of a call.
+ *     `replayPlan` below is therefore indexed by call POSITION, not a key→result map:
+ *     position is part of the identity of a call.
+ *
+ *   - **Position comes from the script's STRUCTURE, never from arrival order** — the
+ *     defect that made the point. A call's position used to be a monotonic counter
+ *     incremented as calls reached this bridge, which is reproducible only for a
+ *     sequential script. `pipeline()` has no barrier by design (spec §8), so its
+ *     stage-2 calls are issued in stage-1 COMPLETION order: `pipeline(['A','B'], s1,
+ *     s2)` where `s1 A` takes 60ms and `s1 B` takes 1ms journaled `[s1 A, s1 B, s2 B,
+ *     s2 A]`, a relaunch of the byte-identical script resolved its replayed prefix in
+ *     dispatch order, the last two positions transposed, and an UNCHANGED script
+ *     re-billed every call past stage 1. That is spec §8's own canonical example.
+ *     The combinators know the shape, so they supply it: `harness/wf_worker.ts` sends a
+ *     structural coordinate (`"0.1.1.0"` — dot-joined slot indexes) with every
+ *     `agent()` call, and a bare call falls back to the enclosing frame's counter,
+ *     which for a sequential script is the old numbering exactly. The journal key is
+ *     `<pos>|<contentHash>`, so a call that MOVED and a call that was EDITED are
+ *     different facts and the divergence report says which one happened — the previous
+ *     message claimed "its key changed" for a transposition, which is the one surface
+ *     that exists to make a key defect visible saying the opposite of what occurred.
  *
  *   - The journal row is written BEFORE the semaphore is acquired, so the run view
  *     can show a queued agent, and `startedAt` is reset when the call actually
  *     starts — otherwise a saturated run shows N agents "working" while only
  *     `concurrency` of them are.
+ *
+ *   - **Pause gates ADMISSION, not issuance, and a stopped run leaves nothing
+ *     non-terminal.** These two are one mechanism and they are checked in `admit()`.
+ *     A `parallel()` fan-out issues every call at dispatch, so a single gate check
+ *     before the semaphore is a no-op for it: pause released nothing, gated nothing,
+ *     and the run billed to completion — for precisely the shape workflows exist for.
+ *     The gate is therefore consulted again after a slot is taken, with the call's row
+ *     still `queued`. The same edge owns the other half: stop opens the gate to unpark
+ *     what is on it, and a call woken that way must not journal a row after the
+ *     wind-down already swept them, nor step over the handler that settles the row it
+ *     does hold. Spec §8 recommends pausing before stopping; that sequence is what
+ *     found both.
  *   - Only successful calls replay. A failed call re-runs live, because the failure
  *     may well have been the thing the author just fixed — and, under the prefix rule,
  *     so does everything after it: the re-run agent works in the same checkout the
@@ -72,7 +102,7 @@ import {
 } from "../harness/protocol.ts";
 import { unterminatedString } from "../harness/vm.ts";
 import { workflowScriptPath } from "../paths.ts";
-import type { WorkflowPhase, WorkflowRun } from "../schema/parts.ts";
+import type { WorkflowAgent, WorkflowPhase, WorkflowRun } from "../schema/parts.ts";
 import type { Bus, Db, WorkflowHostFns } from "../types.ts";
 import { mirrorScript, resolveRerunScript } from "./journal.ts";
 
@@ -310,6 +340,57 @@ export function callKey(call: AgentCall, effectiveModel?: string): string {
   return a.toString(16).padStart(8, "0") + b.toString(16).padStart(8, "0");
 }
 
+// ---------------------------------------------------------------------------
+// Structural positions (pure)
+// ---------------------------------------------------------------------------
+
+/**
+ * A call's structural coordinate: dot-joined slot indexes from the script's shape,
+ * e.g. `"0.1.1.0"` for pipeline 0, item 1, stage 1, first agent. `harness/wf_worker.ts`
+ * computes it; this module only orders and compares.
+ */
+export type CallPos = string;
+
+/**
+ * Component-wise NUMERIC comparison. `"0.10"` sorts after `"0.9"`, which string
+ * comparison gets backwards — and a fan-out of ten items is not an exotic case.
+ * A prefix sorts before what extends it, so a bare call at `"2"` precedes the
+ * combinator subtree at `"2.0.0"` that would only exist if they were the same slot.
+ */
+export function comparePos(a: CallPos, b: CallPos): number {
+  const x = a.split(".");
+  const y = b.split(".");
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const dx = i < x.length ? Number(x[i]) : -1;
+    const dy = i < y.length ? Number(y[i]) : -1;
+    if (dx !== dy) return dx < dy ? -1 : 1;
+  }
+  return 0;
+}
+
+/**
+ * The stored journal key: the call's position and the hash of what it asks for, joined
+ * by a character neither half can contain (positions are digits and dots, the hash is
+ * hex).
+ *
+ * Both halves, in one column, because both are part of a call's identity and the DB
+ * schema is frozen with exactly one key field (plan §4). Keeping them RECOVERABLE
+ * rather than hashing them together is the whole point: it is what lets the divergence
+ * report distinguish a call that was edited (same position, different hash) from one
+ * that moved (same hash, different position). Hashing the pair would have made both
+ * read as "its key changed".
+ */
+export function journalKey(pos: CallPos, contentKey: string): string {
+  return `${pos}|${contentKey}`;
+}
+
+/** The inverse. A key with no separator is pre-coordinate; `pos` reads as `null`. */
+export function splitJournalKey(key: string): { pos: CallPos | null; content: string } {
+  const at = key.indexOf("|");
+  if (at < 0) return { pos: null, content: key };
+  return { pos: key.slice(0, at), content: key.slice(at + 1) };
+}
+
 /**
  * Order-independent JSON for hashing: objects get their keys sorted, recursively.
  * Arrays keep their order — position is meaning there.
@@ -355,9 +436,14 @@ export function distinctLabel(prompt: string, taken: string[]): string {
 
 /** One call of a source run's journal, as the replay decision sees it. */
 export interface ReplayStep {
-  /** The call's position in the source run. The array index, restated for readers. */
-  idx: number;
+  /** The call's STRUCTURAL coordinate — what a relaunch matches on. */
+  pos: CallPos;
+  /** Hash of what the call asks for, position excluded. `callKey`'s output. */
+  content: string;
+  /** The stored key exactly as journaled — `<pos>|<content>`. */
   key: string;
+  /** The call's dispatch index in the source run. Display and ordering of rows only. */
+  idx: number;
   /** The stored report, or `null` when that call has no answer to hand back. */
   result: string | null;
   /** Carried for reporting — which call the prefix broke on is the useful line. */
@@ -365,11 +451,26 @@ export interface ReplayStep {
 }
 
 /**
- * A source run's calls **in call order**, indexed by position. A hole (a position the
- * source never journaled) reads as `undefined` and ends the prefix, which is right: a
- * relaunch cannot replay a call the source never made.
+ * A source run's calls, addressable by structural coordinate and ordered by it.
+ *
+ * An object rather than a bare array because the coordinate is a PATH, not a dense
+ * index — `"0.1.1.0"` cannot be an array subscript, and the ordering the prefix is
+ * defined over is the component-wise numeric one (`comparePos`), not integer order.
+ * `byContent` exists for one job: telling a call that MOVED apart from a call that was
+ * EDITED when replay stops.
  */
-export type ReplayPlan = ReplayStep[];
+export interface ReplayPlan {
+  /** Every journaled call, sorted by `comparePos`. */
+  steps: ReplayStep[];
+  byPos: Map<CallPos, ReplayStep>;
+  /** Content hash → the coordinates the source ran that exact call at. */
+  byContent: Map<string, CallPos[]>;
+}
+
+/** The plan a first run replays from: nothing. */
+export function emptyReplayPlan(): ReplayPlan {
+  return { steps: [], byPos: new Map(), byContent: new Map() };
+}
 
 /**
  * Read a source run's journal into a replay plan.
@@ -380,18 +481,32 @@ export type ReplayPlan = ReplayStep[];
  * and this module is the one that WRITES those statuses. Both must stay in step: only
  * `done` and `cached` rows with a non-null result are answers; `error`, `stopped`,
  * `queued` and `running` are not.
+ *
+ * A row journaled before coordinates existed has no `pos` half in its key. It is given
+ * its dispatch index as a coordinate, which is what a sequential script produces
+ * anyway — so an old sequential journal still replays, and an old concurrent one
+ * misses and re-runs, which is the safe direction.
  */
 export function replayPlan(db: Db, sourceRunId: string): ReplayPlan {
-  const plan: ReplayPlan = [];
+  const plan = emptyReplayPlan();
   for (const a of db.listWorkflowAgents(sourceRunId)) {
     const answered = (a.status === "done" || a.status === "cached") && a.result !== null;
-    plan[a.idx] = {
-      idx: a.idx,
+    const { pos, content } = splitJournalKey(a.key);
+    const step: ReplayStep = {
+      pos: pos ?? String(a.idx),
+      content,
       key: a.key,
+      idx: a.idx,
       result: answered ? a.result : null,
       prompt: a.prompt,
     };
+    plan.steps.push(step);
+    plan.byPos.set(step.pos, step);
+    const at = plan.byContent.get(step.content);
+    if (at) at.push(step.pos);
+    else plan.byContent.set(step.content, [step.pos]);
   }
+  plan.steps.sort((x, y) => comparePos(x.pos, y.pos));
   return plan;
 }
 
@@ -399,11 +514,139 @@ export function replayPlan(db: Db, sourceRunId: string): ReplayPlan {
  * How many leading calls of a plan could replay AT BEST — the ceiling a relaunch can
  * claim before its own keys are known. Zero is not a defect on its own: a source that
  * failed its first call has nothing to offer a relaunch, which is a full live run.
+ *
+ * "Leading" is in STRUCTURAL order, which is the order the prefix rule is defined over.
  */
 export function replayablePrefix(plan: ReplayPlan): number {
   let n = 0;
-  while (n < plan.length && plan[n] && plan[n].result !== null) n++;
+  while (n < plan.steps.length && plan.steps[n].result !== null) n++;
   return n;
+}
+
+// ---------------------------------------------------------------------------
+// Why replay stopped (pure)
+// ---------------------------------------------------------------------------
+
+/**
+ * The four ways a call can fail to replay. They are separated because they call for
+ * four different next moves, and one of them used to be reported as another.
+ *
+ *   - `changed` — same coordinate, different content hash. The call was EDITED. This is
+ *     the ordinary, intended reason a relaunch costs money.
+ *   - `moved` — the content hash is unchanged and the source ran this exact call, at a
+ *     DIFFERENT coordinate. The script's shape changed (an item added, a stage
+ *     reordered), or something upstream renumbered it. Saying "its key changed" here is
+ *     a lie, and it was the lie that hid the pipeline transposition defect: the one
+ *     surface that exists to make a key problem visible reported the opposite of what
+ *     happened.
+ *   - `added` — no call at that coordinate and no call anywhere in the source asks the
+ *     same thing. It is new work.
+ *   - `unanswered` — the source made this exact call and has nothing to hand back: it
+ *     failed, was stopped, or never finished. It re-runs because the failure may be the
+ *     thing the author just fixed (spec §8).
+ */
+export type DivergenceKind = "changed" | "moved" | "added" | "unanswered";
+
+export interface Divergence {
+  /** This run's coordinate for the call replay stopped at. */
+  pos: CallPos;
+  kind: DivergenceKind;
+  /** Where the source ran this same call, when `kind` is `moved`. */
+  sourcePos?: CallPos;
+  /** One sentence, in the words every surface prints. Names the distinction. */
+  reason: string;
+}
+
+/** Why the call at `pos` asking for `content` cannot replay from `plan`. */
+export function classifyDivergence(
+  plan: ReplayPlan,
+  pos: CallPos,
+  content: string,
+): Divergence {
+  const step = plan.byPos.get(pos);
+  if (step && step.content === content) {
+    return {
+      pos,
+      kind: "unanswered",
+      reason: `the source run made this call at ${pos} and has no answer for it — it ` +
+        `failed, was stopped, or never finished, so it runs live`,
+    };
+  }
+  if (step) {
+    return {
+      pos,
+      kind: "changed",
+      reason: `the call at ${pos} was edited: same position in the script, different key`,
+    };
+  }
+  const elsewhere = plan.byContent.get(content);
+  if (elsewhere && elsewhere.length > 0) {
+    return {
+      pos,
+      kind: "moved",
+      sourcePos: elsewhere[0],
+      reason: `the call MOVED: its key did not change — the source run made this exact ` +
+        `call at ${elsewhere[0]}, and this run makes it at ${pos}. The script's shape ` +
+        `changed, not its prompts`,
+    };
+  }
+  return {
+    pos,
+    kind: "added",
+    reason: `the source run never made a call at ${pos}, and none of its calls ask for ` +
+      `the same thing — this call is new`,
+  };
+}
+
+/**
+ * What a run did with its journal, folded from the rows it wrote. One implementation,
+ * so the completion note, `GET /workflows/:id/replay` and the run view cannot disagree
+ * about where replay stopped.
+ *
+ * The divergence reported is the STRUCTURALLY FIRST live call the plan could not serve,
+ * not the first by dispatch index — dispatch index is the thing that was never
+ * reproducible, and quoting it would put the original defect back into the report.
+ */
+export interface ReplayAudit {
+  /** The structurally first call replay could not serve, or `null` if none. */
+  diverged: Divergence | null;
+  /** Its dispatch index in this run — "call N of this run", for a human line. */
+  divergedAt: number | null;
+  /**
+   * Calls that ran live although their coordinate AND key still matched a stored
+   * answer — the price of the prefix rule, stated rather than hidden.
+   */
+  forced: number;
+}
+
+export function replayAudit(plan: ReplayPlan, rows: readonly WorkflowAgent[]): ReplayAudit {
+  // Nothing to diverge FROM. A first run has no source, and a relaunch of a run that
+  // journaled nothing has an empty one; in both cases every call is live because there
+  // was never an alternative, not because something changed. Reporting a divergence
+  // here would put "the source run never made a call at 0.0.0.0" on a run with no
+  // source — an accusation with no defendant, on the most ordinary path there is.
+  // The engine makes the same check before it decides anything (`plan.steps.length`).
+  if (plan.steps.length === 0) return { diverged: null, divergedAt: null, forced: 0 };
+  let diverged: Divergence | null = null;
+  let divergedAt: number | null = null;
+  let divergedPos: CallPos | null = null;
+  let forced = 0;
+  for (const row of rows) {
+    if (row.status === "cached") continue;
+    const { pos, content } = splitJournalKey(row.key);
+    const at = pos ?? String(row.idx);
+    const step = plan.byPos.get(at);
+    if (step && step.content === content && step.result !== null) {
+      forced++;
+      continue;
+    }
+    if (divergedPos === null || comparePos(at, divergedPos) < 0) {
+      divergedPos = at;
+      divergedAt = row.idx;
+      diverged = classifyDivergence(plan, at, content);
+    }
+  }
+  return { diverged, divergedAt, forced };
 }
 
 // ---------------------------------------------------------------------------
@@ -481,7 +724,7 @@ export async function startWorkflow(ctx: WorkflowCtx, opts: StartOpts): Promise<
   // ANSWERED are replayable — a failed one re-runs live, because the failure may be
   // the very thing this edit fixes, and everything after it re-runs too, because a
   // live call may have changed the checkout the later ones were answered against.
-  let plan: ReplayPlan = [];
+  let plan: ReplayPlan = emptyReplayPlan();
   let args: unknown = opts.args ?? null;
   let meta = opts.meta;
   if (opts.resumeOf) {
@@ -532,15 +775,30 @@ export async function startWorkflow(ctx: WorkflowCtx, opts: StartOpts): Promise<
   const limit = opts.concurrency ?? workflowConcurrency();
   let idx = 0;
   /**
-   * Prefix-bounded replay state. `true` until a call's key stops matching the source
-   * run's call at the SAME position; from then on every call runs live, including one
-   * whose own key never changed (spec §8). One-way on purpose — there is no path back
-   * to replaying, because the first live agent may have moved the shared checkout out
-   * from under every answer that followed it in the source run.
+   * Prefix-bounded replay state: the STRUCTURALLY SMALLEST coordinate at which this
+   * run's calls stopped matching the source, or `null` while the prefix still holds. A
+   * call may replay only when its own coordinate sorts strictly before it — so the
+   * divergent call and everything structurally after it runs live, including calls
+   * whose own key never changed (spec §8).
+   *
+   * A coordinate rather than a boolean, because dispatch order is not structural order:
+   * `pipeline()` issues stage 2 in stage-1 completion order, so a call can arrive after
+   * a divergence and still sit BEFORE it in the script. Under a boolean flag that call
+   * would be forced live for no reason — the flag would be recording latency, which is
+   * the whole class of bug this change removes.
+   *
+   * What it cannot do is retract: a call already replayed before a structurally-earlier
+   * divergence was discovered stays replayed. That only happens between calls the
+   * script itself declared CONCURRENT (a barrier-free pipeline's stage-N cells), which
+   * have no order relative to each other in the source run either — the run they
+   * replayed from interleaved them arbitrarily too. A sequentially-later call is
+   * dispatched after its predecessor by construction, so it always sees the divergence.
    */
-  let prefixIntact = plan.length > 0;
-  /** Where it broke, for the run log and the report. `null` = it never did. */
+  let divergedPos: CallPos | null = null;
+  /** The divergent call's dispatch index, for the human line. `null` = it never broke. */
   let divergedAt: number | null = null;
+  /** WHY it broke — edited, moved, added, or unanswered. Carried into the note. */
+  let divergence: Divergence | null = null;
   let inFlight = 0;
   const queue: Array<() => void> = [];
   const acquire = () =>
@@ -557,6 +815,51 @@ export async function startWorkflow(ctx: WorkflowCtx, opts: StartOpts): Promise<
   const awaitGate = () =>
     state.paused ? new Promise<void>((resolve) => state.gate.push(resolve)) : Promise.resolve();
 
+  /**
+   * Take a semaphore slot, but only once the gate is ALSO open — and re-check both as
+   * a loop, because either can change while this call awaits the other.
+   *
+   * WHY THIS IS NOT JUST `acquire()`. Pause used to be consulted once, before the
+   * journal row and before the semaphore, which made it a no-op for the one shape
+   * workflows exist for. `parallel()` issues every thunk at dispatch, so a fan-out of
+   * six at concurrency two has all six calls past the gate within the first tick;
+   * four of them are merely parked on the semaphore. Pausing then released nothing
+   * and gated nothing — the two in flight finished, the queue drained, and all four
+   * remaining agents launched anyway. Spec §8 sells pause as the way to preserve the
+   * most work before a stop, and `workflow/relaunch.ts` repeats that advice in a
+   * user-facing 409; for a fan-out it changed nothing and the run billed to
+   * completion. The existing coverage was a strictly sequential script, the one shape
+   * where a single pre-dispatch check happens to be enough.
+   *
+   * A call parked here keeps its journal row at `queued`, never `running`: the row is
+   * already written (that is what makes a saturated run show queued agents rather
+   * than pretending all of them work), and the `running` write happens only after
+   * this resolves true.
+   *
+   * The slot is RELEASED while parked rather than held. A paused run admits nothing,
+   * so holding it would only mean that on resume the semaphore's own FIFO no longer
+   * matches the order calls arrived in.
+   *
+   * Returns false when the run was stopped while this call was parked — the caller
+   * settles its row rather than starting an agent for a run that no longer exists.
+   */
+  const admit = async (): Promise<boolean> => {
+    for (;;) {
+      if (ctrl.signal.aborted) return false;
+      if (state.paused) {
+        await awaitGate();
+        continue; // re-check abort before touching the semaphore: stop opens the gate
+      }
+      await acquire();
+      if (ctrl.signal.aborted || state.paused) {
+        release();
+        if (ctrl.signal.aborted) return false;
+        continue;
+      }
+      return true;
+    }
+  };
+
   const finish = (status: "done" | "error" | "stopped", result?: unknown, error?: string) => {
     if (!live.has(id)) return;
     live.delete(id);
@@ -565,6 +868,12 @@ export async function startWorkflow(ctx: WorkflowCtx, opts: StartOpts): Promise<
     // Aborting the run's controller is what interrupts in-flight subagent TURNS —
     // killing the worker only stops the script (spec §8: stop does both).
     ctrl.abort();
+    // Then open the gate, in that order, so everything unparked here wakes to an
+    // ALREADY-aborted signal and takes the wind-down path by construction rather than
+    // by microtask timing. Leaving calls parked on a run that no longer exists would
+    // strand their promises for the lifetime of the process.
+    state.paused = false;
+    state.gate.splice(0).forEach((open) => open());
     for (const a of db.listWorkflowAgents(id)) {
       if (a.status === "running" || a.status === "queued") {
         db.updateWorkflowAgent(a.id, { status: "stopped", finishedAt: now() });
@@ -589,12 +898,12 @@ export async function startWorkflow(ctx: WorkflowCtx, opts: StartOpts): Promise<
       const replayed = agents.filter((a) => a.status === "cached").length;
       const head = `[workflow ${status}] "${updated.name}" (${id}) — ` +
         `${okCount}/${agents.length} agents succeeded.\n` +
-        (plan.length > 0
+        (plan.steps.length > 0
           ? `Replay: ${replayed} replayed from run ${updated.resumeOf}, ` +
             `${agents.length - replayed} ran live` +
-            (divergedAt === null
+            (divergence === null
               ? " (the whole prefix matched)."
-              : `, from call ${divergedAt} on.`)
+              : `, from ${divergedPos} (call ${divergedAt}) on — ${divergence.reason}.`)
           : `Replay: none — this run had no journal to replay.`);
       const tail = status === "done"
         ? `Result:\n${clip(JSON.stringify(result ?? null, null, 2), 4000)}`
@@ -613,7 +922,14 @@ export async function startWorkflow(ctx: WorkflowCtx, opts: StartOpts): Promise<
 
   // ---- the three bridged verbs ------------------------------------------------
 
-  const host: WorkflowHostFns = {
+  // `WorkflowHostFns` (types.ts, frozen at T-1) declares `agent(prompt, optsJson)`. The
+  // structural coordinate rides the message ENVELOPE, not the argument list, so the
+  // frozen shape still describes what the script calls — the coordinate is the bridge's
+  // business, never the script's. Widened here, and only here, so the dispatcher can
+  // hand it over.
+  const host: WorkflowHostFns & {
+    agent(prompt: string, optsJson: string, pos?: string): Promise<string>;
+  } = {
     phase(title: string): Promise<string> {
       db.updateWorkflow(id, { currentPhase: String(title) });
       publishRun(ctx, id);
@@ -629,7 +945,7 @@ export async function startWorkflow(ctx: WorkflowCtx, opts: StartOpts): Promise<
       return Promise.resolve("");
     },
 
-    async agent(prompt: string, optsJson: string): Promise<string> {
+    async agent(prompt: string, optsJson: string, pos?: string): Promise<string> {
       const raw = parseAgentOpts(optsJson);
       if (typeof prompt !== "string" || !prompt.trim()) {
         throw new WorkflowError(400, "agent(prompt, opts): prompt must be a non-empty string");
@@ -652,50 +968,73 @@ export async function startWorkflow(ctx: WorkflowCtx, opts: StartOpts): Promise<
         );
       }
 
-      const key = callKey(call, opts.effectiveModel);
+      // The call's coordinate. The worker computes it from the script's SHAPE — a
+      // pipeline cell, a parallel slot, the enclosing frame's counter for a bare call
+      // (`harness/wf_worker.ts`). Absent only when something other than that worker is
+      // driving this host (a unit test, a future driver), in which case the old
+      // monotonic counter is the right answer and is exactly what a sequential script's
+      // coordinates already are.
+      const callPos: CallPos = typeof pos === "string" && pos.length > 0 ? pos : String(at);
+      const content = callKey(call, opts.effectiveModel);
+      const key = journalKey(callPos, content);
 
       // THE PREFIX DECISION, made SYNCHRONOUSLY — before the gate, before the
-      // semaphore, in the same uninterrupted block that assigned `at`. Calls arrive in
-      // index order, so deciding here makes the answer a pure function of (position,
-      // key) and never a function of which concurrent call happened to resume first.
-      // Deciding after an `await` would let call 5's hit be recorded before call 2's
-      // miss had flipped the flag, and a run would replay past its own divergence.
+      // semaphore, in the same uninterrupted block that assigned `at`. Deciding here
+      // makes the answer a pure function of (coordinate, key) and never a function of
+      // which concurrent call happened to resume first. Deciding after an `await` would
+      // let a later call's hit be recorded before an earlier call's miss had moved the
+      // frontier, and a run would replay past its own divergence.
       let cached: string | undefined;
-      if (prefixIntact) {
-        const step = plan[at];
-        if (step && step.key === key && step.result !== null) {
+      if (plan.steps.length > 0) {
+        const blocked = divergedPos !== null && comparePos(callPos, divergedPos) >= 0;
+        const step = plan.byPos.get(callPos);
+        if (blocked) {
+          // Behind a divergence that has already been announced. It runs live and says
+          // nothing more — one line per divergence, not one per consequence.
+        } else if (step && step.content === content && step.result !== null) {
           cached = step.result;
         } else {
-          prefixIntact = false;
+          const why = classifyDivergence(plan, callPos, content);
+          divergedPos = callPos;
           divergedAt = at;
+          divergence = why;
           // Said out loud, because this is the moment a relaunch stops being free and
           // the whole rest of the run becomes live work. A run that quietly replayed
           // nothing looks exactly like one that replayed everything (spec §8:
-          // "replay is always reported").
+          // "replay is always reported"). The message names WHICH of the four things
+          // happened — an edited call and a moved one are different problems with
+          // different fixes, and reporting a move as "its key changed" is how a
+          // position defect stayed invisible.
           bus.publish({
             type: "workflow.log",
             sessionId: run.sessionId,
             data: {
               runId: id,
-              line: !step
-                ? `replay ends at call ${at}: the source run never made this call — ` +
-                  `it and everything after it run live`
-                : `replay ends at call ${at} (${clip(call.label, 60)}): ${
-                  step.result === null
-                    ? "the source run has no answer for it"
-                    : "its key changed"
-                } — it and everything after it run live, including calls whose own ` +
-                  `key is unchanged (agents share one checkout)`,
+              line: `replay ends at ${callPos} (call ${at}, ${clip(call.label, 60)}): ` +
+                `${why.reason} — it and everything after it in the script run live, ` +
+                `including calls whose own key is unchanged (agents share one checkout)`,
             },
           });
         }
       }
 
-      // Pause parks the call BEFORE it journals: a parked call has no row, so the UI
-      // never shows a "running" agent that has not actually started (field finding —
-      // a sequential script's next call surfaced as running and session-less while
-      // the run sat paused).
+      // Pause parks the call BEFORE it journals: a call that has not been admitted yet
+      // has no row, so the UI never shows a "running" agent that has not actually
+      // started (field finding — a sequential script's next call surfaced as running
+      // and session-less while the run sat paused). This is the FIRST of two gate
+      // checks; `admit()` below is the one that holds for a fan-out, whose calls are
+      // all past this line before anybody can press pause.
       await awaitGate();
+
+      // Stop opens the gate on the way DOWN, not only resume — so nothing is left
+      // parked on a run that no longer exists. A call woken that way must not journal:
+      // the wind-down has already swept every non-terminal row, so a row written after
+      // it would sit at `queued` with nothing left in this process that could settle
+      // it. That was the leak, and the pause→stop sequence spec §8 recommends is
+      // exactly how you hit it.
+      if (ctrl.signal.aborted) {
+        throw new WorkflowError(409, "workflow stopped — this call was never journaled");
+      }
 
       // Display label: an explicit one wins; otherwise a line this agent does not
       // share with the siblings already in the run.
@@ -722,40 +1061,52 @@ export async function startWorkflow(ctx: WorkflowCtx, opts: StartOpts): Promise<
       // A journal hit: no live call, no semaphore slot, no cost.
       if (cached !== undefined) return cached;
 
-      await acquire();
+      // The gate and the semaphore, together. A paused run holds the call HERE, with
+      // its row still `queued`, however many calls the script already dispatched.
+      const admitted = await admit();
+      // ONE try/catch, not two nested ones. The abort check used to sit inside an
+      // outer try whose only `finally` released the semaphore, so throwing on it
+      // stepped straight over the handler that settles the row — a call stopped
+      // between journaling and starting left `queued` behind forever. Every exit from
+      // here now runs the same settle, which is what makes "a stopped run leaves no
+      // row in a non-terminal state" true of the code rather than of one path.
       try {
-        if (ctrl.signal.aborted) throw new WorkflowError(409, "workflow stopped");
-        // Off the semaphore: the clock starts HERE, not when the call journaled, so
-        // elapsed time excludes time parked in the queue.
+        if (!admitted || ctrl.signal.aborted) {
+          throw new WorkflowError(
+            409,
+            `workflow stopped — "${clip(call.label, 60)}" was queued and never started`,
+          );
+        }
+        // Off the semaphore and past the gate: the clock starts HERE, not when the
+        // call journaled, so elapsed time excludes time parked or paused.
         db.updateWorkflowAgent(row.id, { status: "running", startedAt: now() });
         publishAgent(ctx, run.sessionId, id, row.id);
-        try {
-          const report = await ctx.runner(call, ctrl.signal, (sid) => {
-            db.updateWorkflowAgent(row.id, { sessionId: sid });
-            publishAgent(ctx, run.sessionId, id, row.id);
-          });
-          db.updateWorkflowAgent(row.id, {
-            status: "done",
-            result: report,
-            finishedAt: now(),
-          });
+        const report = await ctx.runner(call, ctrl.signal, (sid) => {
+          db.updateWorkflowAgent(row.id, { sessionId: sid });
           publishAgent(ctx, run.sessionId, id, row.id);
-          return report;
-        } catch (err) {
-          const message = (err as Error)?.message ?? String(err);
-          db.updateWorkflowAgent(row.id, {
-            status: ctrl.signal.aborted ? "stopped" : "error",
-            error: message,
-            finishedAt: now(),
-          });
-          publishAgent(ctx, run.sessionId, id, row.id);
-          // Rethrown, not swallowed: the script's own combinators decide what a
-          // failed agent means — `null` in a parallel() slot, a dropped item in a
-          // pipeline() — and neither works if this resolves.
-          throw err;
-        }
+        });
+        db.updateWorkflowAgent(row.id, {
+          status: "done",
+          result: report,
+          finishedAt: now(),
+        });
+        publishAgent(ctx, run.sessionId, id, row.id);
+        return report;
+      } catch (err) {
+        const message = (err as Error)?.message ?? String(err);
+        db.updateWorkflowAgent(row.id, {
+          status: ctrl.signal.aborted ? "stopped" : "error",
+          error: message,
+          finishedAt: now(),
+        });
+        publishAgent(ctx, run.sessionId, id, row.id);
+        // Rethrown, not swallowed: the script's own combinators decide what a
+        // failed agent means — `null` in a parallel() slot, a dropped item in a
+        // pipeline() — and neither works if this resolves.
+        throw err;
       } finally {
-        release();
+        // Only if a slot was actually taken. `admit()` returning false took none.
+        if (admitted) release();
       }
     },
   };
@@ -775,9 +1126,12 @@ export async function startWorkflow(ctx: WorkflowCtx, opts: StartOpts): Promise<
       if (!(WORKFLOW_HOST_FN_NAMES as readonly string[]).includes(msg.fn)) {
         throw new WorkflowError(400, `unknown workflow host function: ${msg.fn}`);
       }
+      // The coordinate is appended for `agent` only — `phase` and `log` are not
+      // journaled, so they have no position and the worker sends none.
+      const args = msg.fn === "agent" ? [...msg.args, msg.pos] : msg.args;
       const fn = host[msg.fn as WorkflowHostFnName];
       // deno-lint-ignore no-explicit-any
-      const value = await (fn as any).apply(host, msg.args);
+      const value = await (fn as any).apply(host, args);
       reply(msg.id, true, String(value));
     } catch (err) {
       reply(msg.id, false, (err as Error)?.message ?? String(err));
@@ -849,12 +1203,19 @@ export function stopWorkflow(
   }
   live.delete(id);
   clearTimeout(state.timer);
-  // Release anything parked on the pause gate first, so no promise leaks with the
-  // worker gone, then wind down.
-  state.paused = false;
-  state.gate.splice(0).forEach((open) => open());
   state.worker.terminate();
   state.ctrl.abort();
+  // Then release anything parked on the pause gate, so no promise leaks with the
+  // worker gone. ABORT FIRST, deliberately: everything unparked here wakes to an
+  // already-aborted signal and takes the wind-down path in `agent()` — journaling
+  // nothing if it had not journaled yet, settling its own row if it had. The reverse
+  // order made that a microtask race, and losing it left a `queued` row on a stopped
+  // run with nothing left in the process that could ever settle it.
+  state.paused = false;
+  state.gate.splice(0).forEach((open) => open());
+  // The sweep covers every row that exists at this instant. Rows can still settle
+  // after it — a call unparked above rejects and writes its own terminal status —
+  // but none can be CREATED after it, which is what closes the hole.
   for (const a of ctx.db.listWorkflowAgents(id)) {
     if (a.status === "running" || a.status === "queued") {
       ctx.db.updateWorkflowAgent(a.id, { status: "stopped", finishedAt: now() });
@@ -864,7 +1225,15 @@ export function stopWorkflow(
   return publishRun(ctx, id)!;
 }
 
-/** Pause: NEW `agent()` calls park on the gate; running ones finish normally. */
+/**
+ * Pause: no further agent STARTS; the ones already running finish normally.
+ *
+ * "Starts", not "is issued". The distinction is the whole of spec §8's promise —
+ * pause is what preserves the most work before a stop, and it only does that if it
+ * bites on a fan-out, whose calls are all issued at dispatch and then sit on the
+ * semaphore. `admit()` is where that holds: a call already past the pre-journal gate
+ * is stopped at the semaphore instead, and its journal row stays `queued`.
+ */
 export function pauseWorkflow(ctx: Pick<WorkflowCtx, "db" | "bus">, id: string): WorkflowRun {
   const state = live.get(id);
   if (!state) throw new WorkflowError(409, `workflow ${id} is not running in this process`);

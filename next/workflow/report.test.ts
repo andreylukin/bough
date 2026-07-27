@@ -63,7 +63,13 @@ import {
   startWorkflow,
   type WorkflowCtx,
 } from "./run.ts";
-import { listSavedWorkflows, readSavedWorkflow, savedDir, savedPath, saveWorkflow } from "./saved.ts";
+import {
+  listSavedWorkflows,
+  readSavedWorkflow,
+  savedDir,
+  savedPath,
+  saveWorkflow,
+} from "./saved.ts";
 
 // ---------------------------------------------------------------------------
 // fixtures
@@ -392,6 +398,33 @@ Deno.test("a relaunch that replayed NOTHING is distinguishable from one that rep
     assert.equal(none.body.replay.available, 3, "three answers were on offer and none matched");
     assert.match(none.body.replay.line, /replayed NOTHING of 3 available/);
     assert.match(all.body.replay.line, /3 replayed, 0 ran live of 3/);
+
+    // …and it says WHICH failure it is looking at. Every prompt here was edited, so
+    // this is `changed`. The line used to assert "every key changed" unconditionally,
+    // which was a guess dressed as a finding — and it was the wrong guess for the
+    // pipeline transposition, where no key changed and only positions moved.
+    assert.equal(none.body.replay.diverged?.kind, "changed");
+    assert.equal(none.body.replay.divergedPos, "0");
+    assert.match(none.body.replay.line, /was edited/);
+    assert.equal(all.body.replay.diverged, null, "a full replay diverged nowhere");
+  } finally {
+    h.close();
+  }
+});
+
+Deno.test("a FIRST run reports no divergence — there is no source to diverge from", async () => {
+  const h = harness();
+  try {
+    // Found by booting the real server: a first run's calls are all live, and folding
+    // them against an empty plan accused each one of diverging — "the source run never
+    // made a call at 0" on a run with no source run. Every ordinary first workflow in
+    // the product hits this path.
+    const first = await run(h, recorder(h.db, h.sessionId).runner, THREE);
+    const body = await request<{ replay: ReplaySummary }>(h, "GET", `/workflows/${first.id}`);
+    assert.equal(body.body.replay.sourceId, null);
+    assert.equal(body.body.replay.diverged, null);
+    assert.equal(body.body.replay.divergedPos, null);
+    assert.equal(body.body.replay.line, "0 replayed, 3 ran live of 3");
   } finally {
     h.close();
   }

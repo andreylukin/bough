@@ -41,6 +41,34 @@
  * Both are pure, worker-side, and never cross the wire — which is why
  * `protocol.ts` declares only the three bridged names (see `WORKFLOW_HOST_FN_NAMES`).
  *
+ * THE THIRD MECHANISM, and the reason this file changed: **every `agent()` call
+ * carries a STRUCTURAL COORDINATE, computed from the script's shape rather than from
+ * the order calls happen to reach the host.**
+ *
+ * The journal is prefix-bounded — a relaunch replays the longest unchanged leading run
+ * of `agent()` calls, so a call's POSITION is part of its identity (spec §8). The host
+ * used to derive that position from arrival order, and arrival order is exactly what
+ * `pipeline()` is designed not to fix: with no barrier, stage 2 is issued in stage-1
+ * COMPLETION order. Give `pipeline(['A','B'], s1, s2)` a stage-1 call that takes 60ms
+ * for A and 1ms for B and it journals `[s1 A, s1 B, s2 B, s2 A]`; relaunching the
+ * byte-identical script resolves the replayed prefix in DISPATCH order, the last two
+ * positions transpose, and an UNCHANGED script re-bills every call past stage 1. That
+ * is spec §8's own canonical example, so it was not an exotic case.
+ *
+ * Only this file can fix it, because only this file knows the shape. Each `agent()`
+ * call takes the next slot of the frame that encloses it; `parallel()` opens a frame
+ * per thunk (its slot index); `pipeline()` opens one per (item, stage) cell. The
+ * coordinate is the path of those slots — `"0.1.1.0"` — and it is stable under any
+ * interleaving, because nothing in it is a function of when a call returned.
+ *
+ * Frames propagate through `AsyncLocalStorage`, not a module-level variable, and that
+ * choice is load-bearing: a stage callback is free to `await` before it calls
+ * `agent()`, and by then a dynamically-scoped global would be describing whichever
+ * other item resumed most recently. The store follows the await chain, so it does not.
+ * A call made outside any combinator — a bare `agent()` in the script body — falls back
+ * to the root frame's counter, which for a sequential script is exactly the monotonic
+ * numbering the host used to assign.
+ *
  * The script's parameter list is `WORKFLOW_SCRIPT_PARAMS` from `protocol.ts` plus
  * the two combinators and `console`, which are built here rather than bridged.
  * `workflow/run.ts` pre-flights the script against the same extended list; a test
@@ -50,12 +78,71 @@
  * Ported from `src/harness/wf_worker.ts`. Deltas are marked `NOTE:`.
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
+
 import {
   type FromWorkflowWorker,
   type ToWorkflowWorker,
   WORKFLOW_SCRIPT_PARAMS,
   type WorkflowHostFnName,
 } from "./protocol.ts";
+
+// ---------------------------------------------------------------------------
+// Structural coordinates
+// ---------------------------------------------------------------------------
+
+/**
+ * One nesting level of the script's shape. `path` is where this frame sits; `next` is
+ * the slot the next child created inside it will take.
+ *
+ * Mutable `next` on a shared object is the point: every call made in one frame draws
+ * from the same counter, so siblings are numbered in the order the script CREATES them
+ * — which is a fact about the source text and its sequential control flow, not about
+ * scheduling. Two `agent()` calls in one stage callback are always 0 and 1 in that
+ * frame however long either of them takes.
+ */
+interface Frame {
+  readonly path: readonly number[];
+  next: number;
+}
+
+/**
+ * The script body's own frame. Its counter is what a bare `agent()` draws from, so a
+ * purely sequential script numbers its calls `0, 1, 2, …` — identical to the monotonic
+ * counter the host assigned before coordinates existed.
+ */
+const ROOT: Frame = { path: [], next: 0 };
+
+/**
+ * The enclosing frame, followed across `await`s.
+ *
+ * NOT a module-level "current frame" variable. A stage callback may await anything it
+ * likes before reaching `agent()`, and by then a plain variable would name whichever
+ * other item's callback resumed last — which is the very latency-order bug this whole
+ * mechanism exists to remove, reintroduced one layer down. `AsyncLocalStorage` binds
+ * the frame to the async chain instead, so it survives an await and cannot leak
+ * sideways into a concurrent branch.
+ */
+const frames = new AsyncLocalStorage<Frame>();
+
+function currentFrame(): Frame {
+  return frames.getStore() ?? ROOT;
+}
+
+/** Claim the enclosing frame's next slot. Synchronous, and must stay that way. */
+function claimSlot(): number[] {
+  const frame = currentFrame();
+  return [...frame.path, frame.next++];
+}
+
+function childFrame(path: readonly number[]): Frame {
+  return { path, next: 0 };
+}
+
+/** The wire form: dot-joined slot indexes, e.g. `0.1.1.0` (see `protocol.ts`). */
+function posOf(path: readonly number[]): string {
+  return path.join(".");
+}
 
 // ---------------------------------------------------------------------------
 // The determinism trap
@@ -155,10 +242,10 @@ let seq = 0;
 
 const send = (msg: FromWorkflowWorker) => self.postMessage(msg);
 
-function hostCall(fn: WorkflowHostFnName, args: unknown[]): Promise<string> {
+function hostCall(fn: WorkflowHostFnName, args: unknown[], pos?: string): Promise<string> {
   const id = ++seq;
   const p = new Promise<string>((resolve, reject) => pending.set(id, { resolve, reject }));
-  send({ type: "host", id, fn, args });
+  send({ type: "host", id, fn, args, ...(pos === undefined ? {} : { pos }) });
   return p;
 }
 
@@ -207,9 +294,15 @@ interface AgentOpts {
  * The report crosses the wire verbatim. Only a `{schema}` call parses it, because
  * only then is it JSON by contract — spec §8: the script branches on typed data
  * rather than parsing prose.
+ *
+ * The slot is claimed SYNCHRONOUSLY, on the way in, before the first `await`. That is
+ * what makes the coordinate a property of the script's structure: an `agent()` issued
+ * from a stage callback is numbered by the frame that called it, whatever else is in
+ * flight at that instant.
  */
 const agent = async (prompt: string, opts?: AgentOpts): Promise<unknown> => {
-  const report = await hostCall("agent", [String(prompt), JSON.stringify(opts ?? {})]);
+  const pos = posOf(claimSlot());
+  const report = await hostCall("agent", [String(prompt), JSON.stringify(opts ?? {})], pos);
   if (!opts || opts.schema === undefined) return report;
   try {
     return JSON.parse(report);
@@ -237,6 +330,10 @@ const log = (message: unknown): void => void hostCall("log", [show(message)]).ca
  * `Promise.resolve().then(t)` rather than `t()` so a thunk that throws SYNCHRONOUSLY
  * lands in the same `.catch` as one that rejects — otherwise the whole call would
  * throw before a single sibling started.
+ *
+ * Each thunk runs in its own frame, numbered by its SLOT INDEX. Slot 3's agents are
+ * `…3.0`, `…3.1`, … whether slot 3 started first or last, which is what keeps a
+ * relaunch's positions matching under varying agent latency.
  */
 const parallel = (thunks: unknown): Promise<unknown[]> => {
   if (!Array.isArray(thunks)) {
@@ -248,10 +345,16 @@ const parallel = (thunks: unknown): Promise<unknown[]> => {
       ),
     );
   }
+  const base = claimSlot();
   return Promise.all(
-    thunks.map((t) =>
+    thunks.map((t, slot) =>
       Promise.resolve()
-        .then(() => (typeof t === "function" ? (t as () => unknown)() : t))
+        .then(() =>
+          frames.run(
+            childFrame([...base, slot]),
+            () => (typeof t === "function" ? (t as () => unknown)() : t),
+          )
+        )
         .catch(() => null)
     ),
   );
@@ -268,6 +371,13 @@ const parallel = (thunks: unknown): Promise<unknown[]> => {
  * A throwing stage drops THAT item to `null` and skips its remaining stages; the
  * other items are untouched. The returned promise resolves once every item has
  * settled, in input order.
+ *
+ * Every stage callback runs in a frame named by its (item, stage) CELL, so the agents
+ * it issues are `…item.stage.n`. That is the fix for the defect this combinator caused:
+ * without it, stage 2's journal positions came out in stage-1 completion order, and an
+ * unchanged relaunch of the spec's own example re-ran every call past stage 1.
+ * Coordinates are item-major — item 0's whole run of stages precedes item 1's — which
+ * gives a total order over the cells that no interleaving can disturb.
  */
 const pipeline = (
   items: unknown,
@@ -278,14 +388,22 @@ const pipeline = (
       new TypeError("pipeline(items, ...stages): `items` must be an array"),
     );
   }
+  const base = claimSlot();
   return Promise.all(items.map(async (item, index) => {
     let prev: unknown = item;
     try {
-      for (const stage of stages) {
+      for (let s = 0; s < stages.length; s++) {
+        const stage = stages[s];
         if (typeof stage !== "function") {
           throw new TypeError("pipeline(items, ...stages): every stage must be a function");
         }
-        prev = await stage(prev, item, index);
+        // `prev` is read before the frame is entered, so the value threaded between
+        // stages is unaffected by the coordinate machinery.
+        const carried = prev;
+        prev = await frames.run(
+          childFrame([...base, index, s]),
+          () => stage(carried, item, index),
+        );
       }
       return prev;
     } catch {

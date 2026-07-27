@@ -5,72 +5,149 @@
 <h1 align="center">bough</h1>
 
 <p align="center">
-  <b>A sandboxed coding agent with branchable history.</b><br>
-  Fork any point in the conversation — the filesystem forks with it.
+  <b>A coding agent that acts by writing programs.</b><br>
+  One JavaScript program per round — loops, branching, composition — run against your real checkout.
 </p>
 
-bough runs a frontier model that plans by writing code. A deterministic harness executes each turn in a sealed V8 sandbox, confines spawned processes with a macOS Seatbelt profile, and gates all outbound network behind a human-held leash. Every turn is a node in a tree: rewind, fork, and the files come with you.
+Most harnesses let the model emit one tool call and wait. bough gives it a single tool that takes a
+program: the model writes JavaScript with real control flow, and a harness executes it on your
+machine. A headless server owns all state and execution; the terminal UI is a view over it. History
+is a tree — any turn can be branched — and delegation is first-class: a program can spawn subagents
+or launch a detached workflow that fans work across many of them.
+
+bough is an alternative harness **design**, not a better coding agent. That distinction is the point
+of the project, and this README tries not to blur it.
 
 <p align="center">
   <img src="assets/shots/01-home.png" alt="bough home screen" width="800">
 </p>
 
-## Why bough
+## Read this before you run it
 
-- 🌳 **Branchable history, branchable files.** Fork any earlier turn and the workspace reverts with it — try the risky idea, jump back if it fails.
-- 🔒 **Safe to leave running.** Kernel sandbox: workspace-only writes, secrets unreadable, network default-deny behind a live allow/deny leash.
-- ⚙️ **Code-mode.** One small JS program per turn instead of one-shot tool calls — loops, composition, real control flow over shell, files, subagents, MCP, and LSP.
-- ✅ **Deterministic done.** A turn is done only when a committed `CHECK` command exits 0 — the model can't grade its own homework.
+**There is no isolation boundary.** Programs run as you, with your full authority — filesystem,
+network, subprocesses, `npm:`/`jsr:` imports. There is no sandbox, no egress proxy, no credential
+gating, no confinement of any kind. Host functions are convenience and session integration, never a
+wall.
 
-## Run
+This is a deliberate choice, not an unfinished one ([spec §2](docs/spec.md), [§17](docs/spec.md)).
+The harness edits your real files because reviewing `git diff` and pushing with your own git is the
+delivery mechanism. bough states the posture plainly rather than implying safety it does not
+provide.
 
-macOS only (the sandbox is Seatbelt). One line clones to `~/bough` and sets everything up — deps, worker model, API key, launchd service:
+Run it only on a machine where you would be comfortable running the code it writes, because that is
+exactly what happens.
 
-```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/andreylukin/bough/main/install.sh)"
-```
+## The idea
+
+- **One program per round.** The model's only action is `run_steps(code)`. Control flow lives in the
+  program, not in a chain of round-trips.
+- **In place.** The agent edits your own checkout — no copy, no overlay. The Changes rail is
+  `git diff` against the sha the session started from; you deliver with `git commit` / `git push`.
+- **History is a tree.** Fork any turn, compact a span onto a new branch, lift messages into a fresh
+  root. Nothing is ever destructively rewritten — every operation produces a new branch.
+- **The server is the system.** State, execution, and orchestration are server-side. A client can
+  crash or detach without affecting a running turn.
+- **Delegation is core.** Subagents and workflows are primary capabilities with real persistence,
+  lifecycle control, and observability.
 
 ## Use it
 
-Point a session at a repo and ask in plain language. bough plans by writing a small program, runs it in the sandbox, and answers — folded reasoning, the code it ran, live cost and context all in one view. It even predicts your likely next message.
+Point a session at a repo and ask in plain language. bough writes a small program, runs it, and
+answers — folded reasoning, the code that ran, live cost and context in one view.
 
 <p align="center">
   <img src="assets/shots/02-chat.png" alt="a bough conversation" width="800">
 </p>
 
-**Fork anything.** Edit a past turn to branch from that point; history and files fork together. Sessions spawn subagents as real branches, and the tree shows the whole forest — every root, fork, and subagent — at a glance.
+**The program environment.** Host functions are pre-injected globals; the program also has the full
+Deno runtime and may ignore all of them.
 
-<p align="center">
-  <img src="assets/shots/08-fork-tree.png" alt="session tree with subagent branches" width="800">
-</p>
+| | |
+|---|---|
+| Shell | `bash` (auto-backgrounds past 60s, never killed) · `sh` for concurrent commands · `bashBg` / `bashOutput` / `bashWait` / `bashKill` |
+| Files | `view` → numbered lines with a version tag · `patch` → hash-anchored line edits · `write` for new files |
+| Delegation | `agent` (blocking) · `spawn` (detached) · `join` · `adopt` · `workflow.*` |
+| Session | `ask` a human mid-program · `state.*` durable KV · `schedule.*` · `image` · `fetch` · `artifact` · `mcp` · `lsp.*` |
 
-**Own the network.** Every outbound request is caught at the proxy and shown as a live feed — allow, deny, or hold it. Policy bundles grant scoped access with credential injection at the proxy, so tokens never enter the sandbox.
+**One editing idiom.** `patch` names lines instead of quoting them, so code being edited never has
+to survive the model's own string escaping. The tag pins the version that was viewed: if the file
+moved on but the patched lines are untouched, the edit rebases; if they *were* touched, it reports a
+conflict. With subagents sharing one checkout, that is the primary safeguard against silent
+clobbering.
 
-<p align="center">
-  <img src="assets/shots/06-net.png" alt="network panel with a live request feed" width="800">
-</p>
+**Fan out.** `agent()` runs a subagent to completion and returns its report; `spawn()` detaches one
+that reports back as a system note. For bigger fan-outs, a **workflow** is a script that runs
+detached from the turn, with `agent` / `parallel` / `pipeline` primitives and structured (schema
+validated) results. Every `agent()` call is journaled before it runs, so a stopped run loses no
+completed work and a relaunch replays the unchanged prefix instead of paying for it twice.
 
-**Everything else in one panel.** Sessions, tree, changes review, model picker, net, MCP, skills, themes — `^t` toggles it, `^p`/`^f`/`^d`/`^o` jump straight to a tab. Swap the frontier model or thinking depth mid-session; a tiny local model handles the harness's micro-tasks for free.
+**Everything else in one panel.** Sessions, conversation tree, changes review, model picker, MCP,
+skills, themes — with direct-jump keys. Frontier models route to Anthropic, OpenAI, or OpenRouter by
+id prefix; a cheap tier handles titles, ghost text, and activity blurbs and fails silently when it
+can't.
 
-<p align="center">
-  <img src="assets/shots/05-model.png" alt="model picker" width="800">
-</p>
-
-Plus: an `oracle()` second opinion, artifact publishing at a URL, transcript search, and `@` files / `/` skills in the composer.
+Plus: artifact publishing at a URL with a comment layer, keyword search across transcripts, `@`
+files and `/` skills in the composer, and recurring runs on a schedule.
 
 ## How it works
 
-- **One tool.** The supervisor's only tool is a JS program per turn in a Deno Worker with `permissions: "none"`; host functions bridge out (`bash`, `read`/`write`/`edit`, `oracle`, `agent`/`spawn`, `mcp`, `lsp.*`).
-- **One fence.** The Deno isolate confines the supervisor's program; the processes it launches are not sandboxed — they run as you, in your checkout.
-- **In place.** The agent edits your own checkout directly — no copy, no overlay. The Changes rail is `git diff` against the sha the session started from, and you deliver the work with your own git (`git commit`, `git push`, `gh pr create`).
-- **Headless server + TUI.** One Deno process serves the JSON API, SSE events, and hosted artifacts on `:4321`; the terminal UI drives it. State lives in SQLite at `~/.bough/bough.db`.
-
-## Develop
-
-```bash
-deno task test    # unit + integration tests
-deno task check   # typecheck
-deno task tui     # the terminal UI against the local server
+```
+┌─────────────┐   HTTP + SSE    ┌──────────────────────────────────────┐
+│  TUI (Ink)  │ ───────────────▶│  server  (Deno, 127.0.0.1:4321)      │
+│  CLI (exec) │ ◀─────────────── │  ├─ turn runner                      │
+└─────────────┘   events         │  ├─ program worker   (inherit perms) │
+                                 │  ├─ workflow worker  (no perms)      │
+                                 │  ├─ SQLite  ~/.bough/bough.db        │
+                                 │  └─ artifacts  ~/.bough/artifacts/   │
+                                 └──────────────────────────────────────┘
 ```
 
-`bench/` A/B-tests the harness against Claude Code on a fixed task bank; `probes/` measures TUI responsiveness against the live server. More in `docs/`.
+- **Server** — one Deno process: JSON API, SSE event stream, static artifact hosting. Loopback only,
+  no auth layer.
+- **Program worker** — a fresh `Worker` per round with `permissions: "inherit"`. Host functions
+  bridge over `postMessage`. The worker exists to give the program a clean global scope and a
+  cancellable lifetime, not to contain it.
+- **Workflow worker** — a `Worker` with `permissions: "none"` running one orchestration script. Its
+  only bridge is `agent()` / `phase()` / `log()`, and it is deliberately starved of ambient
+  nondeterminism so journal replay stays sound.
+- **Clients** — an Ink TUI and a headless one-shot CLI.
+
+## Run
+
+Deno, TypeScript, SQLite. No build step — everything runs from source.
+
+```bash
+deno task dev     # server on 127.0.0.1:4321, with --watch
+deno task tui     # the terminal UI against it
+deno task check   # typecheck
+deno task test    # unit + integration, offline and hermetic
+```
+
+`install.sh` bootstraps a fresh machine: it clones the repo and hands off to `scripts/bough setup`
+for dependencies, the API key, and a background service.
+
+For scripting there is a headless one-shot client — `bough exec "do the thing"` creates a session,
+streams the assistant's text to stdout, and exits 0 on a completed turn, 1 on an errored one, 2 on a
+usage or connection problem.
+
+`BOUGH_HOME` relocates the whole data root (`~/.bough` by default) and `BOUGH_PORT` moves the
+listener, so a development instance never touches a live install.
+
+## What bough is not
+
+These are decisions, not gaps:
+
+- No confinement of any kind, and no credential gating.
+- No acceptance gate — the model reports what it did and you verify it. The harness does not re-run
+  a committed command or block a turn from finishing.
+- No local inference; the cheap tier is a hosted model.
+- No embeddings or vector index — cross-session search is SQLite FTS over transcripts.
+- No per-agent worktrees or file leases. One shared checkout.
+- No remote access, no auth layer, no web UI.
+- No archive, deprecate, or purge — session visibility is derived from lineage.
+
+## Docs
+
+- [`docs/spec.md`](docs/spec.md) — what the system is. Authoritative.
+- [`docs/implementation-plan.md`](docs/implementation-plan.md) — how it is built, the module layout,
+  and the invariants worth knowing before changing anything.

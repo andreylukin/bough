@@ -26,7 +26,10 @@
  * through and no "did something above me already consume this" question. A live
  * `ask()` hold takes the keyboard away from the composer for as long as it is
  * held, because the card replaces the composer (spec §6) — that is one line here
- * rather than a flag threaded through six components.
+ * rather than a flag threaded through six components. There is exactly ONE non-chat
+ * surface, the panel (spec §15): sessions, tree, changes, workflows, model, MCP,
+ * skills and theme are tabs of it, and this file mounts it in one place with one
+ * `panel.handle(command)` line. It has no idea which tab is showing.
  *
  * FOURTH — **the transcript is built once.** `buildLines` produces the `VLine[]`
  * that `Chat` paints, and it is memoized here rather than inside `Chat`, because
@@ -35,14 +38,15 @@
  */
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import type { ModelRow } from "../../llm/client.ts";
 import type { SessionRow } from "../api.ts";
 import type { MouseEvent, NavKey } from "../mouse.ts";
 import { buildLines } from "../lines.ts";
 import { sessionLabel, UI } from "../format.ts";
 import {
   chordOf,
-  type Command,
   chunkInput,
+  type Command,
   editLine,
   EMPTY_LINE,
   helpSections,
@@ -57,9 +61,9 @@ import {
 import { currentAsk, isBusy, type Store, type TuiState } from "../store.ts";
 import { Chat } from "./Chat.tsx";
 import { Composer } from "./Composer.tsx";
+import { type PanelControls, usePanelHost } from "./PanelHost.tsx";
 import { liveSubagents, SubagentRail } from "./SubagentRail.tsx";
-import { Tree, treeItems } from "./Tree.tsx";
-import { Workflows } from "./Workflows.tsx";
+import { treeItems } from "./Tree.tsx";
 
 /** How long a second Escape still counts as a double-tap. */
 const DOUBLE_ESC_MS = 600;
@@ -68,20 +72,14 @@ const DOUBLE_ESC_MS = 600;
  * The operations the store does not expose yet.
  *
  * Every one of these is a REST call the TUI's client already has a method for
- * (`api.ts`) and the store has no action for — workflow steering (spec §8) and the
- * `?originId=` drill-in the tree and the subagent rail are built on. They are
- * injected rather than imported so this component keeps its "no I/O" property and
- * so a test drives them with three lines of fakes. They belong in `store.ts`
- * eventually; that file is not this task's to change.
+ * (`api.ts`) and the store has no action for — workflow steering (spec §8), MCP
+ * grants, and the `?originId=` drill-in the tree and the subagent rail are built on.
+ * They are injected rather than imported so this component keeps its "no I/O"
+ * property and so a test drives them with three lines of fakes. They belong in
+ * `store.ts` eventually; that file is not this task's to change. The shape is
+ * declared in `PanelHost.tsx`, which is what consumes most of it.
  */
-export interface AppControls {
-  /** `GET /sessions?originId=` — delegated children, for the rail and drill-in. */
-  listChildren?: (originId: string) => Promise<SessionRow[]>;
-  pauseWorkflow?: (id: string) => Promise<void>;
-  resumeWorkflow?: (id: string) => Promise<void>;
-  stopWorkflow?: (id: string) => Promise<void>;
-  rerunWorkflow?: (id: string) => Promise<void>;
-}
+export type AppControls = PanelControls;
 
 /**
  * What the stdin filter (`mouse.ts`) took out of the stream before ink saw it.
@@ -102,6 +100,11 @@ export interface AppProps {
   defaultWorkspace?: string;
   controls?: AppControls;
   input?: InputHooks;
+  /**
+   * The model picker's catalog. A prop because `llm/client.ts` pulls the provider
+   * SDK: `tui/main.tsx` imports it, the component tree does not.
+   */
+  models?: readonly ModelRow[];
   /** Injected so a render is reproducible and the esc double-tap is testable. */
   now?: () => number;
 }
@@ -110,7 +113,7 @@ export interface AppProps {
 const WHEEL_ROWS = 3;
 
 export function App(
-  { store, defaultWorkspace, controls = {}, input: hooks = {}, now = Date.now }: AppProps,
+  { store, defaultWorkspace, controls = {}, input: hooks = {}, models, now = Date.now }: AppProps,
 ) {
   const { exit } = useApp();
   const { stdout } = useStdout();
@@ -121,7 +124,6 @@ export function App(
   const [scrollOff, setScrollOff] = useState(0);
   const [foldAll, setFoldAll] = useState(false);
   const [railSel, setRailSel] = useState(0);
-  const [listSel, setListSel] = useState(0);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set<string>());
   const [children, setChildren] = useState<Record<string, SessionRow[]>>({});
   const [sent, setSent] = useState<string[]>([]);
@@ -156,8 +158,35 @@ export function App(
     [state.sessions, children, expanded],
   );
 
+  const drillIn = useCallback((originId: string) => {
+    setExpanded((set) => new Set([...set, originId]));
+    if (children[originId] || !controls.listChildren) return;
+    void controls.listChildren(originId)
+      .then((rows) => setChildren((c) => ({ ...c, [originId]: rows })))
+      .catch(() => store.notify("could not load delegated work for that conversation"));
+  }, [children, controls, store]);
+
+  const collapse = useCallback((originId: string) => {
+    setExpanded((set) => new Set([...set].filter((x) => x !== originId)));
+  }, []);
+
+  // The one non-chat surface (spec §15). Eight tabs, one hook, no logic here.
+  const panel = usePanelHost({
+    store,
+    state,
+    rows,
+    cols,
+    now: now(),
+    controls,
+    models,
+    tree,
+    drillIn,
+    collapse,
+  });
+
   // A held question owns the keyboard: the card replaces the composer (spec §6).
-  const uiMode: UiMode = mode === "chat" && ask ? "ask" : mode;
+  // The panel outranks both — while it is open it IS the surface with the keyboard.
+  const uiMode: UiMode = panel.open ? "panel" : mode === "chat" && ask ? "ask" : mode;
 
   const submit = useCallback((queue: boolean) => {
     const text = line.text.trim();
@@ -170,26 +199,11 @@ export function App(
     else void store.createSession(defaultWorkspace).then((s) => s && store.send(text));
   }, [line.text, state.currentId, defaultWorkspace, store]);
 
-  const drillIn = useCallback((originId: string) => {
-    setExpanded((set) => new Set([...set, originId]));
-    if (children[originId] || !controls.listChildren) return;
-    void controls.listChildren(originId)
-      .then((rows) => setChildren((c) => ({ ...c, [originId]: rows })))
-      .catch(() => store.notify("could not load delegated work for that conversation"));
-  }, [children, controls, store]);
-
-  const steer = useCallback((run: (id: string) => Promise<void> | undefined, verb: string) => {
-    const target = state.workflows[listSel];
-    if (!target) return;
-    const started = run(target.id);
-    if (!started) return store.notify(`${verb} is not wired up in this client yet`);
-    void started.then(() => store.refreshWorkflows()).catch((e: unknown) =>
-      store.notify(e instanceof Error ? e.message : String(e))
-    );
-  }, [state.workflows, listSel, store]);
-
   /** One command → one effect. Nothing here decides anything; it only dispatches. */
   const run = useCallback((command: Command, input: string) => {
+    // The panel answers first and says so: every `panel.*`, `tab.*`, list-navigation
+    // and workflow-steering command is its own, and none of them appears below.
+    if (panel.handle(command)) return;
     const page = Math.max(1, rows - 8);
     const last = (n: number) => Math.max(0, n - 1);
     switch (command) {
@@ -202,15 +216,6 @@ export function App(
         return setMode("help");
       case "help.close":
         return setMode("chat");
-      case "view.chat":
-        return setMode("chat");
-      case "view.tree":
-        setListSel(0);
-        return setMode("tree");
-      case "view.workflows":
-        setListSel(0);
-        void store.refreshWorkflows();
-        return setMode("workflows");
 
       case "send":
         return submit(false);
@@ -277,43 +282,6 @@ export function App(
         setAskText("");
         return void store.declineAsk();
 
-      case "move.up":
-        return setListSel((i) => Math.max(0, i - 1));
-      case "move.down": {
-        const len = uiMode === "tree" ? tree.length : state.workflows.length;
-        return setListSel((i) => Math.min(last(len), i + 1));
-      }
-      case "move.in": {
-        const item = tree[listSel];
-        return item ? drillIn(item.type === "session" ? item.session.id : item.originId) : undefined;
-      }
-      case "move.out": {
-        const item = tree[listSel];
-        if (!item) return;
-        const id = item.type === "session" ? item.session.id : item.originId;
-        return setExpanded((set) => new Set([...set].filter((x) => x !== id)));
-      }
-      case "open": {
-        if (uiMode === "workflows") {
-          // Spec §8: replay is ALWAYS reported. This is the client half of that.
-          const target = state.workflows[listSel];
-          return target ? void store.refreshReplay(target.id) : undefined;
-        }
-        const item = tree[listSel];
-        if (!item || item.type !== "session") return;
-        setMode("chat");
-        return void store.open(item.session.id);
-      }
-
-      case "wf.pause":
-        return steer(controls.pauseWorkflow ?? (() => undefined), "pause");
-      case "wf.resume":
-        return steer(controls.resumeWorkflow ?? (() => undefined), "resume");
-      case "wf.stop":
-        return steer(controls.stopWorkflow ?? (() => undefined), "stop");
-      case "wf.rerun":
-        return steer(controls.rerunWorkflow ?? (() => undefined), "relaunch");
-
       default:
         // Everything left is line editing, which is a pure function of the draft.
         return setLine((s) => editLine(s, command));
@@ -321,22 +289,16 @@ export function App(
   }, [
     ask,
     askText,
-    controls,
-    drillIn,
     exit,
     histAt,
     lines.length,
-    listSel,
+    panel,
     rail,
     railSel,
     rows,
     sent,
-    state.workflows,
-    steer,
     store,
     submit,
-    tree,
-    uiMode,
   ]);
 
   // A paste, a wheel tick and the Home/End keys ink does not deliver. Registered
@@ -404,33 +366,13 @@ export function App(
     </Text>
   );
 
-  if (uiMode === "tree") {
+  // The one non-chat surface. It takes the screen while it is open, and every tab
+  // it holds is `PanelHost`'s business rather than this file's.
+  if (panel.view) {
     return (
       <Box flexDirection="column">
         {header}
-        <Tree items={tree} selected={listSel} rows={rows - 2} />
-      </Box>
-    );
-  }
-
-  if (uiMode === "workflows") {
-    return (
-      <Box flexDirection="column">
-        {header}
-        <Workflows
-          runs={state.workflows}
-          sel={listSel}
-          level={0}
-          detail={null}
-          phaseSel={0}
-          agentSel={0}
-          scroll={0}
-          filter={null}
-          promptOpen={false}
-          rows={rows - 3}
-          cols={cols}
-          now={now()}
-        />
+        {panel.view}
         {state.replay ? <Text dimColor wrap="truncate">{state.replay.line}</Text> : null}
       </Box>
     );
@@ -512,11 +454,13 @@ function Help({ rows }: { rows: number }) {
           </Text>
           {section.keys.map(([chord, desc], i) => (
             <Text key={`${chord}-${i}`} wrap="truncate" dimColor={section.unavailable}>
-              {section.limits ? <Text dimColor>{"  · "}</Text> : (
-                <Text color={section.unavailable ? undefined : UI.info}>
-                  {`  ${chord.padEnd(12)}`}
-                </Text>
-              )}
+              {section.limits
+                ? <Text dimColor>{"  · "}</Text>
+                : (
+                  <Text color={section.unavailable ? undefined : UI.info}>
+                    {`  ${chord.padEnd(12)}`}
+                  </Text>
+                )}
               <Text dimColor={section.limits || section.unavailable}>{desc}</Text>
             </Text>
           ))}

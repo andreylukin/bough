@@ -51,8 +51,12 @@ import type { AppCtx, Db } from "../types.ts";
 import { resolveRerunScript, type ScriptSource } from "./journal.ts";
 import { extractMeta } from "./meta.ts";
 import {
+  type CallPos,
+  type Divergence,
+  emptyReplayPlan,
   isWorkflowLive,
   replayablePrefix,
+  replayAudit,
   type ReplayPlan,
   replayPlan,
   startWorkflow,
@@ -152,8 +156,8 @@ export function relaunchPreview(db: Db, sourceId: string): RelaunchPreview {
   const plan = replayPlan(db, sourceId);
   return {
     sourceId,
-    journaled: plan.length,
-    answers: plan.filter((s) => s && s.result !== null).length,
+    journaled: plan.steps.length,
+    answers: plan.steps.filter((s) => s.result !== null).length,
     replayablePrefix: replayablePrefix(plan),
   };
 }
@@ -267,10 +271,22 @@ export interface RelaunchReport {
   /** Answers the source run offered — the ceiling on `replayed`. */
   available: number;
   /**
-   * The first call whose key did not match the source's call at the same position, or
-   * `null` when the prefix held all the way. This is where replay stopped.
+   * The dispatch index of the call replay stopped at, or `null` when the prefix held
+   * all the way. "Call N of this run" — a human coordinate for a human line.
    */
   divergedAt: number | null;
+  /**
+   * Where replay stopped in the SCRIPT, and why: edited, moved, added, or unanswered.
+   * `null` when the prefix held.
+   *
+   * The structural coordinate is the load-bearing half. `divergedAt` is a dispatch
+   * index, and dispatch index is precisely the thing that is not reproducible across
+   * runs of a barrier-free `pipeline()` — quoting it alone is how a transposed position
+   * came to be reported as an edited prompt.
+   */
+  diverged: Divergence | null;
+  /** `diverged?.pos`, lifted so a client can sort or link on it without unpacking. */
+  divergedPos: CallPos | null;
   /**
    * Calls that ran live even though their key still matched the source at their own
    * position — the price of the prefix rule, stated rather than hidden. Every one of
@@ -305,26 +321,20 @@ export function relaunchReport(db: Db, runId: string): RelaunchReport {
   const run = db.getWorkflow(runId);
   if (!run) throw new NotFoundError(`workflow ${runId} not found`);
   const rows = db.listWorkflowAgents(runId);
-  const plan: ReplayPlan = run.resumeOf ? replayPlan(db, run.resumeOf) : [];
+  const plan: ReplayPlan = run.resumeOf ? replayPlan(db, run.resumeOf) : emptyReplayPlan();
 
   const counts = { replayed: 0, pending: 0, succeeded: 0, failed: 0, stopped: 0 };
   const livePrompts: string[] = [];
-  let divergedAt: number | null = null;
-  let forced = 0;
   for (const row of rows) {
     const where = bucket(row);
     counts[where]++;
-    if (where === "replayed") continue;
-    livePrompts.push(row.prompt);
-    const step = plan[row.idx];
-    if (step && step.key === row.key && step.result !== null) {
-      // Its key matched and the source had an answer, yet it ran: an earlier call
-      // diverged. That is the prefix rule's cost, and the only place it is countable.
-      forced++;
-    } else if (divergedAt === null) {
-      divergedAt = row.idx;
-    }
+    if (where !== "replayed") livePrompts.push(row.prompt);
   }
+  // The divergence and the forced count come from the ENGINE's own fold (`replayAudit`),
+  // not a second walk here. A report that re-derived the prefix rule its own way could
+  // disagree with the journal, and then the number that exists to expose a defect would
+  // be one.
+  const audit = replayAudit(plan, rows);
   return {
     runId,
     sourceId: run.resumeOf,
@@ -335,9 +345,11 @@ export function relaunchReport(db: Db, runId: string): RelaunchReport {
     succeeded: counts.succeeded,
     failed: counts.failed,
     stopped: counts.stopped,
-    available: plan.filter((s) => s && s.result !== null).length,
-    divergedAt,
-    forced,
+    available: plan.steps.filter((s) => s.result !== null).length,
+    divergedAt: audit.divergedAt,
+    diverged: audit.diverged,
+    divergedPos: audit.diverged?.pos ?? null,
+    forced: audit.forced,
     final: run.status !== "running" && run.status !== "paused",
     livePrompts,
   };
@@ -357,10 +369,13 @@ export function relaunchLine(r: RelaunchReport): string {
   if (!r.sourceId) return line;
   line += ` (${r.available} available from ${r.sourceId})`;
   if (r.available > 0 && r.replayed === 0) {
-    return `${line} — replayed NOTHING: the first call already differed`;
+    // WHY it replayed nothing, not just that it did. "every key changed" was wrong for a
+    // transposed position and right for an edit, and the two need opposite fixes.
+    return `${line} — replayed NOTHING: ${r.diverged?.reason ?? "the first call already differed"}`;
   }
-  if (r.divergedAt !== null) {
-    line += `; replay stopped at call ${r.divergedAt}`;
+  if (r.diverged !== null) {
+    line += `; replay stopped at ${r.diverged.pos} (call ${r.divergedAt}) — ` +
+      `${r.diverged.reason}`;
     if (r.forced > 0) {
       line += `, so ${r.forced} unchanged call${r.forced === 1 ? "" : "s"} ran live behind it`;
     }

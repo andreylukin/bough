@@ -27,7 +27,14 @@
  * guards is a bug, an unguarded row placed ahead of a guarded one is a bug, and
  * two rows with complementary guards is the design.
  *
- * FOURTH — **`key.super` is only believable under the kitty keyboard protocol.**
+ * FOURTH — **the panel's tab list is part of the keymap, and lives here.** Spec §15
+ * gives bough exactly one non-chat surface with direct-jump keys, so `TABS` is
+ * declared in this module and `Command` derives its `tab.*` members from it. A tab
+ * therefore cannot exist without a chord, cannot be documented without being bound,
+ * and cannot be reached by a second route: `Panel.tsx` imports this table and
+ * re-exports it, and this module imports nothing from `components/`.
+ *
+ * FIFTH — **`key.super` is only believable under the kitty keyboard protocol.**
  * Without it a terminal sends Cmd+←/→ as `CSI 1;9 C/D` and ink leaks bit 3 of the
  * modifier field into the meta flag, so those sequences are intercepted in
  * `mouse.ts` and delivered as nav-key events instead. `term.ts` decides which path
@@ -47,8 +54,14 @@ import { wordLeft, wordRight } from "./format.ts";
 /**
  * Which surface has the keyboard. Not a view stack: a mode is answered by exactly
  * one binding set, so a chord can never be handled twice on its way down.
+ *
+ * There is ONE non-chat surface — `panel` — because spec §15 says there is one:
+ * sessions, tree, changes, workflows, model, MCP, skills and theme are TABS of it,
+ * not modes beside it. The earlier draft of this table had a `tree` mode and a
+ * `workflows` mode, which is the shape the 3,618-line `App.tsx` grew out of: every
+ * surface with its own mode, its own way in, and its own escape.
  */
-export type UiMode = "chat" | "rail" | "ask" | "tree" | "workflows" | "help";
+export type UiMode = "chat" | "rail" | "ask" | "panel" | "help";
 
 export type Command =
   // -- global ---------------------------------------------------------------
@@ -57,9 +70,15 @@ export type Command =
   | "quit"
   | "help.open"
   | "help.close"
-  | "view.chat"
-  | "view.tree"
-  | "view.workflows"
+  // -- the one tabbed panel (spec §15) --------------------------------------
+  | "panel.toggle"
+  | "panel.close"
+  | "panel.next"
+  | "panel.prev"
+  /** The active tab's affirmative: open a session, grant a server, keep a theme. */
+  | "panel.confirm"
+  /** One per tab, derived from `TABS` so a tab cannot exist without a chord. */
+  | TabCommand
   // -- composing ------------------------------------------------------------
   | "send"
   | "send.queue"
@@ -97,17 +116,63 @@ export type Command =
   | "ask.pick"
   | "ask.send"
   | "ask.decline"
-  // -- list navigation, shared by the tree and the run view -----------------
+  // -- list navigation, shared by every list the panel holds ----------------
   | "move.up"
   | "move.down"
   | "move.in"
   | "move.out"
-  | "open"
   // -- workflow steering (spec §8) -----------------------------------------
   | "wf.pause"
   | "wf.resume"
   | "wf.stop"
   | "wf.rerun";
+
+// ---------------------------------------------------------------------------
+// The tabs of the one panel
+// ---------------------------------------------------------------------------
+
+/**
+ * Every non-chat surface, as data (spec §15).
+ *
+ * It lives HERE, in the keymap, and not in `Panel.tsx`, because a tab and its
+ * direct-jump chord are the same fact: `TABS` is what `Command` derives `tab.*`
+ * from, what `BINDINGS` binds, and what the help overlay prints. Adding a surface
+ * is adding a row — it cannot add a mode, an open flag, or an escape path, and it
+ * cannot ship without a key. `Panel.tsx` imports this and re-exports it; the
+ * dependency points that way and never back, so this module stays free of ink.
+ */
+export const TABS = [
+  { id: "sessions", title: "sessions", chord: "ctrl+s", desc: "conversations, newest first" },
+  { id: "tree", title: "tree", chord: "ctrl+f", desc: "what branched from what" },
+  { id: "changes", title: "changes", chord: "ctrl+d", desc: "what this session changed" },
+  { id: "workflows", title: "workflows", chord: "ctrl+w", desc: "workflow runs" },
+  { id: "model", title: "model", chord: "ctrl+o", desc: "frontier · cheap · thinking depth" },
+  { id: "mcp", title: "mcp", chord: "ctrl+p", desc: "servers, grants, authorization" },
+  { id: "skills", title: "skills", chord: "ctrl+k", desc: "installed /skills" },
+  { id: "theme", title: "theme", chord: "ctrl+y", desc: "browse live; leaving reverts" },
+] as const satisfies readonly { id: string; title: string; chord: string; desc: string }[];
+
+export type TabDef = (typeof TABS)[number];
+export type PanelTab = TabDef["id"];
+export type TabCommand = `tab.${PanelTab}`;
+
+/** Tab ids in bar order. Derived, so the bar and the keymap cannot disagree. */
+export const PANEL_TABS: readonly PanelTab[] = TABS.map((t) => t.id);
+
+/** Opens and closes the panel. Never names a tab — that is what the others are for. */
+export const PANEL_TOGGLE = "ctrl+t";
+
+/** The tab a chord jumps to, or `null`. */
+export function tabForChord(chord: string): PanelTab | null {
+  return TABS.find((t) => t.chord === chord)?.id ?? null;
+}
+
+/** The tab a `tab.*` command names, or `null` for every other command. */
+export function tabForCommand(command: Command): PanelTab | null {
+  if (!command.startsWith("tab.")) return null;
+  const id = command.slice(4) as PanelTab;
+  return PANEL_TABS.includes(id) ? id : null;
+}
 
 // ---------------------------------------------------------------------------
 // Chords (pure)
@@ -242,6 +307,46 @@ export interface Binding {
   label?: string;
 }
 
+/** The help section the direct-jump chords are printed under. */
+const PANEL_SECTION = "the panel — ^t, or jump straight to a tab";
+
+/**
+ * Chords that reach the panel from outside it and move between its tabs inside it.
+ *
+ * The four chords that a composer already owns (`^f` forward, `^d` delete, `^w`
+ * word-back, `^k` kill) are guarded on an empty draft, so typing keeps working and
+ * a jump is still one key when there is nothing to type. The other five collide
+ * with nothing and are therefore NOT guarded: a panel you cannot open because you
+ * have a half-written message is a panel with a hidden precondition.
+ *
+ * Generated from `TABS` rather than written out, which is what makes "every tab has
+ * a chord" true by construction instead of by review.
+ */
+function panelChords(): Binding[] {
+  const composerOwned = new Set(["ctrl+f", "ctrl+d", "ctrl+w", "ctrl+k"]);
+  const rows: Binding[] = [];
+  for (
+    const [chord, command, desc] of [
+      [PANEL_TOGGLE, "panel.toggle", "open / close the panel"] as const,
+      ...TABS.map((t) => [t.chord, `tab.${t.id}` as TabCommand, t.desc] as const),
+    ]
+  ) {
+    // Documented once, on the chat row — the overlay is read from chat.
+    rows.push({
+      mode: "chat",
+      chord,
+      command,
+      ...(composerOwned.has(chord) ? { when: ["emptyDraft" as Guard] } : {}),
+      section: PANEL_SECTION,
+      desc,
+    });
+    // A direct jump must work from anywhere it is not being typed into.
+    rows.push({ mode: "panel", chord, command });
+    rows.push({ mode: "rail", chord, command });
+  }
+  return rows;
+}
+
 const digits = (mode: UiMode | "*", command: Command, section: string, desc: string): Binding[] =>
   Array.from({ length: 9 }, (_v, i) => ({
     mode,
@@ -341,23 +446,8 @@ export const BINDINGS: Binding[] = [
     desc: "scroll forward",
   },
 
-  // -- panels ---------------------------------------------------------------
-  {
-    mode: "chat",
-    chord: "ctrl+f",
-    command: "view.tree",
-    when: ["emptyDraft"],
-    section: "panels — need an empty draft",
-    desc: "the conversation tree",
-  },
-  {
-    mode: "chat",
-    chord: "ctrl+w",
-    command: "view.workflows",
-    when: ["emptyDraft"],
-    section: "panels — need an empty draft",
-    desc: "workflow runs",
-  },
+  // -- the one tabbed panel -------------------------------------------------
+  ...panelChords(),
 
   // -- editing the line -----------------------------------------------------
   {
@@ -466,71 +556,79 @@ export const BINDINGS: Binding[] = [
     desc: "decline (the program catches it)",
   },
 
-  // -- the conversation tree ------------------------------------------------
-  { mode: "tree", chord: "k", command: "move.up", section: "tree", label: "j/k ↑↓", desc: "move" },
-  { mode: "tree", chord: "j", command: "move.down" },
-  { mode: "tree", chord: "up", command: "move.up" },
-  { mode: "tree", chord: "down", command: "move.down" },
-  { mode: "tree", chord: "enter", command: "open", section: "tree", desc: "open the conversation" },
+  // -- inside the panel -----------------------------------------------------
+  // One set of navigation keys for eight tabs. What ⏎ affirms depends on the tab
+  // (`PanelHost.tsx` dispatches it), which is why there is one `panel.confirm` and
+  // not one command per tab: the tab already decides, and a second place that
+  // decides is a second place to disagree.
   {
-    mode: "tree",
-    chord: "right",
-    command: "move.in",
-    section: "tree",
-    label: "→ ←",
-    desc: "drill into delegated work",
-  },
-  { mode: "tree", chord: "left", command: "move.out" },
-  { mode: "tree", chord: "esc", command: "view.chat", section: "tree", desc: "back to chat" },
-  { mode: "tree", chord: "ctrl+f", command: "view.chat" },
-
-  // -- workflow runs (spec §8: pause, stop, relaunch from the journal) ------
-  {
-    mode: "workflows",
-    chord: "k",
+    mode: "panel",
+    chord: "up",
     command: "move.up",
-    section: "workflows",
-    label: "j/k ↑↓",
+    section: "inside the panel",
+    label: "↑↓ j/k",
     desc: "move",
   },
-  { mode: "workflows", chord: "j", command: "move.down" },
-  { mode: "workflows", chord: "up", command: "move.up" },
-  { mode: "workflows", chord: "down", command: "move.down" },
+  { mode: "panel", chord: "down", command: "move.down" },
+  { mode: "panel", chord: "k", command: "move.up" },
+  { mode: "panel", chord: "j", command: "move.down" },
   {
-    mode: "workflows",
+    mode: "panel",
+    chord: "tab",
+    command: "panel.next",
+    section: "inside the panel",
+    label: "⇥ ⇧⇥",
+    desc: "next / previous tab",
+  },
+  { mode: "panel", chord: "shift+tab", command: "panel.prev" },
+  {
+    mode: "panel",
     chord: "enter",
-    command: "open",
-    section: "workflows",
-    desc: "what this run replayed",
+    command: "panel.confirm",
+    section: "inside the panel",
+    desc: "open · grant · keep — what the tab affirms",
   },
   {
-    mode: "workflows",
+    mode: "panel",
+    chord: "right",
+    command: "move.in",
+    section: "inside the panel",
+    label: "→ ←",
+    desc: "drill into delegated work (tree)",
+  },
+  { mode: "panel", chord: "left", command: "move.out" },
+  {
+    mode: "panel",
+    chord: "esc",
+    command: "panel.close",
+    section: "inside the panel",
+    desc: "back to chat",
+  },
+
+  // -- workflow runs (spec §8: pause, stop, relaunch from the journal) ------
+  // Bound in the panel and acted on only by the workflows tab. They are letters
+  // rather than chords because the panel has the keyboard when it is open.
+  {
+    mode: "panel",
     chord: "p",
     command: "wf.pause",
-    section: "workflows",
+    section: "the workflows tab",
     desc: "pause · in-flight agents finish",
   },
-  { mode: "workflows", chord: "P", command: "wf.resume", section: "workflows", desc: "resume" },
+  { mode: "panel", chord: "P", command: "wf.resume", section: "the workflows tab", desc: "resume" },
   {
-    mode: "workflows",
+    mode: "panel",
     chord: "x",
     command: "wf.stop",
-    section: "workflows",
+    section: "the workflows tab",
     desc: "stop · pause first to keep work",
   },
   {
-    mode: "workflows",
+    mode: "panel",
     chord: "r",
     command: "wf.rerun",
-    section: "workflows",
+    section: "the workflows tab",
     desc: "relaunch from the journal",
-  },
-  {
-    mode: "workflows",
-    chord: "esc",
-    command: "view.chat",
-    section: "workflows",
-    desc: "back to chat",
   },
 
   // -- the overlay itself ---------------------------------------------------
@@ -604,7 +702,6 @@ export const UNAVAILABLE: HelpSection = {
   unavailable: true,
   keys: [
     ["^r", "no reverse search yet"],
-    ["^y", "esc esc clears; ↑ restores"],
     ["^z", "no suspend · ^c ^c quits"],
     ["⌥d", "use ^k"],
   ],

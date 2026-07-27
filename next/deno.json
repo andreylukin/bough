@@ -3,7 +3,8 @@
     "check": "deno check .",
     "test": "deno test --allow-all",
     "dev": "deno run --watch --allow-all server/main.ts",
-    "tui": "deno run --no-prompt --allow-net=127.0.0.1 --allow-env --allow-read --allow-write=/dev/tty,$HOME/.bough --allow-sys --allow-run tui/main.tsx"
+    "tui": "deno run --no-prompt --allow-net=127.0.0.1 --allow-env --allow-read --allow-write=/dev/tty,$HOME/.bough --allow-sys --allow-run tui/main.tsx",
+    "exec": "deno run --no-prompt --allow-net=127.0.0.1 --allow-env --allow-read cli/exec.ts"
   },
   "imports": {
     "zod": "npm:zod@3.25.76",

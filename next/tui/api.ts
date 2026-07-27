@@ -45,6 +45,10 @@ import type {
   WorkflowRun,
   WorkflowStatus,
 } from "../schema/parts.ts";
+// T10.4 — the wire shape `tui/theme.ts` already declares for `GET /theme`. Imported
+// from there rather than from `server/theme.ts`: the TUI process must not pull a
+// server module in for a type.
+import type { ThemeColors, ThemeState } from "./theme.ts";
 import type {
   CompactBody,
   CreateScheduleBody,
@@ -534,6 +538,34 @@ export function createApi(options: ApiOptions = {}) {
     search: (q: string, opts: { sessionId?: string; limit?: number } = {}) =>
       get<SearchResult>(`/search${query({ q, sessionId: opts.sessionId, limit: opts.limit })}`),
     reindex: () => post<ReindexResult>("/search/reindex"),
+
+    // -- theme (T10.4) ---------------------------------------------------------
+    //
+    // The transport half of "browsing never commits" (`tui/theme.ts`). The picker
+    // paints previews entirely client-side and touches none of these until the user
+    // keeps one, which is why `commit()` takes `persist` as an injected function
+    // rather than importing this module: only the composition root decides that
+    // adopting a theme should outlive the process.
+    //
+    // `getTheme` answers `{theme, defaults}` and never 404s — nothing stored IS the
+    // default palette, which is an answer (`server/theme.ts`). `deleteTheme` is what
+    // the "Default" preset means, since the empty partial is a reset rather than a
+    // palette; both it and `putTheme` return the same document `getTheme` does, so a
+    // caller repaints from the response instead of re-fetching.
+
+    getTheme: () => get<ThemeState>("/theme"),
+    putTheme: (theme: { name: string; colors: ThemeColors }) => put<ThemeState>("/theme", theme),
+    deleteTheme: () => del<ThemeState>("/theme"),
+
+    // -- composer ghost text (T10.1) -------------------------------------------
+    //
+    // The cheap tier predicting the user's next message. ALWAYS resolves — `{ghost:
+    // null}` covers every failure there is — so the composer needs no error path and
+    // must not render one: a suggestion that does not arrive is the feature working
+    // as specified (spec §12).
+
+    ghostText: (sessionId: string, prefix = "") =>
+      post<{ ghost: string | null }>(`/sessions/${seg(sessionId)}/ghost`, { prefix }),
   };
 }
 

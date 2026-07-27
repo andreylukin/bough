@@ -55,12 +55,22 @@ import {
 } from "../workflow/control.ts";
 import type { WithRelaunch } from "../workflow/relaunch.ts"; // T5.7
 import { recoverOrphanedTurns } from "../turn/state.ts";
-import type { AppCtx } from "../types.ts";
+import type { AppCtx, TurnCtx } from "../types.ts";
+import { // T10.2
+  type ActiveSkills,
+  defaultSources,
+  listSkills,
+  turnSkills,
+  widenGrant,
+} from "../skills/skills.ts";
 import { syncScriptMirrors } from "../workflow/journal.ts";
 import { guidelineAdvice } from "../workflow/report.ts"; // T5.8
 import { MAX_AGENTS_PER_RUN, recoverOrphanedWorkflows, workflowConcurrency } from "../workflow/run.ts";
 import { ensureSavedDir, savedDir } from "../workflow/saved.ts"; // T5.8
 import { structuredWorkflowCtx, type WithStructuredWorkflow } from "../workflow/schema.ts";
+import { cheapActivity, watchActivity } from "../worker/activity.ts"; // T10.1
+import { cheapGhost } from "../worker/ghost.ts"; // T10.1
+import { CHEAP_MODEL_ENV, cheapModel, cheapTitle, watchTitles } from "../worker/titles.ts"; // T10.1
 import { createHandler } from "./app.ts";
 import { indexRecoveredMessages, searchSafeDb } from "./search.ts"; // T8.6
 import type { WithTurnStarter } from "./sessions.ts";
@@ -710,3 +720,195 @@ console.log(
   "keyword search: GET /search?q= over every transcript — bare words are ANDed, " +
     'quote a phrase as "like this" (FTS, no embeddings); POST /search/reindex rebuilds it',
 );
+
+// T10.4 — theming. NOTHING is constructed here, and that is the whole design: a theme is
+// a JSON file read on request and served to whoever asks (spec §16, "a theme is pure
+// data, no rebuild"). No cache, because the file is the source of truth and a cached
+// palette is how a `PUT` lands and the next `GET` denies it; no boot validation, because
+// a corrupt file resolves to the default palette rather than to an error
+// (`server/theme.ts`). The three routes are appended in `app.ts`.
+
+// T10.1 — the cheap tier: auto session titles, composer ghost text, live activity
+// blurbs. THREE lines, and every one of them is fire-and-forget by construction.
+//
+// This is the wiring plan §8.4 calls a risk — "the cheap tier bills continuously; a
+// synchronous failure there stalls turns for a cosmetic feature" — so the shape matters
+// more than usual:
+//
+//   - `ctx.cheap` is the only thing installed on the context. It is OPTIONAL in `AppCtx`
+//     on purpose: every reader (`history/compact.ts`'s branch rename, the two watchers
+//     below, the ghost route) degrades to doing nothing when it is absent, which is what
+//     keeps every test that builds its own ctx hermetic and offline with no stub to
+//     remember (plan §7).
+//   - All three methods resolve `null` on failure and never reject. That is enforced
+//     structurally rather than by convention: they share one primitive, `cheapText`,
+//     which has no throwing branch and carries a deadline, so a missing API key, a
+//     provider 500 and a connection that never answers are the same non-event
+//     (`worker/titles.ts`).
+//   - Nothing here is ever awaited by a turn. Titles and blurbs are BUS LISTENERS, so
+//     they hang off events that are already published and cost the turn runner nothing;
+//     ghost text is its own HTTP request from the composer and touches no turn at all.
+//
+// The model is read per call from `BOUGH_CHEAP_MODEL` (default `claude-haiku-4-5`),
+// never from `ctx.model`: spec §12's two tiers are chosen separately in the picker, and
+// a user pinned to Opus for the coding work must not pay Opus rates to name a session.
+ctx.cheap = {
+  title: (firstMessage) => cheapTitle(firstMessage),
+  ghostText: (prefix) => cheapGhost(prefix),
+  activity: (recent) => cheapActivity(recent),
+};
+
+// Auto titles. Without this line a session created untitled stays untitled forever: the
+// title is generated from the FIRST user message, and this is the subscription that sees
+// it. The unsubscribes are discarded deliberately — both watchers live for the life of
+// the process, and holding a thunk nobody calls would only imply otherwise.
+watchTitles(ctx);
+
+// Activity blurbs, and the invariant plan §6.11 names: ONE in-flight blurb per session,
+// rounds that land while it is busy are DROPPED rather than queued. The ledger lives in
+// the watcher's closure, so it is per-subscription rather than global — which is what
+// lets a test run its own watcher over its own bus without inheriting this one's state.
+watchActivity(ctx);
+
+console.log(
+  `cheap tier: ${cheapModel()} (${CHEAP_MODEL_ENV}) — auto titles, composer ghost text ` +
+    "(POST /sessions/:id/ghost), live activity blurbs. Fire-and-forget: every failure is " +
+    "silent and none of them can delay a turn.",
+);
+
+// T10.2 — skills. One rebuilt starter, and it carries BOTH halves of what a `/name`
+// invocation means: the skill's instructions in this turn's prompt, and the MCP
+// servers it lists granted to this turn (spec §16 — the invocation IS the grant).
+//
+// The starter is REBUILT rather than edited above, the same append-only discipline as
+// every block before it: identical wiring to T7.4's, plus the two seams below. No new
+// host function is bridged and nothing is added to `granted` — a skill is instructions,
+// not a verb.
+//
+// WHY THE STARTER IS BUILT PER START. Every other block installs one starter for the
+// life of the process, because everything it wires is fixed for the life of the
+// process. Skills are not: which ones apply is a fact about the message that opened
+// the turn, and `TurnDeps.assemble` — the only seam that reaches the prompt — receives
+// a `PromptInput` with no session on it. So the session id is captured HERE, where the
+// starter already has it, and the skills themselves are resolved INSIDE the closure at
+// assemble time. Both halves matter: capturing the id makes the resolution possible at
+// all, and resolving late is what makes a queued drain (`turn/queue.ts`) load the
+// skills the QUEUED message named rather than the ones the previous turn used.
+//
+// Constructing three tier starters per posted message is object construction with no
+// I/O (`hostfn/delegate.ts`); the alternative is a module-level "current turn" holder
+// read by one seam and written by another, which is a global that breaks silently the
+// day the runner reorders two lines.
+//
+// WHAT A SUBAGENT INHERITS. A child turn is launched with deps derived from this same
+// wiring, so it inherits its spawner's skill bodies along with its MCP grant — which is
+// the same rule spec §7 states for grants, and the sane one: a delegate doing part of
+// skill-directed work should be reading the same instructions. It does not re-resolve
+// from its own task text.
+//
+// NOTHING IS CACHED, and nothing is constructed at boot. `skills/skills.ts` re-walks
+// the two source directories per turn, so a SKILL.md edited on disk takes effect on the
+// next message with no restart — the same property the MCP registry has and for the
+// same reason. The two routes are appended in `app.ts`.
+
+/**
+ * Resolving this turn's skills, with a floor under it.
+ *
+ * `TurnDeps.assemble` is called OUTSIDE the runner's try/catch (`turn/runner.ts`),
+ * so a throw from here would escape `drive` before the turn row exists and leave the
+ * pending supervisor message closed by nobody — a session the UI shows as busy
+ * forever, which is the one failure the whole turn milestone is about. Reading two
+ * directories is not worth that risk: a failure logs and the turn runs without
+ * skills, which is exactly what it did before this block existed.
+ */
+const skillsFor = (sessionId: string): ActiveSkills => {
+  try {
+    return turnSkills(ctx.db, sessionId);
+  } catch (error) {
+    console.error(`could not resolve skills for session ${sessionId}:`, error);
+    return { skills: [], servers: [], names: [], notes: [] };
+  }
+};
+
+/**
+ * `bindTurnGrant` plus whatever servers this turn's skills asked for.
+ *
+ * The inherited case is checked BEFORE binding, because that is the only moment the
+ * two are distinguishable: a subagent arrives with its spawner's snapshot already on
+ * its ctx (`agents/subagent.ts`), and widening it here would let a delegate acquire a
+ * server its spawner never had — the one thing `requireGranted` promises cannot happen.
+ * Its snapshot already contains the spawner's skill servers, so nothing is lost.
+ */
+const grantedCtxFor = (turnCtx: TurnCtx): TurnCtx => {
+  const inherited = turnCtx.mcpGrant !== undefined;
+  const bound = bindTurnGrant(turnCtx);
+  if (inherited) return bound;
+  return widenGrant(bound, skillsFor(turnCtx.sessionId).servers);
+};
+
+const skillAwareStarter = (sessionId: string) =>
+  createDelegatingTurnStarter({
+    base: {
+      survivingJobs: (id) => jobs.runningIds(id),
+      granted: [
+        ...BASE_HOST_FNS,
+        "workflow",
+        "schedule",
+        "image",
+        "fetch",
+        "ask",
+        "state",
+        "artifact",
+        "mcp",
+        "mcpStatus",
+        "lsp",
+      ],
+      // Resolved per turn, like `lsp` beside it. `notes` carries the skills that were
+      // NAMED and could not be loaded: a malformed SKILL.md must not make a `/name`
+      // vanish silently, and the model is the only thing in the loop that can tell the
+      // user their file is broken (`skills/skills.ts`).
+      assemble: (input) => {
+        const active = skillsFor(sessionId);
+        return assemblePrompt({
+          ...input,
+          lsp: lspAvailable(),
+          skills: active.skills,
+          notes: [...(input.notes ?? []), ...active.notes],
+        });
+      },
+    },
+    deliver: createNoteDeliverer(),
+    extend: (turnCtx) => ({
+      ...(delegationTier(db, turnCtx.sessionId) === "top"
+        ? { workflow: createWorkflowHostFn(turnCtx, workflowControl) }
+        : {}),
+      ...createScheduleHostFn(turnCtx),
+      ...createImageHostFn(turnCtx),
+      ...createFetchHostFn(turnCtx),
+      ...createAskHostFn(turnCtx),
+      ...createStateHostFn(turnCtx),
+      ...createArtifactHostFn(turnCtx),
+      ...createMcpHostFns(grantedCtxFor(turnCtx)),
+      ...createLspHostFn(turnCtx),
+    }),
+  });
+
+ctx.startTurn = (appCtx, session, message) => {
+  skillAwareStarter(session.id)(appCtx, session, message);
+};
+
+// The boot report. Skills are files, so the count is the only thing that distinguishes
+// "no skills installed" from "the directory the server is reading is not the one you
+// wrote into" — and a malformed SKILL.md is named here rather than discovered later as
+// a `/name` that quietly did nothing.
+{
+  const installed = listSkills();
+  const broken = installed.filter((s) => s.error);
+  console.log(
+    `${installed.length} skill(s): ${
+      installed.length > 0 ? installed.map((s) => `/${s.name}`).join(", ") : "(none)"
+    } — read from ${defaultSources().map((s) => `${s.source} ${s.dir}`).join(", ")}. ` +
+      `Name one in a message to load it; GET /skills lists them.`,
+  );
+  for (const s of broken) console.log(`skill /${s.name} (${s.dir}) will not load: ${s.error}`);
+}
