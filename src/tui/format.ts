@@ -623,6 +623,52 @@ export function sessionLabel(title: string | null | undefined, workspace?: strin
   return base || "(untitled)";
 }
 
+/**
+ * A provider's retry reason, reduced to something a person can read.
+ *
+ * The raw value is whatever the provider sent, and providers send JSON. A real
+ * one, straight onto a first-time user's screen mid-turn:
+ *
+ *   retrying (attempt 1) — openrouter: 429 {"error":{"message":"Provider returned e…
+ *
+ * — a truncated JSON blob, in a notice, to someone who is already unsure whether
+ * they have broken something. The useful content of that string is "rate limited";
+ * everything after the brace is noise that also crowds out the part that is not.
+ *
+ * Deliberately conservative: it lifts a nested `message` when there is one,
+ * otherwise it keeps the prose and drops the payload. It never tries to classify
+ * an error it does not recognize — an unfamiliar reason is shown, just shorter.
+ */
+export function humanizeRetryReason(raw: string, max = 60): string {
+  const text = (raw ?? "").trim();
+  if (text === "") return "no reason given";
+
+  // A well-known status is worth naming, because the number is the whole meaning.
+  const status = /\b(429|408|500|502|503|504)\b/.exec(text)?.[1];
+  const named: Record<string, string> = {
+    "429": "rate limited",
+    "408": "request timed out",
+    "500": "provider error",
+    "502": "provider unreachable",
+    "503": "provider overloaded",
+    "504": "provider timed out",
+  };
+
+  // The provider's own sentence, if it buried one in the JSON.
+  const nested = /"message"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(text)?.[1];
+  // The status token itself is not prose: "503" next to "provider overloaded" is
+  // the same fact twice, and the name is the readable half.
+  const prose = (nested ?? text.split(/[{[]/)[0])
+    .replace(status ? new RegExp(`\\b${status}\\b`, "g") : /(?!)/g, "")
+    .replace(/\s+/g, " ").trim()
+    .replace(/^[:\-\s]+|[:\-\s]+$/g, "");
+
+  const prefix = status ? named[status] : "";
+  const body = prose && prose !== prefix ? prose : "";
+  const joined = prefix && body ? `${prefix} · ${body}` : prefix || body || text;
+  return joined.length > max ? `${joined.slice(0, max - 1).trimEnd()}…` : joined;
+}
+
 /** `/Users/me/repos/x` → `~/repos/x`. Absolute paths eat a header; `~` does not. */
 export function shortenPath(path: string, home?: string | null): string {
   const h = (home ?? "").replace(/\/+$/, "");

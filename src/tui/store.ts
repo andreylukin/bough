@@ -50,6 +50,7 @@ import type { SessionChangeSet } from "../server/changes.ts";
 import type { Api, ReplayReport, SessionRow, SessionSnapshot, WorkflowSummary } from "./api.ts";
 import { api as defaultApi } from "./api.ts";
 import { connectEvents, type EventStream } from "./events.ts";
+import { humanizeRetryReason } from "./format.ts";
 
 // ---------------------------------------------------------------------------
 // State
@@ -380,7 +381,9 @@ function applyEvent(state: TuiState, raw: BoughEvent): TuiState {
       return {
         ...state,
         streaming: withoutKey(state.streaming, messageId),
-        notice: mine ? `retrying (attempt ${attempt}) — ${reason}` : state.notice,
+        notice: mine
+          ? `retrying (attempt ${attempt}) — ${humanizeRetryReason(reason)}`
+          : state.notice,
       };
     }
 

@@ -14,6 +14,7 @@ import {
   fmtUsd,
   fuzzyPositions,
   fuzzyScore,
+  humanizeRetryReason,
   linkAt,
   md,
   meterLine,
@@ -497,4 +498,27 @@ Deno.test("fmtDuration stays readable from one second to hours", () => {
   assert.equal(fmtDuration(64_000), "1m04s");
   assert.equal(fmtDuration(3_600_000), "1h00m");
   assert.equal(fmtDuration(-5), "0s");
+});
+
+Deno.test("a retry reason is reduced to something a person can read", () => {
+  // The real one, off a first-run user's screen mid-turn.
+  assert.equal(
+    humanizeRetryReason('openrouter: 429 {"error":{"message":"Provider returned error"}}'),
+    "rate limited · Provider returned error",
+  );
+  // A bare status still names itself — the number IS the meaning.
+  assert.equal(humanizeRetryReason("503"), "provider overloaded");
+  // Prose with no payload passes through unchanged.
+  assert.equal(humanizeRetryReason("connection reset"), "connection reset");
+  // An unrecognized reason is shown, just shorter — never classified by guess.
+  assert.equal(humanizeRetryReason("something odd happened"), "something odd happened");
+  assert.equal(humanizeRetryReason(""), "no reason given");
+  // Always bounded, so it cannot crowd the notice row.
+  const long = humanizeRetryReason("x".repeat(500));
+  assert.ok(long.length <= 60, long.length.toString());
+  // No JSON ever reaches the screen.
+  for (const raw of ['{"error":{"code":429}}', 'openrouter: 500 {"a":[1,2]}', "429 {}"]) {
+    const out = humanizeRetryReason(raw);
+    assert.ok(!out.includes("{") && !out.includes('"'), `leaked JSON: ${out}`);
+  }
 });

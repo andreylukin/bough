@@ -76,6 +76,18 @@ export interface ChatProps {
   decorate?: (text: string, line: VLine, index: number) => string;
   /** Shown instead of the transcript when the session has no messages yet. */
   placeholder?: string;
+  /**
+   * The second empty-state line: what bough will actually do to this machine.
+   *
+   * Spec §2 says bough "states this plainly rather than implying safety it does
+   * not provide", and the README leads with it in bold — but the app said it in
+   * exactly one place, forty-odd rows down the `?` overlay under "won't do". A
+   * cautious first-time user pressed ↓ eighteen times to find out that their files
+   * get edited without confirmation, which is not stating it plainly. The empty
+   * state is the one screen that exists BEFORE anything has happened, and it was
+   * seventeen blank rows.
+   */
+  posture?: string;
 }
 
 export function Chat(
@@ -93,6 +105,7 @@ export function Chat(
     notice,
     decorate,
     placeholder = "type to start · the agent writes one program per round",
+    posture = "it runs as you, with your authority — no sandbox, and edits land in your files",
   }: ChatProps,
 ) {
   const body = Math.max(1, height);
@@ -107,10 +120,11 @@ export function Chat(
           ? (
             <>
               {Array.from(
-                { length: Math.max(0, body - 1) },
+                { length: Math.max(0, body - 2) },
                 (_v, i) => <Text key={`pad-${i}`}>{" "}</Text>,
               )}
-              <Text dimColor>{placeholder}</Text>
+              <Text dimColor wrap="truncate">{placeholder}</Text>
+              <Text color={UI.warn} wrap="truncate">{posture}</Text>
             </>
           )
           : (
