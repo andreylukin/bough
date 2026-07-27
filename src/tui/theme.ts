@@ -23,13 +23,14 @@
  * theme cannot land in half the screen. `format.ts` deliberately does not import this
  * module — the dependency points this way, never back.
  *
- * KNOWN GAP, stated rather than faked: there is **no `/theme` route** yet
- * (`server/theme.ts` is T10.4) and therefore no `api.getTheme`/`putTheme`. Nothing in
- * this file fetches or persists; `ThemeState` is the shape the server will serve, and
- * `createThemePreview({persist})` takes the writer as an injected function so wiring
- * it later is one line in the composition root rather than an edit here. Until then a
- * committed theme lasts for the session, which is a visible limitation and not a
- * silent one.
+ * FOURTH — **nothing in this file fetches or persists, and that is still true now
+ * that `/theme` exists.** `ThemeState` is the shape `server/theme.ts` serves;
+ * `createThemePreview({current, persist})` takes the boot value and the writer as
+ * injected parameters, and `tui/main.tsx` supplies both — it fetches the theme before
+ * the first frame and paints it, and `commit()` writes the kept preset back. Called
+ * with neither, the preview still works and the choice lasts for the process, which
+ * is what a fixture-driven test wants and what this module degraded to before the
+ * route landed.
  *
  * Ported from `src/tui/theme.ts` (palette, presets, SGR helpers). The preview
  * controller is new: the old tree scattered preview/revert across `App.tsx`'s key

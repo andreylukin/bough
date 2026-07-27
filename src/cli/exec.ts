@@ -47,13 +47,13 @@
  *       --timeout SECS    give up after SECS (default 900); exits 1
  *       --port N          server port (default BOUGH_PORT, else 4321)
  *
- * KNOWN GAP, deliberately not papered over: on timeout this client cannot stop
- * the turn it abandoned. The old tree posted `/sessions/:id/interrupt`; the
- * rewrite's route table has no interrupt route yet (`turn/runner.ts` exports
- * `interruptTurn`, nothing exposes it over HTTP — `tui/api.ts` reports the same
- * gap). Rather than POST a path that 404s and print a misleading "interrupted",
- * the timeout path says plainly that the turn is still running server-side. When
- * the route lands, the one place to call it is marked below.
+ * Fourth: **a timeout STOPS the turn it abandoned.** `--timeout` elapsing used to
+ * leave a turn running server-side, spending, with the next command against that
+ * session queued behind it — the route to stop it did not exist. It does now
+ * (`POST /sessions/:id/interrupt`, `server/turns.ts`), so the timeout path raises it
+ * on a short deadline of its own and reports what actually happened rather than what
+ * was intended. The exit code does not move: a turn this client gave up on did not
+ * complete, whether or not the stop landed.
  */
 import type { Session, TurnStatus } from "../schema/parts.ts";
 import type { MessageDeltaData, MessageRetryData, TurnFinishedData } from "../schema/events.ts";
@@ -467,16 +467,20 @@ export async function runExec(argv: readonly string[], deps: ExecDeps): Promise<
     await cancel(reader);
 
     if (status === "timeout") {
-      // WHERE THE INTERRUPT GOES once a route exists (see the header). Until then
-      // saying nothing would be worse than saying this: the turn is still running,
-      // still spending, and the next command against this session will queue
-      // behind it.
+      // Stop what we walked away from. On its OWN deadline, because the run's
+      // deadline has already fired by definition and its signal is aborted — reusing
+      // it would abort this request before it was sent. Best-effort in both
+      // directions: a stop that fails is reported and changes nothing else, since the
+      // turn is unfinished either way.
+      const stopped = await stopTurn(api, session.id, deps);
       deps.warn(
         timedOut
-          ? `timed out after ${
-            parsed.timeoutMs / 1000
-          }s — the turn is still running in session ${session.id}`
-          : `the event stream closed before the turn finished — session ${session.id}`,
+          ? `timed out after ${parsed.timeoutMs / 1000}s — ${
+            stopped ? "interrupted" : "could NOT interrupt"
+          } the turn in session ${session.id}`
+          : `the event stream closed before the turn finished — ${
+            stopped ? "interrupted" : "could NOT interrupt"
+          } the turn in session ${session.id}`,
       );
     } else if (error) {
       deps.warn(`turn ${status}: ${error}`);
@@ -516,6 +520,38 @@ export async function runExec(argv: readonly string[], deps: ExecDeps): Promise<
     }
 
     return ok ? 0 : 1;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** How long the abandon-time interrupt gets. Short: nobody is waiting on the answer. */
+const INTERRUPT_TIMEOUT_MS = 5_000;
+
+/**
+ * Raise the user interrupt on a turn this client is giving up on (spec §5).
+ *
+ * Returns whether a turn was actually signalled. `false` covers three different
+ * things — the request failed, the server said nothing was running, the deadline
+ * elapsed — and the caller deliberately does not distinguish them: all three mean
+ * "do not claim it was stopped", which is the only claim worth being careful about.
+ */
+async function stopTurn(api: string, sessionId: string, deps: ExecDeps): Promise<boolean> {
+  const stop = new AbortController();
+  const timer = setTimeout(() => stop.abort(), INTERRUPT_TIMEOUT_MS);
+  try {
+    const res = await deps.fetchFn(`${api}/sessions/${sessionId}/interrupt`, {
+      method: "POST",
+      signal: stop.signal,
+    });
+    if (!res.ok) {
+      await res.body?.cancel();
+      return false;
+    }
+    const body = await res.json() as { interrupted?: boolean };
+    return body.interrupted === true;
+  } catch {
+    return false;
   } finally {
     clearTimeout(timer);
   }

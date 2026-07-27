@@ -400,8 +400,26 @@ const pipeline = (
         // `prev` is read before the frame is entered, so the value threaded between
         // stages is unaffected by the coordinate machinery.
         const carried = prev;
+        // STAGE-MAJOR, not item-major. The coordinate is the frontier the replay
+        // prefix is compared against, so its order has to be the CAUSAL order or the
+        // frontier stops meaning anything.
+        //
+        // Item-major ([...base, index, s]) put every cell of item 0 before any cell of
+        // item 1. But pipeline has no barrier — that is the point of it — so item 1's
+        // stage 1 routinely dispatches before item 0's stage 2. A cell sorting BEFORE
+        // the divergence could therefore be dispatched AFTER it, sail past the
+        // `blocked` test, and replay: a verdict computed against a tree a live agent
+        // had already begun rewriting. That is the stale hit the whole prefix rule
+        // exists to prevent, and it was a regression against the old dispatch-index
+        // scheme, which had the temporal property and lacked only reproducibility.
+        //
+        // Stage-major recovers both. Every stage-s cell happens-after its own item's
+        // stage-(s-1) cell, so structural order implies causal order; stage-s cells
+        // across items are mutually concurrent and sort adjacently, so nothing imposes
+        // an order the script did not declare. Coordinates stay latency-independent,
+        // so the transposition defect this numbering was introduced to fix stays fixed.
         prev = await frames.run(
-          childFrame([...base, index, s]),
+          childFrame([...base, s, index]),
           () => stage(carried, item, index),
         );
       }

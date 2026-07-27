@@ -75,6 +75,7 @@ import * as search from "./search.ts"; // T8.6
 import * as skillsApi from "./skills.ts"; // T10.2
 import * as theme from "./theme.ts"; // T10.4
 import * as ghost from "../worker/ghost.ts"; // T10.1
+import * as turnsApi from "./turns.ts"; // final integration — the interrupt route
 
 // ---- the route table --------------------------------------------------------
 
@@ -246,6 +247,13 @@ export const routes: Route[] = [
   // resolved — the two questions a listing cannot answer (`server/skills.ts`).
   route("GET", "/skills", skillsApi.listSkillsH),
   route("GET", "/skills/:name", skillsApi.getSkillH),
+  // FINAL INTEGRATION — the user interrupt spec §5 requires. `turn/runner.ts` has
+  // exported `interruptTurn` since M2 and nothing reached it: both clients carried a
+  // "KNOWN GAP" note in their headers instead of a stop button, which meant a running
+  // turn could only be stopped by killing the server. Always 200 for a session that
+  // exists — "nothing was running" is an answer, not a race the client must handle
+  // (`server/turns.ts`).
+  route("POST", "/sessions/:id/interrupt", turnsApi.interruptSession),
 ];
 
 // ---- dispatch ---------------------------------------------------------------

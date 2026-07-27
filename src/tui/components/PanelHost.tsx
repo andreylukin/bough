@@ -19,12 +19,13 @@
  * status would disagree with the model's own `mcpStatus()` call. Changes and workflows
  * refresh on entry for the weaker version of the same reason.
  *
- * FOURTH — **absent capability is stated, never faked.** Two things the panel shows
- * have no server route yet: skill discovery (T10.2 — no `skills/` module, no
- * `GET /skills`) and persisting a model choice (there is no `PATCH /sessions/:id`; a
- * model can only be set at session creation). Each renders the sentence saying so.
- * Neither sits on "loading…", which is a hang wearing a spinner, and neither reports a
- * success it did not have.
+ * FOURTH — **absent capability is stated, never faked.** One thing the panel shows
+ * still has no server route: persisting a model choice (there is no
+ * `PATCH /sessions/:id`; a model is set when a session is created). It renders the
+ * sentence saying so. It does not sit on "loading…", which is a hang wearing a
+ * spinner, and it does not report a success it did not have. Skills and theme USED to
+ * be in this list and are not any more — both routes landed, and the fix for a closed
+ * gap is to wire it, not to keep printing the apology.
  *
  * NO I/O OF ITS OWN. Every fetch is an injected thunk supplied by `tui/main.tsx` or a
  * method on the store. This hook builds no client and knows no URL, which is what lets
@@ -36,18 +37,27 @@ import type { ModelRow } from "../../llm/client.ts";
 import type { SessionRow } from "../api.ts";
 import type { Command, PanelTab } from "../keys.ts";
 import type { Store, TuiState } from "../store.ts";
-import { createThemePreview, type ThemePreview } from "../theme.ts";
+import {
+  createThemePreview,
+  type ThemePreset,
+  type ThemePreview,
+  type ThemeState,
+} from "../theme.ts";
 import { initialPanel, Panel, panelActionFor, type PanelState, reducePanel } from "./Panel.tsx";
 import { changeItems } from "./Changes.tsx";
 import { sessionItems } from "./Sessions.tsx";
 import { chooseEntry, type ModelConfig, modelEntries } from "./ModelPicker.tsx";
-import type { SkillRow } from "./Skills.tsx";
+import type { SkillRow, SkillSourceRow } from "./Skills.tsx";
 import { Tree, type TreeItem } from "./Tree.tsx";
 import { Workflows } from "./Workflows.tsx";
 
-/** What T10.2 owes the skills tab, said out loud rather than shown as an empty list. */
+/**
+ * Why the list is absent when it is. Only reachable now if the composition root
+ * declined to inject the fetch or the fetch itself failed — never a claim about what
+ * the user has installed, which is the distinction `Skills.tsx` exists to keep.
+ */
 const SKILLS_NOTE =
-  "skill discovery is not built yet (T10.2) — there is no /skills route to read, " +
+  "the skills list could not be read from this server — GET /skills did not answer, " +
   "so this is not a claim that you have none installed";
 
 /** What a model choice cannot do yet, said at the moment someone tries it. */
@@ -62,6 +72,12 @@ const MODEL_NOTE = "pinned in this client only — there is no route to persist 
  * alone, the tab sits on "loading changes…" forever at cold start, which is a hang
  * wearing a spinner. Spec §13's distinction between "no change set" and "nothing
  * changed" applies to this case too, so it gets its own sentence.
+ *
+ * …and the non-git HINT is suppressed for it (`hint: null` below). `Changes.tsx`
+ * prints "the agent still works here — this checkout produces nothing reviewable"
+ * under an unavailable change set, which is exactly right for the case spec §13 names
+ * and false for this one: there is no checkout, because there is no session. Two
+ * different absences, two different sentences.
  */
 const NO_SESSION_CHANGES = {
   available: false as const,
@@ -70,6 +86,7 @@ const NO_SESSION_CHANGES = {
   files: [],
   workspace: "",
 };
+
 
 /**
  * The operations the store does not expose. Every one is a REST call `tui/api.ts`
@@ -83,8 +100,12 @@ export interface PanelControls {
   loadMcp?: (sessionId?: string) => Promise<McpStatus>;
   /** `POST /mcp/servers/:name/{enable,disable}` — the grant itself. */
   setMcpEnabled?: (name: string, on: boolean, sessionId: string) => Promise<unknown>;
-  /** No route exists yet; absent is the honest state and the tab says so. */
-  loadSkills?: () => Promise<SkillRow[]>;
+  /**
+   * `GET /skills` — a fresh walk of the source directories, so a skill written a
+   * second ago lists a second later. `sources` rides along because an empty list
+   * cannot otherwise be told apart from reading the wrong directory.
+   */
+  loadSkills?: () => Promise<{ skills: SkillRow[]; sources: SkillSourceRow[] }>;
   pauseWorkflow?: (id: string) => Promise<void>;
   resumeWorkflow?: (id: string) => Promise<void>;
   stopWorkflow?: (id: string) => Promise<void>;
@@ -104,6 +125,17 @@ export interface PanelHostDeps {
    * into the TUI process. `tui/main.tsx` passes it; a test passes three rows.
    */
   models?: readonly ModelRow[];
+  /**
+   * The theme's two server-facing halves (spec §16: a theme is persisted server-side
+   * and the TUI fetches it at boot). Absent = the pre-T10.4 behaviour, a picker whose
+   * choice lasts for this process only — which is what a fixture-driven test wants.
+   */
+  theme?: {
+    /** What `GET /theme` served at boot. The baseline `cancel()` restores. */
+    current?: ThemeState | null;
+    /** `PUT`/`DELETE /theme`. Fire-and-forget: a failed save must not unpaint. */
+    persist?: (preset: ThemePreset, state: ThemeState) => unknown;
+  };
   /** The tree tab's rows, and the drill-in `App` already owns for the rail. */
   tree: TreeItem[];
   drillIn: (originId: string) => void;
@@ -128,6 +160,10 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
   const [message, setMessage] = useState<string | null>(null);
   const [mcp, setMcp] = useState<McpStatus | null>(null);
   const [skills, setSkills] = useState<SkillRow[] | null>(null);
+  const [skillSources, setSkillSources] = useState<SkillSourceRow[]>([]);
+  // Tri-state, because `skills === null` alone cannot tell "the fetch is in flight"
+  // from "the fetch failed", and those are a spinner and a sentence respectively.
+  const [loadingSkills, setLoadingSkills] = useState(false);
   const [cfg, setCfg] = useState<ModelConfig>({
     defaultModel: "",
     sessionModel: null,
@@ -139,7 +175,19 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
   // The theme preview is one object per TUI session, not per entry into the tab: its
   // baseline is what a commit moves, and rebuilding it on every visit would make each
   // visit's "revert" restore the previous visit's preview instead of the real theme.
-  const [preview] = useState<ThemePreview>(() => createThemePreview());
+  //
+  // `deps.theme` carries the two halves the preview cannot supply itself: the state
+  // the server served at boot (the baseline `cancel()` restores — without it every
+  // session starts from "Default" and leaving the tab REVERTS a stored theme off the
+  // screen) and the writer `commit()` calls (without it keeping a theme lasts until
+  // the process exits, which is a picker that silently forgets). Both are injected so
+  // this hook keeps its no-I/O property; `tui/main.tsx` supplies them.
+  const [preview] = useState<ThemePreview>(() =>
+    createThemePreview({
+      ...(deps.theme?.current !== undefined ? { current: deps.theme.current } : {}),
+      ...(deps.theme?.persist ? { persist: deps.theme.persist } : {}),
+    })
+  );
 
   const sessions = useMemo(() => sessionItems(state.sessions), [state.sessions]);
   const changes = useMemo(() => changeItems(state.changes), [state.changes]);
@@ -165,7 +213,20 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
         .catch((e: unknown) => setMessage(e instanceof Error ? e.message : String(e)));
     }
     if (panel.tab === "skills") {
-      void controls.loadSkills?.().then(setSkills).catch(() => setSkills(null));
+      // Re-read on entry, like MCP and for a weaker version of the same reason: a
+      // skill is a folder on disk that the user (or the agent) may have written since
+      // the panel was last open, and nothing here caches (`server/skills.ts`).
+      if (controls.loadSkills) {
+        setLoadingSkills(true);
+        void controls.loadSkills()
+          .then((r) => {
+            setSkills(r.skills);
+            setSkillSources(r.sources);
+          })
+          // `null` and not `[]`: a failed fetch must not read as "none installed".
+          .catch(() => setSkills(null))
+          .finally(() => setLoadingSkills(false));
+      }
     }
     // Deliberately NOT `controls`: the object is rebuilt on every render of the
     // composition root, and an effect that depends on it re-runs forever. The two
@@ -347,6 +408,7 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
         }}
         changes={{
           set: state.currentId ? state.changes : NO_SESSION_CHANGES,
+          ...(state.currentId ? {} : { hint: null }),
           items: changes,
           selected: sel,
           rows: body,
@@ -355,7 +417,11 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
         }}
         model={{ cfg: modelCfg, entries, selected: sel, rows: body, message }}
         mcp={{ status: mcp, selected: sel, message }}
-        skills={{ skills, note: controls.loadSkills ? undefined : SKILLS_NOTE }}
+        skills={{
+          skills,
+          sources: skillSources,
+          note: skills === null && !loadingSkills ? SKILLS_NOTE : undefined,
+        }}
         theme={{ preview }}
       >
         {panel.tab === "tree" ? <Tree items={tree} selected={sel} rows={body} /> : (

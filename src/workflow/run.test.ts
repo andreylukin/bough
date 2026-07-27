@@ -645,12 +645,17 @@ Deno.test(
       );
       assert.deepEqual(dispatched(h.db, first.finished.id), skew.seen);
 
-      // The positions are NOT latency order. They are the (item, stage) cells.
+      // The positions are NOT latency order. They are the (stage, item) cells —
+      // STAGE-major, so that structural order implies causal order: every stage-1 cell
+      // happens-after its own item's stage-0 cell, and the stage-0 cells are mutually
+      // concurrent and sort adjacently. Item-major numbering sorted every cell of item 0
+      // ahead of item 1, which let a cell dispatched AFTER a divergence sort before it
+      // and replay — a stale hit against a tree a live agent had already rewritten.
       const sourcePos = positions(h.db, first.finished.id);
       assert.deepEqual(sourcePos, {
         "s1 A": "0.0.0.0",
-        "s2 s1 A": "0.0.1.0",
-        "s1 B": "0.1.0.0",
+        "s1 B": "0.0.1.0",
+        "s2 s1 A": "0.1.0.0",
         "s2 s1 B": "0.1.1.0",
       });
 
@@ -773,14 +778,15 @@ Deno.test("nested parallel-inside-pipeline keeps every coordinate distinct", asy
     const first = await runScript(h, runner, script, { args: { items: ["x", "y"] } });
     assert.equal(first.finished.status, "done");
 
-    // Read left to right: pipeline 0 · item i · stage s · the parallel() that stage
+    // Read left to right: pipeline 0 · stage s · item i · the parallel() that stage
     // opened (slot 0 of the stage frame) · its thunk slot · the agent in that thunk.
+    // Stage before item: see the stage-major note in the transposition test above.
     const pos = positions(h.db, first.finished.id);
     assert.deepEqual(pos, {
       "review x": "0.0.0.0",
-      "verify 1 of review x": "0.0.1.0.0.0",
-      "verify 2 of review x": "0.0.1.0.1.0",
-      "review y": "0.1.0.0",
+      "review y": "0.0.1.0",
+      "verify 1 of review x": "0.1.0.0.0.0",
+      "verify 2 of review x": "0.1.0.0.1.0",
       "verify 1 of review y": "0.1.1.0.0.0",
       "verify 2 of review y": "0.1.1.0.1.0",
     });

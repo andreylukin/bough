@@ -1,58 +1,85 @@
 /**
  * The skills tab: the `/name` instruction bundles this install can load (spec §16).
  *
- * THE INVARIANT THIS HOLDS: **an empty list and an absent source are different
- * screens.** Skill discovery is T10.2 and does not exist yet — there is no
- * `skills/` module and no `GET /skills` route — so a host with nothing to hand this
- * component passes `skills: null` with a `note` saying why, and the tab prints that
- * sentence. It does NOT print "no skills installed", which is a claim about the
- * user's `~/.bough/skills` that nothing here has read, and it does not sit on
- * "loading…" forever, which is a lie that looks like a hang. The gap is visible
- * rather than silent, which is the same rule `theme.ts` follows about its missing
- * route.
+ * THE INVARIANT THIS HOLDS: **an empty list, an absent source and a BROKEN skill are
+ * three different screens.** `null` means nothing has answered yet or the fetch
+ * failed — say why in `note`, and never render it as "no skills installed", which is
+ * a claim about the user's `~/.bough/skills` that this component has not read. An
+ * empty array IS that claim, and it only becomes safe to make once `GET /skills` has
+ * answered; the `sources` it rides along with are printed beside it, because "why is
+ * my skill not listed?" is almost always answered by naming the directory that was
+ * walked.
  *
- * `SkillRow` is declared here rather than imported for the same reason: there is no
- * wire shape to import yet. Only two fields are ever shown and spec §16 fixes both
- * in the frontmatter, so the eventual module can satisfy this without changing it.
+ * The third case is the one worth a component: a skill whose SKILL.md could not be
+ * parsed is served WITH its `error` rather than omitted (`server/skills.ts`), so it
+ * is rendered here in the error colour with the reason. A malformed skill that simply
+ * vanished from the list would instead be discovered as a `/name` that quietly did
+ * nothing, two turns and some money later.
+ *
+ * The row shape is IMPORTED from `server/skills.ts` rather than restated. It used to
+ * be declared here, correctly, because T10.2 had not landed and there was no wire
+ * shape to import; that gap is closed, and a local copy would now be a second
+ * definition free to drift from what the route actually serves.
  *
  * Split out of `Panel.tsx` so the panel file is chrome and a state machine.
  */
 import { Box, Text } from "ink";
 import { clip } from "../format.ts";
 import { palette } from "../theme.ts";
+// Type-only: erased at compile time, so this component keeps its no-server-imports
+// property and cannot drag a handler module into the render graph.
+import type { SkillRow } from "../../server/skills.ts";
 
-/** One installed skill, as `SKILL.md` frontmatter carries it (spec §16). */
-export interface SkillRow {
-  name: string;
-  description: string;
+export type { SkillRow };
+
+/** Where the listing was read from — `GET /skills` returns these beside the rows. */
+export interface SkillSourceRow {
+  source: string;
+  dir: string;
 }
 
 export interface SkillsTabProps {
-  /** `null` = no source. Say why in `note`; never render it as "none installed". */
+  /** `null` = nothing has answered yet. Say why in `note`; never fake an empty list. */
   skills: SkillRow[] | null;
   rows: number;
   /** Why the list is absent. Shown only when `skills` is null. */
   note?: string;
+  /** The directories that were walked. Printed so an empty list is diagnosable. */
+  sources?: readonly SkillSourceRow[];
 }
 
-export function SkillsTab({ skills, rows, note }: SkillsTabProps) {
+export function SkillsTab({ skills, rows, note, sources }: SkillsTabProps) {
   if (!skills) {
     return note
       ? <Text color={palette.warn} wrap="wrap">{note}</Text>
       : <Text dimColor>loading…</Text>;
   }
-  if (skills.length === 0) return <Text dimColor>no skills installed</Text>;
+  const where = sources && sources.length > 0
+    ? sources.map((s) => `${s.source} ${s.dir}`).join(" · ")
+    : null;
+  if (skills.length === 0) {
+    return (
+      <Box flexDirection="column">
+        <Text dimColor>no skills installed</Text>
+        {where ? <Text dimColor wrap="truncate">read from {where}</Text> : null}
+      </Box>
+    );
+  }
   const height = Math.max(3, rows - 6);
   return (
     <Box flexDirection="column">
       {skills.slice(0, height).map((s) => (
         <Text key={s.name} wrap="truncate">
-          <Text bold color={palette.accent}>/{s.name}</Text>
-          <Text dimColor>{"  "}{clip(s.description, 60)}</Text>
+          <Text bold color={s.error ? palette.error : palette.accent}>/{s.name}</Text>
+          <Text dimColor>{"  "}{clip(s.error ?? s.description, 60)}</Text>
+          {s.mcp && s.mcp.length > 0
+            ? <Text color={palette.info}>{"  mcp: " + s.mcp.join(", ")}</Text>
+            : null}
         </Text>
       ))}
       {skills.length > height ? <Text dimColor>… {skills.length - height} more</Text> : null}
       <Text dimColor wrap="truncate">name a skill in your message to load it</Text>
+      {where ? <Text dimColor wrap="truncate">read from {where}</Text> : null}
     </Box>
   );
 }

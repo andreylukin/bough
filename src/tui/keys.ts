@@ -85,6 +85,8 @@ export type Command =
   | "newline"
   | "draft.clear"
   | "cancel"
+  /** Stop the running turn (spec §5). Distinct from `cancel`, which dismisses a notice. */
+  | "turn.interrupt"
   | "history.prev"
   | "history.next"
   // -- reading --------------------------------------------------------------
@@ -405,6 +407,21 @@ export const BINDINGS: Binding[] = [
     section: "compose",
     label: "esc esc",
     desc: "clear the draft",
+  },
+  // Spec §5's user interrupt. Ordered between the double-tap above and the plain
+  // `cancel` below, which is the whole reason the table resolves top-down: while a
+  // turn is running, one Escape stops it; with nothing running it dismisses a notice,
+  // and the double-tap keeps meaning "clear the draft" either way. Guarded on `busy`
+  // rather than bound to a chord of its own because Escape is the key every user
+  // already reaches for to stop something, and a stop button nobody finds is the gap
+  // this closes, not a smaller version of it.
+  {
+    mode: "chat",
+    chord: "esc",
+    command: "turn.interrupt",
+    when: ["busy"],
+    section: "leaving",
+    desc: "stop the running turn",
   },
   { mode: "chat", chord: "esc", command: "cancel" },
   {

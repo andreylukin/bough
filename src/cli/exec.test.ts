@@ -20,6 +20,7 @@ import { openDb } from "../db/db.ts";
 import { createHandler } from "../server/app.ts";
 import type { WithTurnStarter } from "../server/sessions.ts";
 import type { AppCtx } from "../types.ts";
+import { TurnRegistry } from "../turn/queue.ts";
 import type { Message, Session, TurnStatus } from "../schema/parts.ts";
 import {
   createSseReader,
@@ -76,9 +77,11 @@ function fixture(options: {
   isTerminal?: boolean;
   cwd?: string;
   env?: Record<string, string>;
+  /** Extra ctx seams — the interrupt route reads `turnRegistry` off it. */
+  ctxExtra?: Record<string, unknown>;
 } = {}): Fixture {
   const db = openDb(":memory:");
-  const ctx: AppCtx & WithTurnStarter = { db, bus: new Bus() };
+  const ctx: AppCtx & WithTurnStarter = { db, bus: new Bus(), ...options.ctxExtra };
   if (options.turn) {
     ctx.startTurn = (appCtx, session, message) => options.turn!(appCtx, session, message);
   }
@@ -229,14 +232,44 @@ Deno.test("exit 1: an interrupted or orphaned turn is not a completed turn", asy
   }
 });
 
-Deno.test("exit 1: the timeout elapses, and says the turn is still running", async () => {
+Deno.test("exit 1: the timeout elapses, and the abandoned turn is INTERRUPTED", async () => {
   // A turn that starts and never reports. `--timeout` is fractional so the test
   // costs milliseconds rather than the 900s default.
-  const f = fixture({ turn: () => {} });
+  //
+  // The registry is registered against, so the interrupt the client raises has a real
+  // turn to signal — which is the whole point: a `--timeout` that walks away without
+  // stopping the turn leaves it running and spending, and the next command against
+  // that session queues behind it (spec §5).
+  const registry = new TurnRegistry();
+  let controller: AbortController | undefined;
+  const f = fixture({
+    turn: (_ctx, session) => {
+      controller = registry.begin(session.id);
+    },
+    ctxExtra: { turnRegistry: registry },
+  });
   try {
     assert.equal(await runExec(["--timeout", "0.15", "go"], f.deps), 1);
     assert.match(f.err(), /timed out after 0\.15s/);
-    assert.match(f.err(), /still running/);
+    assert.match(f.err(), /interrupted the turn/);
+    assert.ok(
+      f.calls.some((c) => c.startsWith("POST /sessions/") && c.endsWith("/interrupt")),
+      `the client must raise the interrupt it promises: ${f.calls.join(", ")}`,
+    );
+    assert.equal(controller?.signal.aborted, true, "the turn's controller must be aborted");
+  } finally {
+    f.close();
+  }
+});
+
+Deno.test("exit 1: a stop that finds nothing running says so, and still exits 1", async () => {
+  // The race: the turn ended between the stream closing and the stop being raised.
+  // The client must not claim it interrupted anything, and must not change its mind
+  // about the exit code — a turn it gave up on did not complete either way.
+  const f = fixture({ turn: () => {}, ctxExtra: { turnRegistry: new TurnRegistry() } });
+  try {
+    assert.equal(await runExec(["--timeout", "0.15", "go"], f.deps), 1);
+    assert.match(f.err(), /could NOT interrupt/);
   } finally {
     f.close();
   }

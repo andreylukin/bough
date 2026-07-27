@@ -36,6 +36,7 @@ import { MODELS } from "../llm/client.ts";
 import { api } from "./api.ts";
 import { createStore } from "./store.ts";
 import { enterTui, filteredStdin, leaveTui, type MouseEvent, type NavKey } from "./mouse.ts";
+import { applyTheme, type ThemePreset, type ThemeState } from "./theme.ts";
 import { kittyKeyboardMode, syncedStdout, term } from "./term.ts";
 import { App, type AppControls, type InputHooks } from "./components/App.tsx";
 
@@ -108,9 +109,44 @@ async function main() {
     resumeWorkflow: async (id) => void (await api.resumeWorkflow(id)),
     stopWorkflow: async (id) => void (await api.stopWorkflow(id)),
     rerunWorkflow: async (id) => void (await api.rerunWorkflow(id)),
-    // `loadSkills` is deliberately absent: skill discovery is T10.2 and there is no
-    // route to read. The tab says so rather than showing an empty list.
+    // Re-read on every entry into the tab, never cached: a skill is a folder on disk
+    // that the user or the agent may have written since the panel was last open, and
+    // the route is a fresh walk of the source directories (`server/skills.ts`).
+    loadSkills: () => api.listSkills(),
   };
+
+  // The theme, fetched BEFORE the first frame and painted into the palette (spec
+  // §16: "the TUI fetches it at boot and paints truecolor"). Two things depend on
+  // it landing here rather than in an effect: `palette` is a mutable singleton read
+  // at render time, so a late fetch would repaint mid-frame; and the picker's
+  // baseline — what leaving the tab REVERTS to — is exactly this value, so without
+  // it browsing a theme and pressing escape would revert a stored theme off the
+  // screen.
+  //
+  // Best-effort by construction. A server that cannot answer leaves the built-in
+  // FALLBACK painted, which is a complete, contrast-checked palette, not terminal
+  // grey — a theme is decoration and must never be the reason the TUI does not start.
+  let theme: ThemeState | null = null;
+  try {
+    theme = await api.getTheme();
+    applyTheme(theme);
+  } catch {
+    // Reported by its absence: the default palette is what the user sees.
+  }
+
+  /**
+   * Keeping a theme writes it through. `DELETE` and not `PUT` for the empty partial,
+   * because "Default" IS the reset (`tui/theme.ts`'s `stateFor`), and PUTting an
+   * empty colour map would store a named theme that overrides nothing — which reads
+   * identically on screen and survives as a row nobody can explain.
+   *
+   * The promise is returned so `commit()` can swallow it in one place; a failed save
+   * must not unpaint the screen the user just chose.
+   */
+  const persistTheme = (preset: ThemePreset, state: ThemeState) =>
+    state.theme === null
+      ? api.deleteTheme()
+      : api.putTheme({ name: preset.name, colors: state.theme.colors });
 
   enterTui();
   globalThis.addEventListener("unload", () => leaveTui(() => terminal.cleanup()));
@@ -124,6 +160,7 @@ async function main() {
       controls={controls}
       input={hooks}
       models={MODELS}
+      theme={{ current: theme, persist: persistTheme }}
     />,
     {
       exitOnCtrlC: false,

@@ -27,11 +27,12 @@
  * `Session` and the alternative is a module-initialization hazard for every future
  * importer of this file.
  *
- * KNOWN GAP, deliberately not papered over: there is no interrupt route in the
- * server's table (`server/app.ts`) — `turn/runner.ts` exports `interruptTurn` but
- * nothing exposes it over HTTP. Spec §5 requires a user interrupt and the TUI is the
- * thing that raises one, so a method for it is missing here on purpose rather than
- * pointing at a path that 404s. It is reported as a blocking gap for the chat task.
+ * The interrupt gap this header used to report is CLOSED: `POST
+ * /sessions/:id/interrupt` exists (`server/turns.ts`) and `interrupt()` below is the
+ * method that raises it. It always resolves for a session that exists —
+ * `{interrupted: false}` is the answer when the turn had already ended — so the
+ * caller needs no race-condition branch for a button whose job is to be safe to
+ * press.
  */
 import type {
   AskQuestion,
@@ -74,6 +75,9 @@ import type { AuthStart, AuthStatus } from "../mcp/oauth.ts";
 import type { ArtifactComment } from "../server/comments.ts";
 import type { RevertOutcome, SessionChangeSet } from "../server/changes.ts";
 import type { SearchResult } from "../server/search.ts";
+import type { InterruptResult } from "../server/turns.ts";
+import type { SkillRow as SkillListRow } from "../server/skills.ts";
+import type { SkillSource } from "../skills/skills.ts";
 import type { WorkflowAgentView } from "../workflow/control.ts";
 import type {
   LargeRunFlag,
@@ -382,6 +386,13 @@ export function createApi(options: ApiOptions = {}) {
     /** `null` clears the prefilled composer text. No event — the writer is this client. */
     putDraft: (id: string, draft: string | null) =>
       put<{ ok: boolean; draft: string | null }>(`/sessions/${seg(id)}/draft`, { draft }),
+    /**
+     * Stop the running turn (spec §5). The response says whether there was one; the
+     * turn actually ending arrives as `turn.finished` on the stream, like every
+     * other fact about a turn, because the server signals and does not wait for the
+     * children to die (`server/turns.ts`).
+     */
+    interrupt: (id: string) => post<InterruptResult>(`/sessions/${seg(id)}/interrupt`),
 
     // -- ask() holds (T6.1) ----------------------------------------------------
 
@@ -566,6 +577,16 @@ export function createApi(options: ApiOptions = {}) {
 
     ghostText: (sessionId: string, prefix = "") =>
       post<{ ghost: string | null }>(`/sessions/${seg(sessionId)}/ghost`, { prefix }),
+
+    // -- skills (T10.2) --------------------------------------------------------
+    //
+    // A fresh walk of the source directories on every call, because that is what the
+    // route is (`server/skills.ts`) — a skill written a second ago lists a second
+    // later, and there is nothing here to invalidate. `sources` rides along so the
+    // panel can tell "nothing installed" from "looking in the wrong directory",
+    // which is the question an empty list cannot answer on its own.
+
+    listSkills: () => get<{ skills: SkillListRow[]; sources: SkillSource[] }>("/skills"),
   };
 }
 

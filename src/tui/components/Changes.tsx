@@ -104,20 +104,38 @@ export interface ChangesProps {
   focused?: boolean;
   /** Result of the last revert, or why one was refused. */
   message?: string | null;
+  /**
+   * The line printed under an unavailable change set. Defaults to the non-git
+   * sentence, which is the case spec §13 names. `null` suppresses it — the "no
+   * conversation is open" case has no checkout at all, and telling the user that
+   * "the agent still works here" about a workspace that does not exist is a claim
+   * this component cannot make.
+   */
+  hint?: string | null;
 }
 
+/** Spec §13's non-git case: the agent works, it just produces nothing reviewable. */
+export const NOT_A_REPO_HINT =
+  "the agent still works here — this checkout just produces nothing reviewable, and revert is unavailable";
+
 export function Changes(
-  { set, items, selected, scroll = 0, rows, focused = false, message }: ChangesProps,
+  {
+    set,
+    items,
+    selected,
+    scroll = 0,
+    rows,
+    focused = false,
+    message,
+    hint = NOT_A_REPO_HINT,
+  }: ChangesProps,
 ) {
   if (!set) return <Text dimColor>loading changes…</Text>;
   if (!set.available) {
     return (
       <Box flexDirection="column">
         <Text color={palette.warn} wrap="wrap">{set.reason ?? "no change set here"}</Text>
-        <Text dimColor wrap="wrap">
-          the agent still works here — this checkout just produces nothing reviewable, and revert is
-          unavailable
-        </Text>
+        {hint ? <Text dimColor wrap="wrap">{hint}</Text> : null}
       </Box>
     );
   }

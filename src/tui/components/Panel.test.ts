@@ -399,7 +399,7 @@ Deno.test("the MCP tab reports granted, connected and unauthorized distinctly", 
   assert.ok(empty.includes("no skills installed"), empty);
   const one = draw(
     createElement(SkillsTab, {
-      skills: [{ name: "history", description: "query the db" }],
+      skills: [{ name: "history", description: "query the db", source: "bundled", dir: "/s" }],
       rows: 10,
     }),
   );

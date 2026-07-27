@@ -28,6 +28,7 @@ import { setColorEnabled } from "../format.ts";
 import type { SessionRow } from "../api.ts";
 import type { ModelRow } from "../../llm/client.ts";
 import type { McpStatus } from "../../mcp/status.ts";
+import type { SkillRow } from "./Skills.tsx";
 
 setColorEnabled(false);
 
@@ -224,6 +225,16 @@ const MCP: McpStatus = {
   connections: [],
 } as unknown as McpStatus;
 
+/** What `GET /skills` serves. One good skill and one broken one, because the tab
+ * must distinguish them and a listing of only healthy rows would not prove it. */
+const SKILLS: { skills: SkillRow[]; sources: { source: string; dir: string }[] } = {
+  skills: [
+    { name: "history", description: "query bough's own sqlite", source: "bundled", dir: "/b/history" },
+    { name: "broken", description: "", source: "user", dir: "/u/broken", error: "no name:" },
+  ],
+  sources: [{ source: "bundled", dir: "/b" }, { source: "user", dir: "/u" }],
+};
+
 function session(id: string, over: Partial<SessionRow> = {}): SessionRow {
   return {
     id,
@@ -258,6 +269,7 @@ function fakeStore(over: Partial<TuiState> = {}): Store & { calls: string[] } {
     drainQueue: noop,
     answerAsk: noop,
     declineAsk: noop,
+    interrupt: track("interrupt"),
     refreshChanges: track("refreshChanges"),
     refreshJobs: track("refreshJobs"),
     refreshWorkflows: track("refreshWorkflows"),
@@ -288,7 +300,12 @@ function app(store: Store, over: Record<string, unknown> = {}) {
       store={store}
       models={MODELS}
       now={() => 10_000}
-      controls={{ loadMcp: () => Promise.resolve(MCP) }}
+      controls={{
+        loadMcp: () => Promise.resolve(MCP),
+        // T10.2 landed and the panel reads it. Injected here for the same reason
+        // `loadMcp` is: this is transport, and no test binds a socket.
+        loadSkills: () => Promise.resolve(SKILLS),
+      }}
       {...over}
     />
   );
@@ -333,7 +350,7 @@ const EVIDENCE: Record<string, string> = {
   workflows: "no workflow runs in this conversation",
   model: "frontier model",
   mcp: "needs auth",
-  skills: "skill discovery is not built yet",
+  skills: "/history",
   theme: "leaving the tab reverts",
 };
 
@@ -366,6 +383,87 @@ Deno.test({
       // Entering a tab is what refreshes it — nothing is painted from a cache.
       assert.ok(store.calls.includes("refreshChanges"), store.calls.join(","));
       assert.ok(store.calls.includes("refreshWorkflows"), store.calls.join(","));
+    } finally {
+      h.unmount();
+    }
+  },
+});
+
+// ---------------------------------------------------------------------------
+// 2b. The user interrupt (spec §5), and the theme's two server-facing halves
+// ---------------------------------------------------------------------------
+
+/** A pending supervisor message is what `isBusy` reads — the turn is in flight. */
+const BUSY: Partial<TuiState> = {
+  ...STATE,
+  thread: [
+    {
+      id: "m1",
+      sessionId: "s1",
+      role: "supervisor",
+      parts: [],
+      pending: true,
+      createdAt: 1_000,
+    },
+  ] as TuiState["thread"],
+};
+
+Deno.test({
+  name: "esc STOPS a running turn, and only dismisses a notice when none is running",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    // The gap this closes: `turn/runner.ts` has always been able to interrupt and
+    // nothing in either client could reach it, so the only stop button was killing
+    // the server. The guard is the binding — `keys.ts` routes esc to `turn.interrupt`
+    // only while a turn is in flight — which is why both halves are asserted here.
+    const busy = fakeStore(BUSY);
+    const h = await mount(app(busy));
+    try {
+      await h.press(ESC);
+      assert.ok(busy.calls.includes("interrupt"), busy.calls.join(","));
+    } finally {
+      h.unmount();
+    }
+
+    const idle = fakeStore(STATE);
+    const h2 = await mount(app(idle));
+    try {
+      await h2.press(ESC);
+      assert.equal(
+        idle.calls.includes("interrupt"),
+        false,
+        `esc must not raise an interrupt with nothing running: ${idle.calls.join(",")}`,
+      );
+    } finally {
+      h2.unmount();
+    }
+  },
+});
+
+Deno.test({
+  name: "the theme picker starts from the SERVER's theme and persists the one kept",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    // Two failures this covers, both of which shipped: with no `current` the picker's
+    // baseline is "Default", so leaving the tab reverts a stored theme off the screen;
+    // with no `persist` keeping one lasts until the process exits.
+    const stored = { theme: { name: "Fjord", colors: { green: "#5c88c9" } }, defaults: {} };
+    const saved: string[] = [];
+    const store = fakeStore(STATE);
+    const h = await mount(
+      app(store, {
+        theme: { current: stored, persist: (p: { name: string }) => saved.push(p.name) },
+      }),
+    );
+    try {
+      await h.press(ctrl("y"));
+      // The cursor starts on the theme in force, not on row zero.
+      assert.match(await frameShowing(h, "current: Fjord"), /current: Fjord/);
+      await h.press(DOWN);
+      await h.press("\r");
+      assert.equal(saved.length, 1, `keeping a theme must write it through: ${saved.join(",")}`);
     } finally {
       h.unmount();
     }
@@ -455,6 +553,13 @@ Deno.test({
       const frame = h.frame();
       assert.ok(frame.includes("no conversation is open"), frame);
       assert.equal(frame.includes("loading changes"), false, frame);
+      // …and NOT the non-git sentence. "the agent still works here" is a claim about
+      // a checkout, and with no session open there is no checkout to make it about.
+      assert.equal(
+        frame.includes("the agent still works here"),
+        false,
+        `the non-git hint must not be shown when there is no session at all: ${frame}`,
+      );
     } finally {
       h.unmount();
     }

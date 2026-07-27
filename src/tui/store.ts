@@ -656,6 +656,13 @@ export interface Store {
   drainQueue(): Promise<void>;
   answerAsk(answer: string): Promise<void>;
   declineAsk(): Promise<void>;
+  /**
+   * Stop the running turn (spec §5). Always resolves: the server answers 200 with
+   * `interrupted: false` when the turn had already ended, so pressing the key a beat
+   * late is a no-op with a sentence rather than an error banner. The turn actually
+   * ending arrives as `turn.finished` on the stream like every other turn fact.
+   */
+  interrupt(): Promise<void>;
   refreshChanges(): Promise<void>;
   refreshJobs(): Promise<void>;
   refreshWorkflows(): Promise<void>;
@@ -896,6 +903,19 @@ export function createStore(deps: StoreDeps = {}): Store {
     answerAsk: (answer: string) =>
       settleAsk((q) => api.answerQuestion(q.sessionId, q.id, answer)),
     declineAsk: () => settleAsk((q) => api.declineQuestion(q.sessionId, q.id)),
+
+    async interrupt() {
+      const id = state.currentId;
+      if (!id) return;
+      try {
+        const result = await api.interrupt(id);
+        // Said either way. "nothing was running" is the answer when the turn beat the
+        // keypress, and a silent no-op there reads as a stop button that does nothing.
+        dispatch({ type: "notice", notice: result.message });
+      } catch (error) {
+        fail(error);
+      }
+    },
 
     refreshChanges,
     refreshJobs,

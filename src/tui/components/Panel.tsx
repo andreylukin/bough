@@ -47,13 +47,13 @@ import { Changes, type ChangesProps } from "./Changes.tsx";
 import { ModelPicker, type ModelPickerProps } from "./ModelPicker.tsx";
 import { Sessions, type SessionsProps } from "./Sessions.tsx";
 import { McpTab, type McpTabProps } from "./Mcp.tsx";
-import { type SkillRow, SkillsTab } from "./Skills.tsx";
+import { type SkillRow, SkillsTab, type SkillSourceRow } from "./Skills.tsx";
 import { ThemeTab } from "./Theme.tsx";
 
 // The panel's vocabulary, re-exported so a reader of this file never has to know it
 // is declared in the keymap. The declaration is there; the meaning is here.
 export { McpTab, ModelPicker, PANEL_TABS, SkillsTab, tabForChord, TABS, ThemeTab };
-export type { McpTabProps, PanelTab, SkillRow, TabDef };
+export type { McpTabProps, PanelTab, SkillRow, SkillSourceRow, TabDef };
 
 // ---- the state machine (pure, but for the theme preview it must cancel) ----
 
@@ -178,7 +178,7 @@ export interface PanelProps {
   changes?: ChangesProps;
   model?: ModelPickerProps;
   mcp?: McpTabProps;
-  skills?: { skills: SkillRow[] | null; note?: string };
+  skills?: { skills: SkillRow[] | null; note?: string; sources?: readonly SkillSourceRow[] };
   theme?: { preview: ThemePreview | null };
   /** Body for the tabs other tasks own (`tree`, `workflows`). */
   children?: ReactNode;
@@ -196,7 +196,14 @@ function Body({ tab, rows, sessions, changes, model, mcp, skills, theme, childre
     case "mcp":
       return <McpTab {...(mcp ?? { status: null, selected: 0 })} />;
     case "skills":
-      return <SkillsTab skills={skills?.skills ?? null} note={skills?.note} rows={body} />;
+      return (
+        <SkillsTab
+          skills={skills?.skills ?? null}
+          note={skills?.note}
+          sources={skills?.sources}
+          rows={body}
+        />
+      );
     case "theme":
       return <ThemeTab preview={theme?.preview ?? null} rows={body} />;
     default:

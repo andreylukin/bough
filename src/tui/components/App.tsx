@@ -61,7 +61,7 @@ import {
 import { currentAsk, isBusy, type Store, type TuiState } from "../store.ts";
 import { Chat } from "./Chat.tsx";
 import { Composer } from "./Composer.tsx";
-import { type PanelControls, usePanelHost } from "./PanelHost.tsx";
+import { type PanelControls, type PanelHostDeps, usePanelHost } from "./PanelHost.tsx";
 import { liveSubagents, SubagentRail } from "./SubagentRail.tsx";
 import { treeItems } from "./Tree.tsx";
 
@@ -105,6 +105,12 @@ export interface AppProps {
    * SDK: `tui/main.tsx` imports it, the component tree does not.
    */
   models?: readonly ModelRow[];
+  /**
+   * The theme the server served at boot, and the writer that persists a kept one
+   * (spec §16). A prop for the same reason `models` is: this is transport, and the
+   * composition root owns transport. Absent = the choice lasts for this process.
+   */
+  theme?: PanelHostDeps["theme"];
   /** Injected so a render is reproducible and the esc double-tap is testable. */
   now?: () => number;
 }
@@ -113,7 +119,15 @@ export interface AppProps {
 const WHEEL_ROWS = 3;
 
 export function App(
-  { store, defaultWorkspace, controls = {}, input: hooks = {}, models, now = Date.now }: AppProps,
+  {
+    store,
+    defaultWorkspace,
+    controls = {},
+    input: hooks = {},
+    models,
+    theme,
+    now = Date.now,
+  }: AppProps,
 ) {
   const { exit } = useApp();
   const { stdout } = useStdout();
@@ -179,6 +193,7 @@ export function App(
     now: now(),
     controls,
     models,
+    ...(theme ? { theme } : {}),
     tree,
     drillIn,
     collapse,
@@ -227,6 +242,10 @@ export function App(
       case "cancel":
         setScrollOff(0);
         return store.dismissNotice();
+      // Spec §5. The keymap only routes this while a turn is running (`keys.ts`), so
+      // there is no busy check here — the guard is the binding.
+      case "turn.interrupt":
+        return void store.interrupt();
       case "history.prev": {
         if (sent.length === 0) return;
         const at = histAt === null ? last(sent.length) : Math.max(0, histAt - 1);

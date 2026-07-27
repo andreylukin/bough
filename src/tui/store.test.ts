@@ -660,3 +660,54 @@ Deno.test("a failing request becomes a notice, never a thrown render", async () 
   assert.match(store.getState().notice ?? "", /can't reach the bough server/);
   await store.stop();
 });
+
+Deno.test("interrupt raises the stop on the OPEN session, and says what happened", async () => {
+  // Spec §5's user interrupt, from the client end. Two properties, both of which the
+  // route's shape is designed around: it is always addressed at the session the user
+  // is looking at, and its answer is REPORTED either way — a stop that finds nothing
+  // running must say so rather than being a silent no-op, which is indistinguishable
+  // from a key that is not bound.
+  const stops: string[] = [];
+  const { api } = fakeApi({
+    interrupt: (id: string) => {
+      stops.push(id);
+      return Promise.resolve({
+        sessionId: id,
+        interrupted: true,
+        message: "interrupting — the program's children are killed",
+      });
+    },
+  });
+  const events = fakeStream();
+  const store = createStore({ api, connect: events.connect });
+  store.start();
+  await settle();
+
+  // With no session open there is nothing to address the stop at, and inventing one
+  // would interrupt somebody else's turn.
+  await store.interrupt();
+  assert.deepEqual(stops, []);
+
+  await store.open(SESSION);
+  await settle();
+  await store.interrupt();
+  assert.deepEqual(stops, [SESSION]);
+  assert.match(store.getState().notice ?? "", /interrupting/);
+
+  await store.stop();
+});
+
+Deno.test("a failed interrupt is a notice, not a throw into the render", async () => {
+  const { api } = fakeApi({
+    interrupt: () => Promise.reject(new Error("the server went away")),
+  });
+  const events = fakeStream();
+  const store = createStore({ api, connect: events.connect });
+  store.start();
+  await settle();
+  await store.open(SESSION);
+  await settle();
+  await store.interrupt();
+  assert.match(store.getState().notice ?? "", /the server went away/);
+  await store.stop();
+});
