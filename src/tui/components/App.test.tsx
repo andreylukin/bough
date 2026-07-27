@@ -186,6 +186,28 @@ async function settle(painted: () => boolean): Promise<void> {
   await new Promise((r) => setTimeout(r, 30));
 }
 
+/**
+ * The frame once it shows `needle` — or, at the ceiling, whatever is on screen.
+ *
+ * A tab whose body arrives from an injected thunk paints TWICE: once with the panel
+ * open and the body still `null` ("loading…"), then again when the promise resolves.
+ * `press` returns on the first of those, so the fixed grace period inside `settle`
+ * is a bet that the second one lands within 30ms — and under a full-suite run, with
+ * every test file competing for the same cores, that bet loses often enough to make
+ * this the one flaky test in the tree.
+ *
+ * Polling for the evidence makes the wait proportional to the machine rather than to
+ * a guess: a fast run costs nothing extra, and a loaded one waits as long as it must.
+ * The ceiling still expires, so a tab that genuinely never paints fails with the
+ * frame that IS on screen rather than hanging.
+ */
+async function frameShowing(h: Harness, needle: string): Promise<string> {
+  for (let waited = 0; waited < 2_000 && !h.frame().includes(needle); waited += 10) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  return h.frame();
+}
+
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
@@ -332,7 +354,7 @@ Deno.test({
         // Straight from chat, with the panel CLOSED: that is what a direct jump means.
         const letter = tab.chord.replace("ctrl+", "");
         await h.press(ctrl(letter));
-        const frame = h.frame();
+        const frame = await frameShowing(h, EVIDENCE[tab.id]);
         assert.ok(frame.includes("^t close"), `^${letter} did not open the panel: ${frame}`);
         assert.ok(
           frame.includes(EVIDENCE[tab.id]),
