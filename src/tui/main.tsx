@@ -37,6 +37,7 @@ import { api } from "./api.ts";
 import { createStore } from "./store.ts";
 import { enterTui, filteredStdin, leaveTui, type MouseEvent, type NavKey } from "./mouse.ts";
 import { applyTheme, type ThemePreset, type ThemeState } from "./theme.ts";
+import { isTuiHelpRequest, isTuiUsageError, parseTuiArgs, USAGE as TUI_USAGE } from "./args.ts";
 import { kittyKeyboardMode, syncedStdout, term } from "./term.ts";
 import { App, type AppControls, type InputHooks } from "./components/App.tsx";
 
@@ -75,11 +76,24 @@ async function preflight(): Promise<void> {
 }
 
 async function main() {
+  // The command line is parsed BEFORE the terminal is taken, so a usage error is
+  // printed to a normal screen rather than into the alternate buffer. `-w` used to
+  // be discarded in silence, which pointed the agent at a repository the user did
+  // not choose — and there is no sandbox to make that harmless (`args.ts`).
+  const args = parseTuiArgs(Deno.args);
+  if (isTuiHelpRequest(args)) {
+    console.log(TUI_USAGE);
+    Deno.exit(0);
+  }
+  if (isTuiUsageError(args)) {
+    console.error(args.usageError);
+    Deno.exit(2);
+  }
   await preflight();
 
   // New conversations default to where `bough` was launched, not to wherever the
   // entry point happens to be resolved from.
-  const defaultWorkspace = Deno.env.get("BOUGH_TUI_CWD") ?? Deno.cwd();
+  const defaultWorkspace = args.workspace ?? Deno.env.get("BOUGH_TUI_CWD") ?? Deno.cwd();
   const terminal = term();
 
   const pastes = hub<string>();
