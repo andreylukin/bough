@@ -39,6 +39,12 @@ export interface SkillSourceRow {
 }
 
 export interface SkillsTabProps {
+  /**
+   * Columns available. The description used to be clipped at a hardcoded 60
+   * characters, so at 200 columns a skill's description still cut off at column
+   * 80 with 120 blank columns beside it — and there is no way to read the rest.
+   */
+  cols?: number;
   /** `null` = nothing has answered yet. Say why in `note`; never fake an empty list. */
   skills: SkillRow[] | null;
   rows: number;
@@ -48,7 +54,7 @@ export interface SkillsTabProps {
   sources?: readonly SkillSourceRow[];
 }
 
-export function SkillsTab({ skills, rows, note, sources }: SkillsTabProps) {
+export function SkillsTab({ skills, rows, cols, note, sources }: SkillsTabProps) {
   if (!skills) {
     return note
       ? <Text color={palette.warn} wrap="wrap">{note}</Text>
@@ -71,7 +77,10 @@ export function SkillsTab({ skills, rows, note, sources }: SkillsTabProps) {
       {skills.slice(0, height).map((s) => (
         <Text key={s.name} wrap="truncate">
           <Text bold color={s.error ? palette.error : palette.accent}>/{s.name}</Text>
-          <Text dimColor>{"  "}{clip(s.error ?? s.description, 60)}</Text>
+          <Text dimColor>
+            {"  "}
+            {clip(s.error ?? s.description, Math.max(20, (cols ?? 80) - s.name.length - 8))}
+          </Text>
           {s.mcp && s.mcp.length > 0
             ? <Text color={palette.info}>{"  mcp: " + s.mcp.join(", ")}</Text>
             : null}

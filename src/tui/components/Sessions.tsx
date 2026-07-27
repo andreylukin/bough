@@ -164,7 +164,16 @@ export function Sessions(
         ? <Text dimColor>— {Math.max(0, start) + window.length}/{items.length} —</Text>
         : null}
       <Text dimColor wrap="truncate">● root · ⑂ fork · ≣ compacted · ⋯ running · ✗ failed</Text>
-      <Text dimColor wrap="truncate">↑↓ move · ⏎ open · / filter · n new</Text>
+      {
+        /*
+        Only keys the keymap actually binds. This line used to advertise
+        "/ filter · n new"; neither is in `keys.ts`, so pressing either left the
+        list byte-identical. A footer is a promise, and these two were false —
+        the generated `?` overlay cannot drift because it is derived from the
+        table, but these hand-written per-tab lines can, and had.
+      */
+      }
+      <Text dimColor wrap="truncate">↑↓ move · ⏎ open · → drill in · esc back</Text>
     </Box>
   );
 }

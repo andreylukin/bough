@@ -214,7 +214,9 @@ export interface PanelProps {
   children?: ReactNode;
 }
 
-function Body({ tab, rows, sessions, changes, model, mcp, skills, theme, children }: PanelProps) {
+function Body(
+  { tab, rows, width, sessions, changes, model, mcp, skills, theme, children }: PanelProps,
+) {
   const body = Math.max(3, rows - 2);
   switch (tab) {
     case "sessions":
@@ -228,6 +230,7 @@ function Body({ tab, rows, sessions, changes, model, mcp, skills, theme, childre
     case "skills":
       return (
         <SkillsTab
+          cols={width}
           skills={skills?.skills ?? null}
           note={skills?.note}
           sources={skills?.sources}

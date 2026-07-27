@@ -345,19 +345,14 @@ Deno.test({
 /**
  * What each tab must have painted for us to believe it is the one showing.
  *
- * Each string is unique to its tab on purpose: "wire the panel" appears on both the
- * sessions list and the tree, so neither could use it as evidence of which is up.
+ * The bracketed marker in the tab strip, which is the one signal that is unique
+ * per tab, always present, and legible with colour off. It used to be a phrase
+ * scraped from each tab's body — and the sessions entry was "/ filter", a footer
+ * advertising a key the keymap never bound, so the test was pinned to a lie.
  */
-const EVIDENCE: Record<string, string> = {
-  sessions: "/ filter",
-  tree: "drill into delegated work",
-  changes: "not a git repository",
-  workflows: "no workflow runs in this conversation",
-  model: "frontier model",
-  mcp: "needs auth",
-  skills: "/history",
-  theme: "leaving the tab reverts",
-};
+const EVIDENCE: Record<string, string> = Object.fromEntries(
+  TABS.map((t) => [t.id, `[${t.id}]`]),
+);
 
 /** Raw bytes a terminal sends for the keys ink has no letter for. */
 const ESC = String.fromCharCode(27);
