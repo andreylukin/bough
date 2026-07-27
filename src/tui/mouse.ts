@@ -75,6 +75,52 @@ const FOCUS = /\x1b\[([IO])/g;
 const BG_REPORT = /\x1b\]11;([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
 const PASTE_START = "\x1b[200~";
 const PASTE_END = "\x1b[201~";
+/**
+ * The `CSI 27;<mods>;<code>~` form — modifyOtherKeys / the kitty keyboard protocol's
+ * legacy encoding for a key that has no plain byte of its own.
+ *
+ * ink cannot parse it, and forwarding it unchanged is worse than dropping it: ink
+ * splits the escape byte from the rest and delivers the remainder as ordinary
+ * text, so pressing ⌥⏎ — a documented binding — typed its own encoding into the
+ * draft:
+ *
+ *   › and then say done[27;3;13~
+ *
+ * So it is decoded here, into the bytes ink already understands, and a form that
+ * cannot be decoded is swallowed rather than typed.
+ */
+// deno-lint-ignore no-control-regex -- ESC is the point
+const MODIFY_OTHER = /\x1b\[27;(\d+);(\d+)~/g;
+
+/**
+ * `CSI 27;mods;code~` → the bytes ink parses, or "" when there is no equivalent.
+ *
+ * `mods` is a 1-based bitfield: subtract one, then bit 0 is shift, 1 is alt, 2 is
+ * ctrl, 3 is super. ink reads a leading ESC as meta and a C0 byte as ctrl, which
+ * covers every combination bough actually binds.
+ */
+export function decodeModifyOther(mods: number, code: number): string {
+  const bits = Math.max(0, mods - 1);
+  const alt = (bits & 2) !== 0;
+  const ctrl = (bits & 4) !== 0;
+  // Only the codes that are a real character or a key ink knows by byte. A
+  // function key or a keypad code has no byte form and is dropped.
+  if (code < 1 || code > 0x10ffff) return "";
+  let base: string;
+  if (code === 13) base = "\r";
+  else if (code === 9) base = "\t";
+  else if (code === 27) base = "\x1b";
+  else if (code === 127 || code === 8) base = "\x7f";
+  else if (code >= 32 && code < 127) base = String.fromCharCode(code);
+  else return "";
+  // Ctrl folds a letter down to its C0 byte, which is how ink reports ctrl at all.
+  if (ctrl && base >= "a" && base <= "z") base = String.fromCharCode(base.charCodeAt(0) - 96);
+  else if (ctrl && base >= "A" && base <= "Z") {
+    base = String.fromCharCode(base.charCodeAt(0) - 64);
+  }
+  return alt ? `\x1b${base}` : base;
+}
+
 // A trailing fragment that could grow into one of the above on the next read.
 //
 // Every alternative is INCOMPLETE by construction: a mouse report ends in M/m and
@@ -83,7 +129,7 @@ const PASTE_END = "\x1b[201~";
 // old tree wrote `1;9[CD]?` here, which held a COMPLETE cmd-arrow and delivered it
 // one keystroke late.
 // deno-lint-ignore no-control-regex -- ESC is the point
-const PARTIAL_TAIL = /\x1b\[(<[\d;]*|20[01]?|1(;9?)?)$/;
+const PARTIAL_TAIL = /\x1b\[(<[\d;]*|20[01]?|1(;9?)?|2(7(;\d*(;\d*)?)?)?)$/;
 
 export interface InputFilter {
   /** One raw chunk in, the bytes ink should see out. */
@@ -115,7 +161,10 @@ export function createInputFilter(sinks: InputSinks = {}): InputFilter {
       .replace(NAV_KEY, (m) => {
         sinks.navKey?.(m.includes("H") || m.includes("1") ? "home" : "end");
         return "";
-      });
+      })
+      // Last: everything above is a MORE specific shape, and this one must never
+      // fall through to ink as text.
+      .replace(MODIFY_OTHER, (_all, mods, code) => decodeModifyOther(Number(mods), Number(code)));
   }
 
   function dispatchMouse(s: string): string {

@@ -369,7 +369,10 @@ Deno.test("only a trailing \\r sends a coalesced chunk", () => {
 Deno.test("stripCtl removes invisible bytes but keeps newlines and tabs out of harm", () => {
   assert.equal(stripCtl("a\x00b\x07c"), "abc");
   assert.equal(stripCtl("keep\nthe newline"), "keep\nthe newline");
-  assert.equal(stripCtl("\x1b[31mred"), "[31mred");
+  // This line used to assert "[31mred" — it pinned the bug. Removing the escape
+  // byte and keeping the rest of the sequence is what typed a terminal's own key
+  // encoding into the user's draft; see the escape-sequence test below.
+  assert.equal(stripCtl("\x1b[31mred"), "red");
 });
 
 Deno.test("isTextInput tells typing from a chord", () => {
@@ -378,4 +381,22 @@ Deno.test("isTextInput tells typing from a chord", () => {
   assert.equal(isTextInput("", { upArrow: true }), false);
   assert.equal(isTextInput("\r", { return: true }), false);
   assert.equal(isTextInput(""), false);
+});
+
+Deno.test("an escape sequence is dropped whole, never typed into the draft", () => {
+  // Alt+Enter under the kitty / modifyOtherKeys encoding. Stripping only the ESC
+  // byte left "[27;3;13~" behind, which the composer then inserted as text —
+  // observed live as `› and then say done[27;3;13~`.
+  assert.equal(stripCtl("\x1b[27;3;13~"), "");
+  assert.equal(stripCtl("hi\x1b[27;3;13~there"), "hithere");
+  // The other shapes a terminal emits, none of which are things a user typed.
+  assert.equal(stripCtl("\x1b[1;5D"), ""); // CSI, ctrl+left
+  assert.equal(stripCtl("\x1bOP"), ""); // SS3, F1
+  assert.equal(stripCtl("\x1b[200~pasted\x1b[201~"), "pasted"); // bracketed paste
+  assert.equal(stripCtl("\x1b[31mred\x1b[39m"), "red"); // SGR from a paste
+  // Ordinary text, including punctuation that merely LOOKS like a sequence, is kept.
+  assert.equal(stripCtl("a[27;3;13~b"), "a[27;3;13~b");
+  assert.equal(stripCtl("emoji 🎉 and 日本語"), "emoji 🎉 and 日本語");
+  // Newlines and tabs are content, not control noise.
+  assert.equal(stripCtl("one\ntwo\tthree"), "one\ntwo\tthree");
 });

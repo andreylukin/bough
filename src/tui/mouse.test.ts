@@ -17,7 +17,7 @@
  * a process, a stream or a terminal. `node:assert/strict` — jsr.io is unreachable.
  */
 import assert from "node:assert/strict";
-import { createInputFilter, type MouseEvent, type NavKey } from "./mouse.ts";
+import { createInputFilter, decodeModifyOther, type MouseEvent, type NavKey } from "./mouse.ts";
 
 function harness() {
   const mouse: MouseEvent[] = [];
@@ -123,4 +123,40 @@ Deno.test("a mouse drag during a paste does not corrupt either", () => {
 Deno.test("a filter with no sinks still strips what it recognises", () => {
   const filter = createInputFilter();
   assert.equal(filter.feed("a\x1b[<0;1;1Mb\x1b[200~junk\x1b[201~c"), "abc");
+});
+
+Deno.test("CSI 27;m;k~ is decoded, never forwarded as text", () => {
+  // The live symptom: ⌥⏎ typed "[27;3;13~" into the composer, because ink splits
+  // the escape byte from a sequence it cannot parse and delivers the rest as text.
+  const filter = createInputFilter();
+  // Alt+Enter → ESC CR, which ink reports as meta+return → chordOf "meta+enter".
+  assert.equal(filter.feed("\x1b[27;3;13~"), "\x1b\r");
+  // Plain Enter through the same encoding is just CR.
+  assert.equal(filter.feed("\x1b[27;1;13~"), "\r");
+  // Ctrl+J folds to its C0 byte, which is the only way ink reports ctrl.
+  assert.equal(filter.feed("\x1b[27;5;106~"), "\n");
+  // Surrounding typing is untouched.
+  assert.equal(filter.feed("ab\x1b[27;3;13~cd"), "ab\x1b\rcd");
+  // A code with no byte form is SWALLOWED — never emitted as its digits.
+  const undecodable = filter.feed("\x1b[27;1;57441~");
+  assert.equal(undecodable, "");
+  assert.ok(!undecodable.includes("27"));
+});
+
+Deno.test("decodeModifyOther maps the modifier bitfield ink actually understands", () => {
+  assert.equal(decodeModifyOther(1, 65), "A"); // no modifiers
+  assert.equal(decodeModifyOther(3, 65), "\x1bA"); // alt → ESC prefix
+  assert.equal(decodeModifyOther(5, 97), "\x01"); // ctrl+a → C0
+  assert.equal(decodeModifyOther(7, 97), "\x1b\x01"); // ctrl+alt
+  assert.equal(decodeModifyOther(1, 13), "\r");
+  assert.equal(decodeModifyOther(1, 9), "\t");
+  assert.equal(decodeModifyOther(1, 57441), ""); // a kitty keypad code: no byte form
+});
+
+Deno.test("a CSI 27 sequence split across two reads is not typed as text", () => {
+  // The failure this guards: half a sequence forwarded now and the rest next read
+  // is exactly the shape that reaches the draft as printable characters.
+  const filter = createInputFilter();
+  assert.equal(filter.feed("\x1b[27;3;"), "");
+  assert.equal(filter.feed("13~"), "\x1b\r");
 });

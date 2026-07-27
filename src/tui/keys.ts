@@ -45,6 +45,7 @@
  * composer's cursor arithmetic is the part users notice when it is a character off
  * on a wrapped paste, and it has no business being inside a React component.
  */
+import stripAnsi from "strip-ansi";
 import { wordLeft, wordRight } from "./format.ts";
 
 // ---------------------------------------------------------------------------
@@ -927,10 +928,35 @@ export function insertText(s: LineState, text: string): LineState {
   };
 }
 
-/** Invisible control bytes must never reach the draft — or the transcript. */
+/**
+ * Invisible control bytes must never reach the draft — or the transcript.
+ *
+ * WHOLE SEQUENCES, not just the escape byte. Dropping the `\x1b` alone leaves the
+ * rest of the sequence as ordinary printable characters, so a terminal emitting a
+ * key bough does not decode types its encoding into the user's message:
+ *
+ *   › and then say done[27;3;13~
+ *
+ * — that is Alt+Enter under the kitty/modifyOtherKeys encoding, landing as text in
+ * a half-written prompt. Any unrecognized CSI, SS3 or OSC does the same, and the
+ * set of sequences a terminal can send is not one this app gets to enumerate. A
+ * sequence is never something the user typed, so it goes whole or not at all.
+ *
+ * `strip-ansi` is already a dependency and already the repo's answer to "what is
+ * an escape sequence" (`format.ts` measures with it), so it is the answer here too.
+ */
 export function stripCtl(s: string): string {
+  // SS3 (`ESC O <char>` — F1-F4 and the application-mode arrows) first, because
+  // `strip-ansi` covers CSI/OSC and not this one, and leaving it to the control-byte
+  // pass would drop the ESC and keep the "P".
+  // deno-lint-ignore no-control-regex -- stripping escape sequences is the point
+  const noSs3 = s.replace(/\x1bO[\x20-\x7e]/g, "");
+  // Then anything else introduced by an escape byte: a two-character sequence is
+  // still a sequence, and its payload is still not something the user typed.
+  // deno-lint-ignore no-control-regex -- as above
+  const noEsc = stripAnsi(noSs3).replace(/\x1b[\x20-\x7e]/g, "");
   // deno-lint-ignore no-control-regex -- stripping control bytes is the point
-  return s.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
+  return noEsc.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
 }
 
 /**
