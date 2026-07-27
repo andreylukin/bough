@@ -42,7 +42,7 @@ import type { ModelRow } from "../../llm/client.ts";
 import type { SessionRow } from "../api.ts";
 import type { MouseEvent, NavKey } from "../mouse.ts";
 import { buildLines } from "../lines.ts";
-import { headerContext, sessionLabel, UI } from "../format.ts";
+import { headerContext, sessionLabel, SPINNER_MS, UI } from "../format.ts";
 import {
   chordOf,
   chunkInput,
@@ -159,6 +159,20 @@ export function App(
 
   const ask = currentAsk(state);
   const busy = isBusy(state);
+
+  // A spinner needs a clock, and a clock that runs when nothing is happening is a
+  // wakeup per frame forever. This one exists only while a turn does: `busy` gates
+  // the interval, and the turn's start is stamped the moment it goes true.
+  const [tick, setTick] = useState(0);
+  const busySince = useRef<number | null>(null);
+  if (busy && busySince.current === null) busySince.current = now();
+  if (!busy && busySince.current !== null) busySince.current = null;
+  useEffect(() => {
+    if (!busy) return;
+    const id = setInterval(() => setTick((t) => t + 1), SPINNER_MS);
+    return () => clearInterval(id);
+  }, [busy]);
+  const elapsedMs = busy && busySince.current !== null ? now() - busySince.current : 0;
   const rail = useMemo(
     () => liveSubagents(children[state.currentId ?? ""] ?? []),
     [children, state.currentId],
@@ -438,6 +452,9 @@ export function App(
           contextTokens: state.session?.contextTokens ?? null,
         }}
         activity={state.activity}
+        busy={busy}
+        elapsedMs={elapsedMs}
+        tick={tick}
         queued={state.queued}
         notice={state.notice}
       />

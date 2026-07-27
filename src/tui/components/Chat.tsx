@@ -25,7 +25,7 @@
 import { Box, Text } from "ink";
 import type { VLine } from "../lines.ts";
 import { visibleSlice } from "../lines.ts";
-import { meterLine, UI } from "../format.ts";
+import { busyLine, meterLine, UI } from "../format.ts";
 import { MessageRow } from "./Message.tsx";
 
 export interface ChatMeter {
@@ -54,6 +54,12 @@ export interface ChatProps {
    * never load-bearing.
    */
   activity?: string | null;
+  /** A turn is in flight. Drives the spinner line — see `busyLine`. */
+  busy?: boolean;
+  /** How long the running turn has been going. Ignored unless `busy`. */
+  elapsedMs?: number;
+  /** Spinner phase. The caller owns the clock so this stays render-pure. */
+  tick?: number;
   /** Messages typed while a turn ran, held locally until it drains (spec §5). */
   queued?: string[];
   /** A transient message (a copy, an error). */
@@ -76,6 +82,9 @@ export function Chat(
     scrollOff = 0,
     meter,
     activity,
+    busy = false,
+    elapsedMs = 0,
+    tick = 0,
     queued = [],
     notice,
     decorate,
@@ -126,7 +135,17 @@ export function Chat(
         )
         : null}
       {queued.map((q, i) => <Text key={`q-${i}`} dimColor wrap="truncate">⧖ queued: {q}</Text>)}
-      {activity
+      {busy
+        ? (
+          // While a turn runs this REPLACES the bare activity blurb: it carries the
+          // blurb's text when there is one, and says "working" when there is not,
+          // so the running state is never a blank screen.
+          <Text wrap="truncate">
+            <Text color={UI.accent}>{busyLine({ activity, elapsedMs, tick }).slice(0, 2)}</Text>
+            <Text dimColor>{busyLine({ activity, elapsedMs, tick }).slice(2)}</Text>
+          </Text>
+        )
+        : activity
         ? (
           <Text wrap="truncate">
             <Text color={UI.accent}>{"⋯ "}</Text>

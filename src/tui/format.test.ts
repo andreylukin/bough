@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import {
   activeTrigger,
   applyCompletion,
+  busyLine,
   clip,
   codeGist,
   coldCacheNote,
   colorEnabled,
   ctxPctLeft,
   disconnectNote,
+  fmtDuration,
   fmtTokens,
   fmtUsd,
   fuzzyPositions,
@@ -422,4 +424,36 @@ Deno.test("shortenPath only abbreviates a real home prefix", () => {
   // A sibling directory that merely starts with the same characters is not home.
   assert.equal(shortenPath("/Users/mentor/x", "/Users/me"), "/Users/mentor/x");
   assert.equal(shortenPath("/a/b", ""), "/a/b");
+});
+
+Deno.test("the busy line always names motion, elapsed time, and the way out", () => {
+  // The regression it prevents: a running turn that has printed nothing looked
+  // identical to a hung terminal, and esc — the fix for a hung terminal — was
+  // documented on no screen.
+  const line = busyLine({ activity: null, elapsedMs: 9_000, tick: 0 });
+  assert.equal(line, "⠋ working · 9s · esc interrupts");
+  // The cheap-tier blurb rides along when there is one, instead of replacing it.
+  assert.equal(
+    busyLine({ activity: "reading keys.ts", elapsedMs: 0, tick: 1 }),
+    "⠙ reading keys.ts · 0s · esc interrupts",
+  );
+  // A blank blurb is the same as no blurb — never an empty middle field.
+  assert.equal(
+    busyLine({ activity: "   ", elapsedMs: 0, tick: 0 }),
+    "⠋ working · 0s · esc interrupts",
+  );
+  // The spinner cycles rather than running off the end of the frame list.
+  const frames = new Set(
+    Array.from({ length: 40 }, (_, i) => busyLine({ elapsedMs: 0, tick: i }).slice(0, 1)),
+  );
+  assert.equal(frames.size, 10);
+});
+
+Deno.test("fmtDuration stays readable from one second to hours", () => {
+  assert.equal(fmtDuration(0), "0s");
+  assert.equal(fmtDuration(9_400), "9s");
+  assert.equal(fmtDuration(59_999), "59s");
+  assert.equal(fmtDuration(64_000), "1m04s");
+  assert.equal(fmtDuration(3_600_000), "1h00m");
+  assert.equal(fmtDuration(-5), "0s");
 });

@@ -622,6 +622,42 @@ export function shortenPath(path: string, home?: string | null): string {
   return path;
 }
 
+/** Braille spinner frames. Ten of them, so the phase reads as motion, not a glitch. */
+const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/** Ticks per spinner cycle, exposed so the caller's interval and this agree. */
+export const SPINNER_MS = 120;
+
+/**
+ * The line shown while a turn is running.
+ *
+ * It exists because the running state used to be indistinguishable from a hung
+ * one: the ONLY feedback was the cheap-tier `activity` blurb, which is best-effort
+ * by construction and absent for the whole first stretch of a turn. A turn that
+ * has printed nothing yet looked exactly like a frozen terminal, and the one key
+ * that would fix a frozen terminal — esc — was documented nowhere on screen.
+ *
+ * So: motion, elapsed time, and the way out, always, for as long as a turn runs.
+ * The activity blurb rides along when there is one rather than replacing this.
+ */
+export function busyLine(
+  opts: { activity?: string | null; elapsedMs: number; tick: number },
+): string {
+  const frame = SPINNER[Math.abs(Math.trunc(opts.tick)) % SPINNER.length];
+  const what = (opts.activity ?? "").trim() || "working";
+  return `${frame} ${what} · ${fmtDuration(opts.elapsedMs)} · esc interrupts`;
+}
+
+/** `9s`, `1m04s`. Seconds below a minute; a turn that runs an hour still reads. */
+export function fmtDuration(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  if (total < 60) return `${total}s`;
+  const mins = Math.floor(total / 60);
+  const secs = total % 60;
+  if (mins < 60) return `${mins}m${String(secs).padStart(2, "0")}s`;
+  return `${Math.floor(mins / 60)}h${String(mins % 60).padStart(2, "0")}m`;
+}
+
 // ---- composer completion ----------------------------------------------------
 
 /**
