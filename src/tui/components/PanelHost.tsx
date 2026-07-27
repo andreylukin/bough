@@ -35,6 +35,8 @@ import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react
 import type { McpStatus } from "../../mcp/status.ts";
 import type { ModelRow } from "../../llm/client.ts";
 import { api, type SessionRow } from "../api.ts";
+import { selectionFor, type TreeRow } from "../historytree.ts";
+import { ConversationTree } from "./History.tsx";
 import type { Command, PanelTab } from "../keys.ts";
 import type { Store, TuiState } from "../store.ts";
 import {
@@ -93,6 +95,16 @@ const NO_SESSION_CHANGES = {
  * property and a test drives them with three lines of fakes.
  */
 export interface PanelControls {
+  /**
+   * Branch at a message and open the result — pi's `/tree` selection, which is
+   * bough's fork (`historytree.ts`). `editorText` seeds the composer so a user
+   * turn is edited and re-sent rather than replayed.
+   */
+  forkAt?: (
+    sessionId: string,
+    body: { atMessageId: string; exclusive?: boolean },
+    editorText?: string,
+  ) => Promise<void>;
   /** `GET /sessions?originId=` — delegated children, for the tree and the rail. */
   listChildren?: (originId: string) => Promise<SessionRow[]>;
   /** `GET /mcp/servers?session=` — re-read on every entry, never cached. */
@@ -137,6 +149,8 @@ export interface PanelHostDeps {
   };
   /** The tree tab's rows, and the drill-in `App` already owns for the rail. */
   tree: TreeItem[];
+  /** The open conversation as a tree — pi's `/tree` (`historytree.ts`). */
+  conversation?: TreeRow[];
   drillIn: (originId: string) => void;
   collapse: (originId: string) => void;
 }
@@ -152,6 +166,7 @@ export interface PanelHandle {
 
 export function usePanelHost(deps: PanelHostDeps): PanelHandle {
   const { store, state, rows, cols, now, controls = {}, models = [] } = deps;
+  const conversation = deps.conversation ?? [];
   const { tree, drillIn, collapse } = deps;
   const [panel, setPanel] = useState<PanelState>(initialPanel);
   const [sel, setSel] = useState(0);
@@ -257,7 +272,7 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
 
   const items = tabLength(panel.tab, {
     sessions: sessions.length,
-    tree: tree.length,
+    tree: state.currentId ? conversation.length : tree.length,
     changes: changes.length,
     workflows: state.workflows.length,
     model: entries.length,
@@ -300,6 +315,19 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
         return void store.open(item.session.id);
       }
       case "tree": {
+        // With a conversation open this tab IS that conversation, so ⏎ means
+        // "go back to this turn" — pi's selection rules, resolved by
+        // `selectionFor`: a user turn cuts BEFORE itself and hands its text to
+        // the composer so you edit and re-send; anything else cuts inclusive and
+        // leaves the composer empty; a branch row is a session, so open it.
+        if (state.currentId) {
+          const row = conversation[sel];
+          if (!row) return;
+          const choice = selectionFor(row, state.thread);
+          dispatch({ type: "close" });
+          if ("open" in choice) return void store.open(choice.open);
+          return void controls.forkAt?.(state.currentId, choice.fork, choice.editorText);
+        }
         const item = tree[sel];
         if (!item || item.type !== "session") return;
         dispatch({ type: "close" });
@@ -448,22 +476,31 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
         }}
         theme={{ preview }}
       >
-        {panel.tab === "tree" ? <Tree items={tree} selected={sel} rows={body} /> : (
-          <Workflows
-            runs={state.workflows}
-            sel={sel}
-            level={0}
-            detail={null}
-            phaseSel={0}
-            agentSel={0}
-            scroll={0}
-            filter={null}
-            promptOpen={false}
-            rows={body}
-            cols={cols}
-            now={now}
-          />
-        )}
+        {panel.tab === "tree"
+          ? (
+            // With a conversation open the tree is THAT conversation — pi's
+            // `/tree`. With none open there is nothing to branch, so it falls back
+            // to the session lineage, which is what this tab used to be.
+            state.currentId
+              ? <ConversationTree rows={conversation} selected={sel} height={body} />
+              : <Tree items={tree} selected={sel} rows={body} />
+          )
+          : (
+            <Workflows
+              runs={state.workflows}
+              sel={sel}
+              level={0}
+              detail={null}
+              phaseSel={0}
+              agentSel={0}
+              scroll={0}
+              filter={null}
+              promptOpen={false}
+              rows={body}
+              cols={cols}
+              now={now}
+            />
+          )}
       </Panel>
     )
     : null;

@@ -72,6 +72,7 @@ import { currentAsk, isBusy, type Store, type TuiState } from "../store.ts";
 import { Chat, type ChatMeter } from "./Chat.tsx";
 import { Composer } from "./Composer.tsx";
 import { type PanelControls, type PanelHostDeps, usePanelHost } from "./PanelHost.tsx";
+import { historyTreeRows } from "../historytree.ts";
 import { liveSubagents, SubagentRail } from "./SubagentRail.tsx";
 import { treeItems } from "./Tree.tsx";
 
@@ -317,6 +318,19 @@ export function App(
     () => treeItems({ roots: state.sessions, childrenByOrigin: children, expanded }),
     [state.sessions, children, expanded],
   );
+  // pi's `/tree`: the OPEN CONVERSATION as a tree — every turn, and every branch
+  // that cut from a turn. The session list already lives in its own tab, so the
+  // tree tab is the place this belongs (`historytree.ts`).
+  const [userOnly, setUserOnly] = useState(false);
+  const conversation = useMemo(
+    () =>
+      historyTreeRows({
+        thread: state.thread,
+        branches: children[state.currentId ?? ""] ?? [],
+        userOnly,
+      }),
+    [state.thread, children, state.currentId, userOnly],
+  );
 
   const drillIn = useCallback((originId: string) => {
     setExpanded((set) => new Set([...set, originId]));
@@ -331,16 +345,40 @@ export function App(
   }, []);
 
   // The one non-chat surface (spec §15). Eight tabs, one hook, no logic here.
+  /**
+   * pi's `/tree` selection, executed. Branch at the message, open the branch, and
+   * — for a user turn — put its text back in the composer so the re-send IS the
+   * new branch. `api` rather than a `controls` thunk because this needs `setLine`,
+   * which only this component has.
+   */
+  const forkAt = useCallback(
+    async (
+      sessionId: string,
+      body: { atMessageId: string; exclusive?: boolean },
+      editorText?: string,
+    ) => {
+      try {
+        const res = await api.fork(sessionId, body);
+        if (editorText) setLine({ text: editorText, cursor: editorText.length });
+        await store.open(res.session.id);
+      } catch (error) {
+        store.notify(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [store],
+  );
+
   const panel = usePanelHost({
     store,
     state,
     rows,
     cols,
     now: now(),
-    controls,
+    controls: { ...controls, forkAt },
     models,
     ...(theme ? { theme } : {}),
     tree,
+    conversation,
     drillIn,
     collapse,
   });
