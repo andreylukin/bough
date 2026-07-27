@@ -425,25 +425,75 @@ served from the journal and how many ran live. A rerun that silently replayed no
 looks exactly like a successful rerun, so the count is the only thing that makes a
 key defect visible. This is a required part of the response, not a UI nicety.
 
+### Replay is prefix-bounded
+
+A relaunch replays **the longest unchanged prefix** of `agent()` calls. The first
+call whose key changed, and *everything after it*, runs live — even calls whose own
+key is unchanged.
+
+This is deliberately more conservative than replaying every key hit wherever it
+appears, and the reason is bough-specific: **agents mutate a shared checkout.** A
+call's key covers its prompt, not the world that prompt runs against. Two agents can
+ask "run the test suite" with byte-identical prompts and mean entirely different
+questions, because an upstream agent rewrote the code in between. Replaying the
+second one returns a verdict about a tree that no longer exists — and unlike a cache
+miss, which only costs money, a stale hit is a wrong answer presented as a fresh one.
+
+The prefix rule is what makes the shared checkout safe to combine with replay. It
+costs some redundant work on independent fan-outs; that is the price of not silently
+serving results computed against a different filesystem.
+
 ### Steering a run
 
-A workflow is long-lived, so it is **steerable mid-flight** rather than only
-restartable. The loop is **pause → edit → resume**:
+There is **no mid-run user input**. A running script cannot be edited, and it does not
+stop to ask. For sign-off between stages, run each stage as its own workflow.
 
-1. **pause** gates *new* `agent()` calls; agents already dispatched finish normally.
-   Nothing is discarded and nothing is killed.
-2. The script is edited — on disk at `~/.bough/workflows/<id>.js`, through the API, or
-   by asking the agent to rewrite it.
-3. **resume** continues the *same run*. Calls whose key is unchanged replay from the
-   journal; the first changed call and everything after it run live.
+What a long run supports instead:
 
-The distinction from a rerun matters: resume continues the run you are watching, and
-completed work stays completed. A rerun is for a run that has already ended.
+- **pause / resume.** Pause gates *new* `agent()` calls; agents already dispatched
+  finish normally and their results are journaled. Resume releases the gate and the
+  run continues. Nothing is discarded and no completed work is lost.
+- **stop, then relaunch from the journal.** To change what a run does, stop it, edit
+  the script — on disk at `~/.bough/workflows/<id>.js`, through the API, or by asking
+  the agent to rewrite it — and relaunch seeded from the stopped run's journal. The
+  unchanged prefix replays; the rest runs live. This is a **new run** with its own id,
+  reading the old run's journal. It is the same operation as a rerun; a rerun is just
+  the case where the script did not change.
 
-An in-flight call cannot be recalled — it was dispatched with the old prompt and its
-result stands. That is why steering pauses first: the alternative is a run where one
-result silently came from a superseded version of the script, with nothing marking
-which.
+An in-flight call cannot be recalled. Pausing before stopping is therefore the way to
+preserve the most work: a dispatched agent that is allowed to finish is journaled and
+will replay, whereas one killed mid-flight is not and starts over.
+
+That asymmetry has a design consequence worth stating: **a workflow that fans work out
+across many small agents preserves far more progress across a stop than one built from
+a few long ones.**
+
+### Cost
+
+A run can spawn hundreds of agents and quietly become the most expensive thing in the
+product, so cost is a first-class surface rather than something discovered afterward.
+
+- **Size guideline.** A configurable target for how many agents a generated script
+  should aim for — `small` (<5), `medium` (<15), `large` (<50), or unrestricted. It is
+  advice to the model that writes the script, not a cap; a request that plainly calls
+  for a different scale overrides it. Default `medium`.
+- **Large-run warning.** A run that schedules more than the guideline's count, or
+  whose projected token total crosses a threshold, is flagged in the run view. The
+  warning is advisory — it does not pause or throttle — and points at the control that
+  stops the run.
+- **Per-agent accounting.** The run view shows tokens and elapsed time per agent and
+  per phase, so an expensive stage is visible while it is running rather than in the
+  bill.
+
+Stopping a run never loses completed work: the journal is already written, and a
+relaunch replays it.
+
+### Saving a run
+
+A run whose script did what you wanted can be **saved as a named workflow**, at
+`~/.bough/workflows/saved/<name>.js` or in the project. A saved workflow is invoked by
+name and parameterized through `args`, so an orchestration worth repeating — a review
+you run on every branch — becomes a command rather than a script you re-derive.
 
 ### Control
 
@@ -451,8 +501,11 @@ which.
   abort signal.
 - **pause** / **resume** as above.
 - **rerun** starts a new run seeded from a finished run's journal.
-- Concurrency is capped by the run's own semaphore (4 agents at once). Subagent
-  caps do not apply inside a workflow — queue as many calls as needed.
+- Concurrency is capped by the run's own semaphore: up to 16 agents at once, fewer on
+  machines with few cores. Subagent caps do not apply inside a workflow — queue as
+  many calls as needed.
+- A run may spawn at most 1,000 agents in its lifetime. This is a runaway-loop
+  backstop, not a working limit.
 
 Workflow agents get no context beyond their prompt string. Workflows do not nest,
 and there is no token budget ceiling.
