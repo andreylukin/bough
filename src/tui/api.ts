@@ -135,7 +135,11 @@ export class ApiError extends Error {
  */
 export class OfflineError extends Error {
   constructor(readonly base: string, override readonly cause: unknown) {
-    super(`can't reach the bough server at ${base} — start it with: bough start`);
+    // The COMMAND comes before the address, because this line is rendered into a
+    // one-row notice that truncates: with the remedy last, an 80-column terminal
+    // cut it to "…start it with: bough st…" — the one thing the reader needed,
+    // clipped mid-word. What is worth losing to a narrow terminal is the URL.
+    super(`bough server unreachable — run: bough start · ${base}`);
     this.name = "OfflineError";
   }
 }

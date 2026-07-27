@@ -66,9 +66,10 @@ async function preflight(): Promise<void> {
     await api.listSessions();
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    console.error(`bough tui: cannot reach the server at ${api.base}`);
-    console.error(`  ${detail}`);
-    console.error("  start it with:  deno task dev");
+    // `detail` already carries the remedy (`OfflineError`). This used to add
+    // "start it with: deno task dev" underneath it, so the same failure gave two
+    // different commands and the user had to guess which one was meant.
+    console.error(`bough tui: ${detail}`);
     Deno.exit(2);
   }
 }

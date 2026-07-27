@@ -124,8 +124,16 @@ Deno.test("a dead server says so in one sentence, with the command that fixes it
     () => api.listSessions(),
     (error: unknown) => {
       assert.ok(error instanceof OfflineError);
-      assert.match(error.message, /can't reach the bough server at http:\/\/127\.0\.0\.1:4321/);
-      assert.match(error.message, /bough start/);
+      assert.match(error.message, /unreachable/);
+      assert.match(error.message, /http:\/\/127\.0\.0\.1:4321/);
+      // The REMEDY must come before the address. This line is rendered into a
+      // one-row notice that truncates, and with the command last an 80-column
+      // terminal clipped it to "bough st…" — the only part that mattered.
+      assert.ok(
+        error.message.indexOf("bough start") < error.message.indexOf("127.0.0.1"),
+        `the command must precede the address: ${error.message}`,
+      );
+      assert.ok(error.message.length <= 80, `too long for one row: ${error.message}`);
       return true;
     },
   );
