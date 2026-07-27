@@ -399,19 +399,58 @@ happens at the tool-call layer so the model retries on mismatch. Scripts branch 
 typed data rather than parsing prose — this is the primary reliability mechanism
 for fan-out, since delegated work reports no other machine-readable result.
 
-### Journal and rerun
+### The journal
 
-Every `agent()` call is journaled into `workflow_agents` keyed by
-`hash(prompt + opts)`. `workflow.rerun({id, script?})` replays journal hits from the
-source run **instantly** and re-runs only calls whose key changed. Editing a script
-and rerunning therefore costs only the edited calls. Scripts mirror to
-`~/.bough/workflows/<id>.js` so they can be edited on disk.
+Every `agent()` call is journaled into `workflow_agents` **before it runs**, keyed by
+`hash(prompt + label + phase + resolved model + schema)` — everything that decides
+what the subagent will be asked. The key must hash the *resolved* model, not just one
+the script named: a script naming none still runs on something, and hashing only the
+named model let a repinned session replay stale answers as a fresh run.
+
+The journal does three jobs at once, and the first is the reason it exists:
+
+1. **Completed work is never redone.** A key hit replays its stored result instantly —
+   no subagent, no cost.
+2. **Live progress.** Each row carries status (`queued` → `running` →
+   `done`/`error`/`stopped`/`cached`), label, phase, and the backing session id for
+   drill-in. Rows are written before the semaphore is acquired, so a saturated run
+   shows queued agents rather than pretending all of them are working.
+3. **The record.** Each agent's returned text or error, kept after the run ends.
+
+Only successful calls replay. A failed call re-runs live — the failure may well be
+the thing the author just fixed.
+
+**Replay is always reported.** Any operation that replays returns how many calls were
+served from the journal and how many ran live. A rerun that silently replayed nothing
+looks exactly like a successful rerun, so the count is the only thing that makes a
+key defect visible. This is a required part of the response, not a UI nicety.
+
+### Steering a run
+
+A workflow is long-lived, so it is **steerable mid-flight** rather than only
+restartable. The loop is **pause → edit → resume**:
+
+1. **pause** gates *new* `agent()` calls; agents already dispatched finish normally.
+   Nothing is discarded and nothing is killed.
+2. The script is edited — on disk at `~/.bough/workflows/<id>.js`, through the API, or
+   by asking the agent to rewrite it.
+3. **resume** continues the *same run*. Calls whose key is unchanged replay from the
+   journal; the first changed call and everything after it run live.
+
+The distinction from a rerun matters: resume continues the run you are watching, and
+completed work stays completed. A rerun is for a run that has already ended.
+
+An in-flight call cannot be recalled — it was dispatched with the old prompt and its
+result stands. That is why steering pauses first: the alternative is a run where one
+result silently came from a superseded version of the script, with nothing marking
+which.
 
 ### Control
 
 - **stop** kills the worker and interrupts in-flight subagent turns via the run's
   abort signal.
-- **pause** gates *new* `agent()` calls while running ones finish; **resume** releases.
+- **pause** / **resume** as above.
+- **rerun** starts a new run seeded from a finished run's journal.
 - Concurrency is capped by the run's own semaphore (4 agents at once). Subagent
   caps do not apply inside a workflow — queue as many calls as needed.
 
