@@ -208,7 +208,12 @@ export interface PanelProps {
   changes?: ChangesProps;
   model?: ModelPickerProps;
   mcp?: McpTabProps;
-  skills?: { skills: SkillRow[] | null; note?: string; sources?: readonly SkillSourceRow[] };
+  skills?: {
+    skills: SkillRow[] | null;
+    note?: string;
+    sources?: readonly SkillSourceRow[];
+    selected?: number;
+  };
   theme?: { preview: ThemePreview | null };
   /** Body for the tabs other tasks own (`tree`, `workflows`). */
   children?: ReactNode;
@@ -231,6 +236,7 @@ function Body(
       return (
         <SkillsTab
           cols={width}
+          selected={skills?.selected}
           skills={skills?.skills ?? null}
           note={skills?.note}
           sources={skills?.sources}

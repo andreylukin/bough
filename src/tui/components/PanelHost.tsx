@@ -442,6 +442,7 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
         mcp={{ status: mcp, selected: sel, message }}
         skills={{
           skills,
+          selected: sel,
           sources: skillSources,
           note: skills === null && !loadingSkills ? SKILLS_NOTE : undefined,
         }}

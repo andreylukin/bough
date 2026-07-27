@@ -47,7 +47,7 @@ export interface MouseEvent {
 }
 
 /** Keys ink does not deliver, or delivers wrong. See the fourth invariant. */
-export type NavKey = "home" | "end" | "cmdHome" | "cmdEnd" | "shiftTab";
+export type NavKey = "home" | "end" | "cmdHome" | "cmdEnd" | "shiftTab" | "forwardDelete";
 
 /** Where the filter sends what it consumes. Every handler is optional. */
 export interface InputSinks {
@@ -80,6 +80,18 @@ const CMD_ARROW = /\x1b\[1;9([CD])/g;
  */
 // deno-lint-ignore no-control-regex -- ESC is the point
 const BACKTAB = /\x1b\[Z/g;
+/**
+ * `CSI 3~` — the forward-delete key (fn+Delete on a Mac keyboard).
+ *
+ * `chordOf` folds ink's `key.delete` into the backspace chord, and that fold is
+ * CORRECT: on macOS the Backspace key sends `\x7f`, which ink reports as
+ * `key.delete`, so treating that flag as forward-delete would break Backspace for
+ * every Mac user. The consequence was that forward-delete had no chord at all —
+ * `delete.forward` was reachable only via ^d. The real key is this sequence, and
+ * it is unambiguous, so it is decoded here rather than guessed at from a flag.
+ */
+// deno-lint-ignore no-control-regex -- ESC is the point
+const FORWARD_DELETE = /\x1b\[3~/g;
 // deno-lint-ignore no-control-regex -- ESC is the point
 const FOCUS = /\x1b\[([IO])/g;
 // deno-lint-ignore no-control-regex -- ESC is the point
@@ -140,7 +152,7 @@ export function decodeModifyOther(mods: number, code: number): string {
 // old tree wrote `1;9[CD]?` here, which held a COMPLETE cmd-arrow and delivered it
 // one keystroke late.
 // deno-lint-ignore no-control-regex -- ESC is the point
-const PARTIAL_TAIL = /\x1b\[(<[\d;]*|20[01]?|1(;9?)?|2(7(;\d*(;\d*)?)?)?)$/;
+const PARTIAL_TAIL = /\x1b\[(<[\d;]*|20[01]?|1(;9?)?|2(7(;\d*(;\d*)?)?)?|3)$/;
 
 export interface InputFilter {
   /** One raw chunk in, the bytes ink should see out. */
@@ -165,6 +177,10 @@ export function createInputFilter(sinks: InputSinks = {}): InputFilter {
       })
       // Before NAV_KEY: `[1;9D` would otherwise be matched by neither, but the
       // ordering states the intent — the modifier form is the more specific one.
+      .replace(FORWARD_DELETE, () => {
+        sinks.navKey?.("forwardDelete");
+        return "";
+      })
       .replace(BACKTAB, () => {
         sinks.navKey?.("shiftTab");
         return "";

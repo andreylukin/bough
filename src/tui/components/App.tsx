@@ -509,6 +509,9 @@ export function App(
         // Backtab is not line editing: it is the panel's "previous tab", which no
         // keypress could reach because ink does not decode `CSI Z` (`mouse.ts`).
         if (key === "shiftTab") return void run("panel.prev", "");
+        // `chordOf` cannot carry this one: ink reports macOS Backspace as
+        // `key.delete`, so the flag is not the key (`mouse.ts`).
+        if (key === "forwardDelete") return setLine((s) => editLine(s, "delete.forward"));
         setLine((s) =>
           editLine(s, key === "home" || key === "cmdHome" ? "cursor.home" : "cursor.end")
         );

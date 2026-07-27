@@ -175,3 +175,20 @@ Deno.test("shift+tab is delivered as a nav key, in both encodings", () => {
   assert.equal(filter.feed("\t"), "\t");
   assert.deepEqual(seen, ["shiftTab", "shiftTab"]);
 });
+
+Deno.test("forward-delete has a key again, without breaking macOS backspace", () => {
+  // `chordOf` folds ink's `key.delete` into the backspace chord, and must: on
+  // macOS the Backspace key sends \x7f, which ink reports as `key.delete`. The
+  // real forward-delete key sends this sequence instead, and it is unambiguous.
+  const seen: NavKey[] = [];
+  const filter = createInputFilter({ navKey: (k) => seen.push(k) });
+  assert.equal(filter.feed("\x1b[3~"), "");
+  assert.deepEqual(seen, ["forwardDelete"]);
+  // A backspace byte is untouched — it is not a sequence and never was.
+  assert.equal(filter.feed("\x7f"), "\x7f");
+  assert.deepEqual(seen, ["forwardDelete"]);
+  // Split across reads, it still never reaches the draft as text.
+  assert.equal(filter.feed("\x1b[3"), "");
+  assert.equal(filter.feed("~"), "");
+  assert.deepEqual(seen, ["forwardDelete", "forwardDelete"]);
+});

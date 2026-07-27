@@ -39,6 +39,8 @@ export interface SkillSourceRow {
 }
 
 export interface SkillsTabProps {
+  /** Cursor row. The panel already moves it for this tab; nothing drew it. */
+  selected?: number;
   /**
    * Columns available. The description used to be clipped at a hardcoded 60
    * characters, so at 200 columns a skill's description still cut off at column
@@ -54,7 +56,7 @@ export interface SkillsTabProps {
   sources?: readonly SkillSourceRow[];
 }
 
-export function SkillsTab({ skills, rows, cols, note, sources }: SkillsTabProps) {
+export function SkillsTab({ skills, rows, cols, selected = 0, note, sources }: SkillsTabProps) {
   if (!skills) {
     return note
       ? <Text color={palette.warn} wrap="wrap">{note}</Text>
@@ -72,10 +74,18 @@ export function SkillsTab({ skills, rows, cols, note, sources }: SkillsTabProps)
     );
   }
   const height = Math.max(3, rows - 6);
+  // A WINDOW around the cursor, not the first N rows. The panel has always moved
+  // `sel` for this tab — the row count is in its table — but the list drew from
+  // index 0 with no marker, so ↑↓ and ⏎ were documented by the panel and inert
+  // here, and a skill past the fold could not be reached or read at all.
+  const at = Math.max(0, Math.min(selected, skills.length - 1));
+  const start = Math.max(0, Math.min(at - Math.floor(height / 2), skills.length - height));
+  const window = skills.slice(start, start + height);
   return (
     <Box flexDirection="column">
-      {skills.slice(0, height).map((s) => (
-        <Text key={s.name} wrap="truncate">
+      {window.map((s, i) => (
+        <Text key={s.name} wrap="truncate" inverse={start + i === at}>
+          <Text dimColor>{start + i === at ? "❯ " : "  "}</Text>
           <Text bold color={s.error ? palette.error : palette.accent}>/{s.name}</Text>
           <Text dimColor>
             {"  "}
@@ -86,7 +96,9 @@ export function SkillsTab({ skills, rows, cols, note, sources }: SkillsTabProps)
             : null}
         </Text>
       ))}
-      {skills.length > height ? <Text dimColor>… {skills.length - height} more</Text> : null}
+      {skills.length > height
+        ? <Text dimColor>{`${at + 1}/${skills.length} · ↑↓ to see the rest`}</Text>
+        : null}
       <Text dimColor wrap="truncate">name a skill in your message to load it</Text>
       {where ? <Text dimColor wrap="truncate">read from {where}</Text> : null}
     </Box>
