@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Fresh-machine bootstrap for bough. macOS-only because the service is launchd —
 # nothing here is confined; bough runs as you (spec §2).
-# Installs toolchain deps via Homebrew, fetches the worker
-# model, and links the `bough` server manager onto PATH. Safe to re-run.
+# Installs toolchain deps via Homebrew, caches Deno dependencies, and links the
+# `bough` server manager onto PATH. Safe to re-run.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -43,10 +43,10 @@ else
   echo "==> all packages already installed"
 fi
 
-# Deno >= 2.9 via Homebrew. Claw Patrol's MITM proxy needs the server-side TLS
-# handshake + SNI callback that landed in node:tls in 2.9; anything older silently
-# breaks the egress gate. We install/upgrade through brew even when an older deno is
-# already on PATH from the deno.land installer (brew upgrade would fail on that one).
+# Deno >= 2.9 via Homebrew. That is the floor the tree is developed and tested
+# against — it needs `node:sqlite` and the `worker-options` unstable flag (see
+# deno.json). We install/upgrade through brew even when an older deno is already on
+# PATH from the deno.land installer (brew upgrade would fail on that one).
 deno_ok() {
   command -v deno >/dev/null || return 1
   local v
@@ -86,13 +86,6 @@ if ! command -v typescript-language-server >/dev/null; then
 else
   echo "==> typescript-language-server already installed"
 fi
-
-# The plugin panel's "✎ Edit" button opens definitions in Zed. Optional but nice.
-if ! command -v zed >/dev/null; then
-  echo "warning: zed CLI not found — the Plugins panel's Edit button opens files in Zed." >&2
-  echo "  Install Zed (brew install --cask zed), then run 'zed: install CLI' inside it." >&2
-fi
-
 
 echo "==> caching Deno dependencies + typecheck"
 (cd "$ROOT" && deno install && deno task check)
