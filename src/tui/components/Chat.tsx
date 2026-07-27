@@ -95,7 +95,20 @@ export function Chat(
     placeholder = "type to start · the agent writes one program per round",
   }: ChatProps,
 ) {
-  const body = Math.max(1, height);
+  // `height` is this component's TOTAL, not just the transcript's.
+  //
+  // The rows under the viewport — the scroll indicator, each queued message, the
+  // busy line, a notice — used to be drawn IN ADDITION to a fixed-height body, so
+  // Chat grew and shrank as they came and went and the composer under it slid up
+  // and down the screen while you were typing into it. The input bar is the one
+  // thing on screen that must never move; every other harness pins it. So the
+  // extras are counted first and the transcript takes what is left.
+  const fixed = queued.length + (busy ? 1 : 0) + (notice ? 1 : 0);
+  // Whether the scroll indicator gets a row depends on the body height, which
+  // depends on whether the indicator gets a row. One probe slice settles it.
+  const probe = visibleSlice(lines, Math.max(1, height - fixed), scrollOff);
+  const extras = fixed + (probe.more > 0 ? 1 : 0);
+  const body = Math.max(1, height - extras);
   const { start, rows, more, pct } = visibleSlice(lines, body, scrollOff);
   // Pad above, never below: the newest line stays where the eye already is.
   const pad = Math.max(0, body - rows.length);

@@ -251,15 +251,23 @@ export function App(
   // ranking is local. A session switch invalidates it.
   useEffect(() => {
     setFiles([]);
-    if (!state.currentId) return;
     let live = true;
-    void api.listFiles(state.currentId)
+    // A conversation that has not run a turn has no session id — and that is the
+    // screen where someone first types `@`. Fall back to the workspace it WOULD
+    // start in, or the popup opens with zero rows and reads as broken.
+    const pull = state.currentId
+      ? api.listFiles(state.currentId)
+      : defaultWorkspace
+      ? api.listFilesIn(defaultWorkspace)
+      : null;
+    if (!pull) return;
+    void pull
       .then((r) => live && setFiles(r.files))
       .catch(() => {}); // no repo, no candidates — the popup simply stays closed
     return () => {
       live = false;
     };
-  }, [state.currentId]);
+  }, [state.currentId, defaultWorkspace]);
 
   const trigger = useMemo(
     () => (dismissed ? null : activeTrigger(line.text, line.cursor)),

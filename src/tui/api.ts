@@ -595,6 +595,9 @@ export function createApi(options: ApiOptions = {}) {
 
     /** Candidates for the composer's `@` completion. Fetched once per session. */
     listFiles: (sessionId: string) => get<{ files: string[] }>(`/sessions/${sessionId}/files`),
+    /** The same, for a conversation that has not started and so has no session. */
+    listFilesIn: (workspace: string) =>
+      get<{ files: string[] }>(`/files?workspace=${encodeURIComponent(workspace)}`),
     listSkills: () => get<{ skills: SkillListRow[]; sources: SkillSource[] }>("/skills"),
   };
 }

@@ -18,7 +18,7 @@
  * client ranks them. The cap exists so a monorepo cannot stream 200k paths into a
  * terminal on every keystroke.
  */
-import { NotFoundError } from "../errors.ts";
+import { BadRequestError, NotFoundError } from "../errors.ts";
 import type { AppCtx } from "../types.ts";
 import { type Handler, json } from "./http.ts";
 
@@ -88,4 +88,22 @@ export const listFilesH: Handler = async (_req, ctx: AppCtx, params) => {
   // directory that is not a repository.
   const dir = session.workspace ?? "";
   return json({ files: dir ? await listWorkspaceFiles(dir) : [] });
+};
+
+/**
+ * `GET /files?workspace=<dir>` — the same listing for a directory with no session.
+ *
+ * A conversation that has not run a turn has no session id, and that is exactly
+ * the screen where someone types `@` for the first time: the popup opened with
+ * zero rows, which reads as broken rather than as empty. The session route cannot
+ * answer because there is nothing to look up yet.
+ *
+ * Taking a path here adds no capability — programs already run as the user with
+ * the user's full authority and no sandbox (spec §2), so a directory listing is
+ * not a door this opens.
+ */
+export const listFilesForWorkspaceH: Handler = async (req, _ctx: AppCtx) => {
+  const dir = new URL(req.url).searchParams.get("workspace") ?? "";
+  if (!dir) throw new BadRequestError("workspace is required");
+  return json({ files: await listWorkspaceFiles(dir) });
 };

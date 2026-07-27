@@ -159,6 +159,7 @@ export const routes: Route[] = [
   route("GET", "/model-settings", sessions.getModelSettingsH),
   // Candidates for the composer's `@` completion (`server/fs.ts`).
   route("GET", "/sessions/:id/files", fsapi.listFilesH),
+  route("GET", "/files", fsapi.listFilesForWorkspaceH),
   route("GET", "/workflow-settings", workflows.getWorkflowSettingsH),
   route("PUT", "/workflow-settings", workflows.putWorkflowSettingsH),
   // T7.2 — OAuth for remote MCP servers. The callback is the load-bearing one: the
