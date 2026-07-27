@@ -157,6 +157,7 @@ async function main() {
     <App
       store={store}
       defaultWorkspace={defaultWorkspace}
+      home={Deno.env.get("HOME") ?? ""}
       controls={controls}
       input={hooks}
       models={MODELS}

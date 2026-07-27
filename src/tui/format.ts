@@ -590,6 +590,38 @@ export function sessionLabel(title: string | null | undefined, workspace?: strin
   return base || "(untitled)";
 }
 
+/**
+ * The header's right-hand half: where this conversation runs, and how to get help.
+ *
+ * Both facts were absent from every screen. The workspace matters more here than
+ * in a harness that copies your checkout: bough edits the real one, as you, with
+ * your authority (spec §2), so "which directory is this pointed at" is the single
+ * thing a user must be able to read before pressing enter — and on a fresh
+ * conversation the title is "new conversation", which says nothing.
+ *
+ * The `? help` hint is there because `?` is the ONLY route to the keymap and
+ * nothing on screen mentioned it. A keymap nobody can find is a keymap nobody has.
+ *
+ * `home` is a parameter so this stays pure and testable.
+ */
+export function headerContext(
+  workspace: string | null | undefined,
+  home?: string | null,
+): string {
+  const bits: string[] = [];
+  const w = (workspace ?? "").replace(/\/+$/, "");
+  if (w) bits.push(shortenPath(w, home));
+  bits.push("? help");
+  return bits.join(" · ");
+}
+
+/** `/Users/me/repos/x` → `~/repos/x`. Absolute paths eat a header; `~` does not. */
+export function shortenPath(path: string, home?: string | null): string {
+  const h = (home ?? "").replace(/\/+$/, "");
+  if (h && (path === h || path.startsWith(h + "/"))) return "~" + path.slice(h.length);
+  return path;
+}
+
 // ---- composer completion ----------------------------------------------------
 
 /**

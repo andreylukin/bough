@@ -42,7 +42,7 @@ import type { ModelRow } from "../../llm/client.ts";
 import type { SessionRow } from "../api.ts";
 import type { MouseEvent, NavKey } from "../mouse.ts";
 import { buildLines } from "../lines.ts";
-import { sessionLabel, UI } from "../format.ts";
+import { headerContext, sessionLabel, UI } from "../format.ts";
 import {
   chordOf,
   chunkInput,
@@ -98,6 +98,8 @@ export interface AppProps {
   store: Store;
   /** Where a new conversation starts — where `bough` was launched. */
   defaultWorkspace?: string;
+  /** `$HOME`, so the header can print `~/repos/x` instead of eating the line. */
+  home?: string;
   controls?: AppControls;
   input?: InputHooks;
   /**
@@ -125,6 +127,7 @@ export function App(
   {
     store,
     defaultWorkspace,
+    home,
     controls = {},
     input: hooks = {},
     models,
@@ -396,10 +399,15 @@ export function App(
   const title = state.session
     ? sessionLabel(state.session.title, state.session.workspace)
     : "new conversation";
+  // Where this conversation runs, and the one hint that the keymap exists. Both
+  // are on EVERY screen including the empty one, because both are things you need
+  // before you press enter rather than after (`headerContext`).
+  const workspace = state.session?.workspace ?? defaultWorkspace ?? null;
   const header = (
     <Text wrap="truncate">
       <Text bold>{title}</Text>
-      <Text dimColor>{`  ${state.connected ? "" : "· disconnected "}`}</Text>
+      <Text dimColor>{`  ${headerContext(workspace, home)}`}</Text>
+      <Text color={UI.warn}>{state.connected ? "" : "  · disconnected"}</Text>
     </Text>
   );
 

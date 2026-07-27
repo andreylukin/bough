@@ -12,12 +12,14 @@ import {
   fmtUsd,
   fuzzyPositions,
   fuzzyScore,
+  headerContext,
   linkAt,
   md,
   meterLine,
   rankCompletions,
   segmentParts,
   setColorEnabled,
+  shortenPath,
   surface,
   toolSummary,
   truncateAnsi,
@@ -394,4 +396,30 @@ Deno.test("rankCompletions: a skill trigger marks rows with the slash it will in
   assert.equal(items[0].label, "/history");
   assert.equal(items[0].insert, "/history ");
   assert.equal(items[0].detail, "query bough's SQLite");
+});
+
+// ---------------------------------------------------------------------------
+// The header's context line
+// ---------------------------------------------------------------------------
+
+Deno.test("the header says where the turn will run, and always offers help", () => {
+  // bough edits the real checkout as the user (spec §2), so the workspace is a
+  // fact you need BEFORE pressing enter — including on a fresh conversation,
+  // whose title ("new conversation") tells you nothing.
+  assert.equal(
+    headerContext("/Users/me/repos/x", "/Users/me"),
+    "~/repos/x · ? help",
+  );
+  assert.equal(headerContext("/srv/app", "/Users/me"), "/srv/app · ? help");
+  // No workspace yet is not a reason to hide the only route to the keymap.
+  assert.equal(headerContext(null, "/Users/me"), "? help");
+  assert.equal(headerContext("", null), "? help");
+});
+
+Deno.test("shortenPath only abbreviates a real home prefix", () => {
+  assert.equal(shortenPath("/Users/me", "/Users/me"), "~");
+  assert.equal(shortenPath("/Users/me/x", "/Users/me/"), "~/x");
+  // A sibling directory that merely starts with the same characters is not home.
+  assert.equal(shortenPath("/Users/mentor/x", "/Users/me"), "/Users/mentor/x");
+  assert.equal(shortenPath("/a/b", ""), "/a/b");
 });
