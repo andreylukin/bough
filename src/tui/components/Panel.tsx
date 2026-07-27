@@ -47,7 +47,7 @@ import { Changes, type ChangesProps } from "./Changes.tsx";
 import { ModelPicker, type ModelPickerProps } from "./ModelPicker.tsx";
 import { Sessions, type SessionsProps } from "./Sessions.tsx";
 import { McpTab, type McpTabProps } from "./Mcp.tsx";
-import { type SkillRow, SkillsTab, type SkillSourceRow } from "./Skills.tsx";
+import { type SkillRow, type SkillSourceRow, SkillsTab } from "./Skills.tsx";
 import { ThemeTab } from "./Theme.tsx";
 
 // The panel's vocabulary, re-exported so a reader of this file never has to know it

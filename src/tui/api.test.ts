@@ -25,8 +25,7 @@ function fixture() {
   const db = openDb(":memory:");
   const ctx: AppCtx = { db, bus: new Bus() };
   const handler = createHandler(ctx, { onUnexpectedError: () => {} });
-  const fetchFn: typeof fetch = (input, init) =>
-    handler(new Request(input as string | URL, init));
+  const fetchFn: typeof fetch = (input, init) => handler(new Request(input as string | URL, init));
   return {
     ctx,
     api: createApi({ base: "http://127.0.0.1:4321", fetchFn }),

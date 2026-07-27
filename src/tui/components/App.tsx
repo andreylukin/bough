@@ -433,7 +433,7 @@ export function App(
         height={Math.max(1, rows - composerRows - 4 - rail.length)}
         scrollOff={scrollOff}
         meter={{
-          model: state.session?.model ?? null,
+          model: state.session?.model ?? state.effectiveModel,
           costUsd: state.usage?.costUsd ?? null,
           contextTokens: state.session?.contextTokens ?? null,
         }}

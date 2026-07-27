@@ -43,6 +43,7 @@ import {
   SetDraftBody,
 } from "../schema/requests.ts";
 import type { AppCtx } from "../types.ts";
+import { DEFAULT_MODEL } from "../turn/runner.ts";
 // T8.5. `vcs/` is below `server/` and imports nothing from it, so this adds no cycle
 // — deliberately not imported from `server/changes.ts`, which does import `app.ts`.
 import { recordBase } from "../vcs/repodiff.ts";
@@ -279,6 +280,13 @@ export const getSession: Handler = (_req, ctx, params) => {
     session,
     thread: ctx.db.threadFor(session.id),
     usage: { ...ctx.db.sessionUsage(session.id), tree: ctx.db.treeUsage(session.id) },
+    // What the NEXT turn will actually call, resolved the same way the runner
+    // resolves it. `session.model` is null until someone pins one in the picker,
+    // so a client that showed only that field could never name the model a user
+    // is spending money on — which is what the status meter did. Derived and not
+    // stored on purpose: null still means "follow the default", so a changed
+    // default still reaches a session nobody has pinned.
+    effectiveModel: session.model ?? ctx.model ?? DEFAULT_MODEL,
   });
 };
 

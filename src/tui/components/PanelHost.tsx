@@ -87,7 +87,6 @@ const NO_SESSION_CHANGES = {
   workspace: "",
 };
 
-
 /**
  * The operations the store does not expose. Every one is a REST call `tui/api.ts`
  * already has a method for; they are injected so this module keeps its no-I/O

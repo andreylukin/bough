@@ -36,7 +36,7 @@ Deno.test("parseFrames returns the unconsumed tail so a split frame survives", (
   const seen: [string, string][] = [];
   const emit = (type: string, data: string) => seen.push([type, data]);
 
-  let tail = parseFrames("event: message.delta\ndata: {\"a\":1}\n\nevent: turn.fi", emit);
+  let tail = parseFrames('event: message.delta\ndata: {"a":1}\n\nevent: turn.fi', emit);
   assert.deepEqual(seen, [["message.delta", '{"a":1}']]);
   assert.equal(tail, "event: turn.fi");
 
@@ -98,8 +98,16 @@ Deno.test("events flow, parsed, and the request never asks to resume", async () 
   });
 
   await until(() => ctx.bus.size === 1, "the stream to subscribe");
-  ctx.bus.publish({ type: "message.delta", sessionId: "s1", data: { messageId: "m", delta: "hi" } });
-  ctx.bus.publish({ type: "turn.finished", sessionId: "s1", data: { turnId: "t", sessionId: "s1", status: "done" } });
+  ctx.bus.publish({
+    type: "message.delta",
+    sessionId: "s1",
+    data: { messageId: "m", delta: "hi" },
+  });
+  ctx.bus.publish({
+    type: "turn.finished",
+    sessionId: "s1",
+    data: { turnId: "t", sessionId: "s1", status: "done" },
+  });
   await until(() => received.length === 2, "both events to arrive");
 
   assert.equal(received[0].type, "message.delta");
@@ -132,7 +140,9 @@ Deno.test("onOpen reports a RE-connect, which is what triggers the store's re-fe
           controller.enqueue(encoder.encode(": connected\n\n"));
         },
       });
-      return Promise.resolve(new Response(body, { headers: { "content-type": "text/event-stream" } }));
+      return Promise.resolve(
+        new Response(body, { headers: { "content-type": "text/event-stream" } }),
+      );
     },
     onEvent: () => {},
     onOpen: ({ reconnect }) => opens.push(reconnect),
@@ -209,9 +219,17 @@ Deno.test("?sessionId scopes the stream but never drops un-scoped events", async
   });
 
   await until(() => ctx.bus.size === 1, "the stream to subscribe");
-  ctx.bus.publish({ type: "message.delta", sessionId: "s2", data: { messageId: "x", delta: "no" } });
+  ctx.bus.publish({
+    type: "message.delta",
+    sessionId: "s2",
+    data: { messageId: "x", delta: "no" },
+  });
   ctx.bus.publish({ type: "workflow.log", data: { runId: "r", line: "global" } });
-  ctx.bus.publish({ type: "message.delta", sessionId: "s1", data: { messageId: "y", delta: "yes" } });
+  ctx.bus.publish({
+    type: "message.delta",
+    sessionId: "s1",
+    data: { messageId: "y", delta: "yes" },
+  });
   await until(() => received.length === 2, "the two deliverable events");
 
   assert.deepEqual(received.map((e) => e.type), ["workflow.log", "message.delta"]);

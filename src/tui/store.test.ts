@@ -81,7 +81,13 @@ class Recorder {
 
   emit(type: EventType, data: unknown, sessionId: string | undefined = SESSION): BoughEvent {
     this.#ts += 1;
-    const event: BoughEvent = { type, seq: ++this.#seq, ts: this.#ts, data, ...(sessionId ? { sessionId } : {}) };
+    const event: BoughEvent = {
+      type,
+      seq: ++this.#seq,
+      ts: this.#ts,
+      data,
+      ...(sessionId ? { sessionId } : {}),
+    };
     this.log.push(event);
     return event;
   }
@@ -119,7 +125,12 @@ function message(id: string, over: Partial<Message> = {}): Message {
   };
 }
 
-const TOOL_CALL: Part = { type: "tool_call", id: "call-1", name: "run_steps", input: { code: "1" } };
+const TOOL_CALL: Part = {
+  type: "tool_call",
+  id: "call-1",
+  name: "run_steps",
+  input: { code: "1" },
+};
 const TOOL_RESULT: Part = { type: "tool_result", callId: "call-1", output: "ok", isError: false };
 const TEXT: Part = { type: "text", text: "Looking…!" };
 
@@ -277,7 +288,10 @@ Deno.test("the delta text that reaches the finalized part is neither doubled nor
       usage: snapshotAfterOutage().usage,
     },
   });
-  state = replay(state, [...rec.log, rec.emit("message.delta", { messageId: "m-1", delta: "three" })]);
+  state = replay(state, [
+    ...rec.log,
+    rec.emit("message.delta", { messageId: "m-1", delta: "three" }),
+  ]);
   state = replay(state, rec.log); // and once more, for good measure
 
   assert.equal(state.streaming["m-1"], "one two three");
@@ -323,9 +337,27 @@ Deno.test("the snapshot watermark drops only events the fetch already contains",
       usage: snapshotAfterOutage().usage,
     },
   });
-  const older: BoughEvent = { type: "message.delta", sessionId: SESSION, seq: 9, ts: 4_999, data: {} };
-  const newer: BoughEvent = { type: "message.delta", sessionId: SESSION, seq: 10, ts: 5_000, data: {} };
-  const elsewhere: BoughEvent = { type: "message.delta", sessionId: OTHER, seq: 11, ts: 1, data: {} };
+  const older: BoughEvent = {
+    type: "message.delta",
+    sessionId: SESSION,
+    seq: 9,
+    ts: 4_999,
+    data: {},
+  };
+  const newer: BoughEvent = {
+    type: "message.delta",
+    sessionId: SESSION,
+    seq: 10,
+    ts: 5_000,
+    data: {},
+  };
+  const elsewhere: BoughEvent = {
+    type: "message.delta",
+    sessionId: OTHER,
+    seq: 11,
+    ts: 1,
+    data: {},
+  };
   const global: BoughEvent = { type: "workflow.log", seq: 12, ts: 1, data: {} };
 
   assert.equal(isDuplicate(state, older), true);
@@ -336,11 +368,23 @@ Deno.test("the snapshot watermark drops only events the fetch already contains",
 
 Deno.test("the dedupe window is bounded and keeps the most recent identities", () => {
   let state = apply(initialState(), { type: "open", sessionId: SESSION });
-  const first: BoughEvent = { type: "tool.log", sessionId: SESSION, seq: 1, ts: 1, data: { messageId: "m", callId: "c", line: "x" } };
+  const first: BoughEvent = {
+    type: "tool.log",
+    sessionId: SESSION,
+    seq: 1,
+    ts: 1,
+    data: { messageId: "m", callId: "c", line: "x" },
+  };
   for (let i = 1; i <= DEDUPE_WINDOW + 10; i++) {
     state = reduce(state, {
       type: "event",
-      event: { type: "tool.log", sessionId: SESSION, seq: i, ts: i, data: { messageId: "m", callId: "c", line: "x" } },
+      event: {
+        type: "tool.log",
+        sessionId: SESSION,
+        seq: i,
+        ts: i,
+        data: { messageId: "m", callId: "c", line: "x" },
+      },
     });
   }
   assert.equal(state.seen.length, DEDUPE_WINDOW);
@@ -399,7 +443,13 @@ Deno.test("a background session finishing is announced once, with a distinct seq
   );
   state = reduce(state, {
     type: "event",
-    event: { type: "message.finished", sessionId: OTHER, seq: 1, ts: 1, data: { messageId: "m-other" } },
+    event: {
+      type: "message.finished",
+      sessionId: OTHER,
+      seq: 1,
+      ts: 1,
+      data: { messageId: "m-other" },
+    },
   });
   assert.equal(state.background?.sessionId, OTHER);
   assert.equal(state.background?.seq, 1);
@@ -420,7 +470,13 @@ Deno.test("a subagent's finish raises no background toast", () => {
   );
   state = reduce(state, {
     type: "event",
-    event: { type: "message.finished", sessionId: "sub-1", seq: 1, ts: 1, data: { messageId: "m" } },
+    event: {
+      type: "message.finished",
+      sessionId: "sub-1",
+      seq: 1,
+      ts: 1,
+      data: { messageId: "m" },
+    },
   });
   assert.equal(state.background, null, "a subagent finishes inside its spawner's turn — not news");
 });
@@ -428,10 +484,34 @@ Deno.test("a subagent's finish raises no background toast", () => {
 Deno.test("message.retry drops the partial text rather than prefixing the re-stream", () => {
   let state = apply(initialState(), { type: "open", sessionId: SESSION });
   state = replay(state, [
-    { type: "message.started", sessionId: SESSION, seq: 1, ts: 1, data: message("m-1", { pending: true }) },
-    { type: "message.delta", sessionId: SESSION, seq: 2, ts: 2, data: { messageId: "m-1", delta: "half a too" } },
-    { type: "message.retry", sessionId: SESSION, seq: 3, ts: 3, data: { messageId: "m-1", attempt: 2, reason: "truncated tool call" } },
-    { type: "message.delta", sessionId: SESSION, seq: 4, ts: 4, data: { messageId: "m-1", delta: "all of it" } },
+    {
+      type: "message.started",
+      sessionId: SESSION,
+      seq: 1,
+      ts: 1,
+      data: message("m-1", { pending: true }),
+    },
+    {
+      type: "message.delta",
+      sessionId: SESSION,
+      seq: 2,
+      ts: 2,
+      data: { messageId: "m-1", delta: "half a too" },
+    },
+    {
+      type: "message.retry",
+      sessionId: SESSION,
+      seq: 3,
+      ts: 3,
+      data: { messageId: "m-1", attempt: 2, reason: "truncated tool call" },
+    },
+    {
+      type: "message.delta",
+      sessionId: SESSION,
+      seq: 4,
+      ts: 4,
+      data: { messageId: "m-1", delta: "all of it" },
+    },
   ]);
   assert.equal(state.streaming["m-1"], "all of it");
   assert.match(state.notice ?? "", /attempt 2/);
@@ -459,7 +539,13 @@ Deno.test("ask() holds surface oldest-first and settle out of the queue", () => 
   assert.equal(currentAsk(state)?.id, "q2");
   state = reduce(state, {
     type: "event",
-    event: { type: "ask.question", sessionId: SESSION, seq: 3, ts: 3, data: hold("q1", "answered") },
+    event: {
+      type: "ask.question",
+      sessionId: SESSION,
+      seq: 3,
+      ts: 3,
+      data: hold("q1", "answered"),
+    },
   });
   assert.deepEqual(state.asks.map((q) => q.id), ["q2"]);
 });
@@ -472,8 +558,20 @@ Deno.test("opening a session drops everything that belonged to the previous one"
     { type: "queue", text: "typed while busy" },
   );
   state = replay(state, [
-    { type: "message.started", sessionId: SESSION, seq: 1, ts: 1, data: message("m-1", { pending: true }) },
-    { type: "session.activity", sessionId: SESSION, seq: 2, ts: 2, data: { sessionId: SESSION, activity: "running tests" } },
+    {
+      type: "message.started",
+      sessionId: SESSION,
+      seq: 1,
+      ts: 1,
+      data: message("m-1", { pending: true }),
+    },
+    {
+      type: "session.activity",
+      sessionId: SESSION,
+      seq: 2,
+      ts: 2,
+      data: { sessionId: SESSION, activity: "running tests" },
+    },
   ]);
   assert.equal(state.activity, "running tests");
   assert.equal(state.queued.length, 1);
@@ -526,7 +624,13 @@ function fakeApi(overrides: Partial<Api> = {}) {
     },
     getChanges: () => {
       calls.push("getChanges");
-      return Promise.resolve({ available: false, reason: "not a repository", base: null, files: [], workspace: null });
+      return Promise.resolve({
+        available: false,
+        reason: "not a repository",
+        base: null,
+        files: [],
+        workspace: null,
+      });
     },
     listJobs: () => {
       calls.push("listJobs");
@@ -581,7 +685,11 @@ Deno.test("the shell re-fetches on RE-connect only, and re-delivered events stay
   events.open(false);
   await settle();
   assert.equal(store.getState().connected, true);
-  assert.deepEqual(calls.filter((c) => c.startsWith("getSession")), [], "first open must not resync");
+  assert.deepEqual(
+    calls.filter((c) => c.startsWith("getSession")),
+    [],
+    "first open must not resync",
+  );
 
   await store.open(SESSION);
   await settle();
@@ -641,7 +749,13 @@ Deno.test("a queued message drains once the turn ends, and only into its own ses
   assert.equal(calls.some((c) => c.startsWith("postMessage")), false);
 
   // The turn ends: the drain posts it into a fresh turn (spec §5).
-  events.emit({ type: "message.finished", sessionId: SESSION, seq: 99, ts: 9_999, data: { messageId: "m-1" } });
+  events.emit({
+    type: "message.finished",
+    sessionId: SESSION,
+    seq: 99,
+    ts: 9_999,
+    data: { messageId: "m-1" },
+  });
   await settle();
   assert.deepEqual(store.getState().queued, []);
   assert.equal(calls.filter((c) => c === `postMessage:${SESSION}`).length, 1);

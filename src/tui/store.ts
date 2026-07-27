@@ -45,15 +45,9 @@
  * pending.
  */
 import type { AskQuestion, BackgroundJob, Message, Part, Session } from "../schema/parts.ts";
-import type { AnyBoughEvent, BoughEvent, EventType } from "../schema/events.ts";
+import type { AnyBoughEvent, BoughEvent, BoughEventOf, EventType } from "../schema/events.ts";
 import type { SessionChangeSet } from "../server/changes.ts";
-import type {
-  Api,
-  ReplayReport,
-  SessionRow,
-  SessionSnapshot,
-  WorkflowSummary,
-} from "./api.ts";
+import type { Api, ReplayReport, SessionRow, SessionSnapshot, WorkflowSummary } from "./api.ts";
 import { api as defaultApi } from "./api.ts";
 import { connectEvents, type EventStream } from "./events.ts";
 
@@ -102,6 +96,8 @@ export interface TuiState {
   /** Cheap-tier blurb for the open session, or null. Fails silently by construction. */
   activity: string | null;
   usage: SessionSnapshot["usage"] | null;
+  /** The model the next turn will call — see `SessionSnapshot.effectiveModel`. */
+  effectiveModel: string | null;
   /** null until fetched. `available: false` is an ANSWER, not an error (spec §13). */
   changes: SessionChangeSet | null;
   /** The open session's background shells AND its subagents' (spec §9). */
@@ -138,6 +134,7 @@ export function initialState(): TuiState {
     notice: null,
     activity: null,
     usage: null,
+    effectiveModel: null,
     changes: null,
     jobs: [],
     workflows: [],
@@ -201,7 +198,9 @@ export function isDuplicate(state: TuiState, event: BoughEvent): boolean {
 }
 
 function remember(seen: readonly string[], key: string): readonly string[] {
-  const next = seen.length >= DEDUPE_WINDOW ? seen.slice(seen.length - DEDUPE_WINDOW + 1) : [...seen];
+  const next = seen.length >= DEDUPE_WINDOW
+    ? seen.slice(seen.length - DEDUPE_WINDOW + 1)
+    : [...seen];
   next.push(key);
   return next;
 }
@@ -432,7 +431,11 @@ function applyEvent(state: TuiState, raw: BoughEvent): TuiState {
         sessions,
         background,
         activity: mine ? null : state.activity,
-        thread: patchMessage(state.thread, messageId, (m) => m.pending ? { ...m, pending: false } : m),
+        thread: patchMessage(
+          state.thread,
+          messageId,
+          (m) => m.pending ? { ...m, pending: false } : m,
+        ),
         streaming: withoutKey(state.streaming, messageId),
       };
     }
@@ -482,7 +485,13 @@ function applyEvent(state: TuiState, raw: BoughEvent): TuiState {
       const workflows = state.workflows.some((w) => w.id === run.id)
         ? state.workflows.map((w) =>
           w.id === run.id
-            ? { ...w, status: run.status, currentPhase: run.currentPhase, error: run.error, finishedAt: run.finishedAt }
+            ? {
+              ...w,
+              status: run.status,
+              currentPhase: run.currentPhase,
+              error: run.error,
+              finishedAt: run.finishedAt,
+            }
             : w
         )
         : state.workflows;
@@ -537,6 +546,7 @@ export function reduce(state: TuiState, action: StoreAction): TuiState {
         queued: [],
         activity: null,
         usage: null,
+        effectiveModel: null,
         changes: null,
         jobs: [],
         workflows: [],
@@ -548,7 +558,7 @@ export function reduce(state: TuiState, action: StoreAction): TuiState {
     }
 
     case "snapshot": {
-      const { session, thread, usage } = action.snapshot;
+      const { session, thread, usage, effectiveModel } = action.snapshot;
       if (session.id !== state.currentId) {
         // A snapshot that lost the race with a session switch. Record the watermark
         // anyway — it is a fact about that session, not about the view.
@@ -569,6 +579,7 @@ export function reduce(state: TuiState, action: StoreAction): TuiState {
         thread: merged,
         streaming,
         usage,
+        effectiveModel: effectiveModel ?? state.effectiveModel,
         reconciledAt: { ...state.reconciledAt, [session.id]: action.at },
       };
     }
@@ -856,7 +867,19 @@ export function createStore(deps: StoreDeps = {}): Store {
           dispatch({ type: "event", event });
           // The change set has no event of its own (`schema/events.ts`), so the rail
           // refreshes when a turn ends — which is when the files stop moving.
-          if (event.type === "turn.finished") void refreshChanges();
+          //
+          // Usage has no event either, and used to have no refresh: it arrived ONLY
+          // with a snapshot, so a session's cost read null from the moment it was
+          // created until you switched away and came back. The server had the
+          // number the whole time. A turn ending is exactly when spend changes, so
+          // it is when the meter re-reads it.
+          if (event.type === "turn.finished") {
+            void refreshChanges();
+            const finished = event as BoughEventOf<"turn.finished">;
+            if (finished.data.sessionId === state.currentId) {
+              void snapshot(finished.data.sessionId);
+            }
+          }
           if (event.type === "job.spawned" || event.type === "job.exited") void refreshJobs();
           if (event.type === "workflow.updated" || event.type === "workflow.agent") {
             void refreshWorkflows();
@@ -900,8 +923,7 @@ export function createStore(deps: StoreDeps = {}): Store {
     send,
     drainQueue,
 
-    answerAsk: (answer: string) =>
-      settleAsk((q) => api.answerQuestion(q.sessionId, q.id, answer)),
+    answerAsk: (answer: string) => settleAsk((q) => api.answerQuestion(q.sessionId, q.id, answer)),
     declineAsk: () => settleAsk((q) => api.declineQuestion(q.sessionId, q.id)),
 
     async interrupt() {

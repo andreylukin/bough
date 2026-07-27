@@ -130,7 +130,9 @@ export function connectEvents(options: EventStreamOptions): EventStream {
   const doFetch = options.fetchFn ?? globalThis.fetch;
   const delay = options.delay ?? defaultDelay;
   const url = options.url ??
-    `${options.base ?? ""}/events${options.sessionId ? `?sessionId=${encodeURIComponent(options.sessionId)}` : ""}`;
+    `${options.base ?? ""}/events${
+      options.sessionId ? `?sessionId=${encodeURIComponent(options.sessionId)}` : ""
+    }`;
 
   const abort = new AbortController();
   const state = { connected: false, opens: 0 };

@@ -229,7 +229,12 @@ const MCP: McpStatus = {
  * must distinguish them and a listing of only healthy rows would not prove it. */
 const SKILLS: { skills: SkillRow[]; sources: { source: string; dir: string }[] } = {
   skills: [
-    { name: "history", description: "query bough's own sqlite", source: "bundled", dir: "/b/history" },
+    {
+      name: "history",
+      description: "query bough's own sqlite",
+      source: "bundled",
+      dir: "/b/history",
+    },
     { name: "broken", description: "", source: "user", dir: "/u/broken", error: "no name:" },
   ],
   sources: [{ source: "bundled", dir: "/b" }, { source: "user", dir: "/u" }],

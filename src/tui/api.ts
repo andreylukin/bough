@@ -79,12 +79,7 @@ import type { InterruptResult } from "../server/turns.ts";
 import type { SkillRow as SkillListRow } from "../server/skills.ts";
 import type { SkillSource } from "../skills/skills.ts";
 import type { WorkflowAgentView } from "../workflow/control.ts";
-import type {
-  LargeRunFlag,
-  ReplaySummary,
-  RunCost,
-  SizeGuideline,
-} from "../workflow/report.ts";
+import type { LargeRunFlag, ReplaySummary, RunCost, SizeGuideline } from "../workflow/report.ts";
 import type { RelaunchPreview, RelaunchReport } from "../workflow/relaunch.ts";
 import type { SavedWorkflow, SavedWorkflowDetail } from "../workflow/saved.ts";
 
@@ -167,6 +162,12 @@ export interface SessionSnapshot {
   /** Ancestors root→parent, then own. Assembled, never stored. */
   thread: Message[];
   usage: UsageTotals & { tree: UsageTotals };
+  /**
+   * The model the next turn will actually call. `session.model` is null until a
+   * user pins one, so this — not that — is what the meter names. Optional because
+   * a server older than the field simply omits it.
+   */
+  effectiveModel?: string;
 }
 
 /** `POST /sessions/:id/messages` — 202. `queued` = a turn was already running. */
@@ -492,14 +493,12 @@ export function createApi(options: ApiOptions = {}) {
     createSchedule: (body: CreateScheduleBody) => post<Schedule>("/schedules", body),
     patchSchedule: (id: string, body: PatchScheduleBody) =>
       patch<Schedule>(`/schedules/${seg(id)}`, body),
-    deleteSchedule: (id: string) =>
-      del<{ ok: boolean; removed: string }>(`/schedules/${seg(id)}`),
+    deleteSchedule: (id: string) => del<{ ok: boolean; removed: string }>(`/schedules/${seg(id)}`),
 
     // -- artifacts and their comment layer (T6.6, T6.7) ------------------------
 
     /** Filesystem-backed: correct for a session whose row is gone (spec §4). */
-    listArtifacts: (id: string) =>
-      get<{ artifacts: Artifact[] }>(`/sessions/${seg(id)}/artifacts`),
+    listArtifacts: (id: string) => get<{ artifacts: Artifact[] }>(`/sessions/${seg(id)}/artifacts`),
     listComments: (id: string, artifact?: string) =>
       get<{ comments: ArtifactComment[] }>(`/sessions/${seg(id)}/comments${query({ artifact })}`),
     postComment: (id: string, body: PostCommentBody) =>
