@@ -748,6 +748,47 @@ export function helpSections(bindings: Binding[] = BINDINGS): HelpSection[] {
 }
 
 /**
+ * One PHYSICAL row of the overlay.
+ *
+ * The overlay is taller than any terminal it will ever be opened in — 50-odd rows
+ * against a 24-row window — so it has to be a window over a list, and the list has
+ * to exist as data before a component sees it. It did not, and the cost was the
+ * bug this type exists to prevent: `Help` nested a `<Box>` per section inside a
+ * parent pinned to `height={rows}`, yoga shrank the overflow away, and EVERY
+ * section header plus one row per section was silently destroyed. `?` — the only
+ * discoverability surface bough has — rendered as garbage on a default terminal,
+ * and no test caught it because every test asserted `helpSections()` and none
+ * asserted a rendered line.
+ */
+export interface HelpLine {
+  kind: "header" | "row" | "blank";
+  chord: string;
+  desc: string;
+  /** Rendered muted: the `won't do` prose and the `not bound` chords. */
+  muted?: boolean;
+  /** Prose rows carry a bullet instead of a key column. */
+  prose?: boolean;
+}
+
+/**
+ * The overlay as a flat list of rows, one per line the terminal will draw.
+ *
+ * Flattening is the whole point: `visible` can then be a slice, and a slice cannot
+ * lose a header the way a squashed flexbox can.
+ */
+export function helpLines(sections: HelpSection[] = helpSections()): HelpLine[] {
+  const out: HelpLine[] = [];
+  for (const s of sections) {
+    if (out.length > 0) out.push({ kind: "blank", chord: "", desc: "" });
+    out.push({ kind: "header", chord: "", desc: s.section, muted: s.unavailable });
+    for (const [chord, desc] of s.keys) {
+      out.push({ kind: "row", chord, desc, muted: s.unavailable || s.limits, prose: s.limits });
+    }
+  }
+  return out;
+}
+
+/**
  * Bindings that can never fire, as `"mode chord"` strings.
  *
  * Two rows match the same keypress when they share a mode and chord AND the

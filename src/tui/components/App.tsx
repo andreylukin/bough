@@ -49,7 +49,7 @@ import {
   type Command,
   editLine,
   EMPTY_LINE,
-  helpSections,
+  helpLines,
   insertText,
   isTextInput,
   type KeyContext,
@@ -117,6 +117,9 @@ export interface AppProps {
 
 /** Rows a wheel tick moves. Three, like every other pager. */
 const WHEEL_ROWS = 3;
+
+/** Rows the `?` overlay moves per ↑/↓. A keymap is scanned, not paged. */
+const HELP_STEP = 3;
 
 export function App(
   {
@@ -227,9 +230,14 @@ export function App(
         return store.notify("^c again to quit — subagents and workflows keep running");
       case "quit":
         return exit();
+      // The overlay and the transcript share `scrollOff`, so entering or leaving
+      // help must rewind it — otherwise a scrolled-back transcript opens the
+      // overlay somewhere in its middle, and vice versa.
       case "help.open":
+        setScrollOff(0);
         return setMode("help");
       case "help.close":
+        setScrollOff(0);
         return setMode("chat");
 
       case "send":
@@ -265,9 +273,18 @@ export function App(
 
       case "fold.all":
         return setFoldAll((v) => !v);
+      // Two surfaces, opposite senses. The transcript's offset counts BACKWARDS
+      // from the bottom, so scrolling up raises it; the overlay is a document read
+      // top-down, so scrolling up lowers it. Same command, because it is the same
+      // key doing the same thing to whatever is on screen.
       case "scroll.up":
+        if (uiMode === "help") return setScrollOff((o) => Math.max(0, o - HELP_STEP));
         return setScrollOff((o) => Math.min(Math.max(0, lines.length - 1), o + page));
       case "scroll.down":
+        if (uiMode === "help") {
+          const max = Math.max(0, helpLines().length - Math.max(1, rows - 2));
+          return setScrollOff((o) => Math.min(max, o + HELP_STEP));
+        }
         return setScrollOff((o) => Math.max(0, o - page));
 
       case "rail.enter":
@@ -311,6 +328,7 @@ export function App(
     exit,
     histAt,
     lines.length,
+    uiMode,
     panel,
     rail,
     railSel,
@@ -373,7 +391,7 @@ export function App(
 
   // ---- render -------------------------------------------------------------
 
-  if (uiMode === "help") return <Help rows={rows} />;
+  if (uiMode === "help") return <Help rows={rows} offset={scrollOff} />;
 
   const title = state.session
     ? sessionLabel(state.session.title, state.session.workspace)
@@ -460,31 +478,58 @@ function AskCard(
   );
 }
 
-/** The `?` overlay, rendered from the keymap so it can never drift out of date. */
-function Help({ rows }: { rows: number }) {
-  const sections = helpSections();
+/**
+ * The `?` overlay, rendered from the keymap so it can never drift out of date.
+ *
+ * A WINDOW, not a page. The keymap is ~50 rows and a terminal is 24, so this
+ * renders `body` rows starting at `offset` and says so in the header. It must
+ * never hand yoga more children than fit: the previous version pinned a column to
+ * `height={rows}` and let flexbox absorb the overflow, which silently deleted
+ * every section header (see `HelpLine`).
+ */
+function Help({ rows, offset }: { rows: number; offset: number }) {
+  const all = helpLines();
+  // Two chrome rows: the header and the position footer.
+  const body = Math.max(1, rows - 2);
+  const start = clampHelpOffset(offset, all.length, rows);
+  const visible = all.slice(start, start + body);
+  const more = all.length - (start + visible.length);
   return (
-    <Box flexDirection="column" height={rows}>
-      <Text bold>keys · esc closes</Text>
-      {sections.map((section) => (
-        <Box key={section.section} flexDirection="column" marginTop={1}>
-          <Text color={section.unavailable ? undefined : UI.accent} dimColor={section.unavailable}>
-            {section.section}
-          </Text>
-          {section.keys.map(([chord, desc], i) => (
-            <Text key={`${chord}-${i}`} wrap="truncate" dimColor={section.unavailable}>
-              {section.limits
-                ? <Text dimColor>{"  · "}</Text>
-                : (
-                  <Text color={section.unavailable ? undefined : UI.info}>
-                    {`  ${chord.padEnd(12)}`}
-                  </Text>
-                )}
-              <Text dimColor={section.limits || section.unavailable}>{desc}</Text>
+    <Box flexDirection="column">
+      <Text bold>{"keys · esc closes"}</Text>
+      {visible.map((l, i) => {
+        if (l.kind === "blank") return <Text key={i}>{" "}</Text>;
+        if (l.kind === "header") {
+          return (
+            <Text key={i} color={l.muted ? undefined : UI.accent} dimColor={l.muted}>
+              {l.desc}
             </Text>
-          ))}
-        </Box>
-      ))}
+          );
+        }
+        return (
+          <Text key={i} wrap="truncate" dimColor={l.muted}>
+            {l.prose
+              ? <Text dimColor>{"  · "}</Text>
+              : <Text color={l.muted ? undefined : UI.info}>{`  ${l.chord.padEnd(12)}`}</Text>}
+            <Text dimColor={l.muted}>{l.desc}</Text>
+          </Text>
+        );
+      })}
+      <Text dimColor>
+        {more > 0 ? `↑↓ scroll · ${more} more below` : start > 0 ? "↑↓ scroll · end" : "↑↓ scroll"}
+      </Text>
     </Box>
   );
+}
+
+/**
+ * Clamp the overlay's scroll so the last page is the last page.
+ *
+ * Exported-ish (module-local, but used by the key handler too) because the clamp
+ * and the render must agree: if the handler let the offset run past the end the
+ * overlay would go blank, which is exactly the class of bug that shipped here once.
+ */
+function clampHelpOffset(offset: number, total: number, rows: number): number {
+  const body = Math.max(1, rows - 2);
+  return Math.max(0, Math.min(offset, Math.max(0, total - body)));
 }

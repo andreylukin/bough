@@ -21,6 +21,7 @@ import {
   deadBindings,
   editLine,
   EMPTY_LINE,
+  helpLines,
   helpSections,
   insertText,
   isTextInput,
@@ -257,6 +258,33 @@ Deno.test('the "not bound" section is true — none of those chords is bound', (
     );
   }
   assert.equal(UNAVAILABLE.keys.length, unbound.length);
+});
+
+Deno.test("every section header survives flattening, and carries its rows", () => {
+  // The regression this pins: the overlay used to nest a Box per section under a
+  // parent pinned to the terminal height, yoga absorbed the overflow, and every
+  // header plus one row per section vanished from the screen. A flat list cannot
+  // lose a row to layout, so the fix is asserted where the fix lives.
+  const sections = helpSections();
+  const flat = helpLines(sections);
+  const headers = flat.filter((l) => l.kind === "header").map((l) => l.desc);
+  assert.deepEqual(headers, sections.map((s) => s.section));
+  assert.equal(
+    flat.filter((l) => l.kind === "row").length,
+    sections.reduce((n, s) => n + s.keys.length, 0),
+  );
+  // Each header is immediately followed by its own first row, never by another
+  // header — the shape that made the squashed render unreadable.
+  for (let i = 0; i < flat.length; i++) {
+    if (flat[i].kind !== "header") continue;
+    assert.equal(flat[i + 1]?.kind, "row", `section "${flat[i].desc}" rendered no rows`);
+  }
+});
+
+Deno.test("the overlay is taller than a terminal, which is why it scrolls", () => {
+  // If this ever stops being true the windowing in `Help` is dead code and should
+  // go. While it IS true, a renderer that does not window is a broken renderer.
+  assert.ok(helpLines().length > 24);
 });
 
 Deno.test("the prose sections carry no key column of their own", () => {
