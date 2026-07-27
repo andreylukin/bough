@@ -24,7 +24,7 @@ import type { Message, Part, Session } from "../schema/parts.ts";
 import type { AppCtx, LlmClient, LlmParams, LlmResult } from "../types.ts";
 import { DEFAULT_MODEL } from "../turn/runner.ts";
 import { createHandler, type Route, route } from "../server/app.ts";
-import { handoff, handoffH, type HandoffCtx } from "./handoff.ts";
+import { handoff, type HandoffCtx, handoffH } from "./handoff.ts";
 
 // ---- fixtures ---------------------------------------------------------------
 

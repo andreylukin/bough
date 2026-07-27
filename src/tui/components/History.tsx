@@ -37,7 +37,7 @@ export function ConversationTree(
       })}
       <Text dimColor wrap="truncate">
         {rows.length > body ? `${at + 1}/${rows.length} · ` : ""}
-        ↑↓ move · ⏎ branch from this turn · esc back
+        ↑↓ move · ⏎ branch from this turn · s branch + summary · esc back
       </Text>
     </Box>
   );

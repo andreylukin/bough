@@ -27,7 +27,7 @@ import type { BoughEvent } from "../schema/events.ts";
 import type { Message, Part, Session } from "../schema/parts.ts";
 import type { AppCtx } from "../types.ts";
 import { createHandler, type Route, route } from "../server/app.ts";
-import { extract, extractH, type ExtractCtx } from "./extract.ts";
+import { extract, type ExtractCtx, extractH } from "./extract.ts";
 import { fork } from "./fork.ts";
 
 // ---- fixtures ---------------------------------------------------------------
@@ -385,7 +385,8 @@ Deno.test("a nonexistent message id, and a part index out of range, are both 400
 
   assert.throws(
     () => extract(f.ctx, source.id, { picks: [{ messageId: "nope" }] }),
-    (e: unknown) => e instanceof ExtractError && /no message nope exists/.test((e as Error).message),
+    (e: unknown) =>
+      e instanceof ExtractError && /no message nope exists/.test((e as Error).message),
   );
   assert.throws(
     () => extract(f.ctx, source.id, { picks: [{ messageId: turn.id, parts: [3] }] }),

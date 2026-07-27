@@ -113,6 +113,13 @@ export const ForkBody = z.object({
    * branch-point case where the caller intends to re-send it itself.
    */
   exclusive: z.boolean().optional(),
+  /**
+   * Carry a summary of the ABANDONED tail onto the branch — pi's
+   * branch-summary-on-switch. The abandoned path is everything from the fork point
+   * to the end of the source, which is exactly what you stop being able to see
+   * once you branch. Off by default: it costs an LLM call.
+   */
+  summarizeAbandoned: z.boolean().optional(),
 });
 export type ForkBody = z.infer<typeof ForkBody>;
 

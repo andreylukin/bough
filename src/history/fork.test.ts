@@ -33,7 +33,7 @@ import { TurnRegistry } from "../turn/queue.ts";
 // is the module that starts evaluating — entering through a handler module instead
 // leaves its exports in the temporal dead zone while `app.ts` builds the route table.
 import { createHandler, type Route, route } from "../server/app.ts";
-import { fork, type ForkStarter, forkSessionH } from "./fork.ts";
+import { fork, forkSessionH, type ForkStarter } from "./fork.ts";
 
 // ---- fixtures ---------------------------------------------------------------
 
@@ -494,7 +494,8 @@ Deno.test("400: a fork point in ancestor history names the ancestor to fork inst
   const stranger = message(f.db, other.id, "user", "elsewhere");
   assert.throws(
     () => fork(f.ctx, target.id, { atMessageId: stranger.id }),
-    (e: unknown) => e instanceof ForkError && /not .*— fork a session at one of its own/.test(String(e)),
+    (e: unknown) =>
+      e instanceof ForkError && /not .*— fork a session at one of its own/.test(String(e)),
   );
   // And an id that exists nowhere.
   assert.throws(

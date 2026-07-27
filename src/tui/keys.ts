@@ -78,6 +78,8 @@ export type Command =
   | "panel.prev"
   /** The active tab's affirmative: open a session, grant a server, keep a theme. */
   | "panel.confirm"
+  /** Branch at the cursor AND carry a summary of the abandoned path (pi's /tree). */
+  | "panel.confirmSummarize"
   /** One per tab, derived from `TABS` so a tab cannot exist without a chord. */
   | TabCommand
   // -- composing ------------------------------------------------------------
@@ -643,6 +645,15 @@ export const BINDINGS: Binding[] = [
     desc: "drill into delegated work (tree)",
   },
   { mode: "panel", chord: "left", command: "move.out" },
+  // A letter, like the workflow steering keys below and for the same reason: the
+  // panel has the keyboard while it is open. Acted on only by the tree tab.
+  {
+    mode: "panel",
+    chord: "s",
+    command: "panel.confirmSummarize",
+    section: "inside the panel",
+    desc: "branch, carrying a summary of what you left (tree)",
+  },
   {
     mode: "panel",
     chord: "esc",

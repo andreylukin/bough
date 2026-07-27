@@ -72,7 +72,9 @@ export type PanelAction =
   | { type: "cycle"; delta: number }
   /** Cursor movement inside the active tab. */
   | { type: "move"; delta: number }
-  | { type: "confirm" };
+  | { type: "confirm" }
+  /** ⏎'s sibling: branch AND summarize the abandoned path (`historytree.ts`). */
+  | { type: "confirmSummarize" };
 
 /**
  * A resolved keymap command → a panel action, or `null` for "not mine".
@@ -95,6 +97,8 @@ export function panelActionFor(command: Command): PanelAction | null {
       return { type: "cycle", delta: -1 };
     case "panel.confirm":
       return { type: "confirm" };
+    case "panel.confirmSummarize":
+      return { type: "confirmSummarize" };
     case "move.up":
       return { type: "move", delta: -1 };
     case "move.down":
@@ -148,6 +152,9 @@ export function reducePanel(
       return state;
     case "confirm":
       if (state.open && state.tab === "theme") deps.theme?.commit();
+      return state;
+    case "confirmSummarize":
+      // Nothing to preview or revert: the host performs it (`PanelHost`).
       return state;
   }
 }

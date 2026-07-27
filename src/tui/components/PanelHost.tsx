@@ -102,7 +102,7 @@ export interface PanelControls {
    */
   forkAt?: (
     sessionId: string,
-    body: { atMessageId: string; exclusive?: boolean },
+    body: { atMessageId: string; exclusive?: boolean; summarizeAbandoned?: boolean },
     editorText?: string,
   ) => Promise<void>;
   /** `GET /sessions?originId=` — delegated children, for the tree and the rail. */
@@ -306,7 +306,7 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
   }, [panel.tab, panel.open]);
 
   /** ⏎ on the active tab. One place, so a tab's affirmative is one line of code. */
-  const confirm = useCallback(() => {
+  const confirm = useCallback((summarize = false) => {
     switch (panel.tab) {
       case "sessions": {
         const item = sessions[sel];
@@ -326,7 +326,11 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
           const choice = selectionFor(row, state.thread);
           dispatch({ type: "close" });
           if ("open" in choice) return void store.open(choice.open);
-          return void controls.forkAt?.(state.currentId, choice.fork, choice.editorText);
+          return void controls.forkAt?.(
+            state.currentId,
+            { ...choice.fork, ...(summarize ? { summarizeAbandoned: true } : {}) },
+            choice.editorText,
+          );
         }
         const item = tree[sel];
         if (!item || item.type !== "session") return;
@@ -397,6 +401,7 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
       }
       dispatch(action);
       if (action.type === "confirm") confirm();
+      if (action.type === "confirmSummarize") confirm(true);
       return true;
     }
     if (!panel.open) return false;

@@ -70,6 +70,8 @@ import type { Message, Part, Session } from "../schema/parts.ts";
 import { ForkBody } from "../schema/requests.ts";
 import type { AppCtx } from "../types.ts";
 import { baseTitle, openBranch } from "./branch.ts";
+import { summarizeSpan } from "./compact.ts";
+import { DEFAULT_MODEL } from "../turn/runner.ts";
 import { type Handler, json, parseBody } from "../server/http.ts";
 
 // ---------------------------------------------------------------------------
@@ -313,5 +315,38 @@ function inheritPins(ctx: AppCtx, source: Session, branch: Session): Session {
 export const forkSessionH: Handler = async (req, ctx, params) => {
   const body = await parseBody(req, ForkBody);
   const { session, turnStarted } = fork(ctx, params.id, body);
+  // pi's branch-summary-on-switch. The abandoned path is everything from the fork
+  // point to the end of the SOURCE — precisely what you stop being able to see the
+  // moment you branch — so the essence of it is carried onto the new path as a
+  // system note rather than lost. Best-effort by construction: a summariser that
+  // fails must not fail the branch, which already exists and is already correct.
+  if (body.summarizeAbandoned) {
+    const own = ctx.db.messagesFor(params.id);
+    const at = own.findIndex((m) => m.id === body.atMessageId);
+    const abandoned = at < 0 ? [] : own.slice(at);
+    if (abandoned.length > 0) {
+      try {
+        const model = session.model ?? ctx.model ?? DEFAULT_MODEL;
+        const text = await summarizeSpan(ctx, model, abandoned);
+        // Seeded exactly the way `branch.ts` seeds: complete on arrival, never
+        // `pending` (nothing exists to close it), announced so an open client
+        // renders it with no new reducer.
+        const note = ctx.db.createMessage({
+          id: crypto.randomUUID(),
+          sessionId: session.id,
+          role: "system",
+          parts: [{
+            type: "text",
+            text: `Summary of the path this branch left behind:\n\n${text}`,
+          }],
+          pending: false,
+          createdAt: (ctx.now ?? Date.now)(),
+        });
+        ctx.bus.publish({ type: "message.started", sessionId: session.id, data: note });
+      } catch (error) {
+        console.error(`branch summary failed [${session.id}]:`, error);
+      }
+    }
+  }
   return json({ session, thread: ctx.db.threadFor(session.id), turnStarted }, 201);
 };

@@ -354,7 +354,7 @@ export function App(
   const forkAt = useCallback(
     async (
       sessionId: string,
-      body: { atMessageId: string; exclusive?: boolean },
+      body: { atMessageId: string; exclusive?: boolean; summarizeAbandoned?: boolean },
       editorText?: string,
     ) => {
       try {

@@ -174,6 +174,21 @@ function modelFor(ctx: CompactCtx, session: Session): string {
   return session.model ?? ctx.model ?? DEFAULT_MODEL;
 }
 
+/**
+ * Summarize a span of messages. Exported because a BRANCH SWITCH needs the same
+ * thing compaction does: pi's `/tree` carries "the essence of abandoned work
+ * without all the token-heavy details" onto the new path, and that is this
+ * function with a different span (`history/fork.ts`).
+ */
+export async function summarizeSpan(
+  ctx: CompactCtx,
+  model: string,
+  span: readonly Message[],
+  instructions?: string,
+): Promise<string> {
+  return await summarize(ctx, model, span, instructions);
+}
+
 async function summarize(
   ctx: CompactCtx,
   model: string,

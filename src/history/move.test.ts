@@ -20,7 +20,7 @@ import type { BoughEvent } from "../schema/events.ts";
 import type { Message, Part, Session } from "../schema/parts.ts";
 import type { AppCtx } from "../types.ts";
 import { createHandler, type Route, route } from "../server/app.ts";
-import { move, moveIntoH, type MoveCtx } from "./move.ts";
+import { move, type MoveCtx, moveIntoH } from "./move.ts";
 
 // ---- fixtures ---------------------------------------------------------------
 
