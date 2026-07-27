@@ -191,10 +191,17 @@ Deno.test("sanitizeTitle strips the label, the quoting and the trailing period",
 });
 
 Deno.test("sanitizeTitle caps a model that answered the message instead of titling it", () => {
-  // The live finding the word cap exists for: a session titled with thirteen words of
-  // story. Eight words is a readable stub; a real 3-6 word title is untouched.
+  // The live finding the word cap exists for: a session titled with thirteen words
+  // of story. It is now REFUSED outright rather than capped — eight words of an
+  // answer is still an answer, and a session with no title falls back to its
+  // workspace name, which is at least true.
   const prose = "Sure, I can help you with that — let me start by reading the file";
-  assert.equal(sanitizeTitle(prose).split(/\s+/).length, 8);
+  assert.equal(sanitizeTitle(prose), "");
+  // Prose that is not a reply is still capped to a readable stub.
+  assert.equal(
+    sanitizeTitle("Rewrite the theme route and then repaint every preview row").split(/\s+/).length,
+    8,
+  );
   assert.equal(sanitizeTitle("theme picker previews live"), "theme picker previews live");
 });
 
@@ -408,4 +415,45 @@ Deno.test("no cheap tier at all is a working server, not a degraded one", async 
     f.stop();
     f.db.close();
   }
+});
+
+Deno.test("a model that answered instead of titling yields NO title, not a truncated lie", () => {
+  // The live header, from a session where bough had just read the file it claimed
+  // no access to. Eight words of an answer is not a title, it is a false sentence
+  // shown above every screen.
+  assert.equal(sanitizeTitle("I don't have access to your codebase, so I can't say"), "");
+  for (
+    const reply of [
+      "I'll take a look at that for you",
+      "Sure! Here is what that file does",
+      "Sorry, I cannot help with that request",
+      "Let me explain what the runner module does",
+      "As an AI assistant I should note that",
+      "Based on the code you have shared with me",
+      "You asked about the turn runner and its",
+    ]
+  ) {
+    assert.equal(sanitizeTitle(reply), "", `should be refused: ${reply}`);
+  }
+  // A cap that would leave a dangling connective is refused too — it reads as a
+  // half-finished thought rather than a name.
+  assert.equal(
+    sanitizeTitle("Refactor the parser and the lexer and the rest"),
+    "Refactor the parser and the lexer",
+  );
+});
+
+Deno.test("a real title still passes through untouched", () => {
+  assert.equal(
+    sanitizeTitle("Fix division by zero in calculator"),
+    "Fix division by zero in calculator",
+  );
+  assert.equal(sanitizeTitle("Title: Add retry to the LLM client"), "Add retry to the LLM client");
+  assert.equal(sanitizeTitle('"Wire up the changes rail"'), "Wire up the changes rail");
+  // "Interrupt" starts with I but is not the pronoun — the boundary must hold.
+  assert.equal(
+    sanitizeTitle("Interrupt handling for running turns"),
+    "Interrupt handling for running turns",
+  );
+  assert.equal(sanitizeTitle("Image input support"), "Image input support");
 });

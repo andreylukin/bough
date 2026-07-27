@@ -171,12 +171,40 @@ export const TITLE_MAX_CHARS = 60;
  */
 export function sanitizeTitle(raw: string): string {
   const line = raw.trim().split("\n").map((l) => l.trim()).find((l) => l.length > 0) ?? "";
-  return line
+  const cleaned = line
     .replace(/^(title\s*:)\s*/i, "")
     .replace(/^["'“”`*]+|["'“”`*.]+$/g, "")
-    .split(/\s+/).slice(0, 8).join(" ")
-    .slice(0, TITLE_MAX_CHARS)
     .trim();
+  if (cleaned === "") return "";
+
+  const words = cleaned.split(/\s+/);
+  // The model ANSWERED instead of titling. Capping that at eight words does not
+  // rescue it, it manufactures a lie: a live session was headed
+  //
+  //   I don't have access to your codebase, so
+  //
+  // — a truncated sentence, false on its face (bough had just read the file), shown
+  // above every screen and in both the sessions and tree tabs. No title at all is
+  // strictly better; the session then falls back to its workspace name, which is
+  // true. A reply is easy to spot because a title is a noun phrase and these never
+  // begin one.
+  if (
+    /^(i|i'm|i'll|i've|sorry|sure|certainly|okay|ok|here|let|as|based|the user|you)\b/i.test(
+      cleaned,
+    )
+  ) {
+    return "";
+  }
+  // Trailing connectives are trimmed rather than refused: a cap that lands on one
+  // leaves "… and the", which reads as a half-finished thought, but the words
+  // before it are usually a perfectly good name.
+  const capped = words.slice(0, 8);
+  while (capped.length > 1) {
+    const last = capped[capped.length - 1].replace(/[,;:]$/, "").toLowerCase();
+    if (!/^(and|or|but|so|because|that|which|with|for|to|of|in|on|a|an|the)$/.test(last)) break;
+    capped.pop();
+  }
+  return capped.join(" ").slice(0, TITLE_MAX_CHARS).replace(/[,;:]$/, "").trim();
 }
 
 /**
