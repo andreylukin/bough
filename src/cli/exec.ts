@@ -68,7 +68,16 @@ export const DEFAULT_PORT = 4321;
 
 export const USAGE =
   'usage: bough exec [-w DIR] [-m MODEL] [--json] [--timeout SECS] [--port N] "prompt"\n' +
-  "       (or pipe the prompt on stdin, with `-` or no positional argument)";
+  "       (or pipe the prompt on stdin, with `-` or no positional argument)\n" +
+  "\n" +
+  "  -w, --workspace DIR   the checkout the turn runs in (default: cwd)\n" +
+  "  -m, --model MODEL     override the model for this turn\n" +
+  "      --json            one JSON envelope per line instead of streamed text\n" +
+  "      --timeout SECS    wall clock for the whole turn (default: 900)\n" +
+  "      --port N          server port (default: BOUGH_PORT, then 4321)\n" +
+  "  -h, --help            this message\n" +
+  "\n" +
+  "programs run as you, with your authority — there is no sandbox.";
 
 /** A well-formed invocation. `prompt` is still unresolved — `-` means "read stdin". */
 export interface ExecArgs {
@@ -88,7 +97,25 @@ export interface ExecUsageError {
   usageError: string;
 }
 
-export function isUsageError(x: ExecArgs | ExecUsageError): x is ExecUsageError {
+/**
+ * `--help` / `-h`. Distinct from a usage ERROR because it is not one: help was
+ * asked for and help is being given, so it belongs on stdout with exit 0. Treating
+ * it as an unknown flag — which is what happened before this existed — makes the
+ * first thing anyone types at a new CLI print an error and fail a shell `&&`.
+ */
+export interface ExecHelpRequest {
+  help: true;
+}
+
+export function isHelpRequest(
+  x: ExecArgs | ExecUsageError | ExecHelpRequest,
+): x is ExecHelpRequest {
+  return "help" in x;
+}
+
+export function isUsageError(
+  x: ExecArgs | ExecUsageError | ExecHelpRequest,
+): x is ExecUsageError {
   return "usageError" in x;
 }
 
@@ -105,7 +132,9 @@ const SHORT: Record<string, string> = { w: "workspace", m: "model" };
  * errors too**, for the same reason: a typo'd `--jsno` that silently streams is
  * worse than one that stops.
  */
-export function parseExecArgs(argv: readonly string[]): ExecArgs | ExecUsageError {
+export function parseExecArgs(
+  argv: readonly string[],
+): ExecArgs | ExecUsageError | ExecHelpRequest {
   const positional: string[] = [];
   const values: Record<string, string> = {};
   let json = false;
@@ -132,6 +161,7 @@ export function parseExecArgs(argv: readonly string[]): ExecArgs | ExecUsageErro
       // A bare `-` is the stdin sentinel, not a flag — hence `length > 1`.
       const eq = token.indexOf("=");
       const short = eq === -1 ? token.slice(1) : token.slice(1, eq);
+      if (short === "h") return { help: true };
       name = SHORT[short];
       if (!name) return { usageError: `unknown flag -${short}\n${USAGE}` };
       inline = eq === -1 ? undefined : token.slice(eq + 1);
@@ -140,6 +170,7 @@ export function parseExecArgs(argv: readonly string[]): ExecArgs | ExecUsageErro
       continue;
     }
 
+    if (name === "help") return { help: true };
     if (name === "json") {
       if (inline !== undefined) return { usageError: `--json takes no value\n${USAGE}` };
       json = true;
@@ -289,6 +320,10 @@ export interface ExecEnvelope {
  */
 export async function runExec(argv: readonly string[], deps: ExecDeps): Promise<number> {
   const parsed = parseExecArgs(argv);
+  if (isHelpRequest(parsed)) {
+    deps.write(`${USAGE}\n`);
+    return 0;
+  }
   if (isUsageError(parsed)) {
     deps.warn(parsed.usageError);
     return 2;

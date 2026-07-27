@@ -26,6 +26,7 @@ import {
   createSseReader,
   type ExecDeps,
   type ExecEnvelope,
+  isHelpRequest,
   isUsageError,
   parseExecArgs,
   runExec,
@@ -455,7 +456,7 @@ Deno.test("parseExecArgs: the flag set, in both spellings", () => {
     "--port=4400",
     "the prompt",
   ]);
-  assert.ok(!isUsageError(parsed));
+  assert.ok(!isUsageError(parsed) && !isHelpRequest(parsed));
   assert.deepEqual(parsed, {
     prompt: "the prompt",
     workspace: "/w",
@@ -468,7 +469,7 @@ Deno.test("parseExecArgs: the flag set, in both spellings", () => {
 
 Deno.test("parseExecArgs: defaults", () => {
   const parsed = parseExecArgs(["hi"]);
-  assert.ok(!isUsageError(parsed));
+  assert.ok(!isUsageError(parsed) && !isHelpRequest(parsed));
   assert.equal(parsed.json, false);
   assert.equal(parsed.timeoutMs, 900_000);
   assert.equal(parsed.port, undefined);
@@ -477,20 +478,20 @@ Deno.test("parseExecArgs: defaults", () => {
 
 Deno.test("parseExecArgs: `-` is the stdin sentinel, not a flag", () => {
   const parsed = parseExecArgs(["-"]);
-  assert.ok(!isUsageError(parsed));
+  assert.ok(!isUsageError(parsed) && !isHelpRequest(parsed));
   assert.equal(parsed.prompt, "-");
 });
 
 Deno.test("parseExecArgs: `--` ends flag parsing, so a prompt may start with a dash", () => {
   const parsed = parseExecArgs(["--json", "--", "--not-a-flag"]);
-  assert.ok(!isUsageError(parsed));
+  assert.ok(!isUsageError(parsed) && !isHelpRequest(parsed));
   assert.equal(parsed.prompt, "--not-a-flag");
   assert.equal(parsed.json, true);
 });
 
 Deno.test("parseExecArgs: a value flag may take a dash-leading value", () => {
   const parsed = parseExecArgs(["-m", "-weird-model", "go"]);
-  assert.ok(!isUsageError(parsed));
+  assert.ok(!isUsageError(parsed) && !isHelpRequest(parsed));
   assert.equal(parsed.model, "-weird-model");
   assert.equal(parsed.prompt, "go");
 });
@@ -588,4 +589,24 @@ Deno.test("a retry announces itself on stderr and drops the false start from the
   } finally {
     f.close();
   }
+});
+
+Deno.test("--help is answered, not rejected", () => {
+  // It used to fall through to "unknown flag --help" and exit 2, so the first
+  // thing anyone types at a new CLI printed an error and failed a shell `&&`.
+  for (const argv of [["--help"], ["-h"], ["-w", "/tmp", "--help"]]) {
+    const parsed = parseExecArgs(argv);
+    assert.ok(isHelpRequest(parsed), `${argv.join(" ")} should be a help request`);
+  }
+  // A prompt that merely CONTAINS the word is still a prompt.
+  const prompt = parseExecArgs(["help me refactor this"]);
+  assert.ok(!isHelpRequest(prompt));
+});
+
+Deno.test("the usage text names every flag it accepts, and the no-sandbox posture", () => {
+  for (const flag of ["--workspace", "--model", "--json", "--timeout", "--port", "--help"]) {
+    assert.ok(USAGE.includes(flag), `usage does not document ${flag}`);
+  }
+  // Spec §2. A headless client is exactly where this is easiest to forget.
+  assert.match(USAGE, /no sandbox/);
 });
