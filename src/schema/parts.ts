@@ -1,54 +1,95 @@
 /**
- * The wire contract — Zod schemas for everything that crosses the server↔UI (and
- * server↔db) boundary. This is the source of truth for the wire shapes the TUI and
- * headless CLI consume; any change here must keep round-tripping (see parts.test.ts).
+ * The wire contract. Every shape that crosses server↔client, server↔db, or
+ * server↔worker is declared here once, as a Zod schema, so there is exactly one
+ * definition of "what a Message is" for the router, the TUI store, the CLI and the
+ * database layer to agree on.
  *
- * Design notes:
- *   - Parts are a discriminated union on `type` (text/reasoning/tool_call/tool_result/image)
- *     so the UI can switch on it and so new part kinds are additive.
- *   - A Message carries a `parts[]` array plus a `pending` flag: a message is created
- *     pending (the supervisor is still streaming) and flipped to done when finished.
- *   - BoughEvent is the SSE envelope. `data` is left as unknown here because its shape
- *     is per-event-type; the typed payloads live below as *EventData schemas and the
- *     bus stamps `seq`/`ts`. Validation of `data` is the emitter's job, not the wire's.
+ * The invariant this module holds is *derived visibility*: a Session carries its
+ * lineage (`kind`, `parentId`, `originId`) and nothing else. There is no
+ * `archivedAt`, no `deprecatedAt`, no hidden flag — a subagent collapses under its
+ * origin because of what it IS, not because something marked it. Any code that
+ * wants to hide a session computes it from these fields; adding a column here to
+ * store the answer would put two sources of truth in the tree view (spec §4).
+ *
+ * Second invariant: parts are a discriminated union on `type`. The UI switches on
+ * it exhaustively and replay maps each arm to a provider block, so a new part kind
+ * is an additive change that both sides are forced by the compiler to handle.
+ *
+ * Third: image bytes never live in the parts JSON. An `image` part stores a path
+ * under ~/.bough/attachments/, so message rows stay small and a replay survives the
+ * user moving the original file.
  */
 import { z } from "zod";
 
 // ---- roles & kinds ---------------------------------------------------------
 
-// "system" = harness-injected notes (e.g. a background subagent's finished report);
-// they render distinctly in the UI and replay to the model as user-side text.
-export const Role = z.enum(["user", "supervisor", "worker", "system"]);
+/**
+ * `system` = harness-injected notes (a detached subagent's report, a background
+ * job's exit, artifact comments). They render distinctly in the UI and replay to
+ * the model as user-side text — they are not a provider role.
+ */
+export const Role = z.enum(["user", "supervisor", "system"]);
 export type Role = z.infer<typeof Role>;
 
-export const SessionKind = z.enum(["root", "fork", "worker", "compaction", "subagent"]);
+/**
+ * Visibility is derived from this plus lineage: `subagent` and `workflow_agent`
+ * collapse under their `originId` and surface only on drill-in; `root`, `fork` and
+ * `compaction` are always listed (spec §4).
+ */
+export const SessionKind = z.enum([
+  "root",
+  "fork",
+  "compaction",
+  "subagent",
+  "workflow_agent",
+]);
 export type SessionKind = z.infer<typeof SessionKind>;
 
 // ---- parts -----------------------------------------------------------------
 
+/** Model prose. The only part kind a turn is *required* to produce (spec §5). */
 export const TextPart = z.object({ type: z.literal("text"), text: z.string() });
+export type TextPart = z.infer<typeof TextPart>;
+
+/**
+ * Summarized thinking, persisted for DISPLAY ONLY. Reasoning parts are dropped on
+ * replay (plan §6.4) — there are no signed thinking blocks to echo back, so
+ * re-sending them would be both wrong and expensive.
+ */
 export const ReasoningPart = z.object({ type: z.literal("reasoning"), text: z.string() });
+export type ReasoningPart = z.infer<typeof ReasoningPart>;
+
+/** One `run_steps` / `stop` call. `input` is unknown here; the tool's own schema validates it. */
 export const ToolCallPart = z.object({
   type: z.literal("tool_call"),
   id: z.string(),
   name: z.string(),
   input: z.unknown(),
 });
+export type ToolCallPart = z.infer<typeof ToolCallPart>;
+
 export const ToolResultPart = z.object({
   type: z.literal("tool_result"),
   callId: z.string(),
   output: z.unknown(),
   isError: z.boolean(),
-  // The call was stopped by a user interrupt, not completed — the output holds
-  // whatever partial work it produced. The UI renders this distinctly from done.
+  /**
+   * The call was stopped by a user interrupt rather than completing — `output`
+   * holds whatever partial work survived. Distinct from `isError`, and rendered
+   * distinctly, because "you stopped it" and "it failed" are different facts
+   * for both the user and the next round (spec §5, §6).
+   */
   interrupted: z.boolean().optional(),
 });
-// A user-attached image (composer `@shot.png`). The bytes live OUTSIDE the parts
-// JSON: composing the message copies the referenced file to
-// ~/.bough/attachments/<uuid>.<ext> and the part stores only that `path` — the db
-// row stays small and the message replays even after the workspace file moves.
-// `name` is the reference as the user typed it; `size` (bytes, at attach time)
-// feeds the UI's placeholder line.
+export type ToolResultPart = z.infer<typeof ToolResultPart>;
+
+/**
+ * An image the model can see: a user attachment from the composer, or one the
+ * program handed over with `image()`. The bytes live at `path` under
+ * ~/.bough/attachments/, never inline. `name` is the reference as the user typed
+ * it; `size` (bytes at attach time) feeds the UI placeholder. A lost file replays
+ * as placeholder text rather than failing the turn (plan T2.2).
+ */
 export const ImagePart = z.object({
   type: z.literal("image"),
   path: z.string(),
@@ -57,9 +98,12 @@ export const ImagePart = z.object({
   size: z.number(),
 });
 export type ImagePart = z.infer<typeof ImagePart>;
-// A settled ask() hold (asks.ts): the question the program raised mid-turn and how
-// it ended. Appended only once resolved — never "pending" — so replay can render it
-// as plain text and can never re-block. `id` joins the row to its ask.question events.
+
+/**
+ * A SETTLED `ask()` hold. Appended only once resolved — never while pending — so
+ * replay can render it as plain text and it can never re-block (plan §6.5). `id`
+ * joins the row to the `ask.question` events that announced it live.
+ */
 export const AskPart = z.object({
   type: z.literal("ask"),
   id: z.string(),
@@ -68,14 +112,9 @@ export const AskPart = z.object({
   status: z.enum(["answered", "declined", "interrupted"]),
   answer: z.string().optional(),
 });
+export type AskPart = z.infer<typeof AskPart>;
 
-// The turn's marked-up answer, published via the prose() host function: markdown
-// the UI renders with full styling, visually set off from tool chatter. Appended
-// mid-program (between a tool_call and its tool_result) like an ask part. Dropped
-// on replay — the text already replays verbatim inside its program's tool_call
-// input, so echoing it would double-bill the answer.
-export const ProsePart = z.object({ type: z.literal("prose"), text: z.string() });
-
+/** The six part kinds of spec §4. Discriminated on `type`. */
 export const Part = z.discriminatedUnion("type", [
   TextPart,
   ReasoningPart,
@@ -83,12 +122,17 @@ export const Part = z.discriminatedUnion("type", [
   ToolResultPart,
   ImagePart,
   AskPart,
-  ProsePart,
 ]);
 export type Part = z.infer<typeof Part>;
 
-// ---- message & session -----------------------------------------------------
+// ---- messages --------------------------------------------------------------
 
+/**
+ * `pending` is the streaming flag: a supervisor message is created pending and
+ * flipped when `message.finished` lands. Ordering is `(createdAt, rowid)` — see
+ * plan §6.1: seeding uses a real clock so a turn started afterwards always sorts
+ * after the seed, even within the same millisecond.
+ */
 export const Message = z.object({
   id: z.string(),
   sessionId: z.string(),
@@ -99,79 +143,125 @@ export const Message = z.object({
 });
 export type Message = z.infer<typeof Message>;
 
+// ---- sessions --------------------------------------------------------------
+
+/**
+ * One conversation. Note what is absent: no archive, deprecate, hide or purge
+ * field. Visibility is derived from `kind` + `originId` (spec §4, §17).
+ */
 export const Session = z.object({
   id: z.string(),
-  parentId: z.string().nullable(),
   title: z.string(),
   kind: SessionKind,
   createdAt: z.number(),
-  // The session's read-write root. Optional/additive: absent for sessions with no
-  // configured workspace (the turn runner falls back to BOUGH_WORKSPACE/cwd). The
-  // Changes API (#10) exposes/sets this over HTTP
-  // adds it as an optional field to match.
-  workspace: z.string().nullish(),
-  // The user's project directory the session was created on (additive). It mirrors
-  // the workspace column, which is never rewritten, so this is the stable record of
-  // WHICH project the session is for — the UI shows it in the status bar and on
-  // session-tree rows.
-  originDir: z.string().nullish(),
-  // Lineage (additive; set only on branched sessions). For a fork: the session it was
-  // forked from + the at-message. For a compaction: the compacted session + the span-end
-  // message. Root/plain sessions omit them. Gives the map real lineage edges.
+  /**
+   * Thread inheritance: a session's thread is its ancestors' messages ++ its own.
+   * Fork and compaction parent at the TARGET's parent, so shared ancestors come
+   * for free and only the branch's own seeded messages are copied (spec §14).
+   * A subagent has `parentId: null` — a fresh, task-only thread (spec §7).
+   */
+  parentId: z.string().nullable(),
+  /** Lineage edge for the tree view: what this branched from, and at which message. */
   originId: z.string().nullish(),
   originMessageId: z.string().nullish(),
-  // Set when a branch is deprecated — hidden by default in the tree views, shown
-  // on toggle. Distinct from archive (which removes it from the list entirely).
-  deprecatedAt: z.number().nullish(),
-  // Set when a session is archived (soft delete). Absent from the default
-  // GET /sessions; ?archived=1 returns these rows so a UI can reveal/restore them.
-  archivedAt: z.number().nullish(),
-  // Per-session model override (additive). Absent = the process-global default.
-  // Set by the model picker: switching models pins THIS session and moves the
-  // default new sessions start on; other existing sessions keep theirs.
+  /** The checkout the session operates on, edited in place. */
+  workspace: z.string().nullish(),
+  /**
+   * The project directory the session was created on. Mirrors `workspace` at
+   * creation and is never rewritten, so it stays the stable record of WHICH
+   * project this session is for.
+   */
+  originDir: z.string().nullish(),
+  /**
+   * The git sha the session started from — the Changes rail is
+   * `git diff <base>` plus untracked files. Absent for a non-git workspace,
+   * which therefore has no change set and no revert (spec §13).
+   */
+  base: z.string().nullish(),
+  /** Per-session pins; absent = the global default (spec §12). */
   model: z.string().nullish(),
-  // Per-session thinking-depth override (additive; same pinning semantics as
-  // model). One of low/medium/high/xhigh/max; absent = the global default.
   effort: z.string().nullish(),
-  // Per-session system-prompt override dir (additive). When set, the turn runner
-  // resolves the supervisor prompt's section files from this directory instead of
-  // the checked-in default — so prompt variants can be swapped per session with NO
-  // server restart (used by `bough exec --prompt-dir` and the tuner). Absent = the
-  // process default (BOUGH_PROMPT_DIR env, else the built-in ./prompt dir).
-  promptDir: z.string().nullish(),
-  // Prompt-cache visibility (additive; stamped after each turn's last LLM round).
-  // contextTokens = that round's full prompt size; cachedTokens = the share of it
-  // served from / written to the provider's prompt cache; lastLlmAt = when the round
-  // finished. The UI derives warm/cold from lastLlmAt + the provider TTL (~5 min,
-  // sliding) — cache state is a time-decaying property, so it's computed client-side.
+  /** Prefilled composer text, set by handoff. Cleared server-side by the first post. */
+  draft: z.string().nullish(),
+  /**
+   * Status-bar context/cost display (spec §5 Usage, §15). `contextTokens` is the
+   * last round's full prompt size; `cachedTokens` the share of it served from or
+   * written to the provider cache; `lastLlmAt` when that round finished — cache
+   * warmth is a time-decaying property the client derives from it, not a stored
+   * boolean.
+   */
   contextTokens: z.number().nullish(),
   cachedTokens: z.number().nullish(),
   lastLlmAt: z.number().nullish(),
-  // A drafted-but-unsent opening prompt (additive; set by handoff). The UI prefills
-  // the composer with it; posting the session's first message clears it server-side.
-  draft: z.string().nullish(),
-  // Delegation outcome (additive; stamped on a subagent when its spawned turn
-  // finishes). The blocking agent() result returns in-band to the parent PROGRAM
-  // only — persisting {ok, checkPassed} here lets the UI render failed/check-failed
-  // branches. Absent for non-subagents and legacy rows.
+  /**
+   * Delegation outcome, stamped on a `subagent`/`workflow_agent` session when its
+   * turn finishes, so the tree can render a failed branch. There is no acceptance
+   * gate — this records whether the turn errored, not whether the work was
+   * accepted (spec §5, §17).
+   */
   outcomeOk: z.boolean().nullish(),
-  outcomeCheckPassed: z.boolean().nullish(),
 });
 export type Session = z.infer<typeof Session>;
 
+// ---- turns -----------------------------------------------------------------
+
+/**
+ * `orphaned` is what a `running` turn becomes when the server restarts under it:
+ * the checkpoint tells recovery the turn cannot be resumed, and the session
+ * unblocks instead of hanging on a pending message forever (spec §4, plan T2.3).
+ */
+export const TurnStatus = z.enum(["running", "done", "error", "interrupted", "orphaned"]);
+export type TurnStatus = z.infer<typeof TurnStatus>;
+
+/** Per-round provider usage, summed across the turn and aggregated per session. */
+export const Usage = z.object({
+  inputTokens: z.number(),
+  outputTokens: z.number(),
+  /** Tracked separately from input/output — spec §5 Usage. */
+  reasoningTokens: z.number().nullish(),
+  cacheReadTokens: z.number().nullish(),
+  cacheWriteTokens: z.number().nullish(),
+  costUsd: z.number().nullish(),
+});
+export type Usage = z.infer<typeof Usage>;
+
+/**
+ * The persisted state machine covering everything after a user message lands.
+ * Checkpointed as it progresses (`step`) so a restart can find turns still marked
+ * `running` and orphan them.
+ */
+export const Turn = z.object({
+  id: z.string(),
+  sessionId: z.string(),
+  /** The pending supervisor message this turn is producing. */
+  messageId: z.string(),
+  status: TurnStatus,
+  /** Last checkpoint, human-readable. Written after each API round and tool result. */
+  step: z.string(),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+  /** Present when status is `error`; the message names the limit or the failure. */
+  error: z.string().nullish(),
+  usage: Usage.nullish(),
+});
+export type Turn = z.infer<typeof Turn>;
+
 // ---- ask() questions -------------------------------------------------------
 
-// One mid-task question a run_steps program raised via ask() (asks.ts): emitted as
-// `ask.question` when raised (status "pending") and re-emitted on the same id with
-// its final status. Memory-only server-side — the settled record persists as an
-// AskPart on the supervisor message.
+/**
+ * One live `ask()` hold. Memory-only server-side (spec §6: "the hold dies with the
+ * turn") — the durable record is the settled `AskPart` on the supervisor message.
+ * Emitted as `ask.question` on raise and re-emitted on the same `id` with its final
+ * status, so a reconnecting client rebuilds the card from `GET /questions` rather
+ * than from replayed events.
+ */
 export const AskQuestion = z.object({
   id: z.string(),
   sessionId: z.string(),
-  /** The supervisor message whose turn raised it (the transcript anchor). */
+  /** The supervisor message whose turn raised it — the transcript anchor. */
   messageId: z.string(),
   question: z.string(),
-  /** Pick-one choices; absent = free-text only. Free text is always possible. */
+  /** Pick-one choices; absent = free text only. Free text is always possible. */
   options: z.array(z.string()).optional(),
   status: z.enum(["pending", "answered", "declined", "interrupted"]),
   answer: z.string().optional(),
@@ -179,68 +269,126 @@ export const AskQuestion = z.object({
 });
 export type AskQuestion = z.infer<typeof AskQuestion>;
 
-// ---- event envelope --------------------------------------------------------
+// ---- background jobs -------------------------------------------------------
 
-// The SSE envelope. `type` names the event (also the SSE `event:` field); `seq` is a
-// process-monotonic counter stamped by the bus; `data` is the per-type payload.
-export const BoughEvent = z.object({
-  type: z.string(),
-  sessionId: z.string().optional(),
-  seq: z.number(),
-  ts: z.number(),
-  data: z.unknown(),
+/**
+ * An auto-backgrounded (`bash` past 60s) or explicit (`bashBg`) shell. Tracked per
+ * session and outliving the turn, but NOT persisted: a job's process dies with the
+ * server, so a stored row would always be a lie after a restart (spec §9).
+ */
+export const BackgroundJob = z.object({
+  id: z.string(),
+  sessionId: z.string(),
+  pid: z.number(),
+  command: z.string(),
+  status: z.enum(["running", "exited"]),
+  exitCode: z.number().nullish(),
+  startedAt: z.number(),
+  exitedAt: z.number().nullish(),
 });
-export type BoughEvent = z.infer<typeof BoughEvent>;
+export type BackgroundJob = z.infer<typeof BackgroundJob>;
 
-// ---- request bodies (route validation) -------------------------------------
+// ---- schedules -------------------------------------------------------------
 
-export const CreateSessionBody = z.object({
-  // Optional: when absent the session is created as "untitled" and the title worker
-  // names it from the first user message (see supervisor/title.ts).
-  title: z.string().optional(),
-  parentId: z.string().nullable().optional(),
-  kind: SessionKind.optional(),
-  // Optional read-write root for the session; persisted and returned on the Session.
-  workspace: z.string().optional(),
-  // Optional model pin (same semantics as the picker's per-session pin). Used by
-  // `bough exec -m`; absent = the process-global default.
-  model: z.string().optional(),
-  // Optional system-prompt override dir (section .md files). Pins a prompt variant
-  // on this session with no server restart. Used by `bough exec --prompt-dir` and
-  // the prompt tuner; absent = the process default.
-  promptDir: z.string().optional(),
+/**
+ * A recurring run. `nextRunAt` advances FROM NOW at fire time, never from the
+ * stale stored value — a server down through N missed slots fires once on the
+ * first tick after boot, then resumes cadence (spec §9, plan §6.8).
+ */
+export const Schedule = z.object({
+  id: z.string(),
+  title: z.string(),
+  prompt: z.string(),
+  workspace: z.string().nullable(),
+  /** `every:<N><m|h|d>` (N ≥ 1) or `daily@HH:MM` (local wall clock). Stored verbatim. */
+  spec: z.string(),
+  enabled: z.boolean(),
+  createdAt: z.number(),
+  lastRunAt: z.number().nullable(),
+  nextRunAt: z.number(),
 });
-export type CreateSessionBody = z.infer<typeof CreateSessionBody>;
+export type Schedule = z.infer<typeof Schedule>;
 
-export const PostMessageBody = z.object({ text: z.string() });
-export type PostMessageBody = z.infer<typeof PostMessageBody>;
+// ---- workflows -------------------------------------------------------------
 
-// POST /sessions/:id/questions/:qid — {answer} settles the hold; {decline: true}
-// rejects the program's ask() with a "user declined" error it can catch.
-export const AnswerQuestionBody = z.object({
-  answer: z.string().optional(),
-  decline: z.boolean().optional(),
+export const WorkflowStatus = z.enum([
+  "running",
+  "paused",
+  "done",
+  "error",
+  "stopped",
+  "orphaned",
+]);
+export type WorkflowStatus = z.infer<typeof WorkflowStatus>;
+
+/** From the script's `meta` literal, extracted host-side before the body runs. */
+export const WorkflowPhase = z.object({
+  title: z.string(),
+  detail: z.string().optional(),
 });
-export type AnswerQuestionBody = z.infer<typeof AnswerQuestionBody>;
+export type WorkflowPhase = z.infer<typeof WorkflowPhase>;
 
-// ---- typed event payloads --------------------------------------------------
-// The shapes the TUI store reduces — `BoughEvent.data` per event name. Recorded
-// as prose, not schemas: nothing validates the bus, so a schema here would be an
-// unenforced second source of truth. The `bus.publish` calls in turn.ts are
-// canonical; src/tui/store.ts reduces them.
-//
-//   session.created  → Session (the full row)
-//   session.updated  → Session (the full row after a change, e.g. the title worker)
-//   message.started  → Message (created pending)
-//   message.delta    → { messageId, delta } — incremental text for a streaming message
-//   message.retry    → { messageId } — the LLM round failed transiently and is being
-//                      re-attempted; the message re-streams from the top, so UIs
-//                      drop their streaming buffer
-//   message.part     → { messageId, part: Part } — a finalized Part appended
-//   tool.log         → { messageId, callId, line } — one console.* line from a
-//                      running program, keyed to its tool_call
-//   message.finished → { messageId } — the message is complete (pending → false)
-//   ask.question     → AskQuestion (pending on raise; re-emitted with its final status)
-//   workflow.updated → WorkflowRun (db/db.ts) — a run's row after any change
-//   workflow.agent   → WorkflowAgent — one agent() call's journal row after any change
-//   workflow.log     → { runId, line } — one narrator log() line from a running script
+/**
+ * One detached orchestration run. The script text is persisted verbatim (and
+ * mirrored to ~/.bough/workflows/<id>.js for out-of-band editing) so a rerun can
+ * diff against it.
+ */
+export const WorkflowRun = z.object({
+  id: z.string(),
+  sessionId: z.string(),
+  name: z.string(),
+  description: z.string(),
+  script: z.string(),
+  phases: z.array(WorkflowPhase),
+  status: WorkflowStatus,
+  currentPhase: z.string().nullable(),
+  /** The script's return value (status `done`). */
+  result: z.unknown(),
+  error: z.string().nullable(),
+  /** The run's input value, handed to the script as `args` verbatim. */
+  args: z.unknown(),
+  /** The run whose journal this rerun replays from. */
+  resumeOf: z.string().nullable(),
+  createdAt: z.number(),
+  finishedAt: z.number().nullable(),
+});
+export type WorkflowRun = z.infer<typeof WorkflowRun>;
+
+export const WorkflowAgentStatus = z.enum([
+  "queued",
+  "running",
+  "done",
+  "error",
+  "stopped",
+  /** Replayed from the source run's journal — no live agent call was made. */
+  "cached",
+]);
+export type WorkflowAgentStatus = z.infer<typeof WorkflowAgentStatus>;
+
+/**
+ * One `agent()` call's journal row — the unit a rerun replays. `key` is
+ * `hash(prompt + opts)`: a rerun replays every hit instantly and re-runs only the
+ * calls whose key changed, which is why workflow scripts must be deterministic
+ * (plan §6.15).
+ */
+export const WorkflowAgent = z.object({
+  id: z.string(),
+  runId: z.string(),
+  /** Call order within the run. */
+  idx: z.number(),
+  key: z.string(),
+  label: z.string(),
+  phase: z.string().nullable(),
+  prompt: z.string(),
+  model: z.string().nullable(),
+  status: WorkflowAgentStatus,
+  /** The agent's report — raw text, or the JSON of a `{schema}` call. */
+  result: z.string().nullable(),
+  /** Present when the call failed; the message names what went wrong. */
+  error: z.string().nullable(),
+  /** The subagent session backing this call. Absent for cached replays. */
+  sessionId: z.string().nullable(),
+  startedAt: z.number(),
+  finishedAt: z.number().nullable(),
+});
+export type WorkflowAgent = z.infer<typeof WorkflowAgent>;

@@ -1,1370 +1,358 @@
 /**
- * The HTTP surface: a tiny hand-rolled router over a single route table, plus the SSE
- * endpoint that tails the event bus. No framework — the table is a list of
- * {method, URLPattern, handler}, matched in order, so an OpenAPI doc can be generated
- * from it later. Bodies are Zod-validated at the edge; handlers work in domain types.
+ * The HTTP surface: one route table, one dispatcher, one try/catch.
  *
- * Endpoints (consumed by the TUI's api.ts/events.ts and the headless CLI):
- *   GET  /sessions                 → Session[]
- *   POST /sessions                 → Session            {title, parentId?, kind?}
- *   GET  /sessions/:id             → {session, thread}  (thread = root→self messages)
- *   POST /sessions/:id/messages    → 202                {text}  (persist + start turn)
- *   GET/POST /schedules, PATCH/DELETE /schedules/:id → recurring runs (schedules.ts)
- *   GET /events[?sessionId=]  → SSE stream of BoughEvent (named events + heartbeat)
+ * The invariant this holds is that **HTTP lives here and nowhere else.** A domain
+ * module signals failure by throwing an `HttpError` subclass carrying its status
+ * (`errors.ts`); the single catch below is what turns that into a response. No
+ * handler contains a per-error catch block, and no module outside `server/`
+ * constructs a `Response` — which is what keeps `history/`, `hostfn/` and the rest
+ * unit-testable with no server in sight.
  *
- * No CORS headers: the only client is the native `bough` TUI (not a browser), so the
- * server never opts into cross-origin access. This keeps a webpage you happen to visit
- * from reaching the loopback API and driving the agent (browsers block the cross-origin
- * fetch without an allow-origin header) — the web UI that once needed CORS is gone.
+ * Second invariant, and the reason `createHandler` takes a ctx rather than
+ * reaching for module state: **every dependency arrives as a parameter.** The
+ * database, the bus, the LLM client and the clock all travel in `AppCtx`, so a
+ * test builds a fabricated ctx over an in-memory database, calls the returned
+ * function with a `Request`, and asserts on the `Response` — with no socket bound,
+ * no port claimed, and nothing on the network (plan §7, "Server: `createHandler(ctx)`
+ * with a fabricated ctx and an in-memory db. No socket.").
+ *
+ * **The route table is APPEND-ONLY** (plan §4). This file is shared by every task
+ * that adds an endpoint; the merge discipline that keeps parallel agents from
+ * colliding is that a task appends its entries at the very end of `routes` and
+ * writes its handler in its own file. Nothing is ever reordered and no task edits
+ * another task's entry. See the marker at the bottom of the array.
+ *
+ * Matching is on the pathname only — `URLPattern` rejects an init object and a
+ * base URL together — and in table order, first match wins. That is also why order
+ * is never rearranged: a reorder can silently steal another task's route.
+ *
+ * **The route table is read while this module evaluates**, which is why the handler
+ * modules below must never import back from here. `route(..., sessions.listSessions)`
+ * dereferences a binding at module scope, so a graph entered through a handler module
+ * would evaluate this file mid-way through that module's body and read a `const`
+ * that has not been assigned — a `ReferenceError` at import, before any user code.
+ * The primitives every handler needs therefore live in `server/http.ts`, which
+ * imports nothing from `server/`; handlers reach DOWN to it instead of back across to
+ * here, and the graph is a DAG whichever module the process enters through. They are
+ * re-exported below so the old spelling still resolves, and `server/http.test.ts`
+ * fails if a module reintroduces the edge.
+ *
+ * **No CORS headers, ever.** The only client is the native TUI, which is not a
+ * browser and needs none. Their absence is what stops a webpage the user happens
+ * to visit from reaching this loopback API and driving the agent: without an
+ * allow-origin header the browser blocks the cross-origin read. The server binds
+ * loopback and has no auth layer (spec §17), so this is the whole of its access
+ * control and it is worth not undoing by reflex.
  */
-import type { z } from "zod";
 import { HttpError } from "../errors.ts";
-import {
-  AnswerQuestionBody,
-  CreateSessionBody,
-  PostMessageBody,
-  type Session,
-} from "../schema/parts.ts";
-import { answerAsk, declineAsk, getAsk, pendingAsks } from "../asks.ts";
-import type { Db } from "../db/db.ts";
-import type { Bus, Listener } from "../bus.ts";
-import {
-  activeEffort,
-  activeModel,
-  interruptTurn,
-  MODELS,
-  postSystemNote,
-  setActiveEffort,
-  setActiveModel,
-  startUserTurn,
-  usableContextLimit,
-  workflowCtxFor,
-} from "../turn.ts";
-import {
-  controlWorkflowAgent,
-  pauseWorkflow,
-  rerunWorkflow,
-  resumeWorkflow,
-  scriptPath as workflowScriptPath,
-  startWorkflow,
-  stopWorkflow,
-  workflowAgentViews,
-  WorkflowCreateBody,
-  WorkflowRerunBody,
-  workflowSummary,
-} from "../workflow.ts";
-import { clientFor, type Effort, EFFORTS, type LlmClient } from "../supervisor/llm.ts";
-import { setWorkerChoice, WORKER_OPTIONS, workerChoice } from "../worker/frontier.ts";
-import { SuggestBody, suggestNextStep } from "../worker/suggest.ts";
-import { sessionMetrics } from "../metrics.ts";
-import {
-  hostReadRoot,
-  normalizeWorkspace,
-  prepareWorkspace,
-  workspaceProblem,
-} from "../supervisor/workspace.ts";
-import { UNTITLED } from "../supervisor/title.ts";
-import { listSkills } from "../supervisor/skills.ts";
-import { grantedDirs, searchDirectories, searchWorkspaceFiles } from "./files.ts";
-import { fork, ForkBody } from "../fork.ts";
-import {
-  activationsFor as mcpActivationsFor,
-  loadRegistry as loadMcpRegistry,
-  removeServer as removeMcpServer,
-  saveRegistry as saveMcpRegistry,
-  setActivation as setMcpActivation,
-  ttlToExpires,
-  upsertServer as upsertMcpServer,
-} from "../mcp/config.ts";
-import { mcpManager } from "../mcp/manager.ts";
-import { mcpStatusFor } from "../mcp/status.ts";
-import { beginAuth, clearAuth, completeAuth } from "../mcp/oauth.ts";
-import { listArtifacts, serveArtifact } from "./artifacts.ts";
-import { VIEWER_JS_PATH, viewerBundle } from "./jsonrender/bundle.ts";
-import {
-  addComment,
-  AddCommentBody,
-  deleteComment,
-  formatForAgent,
-  loadComments,
-  markSent,
-} from "./comments.ts";
-import { createAuth } from "./auth.ts";
-import { compact, CompactBody } from "../compact.ts";
-import {
-  scheduleCreate,
-  ScheduleCreateBody,
-  schedulePatch,
-  SchedulePatchBody,
-  scheduleRemove,
-} from "../schedules.ts";
-import { sectionize, SectionsBody } from "../sections.ts";
-import { extract, ExtractBody } from "../extract.ts";
-import { handoff, HandoffBody } from "../handoff.ts";
-import { move, MoveBody } from "../move.ts";
-import { jobOutput, killJobById, killJobsOf, listJobs, onJobEvent } from "../tools/bash_bg.ts";
-import { applyChanges, revertChanges, sessionChanges } from "./changes.ts";
-import { ChangesApplyBody, ChangesRevertBody } from "../schema/changes.ts";
-import { clearTheme, loadTheme, saveTheme, Theme, THEME_DEFAULTS, THEME_TOKENS } from "./theme.ts";
-import { deleteKey, KeyDeleteBody, KeysBody, keyStatus, persistEnvVar, setKey } from "./keys.ts";
-import {
-  ensureOpenAIModels,
-  mergeModels,
-  openaiModels,
-  refreshOpenAIModels,
-} from "./openai_models.ts";
-
-export interface AppCtx {
-  db: Db;
-  bus: Bus;
-  /** Theme storage dir override (tests); undefined = ~/.bough. */
-  themeDir?: string;
-  /** Launcher env-file dir override (tests); undefined = ~/.bough. */
-  envDir?: string;
-  /** LLM client for compaction/turns; injected for tests, else the real Anthropic client. */
-  llm?: LlmClient;
-  /** Model override; else BOUGH_MODEL, else the default. */
-  model?: string;
-  /** clonefile snapshot root override (tests); else BOUGH_SNAPSHOT_BASE / default. */
-  snapshotBase?: string;
-  /** When set, every request requires a login session (see auth.ts). From BOUGH_PASSWORD. */
-  password?: string;
-  /** Retitler for compaction branches (production: local title worker); absent in tests. */
-  retitler?: (text: string) => Promise<string | null>;
-}
-
-type Handler = (
-  req: Request,
-  ctx: AppCtx,
-  params: Record<string, string>,
-) => Response | Promise<Response>;
-type Route = { method: string; pattern: URLPattern; handler: Handler };
-
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
-}
-
-function error(status: number, message: string): Response {
-  return json({ error: message }, status);
-}
-
-/** Parse + validate a JSON body; an invalid one throws the 400 that the
- * dispatcher's HttpError catch turns into a response. `fallback` stands in for
- * an absent/unparseable body (default null → schema decides the 400). */
-async function parseBody<S extends z.ZodTypeAny>(
-  req: Request,
-  schema: S,
-  fallback: unknown = null,
-): Promise<z.infer<S>> {
-  const parsed = schema.safeParse(await req.json().catch(() => fallback));
-  if (!parsed.success) throw new HttpError(400, "invalid body: " + parsed.error.message);
-  return parsed.data;
-}
-
-// ---- handlers --------------------------------------------------------------
-
-const getConfig: Handler = () => {
-  // First config read after boot with a key already present: refresh the OpenAI
-  // list in the background — this response serves the static table, the next
-  // one includes the pulled models.
-  ensureOpenAIModels();
-  return json({
-    model: activeModel(),
-    models: mergeModels(MODELS, openaiModels()),
-    // Thinking depth: "" = provider default; the picker offers `efforts`.
-    effort: activeEffort(),
-    efforts: EFFORTS,
-    worker: workerChoice(),
-    workerOptions: WORKER_OPTIONS,
-    // Which provider API keys are configured — booleans only, never the values.
-    keys: keyStatus(),
-  });
-};
-
-// Set a provider's API key: applies to the live process env immediately (clients read
-// the env at run time) and persists to ~/.bough/env for restarts. Returns the
-// refreshed booleans; never echoes the value back. An OpenAI key also pulls the
-// account's model list (awaited, so the client's follow-up config read sees it).
-const putKeys: Handler = async (req) => {
-  const body = await parseBody(req, KeysBody);
-  const keys = setKey(body.provider, body.key);
-  if (body.provider === "openai") await refreshOpenAIModels();
-  return json({ ok: true, keys });
-};
-
-// Remove a provider's API key: from the live process env and from ~/.bough/env,
-// so the deletion also survives a restart. Returns the refreshed booleans.
-const deleteKeys: Handler = async (req) => {
-  const body = await parseBody(req, KeyDeleteBody);
-  return json({ ok: true, keys: deleteKey(body.provider) });
-};
-
-// Switch the model new turns run on and/or the worker micro-tasks run on. Any id
-// is accepted (the pickers list curated subsets); a provider-prefixed model id
-// routes to OpenRouter (see turn.ts / llm.ts). `worker` is "local" or a model id —
-// process-global like the active model, never per session.
-// A model change with `sessionId` also PINS that session to the model: the open
-// conversation switches immediately, the global default moves so NEW sessions
-// start on it, and every other existing session keeps whatever it was on. The
-// default persists to ~/.bough/env (BOUGH_MODEL) so it survives a restart.
-const patchConfig: Handler = async (req, ctx) => {
-  const body = await req.json().catch(() => null) as
-    | { model?: unknown; worker?: unknown; effort?: unknown; sessionId?: unknown }
-    | null;
-  const model = typeof body?.model === "string" && body.model.trim() ? body.model.trim() : null;
-  const worker = typeof body?.worker === "string" && body.worker.trim() ? body.worker.trim() : null;
-  // Thinking depth: one of EFFORTS, or "default" to fall back to the provider
-  // default (clears the pin when a sessionId rides along).
-  const effort = typeof body?.effort === "string" && body.effort.trim() ? body.effort.trim() : null;
-  const sessionId = typeof body?.sessionId === "string" && body.sessionId ? body.sessionId : null;
-  if (!model && !worker && !effort) {
-    return error(
-      400,
-      "invalid body: { model?: string, worker?: string, effort?: string } — at least one required",
-    );
-  }
-  if (effort && effort !== "default" && !(EFFORTS as string[]).includes(effort)) {
-    return error(400, `invalid effort: one of ${EFFORTS.join(", ")}, or "default"`);
-  }
-  if (worker && worker !== "local" && Deno.env.get("BOUGH_WORKER_LOCAL_ONLY") === "1") {
-    return error(400, "BOUGH_WORKER_LOCAL_ONLY=1 pins the worker to local");
-  }
-  if (model) {
-    // Validate before mutating anything — a bad sessionId must not half-apply
-    // (moving the global default while failing the pin).
-    if (sessionId && !ctx.db.getSession(sessionId)) return error(404, "session not found");
-    setActiveModel(model);
-    persistEnvVar("BOUGH_MODEL", model, ctx.envDir);
-    if (sessionId) {
-      ctx.db.setSessionModel(sessionId, model);
-      const updated = ctx.db.getSession(sessionId)!;
-      ctx.bus.publish({ type: "session.updated", sessionId, data: updated });
-    }
-  }
-  if (effort) {
-    // Same pinning semantics as model: with a sessionId the session pins AND the
-    // global default moves; other sessions keep theirs. "default" clears both.
-    if (sessionId && !ctx.db.getSession(sessionId)) return error(404, "session not found");
-    const value = effort === "default" ? "" : (effort as Effort);
-    setActiveEffort(value);
-    persistEnvVar("BOUGH_EFFORT", value, ctx.envDir);
-    if (sessionId) {
-      ctx.db.setSessionEffort(sessionId, value || null);
-      const updated = ctx.db.getSession(sessionId)!;
-      ctx.bus.publish({ type: "session.updated", sessionId, data: updated });
-    }
-  }
-  if (worker) setWorkerChoice(worker);
-  return json({
-    model: activeModel(),
-    effort: activeEffort(),
-    worker: workerChoice(),
-  });
-};
-
-// Installed skills (name + description) for composer autocomplete / discovery.
-const getSkills: Handler = () => json({ skills: listSkills() });
-
-// Composer ghost text: the worker predicts the user's NEXT message from the
-// conversation so far (shown dim on the idle composer, tab accepts). Null
-// suggestion = nothing usable (no worker, empty thread) — no ghost, no error.
-const postSuggest: Handler = async (req, ctx) => {
-  const body = await parseBody(req, SuggestBody);
-  const session = ctx.db.getSession(body.sessionId);
-  if (!session) return error(404, "session not found");
-  const lines = ctx.db.threadFor(session.id)
-    .filter((m) => !m.pending)
-    .map((m) => ({
-      role: m.role === "user" ? "user" as const : "agent" as const,
-      // The prose only: tool calls/results are the agent's scratch work, and
-      // reasoning is hidden from the user — neither is what they'd reply to.
-      text: m.parts.flatMap((p) => p.type === "text" ? [p.text] : []).join("\n").trim(),
-    }))
-    .filter((l) => l.text.length > 0);
-  return json({ suggestion: await suggestNextStep(lines) });
-};
-
-const searchFiles: Handler = async (req, ctx, params) => {
-  const session = ctx.db.getSession(params.id);
-  if (!session) return error(404, "session not found");
-  const workspace = ctx.db.getSessionRuntime(session.id).workspace;
-  if (!workspace) return json({ files: [] }); // chat-only session — nothing to reference
-  const q = new URL(req.url).searchParams.get("q") ?? "";
-  // Read-only walk of the session's workspace.
-  const files = await searchWorkspaceFiles(
-    hostReadRoot(session.id, normalizeWorkspace(workspace)),
-    q,
-  );
-  return json({ files });
-};
-
-// File autocomplete for a draft conversation (no session yet): search the
-// prospective workspace directly, same bounded walk as the per-session route.
-const searchDraftFiles: Handler = async (req) => {
-  const url = new URL(req.url);
-  const dir = url.searchParams.get("dir");
-  if (!dir) return error(400, "dir required");
-  const q = url.searchParams.get("q") ?? "";
-  const files = await searchWorkspaceFiles(normalizeWorkspace(dir), q);
-  return json({ files });
-};
-
-// Directory autocomplete for the new-session dialog: fuzzy dirs under the query's
-// base (fzf-style subsequence), seeded with every workspace a session has ever
-// used. Legacy rows from before bough worked in place recorded a bough-owned
-// worktree instead of a project dir; those paths are filtered out.
-const searchDirs: Handler = (req, ctx) => {
-  const q = new URL(req.url).searchParams.get("q") ?? "";
-  const known = [
-    ...new Set([
-      ...grantedDirs(),
-      ...ctx.db.listSessions()
-        .map((s) => s.workspace)
-        .filter((w): w is string => !!w && !w.includes("/.bough/workspaces/")),
-    ]),
-  ];
-  return json({ dirs: searchDirectories(q, known) });
-};
-
-// Each session carries `busy` (a turn in flight) so the sidebar can show it at a
-// glance; the UI keeps it live from message.started/finished events after this read.
-const listSessions: Handler = (req, ctx) => {
-  const busy = ctx.db.busySessionIds();
-  const statuses = ctx.db.latestTurnStatuses();
-  // ?archived=1 → the soft-deleted rows only, so a UI can reveal and restore
-  // them (they were set archived_at but unreachable over HTTP before).
-  const archived = new URL(req.url).searchParams.get("archived") === "1";
-  return json(
-    (archived ? ctx.db.listArchivedSessions() : ctx.db.listSessions()).map((s) => {
-      // Per-row spend (own turns only) — the tree views' cost column.
-      const { costUsd } = ctx.db.sessionUsage(s.id);
-      return {
-        ...s,
-        busy: busy.has(s.id),
-        ...(statuses.has(s.id) ? { lastTurnStatus: statuses.get(s.id) } : {}),
-        ...(costUsd > 0 ? { costUsd } : {}),
-      };
-    }),
-  );
-};
-
-const createSession: Handler = async (req, ctx) => {
-  const body = await parseBody(req, CreateSessionBody);
-  const { title, parentId, kind, workspace: rawWorkspace } = body;
-  // Expand `~` and reject a workspace that doesn't exist NOW, with one clear
-  // message — otherwise the bad path only surfaces later as per-tool sandbox
-  // spawn failures inside the session.
-  let workspace: string | undefined;
-  if (rawWorkspace) {
-    workspace = normalizeWorkspace(rawWorkspace);
-    const problem = await workspaceProblem(workspace);
-    if (problem) return error(400, problem);
-  }
-  const session: Session = {
-    id: crypto.randomUUID(),
-    parentId: parentId ?? null,
-    // No title → the placeholder; the title worker names it on the first message.
-    title: title ?? UNTITLED,
-    kind: kind ?? (parentId ? "fork" : "root"),
-    createdAt: Date.now(),
-    // Absent when not supplied, so responses/events stay byte-identical (toSession
-    // only surfaces workspace when non-null; createSession persists it in one insert).
-    // originDir mirrors workspace and records the project dir permanently; the
-    // workspace column is never rewritten (bough works in the checkout in place).
-    ...(workspace ? { workspace, originDir: workspace } : {}),
-  };
-  if (session.parentId && !ctx.db.getSession(session.parentId)) {
-    return error(400, `parent ${session.parentId} not found`);
-  }
-  ctx.db.createSession(session);
-  // Model pin (not a createSession column): persist it before the announce so the
-  // event and response carry it.
-  if (body.model) {
-    ctx.db.setSessionModel(session.id, body.model);
-    session.model = body.model;
-  }
-  // Prompt-variant pin (bough exec --prompt-dir / tuner). Like the model pin, it is
-  // not a createSession column — persist it so the turn runner reads it per turn.
-  if (body.promptDir) {
-    ctx.db.setSessionPromptDir(session.id, body.promptDir);
-    session.promptDir = body.promptDir;
-  }
-  ctx.bus.publish({ type: "session.created", sessionId: session.id, data: session });
-  return json(session, 201);
-};
-
-const getSession: Handler = (_req, ctx, params) => {
-  const session = ctx.db.getSession(params.id);
-  if (!session) return error(404, "session not found");
-  return json({
-    session,
-    thread: ctx.db.threadFor(session.id),
-    usage: {
-      ...ctx.db.sessionUsage(session.id),
-      contextLimit: usableContextLimit(session.model ?? activeModel()),
-      tree: ctx.db.treeUsage(session.id),
-    },
-  });
-};
-
-const postMessage: Handler = async (req, ctx, params) => {
-  const session = ctx.db.getSession(params.id);
-  if (!session) return error(404, "session not found");
-  const body = await parseBody(req, PostMessageBody);
-
-  // A handoff draft is consumed by the first post — whatever the user actually
-  // sent (edited or not) supersedes it, so clear it and announce the change.
-  if (session.draft != null) {
-    ctx.db.setSessionDraft(session.id, null);
-    const updated = ctx.db.getSession(session.id);
-    if (updated) {
-      ctx.bus.publish({ type: "session.updated", sessionId: session.id, data: updated });
-    }
-  }
-
-  // Persist + announce the user message and run the turn (streams over /events).
-  startUserTurn(ctx, session.id, body.text);
-  return new Response(null, { status: 202 });
-};
-
-// Soft-delete: hide from the sidebar; the row and its thread stay (forks keep
-// resolving their ancestor chains). The event lets every open UI drop it live.
-const archiveSession: Handler = (_req, ctx, params) => {
-  if (!ctx.db.getSession(params.id)) return error(404, "session not found");
-  // Deleting a conversation stops its work: interrupt any running turn first, which
-  // also expires its parked net holds and reaps its proxy (gateway's turn.finished).
-  interruptTurn(params.id);
-  ctx.db.archiveSession(params.id);
-  // Per-session teardown hangs off the session.archived bus subscription
-  // (server/main.ts) — one hook covering root sessions and subagents alike.
-  ctx.bus.publish({
-    type: "session.archived",
-    sessionId: params.id,
-    data: { sessionId: params.id },
-  });
-  return json({ ok: true });
-};
-
-// Undo the soft-delete: the session returns to GET /sessions. session.updated
-// (archivedAt now absent) tells open UIs the row is live again.
-const unarchiveSession: Handler = (_req, ctx, params) => {
-  if (!ctx.db.getSession(params.id)) return error(404, "session not found");
-  ctx.db.unarchiveSession(params.id);
-  const updated = ctx.db.getSession(params.id)!;
-  ctx.bus.publish({ type: "session.updated", sessionId: params.id, data: updated });
-  return json({ ok: true });
-};
-
-// Persist a session's composer draft (the TUI stashes it on session switch so a
-// half-typed prompt stays with its conversation — same column handoff prefills).
-// Body {draft: string | null}; null clears. No event on purpose: the writer is
-// switching away, and a session.updated here would race the client's prefill.
-const putSessionDraft: Handler = async (req, ctx, params) => {
-  if (!ctx.db.getSession(params.id)) return error(404, "session not found");
-  const body = await req.json().catch(() => null) as { draft?: string | null } | null;
-  if (!body || (body.draft !== null && typeof body.draft !== "string")) {
-    return error(400, "body {draft: string | null} required");
-  }
-  ctx.db.setSessionDraft(params.id, body.draft);
-  return json({ ok: true });
-};
-
-// Deprecate/un-deprecate a branch: hidden by default in the tree views, still fully
-// usable. Body {on: boolean}. A session.updated event carries the new flag.
-const deprecateSession: Handler = async (req, ctx, params) => {
-  const s = ctx.db.getSession(params.id);
-  if (!s) return error(404, "session not found");
-  const body = await req.json().catch(() => null) as { on?: boolean } | null;
-  if (typeof body?.on !== "boolean") return error(400, "body {on: boolean} required");
-  ctx.db.setDeprecated(params.id, body.on);
-  const updated = ctx.db.getSession(params.id)!;
-  ctx.bus.publish({ type: "session.updated", sessionId: params.id, data: updated });
-  return json({ ok: true, deprecated: body.on });
-};
-
-// How long an archived session lingers before the long-term purge removes it.
-export const PURGE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
-
-// Run the long-term purge now (also runs on server boot). `bough purge` hits this.
-const purgeArchived: Handler = (_req, ctx) => {
-  const purged = ctx.db.purgeArchivedBefore(Date.now() - PURGE_RETENTION_MS);
-  return json({ ok: true, purged });
-};
-
-const interruptSession: Handler = (_req, ctx, params) => {
-  if (!ctx.db.getSession(params.id)) return error(404, "session not found");
-  const stopped = interruptTurn(params.id);
-  // 200 whether or not a turn was live — interrupting an idle session is a no-op,
-  // not an error (the UI may race the turn finishing).
-  return json({ ok: true, interrupted: stopped });
-};
-
-/** Every subagent session descending from `rootId`, depth-first. A subagent can
- * spawn its own, so this walks the chain rather than one level. */
-function subagentDescendants(ctx: AppCtx, rootId: string): string[] {
-  const all = ctx.db.listSessions().filter((s) => s.kind === "subagent");
-  const out: string[] = [];
-  const seen = new Set<string>([rootId]);
-  const walk = (id: string) => {
-    for (const s of all) {
-      if (s.originId !== id || seen.has(s.id)) continue;
-      seen.add(s.id);
-      out.push(s.id);
-      walk(s.id);
-    }
-  };
-  walk(rootId);
-  return out;
-}
-
-// POST /sessions/:id/stop → the conversation's kill switch: its turn, every
-// subagent under it (however deep), and their background shells.
-//
-// interruptTurn already cascades to DETACHED subagents through its hooks, and
-// works on an idle session — but the TUI only ever called it while a turn was
-// running, so a detached subagent that outlived its parent's turn could not be
-// stopped from the UI at all. This endpoint interrupts each descendant by id
-// too, so a child whose hook was already unregistered is still reached.
-const stopSession: Handler = (_req, ctx, params) => {
-  if (!ctx.db.getSession(params.id)) return error(404, "session not found");
-  const kids = subagentDescendants(ctx, params.id);
-  // Count what was actually STOPPED, not what exists: reporting every descendant
-  // meant "stopped 1 subagent" for a subagent that had finished minutes ago.
-  const turn = interruptTurn(params.id);
-  let subagents = 0;
-  let jobs = killJobsOf(params.id);
-  for (const id of kids) {
-    if (interruptTurn(id)) subagents++;
-    jobs += killJobsOf(id);
-  }
-  return json({ ok: true, turn, subagents, jobs });
-};
-
-// Compaction-as-a-branch: summarize selected turns onto a new compaction session
-// (see compact.ts).
-const compactSession: Handler = async (req, ctx, params) => {
-  const body = await parseBody(req, CompactBody);
-  const session = await compact(ctx, params.id, body);
-  return json({ session });
-};
-
-// Section grouping: LLM-label the client's turn gists into contiguous activity
-// sections for the conversation tree's color coding + section selection
-// (see sections.ts). Read-only; nothing stored.
-const sectionsSession: Handler = async (req, ctx, params) => {
-  const body = await parseBody(req, SectionsBody);
-  if (!ctx.db.getSession(params.id)) return error(404, "session not found");
-  return json({ sections: await sectionize(ctx, body.turns) });
-};
-
-// Extract-to-conversation: copy picked thread messages into a fresh root session
-// (see extract.ts).
-const extractSession: Handler = async (req, ctx, params) => {
-  const body = await parseBody(req, ExtractBody);
-  const session = extract(ctx, params.id, body);
-  return json({ session });
-};
-
-// Handoff: draft a goal-focused opening prompt from this thread and attach it to a
-// fresh root conversation as an editable composer draft (see handoff.ts).
-const handoffSession: Handler = async (req, ctx, params) => {
-  const body = await parseBody(req, HandoffBody);
-  // Use the session's model (else the active default) via clientFor — not the
-  // Anthropic client hardcoded in handoff.ts. Without this, a handoff on an
-  // OpenAI/OpenRouter model (or with no Anthropic key) threw an unhandled error
-  // → 500 instead of drafting through the configured provider.
-  const model = ctx.model ?? ctx.db.getSession(params.id)?.model ?? activeModel();
-  const session = await handoff(
-    { ...ctx, llm: ctx.llm ?? clientFor(model), model },
-    params.id,
-    body,
-  );
-  return json({ session });
-};
-
-// Move (copy) picked messages from a source session onto this existing target.
-const moveInto: Handler = async (req, ctx, params) => {
-  const body = await parseBody(req, MoveBody);
-  const session = move(ctx, params.id, body);
-  return json({ session });
-};
-
-// Fork-at-message: branch a new session at a past turn (edit & resend or plain branch).
-const forkSession: Handler = async (req, ctx, params) => {
-  const body = await parseBody(req, ForkBody);
-  const { session } = fork(ctx, params.id, body);
-  return json({ session });
-};
-
-// ---- changes (review rail) -------------------------------------------------
-
-const emitChangesUpdated = (ctx: AppCtx, sessionId: string) =>
-  ctx.bus.publish({ type: "changes.updated", sessionId, data: { sessionId } });
-
-// GET /sessions/:id/metrics → usability metrics derived from stored data (metrics.ts).
-const getMetrics: Handler = (_req, ctx, params) => {
-  if (!ctx.db.getSession(params.id)) return error(404, "session not found");
-  return json(sessionMetrics(ctx.db, params.id));
-};
-
-// GET /sessions/:id/jobs → live + recent background shells of the session AND its
-// subagent branches (the TUI's status-bar chip and live job cards). Each row
-// carries its owning sessionId so subagent jobs are attributable.
-const getJobs: Handler = (_req, ctx, params) => {
-  if (!ctx.db.getSession(params.id)) return error(404, "session not found");
-  const subagents = ctx.db.listSessions()
-    .filter((s) => s.kind === "subagent" && s.originId === params.id);
-  return json({ jobs: [...listJobs(params.id), ...subagents.flatMap((s) => listJobs(s.id))] });
-};
-
-// POST /sessions/:id/jobs/:jobId/kill → SIGTERM a running background shell
-// directly (the tool-only bashKill, reachable from the TUI so a kill doesn't cost
-// a full LLM turn). Resolves the job by id across sessions: getJobs lists the
-// session's subagents' shells too, and those aren't in this session's registry.
-const killJob: Handler = async (_req, ctx, params) => {
-  if (!ctx.db.getSession(params.id)) return error(404, "session not found");
-  try {
-    return json({ message: await killJobById(params.jobId) });
-  } catch (e) {
-    return error(404, e instanceof Error ? e.message : String(e));
-  }
-};
-
-// GET /sessions/:id/jobs/:jobId/output → the shell's whole retained buffer, for
-// the jobs tab's output view. Non-destructive (see jobOutput).
-const getJobOutput: Handler = (_req, ctx, params) => {
-  if (!ctx.db.getSession(params.id)) return error(404, "session not found");
-  const out = jobOutput(params.jobId);
-  if (!out) return error(404, `no background shell ${params.jobId}`);
-  return json(out);
-};
-
-// GET /sessions/:id/changes → { diffs } across active snapshot sources (repo + clonefile).
-const getChanges: Handler = async (_req, ctx, params) => {
-  if (!ctx.db.getSession(params.id)) return error(404, "session not found");
-  const diffs = await sessionChanges(ctx.db, params.id, { snapshotBase: ctx.snapshotBase });
-  return json({ diffs });
-};
-
-const applyChangesH: Handler = async (req, ctx, params) => {
-  if (!ctx.db.getSession(params.id)) return error(404, "session not found");
-  const body = await parseBody(req, ChangesApplyBody);
-  const result = await applyChanges(ctx.db, params.id, body, { snapshotBase: ctx.snapshotBase });
-  emitChangesUpdated(ctx, params.id);
-  return json({ ok: true, source: body.source, ...result });
-};
-
-const revertChangesH: Handler = async (req, ctx, params) => {
-  if (!ctx.db.getSession(params.id)) return error(404, "session not found");
-  const body = await parseBody(req, ChangesRevertBody, {});
-  const revertedPaths = await revertChanges(ctx.db, params.id, body.paths);
-  emitChangesUpdated(ctx, params.id);
-  return json({ ok: true, reverted: "repo", paths: revertedPaths });
-};
-
-// ---- schedules (recurring agent runs — schedules.ts owns validation) --------
-
-const listSchedulesH: Handler = (_req, ctx) => json({ schedules: ctx.db.listSchedules() });
-
-const createScheduleH: Handler = async (req, ctx) => {
-  const body = await parseBody(req, ScheduleCreateBody);
-  return json(await scheduleCreate(ctx.db, body), 201);
-};
-
-const patchScheduleH: Handler = async (req, ctx, params) => {
-  const body = await parseBody(req, SchedulePatchBody);
-  return json(await schedulePatch(ctx.db, params.id, body));
-};
-
-const deleteScheduleH: Handler = (_req, ctx, params) => {
-  scheduleRemove(ctx.db, params.id);
-  return json({ ok: true });
-};
-
-// ---- workflows (scripted multi-agent orchestration — workflow.ts owns the engine)
-
-/** The production WorkflowCtx for REST-started runs: agents spawn as subagents
- * of the run's session, anchored to its latest message on the map. */
-function restWorkflowCtx(ctx: AppCtx, sessionId: string) {
-  const anchor = ctx.db.threadFor(sessionId).at(-1)?.id ?? `rest:${sessionId}`;
-  const model = ctx.db.getSession(sessionId)?.model ?? ctx.model ?? activeModel();
-  return workflowCtxFor(ctx, sessionId, anchor, model);
-}
-
-const listWorkflowsH: Handler = (req, ctx) => {
-  const sessionId = new URL(req.url).searchParams.get("session") ?? undefined;
-  return json({
-    workflows: ctx.db.listWorkflows(sessionId).map((r) => workflowSummary(ctx.db, r)),
-  });
-};
-
-const getWorkflowH: Handler = (_req, ctx, params) => {
-  const run = ctx.db.getWorkflow(params.id);
-  if (!run) return error(404, "workflow not found");
-  return json({
-    workflow: run,
-    agents: workflowAgentViews(ctx.db, run.id),
-    scriptFile: workflowScriptPath(run.id),
-  });
-};
-
-/** The run view's x/r on one selected agent (the whole run keeps going). */
-const workflowAgentH: Handler = (_req, ctx, params) =>
-  json(
-    controlWorkflowAgent(
-      ctx,
-      params.id,
-      params.agentId,
-      params.action === "restart" ? "restart" : "stop",
-    ),
-  );
-
-const createWorkflowH: Handler = async (req, ctx) => {
-  const body = await parseBody(req, WorkflowCreateBody);
-  const run = await startWorkflow(restWorkflowCtx(ctx, body.sessionId), {
-    sessionId: body.sessionId,
-    script: body.script,
-    args: body.args,
-  });
-  return json(run, 201);
-};
-
-const stopWorkflowH: Handler = (_req, ctx, params) => json(stopWorkflow(ctx, params.id));
-const pauseWorkflowH: Handler = (_req, ctx, params) => json(pauseWorkflow(ctx, params.id));
-const resumeWorkflowH: Handler = (_req, ctx, params) => json(resumeWorkflow(ctx, params.id));
-
-const rerunWorkflowH: Handler = async (req, ctx, params) => {
-  const body = await parseBody(req, WorkflowRerunBody, {});
-  const src = ctx.db.getWorkflow(params.id);
-  if (!src) return error(404, "workflow not found");
-  const run = await rerunWorkflow(restWorkflowCtx(ctx, src.sessionId), params.id, body);
-  return json(run, 201);
-};
-
-const events: Handler = (req, ctx) => {
-  const filter = new URL(req.url).searchParams.get("sessionId");
-  let unsubscribe: (() => void) | undefined;
-  let heartbeat: ReturnType<typeof setInterval> | undefined;
-  const enc = new TextEncoder();
-
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      const send: Listener = (event) => {
-        if (filter && event.sessionId && event.sessionId !== filter) return;
-        // Named SSE frame: the UI attaches one listener per event type.
-        const frame = `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
-        try {
-          controller.enqueue(enc.encode(frame));
-        } catch {
-          // stream already closed; the cancel() below will tidy up.
-        }
-      };
-      unsubscribe = ctx.bus.subscribe(send);
-      controller.enqueue(enc.encode(": connected\n\n"));
-      heartbeat = setInterval(() => {
-        try {
-          controller.enqueue(enc.encode(": ping\n\n"));
-        } catch { /* closed */ }
-      }, 15_000);
-    },
-    cancel() {
-      unsubscribe?.();
-      if (heartbeat !== undefined) clearInterval(heartbeat);
-    },
-  });
-
-  return new Response(stream, {
-    headers: {
-      "content-type": "text/event-stream",
-      "cache-control": "no-cache",
-      connection: "keep-alive",
-    },
-  });
-};
-
-// ---- theme -------------------------------------------------------------------
-
-// The UI palette. GET returns the stored theme (null = default) plus the token
-// contract + default values so clients and the /theme skill can ground edits.
-// PUT validates and persists ~/.bough/theme.json; DELETE reverts to the default.
-const getTheme: Handler = (_req, ctx) =>
-  json({ theme: loadTheme(ctx.themeDir), tokens: THEME_TOKENS, defaults: THEME_DEFAULTS });
-
-const putTheme: Handler = async (req, ctx) => {
-  const parsed = Theme.safeParse(await req.json().catch(() => null));
-  if (!parsed.success) return error(400, "invalid theme: " + parsed.error.message);
-  return json({ theme: saveTheme(parsed.data, ctx.themeDir) });
-};
-
-const deleteTheme: Handler = (_req, ctx) => {
-  clearTheme(ctx.themeDir);
-  return json({ theme: null });
-};
-
-// MCP servers: the registry (~/.bough/mcp/servers.json), this session's live
-// connections, and manual activations. Management is skill-first — the /mcp builtin
-// drives these over loopback. Registering grants nothing by itself: a skill's `mcp:`
-// frontmatter or an enable is what connects a server to a turn (turn.ts).
-const getMcpServers: Handler = (req, ctx) => {
-  const sessionId = new URL(req.url).searchParams.get("session") ?? undefined;
-  if (sessionId && !ctx.db.getSession(sessionId)) return error(404, "unknown session");
-  return json(mcpStatusFor(sessionId));
-};
-
-// Replace the whole registry (GET → edit → PUT). Only servers
-// whose entry changed or vanished lose their live connections — a bulk edit must
-// not reset every session's unrelated servers; granting turns reconnect fresh.
-const putMcpServers: Handler = async (req) => {
-  const body = await req.json().catch(() => null);
-  if (!body) return error(400, 'body must be the registry JSON: {"servers":{…}}');
-  try {
-    const before = loadMcpRegistry().servers;
-    const registry = saveMcpRegistry(body);
-    const touched = [...new Set([...Object.keys(before), ...Object.keys(registry.servers)])]
-      .filter((name) => JSON.stringify(before[name]) !== JSON.stringify(registry.servers[name]));
-    for (const name of touched) await mcpManager().dropServer(name);
-    return json({ registry });
-  } catch (e) {
-    return error(400, (e as Error).message);
-  }
-};
-
-// Register or update ONE server without round-tripping the registry — the shape
-// the /mcp skill uses, so a registration can't mangle sibling entries (or their
-// ${VAR} secret references) in a shell read-modify-write.
-const putMcpServer: Handler = async (req, _ctx, params) => {
-  const body = await req.json().catch(() => null);
-  if (!body) return error(400, 'body must be one server entry: {"command":…} or {"url":…}');
-  try {
-    const registry = upsertMcpServer(params.name, body);
-    await mcpManager().dropServer(params.name); // a changed entry can't keep serving
-    return json({ registry });
-  } catch (e) {
-    return error(400, (e as Error).message);
-  }
-};
-
-const deleteMcpServer: Handler = async (_req, _ctx, params) => {
-  if (!removeMcpServer(params.name)) {
-    return error(404, `no registered mcp server named "${params.name}"`);
-  }
-  await mcpManager().dropServer(params.name);
-  return json({ removed: params.name });
-};
-
-// Connect (or reuse) one server for a session RIGHT NOW and report its catalog —
-// the validation primitive behind the /mcp skill's "prove it" step. Without this,
-// a registration or enable could only be tested by starting another turn; a typo'd
-// command surfaced a turn later as UNAVAILABLE. Connecting is not a grant: the
-// turn's mcp() bridge still comes only from skills/activations at turn start.
-const connectMcpServer: Handler = async (req, ctx, params) => {
-  const sessionId = new URL(req.url).searchParams.get("session");
-  if (!sessionId) return error(400, "connect is per-session — pass ?session=");
-  if (!ctx.db.getSession(sessionId)) return error(404, "unknown session");
-  if (!loadMcpRegistry().servers[params.name]) {
-    return error(400, `no registered mcp server named "${params.name}" — register it first`);
-  }
-  try {
-    // Same spawn context a turn would use (host-side workspace view + snapshot
-    // dir), so the probe exercises the REAL proxy routing, not a lenient variant.
-    const prepared = await prepareWorkspace(ctx.db, sessionId);
-    const [catalog] = await mcpManager().ensure(sessionId, [params.name], {
-      workspace: prepared.cwd,
-    });
-    if (catalog.error) return json({ server: params.name, connected: false, error: catalog.error });
-    return json({
-      server: params.name,
-      connected: true,
-      status: mcpManager().statuses(sessionId).find((s) => s.server === params.name),
-      tools: catalog.tools.map((t) => ({
-        name: t.name,
-        description: (t.description ?? "").split("\n")[0].trim(),
-      })),
-    });
-  } catch (e) {
-    return error(400, (e as Error).message);
-  }
-};
-
-const restartMcpServer: Handler = async (req, ctx, params) => {
-  const sessionId = new URL(req.url).searchParams.get("session");
-  if (!sessionId) return error(400, "restart is per-session — pass ?session=");
-  if (!ctx.db.getSession(sessionId)) return error(404, "unknown session");
-  try {
-    return json({ status: await mcpManager().restart(sessionId, params.name) });
-  } catch (e) {
-    return error(400, (e as Error).message);
-  }
-};
-
-// OAuth for remote (url) servers. Start: discovery + dynamic registration + PKCE
-// happen server-side (mcp/oauth.ts); "redirect" hands back the URL the human must
-// open — the /mcp skill (or UI) shows it. The browser lands on GET
-// /mcp/oauth/callback below, which validates the state nonce and exchanges the
-// code. Tokens live in ~/.bough/mcp/tokens/<name>.json and reach the remote
-// transport only.
-const startMcpAuth: Handler = async (_req, _ctx, params) => {
-  const cfg = loadMcpRegistry().servers[params.name];
-  if (!cfg) return error(400, `no registered mcp server named "${params.name}"`);
-  if (!cfg.url) return error(400, `"${params.name}" is a stdio server — no OAuth involved`);
-  try {
-    return json(await beginAuth(params.name, cfg.url));
-  } catch (e) {
-    return error(400, (e as Error).message);
-  }
-};
-
-const deleteMcpAuth: Handler = async (_req, _ctx, params) => {
-  clearAuth(params.name);
-  await mcpManager().dropServer(params.name);
-  return json({ authorized: false });
-};
-
-// Where the authorization server sends the user's browser back. HTML because a
-// human is looking at it; the state nonce (minted by our own provider) is what
-// authenticates the flow. On success the tab is done — tokens are stored and the
-// next granting turn connects.
-const mcpOauthCallback: Handler = async (req) => {
-  const q = new URL(req.url).searchParams;
-  const page = (status: number, body: string) =>
-    new Response(
-      `<!doctype html><meta charset="utf-8"><title>bough</title>` +
-        `<body style="font-family:system-ui;max-width:32rem;margin:4rem auto">${body}</body>`,
-      { status, headers: { "content-type": "text/html" } },
-    );
-  const err = q.get("error");
-  if (err) {
-    return page(
-      400,
-      `<h2>Authorization failed</h2><p>${err}: ${q.get("error_description") ?? ""}</p>`,
-    );
-  }
-  const code = q.get("code");
-  const state = q.get("state");
-  if (!code || !state) return page(400, "<h2>Missing code or state</h2>");
-  try {
-    const server = await completeAuth(
-      state,
-      code,
-      (name) => loadMcpRegistry().servers[name]?.url,
-    );
-    return page(
-      200,
-      `<h2>bough is connected to "${server}"</h2><p>You can close this tab and return to bough.</p>`,
-    );
-  } catch (e) {
-    return page(400, `<h2>Authorization failed</h2><p>${(e as Error).message}</p>`);
-  }
-};
-
-// Manual activation for a scope (?session=<id>, or global without it) — the grant
-// path that doesn't require authoring a skill; it still enters through the
-// human-typed /mcp invocation. Enable takes an optional ttl ("90m" | "2h" | "7d");
-// a lapsed activation fails closed. Servers connect at turn start, so an enable
-// takes effect on the session's next turn.
-const setMcpServer = (on: boolean): Handler => async (req, ctx, params) => {
-  const sessionId = new URL(req.url).searchParams.get("session") ?? undefined;
-  if (sessionId && !ctx.db.getSession(sessionId)) return error(404, "unknown session");
-  if (on && !loadMcpRegistry().servers[params.name]) {
-    return error(400, `no registered mcp server named "${params.name}" — PUT /mcp/servers first`);
-  }
-  const body = await req.json().catch(() => null) as { ttl?: string } | null;
-  try {
-    const expires = on && body?.ttl?.trim() ? ttlToExpires(body.ttl.trim()) : undefined;
-    setMcpActivation(sessionId, params.name, on, expires);
-    if (!on && sessionId) await mcpManager().drop(sessionId, params.name);
-    return json({
-      active: mcpActivationsFor(sessionId),
-      scope: sessionId ? { sessionId } : "global",
-    });
-  } catch (e) {
-    return error(400, (e as Error).message);
-  }
-};
-
-// ---- ask() questions -------------------------------------------------------
-// Pending mid-task questions (asks.ts holds). Memory-only: GET rebuilds a
-// freshly-attached client's hold card; POST settles one and the program resumes.
-
-// GET /questions[?sessionId=] → pending AskQuestions, oldest first.
-const listQuestionsH: Handler = (req) => {
-  const sessionId = new URL(req.url).searchParams.get("sessionId") ?? undefined;
-  return json(pendingAsks(sessionId));
-};
-
-// POST /sessions/:id/questions/:qid — {answer} resolves the program's ask();
-// {decline: true} rejects it with a catchable "user declined" error.
-const answerQuestionH: Handler = async (req, _ctx, params) => {
-  const q = getAsk(params.qid);
-  if (!q || q.sessionId !== params.id) {
-    return error(404, "no question awaiting an answer for that id");
-  }
-  const body = AnswerQuestionBody.safeParse(await req.json().catch(() => null));
-  if (!body.success) return error(400, "body {answer: string} or {decline: true} required");
-  if (body.data.decline === true) {
-    declineAsk(params.qid);
-    return json({ ok: true, id: params.qid, status: "declined" });
-  }
-  if (typeof body.data.answer !== "string" || !body.data.answer.trim()) {
-    return error(400, "body {answer: string} or {decline: true} required");
-  }
-  answerAsk(params.qid, body.data.answer);
-  return json({ ok: true, id: params.qid, status: "answered" });
-};
-
-// List a session's published artifacts (server/artifacts.ts). Filesystem-backed, so
-// it survives restarts with no DB row; the TUI fetches this on demand.
-const listArtifactsH: Handler = async (_req, _ctx, params) =>
-  json({ artifacts: await listArtifacts(params.id) });
-
-// Serve one hosted artifact by path (rendered HTML/JS/CSS/…). Same origin as the UI so
-// links open in the browser; traversal + bad ids are rejected inside serveArtifact.
-// ?raw=1 skips the viewer wrapper on *.ui.json spec artifacts.
-const getArtifact: Handler = (req, _ctx, params) =>
-  serveArtifact(params.id, params.path ?? "", undefined, {
-    raw: new URL(req.url).searchParams.get("raw") === "1",
-  });
-
-// The spec-viewer bundle every *.ui.json wrapper page loads (jsonrender/bundle.ts).
-// Built lazily and cached by source hash; the hash is the ETag so browsers revalidate
-// with a cheap 304 while a changed viewer lands immediately.
-const getViewerJs: Handler = async (req) => {
-  const { js, etag } = await viewerBundle();
-  if (req.headers.get("if-none-match") === `"${etag}"`) {
-    return new Response(null, { status: 304, headers: { etag: `"${etag}"` } });
-  }
-  return new Response(js, {
-    headers: {
-      "content-type": "text/javascript; charset=utf-8",
-      "cache-control": "no-cache",
-      etag: `"${etag}"`,
-    },
-  });
-};
-
-// ---- artifact comments -----------------------------------------------------
-// The comment layer injected into every served HTML artifact (comments.ts) talks
-// to these same-origin endpoints. Notes are the user's margin annotations left
-// for the agent; "send" wakes the session so the agent reads them.
-
-// GET /sessions/:id/comments[?artifact=] → this session's artifact comments.
-const listComments: Handler = (req, _ctx, params) => {
-  const artifact = new URL(req.url).searchParams.get("artifact");
-  const all = loadComments(params.id);
-  return json({ comments: artifact ? all.filter((c) => c.artifact === artifact) : all });
-};
-
-// POST /sessions/:id/comments → add one note (from the injected widget).
-const addCommentH: Handler = async (req, ctx, params) => {
-  if (!ctx.db.getSession(params.id)) return error(404, "session not found");
-  const body = await parseBody(req, AddCommentBody);
-  return json(addComment(params.id, body), 201);
-};
-
-// DELETE /sessions/:id/comments/:cid → remove a note.
-const deleteCommentH: Handler = (_req, _ctx, params) =>
-  deleteComment(params.id, params.cid) ? json({ ok: true }) : error(404, "comment not found");
-
-// POST /sessions/:id/comments/send → deliver the unsent notes to the agent as a
-// system note (waking a turn) and mark them sent. One turn per batch, not per note.
-const sendCommentsH: Handler = (_req, ctx, params) => {
-  if (!ctx.db.getSession(params.id)) return error(404, "session not found");
-  const unsent = loadComments(params.id).filter((c) => !c.sent);
-  if (unsent.length === 0) return json({ sent: 0 });
-  postSystemNote(ctx, params.id, formatForAgent(unsent));
-  markSent(params.id, unsent.map((c) => c.id));
-  return json({ sent: unsent.length });
-};
-
-// ---- route table + dispatch ------------------------------------------------
-
-// Matched on pathname only (URLPattern rejects an init object + base together).
-const routes: Route[] = [
-  { method: "GET", pattern: new URLPattern({ pathname: "/config" }), handler: getConfig },
-  { method: "PATCH", pattern: new URLPattern({ pathname: "/config" }), handler: patchConfig },
-  { method: "PUT", pattern: new URLPattern({ pathname: "/config/keys" }), handler: putKeys },
-  { method: "DELETE", pattern: new URLPattern({ pathname: "/config/keys" }), handler: deleteKeys },
-  { method: "GET", pattern: new URLPattern({ pathname: "/skills" }), handler: getSkills },
-  { method: "POST", pattern: new URLPattern({ pathname: "/suggest" }), handler: postSuggest },
-  { method: "GET", pattern: new URLPattern({ pathname: "/theme" }), handler: getTheme },
-  { method: "PUT", pattern: new URLPattern({ pathname: "/theme" }), handler: putTheme },
-  { method: "DELETE", pattern: new URLPattern({ pathname: "/theme" }), handler: deleteTheme },
-  { method: "GET", pattern: new URLPattern({ pathname: "/sessions" }), handler: listSessions },
-  { method: "GET", pattern: new URLPattern({ pathname: "/fs/dirs" }), handler: searchDirs },
-  { method: "GET", pattern: new URLPattern({ pathname: "/fs/files" }), handler: searchDraftFiles },
-  { method: "POST", pattern: new URLPattern({ pathname: "/sessions" }), handler: createSession },
-  { method: "GET", pattern: new URLPattern({ pathname: "/sessions/:id" }), handler: getSession },
-  {
-    method: "POST",
-    pattern: new URLPattern({ pathname: "/sessions/:id/messages" }),
-    handler: postMessage,
-  },
-  {
-    method: "POST",
-    pattern: new URLPattern({ pathname: "/sessions/:id/archive" }),
-    handler: archiveSession,
-  },
-  {
-    method: "POST",
-    pattern: new URLPattern({ pathname: "/sessions/:id/unarchive" }),
-    handler: unarchiveSession,
-  },
-  {
-    method: "PUT",
-    pattern: new URLPattern({ pathname: "/sessions/:id/draft" }),
-    handler: putSessionDraft,
-  },
-  {
-    method: "POST",
-    pattern: new URLPattern({ pathname: "/sessions/:id/deprecate" }),
-    handler: deprecateSession,
-  },
-  { method: "POST", pattern: new URLPattern({ pathname: "/purge" }), handler: purgeArchived },
-  {
-    method: "POST",
-    pattern: new URLPattern({ pathname: "/sessions/:id/interrupt" }),
-    handler: interruptSession,
-  },
-  {
-    method: "POST",
-    pattern: new URLPattern({ pathname: "/sessions/:id/stop" }),
-    handler: stopSession,
-  },
-  {
-    method: "POST",
-    pattern: new URLPattern({ pathname: "/sessions/:id/compact" }),
-    handler: compactSession,
-  },
-  {
-    method: "POST",
-    pattern: new URLPattern({ pathname: "/sessions/:id/sections" }),
-    handler: sectionsSession,
-  },
-  {
-    method: "POST",
-    pattern: new URLPattern({ pathname: "/sessions/:id/extract" }),
-    handler: extractSession,
-  },
-  {
-    method: "POST",
-    pattern: new URLPattern({ pathname: "/sessions/:id/handoff" }),
-    handler: handoffSession,
-  },
-  {
-    method: "POST",
-    pattern: new URLPattern({ pathname: "/sessions/:id/move-into" }),
-    handler: moveInto,
-  },
-  {
-    method: "POST",
-    pattern: new URLPattern({ pathname: "/sessions/:id/fork" }),
-    handler: forkSession,
-  },
-  {
-    method: "GET",
-    pattern: new URLPattern({ pathname: "/sessions/:id/files" }),
-    handler: searchFiles,
-  },
-  {
-    method: "GET",
-    pattern: new URLPattern({ pathname: "/sessions/:id/artifacts" }),
-    handler: listArtifactsH,
-  },
-  {
-    method: "GET",
-    pattern: new URLPattern({ pathname: "/sessions/:id/comments" }),
-    handler: listComments,
-  },
-  {
-    method: "POST",
-    pattern: new URLPattern({ pathname: "/sessions/:id/comments" }),
-    handler: addCommentH,
-  },
-  {
-    method: "POST",
-    pattern: new URLPattern({ pathname: "/sessions/:id/comments/send" }),
-    handler: sendCommentsH,
-  },
-  {
-    method: "DELETE",
-    pattern: new URLPattern({ pathname: "/sessions/:id/comments/:cid" }),
-    handler: deleteCommentH,
-  },
-  {
-    method: "GET",
-    pattern: new URLPattern({ pathname: "/sessions/:id/changes" }),
-    handler: getChanges,
-  },
-  {
-    method: "GET",
-    pattern: new URLPattern({ pathname: "/sessions/:id/metrics" }),
-    handler: getMetrics,
-  },
-  {
-    method: "GET",
-    pattern: new URLPattern({ pathname: "/sessions/:id/jobs" }),
-    handler: getJobs,
-  },
-  {
-    method: "POST",
-    pattern: new URLPattern({ pathname: "/sessions/:id/jobs/:jobId/kill" }),
-    handler: killJob,
-  },
-  {
-    method: "GET",
-    pattern: new URLPattern({ pathname: "/sessions/:id/jobs/:jobId/output" }),
-    handler: getJobOutput,
-  },
-  {
-    method: "POST",
-    pattern: new URLPattern({ pathname: "/sessions/:id/changes/apply" }),
-    handler: applyChangesH,
-  },
-  {
-    method: "POST",
-    pattern: new URLPattern({ pathname: "/sessions/:id/changes/revert" }),
-    handler: revertChangesH,
-  },
-  { method: "GET", pattern: new URLPattern({ pathname: "/questions" }), handler: listQuestionsH },
-  {
-    method: "POST",
-    pattern: new URLPattern({ pathname: "/sessions/:id/questions/:qid" }),
-    handler: answerQuestionH,
-  },
-  { method: "GET", pattern: new URLPattern({ pathname: "/schedules" }), handler: listSchedulesH },
-  { method: "POST", pattern: new URLPattern({ pathname: "/schedules" }), handler: createScheduleH },
-  {
-    method: "PATCH",
-    pattern: new URLPattern({ pathname: "/schedules/:id" }),
-    handler: patchScheduleH,
-  },
-  {
-    method: "DELETE",
-    pattern: new URLPattern({ pathname: "/schedules/:id" }),
-    handler: deleteScheduleH,
-  },
-  { method: "GET", pattern: new URLPattern({ pathname: "/workflows" }), handler: listWorkflowsH },
-  { method: "POST", pattern: new URLPattern({ pathname: "/workflows" }), handler: createWorkflowH },
-  { method: "GET", pattern: new URLPattern({ pathname: "/workflows/:id" }), handler: getWorkflowH },
-  {
-    method: "POST",
-    pattern: new URLPattern({ pathname: "/workflows/:id/stop" }),
-    handler: stopWorkflowH,
-  },
-  {
-    method: "POST",
-    pattern: new URLPattern({ pathname: "/workflows/:id/pause" }),
-    handler: pauseWorkflowH,
-  },
-  {
-    method: "POST",
-    pattern: new URLPattern({ pathname: "/workflows/:id/resume" }),
-    handler: resumeWorkflowH,
-  },
-  {
-    method: "POST",
-    pattern: new URLPattern({ pathname: "/workflows/:id/rerun" }),
-    handler: rerunWorkflowH,
-  },
-  {
-    method: "POST",
-    pattern: new URLPattern({ pathname: "/workflows/:id/agents/:agentId/:action" }),
-    handler: workflowAgentH,
-  },
-  { method: "GET", pattern: new URLPattern({ pathname: "/events" }), handler: events },
-  { method: "GET", pattern: new URLPattern({ pathname: "/mcp/servers" }), handler: getMcpServers },
-  { method: "PUT", pattern: new URLPattern({ pathname: "/mcp/servers" }), handler: putMcpServers },
-  {
-    method: "PUT",
-    pattern: new URLPattern({ pathname: "/mcp/servers/:name" }),
-    handler: putMcpServer,
-  },
-  {
-    method: "DELETE",
-    pattern: new URLPattern({ pathname: "/mcp/servers/:name" }),
-    handler: deleteMcpServer,
-  },
-  {
-    method: "POST",
-    pattern: new URLPattern({ pathname: "/mcp/servers/:name/connect" }),
-    handler: connectMcpServer,
-  },
-  {
-    method: "POST",
-    pattern: new URLPattern({ pathname: "/mcp/servers/:name/restart" }),
-    handler: restartMcpServer,
-  },
-  {
-    method: "POST",
-    pattern: new URLPattern({ pathname: "/mcp/servers/:name/enable" }),
-    handler: setMcpServer(true),
-  },
-  {
-    method: "POST",
-    pattern: new URLPattern({ pathname: "/mcp/servers/:name/disable" }),
-    handler: setMcpServer(false),
-  },
-  {
-    method: "POST",
-    pattern: new URLPattern({ pathname: "/mcp/servers/:name/auth" }),
-    handler: startMcpAuth,
-  },
-  {
-    method: "DELETE",
-    pattern: new URLPattern({ pathname: "/mcp/servers/:name/auth" }),
-    handler: deleteMcpAuth,
-  },
-  {
-    method: "GET",
-    pattern: new URLPattern({ pathname: "/mcp/oauth/callback" }),
-    handler: mcpOauthCallback,
-  },
-  {
-    method: "GET",
-    pattern: new URLPattern({ pathname: "/artifacts/:id/:path*" }),
-    handler: getArtifact,
-  },
-  {
-    method: "GET",
-    pattern: new URLPattern({ pathname: VIEWER_JS_PATH }),
-    handler: getViewerJs,
-  },
+import type { AppCtx } from "../types.ts";
+import { errorResponse, type Handler, type Route, route } from "./http.ts";
+// Re-exported so `import { json, parseBody, route, type Handler } from "./app.ts"`
+// keeps resolving for anything not yet moved. New code imports `./http.ts` directly
+// — importing them from HERE re-forms the initialization cycle documented above,
+// and `server/http.test.ts` is what catches it.
+export { errorResponse, type Handler, json, parseBody, type Route, route } from "./http.ts";
+// ── handler imports; append below, one line per task ──
+import { events } from "./events.ts"; // T1.3
+import * as sessions from "./sessions.ts"; // T1.2
+import * as workflows from "./workflows.ts"; // T5.5
+import * as questions from "./questions.ts"; // T6.1
+import * as schedules from "../schedules.ts"; // T6.3
+import * as artifacts from "./artifacts.ts"; // T6.6
+import * as comments from "./comments.ts"; // T6.7
+import * as jobsApi from "./jobs.ts"; // T6.8
+import * as relaunch from "../workflow/relaunch.ts"; // T5.7
+import * as mcpOauth from "../mcp/oauth.ts"; // T7.2
+import * as mcpApi from "../mcp/status.ts"; // T7.3
+import * as compact from "../history/compact.ts"; // T8.3
+import * as sections from "../history/sections.ts"; // T8.3
+import * as fork from "../history/fork.ts"; // T8.2
+import * as extract from "../history/extract.ts"; // T8.4
+import * as move from "../history/move.ts"; // T8.4
+import * as handoff from "../history/handoff.ts"; // T8.4
+import * as changes from "./changes.ts"; // T8.5
+import * as search from "./search.ts"; // T8.6
+import * as skillsApi from "./skills.ts"; // T10.2
+import * as theme from "./theme.ts"; // T10.4
+import * as ghost from "../worker/ghost.ts"; // T10.1
+import * as turnsApi from "./turns.ts"; // final integration — the interrupt route
+
+// ---- the route table --------------------------------------------------------
+
+/**
+ * APPEND-ONLY. Add your task's entries at the end, below the marker. Never
+ * reorder, never edit another task's entry, never insert in the middle — a
+ * reorder changes which route wins for an overlapping pathname, and an insert
+ * conflicts with every other agent appending at the same time.
+ *
+ * The table starts empty on purpose: `GET /` and the 404 are fallbacks in
+ * `createHandler`, not entries, so every line here belongs to exactly one task.
+ */
+export const routes: Route[] = [
+  // ── append new routes below this line, never above it ──
+  route("GET", "/events", events), // T1.3
+  // T1.2 — sessions and messages
+  route("GET", "/sessions", sessions.listSessions),
+  route("POST", "/sessions", sessions.createSession),
+  route("GET", "/sessions/:id", sessions.getSession),
+  route("PATCH", "/sessions/:id", sessions.patchSession),
+  route("POST", "/sessions/:id/messages", sessions.postMessage),
+  route("PUT", "/sessions/:id/draft", sessions.putDraft),
+  // T5.5 — workflows. `/workflows/:id/agents/:agentId/:action` is listed after the
+  // lifecycle verbs; it cannot shadow them (a different segment count), and the
+  // order is the append order either way.
+  route("GET", "/workflows", workflows.listWorkflows),
+  route("POST", "/workflows", workflows.createWorkflow),
+  route("GET", "/workflows/:id", workflows.getWorkflow),
+  route("POST", "/workflows/:id/stop", workflows.stopWorkflowH),
+  route("POST", "/workflows/:id/pause", workflows.pauseWorkflowH),
+  route("POST", "/workflows/:id/resume", workflows.resumeWorkflowH),
+  route("POST", "/workflows/:id/rerun", workflows.rerunWorkflowH),
+  route("POST", "/workflows/:id/agents/:agentId/:action", workflows.controlWorkflowAgentH),
+  // T6.3 — schedules. The same validated CRUD the `schedule.*` host fn uses, so a
+  // spec that parses over HTTP parses from a program and vice versa.
+  route("GET", "/schedules", schedules.listSchedulesH),
+  route("POST", "/schedules", schedules.createScheduleH),
+  route("PATCH", "/schedules/:id", schedules.patchScheduleH),
+  route("DELETE", "/schedules/:id", schedules.deleteScheduleH),
+  // T6.1 — ask() holds. Memory-only: GET rebuilds a freshly-attached client's hold
+  // card, POST settles one and the parked program resumes.
+  route("GET", "/questions", questions.listQuestions),
+  route("POST", "/sessions/:id/questions/:qid", questions.answerQuestion),
+  // T6.6 — artifacts. The listing is filesystem-backed and survives a database reset,
+  // so it deliberately does not require a session row. `/artifacts/:id/:path*` is the
+  // hosted file itself, same origin as the API so a printed link just opens.
+  route("GET", "/sessions/:id/artifacts", artifacts.listArtifactsH),
+  route("GET", "/artifacts/:id/:path*", artifacts.getArtifactH),
+  // T6.7 — artifact comments. These are what the layer injected into every served HTML
+  // artifact talks to. `/comments/send` is listed before `/comments/:cid` for reading
+  // order; it cannot be shadowed by it either way (different method).
+  route("GET", "/sessions/:id/comments", comments.listCommentsH),
+  route("POST", "/sessions/:id/comments", comments.postCommentH),
+  route("POST", "/sessions/:id/comments/send", comments.sendCommentsH),
+  route("DELETE", "/sessions/:id/comments/:cid", comments.deleteCommentH),
+  // T6.8 — jobs. Scoped to a session AND its subagents, so a spawner's jobs tab shows
+  // the work running on its behalf and the human can kill it without spending a turn.
+  route("GET", "/sessions/:id/jobs", jobsApi.listJobsH),
+  route("POST", "/sessions/:id/jobs/:jobId/kill", jobsApi.killJobH),
+  route("GET", "/sessions/:id/jobs/:jobId/output", jobsApi.jobOutputH),
+  // T5.7 — relaunch from a journal, with prefix-bounded replay. `relaunch` is the
+  // generalization of `rerun`: a NEW run seeded from a stopped run's journal, whose
+  // unchanged leading calls replay and whose first changed call — and everything after
+  // it — runs live. `/workflows/:id/replay` is the required counterpart: replay is
+  // always reported (spec §8), and a run that replayed nothing is otherwise
+  // indistinguishable from one that replayed everything.
+  route("POST", "/workflows/:id/relaunch", relaunch.relaunchWorkflowH),
+  route("GET", "/workflows/:id/replay", relaunch.workflowReplayH),
+  // T5.8 — saving a run as a named workflow, and the cost surface's one setting.
+  //
+  // `/saved-workflows` is a top-level collection rather than `/workflows/saved`
+  // because this table is matched in order and appends land at the END: a two-segment
+  // `/workflows/saved` would be swallowed by `/workflows/:id` above and answer 404 for
+  // a run id of "saved". The same reasoning puts the guideline at `/workflow-settings`.
+  route("POST", "/workflows/:id/save", workflows.saveWorkflowH),
+  route("GET", "/saved-workflows", workflows.listSavedWorkflowsH),
+  route("GET", "/saved-workflows/:name", workflows.getSavedWorkflowH),
+  route("PUT", "/saved-workflows/:name", workflows.putSavedWorkflowH),
+  route("POST", "/saved-workflows/:name/runs", workflows.runSavedWorkflowH),
+  route("GET", "/workflow-settings", workflows.getWorkflowSettingsH),
+  route("PUT", "/workflow-settings", workflows.putWorkflowSettingsH),
+  // T7.2 — OAuth for remote MCP servers. The callback is the load-bearing one: the
+  // authorization server sends the user's BROWSER back here, so this path is baked
+  // into the redirect URI bough registers and must exist on bough's own port (spec
+  // §10). The three `/mcp/servers/:name/auth` verbs are what `/mcp auth <name>`
+  // drives — start the flow, read its state, forget the tokens. No route here ever
+  // returns a token; they return a URL for the human and a status for the panel.
+  route("GET", mcpOauth.CALLBACK_PATH, mcpOauth.oauthCallbackH),
+  route("GET", "/mcp/servers/:name/auth", mcpOauth.authStatusH),
+  route("POST", "/mcp/servers/:name/auth", mcpOauth.beginAuthH),
+  route("DELETE", "/mcp/servers/:name/auth", mcpOauth.clearAuthH),
+  // T7.3 — the MCP registry, the per-session grants over it, and live connections.
+  // Registering is not granting (`mcp/config.ts`): `PUT` defines a server, `enable`
+  // is what lets a session's programs call it, and `connect` only proves the command
+  // works. Every one of these answers with the SAME `{registry, auth, active,
+  // connections}` document `mcpStatus()` returns, so the human's panel and the
+  // model's fresh call can never be looking at different MCP states (plan §6.13).
+  // The `/auth` verbs above are T7.2's and are deliberately not restated here.
+  route("GET", "/mcp/servers", mcpApi.getMcpServersH),
+  route("PUT", "/mcp/servers", mcpApi.putMcpServersH),
+  route("PUT", "/mcp/servers/:name", mcpApi.putMcpServerH),
+  route("DELETE", "/mcp/servers/:name", mcpApi.deleteMcpServerH),
+  route("POST", "/mcp/servers/:name/connect", mcpApi.connectMcpServerH),
+  route("POST", "/mcp/servers/:name/restart", mcpApi.restartMcpServerH),
+  route("POST", "/mcp/servers/:name/enable", mcpApi.setMcpActivationH(true)),
+  route("POST", "/mcp/servers/:name/disable", mcpApi.setMcpActivationH(false)),
+  // T8.2 — fork at message, and edit-and-resend. A history operation is a POST that
+  // CREATES a session (201) and never mutates the one in the URL: the source is
+  // byte-identical afterwards, so this is safe to offer on any turn, however far back.
+  route("POST", "/sessions/:id/fork", fork.forkSessionH),
+  // T8.3 — compaction and topic sections. Compaction is the same shape as fork: a POST
+  // that CREATES a compaction branch (201) and leaves the session in the URL
+  // byte-identical, because every history operation branches and none rewrites (spec
+  // §14). Sections is the odd one — it is STATELESS: the client sends turn gists, gets
+  // back labeled ranges, and nothing is read from or written to the session. It is
+  // nested under `/sessions/:id` anyway so a mistyped id 404s instead of buying an LLM
+  // call about a thread nobody is looking at.
+  route("POST", "/sessions/:id/compact", compact.compactH),
+  route("POST", "/sessions/:id/sections", sections.sectionsH),
+  // T8.4 — extract, move-into, handoff: the three history ops whose selection may reach
+  // into ANCESTOR history, which fork and compaction cannot (spec §14). All three leave
+  // the session in the URL byte-identical. `extract` and `handoff` CREATE a fresh root
+  // (201); `move-into` creates nothing (200) — it appends copies onto the session named
+  // by `:id`, and the session copied FROM travels in the body as `sourceId`, because it
+  // is the argument rather than the thing being acted on.
+  route("POST", "/sessions/:id/extract", extract.extractH),
+  route("POST", "/sessions/:id/move-into", move.moveIntoH),
+  route("POST", "/sessions/:id/handoff", handoff.handoffH),
+  // T8.5 — the Changes rail. Two routes, because there are only two operations: read
+  // what this session changed, and revert some of it. There is no apply — the agent
+  // edits the user's checkout in place, so the work is already delivered and
+  // committing is the reviewer's own call (spec §13, §17).
+  //
+  // GET is always 200: a workspace that is not a repository has no change set, and
+  // saying so plainly is an ANSWER, not an error. The only 400 is a revert asked of a
+  // session that has nothing to revert against.
+  route("GET", "/sessions/:id/changes", changes.getChangesH),
+  route("POST", "/sessions/:id/changes/revert", changes.revertChangesH),
+  // T8.6 — keyword search over transcripts (spec §17: FTS, no embeddings). Top-level
+  // rather than nested under a session because the question it answers is "did I solve
+  // this before?", which spans the whole forest; `?sessionId=` narrows it back down.
+  // `/search/reindex` is the repair path for the drift a swallowed index write leaves
+  // behind — search is allowed to fail quietly, never invisibly (`server/search.ts`).
+  route("GET", "/search", search.searchH),
+  route("POST", "/search/reindex", search.reindexH),
+  // T10.4 — theming. A theme is a NAMED PARTIAL palette over a fixed semantic token set
+  // and is pure DATA: the TUI fetches this at boot and paints truecolor, so adopting one
+  // is a repaint rather than a rebuild (spec §16). Top-level and singular because there
+  // is exactly one theme per install — it is not per-session, and the picker previews it
+  // client-side without touching these routes until the user commits.
+  //
+  // GET is always 200 even with nothing stored: "no theme" is the default palette, which
+  // is an answer. DELETE is idempotent for the same reason.
+  route("GET", "/theme", theme.getThemeH),
+  route("PUT", "/theme", theme.putThemeH),
+  route("DELETE", "/theme", theme.deleteThemeH),
+  // T10.1 — composer ghost text, one of the three cheap-tier micro-tasks (spec §12).
+  // POST rather than GET despite reading nothing: the half-typed prefix is user text
+  // that has no business in a URL or an access log. ALWAYS 200 for a session that
+  // exists, with `{ghost: null}` standing in for every failure there is — a cheap-model
+  // outcome must never reach the composer as an error banner.
+  route("POST", "/sessions/:id/ghost", ghost.ghostTextH),
+  // T10.2 — skills. Top-level and session-less on purpose: a skill is a folder on
+  // disk, not a row (`db/schema.sql`), and what is installed is a property of the
+  // machine rather than of a conversation. Both routes are a fresh walk of the source
+  // directories, so a skill written a second ago is listed a second later.
+  //
+  // GET is always 200 with a possibly-empty list; a malformed SKILL.md is a row with
+  // an `error`, never an omission. `/skills/:name` adds the body with `${SKILL_DIR}`
+  // resolved — the two questions a listing cannot answer (`server/skills.ts`).
+  route("GET", "/skills", skillsApi.listSkillsH),
+  route("GET", "/skills/:name", skillsApi.getSkillH),
+  // FINAL INTEGRATION — the user interrupt spec §5 requires. `turn/runner.ts` has
+  // exported `interruptTurn` since M2 and nothing reached it: both clients carried a
+  // "KNOWN GAP" note in their headers instead of a stop button, which meant a running
+  // turn could only be stopped by killing the server. Always 200 for a session that
+  // exists — "nothing was running" is an answer, not a race the client must handle
+  // (`server/turns.ts`).
+  route("POST", "/sessions/:id/interrupt", turnsApi.interruptSession),
 ];
 
-/** Build the fetch handler bound to a ctx (used by main.ts and by tests). */
-export function createHandler(ctx: AppCtx): (req: Request) => Response | Promise<Response> {
-  const auth = createAuth(ctx.password);
-  // Background-shell lifecycle (bash_bg.ts) → bus, so the TUI hears job spawns
-  // and exits live (status-bar chip + job cards) without polling blind.
-  onJobEvent((ev) => ctx.bus.publish({ type: ev.type, sessionId: ev.sessionId, data: ev.job }));
-  return async (req) => {
-    const denied = await auth.gate(req);
-    if (denied) return denied;
+// ---- dispatch ---------------------------------------------------------------
+
+/** The pointer served at `GET /`. There is no web UI; this origin is the API. */
+const ROOT_POINTER = "bough server — drive it with the `bough` TUI.\n" +
+  "There is no web UI: this origin is the JSON API, the /events SSE stream, and " +
+  "artifact hosting.\n";
+
+export interface CreateHandlerOptions {
+  /**
+   * Override the route table. Production takes the default; a router test passes
+   * a fabricated table so it exercises dispatch, params and error mapping without
+   * depending on which endpoints happen to exist yet.
+   */
+  routes?: readonly Route[];
+  /**
+   * Where a non-`HttpError` escaping a handler is reported. Such an error is a
+   * bug, not a domain outcome, so it is logged rather than swallowed; a test
+   * passes a collector so an intentional throw does not print a stack and so the
+   * isolation can be asserted instead of inferred.
+   */
+  onUnexpectedError?: (error: unknown, req: Request) => void;
+}
+
+/**
+ * Build the fetch handler bound to a ctx. `main.ts` passes it to `Deno.serve`;
+ * tests call the returned function directly with a `Request` and never bind a
+ * socket.
+ */
+export function createHandler(
+  ctx: AppCtx,
+  opts: CreateHandlerOptions = {},
+): (req: Request) => Promise<Response> {
+  const table = opts.routes ?? routes;
+  const onUnexpectedError = opts.onUnexpectedError ??
+    ((err: unknown, req: Request) =>
+      console.error(`unhandled error in ${req.method} ${new URL(req.url).pathname}:`, err));
+
+  return async (req: Request): Promise<Response> => {
     const { pathname } = new URL(req.url);
-    for (const route of routes) {
-      if (route.method !== req.method) continue;
-      const match = route.pattern.exec({ pathname });
-      if (match) {
-        try {
-          return await route.handler(req, ctx, match.pathname.groups as Record<string, string>);
-        } catch (e) {
-          // Domain errors (HttpError subclasses) carry their response; this one
-          // catch replaces a per-handler catch block per error type.
-          if (e instanceof HttpError) return error(e.status, e.message);
-          throw e;
-        }
+
+    for (const entry of table) {
+      if (entry.method !== req.method) continue;
+      const match = entry.pattern.exec({ pathname });
+      if (!match) continue;
+      try {
+        return await entry.handler(req, ctx, groupsOf(match));
+      } catch (e) {
+        // THE one catch. Domain errors carry their own status (errors.ts), which
+        // is what lets every module below `server/` throw instead of returning a
+        // Response. Anything else is a defect: report it and answer 500 rather
+        // than letting the connection die with no body.
+        if (e instanceof HttpError) return errorResponse(e.status, e.message);
+        onUnexpectedError(e, req);
+        return errorResponse(500, e instanceof Error ? e.message : String(e));
       }
     }
-    // No web UI — bough is driven through the TUI; the server is API + artifacts.
+
     if (req.method === "GET" && pathname === "/") {
+      return new Response(ROOT_POINTER, {
+        headers: { "content-type": "text/plain; charset=utf-8" },
+      });
+    }
+
+    // The path exists but not for this method. Saying so beats a 404 that reads
+    // as "endpoint missing" and sends the caller looking for the wrong bug.
+    const allowed = [
+      ...new Set(table.filter((r) => r.pattern.exec({ pathname })).map((r) => r.method)),
+    ];
+    if (allowed.length > 0) {
       return new Response(
-        "bough server — drive it with the `bough` TUI. Artifacts: /artifacts/<sessionId>/<name>\n",
-        { headers: { "content-type": "text/plain; charset=utf-8" } },
+        JSON.stringify({
+          error: `${req.method} not allowed on ${pathname} — try ${allowed.join(", ")}`,
+        }),
+        {
+          status: 405,
+          headers: {
+            "content-type": "application/json; charset=utf-8",
+            allow: allowed.join(", "),
+          },
+        },
       );
     }
-    return error(404, "not found");
+
+    return errorResponse(404, `no route for ${req.method} ${pathname}`);
   };
+}
+
+/**
+ * The matched named groups, minus the ones that did not participate. `URLPattern`
+ * reports an unmatched optional group as `undefined`; carrying that through would
+ * make `Record<string, string>` a lie that every handler has to remember.
+ */
+function groupsOf(match: URLPatternResult): Record<string, string> {
+  const params: Record<string, string> = {};
+  for (const [key, value] of Object.entries(match.pathname.groups)) {
+    if (value !== undefined) params[key] = value;
+  }
+  return params;
 }

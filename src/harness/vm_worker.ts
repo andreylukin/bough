@@ -1,70 +1,91 @@
 /// <reference no-default-lib="true" />
 /// <reference lib="deno.worker" />
 /**
- * The program side of the code-mode VM: this module runs as a Deno Worker with
- * `permissions: "inherit"` — the program has everything the server itself has
- * (filesystem, network, env, subprocesses, npm/jsr imports). The host functions
- * bridged in over postMessage are convenience and session integration, not a
- * boundary: bash() carries the turn's interrupt and the output digest, agent()/
- * ask()/state() reach the session's DB and TUI. A program may ignore all of them
- * and call Deno directly.
+ * The program side of the program worker. This module IS the worker: it runs with
+ * `permissions: "inherit"`, so the program it executes has everything the server
+ * itself has — filesystem, network, env, subprocesses, `npm:`/`jsr:` imports. The
+ * host functions bridged in over `postMessage` are convenience and session
+ * integration, not a boundary, and a program may ignore all of them and call `Deno`
+ * directly (spec §2.2).
  *
- * Because the isolate is no longer sealed, two things it spawns must be wound
- * down deliberately — see the exit trap and the child-process tracking below.
+ * THE INVARIANT THIS HOLDS: **because the isolate is not sealed, everything the
+ * program can start must be stoppable from here.** Two things it can start would
+ * otherwise outlive the turn or take the server down:
  *
- * Protocol (see vm.ts):
- *   main → worker  {type:"run", code}
- *   worker → main  {type:"host", id, fn, args}          host-function call
- *   main → worker  {type:"host_result", id, ok, value}  its result / error
- *   worker → main  {type:"log", line}                     one console.* line, as printed
- *   main → worker  {type:"abort"}                         stop: kill what we spawned
- *   worker → main  {type:"aborted"}                       …swept, safe to terminate
- *   worker → main  {type:"done", logs} | {type:"error", message, logs}
+ *   1. **The exit trap.** `process.exit()` / `Deno.exit()` terminate the worker
+ *      silently — the turn then hangs until its wall timeout with no error to
+ *      report. With inherited permissions the stakes are worse: an uncaught exit
+ *      here can take the whole bough server with it (plan §6.2). Weak models emit
+ *      `process.exit(1)` as an "assertion failed" idiom, so both are replaced with
+ *      a throw the round can catch and report.
+ *   2. **Child-process tracking.** Every process the program spawns natively is a
+ *      child of the SERVER process, and `worker.terminate()` does not touch it. So
+ *      `Deno.Command` is wrapped to record what it spawns, and the abort handshake
+ *      sweeps the set with SIGTERM *before* acking — children first, then the
+ *      worker (plan §6.3). Only the async paths are tracked: `outputSync()` and
+ *      `spawnSync()` block this worker's event loop, so an abort message could not
+ *      be handled during one anyway.
  *
- * console lines are BOTH streamed ({type:"log"} — the TUI renders them live) and
- * batched into `logs` (the model still receives the full output in the tool
- * result). Display-only streaming: context contents are unchanged.
+ * The program's parameters come from `protocol.ts` — the same list the host's
+ * pre-flight check parses with, so the two cannot disagree about which names are
+ * taken (see that module's header). This file declares no name of its own; the
+ * `satisfies Record<HostFnName, …>` on the binding table is what makes a drift a
+ * typecheck failure rather than a runtime hole.
+ *
+ * `console.*` lines are BOTH streamed (`{type:"log"}` — the UI renders them live)
+ * AND batched into `logs`, so the model still receives the full output in its tool
+ * result (spec §5). Display-only streaming: context contents are unchanged.
+ *
+ * Ported from `src/harness/vm_worker.ts`. Deltas are marked `NOTE:`.
  */
 
-type HostName =
-  | "bash"
-  | "sh"
-  | "extract"
-  | "fetch"
-  | "bashBg"
-  | "bashOutput"
-  | "bashWait"
-  | "bashKill"
-  | "read"
-  | "write"
-  | "edit"
-  | "view"
-  | "patch"
-  | "agent"
-  | "spawn"
-  | "join"
-  | "adopt"
-  | "ask"
-  | "mcp"
-  | "mcpStatus"
-  | "lsp"
-  | "artifact"
-  | "recall"
-  | "image"
-  | "schedule"
-  | "state"
-  | "workflow";
+import {
+  type FromProgramWorker,
+  HOST_FN_VERBS,
+  type HostFnName,
+  PROGRAM_PARAMS,
+  type ProgramParam,
+  type ToProgramWorker,
+} from "./protocol.ts";
+
+// ---------------------------------------------------------------------------
+// The bridge
+// ---------------------------------------------------------------------------
 
 const pending = new Map<number, { resolve: (v: string) => void; reject: (e: Error) => void }>();
 let seq = 0;
 const logs: string[] = [];
 
-function hostCall(fn: HostName, args: unknown[]): Promise<string> {
+const send = (msg: FromProgramWorker) => self.postMessage(msg);
+
+function hostCall(fn: HostFnName, args: unknown[]): Promise<string> {
   const id = ++seq;
   const p = new Promise<string>((resolve, reject) => pending.set(id, { resolve, reject }));
-  self.postMessage({ type: "host", id, fn, args });
+  send({ type: "host", id, fn, args });
   return p;
 }
+
+/** Every structured host result crosses the wire as JSON — the protocol is string-only. */
+const jsonCall = async (fn: HostFnName, args: unknown[]): Promise<unknown> =>
+  JSON.parse(await hostCall(fn, args));
+
+/**
+ * A verb-dispatched host function, rebuilt worker-side as the method object the
+ * program actually calls (`state.get(...)` → `state("get", argsJson)`). The verb
+ * lists live in `protocol.ts` so the host dispatcher and this cannot drift.
+ */
+function methodObject(fn: "state" | "schedule" | "workflow" | "lsp") {
+  const verbs: readonly string[] = HOST_FN_VERBS[fn];
+  return Object.fromEntries(
+    verbs.map((
+      verb,
+    ) => [verb, (args?: unknown) => jsonCall(fn, [verb, JSON.stringify(args ?? null)])]),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// console — streamed and batched
+// ---------------------------------------------------------------------------
 
 function show(v: unknown): string {
   if (typeof v === "string") return v;
@@ -75,25 +96,27 @@ function show(v: unknown): string {
   }
 }
 
-// A console.* call emits its line immediately (live progress in the TUI) AND
-// keeps it in the batch (the model-facing tool result ships the joined logs).
+// A console.* call emits its line immediately (live progress in the UI) AND keeps
+// it in the batch (the model-facing tool result ships the joined logs).
 const print = (...args: unknown[]) => {
   const line = args.map(show).join(" ");
   logs.push(line);
-  self.postMessage({ type: "log", line });
+  send({ type: "log", line });
 };
-const sandboxConsole = { log: print, error: print, warn: print, info: print };
+const programConsole = { log: print, error: print, warn: print, info: print, debug: print };
 
-// Node-ism guard, and now a load-bearing one: process.exit()/Deno.exit() used to
-// terminate the worker silently, freezing the turn until its wall timeout (45 min
-// for delegating turns; bench trials burned 900s each on exactly this). With
-// inherited permissions the stakes are higher — an exit here can take the whole
-// bough server down with it. Weak models emit `process.exit(1)` as an "assertion
-// failed" idiom, so make it throw a catchable error the round can report instead.
-const exitTrap = (code?: unknown) => {
+// ---------------------------------------------------------------------------
+// The exit trap
+// ---------------------------------------------------------------------------
+
+// NOTE: the ported message called this a "sandbox". It is not one, and saying so
+// would be exactly the implied safety spec §2.2 forbids — so the message now says
+// what is true: a program ends by returning.
+const exitTrap = (code?: unknown): never => {
   throw new Error(
-    `exit(${code ?? 0}) is not available in this sandbox — a program ends by ` +
-      `returning; throw an Error to signal failure`,
+    `exit(${code ?? 0}) is not available to a program — a program ends by returning, ` +
+      `and signals failure by throwing an Error. Calling exit() would terminate the ` +
+      `worker mid-turn with no result to report.`,
   );
 };
 try {
@@ -102,15 +125,10 @@ try {
   if (g.Deno) g.Deno.exit = exitTrap;
 } catch { /* frozen globals — nothing to guard */ }
 
-/**
- * Every process the program spawns natively (`new Deno.Command(...)`) is a child of
- * the SERVER process, and worker.terminate() does not touch it — so an interrupted
- * turn would leak one on every stop, and ^C would look like it worked while the
- * build kept running. Track them all; the abort handshake sweeps them below.
- *
- * Only the async paths are tracked. outputSync()/spawnSync() block the worker's
- * event loop, so an abort message could not be handled during one anyway.
- */
+// ---------------------------------------------------------------------------
+// Child-process tracking
+// ---------------------------------------------------------------------------
+
 const children = new Set<Deno.ChildProcess>();
 
 function trackChild(child: Deno.ChildProcess): Deno.ChildProcess {
@@ -161,186 +179,84 @@ try {
   });
 } catch { /* namespace locked down — natively spawned children stay untracked */ }
 
-async function run(code: string): Promise<void> {
-  const bash = (cmd: string) => hostCall("bash", [cmd]);
-  // Concurrent shells: the commands ride out as a JSON array and the results come
-  // back as JSON [{code, out}, …] — a non-zero code is data here, never a throw.
-  const sh = async (...cmds: string[]) => JSON.parse(await hostCall("sh", [JSON.stringify(cmds)]));
-  // Cheap-model extraction: the optional JSON Schema rides out as JSON and the
-  // result (a string, or the schema-shaped object) comes back as JSON. Rejects
-  // catchably when no worker is reachable — read the text yourself then.
-  const extract = async (text: string, instruction: string, schema?: unknown) =>
-    JSON.parse(await hostCall("extract", [text, instruction, JSON.stringify(schema ?? null)]));
-  // HTTP: the worker isolate has no network, so this hops to the host. Options ride
-  // out as JSON and the response object comes back as JSON. Rejects catchably on a
-  // transport failure, a non-http(s) URL, the 30s deadline, or an interrupt.
-  const fetch = async (url: string, opts?: unknown) =>
-    JSON.parse(await hostCall("fetch", [url, JSON.stringify(opts ?? {})]));
-  // Background shells: the spawn handle comes back as JSON ({id, pid} — the
-  // postMessage protocol stays string-only); output/kill return plain text.
-  const bashBg = async (cmd: string) => JSON.parse(await hostCall("bashBg", [cmd]));
-  const bashOutput = (id: string) => hostCall("bashOutput", [id]);
-  const bashWait = (id: string) => hostCall("bashWait", [id]);
-  const bashKill = (id: string) => hostCall("bashKill", [id]);
-  const read = (path: string) => hostCall("read", [path]);
-  const write = (path: string, content: string) => hostCall("write", [path, content]);
-  const edit = (path: string, oldText: string, newText: string) =>
-    hostCall("edit", [path, oldText, newText]);
-  // Hash-anchored editing: view() returns numbered lines under a content tag and
-  // patch() applies ops anchored to it. Plain strings both ways — the patch text
-  // IS the format, so nothing is JSON-wrapped.
-  const view = (path: string) => hostCall("view", [path]);
-  const patch = (input: string) => hostCall("patch", [input]);
-  // Delegation: the host sends subagent results/handles as JSON (postMessage stays
-  // string-only); parse them back so the program gets real objects. Sessions that
-  // may not delegate have no bridged fn — the call rejects as "unknown host function".
-  // opts ({name}) rides out as JSON, like ask()/mcp() — the postMessage protocol
-  // is string-only, so an object argument has to be serialized, not passed.
-  const agent = async (task: string, opts?: unknown) =>
-    JSON.parse(await hostCall("agent", [task, JSON.stringify(opts ?? {})]));
-  const spawn = async (task: string, opts?: unknown) =>
-    JSON.parse(await hostCall("spawn", [task, JSON.stringify(opts ?? {})]));
-  const join = async (sessionId: string) => JSON.parse(await hostCall("join", [sessionId]));
-  const adopt = (sessionId: string) => hostCall("adopt", [sessionId]);
-  // Ask the human: options ride out as JSON (string-only protocol); the answer
-  // comes back as a plain string. Rejects on decline/interrupt (catchable).
-  const ask = (question: string, opts?: unknown) =>
-    hostCall("ask", [question, JSON.stringify(opts ?? {})]);
-  // MCP: args out and result back both travel as JSON (string-only protocol).
-  // Turns without granted servers have no bridged fn — the call rejects.
-  const mcp = async (server: string, tool: string, args?: unknown) =>
-    JSON.parse(await hostCall("mcp", [server, tool, JSON.stringify(args ?? {})]));
-  // MCP management state (registry/auth/active/connections) — read-only, always on.
-  const mcpStatus = async () => JSON.parse(await hostCall("mcpStatus", []));
-  // LSP symbol verbs (bridged only when a language backend is registered): one
-  // host function fanned out as a method object; JSON round-trip like mcp().
-  const lspCall = async (verb: string, args?: unknown) =>
-    JSON.parse(await hostCall("lsp", [verb, JSON.stringify(args ?? {})]));
-  const lsp = Object.fromEntries(
-    ["find", "show", "def", "refs", "impls", "calls", "overview", "rename"].map(
-      (verb) => [verb, (args?: unknown) => lspCall(verb, args)],
-    ),
-  );
-  // Artifacts: write a file to the session's artifact store and host it; returns the
-  // artifact object ({url, href, …}). JSON round-trip like agent()/mcp(). A non-string
-  // content (a *.ui.json spec object) is stringified so programs can pass it directly.
-  const artifact = async (name: string, content: unknown) =>
-    JSON.parse(
-      await hostCall("artifact", [
-        name,
-        typeof content === "string" ? content : JSON.stringify(content),
-      ]),
-    );
-  // Recall: semantic search over past conversations; returns {hits, indexed}.
-  const recall = async (query: string, k?: number) =>
-    JSON.parse(await hostCall("recall", k === undefined ? [query] : [query, k]));
-  // Show an image to the model: the host copies the file into the attachment
-  // store and posts it as a system note; a plain confirmation line comes back.
-  const image = (path: string, note?: string) =>
-    hostCall("image", note === undefined ? [path] : [path, note]);
-  // Recurring runs: one host function fanned out as a method object, like lsp.*;
-  // JSON round-trip both ways.
-  const scheduleCall = async (verb: string, args?: unknown) =>
-    JSON.parse(await hostCall("schedule", [verb, JSON.stringify(args ?? null)]));
-  const schedule = Object.fromEntries(
-    ["list", "add", "enable", "disable", "remove"].map(
-      (verb) => [verb, (args?: unknown) => scheduleCall(verb, args)],
-    ),
-  );
-  // Durable notes for this conversation: one host function fanned out as a method
-  // object, like schedule.*; get() returns null for an unset key.
-  const stateCall = async (verb: string, args?: unknown) =>
-    JSON.parse(await hostCall("state", [verb, JSON.stringify(args ?? null)]));
-  const state = Object.fromEntries(
-    ["get", "set", "list", "delete"].map(
-      (verb) => [verb, (args?: unknown) => stateCall(verb, args)],
-    ),
-  );
-  // Workflows: one host function fanned out as a method object, like schedule.*.
-  const workflowCall = async (verb: string, args?: unknown) =>
-    JSON.parse(await hostCall("workflow", [verb, JSON.stringify(args ?? null)]));
-  const workflow = Object.fromEntries(
-    ["start", "rerun", "stop", "pause", "resume", "status", "list"].map(
-      (verb) => [verb, (args?: unknown) => workflowCall(verb, args)],
-    ),
-  );
+// ---------------------------------------------------------------------------
+// The program's scope
+// ---------------------------------------------------------------------------
 
+/**
+ * One binding per name in `HOST_FN_NAMES`. The `satisfies` clause is load-bearing:
+ * a name added to the protocol without a binding here, or a binding here that the
+ * protocol does not declare, fails `deno task check`.
+ *
+ * Where a signature takes an object, it is serialized on the way out and the result
+ * is parsed on the way back, so the program deals in real objects while the wire
+ * stays string-only. `view`/`patch` are the exception — their text IS the payload.
+ */
+const bindings = {
+  bash: (cmd: string) => hostCall("bash", [cmd]),
+  // Concurrent shells: commands ride out as a JSON array, `[{code, out}, …]` comes
+  // back as JSON. A non-zero code is DATA here, never a throw.
+  sh: (...cmds: string[]) => jsonCall("sh", [JSON.stringify(cmds)]),
+  // Background shells: the handle comes back as JSON ({id, pid}); output/kill are
+  // plain text.
+  bashBg: (cmd: string) => jsonCall("bashBg", [cmd]),
+  bashOutput: (id: string) => hostCall("bashOutput", [id]),
+  bashWait: (id: string) => hostCall("bashWait", [id]),
+  bashKill: (id: string) => hostCall("bashKill", [id]),
+  // Hash-anchored editing: view() returns numbered lines under a content tag and
+  // patch() applies ops anchored to it. Plain strings both ways.
+  view: (path: string) => hostCall("view", [path]),
+  patch: (input: string) => hostCall("patch", [input]),
+  write: (path: string, content: string) => hostCall("write", [path, content]),
+  // Delegation. A session that may not delegate has no bridged fn, and the call
+  // rejects catchably — which is correct, because the prompt omits the section too.
+  agent: (task: string, opts?: unknown) => jsonCall("agent", [task, JSON.stringify(opts ?? {})]),
+  spawn: (task: string, opts?: unknown) => jsonCall("spawn", [task, JSON.stringify(opts ?? {})]),
+  join: (sessionId: string) => jsonCall("join", [sessionId]),
+  adopt: (sessionId: string) => hostCall("adopt", [sessionId]),
+  workflow: methodObject("workflow"),
+  // Ask the human: options ride out as JSON, the answer comes back as a plain
+  // string. Rejects catchably on decline or interrupt.
+  ask: (question: string, opts?: unknown) =>
+    hostCall("ask", [question, JSON.stringify(opts ?? {})]),
+  state: methodObject("state"),
+  schedule: methodObject("schedule"),
+  // The image itself never crosses the bridge — the host copies the file into the
+  // attachment store and a plain confirmation line comes back.
+  image: (path: string, note?: string) =>
+    hostCall("image", note === undefined ? [path] : [path, note]),
+  // HTTP hops to the host. A non-2xx response is data on the returned object, not a
+  // rejection.
+  fetch: (url: string, opts?: unknown) => jsonCall("fetch", [url, JSON.stringify(opts ?? {})]),
+  // A non-string content (an object) is stringified so programs can pass it directly.
+  artifact: (name: string, content: unknown) =>
+    jsonCall("artifact", [name, typeof content === "string" ? content : JSON.stringify(content)]),
+  mcp: (server: string, tool: string, args?: unknown) =>
+    jsonCall("mcp", [server, tool, JSON.stringify(args ?? {})]),
+  mcpStatus: () => jsonCall("mcpStatus", []),
+  lsp: methodObject("lsp"),
+} satisfies Record<HostFnName, unknown>;
+
+/** Everything the program's scope holds: the bridged names plus `console`. */
+const scope: Record<ProgramParam, unknown> = { ...bindings, console: programConsole };
+
+async function run(code: string): Promise<void> {
   // deno-lint-ignore no-explicit-any
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as any;
-  const program = new AsyncFunction(
-    "bash",
-    "sh",
-    "extract",
-    "fetch",
-    "bashBg",
-    "bashOutput",
-    "bashWait",
-    "bashKill",
-    "read",
-    "write",
-    "edit",
-    "view",
-    "patch",
-    "agent",
-    "spawn",
-    "join",
-    "adopt",
-    "ask",
-    "mcp",
-    "mcpStatus",
-    "lsp",
-    "artifact",
-    "recall",
-    "image",
-    "schedule",
-    "state",
-    "workflow",
-    "console",
-    code,
-  );
-  await program(
-    bash,
-    sh,
-    extract,
-    fetch,
-    bashBg,
-    bashOutput,
-    bashWait,
-    bashKill,
-    read,
-    write,
-    edit,
-    view,
-    patch,
-    agent,
-    spawn,
-    join,
-    adopt,
-    ask,
-    mcp,
-    mcpStatus,
-    lsp,
-    artifact,
-    recall,
-    image,
-    schedule,
-    state,
-    workflow,
-    sandboxConsole,
-  );
+  // Built from PROGRAM_PARAMS, in order, so the parameter list the worker binds is
+  // the same array the host pre-flights against. Nothing is spelled out twice.
+  const program = new AsyncFunction(...PROGRAM_PARAMS, code);
+  await program(...PROGRAM_PARAMS.map((name) => scope[name]));
 }
 
 self.onmessage = (e: MessageEvent) => {
-  const msg = e.data as
-    | { type: "run"; code: string }
-    | { type: "abort" }
-    | { type: "host_result"; id: number; ok: boolean; value: string };
-  // Stop requested (interrupt or timeout): kill what the program spawned, then tell
+  const msg = e.data as ToProgramWorker;
+  // Stop requested (interrupt or timeout): kill what the program spawned, THEN tell
   // the host it is safe to terminate us. Host-side work (a foreground bash) is
   // already dying on the turn's own signal.
   if (msg.type === "abort") {
     killChildren();
-    self.postMessage({ type: "aborted" });
+    send({ type: "aborted" });
     return;
   }
   if (msg.type === "host_result") {
@@ -352,12 +268,6 @@ self.onmessage = (e: MessageEvent) => {
     return;
   }
   run(msg.code)
-    .then(() => self.postMessage({ type: "done", logs }))
-    .catch((err) =>
-      self.postMessage({
-        type: "error",
-        message: String((err as Error)?.stack ?? err),
-        logs,
-      })
-    );
+    .then(() => send({ type: "done", logs }))
+    .catch((err) => send({ type: "error", message: String((err as Error)?.stack ?? err), logs }));
 };

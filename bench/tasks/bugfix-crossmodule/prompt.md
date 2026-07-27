@@ -1,1 +1,0 @@
-The test suite in this repo fails: report totals disagree with the bank statement by a cent, and some parsed amounts are off by one. Find the root cause and fix it so all tests pass (`python3 -m unittest`). Do not change test_report.py — the tests encode the intended behavior. Make the smallest change that fixes the root cause.

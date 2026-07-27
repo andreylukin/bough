@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fresh-machine bootstrap in one line — clones the repo and hands off to the full
-# setup (deps, worker model, API-key prompt, launchd service):
+# setup (deps, API-key prompt, launchd service):
 #
 #   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/andreylukin/bough/main/install.sh)"
 #
@@ -11,8 +11,10 @@ set -euo pipefail
 DIR="${BOUGH_DIR:-$HOME/bough}"
 REPO="https://github.com/andreylukin/bough.git"
 
+# macOS-only because the service is launchd, not because anything is confined:
+# bough runs programs as you, with your full authority, and says so (spec §2).
 if [ "$(uname -s)" != "Darwin" ]; then
-  echo "error: bough's sandbox requires macOS (Seatbelt)." >&2
+  echo "error: bough's service manager is launchd, so setup is macOS-only." >&2
   exit 1
 fi
 

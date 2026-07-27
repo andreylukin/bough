@@ -1,24 +1,47 @@
 /**
- * Artifacts — files the agent publishes for browser viewing, hosted on the same
- * :4321 origin as the API. The supervisor's `artifact()` host function
- * writes here (server/../turn.ts wires it); `GET /artifacts/:id/*` serves them;
- * `GET /sessions/:id/artifacts` lists a session's artifacts.
+ * Serving artifacts: content types, the comment layer, and the two routes.
  *
- * Stored under ~/.bough/artifacts/<sessionId>/ — OUTSIDE the workspace, so a published
- * artifact never pollutes the repo diff the user reviews. The filesystem is the source
- * of truth: listing survives a restart with no DB row. Names and session ids are
- * confined to their dir (traversal blocked), so one session can't read or write
- * another's, and nothing escapes ~/.bough.
+ * The store itself — where artifacts live, and the confinement rules for names and
+ * session ids — is `hostfn/artifact.ts`, because `hostfn/` may not import from
+ * `server/` (plan §3) and the confinement rules must exist exactly once. This file is
+ * the HTTP half: it reads what the store resolved and turns it into a `Response`.
  *
- * Trust note: artifacts are agent-authored HTML/JS served same-origin, so an opened
- * artifact runs with the page's origin. That is deliberate — this is explicit agent
- * OUTPUT the user chooses to open. It is not a containment boundary; treat an
- * artifact like any file the agent wrote.
+ * THE INVARIANT THIS HOLDS: **every served HTML artifact gets the comment layer
+ * injected AT SERVE TIME** (`comments.ts`), and nothing else does. Two consequences,
+ * both deliberate:
+ *
+ *   - The bytes on disk stay exactly what the agent wrote. A page the user saves or
+ *     forwards is the page, not the page plus an annotation toolbar pointed at a
+ *     loopback server that is not running.
+ *   - The layer only exists where it means something, which is inside bough.
+ *
+ * It goes into HTML documents only. Injecting into the page's own CSS or JS — served
+ * through the same route — would corrupt them, and the layer would not work anyway.
+ *
+ * TRAVERSAL IS A 403, NOT A 404. "That path is not addressable" and "nothing is
+ * there" are different facts, and collapsing them sends whoever is debugging to the
+ * wrong place — a mistyped session id reads as a deleted artifact.
+ *
+ * A 404 that a BROWSER asked for is an HTML page, not a JSON body. Artifact links get
+ * opened by the audience artifacts exist for, who are not reading `{"error":"not
+ * found"}` in a tab; a replaced or mistyped link deserves a sentence saying what
+ * happened.
+ *
+ * Trust note, stated rather than implied: artifacts are agent-authored HTML/JS served
+ * same-origin, so an opened artifact runs with this origin's privileges. That is
+ * deliberate — it is explicit agent OUTPUT the user chooses to open, not a containment
+ * boundary. Treat an artifact like any other file the agent wrote (spec §11).
+ *
+ * Ported from `src/server/artifacts.ts`. Deltas are marked `NOTE:`.
  */
-import { dirname, join, normalize, resolve } from "node:path";
+import { listArtifacts, resolveArtifactPath } from "../hostfn/artifact.ts";
+import type { ArtifactStoreOptions } from "../hostfn/artifact.ts";
+import { type Handler, json } from "./http.ts";
 import { commentWidget } from "./comments.ts";
-import { validateUiSpec } from "./jsonrender/catalog.ts";
-import { viewerPage } from "./jsonrender/bundle.ts";
+
+// ---------------------------------------------------------------------------
+// Content types
+// ---------------------------------------------------------------------------
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -43,53 +66,56 @@ const MIME: Record<string, string> = {
   ".wasm": "application/wasm",
 };
 
-function contentType(path: string): string {
+/** The declared content type for a path, or octet-stream when nothing matches. */
+export function contentTypeFor(path: string): string {
   const dot = path.lastIndexOf(".");
   return (dot >= 0 && MIME[path.slice(dot).toLowerCase()]) || "application/octet-stream";
 }
 
 /**
- * Agents sometimes publish an HTML page under a bare name ("my-explorer"), which
- * would otherwise serve as octet-stream and download instead of render. For
- * extensionless files, sniff the head: markup → text/html.
+ * Agents publish HTML under a bare name (`my-explorer`) often enough to matter, and
+ * an octet-stream response makes the browser download it instead of rendering it —
+ * the user clicks the link the agent gave them and gets a file in ~/Downloads. So for
+ * an EXTENSIONLESS file only, sniff the first bytes: leading markup → HTML.
  */
-async function sniffedType(full: string): Promise<string | null> {
+async function sniffHtml(full: string): Promise<string | null> {
   const head = new Uint8Array(64);
-  const f = await Deno.open(full);
-  let n: number | null;
+  let n: number | null = 0;
+  const file = await Deno.open(full);
   try {
-    n = await f.read(head);
+    n = await file.read(head);
   } finally {
-    f.close();
+    file.close();
   }
-  const text = new TextDecoder().decode(head.subarray(0, n ?? 0)).trimStart();
-  return text.startsWith("<") ? "text/html; charset=utf-8" : null;
+  return new TextDecoder().decode(head.subarray(0, n ?? 0)).trimStart().startsWith("<")
+    ? "text/html; charset=utf-8"
+    : null;
+}
+
+function basename(path: string): string {
+  const cut = path.lastIndexOf("/");
+  return cut >= 0 ? path.slice(cut + 1) : path;
+}
+
+// ---------------------------------------------------------------------------
+// Serve
+// ---------------------------------------------------------------------------
+
+/**
+ * Splice the comment layer in before `</body>`, or append it when the document has no
+ * body tag (a fragment still renders, and the layer still works).
+ */
+export function injectCommentLayer(html: string): string {
+  const widget = commentWidget();
+  const idx = html.toLowerCase().lastIndexOf("</body>");
+  return idx >= 0 ? html.slice(0, idx) + widget + html.slice(idx) : html + widget;
 }
 
 /**
- * `*.ui.json` artifacts are json-render UI specs (jsonrender/catalog.ts): validated
- * against the component catalog at publish time and served as a rendered viewer page.
+ * The browser-facing 404. Self-contained, no external anything — the same bar the
+ * artifacts themselves are held to (spec §11).
  */
-function isUiSpec(name: string): boolean {
-  return name.toLowerCase().endsWith(".ui.json");
-}
-
-/** Page title for a spec artifact: the root element's title prop when it has one. */
-function specTitle(spec: unknown, fallback: string): string {
-  const s = spec as { root?: string; elements?: Record<string, { props?: { title?: unknown } }> };
-  const title = s.elements?.[s.root ?? ""]?.props?.title;
-  return typeof title === "string" && title ? title : fallback;
-}
-
-/**
- * Browser-facing 404. Artifact links are opened by the non-technical audience
- * artifacts exist for, and a mistyped/replaced link answered with raw JSON is a
- * dead end in Chrome — so requests that prefer text/html get a plain-language
- * page in the viewer's footer aesthetic (styles.ts palette, self-contained).
- */
-const NOT_FOUND_PAGE = `<!doctype html>
-<html>
-<head>
+export const NOT_FOUND_PAGE = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>This page isn't here</title>
@@ -98,7 +124,7 @@ const NOT_FOUND_PAGE = `<!doctype html>
 body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
   background: #fcfcfb; color: #0b0b0b; font: 14px/1.55 system-ui, sans-serif; }
 main { max-width: 34em; padding: 32px 28px; }
-.eyebrow { font: 600 11.5px ui-monospace, "SF Mono", Menlo, monospace; text-transform: uppercase;
+.eyebrow { font: 600 11.5px ui-monospace, Menlo, monospace; text-transform: uppercase;
   letter-spacing: 0.08em; color: #52514e; margin: 0 0 14px; }
 h1 { font-size: 21px; font-weight: 650; letter-spacing: -0.01em; margin: 0 0 10px; }
 p { margin: 0; color: #52514e; }
@@ -107,188 +133,119 @@ p { margin: 0; color: #52514e; }
   .eyebrow, p { color: #c3c2b7; }
 }
 </style>
-</head>
-<body>
 <main>
-<p class="eyebrow">404 · not found</p>
+<p class="eyebrow">404 &middot; not found</p>
 <h1>This page isn't here</h1>
 <p>It may have moved or been replaced. Ask bough to share it again.</p>
 </main>
-</body>
-</html>`;
+`;
 
-/** Splice the comment layer in before </body> (or append if there's no body tag). */
-function injectCommentWidget(html: string): string {
-  const widget = commentWidget();
-  const idx = html.toLowerCase().lastIndexOf("</body>");
-  return idx >= 0 ? html.slice(0, idx) + widget + html.slice(idx) : html + widget;
-}
-
-/** An artifact the agent published. */
-export interface Artifact {
-  /** Session-relative path, forward-slashed (e.g. "index.html" or "assets/app.js"). */
-  name: string;
-  /** Same-origin path the UI links to: /artifacts/<sessionId>/<name>. */
-  url: string;
-  /** Absolute loopback URL for the terminal / the agent's reply. */
-  href: string;
-  bytes: number;
-  /** Publish/update time (mtime epoch ms). */
-  ts: number;
-}
-
-/** Root for all artifacts: ~/.bough/artifacts (`base` overrides ~/.bough for tests). */
-export function artifactsRoot(base?: string): string {
-  const home = base ?? join(Deno.env.get("HOME") ?? ".", ".bough");
-  return join(home, "artifacts");
+export interface ServeArtifactOptions extends ArtifactStoreOptions {
+  /** The request's `Accept` header — a browser gets the HTML 404, a client the JSON. */
+  accept?: string;
 }
 
 /**
- * The loopback base URL this server is reachable at. Always 127.0.0.1 even when bound
- * to 0.0.0.0 for LAN/tunnel use: the `href` is what the LOCAL user clicks; the UI uses
- * the relative `url` and so is origin-agnostic.
- */
-function serverBaseUrl(): string {
-  const port = Deno.env.get("BOUGH_PORT") ?? "4321";
-  return `http://127.0.0.1:${port}`;
-}
-
-/** The resolved artifact dir for a session; throws on a session id that isn't a plain token. */
-function sessionDir(sessionId: string, base?: string): string {
-  if (!/^[A-Za-z0-9_-]+$/.test(sessionId)) {
-    throw new Error(`invalid session id: ${sessionId}`);
-  }
-  return resolve(join(artifactsRoot(base), sessionId));
-}
-
-/** Resolve `name` under the session dir, blocking traversal. Returns the absolute path. */
-function resolveArtifact(sessionId: string, name: string, base?: string): string {
-  const dir = sessionDir(sessionId, base);
-  const rel = name.replace(/^\/+/, "");
-  if (!rel) throw new Error("artifact name is empty");
-  const full = normalize(resolve(dir, rel));
-  if (full !== dir && !full.startsWith(dir + "/")) {
-    throw new Error(`artifact name escapes the session dir: ${name}`);
-  }
-  return full;
-}
-
-function toArtifact(sessionId: string, name: string, bytes: number, ts: number): Artifact {
-  const url = `/artifacts/${sessionId}/${name.split("/").map(encodeURIComponent).join("/")}`;
-  return { name, url, href: serverBaseUrl() + url, bytes, ts };
-}
-
-/**
- * Write `content` to the session's artifact store and return its {url, href, …}.
- * Creates parent dirs; overwrites an existing artifact of the same name. A
- * `*.ui.json` spec is validated against the catalog first — an off-catalog spec
- * throws (the message reaches the agent through the artifact() host call), and a
- * valid one is stored in its normalized auto-fixed form.
- */
-export async function publishArtifact(
-  sessionId: string,
-  name: string,
-  content: string,
-  base?: string,
-): Promise<Artifact> {
-  const rel = name.replace(/^\/+/, "");
-  const full = resolveArtifact(sessionId, rel, base);
-  if (isUiSpec(rel)) content = JSON.stringify(validateUiSpec(content));
-  await Deno.mkdir(dirname(full), { recursive: true });
-  await Deno.writeTextFile(full, content);
-  const info = await Deno.stat(full);
-  return toArtifact(sessionId, rel, info.size, info.mtime?.getTime() ?? Date.now());
-}
-
-/** Every artifact a session has published, newest first. Absent dir → []. */
-export function listArtifacts(sessionId: string, base?: string): Artifact[] {
-  let dir: string;
-  try {
-    dir = sessionDir(sessionId, base);
-  } catch {
-    return [];
-  }
-  const out: Artifact[] = [];
-  const walk = (abs: string, rel: string): void => {
-    let entries: Deno.DirEntry[];
-    try {
-      entries = [...Deno.readDirSync(abs)];
-    } catch {
-      return;
-    }
-    for (const e of entries) {
-      const childRel = rel ? `${rel}/${e.name}` : e.name;
-      if (e.isDirectory) {
-        walk(join(abs, e.name), childRel);
-      } else if (e.isFile) {
-        const info = Deno.statSync(join(abs, e.name));
-        out.push(toArtifact(sessionId, childRel, info.size, info.mtime?.getTime() ?? 0));
-      }
-    }
-  };
-  walk(dir, "");
-  out.sort((a, b) => b.ts - a.ts);
-  return out;
-}
-
-/**
- * Serve one artifact file. Traversal / bad-id → 403; missing → 404; else the file with
- * its content type and a no-cache header (artifacts are overwritten in place).
- * A `*.ui.json` spec serves as its rendered viewer page (comment layer included);
- * `raw` skips the wrapper and returns the spec JSON itself. `accept` is the
- * request's Accept header: a client that prefers text/html gets an HTML 404,
- * anything else keeps the JSON body.
+ * Serve one artifact file.
+ *
+ * `no-cache` because artifacts are overwritten in place: a cached stale page is
+ * indistinguishable from an agent that did nothing, and republishing is the normal
+ * way a program iterates.
+ *
+ * NOTE: the port also rendered `*.ui.json` spec artifacts through a bundled viewer
+ * (`jsonrender/`). That subsystem is not in the rewrite's layout (plan §3) and is not
+ * ported; a `.ui.json` artifact serves as JSON like any other file.
  */
 export async function serveArtifact(
   sessionId: string,
   name: string,
-  base?: string,
-  opts?: { raw?: boolean; accept?: string },
+  opts: ServeArtifactOptions = {},
 ): Promise<Response> {
   let full: string;
   try {
-    full = resolveArtifact(sessionId, name, base);
+    full = resolveArtifactPath(sessionId, name, opts);
   } catch {
-    return new Response("forbidden", { status: 403 });
+    return new Response("forbidden", {
+      status: 403,
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
   }
+
   try {
     if (!(await Deno.stat(full)).isFile) throw new Error("not a file");
-    if (isUiSpec(full) && !opts?.raw) {
-      const specJson = await Deno.readTextFile(full);
-      const html = viewerPage(specJson, specTitle(JSON.parse(specJson), name));
-      return new Response(injectCommentWidget(html), {
-        headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" },
-      });
+
+    let type = contentTypeFor(full);
+    if (type === "application/octet-stream" && !basename(full).includes(".")) {
+      type = (await sniffHtml(full)) ?? type;
     }
-    let type = contentType(full);
-    if (
-      type === "application/octet-stream" && !full.slice(full.lastIndexOf("/") + 1).includes(".")
-    ) {
-      type = (await sniffedType(full)) ?? type;
-    }
-    // Top-level HTML documents get the comment layer injected at serve time
-    // (comments.ts) — the on-disk artifact stays clean/portable; the layer only
-    // lives where you'd use it (inside bough). Other resources serve as-is.
+
     if (type.startsWith("text/html")) {
       const html = await Deno.readTextFile(full);
-      return new Response(injectCommentWidget(html), {
+      return new Response(injectCommentLayer(html), {
         headers: { "content-type": type, "cache-control": "no-cache" },
       });
     }
-    const body = await Deno.readFile(full);
-    return new Response(body, {
+
+    return new Response(await Deno.readFile(full), {
       headers: { "content-type": type, "cache-control": "no-cache" },
     });
   } catch {
-    if (opts?.accept?.includes("text/html")) {
+    if (opts.accept?.includes("text/html")) {
       return new Response(NOT_FOUND_PAGE, {
         status: 404,
         headers: { "content-type": "text/html; charset=utf-8" },
       });
     }
-    return new Response(JSON.stringify({ error: "not found" }), {
+    return new Response(JSON.stringify({ error: `no artifact ${name} for session ${sessionId}` }), {
       status: 404,
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json; charset=utf-8" },
     });
   }
+}
+
+// ---------------------------------------------------------------------------
+// HTTP handlers
+// ---------------------------------------------------------------------------
+
+/**
+ * `GET /sessions/:id/artifacts` — what this session has published.
+ *
+ * Answered from the filesystem, so it is correct for a session whose row is gone and
+ * for artifacts published by a previous process (spec §4). It deliberately does NOT
+ * check that the session exists: the artifacts outlive the row, and 404-ing here
+ * would hide files that are demonstrably on disk.
+ */
+export const listArtifactsH: Handler = (_req, _ctx, params) =>
+  json({ artifacts: listArtifacts(decodeSegments(params.id)) });
+
+/**
+ * `GET /artifacts/:id/:path*` — the hosted file itself.
+ *
+ * Same origin as the API on purpose: a link the agent prints is a link the user's
+ * browser opens with no extra machinery, and the injected comment layer can talk back
+ * to `/sessions/:id/comments` without CORS.
+ */
+export const getArtifactH: Handler = (req, _ctx, params) =>
+  serveArtifact(decodeSegments(params.id), decodeSegments(params.path ?? ""), {
+    accept: req.headers.get("accept") ?? undefined,
+  });
+
+/**
+ * Percent-decode a matched path, segment by segment.
+ *
+ * `URLPattern` hands back the raw pathname and the store encodes each segment when it
+ * builds `url`, so a name with a space round-trips only if it is decoded here. Per
+ * segment, not whole: decoding the whole string would turn an encoded `%2F` inside one
+ * segment into a real separator, which is a traversal primitive. A malformed escape
+ * decodes to itself and then fails confinement or the stat, rather than throwing a
+ * `URIError` out of a handler.
+ */
+function decodeSegments(path: string): string {
+  return path.split("/").map((seg) => {
+    try {
+      return decodeURIComponent(seg);
+    } catch {
+      return seg;
+    }
+  }).join("/");
 }
