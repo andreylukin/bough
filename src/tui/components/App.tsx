@@ -42,7 +42,7 @@ import type { ModelRow } from "../../llm/client.ts";
 import type { SessionRow } from "../api.ts";
 import type { MouseEvent, NavKey } from "../mouse.ts";
 import { buildLines } from "../lines.ts";
-import { headerContext, sessionLabel, SPINNER_MS, UI } from "../format.ts";
+import { sessionLabel, shortenPath, SPINNER_MS, UI } from "../format.ts";
 import {
   chordOf,
   chunkInput,
@@ -413,14 +413,14 @@ export function App(
   const title = state.session
     ? sessionLabel(state.session.title, state.session.workspace)
     : "new conversation";
-  // Where this conversation runs, and the one hint that the keymap exists. Both
-  // are on EVERY screen including the empty one, because both are things you need
-  // before you press enter rather than after (`headerContext`).
-  const workspace = state.session?.workspace ?? defaultWorkspace ?? null;
+  // The workspace and the `? help` hint live on the METER, at the bottom, beside
+  // the composer — not up here. A status bar a screen away from the input is one
+  // the user has to go looking for; every other harness keeps this next to where
+  // you type. The top line is the conversation's title and nothing else.
+  const workspace = shortenPath(state.session?.workspace ?? defaultWorkspace ?? "", home);
   const header = (
     <Text wrap="truncate">
       <Text bold>{title}</Text>
-      <Text dimColor>{`  ${headerContext(workspace, home)}`}</Text>
       <Text color={UI.warn}>{state.connected ? "" : "  · disconnected"}</Text>
     </Text>
   );
@@ -448,8 +448,14 @@ export function App(
         scrollOff={scrollOff}
         meter={{
           model: state.session?.model ?? state.effectiveModel,
-          costUsd: state.usage?.costUsd ?? null,
+          // The TREE total, not this session's own: delegated work is work you
+          // paid for, and a subagent's spend that appears on no screen is spend
+          // the user cannot see. `tree` collapses every branch under this one.
+          costUsd: state.usage?.tree.costUsd ?? state.usage?.costUsd ?? null,
           contextTokens: state.session?.contextTokens ?? null,
+          contextLimit: state.contextLimit,
+          workspace,
+          help: true,
         }}
         activity={state.activity}
         busy={busy}

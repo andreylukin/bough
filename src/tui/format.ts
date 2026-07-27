@@ -526,14 +526,24 @@ export function meterLine(m: {
   contextTokens?: number | null;
   contextLimit?: number | null;
   model?: string | null;
+  /** Where the turn runs. Shortened by the caller — this only joins. */
+  workspace?: string | null;
+  /** Append the `? help` hint. False for surfaces that are not the chat. */
+  help?: boolean;
 }): string {
   const bits: string[] = [];
+  // Workspace FIRST and at the bottom of the screen, next to the composer, because
+  // that is where the eye already is when you are about to press enter. It sat on
+  // a top line a whole screen above the input before, which is a status bar you
+  // have to go and look for.
+  if (m.workspace) bits.push(m.workspace);
   if (m.model) bits.push(m.model);
   if (typeof m.costUsd === "number" && m.costUsd > 0) bits.push(fmtUsd(m.costUsd));
   if (typeof m.contextTokens === "number" && m.contextTokens > 0) {
     const pct = ctxPctLeft({ contextTokens: m.contextTokens, contextLimit: m.contextLimit });
     bits.push(pct === null ? `${fmtTokens(m.contextTokens)} ctx` : `${pct}% ctx left`);
   }
+  if (m.help) bits.push("? help");
   return bits.join(" · ");
 }
 
@@ -588,31 +598,6 @@ export function sessionLabel(title: string | null | undefined, workspace?: strin
   if (t && t !== "untitled") return t;
   const base = (workspace ?? "").replace(/\/+$/, "").split("/").pop() ?? "";
   return base || "(untitled)";
-}
-
-/**
- * The header's right-hand half: where this conversation runs, and how to get help.
- *
- * Both facts were absent from every screen. The workspace matters more here than
- * in a harness that copies your checkout: bough edits the real one, as you, with
- * your authority (spec §2), so "which directory is this pointed at" is the single
- * thing a user must be able to read before pressing enter — and on a fresh
- * conversation the title is "new conversation", which says nothing.
- *
- * The `? help` hint is there because `?` is the ONLY route to the keymap and
- * nothing on screen mentioned it. A keymap nobody can find is a keymap nobody has.
- *
- * `home` is a parameter so this stays pure and testable.
- */
-export function headerContext(
-  workspace: string | null | undefined,
-  home?: string | null,
-): string {
-  const bits: string[] = [];
-  const w = (workspace ?? "").replace(/\/+$/, "");
-  if (w) bits.push(shortenPath(w, home));
-  bits.push("? help");
-  return bits.join(" · ");
 }
 
 /** `/Users/me/repos/x` → `~/repos/x`. Absolute paths eat a header; `~` does not. */

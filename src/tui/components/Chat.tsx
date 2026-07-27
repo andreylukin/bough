@@ -33,6 +33,10 @@ export interface ChatMeter {
   costUsd?: number | null;
   contextTokens?: number | null;
   contextLimit?: number | null;
+  /** Where the turn runs, already shortened. Leads the line — see `meterLine`. */
+  workspace?: string | null;
+  /** Append the `? help` hint. The chat sets it; other surfaces need not. */
+  help?: boolean;
   /** A cold-cache or disconnect note from `format.ts`. Rendered as-is. */
   note?: string | null;
   /** The note is a problem, not an aside. */

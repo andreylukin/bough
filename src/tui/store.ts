@@ -98,6 +98,8 @@ export interface TuiState {
   usage: SessionSnapshot["usage"] | null;
   /** The model the next turn will call — see `SessionSnapshot.effectiveModel`. */
   effectiveModel: string | null;
+  /** The effective model's context window. Null = the catalog does not know it. */
+  contextLimit: number | null;
   /** null until fetched. `available: false` is an ANSWER, not an error (spec §13). */
   changes: SessionChangeSet | null;
   /** The open session's background shells AND its subagents' (spec §9). */
@@ -135,6 +137,7 @@ export function initialState(): TuiState {
     activity: null,
     usage: null,
     effectiveModel: null,
+    contextLimit: null,
     changes: null,
     jobs: [],
     workflows: [],
@@ -547,6 +550,7 @@ export function reduce(state: TuiState, action: StoreAction): TuiState {
         activity: null,
         usage: null,
         effectiveModel: null,
+        contextLimit: null,
         changes: null,
         jobs: [],
         workflows: [],
@@ -558,7 +562,7 @@ export function reduce(state: TuiState, action: StoreAction): TuiState {
     }
 
     case "snapshot": {
-      const { session, thread, usage, effectiveModel } = action.snapshot;
+      const { session, thread, usage, effectiveModel, contextLimit } = action.snapshot;
       if (session.id !== state.currentId) {
         // A snapshot that lost the race with a session switch. Record the watermark
         // anyway — it is a fact about that session, not about the view.
@@ -580,6 +584,7 @@ export function reduce(state: TuiState, action: StoreAction): TuiState {
         streaming,
         usage,
         effectiveModel: effectiveModel ?? state.effectiveModel,
+        contextLimit: contextLimit ?? state.contextLimit,
         reconciledAt: { ...state.reconciledAt, [session.id]: action.at },
       };
     }

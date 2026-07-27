@@ -168,6 +168,8 @@ export interface SessionSnapshot {
    * a server older than the field simply omits it.
    */
   effectiveModel?: string;
+  /** The effective model's context window, for the meter's percentage. Null = unknown. */
+  contextLimit?: number | null;
 }
 
 /** `POST /sessions/:id/messages` — 202. `queued` = a turn was already running. */

@@ -40,8 +40,8 @@ import {
   rebuildIndex,
   reindexH,
   searchH,
-  searchSafeDb,
   type SearchResult,
+  searchSafeDb,
   searchTranscripts,
 } from "./search.ts";
 

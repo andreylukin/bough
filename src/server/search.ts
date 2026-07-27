@@ -208,7 +208,10 @@ function healIndex(db: Db): void {
  * closed and enumerated (`turn/state.ts`). Idempotent like every other index write, so
  * a message that *was* indexed simply gets the same rows back.
  */
-export function indexRecoveredMessages(db: Db, recovered: readonly { messageId: string }[]): number {
+export function indexRecoveredMessages(
+  db: Db,
+  recovered: readonly { messageId: string }[],
+): number {
   let indexed = 0;
   for (const { messageId } of recovered) {
     try {

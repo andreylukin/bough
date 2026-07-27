@@ -43,6 +43,7 @@ import {
   SetDraftBody,
 } from "../schema/requests.ts";
 import type { AppCtx } from "../types.ts";
+import { contextWindowFor } from "../llm/pricing.ts";
 import { DEFAULT_MODEL } from "../turn/runner.ts";
 // T8.5. `vcs/` is below `server/` and imports nothing from it, so this adds no cycle
 // — deliberately not imported from `server/changes.ts`, which does import `app.ts`.
@@ -276,6 +277,7 @@ export const createSession: Handler = async (req, ctx) => {
  */
 export const getSession: Handler = (_req, ctx, params) => {
   const session = requireSession(ctx, params.id);
+  const model = session.model ?? ctx.model ?? DEFAULT_MODEL;
   return json({
     session,
     thread: ctx.db.threadFor(session.id),
@@ -286,7 +288,12 @@ export const getSession: Handler = (_req, ctx, params) => {
     // is spending money on — which is what the status meter did. Derived and not
     // stored on purpose: null still means "follow the default", so a changed
     // default still reaches a session nobody has pinned.
-    effectiveModel: session.model ?? ctx.model ?? DEFAULT_MODEL,
+    effectiveModel: model,
+    // The model's context window, so the meter can say "62% ctx left" the way
+    // every other harness does rather than a bare token count nobody can scale.
+    // Null when the vendored catalog does not know the model — the client then
+    // falls back to the raw count rather than inventing a denominator.
+    contextLimit: contextWindowFor(model),
   });
 };
 

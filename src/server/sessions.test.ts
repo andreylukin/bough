@@ -28,12 +28,12 @@ import {
   isCollapsed,
   listSessions,
   normalizeWorkspace,
+  patchSession,
   postMessage,
   putDraft,
   type SessionListItem,
   type TurnStarter,
   type WithTurnStarter,
-  patchSession,
 } from "./sessions.ts";
 
 // ---- fixtures ---------------------------------------------------------------

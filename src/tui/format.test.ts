@@ -14,7 +14,6 @@ import {
   fmtUsd,
   fuzzyPositions,
   fuzzyScore,
-  headerContext,
   linkAt,
   md,
   meterLine,
@@ -404,18 +403,34 @@ Deno.test("rankCompletions: a skill trigger marks rows with the slash it will in
 // The header's context line
 // ---------------------------------------------------------------------------
 
-Deno.test("the header says where the turn will run, and always offers help", () => {
-  // bough edits the real checkout as the user (spec §2), so the workspace is a
-  // fact you need BEFORE pressing enter — including on a fresh conversation,
-  // whose title ("new conversation") tells you nothing.
+Deno.test("the meter carries the whole session status, in one line at the bottom", () => {
+  // Everything a user needs before pressing enter, beside the composer rather
+  // than on a top line a screenful away: where it runs, what it costs, what is
+  // left, and how to get help.
   assert.equal(
-    headerContext("/Users/me/repos/x", "/Users/me"),
+    meterLine({
+      workspace: "~/repos/x",
+      model: "claude-opus-5",
+      costUsd: 0.0072,
+      contextTokens: 18_000,
+      contextLimit: 200_000,
+      help: true,
+    }),
+    "~/repos/x · claude-opus-5 · $0.007 · 91% ctx left · ? help",
+  );
+  // A fresh conversation has no model, no spend and no context — and must still
+  // say where it will run and how to get help, because that is the screen a
+  // first-run user is looking at.
+  assert.equal(
+    meterLine({ workspace: "~/repos/x", help: true }),
     "~/repos/x · ? help",
   );
-  assert.equal(headerContext("/srv/app", "/Users/me"), "/srv/app · ? help");
-  // No workspace yet is not a reason to hide the only route to the keymap.
-  assert.equal(headerContext(null, "/Users/me"), "? help");
-  assert.equal(headerContext("", null), "? help");
+  // An unpriced model has no window in the catalog, so the raw count stands in
+  // rather than a fabricated percentage.
+  assert.equal(
+    meterLine({ model: "who/knows", contextTokens: 18_000, contextLimit: null }),
+    "who/knows · 18k ctx",
+  );
 });
 
 Deno.test("shortenPath only abbreviates a real home prefix", () => {
