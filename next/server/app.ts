@@ -39,6 +39,12 @@ import type { AppCtx } from "../types.ts";
 // ── handler imports; append below, one line per task ──
 import { events } from "./events.ts"; // T1.3
 import * as sessions from "./sessions.ts"; // T1.2
+import * as workflows from "./workflows.ts"; // T5.5
+import * as questions from "./questions.ts"; // T6.1
+import * as schedules from "../schedules.ts"; // T6.3
+import * as artifacts from "./artifacts.ts"; // T6.6
+import * as comments from "./comments.ts"; // T6.7
+import * as jobsApi from "./jobs.ts"; // T6.8
 
 // ---- the handler shape ------------------------------------------------------
 
@@ -136,6 +142,44 @@ export const routes: Route[] = [
   route("GET", "/sessions/:id", sessions.getSession),
   route("POST", "/sessions/:id/messages", sessions.postMessage),
   route("PUT", "/sessions/:id/draft", sessions.putDraft),
+  // T5.5 — workflows. `/workflows/:id/agents/:agentId/:action` is listed after the
+  // lifecycle verbs; it cannot shadow them (a different segment count), and the
+  // order is the append order either way.
+  route("GET", "/workflows", workflows.listWorkflows),
+  route("POST", "/workflows", workflows.createWorkflow),
+  route("GET", "/workflows/:id", workflows.getWorkflow),
+  route("POST", "/workflows/:id/stop", workflows.stopWorkflowH),
+  route("POST", "/workflows/:id/pause", workflows.pauseWorkflowH),
+  route("POST", "/workflows/:id/resume", workflows.resumeWorkflowH),
+  route("POST", "/workflows/:id/rerun", workflows.rerunWorkflowH),
+  route("POST", "/workflows/:id/agents/:agentId/:action", workflows.controlWorkflowAgentH),
+  // T6.3 — schedules. The same validated CRUD the `schedule.*` host fn uses, so a
+  // spec that parses over HTTP parses from a program and vice versa.
+  route("GET", "/schedules", schedules.listSchedulesH),
+  route("POST", "/schedules", schedules.createScheduleH),
+  route("PATCH", "/schedules/:id", schedules.patchScheduleH),
+  route("DELETE", "/schedules/:id", schedules.deleteScheduleH),
+  // T6.1 — ask() holds. Memory-only: GET rebuilds a freshly-attached client's hold
+  // card, POST settles one and the parked program resumes.
+  route("GET", "/questions", questions.listQuestions),
+  route("POST", "/sessions/:id/questions/:qid", questions.answerQuestion),
+  // T6.6 — artifacts. The listing is filesystem-backed and survives a database reset,
+  // so it deliberately does not require a session row. `/artifacts/:id/:path*` is the
+  // hosted file itself, same origin as the API so a printed link just opens.
+  route("GET", "/sessions/:id/artifacts", artifacts.listArtifactsH),
+  route("GET", "/artifacts/:id/:path*", artifacts.getArtifactH),
+  // T6.7 — artifact comments. These are what the layer injected into every served HTML
+  // artifact talks to. `/comments/send` is listed before `/comments/:cid` for reading
+  // order; it cannot be shadowed by it either way (different method).
+  route("GET", "/sessions/:id/comments", comments.listCommentsH),
+  route("POST", "/sessions/:id/comments", comments.postCommentH),
+  route("POST", "/sessions/:id/comments/send", comments.sendCommentsH),
+  route("DELETE", "/sessions/:id/comments/:cid", comments.deleteCommentH),
+  // T6.8 — jobs. Scoped to a session AND its subagents, so a spawner's jobs tab shows
+  // the work running on its behalf and the human can kill it without spending a turn.
+  route("GET", "/sessions/:id/jobs", jobsApi.listJobsH),
+  route("POST", "/sessions/:id/jobs/:jobId/kill", jobsApi.killJobH),
+  route("GET", "/sessions/:id/jobs/:jobId/output", jobsApi.jobOutputH),
 ];
 
 // ---- dispatch ---------------------------------------------------------------

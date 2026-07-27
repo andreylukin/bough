@@ -14,6 +14,7 @@ import {
   readSectionFile,
   SECTION_FILES,
   type SectionId,
+  workspaceNote,
 } from "./assemble.ts";
 
 const assert = (value: unknown, message?: string) => ok(value, message);
@@ -287,4 +288,39 @@ Deno.test("a missing section file is fatal and says why", () => {
   const err = captureError(() => readSectionFile("no-such-section.md"));
   assertStringIncludes(err.message, "no-such-section.md");
   assertStringIncludes(err.message, "not a recoverable condition");
+});
+
+// ---------------------------------------------------------------------------
+// The workspace note
+// ---------------------------------------------------------------------------
+
+Deno.test("the workspace note names the path, and rides the VOLATILE tier", () => {
+  const note = workspaceNote("/home/u/proj");
+  assert(note.startsWith("## Workspace"), "a note is a complete section with its own heading");
+  assertStringIncludes(note, "/home/u/proj");
+
+  const p = build({ notes: [note] });
+  assert(p.sections.includes("notes"));
+  // The stable prefix is shared across sessions and cached by the provider; one
+  // session's workspace path in it would defeat that for every other session.
+  assert(!p.system.includes("/home/u/proj"), "a per-session path must never enter the stable tier");
+  assertStringIncludes(p.systemVolatile, "/home/u/proj");
+});
+
+Deno.test("the workspace note warns that the program's own cwd is NOT the workspace", () => {
+  // The trap this closes: bash() and view() are handed the workspace explicitly,
+  // but the program worker inherits the SERVER's directory, so
+  // `Deno.readTextFile("x")` and `view("x")` in one program name two different
+  // files — and files.md sends the model to Deno.readTextFile for raw content.
+  const text = flat(workspaceNote("/w"));
+  assertStringIncludes(text, "your program's own working directory is not the workspace");
+  assertStringIncludes(text, "deno.readtextfile");
+  assertStringIncludes(text, "absolute");
+});
+
+Deno.test("the workspace note is not gated on a capability — every kind edits a real checkout", () => {
+  for (const kind of ["root", "fork", "compaction", "subagent", "workflow_agent"] as const) {
+    const p = assemblePrompt({ kind, granted: CORE, notes: [workspaceNote("/w/" + kind)] });
+    assertStringIncludes(p.systemVolatile, "/w/" + kind);
+  }
 });

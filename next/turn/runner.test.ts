@@ -20,6 +20,7 @@
  */
 import assert from "node:assert/strict";
 import { Bus } from "../bus.ts";
+import type { PromptInput } from "../prompt/assemble.ts";
 import { openDb, type SqliteDb } from "../db/db.ts";
 import type { ProgramResult } from "../harness/protocol.ts";
 import type { BoughEvent } from "../schema/events.ts";
@@ -570,4 +571,55 @@ Deno.test("with no pin, the ctx default wins, and with neither, the built-in doe
   await beginTurn(g.ctx, g.session.id, g.deps).done;
   assert.equal(bare.calls[0].model, DEFAULT_MODEL);
   g.db.close();
+});
+
+// ---- the workspace note -----------------------------------------------------
+
+Deno.test("every turn's prompt is told which checkout it is editing", async () => {
+  // The seam this closes: `PromptInput.notes` and `TurnDeps.notes` both existed and
+  // nobody filled either, so the model was never told where `bash` starts or where a
+  // relative `view()` path resolves — and the program's own cwd is the SERVER's
+  // directory, not the workspace, so guessing wrong is silent and reachable.
+  const llm = scriptedLlm([{ content: [text("done"), stop("c1")] }]);
+  const f = fixture({ llm: llm.client });
+  f.db.setSessionWorkspace(f.session.id, "/checkouts/acme");
+
+  let seen: PromptInput | undefined;
+  userMessage(f.db, f.session.id, "hi");
+  await beginTurn(f.ctx, f.session.id, {
+    ...f.deps,
+    assemble: (input: PromptInput) => {
+      seen = input;
+      return { system: "SYSTEM", systemVolatile: "", sections: [] };
+    },
+  } as TurnDeps).done;
+
+  const notes = [...(seen?.notes ?? [])];
+  assert.ok(notes.length > 0, "the turn must supply at least the workspace note");
+  assert.ok(
+    notes[0].includes("/checkouts/acme"),
+    `the workspace note must name the session's checkout, got: ${notes[0]}`,
+  );
+});
+
+Deno.test("a caller's own notes are kept, and the workspace note leads", async () => {
+  const llm = scriptedLlm([{ content: [text("done"), stop("c1")] }]);
+  const f = fixture({ llm: llm.client });
+  f.db.setSessionWorkspace(f.session.id, "/checkouts/acme");
+
+  let seen: PromptInput | undefined;
+  userMessage(f.db, f.session.id, "hi");
+  await beginTurn(f.ctx, f.session.id, {
+    ...f.deps,
+    notes: ["## Project rules\n\nno emoji"],
+    assemble: (input: PromptInput) => {
+      seen = input;
+      return { system: "SYSTEM", systemVolatile: "", sections: [] };
+    },
+  } as TurnDeps).done;
+
+  const notes = [...(seen?.notes ?? [])];
+  assert.equal(notes.length, 2);
+  assert.ok(notes[0].startsWith("## Workspace"));
+  assert.ok(notes[1].includes("no emoji"), "a caller's notes must survive");
 });

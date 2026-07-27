@@ -54,7 +54,12 @@ import { createShellHostFns } from "../hostfn/shell.ts";
 import { runProgram } from "../harness/vm.ts";
 import type { ProgramResult } from "../harness/protocol.ts";
 import type { HostFnName } from "../harness/protocol.ts";
-import { type AssembledPrompt, assemblePrompt, type PromptInput } from "../prompt/assemble.ts";
+import {
+  type AssembledPrompt,
+  assemblePrompt,
+  type PromptInput,
+  workspaceNote,
+} from "../prompt/assemble.ts";
 import type { Message, Part, Session, Usage } from "../schema/parts.ts";
 import type {
   AppCtx,
@@ -488,10 +493,16 @@ async function drive(
     },
   });
 
+  // The workspace note leads, unconditionally and for every kind. It is not a
+  // capability grant, so it has no `granted` gate: a subagent, a workflow agent and
+  // a schedule-fired root all edit a real checkout and all need to be told which one
+  // (`prompt/assemble.ts`'s `workspaceNote` says why, including the cwd trap). It is
+  // built HERE because `workspace` is resolved here, per session, and `deps.notes`
+  // is fixed for the life of a starter — boot cannot supply a per-session fact.
   const prompt = (deps.assemble ?? assemblePrompt)({
     kind: session?.kind ?? "root",
     granted: deps.granted ?? BASE_HOST_FNS,
-    notes: deps.notes,
+    notes: [workspaceNote(workspace), ...(deps.notes ?? [])],
   });
 
   /**

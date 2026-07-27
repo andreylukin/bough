@@ -311,6 +311,47 @@ function skillsSection(skills: readonly PromptSkill[]): string {
     .join("\n\n");
 }
 
+/**
+ * Where this turn's verbs actually operate — the one note every turn gets.
+ *
+ * Rendered here rather than kept as a `.md` because it interpolates a per-session
+ * path, which is exactly what the volatile tier is for: one session's workspace in
+ * the stable prefix would defeat cross-session prompt caching for every other
+ * session. It is a `notes` entry, so `turn/runner.ts` passes it in like any other
+ * caller-resolved fact and this module still asks the world nothing.
+ *
+ * TWO THINGS IT HAS TO SAY, and the second is the one that was learned the hard way:
+ *
+ *  1. The workspace path at all. Without it the model has no cwd information and
+ *    invents a container layout (`cd /workspace || cd /home`), walking itself out of
+ *    the real project. That is the note the old tree carried and the reason it did.
+ *
+ *  2. That the PROGRAM's own cwd is not the workspace. `bash`, `sh` and the file
+ *    verbs are given the workspace explicitly (`hostfn/shell.ts`, `hostfn/files.ts`),
+ *    but the program worker is a thread of the server process and inherits the
+ *    SERVER's working directory — and it cannot simply `chdir`, because cwd is a
+ *    process attribute and one turn changing it would move every concurrent turn's
+ *    shells with it. So `Deno.readTextFile("x")` and `view("x")` in the same program
+ *    name two different files. `files.md` sends the model to `Deno.readTextFile` for
+ *    raw content (spec §6: "there is no read()"), so this is a reachable trap on the
+ *    documented path, not a corner case — say it plainly and give the fix.
+ */
+export function workspaceNote(workspace: string): string {
+  return "## Workspace\n" +
+    `The workspace is ${workspace} — the user's REAL checkout. bash(), sh() and the\n` +
+    "file verbs (view/patch/write) all start there, and a relative path you give\n" +
+    "THEM resolves against it.\n\n" +
+    "Your program's own working directory is NOT the workspace: the runtime inherits\n" +
+    "the server's directory, so a raw `Deno.readTextFile(\"src/x.ts\")`,\n" +
+    "`Deno.readDir(\".\")` or `Deno.cwd()` reads somewhere else entirely. When you\n" +
+    "reach past the host functions to the runtime, pass an ABSOLUTE path — join it\n" +
+    "onto the workspace above — or go through bash(), which is already there.\n\n" +
+    "Your edits are immediately real: nothing is copied, staged or confined, and git\n" +
+    "is the source of truth for what changed (`git status`, `git diff`). Deliver work\n" +
+    "with plain git through bash — `git commit`, `git push` — but ONLY when the user\n" +
+    "asks; never as a routine end-of-task step.";
+}
+
 // ---------------------------------------------------------------------------
 // Assembly
 // ---------------------------------------------------------------------------
