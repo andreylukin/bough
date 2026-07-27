@@ -160,3 +160,18 @@ Deno.test("a CSI 27 sequence split across two reads is not typed as text", () =>
   assert.equal(filter.feed("\x1b[27;3;"), "");
   assert.equal(filter.feed("13~"), "\x1b\r");
 });
+
+Deno.test("shift+tab is delivered as a nav key, in both encodings", () => {
+  // It reaches the app as `CSI 27;2;9~` under the kitty protocol and as `CSI Z`
+  // without it. Decoding the first by the general rule produced a bare tab, which
+  // is why ⇧⇥ moved FORWARD through the panel — `panel.prev` was unreachable.
+  const seen: NavKey[] = [];
+  const filter = createInputFilter({ navKey: (k) => seen.push(k) });
+  assert.equal(filter.feed("\x1b[27;2;9~"), "");
+  assert.equal(filter.feed("\x1b[Z"), "");
+  assert.deepEqual(seen, ["shiftTab", "shiftTab"]);
+  // A plain tab is still a plain tab, and ctrl+tab is not shift+tab.
+  assert.equal(filter.feed("\x1b[27;1;9~"), "\t");
+  assert.equal(filter.feed("\t"), "\t");
+  assert.deepEqual(seen, ["shiftTab", "shiftTab"]);
+});

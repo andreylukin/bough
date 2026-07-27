@@ -420,6 +420,7 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
       <Panel
         tab={panel.tab}
         rows={body}
+        width={cols}
         sessions={{
           items: sessions,
           selected: sel,

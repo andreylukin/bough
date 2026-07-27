@@ -497,16 +497,19 @@ export function App(
         if (event.kind === "wheel-up") setScrollOff((o) => o + WHEEL_ROWS);
         if (event.kind === "wheel-down") setScrollOff((o) => Math.max(0, o - WHEEL_ROWS));
       }),
-      hooks.onNavKey?.((key) =>
+      hooks.onNavKey?.((key) => {
+        // Backtab is not line editing: it is the panel's "previous tab", which no
+        // keypress could reach because ink does not decode `CSI Z` (`mouse.ts`).
+        if (key === "shiftTab") return void run("panel.prev", "");
         setLine((s) =>
           editLine(s, key === "home" || key === "cmdHome" ? "cursor.home" : "cursor.end")
-        )
-      ),
+        );
+      }),
     ];
     return () => {
       for (const stop of off) stop?.();
     };
-  }, [hooks]);
+  }, [hooks, run]);
 
   useInput((input, key) => {
     const chord = chordOf(input, key);

@@ -47,7 +47,7 @@ export interface MouseEvent {
 }
 
 /** Keys ink does not deliver, or delivers wrong. See the fourth invariant. */
-export type NavKey = "home" | "end" | "cmdHome" | "cmdEnd";
+export type NavKey = "home" | "end" | "cmdHome" | "cmdEnd" | "shiftTab";
 
 /** Where the filter sends what it consumes. Every handler is optional. */
 export interface InputSinks {
@@ -69,6 +69,17 @@ const NAV_KEY = /\x1b(?:\[(?:[HF]|[14]~)|O[HF])/g;
 // Cmd+←/→ = [1;9D / [1;9C (xterm modifier 9 = super; iTerm2 and others)
 // deno-lint-ignore no-control-regex -- ESC is the point
 const CMD_ARROW = /\x1b\[1;9([CD])/g;
+/**
+ * `CSI Z` — backtab, which is the ONLY thing a terminal sends for shift+tab.
+ *
+ * ink does not decode it, so it fell through and was read as a plain tab: the
+ * panel's ⇧⇥ moved FORWARD, and `panel.prev` — bound and documented as
+ * "next / previous tab" — was unreachable by any keypress. Delivered as a nav key
+ * for the same reason cmd+arrow is: the app must be able to bind it, and ink has
+ * no flag that would carry it.
+ */
+// deno-lint-ignore no-control-regex -- ESC is the point
+const BACKTAB = /\x1b\[Z/g;
 // deno-lint-ignore no-control-regex -- ESC is the point
 const FOCUS = /\x1b\[([IO])/g;
 // deno-lint-ignore no-control-regex -- ESC is the point
@@ -154,6 +165,10 @@ export function createInputFilter(sinks: InputSinks = {}): InputFilter {
       })
       // Before NAV_KEY: `[1;9D` would otherwise be matched by neither, but the
       // ordering states the intent — the modifier form is the more specific one.
+      .replace(BACKTAB, () => {
+        sinks.navKey?.("shiftTab");
+        return "";
+      })
       .replace(CMD_ARROW, (_all, dir) => {
         sinks.navKey?.(dir === "D" ? "cmdHome" : "cmdEnd");
         return "";
@@ -164,7 +179,17 @@ export function createInputFilter(sinks: InputSinks = {}): InputFilter {
       })
       // Last: everything above is a MORE specific shape, and this one must never
       // fall through to ink as text.
-      .replace(MODIFY_OTHER, (_all, mods, code) => decodeModifyOther(Number(mods), Number(code)));
+      .replace(MODIFY_OTHER, (_all, mods, code) => {
+        // Shift+Tab arrives HERE under the kitty protocol (`CSI 27;2;9~`), not as
+        // `CSI Z`, and decoding it by the general rule yields a bare tab — which is
+        // why ⇧⇥ moved FORWARD through the panel instead of back. It is a nav key
+        // for the same reason backtab is: ink has no flag that carries it.
+        if (Number(code) === 9 && ((Number(mods) - 1) & 1) !== 0) {
+          sinks.navKey?.("shiftTab");
+          return "";
+        }
+        return decodeModifyOther(Number(mods), Number(code));
+      });
   }
 
   function dispatchMouse(s: string): string {

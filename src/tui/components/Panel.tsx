@@ -163,7 +163,22 @@ export function reducePanel(
  * colourblind reader, to a NO_COLOR terminal, and to anything reading the screen
  * as text — which includes every test in this repo that asserts on a rendered row.
  */
-export function PanelTabs({ tab }: { tab: PanelTab }) {
+export function PanelTabs({ tab, width }: { tab: PanelTab; width?: number }) {
+  // A strip that does not fit is worse than no strip: truncation silently drops
+  // the tabs at the end, so at 60 columns the theme tab did not appear to exist
+  // and neither did the close hint. Below the fitting width it collapses to the
+  // open tab, its position, and how to move — every fact the strip carried.
+  const full = TABS.reduce((n, t) => n + t.title.length + 2, 0) + 12;
+  if (width !== undefined && width < full) {
+    const at = TABS.findIndex((t) => t.id === tab) + 1;
+    return (
+      <Text wrap="truncate">
+        <Text dimColor>{" ["}</Text>
+        <Text bold color={palette.accent}>{tab}</Text>
+        <Text dimColor>{`] ${at}/${TABS.length} · ⇥ next · ^t close`}</Text>
+      </Text>
+    );
+  }
   return (
     <Text wrap="truncate">
       {TABS.map((t) => {
@@ -187,6 +202,8 @@ export interface PanelProps {
   tab: PanelTab;
   /** Rows the panel body may occupy. */
   rows: number;
+  /** Columns available, so the tab strip can collapse instead of truncating. */
+  width?: number;
   sessions?: SessionsProps;
   changes?: ChangesProps;
   model?: ModelPickerProps;
@@ -228,7 +245,7 @@ function Body({ tab, rows, sessions, changes, model, mcp, skills, theme, childre
 export function Panel(props: PanelProps) {
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={palette.border} paddingX={1}>
-      <PanelTabs tab={props.tab} />
+      <PanelTabs tab={props.tab} width={props.width} />
       <Box flexDirection="column" marginTop={1}>
         <Body {...props} />
       </Box>
