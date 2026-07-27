@@ -80,6 +80,17 @@ Deno.test("a turn with no prose is still a node — it is somewhere you can go b
   assert.equal(historyTreeRows({ thread: [toolOnly], branches: [] }).length, 1);
 });
 
+Deno.test("a long gist is truncated with an ellipsis, a short one is left alone", () => {
+  const long = "please refactor the discount function so it also handles tiered pricing rules";
+  assert.ok(long.length > 56);
+  const gist = messageGist(msg("m4", "user", long));
+  assert.ok(gist.endsWith("…"));
+  assert.ok(gist.length <= 56);
+  assert.ok(long.startsWith(gist.slice(0, -1)));
+  // Under the limit the gist IS the message, no marker added.
+  assert.equal(messageGist(msg("m5", "user", "now validate pct")), "now validate pct");
+});
+
 Deno.test("Enter follows pi's selection rules", () => {
   const rows = historyTreeRows({ thread: THREAD, branches: [branch("s1", "m1", "other")] });
   // A USER turn cuts BEFORE itself and hands its text back, so you edit and
