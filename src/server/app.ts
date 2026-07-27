@@ -54,6 +54,7 @@ import { errorResponse, type Handler, type Route, route } from "./http.ts";
 export { errorResponse, type Handler, json, parseBody, type Route, route } from "./http.ts";
 // ── handler imports; append below, one line per task ──
 import { events } from "./events.ts"; // T1.3
+import * as fsapi from "./fs.ts";
 import * as sessions from "./sessions.ts"; // T1.2
 import * as workflows from "./workflows.ts"; // T5.5
 import * as questions from "./questions.ts"; // T6.1
@@ -156,6 +157,8 @@ export const routes: Route[] = [
   route("PUT", "/saved-workflows/:name", workflows.putSavedWorkflowH),
   route("POST", "/saved-workflows/:name/runs", workflows.runSavedWorkflowH),
   route("GET", "/model-settings", sessions.getModelSettingsH),
+  // Candidates for the composer's `@` completion (`server/fs.ts`).
+  route("GET", "/sessions/:id/files", fsapi.listFilesH),
   route("GET", "/workflow-settings", workflows.getWorkflowSettingsH),
   route("PUT", "/workflow-settings", workflows.putWorkflowSettingsH),
   // T7.2 — OAuth for remote MCP servers. The callback is the load-bearing one: the

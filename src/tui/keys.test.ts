@@ -47,6 +47,7 @@ const ctx = (over: Partial<KeyContext> = {}): KeyContext => ({
   doubleEsc: false,
   quitArmed: false,
   railLive: false,
+  completing: false,
   ...over,
 });
 
@@ -127,7 +128,15 @@ Deno.test("every binding is reachable — some real context resolves to it", () 
   // guard space and record which ROW `lookup` actually picks. A binding no context
   // reaches is a key the user can never press, however plausible the table looks.
   const modes: UiMode[] = ["chat", "rail", "ask", "panel", "help"];
-  const flags = ["emptyDraft", "multiline", "busy", "doubleEsc", "quitArmed", "railLive"] as const;
+  const flags = [
+    "emptyDraft",
+    "multiline",
+    "busy",
+    "doubleEsc",
+    "quitArmed",
+    "railLive",
+    "completing",
+  ] as const;
   const reached = new Set<number>();
   const firstMatch = (c: KeyContext, chord: string): number =>
     BINDINGS.findIndex((b) =>

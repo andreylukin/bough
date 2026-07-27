@@ -39,10 +39,18 @@
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { ModelRow } from "../../llm/client.ts";
-import type { SessionRow } from "../api.ts";
+import { api, type SessionRow } from "../api.ts";
 import type { MouseEvent, NavKey } from "../mouse.ts";
 import { buildLines } from "../lines.ts";
-import { sessionLabel, shortenPath, SPINNER_MS, UI } from "../format.ts";
+import {
+  activeTrigger,
+  applyCompletion,
+  rankCompletions,
+  sessionLabel,
+  shortenPath,
+  SPINNER_MS,
+  UI,
+} from "../format.ts";
 import { onResize, type TermSize } from "../term.ts";
 import {
   chordOf,
@@ -191,6 +199,51 @@ export function App(
   }, [busy]);
   const elapsedMs = busy && busySince.current !== null ? now() - busySince.current : 0;
 
+  // ---- the @// completion -------------------------------------------------
+  // Every pure piece of this already existed and was tested — `activeTrigger`,
+  // `rankCompletions`, `applyCompletion`, `CompletionPopup` — and nothing had ever
+  // connected them, so typing `@src/` in bough did nothing at all while every
+  // comparable harness completes the path. What was missing is exactly this: a
+  // candidate list, a cursor, and four key handlers.
+  const [files, setFiles] = useState<string[]>([]);
+  // Skills are an install-wide fact, so once per process rather than per session.
+  const [skills, setSkills] = useState<{ name: string; description?: string }[]>([]);
+  useEffect(() => {
+    void api.listSkills()
+      .then((r) => setSkills(r.skills))
+      .catch(() => {}); // no skills, no `/` rows — never a modal
+  }, []);
+  const [completionSel, setCompletionSel] = useState(0);
+  const [dismissed, setDismissed] = useState(false);
+  // Once per session, not per keystroke: the list is thousands of paths and the
+  // ranking is local. A session switch invalidates it.
+  useEffect(() => {
+    setFiles([]);
+    if (!state.currentId) return;
+    let live = true;
+    void api.listFiles(state.currentId)
+      .then((r) => live && setFiles(r.files))
+      .catch(() => {}); // no repo, no candidates — the popup simply stays closed
+    return () => {
+      live = false;
+    };
+  }, [state.currentId]);
+
+  const trigger = useMemo(
+    () => (dismissed ? null : activeTrigger(line.text, line.cursor)),
+    [line.text, line.cursor, dismissed],
+  );
+  const completion = useMemo(() => {
+    if (!trigger) return { items: [], total: 0 };
+    const candidates = trigger.kind === "file"
+      ? files.map((name) => ({ name }))
+      : skills.map((sk) => ({ name: sk.name, detail: sk.description ?? "" }));
+    return rankCompletions(candidates, trigger);
+  }, [trigger, files, skills]);
+  const completing = completion.items.length > 0;
+  // The cursor must never point past a list that just got shorter as you typed.
+  const selAt = completing ? Math.min(completionSel, completion.items.length - 1) : 0;
+
   // A conversation you are NOT looking at finished its turn. The store has computed
   // this since the rewrite and nothing read it, so the answer to "is the thing I
   // started in the other session done" was to go and look. `seq` rather than the id
@@ -321,6 +374,21 @@ export function App(
         return setLine({ text: sent[at], cursor: sent[at].length });
       }
 
+      case "complete.accept": {
+        const item = completion.items[selAt];
+        if (!trigger || !item) return;
+        const next = applyCompletion(line.text, trigger, item);
+        setCompletionSel(0);
+        return setLine(next);
+      }
+      case "complete.prev":
+        return setCompletionSel((i) => Math.max(0, i - 1));
+      case "complete.next":
+        return setCompletionSel((i) => Math.min(completion.items.length - 1, i + 1));
+      case "complete.dismiss":
+        // Stays dismissed until the trigger token changes, so esc means esc.
+        return setDismissed(true);
+
       case "fold.all":
         return setFoldAll((v) => !v);
       // Two surfaces, opposite senses. The transcript's offset counts BACKWARDS
@@ -422,6 +490,7 @@ export function App(
       doubleEsc,
       quitArmed,
       railLive: rail.length > 0,
+      completing,
     };
     const command = lookup(ctx, chord);
     if (command) return run(command, input);
@@ -436,6 +505,9 @@ export function App(
       if (send) submit(false);
       return;
     }
+    // Typing re-opens a popup an earlier esc closed: esc dismisses THIS token, not
+    // completion in general.
+    setDismissed(false);
     setLine((s) => insertText(s, stripCtl(input)));
   });
 
@@ -507,6 +579,10 @@ export function App(
             busy={busy}
             width={cols}
             maxRows={composerRows}
+            trigger={trigger}
+            completions={completion.items}
+            completionSel={selAt}
+            completionMore={Math.max(0, completion.total - completion.items.length)}
           />
         )}
     </Box>

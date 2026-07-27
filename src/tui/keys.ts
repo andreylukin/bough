@@ -90,6 +90,11 @@ export type Command =
   | "turn.interrupt"
   | "history.prev"
   | "history.next"
+  // -- the @/ completion popup (guarded on `completing`) -------------------
+  | "complete.accept"
+  | "complete.prev"
+  | "complete.next"
+  | "complete.dismiss"
   // -- reading --------------------------------------------------------------
   | "fold.all"
   | "scroll.up"
@@ -288,6 +293,15 @@ export interface KeyContext {
   quitArmed: boolean;
   /** At least one subagent is working, so ↓ can drop into the rail. */
   railLive: boolean;
+  /**
+   * The `@`/`/` popup is open with at least one row.
+   *
+   * A GUARD rather than a mode, because the composer keeps the keyboard the whole
+   * time: ↑/↓ walk the popup while it is open and history when it is not, and tab
+   * accepts a row or does nothing. Making it a mode would mean an escape path,
+   * and there already is one — the popup closes on esc like any other transient.
+   */
+  completing: boolean;
 }
 
 export type Guard = Exclude<keyof KeyContext, "mode">;
@@ -424,6 +438,20 @@ export const BINDINGS: Binding[] = [
     section: "leaving",
     desc: "stop the running turn",
   },
+  // The @// popup, while it is open. These sit AHEAD of the composer's own ↑/↓ and
+  // esc because the popup is the nearer surface — but behind `turn.interrupt`,
+  // since stopping a running turn outranks closing a menu.
+  {
+    mode: "chat",
+    chord: "tab",
+    command: "complete.accept",
+    when: ["completing"],
+    section: "compose",
+    desc: "accept the @ or / suggestion",
+  },
+  { mode: "chat", chord: "up", command: "complete.prev", when: ["completing"] },
+  { mode: "chat", chord: "down", command: "complete.next", when: ["completing"] },
+  { mode: "chat", chord: "esc", command: "complete.dismiss", when: ["completing"] },
   { mode: "chat", chord: "esc", command: "cancel" },
   {
     mode: "chat",

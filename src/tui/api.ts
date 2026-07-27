@@ -593,6 +593,8 @@ export function createApi(options: ApiOptions = {}) {
     // panel can tell "nothing installed" from "looking in the wrong directory",
     // which is the question an empty list cannot answer on its own.
 
+    /** Candidates for the composer's `@` completion. Fetched once per session. */
+    listFiles: (sessionId: string) => get<{ files: string[] }>(`/sessions/${sessionId}/files`),
     listSkills: () => get<{ skills: SkillListRow[]; sources: SkillSource[] }>("/skills"),
   };
 }
