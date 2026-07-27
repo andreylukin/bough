@@ -155,6 +155,7 @@ export const routes: Route[] = [
   route("GET", "/saved-workflows/:name", workflows.getSavedWorkflowH),
   route("PUT", "/saved-workflows/:name", workflows.putSavedWorkflowH),
   route("POST", "/saved-workflows/:name/runs", workflows.runSavedWorkflowH),
+  route("GET", "/model-settings", sessions.getModelSettingsH),
   route("GET", "/workflow-settings", workflows.getWorkflowSettingsH),
   route("PUT", "/workflow-settings", workflows.putWorkflowSettingsH),
   // T7.2 — OAuth for remote MCP servers. The callback is the load-bearing one: the

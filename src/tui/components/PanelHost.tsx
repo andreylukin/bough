@@ -34,7 +34,7 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import type { McpStatus } from "../../mcp/status.ts";
 import type { ModelRow } from "../../llm/client.ts";
-import type { SessionRow } from "../api.ts";
+import { api, type SessionRow } from "../api.ts";
 import type { Command, PanelTab } from "../keys.ts";
 import type { Store, TuiState } from "../store.ts";
 import {
@@ -195,7 +195,14 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
   // The picker reads the open session's pin; `chooseEntry` writes into a local copy.
   const modelCfg: ModelConfig = {
     ...cfg,
-    defaultModel: cfg.defaultModel || state.session?.model || models[0]?.id || "(unset)",
+    // `state.effectiveModel` is the server's answer to "what will the next turn
+    // actually call", resolved exactly the way the runner resolves it. It comes
+    // BEFORE the catalog fallback, which was a guess wearing the ● that means
+    // fact: with no stored config and no session pin, the picker marked the first
+    // row of the catalog while the meter — correctly — named the model from the
+    // environment. Two surfaces of the same app disagreed about what was running.
+    defaultModel: cfg.defaultModel || state.session?.model || state.effectiveModel ||
+      models[0]?.id || "(unset)",
     sessionModel: cfg.sessionModel ?? state.session?.model ?? null,
   };
 
@@ -203,6 +210,14 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
   // so MCP is re-read every time rather than remembered (plan §6.13).
   useEffect(() => {
     if (!panel.open) return;
+    // The server owns the answer to "what will a new conversation run on"; the
+    // picker used to guess it from the catalog. Fetched on entry, like every other
+    // tab, and only when it is not already known.
+    if (panel.tab === "model" && !cfg.defaultModel) {
+      void api.getModelSettings()
+        .then((s) => setCfg((c) => (c.defaultModel ? c : { ...c, defaultModel: s.defaultModel })))
+        .catch(() => {}); // an unreachable server already shows as disconnected
+    }
     if (panel.tab === "changes") void store.refreshChanges();
     if (panel.tab === "workflows") void store.refreshWorkflows();
     if (panel.tab === "mcp") {
@@ -230,7 +245,15 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
     // Deliberately NOT `controls`: the object is rebuilt on every render of the
     // composition root, and an effect that depends on it re-runs forever. The two
     // thunks it actually reads are stable, built once in `tui/main.tsx`.
-  }, [panel.open, panel.tab, state.currentId, store, controls.loadMcp, controls.loadSkills]);
+  }, [
+    panel.open,
+    panel.tab,
+    state.currentId,
+    store,
+    controls.loadMcp,
+    controls.loadSkills,
+    cfg.defaultModel,
+  ]);
 
   const items = tabLength(panel.tab, {
     sessions: sessions.length,

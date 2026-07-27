@@ -410,3 +410,20 @@ export const patchSession: Handler = async (req, ctx, params) => {
   ctx.bus.publish({ type: "session.updated", sessionId: session.id, data: session });
   return json(session);
 };
+
+/**
+ * `GET /model-settings` — what a NEW conversation will run on.
+ *
+ * The picker had no way to ask. Its `ModelConfig` was local state seeded with an
+ * empty string, so with nothing pinned it fell back to the first row of the
+ * catalog and drew the ● that means "this is what is running" next to a model
+ * that was not. The status meter, reading the session snapshot, named the real
+ * one — so two surfaces of the same app disagreed on the screen at once.
+ *
+ * A session that exists answers this through its snapshot's `effectiveModel`.
+ * This route is for the case where there is no session yet, which is the first
+ * screen a user ever sees.
+ */
+export const getModelSettingsH: Handler = (_req, ctx) => {
+  return json({ defaultModel: ctx.model ?? DEFAULT_MODEL });
+};

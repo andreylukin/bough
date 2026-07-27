@@ -485,6 +485,8 @@ export function createApi(options: ApiOptions = {}) {
     /** Invoke a saved workflow by name, parameterized through `args`. */
     runSavedWorkflow: (name: string, body: { sessionId: string; args?: unknown }) =>
       post<WorkflowRun & { savedAs: string }>(`/saved-workflows/${seg(name)}/runs`, body),
+    /** What a NEW conversation runs on, for the picker's ● before any session exists. */
+    getModelSettings: () => get<{ defaultModel: string }>("/model-settings"),
     getWorkflowSettings: () => get<WorkflowSettings>("/workflow-settings"),
     putWorkflowSettings: (sizeGuideline: SizeGuideline) =>
       put<WorkflowSettings>("/workflow-settings", { sizeGuideline }),
