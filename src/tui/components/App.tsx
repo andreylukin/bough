@@ -114,6 +114,13 @@ export interface AppProps {
    * composition root owns transport. Absent = the choice lasts for this process.
    */
   theme?: PanelHostDeps["theme"];
+  /**
+   * How a desktop notification is delivered. `term.ts` detects per-terminal
+   * whether that is OSC 9 or a bell and suppresses it while the window is
+   * focused; this component only decides WHEN there is something worth saying.
+   * A prop for the same reason `theme` is — the composition root owns transport.
+   */
+  notifyDesktop?: (body: string) => void;
   /** Injected so a render is reproducible and the esc double-tap is testable. */
   now?: () => number;
 }
@@ -133,6 +140,7 @@ export function App(
     input: hooks = {},
     models,
     theme,
+    notifyDesktop,
     now = Date.now,
   }: AppProps,
 ) {
@@ -182,6 +190,22 @@ export function App(
     return () => clearInterval(id);
   }, [busy]);
   const elapsedMs = busy && busySince.current !== null ? now() - busySince.current : 0;
+
+  // A conversation you are NOT looking at finished its turn. The store has computed
+  // this since the rewrite and nothing read it, so the answer to "is the thing I
+  // started in the other session done" was to go and look. `seq` rather than the id
+  // is the dependency: the same session finishing twice is two pieces of news.
+  const backgroundSeq = state.background?.seq ?? 0;
+  useEffect(() => {
+    const done = state.background;
+    if (!done || backgroundSeq === 0) return;
+    const line = `✓ ${done.title} finished — ^s to open it`;
+    store.notify(line);
+    notifyDesktop?.(`${done.title} finished`);
+    // `store` and the title are read through the event that changed `seq`; adding
+    // them here would re-announce on any unrelated store identity change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [backgroundSeq]);
   const rail = useMemo(
     () => liveSubagents(children[state.currentId ?? ""] ?? []),
     [children, state.currentId],

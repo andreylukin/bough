@@ -162,6 +162,7 @@ async function main() {
       input={hooks}
       models={MODELS}
       theme={{ current: theme, persist: persistTheme }}
+      notifyDesktop={(body) => terminal.notifyDesktop(body)}
     />,
     {
       exitOnCtrlC: false,
