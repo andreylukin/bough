@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Fresh-machine bootstrap for bough (macOS only — the sandbox is Seatbelt-based).
+# Fresh-machine bootstrap for bough. macOS-only because the service is launchd —
+# nothing here is confined; bough runs as you (spec §2).
 # Installs toolchain deps via Homebrew, fetches the worker
 # model, and links the `bough` server manager onto PATH. Safe to re-run.
 set -euo pipefail
@@ -7,7 +8,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 if [ "$(uname -s)" != "Darwin" ]; then
-  echo "error: bough's sandbox requires macOS (Seatbelt)." >&2
+  echo "error: bough's service manager is launchd, so setup is macOS-only." >&2
   exit 1
 fi
 
@@ -23,12 +24,14 @@ if ! command -v git >/dev/null; then
   exit 1
 fi
 
-# llama.cpp: local worker (llama-server).
-# cloudflared: `deno task tunnel` for phone access. (deno has its own block below —
-# it needs a version floor, and may already be on PATH from the deno.land installer.)
+# rg is what the prompt tells the model to search with. (deno has its own block
+# below — it needs a version floor, and may already be on PATH from the deno.land
+# installer.) There is no local inference: the cheap tier is a hosted model you pick
+# in the model picker, so no llama.cpp and no GGUF. There is no tunnel: the server
+# binds loopback and has no auth layer (spec §17).
 echo "==> checking Homebrew packages"
-brew_bins=(node llama-server cloudflared rg uv)
-brew_pkgs=(node llama.cpp cloudflared ripgrep uv)
+brew_bins=(node rg uv)
+brew_pkgs=(node ripgrep uv)
 missing=()
 for i in "${!brew_bins[@]}"; do
   command -v "${brew_bins[$i]}" >/dev/null || missing+=("${brew_pkgs[$i]}")
@@ -94,17 +97,6 @@ fi
 echo "==> caching Deno dependencies + typecheck"
 (cd "$ROOT" && deno install && deno task check)
 
-# Worker model (~2 GB, resumes partial downloads). The local worker is optional
-# at runtime, so a failed download is a warning, not a setup failure. A machine
-# configured for frontier-worker mode never loads the GGUF — skip the download.
-. "$ROOT/scripts/worker-model.sh"
-frontier_cfg="$(grep -E '^BOUGH_WORKER_FRONTIER=' "$HOME/.bough/env" 2>/dev/null | tail -1 | cut -d= -f2- || true)"
-if [ -n "$frontier_cfg" ] && [ "$frontier_cfg" != "0" ]; then
-  echo "==> BOUGH_WORKER_FRONTIER is set — skipping local worker model download"
-elif ! ensure_worker_model; then
-  echo "warning: worker model download failed — re-run setup.sh to resume it" >&2
-fi
-prune_stale_worker_models
 
 echo "==> linking bough CLI to ~/.local/bin/bough"
 mkdir -p "$HOME/.local/bin"
@@ -124,11 +116,11 @@ if [ ! -f "$ENV_FILE" ]; then
   cat > "$ENV_FILE" <<'EOF'
 # Environment for the bough server, sourced by `bough start` / the launchd service.
 ANTHROPIC_API_KEY=
-# OPENROUTER_API_KEY=      # only for the OpenRouter entries in the model picker
-# BOUGH_PASSWORD=          # set to enable auth + LAN bind (needed for tunnel)
+# OPENAI_API_KEY=          # only for the openai: entries in the model picker
+# OPENROUTER_API_KEY=      # only for the vendor/model entries in the model picker
 # BOUGH_PORT=4321
-# BOUGH_HOST=
-# BOUGH_WORKER_FRONTIER=1  # worker micro-tasks on claude-haiku-4-5 instead of the local Qwen (or set a model id)
+# BOUGH_CHEAP_MODEL=       # titles, ghost text, activity blurbs. Default: a cheap
+#                          # frontier model. Also settable in the model picker.
 EOF
   chmod 600 "$ENV_FILE"
 fi

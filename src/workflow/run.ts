@@ -572,13 +572,15 @@ export function classifyDivergence(
         `failed, was stopped, or never finished, so it runs live`,
     };
   }
-  if (step) {
-    return {
-      pos,
-      kind: "changed",
-      reason: `the call at ${pos} was edited: same position in the script, different key`,
-    };
-  }
+  // `moved` is tested BEFORE `changed`, and the order is the whole point. Asking "is
+  // this coordinate occupied?" first made `moved` unreachable for the commonest kind of
+  // move: any reorder that preserves the call count leaves every slot full, so a pure
+  // swap — not one prompt edited — was reported as "the call at 0 was edited". That is
+  // the misdiagnosis this classification exists to remove, and it is exactly the shape
+  // that hid the pipeline transposition defect.
+  //
+  // The right question is about the CALL, not the slot: if the source ran this exact
+  // content anywhere, it moved, whatever happens to occupy its old position now.
   const elsewhere = plan.byContent.get(content);
   if (elsewhere && elsewhere.length > 0) {
     return {
@@ -588,6 +590,13 @@ export function classifyDivergence(
       reason: `the call MOVED: its key did not change — the source run made this exact ` +
         `call at ${elsewhere[0]}, and this run makes it at ${pos}. The script's shape ` +
         `changed, not its prompts`,
+    };
+  }
+  if (step) {
+    return {
+      pos,
+      kind: "changed",
+      reason: `the call at ${pos} was edited: same position in the script, different key`,
     };
   }
   return {

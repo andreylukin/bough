@@ -36,7 +36,12 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { BadRequestError, NotFoundError } from "../errors.ts";
 import type { Message, Part, Session, SessionKind, TurnStatus } from "../schema/parts.ts";
-import { CreateSessionBody, PostMessageBody, SetDraftBody } from "../schema/requests.ts";
+import {
+  CreateSessionBody,
+  PatchSessionBody,
+  PostMessageBody,
+  SetDraftBody,
+} from "../schema/requests.ts";
 import type { AppCtx } from "../types.ts";
 // T8.5. `vcs/` is below `server/` and imports nothing from it, so this adds no cycle
 // — deliberately not imported from `server/changes.ts`, which does import `app.ts`.
@@ -367,4 +372,26 @@ export const putDraft: Handler = async (req, ctx, params) => {
   const body = await parseBody(req, SetDraftBody);
   ctx.db.setSessionDraft(params.id, body.draft);
   return json({ ok: true, draft: body.draft });
+};
+
+/**
+ * `PATCH /sessions/:id` — the per-session `model` and `effort` overrides (spec §4).
+ *
+ * These columns have existed since the schema was frozen and nothing wrote them, so
+ * the model picker could pin a model in the client and lose it on the next launch.
+ * A session's pin is the whole point of the field: switching models mid-conversation
+ * must not move every other session with it.
+ *
+ * Absent field = leave alone; explicit `null` = clear the override and fall back to
+ * the global default. The two are deliberately different, because "don't touch this"
+ * and "there should be no pin here" are different requests and a picker needs both.
+ */
+export const patchSession: Handler = async (req, ctx, params) => {
+  requireSession(ctx, params.id);
+  const body = await parseBody(req, PatchSessionBody);
+  if (body.model !== undefined) ctx.db.setSessionModel(params.id, body.model);
+  if (body.effort !== undefined) ctx.db.setSessionEffort(params.id, body.effort);
+  const session = ctx.db.getSession(params.id)!;
+  ctx.bus.publish({ type: "session.updated", sessionId: session.id, data: session });
+  return json(session);
 };

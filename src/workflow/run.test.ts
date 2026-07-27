@@ -68,6 +68,7 @@ import {
   WORKFLOW_PROGRAM_PARAMS,
   type WorkflowCtx,
   workflowSummary,
+  classifyDivergence,
 } from "./run.ts";
 
 // ---------------------------------------------------------------------------
@@ -1409,4 +1410,40 @@ Deno.test("workflowSummary omits the script and counts the journal", async () =>
   } finally {
     h.close();
   }
+});
+
+// Regression: a pure reorder must report `moved`, not `changed`. The occupied-slot
+// test used to run first, which made `moved` unreachable for any reorder that
+// preserves the call count — i.e. the commonest kind.
+Deno.test("classifyDivergence: a swap is a MOVE, not an edit", () => {
+  const plan = emptyReplayPlan();
+  for (const [i, content] of ["review A", "review B", "review C"].entries()) {
+    const step = {
+      pos: String(i),
+      content,
+      key: `${i}:${content}`,
+      idx: i,
+      result: "ok",
+      prompt: content,
+    };
+    plan.steps.push(step);
+    plan.byPos.set(step.pos, step);
+    plan.byContent.set(content, [step.pos]);
+  }
+  // Relaunch reorders to B, A, C. Position 0 now asks for "review B", which the source
+  // ran at position 1. Not one prompt was edited.
+  const d = classifyDivergence(plan, "0", "review B");
+  assert.equal(d.kind, "moved");
+  assert.equal(d.sourcePos, "1");
+  assert.match(d.reason, /MOVED/);
+});
+
+Deno.test("classifyDivergence: a genuine edit is still reported as changed", () => {
+  const plan = emptyReplayPlan();
+  const step = { pos: "0", content: "review A", key: "0:review A", idx: 0, result: "ok", prompt: "review A" };
+  plan.steps.push(step);
+  plan.byPos.set("0", step);
+  plan.byContent.set("review A", ["0"]);
+  const d = classifyDivergence(plan, "0", "review A CAREFULLY");
+  assert.equal(d.kind, "changed");
 });

@@ -95,6 +95,7 @@ export const routes: Route[] = [
   route("GET", "/sessions", sessions.listSessions),
   route("POST", "/sessions", sessions.createSession),
   route("GET", "/sessions/:id", sessions.getSession),
+  route("PATCH", "/sessions/:id", sessions.patchSession),
   route("POST", "/sessions/:id/messages", sessions.postMessage),
   route("PUT", "/sessions/:id/draft", sessions.putDraft),
   // T5.5 — workflows. `/workflows/:id/agents/:agentId/:action` is listed after the

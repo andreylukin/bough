@@ -72,6 +72,19 @@ export const SetDraftBody = z.object({
 export type SetDraftBody = z.infer<typeof SetDraftBody>;
 
 /**
+ * PATCH /sessions/:id — the per-session `model` / `effort` overrides (spec §4).
+ *
+ * Absent and `null` mean different things and both are needed: an absent field leaves
+ * the override alone, an explicit `null` clears it so the session falls back to the
+ * global default. A picker that can pin but not unpin is only half a control.
+ */
+export const PatchSessionBody = z.object({
+  model: z.string().min(1).nullable().optional(),
+  effort: z.enum(["low", "medium", "high", "xhigh", "max"]).nullable().optional(),
+});
+export type PatchSessionBody = z.infer<typeof PatchSessionBody>;
+
+/**
  * POST /sessions/:id/questions/:qid — `{answer}` settles the hold; `{decline:
  * true}` rejects the program's `ask()` with a catchable "user declined" so the
  * program can proceed on a stated default or stop cleanly (spec §6).

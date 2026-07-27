@@ -81,6 +81,8 @@ import {
   stopWorkflow,
   type WorkflowCtx,
   workflowSummary,
+  comparePos,
+  splitJournalKey,
 } from "./run.ts";
 import type { WithStructuredWorkflow } from "./schema.ts";
 
@@ -634,13 +636,43 @@ function gist(input: unknown, max: number): string {
   return clip(line, max);
 }
 
+/**
+ * Order journal rows by their structural coordinate, falling back to `idx` for a row
+ * whose key predates coordinates. Stable: rows that compare equal keep their query
+ * order, so a run written before this existed still lists sensibly.
+ */
+function sortByPosition(rows: WorkflowAgent[]): WorkflowAgent[] {
+  return rows
+    .map((row, i) => ({ row, i, pos: splitJournalKey(row.key).pos }))
+    .sort((a, b) => {
+      if (a.pos !== null && b.pos !== null) {
+        const byPos = comparePos(a.pos, b.pos);
+        if (byPos !== 0) return byPos;
+      } else if (a.row.idx !== b.row.idx) {
+        return a.row.idx - b.row.idx;
+      }
+      return a.i - b.i;
+    })
+    .map((e) => e.row);
+}
+
 export function workflowAgentViews(
   db: Db,
   runId: string,
   registry: WorkflowAgentRegistry = workflowAgents,
 ): WorkflowAgentView[] {
   const liveIds = new Set(registry.forRun(runId).map((h) => h.agentId));
-  return db.listWorkflowAgents(runId).map((a) => {
+  // STRUCTURAL order, not the `ORDER BY idx, rowid` the query returns. `idx` is the
+  // order calls reached the host, which for a `pipeline()` — the one combinator with
+  // no barrier — is latency order and differs run to run. Listing a fan-out that way
+  // gives a view that is neither the script's shape nor stable across two runs of the
+  // same script, so the same workflow looks different every time for no reason the
+  // reader can see. Positions are already structural; sorting by them costs one pass
+  // over a few hundred rows.
+  //
+  // Sorted here rather than in SQL because a coordinate is dot-separated integers:
+  // lexicographic ordering puts "10" before "2". `comparePos` compares componentwise.
+  return sortByPosition(db.listWorkflowAgents(runId)).map((a) => {
     const live = liveIds.has(a.id);
     if (!a.sessionId) return { ...a, tokens: 0, toolCalls: 0, activity: [], live };
     const usage = db.sessionUsage(a.sessionId);

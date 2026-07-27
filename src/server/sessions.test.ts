@@ -33,6 +33,7 @@ import {
   type SessionListItem,
   type TurnStarter,
   type WithTurnStarter,
+  patchSession,
 } from "./sessions.ts";
 
 // ---- fixtures ---------------------------------------------------------------
@@ -44,6 +45,7 @@ const TABLE: Route[] = [
   route("GET", "/sessions/:id", getSession),
   route("POST", "/sessions/:id/messages", postMessage),
   route("PUT", "/sessions/:id/draft", putDraft),
+  route("PATCH", "/sessions/:id", patchSession),
 ];
 
 interface Fixture {
@@ -647,4 +649,42 @@ Deno.test("PUT draft rejects a missing session and a wrong-shaped body", async (
   } finally {
     f.db.close();
   }
+});
+
+const patch = (path: string, body: unknown) =>
+  new Request(url(path), { method: "PATCH", body: JSON.stringify(body) });
+
+Deno.test("PATCH /sessions/:id pins a model, and an explicit null clears it", async () => {
+  const f = fixture();
+  const session = await newSession(f, { title: "pin me" });
+
+  const pinned = await (await f.call(patch(`/sessions/${session.id}`, {
+    model: "openai:gpt-x",
+  }))).json();
+  assert.equal(pinned.model, "openai:gpt-x");
+
+  // An ABSENT field leaves the pin alone. This is the case a naive implementation gets
+  // wrong by collapsing undefined into null and silently unpinning.
+  const untouched = await (await f.call(patch(`/sessions/${session.id}`, {
+    effort: "high",
+  }))).json();
+  assert.equal(untouched.model, "openai:gpt-x");
+  assert.equal(untouched.effort, "high");
+
+  // An EXPLICIT null clears it — the session falls back to the global default.
+  const cleared = await (await f.call(patch(`/sessions/${session.id}`, {
+    model: null,
+  }))).json();
+  assert.equal(cleared.model ?? null, null);
+  assert.equal(cleared.effort, "high", "clearing one override must not clear the other");
+
+  f.db.close();
+});
+
+Deno.test("PATCH /sessions/:id rejects an unknown effort and a missing session", async () => {
+  const f = fixture();
+  const session = await newSession(f, {});
+  assert.equal((await f.call(patch(`/sessions/${session.id}`, { effort: "turbo" }))).status, 400);
+  assert.equal((await f.call(patch("/sessions/nope", { model: "x" }))).status, 404);
+  f.db.close();
 });
