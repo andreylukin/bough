@@ -1,142 +1,68 @@
 /**
- * SQLite persistence for sessions, messages, and turns. Tree history lives here:
- * sessions form a parent_id forest and a session's "thread" is the concatenation of
- * messages along the root→self path (see threadFor).
+ * The only place in the tree that speaks SQL.
  *
- * Driver decision: plain SQL over Deno's built-in `node:sqlite` (DatabaseSync),
- * wrapped in a thin typed layer below. We deliberately skip Drizzle — on Deno its
- * SQLite story means pulling a second native driver (better-sqlite3/libsql) when the
- * runtime already ships one, and our query surface is a handful of statements that read
- * clearer as SQL. The Zod schemas in schema/parts.ts already give us the type safety
- * Drizzle would.
+ * The invariant: **no raw SQL exists outside `db/`.** Every read and write in the
+ * system goes through a typed method here, which is what makes the ordering rules
+ * below enforceable at all — they are properties of three `ORDER BY` clauses in one
+ * file, not a convention every caller has to remember.
  *
- * Storage: JSON columns for message `parts`; booleans as 0/1; timestamps as epoch ms.
- * DB file at ~/.bough/bough.db, overridable via BOUGH_DB (":memory:" for tests).
+ * The three ordering rules, in order of how much depends on them:
+ *
+ *   1. `messagesFor` orders by `(created_at, rowid)`, never `created_at` alone.
+ *      Branch seeding writes with a real clock rather than an advanced artificial
+ *      one (plan §6.1), so a turn started immediately after a seed lands in the
+ *      *same millisecond* — `rowid`, the insertion order, is the only thing that
+ *      keeps it after the seed. Sorting by timestamp alone reorders history under
+ *      the user.
+ *   2. `threadFor` is every ancestor's messages root→parent, then the session's own.
+ *      This is what makes fork and compaction cheap: a branch parented at the
+ *      target's parent inherits the shared ancestors for free and seeds only the
+ *      rest (spec §14).
+ *   3. `ancestorChain` walks `parent_id` to the lineage root and returns it root
+ *      first, inclusive of the session itself. `session_state` is scoped to
+ *      `chain[0]`, so a fork and its parent read one store (spec §6).
+ *
+ * What this layer is NOT: a place for policy. `listSessions` returns every session
+ * and the *caller* derives visibility from `kind` + `origin_id` — there is no
+ * archive, deprecate or purge column to filter on, because there is no such action
+ * (spec §4, §17). Likewise there are no embeddings: cross-session search is keyword
+ * FTS over a text projection of `parts`.
+ *
+ * Injection: the database path and the clock are constructor arguments. `updateTurn`
+ * is the one method that stamps a time of its own, and it stamps `#now()` — so a
+ * test drives checkpoint ordering without sleeping. Everything else takes its
+ * timestamps from the caller.
+ *
+ * Storage conventions, matching `schema.sql`: timestamps are epoch ms integers,
+ * booleans are 0/1, and anything structured is JSON text.
  */
 import { DatabaseSync } from "node:sqlite";
-import { join } from "node:path";
-import { boughHome } from "../paths.ts";
 import { mkdirSync } from "node:fs";
-import type { Message, Part, Role, Session, SessionKind } from "../schema/parts.ts";
+import { dirname } from "node:path";
+import { dbPath } from "../paths.ts";
+import { BadRequestError } from "../errors.ts";
+import { migrate } from "./migrate.ts";
+import type { Db as DbPort, SearchHit, SessionRuntime, UsageTotals } from "../types.ts";
+import type {
+  Message,
+  Part,
+  Role,
+  Schedule,
+  Session,
+  SessionKind,
+  Turn,
+  TurnStatus,
+  Usage,
+  WorkflowAgent,
+  WorkflowAgentStatus,
+  WorkflowPhase,
+  WorkflowRun,
+  WorkflowStatus,
+} from "../schema/parts.ts";
 
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS sessions (
-  id          TEXT PRIMARY KEY,
-  parent_id   TEXT REFERENCES sessions(id),
-  title       TEXT NOT NULL,
-  kind        TEXT NOT NULL,
-  created_at  INTEGER NOT NULL,
-  workspace   TEXT,                   -- the session's workspace root; null = BOUGH_WORKSPACE/cwd.
-                                      -- The agent works in this directory in place. Legacy rows
-                                      -- pointing at ~/.bough/workspaces worktrees are rewritten to
-                                      -- their origin dir at startup (see #migrate). Older modes
-                                      -- this at the session worktree on the first turn.
-  base        TEXT,                   -- persisted snapshot/git base commit, captured on the first turn
-  origin_id         TEXT,             -- lineage: session this fork/compaction branched from (null for root/plain)
-  origin_message_id TEXT,             -- lineage: the fork-at message / compaction span-end message
-  archived_at INTEGER,                -- soft delete: archived sessions leave the sidebar, rows stay
-  deprecated_at INTEGER,              -- branch hidden by default in the tree views (toggle to show)
-  context_tokens INTEGER,             -- last turn's prompt size (context meter)
-  output_tokens  INTEGER,             -- cumulative output tokens across the session
-  input_tokens   INTEGER,             -- cumulative input tokens across the session (cost)
-  cached_tokens  INTEGER,             -- last LLM round: prompt tokens read from / written to the provider cache
-  last_llm_at    INTEGER,             -- epoch ms the last LLM round finished (cache-warmth clock)
-  model       TEXT                    -- per-session model override; null = the global default
-);
-CREATE TABLE IF NOT EXISTS messages (
-  id          TEXT PRIMARY KEY,
-  session_id  TEXT NOT NULL REFERENCES sessions(id),
-  role        TEXT NOT NULL,
-  parts       TEXT NOT NULL,          -- JSON Part[]
-  pending     INTEGER NOT NULL,       -- 0/1
-  created_at  INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS messages_session ON messages(session_id, created_at);
--- The supervisor state machine: one row per in-flight (or finished) turn. The
--- runner checkpoints the step after each API round + each tool result so a restart
--- can find turns still marked running and orphan them (see turns.ts).
-CREATE TABLE IF NOT EXISTS turns (
-  id          TEXT PRIMARY KEY,
-  session_id  TEXT NOT NULL REFERENCES sessions(id),
-  message_id  TEXT NOT NULL REFERENCES messages(id),  -- the pending supervisor msg
-  status      TEXT NOT NULL,          -- running | done | error | orphaned
-  step        TEXT NOT NULL,          -- last checkpoint (human-readable)
-  updated_at  INTEGER NOT NULL,
-  first_output_at INTEGER             -- when the user first SAW anything (metrics)
-);
-CREATE INDEX IF NOT EXISTS turns_status ON turns(status);
--- Message embeddings for recall search (local embedder — see recall.ts). Vectors are
--- unit-normalized Float32 blobs; dim=0 marks a message with nothing to embed so the
--- indexer doesn't retry it forever.
-CREATE TABLE IF NOT EXISTS message_embeddings (
-  message_id  TEXT PRIMARY KEY REFERENCES messages(id),
-  session_id  TEXT NOT NULL,
-  dim         INTEGER NOT NULL,
-  vector      BLOB
-);
--- Recurring agent runs (see schedules.ts): each due fire creates a fresh root
--- session titled from the schedule and starts a turn with its prompt.
-CREATE TABLE IF NOT EXISTS schedules (
-  id          TEXT PRIMARY KEY,
-  title       TEXT NOT NULL,
-  prompt      TEXT NOT NULL,
-  workspace   TEXT,                   -- null = chat-only sessions (no sandbox root)
-  spec        TEXT NOT NULL,          -- "every:<N><m|h|d>" | "daily@HH:MM" (local)
-  enabled     INTEGER NOT NULL,       -- 0/1
-  created_at  INTEGER NOT NULL,
-  last_run_at INTEGER,
-  next_run_at INTEGER NOT NULL
-);
--- Workflow runs (see workflow.ts): a script orchestrating many subagents. The
--- script text is persisted verbatim (also mirrored to ~/.bough/workflows/<id>.js
--- for out-of-band editing); each agent() call journals into workflow_agents so a
--- rerun can replay unchanged calls from cache instead of re-running them.
-CREATE TABLE IF NOT EXISTS workflows (
-  id           TEXT PRIMARY KEY,
-  session_id   TEXT NOT NULL REFERENCES sessions(id),
-  name         TEXT NOT NULL,
-  description  TEXT NOT NULL,
-  script       TEXT NOT NULL,
-  phases       TEXT NOT NULL,         -- JSON [{title, detail?}] from the script's meta
-  status       TEXT NOT NULL,         -- running | paused | done | error | stopped | orphaned
-  current_phase TEXT,
-  result       TEXT,                  -- JSON: the script's return value (status done)
-  error        TEXT,                  -- the failure message (status error)
-  args         TEXT,                  -- JSON: the run's args input
-  resume_of    TEXT,                  -- run id this rerun replays its journal from
-  created_at   INTEGER NOT NULL,
-  finished_at  INTEGER
-);
-CREATE TABLE IF NOT EXISTS workflow_agents (
-  id          TEXT PRIMARY KEY,
-  run_id      TEXT NOT NULL REFERENCES workflows(id),
-  idx         INTEGER NOT NULL,       -- call order within the run
-  key         TEXT NOT NULL,          -- hash(prompt|opts) — the journal replay key
-  label       TEXT NOT NULL,
-  phase       TEXT,
-  prompt      TEXT NOT NULL,
-  model       TEXT,
-  status      TEXT NOT NULL,          -- queued | running | done | error | stopped | cached
-  result      TEXT,                   -- the agent's report text (done/cached)
-  session_id  TEXT,                   -- the subagent session (TUI drill-in)
-  started_at  INTEGER NOT NULL,
-  finished_at INTEGER
-);
-CREATE INDEX IF NOT EXISTS workflow_agents_run ON workflow_agents(run_id, idx);
--- Durable key/value notes the program writes for ITSELF (see state.ts). Scoped to
--- the ROOT session of a lineage so forks, compactions and subagents of the same
--- conversation read the same store — the point is surviving a context that the
--- turn loop will eventually truncate or compact away.
-CREATE TABLE IF NOT EXISTS session_state (
-  root_id     TEXT NOT NULL,
-  key         TEXT NOT NULL,
-  value       TEXT NOT NULL,         -- JSON: whatever the program stored
-  updated_at  INTEGER NOT NULL,
-  PRIMARY KEY (root_id, key)
-);
-`;
-
-// ---- row <-> domain mapping ------------------------------------------------
+// ---- rows -------------------------------------------------------------------
+// One type per table, named exactly as the columns are. The mappers below are the
+// only translation between snake_case storage and the camelCase wire shapes.
 
 type SessionRow = {
   id: string;
@@ -149,28 +75,21 @@ type SessionRow = {
   base: string | null;
   origin_id: string | null;
   origin_message_id: string | null;
-  deprecated_at: number | null;
-  archived_at: number | null;
+  model: string | null;
+  effort: string | null;
+  draft: string | null;
   context_tokens: number | null;
   cached_tokens: number | null;
   last_llm_at: number | null;
-  model: string | null;
-  effort: string | null;
-  prompt_dir: string | null;
-  draft: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  reasoning_tokens: number | null;
+  cache_read_total: number | null;
+  cache_write_total: number | null;
+  cost_usd: number | null;
   outcome_ok: number | null;
-  outcome_check_passed: number | null;
 };
 
-/**
- * The runtime (non-wire) facts a session carries for the turn runner: its explicit
- * workspace (null = fall back to BOUGH_WORKSPACE/cwd) and its persisted snapshot base.
- * Kept off the wire `Session` type so the UI mirror in schema/parts.ts is untouched.
- */
-interface SessionRuntime {
-  workspace: string | null;
-  base: string | null;
-}
 type MessageRow = {
   id: string;
   session_id: string;
@@ -180,40 +99,23 @@ type MessageRow = {
   created_at: number;
 };
 
-export type TurnStatus = "running" | "done" | "error" | "orphaned" | "interrupted";
-export interface Turn {
-  id: string;
-  sessionId: string;
-  messageId: string;
-  status: TurnStatus;
-  step: string;
-  updatedAt: number;
-  /** When the turn's first output (delta or part) reached the UI — see metrics.ts. */
-  firstOutputAt: number | null;
-}
 type TurnRow = {
   id: string;
   session_id: string;
   message_id: string;
   status: string;
   step: string;
+  created_at: number;
   updated_at: number;
-  first_output_at: number | null;
+  error: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  reasoning_tokens: number | null;
+  cache_read_tokens: number | null;
+  cache_write_tokens: number | null;
+  cost_usd: number | null;
 };
 
-/** A recurring agent run: title/prompt/workspace for the session each fire creates. */
-export interface Schedule {
-  id: string;
-  title: string;
-  prompt: string;
-  workspace: string | null;
-  /** "every:<N><m|h|d>" or "daily@HH:MM" — parsed by schedules.ts, stored verbatim. */
-  spec: string;
-  enabled: boolean;
-  createdAt: number;
-  lastRunAt: number | null;
-  nextRunAt: number;
-}
 type ScheduleRow = {
   id: string;
   title: string;
@@ -225,73 +127,6 @@ type ScheduleRow = {
   last_run_at: number | null;
   next_run_at: number;
 };
-
-function toSchedule(r: ScheduleRow): Schedule {
-  return {
-    id: r.id,
-    title: r.title,
-    prompt: r.prompt,
-    workspace: r.workspace,
-    spec: r.spec,
-    enabled: r.enabled === 1,
-    createdAt: r.created_at,
-    lastRunAt: r.last_run_at,
-    nextRunAt: r.next_run_at,
-  };
-}
-
-export type WorkflowStatus = "running" | "paused" | "done" | "error" | "stopped" | "orphaned";
-/** `queued` = journaled but parked on the run's concurrency semaphore: no
- * subagent session yet, and its clock has not started. It used to report
- * `running` with a ticking elapsed, so a saturated run looked like N agents
- * working when only `concurrency()` of them were. */
-export type WorkflowAgentStatus =
-  | "queued"
-  | "running"
-  | "done"
-  | "error"
-  | "stopped"
-  | "cached";
-
-/** One workflow run: the script, its meta (name/description/phases), and outcome. */
-export interface WorkflowRun {
-  id: string;
-  sessionId: string;
-  name: string;
-  description: string;
-  script: string;
-  /** From the script's meta: [{title, detail?}]. */
-  phases: { title: string; detail?: string }[];
-  status: WorkflowStatus;
-  currentPhase: string | null;
-  /** The script's return value (status "done"). */
-  result: unknown;
-  error: string | null;
-  args: unknown;
-  /** Run id this rerun replays its journal from. */
-  resumeOf: string | null;
-  createdAt: number;
-  finishedAt: number | null;
-}
-
-/** One agent() call's journal row — the unit the TUI drills into and reruns replay. */
-export interface WorkflowAgent {
-  id: string;
-  runId: string;
-  idx: number;
-  key: string;
-  label: string;
-  phase: string | null;
-  prompt: string;
-  model: string | null;
-  status: WorkflowAgentStatus;
-  /** The agent's report text (done), or the cached copy of it (cached). */
-  result: string | null;
-  /** The subagent session backing this call (absent for cached replays). */
-  sessionId: string | null;
-  startedAt: number;
-  finishedAt: number | null;
-}
 
 type WorkflowRow = {
   id: string;
@@ -309,6 +144,7 @@ type WorkflowRow = {
   created_at: number;
   finished_at: number | null;
 };
+
 type WorkflowAgentRow = {
   id: string;
   run_id: string;
@@ -318,12 +154,93 @@ type WorkflowAgentRow = {
   phase: string | null;
   prompt: string;
   model: string | null;
+  schema: string | null;
   status: string;
   result: string | null;
+  error: string | null;
   session_id: string | null;
   started_at: number;
   finished_at: number | null;
 };
+
+// ---- row → domain -----------------------------------------------------------
+
+/** Absent optionals come back as `null`, never `undefined`: one shape per row. */
+function toSession(r: SessionRow): Session {
+  return {
+    id: r.id,
+    parentId: r.parent_id,
+    title: r.title,
+    kind: r.kind as SessionKind,
+    createdAt: r.created_at,
+    workspace: r.workspace,
+    originDir: r.origin_dir,
+    base: r.base,
+    originId: r.origin_id,
+    originMessageId: r.origin_message_id,
+    model: r.model,
+    effort: r.effort,
+    draft: r.draft,
+    contextTokens: r.context_tokens,
+    cachedTokens: r.cached_tokens,
+    lastLlmAt: r.last_llm_at,
+    outcomeOk: r.outcome_ok === null ? null : r.outcome_ok === 1,
+  };
+}
+
+function toMessage(r: MessageRow): Message {
+  return {
+    id: r.id,
+    sessionId: r.session_id,
+    role: r.role as Role,
+    parts: JSON.parse(r.parts) as Part[],
+    pending: r.pending === 1,
+    createdAt: r.created_at,
+  };
+}
+
+/**
+ * A turn's `usage` is present once the provider has reported anything for it — a
+ * turn that errored before its first round has none, and reporting zeros there
+ * would be a claim we cannot make.
+ */
+function toTurn(r: TurnRow): Turn {
+  const reported = r.input_tokens !== null || r.output_tokens !== null;
+  return {
+    id: r.id,
+    sessionId: r.session_id,
+    messageId: r.message_id,
+    status: r.status as TurnStatus,
+    step: r.step,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    error: r.error,
+    usage: reported
+      ? {
+        inputTokens: r.input_tokens ?? 0,
+        outputTokens: r.output_tokens ?? 0,
+        reasoningTokens: r.reasoning_tokens,
+        cacheReadTokens: r.cache_read_tokens,
+        cacheWriteTokens: r.cache_write_tokens,
+        costUsd: r.cost_usd,
+      }
+      : null,
+  };
+}
+
+function toSchedule(r: ScheduleRow): Schedule {
+  return {
+    id: r.id,
+    title: r.title,
+    prompt: r.prompt,
+    workspace: r.workspace,
+    spec: r.spec,
+    enabled: r.enabled === 1,
+    createdAt: r.created_at,
+    lastRunAt: r.last_run_at,
+    nextRunAt: r.next_run_at,
+  };
+}
 
 function toWorkflow(r: WorkflowRow): WorkflowRun {
   return {
@@ -332,7 +249,7 @@ function toWorkflow(r: WorkflowRow): WorkflowRun {
     name: r.name,
     description: r.description,
     script: r.script,
-    phases: JSON.parse(r.phases),
+    phases: JSON.parse(r.phases) as WorkflowPhase[],
     status: r.status as WorkflowStatus,
     currentPhase: r.current_phase,
     result: r.result === null ? null : JSON.parse(r.result),
@@ -356,431 +273,150 @@ function toWorkflowAgent(r: WorkflowAgentRow): WorkflowAgent {
     model: r.model,
     status: r.status as WorkflowAgentStatus,
     result: r.result,
+    error: r.error,
     sessionId: r.session_id,
     startedAt: r.started_at,
     finishedAt: r.finished_at,
   };
 }
 
-function toTurn(r: TurnRow): Turn {
-  return {
-    id: r.id,
-    sessionId: r.session_id,
-    messageId: r.message_id,
-    status: r.status as TurnStatus,
-    step: r.step,
-    updatedAt: r.updated_at,
-    firstOutputAt: r.first_output_at,
-  };
+// ---- small helpers ----------------------------------------------------------
+
+const bit = (v: boolean): number => (v ? 1 : 0);
+
+/** `undefined` is not a bindable value; nullish optionals all store as NULL. */
+const nul = <T>(v: T | null | undefined): T | null => (v === undefined ? null : v);
+
+/** JSON columns: `undefined` and `null` both store as NULL, so a read round-trips. */
+const json = (v: unknown): string | null =>
+  v === undefined || v === null ? null : JSON.stringify(v);
+
+/**
+ * The text a message contributes to the keyword index: its prose and its
+ * reasoning. Tool calls, results and image paths are deliberately excluded — a
+ * search over transcripts should find what was *said*, not a path that happened to
+ * appear in a directory listing (spec §17: FTS over transcripts).
+ */
+function indexableText(parts: Part[]): string {
+  return parts
+    .filter((p): p is Extract<Part, { type: "text" | "reasoning" }> =>
+      p.type === "text" || p.type === "reasoning"
+    )
+    .map((p) => p.text)
+    .join("\n")
+    .trim();
 }
 
-function toSession(r: SessionRow): Session {
-  return {
-    id: r.id,
-    parentId: r.parent_id,
-    title: r.title,
-    kind: r.kind as SessionKind,
-    createdAt: r.created_at,
-    // Only surface optional fields when set, so responses stay byte-identical otherwise.
-    ...(r.workspace ? { workspace: r.workspace } : {}),
-    ...(r.origin_dir ? { originDir: r.origin_dir } : {}),
-    ...(r.origin_id ? { originId: r.origin_id } : {}),
-    ...(r.origin_message_id ? { originMessageId: r.origin_message_id } : {}),
-    ...(r.deprecated_at != null ? { deprecatedAt: r.deprecated_at } : {}),
-    ...(r.archived_at != null ? { archivedAt: r.archived_at } : {}),
-    ...(r.model ? { model: r.model } : {}),
-    ...(r.effort ? { effort: r.effort } : {}),
-    ...(r.prompt_dir ? { promptDir: r.prompt_dir } : {}),
-    // Prompt-cache visibility: last prompt size, its cached share, and when the
-    // last LLM round finished (the client derives warm/cold from this + the TTL).
-    ...(r.context_tokens != null ? { contextTokens: r.context_tokens } : {}),
-    ...(r.cached_tokens != null ? { cachedTokens: r.cached_tokens } : {}),
-    ...(r.last_llm_at != null ? { lastLlmAt: r.last_llm_at } : {}),
-    ...(r.draft != null ? { draft: r.draft } : {}),
-    // Delegation outcome (subagents only; see setSessionOutcome).
-    ...(r.outcome_ok != null ? { outcomeOk: r.outcome_ok === 1 } : {}),
-    ...(r.outcome_check_passed != null ? { outcomeCheckPassed: r.outcome_check_passed === 1 } : {}),
-  };
+/** How `openDb`/`SqliteDb` take their seams. */
+export interface DbOptions {
+  /** Injected clock. Absent = `Date.now`. Only `updateTurn` reads it. */
+  now?: () => number;
 }
 
-function toMessage(r: MessageRow): Message {
-  return {
-    id: r.id,
-    sessionId: r.session_id,
-    role: r.role as Role,
-    parts: JSON.parse(r.parts) as Part[],
-    pending: r.pending === 1,
-    createdAt: r.created_at,
-  };
-}
+// ---- the handle -------------------------------------------------------------
 
-// ---- the typed handle ------------------------------------------------------
-
-export class Db {
+/**
+ * The concrete `Db`. Satisfies the port in `types.ts`; consumers that only need
+ * the port depend on that file, not on this one.
+ */
+export class SqliteDb implements DbPort {
   #db: DatabaseSync;
+  #now: () => number;
 
-  /** Session ids whose workspace column was rewritten to the origin by THIS
-   *  open's legacy migration. Nothing consumes it since the worktree store went
-   *  away (there is no leftover worktree to retire — scripts/bough deletes the
-   *  whole store); the migration also logs, so this is only for callers that
-   *  want the list rather than the line. */
-  readonly migratedLegacyWorkspaces: string[] = [];
-
-  constructor(path: string) {
+  constructor(path: string, opts: DbOptions = {}) {
     this.#db = new DatabaseSync(path);
+    this.#now = opts.now ?? Date.now;
+    // Declared foreign keys are only enforced when this is on, and it is a
+    // per-connection setting — off by default, so it must be set at every open.
     this.#db.exec("PRAGMA foreign_keys = ON");
-    this.#db.exec(SCHEMA);
-    this.#migrate();
-  }
-
-  // Idempotent column adds for DB files created before these columns existed.
-  // CREATE TABLE IF NOT EXISTS won't add them, so ALTER and swallow the dup error.
-  #migrate(): void {
-    for (
-      const col of [
-        "workspace TEXT",
-        "origin_dir TEXT",
-        "base TEXT",
-        "origin_id TEXT",
-        "origin_message_id TEXT",
-        "archived_at INTEGER",
-        "deprecated_at INTEGER",
-        "context_tokens INTEGER",
-        "output_tokens INTEGER",
-        "input_tokens INTEGER",
-        "cached_tokens INTEGER",
-        "cache_read_total INTEGER",
-        "cache_write_total INTEGER",
-        "cost_usd REAL",
-        "last_llm_at INTEGER",
-        "model TEXT",
-        "effort TEXT",
-        "prompt_dir TEXT",
-        "draft TEXT",
-        "outcome_ok INTEGER",
-        "outcome_check_passed INTEGER",
-      ]
-    ) {
-      try {
-        this.#db.exec(`ALTER TABLE sessions ADD COLUMN ${col}`);
-      } catch {
-        // column already exists
-      }
-    }
-    try {
-      this.#db.exec(`ALTER TABLE turns ADD COLUMN first_output_at INTEGER`);
-    } catch {
-      // column already exists
-    }
-    // Leftovers from the deleted proxy layer: no source reads or writes them, so
-    // drop them rather than carry dead rows in every existing DB file.
-    for (const table of ["net_events", "net_policies", "net_ext_state"]) {
-      this.#db.exec(`DROP TABLE IF EXISTS ${table}`);
-    }
-    this.#migrateLegacyWorkspaces();
-  }
-
-  /**
-   * The workspace column now always holds the user's real checkout — sessions run
-   * in place, and the per-session worktree store under ~/.bough/workspaces is gone
-   * (scripts/bough reaps it on update). Rows still pointing into that store would
-   * resume a session into a directory that no longer exists, so rewrite them to the
-   * session's origin_dir. Unconditional: there is no mode left in which a row under
-   * the workspaces root is correct. One-shot in practice — after the rewrite the
-   * rows no longer match, so the next open finds nothing.
-   */
-  #migrateLegacyWorkspaces(): void {
-    const root = (Deno.env.get("BOUGH_SUBAGENT_BASE") ??
-      `${Deno.env.get("HOME") ?? ""}/.bough/workspaces`).replace(/\/+$/, "");
-    if (root === "/.bough/workspaces") return; // no HOME — nothing sane to match
-    const rows = this.#db
-      .prepare(
-        `SELECT id, workspace, origin_dir FROM sessions
-         WHERE workspace IS NOT NULL AND origin_dir IS NOT NULL`,
-      )
-      .all() as Array<{ id: string; workspace: string; origin_dir: string }>;
-    const legacy = rows.filter((r) => r.workspace.startsWith(root + "/"));
-    if (legacy.length === 0) return;
-    const set = this.#db.prepare(`UPDATE sessions SET workspace = ? WHERE id = ?`);
-    for (const r of legacy) set.run(r.origin_dir, r.id);
-    this.migratedLegacyWorkspaces.push(...legacy.map((r) => r.id));
-    console.log(
-      `migrated ${legacy.length} legacy workspace row(s) to their origin dir: ` +
-        legacy.map((r) => `${r.id} → ${r.origin_dir}`).join(", "),
-    );
+    migrate(this.#db);
   }
 
   close(): void {
     this.#db.close();
   }
 
-  // sessions ----------------------------------------------------------------
+  #all<T>(sql: string, ...params: (string | number | null)[]): T[] {
+    return this.#db.prepare(sql).all(...params) as unknown as T[];
+  }
 
+  #get<T>(sql: string, ...params: (string | number | null)[]): T | undefined {
+    return this.#db.prepare(sql).get(...params) as unknown as T | undefined;
+  }
+
+  #run(sql: string, ...params: (string | number | null)[]): void {
+    this.#db.prepare(sql).run(...params);
+  }
+
+  // ---- sessions -------------------------------------------------------------
+
+  /**
+   * Insert and return the row *as stored*. Reading back rather than echoing the
+   * argument is deliberate: `createSession(s)` and `getSession(s.id)` then agree
+   * field for field, so a caller can never be handed a session carrying a value the
+   * database did not keep.
+   */
   createSession(s: Session): Session {
-    this.#db
-      .prepare(
-        `INSERT INTO sessions (id, parent_id, title, kind, created_at, workspace, origin_dir, origin_id, origin_message_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        s.id,
-        s.parentId,
-        s.title,
-        s.kind,
-        s.createdAt,
-        s.workspace ?? null,
-        s.originDir ?? null,
-        s.originId ?? null,
-        s.originMessageId ?? null,
-      );
-    return s;
+    this.#run(
+      `INSERT INTO sessions
+         (id, parent_id, title, kind, created_at, workspace, origin_dir, base,
+          origin_id, origin_message_id, model, effort, draft)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      s.id,
+      s.parentId,
+      s.title,
+      s.kind,
+      s.createdAt,
+      nul(s.workspace),
+      nul(s.originDir),
+      nul(s.base),
+      nul(s.originId),
+      nul(s.originMessageId),
+      nul(s.model),
+      nul(s.effort),
+      nul(s.draft),
+    );
+    return this.getSession(s.id)!;
   }
 
   getSession(id: string): Session | undefined {
-    const r = this.#db.prepare(`SELECT * FROM sessions WHERE id = ?`).get(id) as
-      | SessionRow
-      | undefined;
+    const r = this.#get<SessionRow>(`SELECT * FROM sessions WHERE id = ?`, id);
     return r && toSession(r);
   }
 
-  /** The turn runner's runtime view: explicit workspace + persisted base (both nullable). */
   getSessionRuntime(id: string): SessionRuntime {
-    const r = this.#db
-      .prepare(`SELECT workspace, base FROM sessions WHERE id = ?`)
-      .get(id) as { workspace: string | null; base: string | null } | undefined;
+    const r = this.#get<{ workspace: string | null; base: string | null }>(
+      `SELECT workspace, base FROM sessions WHERE id = ?`,
+      id,
+    );
     return { workspace: r?.workspace ?? null, base: r?.base ?? null };
   }
 
-  setSessionTitle(id: string, title: string): void {
-    this.#db.prepare(`UPDATE sessions SET title = ? WHERE id = ?`).run(title, id);
-  }
-
-  setSessionWorkspace(id: string, workspace: string): void {
-    this.#db.prepare(`UPDATE sessions SET workspace = ? WHERE id = ?`).run(workspace, id);
-  }
-
-  /** Set (handoff) or clear (first post) a session's drafted opening prompt. */
-  setSessionDraft(id: string, draft: string | null): void {
-    this.#db.prepare(`UPDATE sessions SET draft = ? WHERE id = ?`).run(draft, id);
-  }
-
-  /** Per-session model override; null clears back to the global default. */
-  setSessionModel(id: string, model: string | null): void {
-    this.#db.prepare(`UPDATE sessions SET model = ? WHERE id = ?`).run(model, id);
-  }
-
-  /** Per-session thinking-depth override; null clears back to the global default. */
-  setSessionEffort(id: string, effort: string | null): void {
-    this.#db.prepare(`UPDATE sessions SET effort = ? WHERE id = ?`).run(effort, id);
-  }
-
-  /** Per-session system-prompt override dir; null clears back to the process default.
-   * Lets a prompt variant be pinned per session (bough exec --prompt-dir) with no
-   * server restart — the turn runner reads it via getSession each turn. */
-  setSessionPromptDir(id: string, promptDir: string | null): void {
-    this.#db.prepare(`UPDATE sessions SET prompt_dir = ? WHERE id = ?`).run(promptDir, id);
-  }
-
-  /** Persist a finished subagent's delegation outcome (see subagent.ts buildResult):
-   * the in-band agent() result only reaches the parent program, so the branch row
-   * carries {ok, checkPassed} for the UI to render failed/check-failed states. */
-  setSessionOutcome(id: string, ok: boolean, checkPassed: boolean): void {
-    this.#db
-      .prepare(`UPDATE sessions SET outcome_ok = ?, outcome_check_passed = ? WHERE id = ?`)
-      .run(ok ? 1 : 0, checkPassed ? 1 : 0, id);
-  }
-
-  /** Record the base commit captured on a session's first turn (see supervisor/workspace.ts). */
-  setSessionBase(id: string, base: string): void {
-    this.#db.prepare(`UPDATE sessions SET base = ? WHERE id = ?`).run(base, id);
-  }
-
-  /** Unarchived sessions, newest first (the sidebar list). */
+  /**
+   * Every session, newest first. No visibility filter: `subagent` and
+   * `workflow_agent` rows are excluded by the *caller*, which derives that from
+   * `kind` + `originId` (spec §4). Tie-broken by `rowid` so two sessions created in
+   * one millisecond have a stable order.
+   */
   listSessions(): Session[] {
-    const rows = this.#db
-      .prepare(`SELECT * FROM sessions WHERE archived_at IS NULL ORDER BY created_at DESC`)
-      .all() as SessionRow[];
-    return rows.map(toSession);
+    return this.#all<SessionRow>(
+      `SELECT * FROM sessions ORDER BY created_at DESC, rowid DESC`,
+    ).map(toSession);
   }
 
-  /** Archived (soft-deleted) sessions, newest first — the reveal/restore drawer. */
-  listArchivedSessions(): Session[] {
-    const rows = this.#db
-      .prepare(`SELECT * FROM sessions WHERE archived_at IS NOT NULL ORDER BY created_at DESC`)
-      .all() as SessionRow[];
-    return rows.map(toSession);
-  }
-
-  /**
-   * Token usage: last turn's prompt size (context meter) + cumulative output and
-   * cumulative input across the session (cost accounting — input dominates cost
-   * because every round re-sends the whole thread).
-   */
-  setSessionUsage(
-    id: string,
-    contextTokens: number,
-    outputTokens: number,
-    inputTokens: number,
-    costUsd = 0,
-  ): void {
-    this.#db
-      .prepare(
-        `UPDATE sessions SET context_tokens = ?, output_tokens = ?, input_tokens = ?,
-           cost_usd = ? WHERE id = ?`,
-      )
-      .run(contextTokens, outputTokens, inputTokens, costUsd, id);
+  /** The branches collapsed under `originId`, in creation order — the drill-in. */
+  sessionsByOrigin(originId: string): Session[] {
+    return this.#all<SessionRow>(
+      `SELECT * FROM sessions WHERE origin_id = ? ORDER BY created_at, rowid`,
+      originId,
+    ).map(toSession);
   }
 
   /**
-   * Last LLM round's cache stats (cached prompt share + finish time, the warmth
-   * clock) plus cumulative cache read/write totals across the session — the
-   * discounted share of input_tokens (reads bill ~0.1x, writes ~1.25x).
+   * Root→self, inclusive; `[]` for an unknown id. The `seen` set is not paranoia
+   * about a well-formed tree — it is what stops a cycle introduced by a bad write
+   * from hanging the server on every read of that session.
    */
-  setSessionCache(
-    id: string,
-    cachedTokens: number,
-    lastLlmAt: number,
-    cacheReadTotal = 0,
-    cacheWriteTotal = 0,
-  ): void {
-    this.#db
-      .prepare(
-        `UPDATE sessions SET cached_tokens = ?, last_llm_at = ?,
-           cache_read_total = COALESCE(cache_read_total, 0) + ?,
-           cache_write_total = COALESCE(cache_write_total, 0) + ?
-         WHERE id = ?`,
-      )
-      .run(cachedTokens, lastLlmAt, cacheReadTotal, cacheWriteTotal, id);
-  }
-
-  sessionUsage(id: string): {
-    contextTokens: number;
-    outputTokens: number;
-    inputTokens: number;
-    cachedTokens: number;
-    cacheReadTotal: number;
-    cacheWriteTotal: number;
-    costUsd: number;
-    lastLlmAt: number | null;
-  } {
-    const r = this.#db
-      .prepare(
-        `SELECT context_tokens, output_tokens, input_tokens, cached_tokens,
-                cache_read_total, cache_write_total, cost_usd, last_llm_at
-         FROM sessions WHERE id = ?`,
-      )
-      .get(id) as {
-        context_tokens: number | null;
-        output_tokens: number | null;
-        input_tokens: number | null;
-        cached_tokens: number | null;
-        cache_read_total: number | null;
-        cache_write_total: number | null;
-        cost_usd: number | null;
-        last_llm_at: number | null;
-      } | undefined;
-    return {
-      contextTokens: r?.context_tokens ?? 0,
-      outputTokens: r?.output_tokens ?? 0,
-      inputTokens: r?.input_tokens ?? 0,
-      cachedTokens: r?.cached_tokens ?? 0,
-      cacheReadTotal: r?.cache_read_total ?? 0,
-      cacheWriteTotal: r?.cache_write_total ?? 0,
-      costUsd: r?.cost_usd ?? 0,
-      lastLlmAt: r?.last_llm_at ?? null,
-    };
-  }
-
-  /**
-   * Cumulative usage for a session PLUS its whole subagent subtree (cost rollup).
-   * Follows origin_id but only through kind='subagent' rows, so forks/compactions
-   * don't count into a session's spend. Includes archived descendants — they cost
-   * money too. `sessions` = descendant count (0 for a leaf).
-   */
-  treeUsage(
-    id: string,
-  ): { inputTokens: number; outputTokens: number; costUsd: number; sessions: number } {
-    const r = this.#db
-      .prepare(
-        `WITH RECURSIVE tree(id) AS (
-           SELECT id FROM sessions WHERE id = ?
-           UNION ALL
-           SELECT s.id FROM sessions s JOIN tree t ON s.origin_id = t.id
-           WHERE s.kind = 'subagent'
-         )
-         SELECT COUNT(*) - 1 AS descendants,
-                COALESCE(SUM(input_tokens), 0) AS input,
-                COALESCE(SUM(output_tokens), 0) AS output,
-                COALESCE(SUM(cost_usd), 0) AS cost
-         FROM sessions WHERE id IN (SELECT id FROM tree)`,
-      )
-      .get(id) as { descendants: number; input: number; output: number; cost: number };
-    return {
-      inputTokens: r.input,
-      outputTokens: r.output,
-      costUsd: r.cost,
-      sessions: r.descendants,
-    };
-  }
-
-  /** Sessions with a turn in flight (any message still pending) — sidebar busy dots. */
-  busySessionIds(): Set<string> {
-    const rows = this.#db
-      .prepare(`SELECT DISTINCT session_id FROM messages WHERE pending = 1`)
-      .all() as { session_id: string }[];
-    return new Set(rows.map((r) => r.session_id));
-  }
-
-  /**
-   * Soft-delete: the session leaves the sidebar but the row (and its messages,
-   * lineage, and descendants' ancestor chains) stays intact.
-   */
-  archiveSession(id: string): void {
-    this.#db.prepare(`UPDATE sessions SET archived_at = ? WHERE id = ?`).run(Date.now(), id);
-  }
-
-  /** Undo archiveSession: the row returns to the sidebar list. */
-  unarchiveSession(id: string): void {
-    this.#db.prepare(`UPDATE sessions SET archived_at = NULL WHERE id = ?`).run(id);
-  }
-
-  /** Deprecate (hide-by-default in the tree) or un-deprecate a branch. */
-  setDeprecated(id: string, on: boolean): void {
-    this.#db.prepare(`UPDATE sessions SET deprecated_at = ? WHERE id = ?`)
-      .run(on ? Date.now() : null, id);
-  }
-
-  /**
-   * Hard-delete sessions archived before `cutoff` (epoch ms) and all their rows —
-   * the long-term purge behind soft-archive. Returns the number of sessions removed.
-   * FK enforcement is toggled off for the sweep so child rows and inter-session
-   * parent pointers don't dictate a delete order; everything referencing a purged
-   * session is being removed or is a survivor whose pointer is nulled.
-   */
-  purgeArchivedBefore(cutoff: number): number {
-    const ids = (this.#db
-      .prepare(`SELECT id FROM sessions WHERE archived_at IS NOT NULL AND archived_at < ?`)
-      .all(cutoff) as { id: string }[]).map((r) => r.id);
-    if (ids.length === 0) return 0;
-    const ph = ids.map(() => "?").join(",");
-    this.#db.exec("PRAGMA foreign_keys = OFF");
-    try {
-      for (const t of ["message_embeddings", "turns"]) {
-        this.#db.prepare(`DELETE FROM ${t} WHERE session_id IN (${ph})`).run(...ids);
-      }
-      this.#db.prepare(`DELETE FROM messages WHERE session_id IN (${ph})`).run(...ids);
-      // Survivors that pointed at a purged parent lose that pointer (surface as roots).
-      this.#db.prepare(`UPDATE sessions SET parent_id = NULL WHERE parent_id IN (${ph})`).run(
-        ...ids,
-      );
-      this.#db.prepare(`DELETE FROM sessions WHERE id IN (${ph})`).run(...ids);
-    } finally {
-      this.#db.exec("PRAGMA foreign_keys = ON");
-    }
-    return ids.length;
-  }
-
-  /** The root→self chain of sessions (root first). Empty if id is unknown. */
   ancestorChain(id: string): Session[] {
     const chain: Session[] = [];
     const seen = new Set<string>();
@@ -790,423 +426,662 @@ export class Db {
       chain.push(cur);
       cur = cur.parentId ? this.getSession(cur.parentId) : undefined;
     }
-    chain.reverse();
-    return chain;
+    return chain.reverse();
   }
 
-  // messages ----------------------------------------------------------------
+  setSessionTitle(id: string, title: string): void {
+    this.#run(`UPDATE sessions SET title = ? WHERE id = ?`, title, id);
+  }
+
+  setSessionWorkspace(id: string, workspace: string): void {
+    this.#run(`UPDATE sessions SET workspace = ? WHERE id = ?`, workspace, id);
+  }
+
+  setSessionBase(id: string, base: string): void {
+    this.#run(`UPDATE sessions SET base = ? WHERE id = ?`, base, id);
+  }
+
+  /** Set by handoff; cleared with `null` by the first posted message. */
+  setSessionDraft(id: string, draft: string | null): void {
+    this.#run(`UPDATE sessions SET draft = ? WHERE id = ?`, draft, id);
+  }
+
+  /** `null` clears the pin back to the global default (spec §12). */
+  setSessionModel(id: string, model: string | null): void {
+    this.#run(`UPDATE sessions SET model = ? WHERE id = ?`, model, id);
+  }
+
+  setSessionEffort(id: string, effort: string | null): void {
+    this.#run(`UPDATE sessions SET effort = ? WHERE id = ?`, effort, id);
+  }
+
+  /** Whether the delegated TURN errored. Not an acceptance gate (spec §17). */
+  setSessionOutcome(id: string, ok: boolean): void {
+    this.#run(`UPDATE sessions SET outcome_ok = ? WHERE id = ?`, bit(ok), id);
+  }
+
+  /**
+   * Fold one round's usage into the session.
+   *
+   * Two different things happen here and conflating them is the classic bug: the
+   * cost columns ACCUMULATE across the session, while `context_tokens` /
+   * `cached_tokens` / `last_llm_at` are OVERWRITTEN — they describe the last round
+   * only, because the context meter is a gauge, not a total.
+   *
+   * `context_tokens` is the whole prompt the provider saw, which is the uncached
+   * input plus everything read from or written to the cache; `cached_tokens` is the
+   * share of that which was cached. The client derives cache warmth from
+   * `last_llm_at` and a TTL rather than reading a stored boolean.
+   */
+  addSessionUsage(id: string, usage: Usage, at: number): void {
+    const read = usage.cacheReadTokens ?? 0;
+    const write = usage.cacheWriteTokens ?? 0;
+    this.#run(
+      `UPDATE sessions SET
+         input_tokens      = COALESCE(input_tokens, 0) + ?,
+         output_tokens     = COALESCE(output_tokens, 0) + ?,
+         reasoning_tokens  = COALESCE(reasoning_tokens, 0) + ?,
+         cache_read_total  = COALESCE(cache_read_total, 0) + ?,
+         cache_write_total = COALESCE(cache_write_total, 0) + ?,
+         cost_usd          = COALESCE(cost_usd, 0) + ?,
+         context_tokens    = ?,
+         cached_tokens     = ?,
+         last_llm_at       = ?
+       WHERE id = ?`,
+      usage.inputTokens,
+      usage.outputTokens,
+      usage.reasoningTokens ?? 0,
+      read,
+      write,
+      usage.costUsd ?? 0,
+      usage.inputTokens + read + write,
+      read + write,
+      at,
+      id,
+    );
+  }
+
+  sessionUsage(id: string): UsageTotals {
+    const r = this.#get<SessionRow>(`SELECT * FROM sessions WHERE id = ?`, id);
+    return {
+      inputTokens: r?.input_tokens ?? 0,
+      outputTokens: r?.output_tokens ?? 0,
+      reasoningTokens: r?.reasoning_tokens ?? 0,
+      cacheReadTokens: r?.cache_read_total ?? 0,
+      cacheWriteTokens: r?.cache_write_total ?? 0,
+      costUsd: r?.cost_usd ?? 0,
+    };
+  }
+
+  /**
+   * The session plus every branch that collapsed under it, transitively — what the
+   * tree view shows as one piece of work's cost.
+   *
+   * Follows `origin_id` but only through `subagent` / `workflow_agent` rows: a fork
+   * or a compaction is a sibling the user opened deliberately, and charging its
+   * spend to the session it branched from would double-count the tree total.
+   * `UNION` (not `UNION ALL`) so a cyclic `origin_id` terminates instead of looping.
+   */
+  treeUsage(id: string): UsageTotals {
+    const r = this.#get<{
+      input: number;
+      output: number;
+      reasoning: number;
+      read: number;
+      write: number;
+      cost: number;
+    }>(
+      `WITH RECURSIVE tree(id) AS (
+         SELECT id FROM sessions WHERE id = ?
+         UNION
+         SELECT s.id FROM sessions s JOIN tree t ON s.origin_id = t.id
+          WHERE s.kind IN ('subagent', 'workflow_agent')
+       )
+       SELECT COALESCE(SUM(input_tokens), 0)      AS input,
+              COALESCE(SUM(output_tokens), 0)     AS output,
+              COALESCE(SUM(reasoning_tokens), 0)  AS reasoning,
+              COALESCE(SUM(cache_read_total), 0)  AS read,
+              COALESCE(SUM(cache_write_total), 0) AS write,
+              COALESCE(SUM(cost_usd), 0)          AS cost
+         FROM sessions WHERE id IN (SELECT id FROM tree)`,
+      id,
+    )!;
+    return {
+      inputTokens: r.input,
+      outputTokens: r.output,
+      reasoningTokens: r.reasoning,
+      cacheReadTokens: r.read,
+      cacheWriteTokens: r.write,
+      costUsd: r.cost,
+    };
+  }
+
+  /**
+   * Sessions with a turn in flight. Read from `turns`, not from a pending message:
+   * an orphaned turn's message can still be pending after a restart, and a session
+   * that looks busy forever is exactly the hang T2.3 recovery exists to prevent.
+   */
+  busySessionIds(): Set<string> {
+    const rows = this.#all<{ session_id: string }>(
+      `SELECT DISTINCT session_id FROM turns WHERE status = 'running'`,
+    );
+    return new Set(rows.map((r) => r.session_id));
+  }
+
+  // ---- messages -------------------------------------------------------------
 
   createMessage(m: Message): Message {
-    this.#db
-      .prepare(
-        `INSERT INTO messages (id, session_id, role, parts, pending, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      )
-      .run(m.id, m.sessionId, m.role, JSON.stringify(m.parts), m.pending ? 1 : 0, m.createdAt);
-    return m;
-  }
-
-  messagesFor(sessionId: string): Message[] {
-    const rows = this.#db
-      // rowid breaks created_at ties by insertion order (same-ms user + supervisor msgs).
-      .prepare(`SELECT * FROM messages WHERE session_id = ? ORDER BY created_at, rowid`)
-      .all(sessionId) as MessageRow[];
-    return rows.map(toMessage);
+    this.#run(
+      `INSERT INTO messages (id, session_id, role, parts, pending, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      m.id,
+      m.sessionId,
+      m.role,
+      JSON.stringify(m.parts),
+      bit(m.pending),
+      m.createdAt,
+    );
+    return this.getMessage(m.id)!;
   }
 
   getMessage(id: string): Message | undefined {
-    const r = this.#db.prepare(`SELECT * FROM messages WHERE id = ?`).get(id) as
-      | MessageRow
-      | undefined;
+    const r = this.#get<MessageRow>(`SELECT * FROM messages WHERE id = ?`, id);
     return r && toMessage(r);
   }
 
-  /** Overwrite a message's parts and pending flag (the turn runner streams into this). */
-  updateMessage(id: string, parts: Part[], pending: boolean): void {
-    this.#db
-      .prepare(`UPDATE messages SET parts = ?, pending = ? WHERE id = ?`)
-      .run(JSON.stringify(parts), pending ? 1 : 0, id);
+  /**
+   * The session's own messages, oldest first.
+   *
+   * `ORDER BY created_at, rowid` — never `created_at` alone. Seeded branch messages
+   * are written with a real clock (plan §6.1), so a turn started right afterwards
+   * shares their millisecond; `rowid` is the insertion order that keeps it after the
+   * seed. Dropping the tie-break silently reorders history.
+   */
+  messagesFor(sessionId: string): Message[] {
+    return this.#all<MessageRow>(
+      `SELECT * FROM messages WHERE session_id = ? ORDER BY created_at, rowid`,
+      sessionId,
+    ).map(toMessage);
   }
 
   /**
-   * The thread for a session: messages of every ancestor (root first) followed by the
-   * session's own, each session's messages in creation order. This is the tree-history
-   * read the UI opens a session with.
+   * The full replayable thread: every ancestor's messages root→parent, then the
+   * session's own. A fork parented at its target's parent therefore inherits the
+   * shared history without copying a byte of it (spec §14).
    */
-  threadFor(id: string): Message[] {
-    return this.ancestorChain(id).flatMap((s) => this.messagesFor(s.id));
+  threadFor(sessionId: string): Message[] {
+    return this.ancestorChain(sessionId).flatMap((s) => this.messagesFor(s.id));
   }
 
-  // message embeddings (recall search) ----------------------------------------
-
-  /** Newest messages with no embedding row yet — the lazy indexer's work queue. */
-  messagesToEmbed(limit: number): Message[] {
-    const rows = this.#db
-      .prepare(
-        `SELECT m.* FROM messages m
-           LEFT JOIN message_embeddings e ON e.message_id = m.id
-         WHERE e.message_id IS NULL AND m.pending = 0
-         ORDER BY m.created_at DESC LIMIT ?`,
-      )
-      .all(limit) as MessageRow[];
-    return rows.map(toMessage);
+  /** Wholesale overwrite — the turn runner streams into this every round. */
+  updateMessage(id: string, parts: Part[], pending: boolean): void {
+    this.#run(
+      `UPDATE messages SET parts = ?, pending = ? WHERE id = ?`,
+      JSON.stringify(parts),
+      bit(pending),
+      id,
+    );
   }
 
-  /** Store a message's unit vector; null marks "nothing to embed — don't retry". */
-  putEmbedding(messageId: string, sessionId: string, vector: Float32Array | null): void {
-    this.#db
-      .prepare(
-        `INSERT OR REPLACE INTO message_embeddings (message_id, session_id, dim, vector)
-         VALUES (?, ?, ?, ?)`,
-      )
-      .run(
-        messageId,
-        sessionId,
-        vector?.length ?? 0,
-        vector ? new Uint8Array(vector.buffer, vector.byteOffset, vector.byteLength) : null,
-      );
-  }
-
-  /** Every stored vector (dim>0 rows only), for the in-process cosine scan. */
-  allEmbeddings(): { messageId: string; sessionId: string; vector: Float32Array }[] {
-    const rows = this.#db
-      .prepare(`SELECT message_id, session_id, dim, vector FROM message_embeddings WHERE dim > 0`)
-      .all() as { message_id: string; session_id: string; dim: number; vector: Uint8Array }[];
-    return rows.map((r) => ({
-      messageId: r.message_id,
-      sessionId: r.session_id,
-      vector: new Float32Array(r.vector.buffer, r.vector.byteOffset, r.dim),
-    }));
-  }
-
-  // turns -------------------------------------------------------------------
+  // ---- turns ----------------------------------------------------------------
 
   createTurn(t: Turn): Turn {
-    this.#db
-      .prepare(
-        `INSERT INTO turns (id, session_id, message_id, status, step, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      )
-      .run(t.id, t.sessionId, t.messageId, t.status, t.step, t.updatedAt);
-    return t;
-  }
-
-  /**
-   * Stamp when the turn's first output reached the user (idempotent — only the
-   * first call lands). Doesn't bump updated_at: this is a metric, not a checkpoint.
-   */
-  setTurnFirstOutput(id: string, ts: number): void {
-    this.#db
-      .prepare(`UPDATE turns SET first_output_at = ? WHERE id = ? AND first_output_at IS NULL`)
-      .run(ts, id);
-  }
-
-  /** All turns for a session, oldest first (metrics.ts). */
-  turnsForSession(sessionId: string): Turn[] {
-    const rows = this.#db
-      .prepare(`SELECT * FROM turns WHERE session_id = ? ORDER BY updated_at`)
-      .all(sessionId) as TurnRow[];
-    return rows.map(toTurn);
-  }
-
-  /** Patch a turn's status and/or step, bumping updated_at. Used for checkpoints. */
-  updateTurn(id: string, patch: { status?: TurnStatus; step?: string }): void {
-    const cur = this.getTurn(id);
-    if (!cur) return;
-    this.#db
-      .prepare(`UPDATE turns SET status = ?, step = ?, updated_at = ? WHERE id = ?`)
-      .run(patch.status ?? cur.status, patch.step ?? cur.step, Date.now(), id);
-  }
-
-  /**
-   * Latest turn status per session (SQLite bare-column-with-MAX picks the row of
-   * the max). Sessions that never ran a turn are absent. Feeds the sidebar/map
-   * status affixes via GET /sessions.
-   */
-  latestTurnStatuses(): Map<string, TurnStatus> {
-    const rows = this.#db
-      .prepare(`SELECT session_id, status, MAX(updated_at) FROM turns GROUP BY session_id`)
-      .all() as { session_id: string; status: string }[];
-    return new Map(rows.map((r) => [r.session_id, r.status as TurnStatus]));
-  }
-
-  /** The turn that produced a given supervisor message (latest row wins). */
-  turnForMessage(messageId: string): Turn | undefined {
-    const r = this.#db
-      .prepare(`SELECT * FROM turns WHERE message_id = ? ORDER BY updated_at DESC LIMIT 1`)
-      .get(messageId) as TurnRow | undefined;
-    return r && toTurn(r);
+    this.#run(
+      `INSERT INTO turns (id, session_id, message_id, status, step, created_at, updated_at, error)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      t.id,
+      t.sessionId,
+      t.messageId,
+      t.status,
+      t.step,
+      t.createdAt,
+      t.updatedAt,
+      nul(t.error),
+    );
+    return this.getTurn(t.id)!;
   }
 
   getTurn(id: string): Turn | undefined {
-    const r = this.#db.prepare(`SELECT * FROM turns WHERE id = ?`).get(id) as
-      | TurnRow
-      | undefined;
+    const r = this.#get<TurnRow>(`SELECT * FROM turns WHERE id = ?`, id);
     return r && toTurn(r);
   }
 
-  turnsByStatus(status: TurnStatus): Turn[] {
-    const rows = this.#db
-      .prepare(`SELECT * FROM turns WHERE status = ? ORDER BY updated_at`)
-      .all(status) as TurnRow[];
-    return rows.map(toTurn);
+  /** The turn that produced a supervisor message; the most recently touched wins. */
+  turnForMessage(messageId: string): Turn | undefined {
+    const r = this.#get<TurnRow>(
+      `SELECT * FROM turns WHERE message_id = ? ORDER BY updated_at DESC, rowid DESC LIMIT 1`,
+      messageId,
+    );
+    return r && toTurn(r);
   }
 
-  // schedules ---------------------------------------------------------------
+  turnsForSession(sessionId: string): Turn[] {
+    return this.#all<TurnRow>(
+      `SELECT * FROM turns WHERE session_id = ? ORDER BY created_at, rowid`,
+      sessionId,
+    ).map(toTurn);
+  }
+
+  /** Boot recovery reads `running` here and orphans every row it finds (T2.3). */
+  turnsByStatus(status: TurnStatus): Turn[] {
+    return this.#all<TurnRow>(
+      `SELECT * FROM turns WHERE status = ? ORDER BY created_at, rowid`,
+      status,
+    ).map(toTurn);
+  }
+
+  /**
+   * The latest turn status per session, for the sidebar affixes. Correlated
+   * `LIMIT 1` rather than `GROUP BY` with a bare column: bare-column-with-MAX picks
+   * an arbitrary row among ties, and two checkpoints in one millisecond is the
+   * normal case, not the rare one.
+   */
+  latestTurnStatuses(): Map<string, TurnStatus> {
+    const rows = this.#all<{ session_id: string; status: string }>(
+      `SELECT session_id, status FROM turns
+        WHERE rowid = (
+          SELECT rowid FROM turns x WHERE x.session_id = turns.session_id
+           ORDER BY x.updated_at DESC, x.rowid DESC LIMIT 1
+        )`,
+    );
+    return new Map(rows.map((r) => [r.session_id, r.status as TurnStatus]));
+  }
+
+  /**
+   * Checkpoint a turn. Every call bumps `updated_at` from the injected clock — the
+   * point of a checkpoint is that it says *when* the turn last made progress.
+   *
+   * `usage` REPLACES the turn's usage columns rather than accumulating: the runner
+   * carries the turn's running total and checkpoints it, so adding here would
+   * double-count every round after the first. Session totals accumulate; that is
+   * `addSessionUsage`.
+   */
+  updateTurn(
+    id: string,
+    patch: { status?: TurnStatus; step?: string; error?: string | null; usage?: Usage },
+  ): void {
+    const cur = this.#get<TurnRow>(`SELECT * FROM turns WHERE id = ?`, id);
+    if (!cur) return;
+    const u = patch.usage;
+    this.#run(
+      `UPDATE turns SET status = ?, step = ?, updated_at = ?, error = ?,
+         input_tokens = ?, output_tokens = ?, reasoning_tokens = ?,
+         cache_read_tokens = ?, cache_write_tokens = ?, cost_usd = ?
+       WHERE id = ?`,
+      patch.status ?? cur.status,
+      patch.step ?? cur.step,
+      this.#now(),
+      "error" in patch ? nul(patch.error) : cur.error,
+      u ? u.inputTokens : cur.input_tokens,
+      u ? u.outputTokens : cur.output_tokens,
+      u ? nul(u.reasoningTokens) : cur.reasoning_tokens,
+      u ? nul(u.cacheReadTokens) : cur.cache_read_tokens,
+      u ? nul(u.cacheWriteTokens) : cur.cache_write_tokens,
+      u ? nul(u.costUsd) : cur.cost_usd,
+      id,
+    );
+  }
+
+  // ---- durable KV, scoped to the lineage root --------------------------------
+
+  getState(rootId: string, key: string): string | undefined {
+    return this.#get<{ value: string }>(
+      `SELECT value FROM session_state WHERE root_id = ? AND key = ?`,
+      rootId,
+      key,
+    )?.value;
+  }
+
+  /** Upsert: a re-set overwrites in place and re-stamps `updated_at`. */
+  setState(rootId: string, key: string, value: string, now: number): void {
+    this.#run(
+      `INSERT INTO session_state (root_id, key, value, updated_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(root_id, key)
+         DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+      rootId,
+      key,
+      value,
+      now,
+    );
+  }
+
+  /** Keys and sizes only — a listing must never drag whole values into context. */
+  listState(rootId: string): { key: string; bytes: number; updatedAt: number }[] {
+    return this.#all<{ key: string; bytes: number; updated_at: number }>(
+      `SELECT key, length(value) AS bytes, updated_at FROM session_state
+        WHERE root_id = ? ORDER BY key`,
+      rootId,
+    ).map((r) => ({ key: r.key, bytes: r.bytes, updatedAt: r.updated_at }));
+  }
+
+  /** True when a row was actually removed, so the program learns "there was none". */
+  deleteState(rootId: string, key: string): boolean {
+    const existed = this.getState(rootId, key) !== undefined;
+    this.#run(`DELETE FROM session_state WHERE root_id = ? AND key = ?`, rootId, key);
+    return existed;
+  }
+
+  // ---- schedules ------------------------------------------------------------
 
   createSchedule(s: Schedule): Schedule {
-    this.#db
-      .prepare(
-        `INSERT INTO schedules (id, title, prompt, workspace, spec, enabled, created_at, last_run_at, next_run_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        s.id,
-        s.title,
-        s.prompt,
-        s.workspace,
-        s.spec,
-        s.enabled ? 1 : 0,
-        s.createdAt,
-        s.lastRunAt,
-        s.nextRunAt,
-      );
-    return s;
+    this.#run(
+      `INSERT INTO schedules
+         (id, title, prompt, workspace, spec, enabled, created_at, last_run_at, next_run_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      s.id,
+      s.title,
+      s.prompt,
+      s.workspace,
+      s.spec,
+      bit(s.enabled),
+      s.createdAt,
+      s.lastRunAt,
+      s.nextRunAt,
+    );
+    return this.getSchedule(s.id)!;
   }
 
   getSchedule(id: string): Schedule | undefined {
-    const r = this.#db.prepare(`SELECT * FROM schedules WHERE id = ?`).get(id) as
-      | ScheduleRow
-      | undefined;
+    const r = this.#get<ScheduleRow>(`SELECT * FROM schedules WHERE id = ?`, id);
     return r && toSchedule(r);
   }
 
   listSchedules(): Schedule[] {
-    const rows = this.#db
-      .prepare(`SELECT * FROM schedules ORDER BY created_at, rowid`)
-      .all() as ScheduleRow[];
-    return rows.map(toSchedule);
+    return this.#all<ScheduleRow>(
+      `SELECT * FROM schedules ORDER BY created_at, rowid`,
+    ).map(toSchedule);
   }
 
-  /** Enabled schedules whose next_run_at has passed — the ticker's due set. */
+  /** The ticker's due set: enabled and past due, soonest first. */
   dueSchedules(now: number): Schedule[] {
-    const rows = this.#db
-      .prepare(
-        `SELECT * FROM schedules WHERE enabled = 1 AND next_run_at <= ? ORDER BY next_run_at`,
-      )
-      .all(now) as ScheduleRow[];
-    return rows.map(toSchedule);
+    return this.#all<ScheduleRow>(
+      `SELECT * FROM schedules WHERE enabled = 1 AND next_run_at <= ?
+        ORDER BY next_run_at, rowid`,
+      now,
+    ).map(toSchedule);
   }
 
-  /** Overwrite the caller-recomputed fields (PATCH merges into the full row first). */
+  /** Overwrites the mutable fields; the caller merges a PATCH into the full row. */
   updateSchedule(s: Schedule): void {
-    this.#db
-      .prepare(
-        `UPDATE schedules SET title = ?, prompt = ?, workspace = ?, spec = ?, enabled = ?, next_run_at = ? WHERE id = ?`,
-      )
-      .run(s.title, s.prompt, s.workspace, s.spec, s.enabled ? 1 : 0, s.nextRunAt, s.id);
+    this.#run(
+      `UPDATE schedules SET title = ?, prompt = ?, workspace = ?, spec = ?, enabled = ?,
+         last_run_at = ?, next_run_at = ? WHERE id = ?`,
+      s.title,
+      s.prompt,
+      s.workspace,
+      s.spec,
+      bit(s.enabled),
+      s.lastRunAt,
+      s.nextRunAt,
+      s.id,
+    );
   }
 
-  /** Stamp a fire: when it ran and when it runs next. */
+  /**
+   * Stamp a fire. The caller computes `nextRunAt` FROM NOW, never from the stale
+   * stored value — a server down through N slots fires once and resumes cadence
+   * rather than bursting N make-up runs (plan §6.8).
+   */
   markScheduleRun(id: string, lastRunAt: number, nextRunAt: number): void {
-    this.#db
-      .prepare(`UPDATE schedules SET last_run_at = ?, next_run_at = ? WHERE id = ?`)
-      .run(lastRunAt, nextRunAt, id);
+    this.#run(
+      `UPDATE schedules SET last_run_at = ?, next_run_at = ? WHERE id = ?`,
+      lastRunAt,
+      nextRunAt,
+      id,
+    );
   }
 
   deleteSchedule(id: string): void {
-    this.#db.prepare(`DELETE FROM schedules WHERE id = ?`).run(id);
+    this.#run(`DELETE FROM schedules WHERE id = ?`, id);
   }
 
-  // session state (durable key/value notes — see state.ts) --------------------
-
-  /** The stored JSON text for a key, or undefined when unset. */
-  getState(rootId: string, key: string): string | undefined {
-    const r = this.#db
-      .prepare(`SELECT value FROM session_state WHERE root_id = ? AND key = ?`)
-      .get(rootId, key) as { value: string } | undefined;
-    return r?.value;
-  }
-
-  /** Upsert: a re-set overwrites in place and re-stamps updated_at. */
-  setState(rootId: string, key: string, value: string, now: number): void {
-    this.#db
-      .prepare(
-        `INSERT INTO session_state (root_id, key, value, updated_at) VALUES (?, ?, ?, ?)
-         ON CONFLICT(root_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-      )
-      .run(rootId, key, value, now);
-  }
-
-  /** Keys only (with sizes) — listing never drags whole values into context. */
-  listState(rootId: string): { key: string; bytes: number; updatedAt: number }[] {
-    const rows = this.#db
-      .prepare(
-        `SELECT key, length(value) AS bytes, updated_at FROM session_state
-         WHERE root_id = ? ORDER BY key`,
-      )
-      .all(rootId) as { key: string; bytes: number; updated_at: number }[];
-    return rows.map((r) => ({ key: r.key, bytes: r.bytes, updatedAt: r.updated_at }));
-  }
-
-  /** True when a row was actually removed (the program learns "there was nothing"). */
-  deleteState(rootId: string, key: string): boolean {
-    const before = this.getState(rootId, key) !== undefined;
-    this.#db.prepare(`DELETE FROM session_state WHERE root_id = ? AND key = ?`).run(rootId, key);
-    return before;
-  }
-
-  // workflows ---------------------------------------------------------------
+  // ---- workflows ------------------------------------------------------------
 
   createWorkflow(w: WorkflowRun): WorkflowRun {
-    this.#db
-      .prepare(
-        `INSERT INTO workflows (id, session_id, name, description, script, phases, status, current_phase, result, error, args, resume_of, created_at, finished_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        w.id,
-        w.sessionId,
-        w.name,
-        w.description,
-        w.script,
-        JSON.stringify(w.phases),
-        w.status,
-        w.currentPhase,
-        w.result === null ? null : JSON.stringify(w.result),
-        w.error,
-        w.args === null || w.args === undefined ? null : JSON.stringify(w.args),
-        w.resumeOf,
-        w.createdAt,
-        w.finishedAt,
-      );
-    return w;
+    this.#run(
+      `INSERT INTO workflows
+         (id, session_id, name, description, script, phases, status, current_phase,
+          result, error, args, resume_of, created_at, finished_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      w.id,
+      w.sessionId,
+      w.name,
+      w.description,
+      w.script,
+      JSON.stringify(w.phases),
+      w.status,
+      w.currentPhase,
+      json(w.result),
+      w.error,
+      json(w.args),
+      w.resumeOf,
+      w.createdAt,
+      w.finishedAt,
+    );
+    return this.getWorkflow(w.id)!;
   }
 
   getWorkflow(id: string): WorkflowRun | undefined {
-    const r = this.#db.prepare(`SELECT * FROM workflows WHERE id = ?`).get(id) as
-      | WorkflowRow
-      | undefined;
+    const r = this.#get<WorkflowRow>(`SELECT * FROM workflows WHERE id = ?`, id);
     return r && toWorkflow(r);
   }
 
   listWorkflows(sessionId?: string): WorkflowRun[] {
-    const rows =
-      (sessionId
-        ? this.#db.prepare(`SELECT * FROM workflows WHERE session_id = ? ORDER BY created_at DESC`)
-          .all(sessionId)
-        : this.#db.prepare(`SELECT * FROM workflows ORDER BY created_at DESC`)
-          .all()) as WorkflowRow[];
+    const rows = sessionId === undefined
+      ? this.#all<WorkflowRow>(`SELECT * FROM workflows ORDER BY created_at DESC, rowid DESC`)
+      : this.#all<WorkflowRow>(
+        `SELECT * FROM workflows WHERE session_id = ? ORDER BY created_at DESC, rowid DESC`,
+        sessionId,
+      );
     return rows.map(toWorkflow);
   }
 
-  /** Overwrite the run's mutable outcome fields (status/phase/result/error/finished). */
-  updateWorkflow(
-    id: string,
-    patch: {
-      status?: WorkflowStatus;
-      currentPhase?: string | null;
-      result?: unknown;
-      error?: string | null;
-      finishedAt?: number | null;
-    },
-  ): void {
+  /** Runs still `running`/`paused` at boot — orphaned like turns. */
+  unfinishedWorkflows(): WorkflowRun[] {
+    return this.#all<WorkflowRow>(
+      `SELECT * FROM workflows WHERE status IN ('running', 'paused') ORDER BY created_at, rowid`,
+    ).map(toWorkflow);
+  }
+
+  /**
+   * Patch a run's mutable fields. Membership (`"x" in patch`), not `!== undefined`,
+   * so `{result: undefined}` and `{}` stay distinguishable — `result` and `args` are
+   * `unknown` and `undefined` is a value a script can legitimately return.
+   *
+   * Identity fields (`id`, `sessionId`, `script`, `createdAt`) are not patchable:
+   * the script text is the record of what actually ran, and a rerun is a NEW run
+   * that points back via `resumeOf` rather than an edit of the old one.
+   */
+  updateWorkflow(id: string, patch: Partial<WorkflowRun>): void {
     const cur = this.getWorkflow(id);
     if (!cur) return;
-    this.#db
-      .prepare(
-        `UPDATE workflows SET status = ?, current_phase = ?, result = ?, error = ?, finished_at = ? WHERE id = ?`,
-      )
-      .run(
-        patch.status ?? cur.status,
-        patch.currentPhase !== undefined ? patch.currentPhase : cur.currentPhase,
-        patch.result !== undefined
-          ? (patch.result === null ? null : JSON.stringify(patch.result))
-          : (cur.result === null ? null : JSON.stringify(cur.result)),
-        patch.error !== undefined ? patch.error : cur.error,
-        patch.finishedAt !== undefined ? patch.finishedAt : cur.finishedAt,
-        id,
-      );
-  }
-
-  /** Running/paused runs — the orphan-recovery set after a server restart. */
-  unfinishedWorkflows(): WorkflowRun[] {
-    const rows = this.#db
-      .prepare(`SELECT * FROM workflows WHERE status IN ('running', 'paused')`)
-      .all() as WorkflowRow[];
-    return rows.map(toWorkflow);
+    this.#run(
+      `UPDATE workflows SET name = ?, description = ?, phases = ?, status = ?,
+         current_phase = ?, result = ?, error = ?, args = ?, finished_at = ?
+       WHERE id = ?`,
+      "name" in patch ? patch.name! : cur.name,
+      "description" in patch ? patch.description! : cur.description,
+      JSON.stringify("phases" in patch ? patch.phases! : cur.phases),
+      "status" in patch ? patch.status! : cur.status,
+      "currentPhase" in patch ? nul(patch.currentPhase) : cur.currentPhase,
+      json("result" in patch ? patch.result : cur.result),
+      "error" in patch ? nul(patch.error) : cur.error,
+      json("args" in patch ? patch.args : cur.args),
+      "finishedAt" in patch ? nul(patch.finishedAt) : cur.finishedAt,
+      id,
+    );
   }
 
   createWorkflowAgent(a: WorkflowAgent): WorkflowAgent {
-    this.#db
-      .prepare(
-        `INSERT INTO workflow_agents (id, run_id, idx, key, label, phase, prompt, model, status, result, session_id, started_at, finished_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        a.id,
-        a.runId,
-        a.idx,
-        a.key,
-        a.label,
-        a.phase,
-        a.prompt,
-        a.model,
-        a.status,
-        a.result,
-        a.sessionId,
-        a.startedAt,
-        a.finishedAt,
-      );
-    return a;
+    this.#run(
+      `INSERT INTO workflow_agents
+         (id, run_id, idx, key, label, phase, prompt, model, schema, status, result,
+          error, session_id, started_at, finished_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      a.id,
+      a.runId,
+      a.idx,
+      a.key,
+      a.label,
+      a.phase,
+      a.prompt,
+      a.model,
+      // The `schema` column has no field on the wire `WorkflowAgent` (schema/parts.ts)
+      // — the JSON Schema of a {schema} call is part of what `key` hashes, so a rerun
+      // already re-runs the right calls without reading it back. See notes on T5.4.
+      null,
+      a.status,
+      a.result,
+      a.error,
+      a.sessionId,
+      a.startedAt,
+      a.finishedAt,
+    );
+    return this.#agent(a.id)!;
   }
 
-  updateWorkflowAgent(
-    id: string,
-    patch: {
-      status?: WorkflowAgentStatus;
-      result?: string | null;
-      sessionId?: string | null;
-      /** Reset when a queued agent actually starts, so elapsed excludes queue time. */
-      startedAt?: number;
-      finishedAt?: number | null;
-    },
-  ): void {
-    const r = this.#db.prepare(`SELECT * FROM workflow_agents WHERE id = ?`).get(id) as
-      | WorkflowAgentRow
-      | undefined;
-    if (!r) return;
-    this.#db
-      .prepare(
-        `UPDATE workflow_agents SET status = ?, result = ?, session_id = ?, started_at = ?, finished_at = ? WHERE id = ?`,
-      )
-      .run(
-        patch.status ?? r.status,
-        patch.result !== undefined ? patch.result : r.result,
-        patch.sessionId !== undefined ? patch.sessionId : r.session_id,
-        patch.startedAt !== undefined ? patch.startedAt : r.started_at,
-        patch.finishedAt !== undefined ? patch.finishedAt : r.finished_at,
-        id,
-      );
+  #agent(id: string): WorkflowAgent | undefined {
+    const r = this.#get<WorkflowAgentRow>(`SELECT * FROM workflow_agents WHERE id = ?`, id);
+    return r && toWorkflowAgent(r);
+  }
+
+  /**
+   * Patch a journal row. `startedAt` is patchable on purpose: a queued agent's clock
+   * is reset when it actually starts, so elapsed time excludes time spent parked on
+   * the run's semaphore — otherwise a saturated run shows N agents "working" when
+   * only `concurrency()` of them are.
+   */
+  updateWorkflowAgent(id: string, patch: Partial<WorkflowAgent>): void {
+    const cur = this.#agent(id);
+    if (!cur) return;
+    this.#run(
+      `UPDATE workflow_agents SET label = ?, phase = ?, status = ?, result = ?, error = ?,
+         session_id = ?, started_at = ?, finished_at = ? WHERE id = ?`,
+      "label" in patch ? patch.label! : cur.label,
+      "phase" in patch ? nul(patch.phase) : cur.phase,
+      "status" in patch ? patch.status! : cur.status,
+      "result" in patch ? nul(patch.result) : cur.result,
+      "error" in patch ? nul(patch.error) : cur.error,
+      "sessionId" in patch ? nul(patch.sessionId) : cur.sessionId,
+      "startedAt" in patch ? patch.startedAt! : cur.startedAt,
+      "finishedAt" in patch ? nul(patch.finishedAt) : cur.finishedAt,
+      id,
+    );
   }
 
   listWorkflowAgents(runId: string): WorkflowAgent[] {
-    const rows = this.#db
-      .prepare(`SELECT * FROM workflow_agents WHERE run_id = ? ORDER BY idx`)
-      .all(runId) as WorkflowAgentRow[];
-    return rows.map(toWorkflowAgent);
+    return this.#all<WorkflowAgentRow>(
+      `SELECT * FROM workflow_agents WHERE run_id = ? ORDER BY idx, rowid`,
+      runId,
+    ).map(toWorkflowAgent);
+  }
+
+  /** Journal lookup on rerun: the source run's row for a call key. First call wins. */
+  findWorkflowAgent(runId: string, key: string): WorkflowAgent | undefined {
+    const r = this.#get<WorkflowAgentRow>(
+      `SELECT * FROM workflow_agents WHERE run_id = ? AND key = ? ORDER BY idx, rowid LIMIT 1`,
+      runId,
+      key,
+    );
+    return r && toWorkflowAgent(r);
+  }
+
+  // ---- keyword search -------------------------------------------------------
+
+  /**
+   * Index (or re-index) one message. Idempotent by delete-then-insert: a message is
+   * re-indexed on every streaming update, and `messages_fts` is a standalone table
+   * with no unique constraint to lean on, so the delete is what stops a supervisor
+   * message from appearing once per round of its turn.
+   *
+   * A message with no prose contributes no row at all — an empty row would match
+   * nothing but would still have to be walked.
+   */
+  indexMessage(m: Message): void {
+    this.#run(`DELETE FROM messages_fts WHERE message_id = ?`, m.id);
+    const text = indexableText(m.parts);
+    if (!text) return;
+    this.#run(
+      `INSERT INTO messages_fts (text, message_id, session_id) VALUES (?, ?, ?)`,
+      text,
+      m.id,
+      m.sessionId,
+    );
+  }
+
+  /**
+   * Keyword search over transcripts (spec §17 — FTS, no embeddings).
+   *
+   * Ordered by relevance and tie-broken by `(created_at DESC, message_id)` rather
+   * than by anything FTS-internal, so a rebuilt index returns results in the same
+   * order as an incrementally built one (plan T8.9). An FTS syntax error becomes a
+   * 400 naming the query: the user typed it, and a bare "failed" would leave them
+   * guessing which character SQLite objected to.
+   */
+  searchMessages(query: string, opts: { sessionId?: string; limit?: number } = {}): SearchHit[] {
+    const limit = opts.limit ?? 20;
+    const scoped = opts.sessionId !== undefined;
+    const sql = `SELECT messages_fts.message_id AS message_id,
+                        messages_fts.session_id AS session_id,
+                        snippet(messages_fts, 0, '', '', '…', 24) AS snippet,
+                        m.created_at AS created_at
+                   FROM messages_fts
+                   JOIN messages m ON m.id = messages_fts.message_id
+                  WHERE messages_fts MATCH ?
+                    ${scoped ? "AND messages_fts.session_id = ?" : ""}
+                  ORDER BY rank, m.created_at DESC, messages_fts.message_id
+                  LIMIT ?`;
+    const params: (string | number)[] = scoped ? [query, opts.sessionId!, limit] : [query, limit];
+    let rows: {
+      message_id: string;
+      session_id: string;
+      snippet: string;
+      created_at: number;
+    }[];
+    try {
+      rows = this.#all(sql, ...params);
+    } catch (e) {
+      throw new BadRequestError(
+        `search query ${JSON.stringify(query)} is not valid FTS5 syntax ` +
+          `(${e instanceof Error ? e.message : String(e)}). ` +
+          `Quote a phrase as "like this"; bare ", *, ^, : and NEAR are operators.`,
+      );
+    }
+    return rows.map((r) => ({
+      messageId: r.message_id,
+      sessionId: r.session_id,
+      snippet: r.snippet,
+      createdAt: r.created_at,
+    }));
+  }
+
+  /**
+   * Rebuild the whole index from `messages`.
+   *
+   * Deliberately implemented as "clear, then run `indexMessage` over every row in
+   * `(created_at, rowid)` order" rather than as a bulk INSERT..SELECT: sharing the
+   * one projection function is what makes a rebuild produce results identical to
+   * incremental indexing, which is T8.9's acceptance criterion. A second projection
+   * here would be a second thing to keep in sync, and the drift would only ever show
+   * up as search results that quietly differ after a rebuild.
+   */
+  rebuildSearchIndex(): void {
+    this.#run(`DELETE FROM messages_fts`);
+    const rows = this.#all<MessageRow>(`SELECT * FROM messages ORDER BY created_at, rowid`);
+    for (const r of rows) this.indexMessage(toMessage(r));
   }
 }
 
-/** Resolve the DB path: BOUGH_DB override, else ~/.bough/bough.db (dir created). */
-function defaultDbPath(): string {
-  const override = Deno.env.get("BOUGH_DB");
-  if (override) return override;
-  const dir = boughHome();
-  mkdirSync(dir, { recursive: true });
-  return join(dir, "bough.db");
-}
-
-export function openDb(path: string = defaultDbPath()): Db {
-  return new Db(path);
+/**
+ * Open the database, creating its parent directory when it does not exist.
+ *
+ * The path resolves through `paths.dbPath()` — `BOUGH_DB`, else `<BOUGH_HOME>/bough.db`
+ * — so a test sets one env var and gets a hermetic database, and the rewrite never
+ * opens the live install's file (plan §2). `":memory:"` needs no directory.
+ */
+export function openDb(path: string = dbPath(), opts: DbOptions = {}): SqliteDb {
+  if (path !== ":memory:" && !path.startsWith("file:")) {
+    mkdirSync(dirname(path), { recursive: true });
+  }
+  return new SqliteDb(path, opts);
 }

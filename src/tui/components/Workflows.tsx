@@ -1,39 +1,153 @@
-// The workflows tab: a miller-column browser over a run, matching Claude Code's
-// /workflows. Four levels — runs → phases → that phase's agents → one agent's
-// detail — where the LEFT pane always holds the level you came from and the
-// right pane holds what you selected. The stacked single-column version this
-// replaced silently dropped whole phase groups once the viewport filled, which
-// read as "that's the whole run" on anything bigger than a handful of agents.
-// App owns the data and key handling; this renders the level it is given.
-import { Box } from "ink";
-import { Text } from "./Text.tsx";
-import { palette } from "../theme.ts";
-import type { WfAgentView, WfSummary, WireWorkflowRun } from "../api.ts";
-import { clip, relTime } from "../format.ts";
+/**
+ * The workflow run view — the surface delegation is *for*.
+ *
+ * THE INVARIANT THIS HOLDS: **a run that replayed nothing never looks like a run that
+ * worked.** Spec §8 states it as a requirement on the system, not on the UI: "Any
+ * operation that replays returns how many calls were served from the journal and how
+ * many ran live… A rerun that silently replayed nothing looks exactly like a successful
+ * rerun, so the count is the only thing that makes a key defect visible. This is a
+ * required part of the response, not a UI nicety." The server already computes it
+ * (`workflow/report.ts`); the failure mode this file prevents is the client dropping it
+ * on the floor. `replayRows` is therefore unconditional — it renders for every run, in
+ * every state, before the phases — and it renders the counts AND the server's canonical
+ * `line` so a bough TUI, `bough exec` and a system note all say the same sentence.
+ *
+ * The alarm case gets its own tone: `available > 0, replayed: 0` means the source run
+ * held answers and this run's keys matched none of them, which is a key defect and not
+ * a slow day. `available: 0` is an ordinary first run and says so quietly.
+ *
+ * WHAT THE VIEW IS. Miller-column: runs → phases → that phase's agents → one agent,
+ * plus the script. The stacked single-column version this replaces silently dropped
+ * whole phase groups once the viewport filled, which read as "that is the whole run".
+ * Phases keep their ordinal until they complete, so the SHAPE of a run is legible
+ * before it gets there — `meta.phases` declares stages no agent has reached yet.
+ *
+ * STEERING (spec §8). `p` pauses — gating new `agent()` calls while the ones in flight
+ * finish and are journaled — and `x` stops. The script level exists because "stop, edit
+ * the script, relaunch seeded from the journal" is the whole steering loop, and it names
+ * the edit target on screen: the mirror at `~/.bough/workflows/<id>.js`. Pausing BEFORE
+ * stopping is called out, since it preserves the most work — a dispatched agent allowed
+ * to finish is journaled and replays; one killed in flight is not.
+ *
+ * COST IS A HEADER FIELD, not a post-mortem: tokens per agent and per phase while the
+ * run is going, and the advisory large-run flag beside the control that stops it — a
+ * warning with no adjacent action is one people learn to ignore.
+ *
+ * PURE ROWS. Everything above the component is `Row[]` — `{text, tone}` cells with no
+ * React in them — so what the user sees is asserted directly in `Workflows.test.ts`
+ * with nothing mounted and no terminal (plan §7).
+ *
+ * NOTE on colour: `tui/theme.ts` (T9.2) has not landed and is not in this task's owned
+ * set, so `toneColor` maps the semantic tones onto ink's named colours. One function to
+ * repoint. Clipping, windowing and number formatting come from `tui/format.ts`.
+ */
+import { Box, Text } from "ink";
+import type { WorkflowRun } from "../../schema/parts.ts";
+import type { WorkflowAgentView } from "../../workflow/control.ts";
+import type { LargeRunFlag, ReplaySummary, RunCost } from "../../workflow/report.ts";
+import type { WorkflowDetail, WorkflowSummary } from "../api.ts";
+import { clip, fmtTokens, windowAround } from "../format.ts";
 
-/** 0 runs · 1 phases · 2 a phase's agents · 3 one agent's detail. */
-export type WfLevel = 0 | 1 | 2 | 3;
+// ---------------------------------------------------------------------------
+// Rows: the testable rendering unit
+// ---------------------------------------------------------------------------
 
-/** The `f` cycle: all, then each status worth isolating on a big run. */
-export const WF_FILTERS = [null, "running", "queued", "done", "error"] as const;
-export type WfFilter = (typeof WF_FILTERS)[number];
+export type Tone = "text" | "muted" | "accent" | "warn" | "error" | "info";
+export interface Cell {
+  text: string;
+  tone?: Tone;
+  bold?: boolean;
+}
+export type Row = Cell[];
 
-/** Phases-pane width. The panel draws its own border+padding around this view,
- * so every frame measurement works off `inner` (cols minus that chrome) — using
- * the raw terminal width overflowed and Ink truncated the right-hand column. */
-const LEFT_W = 20;
-const PANEL_CHROME = 4;
+export const rowText = (row: Row): string => row.map((c) => c.text).join("");
+export const linesOf = (rows: Row[]): string[] => rows.map(rowText);
+
+function toneColor(tone: Tone | undefined): { color?: string; dimColor?: boolean } {
+  switch (tone) {
+    case "accent":
+      return { color: "green" };
+    case "warn":
+      return { color: "yellow" };
+    case "error":
+      return { color: "red" };
+    case "info":
+      return { color: "cyan" };
+    case "muted":
+      return { dimColor: true };
+    default:
+      return {};
+  }
+}
+
+function Line({ row }: { row: Row }) {
+  return (
+    <Text wrap="truncate">
+      {row.map((c, i) => <Text key={i} bold={c.bold} {...toneColor(c.tone)}>{c.text}</Text>)}
+    </Text>
+  );
+}
+
+/** `12s` / `3m07s`. Seconds survive past a minute: the clock is how a wedged agent shows. */
+function elapsed(from: number, to: number | null, now: number): string {
+  const s = Math.max(0, Math.round(((to ?? now) - from) / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s`;
+}
+
+/** "17.8k tok" — the per-agent cost signal. Empty for a call that spent nothing. */
+export function tokenChip(n: number): string {
+  return n <= 0 ? "" : `${fmtTokens(n)} tok`;
+}
+
+/** Window a list around the cursor so a 200-agent phase still scrolls. */
+export function windowed<T>(items: T[], sel: number, rows: number): { slice: T[]; from: number } {
+  if (items.length <= rows) return { slice: items, from: 0 };
+  const { start, end } = windowAround(sel, items.length, rows);
+  return { slice: items.slice(start, end), from: start };
+}
+
+// ---------------------------------------------------------------------------
+// Status
+// ---------------------------------------------------------------------------
+
+/** Status → (glyph, tone). One place, so every level and the chip agree. */
+export function wfGlyph(status: string): { glyph: string; tone: Tone } {
+  switch (status) {
+    case "queued":
+      return { glyph: "◦", tone: "muted" }; // journaled, waiting on the semaphore
+    case "running":
+      return { glyph: "◐", tone: "info" };
+    case "paused":
+      return { glyph: "⏸", tone: "warn" };
+    case "done":
+      return { glyph: "✓", tone: "accent" };
+    case "cached":
+      return { glyph: "≡", tone: "accent" }; // replayed from the journal — no agent ran
+    case "error":
+      return { glyph: "✗", tone: "error" };
+    case "stopped":
+      return { glyph: "■", tone: "warn" };
+    default: // orphaned
+      return { glyph: "⚠", tone: "warn" };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Grouping and filtering (pure)
+// ---------------------------------------------------------------------------
+
+export interface PhaseGroup {
+  title: string;
+  detail?: string;
+  agents: WorkflowAgentView[];
+}
 
 /**
- * The run's agents grouped under their phase, in script order: meta-declared
- * phases first (including ones no agent has reached yet, so the shape of the run
- * is visible before it gets there), then phases agents reported that meta never
- * declared, then phase-less agents.
+ * Agents grouped under their phase, in script order: `meta`-declared phases first —
+ * INCLUDING ones no agent has reached, so the run's shape is visible before it gets
+ * there — then phases agents reported that meta never declared, then phase-less agents.
  */
-export function phaseGroups(
-  run: WireWorkflowRun,
-  agents: WfAgentView[],
-): Array<{ title: string; detail?: string; agents: WfAgentView[] }> {
+export function phaseGroups(run: WorkflowRun, agents: WorkflowAgentView[]): PhaseGroup[] {
   const declared = run.phases.map((p) => p.title);
   const extra = [...new Set(agents.map((a) => a.phase ?? ""))]
     .filter((p) => p && !declared.includes(p));
@@ -49,8 +163,12 @@ export function phaseGroups(
     .filter((g) => g.agents.length > 0 || declared.includes(g.title));
 }
 
-/** The agents `f` leaves visible in a group. "done" folds in journal replays. */
-export function visibleAgents(agents: WfAgentView[], filter: WfFilter): WfAgentView[] {
+/** The `f` cycle: all, then each status worth isolating on a big run. */
+export const WF_FILTERS = [null, "running", "queued", "done", "error"] as const;
+export type WfFilter = (typeof WF_FILTERS)[number];
+
+/** "done" folds in journal replays: both are answers, and only one cost anything. */
+export function visibleAgents(agents: WorkflowAgentView[], filter: WfFilter): WorkflowAgentView[] {
   if (!filter) return agents;
   if (filter === "done") {
     return agents.filter((a) => a.status === "done" || a.status === "cached");
@@ -58,486 +176,436 @@ export function visibleAgents(agents: WfAgentView[], filter: WfFilter): WfAgentV
   return agents.filter((a) => a.status === filter);
 }
 
-/** Status → (glyph, color). One place so every level and the chip agree. */
-export function wfGlyph(status: string): { glyph: string; color: string | undefined } {
-  switch (status) {
-    case "queued":
-      // Journaled but waiting on the run's concurrency semaphore — not working yet.
-      return { glyph: "◦", color: palette.muted };
-    case "running":
-      return { glyph: "◐", color: palette.accent };
-    case "paused":
-      return { glyph: "⏸", color: palette.warn };
-    case "done":
-      return { glyph: "✓", color: palette.accent };
-    case "cached":
-      return { glyph: "≡", color: palette.accent };
-    case "error":
-      return { glyph: "✗", color: palette.error };
-    case "stopped":
-      return { glyph: "■", color: palette.warn };
-    default: // orphaned
-      return { glyph: "⚠", color: palette.warn };
-  }
+// ---------------------------------------------------------------------------
+// Replay, cost, and the large-run flag
+// ---------------------------------------------------------------------------
+
+/**
+ * The replay accounting. NEVER conditional — see the header. Two rows: the counts,
+ * broken out so the arithmetic is visible (`replayed + ranLive + pending === total`),
+ * then the server's one-line form, so every client says the same sentence.
+ */
+export function replayRows(replay: ReplaySummary): Row[] {
+  const alarm = replay.available > 0 && replay.replayed === 0;
+  const counts = [
+    `${replay.replayed} replayed`,
+    `${replay.ranLive} ran live`,
+    ...(replay.pending > 0 ? [`${replay.pending} still going`] : []),
+    `of ${replay.total}`,
+  ].join(" · ");
+  const source = replay.sourceId ? ` · ${replay.available} available to replay` : "";
+  return [
+    [
+      { text: "≡ replay  ", tone: "muted" },
+      { text: counts + source, tone: alarm ? "error" : "text", bold: alarm },
+    ],
+    [{ text: `  ${replay.line}`, tone: alarm ? "error" : "muted" }],
+  ];
 }
 
-/** "3/7" agents with the failed count when nonzero. */
-function agentCounts(a: WfSummary["agents"]): string {
-  return `${a.done}/${a.total}${a.failed ? ` (${a.failed} failed)` : ""}`;
+/** Tokens and agent-time, per run and per phase. Visible while it runs, not after. */
+export function costRows(cost: RunCost): Row[] {
+  const perPhase = cost.byPhase
+    .map((p) => `${p.phase || "agents"} ${tokenChip(p.tokens) || "0 tok"}`)
+    .join(" · ");
+  return [[
+    { text: "$ cost    ", tone: "muted" },
+    { text: `${tokenChip(cost.tokens) || "0 tok"} · ${cost.agents} agents`, tone: "text" },
+    { text: perPhase ? `  ${perPhase}` : "", tone: "muted" },
+  ]];
 }
 
-function elapsed(createdAt: number, finishedAt: number | null): string {
-  const ms = (finishedAt ?? Date.now()) - createdAt;
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  return `${m}m${(s % 60).toString().padStart(2, "0")}s`;
+/** The advisory flag, next to the control that actually stops the run. */
+export function warningRows(warning: LargeRunFlag | null): Row[] {
+  if (!warning) return [];
+  return [
+    [
+      { text: "! large   ", tone: "warn" },
+      { text: warning.reasons.join(" · "), tone: "warn" },
+    ],
+    [{ text: "  advisory — nothing is throttled; x stops the run", tone: "muted" }],
+  ];
 }
 
-/** "17.8k tok" — the per-agent cost signal the run view leads with. */
-export function tokenChip(n: number): string {
-  if (n <= 0) return "";
-  return n >= 1000 ? `${(n / 1000).toFixed(1)}k tok` : `${n} tok`;
-}
+// ---------------------------------------------------------------------------
+// Steering (spec §8)
+// ---------------------------------------------------------------------------
 
-/** Window a list around the cursor so a 200-agent phase still scrolls. */
-function windowed<T>(items: T[], sel: number, rows: number): { slice: T[]; from: number } {
-  if (items.length <= rows) return { slice: items, from: 0 };
-  const from = Math.min(Math.max(0, sel - Math.floor(rows / 2)), items.length - rows);
-  return { slice: items.slice(from, from + rows), from };
+export interface SteerAction {
+  key: string;
+  label: string;
 }
 
 /**
- * The pane frame, drawn by hand. Ink cannot put text inside a border, and here
- * the titles ARE the border — `╭ Phases ────┬ Explore · 9 agents ────╮` — so the
- * box is emitted as plain rows with each pane's contents pre-rendered into
- * fixed-width cells. Selection is a `❯` cursor, not an inverse bar; that is what
- * makes hand-drawing viable, since no row needs a painted full-width fill.
+ * The controls that apply to a run in this state. `pause` is named as the thing to do
+ * BEFORE stopping: a dispatched agent allowed to finish is journaled and replays, while
+ * one killed in flight is not and starts over. A terminal run offers the other half of
+ * the loop — edit the script, relaunch seeded from this run's journal.
  */
-type Cell = { text: string; color?: string; dim?: boolean; bold?: boolean };
-type Row = Cell[];
-
-/** Visible width of a row — frame math is done on plain text, not on elements. */
-function rowWidth(row: Row): number {
-  return row.reduce((n, c) => n + c.text.length, 0);
-}
-
-/** Pad (or hard-truncate) a row to exactly `width`, so the seams stay aligned. */
-function fit(row: Row, width: number): Row {
-  const w = rowWidth(row);
-  if (w === width) return row;
-  if (w < width) return [...row, { text: " ".repeat(width - w) }];
-  const out: Row = [];
-  let left = width;
-  for (const c of row) {
-    if (left <= 0) break;
-    out.push(c.text.length <= left ? c : { ...c, text: c.text.slice(0, left) });
-    left -= c.text.length;
+export function steerActions(status: WorkflowRun["status"], live: boolean): SteerAction[] {
+  const stop: SteerAction = { key: "x", label: "stop" };
+  const script: SteerAction = { key: "e", label: "script" };
+  if (status === "running") {
+    // A run this process no longer holds cannot honor a pause, so it is not offered one.
+    return live
+      ? [{ key: "p", label: "pause (finishes in-flight agents)" }, stop]
+      : [{ key: "x", label: "stop — orphaned by a restart" }, script];
   }
-  return out;
+  if (status === "paused") return [{ key: "p", label: "resume" }, stop, script];
+  return [
+    { key: "r", label: "rerun (replays the journal)" },
+    { key: "e", label: "edit script & relaunch" },
+  ];
 }
 
-/** Right-align `right` against `width` with at least one space of gap. */
-function columns(left: Row, right: Row, width: number): Row {
-  const gap = width - rowWidth(left) - rowWidth(right);
-  return gap > 0
-    ? [...left, { text: " ".repeat(gap) }, ...right]
-    : [...left, { text: " " }, ...right];
-}
+// ---------------------------------------------------------------------------
+// Header, panes and detail (pure rows)
+// ---------------------------------------------------------------------------
 
-function Line({ row }: { row: Row }) {
-  return (
-    <Text wrap="truncate">
-      {row.map((c, i) => (
-        <Text key={i} color={c.color} dimColor={c.dim} bold={c.bold}>{c.text}</Text>
-      ))}
-    </Text>
-  );
-}
-
-/** `╭ Phases ─────┬ Explore · 9 agents ─────╮` */
-function frameTop(leftTitle: string, rightTitle: string, leftW: number, rightW: number): string {
-  const l = `╭ ${clip(leftTitle, leftW)} `;
-  const r = `┬ ${clip(rightTitle, rightW)} `;
-  return l + "─".repeat(Math.max(0, leftW + 3 - l.length)) +
-    r + "─".repeat(Math.max(0, rightW + 3 - r.length)) + "╮";
-}
-
-function Panes(
-  { leftTitle, rightTitle, left, right, rows, cols }: {
-    leftTitle: string;
-    rightTitle: string;
-    left: Row[];
-    right: Row[];
-    rows: number;
-    cols: number;
-  },
-) {
-  const leftW = LEFT_W;
-  const rightW = Math.max(20, cols - PANEL_CHROME - leftW - 7);
-  return (
-    <Box flexDirection="column">
-      <Text dimColor wrap="truncate">{frameTop(leftTitle, rightTitle, leftW, rightW)}</Text>
-      {Array.from({ length: rows }, (_, i) => (
-        <Line
-          key={i}
-          row={[
-            { text: "│ ", dim: true },
-            ...fit(left[i] ?? [], leftW),
-            { text: " │ ", dim: true },
-            ...fit(right[i] ?? [], rightW),
-            { text: " │", dim: true },
-          ]}
-        />
-      ))}
-      <Text dimColor wrap="truncate">
-        {"╰" + "─".repeat(leftW + 2) + "┴" + "─".repeat(rightW + 2) + "╯"}
-      </Text>
-    </Box>
-  );
-}
-
-/** The run header both pane levels sit under. */
-function RunHeader(
-  { run, agents, cols, lastLog }: {
-    run: WireWorkflowRun;
-    agents: WfAgentView[];
-    cols: number;
-    lastLog?: string;
-  },
-) {
-  const done = agents.filter((a) => a.status === "done" || a.status === "cached").length;
-  const failed = agents.filter((a) => a.status === "error").length;
-  const width = Math.max(20, cols - PANEL_CHROME);
-  const right = `${done}/${agents.length} agents${failed ? ` (${failed} failed)` : ""} · ${
-    elapsed(run.createdAt, run.finishedAt)
-  }`;
-  return (
-    <Box flexDirection="column">
-      <Text dimColor wrap="truncate">{"─".repeat(width)}</Text>
-      <Text wrap="truncate">
-        <Text bold color={palette.accent}>{run.name}</Text>
-        {run.status !== "running" ? <Text dimColor>{"  "}{run.status}</Text> : null}
-        {run.resumeOf ? <Text dimColor>{"  rerun (≡ = replayed)"}</Text> : null}
-      </Text>
-      <Line
-        row={columns(
-          [{ text: clip(run.description, Math.max(12, width - right.length - 2)), dim: true }],
-          [{ text: right, dim: true }],
-          width,
-        )}
-      />
-      {run.error
-        ? <Text color={palette.error} wrap="truncate">{clip(run.error, width)}</Text>
-        : null}
-      {lastLog && run.status === "running"
-        ? <Text dimColor wrap="truncate">▸ {clip(lastLog, width - 2)}</Text>
-        : null}
-    </Box>
-  );
+export function runHeaderRows(
+  detail: WorkflowDetail,
+  opts: { lastLog?: string; now?: number } = {},
+): Row[] {
+  const now = opts.now ?? Date.now();
+  const run = detail.workflow;
+  const { glyph, tone } = wfGlyph(run.status);
+  const settled = detail.agents.filter((a) => a.status === "done" || a.status === "cached").length;
+  const failed = detail.agents.filter((a) => a.status === "error").length;
+  const rows: Row[] = [
+    [
+      { text: glyph, tone },
+      { text: ` ${run.name}`, bold: true },
+      { text: `  ${run.status}`, tone: run.status === "error" ? "error" : "muted" },
+      { text: run.resumeOf ? `  relaunch of ${run.resumeOf}` : "", tone: "muted" },
+      { text: detail.live || run.status !== "running" ? "" : "  (not live here)", tone: "warn" },
+    ],
+    [
+      { text: run.description, tone: "muted" },
+      {
+        text: `  ${settled}/${detail.agents.length} agents${failed ? ` · ${failed} failed` : ""}` +
+          ` · ${elapsed(run.createdAt, run.finishedAt, now)}`,
+        tone: "muted",
+      },
+    ],
+    ...replayRows(detail.replay),
+    ...costRows(detail.cost),
+    ...warningRows(detail.warning),
+  ];
+  if (run.error) rows.push([{ text: run.error, tone: "error" }]);
+  if (opts.lastLog && run.status === "running") {
+    rows.push([{ text: `▸ ${opts.lastLog}`, tone: "muted" }]);
+  }
+  return rows;
 }
 
 /**
- * The Phases pane. A phase keeps its ORDINAL until it completes — the number is
- * how you read the run's shape before it gets there — and only then becomes ✓
- * (or ✗ if it settled with a failure; a red ◐ would say "still going", which is
- * the opposite of what happened).
+ * The Phases pane. A phase keeps its ORDINAL until it completes — the number is how the
+ * run's shape reads before it gets there — and only then becomes ✓, or ✗ when it settled
+ * with a failure (a red ◐ would say "still going", the opposite of what happened).
  */
-function phaseRows(
-  groups: ReturnType<typeof phaseGroups>,
+export function phaseRows(
+  groups: PhaseGroup[],
   selected: number,
   cursor: boolean,
   current: string | null,
 ): Row[] {
   return groups.map((g, i) => {
     const done = g.agents.filter((a) => a.status === "done" || a.status === "cached").length;
-    const failed = g.agents.some((a) => a.status === "error");
     const busy = g.agents.some((a) => a.status === "running" || a.status === "queued");
+    const failed = g.agents.some((a) => a.status === "error");
     const complete = g.agents.length > 0 && !busy;
-    const mark = complete
-      ? { text: failed ? "✗" : "✓", color: failed ? palette.error : palette.accent }
-      : { text: String(i + 1), dim: true };
+    const mark: Cell = complete
+      ? { text: failed ? "✗" : "✓", tone: failed ? "error" : "accent" }
+      : { text: String(i + 1), tone: "muted" };
     return [
-      { text: cursor && i === selected ? "❯ " : "  ", color: palette.accent },
+      { text: cursor && i === selected ? "❯ " : "  ", tone: "info" },
       mark,
-      { text: " " },
-      { text: clip(g.title || "agents", 13), bold: g.title === current },
-      ...(g.agents.length ? [{ text: ` ${done}/${g.agents.length}`, dim: true }] : []),
+      { text: ` ${clip(g.title || "agents", 14)}`, bold: g.title === current },
+      ...(g.agents.length ? [{ text: ` ${done}/${g.agents.length}`, tone: "muted" as Tone }] : []),
     ];
   });
 }
 
-/**
- * One phase's agents: the right pane at level 2, the left pane at level 3.
- * Columns are aligned — label, then model · tokens, then the clock hard against
- * the right edge — so a fan-out reads as a table instead of ragged text.
- */
-function agentRows(
-  agents: WfAgentView[],
+/** One phase's agents. A running agent shows its clock, not the word "running". */
+export function agentRows(
+  agents: WorkflowAgentView[],
   selected: number,
   cursor: boolean,
-  width: number,
   compact: boolean,
+  now: number = Date.now(),
 ): Row[] {
-  const labelW = compact
-    ? Math.max(8, width - 4)
-    : Math.min(34, Math.max(14, ...agents.map((a) => a.label.length + 1)));
   return agents.map((a, i) => {
-    const s = wfGlyph(a.status);
+    const { glyph, tone } = wfGlyph(a.status);
     const head: Row = [
-      { text: cursor && i === selected ? "❯ " : "  ", color: palette.accent },
-      { text: s.glyph, color: s.color },
-      { text: " " },
-      ...fit([{ text: clip(a.label, labelW) }], compact ? Math.max(1, width - 4) : labelW),
+      { text: cursor && i === selected ? "❯ " : "  ", tone: "info" },
+      { text: glyph, tone },
+      { text: ` ${clip(a.label || "(unlabeled)", compact ? 16 : 34)}` },
     ];
     if (compact) return head;
-    // A running agent shows its live clock, not the word "running" — the glyph
-    // already says running, and the number is what tells you it is wedged.
-    const time = a.status === "queued" ? "queued" : elapsed(a.startedAt, a.finishedAt);
+    const time = a.status === "queued" ? "queued" : elapsed(a.startedAt, a.finishedAt, now);
     const mid = [a.model, tokenChip(a.tokens)].filter(Boolean).join(" · ");
-    return columns([...head, { text: mid, dim: true }], [{ text: time, dim: true }], width);
+    return [...head, { text: `  ${mid}`, tone: "muted" }, { text: `  ${time}`, tone: "muted" }];
   });
 }
 
 /**
- * Level 3's right pane, as frame rows. The prompt is COLLAPSED by default — it
- * is the one thing here you already know (you wrote the workflow); the outcome
- * is what you opened this for, and a 30-line prompt used to push it off the
- * bottom.
+ * One agent, in full. The prompt is COLLAPSED by default — it is the one thing you
+ * already know, you wrote the workflow — and the outcome is what the drill-in was for.
  */
-function detailRows(
-  agent: WfAgentView,
-  scroll: number,
-  rows: number,
+export function agentDetailRows(
+  agent: WorkflowAgentView,
   promptOpen: boolean,
-  width: number,
+  now: number = Date.now(),
 ): Row[] {
-  const s = wfGlyph(agent.status);
-  const promptLines = agent.prompt.split("\n");
-  const body: Row[] = [];
-  const head = (text: string): Row => [{ text, bold: true }];
-  const line = (
-    text: string,
-  ): Row => [{ text: "  " + clip(text, Math.max(8, width - 2)), dim: true }];
-
-  body.push([
-    { text: s.glyph, color: s.color },
-    { text: " " + agent.status },
+  const { glyph, tone } = wfGlyph(agent.status);
+  const prompt = agent.prompt.split("\n");
+  const rows: Row[] = [[
+    { text: glyph, tone },
+    { text: ` ${agent.status}` },
     {
       text: "  " + [
         agent.model,
         tokenChip(agent.tokens),
-        agent.toolCalls ? `${agent.toolCalls} tool call${agent.toolCalls === 1 ? "" : "s"}` : "",
+        agent.toolCalls ? `${agent.toolCalls} tool calls` : "",
         agent.status === "queued"
           ? "waiting on the run's concurrency limit"
-          : elapsed(agent.startedAt, agent.finishedAt),
+          : elapsed(agent.startedAt, agent.finishedAt, now),
       ].filter(Boolean).join(" · "),
-      dim: true,
+      tone: "muted",
     },
-  ]);
-  if (agent.sessionId) {
-    body.push([{ text: `session ${agent.sessionId.slice(0, 8)} — o opens it`, dim: true }]);
-  }
-  body.push([]);
-  body.push(head(
-    promptOpen
-      ? "Prompt · ⏎ collapse"
-      : `Prompt · ${promptLines.length} line${promptLines.length === 1 ? "" : "s"} · ⏎ expand`,
-  ));
-  for (const l of promptOpen ? promptLines : promptLines.slice(0, 2)) body.push(line(l));
-  if (!promptOpen && promptLines.length > 2) {
-    body.push(line(`… ${promptLines.length - 2} more lines`));
+  ]];
+  rows.push([{
+    text: agent.sessionId
+      ? `session ${agent.sessionId.slice(0, 8)} — o opens it`
+      : "no session — this call was replayed from the journal",
+    tone: "muted",
+  }]);
+  rows.push([]);
+  rows.push([{
+    text: promptOpen ? "Prompt · ⏎ collapse" : `Prompt · ${prompt.length} lines · ⏎ expand`,
+    bold: true,
+  }]);
+  for (const l of promptOpen ? prompt : prompt.slice(0, 2)) rows.push([{ text: `  ${l}` }]);
+  if (!promptOpen && prompt.length > 2) {
+    rows.push([{ text: `  … ${prompt.length - 2} more lines`, tone: "muted" }]);
   }
   if (agent.activity.length > 0) {
-    body.push([]);
-    body.push(head("Activity"));
-    for (const l of agent.activity) body.push(line(l));
+    rows.push([], [{ text: "Activity", bold: true }]);
+    for (const l of agent.activity) rows.push([{ text: `  ${l}`, tone: "muted" }]);
   }
-  body.push([]);
-  body.push(head(
-    agent.status === "error"
+  rows.push([]);
+  rows.push([{
+    text: agent.status === "error"
       ? "Error"
       : agent.status === "cached"
-      ? "Outcome (replayed from the previous run)"
+      ? "Outcome · replayed from the source run's journal — no agent ran"
       : "Outcome",
-  ));
-  for (const l of (agent.result ?? "(none yet)").split("\n")) {
-    body.push([{ text: "  " + clip(l, Math.max(8, width - 2)) }]);
+    bold: true,
+    tone: agent.status === "error" ? "error" : undefined,
+  }]);
+  for (const l of (agent.error ?? agent.result ?? "(none yet)").split("\n")) {
+    rows.push([{ text: `  ${l}`, tone: agent.status === "error" ? "error" : undefined }]);
   }
-
-  const visible = body.slice(scroll, scroll + rows);
-  if (body.length > rows) {
-    visible[visible.length - 1] = [{
-      text: `${scroll + visible.length}/${body.length} · j/k scroll`,
-      dim: true,
-    }];
-  }
-  return visible;
+  return rows;
 }
 
-/** How many body lines detailRows can produce — App clamps j/k against this. */
-export function agentDetailLines(agent: WfAgentView, promptOpen: boolean): number {
-  const prompt = agent.prompt.split("\n").length;
-  const promptRows = promptOpen ? prompt : Math.min(2, prompt) + (prompt > 2 ? 1 : 0);
-  const activityRows = agent.activity.length ? agent.activity.length + 2 : 0;
-  const outcomeRows = (agent.result ?? "(none yet)").split("\n").length;
-  return 3 + promptRows + activityRows + 2 + outcomeRows;
+/**
+ * The script, and where to edit it. The mirror path is rendered first and in full,
+ * because spec §8's loop is "stop, edit the script — on disk at
+ * `~/.bough/workflows/<id>.js`, through the API, or by asking the agent to rewrite it —
+ * and relaunch seeded from the stopped run's journal": the path IS the affordance. The
+ * relaunch is a NEW run reading this one's journal, so the unchanged prefix replays and
+ * everything from the first changed call onward runs live.
+ */
+export function scriptRows(detail: WorkflowDetail): Row[] {
+  const lines = detail.workflow.script.split("\n");
+  const width = String(lines.length).length;
+  return [
+    [{ text: detail.scriptFile, tone: "info" }],
+    [{
+      text: detail.live
+        ? "the run is still live — pause, then stop, before you edit: dispatched agents that " +
+          "finish are journaled and replay"
+        : `R relaunches a NEW run from this one's journal · ${detail.replay.total} calls ` +
+          `journaled here`,
+      tone: detail.live ? "warn" : "muted",
+    }],
+    [],
+    ...lines.map((l, i): Row => [
+      { text: `${String(i + 1).padStart(width)} `, tone: "muted" },
+      { text: l },
+    ]),
+  ];
 }
 
-function RunsList({ runs, selected, rows }: { runs: WfSummary[]; selected: number; rows: number }) {
+// ---------------------------------------------------------------------------
+// The component
+// ---------------------------------------------------------------------------
+
+/** 0 runs · 1 phases · 2 a phase's agents · 3 one agent · 4 the script. */
+export type WfLevel = 0 | 1 | 2 | 3 | 4;
+
+/** Per-level footer — the keys that do something HERE, plus the steering controls. */
+export function footer(level: WfLevel, detail: WorkflowDetail | null): string {
+  const steer = detail
+    ? steerActions(detail.workflow.status, detail.live).map((a) => `${a.key} ${a.label}`).join(
+      " · ",
+    )
+    : "";
+  if (level === 0) return `⏎ open · ${steer || "r rerun"}`;
+  if (level === 4) return `${steer} · esc back`;
+  if (level === 1) return `↑↓ phase · ⏎ agents · ${steer} · esc back`;
+  if (level === 2) return `↑↓ agent · ⏎ open · f filter · o session · ${steer} · esc back`;
+  return `⏎ prompt · j/k scroll · o session · ${steer} · esc back`;
+}
+
+function RunsList({ runs, sel, rows }: { runs: WorkflowSummary[]; sel: number; rows: number }) {
   if (runs.length === 0) {
-    return (
-      <Text dimColor>
-        no workflow runs in this conversation — ask for one ("use a workflow: …")
-      </Text>
-    );
+    return <Text dimColor>no workflow runs in this conversation — ask for one</Text>;
   }
-  const { slice, from } = windowed(runs, selected, Math.max(3, rows - 6));
+  const { slice, from } = windowed(runs, sel, Math.max(3, rows - 6));
   return (
     <Box flexDirection="column">
       {slice.map((r, i) => {
-        const sel = from + i === selected;
-        const { glyph, color } = wfGlyph(r.status);
+        const on = from + i === sel;
+        const { glyph, tone } = wfGlyph(r.status);
+        const a = r.agents;
         return (
           <Line
             key={r.id}
             row={[
-              { text: sel ? "❯ " : "  ", color: palette.accent },
-              { text: glyph, color },
-              { text: " " },
-              { text: r.name, bold: true, color: sel ? palette.accent : undefined },
-              { text: "  " + clip(r.description, 44), dim: true },
+              { text: on ? "❯ " : "  ", tone: "info" },
+              { text: glyph, tone },
+              { text: ` ${r.name}`, bold: true },
+              { text: `  ${clip(r.description, 44)}`, tone: "muted" },
               {
-                text: `  ${agentCounts(r.agents)} · ${elapsed(r.createdAt, r.finishedAt)} · ${
-                  relTime(r.createdAt)
-                } ago`,
-                dim: true,
+                text: `  ${a.done}/${a.total}` +
+                  `${a.cached ? ` · ${a.cached} replayed` : ""}` +
+                  `${a.failed ? ` · ${a.failed} failed` : ""}`,
+                tone: "muted",
               },
             ]}
           />
         );
       })}
-      {runs.length > slice.length
-        ? <Text dimColor>… {runs.length - slice.length} more</Text>
-        : null}
     </Box>
   );
 }
 
-/** Per-level footer — the keys that actually do something HERE. */
-function footer(level: WfLevel, running: boolean): string {
-  if (level === 0) return `enter open · r rerun${running ? " · x stop · p pause" : ""}`;
-  if (level === 1) {
-    return `↑↓ select · enter agents${running ? " · x stop workflow · p pause" : ""} · esc back`;
-  }
-  if (level === 2) {
-    return `↑↓ select · enter open · / filter · o session${
-      running ? " · x stop agent · r restart agent · p pause" : ""
-    } · esc back`;
-  }
-  return "↑↓ agent · ⏎ prompt · j/k scroll · o session · esc back";
+export interface WorkflowsProps {
+  runs: WorkflowSummary[];
+  sel: number;
+  level: WfLevel;
+  /** `GET /workflows/:id` for the opened run; null at level 0 or while loading. */
+  detail: WorkflowDetail | null;
+  phaseSel: number;
+  agentSel: number;
+  scroll: number;
+  filter: WfFilter;
+  promptOpen: boolean;
+  rows: number;
+  cols: number;
+  lastLog?: string;
+  /** Injected so a render is reproducible in a test. */
+  now?: number;
 }
 
-export function Workflows(
-  {
-    runs,
-    sel,
-    level,
-    run,
-    agents,
-    phaseSel,
-    agentSel,
-    scroll,
-    filter,
-    promptOpen,
-    rows,
-    cols,
-    lastLog,
-  }: {
-    runs: WfSummary[];
-    sel: number;
-    level: WfLevel;
-    /** The opened run's full row + journal (levels 1–3); null while loading. */
-    run: WireWorkflowRun | null;
-    agents: WfAgentView[];
-    phaseSel: number;
-    agentSel: number;
-    scroll: number;
-    filter: WfFilter;
-    promptOpen: boolean;
-    rows: number;
-    cols: number;
-    lastLog?: string;
-  },
-) {
-  if (level === 0 || run === null) {
+export function Workflows(props: WorkflowsProps) {
+  const { detail, level, rows, cols } = props;
+  if (level === 0 || detail === null) {
     return (
       <Box marginTop={1} flexDirection="column">
-        <RunsList runs={runs} selected={sel} rows={rows} />
+        <RunsList runs={props.runs} sel={props.sel} rows={rows} />
         <Box marginTop={1}>
-          <Text dimColor wrap="truncate">{footer(0, runs[sel]?.status === "running")}</Text>
+          <Text dimColor wrap="truncate">{footer(0, detail)}</Text>
         </Box>
       </Box>
     );
   }
-  const groups = phaseGroups(run, agents);
-  const group = groups[Math.min(phaseSel, Math.max(0, groups.length - 1))] ??
-    { title: "", agents: [] };
-  const shown = visibleAgents(group.agents, filter);
-  // Panel chrome + this view's header/footer/margins come off the top before the
-  // panes get their height; overflowing pushes the run header off the TOP of the
-  // clipped panel, which is how it once went missing entirely.
-  const paneRows = Math.max(4, rows - 15);
-  const rightW = Math.max(20, cols - PANEL_CHROME - LEFT_W - 7);
-  const running = run.status === "running" || run.status === "paused";
-  const agentTitle = `${group.title || "agents"} · ${
-    filter ? `showing ${shown.length} ${filter}` : `${shown.length} agents`
-  }`;
 
-  const detail = level === 3 ? shown[agentSel] : undefined;
-  const leftRows = detail
-    ? agentRows(shown, agentSel, true, LEFT_W, true)
-    : phaseRows(groups, phaseSel, level === 1, run.currentPhase);
-  const win = windowed(leftRows, detail ? agentSel : phaseSel, paneRows);
-  const rightRows = detail ? detailRows(detail, scroll, paneRows, promptOpen, rightW) : windowed(
-    agentRows(shown, agentSel, level === 2, rightW, false),
-    agentSel,
-    paneRows,
-  ).slice;
+  const now = props.now ?? Date.now();
+  const header = runHeaderRows(detail, {
+    ...(props.lastLog ? { lastLog: props.lastLog } : {}),
+    now,
+  });
+  const paneRows = Math.max(4, rows - header.length - 4);
+  const leftW = Math.min(24, Math.max(12, Math.floor(cols / 4)));
+
+  if (level === 4) {
+    const body = scriptRows(detail);
+    return (
+      <Box marginTop={1} flexDirection="column">
+        {header.map((r, i) => <Line key={i} row={r} />)}
+        {windowed(body, props.scroll, paneRows).slice.map((r, i) => <Line key={i} row={r} />)}
+        <Text dimColor wrap="truncate">{footer(4, detail)}</Text>
+      </Box>
+    );
+  }
+
+  const groups = phaseGroups(detail.workflow, detail.agents);
+  const group = groups[Math.min(props.phaseSel, Math.max(0, groups.length - 1))] ??
+    { title: "", agents: [] };
+  const shown = visibleAgents(group.agents, props.filter);
+  const agent = level === 3 ? shown[props.agentSel] : undefined;
+
+  const left = agent
+    ? agentRows(shown, props.agentSel, true, true, now)
+    : phaseRows(groups, props.phaseSel, level === 1, detail.workflow.currentPhase);
+  const right = agent
+    ? windowed(agentDetailRows(agent, props.promptOpen, now), props.scroll, paneRows).slice
+    : windowed(agentRows(shown, props.agentSel, level === 2, false, now), props.agentSel, paneRows)
+      .slice;
 
   return (
     <Box marginTop={1} flexDirection="column">
-      <RunHeader run={run} agents={agents} cols={cols} lastLog={lastLog} />
-      <Panes
-        leftTitle={detail ? clip(group.title || "agents", 14) : "Phases"}
-        rightTitle={detail ? clip(detail.label, rightW - 4) : agentTitle}
-        left={win.slice}
-        right={rightRows}
-        rows={paneRows}
-        cols={cols}
-      />
-      <Text dimColor wrap="truncate">{footer(level, running)}</Text>
+      {header.map((r, i) => <Line key={`h${i}`} row={r} />)}
+      <Box flexDirection="row" marginTop={1}>
+        <Box flexDirection="column" width={leftW} marginRight={2}>
+          <Text dimColor wrap="truncate">
+            {agent ? clip(group.title || "agents", leftW) : "Phases"}
+          </Text>
+          {windowed(left, agent ? props.agentSel : props.phaseSel, paneRows).slice
+            .map((r, i) => <Line key={i} row={r} />)}
+        </Box>
+        <Box flexDirection="column" flexGrow={1}>
+          <Text dimColor wrap="truncate">
+            {agent
+              ? clip(agent.label, 40)
+              : `${group.title || "agents"} · ${shown.length}${
+                props.filter ? ` ${props.filter}` : ""
+              }`}
+          </Text>
+          {right.map((r, i) => <Line key={i} row={r} />)}
+        </Box>
+      </Box>
+      <Text dimColor wrap="truncate">{footer(level, detail)}</Text>
     </Box>
   );
 }
 
 /**
- * The composer's live-run line: what is running, without opening the panel.
- * Carries the elapsed clock so a wedged run is visible from the chat view —
- * "3/8 agents" alone looks identical at 10 seconds and at 10 minutes.
+ * The composer's live-run line: what is running, without opening the panel. Carries the
+ * replayed count too — a chip that says "3/8 agents" hides whether any of them cost
+ * anything.
  */
-export function WorkflowChip({ run, log }: { run: WfSummary; log?: string }) {
-  const { glyph, color } = wfGlyph(run.status);
+export function WorkflowChip(
+  { run, log, now }: { run: WorkflowSummary; log?: string; now?: number },
+) {
+  const { glyph, tone } = wfGlyph(run.status);
+  const a = run.agents;
   return (
-    <Text wrap="truncate">
-      <Text color={color}>{glyph}</Text> <Text bold>{run.name}</Text>
-      <Text dimColor>
-        {"  "}
-        {agentCounts(run.agents)} agents · {elapsed(run.createdAt, run.finishedAt)}
-        {run.currentPhase ? ` · ${run.currentPhase}` : ""}
-        {log ? ` · ${clip(log, 40)}` : ""}
-        {" · /workflows"}
-      </Text>
-    </Text>
+    <Line
+      row={[
+        { text: glyph, tone },
+        { text: ` ${run.name}`, bold: true },
+        {
+          text: `  ${a.done}/${a.total} agents${a.cached ? ` · ${a.cached} replayed` : ""}` +
+            ` · ${elapsed(run.createdAt, run.finishedAt, now ?? Date.now())}` +
+            `${run.currentPhase ? ` · ${run.currentPhase}` : ""}` +
+            `${log ? ` · ${clip(log, 40)}` : ""} · /workflows`,
+          tone: "muted",
+        },
+      ]}
+    />
   );
 }

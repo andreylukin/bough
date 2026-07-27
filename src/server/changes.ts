@@ -1,47 +1,55 @@
 /**
- * The Changes-tab backend: turn a session's snapshot state into review payloads and
- * apply/revert reviewed edits. Two snapshot sources feed the same Diff contract
- * (src/schema/changes.ts):
- *   - repo — the session edits the user's checkout directly, so the change set is
- *     `git diff <session base>` plus untracked files (vcs/repodiff.ts). Present
- *     when the workspace is a git repo.
- *   - clonefile — non-git config. Present when a snapshot dir with a manifest exists.
- * A session may have both, neither (→ empty), or one.
+ * The Changes rail: a session's review payload, and the one mutation over it.
  *
- * Apply / revert semantics:
- *   - clonefile apply → copy the approved originals back (applyBack). This is the real
- *     mutation for config edits.
- *   - repo apply → nothing to deliver. The edits are already in the user's working
- *     tree; delivery is the reviewer's own `git commit`. Reported as such rather than
- *     silently succeeding.
- *   - repo revert → restore the selected paths from the session's base sha, or
- *     delete them when the session created them (repodiff.revertPaths). With no
- *     paths, revert everything the session changed.
- *   - clonefile revert is implicit: the originals stay pristine until you apply, so
- *     "revert" is simply not applying; there is no clonefile revert path.
+ * THE INVARIANT THIS HOLDS: **revert never touches a path the session did not
+ * change** (spec §13). That is enforced here rather than assumed of the caller. A
+ * revert request is intersected with the change set the rail is showing right now,
+ * and anything outside it is reported back as skipped instead of being restored —
+ * because `git checkout <base> -- <path>` is perfectly happy to rewrite a file this
+ * session never opened, and a client passing a stale or hand-typed path would
+ * otherwise silently clobber the user's own uncommitted work. The old tree left
+ * this "true by construction" (`src/vcs/repodiff.ts`: "the caller passes what the
+ * diff reported"), which is a comment, not a guarantee.
+ *
+ * Second: **a workspace that is not a repository degrades, it does not fail.** No
+ * repo means no base, which means no change set — the rail says exactly that, with
+ * the reason (spec §13), and the session keeps working. The only 400 here is a
+ * revert asked of a session that has nothing to revert against, and its message is
+ * that same reason.
+ *
+ * There is no apply. It existed for the non-git snapshotting this design dropped
+ * (spec §17): the agent edits the user's checkout in place, so the work is already
+ * where an apply would have put it, and delivery is the reviewer's own `git commit`.
+ *
+ * NO EVENT IS PUBLISHED on revert, deliberately. Spec §3's event set is closed and
+ * has no changes event; the rail is a fetch-on-demand surface, and the response
+ * carries the whole outcome, so a client re-reads `GET /sessions/:id/changes` and
+ * reconciles — the same rule as reconnect (events are display transport, the
+ * database and the working tree are the truth).
+ *
+ * Ported from `src/server/changes.ts`, dropping the clonefile source and the apply
+ * path. Deltas are marked `NOTE:`.
  */
-import { HttpError } from "../errors.ts";
-import * as repodiff from "../vcs/repodiff.ts";
-import * as clonefile from "../vcs/clonefile.ts";
-import type { Db } from "../db/db.ts";
-import type { ChangesApplyBody, Diff } from "../schema/changes.ts";
+import { BadRequestError, NotFoundError } from "../errors.ts";
+import { RevertChangesBody } from "../schema/requests.ts";
+import type { AppCtx, Db } from "../types.ts";
+import { type ChangeSet, changeSet, type FileDiff, revertPaths } from "../vcs/repodiff.ts";
+import { type Handler, json, parseBody } from "./http.ts";
 
-export interface ChangesOpts {
-  /** clonefile snapshot root override (tests); else BOUGH_SNAPSHOT_BASE, else default. */
-  snapshotBase?: string;
+/** The rail's payload: the git change set plus the checkout it was measured in. */
+export interface SessionChangeSet extends ChangeSet {
+  /** The session's checkout, or null when it never named one. */
+  workspace: string | null;
 }
 
-/** 400 for an unrevertable session, etc. */
-export class ChangesError extends HttpError {}
+// ---- display noise -----------------------------------------------------------
+//
+// Build and cache artifacts clutter the review list and are never what a reviewer
+// came to look at. Filtered from what the rail SHOWS — and therefore, since revert
+// can only touch what was shown, from what a revert can delete. That direction is
+// deliberate: leaving a stale `__pycache__` behind is a nuisance, deleting files the
+// user was never shown is a surprise.
 
-function snapBase(opts: ChangesOpts): string {
-  return opts.snapshotBase ?? Deno.env.get("BOUGH_SNAPSHOT_BASE") ?? clonefile.snapshotBase();
-}
-
-// Display noise: build/cache artifacts that clutter the review list. Filtered
-// from what the Changes rail shows AND from the apply "covers everything" seal
-// check, so they neither distract the reviewer nor block sealing. Apply/revert
-// otherwise read paths straight from the client's selection or repodiff.diffSince.
 const NOISE_SEGMENTS = ["__pycache__", "node_modules", ".pytest_cache", ".mypy_cache"];
 const NOISE_BASENAMES = [".DS_Store"];
 const NOISE_SUFFIXES = [".pyc", ".pyo"];
@@ -54,117 +62,151 @@ function isNoise(path: string): boolean {
     NOISE_SUFFIXES.some((s) => base.endsWith(s));
 }
 
-async function isFile(path: string): Promise<boolean> {
-  try {
-    return (await Deno.stat(path)).isFile;
-  } catch {
-    return false;
+// ---- the change set ----------------------------------------------------------
+
+function requireSession(ctx: AppCtx, id: string): void {
+  if (!ctx.db.getSession(id)) {
+    throw new NotFoundError(
+      `no session ${id} — changes are per session, so open one that exists ` +
+        `(GET /sessions lists them).`,
+    );
   }
 }
 
 /**
- * A session's repo change set, or null when it has none. The workspace IS the
- * user's checkout — git ops run right there — and `base` is the sha the session
- * started from, recorded on its first turn.
+ * A session's change set: `git diff <base>` plus untracked files, in the session's
+ * own checkout.
+ *
+ * A session with no workspace answers unavailable rather than falling back to the
+ * server's own directory the way a turn does. The fallback is right for RUNNING a
+ * program — something has to be the cwd — and wrong here: attributing whatever is
+ * uncommitted in bough's own checkout to a session that never named one would
+ * report a stranger's work as the agent's, and offer to revert it.
  */
-interface RepoSource {
-  dir: string;
-  /** The sha the session started from; the rail diffs against it. */
-  base: string | null;
-}
-
-async function repoSource(db: Db, sessionId: string): Promise<RepoSource | null> {
+export async function sessionChanges(db: Db, sessionId: string): Promise<SessionChangeSet> {
   const { workspace, base } = db.getSessionRuntime(sessionId);
-  if (!workspace || !(await repodiff.isRepo(workspace))) return null;
-  return { dir: workspace, base: base && base !== "empty" ? base : null };
+  if (!workspace) {
+    return {
+      available: false,
+      reason: "this session has no workspace, so there is no checkout to diff. " +
+        "Create a session with a `workspace` to get a Changes rail.",
+      base: null,
+      files: [],
+      workspace: null,
+    };
+  }
+  const set = await changeSet(workspace, base);
+  return { ...set, files: set.files.filter((f) => !isNoise(f.path)), workspace };
 }
 
-/** All review payloads for a session: one per active snapshot source (0..2). */
-export async function sessionChanges(
-  db: Db,
-  sessionId: string,
-  opts: ChangesOpts = {},
-): Promise<Diff[]> {
-  const diffs: Diff[] = [];
+// ---- revert ------------------------------------------------------------------
 
-  const src = await repoSource(db, sessionId);
-  if (src) {
-    try {
-      diffs.push(await repodiff.diffSince(src.dir, src.base));
-    } catch (e) {
-      console.error(`changes: repo diff failed for ${sessionId}: ${(e as Error).message}`);
-    }
-  }
-
-  const base = snapBase(opts);
-  if (await isFile(`${clonefile.sessionDir(sessionId, base)}/${clonefile.MANIFEST}`)) {
-    try {
-      diffs.push(await clonefile.diff(sessionId, base));
-    } catch (e) {
-      console.error(`changes: clonefile diff failed for ${sessionId}: ${(e as Error).message}`);
-    }
-  }
-
-  // No subagent sections: subagents share the spawner's workspace now (there are
-  // no per-session branches to adopt), so their work is already in the diff above.
-
-  // Display filter only — drop build/cache noise from each section's file list.
-  return diffs.map((d) => ({ ...d, files: d.files.filter((f) => !isNoise(f.path)) }));
-}
-
-/** What an apply actually did — the UI's feedback line is built from this. */
-export interface ApplyResult {
-  /** Paths delivered/accepted this call. */
-  applied: string[];
-  /** The user's checkout the files landed in (external mode), else null. */
-  origin: string | null;
-  /** The session's git branch in the origin repo, when one exists. */
-  branch: string | null;
-  /** True when every changed path was covered, so the change was also sealed. */
-  sealed: boolean;
+/** What a revert did, said in full: nothing here is inferred by the client. */
+export interface RevertOutcome {
+  /** Paths restored from the base sha, or deleted because the session created them. */
+  reverted: string[];
+  /** Requested paths that are not in the session's change set — left untouched. */
+  skipped: string[];
+  /** Paths that are the session's but could not be reverted, with git's reason. */
+  failed: { path: string; error: string }[];
 }
 
 /**
- * Apply reviewed changes, by source. `clonefile` copies the approved originals back
- * over the real config paths — a real mutation. `shadow` has nothing to apply: the
- * session edits the checkout directly, so the files are already in place.
+ * A requested path as it appears in the change set, or null if it is not one.
+ *
+ * Only cosmetic normalization (`./x` → `x`, trailing slash) is done. An absolute
+ * path or a `..` escape is not resolved into a match — it is simply not found, and
+ * lands in `skipped`. Resolving them would be re-implementing path confinement in
+ * the one place where being lenient means writing outside the change set.
  */
-export async function applyChanges(
-  db: Db,
-  sessionId: string,
-  body: ChangesApplyBody,
-  opts: ChangesOpts = {},
-): Promise<ApplyResult> {
-  if (body.source === "clonefile") {
-    await clonefile.applyBack(sessionId, body.paths, snapBase(opts));
-    return { applied: body.paths, origin: null, branch: null, sealed: false };
-  }
-  if (body.source === "repo") {
-    // Nothing to deliver: the session edited the user's checkout in place, so the
-    // work is already where an apply used to put it. Say so instead of reporting a
-    // successful delivery that moved no bytes — committing is the reviewer's call
-    // (or the agent's `git commit`).
-    const src = await repoSource(db, sessionId);
-    if (!src) throw new ChangesError(400, "no repo workspace");
-    return { applied: [], origin: src.dir, branch: null, sealed: false };
-  }
-  throw new ChangesError(400, `unknown source ${body.source}`);
+function matchPath(requested: string, changed: Set<string>): string | null {
+  const trimmed = requested.trim().replace(/^\.\//, "").replace(/\/+$/, "");
+  return changed.has(trimmed) ? trimmed : null;
 }
 
 /**
- * Revert the session's work: restore `paths` from the session's base sha (deleting
- * the ones it created), or everything it changed when `paths` is empty. Returns the
- * paths actually reverted. Throws if the session has no repo workspace.
+ * Revert the session's work on `paths` — or on everything the rail is showing when
+ * `paths` is ABSENT.
+ *
+ * **An explicit `paths: []` selects nothing and is refused**, and the difference
+ * between "absent" and "explicitly empty" is the whole point. Revert is the only
+ * destructive operation in the product and it is unbounded — the change set of a
+ * session opened in a dirty checkout is every uncommitted file in it, because
+ * `base` is the sha the session started from (spec §13) and nothing distinguishes
+ * work the agent did from work that was already there. So the one input a caller
+ * produces by ACCIDENT — a selection loop that yielded no rows, a UI with nothing
+ * highlighted, a `paths` variable that came back empty — must not be the input that
+ * means "destroy all of it". Conflating them makes an empty selection the most
+ * destructive request in the API, which is precisely backwards.
+ *
+ * Revert-all is still reachable and still one call: omit `paths` entirely. That is
+ * a request nobody sends by mistake, and it is what `api.revertChanges(id)` sends.
+ *
+ * Throws 400 when the session has no change set to revert against, carrying the
+ * reason the rail displays, so the human reads the same sentence in both places.
  */
 export async function revertChanges(
   db: Db,
   sessionId: string,
   paths?: string[],
-): Promise<string[]> {
-  const src = await repoSource(db, sessionId);
-  if (!src) throw new ChangesError(400, "no workspace to revert");
-  const targets = paths && paths.length > 0
-    ? paths
-    : (await repodiff.diffSince(src.dir, src.base)).files.map((f) => f.path);
-  return await repodiff.revertPaths(src.dir, src.base, targets);
+): Promise<RevertOutcome> {
+  if (paths && paths.length === 0) {
+    throw new BadRequestError(
+      "revert was given an empty `paths` selection, so it reverted nothing. An empty " +
+        "list is not a wildcard — it is almost always a client that selected no rows, " +
+        "and revert deletes files. To revert one or more paths, name them; to revert " +
+        "the WHOLE change set, omit `paths` from the body entirely.",
+    );
+  }
+
+  const set = await sessionChanges(db, sessionId);
+  if (!set.available || !set.base || !set.workspace) {
+    throw new BadRequestError(`nothing to revert: ${set.reason ?? "no change set"}`);
+  }
+
+  const changed = new Set(set.files.map((f: FileDiff) => f.path));
+  const targets: string[] = [];
+  const skipped: string[] = [];
+  // NOTE: the enforcement the old tree only claimed. The selection is intersected
+  // with the change set the rail is showing — never a wildcard git resolves, so a
+  // path that scrolled off the rail is unreachable.
+  for (const requested of paths ?? []) {
+    const match = matchPath(requested, changed);
+    if (match) targets.push(match);
+    else skipped.push(requested);
+  }
+  const selection = paths ? targets : [...changed];
+
+  const { reverted, failed } = await revertPaths(set.workspace, set.base, selection);
+  return { reverted, skipped, failed };
 }
+
+// ---- handlers ----------------------------------------------------------------
+
+/**
+ * `GET /sessions/:id/changes` — the rail's payload.
+ *
+ * Always 200, even with no change set: "not a repository" and "you changed
+ * nothing" are both ordinary answers about a healthy session, and the difference
+ * between them is `available` + `reason` rather than a status code (spec §13).
+ */
+export const getChangesH: Handler = async (_req, ctx, params) => {
+  requireSession(ctx, params.id);
+  return json(await sessionChanges(ctx.db, params.id));
+};
+
+/**
+ * `POST /sessions/:id/changes/revert` — restore tracked paths from the base sha and
+ * delete the ones the session created. No body (or a body without `paths`) reverts
+ * everything the rail is showing; an explicit `{paths: []}` is refused rather than
+ * treated as a wildcard (see `revertChanges`).
+ *
+ * REST exists so a revert does not cost a turn: this is the human's verb, and
+ * asking the agent to undo its own work would be an LLM round-trip to run
+ * `git checkout`.
+ */
+export const revertChangesH: Handler = async (req, ctx, params) => {
+  requireSession(ctx, params.id);
+  const body = await parseBody(req, RevertChangesBody, {});
+  return json(await revertChanges(ctx.db, params.id, body.paths));
+};

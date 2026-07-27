@@ -1,3 +1,0 @@
-2026-02-01 north widget 15 800 store
-2026-02-02 south gadget 4 250 web
-2026-02-03 north cable 1 3200

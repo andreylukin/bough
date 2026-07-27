@@ -1,261 +1,318 @@
 /**
- * The host side of the code-mode VM. Each supervisor round is one JavaScript program
- * executed in a fresh Deno Worker with `permissions: "inherit"` — the program runs as
- * the user, with the user's full authority: filesystem, network, env, subprocesses,
- * npm/jsr imports. Nothing here is a security boundary.
+ * The host side of the program worker: one `run_steps` program per round, executed
+ * in a fresh `Worker` with `permissions: "inherit"`.
  *
- * The host functions bridged in are therefore convenience and integration, not
- * confinement. They earn their place by carrying harness behavior a raw Deno call
- * cannot: bash() dies on the turn's interrupt, auto-backgrounds past 60s and digests
- * oversized output; write()/edit() feed the done-gate's write signal; agent(), ask()
- * and state() reach the session's DB and TUI.
+ * WHY THIS EXISTS. bough's thesis is one program per round (spec §1), and a program
+ * runs as the user with the user's full authority — filesystem, network, env,
+ * subprocesses, `npm:`/`jsr:` imports. **Nothing here is a security boundary**
+ * (spec §2.2). The bridged host functions are convenience and session integration,
+ * never confinement: `bash` carries the turn's interrupt and the 60s
+ * auto-background, `view`/`patch` carry the hash anchoring that makes concurrent
+ * subagents safe, `agent`/`ask`/`state` reach the session's database and UI. A
+ * program is free to ignore every one of them and call `Deno` directly.
  *
- * A program is disposable compute: fresh isolate per round, hard wall-clock timeout,
- * wound down (children killed, then terminated) on overrun or interrupt.
- * Host-function failures reject inside the program as ordinary exceptions the
- * supervisor's code may catch.
+ * THE INVARIANT THIS HOLDS: **a program never outlives its turn, and never takes
+ * the server with it.** Three mechanisms, each of which exists because the isolate
+ * is *not* sealed:
+ *
+ *   1. **Pre-flight, before a worker is spawned.** A program that cannot compile
+ *      used to reach the model as a bare `SyntaxError` over ten frames of Deno
+ *      internals — no line, no column, no source — and the model burned the round
+ *      guessing. `checkProgramSyntax` parses with the *same* parameter list the
+ *      worker binds, so the two can never disagree about what is legal. That is why
+ *      shadowing a host name (`let bash = 1`) is caught here and reported as a
+ *      shadow, not discovered inside the worker as a mystery.
+ *   2. **Wind-down is a handshake, not a `terminate()`.** A program spawns children
+ *      of the SERVER process, and `worker.terminate()` does not touch them. So an
+ *      abort or a wall-clock timeout asks the worker to kill what it spawned, waits
+ *      briefly for the ack, and only then terminates. Reverse order orphans
+ *      processes — ^C would look like it worked while the build kept running
+ *      (plan §6.3).
+ *   3. **Partial output survives.** `console.*` lines are streamed as they are
+ *      printed *and* batched into the result. An interrupt terminates the worker
+ *      before it can post its batch, so the streamed copy kept here is what keeps
+ *      the model's tool result non-empty.
+ *
+ * Host names come from `protocol.ts`, imported by both sides — see that module's
+ * header for why there is exactly one list. This file adds no name of its own.
+ *
+ * Ported from `src/harness/vm.ts`. Deltas from that port are marked `NOTE:`.
  */
 
-import { checkSyntax } from "../text.ts";
+import {
+  type FromProgramWorker,
+  HOST_FN_NAMES,
+  type HostCallMessage,
+  type HostFnName,
+  PROGRAM_PARAMS,
+  type ProgramResult,
+} from "./protocol.ts";
+import type { HostFns } from "../types.ts";
 
 /**
- * The program's parameter names, mirroring vm_worker.ts's own AsyncFunction call.
- * Duplicated rather than imported to keep the worker module self-contained;
- * vm.test.ts pins the two lists equal.
- * They must match: a program that shadows a host name (`let bash = 1`) is a
- * SyntaxError, and the pre-flight check should agree with the worker about it.
+ * The wall-clock ceiling on one program. Not a resource limit — a liveness one: a
+ * program wedged in a synchronous loop or blocked on a host call that will never
+ * answer would otherwise hang the turn forever.
  */
-export const PROGRAM_PARAMS = [
-  "bash",
-  "sh",
-  "extract",
-  "fetch",
-  "bashBg",
-  "bashOutput",
-  "bashWait",
-  "bashKill",
-  "read",
-  "write",
-  "edit",
-  "view",
-  "patch",
-  "agent",
-  "spawn",
-  "join",
-  "adopt",
-  "ask",
-  "mcp",
-  "mcpStatus",
-  "lsp",
-  "artifact",
-  "recall",
-  "image",
-  "schedule",
-  "state",
-  "workflow",
-  "console",
-];
-
-export interface HostFns {
-  bash(cmd: string): Promise<string>;
-  /**
-   * Background shells: bashBg spawns a command that outlives the program and the
-   * turn, returning {id, pid} as JSON; bashOutput returns output accrued since the
-   * last call plus a status line; bashKill terminates one. Always wired by
-   * run_steps, like bash.
-   */
-  /**
-   * Concurrent shells (bash.ts shConcurrent): the commands travel in as a JSON
-   * array and the [{code, out}, …] results come back as JSON — the worker side
-   * exposes it as the variadic sh(...cmds). Always wired by run_steps, like bash.
-   */
-  sh(cmdsJson: string): Promise<string>;
-  /**
-   * Cheap-model extraction over text the program already holds (worker/extract.ts):
-   * the optional JSON Schema travels in as JSON and the result comes back as JSON
-   * — the worker side exposes it as extract(text, instruction, schema?). Always
-   * wired by run_steps, like bash.
-   */
-  extract(text: string, instruction: string, schemaJson: string): Promise<string>;
-  /**
-   * HTTP from the host (tools/fetch_url.ts): the worker isolate has no network of
-   * its own, so this is the program's only egress. Options travel in as JSON and
-   * the {status, ok, url, contentType, body, truncated} result comes back as JSON.
-   * Always wired by run_steps, like bash.
-   */
-  fetch(url: string, optsJson: string): Promise<string>;
-  bashBg(cmd: string): Promise<string>;
-  bashOutput(id: string): Promise<string>;
-  bashWait(id: string): Promise<string>;
-  bashKill(id: string): Promise<string>;
-  read(path: string): Promise<string>;
-  /**
-   * Hash-anchored editing (tools/patch_file.ts): `view` returns the file as
-   * `[path#TAG]` plus numbered lines, `patch` applies ops written against that
-   * tag. Both are plain strings — the format is the payload. Always wired by
-   * run_steps, like read/write/edit.
-   */
-  view(path: string): Promise<string>;
-  patch(input: string): Promise<string>;
-  write(path: string, content: string): Promise<string>;
-  edit(path: string, oldText: string, newText: string): Promise<string>;
-  /**
-   * Delegation, bridged only for sessions that may spawn (run_steps wires them from
-   * ToolRunCtx). `agent` (blocking result), `spawn` (background handle) and `join`
-   * (await a background subagent) return JSON — the worker side parses it back into
-   * an object; the string keeps the postMessage protocol string-only.
-   */
-  agent?(task: string, optsJson?: string): Promise<string>;
-  spawn?(task: string, optsJson?: string): Promise<string>;
-  join?(sessionId: string): Promise<string>;
-  adopt?(sessionId: string): Promise<string>;
-  /**
-   * Ask the HUMAN a mid-task question (bridged for supervisor turns — asks.ts):
-   * the program parks until they answer in the TUI. Options travel in as JSON
-   * ({options?: string[]}); the chosen/typed answer returns as a plain string.
-   * Rejects (catchably) when the user declines, and on turn interrupt.
-   */
-  ask?(question: string, optsJson: string): Promise<string>;
-  /**
-   * MCP tool call (bridged only for turns granted servers): args travel in as JSON
-   * and the result returns as JSON — the worker side parses both ends.
-   */
-  mcp?(server: string, tool: string, argsJson: string): Promise<string>;
-  /**
-   * MCP management state for the session (registry/auth/active/connections) as
-   * JSON. Read-only and always bridged for supervisor turns — status is not a
-   * capability grant; calling tools still requires mcp().
-   */
-  mcpStatus?(): Promise<string>;
-  /**
-   * LSP symbol verb (bridged when a language-intelligence server is registered —
-   * mcp/lsp.ts): args in and result back travel as JSON, like mcp(). The worker
-   * side exposes it as the `lsp.*` method object.
-   */
-  lsp?(verb: string, argsJson: string): Promise<string>;
-  /**
-   * Publish an artifact for browser viewing (server/artifacts.ts): write `content`
-   * to the session's artifact store, host it on the bough server, and return the
-   * artifact ({url, href, …}) as JSON — the worker side parses it back. Bridged for
-   * every supervisor turn.
-   */
-  artifact?(name: string, content: string): Promise<string>;
-  /**
-   * Semantic search over all past conversations (recall.ts): the RecallResult
-   * ({hits, indexed}) returns as JSON — the worker side parses it back. Bridged
-   * for every supervisor turn.
-   */
-  recall?(query: string, k?: number): Promise<string>;
-  /**
-   * Show an image file to the model (turn.ts): the file is copied into the
-   * attachment store and posted as a system note carrying the picture. Returns a
-   * plain confirmation line (no JSON) — the image itself never crosses the
-   * postMessage bridge. Bridged for every supervisor turn.
-   */
-  image?(path: string, note?: string): Promise<string>;
-  /**
-   * Recurring runs (schedules.ts): one verb-dispatched function like lsp() —
-   * args in and result back travel as JSON; the worker side exposes it as the
-   * `schedule.*` method object (list/add/enable/disable/remove).
-   */
-  schedule?(verb: string, argsJson: string): Promise<string>;
-  /**
-   * Durable per-conversation key/value notes (state.ts): one verb-dispatched
-   * function like schedule() — args in and result back travel as JSON; the worker
-   * side exposes it as the `state.*` method object (get/set/list/delete). Bridged
-   * for every supervisor turn.
-   */
-  state?(verb: string, argsJson: string): Promise<string>;
-  /**
-   * Workflows (workflow.ts): scripted multi-agent orchestration, verb-dispatched
-   * like schedule() — the worker side exposes it as the `workflow.*` method
-   * object (start/rerun/stop/pause/resume/status/list). Bridged only for
-   * root-session turns that may delegate.
-   */
-  workflow?(verb: string, argsJson: string): Promise<string>;
-}
-
-export interface ProgramResult {
-  ok: boolean;
-  /** console.log/error/warn/info output, in order. */
-  logs: string[];
-  /** Present when ok=false: the thrown error (with stack) or the timeout notice. */
-  error?: string;
-}
-
-const DEFAULT_TIMEOUT_MS = 180_000;
+export const DEFAULT_TIMEOUT_MS = 180_000;
 
 /**
  * How long a stopping program gets to kill the processes it spawned before the
  * worker is terminated regardless. Long enough for a SIGTERM sweep, short enough
- * that the stop button still feels instant.
+ * that the stop button still feels instant. A worker wedged in a synchronous loop
+ * cannot answer at all, which is exactly why this is a timeout and not a wait.
  */
-const ABORT_GRACE_MS = 1_000;
+export const ABORT_GRACE_MS = 1_000;
+
+// ---------------------------------------------------------------------------
+// Pre-flight
+// ---------------------------------------------------------------------------
+
+// deno-lint-ignore no-explicit-any
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as any;
+
+function clip(s: string, n: number): string {
+  return s.length > n ? `${s.slice(0, n)}…` : s;
+}
 
 /**
- * Run one supervisor program in a sealed V8 isolate with the given host functions.
- * `signal` (the turn's interrupt) terminates the worker mid-program — host functions
- * already in flight are expected to observe the same signal and die on their own
- * (bash kills its child process).
+ * Locate a string literal closed by a raw newline.
+ *
+ * This is THE failure mode for model-generated code: the model assembles the
+ * program inside a template literal, and every `\n` meant for a string in the
+ * GENERATED program is consumed by the outer literal, leaving a real newline inside
+ * `"..."`. V8 reports it as "Invalid or unexpected token" with no position, which
+ * tells the author nothing.
+ *
+ * A scanner rather than a regex because it has to skip comments and template
+ * literals, where a raw newline is perfectly legal.
+ *
+ * NOTE: ported from `src/text.ts`, which the new layout does not carry forward.
+ * It lives here because its only caller is the pre-flight check, and because the
+ * check must parse with the worker's own parameter list to be meaningful.
  */
-export function runProgram(
-  code: string,
-  host: HostFns,
-  timeoutMs: number = DEFAULT_TIMEOUT_MS,
-  signal?: AbortSignal,
-  /** Fires for each console.* line as the program prints it (display-only
-   * streaming — the batched `logs` in the result are unaffected). */
-  onLog?: (line: string) => void,
-): Promise<ProgramResult> {
-  // Parse before spawning: a program that cannot compile used to reach the model
-  // as a bare SyntaxError over ten frames of Deno internals, with no line and no
-  // source — nothing it could act on, so it burned the turn guessing. The worker
-  // parses it again for real; this pass exists only to say WHERE.
-  const bad = checkSyntax(code, PROGRAM_PARAMS, "program");
-  if (bad) return Promise.resolve({ ok: false, logs: [], error: bad.message });
+export function unterminatedString(
+  src: string,
+): { line: number; col: number; text: string; quote: string } | null {
+  let line = 1, col = 1, depth = 0;
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i], next = src[i + 1];
+    if (c === "/" && next === "/") {
+      while (i < src.length && src[i] !== "\n") i++;
+      line++;
+      col = 1;
+      continue;
+    }
+    if (c === "/" && next === "*") {
+      const end = src.indexOf("*/", i + 2);
+      const skipped = src.slice(i, end < 0 ? src.length : end + 2);
+      line += (skipped.match(/\n/g) ?? []).length;
+      col = 1;
+      i = end < 0 ? src.length : end + 1;
+      continue;
+    }
+    // Template literals may span lines legally; walk them (with `${}` nesting) so
+    // their newlines never look like an unterminated quote.
+    if (c === "`") {
+      i++;
+      for (; i < src.length; i++) {
+        if (src[i] === "\\") {
+          i++;
+          continue;
+        }
+        if (src[i] === "\n") {
+          line++;
+          col = 1;
+          continue;
+        }
+        if (src[i] === "$" && src[i + 1] === "{") depth++;
+        else if (src[i] === "}" && depth > 0) depth--;
+        else if (src[i] === "`" && depth === 0) break;
+      }
+      col++;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      const startLine = line, startCol = col;
+      for (i++; i < src.length; i++) {
+        if (src[i] === "\\") {
+          i++;
+          continue;
+        }
+        if (src[i] === "\n" || (i === src.length - 1 && src[i] !== c)) {
+          return {
+            line: startLine,
+            col: startCol,
+            text: src.split("\n")[startLine - 1] ?? "",
+            quote: c,
+          };
+        }
+        if (src[i] === c) break;
+      }
+      col++;
+      continue;
+    }
+    if (c === "\n") {
+      line++;
+      col = 1;
+    } else col++;
+  }
+  return null;
+}
+
+/**
+ * Compile-check a program BEFORE spawning a worker. Returns the message to hand the
+ * model, or `null` when the program parses.
+ *
+ * Compiling is side-effect free: the `AsyncFunction` constructor parses, it does not
+ * execute, and the code never touches this scope. The parameter list is
+ * `PROGRAM_PARAMS` — the same list `vm_worker.ts` binds — so a program that shadows
+ * a host name is a `SyntaxError` in both places, and this one is the one that can
+ * explain itself.
+ */
+export function checkProgramSyntax(code: string): string | null {
+  try {
+    new AsyncFunction(...PROGRAM_PARAMS, code);
+    return null;
+  } catch (err) {
+    if ((err as Error)?.name !== "SyntaxError") throw err;
+    const why = (err as Error).message;
+    // NOTE: the shadow case is worth naming outright. V8 says "Identifier 'bash'
+    // has already been declared", which reads as a bug in the program's own scope
+    // unless you know `bash` arrived as a parameter.
+    const shadow = /Identifier '([^']+)' has already been declared/.exec(why);
+    if (shadow && (PROGRAM_PARAMS as readonly string[]).includes(shadow[1])) {
+      return `program does not parse: ${why} — \`${shadow[1]}\` is a host function ` +
+        `already bound in every program's scope, so declaring it shadows the binding. ` +
+        `Rename your variable (\`my${shadow[1][0].toUpperCase()}${shadow[1].slice(1)}\`) ` +
+        `and call \`${shadow[1]}\` as it is.`;
+    }
+    const hit = unterminatedString(code);
+    if (!hit) return `program does not parse: ${why}`;
+    return `program does not parse: ${why} — line ${hit.line}: a ${
+      hit.quote === '"' ? "double" : "single"
+    }-quoted string is closed by a real newline.\n  ${hit.line} | ${
+      clip(hit.text.trim(), 90)
+    }\nIf you built this code inside a template literal, write \\\\n (escaped) for ` +
+      `newlines that belong to the GENERATED code's strings — a bare \\n is consumed ` +
+      `by the outer literal.`;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Running one program
+// ---------------------------------------------------------------------------
+
+/**
+ * NOTE: an options object where the port took five positional arguments. The
+ * caller (`turn/runner.ts`) passes `signal` and `onLog` but rarely `timeoutMs`, and
+ * a bare `runProgram(code, host, undefined, signal)` is exactly the shape that
+ * grows a bug when a parameter is inserted.
+ */
+export interface RunProgramOptions {
+  /** The program source, as the model wrote it. */
+  code: string;
+  /**
+   * The bridged host functions. **Absence is the capability denial** — a name the
+   * turn does not bridge simply is not here, and calling it rejects catchably
+   * (types.ts `HostFns`).
+   */
+  host: HostFns;
+  /** Wall-clock ceiling. Default `DEFAULT_TIMEOUT_MS`. */
+  timeoutMs?: number;
+  /** The turn's interrupt. Winds the program down: children first, then the worker. */
+  signal?: AbortSignal;
+  /**
+   * Fires for each `console.*` line as the program prints it. Display-only — the
+   * batched `logs` in the result carry the same lines regardless (spec §5).
+   */
+  onLog?: (line: string) => void;
+}
+
+/**
+ * Run one program to completion, a timeout, or an interrupt, and resolve with what
+ * the model should see. **This never rejects**: a program that throws, times out,
+ * or is interrupted is an ordinary result with `ok: false`, because every one of
+ * those is something the next round can act on.
+ */
+export function runProgram(opts: RunProgramOptions): Promise<ProgramResult> {
+  const { code, host, timeoutMs = DEFAULT_TIMEOUT_MS, signal, onLog } = opts;
+
+  // Parse before spawning. The worker parses it again for real; this pass exists
+  // only to say WHERE, and to cost a fast round-trip instead of a worker spawn
+  // (spec §6).
+  const bad = checkProgramSyntax(code);
+  if (bad) return Promise.resolve({ ok: false, logs: [], error: bad });
 
   const worker = new Worker(new URL("./vm_worker.ts", import.meta.url).href, {
     type: "module",
-    // The program runs with everything the server itself has: filesystem, network,
-    // env, subprocesses, npm/jsr imports. The host functions below are convenience
-    // and integration (they carry the turn's interrupt, the auto-background, the
-    // output digest, and the session's DB/TUI-backed verbs) — they are NOT a
-    // boundary, and a program is free to reach past them to raw Deno APIs.
+    // The program runs with everything the server itself has. The host functions
+    // are convenience and integration, NOT a boundary, and a program is free to
+    // reach past them to raw Deno APIs (spec §2.2).
     deno: { permissions: "inherit" },
   });
 
   return new Promise<ProgramResult>((resolve) => {
     let settled = false;
-    /** Set while a stop is in flight: the worker's "aborted" ack calls it. */
+    /** Set while a stop is in flight; the worker's `aborted` ack calls it. */
     let onAborted: (() => void) | undefined;
-    // Console lines already streamed out of the worker — an interrupt terminates
-    // the worker before it can post its batched logs, so this copy is what keeps
-    // the partial output in the tool result.
+    let grace: ReturnType<typeof setTimeout> | undefined;
+    /**
+     * Console lines already streamed out of the worker. An interrupt terminates the
+     * worker before it can post its batched `logs`, so this copy is what keeps the
+     * partial output in the tool result.
+     */
     const streamed: string[] = [];
+
+    /** Spec §6: a timeout and an interrupt must be distinguishable, and each must
+     * say what partial work survived. "failed" alone is a defect. */
+    const survived = () =>
+      streamed.length === 0
+        ? "it printed nothing before stopping; anything it had already done (files written, commands run) still stands"
+        : `the ${streamed.length} line(s) it printed before stopping are above; ` +
+          `anything it had already done (files written, commands run) still stands`;
+
     const interrupted = (): ProgramResult => ({
       ok: false,
       logs: streamed,
-      error: "program interrupted by the user",
+      interrupted: true,
+      error: `program interrupted by the user — ${survived()}`,
     });
+    const timedOut = (): ProgramResult => ({
+      ok: false,
+      logs: streamed,
+      error: `program timed out after ${timeoutMs}ms — ${survived()}. ` +
+        `Long-running commands belong in bashBg(), not in a foreground wait.`,
+    });
+
+    const finish = (result: ProgramResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      // A stop already in flight leaves its grace timer armed; an unclaimed timer
+      // keeps the process (and Deno's test sanitizer) awake for another second.
+      if (grace !== undefined) clearTimeout(grace);
+      signal?.removeEventListener("abort", onAbort);
+      worker.terminate();
+      resolve(result);
+    };
+
     /**
-     * Stopping the program is a handshake, not just a terminate(). The program runs
-     * with real permissions, so it may have spawned processes of its own — and those
-     * are children of THIS server process, which worker.terminate() leaves running
-     * forever. So: ask the worker to kill what it spawned, wait briefly for its ack,
-     * then terminate. A worker wedged in a synchronous loop can't answer, hence the
-     * grace timeout — it stops the turn on schedule either way.
+     * Stopping is a handshake. The program runs with real permissions, so it may
+     * have spawned processes of its own — children of THIS server process, which
+     * `worker.terminate()` leaves running forever. So: ask the worker to kill what
+     * it spawned, wait briefly for the ack, then terminate. A worker wedged in a
+     * synchronous loop cannot answer, hence the grace timeout — the turn stops on
+     * schedule either way (plan §6.3).
      */
     const stop = (result: ProgramResult) => {
-      if (settled) return;
-      let acked = false;
+      if (settled || onAborted) return;
       const done = () => {
-        if (acked) return;
-        acked = true;
-        clearTimeout(grace);
+        if (grace !== undefined) clearTimeout(grace);
         finish(result);
       };
       onAborted = done;
-      const grace = setTimeout(done, ABORT_GRACE_MS);
+      grace = setTimeout(done, ABORT_GRACE_MS);
       try {
         worker.postMessage({ type: "abort" });
       } catch {
@@ -263,33 +320,13 @@ export function runProgram(
       }
     };
     const onAbort = () => stop(interrupted());
-    const finish = (result: ProgramResult) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", onAbort);
-      worker.terminate();
-      resolve(result);
-    };
 
     // A timed-out program gets the same wind-down as an interrupted one: whatever
     // it spawned is killed before the worker goes away.
-    const timer = setTimeout(
-      () => stop({ ok: false, logs: streamed, error: `program timed out after ${timeoutMs}ms` }),
-      timeoutMs,
-    );
-    // Already stopped before we started: the program never ran, so there is nothing
-    // to wind down and no reason to wait on an ack.
-    if (signal?.aborted) return finish(interrupted());
-    signal?.addEventListener("abort", onAbort, { once: true });
+    const timer = setTimeout(() => stop(timedOut()), timeoutMs);
 
     worker.onmessage = async (e: MessageEvent) => {
-      const msg = e.data as
-        | { type: "host"; id: number; fn: keyof HostFns; args: unknown[] }
-        | { type: "log"; line: string }
-        | { type: "aborted" }
-        | { type: "done"; logs: string[] }
-        | { type: "error"; message: string; logs: string[] };
+      const msg = e.data as FromProgramWorker;
       // The worker finished killing what it spawned — stop waiting on the grace timer.
       if (msg.type === "aborted") return onAborted?.();
       if (msg.type === "log") {
@@ -299,27 +336,58 @@ export function runProgram(
       }
       if (msg.type === "done") return finish({ ok: true, logs: msg.logs });
       if (msg.type === "error") return finish({ ok: false, logs: msg.logs, error: msg.message });
-      // Host-function call: run it here, send the result (or the error) back in.
+      await hostCall(msg);
+    };
+
+    /** One bridged call: run it here, post the result — or the error — back in. */
+    const hostCall = async (msg: HostCallMessage) => {
       try {
-        const fn = host[msg.fn];
-        if (!fn) throw new Error(`unknown host function: ${msg.fn}`);
+        // Validate against the canonical list before indexing: the worker global is
+        // reachable from the program, so `fn` is not guaranteed to be one of ours,
+        // and `host["constructor"]` would otherwise be "callable".
+        if (!(HOST_FN_NAMES as readonly string[]).includes(msg.fn)) {
+          throw new Error(`unknown host function: ${msg.fn}`);
+        }
+        const fn = host[msg.fn as HostFnName];
+        if (typeof fn !== "function") {
+          // Absence is the capability denial (types.ts `HostFns`). Say which, and
+          // that the prompt is the authority — the model must not retry blind.
+          throw new Error(
+            `${msg.fn}() is not available in this turn — the system prompt lists the ` +
+              `host functions this session was granted. Use another approach.`,
+          );
+        }
         // deno-lint-ignore no-explicit-any
-        const value = await (fn as any)(...msg.args);
-        worker.postMessage({ type: "host_result", id: msg.id, ok: true, value: String(value) });
+        const value = await (fn as any).apply(host, msg.args);
+        post({ type: "host_result", id: msg.id, ok: true, value: String(value) });
       } catch (err) {
-        worker.postMessage({
+        post({
           type: "host_result",
           id: msg.id,
           ok: false,
-          value: (err as Error).message ?? String(err),
+          value: (err as Error)?.message ?? String(err),
         });
       }
     };
 
+    const post = (m: unknown) => {
+      // The worker may have been terminated (interrupt) while a host call was in
+      // flight; posting into a dead worker is not an error worth surfacing.
+      if (settled) return;
+      try {
+        worker.postMessage(m);
+      } catch { /* worker gone */ }
+    };
+
     worker.onerror = (e) => {
       e.preventDefault();
-      finish({ ok: false, logs: [], error: `worker error: ${e.message}` });
+      finish({ ok: false, logs: streamed, error: `worker error: ${e.message}` });
     };
+
+    // Already stopped before we started: the program never ran, so there is nothing
+    // to wind down and no reason to wait on an ack.
+    if (signal?.aborted) return finish(interrupted());
+    signal?.addEventListener("abort", onAbort, { once: true });
 
     worker.postMessage({ type: "run", code });
   });

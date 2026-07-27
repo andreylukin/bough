@@ -10,5 +10,3 @@ __pycache__/
 scripts/guest-image/golden-rootfs/
 *.smolmachine
 
-# rewrite tree build artifacts
-next/node_modules/

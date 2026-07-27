@@ -1,930 +1,380 @@
-import { assert, assertEquals } from "jsr:@std/assert@1";
-import { Db } from "../db/db.ts";
+/**
+ * Tests for the router.
+ *
+ * The whole point of `createHandler(ctx)` is that the HTTP layer is drivable
+ * without a server: every test here fabricates an `AppCtx` over an in-memory
+ * database, builds a `Request` by hand, and calls the returned function. Nothing
+ * binds a socket, claims a port, touches `~/.bough`, or reaches the network
+ * (plan §7).
+ *
+ * The three that are load-bearing, and why:
+ *
+ *   - **`HttpError` → response.** The ground rule is that domain modules throw and
+ *     the router renders (plan §0). If this mapping regressed, every module below
+ *     `server/` would have to grow its own catch block and its own `Response`
+ *     construction — the exact coupling `errors.ts` exists to prevent.
+ *   - **A non-`HttpError` becomes a 500, not a dropped connection.** A defect in a
+ *     handler must surface as an answer the client can show, and be reported once.
+ *   - **First match wins, and the real table has no duplicate `(method, pathname)`.**
+ *     `routes` is appended to by every task that adds an endpoint. Two entries for
+ *     the same method and path is a merge accident where the second is dead code,
+ *     and it is invisible in review; this catches it mechanically.
+ *
+ * Assertions come from `node:assert/strict` rather than `@std/assert`: jsr.io is
+ * not reachable from this environment, and a test that cannot run offline does not
+ * belong in `deno task test`.
+ */
+import assert from "node:assert/strict";
+import { z } from "zod";
 import { Bus } from "../bus.ts";
-import { type AppCtx, createHandler } from "./app.ts";
-import { activeModel, usableContextLimit } from "../turn.ts";
-import type { Message, Session } from "../schema/parts.ts";
+import { openDb, type SqliteDb } from "../db/db.ts";
+import { ConflictError, HttpError, NotFoundError } from "../errors.ts";
+import type { AppCtx } from "../types.ts";
+import {
+  createHandler,
+  errorResponse,
+  type Handler,
+  json,
+  parseBody,
+  type Route,
+  route,
+  routes,
+} from "./app.ts";
 
-function ctx(): AppCtx {
-  const bus = new Bus();
-  // envDir: PATCH /config persists the default model to the launcher env file —
-  // point it at a throwaway dir so tests never touch the real ~/.bough/env.
-  return { db: new Db(":memory:"), bus, envDir: Deno.makeTempDirSync({ prefix: "app-env-" }) };
+// ---- fixtures ---------------------------------------------------------------
+
+/** A fabricated ctx: real bus, in-memory database, no LLM, no socket. */
+function fixture(): { ctx: AppCtx; db: SqliteDb } {
+  const db = openDb(":memory:");
+  return { ctx: { db, bus: new Bus(), model: "test-model" }, db };
 }
 
-const req = (method: string, path: string, body?: unknown) =>
-  new Request("http://x" + path, {
-    method,
-    headers: body ? { "content-type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
+function get(path: string): Request {
+  return new Request(`http://127.0.0.1:4321${path}`);
+}
+
+function post(path: string, body?: unknown): Request {
+  return new Request(`http://127.0.0.1:4321${path}`, {
+    method: "POST",
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
+}
 
-Deno.test("GET /config lists models; PATCH /config switches the active model", async () => {
-  const c = ctx();
-  const h = createHandler(c);
-
-  const cfg = await (await h(req("GET", "/config"))).json() as {
-    model: string;
-    models: { id: string }[];
-  };
-  assertEquals(cfg.model, "claude-opus-4-8");
-  assert(cfg.models.some((m) => m.id === "claude-opus-4-8"));
-
-  const patched = await h(req("PATCH", "/config", { model: "claude-haiku-4-5" }));
-  assertEquals((await patched.json() as { model: string }).model, "claude-haiku-4-5");
-  assertEquals(
-    (await (await h(req("GET", "/config"))).json() as { model: string }).model,
-    "claude-haiku-4-5",
-  );
-
-  assertEquals((await h(req("PATCH", "/config", { model: "" }))).status, 400);
-  // Restore so later tests see the default.
-  await h(req("PATCH", "/config", { model: "claude-opus-4-8" }));
-  c.db.close();
-});
-
-Deno.test("PATCH /config with sessionId pins that session; others keep theirs", async () => {
-  const c = ctx();
-  const h = createHandler(c);
-  const events: unknown[] = [];
-  c.bus.subscribe((e) => e.type === "session.updated" && events.push(e.data));
-  c.db.createSession({ id: "A", parentId: null, title: "a", kind: "root", createdAt: 1 });
-  c.db.createSession({ id: "B", parentId: null, title: "b", kind: "root", createdAt: 2 });
-
-  const res = await h(
-    req("PATCH", "/config", { model: "claude-haiku-4-5", sessionId: "A" }),
-  );
-  assertEquals(res.status, 200);
-  // The open session is pinned, the sibling untouched, the global default moved.
-  assertEquals(c.db.getSession("A")?.model, "claude-haiku-4-5");
-  assertEquals(c.db.getSession("B")?.model, undefined);
-  assertEquals(
-    (await (await h(req("GET", "/config"))).json() as { model: string }).model,
-    "claude-haiku-4-5",
-  );
-  // The pin is announced so open UIs refresh the session row.
-  assertEquals((events.at(-1) as { model?: string })?.model, "claude-haiku-4-5");
-  // …and the session row carries it over the wire.
-  const got = await (await h(req("GET", "/sessions/A"))).json() as {
-    session: { model?: string };
-  };
-  assertEquals(got.session.model, "claude-haiku-4-5");
-
-  assertEquals(
-    (await h(req("PATCH", "/config", { model: "claude-opus-4-8", sessionId: "zzz" }))).status,
-    404,
-  );
-  // Restore the process-global default for later tests.
-  await h(req("PATCH", "/config", { model: "claude-opus-4-8" }));
-  c.db.close();
-});
-
-Deno.test("PATCH /config effort: validates, pins per session, 'default' clears", async () => {
-  const c = ctx();
-  const h = createHandler(c);
-  c.db.createSession({ id: "A", parentId: null, title: "a", kind: "root", createdAt: 1 });
-
-  // Advertised in GET /config; starts unset.
-  const cfg = await (await h(req("GET", "/config"))).json() as {
-    effort: string;
-    efforts: string[];
-  };
-  assertEquals(cfg.effort, "");
-  assert(cfg.efforts.includes("xhigh"));
-
-  assertEquals((await h(req("PATCH", "/config", { effort: "extreme" }))).status, 400);
-
-  // Pin: session + global default move together (same semantics as model).
-  const res = await h(req("PATCH", "/config", { effort: "xhigh", sessionId: "A" }));
-  assertEquals((await res.json() as { effort: string }).effort, "xhigh");
-  assertEquals(c.db.getSession("A")?.effort, "xhigh");
-
-  // "default" clears the global and the pin.
-  await h(req("PATCH", "/config", { effort: "default", sessionId: "A" }));
-  assertEquals(c.db.getSession("A")?.effort, undefined);
-  assertEquals(
-    (await (await h(req("GET", "/config"))).json() as { effort: string }).effort,
-    "",
-  );
-  c.db.close();
-});
-
-Deno.test("GET /config lists workers; PATCH /config switches the worker", async () => {
-  const c = ctx();
-  const h = createHandler(c);
-
-  const cfg = await (await h(req("GET", "/config"))).json() as {
-    worker: string;
-    workerOptions: { id: string }[];
-  };
-  assertEquals(cfg.worker, "local");
-  assert(cfg.workerOptions.some((w) => w.id === "local"));
-  assert(cfg.workerOptions.some((w) => w.id === "claude-haiku-4-5"));
-
-  const patched = await h(req("PATCH", "/config", { worker: "claude-haiku-4-5" }));
-  assertEquals((await patched.json() as { worker: string }).worker, "claude-haiku-4-5");
-  assertEquals(
-    (await (await h(req("GET", "/config"))).json() as { worker: string }).worker,
-    "claude-haiku-4-5",
-  );
-
-  // Local-only pins the worker: switching to a frontier model is rejected and the
-  // effective worker reads as local even with a frontier choice stored.
-  Deno.env.set("BOUGH_WORKER_LOCAL_ONLY", "1");
-  try {
-    assertEquals((await h(req("PATCH", "/config", { worker: "claude-haiku-4-5" }))).status, 400);
-    assertEquals(
-      (await (await h(req("GET", "/config"))).json() as { worker: string }).worker,
-      "local",
-    );
-  } finally {
-    Deno.env.delete("BOUGH_WORKER_LOCAL_ONLY");
-  }
-
-  assertEquals((await h(req("PATCH", "/config", {}))).status, 400);
-  // Restore so later tests see the default.
-  await h(req("PATCH", "/config", { worker: "local" }));
-  c.db.close();
-});
-
-Deno.test("GET /config exposes key booleans; PUT /config/keys validates", async () => {
-  const c = ctx();
-  const h = createHandler(c);
-
-  const cfg = await (await h(req("GET", "/config"))).json() as { keys: Record<string, unknown> };
-  // A boolean per provider — never a value.
-  assertEquals(typeof cfg.keys.anthropic, "boolean");
-  assertEquals(typeof cfg.keys.openrouter, "boolean");
-  assertEquals(typeof cfg.keys.openai, "boolean");
-
-  // Validation: unknown provider, empty key, newline key, and empty body all 400.
-  assertEquals((await h(req("PUT", "/config/keys", { provider: "bogus", key: "x" }))).status, 400);
-  assertEquals((await h(req("PUT", "/config/keys", { provider: "openai", key: "" }))).status, 400);
-  assertEquals(
-    (await h(req("PUT", "/config/keys", { provider: "openai", key: "a\nb" }))).status,
-    400,
-  );
-  assertEquals((await h(req("PUT", "/config/keys", {}))).status, 400);
-  c.db.close();
-});
-
-Deno.test("GET /sessions/:id includes token usage (zero before any turn)", async () => {
-  const c = ctx();
-  const h = createHandler(c);
-  const s = await (await h(req("POST", "/sessions", { title: "u" }))).json() as Session;
-  const got = await (await h(req("GET", `/sessions/${s.id}`))).json() as {
-    usage: {
-      contextTokens: number;
-      outputTokens: number;
-      inputTokens: number;
-      cachedTokens: number;
-      cacheReadTotal: number;
-      cacheWriteTotal: number;
-      costUsd: number;
-      contextLimit: number | null;
-      lastLlmAt: number | null;
-      tree: { inputTokens: number; outputTokens: number; costUsd: number; sessions: number };
-    };
-  };
-  assertEquals(got.usage, {
-    contextTokens: 0,
-    outputTokens: 0,
-    inputTokens: 0,
-    cachedTokens: 0,
-    cacheReadTotal: 0,
-    cacheWriteTotal: 0,
-    costUsd: 0,
-    // The default model's usable prompt budget (catalog window − output reservation).
-    contextLimit: usableContextLimit(activeModel()),
-    lastLlmAt: null,
-    tree: { inputTokens: 0, outputTokens: 0, costUsd: 0, sessions: 0 },
+/** Runs `fn` against a handler built over a fabricated ctx and a fabricated table. */
+async function withHandler(
+  table: Route[],
+  fn: (
+    call: (req: Request) => Promise<Response>,
+    ctx: AppCtx,
+    reported: unknown[],
+  ) => Promise<void>,
+): Promise<void> {
+  const { ctx, db } = fixture();
+  const reported: unknown[] = [];
+  const call = createHandler(ctx, {
+    routes: table,
+    onUnexpectedError: (e) => reported.push(e),
   });
-  c.db.close();
-});
-
-Deno.test("POST /sessions creates and GET /sessions lists it", async () => {
-  const c = ctx();
-  const h = createHandler(c);
-
-  const created = await (await h(req("POST", "/sessions", { title: "hello" }))).json() as Session;
-  assertEquals(created.title, "hello");
-  assertEquals(created.kind, "root");
-  assertEquals(created.parentId, null);
-
-  const list = await (await h(req("GET", "/sessions"))).json() as Session[];
-  assertEquals(list.map((s) => s.id), [created.id]);
-  c.db.close();
-});
-
-Deno.test("artifact comments: POST adds, GET lists, DELETE removes (404s guarded)", async () => {
-  // Isolate the comments sidecar under a throwaway HOME so the real ~/.bough is untouched.
-  const home = Deno.makeTempDirSync({ prefix: "cmt-home-" });
-  const prevHome = Deno.env.get("HOME");
-  Deno.env.set("HOME", home);
   try {
-    const c = ctx();
-    const h = createHandler(c);
-    const s = await (await h(req("POST", "/sessions", { title: "art" }))).json() as Session;
-    const anchor = { label: "Files", selector: "body>h2", xf: 0.5, yf: 0.2 };
-
-    // Unknown session → 404 on add.
-    assertEquals(
-      (await h(req("POST", "/sessions/nope/comments", {
-        artifact: "i.html",
-        text: "x",
-        anchor,
-      }))).status,
-      404,
-    );
-
-    const added = await (await h(req("POST", `/sessions/${s.id}/comments`, {
-      artifact: "index.html",
-      text: "this is stale",
-      anchor,
-    }))).json() as { id: string; sent: boolean };
-    assertEquals(added.sent, false);
-
-    const listed = await (await h(req("GET", `/sessions/${s.id}/comments`))).json() as {
-      comments: { text: string }[];
-    };
-    assertEquals(listed.comments.map((x) => x.text), ["this is stale"]);
-
-    assertEquals((await h(req("DELETE", `/sessions/${s.id}/comments/${added.id}`))).status, 200);
-    assertEquals((await h(req("DELETE", `/sessions/${s.id}/comments/${added.id}`))).status, 404);
-    assertEquals(
-      ((await (await h(req("GET", `/sessions/${s.id}/comments`))).json()) as { comments: [] })
-        .comments.length,
-      0,
-    );
-    c.db.close();
+    await fn(call, ctx, reported);
   } finally {
-    if (prevHome !== undefined) Deno.env.set("HOME", prevHome);
-    Deno.removeSync(home, { recursive: true });
+    db.close();
   }
+}
+
+const ok: Handler = () => json({ ok: true });
+
+// ---- dispatch ---------------------------------------------------------------
+
+Deno.test("dispatches a matching method + pathname to its handler", async () => {
+  await withHandler([route("GET", "/sessions", ok)], async (call) => {
+    const res = await call(get("/sessions"));
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("content-type"), "application/json; charset=utf-8");
+    assert.deepEqual(await res.json(), { ok: true });
+  });
 });
 
-Deno.test("POST /sessions with model pins the session (bough exec -m)", async () => {
-  const c = ctx();
-  const h = createHandler(c);
-  const created = await (await h(
-    req("POST", "/sessions", { title: "m", model: "claude-haiku-4-5" }),
-  )).json() as Session;
-  assertEquals(created.model, "claude-haiku-4-5");
-  assertEquals(c.db.getSession(created.id)?.model, "claude-haiku-4-5");
-  c.db.close();
+Deno.test("hands the handler the exact ctx createHandler was built with", async () => {
+  let seen: AppCtx | undefined;
+  const capture: Handler = (_req, ctx) => {
+    seen = ctx;
+    return json({});
+  };
+  await withHandler([route("GET", "/x", capture)], async (call, ctx) => {
+    await call(get("/x"));
+    // Identity, not shape: the router must pass the object through untouched, or
+    // a test's fake db/bus would not be the one the handler uses.
+    assert.equal(seen, ctx);
+    assert.equal(seen?.model, "test-model");
+  });
 });
 
-Deno.test("POST /sessions with parentId defaults kind=fork; unknown parent → 400", async () => {
-  const c = ctx();
-  const h = createHandler(c);
-  const root = await (await h(req("POST", "/sessions", { title: "r" }))).json() as Session;
-
-  const fork = await (await h(req("POST", "/sessions", { title: "f", parentId: root.id })))
-    .json() as Session;
-  assertEquals(fork.kind, "fork");
-  assertEquals(fork.parentId, root.id);
-
-  const bad = await h(req("POST", "/sessions", { title: "f", parentId: "nope" }));
-  assertEquals(bad.status, 400);
-  c.db.close();
+Deno.test("extracts named groups as params", async () => {
+  let params: Record<string, string> | undefined;
+  const capture: Handler = (_req, _ctx, p) => {
+    params = p;
+    return json({});
+  };
+  const table = [route("GET", "/sessions/:id/jobs/:jobId", capture)];
+  await withHandler(table, async (call) => {
+    await call(get("/sessions/abc/jobs/bg_1"));
+    assert.deepEqual(params, { id: "abc", jobId: "bg_1" });
+  });
 });
 
-Deno.test("GET /sessions marks a session busy while a turn is pending", async () => {
-  const c = ctx();
-  const h = createHandler(c);
-  const s = await (await h(req("POST", "/sessions", { title: "b" }))).json() as Session;
-
-  const before = await (await h(req("GET", "/sessions"))).json() as (Session & { busy: boolean })[];
-  assertEquals(before[0].busy, false);
-
-  // postMessage persists a pending supervisor placeholder before the turn runs.
-  await h(req("POST", `/sessions/${s.id}/messages`, { text: "go" }));
-  const during = await (await h(req("GET", "/sessions"))).json() as (Session & { busy: boolean })[];
-  assertEquals(during[0].busy, true);
-  c.db.close();
+Deno.test("omits an optional group that did not match, rather than passing undefined", async () => {
+  let params: Record<string, string> | undefined;
+  const capture: Handler = (_req, _ctx, p) => {
+    params = p;
+    return json({});
+  };
+  // `:path*` is how the artifact route is written. With nothing after the id the
+  // group does not participate, and `URLPattern` reports it as `undefined`; the
+  // router drops it so the key is simply absent and a handler can write
+  // `params.path ?? ""` without the type lying to it.
+  await withHandler([route("GET", "/artifacts/:id/:path*", capture)], async (call) => {
+    await call(get("/artifacts/s1"));
+    assert.equal(Object.hasOwn(params ?? {}, "path"), false);
+    assert.deepEqual(params, { id: "s1" });
+    await call(get("/artifacts/s1/deep/page.html"));
+    assert.deepEqual(params, { id: "s1", path: "deep/page.html" });
+  });
 });
 
-Deno.test("GET /sessions carries per-row costUsd when priced usage exists (omitted at zero)", async () => {
-  const c = ctx();
-  const h = createHandler(c);
-  const spent = await (await h(req("POST", "/sessions", { title: "s" }))).json() as Session;
-  const fresh = await (await h(req("POST", "/sessions", { title: "f" }))).json() as Session;
-  c.db.setSessionUsage(spent.id, 100, 50, 200, 0.0123);
-
-  const rows = await (await h(req("GET", "/sessions"))).json() as (Session & {
-    costUsd?: number;
-  })[];
-  assertEquals(rows.find((r) => r.id === spent.id)?.costUsd, 0.0123);
-  assertEquals(rows.find((r) => r.id === fresh.id)?.costUsd, undefined);
-  c.db.close();
+Deno.test("matches on pathname only — a query string does not affect routing", async () => {
+  await withHandler([route("GET", "/events", ok)], async (call) => {
+    const res = await call(get("/events?sessionId=abc"));
+    assert.equal(res.status, 200);
+  });
 });
 
-Deno.test("GET /sessions/:id returns session + thread-through-parents; 404 unknown", async () => {
-  const c = ctx();
-  const h = createHandler(c);
-  const root = await (await h(req("POST", "/sessions", { title: "r" }))).json() as Session;
-  await h(req("POST", `/sessions/${root.id}/messages`, { text: "hi from user" }));
-  const fork = await (await h(req("POST", "/sessions", { title: "f", parentId: root.id })))
-    .json() as Session;
-
-  const res = await h(req("GET", `/sessions/${fork.id}`));
-  const { session, thread } = await res.json() as { session: Session; thread: Message[] };
-  assertEquals(session.id, fork.id);
-  // The user message on root is inherited by the fork's thread.
-  assertEquals(thread[0].role, "user");
-  assertEquals(thread[0].parts, [{ type: "text", text: "hi from user" }]);
-
-  assertEquals((await h(req("GET", "/sessions/missing"))).status, 404);
-  c.db.close();
+Deno.test("first match wins, so appending never steals an existing route", async () => {
+  const first: Handler = () => json({ which: "first" });
+  const second: Handler = () => json({ which: "second" });
+  // The second entry also matches /sessions/new. Appending it must not change
+  // what /sessions/new resolves to — this is why the table is never reordered.
+  const table = [
+    route("GET", "/sessions/new", first),
+    route("GET", "/sessions/:id", second),
+  ];
+  await withHandler(table, async (call) => {
+    assert.deepEqual(await (await call(get("/sessions/new"))).json(), { which: "first" });
+    assert.deepEqual(await (await call(get("/sessions/x1"))).json(), { which: "second" });
+  });
 });
 
-Deno.test("POST message returns 202 and persists user + pending supervisor msgs", async () => {
-  const c = ctx();
-  const h = createHandler(c);
-  const s = await (await h(req("POST", "/sessions", { title: "s" }))).json() as Session;
-
-  const res = await h(req("POST", `/sessions/${s.id}/messages`, { text: "go" }));
-  assertEquals(res.status, 202);
-
-  const msgs = c.db.messagesFor(s.id);
-  assertEquals(msgs.length, 2);
-  assertEquals(msgs[0].role, "user");
-  assertEquals(msgs[0].pending, false);
-  assertEquals(msgs[1].role, "supervisor");
-  assertEquals(msgs[1].pending, true); // stub turn placeholder
-  c.db.close();
+Deno.test("awaits an async handler", async () => {
+  const slow: Handler = async () => {
+    await Promise.resolve();
+    return json({ ok: true }, 202);
+  };
+  await withHandler([route("POST", "/sessions/:id/messages", slow)], async (call) => {
+    const res = await call(post("/sessions/a/messages"));
+    assert.equal(res.status, 202);
+  });
 });
 
-Deno.test("schedules: CRUD round-trip, spec/workspace validation, 404s", async () => {
-  const c = ctx();
-  const h = createHandler(c);
-  const ws = Deno.makeTempDirSync({ prefix: "sched-api-" });
+// ---- the one try/catch ------------------------------------------------------
 
-  // Create — spec validated, next_run_at computed, enabled defaults on.
-  const res = await h(
-    req("POST", "/schedules", {
-      title: "deploy check",
-      prompt: "check it",
-      spec: "every:30m",
-      workspace: ws,
+Deno.test("maps a thrown HttpError subclass to its status and message", async () => {
+  const missing: Handler = () => {
+    throw new NotFoundError("session not found");
+  };
+  await withHandler([route("GET", "/sessions/:id", missing)], async (call, _ctx, reported) => {
+    const res = await call(get("/sessions/nope"));
+    assert.equal(res.status, 404);
+    assert.deepEqual(await res.json(), { error: "session not found" });
+    // A domain error is an outcome, not a defect: nothing is reported.
+    assert.deepEqual(reported, []);
+  });
+});
+
+Deno.test("maps each HttpError status, including ones no generic catch could guess", async () => {
+  const table = [
+    route("POST", "/conflict", () => {
+      throw new ConflictError("that subagent already finished");
     }),
-  );
-  assertEquals(res.status, 201);
-  const created = await res.json() as {
-    id: string;
-    enabled: boolean;
-    nextRunAt: number;
-    workspace: string;
+    route("POST", "/teapot", () => {
+      throw new HttpError(413, "context window exceeded: 200000 tokens");
+    }),
+  ];
+  await withHandler(table, async (call) => {
+    assert.equal((await call(post("/conflict"))).status, 409);
+    const overflow = await call(post("/teapot"));
+    assert.equal(overflow.status, 413);
+    assert.deepEqual(await overflow.json(), { error: "context window exceeded: 200000 tokens" });
+  });
+});
+
+Deno.test("maps an HttpError rejected from an async handler too", async () => {
+  const rejects: Handler = async () => {
+    await Promise.resolve();
+    throw new NotFoundError("gone");
   };
-  assertEquals(created.enabled, true);
-  assert(created.nextRunAt > Date.now());
-  assertEquals(created.workspace, ws);
-
-  // Bad spec / bad workspace → 400 with the parser's message.
-  assertEquals(
-    (await h(req("POST", "/schedules", { title: "x", prompt: "y", spec: "weekly" }))).status,
-    400,
-  );
-  assertEquals(
-    (await h(
-      req("POST", "/schedules", {
-        title: "x",
-        prompt: "y",
-        spec: "every:1h",
-        workspace: "/nope/zzz",
-      }),
-    ))
-      .status,
-    400,
-  );
-
-  // List.
-  const listed = await (await h(req("GET", "/schedules"))).json() as {
-    schedules: { id: string }[];
-  };
-  assertEquals(listed.schedules.map((s) => s.id), [created.id]);
-
-  // PATCH: disable, then edit the spec (recomputes next run); bad spec 400; 404 unknown.
-  const off = await (await h(req("PATCH", `/schedules/${created.id}`, { enabled: false })))
-    .json() as {
-      enabled: boolean;
-    };
-  assertEquals(off.enabled, false);
-  const respec = await (await h(req("PATCH", `/schedules/${created.id}`, { spec: "daily@09:00" })))
-    .json() as {
-      spec: string;
-    };
-  assertEquals(respec.spec, "daily@09:00");
-  assertEquals((await h(req("PATCH", `/schedules/${created.id}`, { spec: "bogus" }))).status, 400);
-  assertEquals((await h(req("PATCH", "/schedules/zzz", { enabled: true }))).status, 404);
-
-  // DELETE: removes; unknown id 404s.
-  assertEquals((await h(req("DELETE", `/schedules/${created.id}`))).status, 200);
-  assertEquals(
-    ((await (await h(req("GET", "/schedules"))).json()) as { schedules: unknown[] }).schedules
-      .length,
-    0,
-  );
-  assertEquals((await h(req("DELETE", `/schedules/${created.id}`))).status, 404);
-  c.db.close();
-});
-
-Deno.test("archive hides a session from the list but keeps it addressable", async () => {
-  const c = ctx();
-  const h = createHandler(c);
-  const s = await (await h(req("POST", "/sessions", { title: "old noise" }))).json() as Session;
-  assertEquals((await h(req("POST", `/sessions/${s.id}/archive`, {}))).status, 200);
-  const list = await (await h(req("GET", "/sessions"))).json() as Session[];
-  assertEquals(list.some((x) => x.id === s.id), false);
-  // The thread is still there — forks/lineage keep resolving.
-  assertEquals((await h(req("GET", `/sessions/${s.id}`))).status, 200);
-  assertEquals((await h(req("POST", "/sessions/nope/archive", {}))).status, 404);
-  c.db.close();
-});
-
-Deno.test("archived sessions list via ?archived=1 and unarchive restores them", async () => {
-  const c = ctx();
-  const h = createHandler(c);
-  const s = await (await h(req("POST", "/sessions", { title: "resurrect me" }))).json() as Session;
-  await h(req("POST", `/sessions/${s.id}/archive`, {}));
-  // Reachable in the archived drawer, with archivedAt set.
-  const drawer = await (await h(req("GET", "/sessions?archived=1"))).json() as Session[];
-  const row = drawer.find((x) => x.id === s.id);
-  assert(row && typeof row.archivedAt === "number");
-  // Unarchive: back in the default list, out of the drawer.
-  assertEquals((await h(req("POST", `/sessions/${s.id}/unarchive`, {}))).status, 200);
-  const list = await (await h(req("GET", "/sessions"))).json() as Session[];
-  assertEquals(list.some((x) => x.id === s.id && x.archivedAt == null), true);
-  const drawer2 = await (await h(req("GET", "/sessions?archived=1"))).json() as Session[];
-  assertEquals(drawer2.some((x) => x.id === s.id), false);
-  assertEquals((await h(req("POST", "/sessions/nope/unarchive", {}))).status, 404);
-  c.db.close();
-});
-
-Deno.test("PUT /sessions/:id/draft stores and clears the composer draft", async () => {
-  const c = ctx();
-  const h = createHandler(c);
-  const s = await (await h(req("POST", "/sessions", { title: "drafty" }))).json() as Session;
-  assertEquals(
-    (await h(req("PUT", `/sessions/${s.id}/draft`, { draft: "half a thought" }))).status,
-    200,
-  );
-  const got = await (await h(req("GET", `/sessions/${s.id}`))).json() as { session: Session };
-  assertEquals(got.session.draft, "half a thought");
-  // null clears; bad bodies 400; unknown session 404s.
-  assertEquals((await h(req("PUT", `/sessions/${s.id}/draft`, { draft: null }))).status, 200);
-  const cleared = await (await h(req("GET", `/sessions/${s.id}`))).json() as { session: Session };
-  assertEquals(cleared.session.draft, undefined);
-  assertEquals((await h(req("PUT", `/sessions/${s.id}/draft`, { draft: 5 }))).status, 400);
-  assertEquals((await h(req("PUT", "/sessions/nope/draft", { draft: "x" }))).status, 404);
-  c.db.close();
-});
-
-Deno.test("invalid body → 400", async () => {
-  const c = ctx();
-  const h = createHandler(c);
-  // title is optional now (title worker), so a wrong TYPE is the invalid case.
-  assertEquals((await h(req("POST", "/sessions", { title: 123 }))).status, 400);
-  c.db.close();
-});
-
-Deno.test("no CORS: responses carry no allow-origin; a browser can't drive the loopback API", async () => {
-  const c = ctx();
-  const h = createHandler(c);
-  // A normal API response opts into no cross-origin access.
-  const get = await h(req("GET", "/sessions"));
-  assertEquals(get.headers.get("access-control-allow-origin"), null);
-  // No preflight handler either — OPTIONS isn't a routed method, so it 404s.
-  const opt = await h(req("OPTIONS", "/sessions"));
-  assertEquals(opt.status, 404);
-  assertEquals(opt.headers.get("access-control-allow-origin"), null);
-  c.db.close();
-});
-
-// ---- SSE smoke: real server, events flow from POSTs to the /events stream ----
-
-Deno.test("smoke: /events streams named events for a posted turn", async () => {
-  const c = ctx();
-  const h = createHandler(c);
-  const server = Deno.serve({ port: 0, onListen() {} }, h);
-  const { port } = server.addr as Deno.NetAddr;
-  const origin = `http://127.0.0.1:${port}`;
-
-  // Open the SSE stream first so we don't miss events.
-  const evRes = await fetch(`${origin}/events`);
-  const reader = evRes.body!.getReader();
-  const dec = new TextDecoder();
-
-  const seen: string[] = [];
-  const collect = (async () => {
-    let buf = "";
-    while (seen.length < 3) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      let i;
-      while ((i = buf.indexOf("\n\n")) >= 0) {
-        const frame = buf.slice(0, i);
-        buf = buf.slice(i + 2);
-        const m = frame.match(/^event: (.+)$/m);
-        if (m) seen.push(m[1]);
-      }
-    }
-  })();
-
-  const s = await (await fetch(`${origin}/sessions`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ title: "smoke" }),
-  })).json() as Session;
-
-  await fetch(`${origin}/sessions/${s.id}/messages`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ text: "hello" }),
+  await withHandler([route("GET", "/x", rejects)], async (call) => {
+    assert.equal((await call(get("/x"))).status, 404);
   });
-
-  await collect;
-  reader.cancel();
-  await server.shutdown();
-  c.db.close();
-
-  // session.created, then message.started (user) + message.started (supervisor).
-  assertEquals(seen[0], "session.created");
-  assertEquals(seen.filter((t) => t === "message.started").length, 2);
 });
 
-Deno.test("GET /sessions carries lastTurnStatus once a session has run a turn", async () => {
-  const c = ctx();
-  const h = createHandler(c);
-  const s = await (await h(req("POST", "/sessions", { title: "t" }))).json() as Session;
-
-  let list = await (await h(req("GET", "/sessions")))
-    .json() as (Session & { lastTurnStatus?: string })[];
-  assertEquals(list.find((x) => x.id === s.id)?.lastTurnStatus, undefined);
-
-  c.db.createMessage({
-    id: "m1",
-    sessionId: s.id,
-    role: "supervisor",
-    parts: [],
-    pending: false,
-    createdAt: 2,
+Deno.test("turns an unexpected error into a reported 500, never a dropped request", async () => {
+  const boom = new TypeError("cannot read properties of undefined");
+  await withHandler([route("GET", "/x", () => {
+    throw boom;
+  })], async (call, _ctx, reported) => {
+    const res = await call(get("/x"));
+    assert.equal(res.status, 500);
+    assert.deepEqual(await res.json(), { error: "cannot read properties of undefined" });
+    // Reported exactly once: it is a defect and must be visible in the log.
+    assert.deepEqual(reported, [boom]);
   });
-  c.db.createTurn({
-    id: "t1",
-    sessionId: s.id,
-    messageId: "m1",
-    status: "error",
-    step: "x",
-    updatedAt: 3,
-    firstOutputAt: null,
+});
+
+Deno.test("survives a handler throwing a non-Error value", async () => {
+  await withHandler([route("GET", "/x", () => {
+    throw "just a string";
+  })], async (call) => {
+    const res = await call(get("/x"));
+    assert.equal(res.status, 500);
+    assert.deepEqual(await res.json(), { error: "just a string" });
   });
-  list = await (await h(req("GET", "/sessions")))
-    .json() as (Session & { lastTurnStatus?: string })[];
-  assertEquals(list.find((x) => x.id === s.id)?.lastTurnStatus, "error");
-  c.db.close();
 });
 
-Deno.test("theme: PUT round-trips, 400 on bad color, DELETE reverts to default", async () => {
-  const dir = Deno.makeTempDirSync();
-  const c = { ...ctx(), themeDir: dir };
-  const h = createHandler(c);
-
-  // Nothing saved yet: default palette, contract exposed.
-  const empty = await (await h(req("GET", "/theme"))).json() as {
-    theme: unknown;
-    tokens: string[];
-    defaults: Record<string, string>;
-  };
-  assertEquals(empty.theme, null);
-  assert(empty.tokens.includes("green"));
-  assertEquals(empty.defaults.bg, "#0e1013");
-
-  // Save a partial theme and read it back.
-  const theme = { name: "Rosé Pine", colors: { bg: "#191724", green: "#9ccfd8" } };
-  const put = await h(req("PUT", "/theme", theme));
-  assertEquals(put.status, 200);
-  const got = await (await h(req("GET", "/theme"))).json() as { theme: typeof theme };
-  assertEquals(got.theme, theme);
-
-  // Non-hex color and unknown token shape are rejected.
-  assertEquals((await h(req("PUT", "/theme", { name: "x", colors: { bg: "red" } }))).status, 400);
-  assertEquals((await h(req("PUT", "/theme", { colors: {} }))).status, 400); // name required
-
-  // DELETE reverts to the default palette.
-  assertEquals((await h(req("DELETE", "/theme"))).status, 200);
-  const cleared = await (await h(req("GET", "/theme"))).json() as { theme: unknown };
-  assertEquals(cleared.theme, null);
-  c.db.close();
+Deno.test("one failing request does not poison the next", async () => {
+  const table = [
+    route("GET", "/bad", () => {
+      throw new Error("boom");
+    }),
+    route("GET", "/good", ok),
+  ];
+  await withHandler(table, async (call) => {
+    assert.equal((await call(get("/bad"))).status, 500);
+    assert.equal((await call(get("/good"))).status, 200);
+  });
 });
 
-Deno.test("mcp: registry round-trips, enable/disable manage activations, guards hold", async () => {
-  const dir = Deno.makeTempDirSync({ prefix: "bough-mcp-app-" });
-  Deno.env.set("BOUGH_MCP_DIR", dir);
-  const c = ctx();
-  const h = createHandler(c);
-  try {
-    // no user registry: builtins only, nothing active, nothing connected
-    const empty = await (await h(req("GET", "/mcp/servers"))).json() as {
-      registry: { servers: Record<string, unknown> };
-      auth: Record<string, unknown>;
-      active: string[];
-      connections: unknown[];
-    };
-    assertEquals(empty, {
-      registry: { servers: {} },
-      auth: {},
-      active: [],
-      connections: [],
-    });
+// ---- fallbacks --------------------------------------------------------------
 
-    // PUT validates: bad shape 400, good shape persists
-    assertEquals((await h(req("PUT", "/mcp/servers", { servers: { bad: {} } }))).status, 400);
-    const put = await h(req("PUT", "/mcp/servers", {
-      servers: { echo: { command: "deno", args: ["run", "srv.ts"] } },
-    }));
-    assertEquals(put.status, 200);
+Deno.test("GET / returns a plain-text pointer", async () => {
+  await withHandler([], async (call) => {
+    const res = await call(get("/"));
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("content-type"), "text/plain; charset=utf-8");
+    const body = await res.text();
+    assert.match(body, /bough server/);
+    // The pointer says there is no web UI, because there is not one (spec §17).
+    assert.match(body, /no web UI/);
+  });
+});
 
-    // enable requires a registered name; unknown session 404s
-    assertEquals((await h(req("POST", "/mcp/servers/ghost/enable"))).status, 400);
-    assertEquals((await h(req("POST", "/mcp/servers/echo/enable?session=nope"))).status, 404);
+Deno.test("an unknown path is a 404 naming the method and path", async () => {
+  await withHandler([route("GET", "/sessions", ok)], async (call) => {
+    const res = await call(get("/nope"));
+    assert.equal(res.status, 404);
+    assert.deepEqual(await res.json(), { error: "no route for GET /nope" });
+  });
+});
 
-    const s = await (await h(req("POST", "/sessions", { title: "m" }))).json() as Session;
-    await h(req("POST", `/mcp/servers/echo/enable?session=${s.id}`));
-    const active = await (await h(req("GET", `/mcp/servers?session=${s.id}`))).json() as {
-      active: string[];
-    };
-    assertEquals(active.active, ["echo"]);
-    // scoped to that session; disable clears it
-    const other = await (await h(req("GET", "/mcp/servers"))).json() as { active: string[] };
-    assertEquals(other.active, []);
-    await h(req("POST", `/mcp/servers/echo/disable?session=${s.id}`));
-    const after = await (await h(req("GET", `/mcp/servers?session=${s.id}`))).json() as {
-      active: string[];
-    };
-    assertEquals(after.active, []);
+Deno.test("a known path with the wrong method is a 405 that names the allowed ones", async () => {
+  const table = [
+    route("GET", "/sessions/:id", ok),
+    route("POST", "/sessions/:id", ok),
+  ];
+  await withHandler(table, async (call) => {
+    const res = await call(new Request("http://127.0.0.1:4321/sessions/a", { method: "DELETE" }));
+    assert.equal(res.status, 405);
+    assert.equal(res.headers.get("allow"), "GET, POST");
+    assert.match((await res.json()).error, /DELETE not allowed on \/sessions\/a/);
+  });
+});
 
-    // restart needs a session and a live connection
-    assertEquals((await h(req("POST", "/mcp/servers/echo/restart"))).status, 400);
-    assertEquals((await h(req("POST", `/mcp/servers/echo/restart?session=${s.id}`))).status, 400);
-  } finally {
-    Deno.env.delete("BOUGH_MCP_DIR");
-    c.db.close();
+Deno.test("the root pointer wins over a 405 when some other method owns /", async () => {
+  await withHandler([route("POST", "/", ok)], async (call) => {
+    const res = await call(get("/"));
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("content-type"), "text/plain; charset=utf-8");
+  });
+});
+
+// ---- body parsing -----------------------------------------------------------
+
+const Body = z.object({ text: z.string().min(1) });
+
+Deno.test("parseBody yields validated data to the handler", async () => {
+  const handler: Handler = async (req) => json({ echo: (await parseBody(req, Body)).text });
+  await withHandler([route("POST", "/m", handler)], async (call) => {
+    const res = await call(post("/m", { text: "hello" }));
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { echo: "hello" });
+  });
+});
+
+Deno.test("an invalid body becomes a 400 through the router's one catch", async () => {
+  const handler: Handler = async (req) => json(await parseBody(req, Body));
+  await withHandler([route("POST", "/m", handler)], async (call, _ctx, reported) => {
+    const res = await call(post("/m", { text: 42 }));
+    assert.equal(res.status, 400);
+    assert.match((await res.json()).error, /^invalid body: /);
+    // A 400 is a domain outcome, not a defect — it must not be logged as one.
+    assert.deepEqual(reported, []);
+  });
+});
+
+Deno.test("an absent body falls back, and the fallback decides the 400", async () => {
+  const strict: Handler = async (req) => json(await parseBody(req, Body));
+  const lenient: Handler = async (req) =>
+    json(await parseBody(req, z.object({ paths: z.array(z.string()).optional() }), {}));
+  await withHandler([route("POST", "/strict", strict), route("POST", "/lenient", lenient)], async (
+    call,
+  ) => {
+    // Default fallback is null: the schema rejects it.
+    assert.equal((await call(post("/strict"))).status, 400);
+    // An all-optional body passes `{}` so "no body" means "no options".
+    const res = await call(post("/lenient"));
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), {});
+  });
+});
+
+Deno.test("malformed JSON is a 400, not a 500", async () => {
+  const handler: Handler = async (req) => json(await parseBody(req, Body));
+  await withHandler([route("POST", "/m", handler)], async (call, _ctx, reported) => {
+    const req = new Request("http://127.0.0.1:4321/m", { method: "POST", body: "{not json" });
+    assert.equal((await call(req)).status, 400);
+    assert.deepEqual(reported, []);
+  });
+});
+
+// ---- helpers ----------------------------------------------------------------
+
+Deno.test("json and errorResponse produce the shapes every client reads", async () => {
+  const res = json({ a: 1 }, 201);
+  assert.equal(res.status, 201);
+  assert.deepEqual(await res.json(), { a: 1 });
+  const err = errorResponse(429, "spawn cap: 8 per turn");
+  assert.equal(err.status, 429);
+  assert.deepEqual(await err.json(), { error: "spawn cap: 8 per turn" });
+});
+
+// ---- the real route table ---------------------------------------------------
+
+Deno.test("the shared route table has no duplicate (method, pathname) entry", () => {
+  const seen = new Set<string>();
+  for (const entry of routes) {
+    const key = `${entry.method} ${entry.pattern.pathname}`;
+    assert.equal(seen.has(key), false, `duplicate route appended: ${key}`);
+    seen.add(key);
   }
 });
 
-Deno.test("mcp: per-server PUT/DELETE, connect-now proves a server runs", async () => {
-  const dir = Deno.makeTempDirSync({ prefix: "bough-mcp-app2-" });
-  Deno.env.set("BOUGH_MCP_DIR", dir);
-  const c = ctx();
-  const h = createHandler(c);
-  const fixture = new URL("../mcp/testdata/echo_server.ts", import.meta.url).pathname;
+Deno.test("createHandler defaults to the shared route table", async () => {
+  const { ctx, db } = fixture();
   try {
-    // per-server PUT validates and leaves siblings alone
-    assertEquals((await h(req("PUT", "/mcp/servers/bad name", { command: "x" }))).status, 400);
-    assertEquals((await h(req("PUT", "/mcp/servers/other", {}))).status, 400);
-    await h(req("PUT", "/mcp/servers/other", { command: "sleep", args: ["1"] }));
-    const put = await h(req("PUT", "/mcp/servers/echo", {
-      command: Deno.execPath(),
-      args: ["run", "--quiet", "--no-config", fixture],
-    }));
-    assertEquals(put.status, 200);
-    const reg = await (await h(req("GET", "/mcp/servers"))).json() as {
-      registry: { servers: Record<string, unknown> };
-    };
-    assertEquals(Object.keys(reg.registry.servers).sort(), ["echo", "other"]);
-
-    // connect guards: session required/known, name registered
-    const s = await (await h(req("POST", "/sessions", { title: "m" }))).json() as Session;
-    assertEquals((await h(req("POST", "/mcp/servers/echo/connect"))).status, 400);
-    assertEquals((await h(req("POST", "/mcp/servers/echo/connect?session=nope"))).status, 404);
-    assertEquals(
-      (await h(req("POST", `/mcp/servers/ghost/connect?session=${s.id}`))).status,
-      400,
-    );
-
-    if ((await Deno.permissions.query({ name: "run" })).state === "granted") {
-      // connect-now spawns the server and reports its catalog — the proof step
-      const conn = await (await h(req("POST", `/mcp/servers/echo/connect?session=${s.id}`)))
-        .json() as { connected: boolean; tools: { name: string }[] };
-      assertEquals(conn.connected, true);
-      assertEquals(conn.tools.map((t) => t.name), ["echo", "scream", "boom"]);
-
-      // whole-registry PUT with echo unchanged keeps its connection alive
-      const full = await (await h(req("GET", "/mcp/servers"))).json() as {
-        registry: { servers: Record<string, unknown> };
-      };
-      await h(req("PUT", "/mcp/servers", full.registry));
-      const kept = await (await h(req("GET", `/mcp/servers?session=${s.id}`))).json() as {
-        connections: { server: string; alive: boolean }[];
-      };
-      assertEquals(kept.connections.map((x) => [x.server, x.alive]), [["echo", true]]);
-
-      // per-server PUT of a CHANGED entry drops its connection
-      await h(req("PUT", "/mcp/servers/echo", {
-        command: Deno.execPath(),
-        args: ["run", "--quiet", "--no-config", fixture],
-        env: { CHANGED: "1" },
-      }));
-      const dropped = await (await h(req("GET", `/mcp/servers?session=${s.id}`))).json() as {
-        connections: unknown[];
-      };
-      assertEquals(dropped.connections, []);
-    }
-
-    // DELETE unregisters; repeat 404s
-    assertEquals((await h(req("DELETE", "/mcp/servers/echo"))).status, 200);
-    assertEquals((await h(req("DELETE", "/mcp/servers/echo"))).status, 404);
+    const call = createHandler(ctx);
+    // Whatever tasks have appended, the fallbacks are always reachable.
+    assert.equal((await call(get("/"))).status, 200);
+    assert.equal((await call(get("/__no_such_route__"))).status, 404);
   } finally {
-    const { mcpManager } = await import("../mcp/manager.ts");
-    await mcpManager().dropAll();
-    Deno.env.delete("BOUGH_MCP_DIR");
-    c.db.close();
-  }
-});
-
-Deno.test("mcp oauth: auth endpoint guards; callback validates state", async () => {
-  const dir = Deno.makeTempDirSync({ prefix: "bough-mcp-oauth-app-" });
-  Deno.env.set("BOUGH_MCP_DIR", dir);
-  const c = ctx();
-  const h = createHandler(c);
-  try {
-    await h(req("PUT", "/mcp/servers", {
-      servers: {
-        stdio: { command: "deno" },
-        remote: { url: "https://example.invalid/mcp" },
-      },
-    }));
-    // auth is for remote servers only; unknown name 400s
-    assertEquals((await h(req("POST", "/mcp/servers/ghost/auth"))).status, 400);
-    assertEquals((await h(req("POST", "/mcp/servers/stdio/auth"))).status, 400);
-    // remote servers surface their auth state on GET
-    const got = await (await h(req("GET", "/mcp/servers"))).json() as {
-      auth: Record<string, { authorized: boolean }>;
-    };
-    assertEquals(got.auth, { remote: { authorized: false } });
-    // callback rejects a flow bough never started, as HTML for the human
-    const cb = await h(req("GET", "/mcp/oauth/callback?code=x&state=remote.forged"));
-    assertEquals(cb.status, 400);
-    assert((await cb.text()).includes("state mismatch"));
-    assertEquals((await h(req("GET", "/mcp/oauth/callback"))).status, 400);
-    // logout is idempotent
-    assertEquals((await h(req("DELETE", "/mcp/servers/remote/auth"))).status, 200);
-  } finally {
-    Deno.env.delete("BOUGH_MCP_DIR");
-    c.db.close();
-  }
-});
-
-Deno.test("GET /artifacts/:id/* serves a published artifact; /sessions/:id/artifacts lists them", async () => {
-  const home = Deno.makeTempDirSync({ prefix: "app-artifacts-" });
-  const prevHome = Deno.env.get("HOME");
-  Deno.env.set("HOME", home);
-  try {
-    const { publishArtifact } = await import("./artifacts.ts");
-    await publishArtifact("sessX", "index.html", "<!doctype html><title>demo</title>");
-    await publishArtifact("sessX", "css/app.css", "body{color:red}");
-
-    const c = ctx();
-    const h = createHandler(c);
-
-    const page = await h(req("GET", "/artifacts/sessX/index.html"));
-    assertEquals(page.status, 200);
-    assertEquals(page.headers.get("content-type"), "text/html; charset=utf-8");
-    assert((await page.text()).includes("<title>demo</title>"));
-
-    const css = await h(req("GET", "/artifacts/sessX/css/app.css"));
-    assertEquals(css.status, 200);
-    assertEquals(css.headers.get("content-type"), "text/css; charset=utf-8");
-
-    const missing = await h(req("GET", "/artifacts/sessX/ghost.html"));
-    assertEquals(missing.status, 404);
-
-    const listed = await (await h(req("GET", "/sessions/sessX/artifacts"))).json() as {
-      artifacts: { name: string }[];
-    };
-    assertEquals(listed.artifacts.map((a) => a.name).sort(), ["css/app.css", "index.html"]);
-
-    c.db.close();
-  } finally {
-    if (prevHome) Deno.env.set("HOME", prevHome);
-    else Deno.env.delete("HOME");
-    await Deno.remove(home, { recursive: true });
-  }
-});
-
-Deno.test("questions: GET lists pending asks; POST answers/declines; stale ids 404", async () => {
-  const { raiseAsk } = await import("../asks.ts");
-  const c = ctx();
-  const h = createHandler(c);
-
-  const q1 = raiseAsk(c.bus, {
-    sessionId: "s1",
-    messageId: "m1",
-    question: "Which env?",
-    options: ["dev", "prod"],
-  });
-
-  // A freshly-attached client rebuilds the hold from the GET.
-  const listed = await (await h(req("GET", "/questions"))).json() as {
-    id: string;
-    status: string;
-    options?: string[];
-  }[];
-  assertEquals(listed.length, 1);
-  assertEquals(listed[0].id, q1.record.id);
-  assertEquals(listed[0].status, "pending");
-  assertEquals(listed[0].options, ["dev", "prod"]);
-  // Session filter: another session sees nothing.
-  assertEquals(
-    await (await h(req("GET", "/questions?sessionId=zzz"))).json() as unknown[],
-    [],
-  );
-
-  // Wrong session in the path → 404; empty body → 400.
-  assertEquals(
-    (await h(req("POST", `/sessions/zzz/questions/${q1.record.id}`, { answer: "dev" }))).status,
-    404,
-  );
-  assertEquals(
-    (await h(req("POST", `/sessions/s1/questions/${q1.record.id}`, {}))).status,
-    400,
-  );
-
-  // Answer resolves the program's promise and clears the listing.
-  const res = await h(req("POST", `/sessions/s1/questions/${q1.record.id}`, { answer: "prod" }));
-  assertEquals(res.status, 200);
-  assertEquals(await q1.answer, "prod");
-  assertEquals((await (await h(req("GET", "/questions"))).json() as unknown[]).length, 0);
-  // Settled → gone: a second answer 404s instead of double-settling.
-  assertEquals(
-    (await h(req("POST", `/sessions/s1/questions/${q1.record.id}`, { answer: "x" }))).status,
-    404,
-  );
-
-  // Decline rejects the program's ask() with the catchable error.
-  const q2 = raiseAsk(c.bus, { sessionId: "s1", messageId: "m1", question: "Proceed?" });
-  assertEquals(
-    (await h(req("POST", `/sessions/s1/questions/${q2.record.id}`, { decline: true }))).status,
-    200,
-  );
-  await q2.answer.then(
-    () => {
-      throw new Error("decline should reject");
-    },
-    (err: Error) => assert(err.message.includes("user declined")),
-  );
-  c.db.close();
-});
-
-Deno.test("GET /sessions/:id/jobs lists live bg shells; job events reach the bus", async () => {
-  const { bashBg, bashKill, bashWait } = await import("../tools/bash_bg.ts");
-  const c = ctx();
-  const h = createHandler(c);
-  c.db.createSession({ id: "J", parentId: null, title: "j", kind: "root", createdAt: 1 });
-  const events: string[] = [];
-  c.bus.subscribe((e) => {
-    if (e.type === "job.spawned" || e.type === "job.exited") events.push(e.type);
-  });
-
-  // Missing session → 404; a session with no shells → empty list.
-  assertEquals((await h(req("GET", "/sessions/zzz/jobs"))).status, 404);
-  assertEquals(await (await h(req("GET", "/sessions/J/jobs"))).json(), { jobs: [] });
-
-  const workspace = Deno.makeTempDirSync({ prefix: "app-jobs-" });
-  const toolCtx = { workspace, sessionId: "J" };
-  // `exec`: the SIGTERM must reach the sleeper itself, or the orphaned child
-  // keeps the output pipe open for the full 30s after bash dies.
-  const { id } = JSON.parse(await bashBg("echo hi; exec sleep 30", toolCtx)) as { id: string };
-  try {
-    // The running job is listed with its command and (eventually) an output tail.
-    let job: { id: string; sessionId: string; status: string; tailLines: string[] } | undefined;
-    const deadline = Date.now() + 10_000;
-    for (;;) {
-      const { jobs } = await (await h(req("GET", "/sessions/J/jobs"))).json() as {
-        jobs: NonNullable<typeof job>[];
-      };
-      job = jobs.find((j) => j.id === id);
-      if (job?.tailLines.includes("hi")) break;
-      if (Date.now() > deadline) throw new Error("job tail never showed up");
-      await new Promise((r) => setTimeout(r, 50));
-    }
-    assertEquals(job.sessionId, "J");
-    assertEquals(job.status, "running");
-    assertEquals(events, ["job.spawned"]);
-
-    // Kill reports the real outcome; the registry flips to "killed"; exit hits the bus.
-    const killed = await bashKill(id, toolCtx);
-    assert(killed.startsWith(`killed ${id} (`), killed);
-    const after = await (await h(req("GET", "/sessions/J/jobs"))).json() as {
-      jobs: { id: string; status: string }[];
-    };
-    assertEquals(after.jobs.find((j) => j.id === id)?.status, "killed");
-    assertEquals(events, ["job.spawned", "job.exited"]);
-  } finally {
-    await bashWait(id, toolCtx).catch(() => {}); // drain the pumps for the sanitizer
-    await Deno.remove(workspace, { recursive: true }).catch(() => {});
-    c.db.close();
+    db.close();
   }
 });

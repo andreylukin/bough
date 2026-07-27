@@ -1,789 +1,912 @@
-// App state + event reduction — originally a port of the retired web UI's store, trimmed to the TUI's P1
-// scope (sessions, open thread, streaming buffers, ask() holds, queued messages).
-// Policy/changes/usage/fork land with their panels in later phases.
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { AskQuestion, BoughEvent, Message, Part, Session } from "../schema/parts.ts";
-import { api, type JobRow, type Usage, USAGE_ZERO, type WfSummary, type WireDiff } from "./api.ts";
-import { useEvents } from "./events.ts";
-import { notifyDesktop } from "./term.ts";
+/**
+ * The TUI's state: one pure reducer over `BoughEvent`, plus a thin shell that feeds
+ * it from `api.ts` and `events.ts`.
+ *
+ * THE INVARIANT THIS HOLDS: **state lives here, rendering lives in components, and
+ * the reducer touches neither a terminal nor a server.** `reduce(state, action)` is a
+ * pure function of data — no `fetch`, no React, no clock, no Ink — so every rule
+ * below is testable by replaying a recorded event sequence with nothing mounted
+ * (plan §7, "TUI: store reducers over recorded event sequences"). The previous tree's
+ * `App.tsx` was 3,618 lines because this boundary did not exist; the shell at the
+ * bottom of this file is the only part that performs I/O, and it does so by
+ * dispatching the same actions a test dispatches by hand.
+ *
+ * SECOND INVARIANT — **the reducer is idempotent under re-delivery.** `seq` is a
+ * dedupe key, not a resume cursor (spec §3, plan §6.16): it is per-process and resets
+ * on restart, so a reconnecting client re-fetches `GET /sessions/:id` and reconciles
+ * by message id rather than replaying from a cursor. That makes duplicate delivery a
+ * NORMAL condition — the snapshot necessarily contains events the client already
+ * applied, and a redialed stream can overlap with the connection it replaced — so the
+ * reducer defends in three layers, each covering what the others cannot:
+ *
+ *   1. **The dedupe window.** An event is identified by `seq:ts`. `seq` alone is not
+ *      enough (it resets, so a restarted server's event 1 is not the old event 1) and
+ *      `ts` alone is not enough (millisecond collisions). The pair is unique within a
+ *      process and, in practice, across one. A bounded window, because this is a
+ *      dedupe key and not a ledger.
+ *   2. **The snapshot watermark.** The server persists, THEN publishes (`bus.ts`), so
+ *      every event stamped before a snapshot was requested is already reflected in
+ *      that snapshot. Session-scoped events older than the watermark are dropped
+ *      wholesale — which is what catches the events that were re-delivered from
+ *      outside the dedupe window, and everything the outage swallowed and the fetch
+ *      restored. Server and client share a machine (loopback only, spec §3), so the
+ *      two clocks are the same clock.
+ *   3. **Identity-keyed appends.** A message is merged by `id`; a part that HAS an
+ *      identity (`tool_call.id`, `tool_result.callId`, `ask.id`) is appended only
+ *      once. Text and reasoning parts have no identity — two identical `text` parts in
+ *      one message are legal — so they are covered by layers 1 and 2 rather than by
+ *      content comparison, which would silently swallow a real repeat.
+ *
+ * THIRD — **a snapshot merges, it does not clobber.** Events published while the
+ * fetch was in flight are newer than the rows it read, so replacing the thread with
+ * the response would lose exactly the deltas the reconnect was supposed to repair.
+ * Parts only ever append within a message and `pending` only ever goes true→false, so
+ * the merge is well-defined: union by id, the longer part list wins, finished beats
+ * pending.
+ */
+import type { AskQuestion, BackgroundJob, Message, Part, Session } from "../schema/parts.ts";
+import type { AnyBoughEvent, BoughEvent, EventType } from "../schema/events.ts";
+import type { SessionChangeSet } from "../server/changes.ts";
+import type {
+  Api,
+  ReplayReport,
+  SessionRow,
+  SessionSnapshot,
+  WorkflowSummary,
+} from "./api.ts";
+import { api as defaultApi } from "./api.ts";
+import { connectEvents, type EventStream } from "./events.ts";
 
-export type TuiSession = Session & {
-  busy?: boolean;
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+/**
+ * How many event identities the dedupe window keeps. Large enough to cover a
+ * reconnect overlap (a redial delivers at most the frames in flight), small enough
+ * that it stays a fixed-cost check rather than an unbounded log of everything the
+ * session ever saw.
+ */
+export const DEDUPE_WINDOW = 256;
+
+/**
+ * A listed session plus the one fact only the client knows.
+ *
+ * `unseen` is deliberately NOT a wire field: it means "this session finished a turn
+ * while you were looking at another one", which is a property of this terminal and
+ * of nothing else. `busy`, `lastTurnStatus` and `costUsd` are the server's derived
+ * values (`api.ts`) and are never invented here.
+ */
+export interface TuiSessionRow extends SessionRow {
   unseen?: boolean;
-  lastTurnStatus?: "done" | "error" | "interrupted" | "orphaned";
-  /** Own cumulative spend (server-priced) — the tree views' per-row cost column. */
-  costUsd?: number;
-};
-
-export interface Store {
-  sessions: TuiSession[];
-  // Archived (soft-deleted) sessions — empty until loadArchived(); the picker's
-  // "show hidden" reveal lists them and `u` restores one.
-  archived: TuiSession[];
-  currentId: string | null;
-  session: TuiSession | null;
-  thread: Message[];
-  // messageId -> live text accumulated from message.delta, shown until the finalized
-  // text part lands (then cleared to avoid double-rendering).
-  streaming: Record<string, string>;
-  // toolCallId -> console lines streamed live from the running program (tool.log
-  // events). Cleared when the message finishes; the final tool_result part then
-  // carries the same lines in its output.
-  toolLogs: Record<string, string[]>;
-  connected: boolean;
-  busy: boolean;
-  // Oldest pending ask() question (the card shows one at a time) + total.
-  ask: AskQuestion | null;
-  askCount: number;
-  // Messages typed while a turn was running — staged locally, flushed once idle.
-  queued: string[];
-  notice: string | null;
-  // Local-worker blurb of what the running turn's program is doing ("running the
-  // test suite") — shown next to the working spinner; null when idle/unknown.
-  activity: string | null;
-  // Review payloads for the open session; refetched on changes.updated.
-  changes: WireDiff[];
-  // Token usage for the open session (status-bar meter); zeroed on session switch.
-  usage: Usage;
-  // Background shells of the open session (and its subagents): live + recently
-  // ended, refetched on job.* events and polled while any runs (tail lines move).
-  jobs: JobRow[];
-  // Workflow runs of the open session (newest first) — refetched on workflow.*
-  // events; drives the workflows panel tab and the running-workflow status chip.
-  workflows: WfSummary[];
-  // Bumps on every workflow.* event — the panel's open-run detail refetches on it.
-  wfSeq: number;
-  // Last narrator log() line per running workflow (memory-only, chip + run view).
-  wfLogs: Record<string, string>;
-  // Signals a background (non-active) session finishing a turn; App flashes a
-  // toast on each new value. `seq` makes repeat finishes distinct references.
-  bgFinish: { title: string; seq: number } | null;
-  open: (id: string) => Promise<void>;
-  newSession: (workspace?: string) => Promise<Session>;
-  /** Post a message. While busy: posts immediately (steer) unless queue=true.
-   * `id` overrides the current session (used right after a draft's session is
-   * created, before the state round-trip lands). */
-  send: (text: string, queue?: boolean, id?: string) => Promise<void>;
-  interrupt: () => void;
-  archive: (id: string) => void;
-  /** Fetch the archived list (the picker's reveal loads it on demand). */
-  loadArchived: () => Promise<void>;
-  /** Restore an archived session to the live list. */
-  unarchive: (id: string) => void;
-  deprecate: (id: string, on: boolean) => void;
-  /** Answer the surfaced ask() question (chosen option or typed free text). */
-  answerAsk: (answer: string) => void;
-  /** Decline it — the program's ask() rejects with a "user declined" error. */
-  declineAsk: () => void;
-  // Branch off the current session at a message (optionally cut mid-message at a
-  // tool run via atPart); opens the new branch (or notices). `id` overrides the
-  // current session (the conversation tree re-roots at the spawner inside a
-  // subagent, so its rewind/branch ops act on the parent).
-  fork: (
-    atMessageId: string,
-    atPart?: number,
-    exclusive?: boolean,
-    id?: string,
-  ) => Promise<Session | null>;
-  // Compact the current session's own turns onto a summary branch; opens it.
-  compact: () => Promise<Session | null>;
-  compactPicks: (msgIds: string[]) => Promise<Session | null>;
-  extractPicks: (msgIds: string[]) => Promise<Session | null>;
-  /** Draft a goal-focused opening prompt from this thread onto a fresh conversation. */
-  handoff: (goal: string) => Promise<Session | null>;
-  deleteRange: (rangeIds: string[]) => Promise<Session | null>;
-  moveRange: (targetId: string, rangeIds: string[]) => Promise<Session | null>;
-  applyChanges: (source: WireDiff["source"], paths: string[]) => void;
-  revertChanges: () => void;
-  dismissNotice: () => void;
-  /** Show a transient notice (auto-clears) — feedback for actions that would
-   * otherwise be silent (fork created, range deleted, key not applicable). */
-  notify: (msg: string) => void;
-  /** Stop the open conversation's turn, subagent subtree, and background shells. */
-  stopAll: () => void;
 }
 
-export function useStore(initialSessions: Session[]): Store {
-  const [sessions, setSessions] = useState<TuiSession[]>(initialSessions);
-  const [archived, setArchived] = useState<TuiSession[]>([]);
-  const [currentId, setCurrentId] = useState<string | null>(null);
-  const [session, setSession] = useState<TuiSession | null>(null);
-  const [thread, setThread] = useState<Message[]>([]);
-  const [streaming, setStreaming] = useState<Record<string, string>>({});
-  const [toolLogs, setToolLogs] = useState<Record<string, string[]>>({});
-  // ALL ask() questions awaiting an answer, oldest first.
-  const [asks, setAsks] = useState<AskQuestion[]>([]);
-  const ask = asks[0] ?? null;
-  const [queued, setQueued] = useState<string[]>([]);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [activity, setActivity] = useState<string | null>(null);
-  const [changes, setChanges] = useState<WireDiff[]>([]);
-  const [usage, setUsage] = useState<Usage>(USAGE_ZERO);
-  const [jobs, setJobs] = useState<JobRow[]>([]);
-  const [workflows, setWorkflows] = useState<WfSummary[]>([]);
-  const [wfSeq, setWfSeq] = useState(0);
-  const [wfLogs, setWfLogs] = useState<Record<string, string>>({});
-  // Bumped whenever a NON-active (background) session finishes a turn — App
-  // watches it to flash an in-TUI toast (the desktop banner self-gates on focus
-  // and the picker dot needs ^p, so a focused terminal would otherwise miss it).
-  const [bgFinish, setBgFinish] = useState<{ title: string; seq: number } | null>(null);
-  const bgSeq = useRef(0);
+export interface TuiState {
+  /** Is the event stream up? False means the view may be stale, not that work stopped. */
+  connected: boolean;
+  /** Top-level sessions, newest first. `subagent`/`workflow_agent` never appear here. */
+  sessions: TuiSessionRow[];
+  currentId: string | null;
+  session: Session | null;
+  /** Ancestors root→parent, then own — as the server assembled it. */
+  thread: Message[];
+  /** messageId → text accumulated from `message.delta`, until the text part lands. */
+  streaming: Record<string, string>;
+  /** callId → live `console.*` lines from the running program. */
+  toolLogs: Record<string, string[]>;
+  /** Every unsettled `ask()` hold, oldest first. The card shows `asks[0]`. */
+  asks: AskQuestion[];
+  /** Typed while a turn was running, held locally until it ends. */
+  queued: string[];
+  notice: string | null;
+  /** Cheap-tier blurb for the open session, or null. Fails silently by construction. */
+  activity: string | null;
+  usage: SessionSnapshot["usage"] | null;
+  /** null until fetched. `available: false` is an ANSWER, not an error (spec §13). */
+  changes: SessionChangeSet | null;
+  /** The open session's background shells AND its subagents' (spec §9). */
+  jobs: BackgroundJob[];
+  workflows: WorkflowSummary[];
+  /** runId → the last narrator `log()` line. Memory-only, like the run's chip. */
+  workflowLogs: Record<string, string>;
+  /** Bumped on every `workflow.*` event — a detail view refetches on the change. */
+  workflowSeq: number;
+  /**
+   * The open run's replay accounting. Spec §8: replay is ALWAYS reported, because a
+   * relaunch that replayed nothing looks exactly like one that replayed everything.
+   */
+  replay: ReplayReport | null;
+  /** A NON-open session finished a turn. `seq` makes repeat finishes distinct. */
+  background: { sessionId: string; title: string; seq: number } | null;
+  /** sessionId → when its snapshot was requested. The watermark of layer 2. */
+  reconciledAt: Record<string, number>;
+  /** The dedupe window of layer 1, oldest first. */
+  seen: readonly string[];
+}
 
-  // currentId in a ref so the stable event handler can filter without re-subscribing.
-  const currentRef = useRef<string | null>(null);
-  currentRef.current = currentId;
-  const threadRef = useRef<Message[]>([]);
-  threadRef.current = thread;
-  // For desktop notifications: the stable event handler needs session titles.
-  const sessionsRef = useRef<TuiSession[]>([]);
-  sessionsRef.current = sessions;
-  const busyRef = useRef(false);
-  const askRef = useRef<AskQuestion | null>(null);
-  askRef.current = ask;
+export function initialState(): TuiState {
+  return {
+    connected: false,
+    sessions: [],
+    currentId: null,
+    session: null,
+    thread: [],
+    streaming: {},
+    toolLogs: {},
+    asks: [],
+    queued: [],
+    notice: null,
+    activity: null,
+    usage: null,
+    changes: null,
+    jobs: [],
+    workflows: [],
+    workflowLogs: {},
+    workflowSeq: 0,
+    replay: null,
+    background: null,
+    reconciledAt: {},
+    seen: [],
+  };
+}
 
-  const reload = useCallback(async () => {
-    const s = await api.listSessions();
-    // busy/unseen are client-side memory — carry them across the server refetch.
-    // lastTurnStatus is server-authoritative (the last finished turn's status), so
-    // prefer the fresh value and fall back to client memory only when it's absent —
-    // otherwise a failed/interrupted subagent shows no status until a live event.
-    setSessions((prev) =>
-      s.map((n) => {
-        const old = prev.find((p) => p.id === n.id);
-        // The server augments the row with a runtime lastTurnStatus (not in the
-        // persisted schema type) — read it via a cast and prefer it over memory.
-        const serverStatus = (n as { lastTurnStatus?: TuiSession["lastTurnStatus"] })
-          .lastTurnStatus;
-        // costUsd is a runtime augmentation too (usage column, not the schema).
-        const serverCost = (n as { costUsd?: number }).costUsd;
-        return {
-          ...n,
-          busy: old?.busy,
-          unseen: old?.unseen,
-          lastTurnStatus: serverStatus ?? old?.lastTurnStatus,
-          costUsd: serverCost ?? old?.costUsd,
-        };
-      })
-    );
-  }, []);
+// ---------------------------------------------------------------------------
+// Actions
+// ---------------------------------------------------------------------------
 
-  // Rebuild the ask() hold card after (re)attach — the server returns pending
-  // questions oldest first, so a reconnecting client sees the same hold.
-  const refreshAsks = useCallback(async () => {
-    setAsks(await api.questions());
-  }, []);
+export type StoreAction =
+  /** One event off the wire. Everything about dedupe happens under this arm. */
+  | { type: "event"; event: BoughEvent }
+  | { type: "connection"; connected: boolean }
+  | { type: "sessions"; sessions: SessionRow[] }
+  /** Focus a session. Clears everything that belonged to the previous one. */
+  | { type: "open"; sessionId: string | null }
+  /**
+   * A fresh `GET /sessions/:id`. `at` is when the FETCH WAS ISSUED, not when it
+   * landed: the conservative end of the window, so an event published during the
+   * round trip is re-applied (and deduped) rather than dropped as already-known.
+   */
+  | { type: "snapshot"; at: number; snapshot: SessionSnapshot }
+  | { type: "questions"; questions: AskQuestion[] }
+  /** Optimistic settle: the next hold surfaces immediately; the event confirms it. */
+  | { type: "ask.settled"; id: string }
+  | { type: "changes"; sessionId: string; changes: SessionChangeSet }
+  | { type: "jobs"; sessionId: string; jobs: BackgroundJob[] }
+  | { type: "workflows"; sessionId: string; workflows: WorkflowSummary[] }
+  | { type: "replay"; replay: ReplayReport | null }
+  | { type: "notice"; notice: string | null }
+  | { type: "queue"; text: string }
+  | { type: "queue.drained" };
 
-  // Optimistic-drop: the next question surfaces right away; the settle re-emits the
-  // row (final status), reconciled by id.
-  const settleAsk = useCallback((run: (q: AskQuestion) => Promise<unknown>) => {
-    const q = askRef.current;
-    if (!q) return;
-    setAsks((prev) => prev.filter((p) => p.id !== q.id));
-    run(q).catch(() => {
-      // Already settled/expired server-side — re-sync.
-      refreshAsks().catch(() => {});
-    });
-  }, [refreshAsks]);
-  const answerAsk = useCallback(
-    (answer: string) => settleAsk((q) => api.answerQuestion(q.sessionId, q.id, answer)),
-    [settleAsk],
-  );
-  const declineAsk = useCallback(
-    () => settleAsk((q) => api.declineQuestion(q.sessionId, q.id)),
-    [settleAsk],
-  );
+// ---------------------------------------------------------------------------
+// Dedupe and reconciliation primitives (pure)
+// ---------------------------------------------------------------------------
 
-  const refreshChanges = useCallback(async (id: string | null) => {
-    if (!id) return setChanges([]);
-    try {
-      const { diffs } = await api.getChanges(id);
-      setChanges(diffs);
-    } catch {
-      setChanges([]);
+/** Layer 1's key. The pair, for the reasons in the header. */
+export function eventKey(event: { seq: number; ts: number }): string {
+  return `${event.seq}:${event.ts}`;
+}
+
+/**
+ * Has this exact event already been applied, or does the snapshot already contain it?
+ *
+ * Exported because it is the rule the whole reconnect story rests on, and a rule
+ * worth being able to test without building a state tree around it.
+ */
+export function isDuplicate(state: TuiState, event: BoughEvent): boolean {
+  if (state.seen.includes(eventKey(event))) return true;
+  if (event.sessionId === undefined) return false;
+  const watermark = state.reconciledAt[event.sessionId];
+  return watermark !== undefined && event.ts < watermark;
+}
+
+function remember(seen: readonly string[], key: string): readonly string[] {
+  const next = seen.length >= DEDUPE_WINDOW ? seen.slice(seen.length - DEDUPE_WINDOW + 1) : [...seen];
+  next.push(key);
+  return next;
+}
+
+/** A part's identity, or null when it has none (text, reasoning). */
+export function partKey(part: Part): string | null {
+  switch (part.type) {
+    case "tool_call":
+      return `tool_call:${part.id}`;
+    case "tool_result":
+      return `tool_result:${part.callId}`;
+    case "ask":
+      return `ask:${part.id}`;
+    case "image":
+      return `image:${part.path}`;
+    default:
+      return null; // text / reasoning — legal to repeat, so never deduped by content
+  }
+}
+
+/** Append `part` unless an identity-carrying twin is already there (layer 3). */
+function appendPart(parts: Part[], part: Part): Part[] {
+  const key = partKey(part);
+  if (key !== null && parts.some((p) => partKey(p) === key)) return parts;
+  return [...parts, part];
+}
+
+/**
+ * Merge one message from a snapshot with the one the events built.
+ *
+ * Parts only append and `pending` only clears, which is what makes "take the longer
+ * list, take finished over pending" a merge rather than a guess.
+ */
+function mergeMessage(fromDb: Message, local: Message): Message {
+  return {
+    ...fromDb,
+    parts: local.parts.length > fromDb.parts.length ? local.parts : fromDb.parts,
+    pending: fromDb.pending && local.pending,
+  };
+}
+
+/**
+ * The snapshot thread, plus anything the stream delivered that the read predates.
+ *
+ * A straight replace would drop a `message.started` that landed while the request was
+ * in flight — the message would then reappear only on the next fetch, which is the
+ * "my message vanished" bug the reconnect path exists to prevent.
+ */
+export function mergeThread(fromDb: Message[], local: Message[]): Message[] {
+  const localById = new Map(local.map((m) => [m.id, m]));
+  const merged = fromDb.map((m) => {
+    const mine = localById.get(m.id);
+    return mine ? mergeMessage(m, mine) : m;
+  });
+  const known = new Set(fromDb.map((m) => m.id));
+  for (const m of local) if (!known.has(m.id)) merged.push(m);
+  return merged;
+}
+
+// ---------------------------------------------------------------------------
+// The reducer
+// ---------------------------------------------------------------------------
+
+/** Rows carry client-side memory (`unseen`) that a server refetch must not erase. */
+function mergeSessionRows(previous: TuiSessionRow[], next: SessionRow[]): TuiSessionRow[] {
+  const before = new Map(previous.map((s) => [s.id, s]));
+  return next.map((s) => {
+    const old = before.get(s.id);
+    return old?.unseen ? { ...s, unseen: true } : s;
+  });
+}
+
+function patchSession(
+  sessions: TuiSessionRow[],
+  id: string,
+  patch: (s: TuiSessionRow) => TuiSessionRow,
+): TuiSessionRow[] {
+  let changed = false;
+  const next = sessions.map((s) => {
+    if (s.id !== id) return s;
+    const updated = patch(s);
+    if (updated !== s) changed = true;
+    return updated;
+  });
+  return changed ? next : sessions;
+}
+
+function patchMessage(
+  thread: Message[],
+  id: string,
+  patch: (m: Message) => Message,
+): Message[] {
+  let changed = false;
+  const next = thread.map((m) => {
+    if (m.id !== id) return m;
+    const updated = patch(m);
+    if (updated !== m) changed = true;
+    return updated;
+  });
+  return changed ? next : thread;
+}
+
+function withoutKey<T>(record: Record<string, T>, key: string): Record<string, T> {
+  if (!(key in record)) return record;
+  const next = { ...record };
+  delete next[key];
+  return next;
+}
+
+/**
+ * Apply one event. Assumes dedupe already passed — `reduce` owns that, so this
+ * function is only ever asked "what does this event mean", never "have I seen it".
+ */
+function applyEvent(state: TuiState, raw: BoughEvent): TuiState {
+  const event = raw as AnyBoughEvent;
+  const current = state.currentId;
+  const mine = event.sessionId !== undefined && event.sessionId === current;
+
+  switch (event.type) {
+    case "session.created": {
+      const s = event.data;
+      if (state.sessions.some((p) => p.id === s.id)) return state;
+      // Delegated work collapses under its origin and is reached by drill-in, never
+      // by the top-level list (spec §4). Visibility is derived, here as everywhere.
+      if (s.kind === "subagent" || s.kind === "workflow_agent") return state;
+      return { ...state, sessions: [{ ...s, busy: false }, ...state.sessions] };
     }
-  }, []);
-  const refreshChangesRef = useRef(refreshChanges);
-  refreshChangesRef.current = refreshChanges;
 
-  const refreshJobs = useCallback(async (id: string | null) => {
-    if (!id) return setJobs([]);
-    try {
-      setJobs(await api.jobs(id));
-    } catch {
-      setJobs([]);
+    case "session.updated": {
+      const s = event.data;
+      return {
+        ...state,
+        sessions: patchSession(state.sessions, s.id, (p) => ({ ...p, ...s })),
+        session: state.session?.id === s.id ? { ...state.session, ...s } : state.session,
+      };
     }
-  }, []);
-  const refreshJobsRef = useRef(refreshJobs);
-  refreshJobsRef.current = refreshJobs;
 
-  const refreshWorkflows = useCallback(async (id: string | null) => {
-    if (!id) return setWorkflows([]);
-    try {
-      setWorkflows(await api.workflows(id));
-    } catch {
-      setWorkflows([]);
+    case "session.activity": {
+      if (!mine) return state;
+      return { ...state, activity: event.data.activity };
     }
-  }, []);
-  const refreshWorkflowsRef = useRef(refreshWorkflows);
-  refreshWorkflowsRef.current = refreshWorkflows;
 
-  const open = useCallback(async (id: string) => {
-    setCurrentId(id);
-    setStreaming({});
-    setQueued([]); // staged messages belong to the session they were typed in
-    setActivity(null); // a blurb describes the session it was born in
-    setChanges([]);
-    setUsage(USAGE_ZERO);
-    setJobs([]);
-    setWorkflows([]);
-    setSessions((prev) => prev.map((s) => (s.id === id && s.unseen ? { ...s, unseen: false } : s)));
-    const { session, thread, usage } = await api.getSession(id);
-    setSession(session);
-    setThread(thread);
-    setUsage(usage);
-    refreshChanges(id);
-    refreshJobs(id);
-    refreshWorkflows(id);
-  }, [refreshChanges, refreshJobs, refreshWorkflows]);
+    case "message.started": {
+      const m = event.data;
+      const sessions = m.pending
+        ? patchSession(state.sessions, m.sessionId, (s) => s.busy ? s : { ...s, busy: true })
+        : state.sessions;
+      if (m.sessionId !== current) return { ...state, sessions };
+      const existing = state.thread.find((x) => x.id === m.id);
+      const thread = existing
+        // Already here: keep what the stream has accumulated. Re-appending is the
+        // duplicate-message bug this whole file is arranged to make impossible.
+        ? patchMessage(state.thread, m.id, (x) => mergeMessage(m, x))
+        : [...state.thread, m];
+      return { ...state, sessions, thread };
+    }
 
-  const newSession = useCallback(async (workspace?: string) => {
-    // No title — the backend's title worker names the session from its first message.
-    const s = await api.createSession(workspace ? { workspace } : {});
-    setSessions((prev) => (prev.some((p) => p.id === s.id) ? prev : [s, ...prev]));
-    await open(s.id);
-    return s;
-  }, [open]);
+    case "message.delta": {
+      const { messageId, delta } = event.data;
+      if (!mine && current !== null) return state;
+      return {
+        ...state,
+        streaming: {
+          ...state.streaming,
+          [messageId]: (state.streaming[messageId] ?? "") + delta,
+        },
+      };
+    }
 
-  // Transient toast: unlike error notices (which persist until replaced), these
-  // self-dismiss — the message confirms an action, it shouldn't linger as state.
-  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const notify = useCallback((msg: string) => {
-    setNotice(msg);
-    if (noticeTimer.current) clearTimeout(noticeTimer.current);
-    noticeTimer.current = setTimeout(() => {
-      noticeTimer.current = null;
-      setNotice((n) => (n === msg ? null : n));
-    }, 5000);
-  }, []);
+    case "message.retry": {
+      // The round is being re-attempted and re-streams from the top, so the partial
+      // text is not a prefix of what is coming — it is a competing copy.
+      const { messageId, attempt, reason } = event.data;
+      return {
+        ...state,
+        streaming: withoutKey(state.streaming, messageId),
+        notice: mine ? `retrying (attempt ${attempt}) — ${reason}` : state.notice,
+      };
+    }
 
-  const fork = useCallback(async (
-    atMessageId: string,
-    atPart?: number,
-    exclusive?: boolean,
-    idArg?: string,
-  ) => {
-    const id = idArg ?? currentRef.current;
-    if (!id) return null;
-    try {
-      return await api.fork(id, {
-        atMessageId,
-        ...(atPart === undefined ? {} : { atPart }),
-        ...(exclusive ? { exclusive: true } : {}),
+    case "message.part": {
+      const { messageId, part } = event.data;
+      const thread = patchMessage(state.thread, messageId, (m) => {
+        const parts = appendPart(m.parts, part);
+        return parts === m.parts ? m : { ...m, parts };
       });
-    } catch (e) {
-      setNotice(e instanceof Error ? e.message : String(e));
-      return null;
+      return {
+        ...state,
+        thread,
+        // The finalized text part supersedes the live buffer; keeping both renders
+        // the same prose twice.
+        streaming: part.type === "text" ? withoutKey(state.streaming, messageId) : state.streaming,
+      };
     }
-  }, []);
 
-  // Compact all of the session's OWN turns (inherited ancestor turns are skipped —
-  // the server 400s picks that reach into ancestor history).
-  const compact = useCallback(async () => {
-    const id = currentRef.current;
-    if (!id) return null;
-    const picks = threadRef.current
-      .filter((m) => m.sessionId === id)
-      .map((m) => ({ messageId: m.id }));
-    if (picks.length === 0) {
-      setNotice("nothing to compact — no own turns");
-      return null;
+    case "tool.log": {
+      const { callId, line } = event.data;
+      return {
+        ...state,
+        toolLogs: { ...state.toolLogs, [callId]: [...(state.toolLogs[callId] ?? []), line] },
+      };
+    }
+
+    case "message.finished": {
+      const { messageId } = event.data;
+      const sessionId = event.sessionId;
+      let sessions = state.sessions;
+      let background = state.background;
+      if (sessionId !== undefined) {
+        const row = state.sessions.find((s) => s.id === sessionId);
+        sessions = patchSession(state.sessions, sessionId, (s) => ({
+          ...s,
+          busy: false,
+          unseen: s.unseen || !mine,
+        }));
+        // A background session finishing while you watch another is news; a subagent
+        // finishing inside its spawner's still-running turn is not.
+        if (row?.busy && !mine && row.kind !== "subagent" && row.kind !== "workflow_agent") {
+          background = {
+            sessionId,
+            title: row.title || "session",
+            seq: (state.background?.seq ?? 0) + 1,
+          };
+        }
+      }
+      return {
+        ...state,
+        sessions,
+        background,
+        activity: mine ? null : state.activity,
+        thread: patchMessage(state.thread, messageId, (m) => m.pending ? { ...m, pending: false } : m),
+        streaming: withoutKey(state.streaming, messageId),
+      };
+    }
+
+    case "turn.finished": {
+      const { sessionId, status } = event.data;
+      return {
+        ...state,
+        sessions: patchSession(state.sessions, sessionId, (s) => ({
+          ...s,
+          busy: false,
+          lastTurnStatus: status,
+        })),
+      };
+    }
+
+    case "ask.question": {
+      const q = event.data;
+      if (q.status === "pending") {
+        const asks = state.asks.some((p) => p.id === q.id)
+          ? state.asks.map((p) => (p.id === q.id ? q : p))
+          : [...state.asks, q];
+        return { ...state, asks };
+      }
+      // Settled: drop it so the next hold surfaces. The durable record is the `ask`
+      // part on the transcript, which arrives as `message.part`.
+      return { ...state, asks: state.asks.filter((p) => p.id !== q.id) };
+    }
+
+    case "job.spawned":
+    case "job.exited": {
+      const job = event.data;
+      const known = state.jobs.some((j) => j.id === job.id);
+      // Only the open session's own rows are patched in place. A subagent's job
+      // belongs to the tree list, which the shell refetches — this reducer does not
+      // know the lineage, and inventing it here would put visibility rules in two
+      // places (`server/jobs.ts` owns them).
+      if (!known && job.sessionId !== current) return state;
+      const jobs = known
+        ? state.jobs.map((j) => (j.id === job.id ? job : j))
+        : [job, ...state.jobs];
+      return { ...state, jobs };
+    }
+
+    case "workflow.updated": {
+      const run = event.data;
+      const workflows = state.workflows.some((w) => w.id === run.id)
+        ? state.workflows.map((w) =>
+          w.id === run.id
+            ? { ...w, status: run.status, currentPhase: run.currentPhase, error: run.error, finishedAt: run.finishedAt }
+            : w
+        )
+        : state.workflows;
+      return { ...state, workflows, workflowSeq: state.workflowSeq + 1 };
+    }
+
+    case "workflow.agent":
+      return { ...state, workflowSeq: state.workflowSeq + 1 };
+
+    case "workflow.log": {
+      const { runId, line } = event.data;
+      return { ...state, workflowLogs: { ...state.workflowLogs, [runId]: line } };
+    }
+  }
+  // Exhaustive over the frozen `EVENT_TYPES`; an unreachable default would hide the
+  // compile error that a new event name is supposed to cause here.
+  return state;
+}
+
+/** The whole state transition. Pure: same inputs, same output, no I/O anywhere. */
+export function reduce(state: TuiState, action: StoreAction): TuiState {
+  switch (action.type) {
+    case "event": {
+      const { event } = action;
+      if (isDuplicate(state, event)) return state;
+      const next = applyEvent(state, event);
+      // Remembered even when the event changed nothing: "seen" is about delivery,
+      // not about effect, and an event that was a no-op once is a no-op twice.
+      return { ...next, seen: remember(state.seen, eventKey(event)) };
+    }
+
+    case "connection":
+      return state.connected === action.connected
+        ? state
+        : { ...state, connected: action.connected };
+
+    case "sessions":
+      return { ...state, sessions: mergeSessionRows(state.sessions, action.sessions) };
+
+    case "open": {
+      const id = action.sessionId;
+      if (id === state.currentId) return state;
+      // Everything below belonged to the session being left: a queued message must
+      // not be sent to the new one, and a blurb describes the session it was born in.
+      return {
+        ...state,
+        currentId: id,
+        session: null,
+        thread: [],
+        streaming: {},
+        toolLogs: {},
+        queued: [],
+        activity: null,
+        usage: null,
+        changes: null,
+        jobs: [],
+        workflows: [],
+        replay: null,
+        sessions: id === null
+          ? state.sessions
+          : patchSession(state.sessions, id, (s) => s.unseen ? { ...s, unseen: false } : s),
+      };
+    }
+
+    case "snapshot": {
+      const { session, thread, usage } = action.snapshot;
+      if (session.id !== state.currentId) {
+        // A snapshot that lost the race with a session switch. Record the watermark
+        // anyway — it is a fact about that session, not about the view.
+        return { ...state, reconciledAt: { ...state.reconciledAt, [session.id]: action.at } };
+      }
+      const merged = mergeThread(thread, state.thread);
+      // Drop the live buffer of any message the database now shows as finished: its
+      // text is in the parts. A still-pending message keeps its buffer — that text is
+      // not persisted anywhere yet, and the outage's hole in it is repaired wholesale
+      // when the finalized text part lands.
+      const streaming: Record<string, string> = {};
+      for (const [messageId, text] of Object.entries(state.streaming)) {
+        if (merged.some((m) => m.id === messageId && m.pending)) streaming[messageId] = text;
+      }
+      return {
+        ...state,
+        session,
+        thread: merged,
+        streaming,
+        usage,
+        reconciledAt: { ...state.reconciledAt, [session.id]: action.at },
+      };
+    }
+
+    case "questions":
+      return { ...state, asks: action.questions };
+
+    case "ask.settled":
+      return { ...state, asks: state.asks.filter((q) => q.id !== action.id) };
+
+    case "changes":
+      return action.sessionId === state.currentId ? { ...state, changes: action.changes } : state;
+
+    case "jobs":
+      return action.sessionId === state.currentId ? { ...state, jobs: action.jobs } : state;
+
+    case "workflows":
+      return action.sessionId === state.currentId
+        ? { ...state, workflows: action.workflows }
+        : state;
+
+    case "replay":
+      return { ...state, replay: action.replay };
+
+    case "notice":
+      return { ...state, notice: action.notice };
+
+    case "queue":
+      return { ...state, queued: [...state.queued, action.text] };
+
+    case "queue.drained":
+      return state.queued.length === 0 ? state : { ...state, queued: [] };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Selectors — derived, never stored
+// ---------------------------------------------------------------------------
+
+/** A turn is in flight in the open session. Derived from the thread, like the server. */
+export function isBusy(state: TuiState): boolean {
+  return state.thread.some((m) => m.pending);
+}
+
+/** The hold the card shows. One at a time, oldest first (spec §6). */
+export function currentAsk(state: TuiState): AskQuestion | null {
+  return state.asks[0] ?? null;
+}
+
+/** The message's live text, or the text it finalized into. */
+export function liveText(state: TuiState, messageId: string): string {
+  return state.streaming[messageId] ?? "";
+}
+
+// ---------------------------------------------------------------------------
+// The shell — the only part of this file that performs I/O
+// ---------------------------------------------------------------------------
+
+export interface StoreDeps {
+  /** Absent = the production client. A test passes a fake and never binds a socket. */
+  api?: Api;
+  /** Absent = the real SSE client. Injected so a test drives events by hand. */
+  connect?: typeof connectEvents;
+  /** Absent = `Date.now`. The snapshot watermark reads this and nothing else does. */
+  now?: () => number;
+}
+
+export interface Store {
+  getState(): TuiState;
+  /** Returns an unsubscribe thunk. Called after every state change, never per event. */
+  subscribe(listener: (state: TuiState) => void): () => void;
+  dispatch(action: StoreAction): void;
+  /** Open the stream and load the session list and any live `ask()` holds. */
+  start(): void;
+  stop(): Promise<void>;
+  reload(): Promise<void>;
+  open(sessionId: string): Promise<void>;
+  createSession(workspace?: string): Promise<Session | null>;
+  /**
+   * Post a message. While a turn runs, `queue` holds it locally and it drains into a
+   * fresh turn when the current one ends; without `queue` it is posted immediately
+   * and the server queues it (spec §5) — steering, rather than staging.
+   */
+  send(text: string, opts?: { queue?: boolean; sessionId?: string }): Promise<void>;
+  drainQueue(): Promise<void>;
+  answerAsk(answer: string): Promise<void>;
+  declineAsk(): Promise<void>;
+  refreshChanges(): Promise<void>;
+  refreshJobs(): Promise<void>;
+  refreshWorkflows(): Promise<void>;
+  /** Spec §8: replay is always reported. This is what fetches the counts. */
+  refreshReplay(runId: string): Promise<void>;
+  /** Re-fetch everything the stream would have carried while it was down. */
+  resync(): Promise<void>;
+  notify(message: string): void;
+  dismissNotice(): void;
+}
+
+export function createStore(deps: StoreDeps = {}): Store {
+  const api = deps.api ?? defaultApi;
+  const connect = deps.connect ?? connectEvents;
+  const now = deps.now ?? Date.now;
+
+  let state = initialState();
+  const listeners = new Set<(state: TuiState) => void>();
+  let stream: EventStream | null = null;
+
+  function dispatch(action: StoreAction): void {
+    const next = reduce(state, action);
+    if (next === state) return;
+    state = next;
+    for (const listener of listeners) {
+      try {
+        listener(state);
+      } catch {
+        // One wedged renderer must not stop the others from being told, for the same
+        // reason the bus isolates its listeners (plan §6.6).
+      }
+    }
+  }
+
+  /** Report a failure to the user instead of throwing into a render. */
+  function fail(error: unknown): void {
+    dispatch({ type: "notice", notice: error instanceof Error ? error.message : String(error) });
+  }
+
+  const reload = async () => {
+    try {
+      dispatch({ type: "sessions", sessions: await api.listSessions() });
+    } catch (error) {
+      fail(error);
+    }
+  };
+
+  const refreshAsks = async () => {
+    try {
+      dispatch({ type: "questions", questions: await api.listQuestions() });
+    } catch (error) {
+      fail(error);
+    }
+  };
+
+  const refreshChanges = async () => {
+    const id = state.currentId;
+    if (!id) return;
+    try {
+      dispatch({ type: "changes", sessionId: id, changes: await api.getChanges(id) });
+    } catch (error) {
+      fail(error);
+    }
+  };
+
+  const refreshJobs = async () => {
+    const id = state.currentId;
+    if (!id) return;
+    try {
+      const { jobs } = await api.listJobs(id);
+      dispatch({ type: "jobs", sessionId: id, jobs });
+    } catch (error) {
+      fail(error);
+    }
+  };
+
+  const refreshWorkflows = async () => {
+    const id = state.currentId;
+    if (!id) return;
+    try {
+      const { workflows } = await api.listWorkflows(id);
+      dispatch({ type: "workflows", sessionId: id, workflows });
+    } catch (error) {
+      fail(error);
+    }
+  };
+
+  const refreshReplay = async (runId: string) => {
+    try {
+      dispatch({ type: "replay", replay: await api.workflowReplay(runId) });
+    } catch (error) {
+      fail(error);
+    }
+  };
+
+  /**
+   * Fetch a session and reconcile. The watermark is taken BEFORE the request, so an
+   * event published during the round trip is re-applied rather than assumed known.
+   */
+  const snapshot = async (id: string) => {
+    const at = now();
+    const result = await api.getSession(id);
+    dispatch({ type: "snapshot", at, snapshot: result });
+  };
+
+  const open = async (sessionId: string) => {
+    dispatch({ type: "open", sessionId });
+    try {
+      await snapshot(sessionId);
+    } catch (error) {
+      fail(error);
+      return;
+    }
+    await Promise.all([refreshChanges(), refreshJobs(), refreshWorkflows()]);
+  };
+
+  /**
+   * The reconnect path (spec §3). It re-fetches; it does not replay from a seq —
+   * there is no seq to replay from, and the database is the source of truth.
+   */
+  const resync = async () => {
+    await Promise.all([reload(), refreshAsks()]);
+    const id = state.currentId;
+    if (!id) return;
+    try {
+      await snapshot(id);
+    } catch (error) {
+      // Unreachable server: the next reconnect resyncs again. Not a notice — the
+      // disconnected indicator already says it.
+      return;
+    }
+    await Promise.all([refreshChanges(), refreshJobs(), refreshWorkflows()]);
+  };
+
+  const drainQueue = async () => {
+    const id = state.currentId;
+    if (!id || state.queued.length === 0 || isBusy(state)) return;
+    const pending = state.queued;
+    dispatch({ type: "queue.drained" });
+    for (const text of pending) {
+      try {
+        await api.postMessage(id, { text });
+      } catch (error) {
+        fail(error);
+      }
+    }
+  };
+
+  const send = async (text: string, opts: { queue?: boolean; sessionId?: string } = {}) => {
+    const id = opts.sessionId ?? state.currentId;
+    if (!id) return;
+    if (opts.queue && isBusy(state)) {
+      dispatch({ type: "queue", text });
+      return;
     }
     try {
-      return await api.compact(id, picks);
-    } catch (e) {
-      setNotice(e instanceof Error ? e.message : String(e));
-      return null;
+      await api.postMessage(id, { text });
+    } catch (error) {
+      fail(error);
     }
-  }, []);
+  };
 
-  // Range ops on a hand-picked set of turn message ids (only this session's OWN
-  // messages qualify; the server 400s picks that reach into ancestor history).
-  const rangeOp = useCallback(
-    async (
-      msgIds: string[],
-      run: (id: string, picks: { messageId: string }[]) => Promise<Session>,
-    ) => {
-      const id = currentRef.current;
-      if (!id) return null;
-      const own = new Set(threadRef.current.filter((m) => m.sessionId === id).map((m) => m.id));
-      const picks = msgIds.filter((mid) => own.has(mid)).map((messageId) => ({ messageId }));
-      if (picks.length === 0) {
-        setNotice("select turns from this conversation (not inherited history)");
-        return null;
-      }
+  const settleAsk = async (run: (q: AskQuestion) => Promise<unknown>) => {
+    const q = currentAsk(state);
+    if (!q) return;
+    dispatch({ type: "ask.settled", id: q.id });
+    try {
+      await run(q);
+    } catch {
+      // Already settled or expired server-side. The holds are memory-only, so the
+      // server is the only place that knows — re-read rather than guess.
+      await refreshAsks();
+    }
+  };
+
+  return {
+    getState: () => state,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    dispatch,
+
+    start() {
+      if (stream) return;
+      stream = connect({
+        url: api.eventsUrl(),
+        onEvent: (event) => {
+          dispatch({ type: "event", event });
+          // The change set has no event of its own (`schema/events.ts`), so the rail
+          // refreshes when a turn ends — which is when the files stop moving.
+          if (event.type === "turn.finished") void refreshChanges();
+          if (event.type === "job.spawned" || event.type === "job.exited") void refreshJobs();
+          if (event.type === "workflow.updated" || event.type === "workflow.agent") {
+            void refreshWorkflows();
+          }
+          if (event.type === "message.finished") void drainQueue();
+        },
+        onOpen: ({ reconnect }) => {
+          dispatch({ type: "connection", connected: true });
+          if (reconnect) void resync();
+        },
+        onClose: () => dispatch({ type: "connection", connected: false }),
+      });
+      void reload();
+      void refreshAsks();
+    },
+
+    async stop() {
+      const open = stream;
+      stream = null;
+      open?.close();
+      await open?.done;
+      dispatch({ type: "connection", connected: false });
+    },
+
+    reload,
+    open,
+
+    async createSession(workspace?: string) {
       try {
-        return await run(id, picks);
-      } catch (e) {
-        setNotice(e instanceof Error ? e.message : String(e));
+        // No title: the cheap tier names the session from its first message (§12).
+        const session = await api.createSession(workspace ? { workspace } : {});
+        await open(session.id);
+        await reload();
+        return session;
+      } catch (error) {
+        fail(error);
         return null;
       }
     },
-    [],
-  );
-  const compactPicks = useCallback((ids: string[]) => rangeOp(ids, api.compact), [rangeOp]);
-  const extractPicks = useCallback((ids: string[]) => rangeOp(ids, api.extract), [rangeOp]);
 
-  // Handoff (focused threads instead of compaction): the server drafts a
-  // self-contained opening prompt from this thread toward `goal` and attaches it
-  // to a fresh conversation as session.draft — the composer prefills from it and
-  // the first send consumes it.
-  const handoff = useCallback(async (goal: string) => {
-    const id = currentRef.current;
-    if (!id) return null;
-    try {
-      return await api.handoff(id, goal);
-    } catch (e) {
-      setNotice(e instanceof Error ? e.message : String(e));
-      return null;
-    }
-  }, []);
-
-  // Delete a section: branch the conversation WITHOUT the picked turns (extract the
-  // complement), then archive the original — recoverable until the 30-day purge.
-  const deleteRange = useCallback(async (rangeIds: string[]) => {
-    const id = currentRef.current;
-    if (!id) return null;
-    const cut = new Set(rangeIds);
-    const keep = threadRef.current
-      .filter((m) => m.sessionId === id && !cut.has(m.id))
-      .map((m) => ({ messageId: m.id }));
-    if (keep.length === 0) {
-      setNotice("that's the whole session — archive it from the sessions tab instead");
-      return null;
-    }
-    try {
-      // replaceSource: the new session takes the original's title + lineage spot.
-      const s = await api.extract(id, keep, true);
-      await api.archiveSession(id);
-      notify("turns deleted — the original session is archived (recoverable)");
-      return s;
-    } catch (e) {
-      setNotice(e instanceof Error ? e.message : String(e));
-      return null;
-    }
-  }, [notify]);
-
-  // Move a section onto an existing branch: append the picked turns to the target.
-  const moveRange = useCallback(async (targetId: string, rangeIds: string[]) => {
-    const id = currentRef.current;
-    if (!id) return null;
-    const own = new Set(threadRef.current.filter((m) => m.sessionId === id).map((m) => m.id));
-    const picks = rangeIds.filter((mid) => own.has(mid)).map((messageId) => ({ messageId }));
-    if (picks.length === 0) {
-      setNotice("select turns from this conversation (not inherited history)");
-      return null;
-    }
-    try {
-      return await api.moveInto(targetId, id, picks);
-    } catch (e) {
-      setNotice(e instanceof Error ? e.message : String(e));
-      return null;
-    }
-  }, []);
-
-  const applyChanges = useCallback((source: WireDiff["source"], paths: string[]) => {
-    const id = currentRef.current;
-    if (!id || paths.length === 0) return;
-    // The changes.updated event triggers the refetch; no optimistic mutation needed.
-    api.applyChanges(id, source, paths).then((r) => {
-      // Say where the files actually went — silence here reads as a failed no-op.
-      const n = r.applied.length;
-      if (n === 0) return notify("nothing to apply");
-      const files = `${n} file${n === 1 ? "" : "s"}`;
-      if (r.origin) {
-        notify(`✓ ${files} → ${r.origin}${r.sealed && r.branch ? ` · sealed as ${r.branch}` : ""}`);
-      } else {
-        notify(`✓ accepted ${files}${r.branch ? ` · kept on ${r.branch}` : ""}`);
-      }
-    }, (e) => {
-      setNotice(e instanceof Error ? e.message : String(e));
-      refreshChangesRef.current(id);
-    });
-  }, [notify]);
-
-  const revertChanges = useCallback(() => {
-    const id = currentRef.current;
-    if (!id) return;
-    // Confirm the undo — like apply, silence here reads as a failed no-op.
-    api.revertChanges(id).then(
-      () => notify("↩ reverted — session files restored to base"),
-      (e) => setNotice(e instanceof Error ? e.message : String(e)),
-    );
-  }, [notify]);
-
-  const send = useCallback(async (text: string, queue = false, idArg?: string) => {
-    const id = idArg ?? currentRef.current;
-    if (!id) return;
-    if (busyRef.current && queue) {
-      setQueued((q) => [...q, text]);
-      return;
-    }
-    await api.postMessage(id, text);
-  }, []);
-
-  const interrupt = useCallback(() => {
-    const id = currentRef.current;
-    if (!id) return;
-    api.interrupt(id).catch(() => {});
-  }, []);
-
-  /** ^x: stop the open conversation's turn, its whole subagent subtree, and
-   * their background shells. Reports what it actually stopped — a stop that
-   * silently did nothing is indistinguishable from a stop that failed. */
-  const stopAll = useCallback(() => {
-    const id = currentRef.current;
-    if (!id) return;
-    api.stopAll(id).then(
-      (r) => {
-        const bits = [
-          r.turn ? "the turn" : null,
-          r.subagents > 0 ? `${r.subagents} subagent${r.subagents > 1 ? "s" : ""}` : null,
-          r.jobs > 0 ? `${r.jobs} background shell${r.jobs > 1 ? "s" : ""}` : null,
-        ].filter(Boolean).join(" · ");
-        notify(bits ? `⏹ stopped — ${bits}` : "⏹ nothing was still running");
-      },
-      (e) => notify(`stop failed: ${e}`),
-    );
-  }, []);
-
-  const archive = useCallback((id: string) => {
-    api.archiveSession(id).catch(() => {});
-  }, []);
-
-  const loadArchived = useCallback(async () => {
-    setArchived(await api.listSessions(true));
-  }, []);
-
-  const unarchive = useCallback((id: string) => {
-    api.unarchiveSession(id).then(() => {
-      // Refetch both lists — the row moves from one to the other.
-      reload().catch(() => {});
-      loadArchived().catch(() => {});
-    }, () => {});
-  }, [reload, loadArchived]);
-
-  const deprecate = useCallback((id: string, on: boolean) => {
-    api.deprecateSession(id, on).catch(() => {}); // session.updated event reflects it
-  }, []);
-
-  const dismissNotice = useCallback(() => setNotice(null), []);
-
-  const onEvent = useCallback((ev: BoughEvent) => {
-    switch (ev.type) {
-      case "session.created": {
-        const s = ev.data as Session;
-        setSessions((prev) => (prev.some((p) => p.id === s.id) ? prev : [s, ...prev]));
-        break;
-      }
-      case "session.archived": {
-        const { sessionId } = ev.data as { sessionId: string };
-        // Keep the row reachable in the archived drawer without a refetch.
-        const row = sessionsRef.current.find((p) => p.id === sessionId);
-        setSessions((prev) => prev.filter((p) => p.id !== sessionId));
-        if (row) {
-          setArchived((prev) =>
-            prev.some((p) => p.id === sessionId)
-              ? prev
-              : [{ ...row, archivedAt: Date.now() }, ...prev]
-          );
-        }
-        break;
-      }
-      case "session.updated": {
-        const s = ev.data as Session;
-        setSessions((prev) =>
-          prev.map((p) =>
-            p.id === s.id
-              ? {
-                ...s,
-                busy: p.busy,
-                unseen: p.unseen,
-                lastTurnStatus: p.lastTurnStatus,
-                costUsd: p.costUsd,
-              }
-              : p
-          )
-        );
-        setSession((cur) => (cur && cur.id === s.id ? { ...cur, ...s } : cur));
-        break;
-      }
-      case "message.started": {
-        const m = ev.data as Message;
-        if (m.pending) {
-          setSessions((prev) =>
-            prev.map((s) => (s.id === m.sessionId && !s.busy ? { ...s, busy: true } : s))
-          );
-        }
-        if (m.sessionId !== currentRef.current) break;
-        setThread((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
-        break;
-      }
-      case "message.delta": {
-        const { messageId, delta } = ev.data as { messageId: string; delta: string };
-        setStreaming((prev) => ({ ...prev, [messageId]: (prev[messageId] ?? "") + delta }));
-        break;
-      }
-      case "message.retry": {
-        // The round is being re-attempted and will re-stream from the top —
-        // drop the partial streamed text so it doesn't double up.
-        const { messageId } = ev.data as { messageId: string };
-        setStreaming((prev) => {
-          if (prev[messageId] === undefined) return prev;
-          const next = { ...prev };
-          delete next[messageId];
-          return next;
-        });
-        break;
-      }
-      case "message.part": {
-        const { messageId, part } = ev.data as { messageId: string; part: Part };
-        setThread((prev) =>
-          prev.map((m) => (m.id === messageId ? { ...m, parts: [...m.parts, part] } : m))
-        );
-        // The finalized text part supersedes the streaming buffer.
-        if (part.type === "text") {
-          setStreaming((prev) => {
-            const next = { ...prev };
-            delete next[messageId];
-            return next;
-          });
-        }
-        break;
-      }
-      case "tool.log": {
-        // A console line from the running program — accumulate under its tool
-        // call; the group renders these while the call has no result yet.
-        const { callId, line } = ev.data as { messageId: string; callId: string; line: string };
-        setToolLogs((prev) => ({ ...prev, [callId]: [...(prev[callId] ?? []), line] }));
-        break;
-      }
-      case "session.activity": {
-        const { text } = ev.data as { text: string };
-        if (ev.sessionId === currentRef.current) setActivity(text);
-        break;
-      }
-      case "message.finished": {
-        const { messageId } = ev.data as { messageId: string };
-        if (ev.sessionId) {
-          const seen = ev.sessionId === currentRef.current;
-          setSessions((prev) =>
-            prev.map((s) =>
-              s.id === ev.sessionId ? { ...s, busy: false, unseen: s.unseen || !seen } : s
-            )
-          );
-          if (ev.sessionId === currentRef.current) setActivity(null);
-          // Desktop banner when a turn lands while the terminal is unfocused
-          // (notifyDesktop self-gates on focus). Subagent turns finish inside a
-          // parent's still-running turn — a banner there would be noise.
-          const fin = sessionsRef.current.find((s) => s.id === ev.sessionId);
-          if (fin?.busy && fin.kind !== "subagent") {
-            notifyDesktop(`${fin.title || "bough"} — turn finished`);
-            // In-TUI toast for a background session finishing while you watch
-            // another (notifyDesktop is a no-op when the terminal is focused).
-            if (!seen) setBgFinish({ title: fin.title || "session", seq: ++bgSeq.current });
-          }
-        }
-        setThread((prev) => prev.map((m) => (m.id === messageId ? { ...m, pending: false } : m)));
-        setStreaming((prev) => {
-          const next = { ...prev };
-          delete next[messageId];
-          return next;
-        });
-        // The turn is over — drop live log buffers (their lines now live in the
-        // finalized tool_result outputs).
-        setToolLogs((prev) => {
-          const done = new Set(
-            threadRef.current
-              .filter((m) => m.id === messageId)
-              .flatMap((m) => m.parts)
-              .filter((p) => p.type === "tool_call")
-              .map((p) => p.id),
-          );
-          const next = Object.fromEntries(
-            Object.entries(prev).filter(([id]) => !done.has(id)),
-          );
-          return Object.keys(next).length === Object.keys(prev).length ? prev : next;
-        });
-        break;
-      }
-      case "turn.finished": {
-        const { sessionId, status } = ev.data as {
-          sessionId: string;
-          status: TuiSession["lastTurnStatus"];
-        };
-        setSessions((prev) =>
-          prev.map((s) => (s.id === sessionId ? { ...s, lastTurnStatus: status } : s))
-        );
-        break;
-      }
-      case "changes.updated": {
-        const { sessionId } = ev.data as { sessionId: string };
-        if (sessionId === currentRef.current) refreshChangesRef.current(sessionId);
-        break;
-      }
-      case "usage.updated": {
-        const u = ev.data as { sessionId: string } & Usage;
-        if (u.sessionId === currentRef.current) setUsage(u);
-        // Keep the per-row cost live too — subagent rows in the trees move with
-        // their own spend during a fan-out, not only on the next full reload.
-        if (u.costUsd !== undefined) {
-          setSessions((prev) =>
-            prev.map((s) => (s.id === u.sessionId ? { ...s, costUsd: u.costUsd } : s))
-          );
-        }
-        break;
-      }
-      case "job.spawned":
-      case "job.exited": {
-        // Refetch when the job belongs to the open session or one of its
-        // subagent branches (the jobs endpoint aggregates both).
-        const cur = currentRef.current;
-        if (!cur) break;
-        const sid = ev.sessionId;
-        const relevant = sid === cur ||
-          sessionsRef.current.some((s) =>
-            s.id === sid && s.kind === "subagent" && s.originId === cur
-          );
-        if (relevant) refreshJobsRef.current(cur).catch(() => {});
-        break;
-      }
-      case "workflow.updated":
-      case "workflow.agent": {
-        setWfSeq((n) => n + 1);
-        if (ev.sessionId === currentRef.current) {
-          refreshWorkflowsRef.current(ev.sessionId).catch(() => {});
-        }
-        break;
-      }
-      case "workflow.log": {
-        const { runId, line } = ev.data as { runId: string; line: string };
-        setWfLogs((prev) => ({ ...prev, [runId]: line }));
-        break;
-      }
-      case "ask.question": {
-        const q = ev.data as AskQuestion;
-        setAsks((prev) => {
-          if (q.status === "pending") {
-            // A NEW question wants eyes on it — banner if the terminal is
-            // unfocused (notifyDesktop self-gates on focus).
-            if (!prev.some((p) => p.id === q.id)) {
-              notifyDesktop(`bough — question: ${q.question}`);
-              return [...prev, q];
-            }
-            return prev.map((p) => (p.id === q.id ? q : p));
-          }
-          return prev.filter((p) => p.id !== q.id); // settled → next surfaces
-        });
-        break;
-      }
-      default:
-        break;
-    }
-  }, []);
-
-  // Refetch everything the stream would have told us about while it was down. Streaming
-  // buffers are dropped — their deltas are lost anyway; the refetched thread has the
-  // real parts (and the server marks orphaned turns, so stale `pending` clears too).
-  const resync = useCallback(async () => {
-    reload().catch(() => {});
-    refreshAsks().catch(() => {});
-    const id = currentRef.current;
-    if (!id) return;
-    try {
-      const { session, thread, usage } = await api.getSession(id);
-      setSession(session);
-      setThread(thread);
-      setUsage(usage);
-      setStreaming({});
-      refreshChangesRef.current(id);
-      refreshJobsRef.current(id).catch(() => {});
-      refreshWorkflowsRef.current(id).catch(() => {});
-    } catch {
-      // server unreachable — the next reconnect will resync again
-    }
-  }, [reload, refreshAsks]);
-
-  const connected = useEvents(onEvent, resync);
-
-  useEffect(() => {
-    refreshAsks().catch(() => {});
-  }, [refreshAsks]);
-
-  const busy = thread.some((m) => m.pending);
-  busyRef.current = busy;
-
-  // While a background shell runs, poll its tail so the live card actually moves
-  // (job.* events only mark spawn/exit; the output between them has no event).
-  const jobsRunning = jobs.some((j) => j.status === "running");
-  useEffect(() => {
-    if (!jobsRunning || !currentId) return;
-    const t = setInterval(() => refreshJobsRef.current(currentId).catch(() => {}), 2_000);
-    return () => clearInterval(t);
-  }, [jobsRunning, currentId]);
-
-  // Flush staged messages once the turn finishes (the server queues rapid posts into
-  // a single follow-up turn). Guard on currentId so a switch mid-turn doesn't send
-  // them to the wrong session (open() already clears the queue).
-  useEffect(() => {
-    if (busy || queued.length === 0 || !currentId) return;
-    const toSend = queued;
-    setQueued([]);
-    for (const text of toSend) api.postMessage(currentId, text).catch(() => {});
-  }, [busy, queued, currentId]);
-
-  return {
-    sessions,
-    archived,
-    currentId,
-    session,
-    thread,
-    streaming,
-    toolLogs,
-    connected,
-    busy,
-    ask,
-    askCount: asks.length,
-    queued,
-    notice,
-    activity,
-    changes,
-    usage,
-    jobs,
-    workflows,
-    wfSeq,
-    wfLogs,
-    bgFinish,
-    open,
-    newSession,
     send,
-    interrupt,
-    archive,
-    loadArchived,
-    unarchive,
-    deprecate,
-    answerAsk,
-    declineAsk,
-    fork,
-    compact,
-    compactPicks,
-    extractPicks,
-    handoff,
-    deleteRange,
-    moveRange,
-    applyChanges,
-    revertChanges,
-    dismissNotice,
-    notify,
-    stopAll,
+    drainQueue,
+
+    answerAsk: (answer: string) =>
+      settleAsk((q) => api.answerQuestion(q.sessionId, q.id, answer)),
+    declineAsk: () => settleAsk((q) => api.declineQuestion(q.sessionId, q.id)),
+
+    refreshChanges,
+    refreshJobs,
+    refreshWorkflows,
+    refreshReplay,
+    resync,
+
+    notify: (message: string) => dispatch({ type: "notice", notice: message }),
+    dismissNotice: () => dispatch({ type: "notice", notice: null }),
   };
 }
+
+/** Re-exported so a component imports its state shape from one place. */
+export type { EventType };

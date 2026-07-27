@@ -129,30 +129,37 @@ designing the bridge protocol.
 
 ## 2. Disposition of the current tree
 
-The existing `src/` is **reference material, not a starting point.**
+**The cutover has happened (T10.8).** `src/` *is* the rewrite. There is one tree,
+one root `deno.json`, and one `deno.lock`; every path in this document reads
+literally. Nothing below is an instruction any more — it is the record of how the
+tree got here, kept because the `Port from` lines still refer to files that only
+exist in history.
 
-**The new tree is built at `next/`**, with its own `next/deno.json`. It is renamed
-to `src/` at cutover (T10.8). This is not cosmetic: the layout below reuses paths
-that already exist (`src/db/db.ts`, `src/schema/parts.ts`, …), so building in place
-would have parallel tasks overwriting live files and each other. `next/` removes the
-collision entirely, and keeps every `Port from` reference readable while you work.
+While the rewrite was under construction it was built at `next/`, with its own
+`next/deno.json`, and the old `src/` was read-only reference material. That was not
+cosmetic: the layout in §3 reuses paths the old tree already occupied
+(`src/db/db.ts`, `src/schema/parts.ts`, …), so building in place would have had
+parallel tasks overwriting live files and each other. Building beside it removed the
+collision and kept every `Port from` reference readable.
 
-Until cutover, treat everything under `src/` as **read-only**. Do not edit, do not
-partially migrate, do not delete. The `Port from` line in each task says which old
-file to read. The root `deno.json` also stays untouched — the running server builds
-from it.
+**Reading a `Port from` line now.** The file it names is gone from the working tree.
+Recover it from git — `git show 385962d~1:src/turn.ts` — or read it in the history
+of the path it became. The last commit that contains the whole old tree is the one
+immediately before the cutover.
 
-Paths in §3 are written relative to `next/`.
-
-Also deleted in that final commit: `docs/identity-boundary.md`,
+Deleted at cutover, alongside the old tree: `docs/identity-boundary.md`,
 `docs/mcp.md`, `docs/net-transparent-proxy.md`, `docs/subagent-failure-testing.md`,
-`bench/`, `probes/`, and the four bundled skills that don't survive.
+`bench/`, `probes/`, the four bundled skills that don't survive (`cloud`,
+`prewalk`, `theme`, `tui-test` — `history` is rewritten at `src/skills/history/`),
+and `scripts/live-smoke.ts`, which drove the old monolithic `src/turn.ts`.
 
-**Coexistence while building.** The current server runs on `:4321` under launchd
-against `~/.bough/bough.db`. The rewrite must not collide with it: develop against
-`BOUGH_PORT` and a `BOUGH_HOME` override, and do not touch the live database. The
-cutover — launchd pointing at the new entrypoint, fresh `bough.db` — is the last
-task of M10.
+**What the cutover did not do.** T10.6 (install) did not land: `install.sh`,
+`scripts/setup.sh`, `scripts/bough` and `scripts/worker-model.sh` still describe the
+retired design — a Seatbelt sandbox, a local `llama-server` worker, a cloudflared
+tunnel, and `BOUGH_PASSWORD` auth. All four are explicit non-goals (spec §17). The
+entrypoints those scripts exec (`src/server/main.ts`, `src/tui/main.tsx`,
+`src/cli/exec.ts`) are correct; the surrounding provisioning is not. Rewriting them
+is the remaining M10 work.
 
 ---
 
@@ -231,7 +238,7 @@ owning task.
 
 | File | Owner | Everyone else |
 |---|---|---|
-| `next/deno.json` | T-1 | All dependencies are declared up front in T-1. If a later task needs a new one, it **stops and asks** rather than editing the import map. |
+| `deno.json` | T-1 | All dependencies are declared up front in T-1. If a later task needs a new one, it **stops and asks** rather than editing the import map. |
 | `src/harness/protocol.ts` | T3.1 | Host-function names are declared here once, in one array, at T3.1 — including names whose implementations land later in M6. Later tasks implement against the existing name; they never add one. |
 | `src/db/schema.sql` | T0.3 | Every table for every milestone is created in T0.3. A later task that needs a column stops and asks. |
 | `src/server/app.ts` route table | T1.1 | **Append-only.** A task adds its route entries at the end of the `routes` array and its handler in its own file. It never reorders, never edits another task's entry. |
@@ -680,7 +687,7 @@ indexing.
 | **T10.5** CLI | `bough exec` — **open the event stream before posting**, or a fast turn finishes unseen. Exit 0/1/2. Port from `src/cli/exec.ts`. |
 | **T10.6** install | `install.sh` + launchd. Port from `install.sh`, `scripts/bough`. |
 | **T10.7** README | Describe what bough is, including the absence of any isolation boundary, and that it is an alternative harness *design*. No claim the code does not back. |
-| **T10.8** cutover | Delete the old tree (§2), point launchd at the new entrypoint, fresh `bough.db`. One commit. |
+| **T10.8** cutover | **Done.** Old tree deleted (§2), `next/` renamed to `src/`, the two `deno.json`s merged into one at the root. Pointing launchd at the new entrypoint rides with T10.6, which has not landed. |
 
 ---
 

@@ -1,1 +1,0 @@
-Add a `--top N` option to wordcount.py: `python3 wordcount.py --top N FILE` prints the N most common words, one per line, formatted as `word count`, most common first. Words are compared case-insensitively and printed lowercase. Ties are broken alphabetically. Behavior without `--top` must stay exactly as it is today.
