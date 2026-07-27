@@ -231,22 +231,55 @@ export function parseGitDiff(text: string): FileDiff[] {
 
 // ---- the change set ---------------------------------------------------------
 
-/** Paths git neither tracks nor ignores, relative to the repo root. */
+/**
+ * The largest untracked file whose body is worth inlining as an added hunk.
+ *
+ * A change set is a REVIEW, and nobody reviews a 4 MiB blob by scrolling it. The
+ * entry still appears — you must be able to see that the file is new — it just
+ * carries no body.
+ */
+const MAX_ADDED_BYTES = 512 * 1024;
+
+/**
+ * Paths git neither tracks nor ignores, relative to the repo root.
+ *
+ * `--directory` is what makes this survive a real checkout. Without it, one
+ * untracked directory — build output, a venv, a data dir, anything not in
+ * `.gitignore` — enumerates every file beneath it: this repo's own `bench/` turned
+ * the Changes rail into "50908 files changed" over a six-entry screen, and the
+ * post-turn refresh then read all 50,899 bodies off disk. `git status` collapses
+ * such a directory to a single `bench/` line, and the review surface should say
+ * exactly what git says.
+ */
 async function untracked(dir: string): Promise<string[]> {
-  const r = await git(dir, ["ls-files", "--others", "--exclude-standard"]);
+  const r = await git(dir, [
+    "ls-files",
+    "--others",
+    "--exclude-standard",
+    "--directory",
+    "--no-empty-directory",
+  ]);
   if (!r.ok) return [];
   return r.out.split("\n").map((l) => l.trim()).filter(Boolean);
 }
 
-/** An untracked file as an all-added FileDiff. Binary or unreadable ⇒ no hunks. */
+/** An untracked file as an all-added FileDiff. Binary, huge or unreadable ⇒ no hunks. */
 async function addedFile(dir: string, path: string): Promise<FileDiff> {
+  // `--directory` yields collapsed directories with a trailing slash. There is no
+  // body to read and no point stat-ing it: it is one entry meaning "all of this is
+  // new", which is the same thing `git status` shows.
+  if (path.endsWith("/")) return { path, status: "added", hunks: [] };
+
   let lines: string[] = [];
   try {
-    const body = (await Deno.readTextFile(join(dir, path))).split("\n");
-    // A trailing "" from a final newline is not a line; a file without a final
-    // newline keeps its last one.
-    if (body.at(-1) === "") body.pop();
-    lines = body.map((l) => `+${l}`);
+    const info = await Deno.stat(join(dir, path));
+    if (info.size <= MAX_ADDED_BYTES) {
+      const body = (await Deno.readTextFile(join(dir, path))).split("\n");
+      // A trailing "" from a final newline is not a line; a file without a final
+      // newline keeps its last one.
+      if (body.at(-1) === "") body.pop();
+      lines = body.map((l) => `+${l}`);
+    }
   } catch {
     lines = []; // binary, unreadable, or deleted mid-review
   }
