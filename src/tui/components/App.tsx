@@ -137,6 +137,9 @@ export interface AppProps {
 /** Rows a wheel tick moves. Three, like every other pager. */
 const WHEEL_ROWS = 3;
 
+/** How often the rail re-reads the session's children while a turn is running. */
+const RAIL_POLL_MS = 1500;
+
 /** Rows the `?` overlay moves per ↑/↓. A keymap is scanned, not paged. */
 const HELP_STEP = 3;
 
@@ -199,6 +202,34 @@ export function App(
     return () => clearInterval(id);
   }, [busy]);
   const elapsedMs = busy && busySince.current !== null ? now() - busySince.current : 0;
+
+  // ---- live delegated work -------------------------------------------------
+  // The rail reads `children[currentId]`, and the ONLY thing that ever filled
+  // `children` was the tree tab's drill-in. So in chat it was permanently empty:
+  // no rail ever rendered, `railLive` was always false, and ↓ — documented as
+  // "into the live subagent rail" — did nothing while subagents were running.
+  // Delegation is a primary capability (spec §2, §6) and it was invisible.
+  //
+  // Polled rather than evented because a subagent is a SESSION and its lifecycle
+  // arrives as `session.created` on a stream the store does not index by origin.
+  // Only while a turn runs, plus one pull when it stops so finished rows clear.
+  useEffect(() => {
+    const id = state.currentId;
+    const list = controls.listChildren;
+    if (!id || !list) return;
+    let alive = true;
+    const pull = () =>
+      void list(id)
+        .then((rows) => alive && setChildren((c) => ({ ...c, [id]: rows })))
+        .catch(() => {}); // a failed poll is a stale rail, never an error card
+    pull();
+    if (!busy) return () => void (alive = false);
+    const timer = setInterval(pull, RAIL_POLL_MS);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [state.currentId, busy, controls.listChildren]);
 
   // ---- the @// completion -------------------------------------------------
   // Every pure piece of this already existed and was tested — `activeTrigger`,

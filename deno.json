@@ -2,6 +2,10 @@
   "name": "bough",
   "version": "0.0.0",
   "exports": "./src/server/main.ts",
+  "// exclude": "Agent worktrees under .claude are checkouts of other branches; they are not part of this build and must not be walked by check/test/fmt/lint.",
+  "exclude": [
+    ".claude"
+  ],
   "tasks": {
     "dev": "deno run --watch --allow-all src/server/main.ts",
     "check": "deno check .",
