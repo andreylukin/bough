@@ -363,3 +363,60 @@ export function syncedStdout(): typeof process.stdout {
     },
   }) as typeof process.stdout;
 }
+
+// ---------------------------------------------------------------------------
+// Terminal size
+// ---------------------------------------------------------------------------
+
+/** Columns and rows, with the fallbacks the renderer needs when there is no tty. */
+export interface TermSize {
+  cols: number;
+  rows: number;
+}
+
+/**
+ * The terminal's current size, measured rather than remembered.
+ *
+ * `Deno.consoleSize()` and not `process.stdout.rows`, because this is the reading
+ * that stays true: the node-compat properties are sampled when the stream is
+ * built, and a piped or detached stdout has none at all.
+ */
+export function terminalSize(): TermSize {
+  try {
+    const { columns, rows } = Deno.consoleSize();
+    return { cols: Math.max(20, columns || 80), rows: Math.max(8, rows || 24) };
+  } catch {
+    // Not a tty (a test, a pipe). The fallbacks are the same ones the renderer
+    // used before this function existed.
+    return { cols: 80, rows: 24 };
+  }
+}
+
+/**
+ * Call `handler` whenever the terminal is resized. Returns an unsubscribe.
+ *
+ * bough used to have no resize handling of its own and relied on ink re-rendering
+ * the tree, which in practice happened for the FIRST resize and then never again:
+ * a user who grew their terminal kept a UI locked to the old height, with the
+ * bottom of the screen simply unused. Owning the signal makes the size a fact this
+ * app tracks rather than one it hopes to be re-rendered for.
+ *
+ * SIGWINCH is unavailable on Windows and inside a test with no tty; a failure to
+ * subscribe leaves the size static, which is exactly the old behaviour and never
+ * an exception during mount.
+ */
+export function onResize(handler: (size: TermSize) => void): () => void {
+  const fire = () => handler(terminalSize());
+  try {
+    Deno.addSignalListener("SIGWINCH", fire);
+  } catch {
+    return () => {};
+  }
+  return () => {
+    try {
+      Deno.removeSignalListener("SIGWINCH", fire);
+    } catch {
+      // Already torn down with the process.
+    }
+  };
+}

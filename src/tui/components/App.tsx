@@ -43,6 +43,7 @@ import type { SessionRow } from "../api.ts";
 import type { MouseEvent, NavKey } from "../mouse.ts";
 import { buildLines } from "../lines.ts";
 import { sessionLabel, shortenPath, SPINNER_MS, UI } from "../format.ts";
+import { onResize, type TermSize } from "../term.ts";
 import {
   chordOf,
   chunkInput,
@@ -152,10 +153,18 @@ export function App(
   const [quitArmed, setQuitArmed] = useState(false);
   const lastEsc = useRef(0);
 
+  // The size is TRACKED, not sampled once. ink re-rendered the tree for the first
+  // resize and then never again, so a terminal that grew left the bottom of the
+  // screen unused until restart; `onResize` makes this app own the signal. The
+  // initial read still prefers ink's stdout so a test can mount with a fake one.
   // `|| 80`, not `?? 80`: a stdout with no size reports 0, and a zero-width
   // viewport wraps the transcript one character per line rather than falling back.
-  const cols = Math.max(20, stdout?.columns || 80);
-  const rows = Math.max(8, stdout?.rows || 24);
+  const [size, setSize] = useState<TermSize>(() => ({
+    cols: Math.max(20, stdout?.columns || 80),
+    rows: Math.max(8, stdout?.rows || 24),
+  }));
+  useEffect(() => onResize(setSize), []);
+  const { cols, rows } = size;
 
   const ask = currentAsk(state);
   const busy = isBusy(state);
