@@ -23,7 +23,7 @@
 import { BadRequestError, ConflictError, NotFoundError } from "../errors.ts";
 import { answerAsk, declineAsk, getAsk, pendingAsks } from "../hostfn/ask.ts";
 import { AnswerQuestionBody } from "../schema/requests.ts";
-import { type Handler, json, parseBody } from "./app.ts";
+import { type Handler, json, parseBody } from "./http.ts";
 
 /**
  * `GET /questions[?sessionId=]` — every question awaiting an answer, oldest first.

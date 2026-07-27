@@ -24,6 +24,7 @@
  * is reconciled to `orphaned` at boot, and a client that cannot tell the two apart
  * shows a fan-out that will never advance.
  */
+import { z } from "zod";
 import { BadRequestError, NotFoundError } from "../errors.ts";
 import { CreateWorkflowBody, RerunWorkflowBody } from "../schema/requests.ts";
 import type { WorkflowRun } from "../schema/parts.ts";
@@ -35,8 +36,29 @@ import {
   workflowControlOf,
   workflowDetail,
 } from "../workflow/control.ts";
-import { pauseWorkflow, resumeWorkflow, stopWorkflow, workflowSummary } from "../workflow/run.ts";
-import { type Handler, json, parseBody } from "./app.ts";
+import {
+  activeGuideline,
+  GUIDELINE_TARGET,
+  guidelineAdvice,
+  replaySummary,
+  setGuideline,
+  tokenWarnThreshold,
+} from "../workflow/report.ts";
+import {
+  MAX_AGENTS_PER_RUN,
+  pauseWorkflow,
+  resumeWorkflow,
+  stopWorkflow,
+  workflowConcurrency,
+  workflowSummary,
+} from "../workflow/run.ts";
+import {
+  listSavedWorkflows,
+  readSavedWorkflow,
+  saveRunAs,
+  saveWorkflow,
+} from "../workflow/saved.ts";
+import { type Handler, json, parseBody } from "./http.ts";
 
 /** 404 naming the id, so a client's log says which run was wrong. */
 function requireWorkflow(ctx: AppCtx, id: string): WorkflowRun {
@@ -133,7 +155,137 @@ export const rerunWorkflowH: Handler = async (req, ctx, params) => {
     ...(body.script !== undefined ? { script: body.script } : {}),
     args: body.args,
   }, workflowControlOf(ctx));
-  return json(run, 201);
+  // The run row, plus what this relaunch is replaying (spec §8: "any operation that
+  // replays returns how many calls were served from the journal and how many ran
+  // live"). The run is detached, so the live counts here are the counts SO FAR — zero
+  // at this instant — and `replay.available` is the number that carries information
+  // now: it is the ceiling the new run's keys will be measured against, and it is what
+  // makes a later `replayed: 0` legible as a key defect rather than as a first run.
+  // The live counts arrive on `GET /workflows/:id`, which carries the same block.
+  return json({ ...run, replay: replaySummary(ctx.db, run.id) }, 201);
+};
+
+// ---------------------------------------------------------------------------
+// Saved workflows (spec §8, "Saving a run")
+// ---------------------------------------------------------------------------
+
+/** `POST /workflows/:id/save` — keep this run's script as a named workflow. */
+const SaveWorkflowBody = z.object({ name: z.string().min(1) }).strict();
+
+/** `PUT /saved-workflows/:name` — save a script, or the script a run ran. */
+const PutSavedBody = z.object({
+  script: z.string().min(1).optional(),
+  runId: z.string().min(1).optional(),
+}).strict();
+
+/** `POST /saved-workflows/:name/runs` — invoke a saved workflow, parameterized. */
+const RunSavedBody = z.object({
+  sessionId: z.string().min(1),
+  args: z.unknown().optional(),
+}).strict();
+
+/** `PUT /workflow-settings` — the size guideline. Advice to the script's author. */
+const SettingsBody = z.object({ sizeGuideline: z.unknown() }).strict();
+
+/**
+ * `POST /workflows/:id/save` — save a finished run's script under a name.
+ *
+ * The script saved is the one the run would relaunch: the edited mirror if there is
+ * one, else the stored row (`workflow/journal.ts`). Saving the row instead would
+ * quietly save the version the user replaced — the opposite of "the script that did
+ * what you wanted".
+ */
+export const saveWorkflowH: Handler = async (req, ctx, params) => {
+  requireWorkflow(ctx, params.id);
+  const body = await parseBody(req, SaveWorkflowBody);
+  return json(await saveRunAs(ctx.db, params.id, body.name), 201);
+};
+
+/** `GET /saved-workflows` — every named workflow, with its `meta.description`. */
+export const listSavedWorkflowsH: Handler = async () => {
+  return json({ saved: await listSavedWorkflows() });
+};
+
+/** `GET /saved-workflows/:name` — one saved workflow, script included. */
+export const getSavedWorkflowH: Handler = async (_req, _ctx, params) => {
+  return json(await readSavedWorkflow(params.name));
+};
+
+/**
+ * `PUT /saved-workflows/:name` — save a script directly, or copy a run's.
+ *
+ * Idempotent on the name: a saved workflow is a command, not a version history. The
+ * run's own journal is where history lives.
+ */
+export const putSavedWorkflowH: Handler = async (req, ctx, params) => {
+  const body = await parseBody(req, PutSavedBody, {});
+  if (body.runId) return json(await saveRunAs(ctx.db, body.runId, params.name), 201);
+  if (!body.script) {
+    throw new BadRequestError(
+      "PUT /saved-workflows/:name needs {script} or {runId} — the script to save, or " +
+        "the finished run whose script to save.",
+    );
+  }
+  return json(await saveWorkflow(params.name, body.script), 201);
+};
+
+/**
+ * `POST /saved-workflows/:name/runs` — invoke a saved workflow by name.
+ *
+ * `args` is the parameterization: the same orchestration against a different branch,
+ * a different file list, a different threshold (spec §8). A new run every time, with
+ * no `resumeOf` — invoking a saved workflow is not a relaunch of anything, and nothing
+ * replays.
+ */
+export const runSavedWorkflowH: Handler = async (req, ctx, params) => {
+  const body = await parseBody(req, RunSavedBody);
+  const saved = await readSavedWorkflow(params.name);
+  const run = await startWorkflowRun(ctx, {
+    sessionId: body.sessionId,
+    script: saved.script,
+    args: body.args,
+  }, workflowControlOf(ctx));
+  return json({ ...run, savedAs: saved.name }, 201);
+};
+
+/**
+ * `GET /workflow-settings` — the size guideline and the thresholds derived from it.
+ *
+ * `advice` is the sentence to hand whoever writes the next script; a client that shows
+ * the setting without it turns a guideline into a mystery number.
+ */
+export const getWorkflowSettingsH: Handler = () => {
+  const guideline = activeGuideline();
+  const target = GUIDELINE_TARGET[guideline];
+  return json({
+    sizeGuideline: guideline,
+    target: Number.isFinite(target) ? target : null,
+    advice: guidelineAdvice(guideline),
+    tokenWarnThreshold: tokenWarnThreshold(),
+    concurrency: workflowConcurrency(),
+    maxAgentsPerRun: MAX_AGENTS_PER_RUN,
+    advisory: true,
+  });
+};
+
+/**
+ * `PUT /workflow-settings` — set the size guideline.
+ *
+ * It changes what the next script is ADVISED to aim for and what the run view flags.
+ * It caps nothing: no run is refused, paused or throttled by this value, and a run
+ * already flagged stays exactly as fast as it was (spec §8).
+ */
+export const putWorkflowSettingsH: Handler = async (req) => {
+  const body = await parseBody(req, SettingsBody);
+  const guideline = await setGuideline(body.sizeGuideline);
+  const target = GUIDELINE_TARGET[guideline];
+  return json({
+    sizeGuideline: guideline,
+    target: Number.isFinite(target) ? target : null,
+    advice: guidelineAdvice(guideline),
+    tokenWarnThreshold: tokenWarnThreshold(),
+    advisory: true,
+  });
 };
 
 /**

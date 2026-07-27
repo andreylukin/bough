@@ -31,7 +31,7 @@ import { NotFoundError } from "../errors.ts";
 import { JobRegistry, jobs as processJobs } from "../hostfn/jobs.ts";
 import type { BackgroundJob } from "../schema/parts.ts";
 import type { AppCtx, Db } from "../types.ts";
-import { type Handler, json } from "./app.ts";
+import { type Handler, json } from "./http.ts";
 
 /**
  * The registry the handlers read.

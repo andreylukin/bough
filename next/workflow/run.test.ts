@@ -528,7 +528,13 @@ Deno.test("rerunning an unchanged script issues zero live agent calls", async ()
   }
 });
 
-Deno.test("editing one prompt re-runs exactly that call", async () => {
+// NOTE (T5.7): replay is PREFIX-BOUNDED, so this is no longer "re-runs exactly that
+// call". Editing the second of three re-runs the second AND the third, whose key never
+// changed — agents share one checkout, so a call after a live one may be asking about a
+// tree that no longer matches the answer in the journal (spec §8). The full statement of
+// that rule, including the assertion that the unchanged keys really are unchanged, is
+// `workflow/relaunch.test.ts`; this keeps the engine-level version of it honest.
+Deno.test("editing one prompt re-runs that call and everything after it", async () => {
   const h = harness();
   try {
     const script = (b: string) => `
@@ -549,7 +555,7 @@ Deno.test("editing one prompt re-runs exactly that call", async () => {
     );
     const second = await done;
 
-    assert.deepEqual(live, ["review b.ts THOROUGHLY"]);
+    assert.deepEqual(live, ["review b.ts THOROUGHLY", "review c.ts"]);
     assert.deepEqual(second.result, [
       "review a.ts",
       "review b.ts THOROUGHLY",
@@ -559,14 +565,15 @@ Deno.test("editing one prompt re-runs exactly that call", async () => {
     assert.deepEqual(statuses, [
       "review a.ts:cached",
       "review b.ts THOROUGHLY:done",
-      "review c.ts:cached",
+      // Unchanged, and it ran anyway: replay stopped at the edit above it.
+      "review c.ts:done",
     ]);
   } finally {
     h.close();
   }
 });
 
-Deno.test("a failed call re-runs live rather than replaying", async () => {
+Deno.test("a failed call re-runs live, and so does everything after it", async () => {
   const h = harness();
   try {
     const script = `return await parallel([() => agent('flaky'), () => agent('steady')])`;
@@ -595,7 +602,10 @@ Deno.test("a failed call re-runs live rather than replaying", async () => {
     await withHome(h.home, () => rerunWorkflow(ctx, first.finished.id, { script }));
     const second = await done;
 
-    assert.deepEqual(live, ["flaky"], "only the failed call re-runs");
+    // The failure re-runs because it may be what the author just fixed — and `steady`
+    // re-runs behind it under the prefix rule (T5.7): a live agent may have moved the
+    // shared checkout, so its stored answer is no longer about the tree it described.
+    assert.deepEqual(live, ["flaky", "steady"], "the failure ends the replayable prefix");
     assert.deepEqual(second.result, ["flaky", "steady"]);
   } finally {
     h.close();

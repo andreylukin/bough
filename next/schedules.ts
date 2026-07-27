@@ -46,7 +46,7 @@ import {
   schedulePatch,
   scheduleRemove,
 } from "./hostfn/schedule.ts";
-import { json, parseBody } from "./server/app.ts";
+import { json, parseBody } from "./server/http.ts";
 import type { WithTurnStarter } from "./server/sessions.ts";
 
 // ---------------------------------------------------------------------------

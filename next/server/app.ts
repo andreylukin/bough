@@ -26,6 +26,17 @@
  * base URL together — and in table order, first match wins. That is also why order
  * is never rearranged: a reorder can silently steal another task's route.
  *
+ * **The route table is read while this module evaluates**, which is why the handler
+ * modules below must never import back from here. `route(..., sessions.listSessions)`
+ * dereferences a binding at module scope, so a graph entered through a handler module
+ * would evaluate this file mid-way through that module's body and read a `const`
+ * that has not been assigned — a `ReferenceError` at import, before any user code.
+ * The primitives every handler needs therefore live in `server/http.ts`, which
+ * imports nothing from `server/`; handlers reach DOWN to it instead of back across to
+ * here, and the graph is a DAG whichever module the process enters through. They are
+ * re-exported below so the old spelling still resolves, and `server/http.test.ts`
+ * fails if a module reintroduces the edge.
+ *
  * **No CORS headers, ever.** The only client is the native TUI, which is not a
  * browser and needs none. Their absence is what stops a webpage the user happens
  * to visit from reaching this loopback API and driving the agent: without an
@@ -33,9 +44,14 @@
  * loopback and has no auth layer (spec §17), so this is the whole of its access
  * control and it is worth not undoing by reflex.
  */
-import type { z } from "zod";
-import { BadRequestError, HttpError } from "../errors.ts";
+import { HttpError } from "../errors.ts";
 import type { AppCtx } from "../types.ts";
+import { errorResponse, type Handler, type Route, route } from "./http.ts";
+// Re-exported so `import { json, parseBody, route, type Handler } from "./app.ts"`
+// keeps resolving for anything not yet moved. New code imports `./http.ts` directly
+// — importing them from HERE re-forms the initialization cycle documented above,
+// and `server/http.test.ts` is what catches it.
+export { errorResponse, type Handler, json, parseBody, type Route, route } from "./http.ts";
 // ── handler imports; append below, one line per task ──
 import { events } from "./events.ts"; // T1.3
 import * as sessions from "./sessions.ts"; // T1.2
@@ -45,82 +61,17 @@ import * as schedules from "../schedules.ts"; // T6.3
 import * as artifacts from "./artifacts.ts"; // T6.6
 import * as comments from "./comments.ts"; // T6.7
 import * as jobsApi from "./jobs.ts"; // T6.8
-
-// ---- the handler shape ------------------------------------------------------
-
-/**
- * Every endpoint is `(req, ctx, params)`. `params` holds the pattern's named
- * groups, already narrowed to the ones that actually matched — an optional group
- * that did not match is absent rather than present-and-undefined, so a handler can
- * write `params.path ?? ""` and mean it.
- */
-export type Handler = (
-  req: Request,
-  ctx: AppCtx,
-  params: Record<string, string>,
-) => Response | Promise<Response>;
-
-export interface Route {
-  /** Matched exactly against `req.method`. */
-  method: string;
-  pattern: URLPattern;
-  handler: Handler;
-}
-
-/**
- * Build one route entry. Appending a one-line `route("GET", "/x", getX)` instead
- * of a five-line object literal is not cosmetics: it keeps each task's addition to
- * a single line, which is what makes concurrent appends to a shared array merge
- * without conflict.
- */
-export function route(method: string, pathname: string, handler: Handler): Route {
-  return { method, pattern: new URLPattern({ pathname }), handler };
-}
-
-// ---- response helpers -------------------------------------------------------
-//
-// Exported for the handler modules that later tasks own. Importing these from a
-// module that this file also imports forms a cycle, which is safe here and only
-// here: both are called at REQUEST time, never while a module is evaluating, so
-// the binding is always initialized by the time it is read.
-
-export function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json; charset=utf-8" },
-  });
-}
-
-/**
- * The error envelope: `{error: message}`, which is the shape every client reads.
- *
- * Prefer throwing the domain error — `throw new NotFoundError("session not found")`
- * — over returning this. The throw is what lets a domain module state its HTTP
- * contract without importing anything from `server/`; this helper exists for the
- * dispatcher itself and for the rare handler that has a status but no domain error
- * to name.
- */
-export function errorResponse(status: number, message: string): Response {
-  return json({ error: message }, status);
-}
-
-/**
- * Parse and validate a JSON request body.
- *
- * A failed parse throws the 400 that the dispatcher's one catch renders, so no
- * handler branches on validation. `fallback` stands in for an absent or
- * unparseable body: the default `null` lets the schema decide (an all-optional
- * body would reject it, so a route with no required fields passes `{}`).
- */
-export async function parseBody<S extends z.ZodTypeAny>(
-  req: Request,
-  schema: S,
-  fallback: unknown = null,
-): Promise<z.infer<S>> {
-  const parsed = schema.safeParse(await req.json().catch(() => fallback));
-  if (!parsed.success) throw new BadRequestError("invalid body: " + parsed.error.message);
-  return parsed.data;
-}
+import * as relaunch from "../workflow/relaunch.ts"; // T5.7
+import * as mcpOauth from "../mcp/oauth.ts"; // T7.2
+import * as mcpApi from "../mcp/status.ts"; // T7.3
+import * as compact from "../history/compact.ts"; // T8.3
+import * as sections from "../history/sections.ts"; // T8.3
+import * as fork from "../history/fork.ts"; // T8.2
+import * as extract from "../history/extract.ts"; // T8.4
+import * as move from "../history/move.ts"; // T8.4
+import * as handoff from "../history/handoff.ts"; // T8.4
+import * as changes from "./changes.ts"; // T8.5
+import * as search from "./search.ts"; // T8.6
 
 // ---- the route table --------------------------------------------------------
 
@@ -180,6 +131,91 @@ export const routes: Route[] = [
   route("GET", "/sessions/:id/jobs", jobsApi.listJobsH),
   route("POST", "/sessions/:id/jobs/:jobId/kill", jobsApi.killJobH),
   route("GET", "/sessions/:id/jobs/:jobId/output", jobsApi.jobOutputH),
+  // T5.7 — relaunch from a journal, with prefix-bounded replay. `relaunch` is the
+  // generalization of `rerun`: a NEW run seeded from a stopped run's journal, whose
+  // unchanged leading calls replay and whose first changed call — and everything after
+  // it — runs live. `/workflows/:id/replay` is the required counterpart: replay is
+  // always reported (spec §8), and a run that replayed nothing is otherwise
+  // indistinguishable from one that replayed everything.
+  route("POST", "/workflows/:id/relaunch", relaunch.relaunchWorkflowH),
+  route("GET", "/workflows/:id/replay", relaunch.workflowReplayH),
+  // T5.8 — saving a run as a named workflow, and the cost surface's one setting.
+  //
+  // `/saved-workflows` is a top-level collection rather than `/workflows/saved`
+  // because this table is matched in order and appends land at the END: a two-segment
+  // `/workflows/saved` would be swallowed by `/workflows/:id` above and answer 404 for
+  // a run id of "saved". The same reasoning puts the guideline at `/workflow-settings`.
+  route("POST", "/workflows/:id/save", workflows.saveWorkflowH),
+  route("GET", "/saved-workflows", workflows.listSavedWorkflowsH),
+  route("GET", "/saved-workflows/:name", workflows.getSavedWorkflowH),
+  route("PUT", "/saved-workflows/:name", workflows.putSavedWorkflowH),
+  route("POST", "/saved-workflows/:name/runs", workflows.runSavedWorkflowH),
+  route("GET", "/workflow-settings", workflows.getWorkflowSettingsH),
+  route("PUT", "/workflow-settings", workflows.putWorkflowSettingsH),
+  // T7.2 — OAuth for remote MCP servers. The callback is the load-bearing one: the
+  // authorization server sends the user's BROWSER back here, so this path is baked
+  // into the redirect URI bough registers and must exist on bough's own port (spec
+  // §10). The three `/mcp/servers/:name/auth` verbs are what `/mcp auth <name>`
+  // drives — start the flow, read its state, forget the tokens. No route here ever
+  // returns a token; they return a URL for the human and a status for the panel.
+  route("GET", mcpOauth.CALLBACK_PATH, mcpOauth.oauthCallbackH),
+  route("GET", "/mcp/servers/:name/auth", mcpOauth.authStatusH),
+  route("POST", "/mcp/servers/:name/auth", mcpOauth.beginAuthH),
+  route("DELETE", "/mcp/servers/:name/auth", mcpOauth.clearAuthH),
+  // T7.3 — the MCP registry, the per-session grants over it, and live connections.
+  // Registering is not granting (`mcp/config.ts`): `PUT` defines a server, `enable`
+  // is what lets a session's programs call it, and `connect` only proves the command
+  // works. Every one of these answers with the SAME `{registry, auth, active,
+  // connections}` document `mcpStatus()` returns, so the human's panel and the
+  // model's fresh call can never be looking at different MCP states (plan §6.13).
+  // The `/auth` verbs above are T7.2's and are deliberately not restated here.
+  route("GET", "/mcp/servers", mcpApi.getMcpServersH),
+  route("PUT", "/mcp/servers", mcpApi.putMcpServersH),
+  route("PUT", "/mcp/servers/:name", mcpApi.putMcpServerH),
+  route("DELETE", "/mcp/servers/:name", mcpApi.deleteMcpServerH),
+  route("POST", "/mcp/servers/:name/connect", mcpApi.connectMcpServerH),
+  route("POST", "/mcp/servers/:name/restart", mcpApi.restartMcpServerH),
+  route("POST", "/mcp/servers/:name/enable", mcpApi.setMcpActivationH(true)),
+  route("POST", "/mcp/servers/:name/disable", mcpApi.setMcpActivationH(false)),
+  // T8.2 — fork at message, and edit-and-resend. A history operation is a POST that
+  // CREATES a session (201) and never mutates the one in the URL: the source is
+  // byte-identical afterwards, so this is safe to offer on any turn, however far back.
+  route("POST", "/sessions/:id/fork", fork.forkSessionH),
+  // T8.3 — compaction and topic sections. Compaction is the same shape as fork: a POST
+  // that CREATES a compaction branch (201) and leaves the session in the URL
+  // byte-identical, because every history operation branches and none rewrites (spec
+  // §14). Sections is the odd one — it is STATELESS: the client sends turn gists, gets
+  // back labeled ranges, and nothing is read from or written to the session. It is
+  // nested under `/sessions/:id` anyway so a mistyped id 404s instead of buying an LLM
+  // call about a thread nobody is looking at.
+  route("POST", "/sessions/:id/compact", compact.compactH),
+  route("POST", "/sessions/:id/sections", sections.sectionsH),
+  // T8.4 — extract, move-into, handoff: the three history ops whose selection may reach
+  // into ANCESTOR history, which fork and compaction cannot (spec §14). All three leave
+  // the session in the URL byte-identical. `extract` and `handoff` CREATE a fresh root
+  // (201); `move-into` creates nothing (200) — it appends copies onto the session named
+  // by `:id`, and the session copied FROM travels in the body as `sourceId`, because it
+  // is the argument rather than the thing being acted on.
+  route("POST", "/sessions/:id/extract", extract.extractH),
+  route("POST", "/sessions/:id/move-into", move.moveIntoH),
+  route("POST", "/sessions/:id/handoff", handoff.handoffH),
+  // T8.5 — the Changes rail. Two routes, because there are only two operations: read
+  // what this session changed, and revert some of it. There is no apply — the agent
+  // edits the user's checkout in place, so the work is already delivered and
+  // committing is the reviewer's own call (spec §13, §17).
+  //
+  // GET is always 200: a workspace that is not a repository has no change set, and
+  // saying so plainly is an ANSWER, not an error. The only 400 is a revert asked of a
+  // session that has nothing to revert against.
+  route("GET", "/sessions/:id/changes", changes.getChangesH),
+  route("POST", "/sessions/:id/changes/revert", changes.revertChangesH),
+  // T8.6 — keyword search over transcripts (spec §17: FTS, no embeddings). Top-level
+  // rather than nested under a session because the question it answers is "did I solve
+  // this before?", which spans the whole forest; `?sessionId=` narrows it back down.
+  // `/search/reindex` is the repair path for the drift a swallowed index write leaves
+  // behind — search is allowed to fail quietly, never invisibly (`server/search.ts`).
+  route("GET", "/search", search.searchH),
+  route("POST", "/search/reindex", search.reindexH),
 ];
 
 // ---- dispatch ---------------------------------------------------------------

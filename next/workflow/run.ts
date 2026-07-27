@@ -10,18 +10,31 @@
  * `workflow.start` is free to end (spec §8).
  *
  * THE INVARIANT THIS HOLDS: **every `agent()` call is journaled by key before it
- * runs, and a rerun replays a hit instead of paying for it.** `key` is
- * `hash(prompt + label + phase + model + schema)` — everything that decides what the
- * subagent will be asked. So editing one prompt in a 300-agent script and rerunning
- * costs exactly the edited call, and that is the entire iteration loop for a
- * workflow. Two consequences that shape the code below:
+ * runs, and a relaunch replays the longest UNCHANGED PREFIX of those calls instead of
+ * paying for it.** `key` is `hash(prompt + label + phase + model + schema)` —
+ * everything that decides what the subagent will be asked. So editing one prompt in a
+ * 300-agent script and relaunching costs the edited call and everything after it, and
+ * that is the entire iteration loop for a workflow. Three consequences that shape the
+ * code below:
+ *
+ *   - **Replay stops at the first changed call and never resumes** (T5.7, spec §8's
+ *     "Replay is prefix-bounded"). A key covers a call's PROMPT, not the filesystem
+ *     that prompt runs against, and workflow agents all share one checkout: two calls
+ *     can say "run the test suite" byte-identically and mean different questions
+ *     because an upstream agent rewrote the code in between. Replaying the later one
+ *     answers about a tree that no longer exists. A miss costs money; a stale hit is a
+ *     wrong answer presented as a fresh one, so the engine buys the cheap failure.
+ *     `replayPlan` below is therefore an ordered LIST indexed by call position, not a
+ *     key→result map: position is part of the identity of a call.
  *
  *   - The journal row is written BEFORE the semaphore is acquired, so the run view
  *     can show a queued agent, and `startedAt` is reset when the call actually
  *     starts — otherwise a saturated run shows N agents "working" while only
  *     `concurrency` of them are.
  *   - Only successful calls replay. A failed call re-runs live, because the failure
- *     may well have been the thing the author just fixed.
+ *     may well have been the thing the author just fixed — and, under the prefix rule,
+ *     so does everything after it: the re-run agent works in the same checkout the
+ *     later answers were computed against.
  *
  * Determinism is the other half of that bargain, and it is enforced in the worker
  * (`harness/wf_worker.ts`): a script that stamps `Date.now()` into a prompt would
@@ -37,6 +50,10 @@
  *     T5.3 wires `zodOutputFormat`/`messages.parse`.
  *   - **REST and the `workflow.*` verb.** The routes and the program-side dispatcher
  *     are T5.5; everything they need is exported from here.
+ *   - **Relaunching from a journal.** Choosing the source run, resolving the edited
+ *     script, and reporting what the prefix cost are `workflow/relaunch.ts` (T5.7).
+ *     This module holds only the mechanism: `replayPlan` reads a source journal and
+ *     `StartOpts.resumeOf` hands it to a new run.
  *
  * The `AgentRunner` is injected, so the whole engine — worker, journal, semaphore,
  * pause gate, replay — is drivable offline with no LLM, no key and no subagent
@@ -54,9 +71,10 @@ import {
   type WorkflowHostFnName,
 } from "../harness/protocol.ts";
 import { unterminatedString } from "../harness/vm.ts";
-import { workflowScriptPath, workflowsDir } from "../paths.ts";
+import { workflowScriptPath } from "../paths.ts";
 import type { WorkflowPhase, WorkflowRun } from "../schema/parts.ts";
 import type { Bus, Db, WorkflowHostFns } from "../types.ts";
+import { mirrorScript, resolveRerunScript } from "./journal.ts";
 
 // ---------------------------------------------------------------------------
 // Limits
@@ -69,7 +87,28 @@ import type { Bus, Db, WorkflowHostFns } from "../types.ts";
  */
 export function workflowConcurrency(): number {
   const n = Number(Deno.env.get("BOUGH_WORKFLOW_CONCURRENCY"));
-  return Number.isFinite(n) && n > 0 ? n : 4;
+  if (Number.isFinite(n) && n > 0) return n;
+  return defaultWorkflowConcurrency();
+}
+
+/**
+ * Up to 16 at once, fewer on a small machine (spec §8: "up to 16 agents at once, fewer
+ * on machines with few cores").
+ *
+ * Two cores are left for everything that is NOT a workflow agent: the server's own turn
+ * runner, the program worker a supervisor is running, the subagent turns those spawn.
+ * A run that saturates every core makes the session that started it unusable, which is
+ * the failure this backs off from — 16 is the ceiling because the meter that matters
+ * beyond that is the provider's, not the machine's.
+ *
+ * `navigator.hardwareConcurrency` is the count Deno exposes; a runtime that reports
+ * nothing usable falls back to the old default of 4 rather than to 1, because a
+ * conservative guess here costs wall-clock on every fan-out.
+ */
+export function defaultWorkflowConcurrency(): number {
+  const cores = Number(navigator?.hardwareConcurrency);
+  if (!Number.isFinite(cores) || cores <= 0) return 4;
+  return Math.max(1, Math.min(16, Math.floor(cores) - 2));
 }
 
 /** Wall-clock ceiling on a whole run. A liveness backstop, not a budget. */
@@ -83,8 +122,15 @@ export function workflowTimeoutMs(): number {
  * script that means to launch 300 agents is doing its job; one that means to launch
  * 300 and has an off-by-one in a `while` is not, and without this it bills until
  * someone notices.
+ *
+ * 1,000, per spec §8. It was 200, which is inside the range a real audit legitimately
+ * asks for ("review every handler" over a large tree), so it was a working limit
+ * wearing a backstop's name: it fired on jobs that were doing exactly what they meant
+ * to. The advisory surface — the size guideline and the large-run flag
+ * (`workflow/report.ts`) — is what tells a user a run is big. This one only stops a
+ * loop that has lost its exit condition.
  */
-export const MAX_AGENTS_PER_RUN = 200;
+export const MAX_AGENTS_PER_RUN = 1000;
 
 // ---------------------------------------------------------------------------
 // Pre-flight
@@ -304,6 +350,63 @@ export function distinctLabel(prompt: string, taken: string[]): string {
 }
 
 // ---------------------------------------------------------------------------
+// Prefix-bounded replay (pure)
+// ---------------------------------------------------------------------------
+
+/** One call of a source run's journal, as the replay decision sees it. */
+export interface ReplayStep {
+  /** The call's position in the source run. The array index, restated for readers. */
+  idx: number;
+  key: string;
+  /** The stored report, or `null` when that call has no answer to hand back. */
+  result: string | null;
+  /** Carried for reporting — which call the prefix broke on is the useful line. */
+  prompt: string;
+}
+
+/**
+ * A source run's calls **in call order**, indexed by position. A hole (a position the
+ * source never journaled) reads as `undefined` and ends the prefix, which is right: a
+ * relaunch cannot replay a call the source never made.
+ */
+export type ReplayPlan = ReplayStep[];
+
+/**
+ * Read a source run's journal into a replay plan.
+ *
+ * NOTE: the "is this an answer" test is spelled out here rather than imported from
+ * `workflow/journal.ts`, whose `isReplayable` says the same thing on the read side.
+ * The import would close a cycle (`journal.ts` re-exports `callKey` from this file),
+ * and this module is the one that WRITES those statuses. Both must stay in step: only
+ * `done` and `cached` rows with a non-null result are answers; `error`, `stopped`,
+ * `queued` and `running` are not.
+ */
+export function replayPlan(db: Db, sourceRunId: string): ReplayPlan {
+  const plan: ReplayPlan = [];
+  for (const a of db.listWorkflowAgents(sourceRunId)) {
+    const answered = (a.status === "done" || a.status === "cached") && a.result !== null;
+    plan[a.idx] = {
+      idx: a.idx,
+      key: a.key,
+      result: answered ? a.result : null,
+      prompt: a.prompt,
+    };
+  }
+  return plan;
+}
+
+/**
+ * How many leading calls of a plan could replay AT BEST — the ceiling a relaunch can
+ * claim before its own keys are known. Zero is not a defect on its own: a source that
+ * failed its first call has nothing to offer a relaunch, which is a full live run.
+ */
+export function replayablePrefix(plan: ReplayPlan): number {
+  let n = 0;
+  while (n < plan.length && plan[n] && plan[n].result !== null) n++;
+  return n;
+}
+
+// ---------------------------------------------------------------------------
 // The live registry
 // ---------------------------------------------------------------------------
 
@@ -372,24 +475,21 @@ export async function startWorkflow(ctx: WorkflowCtx, opts: StartOpts): Promise<
   const bad = checkWorkflowSyntax(body);
   if (bad) throw new WorkflowScriptError(bad);
 
-  // Journal replay. Only successful calls replay — a failed one re-runs live, because
-  // the failure may be the very thing this edit fixes. FIFO per key so N identical
-  // calls replay their N results in the order they were made.
-  const replay = new Map<string, string[]>();
+  // Journal replay, PREFIX-BOUNDED. The source run's calls in call order; the engine
+  // below replays the longest leading run of them whose keys still match and stops
+  // for good at the first that does not (spec §8, and the header). Only calls that
+  // ANSWERED are replayable — a failed one re-runs live, because the failure may be
+  // the very thing this edit fixes, and everything after it re-runs too, because a
+  // live call may have changed the checkout the later ones were answered against.
+  let plan: ReplayPlan = [];
   let args: unknown = opts.args ?? null;
   let meta = opts.meta;
   if (opts.resumeOf) {
     const src = db.getWorkflow(opts.resumeOf);
     if (!src) throw new NotFoundError(`workflow ${opts.resumeOf} not found`);
-    if (opts.args === undefined) args = src.args; // a rerun keeps its input by default
+    if (opts.args === undefined) args = src.args; // a relaunch keeps its input by default
     meta ??= { name: src.name, description: src.description, phases: src.phases };
-    for (const a of db.listWorkflowAgents(opts.resumeOf)) {
-      if ((a.status === "done" || a.status === "cached") && a.result !== null) {
-        const q = replay.get(a.key) ?? [];
-        q.push(a.result);
-        replay.set(a.key, q);
-      }
-    }
+    plan = replayPlan(db, opts.resumeOf);
   }
 
   const id = crypto.randomUUID();
@@ -410,12 +510,12 @@ export async function startWorkflow(ctx: WorkflowCtx, opts: StartOpts): Promise<
     finishedAt: null,
   });
 
-  // Mirror the script to a real file so "edit it and rerun" is a file edit away
-  // (spec §8). A convenience — the canonical script is the row.
-  try {
-    await Deno.mkdir(workflowsDir(), { recursive: true });
-    await Deno.writeTextFile(workflowScriptPath(id), opts.script);
-  } catch { /* mirror is best-effort */ }
+  // Mirror the script to a real file so "edit it and relaunch" is a file edit away
+  // (spec §8). A convenience — the canonical script is the row — and best-effort: a
+  // read-only `~/.bough` must not stop a run from starting. `workflow/journal.ts` owns
+  // every mirror read and write in the tree, so the confinement guard on the path is
+  // applied here too rather than only where a relaunch reads it back (T5.8).
+  await mirrorScript(id, opts.script);
 
   bus.publish({ type: "workflow.updated", sessionId: run.sessionId, data: run });
 
@@ -431,6 +531,16 @@ export async function startWorkflow(ctx: WorkflowCtx, opts: StartOpts): Promise<
 
   const limit = opts.concurrency ?? workflowConcurrency();
   let idx = 0;
+  /**
+   * Prefix-bounded replay state. `true` until a call's key stops matching the source
+   * run's call at the SAME position; from then on every call runs live, including one
+   * whose own key never changed (spec §8). One-way on purpose — there is no path back
+   * to replaying, because the first live agent may have moved the shared checkout out
+   * from under every answer that followed it in the source run.
+   */
+  let prefixIntact = plan.length > 0;
+  /** Where it broke, for the run log and the report. `null` = it never did. */
+  let divergedAt: number | null = null;
   let inFlight = 0;
   const queue: Array<() => void> = [];
   const acquire = () =>
@@ -470,8 +580,22 @@ export async function startWorkflow(ctx: WorkflowCtx, opts: StartOpts): Promise<
     if (ctx.notify && updated) {
       const agents = db.listWorkflowAgents(id);
       const okCount = agents.filter((a) => a.status === "done" || a.status === "cached").length;
+      // Replay is REPORTED, always (spec §8). A relaunch that replayed nothing and one
+      // that replayed everything produce the same row, the same events and the same
+      // result — the counts are the only thing that makes a broken key visible, so
+      // they ride the note the model actually reads rather than a view someone may
+      // open. `divergedAt` names the call the prefix broke on, which is the line that
+      // turns "why did 38 agents run again" into an answer.
+      const replayed = agents.filter((a) => a.status === "cached").length;
       const head = `[workflow ${status}] "${updated.name}" (${id}) — ` +
-        `${okCount}/${agents.length} agents succeeded.`;
+        `${okCount}/${agents.length} agents succeeded.\n` +
+        (plan.length > 0
+          ? `Replay: ${replayed} replayed from run ${updated.resumeOf}, ` +
+            `${agents.length - replayed} ran live` +
+            (divergedAt === null
+              ? " (the whole prefix matched)."
+              : `, from call ${divergedAt} on.`)
+          : `Replay: none — this run had no journal to replay.`);
       const tail = status === "done"
         ? `Result:\n${clip(JSON.stringify(result ?? null, null, 2), 4000)}`
         : status === "error"
@@ -528,19 +652,56 @@ export async function startWorkflow(ctx: WorkflowCtx, opts: StartOpts): Promise<
         );
       }
 
+      const key = callKey(call, opts.effectiveModel);
+
+      // THE PREFIX DECISION, made SYNCHRONOUSLY — before the gate, before the
+      // semaphore, in the same uninterrupted block that assigned `at`. Calls arrive in
+      // index order, so deciding here makes the answer a pure function of (position,
+      // key) and never a function of which concurrent call happened to resume first.
+      // Deciding after an `await` would let call 5's hit be recorded before call 2's
+      // miss had flipped the flag, and a run would replay past its own divergence.
+      let cached: string | undefined;
+      if (prefixIntact) {
+        const step = plan[at];
+        if (step && step.key === key && step.result !== null) {
+          cached = step.result;
+        } else {
+          prefixIntact = false;
+          divergedAt = at;
+          // Said out loud, because this is the moment a relaunch stops being free and
+          // the whole rest of the run becomes live work. A run that quietly replayed
+          // nothing looks exactly like one that replayed everything (spec §8:
+          // "replay is always reported").
+          bus.publish({
+            type: "workflow.log",
+            sessionId: run.sessionId,
+            data: {
+              runId: id,
+              line: !step
+                ? `replay ends at call ${at}: the source run never made this call — ` +
+                  `it and everything after it run live`
+                : `replay ends at call ${at} (${clip(call.label, 60)}): ${
+                  step.result === null
+                    ? "the source run has no answer for it"
+                    : "its key changed"
+                } — it and everything after it run live, including calls whose own ` +
+                  `key is unchanged (agents share one checkout)`,
+            },
+          });
+        }
+      }
+
       // Pause parks the call BEFORE it journals: a parked call has no row, so the UI
       // never shows a "running" agent that has not actually started (field finding —
       // a sequential script's next call surfaced as running and session-less while
       // the run sat paused).
       await awaitGate();
 
-      const key = callKey(call, opts.effectiveModel);
       // Display label: an explicit one wins; otherwise a line this agent does not
       // share with the siblings already in the run.
       const shown = typeof raw.label === "string" && raw.label.trim()
         ? call.label
         : distinctLabel(call.prompt, db.listWorkflowAgents(id).map((a) => a.label));
-      const cached = replay.get(key)?.shift();
       const row = db.createWorkflowAgent({
         id: crypto.randomUUID(),
         runId: id,
@@ -736,12 +897,15 @@ export interface RerunOpts {
 }
 
 /**
- * Rerun a finished run with journal replay: unchanged `agent()` calls return the old
- * run's results instantly, edited and new ones run live. The script defaults to the
- * run's file mirror, so "edit the file, press r" is the whole iteration loop.
+ * Rerun a finished run with journal replay: the unchanged PREFIX of its `agent()`
+ * calls returns the old run's results instantly, and the first changed call plus
+ * everything after it runs live. The script defaults to the run's file mirror, so
+ * "edit the file, press r" is the whole iteration loop.
  *
  * A rerun is a NEW run pointing back via `resumeOf`, never an edit of the old one —
- * nothing in bough is destructively rewritten (spec §2.4).
+ * nothing in bough is destructively rewritten (spec §2.4). It is the same operation as
+ * a relaunch (`workflow/relaunch.ts`); a rerun is just the case where the script did
+ * not change (spec §8).
  */
 export async function rerunWorkflow(
   ctx: WorkflowCtx,
@@ -753,8 +917,9 @@ export async function rerunWorkflow(
   if (live.has(id)) {
     throw new WorkflowError(409, `workflow ${id} is still running — stop it first`);
   }
-  const script = opts.script ??
-    await Deno.readTextFile(workflowScriptPath(id)).catch(() => src.script);
+  // Explicit script, else the mirror the user may have edited, else the stored row —
+  // one resolution, in `workflow/journal.ts`, which the control layer calls too (T5.8).
+  const { script } = await resolveRerunScript(src, opts.script);
   return await startWorkflow(ctx, {
     sessionId: src.sessionId,
     script,

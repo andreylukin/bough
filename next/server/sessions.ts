@@ -38,7 +38,10 @@ import { BadRequestError, NotFoundError } from "../errors.ts";
 import type { Message, Part, Session, SessionKind, TurnStatus } from "../schema/parts.ts";
 import { CreateSessionBody, PostMessageBody, SetDraftBody } from "../schema/requests.ts";
 import type { AppCtx } from "../types.ts";
-import { type Handler, json, parseBody } from "./app.ts";
+// T8.5. `vcs/` is below `server/` and imports nothing from it, so this adds no cycle
+// — deliberately not imported from `server/changes.ts`, which does import `app.ts`.
+import { recordBase } from "../vcs/repodiff.ts";
+import { type Handler, json, parseBody } from "./http.ts";
 
 // ---- derived visibility ------------------------------------------------------
 
@@ -231,6 +234,25 @@ export const createSession: Handler = async (req, ctx) => {
   // database holds.
   if (body.model) ctx.db.setSessionModel(session.id, body.model);
   if (body.effort) ctx.db.setSessionEffort(session.id, body.effort);
+
+  // T8.5 — the sha this session starts from, which is the whole of the Changes
+  // rail's state (spec §13: the working tree is the tip, `base` is where the
+  // session began, and `git diff <base>` plus untracked files is the change set).
+  //
+  // Recorded HERE, at creation, rather than on the first turn: everything that runs
+  // in the workspace — a program, a subagent, a workflow agent, a schedule firing —
+  // moves the tree, so a base captured any later than this attributes work already
+  // done to the commit it started from and hides it from review.
+  //
+  // Only for an EXPLICIT workspace. A session that named none runs in the server's
+  // own directory (`turn/runner.ts`), and recording that repository's HEAD would
+  // give the session a change set full of somebody else's uncommitted work — with a
+  // revert button on it.
+  //
+  // Best-effort by construction (`vcs/repodiff.ts`): a non-repo workspace stores
+  // nothing and the rail reports "not a repository" rather than an empty diff, and a
+  // git failure costs the diff, never the session.
+  if (workspace) await recordBase(ctx.db, session.id, workspace);
 
   const stored = ctx.db.getSession(session.id)!;
   ctx.bus.publish({ type: "session.created", sessionId: stored.id, data: stored });

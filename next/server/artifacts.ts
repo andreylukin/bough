@@ -36,7 +36,7 @@
  */
 import { listArtifacts, resolveArtifactPath } from "../hostfn/artifact.ts";
 import type { ArtifactStoreOptions } from "../hostfn/artifact.ts";
-import { type Handler, json } from "./app.ts";
+import { type Handler, json } from "./http.ts";
 import { commentWidget } from "./comments.ts";
 
 // ---------------------------------------------------------------------------

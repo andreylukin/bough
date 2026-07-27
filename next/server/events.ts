@@ -41,7 +41,7 @@
  * hand instead of waiting fifteen seconds.
  */
 import type { BoughEvent } from "../schema/events.ts";
-import type { Handler } from "./app.ts";
+import type { Handler } from "./http.ts";
 
 /**
  * How often a comment line is written to keep the connection warm. Long enough to

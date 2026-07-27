@@ -42,8 +42,8 @@ import { postSystemNote } from "../agents/notes.ts";
 import { NotFoundError, PathError } from "../errors.ts";
 import { commentsDir, commentsPathFor, confine } from "../paths.ts";
 import { PostCommentBody, SendCommentsBody } from "../schema/requests.ts";
-import type { Handler } from "./app.ts";
-import { json, parseBody } from "./app.ts";
+import type { Handler } from "./http.ts";
+import { json, parseBody } from "./http.ts";
 
 // ---------------------------------------------------------------------------
 // Shapes

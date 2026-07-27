@@ -61,7 +61,9 @@ import type { Message, Part, WorkflowAgent, WorkflowRun } from "../schema/parts.
 import { DEFAULT_MODEL, interruptTurn } from "../turn/runner.ts";
 import { type TurnRegistry, turns } from "../turn/queue.ts";
 import type { AppCtx, Db, HostFns, TurnCtx } from "../types.ts";
+import { resolveRerunScript } from "./journal.ts";
 import { extractMeta } from "./meta.ts";
+import { type RunAccounting, runAccounting, summarize } from "./report.ts";
 import {
   type AgentCall,
   type AgentRunner,
@@ -571,8 +573,11 @@ export async function rerunWorkflowRun(
         `journal of a finished run; replaying one that is still writing to it would race.`,
     );
   }
-  const script = opts.script ??
-    await Deno.readTextFile(workflowScriptPath(id)).catch(() => src.script);
+  // One script resolution for the whole tree (`workflow/journal.ts`): an explicit
+  // script wins, else the mirror the user edited, else the stored row. Resolved HERE
+  // and passed down rather than left to the engine, because meta travels with the
+  // script — see the header.
+  const { script } = await resolveRerunScript(src, opts.script);
   const meta = extractMeta(script);
   const { workflowCtx, bind } = workflowCtxFor(ctx, src.sessionId, deps);
   try {
@@ -646,17 +651,37 @@ export function workflowAgentViews(
   });
 }
 
-/** `GET /workflows/:id`'s body, and `workflow.status({id})`'s. */
+/**
+ * `GET /workflows/:id`'s body, and `workflow.status({id})`'s.
+ *
+ * Carries the run, its journal rows with live activity, the script file, whether the
+ * run is live in THIS process — and, since T5.8, the three accounting fields spec §8
+ * requires of a run view:
+ *
+ *   - `replay` — how many calls were served from the journal and how many ran live.
+ *     Required, not decorative: a relaunch that replayed nothing is otherwise
+ *     indistinguishable from one that replayed everything.
+ *   - `cost` — tokens and elapsed time per agent and per phase, so an expensive stage
+ *     is visible while it runs rather than in the bill.
+ *   - `warning` — the advisory large-run flag, or `null`. Computed here, at view time,
+ *     from rows that already exist; nothing in the engine reads it, which is what makes
+ *     "it does not pause or throttle" a property of the code rather than a promise.
+ */
 export function workflowDetail(
   db: Db,
   run: WorkflowRun,
   registry: WorkflowAgentRegistry = workflowAgents,
+  accounting: RunAccounting = runAccounting(db, run),
 ): Record<string, unknown> {
   return {
     workflow: run,
     agents: workflowAgentViews(db, run.id, registry),
     scriptFile: workflowScriptPath(run.id),
     live: isWorkflowLive(run.id),
+    replay: accounting.replay,
+    cost: accounting.cost,
+    warning: accounting.warning,
+    guideline: accounting.guideline,
   };
 }
 
@@ -727,7 +752,11 @@ export async function workflowVerb(
         { ...(a.script !== undefined ? { script: a.script } : {}), args: a.args },
         deps,
       );
-      return workflowSummary(db, run);
+      // `replay` is REQUIRED on an operation that replays (spec §8). The run is
+      // detached, so at this instant the live counts are still zero and `available` is
+      // the number that matters: it is the ceiling the new run's keys will be measured
+      // against, and `available: 40` next to a later `replayed: 0` is the whole signal.
+      return { ...workflowSummary(db, run), replay: summarize(db, run) };
     }
     case "stop":
     case "pause":
@@ -737,9 +766,13 @@ export async function workflowVerb(
       if (verb === "status") {
         const run = db.getWorkflow(a.id);
         if (!run) throw new NotFoundError(`workflow ${a.id} not found`);
+        const accounting = runAccounting(db, run);
         return {
           ...workflowSummary(db, run),
           agentRows: workflowAgentViews(db, run.id, deps.agents ?? workflowAgents),
+          replay: accounting.replay,
+          cost: accounting.cost,
+          warning: accounting.warning,
         };
       }
       const run = verb === "stop"

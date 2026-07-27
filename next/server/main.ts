@@ -33,8 +33,16 @@ import { createAskHostFn } from "../hostfn/ask.ts"; // T6.1
 import { createFetchHostFn } from "../hostfn/fetch.ts"; // T6.5
 import { createImageHostFn } from "../hostfn/image.ts"; // T6.4
 import { jobs } from "../hostfn/jobs.ts";
+import { killAllMcpServers } from "../mcp/client.ts"; // T7.1
+import { loadRegistry, registryFile } from "../mcp/config.ts"; // T7.1
+import { authStatus, callbackUrl, configureOAuthCallback } from "../mcp/oauth.ts"; // T7.2
+import { createMcpHostFns } from "../hostfn/mcp.ts"; // T7.3
+import { bindTurnGrant, mcpManager } from "../mcp/manager.ts"; // T7.3
 import { createScheduleHostFn } from "../hostfn/schedule.ts"; // T6.3
 import { createStateHostFn } from "../hostfn/state.ts"; // T6.2
+import { createLspHostFn } from "../hostfn/lsp.ts"; // T7.4
+import { BACKEND_NAME, BIN_ENV_VAR, findBackend, lspAvailable } from "../lsp/lsp.ts"; // T7.4
+import { assemblePrompt } from "../prompt/assemble.ts"; // T7.4
 import { dbPath, workflowsDir } from "../paths.ts";
 import { startScheduleTicker, TICK_MS } from "../schedules.ts"; // T6.3
 import { BASE_HOST_FNS, createTurnStarter } from "../turn/runner.ts";
@@ -42,13 +50,19 @@ import {
   createWorkflowHostFn,
   type WithWorkflowControl,
   type WorkflowControlDeps,
+  workflowCtxFor, // T5.7
+  workflowCtxModel, // T5.7
 } from "../workflow/control.ts";
+import type { WithRelaunch } from "../workflow/relaunch.ts"; // T5.7
 import { recoverOrphanedTurns } from "../turn/state.ts";
 import type { AppCtx } from "../types.ts";
 import { syncScriptMirrors } from "../workflow/journal.ts";
-import { recoverOrphanedWorkflows } from "../workflow/run.ts";
+import { guidelineAdvice } from "../workflow/report.ts"; // T5.8
+import { MAX_AGENTS_PER_RUN, recoverOrphanedWorkflows, workflowConcurrency } from "../workflow/run.ts";
+import { ensureSavedDir, savedDir } from "../workflow/saved.ts"; // T5.8
 import { structuredWorkflowCtx, type WithStructuredWorkflow } from "../workflow/schema.ts";
 import { createHandler } from "./app.ts";
+import { indexRecoveredMessages, searchSafeDb } from "./search.ts"; // T8.6
 import type { WithTurnStarter } from "./sessions.ts";
 
 const PORT = Number(Deno.env.get("BOUGH_PORT") ?? 4321);
@@ -357,6 +371,52 @@ ctx.startTurn = createDelegatingTurnStarter({
   }),
 });
 
+// T5.7 — relaunching a workflow from a stopped run's journal. One wiring, and the
+// route is inert without it.
+//
+// The engine seeds a new run from an old one's journal on its own; what it cannot do
+// is put REAL subagents behind the relaunched script. `workflow/relaunch.ts` is
+// reachable from the route table, so importing the control layer from inside it would
+// close a cycle through `server/app.ts` — the seam is filled here instead, with the
+// same `workflowControl` deps the T5.5 block wired for start and rerun, so a
+// relaunched run gets the identical launch context, caps exemption and
+// structured-output decorator as the run it replaces.
+//
+// `effectiveModel` is not decoration. The journal key hashes the RESOLVED model, so a
+// relaunch that resolved it any other way than the original run did would miss every
+// key and re-run a 40-agent audit at full price while reporting a successful replay.
+// Both halves come from `workflow/control.ts` for exactly that reason: one resolution,
+// one place.
+(ctx as AppCtx & WithTurnStarter & WithRelaunch).relaunch = {
+  ctxFor: (c, sessionId) => workflowCtxFor(c, sessionId, workflowControl),
+  effectiveModel: workflowCtxModel,
+};
+
+// T5.8 — saved workflows and the cost surface, wired before the listener binds.
+//
+// The directory first. `~/.bough/workflows/saved/` is meant to be a place a user can
+// drop a script into and invoke by name, which is only true if it EXISTS before anyone
+// looks — a directory that materializes on the first API save is one nobody finds.
+// Best-effort, like the script mirrors above: a read-only `~/.bough` must not stop the
+// server from starting, and saving will report its own error when it is tried.
+const savedCount = await ensureSavedDir();
+console.log(
+  `${savedCount} saved workflow(s) under ${savedDir()} — ` +
+    `POST /saved-workflows/<name>/runs invokes one with {sessionId, args}`,
+);
+
+// The size guideline is READ at view time (`workflow/report.ts`), never cached, so
+// there is nothing to construct here. It is logged because it is the one workflow
+// setting that changes what the model is told to aim for, and a boot line is how a user
+// discovers that the run they are about to start will be flagged as large. Advisory in
+// both directions: nothing below this line can pause, throttle or refuse a run, and the
+// concurrency and lifetime numbers are printed beside it so the three are read together
+// (spec §8's "Cost").
+console.log(
+  `${guidelineAdvice()} Up to ${workflowConcurrency()} agents at once, ` +
+    `${MAX_AGENTS_PER_RUN}-agent lifetime backstop per run.`,
+);
+
 // Teardown. Background shells are children of THIS process, so an unkilled one
 // survives as an orphan with no reader for its output — kill children before the
 // process goes, the same ordering rule the program worker holds (plan §6.3).
@@ -384,3 +444,269 @@ Deno.serve({
   onListen: ({ hostname, port }) =>
     console.log(`bough listening on ${hostname}:${port} — db ${dbPath()}`),
 }, createHandler(ctx));
+
+// T7.1 — MCP. Two lines, and only the second one is required.
+//
+// The registry is a FILE, read fresh on every use (`mcp/config.ts`): MCP state is
+// never cached, because grants and connections change between turns and a cached
+// catalog is how the model ends up calling a tool that was revoked two turns ago
+// (plan §6.13). So there is nothing to construct here and nothing to recover — the
+// count is logged because the registry lives outside the database, and a server the
+// user registered by editing the file is otherwise invisible until a turn needs it.
+try {
+  const registered = Object.keys(loadRegistry().servers);
+  console.log(
+    `${registered.length} MCP server(s) registered in ${registryFile()}` +
+      (registered.length > 0 ? `: ${registered.join(", ")}` : ""),
+  );
+} catch (error) {
+  // Best-effort, like the workflow mirrors above: an unreadable registry must not
+  // stop the server from starting. The turn that needs a server will say so itself.
+  console.log(`could not read ${registryFile()}: ${error}`);
+}
+
+// The required half: stdio servers are CHILDREN of this process, and killing the
+// server has to take them with it. Same trap as background shells (plan §6.3): a
+// chatty server dies of SIGPIPE when our end of its stdout closes, but a silent one
+// — an idle HTTP bridge, a server between calls — survives, reparented and
+// invisible, with nothing left that knows it exists.
+//
+// Hung on `unload` rather than on the signal handlers above for two reasons. The
+// handler that is already registered calls `Deno.exit` synchronously, so a second
+// signal listener added here would never run; and `unload` also covers the exits no
+// signal announces. `Deno.exit` fires it, so both paths converge here.
+globalThis.addEventListener("unload", () => {
+  const killed = killAllMcpServers();
+  if (killed > 0) console.log(`shutdown: killed ${killed} MCP server subprocess(es)`);
+});
+
+// T7.2 — remote MCP servers and OAuth. One required wiring, and it is required for
+// a reason that only shows up at the end of the flow.
+//
+// bough is a public PKCE client that hosts its OWN redirect: the authorization
+// server sends the user's browser back to `/mcp/oauth/callback` on this port. That
+// URI is registered with the authorization server at dynamic-registration time and
+// baked into every authorization request, so if it names a port nothing is
+// listening on, the user approves access in their browser and lands on a connection
+// error with no way back — and the failure appears at the very last step, after the
+// registration is already stored. Pinning it to the port the listener actually bound
+// is what keeps the redirect and the socket from drifting apart (`BOUGH_PORT` moves
+// both; without this line only the socket moves).
+//
+// Nothing else is constructed here and nothing is recovered. Credentials are per-server
+// files under `~/.bough/mcp/tokens/` read fresh on every use, for the same reason the
+// registry is (plan §6.13: MCP state is never cached) — a cached token is how a turn
+// ends up presenting a credential the user revoked two turns ago. Connections are made
+// per turn by the layer above; a remote server that is not authorized surfaces in that
+// turn's catalog as "not authorized — /mcp auth <name>" and never as a hang (spec §10).
+configureOAuthCallback({ port: PORT });
+try {
+  const remotes = Object.entries(loadRegistry().servers).filter(([, s]) => s.url);
+  if (remotes.length > 0) {
+    const authorized = remotes.filter(([name]) => authStatus(name).authorized).map(([n]) => n);
+    console.log(
+      `${remotes.length} remote MCP server(s); ${authorized.length} authorized` +
+        (authorized.length > 0 ? `: ${authorized.join(", ")}` : "") +
+        ` — OAuth callback ${callbackUrl()}`,
+    );
+  }
+} catch (error) {
+  // Best-effort, like the registry count above: an unreadable token store must not
+  // stop the server from starting. The turn that needs the server will say so itself.
+  console.log(`could not read MCP authorization state: ${error}`);
+}
+
+// T7.3 — the MCP manager, the per-session grant, and the two program verbs.
+//
+// The starter is REBUILT rather than edited above, the same append-only discipline as
+// every block before it: identical wiring, plus `mcp()` and `mcpStatus()` merged into
+// the `extend` seam and named in `granted` so `prompt/assemble.ts` includes
+// `prompt/mcp-status.md`. Both halves are required and neither is sufficient (spec §6)
+// — without the bridge the prompt documents a verb that rejects at runtime, and
+// without the grant the model is never told the verbs exist and will not reach for
+// them. Granted at every tier, like `fetch`/`artifact` and unlike `workflow`: a
+// subagent is doing part of the same granted work, and refusing it the servers its
+// spawner had would fail every delegated MCP task at the first call (spec §7).
+//
+// `bindTurnGrant` is the line that makes that inheritance real, and it is not
+// decoration. `agents/subagent.ts` copies `ctx.mcpGrant` into the child at spawn, so
+// a turn whose ctx never had one hands its subagents nothing; setting a plain array
+// instead would fix that and freeze the grant for the whole turn, so a revocation
+// would keep working until the turn ended. It installs a LIVE READ of the
+// activations instead: every access re-reads them — which is what makes a revoked
+// grant visible to the very next `mcpStatus()` call — while the one access that
+// matters for inheritance, the spawn, copies the value out as the snapshot spec §7
+// describes (`mcp/manager.ts`).
+ctx.startTurn = createDelegatingTurnStarter({
+  base: {
+    survivingJobs: (sessionId) => jobs.runningIds(sessionId),
+    granted: [
+      ...BASE_HOST_FNS,
+      "workflow",
+      "schedule",
+      "image",
+      "fetch",
+      "ask",
+      "state",
+      "artifact",
+      "mcp",
+      "mcpStatus",
+    ],
+  },
+  deliver: createNoteDeliverer(),
+  extend: (turnCtx) => ({
+    ...(delegationTier(db, turnCtx.sessionId) === "top"
+      ? { workflow: createWorkflowHostFn(turnCtx, workflowControl) }
+      : {}),
+    ...createScheduleHostFn(turnCtx),
+    ...createImageHostFn(turnCtx),
+    ...createFetchHostFn(turnCtx),
+    ...createAskHostFn(turnCtx),
+    ...createStateHostFn(turnCtx),
+    ...createArtifactHostFn(turnCtx),
+    ...createMcpHostFns(bindTurnGrant(turnCtx)),
+  }),
+});
+
+// Nothing else is constructed for MCP, and that is deliberate: the registry is a file
+// read fresh on every use, grants live in it, and a connection is a live child process
+// that only a call creates (plan §6.13). The process manager is touched here purely so
+// its subprocesses are reported at shutdown beside the count `killAllMcpServers` gives
+// — the kill itself is already hung on `unload` by the T7.1 block above, which is the
+// path every exit converges on.
+globalThis.addEventListener("unload", () => {
+  const open = mcpManager().statuses().length;
+  if (open > 0) console.log(`shutdown: ${open} MCP connection(s) were open`);
+});
+
+// T7.4 — symbol navigation. One rebuilt starter and one boot report.
+//
+// The starter is REBUILT rather than edited above, the same append-only discipline as
+// every block before it: identical wiring, plus `lsp()` merged into the `extend` seam,
+// `"lsp"` named in `granted`, and one new thing no earlier block needed — an
+// `assemble` override.
+//
+// WHY THE OVERRIDE. `prompt/lsp.md` is gated on TWO facts: the verb is bridged
+// (`granted`) and the backend is actually installed (`PromptInput.lsp`). The first is
+// fixed for the life of a starter; the second is a fact about the machine that can
+// change while the server runs — a user who installs the backend mid-session should
+// get symbol navigation on their next turn, not after a restart. `TurnDeps.assemble`
+// is the seam the runner already calls once per turn, so resolving availability there
+// is what keeps the two in step. It is a filesystem stat, never a spawn (`lsp/lsp.ts`),
+// so the laziness spec §10 requires survives being asked every turn.
+//
+// WHY THE BRIDGE IS UNCONDITIONAL while the prompt section is not. A turn told about a
+// verb it cannot call wastes a round, which is the failure `granted` exists to prevent
+// — but the reverse here is harmless and useful: with no backend installed the model is
+// never told the verbs exist, and the one path that could still reach them (a program
+// that guessed) gets a sentence saying the backend is not installed rather than
+// "unknown host function". Gating the bridge at boot instead would freeze the answer
+// for the life of the process.
+//
+// Granted at every tier, like `fetch`/`artifact`/`mcp` and unlike `workflow`: a
+// subagent handed "rename X across the codebase" needs the same verbs its spawner had,
+// and reading symbols is as core to delegated work as `bash` is.
+//
+// Nothing is constructed, connected or recovered here. The backend is a lazy
+// subprocess: the first `lsp.*` call of a turn registers the workspace and wakes the
+// daemon, and a turn that never asks about a symbol never pays for a language server.
+ctx.startTurn = createDelegatingTurnStarter({
+  base: {
+    survivingJobs: (sessionId) => jobs.runningIds(sessionId),
+    granted: [
+      ...BASE_HOST_FNS,
+      "workflow",
+      "schedule",
+      "image",
+      "fetch",
+      "ask",
+      "state",
+      "artifact",
+      "mcp",
+      "mcpStatus",
+      "lsp",
+    ],
+    // Resolved per turn, for the reason above. Everything else the runner passes in
+    // (kind, granted, the workspace note) is forwarded untouched.
+    assemble: (input) => assemblePrompt({ ...input, lsp: lspAvailable() }),
+  },
+  deliver: createNoteDeliverer(),
+  extend: (turnCtx) => ({
+    ...(delegationTier(db, turnCtx.sessionId) === "top"
+      ? { workflow: createWorkflowHostFn(turnCtx, workflowControl) }
+      : {}),
+    ...createScheduleHostFn(turnCtx),
+    ...createImageHostFn(turnCtx),
+    ...createFetchHostFn(turnCtx),
+    ...createAskHostFn(turnCtx),
+    ...createStateHostFn(turnCtx),
+    ...createArtifactHostFn(turnCtx),
+    ...createMcpHostFns(bindTurnGrant(turnCtx)),
+    ...createLspHostFn(turnCtx),
+  }),
+});
+
+// T8.5 — the Changes rail. NOTHING is constructed, attached or recovered here, and
+// that is a property of the design rather than an omission: the working tree IS the
+// tip (spec §13), so the rail has no substrate, no cache and no in-memory state to
+// rebuild. Its two routes are appended in `app.ts` and read the checkout live.
+//
+// The one thing it does need is `sessions.base`, and the place that must write it is
+// the place a session is CREATED — `server/sessions.ts`, already wired — not this
+// file. A base captured at boot, or on a session's first turn, would be a sha taken
+// after work had already landed in the tree, which hides exactly the changes the rail
+// exists to show. There is deliberately no backfill pass for rows created before this
+// task either: stamping today's HEAD onto an old session would silently declare its
+// whole diff reviewed.
+
+// The boot report. Not a gate and not a probe — it stats for the binary and says what
+// it found, because "the model never mentions lsp" and "the backend is not installed"
+// look identical from the outside and this is the only place that can tell them apart
+// cheaply. Absence is normal and is not a warning: bough works without it, which is
+// exactly what the fallback in `prompt/lsp.md` is for.
+{
+  const bin = findBackend();
+  console.log(
+    bin
+      ? `lsp backend: ${bin} — symbol navigation enabled (nothing spawns until the first call)`
+      : `lsp backend: ${BACKEND_NAME} not installed — symbol navigation off; programs use ` +
+        `rg + view + patch. Set ${BIN_ENV_VAR} to point at it.`,
+  );
+}
+
+// T8.6 — keyword search over transcripts. Two wirings, and the first one is the
+// required half.
+//
+// THE HANDLE IS SWAPPED FOR A SEARCH-SAFE ONE. Indexing runs on the INSERT path —
+// `server/sessions.ts` indexes a posted message as it persists it, and the turn runner,
+// the branch seeder, the note poster, the subagent launcher and the schedule ticker all
+// do the same — which is what keeps the index current with no background job and no
+// lazy catch-up that makes the first search of the day slow. The price of being on that
+// path is that a broken `messages_fts` becomes a broken `POST /sessions/:id/messages`,
+// and losing a user's message to a search-index error is not a trade anyone would take.
+// Most of those call sites already guard themselves; this is what makes the guarantee
+// hold for the one that does not and for every future one, at the seam, once. Every
+// other method delegates untouched, so nothing downstream can tell (`server/search.ts`).
+//
+// Assigned to `ctx.db` rather than to the module's `db` const on purpose: the raw handle
+// is what boot recovery, the mirrors and the shutdown path above already captured, and
+// they neither index nor should be reading through a wrapper. Every REQUEST and every
+// TURN reads `ctx.db`, which is the whole write path this protects. It lands before the
+// listener can serve anything: `Deno.serve` above cannot dispatch until this module
+// finishes evaluating, and nothing between here and there awaits.
+ctx.db = searchSafeDb(db);
+
+// Second, the messages boot recovery just closed. A turn that died mid-stream never
+// reached the finish path that indexes its message (`turn/runner.ts`), so everything the
+// supervisor had already said in it would be unsearchable forever — and this is the one
+// moment those messages are known, closed and enumerated. Idempotent, like every other
+// index write, so a message that was already indexed simply gets the same rows back.
+if (orphaned.length > 0) {
+  const reindexed = indexRecoveredMessages(ctx.db, orphaned);
+  if (reindexed > 0) console.log(`re-indexed ${reindexed} message(s) closed by turn recovery`);
+}
+
+console.log(
+  "keyword search: GET /search?q= over every transcript — bare words are ANDed, " +
+    'quote a phrase as "like this" (FTS, no embeddings); POST /search/reindex rebuilds it',
+);
