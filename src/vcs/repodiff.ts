@@ -241,26 +241,50 @@ export function parseGitDiff(text: string): FileDiff[] {
 const MAX_ADDED_BYTES = 512 * 1024;
 
 /**
- * Paths git neither tracks nor ignores, relative to the repo root.
+ * How many files a wholly-untracked directory may hold before the rail shows the
+ * DIRECTORY instead of its contents.
  *
- * `--directory` is what makes this survive a real checkout. Without it, one
- * untracked directory — build output, a venv, a data dir, anything not in
- * `.gitignore` — enumerates every file beneath it: this repo's own `bench/` turned
- * the Changes rail into "50908 files changed" over a six-entry screen, and the
- * post-turn refresh then read all 50,899 bodies off disk. `git status` collapses
- * such a directory to a single `bench/` line, and the review surface should say
- * exactly what git says.
+ * The two cases this sits between are both real and want opposite things. A new
+ * `src/feature/` with four files in it IS the work under review, and collapsing it
+ * would hide exactly what the user opened the rail to see. A `bench/` with 50,899
+ * files in it is not under review by anybody, and enumerating it turned the header
+ * into "50908 files changed" over a six-entry screen. So: itemize until a
+ * directory is plainly not hand-written, then say its name the way git status
+ * would.
  */
-async function untracked(dir: string): Promise<string[]> {
-  const r = await git(dir, [
-    "ls-files",
-    "--others",
-    "--exclude-standard",
-    "--directory",
-    "--no-empty-directory",
-  ]);
+const MAX_DIR_FILES = 25;
+
+async function lsFiles(dir: string, extra: string[]): Promise<string[]> {
+  const r = await git(dir, ["ls-files", "--others", "--exclude-standard", ...extra]);
   if (!r.ok) return [];
   return r.out.split("\n").map((l) => l.trim()).filter(Boolean);
+}
+
+/**
+ * Paths git neither tracks nor ignores, relative to the repo root — with a
+ * runaway directory collapsed to one entry.
+ *
+ * Two passes, because git will give either shape but not the choice between them:
+ * `--directory` names the wholly-untracked directories, the bare listing names
+ * every file. A directory over the threshold contributes its own name; everything
+ * else contributes its files.
+ */
+async function untracked(dir: string): Promise<string[]> {
+  const files = await lsFiles(dir, []);
+  const collapsed = await lsFiles(dir, ["--directory", "--no-empty-directory"]);
+  const dirs = collapsed.filter((p) => p.endsWith("/"));
+  if (dirs.length === 0) return files;
+
+  const out: string[] = [];
+  const bulky: string[] = [];
+  for (const d of dirs) {
+    if (files.filter((f) => f.startsWith(d)).length > MAX_DIR_FILES) bulky.push(d);
+  }
+  for (const d of bulky) out.push(d);
+  for (const f of files) {
+    if (!bulky.some((d) => f.startsWith(d))) out.push(f);
+  }
+  return out;
 }
 
 /** An untracked file as an all-added FileDiff. Binary, huge or unreadable ⇒ no hunks. */

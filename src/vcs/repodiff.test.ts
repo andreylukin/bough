@@ -33,7 +33,7 @@ async function repo(): Promise<{ dir: string; head: string }> {
   return { dir, head: await run("rev-parse", "HEAD") };
 }
 
-Deno.test("an untracked directory collapses to one entry, the way git status shows it", async () => {
+Deno.test("a RUNAWAY untracked directory collapses to one entry, the way git status shows it", async () => {
   const { dir, head } = await repo();
   try {
     // The shape that broke the rail in bough's own checkout: one untracked
@@ -43,12 +43,16 @@ Deno.test("an untracked directory collapses to one entry, the way git status sho
       await Deno.writeTextFile(join(dir, "bench", "state", `r${i}.json`), `{"i":${i}}\n`);
     }
     await Deno.writeTextFile(join(dir, "loose.txt"), "new\n");
+    // A small new directory is the agent's actual work and stays itemized.
+    await Deno.mkdir(join(dir, "feature"), { recursive: true });
+    await Deno.writeTextFile(join(dir, "feature", "a.ts"), "export const a = 1;\n");
+    await Deno.writeTextFile(join(dir, "feature", "b.ts"), "export const b = 2;\n");
 
     const set = await changeSet(dir, head);
     assert.ok(set.available);
     const paths = set.files.map((f) => f.path).sort();
     // One entry for the whole directory — not 60 — plus the loose file.
-    assert.deepEqual(paths, ["bench/", "loose.txt"]);
+    assert.deepEqual(paths, ["bench/", "feature/a.ts", "feature/b.ts", "loose.txt"]);
     // The collapsed directory carries no body: there is no single file to show.
     assert.deepEqual(set.files.find((f) => f.path === "bench/")?.hunks, []);
     // The loose file still gets its contents, because that IS reviewable.
