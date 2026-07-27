@@ -530,21 +530,44 @@ export function meterLine(m: {
   workspace?: string | null;
   /** Append the `? help` hint. False for surfaces that are not the chat. */
   help?: boolean;
+  /** Columns available. Omitted = no degradation, the caller accepts any length. */
+  width?: number;
 }): string {
-  const bits: string[] = [];
   // Workspace FIRST and at the bottom of the screen, next to the composer, because
   // that is where the eye already is when you are about to press enter. It sat on
   // a top line a whole screen above the input before, which is a status bar you
   // have to go and look for.
-  if (m.workspace) bits.push(m.workspace);
-  if (m.model) bits.push(m.model);
-  if (typeof m.costUsd === "number" && m.costUsd > 0) bits.push(fmtUsd(m.costUsd));
+  const workspace = m.workspace ?? "";
+  const model = m.model ?? "";
+  const cost = typeof m.costUsd === "number" && m.costUsd > 0 ? fmtUsd(m.costUsd) : "";
+  let context = "";
   if (typeof m.contextTokens === "number" && m.contextTokens > 0) {
     const pct = ctxPctLeft({ contextTokens: m.contextTokens, contextLimit: m.contextLimit });
-    bits.push(pct === null ? `${fmtTokens(m.contextTokens)} ctx` : `${pct}% ctx left`);
+    context = pct === null ? `${fmtTokens(m.contextTokens)} ctx` : `${pct}% ctx left`;
   }
-  if (m.help) bits.push("? help");
-  return bits.join(" · ");
+  const help = m.help ? "? help" : "";
+  const join = (...bits: string[]) => bits.filter(Boolean).join(" · ");
+
+  const full = join(workspace, model, cost, context, help);
+  if (!m.width || width(full) <= m.width) return full;
+
+  // Too narrow for everything. Degrade in priority order instead of wrapping onto
+  // a second row: a status bar that reflows steals a line from the transcript and
+  // reads as a rendering bug. Cost and context go last because they are the two
+  // numbers that change, and the whole point of a live meter is watching them.
+  const base = workspace.replace(/\/+$/, "").split("/").pop() ?? "";
+  for (
+    const candidate of [
+      join(base, model, cost, context, help),
+      join(model, cost, context, help),
+      join(cost, context, help),
+      join(cost, context),
+      join(context),
+    ]
+  ) {
+    if (width(candidate) <= m.width) return candidate;
+  }
+  return truncateAnsi(full, m.width, "…");
 }
 
 // The conversation prefix rides a 5-minute sliding cache TTL.

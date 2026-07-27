@@ -433,6 +433,32 @@ Deno.test("the meter carries the whole session status, in one line at the bottom
   );
 });
 
+Deno.test("a narrow terminal degrades the meter instead of wrapping it", () => {
+  // A status bar that reflows onto a second row steals a line from the transcript
+  // and reads as a rendering bug — which is what 60 columns used to produce.
+  const m = {
+    workspace: "~/repos/bough",
+    model: "moonshotai/kimi-k3",
+    costUsd: 0.007,
+    contextTokens: 18_000,
+    contextLimit: 1_048_576,
+    help: true,
+  };
+  assert.equal(
+    meterLine({ ...m, width: 200 }),
+    "~/repos/bough · moonshotai/kimi-k3 · $0.007 · 98% ctx left · ? help",
+  );
+  // Every degraded form still fits, and the two live numbers survive longest.
+  for (const w of [70, 60, 50, 40, 30, 20, 12]) {
+    const line = meterLine({ ...m, width: w });
+    assert.ok(width(line) <= w, `width ${w} produced ${width(line)} cols: ${line}`);
+  }
+  // The workspace shortens to its basename before it disappears entirely.
+  assert.match(meterLine({ ...m, width: 60 }), /bough/);
+  // At the narrowest, context left is the last thing standing.
+  assert.equal(meterLine({ ...m, width: 14 }), "98% ctx left");
+});
+
 Deno.test("shortenPath only abbreviates a real home prefix", () => {
   assert.equal(shortenPath("/Users/me", "/Users/me"), "~");
   assert.equal(shortenPath("/Users/me/x", "/Users/me/"), "~/x");

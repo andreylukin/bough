@@ -99,7 +99,7 @@ export function Chat(
   const { start, rows, more, pct } = visibleSlice(lines, body, scrollOff);
   // Pad above, never below: the newest line stays where the eye already is.
   const pad = Math.max(0, body - rows.length);
-  const meterText = meter ? meterLine(meter) : "";
+  const meterText = meter ? meterLine({ ...meter, width }) : "";
   return (
     <Box flexDirection="column" width={width}>
       <Box flexDirection="column" flexGrow={1}>
