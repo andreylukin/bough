@@ -372,6 +372,28 @@ export function rebaseOps(ops: Op[], base: string[], cur: string[]): RebaseResul
       });
       continue;
     }
+    // …and every line BETWEEN the endpoints, not just the ends. Checking only
+    // a and b accepts an op whose interior was rewritten in place: the line
+    // count is unchanged, so the contiguity guard above passes, and the op
+    // then overwrites an edit this agent never saw. That is the silent lost
+    // update this whole mechanism exists to prevent, and it is the most common
+    // concurrent shape there is — a renamed identifier or changed constant
+    // inside a span someone else is replacing wholesale. Being stricter here
+    // can only turn a silently-wrong apply into a reported conflict.
+    let interiorMoved = false;
+    for (let k = op.a! - 1; k <= op.b! - 1; k++) {
+      if (map[k] !== a + (k - (op.a! - 1))) {
+        interiorMoved = true;
+        break;
+      }
+    }
+    if (interiorMoved) {
+      conflicts.push({
+        op,
+        reason: `lines ${op.a}.=${op.b} were changed by the other write`,
+      });
+      continue;
+    }
     out.push({ ...op, a: a + 1, b: b + 1 });
   }
   return conflicts.length ? { ok: false, conflicts } : { ok: true, ops: out };

@@ -187,3 +187,22 @@ Deno.test("PARALLEL: an insert INSIDE the span is a conflict, not a silent clobb
   if (res.ok) return;
   assertStringIncludes(res.conflicts[0].reason, "inserted inside");
 });
+
+// Regression: the guard above checked only a span's ENDPOINTS, so a multi-line
+// op whose interior was rewritten in place — line count unchanged — was rebased
+// and applied, silently discarding the other write. Single-line ops were never
+// affected, which is why the neighbouring test passed throughout.
+Deno.test("PARALLEL: a multi-line span whose interior was rewritten is a conflict", () => {
+  const base = toLines("X\nY\nZ\n");
+  const cur = toLines("X\nY-EDITED\nZ\n");
+  const res = rebaseOps([{ kind: "swap", a: 1, b: 3, body: ["N"] }], base, cur);
+  assertEquals(res.ok, false);
+});
+
+Deno.test("PARALLEL: an untouched span that merely shifts still rebases", () => {
+  const base = toLines("a\nb\nc\n");
+  const cur = toLines("header\na\nb\nc\n");
+  const res = rebaseOps([{ kind: "swap", a: 1, b: 3, body: ["N"] }], base, cur);
+  assertEquals(res.ok, true);
+  if (res.ok) assertEquals([res.ops[0].a, res.ops[0].b], [2, 4]);
+});
