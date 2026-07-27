@@ -154,17 +154,30 @@ export function reducePanel(
 
 // ---- the panel -------------------------------------------------------------
 
+/**
+ * The tab strip.
+ *
+ * Which tab is open is marked with BRACKETS as well as with weight and hue,
+ * because a character is the only encoding that always survives. Colour alone was
+ * the whole signal here, so the answer to "which tab am I on" was invisible to a
+ * colourblind reader, to a NO_COLOR terminal, and to anything reading the screen
+ * as text — which includes every test in this repo that asserts on a rendered row.
+ */
 export function PanelTabs({ tab }: { tab: PanelTab }) {
   return (
     <Text wrap="truncate">
-      {TABS.map((t) => (
-        <Text key={t.id}>
-          <Text dimColor>{"  "}</Text>
-          <Text bold={t.id === tab} color={t.id === tab ? palette.accent : undefined}>
-            {t.title}
+      {TABS.map((t) => {
+        const active = t.id === tab;
+        return (
+          <Text key={t.id}>
+            <Text dimColor>{active ? " [" : "  "}</Text>
+            <Text bold={active} color={active ? palette.accent : undefined}>
+              {t.title}
+            </Text>
+            <Text dimColor>{active ? "]" : ""}</Text>
           </Text>
-        </Text>
-      ))}
+        );
+      })}
       <Text dimColor>{"   ^t close"}</Text>
     </Text>
   );

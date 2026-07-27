@@ -27,6 +27,8 @@ import {
   type PanelAction,
   panelActionFor,
   type PanelState,
+  type PanelTab,
+  PanelTabs,
   reducePanel,
   SkillsTab,
   tabForChord,
@@ -422,3 +424,19 @@ function row(
     ...over,
   };
 }
+
+Deno.test("the open tab is marked in TEXT, not only in colour", () => {
+  // `setColorEnabled(false)` is in force for this file, which is the point: the
+  // active tab used to be signalled by hue and weight alone, so a colourblind
+  // reader, a NO_COLOR terminal and every text assertion in this repo all saw a
+  // strip of eight identical words.
+  for (const id of ["sessions", "changes", "theme"] as PanelTab[]) {
+    const text = draw(createElement(PanelTabs, { tab: id }));
+    assert.ok(text.includes(`[${id}]`), `tab "${id}" is not marked: ${text.trim()}`);
+    // Exactly one tab is marked open at a time.
+    assert.equal((text.match(/\[/g) ?? []).length, 1, text.trim());
+  }
+  // Every tab is still listed, marked or not.
+  const strip = draw(createElement(PanelTabs, { tab: "sessions" as PanelTab }));
+  for (const t of TABS) assert.ok(strip.includes(t.title), `missing tab ${t.title}`);
+});
