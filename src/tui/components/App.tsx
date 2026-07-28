@@ -1007,6 +1007,15 @@ export function App(
         return submit(false);
       case "send.queue":
         return submit(true);
+      case "session.new":
+        // The draft goes too: it was written for the conversation being left, and
+        // carrying it into a fresh one is how you send the wrong thing to the wrong
+        // thread. `histAt` likewise — the ↑ history belongs to what was open.
+        setLine(EMPTY_LINE);
+        setHistAt(null);
+        setScrollOff(0);
+        store.newConversation();
+        return setMode("chat");
       case "draft.clear":
         setHistAt(null);
         return setLine(EMPTY_LINE);

@@ -112,6 +112,15 @@ export type Command =
    * A separate command from `tab.tree` because the landing row is the whole point.
    */
   | "tree.rewind"
+  /**
+   * Start a fresh root conversation.
+   *
+   * A session was only ever created IMPLICITLY, by sending the first message with
+   * none open — so once you were in a conversation there was no way to begin
+   * another without quitting the TUI and running `bough` again. The tree can open
+   * an existing conversation and fork a turn; it could not start one.
+   */
+  | "session.new"
   // -- composing ------------------------------------------------------------
   | "send"
   | "send.queue"
@@ -290,6 +299,7 @@ export interface SlashCommand {
  */
 export const SLASH_COMMANDS: readonly SlashCommand[] = [
   ...TABS.map((t) => ({ name: t.id, command: `tab.${t.id}` as Command, desc: t.desc })),
+  { name: "new", command: "session.new", desc: "start a fresh conversation" },
   { name: "rewind", command: "tree.rewind", desc: "go back to a turn and say it differently" },
   { name: "help", command: "help.open", desc: "every key, by section" },
 ];
@@ -658,6 +668,13 @@ export const BINDINGS: Binding[] = [
     desc: "queue for after this turn",
   },
   { mode: "chat", chord: "ctrl+j", command: "newline", section: "compose", desc: "newline" },
+  {
+    mode: "chat",
+    chord: "ctrl+n",
+    command: "session.new",
+    section: "compose",
+    desc: "start a fresh conversation",
+  },
   // `not: ["emptyDraft"]` is not decoration: with nothing typed there is nothing to
   // clear, and a double-tap that resolved here anyway SWALLOWED the gesture — a
   // user hammering Escape at a running turn got "cleared an empty draft" instead of

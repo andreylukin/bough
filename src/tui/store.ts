@@ -1087,6 +1087,15 @@ export interface Store {
   open(sessionId: string): Promise<void>;
   createSession(workspace?: string): Promise<Session | null>;
   /**
+   * Focus nothing, so the next message starts a fresh root conversation.
+   *
+   * Deliberately does NOT create a session up front: an empty one that never got a
+   * message would still be a row in the tree, and the tree is the record of work
+   * done. The `open` action already clears everything belonging to the session
+   * being left, so this is that same transition with no destination.
+   */
+  newConversation(): void;
+  /**
    * Post a message. While a turn runs, `queue` holds it locally and it drains into a
    * fresh turn when the current one ends; without `queue` it is posted immediately
    * and the server queues it (spec §5) — steering, rather than staging.
@@ -1482,6 +1491,10 @@ export function createStore(deps: StoreDeps = {}): Store {
 
     reload,
     open,
+
+    newConversation() {
+      dispatch({ type: "open", sessionId: null });
+    },
 
     async createSession(workspace?: string) {
       try {

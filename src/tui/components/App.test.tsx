@@ -252,6 +252,7 @@ function fakeStore(over: Partial<TuiState> = {}): Store & { calls: string[] } {
     reload: noop,
     open: (id: string) => (calls.push(`open:${id}`), Promise.resolve()),
     createSession: () => Promise.resolve(null),
+    newConversation: () => calls.push("newConversation"),
     send: noop,
     drainQueue: noop,
     answerAsk: noop,
@@ -915,6 +916,28 @@ test("a bare \\n in a coalesced chunk is a newline, never a send", async () => {
   try {
     await h.press("ab\n");
     assert.deepEqual(sent, [], `^j is a newline, not a send: ${h.frame()}`);
+  } finally {
+    h.unmount();
+  }
+});
+
+/**
+ * A session was only ever created IMPLICITLY, by sending the first message with
+ * none open, so once a conversation was open there was no way to start another
+ * without quitting the TUI. The tree could open one and fork a turn; it could not
+ * begin one.
+ */
+test("^n starts a fresh conversation, and takes the old draft with it", async () => {
+  const store = fakeStore(STATE);
+  const h = await mount(app(store));
+  try {
+    await h.press("half a thought");
+    assert.ok(h.frame().includes("half a thought"), h.frame());
+    await h.press(ctrl("n"));
+    assert.ok(store.calls.includes("newConversation"), store.calls.join(","));
+    // The draft belonged to the conversation being left — carrying it over is how
+    // the wrong message reaches the wrong thread.
+    assert.equal(h.frame().includes("half a thought"), false, h.frame());
   } finally {
     h.unmount();
   }
