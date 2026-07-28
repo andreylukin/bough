@@ -164,9 +164,11 @@ test("host names: one list, with the dropped verbs actually dropped", () => {
   ) {
     assert((HOST_FN_NAMES as readonly string[]).includes(later), `${later} must be declared`);
   }
-  // PROGRAM_PARAMS is the host names plus `console`, in order.
+  // PROGRAM_PARAMS is the host names first, then the two names bound the same way
+  // that are not bridged calls: `console` (built worker-side) and `require` (a real
+  // CommonJS require, so a program can reach `node:*` without an import statement).
   assertEquals(PROGRAM_PARAMS.slice(0, HOST_FN_NAMES.length), HOST_FN_NAMES);
-  assertEquals(PROGRAM_PARAMS.at(-1), "console");
+  assertEquals(PROGRAM_PARAMS.slice(HOST_FN_NAMES.length), ["console", "require"]);
 });
 
 test("request bodies reject the empty selections that make a no-op branch", () => {

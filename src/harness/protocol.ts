@@ -72,15 +72,24 @@ export const HOST_FN_NAMES = [
 export type HostFnName = (typeof HOST_FN_NAMES)[number];
 
 /**
- * The program's parameter names: every host function plus `console`.
+ * The program's parameter names: every host function, plus `console` and `require`.
  *
  * `console` is bound as a parameter rather than left as the worker's global
  * because it is not the worker's console — every line both streams to the UI as a
  * `tool.log` event AND batches into the tool result the model receives (spec §5).
  * It is in this list, and not in `HOST_FN_NAMES`, because it is a plain object
  * built worker-side, not a bridged call.
+ *
+ * `require` is here because a program is an ES module body and CommonJS therefore
+ * is not defined in it — but spec §2.2 says the program may reach `node:*` and
+ * `npm:` directly, and `require` is simply the other door to that same reach. Weak
+ * models write it constantly. Without it the round died on a bare
+ * `ReferenceError: require is not defined` whose stack pointed into
+ * `vm_worker.ts`, which reads as "bough is broken" rather than "use import", and
+ * the model's next move was to abandon the program and shell out instead. Binding
+ * the real thing costs nothing and removes the whole class.
  */
-export const PROGRAM_PARAMS = [...HOST_FN_NAMES, "console"] as const;
+export const PROGRAM_PARAMS = [...HOST_FN_NAMES, "console", "require"] as const;
 
 export type ProgramParam = (typeof PROGRAM_PARAMS)[number];
 

@@ -164,7 +164,7 @@ test("pre-flight: a shadowed host name fails before a worker is spawned", async 
   ok(/twice|already been declared/.test(res.error!), res.error);
   // Error text is a product surface (spec §6): the message must say WHY the name is
   // taken and what to do, not just quote the parser.
-  ok(res.error!.includes("host function"), res.error);
+  ok(res.error!.includes("already bound"), res.error);
   ok(res.error!.includes("myBash"), res.error);
 });
 
@@ -486,4 +486,25 @@ test("an interrupt mid-host-call still winds down and keeps partial output", asy
   strictEqual(res.interrupted, true);
   strictEqual(res.logs[0], "about to hang");
   ok(!res.logs.includes("unreachable"));
+});
+
+/**
+ * `require` is bound because weak models write CommonJS by reflex, and spec §2.2
+ * already grants the program the very modules it reaches for. Before this, such a
+ * program died on `ReferenceError: require is not defined` with a stack pointing
+ * into `vm_worker.ts` — a message that reads as a bug in bough rather than a fixable
+ * mistake in the program. A haiku run answered it by giving up on the program
+ * entirely and shelling out through `bash` instead, at the cost of two extra rounds.
+ */
+test("a program may reach node builtins through require, not only import", async () => {
+  const res = await runProgram({
+    code: `
+      const path = require("node:path");
+      console.log(path.join("a", "b"));
+    `,
+    host: fakeHost(),
+  });
+
+  ok(res.ok, res.error);
+  strictEqual(JSON.stringify(res.logs), JSON.stringify(["a/b"]));
 });

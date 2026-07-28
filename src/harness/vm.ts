@@ -190,7 +190,9 @@ export function checkProgramSyntax(code: string): string | null {
       .exec(why);
     const shadowed = shadow?.[1] ?? shadow?.[2];
     if (shadowed && (PROGRAM_PARAMS as readonly string[]).includes(shadowed)) {
-      return `program does not parse: ${why} — \`${shadowed}\` is a host function ` +
+      // "host function" would be a lie for `console` and `require`, which are bound
+      // the same way and are not bridged calls. "already bound" is true of all of them.
+      return `program does not parse: ${why} — \`${shadowed}\` is ` +
         `already bound in every program's scope, so declaring it shadows the binding. ` +
         `Rename your variable (\`my${shadowed[0].toUpperCase()}${shadowed.slice(1)}\`) ` +
         `and call \`${shadowed}\` as it is.`;

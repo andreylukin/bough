@@ -43,6 +43,7 @@
  * Ported from `src/harness/vm_worker.ts`. Deltas are marked `NOTE:`.
  */
 
+import { createRequire } from "node:module";
 import {
   type FromProgramWorker,
   HOST_FN_VERBS,
@@ -241,8 +242,18 @@ const bindings = {
   lsp: methodObject("lsp"),
 } satisfies Record<HostFnName, unknown>;
 
-/** Everything the program's scope holds: the bridged names plus `console`. */
-const scope: Record<ProgramParam, unknown> = { ...bindings, console: programConsole };
+/**
+ * Everything the program's scope holds: the bridged names, `console`, `require`.
+ *
+ * The `require` is a REAL one, resolving from this module's location, not a stub
+ * that throws a friendlier message — the program already has the capabilities it
+ * would reach for (spec §2.2), so the only thing missing was the CommonJS spelling.
+ */
+const scope: Record<ProgramParam, unknown> = {
+  ...bindings,
+  console: programConsole,
+  require: createRequire(import.meta.url),
+};
 
 async function run(code: string): Promise<void> {
   // deno-lint-ignore no-explicit-any
