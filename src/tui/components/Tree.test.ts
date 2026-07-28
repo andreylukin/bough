@@ -1,24 +1,18 @@
 /**
- * Tests for the session tree.
+ * The tree's PRESENTATION: the outcome marker, the title, and the absence.
  *
- * All of them are about one sentence in spec §4: **"Visibility is derived, not
- * stored."** Sessions of kind `subagent` and `workflow_agent` collapse under their
- * `originId` and surface only on drill-in; roots and their branches are always listed;
- * and there is no archive, deprecate, hide or purge state anywhere in the model. So the
- * assertions below are about what `treeItems` puts in the list given nothing but
- * `kind`, `originId` and one set of expanded ids — and, just as load-bearing, what it
- * leaves out. A regression here does not look like a crash; it looks like a fan-out
- * quietly burying the conversation it belongs to, or a branch the user cannot reach.
+ * What rows exist and in what order is `forest.ts`'s business and is asserted in
+ * `forest.test.ts` — this file covers only what this module decides.
  *
- * The last test pins the absence: no fixture carries a deprecated flag because no such
- * field exists, and the rendered rows must never grow one.
+ * The last test pins the absence: no fixture carries a deprecated flag because no
+ * such field exists, and the rendered rows must never grow one.
  */
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import type { SessionKind } from "../../schema/parts.ts";
 import type { SessionRow } from "../api.ts";
-import { isDelegated, statusMark, titleOf, Tree, treeItems } from "./Tree.tsx";
+import { statusMark, titleOf, Tree } from "./Tree.tsx";
 
 let clock = 1_700_000_000_000;
 
@@ -37,132 +31,6 @@ function session(
     ...over,
   };
 }
-
-/**
- * One root, a fork of it, and a fan-out of three workflow agents under the fork —
- * the ordinary shape of a session that delegated once.
- */
-function fixture() {
-  const root = session("root", "root");
-  const fork = session("fork", "fork", { originId: "root", parentId: "root" });
-  const agents = ["w1", "w2", "w3"].map((id) =>
-    session(id, "workflow_agent", { originId: "fork" })
-  );
-  const sub = session("sub", "subagent", { originId: "root" });
-  return {
-    roots: [root, fork],
-    childrenByOrigin: { root: [fork, sub], fork: agents },
-  };
-}
-
-test("delegated kinds are the ones that collapse", () => {
-  assert.equal(isDelegated("subagent"), true);
-  assert.equal(isDelegated("workflow_agent"), true);
-  assert.equal(isDelegated("root"), false);
-  assert.equal(isDelegated("fork"), false);
-  assert.equal(isDelegated("compaction"), false);
-});
-
-test("a fan-out collapses to one countable row under its origin", () => {
-  const { roots, childrenByOrigin } = fixture();
-  const items = treeItems({ roots, childrenByOrigin, expanded: new Set() });
-
-  const ids = items.map((i) => i.type === "session" ? i.session.id : `⋯${i.originId}`);
-  // The fork is listed (a branch, always visible); its three workflow agents are one
-  // row saying how many, and the root's subagent likewise. Nothing is hidden outright:
-  // a branch the user cannot see is a branch they cannot reach.
-  assert.deepEqual(ids, ["root", "fork", "⋯fork", "⋯root"]);
-
-  const collapsed = items.filter((i) => i.type === "collapsed");
-  assert.deepEqual(collapsed.map((c) => c.type === "collapsed" && c.count), [3, 1]);
-});
-
-test("drill-in surfaces exactly the origin that was expanded", () => {
-  const { roots, childrenByOrigin } = fixture();
-  const items = treeItems({ roots, childrenByOrigin, expanded: new Set(["fork"]) });
-
-  const ids = items.map((i) => i.type === "session" ? i.session.id : `⋯${i.originId}`);
-  assert.deepEqual(ids, ["root", "fork", "w1", "w2", "w3", "⋯root"]);
-  // The root's own fan-out stays collapsed: expanding one origin must not unfold the
-  // tree beneath or beside it.
-  assert.ok(ids.includes("⋯root"));
-});
-
-test("delegated grandchildren stay collapsed until their own parent is opened", () => {
-  const roots = [session("root", "root")];
-  const childrenByOrigin = {
-    root: [session("sub", "subagent", { originId: "root" })],
-    sub: [session("nested", "subagent", { originId: "sub" })],
-  };
-  const shallow = treeItems({ roots, childrenByOrigin, expanded: new Set(["root"]) });
-  assert.deepEqual(
-    shallow.map((i) => i.type === "session" ? i.session.id : `⋯${i.originId}`),
-    ["root", "sub", "⋯sub"],
-  );
-
-  const deep = treeItems({ roots, childrenByOrigin, expanded: new Set(["root", "sub"]) });
-  assert.deepEqual(
-    deep.map((i) => i.type === "session" ? i.session.id : `⋯${i.originId}`),
-    ["root", "sub", "nested"],
-  );
-});
-
-test("a fork listed at the top level is drawn once, under what it branched from", () => {
-  const { roots, childrenByOrigin } = fixture();
-  const items = treeItems({ roots, childrenByOrigin, expanded: new Set() });
-  const forks = items.filter((i) => i.type === "session" && i.session.id === "fork");
-  assert.equal(forks.length, 1);
-  assert.equal(forks[0].type === "session" && forks[0].depth, 1);
-});
-
-test("a session carries the count of what is delegated under it, open or not", () => {
-  const { roots, childrenByOrigin } = fixture();
-  const closed = treeItems({ roots, childrenByOrigin, expanded: new Set() });
-  const fork = closed.find((i) => i.type === "session" && i.session.id === "fork");
-  assert.equal(fork?.type === "session" && fork.delegated, 3);
-  assert.equal(fork?.type === "session" && fork.open, false);
-
-  const open = treeItems({ roots, childrenByOrigin, expanded: new Set(["fork"]) });
-  const opened = open.find((i) => i.type === "session" && i.session.id === "fork");
-  assert.equal(opened?.type === "session" && opened.open, true);
-});
-
-test("a lineage cycle renders a short tree instead of hanging the terminal", () => {
-  // `originId` is a pointer the server sets for the tree, not a foreign key — a
-  // malformed one must not be an infinite walk.
-  const a = session("a", "root");
-  const b = session("b", "fork", { originId: "a" });
-  const items = treeItems({
-    roots: [a],
-    childrenByOrigin: { a: [b], b: [a] },
-    expanded: new Set(),
-  });
-  assert.deepEqual(items.map((i) => i.type === "session" && i.session.id), ["a", "b"]);
-});
-
-test("an unfetched drill-in is an empty fan-out, not a crash", () => {
-  const items = treeItems({
-    roots: [session("root", "root")],
-    childrenByOrigin: {},
-    expanded: new Set(["root"]),
-  });
-  assert.equal(items.length, 1);
-});
-
-test("branches sort by creation, so a row does not move under the cursor", () => {
-  const root = session("root", "root");
-  const late = session("late", "fork", { originId: "root", createdAt: 2000 });
-  const early = session("early", "fork", { originId: "root", createdAt: 1000 });
-  const items = treeItems({
-    roots: [root],
-    childrenByOrigin: { root: [late, early] },
-    expanded: new Set(),
-  });
-  assert.deepEqual(
-    items.map((i) => i.type === "session" && i.session.id),
-    ["root", "early", "late"],
-  );
-});
 
 // ---- outcome markers ---------------------------------------------------------
 

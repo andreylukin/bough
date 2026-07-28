@@ -41,12 +41,11 @@
  * method on the store. This hook builds no client and knows no URL, which is what lets
  * `App.test.tsx` drive the whole panel from fixtures with no server.
  */
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { McpStatus } from "../../mcp/status.ts";
 import type { ModelRow } from "../../llm/client.ts";
 import { api, type SessionRow, type WorkflowDetail } from "../api.ts";
-import { selectionFor, type TreeRow } from "../historytree.ts";
-import { ConversationTree } from "./History.tsx";
+import { type ForestInput, forestRows, rewindIndex, selectionFor } from "../forest.ts";
 import type { Command, PanelTab } from "../keys.ts";
 import type { Store, TuiState } from "../store.ts";
 import {
@@ -65,7 +64,6 @@ import {
   reducePanel,
 } from "./Panel.tsx";
 import { changeItems, type PendingRevert } from "./Changes.tsx";
-import { sessionItems, sessionsWindow } from "./Sessions.tsx";
 import {
   asEffortChoice,
   chooseEntry,
@@ -77,7 +75,7 @@ import {
 } from "./ModelPicker.tsx";
 import { type SkillRow, type SkillSourceRow, skillsWindow } from "./Skills.tsx";
 import { mcpWindow } from "./Mcp.tsx";
-import { Tree, type TreeItem } from "./Tree.tsx";
+import { forestWindow, Tree } from "./Tree.tsx";
 import {
   phaseGroups,
   WF_FILTERS,
@@ -251,10 +249,17 @@ export interface PanelHostDeps {
     /** `PUT`/`DELETE /theme`. Fire-and-forget: a failed save must not unpaint. */
     persist?: (preset: ThemePreset, state: ThemeState) => unknown;
   };
-  /** The tree tab's rows, and the drill-in `App` already owns for the rail. */
-  tree: TreeItem[];
-  /** The open conversation as a tree — pi's `/tree` (`historytree.ts`). */
-  conversation?: TreeRow[];
+  /**
+   * THE forest's raw material: every conversation, the threads that have been
+   * fetched, and what is expanded. Folded into rows here rather than in `App`
+   * because the `/` filter that narrows them lives here (`forest.ts`).
+   */
+  forest: Omit<ForestInput, "currentId" | "filter" | "userOnly">;
+  /** Show a conversation's turns. Fetches its thread if this is the first time. */
+  expand: (sessionId: string) => void;
+  /** Hide them again. */
+  collapseTurns: (sessionId: string) => void;
+  /** Reveal a collapsed delegated fan-out (spec §4). */
   drillIn: (originId: string) => void;
   collapse: (originId: string) => void;
 }
@@ -282,16 +287,33 @@ export interface PanelHandle {
   filtering: boolean;
   /** Append to the filter buffer. `App` calls it for a text keypress while filtering. */
   filterInput: (text: string) => void;
+  /**
+   * Open the panel straight onto one run's view, by id.
+   *
+   * The transcript's workflow card is the entry point this exists for: a click on a
+   * card must land on THAT run, not on the workflows tab with the cursor wherever it
+   * happened to be. Unknown ids still open the tab — a run purged out from under a
+   * card should show the list, not nothing.
+   */
+  openRun: (runId: string) => void;
   /** The mounted panel, or `null` when it is closed. */
   view: ReactNode;
 }
 
 export function usePanelHost(deps: PanelHostDeps): PanelHandle {
   const { store, state, rows, cols, now, controls = {}, models = [] } = deps;
-  const conversation = deps.conversation ?? [];
-  const { tree, drillIn, collapse } = deps;
+  const { expand, collapseTurns, drillIn, collapse } = deps;
   const [panel, setPanel] = useState<PanelState>(initialPanel);
   const [sel, setSel] = useState(0);
+  /**
+   * The row an ARRIVAL should land on, when it is not the top.
+   *
+   * "Arriving at a tab arrives at its top" is the rule below and it is right for
+   * every ordinary entry — but `esc esc` is not one: it names the row it is going
+   * to. A ref rather than state because it is consumed by the very effect that
+   * would otherwise overwrite it, and one render later it is nobody's business.
+   */
+  const landOn = useRef<number | null>(null);
   const [focusDiff, setFocusDiff] = useState(false);
   // Rows scrolled into the focused file's hunks. The tab has always PRINTED "↑↓ scroll
   // the diff" and always passed `scroll` as its default 0, so the arrow keys moved the
@@ -307,6 +329,8 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
   // nothing, no run ever showed its elapsed time or its cost, and the steering verbs
   // the footer computes from a run's state had no state to compute from.
   const [wfOpen, setWfOpen] = useState<string | null>(null);
+  /** A run the transcript asked for, waiting for the workflows tab to be on screen. */
+  const [pendingRun, setPendingRun] = useState<string | null>(null);
   const [wfLevel, setWfLevel] = useState<WfLevel>(0);
   const [wfDetail, setWfDetail] = useState<WorkflowDetail | null>(null);
   const [wfPhaseSel, setWfPhaseSel] = useState(0);
@@ -370,10 +394,18 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
   // The filter NARROWS the list the cursor walks, and it does so here rather than in
   // the tab body: `sel` is bounded by the list's length, so a body that filtered on
   // its own would leave the cursor addressing rows that are no longer there.
-  const sessions = useMemo(
-    () => sessionItems(state.sessions, panel.tab === "sessions" ? filter : ""),
-    [state.sessions, panel.tab, filter],
+  const tree = useMemo(
+    () =>
+      forestRows({
+        ...deps.forest,
+        currentId: state.currentId,
+        // Only when the buffer belongs to THIS tab: an MCP URL half-typed must never
+        // narrow the conversation list underneath it.
+        filter: panel.tab === "tree" ? filter : "",
+      }),
+    [deps.forest, state.currentId, panel.tab, filter],
   );
+  const threads = deps.forest.threads;
   const changes = useMemo(() => changeItems(state.changes), [state.changes]);
   const entries = useMemo(() => {
     const all = modelEntries(models);
@@ -501,8 +533,7 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
   );
 
   const items = tabLength(panel.tab, {
-    sessions: sessions.length,
-    tree: state.currentId ? conversation.length : tree.length,
+    tree: tree.length,
     changes: changes.length,
     workflows: state.workflows.length,
     model: entries.length,
@@ -528,11 +559,19 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
     setPanel(reducePanel(panel, action, { theme: preview }));
   }, [panel, preview]);
 
+  // The transcript card's door into the run view. Jumps the tab and parks the id for
+  // the effect above to apply — see there for why it cannot be done in one step.
+  const openRun = useCallback((runId: string) => {
+    setPendingRun(runId);
+    setPanel(reducePanel(panel, { type: "jump", tab: "workflows" }, { theme: preview }));
+  }, [panel, preview]);
+
   // Arriving at a tab arrives at its top, with no message, no held diff focus, no
   // armed revert (a confirm that outlives the screen it was read on is not a confirm)
   // and no run drilled into.
   useEffect(() => {
-    setSel(0);
+    setSel(landOn.current ?? 0);
+    landOn.current = null;
     setMessage(null);
     setFocusDiff(false);
     setDiffScroll(0);
@@ -548,6 +587,31 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
     setFiltering(false);
     setFilter("");
   }, [panel.tab, panel.open]);
+
+  /**
+   * Apply a pending `openRun` once the workflows tab is actually showing.
+   *
+   * Two-step and not one because the reset effect directly above clears `wfOpen` on
+   * every tab change: setting the tab and the run in the same handler means the reset
+   * runs afterwards and throws the run away, landing on the list with the cursor
+   * wherever it was. Declared AFTER that effect so it runs after it in the same
+   * commit, which is what makes "open the tab, then drill in" one frame.
+   */
+  useEffect(() => {
+    if (!pendingRun || !panel.open || panel.tab !== "workflows") return;
+    const at = state.workflows.findIndex((w) => w.id === pendingRun);
+    setPendingRun(null);
+    // An id with no run — purged, or from another session — leaves the tab open on
+    // the list rather than drilling into nothing.
+    if (at < 0) return;
+    setSel(at);
+    setWfOpen(pendingRun);
+    setWfDetail(null);
+    setWfLevel(1);
+    setWfPhaseSel(0);
+    setWfAgentSel(0);
+    setWfScroll(0);
+  }, [pendingRun, panel.open, panel.tab, state.workflows]);
 
   /**
    * The row window each list tab is PAINTING, so a digit lands where the eye is.
@@ -567,9 +631,11 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
   const pickTargets = useCallback((): number[] => {
     const chrome = (message ? 1 : 0) + (filtering || filter ? 1 : 0);
     switch (panel.tab) {
-      case "sessions": {
-        const { start, height } = sessionsWindow(sessions.length, sel, bodyRows, chrome);
-        return range(start, Math.min(sessions.length, start + height));
+      case "tree": {
+        // The SAME window the tab paints — `Tree.tsx` exports it for exactly this,
+        // so a digit cannot address a row that is off screen.
+        const { start, height } = forestWindow(tree.length, sel, bodyRows, chrome);
+        return range(start, Math.min(tree.length, start + height));
       }
       case "model": {
         const display = displayRows(entries, { cheapUnset: modelCfg.cheapModel === null });
@@ -610,7 +676,7 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
     message,
     filtering,
     filter,
-    sessions.length,
+    tree.length,
     entries,
     modelCfg.cheapModel,
     shownSkills,
@@ -746,34 +812,34 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
       return;
     }
     switch (panel.tab) {
-      case "sessions": {
-        const item = sessions[at];
-        if (!item) return;
-        dispatch({ type: "close" });
-        return void store.open(item.session.id);
-      }
       case "tree": {
-        // With a conversation open this tab IS that conversation, so ⏎ means
-        // "go back to this turn" — pi's selection rules, resolved by
-        // `selectionFor`: a user turn cuts BEFORE itself and hands its text to
-        // the composer so you edit and re-send; anything else cuts inclusive and
-        // leaves the composer empty; a branch row is a session, so open it.
-        if (state.currentId) {
-          const row = conversation[at];
-          if (!row) return;
-          const choice = selectionFor(row, state.thread);
+        // ONE list, three kinds of row, and `selectionFor` decides which is which:
+        // a conversation OPENS (the switcher half of this surface stays one key), a
+        // collapsed fan-out DRILLS IN, and a turn FORKS — pi's selection rules, so a
+        // user turn cuts BEFORE itself and hands its text to the composer while
+        // anything else cuts inclusive and leaves the composer empty.
+        const row = tree[at];
+        if (!row) return;
+        const choice = selectionFor(row, threads);
+        if ("drill" in choice) return drillIn(choice.drill);
+        if ("open" in choice) {
           dispatch({ type: "close" });
-          if ("open" in choice) return void store.open(choice.open);
-          return void controls.forkAt?.(
-            state.currentId,
-            { ...choice.fork, ...(summarize ? { summarizeAbandoned: true } : {}) },
-            choice.editorText,
-          );
+          return void store.open(choice.open);
         }
-        const item = tree[at];
-        if (!item || item.type !== "session") return;
+        if ("expand" in choice) return expand(choice.expand);
         dispatch({ type: "close" });
-        return void store.open(item.session.id);
+        // The fork is addressed to the row's OWN conversation, not to the open one:
+        // the forest shows every conversation's turns, so ⏎ on a branch's turn must
+        // branch that branch rather than whatever happens to be on screen.
+        return void controls.forkAt?.(
+          choice.fork.sessionId,
+          {
+            atMessageId: choice.fork.atMessageId,
+            ...(choice.fork.exclusive ? { exclusive: true } : {}),
+            ...(summarize ? { summarizeAbandoned: true } : {}),
+          },
+          choice.editorText,
+        );
       }
       case "changes":
         // With a revert armed ⏎ is that revert's yes — the scope has been printed and
@@ -846,7 +912,6 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
     dispatch,
     panel.tab,
     sel,
-    sessions,
     tree,
     state.workflows,
     entries,
@@ -858,7 +923,9 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
     performRevert,
     wfLevel,
     wfAgents.length,
-    conversation,
+    threads,
+    expand,
+    drillIn,
     controls.forkAt,
     // The URL buffer is read at the top of this callback, so a stale copy would
     // register whatever was typed the render before.
@@ -997,6 +1064,40 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
     // out of the panel. Without this, cancelling a confirm also closed the tab it was
     // asked in, and there was no way back up a workflow's levels at all.
     if (panel.open && command === "panel.close" && back()) return true;
+    /**
+     * `esc esc` — the tree, opened ON the turn you would go back to.
+     *
+     * Handled ahead of `panelActionFor` because the landing row is the entire
+     * difference between this and `^f`: the open conversation is expanded (so its
+     * turns are rows at all) and the cursor is put on its last user turn, where ⏎
+     * means "edit this and branch". Arriving at the top of a forest of forty
+     * conversations would make the commonest correction in the product a scroll.
+     */
+    if (command === "tree.rewind") {
+      const id = state.currentId;
+      if (!id) {
+        setMessage("no conversation is open — there is no turn to go back to");
+      }
+      if (id) expand(id);
+      setPanel({ open: true, tab: "tree" });
+      // Against the rows as they will be WITH this conversation expanded: `expand`
+      // is a state update and `tree` in this closure predates it, so the index is
+      // computed from a forest built here rather than from the stale one.
+      landOn.current = (
+        rewindIndex(
+          forestRows({
+            ...deps.forest,
+            currentId: id,
+            expanded: id ? new Set([...deps.forest.expanded, id]) : deps.forest.expanded,
+          }),
+          id,
+        )
+      );
+      // Set as well as parked: the reset effect only fires when the tab or the open
+      // flag CHANGES, and `esc esc` inside an already-open tree changes neither.
+      setSel(landOn.current);
+      return true;
+    }
     const action = panelActionFor(command);
     if (action) {
       // A chord opens the panel from outside it; everything else needs it open.
@@ -1046,14 +1147,26 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
         }
         const item = tree[sel];
         if (panel.tab !== "tree" || !item) return true;
-        drillIn(item.type === "session" ? item.session.id : item.originId);
+        // → WALKS IN, one step at a time: a conversation shows its turns, a
+        // collapsed fan-out reveals itself. On a turn there is nothing further in —
+        // the branches under it are already rows — so it does nothing rather than
+        // pretending.
+        if (item.kind === "session") expand(item.id);
+        else if (item.kind === "collapsed") drillIn(item.originId);
         return true;
       }
       case "move.out": {
         if (back()) return true;
         const item = tree[sel];
         if (panel.tab !== "tree" || !item) return true;
-        collapse(item.type === "session" ? item.session.id : item.originId);
+        // ← is →'s inverse on a conversation. On a TURN it closes the conversation
+        // that turn belongs to, which is the only useful "out" from inside one and
+        // saves walking back up to the header row to press ← there.
+        if (item.kind === "session") {
+          collapseTurns(item.id);
+          collapse(item.id);
+        } else if (item.kind === "message") collapseTurns(item.sessionId);
+        else collapse(item.originId);
         return true;
       }
       // ---- a screenful at a time (spec §3: a list you can only walk one row at a
@@ -1261,18 +1374,6 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
         tab={panel.tab}
         rows={body}
         width={cols}
-        sessions={{
-          items: sessions,
-          selected: sel,
-          currentId: state.currentId,
-          rows: body,
-          now,
-          message,
-          // Built into `Sessions.tsx` from the start and never passed — the tab drew
-          // a `/ filter` line for a buffer nothing could fill.
-          filter,
-          filtering,
-        }}
         changes={{
           set: state.currentId ? state.changes : NO_SESSION_CHANGES,
           ...(state.currentId ? {} : { hint: null }),
@@ -1306,16 +1407,16 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
       >
         {panel.tab === "tree"
           ? (
-            // With a conversation open the tree is THAT conversation — pi's
-            // `/tree`. With none open there is nothing to branch, so it falls back
-            // to the session lineage, which is what this tab used to be.
-            state.currentId
-              // `bodyRows`, not `body`: these two tabs arrive as `children`, so
-              // `Panel` cannot subtract its own chrome for them the way it does for
-              // the tabs it mounts itself. They were handed two rows they did not
-              // have, every time.
-              ? <ConversationTree rows={conversation} selected={sel} height={bodyRows} />
-              : <Tree items={tree} selected={sel} rows={bodyRows} />
+            // `bodyRows`, not `body`: this tab arrives as `children`, so `Panel`
+            // cannot subtract its own chrome for it the way it does for the tabs it
+            // mounts itself. It was handed two rows it did not have, every time.
+            <Tree
+              rows={tree}
+              selected={sel}
+              height={bodyRows}
+              filter={filter}
+              filtering={filtering}
+            />
           )
           : (
             <>
@@ -1354,6 +1455,7 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
     handle,
     filtering,
     filterInput,
+    openRun,
     view,
   };
 }

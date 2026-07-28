@@ -30,7 +30,7 @@ import type { SessionRow } from "../api.ts";
 import type { LiveUnit } from "../store.ts";
 import { bold, dim, info, truncateAnsi, unitLine } from "../format.ts";
 import { padRow, styledRow } from "./Message.tsx";
-import { DELEGATED_KINDS, isDelegated } from "./Tree.tsx";
+import { DELEGATED_KINDS, isDelegated } from "../forest.ts";
 
 /**
  * The delegated children of the open session with a turn in flight.

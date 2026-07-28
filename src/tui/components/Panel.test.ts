@@ -30,6 +30,7 @@ import {
   panelActionFor,
   type PanelState,
   type PanelTab,
+  panelBodyRows,
   PanelTabs,
   reducePanel,
   SkillsTab,
@@ -49,7 +50,8 @@ import {
 } from "../theme.ts";
 import { chooseEntry, effectiveModel, modelEntries } from "./ModelPicker.tsx";
 import { changeItems, diffBody, fileStats } from "./Changes.tsx";
-import { labelFor, sessionItems } from "./Sessions.tsx";
+import { forestRows } from "../forest.ts";
+import { Tree } from "./Tree.tsx";
 import type { SessionRow } from "../api.ts";
 import type { SessionChangeSet } from "../../server/changes.ts";
 import { setColorEnabled } from "../format.ts";
@@ -91,13 +93,15 @@ test("^t toggles the panel and every other chord jumps straight to its tab", () 
   const toggle = panelActionFor("panel.toggle");
   assert.deepEqual(toggle, { type: "toggle" });
   state = reducePanel(state, toggle!);
-  assert.deepEqual(state, { open: true, tab: "sessions" });
+  // The tree is the home tab: it is the switcher AND the history, so it is what
+  // `^t` with no further intent lands on.
+  assert.deepEqual(state, { open: true, tab: "tree" });
 
   // A chord is a DIRECT jump: it works from any tab, and from a closed panel.
   for (const tab of TABS) {
     const action = panelActionFor(`tab.${tab.id}`);
     assert.deepEqual(action, { type: "jump", tab: tab.id }, tab.chord);
-    const next = reducePanel({ open: false, tab: "sessions" }, action!);
+    const next = reducePanel({ open: false, tab: "tree" }, action!);
     assert.deepEqual(next, { open: true, tab: tab.id });
   }
 
@@ -178,8 +182,8 @@ test("a theme preview paints live and reverts when the tab is left", () => {
   assert.equal(painted[0]?.theme?.name, THEME_PRESETS[1].name);
 
   // Leaving without confirming reverts to what was in force on entry.
-  state = reducePanel(state, { type: "jump", tab: "sessions" }, { theme: preview });
-  assert.deepEqual(state, { open: true, tab: "sessions" });
+  state = reducePanel(state, { type: "jump", tab: "changes" }, { theme: preview });
+  assert.deepEqual(state, { open: true, tab: "changes" });
   assert.equal(preview.previewing, false);
   assert.deepEqual(painted[painted.length - 1], START);
   assert.equal(preview.index, presetIndex(START));
@@ -350,37 +354,31 @@ test("a change set counts its own +/- and flattens hunks for display", async () 
   assert.ok(frame.includes("since abcdef12"), frame);
 });
 
-test("the sessions tab lists conversations only, newest first, and filters", async () => {
+test("the tree tab lists conversations newest first, delegated work collapsed", async () => {
   const rows: SessionRow[] = [
     row("a", "root", { title: "wire the panel", createdAt: 1_000, originDir: "/src/bough" }),
-    row("b", "fork", { title: "fork · retry the patch", createdAt: 3_000 }),
-    row("c", "subagent", { title: "subagent · review", createdAt: 4_000 }),
-    row("d", "workflow_agent", { title: "audit", createdAt: 5_000 }),
-    row("e", "compaction", { title: "compacted · earlier", createdAt: 2_000 }),
+    row("b", "root", { title: "nightly bench", createdAt: 3_000 }),
+    row("c", "subagent", { title: "subagent · review", createdAt: 4_000, originId: "a" }),
   ];
-  // Delegated kinds collapse under their origin (spec §4) — the tree tab shows them.
-  assert.deepEqual(sessionItems(rows).map((i) => i.session.id), ["b", "e", "a"]);
-  assert.equal(labelFor(rows[1]), "retry the patch");
-  // The filter subtracts rows; it never reorders them.
-  assert.deepEqual(sessionItems(rows, "patch").map((i) => i.session.id), ["b"]);
-  assert.deepEqual(sessionItems(rows, "zzz"), []);
-
+  const items = forestRows({
+    sessions: rows,
+    childrenByOrigin: { a: [rows[2]] },
+    threads: {},
+    expanded: new Set(["a"]),
+    drilled: new Set(),
+    currentId: "a",
+  });
   const frame = await draw(
     createElement(Panel, {
-      tab: "sessions",
+      tab: "tree",
       rows: 14,
-      sessions: {
-        items: sessionItems(rows),
-        selected: 0,
-        currentId: "a",
-        rows: 14,
-        now: 10_000,
-      },
-    }),
+    }, createElement(Tree, { rows: items, selected: 0, height: 12 })),
   );
-  assert.ok(frame.includes("retry the patch"), frame);
-  assert.ok(frame.includes("here"), frame);
-  assert.equal(frame.includes("review"), false); // the subagent is not listed
+  assert.ok(frame.includes("nightly bench"), frame);
+  assert.ok(frame.includes("wire the panel"), frame);
+  // Spec §4: the subagent is a COUNT, not a row of its own, until it is drilled into.
+  assert.equal(frame.includes("review"), false, frame);
+  assert.ok(frame.includes("1 delegated"), frame);
 });
 
 test("the MCP tab reports granted, connected and unauthorized distinctly", async () => {
@@ -431,7 +429,7 @@ test("the open tab is marked in TEXT, not only in colour", async () => {
   // active tab used to be signalled by hue and weight alone, so a colourblind
   // reader, a NO_COLOR terminal and every text assertion in this repo all saw a
   // strip of eight identical words.
-  for (const id of ["sessions", "changes", "theme"] as PanelTab[]) {
+  for (const id of ["tree", "changes", "theme"] as PanelTab[]) {
     const text = await draw(createElement(PanelTabs, { tab: id }));
     assert.ok(text.includes(`[${id}]`), `tab "${id}" is not marked: ${text.trim()}`);
     // Exactly one tab is marked open at a time.
@@ -497,7 +495,13 @@ function overdrawn(frame: string): string | null {
 }
 
 test("no tab paints past its row budget — the 100x12 panel corruption", async () => {
-  const items = sessionItems(LIST);
+  const items = forestRows({
+    sessions: LIST,
+    childrenByOrigin: {},
+    threads: {},
+    expanded: new Set(),
+    drilled: new Set(),
+  });
 
   // 12 terminal rows is what `App` leaves the panel roughly six of. Every height
   // from "absurdly cramped" up to comfortable must hold the property, because the
@@ -509,13 +513,12 @@ test("no tab paints past its row budget — the 100x12 panel corruption", async 
           tab,
           rows: h,
           width: 100,
-          sessions: { items, selected: 0, rows: h, now: 2_000 },
           changes: { set: null, items: [], selected: 0, rows: h },
           model: { cfg: MODEL_CFG, entries: modelEntries(CATALOG), selected: 0, rows: h },
           mcp: { status: null, selected: 0 },
           skills: { skills: null, selected: 0 },
           theme: { preview: createThemePreview({ current: START }) },
-        }),
+        }, createElement(Tree, { rows: items, selected: 0, height: panelBodyRows(h) })),
         100,
         // Two more than the panel's own box, so an overrun would be VISIBLE as a
         // painted row below the border rather than clipped by the grid.
@@ -539,16 +542,21 @@ test("no tab paints past its row budget — the 100x12 panel corruption", async 
   }
 });
 
-test("the sessions legend is the LAST row, at every height that has one", async () => {
-  const items = sessionItems(LIST);
+test("the tree legend is the LAST row, at every height that has one", async () => {
+  const items = forestRows({
+    sessions: LIST,
+    childrenByOrigin: {},
+    threads: {},
+    expanded: new Set(),
+    drilled: new Set(),
+  });
   for (const h of [4, 6, 8, 12, 20]) {
     const frame = await draw(
       createElement(Panel, {
-        tab: "sessions",
+        tab: "tree",
         rows: h,
         width: 100,
-        sessions: { items, selected: 0, rows: h, now: 2_000 },
-      }),
+      }, createElement(Tree, { rows: items, selected: 0, height: panelBodyRows(h) })),
       100,
       h + 4,
     );
@@ -596,36 +604,36 @@ test("something that is not a URL yields no name, so nothing is registered", () 
 // layout is how a click lands one tab off at the far end of the strip.
 
 test("a click on a title picks that tab, on either side of the active one", () => {
-  // "  sessions  tree …" — the strip opens with two spaces, so `sessions`
-  // occupies columns 2..9.
-  assert.equal(tabAtColumn("sessions", 2), "sessions");
-  assert.equal(tabAtColumn("sessions", 9), "sessions");
+  // "  tree  changes …" — the strip opens with two spaces, so `tree` occupies
+  // columns 2..5.
+  assert.equal(tabAtColumn("changes", 2), "tree");
+  assert.equal(tabAtColumn("changes", 5), "tree");
   // Every tab is reachable, including the last, which is what the truncation bug
   // in `PanelTabs` was originally about.
-  assert.equal(tabAtColumn("sessions", 0), null);
-  assert.equal(tabAtColumn("sessions", 13), "tree");
+  assert.equal(tabAtColumn("changes", 0), null);
+  assert.equal(tabAtColumn("tree", 9), "changes");
 });
 
 test("the ACTIVE tab's brackets shift everything after it by one", () => {
-  // " [sessions]" is one column wider than "  sessions", so a strip measured
-  // against the inactive layout would drift right for every later tab.
-  // Column 12 is the discriminator: with `sessions` active its "]" pushes `tree`
-  // right to 13, leaving 12 as padding; with `sessions` inactive `tree` starts at 12.
-  assert.equal(tabAtColumn("sessions", 12), null);
-  assert.equal(tabAtColumn("tree", 12), "tree");
+  // " [tree]" is one column wider than "  tree", so a strip measured against the
+  // inactive layout would drift right for every later tab. Column 8 is the
+  // discriminator: with `tree` active its "]" pushes `changes` right to 9, leaving
+  // 8 as padding; with `tree` inactive `changes` starts at 8.
+  assert.equal(tabAtColumn("tree", 8), null);
+  assert.equal(tabAtColumn("changes", 8), "changes");
 });
 
 test("a click in the padding between titles picks nothing", () => {
   // The gap belongs to neither neighbour. Rounding toward one of them is how a
   // click near an edge selects the tab you were trying to avoid.
-  assert.equal(tabAtColumn("sessions", 1), null);
-  assert.equal(tabAtColumn("sessions", 10), null);
+  assert.equal(tabAtColumn("changes", 1), null);
+  assert.equal(tabAtColumn("changes", 6), null);
 });
 
 test("every tab is reachable by some column", () => {
   // The complement of the above: a tab no column resolves to is a tab the mouse
   // cannot reach, however plausible the strip looks.
-  for (const active of ["sessions", "mcp"] as const) {
+  for (const active of ["tree", "mcp"] as const) {
     const seen = new Set<string>();
     for (let c = 0; c < 200; c++) {
       const hit = tabAtColumn(active, c);

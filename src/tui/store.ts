@@ -338,6 +338,8 @@ export function partKey(part: Part): string | null {
       return `ask:${part.id}`;
     case "image":
       return `image:${part.path}`;
+    case "workflow":
+      return `workflow:${part.id}`;
     default:
       return null; // text / reasoning — legal to repeat, so never deduped by content
   }

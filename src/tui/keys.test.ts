@@ -261,7 +261,7 @@ test("a bare letter means what the OPEN TAB says it means", () => {
   // to commit a model — a bare letter silently changing a setting.
   assert.equal(lookup(ctx({ mode: "panel", tab: "model" }), "s"), null);
   assert.equal(lookup(ctx({ mode: "panel", tab: "model" }), "x"), null);
-  assert.equal(lookup(ctx({ mode: "panel", tab: "sessions" }), "p"), null);
+  assert.equal(lookup(ctx({ mode: "panel", tab: "skills" }), "p"), null);
   // A context that names no tab is the panel closed: no tab-local row can fire.
   assert.equal(lookup(ctx({ mode: "panel" }), "x"), null);
 });

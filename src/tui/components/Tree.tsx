@@ -1,128 +1,25 @@
 /**
- * The session tree: every root, fork and subagent branch, in one list.
+ * The one tree, painted.
  *
  * THE INVARIANT THIS HOLDS: **visibility is derived from lineage, never stored.**
  * Spec §4 is explicit — sessions of kind `subagent` and `workflow_agent` collapse
- * under their `originId` and surface only on drill-in; roots and their branches are
+ * under their origin and surface only on drill-in; roots and their branches are
  * always listed; and "there is no archive, deprecate, hide, or purge action, and no
- * corresponding columns". The old tree (`src/tui/components/ConversationTree.tsx`)
- * rendered a `deprecatedAt` strikethrough, a `showDeprecated` toggle and an `x
- * deprecate` binding. None of that is ported: the state does not exist, so neither
- * does the affordance. What replaces it is `treeItems` below, which computes the whole
- * visible list from `kind` + `originId` + one set of expanded ids and nothing else.
+ * corresponding columns". The old tree rendered a `deprecatedAt` strikethrough, a
+ * `showDeprecated` toggle and an `x deprecate` binding. None of that is ported: the
+ * state does not exist, so neither does the affordance.
  *
- * WHY THE COLLAPSE IS A *COUNT*, NOT A HIDE. A fan-out of 40 workflow agents under one
- * turn is the normal case (spec §8), and listing them inline buries the conversation
- * they belong to. But a branch the user cannot see is a branch they cannot reach, so a
- * collapsed origin renders a row that says how many are under it — `⋯ 40 delegated` —
- * rather than nothing. Drill-in expands exactly that node; delegated grandchildren
- * stay collapsed until their own parent is expanded, so opening one fan-out never
- * unfolds the tree beneath it.
- *
- * PURE CORE. `treeItems` is a fold over rows with no React, no clock and no I/O, so the
- * lineage rules are tested by handing it fixture sessions (plan §7: "renderers over
- * fixture state"). The component below is the thin part: it windows the list around the
- * cursor and paints it.
- *
- * NOTE on colour: `tui/theme.ts` (T9.2) has not landed and is not in this task's owned
- * set, so the status hues here are the terminal's named colours rather than the
- * server-served palette. They are confined to `statusMark`/`KIND_GLYPH` — one record to
- * repoint when the palette arrives. Measurement and clipping DO come from
- * `tui/format.ts`, which has landed: display width is never `String.length`.
+ * PURE CORE ELSEWHERE. The rows come from `forest.ts`, which is a fold over
+ * sessions and threads with no React, no clock and no I/O (plan §7: "renderers over
+ * fixture state"). This file is the thin part: it windows the list around the
+ * cursor and paints it. Measurement and clipping come from `format.ts` — display
+ * width is never `String.length`.
  */
 import { TextAttributes } from "@opentui/core";
 import type { SessionKind } from "../../schema/parts.ts";
 import type { SessionRow } from "../api.ts";
 import { clip, fmtUsd, windowAround } from "../format.ts";
-
-// ---------------------------------------------------------------------------
-// Lineage (pure)
-// ---------------------------------------------------------------------------
-
-/** The kinds that collapse under their origin and surface on drill-in (spec §4). */
-export const DELEGATED_KINDS: readonly SessionKind[] = ["subagent", "workflow_agent"];
-
-export function isDelegated(kind: SessionKind): boolean {
-  return DELEGATED_KINDS.includes(kind);
-}
-
-/** What the tree is built from: the top level, plus whatever drill-in has fetched. */
-export interface TreeInput {
-  /** `GET /sessions` — roots and their forks/compactions. Never delegated kinds. */
-  roots: SessionRow[];
-  /** `originId` → `GET /sessions?originId=`. Absent means "not fetched yet". */
-  childrenByOrigin: Record<string, SessionRow[]>;
-  /** Origins whose delegated children are drilled into. */
-  expanded: ReadonlySet<string>;
-}
-
-export type TreeItem =
-  | {
-    type: "session";
-    session: SessionRow;
-    depth: number;
-    /** Delegated children under this session, whether or not they are shown. */
-    delegated: number;
-    /** Is this node's delegated fan-out currently drilled into? */
-    open: boolean;
-  }
-  /** The collapsed fan-out's own row — reachable, countable, one line. */
-  | { type: "collapsed"; originId: string; depth: number; count: number };
-
-function byCreatedAt(a: SessionRow, b: SessionRow): number {
-  return a.createdAt - b.createdAt;
-}
-
-/**
- * The visible list, depth-first.
- *
- * `seen` is a cycle guard, not a dedupe: `originId` is a pointer the server sets and
- * not a foreign key, so a malformed lineage must render a short tree rather than hang
- * the terminal in an infinite walk.
- */
-export function treeItems(input: TreeInput): TreeItem[] {
-  const items: TreeItem[] = [];
-  const seen = new Set<string>();
-
-  const walk = (session: SessionRow, depth: number): void => {
-    if (seen.has(session.id)) return;
-    seen.add(session.id);
-    const children = [...(input.childrenByOrigin[session.id] ?? [])].sort(byCreatedAt);
-    const branches = children.filter((c) => !isDelegated(c.kind));
-    const delegated = children.filter((c) => isDelegated(c.kind));
-    const open = input.expanded.has(session.id);
-    items.push({ type: "session", session, depth, delegated: delegated.length, open });
-    // Branches are always listed; delegated children only on drill-in (spec §4).
-    for (const child of branches) walk(child, depth + 1);
-    if (delegated.length === 0) return;
-    if (open) { for (const child of delegated) walk(child, depth + 1); }
-    else {
-      items.push({
-        type: "collapsed",
-        originId: session.id,
-        depth: depth + 1,
-        count: delegated.length,
-      });
-    }
-  };
-
-  for (const root of [...input.roots].sort(byCreatedAt)) {
-    // A fork the server also listed at the top level is walked from its origin
-    // instead, so it appears once, under what it branched from.
-    if (root.originId && input.roots.some((r) => r.id === root.originId)) continue;
-    walk(root, 0);
-  }
-  return items;
-}
-
-/** The item a cursor at `selected` is on, or null on an empty tree. */
-export function itemAt(items: TreeItem[], selected: number): TreeItem | null {
-  return items[selected] ?? null;
-}
-
-// ---------------------------------------------------------------------------
-// Presentation
-// ---------------------------------------------------------------------------
+import { type ForestRow, isDelegated } from "../forest.ts";
 
 const KIND_GLYPH: Record<SessionKind, string> = {
   root: "●",
@@ -133,13 +30,14 @@ const KIND_GLYPH: Record<SessionKind, string> = {
 };
 
 /**
- * Outcome marker. `null` for a session that has never run a turn — an absence, not a
- * state, and rendering a glyph for it would invent one.
+ * Outcome marker. `null` for a session that has never run a turn — an absence, not
+ * a state, and rendering a glyph for it would invent one.
  *
  * `outcomeOk === false` is checked ahead of the turn status because it is the
- * DELEGATION outcome (`schema/parts.ts`): a subagent whose turn ended `done` but whose
- * work failed is exactly the branch the tree exists to make findable. There is no
- * acceptance gate behind it — it records that the turn errored, not that a check ran.
+ * DELEGATION outcome (`schema/parts.ts`): a subagent whose turn ended `done` but
+ * whose work failed is exactly the branch the tree exists to make findable. There is
+ * no acceptance gate behind it — it records that the turn errored, not that a check
+ * ran.
  */
 export function statusMark(s: SessionRow): { glyph: string; color: string } | null {
   if (s.busy) return { glyph: "⋯", color: "cyan" };
@@ -163,57 +61,125 @@ export function titleOf(s: SessionRow): string {
   return (s.title || "(untitled)").replace(/^(fork|compacted|subagent|workflow) · /, "");
 }
 
-export function Tree(
-  { items, selected, rows }: { items: TreeItem[]; selected: number; rows: number },
-) {
+/** `supervisor` is the agent — the transcript calls it "bough" and so does this. */
+const ROLE_LABEL: Record<string, string> = {
+  user: "you",
+  supervisor: "bough",
+  system: "system",
+};
+
+const ROLE_COLOR: Record<string, string> = {
+  user: "white",
+  supervisor: "green",
+  system: "yellow",
+};
+
+/**
+ * The rows on screen, and where the window starts.
+ *
+ * Exported because `PanelHost` resolves `1`–`9` against the SAME window this
+ * paints: two calculations of "which rows are visible" is how a digit comes to
+ * select a row nobody can see.
+ */
+export function forestWindow(
+  count: number,
+  selected: number,
+  rows: number,
+  chrome = 0,
+): { start: number; height: number } {
   // One row of chrome: the legend, and it goes LAST. It used to be the tab's FIRST
   // row — the only tab that put it there — and the budget reserved four rows for it
   // while flooring the list at three, so a short panel painted rows it did not have
   // and OpenTUI shrank them onto each other (`Panel.tsx`).
-  const height = Math.max(0, rows - 1);
-  const { start, end } = windowAround(selected, items.length, height);
-  const window = height === 0 ? [] : items.slice(Math.max(0, start), end);
+  const height = Math.max(0, rows - 1 - chrome);
+  const { start, end } = windowAround(selected, count, height);
+  const from = Math.max(0, start);
+  return { start: from, height: Math.max(0, end - from) };
+}
+
+export interface TreeProps {
+  rows: readonly ForestRow[];
+  selected: number;
+  /** The tab body's total row budget, legend and filter row included. */
+  height: number;
+  /** The `/` buffer, echoed so a narrowed list says what narrowed it. */
+  filter?: string;
+  filtering?: boolean;
+}
+
+export function Tree({ rows: items, selected, height, filter, filtering }: TreeProps) {
+  const chrome = filtering || filter ? 1 : 0;
+  const { start, height: shown } = forestWindow(items.length, selected, height, chrome);
+  const window = items.slice(start, start + shown);
   return (
     <box flexDirection="column">
+      {filtering || filter
+        ? (
+          <text attributes={TextAttributes.DIM} wrapMode="none">
+            {`/ ${filter ?? ""}${filtering ? "▌" : ""}`}
+          </text>
+        )
+        : null}
       {items.length === 0
-        ? <text attributes={TextAttributes.DIM}>no sessions yet</text>
+        ? (
+          <text attributes={TextAttributes.DIM}>
+            {filter ? `nothing matches "${filter}"` : "no conversations yet"}
+          </text>
+        )
         : null}
       {window.map((item, i) => {
-        const idx = Math.max(0, start) + i;
+        const idx = start + i;
         const sel = idx === selected;
         const cursor = sel ? "❯ " : "  ";
         const indent = "  ".repeat(item.depth);
-        if (item.type === "collapsed") {
+        if (item.kind === "collapsed") {
           return (
-            <text key={`c-${item.originId}`} wrapMode="none">
+            <text key={item.id} wrapMode="none">
               <span fg={sel ? "cyan" : undefined}>{cursor}</span>
               <span attributes={TextAttributes.DIM}>
-                {indent}⋯ {item.count} delegated · → drill in
+                {`${indent}⋯ ${item.count} delegated · → drill in`}
               </span>
+            </text>
+          );
+        }
+        if (item.kind === "message") {
+          // A turn: the connector, who said it, the gist. `← active` marks where the
+          // next turn would append, which is what makes "go back to here" concrete.
+          return (
+            <text key={item.id} wrapMode="none">
+              <span fg={sel ? "cyan" : undefined}>{cursor}</span>
+              <span attributes={TextAttributes.DIM}>{`${indent}${item.last ? "└─ " : "├─ "}`}</span>
+              <span fg={ROLE_COLOR[item.role]}>{ROLE_LABEL[item.role] ?? item.role}</span>
+              <span attributes={sel ? TextAttributes.BOLD : TextAttributes.NONE}>
+                {` ${clip(item.gist, Math.max(12, 54 - item.depth * 2))}`}
+              </span>
+              {item.active ? <span attributes={TextAttributes.DIM}>{"  ← active"}</span> : null}
             </text>
           );
         }
         const s = item.session;
         const mark = statusMark(s);
         return (
-          <text key={s.id} wrapMode="none">
+          <text key={item.id} wrapMode="none">
             <span fg={sel ? "cyan" : undefined}>{cursor}</span>
             <span>{indent}</span>
+            {/* The disclosure comes FIRST and is present on every conversation with
+                anything under it: it is the one mark saying this row is a door. */}
+            <span attributes={TextAttributes.DIM}>
+              {item.expandable ? (item.open ? "▾ " : "▸ ") : "  "}
+            </span>
             <span attributes={isDelegated(s.kind) ? TextAttributes.NONE : TextAttributes.DIM}>
               {KIND_GLYPH[s.kind]}
             </span>
             {mark ? <span fg={mark.color}>{` ${mark.glyph}`}</span> : <span>{"  "}</span>}
-            <span attributes={sel ? TextAttributes.BOLD : TextAttributes.NONE}>
-              {" "}
-              {clip(titleOf(s), 52 - item.depth * 2)}
+            <span
+              attributes={sel || item.current ? TextAttributes.BOLD : TextAttributes.NONE}
+              fg={item.current ? "green" : undefined}
+            >
+              {` ${clip(titleOf(s), Math.max(12, 46 - item.depth * 2))}`}
             </span>
             {item.delegated > 0
-              ? (
-                <span attributes={TextAttributes.DIM}>
-                  {"  "}
-                  {item.open ? "▾" : "▸"} {item.delegated}
-                </span>
-              )
+              ? <span attributes={TextAttributes.DIM}>{`  ⋯${item.delegated}`}</span>
               : null}
             {s.costUsd
               ? <span attributes={TextAttributes.DIM}>{`  ${fmtUsd(s.costUsd)}`}</span>
@@ -222,8 +188,8 @@ export function Tree(
         );
       })}
       <text attributes={TextAttributes.DIM} wrapMode="none">
-        {items.length > height ? `${selected + 1}/${items.length} · ` : ""}
-        ↑↓ move · pgup/pgdn page · ⏎ open · → drill into delegated work · esc back
+        {`${items.length > shown ? `${selected + 1}/${items.length} · ` : ""}` +
+          "↑↓ move · →← turns · ⏎ open · ⏎ on a turn forks · / find · esc back"}
       </text>
     </box>
   );

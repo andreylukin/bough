@@ -24,11 +24,10 @@
  * batches into the model's tool result; those are the same lines seen twice, and
  * the transcript must show them once.
  *
- * Ported from `src/tui/lines.ts`. Gone with the rewrite: the `prose` part kind (the
- * union is frozen at six — schema/parts.ts) and the check-passed hue on subagent
- * cards (there is no acceptance gate — spec §17).
+ * Ported from `src/tui/lines.ts`. Gone with the rewrite: the `prose` part kind and
+ * the check-passed hue on subagent cards (there is no acceptance gate — spec §17).
  */
-import type { BackgroundJob, Message, Role } from "../schema/parts.ts";
+import type { BackgroundJob, Message, Role, WorkflowStatus } from "../schema/parts.ts";
 import {
   accent,
   bold,
@@ -372,6 +371,8 @@ export function messageLines(
   w: number,
   streaming?: string,
   toolLogs?: Record<string, string[]>,
+  runs?: Map<string, RunCardView>,
+  now: number = Date.now(),
 ): VLine[] {
   const out: VLine[] = [];
   const body: VLine[] = [];
@@ -442,6 +443,9 @@ export function messageLines(
         : dim(a.status === "declined" ? "declined" : "interrupted");
       push(seg, `${warn("?")} ${a.question} ${dim("→")} ${outcome}`, inner);
       copy = `${a.question} → ${a.answer ?? a.status}`;
+    } else if (s.kind === "workflow") {
+      workflowCardLines(seg, s.part, runs?.get(s.part.id), now);
+      copy = `${s.part.name} — ${s.part.description} (${s.part.id})`;
     } else {
       toolGroupLines(seg, s.parts, key, isExpanded(key), isFull(key), inner, toolLogs);
       copy = toolGroupCopy(s.parts);
@@ -611,6 +615,103 @@ export function jobCardLines(out: VLine[], job: JobView, w: number, now: number)
   out.push(...body.map((l) => ({ ...l, copy, click, text: "  " + l.text })));
 }
 
+// ---- workflow runs ----------------------------------------------------------
+
+/**
+ * What the transcript card needs from a run — structurally a `WorkflowSummary`
+ * (`tui/api.ts`), declared here so this module stays a leaf and can be tested with
+ * a literal instead of a fetched row.
+ */
+export interface RunCardView {
+  id: string;
+  status: WorkflowStatus;
+  agents: {
+    total: number;
+    done: number;
+    cached: number;
+    running: number;
+    queued: number;
+    failed: number;
+  };
+  createdAt: number;
+  finishedAt: number | null;
+}
+
+function runStatusText(run: RunCardView): string {
+  switch (run.status) {
+    case "running":
+      return warn("⋯ running");
+    case "paused":
+      return warn("⏸ paused");
+    case "stopped":
+      return dim("■ stopped");
+    case "error":
+      return danger("✗ error");
+    case "orphaned":
+      return danger("✗ orphaned");
+    case "done":
+      // A run whose agents mostly failed is NOT a ✓. The run row reaching `done`
+      // only means the script returned; the list view used to print a green check
+      // beside "1/9 · 8 failed", which is the same lie the subagent cards were
+      // fixed for.
+      return run.agents.failed > 0 ? warn("⚠ done") : accent("✓ done");
+  }
+}
+
+/**
+ * A launched workflow's card — the transcript's permanent handle on a detached run.
+ *
+ * WHY IT IS NOT THE RAIL. `SubagentRail.tsx` pins live work and drops a run the
+ * instant it finishes, on purpose: a rail that accumulated finished runs would push
+ * the composer off screen. The consequence was that a fan-out which took four
+ * minutes and 155k tokens left, once done, nothing in the conversation but a system
+ * note — no record of WHERE it was launched from and no way back into the run view
+ * except opening the panel and recognising the name. This card is that record, and
+ * it is anchored to the message whose program called `workflow.start()`.
+ *
+ * The part carries identity only; every number here is read live from the run row,
+ * so the card counts up while the run goes and settles when it ends.
+ */
+export function workflowCardLines(
+  out: VLine[],
+  part: Extract<Message["parts"][number], { type: "workflow" }>,
+  run: RunCardView | undefined,
+  now: number,
+) {
+  const body: VLine[] = [];
+  const glyph = !run
+    ? dim("⧉")
+    : run.status === "running" || run.status === "paused"
+    ? warn("⧉")
+    : run.status === "done" && run.agents.failed === 0
+    ? accent("⧉")
+    : danger("⧉");
+  // No run row yet (a fresh part, or a purged run): the card still renders, because
+  // the alternative is a launch that left no trace at all.
+  const status = run ? runStatusText(run) : dim("· launched");
+  const facts: string[] = [];
+  if (run) {
+    facts.push(`${run.agents.done + run.agents.cached}/${run.agents.total} agents`);
+    if (run.agents.failed > 0) facts.push(`${run.agents.failed} failed`);
+    facts.push(fmtElapsed((run.finishedAt ?? now) - run.createdAt));
+  }
+  if (part.rerunOf) facts.push("rerun");
+  body.push({
+    text: `${glyph} ${bold(part.name)} ${status}  ${
+      dim([clip(oneLine(part.description), 56), ...facts].filter(Boolean).join(" · "))
+    }`,
+  });
+  // The way in, named on the card. `^w` is bound (keys.ts) and was findable only by
+  // reading the keymap: the panel's own tab bar advertises `^t close` and nothing
+  // else, so the run view was a surface you had to already know about.
+  body.push({ text: dim("⎿ ") + dim("^w opens the run view · click to open it here") });
+  // No extra indent and no leading blank: this renders as a message SEGMENT, and
+  // `messageLines` indents the whole body once at the end. The job and branch cards
+  // pad themselves because they are pushed straight into the transcript instead.
+  const copy = `${part.name} — ${part.description} (${part.id})`;
+  out.push(...body.map((l) => ({ ...l, copy, click: `workflow:${part.id}` })));
+}
+
 // ---- the whole transcript ---------------------------------------------------
 
 export interface BuildOptions {
@@ -618,6 +719,12 @@ export interface BuildOptions {
   branches?: Branch[];
   toolLogs?: Record<string, string[]>;
   jobs?: JobView[];
+  /**
+   * Live run rows for the `workflow` parts in the thread, keyed by run id. The part
+   * persists identity; the counts, status and elapsed time come from here, so a card
+   * left in the transcript by a turn last week still reads the run's real outcome.
+   */
+  runs?: readonly RunCardView[];
   /**
    * The session's permanent ledger (`store.ts`), oldest first.
    *
@@ -657,6 +764,7 @@ export function buildLines(
   const branches = opts.branches ?? [];
   const jobs = opts.jobs ?? [];
   const now = opts.now ?? Date.now();
+  const runsById = new Map((opts.runs ?? []).map((r) => [r.id, r]));
   // A note that already renders as a card is dropped from the raw thread, and so
   // is a job wake note while its card is showing. Once a job ages out of the
   // registry the note is all that is left — keep it then.
@@ -694,7 +802,9 @@ export function buildLines(
       if (bg && jobIds.has(bg)) continue;
     }
     flushMarks(m.createdAt);
-    out.push(...messageLines(m, isExpanded, isFull, w, streaming[m.id], opts.toolLogs));
+    out.push(
+      ...messageLines(m, isExpanded, isFull, w, streaming[m.id], opts.toolLogs, runsById, now),
+    );
     // An honest ack under a steered message: the turn drains it at the next round
     // boundary, and a blocking host call can hold that off for minutes — silence
     // reads as being ignored.

@@ -41,6 +41,7 @@ import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { ModelRow } from "../../llm/client.ts";
 import { api, type SessionRow } from "../api.ts";
+import type { Message } from "../../schema/parts.ts";
 import type { MouseEvent, NavKey } from "../mouse.ts";
 import { buildLines, chatBodyHeight, lineAtSlot, type VLine } from "../lines.ts";
 import sliceAnsi from "slice-ansi";
@@ -92,9 +93,9 @@ import { Chat, type ChatMeter } from "./Chat.tsx";
 import { JobOutput, jobBodyRows } from "./JobOutput.tsx";
 import { Composer, completionPopupHeight, composerHeight } from "./Composer.tsx";
 import { type PanelControls, type PanelHostDeps, usePanelHost } from "./PanelHost.tsx";
-import { historyTreeRows } from "../historytree.ts";
 import { liveSubagents, SubagentRail } from "./SubagentRail.tsx";
-import { treeItems } from "./Tree.tsx";
+import { forestRows, rewindIndex } from "../forest.ts";
+
 import { palette } from "../theme.ts";
 import { tabAtColumn } from "./Panel.tsx";
 
@@ -354,8 +355,20 @@ export function App(
   // help open in its middle (see `help.open`), and a job is opened and left far more
   // often than the overlay is.
   const [jobScroll, setJobScroll] = useState(0);
+  // Delegated fan-outs drilled into (spec §4's collapse), and conversations whose
+  // TURNS are shown. Two sets, because they are two different disclosures on the same
+  // row: `⋯ 12 delegated` and "show me this conversation's history".
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set<string>());
+  const [openTurns, setOpenTurns] = useState<ReadonlySet<string>>(() => new Set<string>());
   const [children, setChildren] = useState<Record<string, SessionRow[]>>({});
+  /**
+   * Threads by session id, for conversations OTHER than the open one.
+   *
+   * The open conversation's thread is `state.thread` and is live; any other has to
+   * be fetched, and it is fetched once, when it is first expanded. A tree that
+   * pre-fetched every conversation's history would be one `GET` per row on arrival.
+   */
+  const [threads, setThreads] = useState<Record<string, Message[]>>({});
   const [sent, setSent] = useState<string[]>([]);
   const [histAt, setHistAt] = useState<number | null>(null);
   const [askText, setAskText] = useState("");
@@ -586,6 +599,9 @@ export function App(
           streaming: state.streaming,
           toolLogs: state.toolLogs,
           jobs: exitedJobs,
+          // Every run of this session, not just the live ones: the card's whole
+          // purpose is that a finished run still reads its outcome in place.
+          runs: state.workflows,
           marks,
           now: now(),
         },
@@ -595,6 +611,7 @@ export function App(
       state.streaming,
       state.toolLogs,
       exitedJobs,
+      state.workflows,
       marks,
       cols,
       foldAll,
@@ -602,23 +619,31 @@ export function App(
       fullKeys,
     ],
   );
-  const tree = useMemo(
-    () => treeItems({ roots: state.sessions, childrenByOrigin: children, expanded }),
-    [state.sessions, children, expanded],
+  // The open conversation's thread comes from the store — it is live, and a copy in
+  // `threads` would go stale the moment a turn appended.
+  const allThreads = useMemo(
+    () => (state.currentId ? { ...threads, [state.currentId]: state.thread } : threads),
+    [threads, state.currentId, state.thread],
   );
-  // pi's `/tree`: the OPEN CONVERSATION as a tree — every turn, and every branch
-  // that cut from a turn. The session list already lives in its own tab, so the
-  // tree tab is the place this belongs (`historytree.ts`).
-  const [userOnly, setUserOnly] = useState(false);
-  const conversation = useMemo(
-    () =>
-      historyTreeRows({
-        thread: state.thread,
-        branches: children[state.currentId ?? ""] ?? [],
-        userOnly,
-      }),
-    [state.thread, children, state.currentId, userOnly],
-  );
+
+  /**
+   * Show a conversation's turns, fetching its thread the first time.
+   *
+   * The open conversation needs no fetch (`allThreads` above), and a second expand
+   * of the same session needs none either — a thread is append-only, and the rows
+   * this feeds are history.
+   */
+  const expand = useCallback((sessionId: string) => {
+    setOpenTurns((set) => new Set([...set, sessionId]));
+    if (sessionId === state.currentId || threads[sessionId]) return;
+    void api.getSession(sessionId)
+      .then((snap) => setThreads((t) => ({ ...t, [sessionId]: snap.thread })))
+      .catch(() => store.notify("could not read that conversation's history"));
+  }, [threads, state.currentId, store]);
+
+  const collapseTurns = useCallback((sessionId: string) => {
+    setOpenTurns((set) => new Set([...set].filter((x) => x !== sessionId)));
+  }, []);
 
   const drillIn = useCallback((originId: string) => {
     setExpanded((set) => new Set([...set, originId]));
@@ -701,8 +726,17 @@ export function App(
     controls: { ...controls, forkAt },
     models,
     ...(theme ? { theme } : {}),
-    tree,
-    conversation,
+    // The raw material for the ONE tree. `PanelHost` folds it into rows because it
+    // owns the `/` filter that narrows them (`forest.ts`).
+    forest: {
+      sessions: state.sessions,
+      childrenByOrigin: children,
+      threads: allThreads,
+      expanded: openTurns,
+      drilled: expanded,
+    },
+    expand,
+    collapseTurns,
     drillIn,
     collapse,
   });
@@ -852,6 +886,13 @@ export function App(
         setJobScroll(0);
         setMode("job");
         void store.openJob(jobId, sessionId);
+        return;
+      }
+      // A workflow card opens that run's view. The run is detached and off the live
+      // rail the moment it ends, so the card is the only door left to its phases,
+      // its per-agent cost and its replay accounting.
+      if (target.startsWith("workflow:")) {
+        panel.openRun(target.slice("workflow:".length));
         return;
       }
       // "+N more lines" lifts the cap and stays lifted — re-capping it is `^e`.

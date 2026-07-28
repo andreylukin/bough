@@ -41,6 +41,7 @@ export type ToolCall = Extract<Part, { type: "tool_call" }>;
 export type ToolResult = Extract<Part, { type: "tool_result" }>;
 export type ImagePart = Extract<Part, { type: "image" }>;
 export type AskPart = Extract<Part, { type: "ask" }>;
+export type WorkflowPart = Extract<Part, { type: "workflow" }>;
 
 // ---- color state ------------------------------------------------------------
 
@@ -409,6 +410,7 @@ export type Segment =
   | { kind: "reasoning"; text: string }
   | { kind: "image"; part: ImagePart }
   | { kind: "ask"; part: AskPart }
+  | { kind: "workflow"; part: WorkflowPart }
   | { kind: "tools"; parts: Part[] };
 
 /**
@@ -419,6 +421,9 @@ export type Segment =
  * than as two entries; prose between two groups splits them, because that prose is
  * the model narrating a boundary. A settled `ask()` stands alone — it is a human
  * exchange, not tool plumbing, and folding it would hide an answer the user gave.
+ * A launched workflow stands alone for the same reason: it is a card with its own
+ * live status and its own click target, and folding it into a tool group would
+ * bury the one row that leads back to the run.
  */
 export function segmentParts(parts: Part[]): Segment[] {
   const segs: Segment[] = [];
@@ -427,6 +432,7 @@ export function segmentParts(parts: Part[]): Segment[] {
     else if (p.type === "reasoning") segs.push({ kind: "reasoning", text: p.text });
     else if (p.type === "image") segs.push({ kind: "image", part: p });
     else if (p.type === "ask") segs.push({ kind: "ask", part: p });
+    else if (p.type === "workflow") segs.push({ kind: "workflow", part: p });
     else {
       const last = segs[segs.length - 1];
       if (last?.kind === "tools") last.parts.push(p);

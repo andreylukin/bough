@@ -22,7 +22,7 @@
  * only translation between the two: `Command` in, `PanelAction` out. There is no
  * second chord table and no second place a key is interpreted.
  *
- * OWNERSHIP. Every tab body is its own file — `Sessions`, `Changes`, `ModelPicker`,
+ * OWNERSHIP. Every tab body is its own file — `Tree`, `Changes`, `ModelPicker`,
  * `McpTab`, `SkillsTab`, `ThemeTab` — and `tree` and `workflows` arrive as `children`,
  * so their prop shapes stay theirs and this file stays chrome. `PanelHost.tsx` holds
  * the cursor, the fetches and the confirm dispatch; this is the presentation.
@@ -45,7 +45,6 @@ import type { ThemePreview } from "../theme.ts";
 import { palette } from "../theme.ts";
 import { Changes, type ChangesProps } from "./Changes.tsx";
 import { ModelPicker, type ModelPickerProps } from "./ModelPicker.tsx";
-import { Sessions, type SessionsProps } from "./Sessions.tsx";
 import { McpTab, type McpTabProps } from "./Mcp.tsx";
 import { type SkillRow, type SkillSourceRow, SkillsTab } from "./Skills.tsx";
 import { ThemeTab } from "./Theme.tsx";
@@ -62,7 +61,9 @@ export interface PanelState {
   tab: PanelTab;
 }
 
-export const initialPanel: PanelState = { open: false, tab: "sessions" };
+// The tree is the panel's home tab: it is the switcher AND the history, so it is
+// what `^t` with no further intent should land on.
+export const initialPanel: PanelState = { open: false, tab: "tree" };
 
 export type PanelAction =
   | { type: "toggle" }
@@ -239,7 +240,6 @@ export interface PanelProps {
   rows: number;
   /** Columns available, so the tab strip can collapse instead of truncating. */
   width?: number;
-  sessions?: SessionsProps;
   changes?: ChangesProps;
   model?: ModelPickerProps;
   mcp?: McpTabProps;
@@ -286,14 +286,10 @@ export function panelBodyRows(rows: number): number {
 }
 
 function Body(
-  { tab, rows, width, sessions, changes, model, mcp, skills, theme, children }: PanelProps,
+  { tab, rows, width, changes, model, mcp, skills, theme, children }: PanelProps,
 ) {
   const body = panelBodyRows(rows);
   switch (tab) {
-    case "sessions":
-      return sessions
-        ? <Sessions {...sessions} rows={body} />
-        : <text attributes={TextAttributes.DIM}>loading…</text>;
     case "changes":
       return changes
         ? <Changes {...changes} rows={body} />

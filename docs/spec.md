@@ -610,10 +610,18 @@ reaching into ancestor history is a 400.
 ## 15. Clients
 
 **TUI (Ink).** State layer separated from rendering; no monolithic component. One
-tabbed panel holds every non-chat surface (sessions, tree, changes, model picker,
-MCP, skills, theme) with direct-jump keys. Chat shows folded reasoning, the program
-that ran, live cost and context. A rail pins live subagents; the tree shows every
-root, fork and subagent branch.
+tabbed panel holds every non-chat surface (tree, changes, model picker, MCP,
+skills, theme) with direct-jump keys. Chat shows folded reasoning, the program that
+ran, live cost and context. A rail pins live subagents and background jobs, and ⏎
+on a job row opens its output.
+
+**One tree.** Conversations, their turns, and what branched off which turn are ONE
+walkable list — the switcher and the history are the same surface, because "which
+turn of which conversation did that branch come from" is one question. A
+conversation expands to its turns; a branch hangs off the turn it cut from;
+delegated fan-outs stay collapsed to a count (§4). ⏎ opens a conversation and forks
+a turn, and `esc esc` at an idle composer lands the cursor on the last turn you
+would go back to.
 
 **CLI.** `bough exec [flags] "prompt"` — creates a session, opens the event stream
 *before* posting (a fast turn must not finish unseen), streams assistant text to

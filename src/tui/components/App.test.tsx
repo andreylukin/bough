@@ -77,7 +77,6 @@ test("the panel and every tab it holds are reachable from App", async () => {
     const file of [
       "Panel.tsx",
       "PanelHost.tsx",
-      "Sessions.tsx",
       "Changes.tsx",
       "ModelPicker.tsx",
       "Mcp.tsx",
@@ -442,15 +441,16 @@ test("the theme picker starts from the SERVER's theme and persists the one kept"
   }
 });
 
-test("⇥ cycles the tab bar, and ⏎ on a session opens it and closes the panel", async () => {
+test("⇥ cycles the tab bar, and ⏎ on a conversation opens it and closes the panel", async () => {
   const store = fakeStore(STATE);
   const h = await mount(app(store));
   try {
     await h.press(ctrl("t"));
+    assert.ok(h.frame().includes(EVIDENCE.tree), h.frame()); // the home tab
     await h.press("\t");
-    assert.ok(h.frame().includes(EVIDENCE.tree), h.frame()); // sessions → tree
-    await h.press(SHIFT_TAB); // shift-tab, back to sessions
-    assert.ok(h.frame().includes(EVIDENCE.sessions), h.frame());
+    assert.ok(h.frame().includes(EVIDENCE.changes), h.frame());
+    await h.press(SHIFT_TAB); // back to the tree
+    assert.ok(h.frame().includes(EVIDENCE.tree), h.frame());
     await h.press("\r");
     assert.ok(store.calls.includes("open:s1"), store.calls.join(","));
     assert.equal(h.frame().includes("^t close"), false, h.frame());
@@ -658,7 +658,7 @@ test("a drag over the PANEL copies what is on screen, not the transcript", async
     assert.equal(copied.length, 1, "a drag over the panel must copy");
     // The tab strip is on row 3, so whatever came back has to carry a tab name.
     assert.ok(
-      copied[0]?.includes("sessions"),
+      copied[0]?.includes("tree"),
       `expected the panel's own rows, got ${JSON.stringify(copied[0])}`,
     );
   } finally {
@@ -786,6 +786,99 @@ test("a multi-line command does not tear the frame apart", async () => {
     assert.ok(frame.includes("webhook POST every 10s"), frame);
     assert.ok(frame.includes("for i in 1 2 3; do ¶"), frame);
     assert.equal(frame.includes("done\n"), false, frame);
+  } finally {
+    h.unmount();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// One tree, walked — and esc esc into it
+// ---------------------------------------------------------------------------
+
+const TALKED: Partial<TuiState> = {
+  ...STATE,
+  sessions: [
+    session("s1", { title: "wire the panel" }),
+    session("s2", { title: "nightly bench", createdAt: 5_000 }),
+  ],
+  thread: [
+    { id: "m1", sessionId: "s1", role: "user", parts: [{ type: "text", text: "name the jobs" }], pending: false, createdAt: 1_000 },
+    { id: "m2", sessionId: "s1", role: "supervisor", parts: [{ type: "text", text: "done, they are named" }], pending: false, createdAt: 2_000 },
+  ] as TuiState["thread"],
+};
+
+test("the tree holds conversations AND their turns — one walk, not two tabs", async () => {
+  // What this replaces: `^s` listed conversations and knew nothing of their turns,
+  // `^f` showed turns OR lineage depending on what was open, and neither could say
+  // which turn of which conversation a branch came from.
+  const store = fakeStore(TALKED);
+  const h = await mount(app(store));
+  try {
+    await h.press(ctrl("f"));
+    const top = h.frame();
+    // Every conversation, newest first, and no turns until one is expanded.
+    assert.ok(top.includes("nightly bench"), top);
+    assert.ok(top.includes("wire the panel"), top);
+    assert.equal(top.includes("name the jobs"), false, top);
+
+    // → walks IN, to the turns of the conversation under the cursor.
+    await h.press(DOWN); // past `nightly bench` onto the open conversation
+    await h.press(ESC + "[C"); // →
+    const opened = await frameShowing(h, "name the jobs");
+    assert.ok(opened.includes("name the jobs"), opened);
+    assert.ok(opened.includes("done, they are named"), opened);
+    // …and ← walks back out, so the top level is one keypress away again.
+    await h.press(ESC + "[D");
+    await h.paint();
+    assert.equal(h.frame().includes("name the jobs"), false, h.frame());
+  } finally {
+    h.unmount();
+  }
+});
+
+test("^s still opens the tree — the chord outlived the tab it used to open", async () => {
+  const store = fakeStore(TALKED);
+  const h = await mount(app(store));
+  try {
+    await h.press(ctrl("s"));
+    assert.ok(h.frame().includes(EVIDENCE.tree), h.frame());
+  } finally {
+    h.unmount();
+  }
+});
+
+test("esc esc opens the tree ON the turn you would go back to", async () => {
+  // The gesture already meant "undo what I am in the middle of" — it cleared a
+  // draft, it stopped a turn. Idle with an empty composer it meant nothing at all,
+  // while the actual undo (go back a message and say it differently) was four
+  // keypresses into a tab.
+  const store = fakeStore(TALKED);
+  const h = await mount(app(store));
+  try {
+    await h.press(ESC);
+    await h.press(ESC);
+    const frame = await frameShowing(h, "name the jobs");
+    assert.ok(frame.includes(EVIDENCE.tree), frame);
+    // The conversation is EXPANDED — its turns are rows at all — and the cursor is
+    // on the last user turn, where ⏎ means "edit this and branch".
+    assert.ok(frame.includes("name the jobs"), frame);
+    assert.ok(
+      frame.split("\n").some((r) => r.includes("❯") && r.includes("name the jobs")),
+      `the cursor must land on the last user turn:\n${frame}`,
+    );
+  } finally {
+    h.unmount();
+  }
+});
+
+test("esc esc still stops a running turn — the rewind never shadows the stop", async () => {
+  const busy = fakeStore(BUSY);
+  const h = await mount(app(busy));
+  try {
+    await h.press(ESC);
+    await h.press(ESC);
+    assert.ok(busy.calls.includes("interrupt"), busy.calls.join(","));
+    assert.equal(h.frame().includes("^t close"), false, h.frame());
   } finally {
     h.unmount();
   }

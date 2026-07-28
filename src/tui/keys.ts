@@ -107,6 +107,11 @@ export type Command =
   | "panel.filterExit"
   /** One per tab, derived from `TABS` so a tab cannot exist without a chord. */
   | TabCommand
+  /**
+   * Open the tree with the cursor on the open conversation's last turn — `esc esc`.
+   * A separate command from `tab.tree` because the landing row is the whole point.
+   */
+  | "tree.rewind"
   // -- composing ------------------------------------------------------------
   | "send"
   | "send.queue"
@@ -239,8 +244,12 @@ export type Command =
  * dependency points that way and never back, so this module stays free of ink.
  */
 export const TABS = [
-  { id: "sessions", title: "sessions", chord: "ctrl+s", desc: "conversations, newest first" },
-  { id: "tree", title: "tree", chord: "ctrl+f", desc: "what branched from what" },
+  // ONE tree, not two tabs. `sessions` was a flat recency list that knew nothing
+  // about what was inside a conversation, and `tree` was bimodal — turns with one
+  // open, lineage with none — so the same chord produced two unrelated screens.
+  // `^s` stays bound to this tab as an alias below: it is the chord in everyone's
+  // fingers for "where are my conversations", and that is still what this answers.
+  { id: "tree", title: "tree", chord: "ctrl+f", desc: "conversations, turns, branches" },
   { id: "changes", title: "changes", chord: "ctrl+d", desc: "what this session changed" },
   { id: "workflows", title: "workflows", chord: "ctrl+w", desc: "workflow runs" },
   { id: "model", title: "model", chord: "ctrl+o", desc: "frontier · cheap · thinking depth" },
@@ -482,7 +491,7 @@ const PANEL_SECTION = "the panel — ^t, or jump straight to a tab";
  * twenty-row viewport and `skills` grows with the install, which is the case this
  * exists for.
  */
-export const FILTER_TABS: readonly PanelTab[] = ["sessions", "model", "skills"];
+export const FILTER_TABS: readonly PanelTab[] = ["tree", "model", "skills"];
 
 /**
  * Chords that reach the panel from outside it and move between its tabs inside it.
@@ -518,8 +527,23 @@ function panelChords(): Binding[] {
     rows.push({ mode: "panel", chord, command });
     rows.push({ mode: "rail", chord, command });
   }
+  // `^s` is the chord everyone's fingers already have for "where are my
+  // conversations", and that question is now answered by the tree. Kept as an alias
+  // rather than retired: the tab it used to open no longer exists, and a chord that
+  // silently does nothing is worse than one that lands somewhere sensible.
+  for (const mode of ["chat", "panel", "rail"] as const) {
+    rows.push({
+      mode,
+      chord: SESSIONS_ALIAS,
+      command: "tab.tree",
+      ...(mode === "chat" ? { when: ["emptyDraft" as Guard] } : {}),
+    });
+  }
   return rows;
 }
+
+/** The retired `sessions` tab's chord, still bound to the tree that replaced it. */
+const SESSIONS_ALIAS = "ctrl+s";
 
 /**
  * `1`…`9`, one row each, documented once as `1-9`.
@@ -619,6 +643,30 @@ export const BINDINGS: Binding[] = [
     section: "compose",
     label: "esc esc",
     desc: "clear the draft",
+  },
+  /**
+   * esc esc with NOTHING typed and NOTHING running: open the tree on your last turn.
+   *
+   * The gesture already meant "undo the thing I am in the middle of" — it cleared a
+   * draft, it stopped a turn. With an empty composer and an idle session it meant
+   * "dismiss a notice", which is nothing at all, and the actual undo one reaches for
+   * at that moment — go back a message and say it differently — was four keypresses
+   * into a panel tab. It is one gesture now, and it lands on the turn (`rewindIndex`)
+   * rather than at the top of the forest.
+   *
+   * Ordered AHEAD of `turn.interrupt` is deliberate but safe: `not: ["busy"]` means a
+   * running turn still resolves to the stop below, which is the meaning nobody may
+   * lose.
+   */
+  {
+    mode: "chat",
+    chord: "esc",
+    command: "tree.rewind",
+    when: ["doubleEsc", "emptyDraft"],
+    not: ["busy", "completing"],
+    section: "compose",
+    label: "esc esc",
+    desc: "go back to a turn and fork it",
   },
   // The @// popup, while it is open. These sit AHEAD of the composer's own ↑/↓ and
   // esc — and, since the popup's own legend row promises `esc closes`, ahead of
