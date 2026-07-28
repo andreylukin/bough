@@ -58,6 +58,7 @@ import assert from "node:assert/strict";
 import type { SubagentLaunch, SubagentResult } from "../agents/subagent.ts";
 import { Bus } from "../bus.ts";
 import { openDb, type SqliteDb } from "../db/db.ts";
+import { declineAsk } from "../hostfn/ask.ts";
 import type { LaunchFn } from "../hostfn/delegate.ts";
 import type { BoughEvent } from "../schema/events.ts";
 import type { WorkflowAgent, WorkflowRun } from "../schema/parts.ts";
@@ -65,6 +66,7 @@ import { createHandler } from "../server/app.ts";
 import { TurnRegistry } from "../turn/queue.ts";
 import type { AppCtx, TurnCtx } from "../types.ts";
 import {
+  createWorkflowHostFn,
   startWorkflowRun,
   type WithWorkflowControl,
   WorkflowAgentRegistry,
@@ -852,6 +854,127 @@ test("rerun replays the journal of a finished run and refuses a live one", async
       rowsOf(h, replayed.id).map((a) => a.status),
       ["cached", "cached"],
     );
+  } finally {
+    h.close();
+  }
+});
+
+/**
+ * The card must survive the turn runner, which is the whole reason it is buffered.
+ *
+ * The runner keeps the supervisor message's `parts` in memory and rewrites the row
+ * WHOLESALE on every append (`turn/runner.ts`), so a part written from out here is
+ * erased by the runner's very next write — and `workflow.start()` is always called
+ * from inside a program, so that next write is the program step's own tool_result,
+ * milliseconds later. Written directly, the card would appear and vanish every time,
+ * which is indistinguishable from never having been implemented. `hostfn/ask.ts`
+ * carries the same buffer for the same reason.
+ */
+test("a launch card survives the runner's next wholesale write", async () => {
+  const h = harness();
+  try {
+    const messageId = crypto.randomUUID();
+    h.db.createMessage({
+      id: messageId,
+      sessionId: h.sessionId,
+      role: "supervisor",
+      parts: [],
+      pending: true,
+      createdAt: 2_000,
+    });
+    const turnCtx: TurnCtx = {
+      ...h.ctx,
+      sessionId: h.sessionId,
+      turnId: "t1",
+      messageId,
+      workspace: "/tmp/checkout",
+      model: "test-model",
+      signal: new AbortController().signal,
+      depth: 0,
+    };
+    // The approval gate is off: this test is about the card surviving the runner,
+    // and a gate nobody answers would park it forever.
+    const workflow = createWorkflowHostFn(turnCtx, h.control, false);
+    // No `agent()` call: this test is about the transcript, and a live fan-out
+    // racing the harness teardown is a different test's problem.
+    const finished = completion(h.bus);
+    const script = `export const meta = {name: "w", description: "d"}\nreturn 1\n`;
+    await workflow("start", JSON.stringify({ script }));
+    await finished;
+
+    // The runner's own array has never heard of the card, and this is what it does
+    // next: one wholesale write of the parts IT is holding.
+    h.db.updateMessage(messageId, [{ type: "text", text: "the program ran" }], true);
+
+    assert.deepEqual(
+      h.db.getMessage(messageId)?.parts.map((p) => p.type),
+      ["text"],
+      "buffered, so nothing is on the row while the turn is still writing to it",
+    );
+
+    // The runner's LAST write, then the event that releases the buffer.
+    h.db.updateMessage(messageId, [{ type: "text", text: "the program ran" }], false);
+    h.bus.publish({ type: "message.finished", sessionId: h.sessionId, data: { messageId } });
+
+    const parts = h.db.getMessage(messageId)?.parts ?? [];
+    assert.deepEqual(parts.map((p) => p.type), ["text", "workflow"]);
+    const card = parts.find((p) => p.type === "workflow");
+    assert.equal(card && "name" in card ? card.name : null, "w");
+  } finally {
+    h.close();
+  }
+});
+
+/**
+ * The gate is BEFORE the run exists, which is the only place it is worth anything.
+ *
+ * A confirm that fired after `startWorkflowRun` would already have written a run row,
+ * mirrored the script and — for a `parallel()` script — issued every call in the
+ * first tick. Declining has to leave nothing behind, so this asserts on the absence
+ * of a run row, not merely on the thrown error.
+ */
+test("a declined workflow starts nothing at all", async () => {
+  const h = harness();
+  try {
+    const messageId = crypto.randomUUID();
+    h.db.createMessage({
+      id: messageId,
+      sessionId: h.sessionId,
+      role: "supervisor",
+      parts: [],
+      pending: true,
+      createdAt: 2_000,
+    });
+    const turnCtx: TurnCtx = {
+      ...h.ctx,
+      sessionId: h.sessionId,
+      turnId: "t1",
+      messageId,
+      workspace: "/tmp/checkout",
+      model: "test-model",
+      signal: new AbortController().signal,
+      depth: 0,
+    };
+    const workflow = createWorkflowHostFn(turnCtx, h.control, true);
+
+    // Answer the hold the moment it is raised — the TUI's job, done inline.
+    const off = h.bus.subscribe((e) => {
+      if (e.type !== "ask.question") return;
+      const q = e.data as { id: string; status: string; question: string };
+      if (q.status !== "pending") return;
+      assert.match(q.question, /Run the workflow "w"\?/);
+      assert.match(q.question, /1\. describe/, "the phases are on the card, before any of it runs");
+      declineAsk(q.id);
+    });
+
+    const script = `export const meta = {name: "w", description: "d", ` +
+      `phases: [{title: "describe"}]}\nreturn 1\n`;
+    await assert.rejects(
+      () => workflow("start", JSON.stringify({ script })),
+      /declined to run the workflow/,
+    );
+    off();
+    assert.deepEqual(h.db.listWorkflows(h.sessionId), [], "no run row, no journal, no cost");
   } finally {
     h.close();
   }

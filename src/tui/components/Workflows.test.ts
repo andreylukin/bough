@@ -314,8 +314,11 @@ test("a running run offers pause before stop; a paused one offers resume", () =>
 
 test("a finished run offers the edit-and-relaunch half of the steering loop", () => {
   const done = steerActions("done", false);
-  assert.deepEqual(done.map((a) => a.key), ["r", "e"]);
+  assert.deepEqual(done.map((a) => a.key), ["r", "e", "s"]);
   assert.match(done[1].label, /edit script & relaunch/);
+  // Save rides with the settled state, not with a running one: the point of saving a
+  // script is that you have seen it finish.
+  assert.match(done[2].label, /save/);
 });
 
 test("a run orphaned by a restart is not offered a pause it cannot honor", () => {

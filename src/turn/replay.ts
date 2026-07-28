@@ -196,6 +196,12 @@ export function messageToLlm(m: Message, opts: ReplayOptions = {}): LlmMessage[]
         // A picture the supervisor produced reaches the model as a system note
         // carrying the part (spec §6, `image()`), never inline on its own message.
         break;
+      case "workflow":
+        // Display only. The run is detached: its outcome reaches the model as the
+        // `[workflow done]` system note, which is the record replay must not
+        // duplicate — echoing a launch line here would have the model reading
+        // "started" and "finished" as two separate runs.
+        break;
     }
   }
 

@@ -120,6 +120,11 @@ function renderPart(role: string, p: Part): string {
       return `ask: ${p.question} → ${
         p.status === "answered" ? `user answered: ${p.answer ?? ""}` : p.status
       }`;
+    case "workflow":
+      // Kept in the summary even though replay drops it: a compacted span is the
+      // only place left that remembers a fan-out was launched here once the
+      // `[workflow done]` note has itself been compacted away.
+      return `${role}: [workflow ${p.name}] ${clip(p.description, PART_CLIP)}`;
   }
 }
 

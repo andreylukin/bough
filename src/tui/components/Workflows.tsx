@@ -143,6 +143,21 @@ export function wfGlyph(status: string): { glyph: string; tone: Tone } {
   }
 }
 
+/**
+ * A RUN's glyph, which is not the same question as an agent's.
+ *
+ * `status: "done"` on a run means only that the script returned — it says nothing
+ * about whether the agents it dispatched worked. A run that lost 8 of its 9 agents
+ * to a schema rejection reached `done` in 1m51s and was drawn with the same green
+ * `✓` as a clean one, two columns from the text "8 failed". That is the lying
+ * checkmark the subagent cards were fixed for, in the one view built to explain a
+ * fan-out, so a settled run with failures is amber and says so.
+ */
+export function runGlyph(status: string, failed: number): { glyph: string; tone: Tone } {
+  if (status === "done" && failed > 0) return { glyph: "⚠", tone: "warn" };
+  return wfGlyph(status);
+}
+
 // ---------------------------------------------------------------------------
 // Grouping and filtering (pure)
 // ---------------------------------------------------------------------------
@@ -263,9 +278,12 @@ export function steerActions(status: WorkflowRun["status"], live: boolean): Stee
       : [{ key: "x", label: "stop — orphaned by a restart" }, script];
   }
   if (status === "paused") return [{ key: "p", label: "resume" }, stop, script];
+  // `save` is offered only on a SETTLED run, and deliberately: what it stores is the
+  // script, and the reason to store one is that you watched it work.
   return [
     { key: "r", label: "rerun (replays the journal)" },
     { key: "e", label: "edit script & relaunch" },
+    { key: "s", label: "save to run again by name" },
   ];
 }
 
@@ -279,9 +297,9 @@ export function runHeaderRows(
 ): Row[] {
   const now = opts.now ?? Date.now();
   const run = detail.workflow;
-  const { glyph, tone } = wfGlyph(run.status);
   const settled = detail.agents.filter((a) => a.status === "done" || a.status === "cached").length;
   const failed = detail.agents.filter((a) => a.status === "error").length;
+  const { glyph, tone } = runGlyph(run.status, failed);
   const rows: Row[] = [
     [
       { text: glyph, tone },
@@ -468,9 +486,12 @@ export type WfLevel = 0 | 1 | 2 | 3 | 4;
  * do something. `e` was filtered out here because the keymap did not bind it and the
  * script level was therefore unreachable; `wf.script`, `wf.filter` and `wf.openAgent`
  * are bound now, scoped `tab: ["workflows"]`, so `e` joins the set and `f` and `o` are
- * named per level below. This set is still the one line to change.
+ * named per level below. `s` (`wf.save`) joined it the same way — the saved-workflow
+ * routes and `api.saveWorkflowAs` existed all along with no key and no legend, which
+ * is the same dead-surface shape one level down. This set is still the one line to
+ * change.
  */
-const BOUND_STEER_KEYS = new Set(["p", "P", "x", "r", "e"]);
+const BOUND_STEER_KEYS = new Set(["p", "P", "x", "r", "e", "s"]);
 
 /** Per-level footer — the keys that do something HERE, plus the steering controls. */
 export function footer(level: WfLevel, detail: WorkflowDetail | null): string {
@@ -540,8 +561,8 @@ function RunsList(
     <box flexDirection="column">
       {slice.map((r, i) => {
         const on = from + i === sel;
-        const { glyph, tone } = wfGlyph(r.status);
         const a = r.agents;
+        const { glyph, tone } = runGlyph(r.status, a.failed);
         return (
           <Line
             key={r.id}

@@ -58,9 +58,10 @@
 import { z } from "zod";
 import { cappedLaunch } from "../agents/caps.ts";
 import { postSystemNote } from "../agents/notes.ts";
-import { ConflictError, NotFoundError, WorkflowError } from "../errors.ts";
+import { AskDeclinedError, ConflictError, NotFoundError, WorkflowError } from "../errors.ts";
 import type { LaunchDeps } from "../agents/subagent.ts";
 import { launchSubagent } from "../agents/subagent.ts";
+import { raiseAsk } from "../hostfn/ask.ts";
 import type { LaunchFn } from "../hostfn/delegate.ts";
 import { workflowScriptPath } from "../paths.ts";
 import type { Message, Part, WorkflowAgent, WorkflowRun } from "../schema/parts.ts";
@@ -206,6 +207,12 @@ export interface WorkflowControlDeps {
   decorate?: (base: WorkflowCtx) => WorkflowCtx;
   /** Injected clock. Absent = `ctx.now`, then `Date.now`. */
   now?: () => number;
+  /**
+   * Where the transcript card for a launched run goes. Absent = straight onto the
+   * message, which is right for a REST launch and WRONG from inside a live turn —
+   * see `createWorkflowHostFn`, which supplies the buffering sink.
+   */
+  card?: (run: WorkflowRun) => void;
 }
 
 /**
@@ -724,6 +731,50 @@ export function workflowDetail(
 }
 
 // ---------------------------------------------------------------------------
+// The transcript card
+// ---------------------------------------------------------------------------
+
+/**
+ * Record a launched run on the message whose program launched it.
+ *
+ * WHY A PART AND NOT A COLUMN. The alternative was an `anchor_message_id` on the
+ * `workflows` table, and `db/schema.sql` is explicitly a closed table set — "a later
+ * task that needs a column stops and asks". The part union is the extension point
+ * that IS open, and it buys the right lifetime for free: a part rides the message,
+ * so the card lands exactly where the launch happened, survives compaction into the
+ * span summary, and needs no join to find.
+ *
+ * Identity only. Status, counts and elapsed time are read live from the run row by
+ * the renderer (`tui/lines.ts`), because a run is detached and any status frozen in
+ * here would be stale before the next frame.
+ *
+ * Idempotent on the run id, and it preserves `pending` rather than setting it —
+ * both for the reasons `appendAskPart` gives: the same launch must never appear
+ * twice, and a card appended as a turn dies must not flip a finished message back
+ * to streaming and leave the session busy forever.
+ */
+export function appendWorkflowPart(
+  ctx: AppCtx,
+  sessionId: string,
+  messageId: string,
+  run: WorkflowRun,
+): boolean {
+  const message = ctx.db.getMessage(messageId);
+  if (!message) return false;
+  if (message.parts.some((p: Part) => p.type === "workflow" && p.id === run.id)) return false;
+  const part: Part = {
+    type: "workflow",
+    id: run.id,
+    name: run.name,
+    description: run.description,
+    ...(run.resumeOf ? { rerunOf: run.resumeOf } : {}),
+  };
+  ctx.db.updateMessage(messageId, [...message.parts, part], message.pending);
+  ctx.bus.publish({ type: "message.part", sessionId, data: { messageId, part } });
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // The program-side `workflow.*` verb
 // ---------------------------------------------------------------------------
 
@@ -767,6 +818,11 @@ export async function workflowVerb(
   anchorMessageId?: string,
 ): Promise<unknown> {
   const { db } = ctx;
+  // No anchor = no card. A run launched over REST has no message to hang one on.
+  const card = (run: WorkflowRun): void => {
+    if (deps.card) return deps.card(run);
+    if (anchorMessageId) appendWorkflowPart(ctx, sessionId, anchorMessageId, run);
+  };
   switch (verb) {
     case "start": {
       const a = parseArgs(StartArgs, "start", "{script, args?}", args);
@@ -780,6 +836,7 @@ export async function workflowVerb(
         },
         deps,
       );
+      card(run);
       return workflowSummary(db, run);
     }
     case "rerun": {
@@ -790,6 +847,10 @@ export async function workflowVerb(
         { ...(a.script !== undefined ? { script: a.script } : {}), args: a.args },
         deps,
       );
+      // A rerun is its own run with its own id, so it gets its own card: the whole
+      // point of the first one is that it records what happened, and overwriting it
+      // would erase the failed attempt the rerun exists because of.
+      card(run);
       // `replay` is REQUIRED on an operation that replays (spec §8). The run is
       // detached, so at this instant the live counts are still zero and `available` is
       // the number that matters: it is the ceiling the new run's keys will be measured
@@ -832,6 +893,49 @@ export async function workflowVerb(
 }
 
 /**
+ * Whether a program-launched run has to be approved first. Default ON.
+ *
+ * `BOUGH_WORKFLOW_CONFIRM=0` turns the gate off for a session that wants the old
+ * behaviour (and for the headless `bough exec`, where there is nobody to ask).
+ */
+export function workflowConfirmEnabled(): boolean {
+  return (process.env["BOUGH_WORKFLOW_CONFIRM"] ?? "1") !== "0";
+}
+
+/**
+ * The approval card's text: what is about to run, before any of it bills.
+ *
+ * Everything here is read from `meta` WITHOUT running the script, which is the only
+ * reason this can be shown at submit time at all (`workflow/meta.ts`). The phase
+ * list is the shape of the fan-out; the agent count is deliberately NOT guessed,
+ * because the number of `agent()` calls is a property of the script's control flow
+ * and a wrong estimate on a spend warning is worse than none.
+ */
+export function confirmWorkflowText(meta: { name: string; description: string; phases?: readonly { title: string; detail?: string }[] }): string {
+  const lines = [`Run the workflow "${meta.name}"?`, meta.description];
+  const phases = meta.phases ?? [];
+  if (phases.length) {
+    lines.push("");
+    phases.forEach((p, i) => lines.push(`  ${i + 1}. ${p.title}${p.detail ? ` — ${p.detail}` : ""}`));
+  }
+  lines.push(
+    "",
+    "It runs detached and fans out subagents in parallel, so it can spend a lot of " +
+      "tokens quickly. `x` in the workflows tab (^w) stops a run at any point.",
+  );
+  return lines.join("\n");
+}
+
+/** A refused launch, worded for the thing that was refused. */
+function refusedWorkflow(said: string): Error {
+  return new AskDeclinedError(
+    `the user declined to run the workflow ("${said}"). NOTHING was started — no run, ` +
+      `no agents, no cost. Do not start it again. Say what it would have done and let ` +
+      `them decide, or do the work directly if it is small enough not to need a workflow.`,
+  );
+}
+
+/**
  * The bridged `workflow` host function for one turn.
  *
  * Bound to the turn's session and its in-flight supervisor message: a run started
@@ -842,7 +946,91 @@ export async function workflowVerb(
 export function createWorkflowHostFn(
   turnCtx: TurnCtx,
   deps: WorkflowControlDeps = workflowControlOf(turnCtx),
+  confirmGate: boolean = workflowConfirmEnabled(),
 ): NonNullable<HostFns["workflow"]> {
+  /**
+   * Cards wait for the runner's last write, for the reason `hostfn/ask.ts` spells
+   * out at length: the turn runner holds the supervisor message's `parts` in MEMORY
+   * and rewrites the row wholesale on every append. `workflow.start()` is always
+   * called from inside a program, so the very next thing the runner writes is that
+   * program step's `tool_result` — from its own array, which has never heard of a
+   * part written out here. Appending directly would put the card in the row for a
+   * few milliseconds and then silently erase it, every single time.
+   */
+  const buffered: WorkflowRun[] = [];
+  let closed = false;
+  let off: (() => void) | null = null;
+
+  const write = (run: WorkflowRun): void => {
+    appendWorkflowPart(turnCtx, turnCtx.sessionId, turnCtx.messageId, run);
+  };
+  const flush = (): void => {
+    closed = true;
+    for (const run of buffered.splice(0)) write(run);
+  };
+  // Armed on the first launch, so a turn that starts no workflow never subscribes,
+  // and dropped on `turn.finished` — which the runner emits on success, failure and
+  // interrupt alike, so a run launched by a turn that then died still leaves a card.
+  const card = (run: WorkflowRun): void => {
+    if (closed) return write(run);
+    buffered.push(run);
+    if (off) return;
+    off = turnCtx.bus.subscribe((event) => {
+      const done = event.type === "message.finished" &&
+        (event.data as { messageId?: string })?.messageId === turnCtx.messageId;
+      if (!done && !(event.type === "turn.finished" && event.sessionId === turnCtx.sessionId)) {
+        return;
+      }
+      const stop = off;
+      off = null;
+      stop?.();
+      flush();
+    });
+  };
+
+  /**
+   * Park on the human before a fan-out starts, not after it has billed.
+   *
+   * Only `start` and `rerun` — the two verbs that dispatch agents. `stop`, `pause`,
+   * `status` and `list` are reads and brakes, and a confirm on a brake is how you
+   * teach someone to hit enter without reading.
+   *
+   * A decline reaches the program as `AskDeclinedError`, the same catchable shape
+   * `ask()` raises, so a script-writing turn can say "you declined, here is what I
+   * would have run" instead of dying. Nothing is created: the gate is BEFORE
+   * `startWorkflowRun`, so a refused launch leaves no run row, no journal, no
+   * mirrored script.
+   */
+  const confirm = async (verb: string, args: unknown): Promise<void> => {
+    if (!confirmGate || (verb !== "start" && verb !== "rerun")) return;
+    const script = (args as { script?: unknown } | null)?.script;
+    // A rerun with no inline script re-runs the source run's, which this cannot read
+    // without a db round-trip it does not own. Gate on the id it was given.
+    const meta = typeof script === "string" && script.trim()
+      ? extractMeta(script)
+      : { name: "the previous script", description: "relaunched from its journal" };
+    const { answer } = raiseAsk(turnCtx.bus, {
+      sessionId: turnCtx.sessionId,
+      messageId: turnCtx.messageId,
+      question: confirmWorkflowText(meta),
+      options: ["run it", "no"],
+    }, turnCtx.signal);
+    let said: string;
+    try {
+      said = (await answer).trim().toLowerCase();
+    } catch (err) {
+      // A dismissal arrives as `ask()`'s own decline, whose advice — "proceed on a
+      // default you state out loud" — is exactly wrong here: the default for a
+      // refused fan-out is to not run it. Re-word, keep the catchable type.
+      if (err instanceof AskDeclinedError) throw refusedWorkflow("the card was dismissed");
+      throw err;
+    }
+    // Anything that is not an affirmative is a refusal. The free-text box is always
+    // open beside the options, and treating "not yet" as consent to spend is the one
+    // failure mode a spend gate may not have.
+    if (said !== "run it" && said !== "yes" && said !== "y") throw refusedWorkflow(said);
+  };
+
   return async (verb: string, argsJson: string): Promise<string> => {
     let args: unknown = null;
     try {
@@ -850,12 +1038,13 @@ export function createWorkflowHostFn(
     } catch {
       throw new WorkflowError(400, `workflow.${verb}(…): arguments must be a JSON value`);
     }
+    await confirm(verb, args);
     const value = await workflowVerb(
       turnCtx,
       turnCtx.sessionId,
       verb,
       args,
-      deps,
+      { ...deps, card },
       turnCtx.messageId,
     );
     return JSON.stringify(value ?? null);

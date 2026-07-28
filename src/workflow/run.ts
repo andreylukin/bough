@@ -588,7 +588,7 @@ export function classifyDivergence(
       kind: "moved",
       sourcePos: elsewhere[0],
       reason: `the call MOVED: its key did not change — the source run made this exact ` +
-        `call at ${elsewhere[0]}, and this run makes it at ${pos}. The script's shape ` +
+        `call at slot ${elsewhere[0]}, and this run makes it at slot ${pos}. The script's shape ` +
         `changed, not its prompts`,
     };
   }
@@ -596,13 +596,13 @@ export function classifyDivergence(
     return {
       pos,
       kind: "changed",
-      reason: `the call at ${pos} was edited: same position in the script, different key`,
+      reason: `the call at slot ${pos} was edited: same position in the script, different key`,
     };
   }
   return {
     pos,
     kind: "added",
-    reason: `the source run never made a call at ${pos}, and none of its calls ask for ` +
+    reason: `the source run never made a call at slot ${pos}, and none of its calls ask for ` +
       `the same thing — this call is new`,
   };
 }
@@ -1057,7 +1057,12 @@ export async function startWorkflow(ctx: WorkflowCtx, opts: StartOpts): Promise<
         label: shown,
         phase: call.phase ?? db.getWorkflow(id)?.currentPhase ?? null,
         prompt: call.prompt,
-        model: call.model ?? null,
+        // The RESOLVED model, for the same reason `callKey` hashes the resolved one
+        // (above): a script that names no model still runs on *something*, and
+        // storing only `call.model` left the run view with a blank model on every
+        // ordinary call — which is the column you would check to notice that a
+        // session pin never reached the agents. Null only when nothing resolved.
+        model: call.model ?? opts.effectiveModel ?? null,
         status: cached !== undefined ? "cached" : "queued",
         result: cached ?? null,
         error: null,

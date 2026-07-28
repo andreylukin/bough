@@ -219,6 +219,8 @@ export type Command =
   | "wf.rerun"
   /** The run's script — Workflows level 4, which nothing could reach. */
   | "wf.script"
+  /** Save the open run's script under its name, so it can be run again. */
+  | "wf.save"
   /** Cycle the agent-status filter (`WF_FILTERS`) on a big run. */
   | "wf.filter"
   /** Open the session of the agent under the cursor. The detail row promises it. */
@@ -1049,6 +1051,19 @@ export const BINDINGS: Binding[] = [
     not: ["panelFiltering"],
     section: "the workflows tab",
     desc: "the run's script",
+  },
+  // `saved.ts`, the REST routes and `api.saveWorkflowAs` have all existed since the
+  // workflows tab landed; nothing on screen ever reached them, so a run you would
+  // want again could only be re-obtained by asking the model to write it a second
+  // time. One key closes it.
+  {
+    mode: "panel",
+    chord: "s",
+    command: "wf.save",
+    tab: ["workflows"],
+    not: ["panelFiltering"],
+    section: "the workflows tab",
+    desc: "save this run as a reusable workflow",
   },
   {
     mode: "panel",

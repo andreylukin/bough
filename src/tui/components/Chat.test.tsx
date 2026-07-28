@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "bun:test";
 import { testRender } from "@opentui/react/test-utils";
 import type { ReactNode } from "react";
+import { askPromptLines } from "./App.tsx";
 import { Chat } from "./Chat.tsx";
 import { Composer } from "./Composer.tsx";
 import { MessageView } from "./Message.tsx";
@@ -167,4 +168,29 @@ test("Composer's / popup says so when nothing matches, rather than vanishing", a
     />,
   );
   assert.ok(frame.includes("no matching skills"), frame);
+});
+
+/**
+ * A question's height is its LINE COUNT, and the layout has to agree with the card.
+ *
+ * `App` lays the ask card out in a fixed region computed as `3 + prompt lines +
+ * options`. That number was a bare `4 + options`, which is right for exactly the
+ * shape `ask()` shipped with — one line, "Deploy to prod or staging?" — and paints a
+ * multi-line question's later rows ON TOP of the options for anything else. The
+ * workflow approval card is multi-line by design (its phase list is the point), and
+ * it rendered as `Revieweeachkf*.js"fileeforjdescription` until both halves counted
+ * the same rows.
+ */
+test("a multi-line ask reports every line, and clips instead of overflowing", () => {
+  assert.deepEqual(askPromptLines("one line?", 46), ["one line?"]);
+
+  const three = askPromptLines("Run it?\n\n  1. describe\n  2. summarize", 46);
+  assert.equal(three.length, 4, "blank lines are rows too — they are what spaces the card");
+
+  // A question taller than a third of the screen is clipped, and says so: silently
+  // dropping the tail of a spend confirmation is the one thing it may not do.
+  const long = Array.from({ length: 40 }, (_, i) => `line ${i}`).join("\n");
+  const clipped = askPromptLines(long, 30);
+  assert.equal(clipped.length, 10, "capped at rows/3");
+  assert.match(clipped.at(-1) ?? "", /… 31 more lines/);
 });

@@ -114,7 +114,30 @@ export const AskPart = z.object({
 });
 export type AskPart = z.infer<typeof AskPart>;
 
-/** The six part kinds of spec §4. Discriminated on `type`. */
+/**
+ * A workflow run LAUNCHED from this turn — the transcript's permanent record that
+ * it happened.
+ *
+ * Deliberately three identity fields and no status: a run is detached and outlives
+ * the turn that started it, so a status frozen into the part would be a lie within
+ * seconds. The card reads status live from the run row by `id`; what is persisted
+ * here is only what cannot be recovered later — that THIS message is where the run
+ * came from. The live rail (`SubagentRail.tsx`) is live-only by design and drops
+ * the run the moment it finishes, which left a finished fan-out with no anchor in
+ * the conversation at all and no way back into its run view.
+ */
+export const WorkflowPart = z.object({
+  type: z.literal("workflow"),
+  /** The run id — how the card resolves live status, and the click target. */
+  id: z.string(),
+  name: z.string(),
+  description: z.string(),
+  /** Set when this run is a rerun, so the card can say so without a second lookup. */
+  rerunOf: z.string().nullish(),
+});
+export type WorkflowPart = z.infer<typeof WorkflowPart>;
+
+/** The seven part kinds of spec §4. Discriminated on `type`. */
 export const Part = z.discriminatedUnion("type", [
   TextPart,
   ReasoningPart,
@@ -122,6 +145,7 @@ export const Part = z.discriminatedUnion("type", [
   ToolResultPart,
   ImagePart,
   AskPart,
+  WorkflowPart,
 ]);
 export type Part = z.infer<typeof Part>;
 

@@ -1307,6 +1307,20 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
         setWfScroll(0);
         setWfLevel(4);
         return true;
+      case "wf.save": {
+        // Saved under the run's own `meta.name`, with no name prompt: the name is
+        // already the thing the author chose to call it, and the route is idempotent
+        // on it, so saving twice updates rather than accumulating `audit-2`.
+        if (!wfOpen || !wfDetail) {
+          return void setMessage("open a run first — s saves that run's script"), true;
+        }
+        const name = wfDetail.workflow.name;
+        setMessage(null);
+        void api.saveWorkflowAs(wfOpen, name)
+          .then(() => setMessage(`saved as "${name}" — it can be run again by name`))
+          .catch((e: unknown) => setMessage(e instanceof Error ? e.message : String(e)));
+        return true;
+      }
       case "wf.filter":
         setMessage(null);
         setWfFilter((f) => WF_FILTERS[(WF_FILTERS.indexOf(f) + 1) % WF_FILTERS.length] ?? null);

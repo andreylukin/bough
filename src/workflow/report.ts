@@ -227,7 +227,12 @@ export function replayLine(s: Omit<ReplaySummary, "line">): string {
     }`;
   }
   if (s.sourceId && s.diverged) {
-    return `${head} (${s.available} available to replay); replay stopped at ` +
+    // "stopped at slot 0.0.0.0", never a bare "stopped at 0.0.0.0". A `CallPos` is
+    // dot-joined slot indexes (`run.ts`) and a four-deep one — pipeline, item, stage,
+    // call, the shape every `pipeline()` produces — is EXACTLY an IPv4 address. Read
+    // in a sentence about a run that stopped, it parses as a host, and the word is
+    // the only thing that stops it.
+    return `${head} (${s.available} available to replay); replay stopped at slot ` +
       `${s.diverged.pos} — ${s.diverged.reason}`;
   }
   if (s.sourceId) return `${head} (${s.available} available to replay)`;

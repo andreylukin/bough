@@ -489,7 +489,7 @@ test("an edited call and a new call are reported as themselves, not as each othe
     assert.equal(added.replayed, 6, "the whole source prefix still replayed");
     assert.equal(added.diverged?.kind, "added");
     assert.equal(added.divergedPos, "6");
-    assert.match(added.diverged?.reason ?? "", /never made a call at 6/);
+    assert.match(added.diverged?.reason ?? "", /never made a call at slot 6/);
 
     // (3) the source failed the call → unanswered, which is a fourth thing again.
     const flaky = await sourceRun(

@@ -700,8 +700,13 @@ export function App(
     )
     : 0;
   // An `ask()` takes the composer's place: prompt + options + the typed row + the
-  // legend, inside a border.
-  const inputH = ask ? 4 + (ask.options?.length ?? 0) : boxH + popupH;
+  // legend, inside a border. The prompt's OWN line count is part of that — this was
+  // `4 + options`, a constant that silently assumed every question is one line, and
+  // a multi-line one then painted its later rows on top of the options because the
+  // region it was laid out in was smaller than the card.
+  const askLines = ask ? askPromptLines(ask.question, rows) : [];
+  // 2 border + N prompt + one row per option + the typed row + the legend.
+  const inputH = ask ? 4 + askLines.length + (ask.options?.length ?? 0) : boxH + popupH;
   // Hoisted out of the JSX because the click hit-test needs the same number the
   // renderer lays out with; two copies would put a click one row off its row.
   const chatH = Math.max(1, rows - 1 /* header */ - railH - inputH - 1 /* status */);
@@ -1519,7 +1524,7 @@ export function App(
         armedId={armedStop}
       />
       {ask
-        ? <AskCard prompt={ask.question} options={ask.options ?? []} typed={askText} />
+        ? <AskCard lines={askLines} options={ask.options ?? []} typed={askText} />
         : (
           <Composer
             input={line.text}
@@ -1560,15 +1565,32 @@ function StatusLine({ width, meter }: { width: number; meter: ChatMeter }) {
 /**
  * A held `ask()`, in place of the composer.
  *
- * Deliberately tiny and deliberately here: it is four rows of text with no state
- * of its own, and giving it a file would imply there is something to test.
+ * ONE ROW PER LINE, which is not a detail. The prompt used to be a single
+ * `<text wrapMode="none">` holding the whole question, which is correct for exactly
+ * the shape it was written for — "Deploy to prod or staging?" — and silently wrong
+ * for any other: with `wrapMode="none"` an embedded newline does not open a row, so
+ * a multi-line question and the numbered options below it painted into the SAME
+ * cells. The workflow approval card (`workflow/control.ts`), whose entire value is
+ * the phase list it shows before anything bills, rendered as
+ * `21noneitew files — One agent per f*.js file`. Splitting here rather than wrapping
+ * keeps the no-wrap discipline the rest of the card has.
  */
+export function askPromptLines(prompt: string, rows: number): string[] {
+  // At most a third of the screen. A question is asked INSTEAD of the composer, so a
+  // long one squeezes the transcript it is asking about; past the cap the card says
+  // it clipped rather than quietly dropping the tail.
+  const cap = Math.max(1, Math.floor(rows / 3));
+  const lines = prompt.split("\n");
+  if (lines.length <= cap) return lines;
+  return [...lines.slice(0, cap - 1), `… ${lines.length - cap + 1} more lines`];
+}
+
 function AskCard(
-  { prompt, options, typed }: { prompt: string; options: string[]; typed: string },
+  { lines, options, typed }: { lines: string[]; options: string[]; typed: string },
 ) {
   return (
     <box flexDirection="column" borderStyle="rounded" borderColor={UI.warn} paddingX={1}>
-      <text wrapMode="none">{prompt}</text>
+      {lines.map((line, i) => <text key={`q${i}`} wrapMode="none">{line}</text>)}
       {options.map((option, i) => (
         <text key={option + i} wrapMode="none">
           <span fg={UI.accent}>{` ${i + 1} `}</span>
