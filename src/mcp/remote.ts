@@ -89,7 +89,13 @@ const ERROR_TAIL_BYTES = 4_096;
  * in another is a prompt they do not act on.
  */
 export function authPrompt(server: string): string {
-  return `not authorized — /mcp auth ${server}`;
+  // NAMES A GESTURE THAT EXISTS. This said "/mcp auth <name>" for as long as it has
+  // existed, and there has never been a `/mcp` slash command in this client — `/`
+  // lists skills, and MCP is a PANEL. So the single instruction bough gave for the
+  // single action that unblocks a remote server could not be followed, and the flow
+  // it points at (`beginMcpAuth`) sat unreachable behind it. `^p` opens the tab, `a`
+  // starts the flow.
+  return `not authorized — open the mcp panel (^p) and press a on ${server}`;
 }
 
 /**

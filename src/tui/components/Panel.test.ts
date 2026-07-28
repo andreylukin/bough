@@ -18,6 +18,7 @@
 import assert from "node:assert/strict";
 import { test } from "bun:test";
 import { testRender } from "@opentui/react/test-utils";
+import { nameFromUrl } from "./PanelHost.tsx";
 import { createElement, type ReactNode } from "react";
 import {
   initialPanel,
@@ -554,4 +555,36 @@ test("the sessions legend is the LAST row, at every height that has one", async 
     const last = painted[painted.length - 1] ?? "";
     assert.match(last, /↑↓ move/, `@${h}: the last row is not the legend: ${frame}`);
   }
+});
+
+// ---- registering an MCP server by URL ---------------------------------------
+// The name is derived rather than asked for, so registration is ONE field. These
+// pin the derivation, because a wrong name silently registers a second server
+// beside one that may already be authorized.
+
+test("a server name is derived from its URL, without the mcp. and the TLD", () => {
+  assert.equal(nameFromUrl("https://mcp.linear.app/sse"), "linear");
+  assert.equal(nameFromUrl("https://mcp.notion.com/mcp"), "notion");
+  assert.equal(nameFromUrl("https://api.githubcopilot.com/mcp/"), "githubcopilot");
+  assert.equal(nameFromUrl("https://example.com"), "example");
+  // A port and a path change nothing — the host is the whole of the answer.
+  assert.equal(nameFromUrl("http://localhost:3000/mcp"), "localhost");
+});
+
+test("a co.uk-shaped suffix does not become the name", () => {
+  // Taking "the part before the TLD" naively would call this one "co".
+  assert.equal(nameFromUrl("https://mcp.acme.co.uk/sse"), "acme");
+});
+
+test("a name that is taken gets a suffix rather than overwriting", () => {
+  // Overwriting silently would replace a registration that may already hold
+  // credentials — the one outcome worse than asking.
+  assert.equal(nameFromUrl("https://mcp.linear.app/sse", ["linear"]), "linear-2");
+  assert.equal(nameFromUrl("https://mcp.linear.app/sse", ["linear", "linear-2"]), "linear-3");
+});
+
+test("something that is not a URL yields no name, so nothing is registered", () => {
+  assert.equal(nameFromUrl("linear"), "");
+  assert.equal(nameFromUrl(""), "");
+  assert.equal(nameFromUrl("https://"), "");
 });

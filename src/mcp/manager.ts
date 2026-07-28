@@ -511,7 +511,7 @@ export class McpManager {
  *
  * The two clients satisfy the same `McpConnection`, so this is the only place in
  * the manager that knows which kind an entry is — and a 401 from a remote server
- * arrives as `McpAuthRequiredError`, whose message is the "/mcp auth <name>" prompt
+ * arrives as `McpAuthRequiredError`, whose message is the "^p, then a" prompt
  * rather than a fault, straight through `ensure`'s catalog error and into the
  * `failed` status row.
  */

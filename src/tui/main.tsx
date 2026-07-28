@@ -123,6 +123,10 @@ async function main() {
     // panel re-reads this every time the MCP tab is entered (plan §6.13).
     loadMcp: (sessionId) => api.mcpStatus(sessionId),
     setMcpEnabled: (name, on, sessionId) => api.setMcpEnabled(name, on, sessionId),
+    beginMcpAuth: (name) => api.beginMcpAuth(name),
+    clearMcpAuth: (name) => api.clearMcpAuth(name),
+    mcpAuthStatus: (name) => api.mcpAuthStatus(name),
+    putMcpServer: (name, config) => api.putMcpServer(name, config),
     pauseWorkflow: async (id) => void (await api.pauseWorkflow(id)),
     resumeWorkflow: async (id) => void (await api.resumeWorkflow(id)),
     stopWorkflow: async (id) => void (await api.stopWorkflow(id)),

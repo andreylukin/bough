@@ -177,6 +177,21 @@ export type Command =
   /** A screenful of rows. The model tab is 32 rows in a 20-row viewport. */
   | "move.pageUp"
   | "move.pageDown"
+  // -- MCP registration and authorization (spec §10) ------------------------
+  /**
+   * Start the OAuth flow for the selected server and print the URL to open.
+   *
+   * There was no key for this and no command either. An unauthorized server's
+   * error said "not authorized — /mcp auth <name>", naming a slash command that
+   * does not exist in this client — `/mcp` is a PANEL. So the one instruction the
+   * product gave for the one action that unblocks a remote server was unfollowable,
+   * and `beginMcpAuth`/`clearMcpAuth` sat in `api.ts` with no caller.
+   */
+  | "mcp.auth"
+  /** Drop stored credentials for the selected server, so the next call re-authorizes. */
+  | "mcp.forget"
+  /** Register a remote server by URL — the buffer, not the write. */
+  | "mcp.add"
   // -- workflow steering (spec §8) -----------------------------------------
   | "wf.pause"
   | "wf.resume"
@@ -888,6 +903,37 @@ export const BINDINGS: Binding[] = [
   },
 
   // -- workflow runs (spec §8: pause, stop, relaunch from the journal) ------
+  // The MCP tab's verbs. Registering a remote server used to mean hand-editing
+  // `~/.bough/mcp.json` and restarting, and authorizing one had no route through
+  // this client at all — the tab's whole legend was "⏎ grant/revoke".
+  {
+    mode: "panel",
+    chord: "a",
+    command: "mcp.auth",
+    tab: ["mcp"],
+    not: ["panelFiltering"],
+    section: "the mcp tab",
+    desc: "authorize — prints the URL to open",
+  },
+  {
+    mode: "panel",
+    chord: "n",
+    command: "mcp.add",
+    tab: ["mcp"],
+    not: ["panelFiltering"],
+    section: "the mcp tab",
+    desc: "add a remote server by URL",
+  },
+  {
+    mode: "panel",
+    chord: "F",
+    command: "mcp.forget",
+    tab: ["mcp"],
+    not: ["panelFiltering"],
+    section: "the mcp tab",
+    desc: "forget this server's credentials",
+  },
+
   // Bound in the panel and live only in the workflows tab. They are letters rather
   // than chords because the panel has the keyboard when it is open, and they carry
   // `tab` because a letter that acts on a list you are not looking at is a bug the

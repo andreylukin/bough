@@ -169,7 +169,7 @@ export const routes: Route[] = [
   // T7.2 — OAuth for remote MCP servers. The callback is the load-bearing one: the
   // authorization server sends the user's BROWSER back here, so this path is baked
   // into the redirect URI bough registers and must exist on bough's own port (spec
-  // §10). The three `/mcp/servers/:name/auth` verbs are what `/mcp auth <name>`
+  // §10). The three `/mcp/servers/:name/auth` verbs are what the mcp panel's `a`/`F`
   // drives — start the flow, read its state, forget the tokens. No route here ever
   // returns a token; they return a URL for the human and a status for the panel.
   route("GET", mcpOauth.CALLBACK_PATH, mcpOauth.oauthCallbackH),

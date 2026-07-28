@@ -119,6 +119,36 @@ const SKILLS_NOTE =
 const MODEL_NOTE = "pinned for this conversation and set as the default for new ones";
 
 /**
+ * A registry name derived from a server URL.
+ *
+ * Registration asked for a name AND a URL, which is one field more than the user
+ * has: the name is bough's own label for the thing, and nobody arrives wanting to
+ * choose it. `https://mcp.linear.app/sse` → `linear`. The leading `mcp.` and the
+ * public suffix are dropped because every remote MCP server is called `mcp.<x>.com`
+ * and a registry of `mcp-linear-app`, `mcp-notion-com` reads like a hostname dump.
+ * Collisions get a numeric suffix rather than silently overwriting a server that is
+ * already registered and possibly already authorized.
+ */
+export function nameFromUrl(raw: string, taken: readonly string[] = []): string {
+  let host: string;
+  try {
+    host = new URL(raw).hostname;
+  } catch {
+    return "";
+  }
+  const parts = host.split(".").filter((p) => p && p !== "mcp" && p !== "www" && p !== "api");
+  // Drop the TLD, and the second-level part of a `co.uk`-shaped suffix with it.
+  const base = (parts.length > 2 && parts.at(-2)!.length <= 3
+    ? parts.slice(0, -2)
+    : parts.slice(0, -1)).at(-1) ?? parts[0] ?? host;
+  const slug = base.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-+|-+$/g, "");
+  if (!slug) return "";
+  if (!taken.includes(slug)) return slug;
+  for (let i = 2; i < 100; i++) if (!taken.includes(`${slug}-${i}`)) return `${slug}-${i}`;
+  return slug;
+}
+
+/**
  * The changes tab with no conversation open.
  *
  * `store.refreshChanges()` returns without fetching when there is no session, which
@@ -133,6 +163,14 @@ const MODEL_NOTE = "pinned for this conversation and set as the default for new 
  * and false for this one: there is no checkout, because there is no session. Two
  * different absences, two different sentences.
  */
+/**
+ * How long the tab waits on the browser half of an OAuth flow: 2s × 150 = 5 minutes.
+ * Long enough to find the window, log in and approve; bounded so an abandoned flow
+ * does not leave a timer running for the life of the process.
+ */
+const AUTH_POLL_MS = 2000;
+const AUTH_POLLS = 150;
+
 const NO_SESSION_CHANGES = {
   available: false as const,
   reason: "no conversation is open — open or start one and its changes appear here",
@@ -163,6 +201,20 @@ export interface PanelControls {
   loadMcp?: (sessionId?: string) => Promise<McpStatus>;
   /** `POST /mcp/servers/:name/{enable,disable}` — the grant itself. */
   setMcpEnabled?: (name: string, on: boolean, sessionId: string) => Promise<unknown>;
+  /**
+   * `POST /mcp/servers/:name/auth` — begin OAuth. Returns the URL a human opens.
+   *
+   * Never opens a browser: a headless server that shells out to one hangs when
+   * there is no browser, and the model must never be handed a URL to "click"
+   * (`mcp/oauth.ts`). The URL comes back here and this tab prints it.
+   */
+  beginMcpAuth?: (name: string) => Promise<{ status: string; authorizationUrl?: string }>;
+  /** `DELETE /mcp/servers/:name/auth` — drop stored credentials. */
+  clearMcpAuth?: (name: string) => Promise<unknown>;
+  /** `GET /mcp/servers/:name/auth` — polled after the browser half of the flow. */
+  mcpAuthStatus?: (name: string) => Promise<{ authorized: boolean }>;
+  /** `PUT /mcp/servers/:name` — register a definition. Registering grants nothing. */
+  putMcpServer?: (name: string, config: unknown) => Promise<unknown>;
   /**
    * `GET /skills` — a fresh walk of the source directories, so a skill written a
    * second ago lists a second later. `sources` rides along because an empty list
@@ -273,6 +325,17 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
   const [armedStop, setArmedStop] = useState<string | null>(null);
   const [filtering, setFiltering] = useState(false);
   const [filter, setFilter] = useState("");
+  /**
+   * What the typed buffer IS. `filtering` means "the panel has the text keyboard";
+   * this says what happens on ⏎.
+   *
+   * One buffer, two jobs, because they are the same gesture and the keymap already
+   * makes bare letters safe while it is open (`panelFiltering`). A second parallel
+   * input path would need its own guard and would be the second place to get that
+   * wrong. `filter` is only handed to a tab body when this is `"filter"` — an MCP
+   * URL half-typed must never narrow the sessions list underneath it.
+   */
+  const [entryKind, setEntryKind] = useState<"filter" | "mcpUrl">("filter");
   const [mcp, setMcp] = useState<McpStatus | null>(null);
   const [skills, setSkills] = useState<SkillRow[] | null>(null);
   const [skillSources, setSkillSources] = useState<SkillSourceRow[]>([]);
@@ -607,7 +670,81 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
    * moves the cursor and affirms in one gesture, and `setSel` does not take effect
    * until the next render, so the row has to travel with the call.
    */
+  /** The registry name under the cursor, in the same sort order the tab paints. */
+  const mcpNameAt = useCallback(
+    (at: number): string | undefined =>
+      mcp ? Object.keys(mcp.registry.servers).sort()[at] : undefined,
+    [mcp],
+  );
+
+  // Always a promise, even with no fetch injected, so callers can chain without
+  // each one re-deciding what "the capability is absent" means.
+  const refreshMcp = useCallback(
+    async (): Promise<void> => {
+      const next = await controls.loadMcp?.(state.currentId ?? undefined);
+      if (next) setMcp(next);
+    },
+    [controls, state.currentId],
+  );
+
+  /**
+   * Wait out the browser half of the OAuth flow.
+   *
+   * The redirect lands on bough's own callback (`GET /mcp/oauth/callback`), which
+   * stores the tokens — but nothing tells this client, because the browser is a
+   * different process entirely. Without this the tab sits on "open this URL"
+   * forever and the user has to guess when to press a key to find out. Polling is
+   * the honest mechanism: the flow finishes in a browser bough does not own.
+   *
+   * Bounded, because a user who abandons the flow must not leave a timer running for
+   * the life of the process.
+   */
+  const pollAuth = useCallback(async (name: string) => {
+    if (!controls.mcpAuthStatus) return;
+    for (let i = 0; i < AUTH_POLLS; i++) {
+      await new Promise((r) => setTimeout(r, AUTH_POLL_MS));
+      let ok = false;
+      try {
+        ok = (await controls.mcpAuthStatus(name)).authorized;
+      } catch {
+        continue; // a blip mid-flow is not a failed flow
+      }
+      if (ok) {
+        setMessage(`${name} is authorized — ⏎ grants it to this conversation`);
+        await refreshMcp();
+        return;
+      }
+    }
+    setMessage(`${name}: still waiting on the browser — press a to start over`);
+  }, [controls, refreshMcp]);
+
   const confirm = useCallback((summarize = false, at = sel) => {
+    // The URL buffer takes ⏎ before any tab does: while it is open the panel is
+    // asking a question, and the row under the cursor is not what the key is about.
+    if (filtering && entryKind === "mcpUrl") {
+      const url = filter.trim();
+      setFiltering(false);
+      setFilter("");
+      setEntryKind("filter");
+      if (!url || url === "https://") return setMessage(null);
+      const name = nameFromUrl(url, Object.keys(mcp?.registry.servers ?? {}));
+      if (!name) return setMessage(`${url} is not a URL bough can name a server from`);
+      if (!controls.putMcpServer) {
+        return setMessage("registering an MCP server is not wired into this client");
+      }
+      setMessage(`registering ${name}…`);
+      // Registering GRANTS NOTHING (`mcp/config.ts`) — the row appears "off" and ⏎
+      // is what turns it on. Authorization is offered in the same breath because a
+      // remote server that needs it is useless until it has it, but it is still the
+      // user's keypress: `a`, named in the message, not started behind their back.
+      void controls.putMcpServer(name, { url })
+        .then(() => refreshMcp())
+        .then(() => {
+          setMessage(`registered ${name} — a authorizes it, ⏎ grants it to this conversation`);
+        })
+        .catch((e: unknown) => setMessage(e instanceof Error ? e.message : String(e)));
+      return;
+    }
     switch (panel.tab) {
       case "sessions": {
         const item = sessions[at];
@@ -723,6 +860,12 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
     wfAgents.length,
     conversation,
     controls.forkAt,
+    // The URL buffer is read at the top of this callback, so a stale copy would
+    // register whatever was typed the render before.
+    filtering,
+    entryKind,
+    filter,
+    refreshMcp,
   ]);
 
   /**
@@ -943,6 +1086,7 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
 
       // ---- the `/` buffer (`FILTER_TABS` only; the keymap enforces which) ----
       case "panel.filter":
+        setEntryKind("filter");
         setFiltering(true);
         return true;
       case "panel.filterBack":
@@ -954,11 +1098,72 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
         // keymap orders this ahead of `panel.close`, so the next esc closes.
         setFiltering(false);
         setFilter("");
+        setEntryKind("filter");
         setSel(0);
         return true;
 
       // `p`/`P`/`r`/`x` are the WORKFLOWS tab's verbs and used to reach the dispatcher
       // from every tab, steering `state.workflows[sel]` — the row a cursor in an
+      // ---- the mcp tab's verbs ------------------------------------------------
+      case "mcp.add":
+        // The buffer only; the write happens on ⏎ (`confirm`). Prefilled with the
+        // scheme because every remote MCP server is https and typing it is friction
+        // on the one field this flow has.
+        setEntryKind("mcpUrl");
+        setFilter("https://");
+        setFiltering(true);
+        setMessage(null);
+        return true;
+
+      case "mcp.auth": {
+        const name = mcpNameAt(sel);
+        if (!name) return true;
+        if (!controls.beginMcpAuth) {
+          setMessage("authorizing an MCP server is not wired into this client");
+          return true;
+        }
+        setMessage(`authorizing ${name}…`);
+        void controls.beginMcpAuth(name)
+          .then((start) => {
+            if (start.status === "authorized") {
+              setMessage(`${name} is authorized`);
+              return refreshMcp();
+            }
+            if (!start.authorizationUrl) {
+              setMessage(`${name}: the server asked for authorization but sent no URL`);
+              return;
+            }
+            // PRINTED, never opened. A headless server that shells out to a browser
+            // hangs when there is no browser (`mcp/oauth.ts`), and the terminal makes
+            // the URL clickable itself.
+            setMessage(`open this, then come back — it finishes on its own: ${start.authorizationUrl}`);
+            // The server may have CORRECTED the registry on the way through — the
+            // published URL is often not the one the flow wants (`mcp/oauth.ts`) —
+            // so the row must be re-read or it keeps showing the URL that failed.
+            return refreshMcp().then(() => pollAuth(name));
+          })
+          .catch((e: unknown) => setMessage(e instanceof Error ? e.message : String(e)));
+        return true;
+      }
+
+      case "mcp.forget": {
+        const name = mcpNameAt(sel);
+        if (!name) return true;
+        if (!controls.clearMcpAuth) {
+          setMessage("clearing MCP credentials is not wired into this client");
+          return true;
+        }
+        // The scope is said out loud rather than implied: this drops the stored
+        // tokens for ONE server and nothing else.
+        void controls.clearMcpAuth(name)
+          .then(() => {
+            setMessage(`forgot ${name}'s credentials — press a to authorize again`);
+            return refreshMcp();
+          })
+          .catch((e: unknown) => setMessage(e instanceof Error ? e.message : String(e)));
+        return true;
+      }
+
       // unrelated list happened to be on. The hand-written `if (panel.tab !==
       // "workflows") return true` guards that fixed it are GONE: the bindings carry
       // `tab: ["workflows"]` now, so `lookup` never resolves them elsewhere, and two
@@ -1080,7 +1285,15 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
           pending: pendingRevert,
         }}
         model={{ cfg: modelCfg, entries, selected: sel, rows: body, message, filter, filtering }}
-        mcp={{ status: mcp, selected: sel, message }}
+        mcp={{
+          status: mcp,
+          selected: sel,
+          message,
+          rows: body,
+          // The URL being typed. `null` when the buffer is closed or is a filter for
+          // some other tab — the two share one buffer, not one meaning.
+          entry: filtering && entryKind === "mcpUrl" ? filter : null,
+        }}
         skills={{
           skills: shownSkills,
           selected: sel,

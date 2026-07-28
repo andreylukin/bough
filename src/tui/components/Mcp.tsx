@@ -33,6 +33,13 @@ export interface McpTabProps {
    * OpenTUI shrank the rows onto each other (`Panel.tsx`).
    */
   rows?: number;
+  /**
+   * The server URL being typed, or `null` when the buffer is closed.
+   *
+   * Registration used to mean hand-editing `~/.bough/mcp.json` and restarting the
+   * server, which is why this tab's legend was one verb long.
+   */
+  entry?: string | null;
 }
 
 /** The visible slice. Chrome is the message and the legend, which is always last. */
@@ -65,18 +72,32 @@ export function mcpDetail(status: McpStatus, name: string): string {
   ].filter(Boolean).join(" · ");
 }
 
-export function McpTab({ status, selected, message, rows = 20 }: McpTabProps) {
+export function McpTab({ status, selected, message, rows = 20, entry = null }: McpTabProps) {
   if (!status) return <text attributes={TextAttributes.DIM}>loading…</text>;
   const names = Object.keys(status.registry.servers).sort();
   const legend = (
     <text attributes={TextAttributes.DIM} wrapMode="none">
-      ↑↓ move · pgup/pgdn page · 1-9 pick · ⏎ grant/revoke · esc back
+      {entry === null
+        ? "↑↓ move · 1-9 pick · ⏎ grant/revoke · a authorize · n add by URL · F forget · esc back"
+        : "⏎ registers · ⌫ back · esc cancels"}
+    </text>
+  );
+  // The prompt REPLACES the list's affirmative while it is open — see `confirm`,
+  // which takes ⏎ before any tab does.
+  const prompt = entry === null ? null : (
+    <text wrapMode="none">
+      <span attributes={TextAttributes.DIM}>new server </span>
+      <span>{entry}</span>
+      <span fg={palette.accent}>▌</span>
     </text>
   );
   if (names.length === 0) {
     return (
       <box flexDirection="column">
-        <text attributes={TextAttributes.DIM}>no MCP servers configured</text>
+        {prompt}
+        <text attributes={TextAttributes.DIM}>
+          {entry === null ? "no MCP servers configured — n adds one by URL" : ""}
+        </text>
         {legend}
       </box>
     );
@@ -85,11 +106,20 @@ export function McpTab({ status, selected, message, rows = 20 }: McpTabProps) {
     names.length,
     selected,
     rows,
-    message ? 1 : 0,
+    (message ? 1 : 0) + (prompt ? 1 : 0),
   );
   return (
     <box flexDirection="column">
-      {message ? <text fg={palette.warn} wrapMode="none">{clip(message, 96)}</text> : null}
+      {prompt}
+      {/* NOT clipped to one line when it carries a URL: an authorization URL that
+          ends in "…" is a URL nobody can open, which is the whole point of it. */}
+      {message
+        ? (
+          <text fg={palette.warn} wrapMode={message.includes("://") ? "word" : "none"}>
+            {message.includes("://") ? message : clip(message, 96)}
+          </text>
+        )
+        : null}
       {(height === 0 ? [] : names.slice(start, end)).map((name, i) => {
         const idx = start + i;
         const granted = status.active.includes(name);

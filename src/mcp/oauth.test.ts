@@ -42,6 +42,7 @@ import {
   hasTokens,
   oauthCallbackH,
   TokenStore,
+  declaredResource,
 } from "./oauth.ts";
 
 /** A throwaway store. Nothing under the real `~/.bough` is read or written. */
@@ -157,7 +158,8 @@ test("a missing verifier is a restartable message, not a crash", () => {
   const provider = new BoughOAuthProvider("notion", { dir: store.dir });
   assert.throws(
     () => provider.codeVerifier(),
-    (error: unknown) => error instanceof McpError && error.message.includes("/mcp auth notion"),
+    (error: unknown) =>
+      error instanceof McpError && error.message.includes("press a on notion"),
   );
 });
 
@@ -424,4 +426,46 @@ test("the /mcp auth verbs: status, start, and forget", async () => {
       await as.close();
     }
   });
+});
+
+// ---- the docs URL is often not the flow's URL --------------------------------
+// Linear publishes `https://mcp.linear.app/sse`; that endpoint's RFC9728 metadata
+// declares its resource as `https://mcp.linear.app/mcp`, and the SDK refuses the
+// mismatch. `beginAuthH` adopts the advertised URL rather than making the user read
+// a 502 and edit the registry by hand — but only when it is safe to.
+
+test("an advertised same-origin resource is adopted", () => {
+  const err = new Error(
+    "Protected resource https://mcp.linear.app/mcp does not match expected " +
+      "https://mcp.linear.app/sse (or origin)",
+  );
+  assert.equal(
+    declaredResource(err, "https://mcp.linear.app/sse"),
+    "https://mcp.linear.app/mcp",
+  );
+});
+
+test("a CROSS-ORIGIN redeclaration is refused", () => {
+  // Following this would let a server point bough's registry at someone else's
+  // endpoint — and the next flow would mint a token for that audience.
+  const err = new Error(
+    "Protected resource https://evil.example.com/mcp does not match expected " +
+      "https://mcp.linear.app/sse (or origin)",
+  );
+  assert.equal(declaredResource(err, "https://mcp.linear.app/sse"), null);
+});
+
+test("an unrelated failure is not mistaken for a redeclaration", () => {
+  // Everything else must keep surfacing as itself; only this one shape is retried.
+  assert.equal(declaredResource(new Error("fetch failed"), "https://x.example/mcp"), null);
+  assert.equal(declaredResource(new Error(""), "https://x.example/mcp"), null);
+});
+
+test("a resource identical to what was tried is not a correction", () => {
+  // Retrying the same URL would loop.
+  const err = new Error(
+    "Protected resource https://x.example/mcp does not match expected " +
+      "https://x.example/mcp (or origin)",
+  );
+  assert.equal(declaredResource(err, "https://x.example/mcp"), null);
 });

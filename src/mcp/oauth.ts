@@ -4,7 +4,7 @@
  * THE INVARIANT THIS HOLDS: **an unauthorized server is a QUESTION, never a
  * failure and never a hang.** Everything here exists so that a remote server
  * answering 401 turns into one sentence a human can act on — "not authorized —
- * /mcp auth <name>" — and one URL they can open. The SDK's `auth()` drives
+ * open the mcp panel (^p) and press a" — and one URL they can open. The SDK's `auth()` drives
  * discovery, dynamic client registration and PKCE; this module supplies the
  * `OAuthClientProvider` it needs and owns three things the SDK deliberately does
  * not: where credentials live, who the callback belongs to, and the fact that
@@ -62,7 +62,7 @@ import type {
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { McpError } from "../errors.ts";
 import { boughPath, confine } from "../paths.ts";
-import { getServer, type McpConfigOptions } from "./config.ts";
+import { getServer, type McpConfigOptions, upsertServer } from "./config.ts";
 import type { AppCtx } from "../types.ts";
 
 // ---------------------------------------------------------------------------
@@ -315,7 +315,7 @@ export class BoughOAuthProvider implements OAuthClientProvider {
         400,
         `no PKCE verifier is stored for "${this.server}", so this authorization cannot ` +
           `be completed — it was started by a different process or already finished. ` +
-          `Run \`/mcp auth ${this.server}\` to start a fresh one.`,
+          `Open the mcp panel (^p) and press a on ${this.server} to start a fresh one.`,
       );
     }
     return verifier;
@@ -511,7 +511,7 @@ export async function completeAuth(
     throw new McpError(
       400,
       `malformed state ${JSON.stringify(state)} — a bough callback carries ` +
-        `"<server>.<nonce>". Start the flow again with \`/mcp auth <name>\`.`,
+        `"<server>.<nonce>". Start the flow again from the mcp panel (^p, then a).`,
     );
   }
   const server = assertServerName(state.slice(0, dot));
@@ -521,7 +521,7 @@ export async function completeAuth(
       400,
       `state mismatch for "${server}" — this callback does not match the authorization ` +
         `bough started (it may have been completed already, or started by a different ` +
-        `process). Run \`/mcp auth ${server}\` to start a fresh one.`,
+        `process). Open the mcp panel (^p) and press a on ${server} to start a fresh one.`,
     );
   }
   const lookup = opts.serverUrlFor ?? ((name: string) => remoteServerUrl(name));
@@ -548,7 +548,7 @@ export async function completeAuth(
     throw new McpError(
       502,
       `the token exchange for "${server}" did not complete — the authorization server ` +
-        `accepted the code but returned no tokens. Run \`/mcp auth ${server}\` again.`,
+        `accepted the code but returned no tokens. Press a on ${server} again (^p).`,
     );
   }
   return server;
@@ -604,7 +604,7 @@ export function authStatusH(_req: Request, _ctx: AppCtx, params: Record<string, 
 }
 
 /**
- * `POST /mcp/servers/:name/auth` — start the flow. This is what `/mcp auth <name>`
+ * `POST /mcp/servers/:name/auth` — start the flow. This is what the mcp panel's `a`
  * calls. It returns the URL; it never opens a browser and never blocks waiting for
  * one, so a headless install behaves the same as a desktop one.
  */
@@ -615,7 +615,46 @@ export async function beginAuthH(
 ): Promise<Response> {
   const name = params.name ?? "";
   const url = requireRemote(name);
-  return jsonResponse(await beginAuth(name, url));
+  try {
+    return jsonResponse(await beginAuth(name, url));
+  } catch (error) {
+    // THE URL IN THE DOCS IS OFTEN NOT THE URL THE FLOW WANTS. Linear publishes
+    // `https://mcp.linear.app/sse`; that endpoint's RFC9728 metadata declares its
+    // resource as `https://mcp.linear.app/mcp`, and the SDK refuses the mismatch —
+    // correctly, since a resource indicator that does not match is how a token gets
+    // minted for the wrong audience. But the server has just TOLD us the right URL,
+    // and making the user read a 502, edit the registry by hand and try again is
+    // friction over a fact bough is already holding.
+    //
+    // Same-origin only. Following a cross-origin redeclaration would let a server
+    // point bough's registry at someone else's endpoint.
+    const advertised = declaredResource(error, url);
+    if (!advertised) throw error;
+    // The whole entry is rewritten with the corrected url; every other field is
+    // carried through, because `upsertServer` replaces rather than merges.
+    upsertServer(name, { ...getServer(name), url: advertised });
+    return jsonResponse({ ...(await beginAuth(name, advertised)), correctedUrl: advertised });
+  }
+}
+
+/**
+ * The resource URL a failed flow says the server actually declares, when it is safe
+ * to adopt: same origin, and genuinely different from what we tried.
+ *
+ * Read out of the SDK's message rather than re-fetching the metadata, because the
+ * SDK has already done that fetch and its comparison is the thing that failed.
+ */
+export function declaredResource(error: unknown, tried: string): string | null {
+  const text = error instanceof Error ? error.message : String(error);
+  const m = /Protected resource (\S+) does not match expected (\S+)/.exec(text);
+  if (!m) return null;
+  try {
+    const found = new URL(m[1]!);
+    if (found.origin !== new URL(tried).origin) return null;
+    return found.href === new URL(tried).href ? null : found.href;
+  } catch {
+    return null;
+  }
 }
 
 /** `DELETE /mcp/servers/:name/auth` — forget the tokens ("logout"). */
@@ -644,7 +683,7 @@ export async function oauthCallbackH(req: Request): Promise<Response> {
       `${escapeHtml(error)}${
         query.get("error_description") ? `: ${escapeHtml(query.get("error_description")!)}` : ""
       }`,
-      "Nothing was stored. You can start again with <code>/mcp auth &lt;name&gt;</code>.",
+      "Nothing was stored. Start again from bough's mcp panel (^p, then a).",
     );
   }
   const code = query.get("code");
@@ -654,7 +693,7 @@ export async function oauthCallbackH(req: Request): Promise<Response> {
       400,
       "That link is not a bough callback",
       "The authorization server did not send a <code>code</code> and <code>state</code>.",
-      "Start the flow from bough with <code>/mcp auth &lt;name&gt;</code> and open the URL it prints.",
+      "Start the flow from bough's mcp panel (^p, then a) and open the URL it prints.",
     );
   }
   try {
@@ -672,7 +711,7 @@ export async function oauthCallbackH(req: Request): Promise<Response> {
       e instanceof McpError ? e.status : 502,
       "Authorization did not complete",
       escapeHtml(e instanceof Error ? e.message : String(e)),
-      "Nothing was stored. You can start again with <code>/mcp auth &lt;name&gt;</code>.",
+      "Nothing was stored. Start again from bough's mcp panel (^p, then a).",
     );
   }
 }

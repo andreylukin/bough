@@ -519,7 +519,7 @@ process.on("exit", () => {
 // registry is (plan §6.13: MCP state is never cached) — a cached token is how a turn
 // ends up presenting a credential the user revoked two turns ago. Connections are made
 // per turn by the layer above; a remote server that is not authorized surfaces in that
-// turn's catalog as "not authorized — /mcp auth <name>" and never as a hang (spec §10).
+// turn's catalog as "not authorized — ^p, then a" and never as a hang (spec §10).
 configureOAuthCallback({ port: PORT });
 try {
   const remotes = Object.entries(loadRegistry().servers).filter(([, s]) => s.url);

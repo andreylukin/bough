@@ -325,7 +325,14 @@ test("a 401 surfaces as an authorization prompt in the catalog, not an error", a
       entry.error?.includes(authPrompt("notion")),
       `catalog error must carry the prompt, got: ${entry.error}`,
     );
-    assert.ok(entry.error?.includes("not authorized — /mcp auth notion"));
+    assert.ok(entry.error?.includes("not authorized"));
+    // NAMES A GESTURE THAT EXISTS. This asserted "/mcp auth notion" for as long as
+    // the prompt said it, and there has never been a `/mcp` slash command in the TUI
+    // — so the one instruction bough gives for the one action that unblocks a remote
+    // server was untypeable, and the test pinned the falsehood in place. A prompt
+    // that names a slash command is now a failure.
+    assert.equal(/\/mcp\s+auth/.test(entry.error ?? ""), false, entry.error);
+    assert.ok(entry.error?.includes("^p"), entry.error);
 
     // And the human's next step actually exists: the flow got as far as PKCE, so
     // there is a URL to open and a verifier waiting for the callback.

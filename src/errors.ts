@@ -188,7 +188,7 @@ export class ArtifactError extends HttpError {}
 
 /**
  * An MCP server is unreachable, unauthorized, or not registered. A 401 surfaces
- * as "not authorized — /mcp auth <name>" and NEVER as a hang; a server that fails
+ * as "not authorized — open the mcp panel (^p) and press a" and NEVER as a hang; a server that fails
  * to start surfaces as catalog status (plan T7.1, T7.2).
  */
 export class McpError extends HttpError {}
