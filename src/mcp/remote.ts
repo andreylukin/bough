@@ -64,6 +64,7 @@ import type {
   McpTimeouts,
   McpToolInfo,
 } from "./client.ts";
+import { claudeCodePrefill } from "./keychain.ts";
 import { BoughOAuthProvider, type TokenStoreOptions } from "./oauth.ts";
 
 const DEFAULT_TIMEOUTS: Required<McpTimeouts> = {
@@ -177,6 +178,13 @@ export interface RemoteConnectOptions extends TokenStoreOptions {
   authProvider?: OAuthClientProvider | null;
   /** HTTP, injected in tests. Absent = the global `fetch`. */
   fetchFn?: FetchLike;
+  /**
+   * Bearer token to try before any authorization flow. Absent = ask `keychain.ts`
+   * (a covered host gets the machine's existing credential, anything else gets
+   * nothing); `null` = do not prefill at all, which is what a test wants when it is
+   * asserting the unauthorized path.
+   */
+  prefill?: string | null;
 }
 
 /**
@@ -264,9 +272,21 @@ export class McpRemoteClient implements McpConnection {
       },
     });
 
+    // PREFILL, resolved before the provider is built because the read is a
+    // subprocess and `tokens()` is synchronous. Confined to hosts the credential
+    // belongs to and silent when there is none, so a server with its own OAuth flow
+    // is unaffected — and a token bough's own flow stored always wins over this
+    // (`BoughOAuthProvider.tokens`, `keychain.ts`).
+    const prefill = opts.prefill === null
+      ? undefined
+      : opts.prefill ?? await claudeCodePrefill(opts.url);
     const authProvider = opts.authProvider === null
       ? undefined
-      : opts.authProvider ?? new BoughOAuthProvider(name, { dir: opts.dir });
+      : opts.authProvider ??
+        new BoughOAuthProvider(name, {
+          dir: opts.dir,
+          ...(prefill ? { prefill } : {}),
+        });
 
     const transport = new StreamableHTTPClientTransport(endpoint, {
       ...(authProvider ? { authProvider } : {}),

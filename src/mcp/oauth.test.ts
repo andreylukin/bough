@@ -547,3 +547,27 @@ test("an entry with no clientId still returns undefined, so DCR runs as before",
   const { config, dir } = tempRegistry({ url: "https://mcp.slack.com/mcp" });
   assert.equal(new BoughOAuthProvider("slack", { dir, config }).clientInformation(), undefined);
 });
+
+test("a prefilled token is used only until this server has one of its own", () => {
+  const store = tempStore();
+  const provider = new BoughOAuthProvider("claude-ai", {
+    dir: store.dir,
+    prefill: "sk-ant-oat01-FROM-KEYCHAIN",
+  });
+
+  // Nothing stored: the connection is tried with the credential the machine
+  // already has, so a freshly registered server works without anyone pressing `a`.
+  assert.deepEqual(provider.tokens(), {
+    access_token: "sk-ant-oat01-FROM-KEYCHAIN",
+    token_type: "Bearer",
+  });
+  // …and prefill is NOT authorization: nothing was written to the token store, so
+  // the one copy of that secret is still the keychain's.
+  assert.equal(hasTokens("claude-ai", { dir: store.dir }), false);
+
+  // Once a real flow completes, what the user authorized WINS. A credential that
+  // merely happens to be on the machine must never displace a deliberate one.
+  provider.saveTokens({ access_token: "from-oauth", token_type: "Bearer" });
+  assert.equal(provider.tokens()?.access_token, "from-oauth");
+  assert.equal(hasTokens("claude-ai", { dir: store.dir }), true);
+});

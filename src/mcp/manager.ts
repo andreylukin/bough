@@ -62,6 +62,7 @@ import {
 import {
   activationsFor,
   childEnv,
+  expandHeaders,
   isStdio,
   loadRegistry,
   type McpConfigOptions,
@@ -520,7 +521,12 @@ export const defaultConnector: Connector = async ({ name, server, spawn, config,
     return await McpRemoteClient.connect({
       name,
       url: server.url!,
-      ...(Object.keys(server.headers).length > 0 ? { headers: server.headers } : {}),
+      // Expanded HERE, not at load: a `${VAR}` or `${keychain:…}` reference is
+      // resolved at the moment it is sent, so the secret never enters the registry
+      // document, the `GET /mcp/servers` body, or the `/mcp` panel (`config.ts`).
+      ...(Object.keys(server.headers).length > 0
+        ? { headers: await expandHeaders(server.headers, config ?? {}) }
+        : {}),
       ...(timeouts ? { timeouts } : {}),
     });
   }

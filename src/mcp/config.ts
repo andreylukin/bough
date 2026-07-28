@@ -48,6 +48,11 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { z } from "zod";
 import { McpError } from "../errors.ts";
 import { mcpRegistryPath } from "../paths.ts";
+import {
+  type KeychainOptions,
+  parseKeychainRef,
+  readKeychainRef,
+} from "./keychain.ts";
 
 // ---------------------------------------------------------------------------
 // Shapes
@@ -87,7 +92,21 @@ export const ServerConfig = z.object({
   cwd: z.string().optional(),
   /** Remote transport: the Streamable HTTP endpoint. Mutually exclusive with `command`. */
   url: z.string().url().optional(),
-  /** Static headers for a remote server. OAuth tokens are NOT stored here (T7.2). */
+  /**
+   * Static headers for a remote server. bough's OWN OAuth tokens are not stored
+   * here (T7.2) — they live in `~/.bough/mcp-auth.json`.
+   *
+   * A value may be a reference, resolved at connect time by `expandHeaders` and
+   * never at load: `${VAR}` from bough's environment, or
+   * `${keychain:<item>#<a.b.c>}` from the macOS login keychain (`keychain.ts`) —
+   * which is how a server that ANOTHER client on this machine already authorized
+   * gets its bearer token, e.g.
+   *
+   *     "Authorization": "Bearer ${keychain:Claude Code-credentials#claudeAiOauth.accessToken}"
+   *
+   * Write the reference, never the secret: this document is served by
+   * `GET /mcp/servers` and rendered in the `/mcp` panel.
+   */
   headers: z.record(z.string(), z.string()).default({}),
   /**
    * A PRE-REGISTERED OAuth client for this server.
@@ -381,6 +400,52 @@ export function expandEnv(
       }
       return found;
     });
+  }
+  return out;
+}
+
+/**
+ * Expand a remote server's `headers` at the moment they are sent.
+ *
+ * Two reference kinds, one rule. `${VAR}` reads bough's environment, exactly as a
+ * spawned server's `env` does. `${keychain:<item>}` — optionally `#a.b.c` into a
+ * JSON item — reads the macOS login keychain (`keychain.ts`), which is how a server
+ * that some OTHER client on this machine already authorized gets its bearer token
+ * without bough running a second, parallel OAuth flow for the same account.
+ *
+ * The rule both share: **the registry stores the reference and never the secret.**
+ * `GET /mcp/servers` serves this document and the `/mcp` panel renders it, so a
+ * literal token in `headers` would sit in a response body and in the model's
+ * context. Expansion happens HERE, at connect, and the result goes into one request
+ * and is not stored, logged or returned.
+ *
+ * Async because a keychain read is a subprocess (and may raise the system's "allow
+ * access?" dialog, which is macOS asking the human — the right gate for this).
+ */
+export async function expandHeaders(
+  headers: Record<string, string>,
+  opts: McpConfigOptions & KeychainOptions = {},
+): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    const ref = parseKeychainRef(value);
+    // A keychain reference is the WHOLE value, never interpolated into a larger
+    // string: `Bearer ${keychain:…}` is written as two parts by the caller, and a
+    // partial match here would be a second, subtler way to end up with a secret in
+    // a string this module also has to keep out of logs.
+    if (ref) {
+      out[key] = await readKeychainRef(ref, opts);
+      continue;
+    }
+    const bearer = /^Bearer\s+(\$\{keychain:[^{}]+\})$/i.exec(value.trim());
+    if (bearer) {
+      const inner = parseKeychainRef(bearer[1]);
+      if (inner) {
+        out[key] = `Bearer ${await readKeychainRef(inner, opts)}`;
+        continue;
+      }
+    }
+    out[key] = expandEnv({ [key]: value }, opts)[key];
   }
   return out;
 }

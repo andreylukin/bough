@@ -235,6 +235,18 @@ export interface ProviderOptions extends TokenStoreOptions {
    * call sites pass nothing and get the real registry.
    */
   config?: McpConfigOptions;
+  /**
+   * A bearer token to fall back on when this server has none of its own yet —
+   * `keychain.ts`'s prefill, resolved by the caller because reading it is async and
+   * `tokens()` is not.
+   *
+   * PREFILL, and only that. It is what the connection is tried with before anybody
+   * is asked to authorize anything; the moment a real flow stores tokens for this
+   * server, those win (see `tokens`). Nothing is written to the token store from
+   * here — the secret belongs to the client that obtained it and bough keeps
+   * exactly one copy of it, in the keychain where it already was.
+   */
+  prefill?: string;
 }
 
 /**
@@ -254,6 +266,7 @@ export class BoughOAuthProvider implements OAuthClientProvider {
   readonly #redirectUrl: string | undefined;
   readonly #now: () => number;
   readonly #config: McpConfigOptions;
+  readonly #prefill: string | undefined;
 
   constructor(readonly server: string, opts: ProviderOptions = {}) {
     assertServerName(server);
@@ -261,6 +274,7 @@ export class BoughOAuthProvider implements OAuthClientProvider {
     this.#redirectUrl = opts.redirectUrl;
     this.#now = opts.now ?? Date.now;
     this.#config = opts.config ?? {};
+    this.#prefill = opts.prefill;
   }
 
   get redirectUrl(): string {
@@ -324,8 +338,19 @@ export class BoughOAuthProvider implements OAuthClientProvider {
     this.#store.patch(this.server, { client });
   }
 
+  /**
+   * This server's tokens: the ones bough's own flow stored, or the prefill.
+   *
+   * STORED WINS, always. A user who ran `a` and completed an authorization has said
+   * something specific about how this server should be reached, and a credential
+   * that merely happens to be on the machine must never quietly displace it. The
+   * prefill only answers when there is nothing stored at all, which is the state a
+   * freshly registered server is in.
+   */
   tokens(): OAuthTokens | undefined {
-    return this.#store.load(this.server).tokens;
+    const stored = this.#store.load(this.server).tokens;
+    if (stored) return stored;
+    return this.#prefill ? { access_token: this.#prefill, token_type: "Bearer" } : undefined;
   }
 
   saveTokens(tokens: OAuthTokens): void {

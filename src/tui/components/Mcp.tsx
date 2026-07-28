@@ -18,6 +18,7 @@
  * bodies are their own files with their own props.
  */
 import { TextAttributes } from "@opentui/core";
+import { isCoveredHost } from "../../mcp/keychain.ts";
 import type { McpStatus } from "../../mcp/status.ts";
 import { clip, windowAround } from "../format.ts";
 import { palette } from "../theme.ts";
@@ -67,7 +68,15 @@ export function mcpDetail(status: McpStatus, name: string): string {
     granted ? "granted" : "off",
     conn?.alive ? `${conn.toolCount} tools` : null,
     conn?.error ? clip(conn.error, 40) : null,
-    auth ? (auth.authorized ? "authed" : "needs auth") : null,
+    // "needs auth" is about tokens BOUGH stored, and for a host the machine's own
+    // Claude Code credential covers it would be a lie by omission: nobody has to
+    // press `a` there, because the connection is tried with that credential first
+    // (`mcp/keychain.ts`). Derived from the URL alone — the panel must not spawn a
+    // keychain read to paint a row, and this says what will be TRIED, not that the
+    // server has already accepted it.
+    auth
+      ? auth.authorized ? "authed" : isCoveredHost(entry.url ?? "") ? "keychain" : "needs auth"
+      : null,
     clip(entry.url ?? entry.command ?? "", 30),
   ].filter(Boolean).join(" · ");
 }
