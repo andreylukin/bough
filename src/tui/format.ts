@@ -507,8 +507,83 @@ export function programSummary(code: string, max = 64, running = false): string 
 const osc8 = (url: string, text: string) =>
   COLOR ? `\x1b]8;;${url}\x1b\\${text}\x1b]8;;\x1b\\` : text;
 
+/** A run of characters that can belong to a URL, once the scheme has started. */
+const URL_CHARS = /[^\s"'`<>()[\]{}│]/;
+
 /**
- * The OSC 8 target under 0-based display column `col`, or null — a plain click can
+ * The bare URL under 0-based column `col` of a PLAIN row, with where it sits.
+ *
+ * `linkAt` answers the same question from OSC 8 markers, which only the transcript
+ * emits. Everything else bough paints — a panel message, a rail row, a job card —
+ * is plain text, so a URL sitting in it was unclickable no matter how obviously it
+ * was a URL. This reads the characters instead, which works on any surface.
+ */
+export function urlAt(
+  plain: string,
+  col: number,
+): { url: string; start: number; end: number } | null {
+  for (const m of plain.matchAll(/https?:\/\//g)) {
+    const start = m.index;
+    let end = start;
+    while (end < plain.length && URL_CHARS.test(plain[end]!)) end++;
+    if (col >= start && col < end) {
+      // Trailing sentence punctuation is not part of the address — the same rule
+      // `linkifyUrl` applies when it makes prose clickable.
+      const url = plain.slice(start, end).replace(/[.,;:!?]+$/, "");
+      return { url, start, end: start + url.length };
+    }
+  }
+  return null;
+}
+
+/**
+ * The URL under `(row, col)`, rejoined across the rows it was wrapped onto.
+ *
+ * A long URL — an OAuth authorization link is the case that matters — is laid out
+ * across four or five rows, and each of them holds a fragment that is not an
+ * address. Clicking one and opening the fragment would be worse than doing nothing.
+ *
+ * `rows` are CONTENT rows: already stripped of any border or padding, so "these
+ * two rows join" is a fact about the text rather than about the box it is drawn in.
+ * Two rows join when the upper ends and the lower begins on characters that could
+ * both belong to a URL — which is what a wrap inside an address looks like, and
+ * what a wrap between two words does not.
+ */
+export function urlAcross(rows: readonly string[], row: number, col: number): string | null {
+  // A row that CONTINUES an address is one unbroken token — an address has no
+  // spaces, so a wrap inside one produces a row that is nothing but more address. A
+  // row with a space in it is prose, or the next list entry.
+  //
+  // This replaced a "the upper row must be filled to the wrap width" rule that was
+  // both too strict and too loose: the first row of a message is rarely full (the
+  // wrapper moves a long token down whole, so a wrapped URL stopped joining at its
+  // first row), and "…%2Fmcp" sitting above "1 ❯ ○ linear" still looked like a
+  // join, so a click opened the address with a stray "1" welded onto the end.
+  const joins = (above: string, below: string): boolean => {
+    const a = above.trimEnd(), b = below.trim();
+    return a.length > 0 && b.length > 0 && !/\s/.test(b) &&
+      URL_CHARS.test(a[a.length - 1]!) && URL_CHARS.test(b[0]!);
+  };
+  // BACKWARD FIRST. The click usually lands in the middle of a long address, on a
+  // row that carries no scheme at all — the whole reason the first cut of this
+  // found nothing when you clicked an authorization link anywhere but its first
+  // row.
+  let start = row;
+  while (start > 0 && joins(rows[start - 1] ?? "", rows[start] ?? "")) start--;
+  // Then forward, remembering where the clicked cell ended up in the joined text.
+  let joined = "";
+  let clickAt = -1;
+  for (let y = start; y < rows.length; y++) {
+    if (y > start && !joins(rows[y - 1] ?? "", rows[y] ?? "")) break;
+    if (y === row) clickAt = joined.length + col;
+    joined += (rows[y] ?? "").trimEnd();
+  }
+  if (clickAt < 0) return null;
+  return urlAt(joined, clickAt)?.url ?? null;
+}
+
+/**
+ * The OSC 8 target under 0-based column `col`, or null — a plain click can
  * then open the link even though the TUI's mouse reporting keeps the terminal's
  * own hit-testing away. The escapes are zero-width, so the column math counts only
  * the visible text between markers; a wrapped URL works because wrap-ansi re-opens

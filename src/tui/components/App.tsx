@@ -47,6 +47,7 @@ import sliceAnsi from "slice-ansi";
 import stripAnsi from "strip-ansi";
 import {
   isEmptySelection,
+  rowContent,
   rowSpan,
   selRows,
   type Selection,
@@ -57,6 +58,7 @@ import {
   applyCompletion,
   linkAt,
   meterLine,
+  urlAcross,
   rankCompletions,
   sessionLabel,
   shortenPath,
@@ -1111,12 +1113,34 @@ export function App(
           return write(null);
         }
         write(null);
-        // A CLICK. Links first: the row's OSC 8 target under this exact column
-        // beats the fold the line belongs to, because a URL is the more specific
-        // thing to have aimed at.
-        const url = openUrl ? linkAt(rowAt(at.y)?.text ?? "", at.x - 1) : null;
-        if (url) openUrl?.(url);
-        else clickAt(at.y, at.x);
+        // A CLICK. Links first: a URL under this exact column beats the fold the row
+        // belongs to, because a URL is the more specific thing to have aimed at.
+        //
+        // TWO READINGS, because there are two kinds of link on screen. The
+        // transcript emits OSC 8, so `linkAt` answers from the markers. Everything
+        // else — a panel message, a rail row, a job card — is plain text, and
+        // `urlAcross` reads the characters and rejoins the rows a long URL was
+        // wrapped onto. Without the second, the mcp tab's authorization link — the
+        // one URL in the product nobody can retype — was the only thing on screen
+        // that looked like a link and was not one.
+        if (openUrl) {
+          const marked = linkAt(rowAt(at.y)?.text ?? "", at.x - 1);
+          if (marked) {
+            openUrl(marked);
+            return;
+          }
+          const rows = paintedRef.current.map(rowContent);
+
+          const here = rows[at.y - 1];
+          const bare = here
+            ? urlAcross(rows.map((r) => r.content), at.y - 1, at.x - 1 - here.offset)
+            : null;
+          if (bare) {
+            openUrl(bare);
+            return;
+          }
+        }
+        clickAt(at.y, at.x);
       }),
       hooks.onNavKey?.((key) => {
         // Backtab is not line editing: it is the panel's "previous tab". No

@@ -33,6 +33,8 @@ import {
   wordLeft,
   wordRight,
   wrapLine,
+  urlAt,
+  urlAcross,
 } from "./format.ts";
 import type { Part } from "../schema/parts.ts";
 
@@ -625,4 +627,86 @@ test("a step is headlined by what the program did, not by its first line of code
   assert.equal(programSummary(""), "");
   // Always bounded — this shares a row with the step count and the status chips.
   assert.ok(programSummary('await bash("x");'.repeat(40)).length <= 64);
+});
+
+// ---- bare URLs, on surfaces that emit no OSC 8 -------------------------------
+// The transcript marks its links; a panel message, a rail row and a job card are
+// plain text. The mcp tab's authorization URL lives in one of those, wrapped over
+// five rows — the one URL in the product nobody can retype.
+
+test("urlAt finds the address under a column, and only under it", () => {
+  const row = "open this: https://example.com/a?b=1 for details";
+  assert.equal(urlAt(row, 11)?.url, "https://example.com/a?b=1");
+  assert.equal(urlAt(row, 35)?.url, "https://example.com/a?b=1"); // last char
+  assert.equal(urlAt(row, 5), null); // before it
+  assert.equal(urlAt(row, 40), null); // after it
+});
+
+test("urlAt drops trailing sentence punctuation", () => {
+  assert.equal(urlAt("see https://example.com/x.", 10)?.url, "https://example.com/x");
+});
+
+test("urlAcross rejoins a URL wrapped over several rows", () => {
+  // Exactly the shape of an OAuth link in the mcp tab: it runs to the edge of each
+  // row and continues on the next with no space.
+  // Equal-width rows, because that is what a wrap produces: each row ran out of
+  // room. The last is short — it is where the address ended.
+  const rows = [
+    "open this, then come back: https://mcp.example.com/authorize?response_ty",
+    "pe=code&client_id=abc&code_challenge=xyz&redirect_uri=http%3A%2F%2F127.0",
+    ".0.1%3A4399&scope=read+write",
+  ];
+  assert.equal(
+    urlAcross(rows, 0, 30),
+    "https://mcp.example.com/authorize?response_type=code" +
+      "&client_id=abc&code_challenge=xyz&redirect_uri=http%3A%2F%2F127.0" +
+      ".0.1%3A4399&scope=read+write",
+  );
+});
+
+test("urlAcross does NOT glue the next row onto a URL that already ended", () => {
+  // The guard that keeps it from inventing addresses: a URL ending mid-row is
+  // whole, whatever happens to be on the row below it.
+  const rows = ["see https://example.com/a and more text", "notacontinuation"];
+  assert.equal(urlAcross(rows, 0, 10), "https://example.com/a");
+});
+
+test("urlAcross stops when a continuation row carries anything else", () => {
+  // A row that begins with a URL-ish token but goes on to hold other words is not a
+  // continuation at all: an address has no spaces, so a row with one is prose or the
+  // next list entry. Nothing of it is taken.
+  const rows = ["https://example.com/averylongpathrunningtotheedge", "tail and then words"];
+  assert.equal(urlAcross(rows, 0, 5), "https://example.com/averylongpathrunningtotheedge");
+});
+
+test("urlAcross does not weld the row BELOW a finished address onto it", () => {
+  // The exact shape that broke it live: the last row of a wrapped authorization
+  // URL is short — the address ended there — and the mcp list row under it starts
+  // with "1". Joining on "both sides look URL-ish" opened the link with a stray
+  // digit welded on. A wrap only happens on a row that ran out of room.
+  const rows = [
+    "open this: https://mcp.example.com/authorize?response_type=code&client_i",
+    "d=abc&resource=https%3A%2F%2Fmcp.example.com%2Fmcp",
+    "1 linear  off · needs auth",
+  ];
+  const url = urlAcross(rows, 1, 10);
+  assert.equal(
+    url,
+    "https://mcp.example.com/authorize?response_type=code&client_i" +
+      "d=abc&resource=https%3A%2F%2Fmcp.example.com%2Fmcp",
+  );
+  assert.equal(url?.endsWith("1"), false, `a row below leaked in: ${url}`);
+});
+
+test("clicking a CONTINUATION row resolves the whole address", () => {
+  // The click usually lands mid-URL, on a row carrying no scheme at all — which is
+  // why the search has to run backward before it runs forward.
+  const rows = [
+    "open this: https://mcp.example.com/authorize?response_type=code&client_i",
+    "d=abc&scope=read",
+  ];
+  assert.equal(
+    urlAcross(rows, 1, 3),
+    "https://mcp.example.com/authorize?response_type=code&client_id=abc&scope=read",
+  );
 });

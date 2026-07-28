@@ -104,6 +104,15 @@ export interface CopyRow {
 const CHROME = /^(\s*)[│╭╰]\s?/;
 
 /**
+ * The panel's RIGHT border, with the padding that reaches it.
+ *
+ * The left one was stripped from the start and this one was not, so every row
+ * copied out of a panel ended in a stray `│` — most visibly on the mcp tab's
+ * authorization URL, which is the one thing there anybody copies.
+ */
+const RIGHT_BORDER = /\s*[│╮╯]\s*$/;
+
+/**
  * A fence row: `╭ ts` opening a block or `╰` closing it.
  *
  * Both are chrome for the whole of their width — the opener's label included. It
@@ -111,6 +120,20 @@ const CHROME = /^(\s*)[│╭╰]\s?/;
  * a line of its own, which is worse than not saying it.
  */
 const FENCE_ONLY = /^\s*[╭╰]/;
+
+/**
+ * A painted row reduced to its content: no border either side, no padding.
+ *
+ * `offset` is how many columns the strip removed from the LEFT, so a caller
+ * holding a mouse column can translate it into this string. Without it a click in
+ * a panel would hit-test one or two characters off, which on a URL is the
+ * difference between opening it and opening nothing.
+ */
+export function rowContent(text: string): { content: string; offset: number } {
+  const plain = stripAnsi(text).replace(RIGHT_BORDER, "");
+  const body = plain.replace(CHROME, "$1");
+  return { content: body.trimEnd(), offset: plain.length - body.length };
+}
 
 /**
  * A source line as it should reach the clipboard.
@@ -170,7 +193,10 @@ export function selectedCopy(
     const span = rowSpan(sel, top);
     const row = rowAt(top);
     if (!span || !row) return "";
-    return extractSpan(row.text, span.from, span.to).replace(CHROME, "$1");
+    return extractSpan(row.text, span.from, span.to).replace(RIGHT_BORDER, "").replace(
+      CHROME,
+      "$1",
+    );
   }
   const out: string[] = [];
   let lastSource: string | null = null;
@@ -198,7 +224,9 @@ export function selectedCopy(
     // No source to consult — the panel, the rail, the composer. A row that is
     // nothing but chrome is still dropped.
     if (FENCE_ONLY.test(stripAnsi(row.text))) continue;
-    out.push(extractSpan(row.text, span.from, span.to).replace(CHROME, "$1"));
+    out.push(
+      extractSpan(row.text, span.from, span.to).replace(RIGHT_BORDER, "").replace(CHROME, "$1"),
+    );
   }
   return out.join("\n");
 }
