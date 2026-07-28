@@ -19,6 +19,7 @@ import assert from "node:assert/strict";
 import { test } from "bun:test";
 import { testRender } from "@opentui/react/test-utils";
 import { nameFromUrl } from "./PanelHost.tsx";
+import { tabAtColumn } from "./Panel.tsx";
 import { createElement, type ReactNode } from "react";
 import {
   initialPanel,
@@ -587,4 +588,49 @@ test("something that is not a URL yields no name, so nothing is registered", () 
   assert.equal(nameFromUrl("linear"), "");
   assert.equal(nameFromUrl(""), "");
   assert.equal(nameFromUrl("https://"), "");
+});
+
+// ---- clicking the tab strip -------------------------------------------------
+// The column math walks the SAME widths `PanelTabs` renders: an inactive tab is
+// "  " + title, an active one is " [" + title + "]". Two derivations of that
+// layout is how a click lands one tab off at the far end of the strip.
+
+test("a click on a title picks that tab, on either side of the active one", () => {
+  // "  sessions  tree …" — the strip opens with two spaces, so `sessions`
+  // occupies columns 2..9.
+  assert.equal(tabAtColumn("sessions", 2), "sessions");
+  assert.equal(tabAtColumn("sessions", 9), "sessions");
+  // Every tab is reachable, including the last, which is what the truncation bug
+  // in `PanelTabs` was originally about.
+  assert.equal(tabAtColumn("sessions", 0), null);
+  assert.equal(tabAtColumn("sessions", 13), "tree");
+});
+
+test("the ACTIVE tab's brackets shift everything after it by one", () => {
+  // " [sessions]" is one column wider than "  sessions", so a strip measured
+  // against the inactive layout would drift right for every later tab.
+  // Column 12 is the discriminator: with `sessions` active its "]" pushes `tree`
+  // right to 13, leaving 12 as padding; with `sessions` inactive `tree` starts at 12.
+  assert.equal(tabAtColumn("sessions", 12), null);
+  assert.equal(tabAtColumn("tree", 12), "tree");
+});
+
+test("a click in the padding between titles picks nothing", () => {
+  // The gap belongs to neither neighbour. Rounding toward one of them is how a
+  // click near an edge selects the tab you were trying to avoid.
+  assert.equal(tabAtColumn("sessions", 1), null);
+  assert.equal(tabAtColumn("sessions", 10), null);
+});
+
+test("every tab is reachable by some column", () => {
+  // The complement of the above: a tab no column resolves to is a tab the mouse
+  // cannot reach, however plausible the strip looks.
+  for (const active of ["sessions", "mcp"] as const) {
+    const seen = new Set<string>();
+    for (let c = 0; c < 200; c++) {
+      const hit = tabAtColumn(active, c);
+      if (hit) seen.add(hit);
+    }
+    assert.equal(seen.size, TABS.length, `active=${active}: reached ${[...seen].join(",")}`);
+  }
 });

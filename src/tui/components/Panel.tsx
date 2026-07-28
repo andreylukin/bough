@@ -170,6 +170,29 @@ export function reducePanel(
  * colourblind reader, to a NO_COLOR terminal, and to anything reading the screen
  * as text — which includes every test in this repo that asserts on a rendered row.
  */
+/**
+ * The tab whose title sits under 0-based column `col` of the strip, or null.
+ *
+ * Pure, and it walks the SAME widths `PanelTabs` renders — an inactive tab is
+ * `"  " + title`, an active one is `" [" + title + "]"`. Two derivations of that
+ * layout would be two answers to "which tab did I just click", which is the class
+ * of bug where the pointer lands one tab off at the far end of the strip.
+ *
+ * Only the TITLE is a target. The padding between tabs belongs to neither
+ * neighbour, so a click in the gap does nothing rather than picking whichever tab
+ * the arithmetic happened to round toward.
+ */
+export function tabAtColumn(active: PanelTab, col: number): PanelTab | null {
+  let x = 0;
+  for (const t of TABS) {
+    const on = t.id === active;
+    x += 2; // "  " or " ["
+    if (col >= x && col < x + t.title.length) return t.id;
+    x += t.title.length + (on ? 1 : 0); // the closing "]" only when active
+  }
+  return null;
+}
+
 export function PanelTabs({ tab, width }: { tab: PanelTab; width?: number }) {
   // A strip that does not fit is worse than no strip: truncation silently drops
   // the tabs at the end, so at 60 columns the theme tab did not appear to exist

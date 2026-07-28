@@ -42,11 +42,13 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import type { ModelRow } from "../../llm/client.ts";
 import { api, type SessionRow } from "../api.ts";
 import type { MouseEvent, NavKey } from "../mouse.ts";
-import { buildLines, chatBodyHeight, lineAtSlot, type VLine, visibleSlice } from "../lines.ts";
+import { buildLines, chatBodyHeight, lineAtSlot } from "../lines.ts";
+import sliceAnsi from "slice-ansi";
+import stripAnsi from "strip-ansi";
 import {
-  highlightSpan,
   isEmptySelection,
   rowSpan,
+  selRows,
   type Selection,
   selectedText,
 } from "../selection.ts";
@@ -90,6 +92,7 @@ import { type PanelControls, type PanelHostDeps, usePanelHost } from "./PanelHos
 import { historyTreeRows } from "../historytree.ts";
 import { liveSubagents, SubagentRail } from "./SubagentRail.tsx";
 import { treeItems } from "./Tree.tsx";
+import { tabAtColumn } from "./Panel.tsx";
 
 /** How long a second Escape still counts as a double-tap. */
 const DOUBLE_ESC_MS = 600;
@@ -177,6 +180,12 @@ const WHEEL_ROWS = 3;
  * through this rather than re-deriving it.
  */
 const CHAT_TOP = 2;
+
+/**
+ * The 1-based screen row the panel's tab titles are painted on: the header owns
+ * row 1 and `Panel`'s top border owns row 2.
+ */
+const PANEL_TABS_ROW = 3;
 
 /** How often the rail re-reads the session's children while a turn is running. */
 const RAIL_POLL_MS = 1500;
@@ -314,6 +323,10 @@ export function App(
   const [sel, setSel] = useState<Selection | null>(null);
   /** The same value, readable synchronously mid-burst — see the mouse handler. */
   const selRef = useRef<Selection | null>(null);
+  /** `run`, reachable from callbacks declared above it. Assigned on every render. */
+  const runRef = useRef<((command: Command, input: string) => void) | null>(null);
+  /** The screen as it looked when the drag began — see the `down` branch. */
+  const paintedRef = useRef<string[]>([]);
   const [openKeys, setOpenKeys] = useState<ReadonlySet<string>>(() => new Set<string>());
   const [fullKeys, setFullKeys] = useState<ReadonlySet<string>>(() => new Set<string>());
   const [railSel, setRailSel] = useState(0);
@@ -633,7 +646,8 @@ export function App(
   // it is handed two more than the region it must fit inside.
   const panelBodyH = Math.max(
     1,
-    rows - 1 /* header */ - railH - boxH - 1 /* status */ - (state.replay ? 1 : 0),
+    rows - 1 /* header */ - railH - boxH - 1 /* status */ - (state.replay ? 1 : 0) -
+      (state.notice ? 1 : 0),
   );
   const panelRows = panelBodyH + 2;
 
@@ -677,12 +691,30 @@ export function App(
    * you copy one row and see another highlighted.
    */
   const rowAt = useCallback((y: number): string | null => {
-    if (panel.open) return null;
     const slot = y - CHAT_TOP;
-    if (slot < 0 || slot >= chatH) return null;
+    if (panel.open || slot < 0 || slot >= chatH) return null;
     const body = chatBodyHeight(chatH, state.queued.length, Boolean(state.notice));
     return lineAtSlot(lines, body, scrollOff, slot)?.text ?? null;
   }, [panel.open, chatH, state.queued.length, state.notice, lines, scrollOff]);
+
+  /**
+   * Every row currently PAINTED, read back off the renderer as plain text.
+   *
+   * `rowAt` above answers from the transcript, which is the only surface whose
+   * lines this file holds — so a drag over the panel, the rail or the composer
+   * copied nothing at all. This answers from the screen instead, so a selection
+   * works on every surface without each one having to hand its rows up.
+   *
+   * Read ONCE per gesture rather than per row: it decodes the whole grid, and
+   * `selectedText` asks per row.
+   */
+  const screenRows = useCallback((): string[] => {
+    const buffer = (renderer as unknown as {
+      currentRenderBuffer?: { getRealCharBytes?: (trim: boolean) => Uint8Array };
+    })?.currentRenderBuffer;
+    const bytes = buffer?.getRealCharBytes?.(true);
+    return bytes ? new TextDecoder().decode(bytes).split("\n") : [];
+  }, [renderer]);
 
   /**
    * The selection, painted.
@@ -693,19 +725,63 @@ export function App(
    * the screen, and storing it against the transcript would make it slide when new
    * output arrives underneath it, highlighting text nobody selected.
    */
-  const decorate = useMemo(() => {
-    if (!sel || isEmptySelection(sel)) return undefined;
-    const body = chatBodyHeight(chatH, state.queued.length, Boolean(state.notice));
-    const { start, rows } = visibleSlice(lines, body, scrollOff);
-    const pad = Math.max(0, body - rows.length);
-    return (text: string, _line: VLine, index: number): string => {
-      const span = rowSpan(sel, index - start + pad + CHAT_TOP);
-      return span ? highlightSpan(text, span.from, span.to) : text;
-    };
-  }, [sel, chatH, state.queued.length, state.notice, lines, scrollOff]);
+  const highlight = useMemo(() => {
+    if (!sel || isEmptySelection(sel)) return null;
+    const painted = paintedRef.current;
+    const [top, bottom] = selRows(sel);
+    const rows: { y: number; from: number; text: string }[] = [];
+    for (let y = top; y <= bottom; y++) {
+      const span = rowSpan(sel, y);
+      const line = painted[y - 1];
+      if (!span || !line) continue;
+      const text = span.to === Infinity
+        ? sliceAnsi(line, span.from)
+        : sliceAnsi(line, span.from, span.to);
+      // A drag past end-of-line selects nothing on that row; an empty inverse run
+      // renders as a blip in some terminals.
+      if (text.trim()) rows.push({ y, from: span.from, text });
+    }
+    return rows;
+  }, [sel]);
 
-  const clickAt = useCallback((y: number) => {
-    if (panel.open) return; // the panel displaces the transcript; nothing under it is live
+  /**
+   * The selection, drawn as one absolutely-positioned layer over whatever is
+   * underneath.
+   *
+   * ONE mechanism for every surface. The first cut highlighted through `Chat`'s
+   * `decorate` hook, which only the transcript has — so the panel, the rail and the
+   * composer could be dragged over and copied but never showed what was selected.
+   * Threading a decorator into all nine tab bodies would have been nine chances to
+   * get it inconsistent; an overlay is addressed in screen coordinates, which is
+   * what a drag already is.
+   */
+  const SelectionLayer = () =>
+    highlight === null ? null : (
+      <>
+        {highlight.map((r) => (
+          <box
+            key={`sel-${r.y}`}
+            style={{ position: "absolute", left: r.from, top: r.y - 1, zIndex: 100 }}
+          >
+            <text attributes={TextAttributes.INVERSE} wrapMode="none">{stripAnsi(r.text)}</text>
+          </box>
+        ))}
+      </>
+    );
+
+  const clickAt = useCallback((y: number, x = 1) => {
+    if (panel.open) {
+      // The strip is the one thing under the panel that a click can reach. Its row
+      // is fixed: the header owns row 1, `Panel`'s border owns row 2, the titles
+      // are row 3, and the border also costs one column on the left.
+      if (y === PANEL_TABS_ROW) {
+        const hit = tabAtColumn(panel.tab, x - 1 - 1);
+        // Through a ref: `run` is declared below this, and a click is dispatched
+        // long after both exist. Same arrangement as `lineRef` and `selRef`.
+        if (hit) runRef.current?.(`tab.${hit}` as Command, "");
+      }
+      return;
+    }
     if (y >= CHAT_TOP && y < CHAT_TOP + chatH) {
       const body = chatBodyHeight(chatH, state.queued.length, Boolean(state.notice));
       const target = lineAtSlot(lines, body, scrollOff, y - CHAT_TOP)?.click;
@@ -734,7 +810,7 @@ export function App(
       setRailSel(y - railTop);
       setMode("rail");
     }
-  }, [panel.open, chatH, state.queued.length, state.notice, lines, scrollOff, units.length, store]);
+  }, [panel.open, panel.tab, chatH, state.queued.length, state.notice, lines, scrollOff, units.length, store]);
 
   // The history cursor is a POSITION IN `sent`, and it only means anything while the
   // draft is holding a prompt taken from there. Every route back to an empty composer
@@ -976,7 +1052,14 @@ export function App(
         // A press opens a selection rather than acting. Which gesture it turns out
         // to be is not knowable until the button comes back up: a click and the
         // first cell of a drag are the same event.
-        if (event.kind === "down") return write({ anchor: at, focus: at });
+        if (event.kind === "down") {
+          // SNAPSHOT NOW, before the overlay exists. The highlight is drawn as a
+          // layer on top, so re-reading the screen mid-drag would read bough's own
+          // inverse video back and highlight the highlight. The content under a
+          // drag does not change while the button is held, so one read is right.
+          paintedRef.current = screenRows();
+          return write({ anchor: at, focus: at });
+        }
         if (event.kind === "drag") {
           const s = selRef.current;
           return s ? write({ ...s, focus: at }) : undefined;
@@ -987,7 +1070,14 @@ export function App(
           // A DRAG. Copy on release, the way a terminal's own selection does —
           // requiring a second keystroke to keep what you just highlighted is a
           // step nobody expects.
-          const text = selectedText({ ...s, focus: at }, rowAt);
+          //
+          // The TRANSCRIPT's own styled rows first, because they carry the ANSI a
+          // span is sliced out of; anything the transcript does not own — the panel
+          // and its tabs, the rail, the composer, the status row — falls back to
+          // what is painted on screen. That fallback is what makes a drag over the
+          // mcp tab copy the mcp tab.
+          const painted = paintedRef.current;
+          const text = selectedText({ ...s, focus: at }, (y) => painted[y - 1] ?? null);
           if (text.trim()) {
             copyText?.(text);
             store.notify(`copied ${text.length} character${text.length === 1 ? "" : "s"}`);
@@ -1005,7 +1095,7 @@ export function App(
         // thing to have aimed at.
         const url = openUrl ? linkAt(rowAt(at.y) ?? "", at.x - 1) : null;
         if (url) openUrl?.(url);
-        else clickAt(at.y);
+        else clickAt(at.y, at.x);
       }),
       hooks.onNavKey?.((key) => {
         // Backtab is not line editing: it is the panel's "previous tab". No
@@ -1025,7 +1115,8 @@ export function App(
     // `clickAt` closes over the transcript, the scroll offset and the geometry, so
     // it MUST be a dep: a stale one would hit-test the screen as it was when the
     // listener was registered and fold a group the user is no longer looking at.
-  }, [hooks, run, clickAt, rowAt, copyText, openUrl, store]);
+  }, [hooks, run, clickAt, rowAt, screenRows, copyText, openUrl, store]);
+  runRef.current = run;
 
   useKeyboard((event) => {
     const { input, key } = inkKey(event);
@@ -1163,6 +1254,13 @@ export function App(
         <box flexDirection="column" height={panelBodyH}>
           {panel.view}
         </box>
+        {/* The notice belongs here as well as in `Chat`. Copying from a panel row
+            said nothing at all, because the only place a notice was painted is the
+            surface the panel had just displaced — so the one action with no other
+            feedback was silent exactly where it was newly possible. */}
+        {state.notice
+          ? <text fg={UI.warn} wrapMode="none">{state.notice}</text>
+          : null}
         {state.replay
           ? <text attributes={TextAttributes.DIM} wrapMode="none">{state.replay.line}</text>
           : null}
@@ -1182,6 +1280,7 @@ export function App(
           maxRows={composerRows}
         />
         {status}
+        <SelectionLayer />
       </box>
     );
   }
@@ -1193,7 +1292,6 @@ export function App(
         lines={lines}
         width={cols}
         height={chatH}
-        decorate={decorate}
         scrollOff={scrollOff}
         activity={state.activity}
         busy={busy}
@@ -1225,6 +1323,7 @@ export function App(
           />
         )}
       {status}
+      <SelectionLayer />
     </box>
   );
 }

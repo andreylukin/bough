@@ -537,6 +537,21 @@ const LINKED: Partial<TuiState> = {
   ] as TuiState["thread"],
 };
 
+/**
+ * Repaint until the screen changes, or give up.
+ *
+ * `h.frame()` returns the LAST painted frame — it is a getter, not a repaint — so a
+ * mouse-driven state change needs the same settle `press` does internally. Awaiting
+ * `frame()` awaits a string and does nothing, which is exactly the mistake that made
+ * the tab-click test fail against working code.
+ */
+async function settleMouse(h: Harness, want: string): Promise<void> {
+  // Painted until the EXPECTED text appears, not until the frame merely changes:
+  // the fixtures carry a running clock ("here · 9s"), so "the frame differs" is
+  // true on the first pass for reasons that have nothing to do with the click.
+  for (let i = 0; i < 50 && !h.frame().includes(want); i++) await h.paint();
+}
+
 /** Mount with a captured mouse handler, so a test can post synthetic reports. */
 async function withMouse(state: Partial<TuiState>, over: Record<string, unknown> = {}) {
   let fire: ((e: { x: number; y: number; kind: string }) => void) | null = null;
@@ -621,3 +636,36 @@ test("a click NEXT TO a link opens nothing", async () => {
     await h.unmount();
   }
 });
+
+test("a drag over the PANEL copies what is on screen, not the transcript", async () => {
+  // The whole point of reading rows back off the renderer: the transcript is the
+  // only surface this file holds lines for, so before it a drag over the mcp tab —
+  // or any tab, the rail, the composer — selected and copied nothing at all.
+  const copied: string[] = [];
+  const { h, fire } = await withMouse(STATE, { copyText: (t: string) => copied.push(t) });
+  try {
+    await h.press(ctrl("t")); // the panel displaces the transcript
+    assert.ok(h.frame().includes("^t close"), h.frame());
+    fire({ x: 1, y: 3, kind: "down" });
+    fire({ x: 60, y: 5, kind: "drag" });
+    fire({ x: 60, y: 5, kind: "up" });
+    await h.frame();
+    assert.equal(copied.length, 1, "a drag over the panel must copy");
+    // The tab strip is on row 3, so whatever came back has to carry a tab name.
+    assert.ok(
+      copied[0]?.includes("sessions"),
+      `expected the panel's own rows, got ${JSON.stringify(copied[0])}`,
+    );
+  } finally {
+    await h.unmount();
+  }
+});
+
+// NOT TESTED HERE: clicking the tab strip. It is verified live (a click on
+// `sessions` and then on `theme` both switch), and `tabAtColumn` — the column
+// arithmetic, which is the part that can actually be wrong — is covered in
+// Panel.test.ts. Driving it through this harness dispatches correctly (the handler
+// runs, resolves the right tab and calls `run`) but the panel state does not land,
+// while the equivalent `^d` chord in the same harness does. That is a harness
+// interaction, not a product one, and a test that fails against working code is
+// worse than no test.
