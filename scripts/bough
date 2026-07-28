@@ -16,6 +16,36 @@ while [ -L "$SOURCE" ]; do
 done
 ROOT="$(cd "$(dirname "$SOURCE")/.." && pwd)"
 
+# Where bun might be, widened ONCE for every subcommand below.
+#
+# `bun` is the runtime for all of them — the server, the TUI, `exec`, `update` —
+# and it is routinely not on the PATH we are handed. The bun.sh installer puts it
+# in ~/.bun/bin, which reaches an interactive shell only if the user's rc adds it
+# and NEVER reaches launchd, which starts with a bare environment. That gap showed
+# up as the server failing to start with nothing but a "bun: command not found" in
+# the log, on a machine where `bun --version` worked fine in the terminal.
+#
+# Prepended only when the directory exists and is not already on PATH, so this
+# cannot reorder a PATH the user deliberately arranged, and cannot shadow a brew
+# bun with an older bun.sh one that happens to be installed too.
+for d in "/opt/homebrew/bin" "/usr/local/bin" "$HOME/.bun/bin"; do
+  case ":$PATH:" in
+    *":$d:"*) ;;
+    *) [ -d "$d" ] && PATH="$PATH:$d" ;;
+  esac
+done
+export PATH
+
+# Said once, here, rather than as `bun: command not found` from six call sites.
+require_bun() {
+  command -v bun >/dev/null && return 0
+  echo "error: bun is not on PATH, and is not in ~/.bun/bin or $(brew --prefix 2>/dev/null || echo /opt/homebrew)/bin." >&2
+  echo "  install it with:  brew install oven-sh/bun/bun" >&2
+  echo "  or:               curl -fsSL https://bun.sh/install | bash" >&2
+  echo "  then re-run: $ROOT/scripts/setup.sh" >&2
+  exit 1
+}
+
 LABEL="com.bough.server"
 
 # The server runs as you, in your own account, via a per-user LaunchAgent.
@@ -95,9 +125,11 @@ wait_up() {
 }
 
 # What launchd executes (also handy for a manual foreground run). launchd starts
-# with a bare environment, so put the toolchain on PATH for bun/git/rg.
+# with a bare environment, so put the toolchain on PATH for git/rg. `bun` itself is
+# handled at the top of this file, for every subcommand rather than just this one.
 cmd_run() {
   export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
+  require_bun
   if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
     # Exit 0 so launchd doesn't relaunch-loop while the machine is unconfigured.
     echo "ANTHROPIC_API_KEY is not set — put it in $ENV_FILE; not starting"
@@ -223,6 +255,7 @@ cmd_update() {
   fi
 
   echo "==> refreshing dependencies"
+  require_bun
   (cd "$ROOT" && bun install)
 
   # leta + tsserver: LSP backend (lsp.* host functions). Added in the leta
@@ -377,6 +410,7 @@ ensure_up() {
 }
 
 cmd_tui() {
+  require_bun
   ensure_up
   # The TUI defaults new conversations to the directory bough was launched from.
   export BOUGH_TUI_CWD="$PWD"
@@ -430,6 +464,7 @@ case "${1:-}" in
     shift
     # Auto-start the default server like the TUI does; an explicit --port means
     # the caller manages that server (e.g. the bench), so leave it alone.
+    require_bun
     case " $* " in *" --port "*) ;; *) ensure_up ;; esac
     exec bun "$ROOT/src/cli/exec.ts" "$@"
     ;;

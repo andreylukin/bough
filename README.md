@@ -117,14 +117,19 @@ files and `/` skills in the composer, and recurring runs on a schedule.
 Deno, TypeScript, SQLite. No build step — everything runs from source.
 
 ```bash
-deno task dev     # server on 127.0.0.1:4321, with --watch
-deno task tui     # the terminal UI against it
-deno task check   # typecheck
-deno task test    # unit + integration, offline and hermetic
+bun run dev     # server on 127.0.0.1:4321, with --watch
+bun run tui     # the terminal UI against it
+bun run check   # typecheck
+bun test        # unit + integration, offline and hermetic
 ```
 
 `install.sh` bootstraps a fresh machine: it clones the repo and hands off to `scripts/bough setup`
 for dependencies, the API key, and a background service.
+
+Bun is the runtime, and `bough` finds it whether it came from Homebrew or from the `bun.sh`
+installer's `~/.bun/bin` — including under launchd, which starts with a bare environment and does
+not read your shell's PATH. If bun lives in `~/.bun/bin` and your own shell cannot see it, setup
+says so and prints the line to add; nothing in bough depends on you adding it.
 
 For scripting there is a headless one-shot client — `bough exec "do the thing"` creates a session,
 streams the assistant's text to stdout, and exits 0 on a completed turn, 1 on an errored one, 2 on a

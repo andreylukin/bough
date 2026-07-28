@@ -46,6 +46,15 @@ fi
 # Bun >= 1.3 via Homebrew. That is the floor the tree is developed and tested
 # against. We install/upgrade through brew even when an older bun is already on
 # PATH from the bun.sh installer (brew upgrade would fail on that one).
+# ~/.bun/bin is where the bun.sh installer puts it, and it is on PATH only if the
+# user's shell rc adds it. Looked at BEFORE deciding bun is missing, so a perfectly
+# good bun does not get a redundant brew install stacked on top of it.
+PATH_BEFORE_BUN="$PATH" # kept so the advisory below can tell "found it" from "you had it"
+case ":$PATH:" in
+  *":$HOME/.bun/bin:"*) ;;
+  *) [ -d "$HOME/.bun/bin" ] && PATH="$PATH:$HOME/.bun/bin" && export PATH ;;
+esac
+
 bun_ok() {
   command -v bun >/dev/null || return 1
   local v
@@ -67,6 +76,27 @@ if ! bun_ok; then
   echo "  $(brew --prefix)/bin comes first, or remove the old bun." >&2
   exit 1
 fi
+
+# bun works for US because of the PATH line above, but the user's own shell was
+# never told. `bough` self-heals the same way, so the server and the TUI are fine —
+# what breaks is every `bun test` / `bun run check` typed by hand, which fails with
+# "command not found" on a machine where bun is plainly installed. Say the fix once,
+# with the actual file and the actual line, rather than leaving it to be rediscovered.
+case "$(command -v bun)" in
+  "$HOME/.bun/bin/"*)
+    case ":${PATH_BEFORE_BUN:-$PATH}:" in
+      *":$HOME/.bun/bin:"*) ;;
+      *)
+        rc="$HOME/.zshrc"
+        case "${SHELL:-}" in *bash) rc="$HOME/.bash_profile" ;; esac
+        echo "==> note: bun is in ~/.bun/bin, which is not on your shell's PATH."
+        echo "    bough itself does not care — it looks there. Your own shell does:"
+        echo "        echo 'export PATH=\"\$HOME/.bun/bin:\$PATH\"' >> $rc"
+        echo "    then open a new shell (or: source $rc)."
+        ;;
+    esac
+    ;;
+esac
 
 # leta: LSP backend for the lsp.* host functions (symbol navigation).
 # From a third-party tap, so it can't go in the main brew array above.
