@@ -54,6 +54,7 @@ import {
   type TuiState,
 } from "./store.ts";
 import type { EventStream, EventStreamOptions } from "./events.ts";
+import { unitLine } from "./format.ts";
 
 // ---- the recorder -----------------------------------------------------------
 
@@ -1140,4 +1141,30 @@ test("openJob reads a job's buffer, and a failed refresh keeps the last one", as
   await store.refreshJob();
   assert.equal(store.getState().jobView, null);
   await store.stop();
+});
+
+test("a multi-line command still makes ONE rail row", async () => {
+  // The defect: `App` sizes the transcript by subtracting `units.length`, so a row
+  // whose text contained a newline painted two rows and shoved the composer and the
+  // status line off theirs — the frame came apart around a `for` loop.
+  const units = liveUnits({
+    now: 1_000,
+    jobs: [{
+      id: "bg_1",
+      name: "webhook POST every 10s",
+      sessionId: SESSION,
+      pid: 1,
+      command: 'for i in 1 2 3; do\n  echo "request $i"\n  sleep 10\ndone',
+      status: "running",
+      startedAt: 0,
+    }],
+    subagents: [],
+    workflows: [],
+  });
+  assert.equal(units.length, 1);
+  assert.equal(units[0].detail?.includes("\n"), false, units[0].detail ?? "");
+  // The join is MARKED rather than silently closed up: two lines are not one line
+  // with a space in it, and a reader comparing this to their scrollback should see it.
+  assert.match(units[0].detail ?? "", /for i in 1 2 3; do ¶ echo "request \$i"/);
+  assert.equal(unitLine(units[0], 80).includes("\n"), false);
 });

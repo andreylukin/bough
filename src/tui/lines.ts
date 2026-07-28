@@ -41,6 +41,7 @@ import {
   linkifyUrls,
   md,
   MIN_WRAP,
+  oneLine,
   outputText,
   programSummary,
   segmentParts,
@@ -590,7 +591,7 @@ export function jobCardLines(out: VLine[], job: JobView, w: number, now: number)
   const took = fmtElapsed((job.exitedAt ?? now) - job.startedAt);
   body.push({
     text: `${glyph} ${bold(job.name || job.id)} ${jobStatusText(job)}  ${
-      dim(`${job.name ? `${job.id} · ` : ""}${clip(job.command, 60)} · ${took}`)
+      dim(`${job.name ? `${job.id} · ` : ""}${clip(oneLine(job.command), 60)} · ${took}`)
     }`,
   });
   for (const line of job.tail ?? []) {

@@ -755,3 +755,38 @@ test("the open job's x is armed before it kills, like the rail's", async () => {
     h.unmount();
   }
 });
+
+test("a multi-line command does not tear the frame apart", async () => {
+  // The screenshot this pins: a `for` loop on the rail painted four rows where the
+  // layout had budgeted one, so the composer border and the status line were pushed
+  // off the bottom of the terminal and the frame was garbage. The rail is a
+  // fixed-height region (`railH = units.length`), so its rows must be one row each.
+  const store = fakeStore({
+    ...STATE,
+    jobs: [{
+      id: "bg_1",
+      name: "webhook POST every 10s",
+      sessionId: "s1",
+      pid: 4321,
+      command: 'for i in 1 2 3; do\n  echo "request $i"\n  sleep 10\ndone',
+      status: "running",
+      startedAt: 9_000,
+    }],
+  });
+  const h = await mount(app(store));
+  try {
+    const frame = h.frame();
+    // The status line is the LAST row, where the layout put it.
+    const rows = frame.split("\n").map((r) => r.trimEnd()).filter((r) => r !== "");
+    assert.ok(
+      rows.at(-1)?.includes("? help"),
+      `the status line must still be the last row:\n${frame}`,
+    );
+    // …and the job is one row that reads as one command.
+    assert.ok(frame.includes("webhook POST every 10s"), frame);
+    assert.ok(frame.includes("for i in 1 2 3; do ¶"), frame);
+    assert.equal(frame.includes("done\n"), false, frame);
+  } finally {
+    h.unmount();
+  }
+});

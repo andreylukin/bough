@@ -58,7 +58,7 @@ import type { Effort } from "../types.ts";
 import type { Api, ReplayReport, SessionRow, SessionSnapshot, WorkflowSummary } from "./api.ts";
 import { api as defaultApi } from "./api.ts";
 import { connectEvents, type EventStream } from "./events.ts";
-import { fmtDuration, fmtTokens, fmtUsd, humanizeRetryReason } from "./format.ts";
+import { fmtDuration, fmtTokens, fmtUsd, humanizeRetryReason, oneLine } from "./format.ts";
 
 // ---------------------------------------------------------------------------
 // State
@@ -966,12 +966,15 @@ export function liveUnits(opts: {
       // falling back to the id for a row from a server that predates names. `bg_7`
       // beside a clipped command identified a shell only to someone who had read the
       // round that started it.
-      title: j.name || j.id,
+      title: oneLine(j.name || j.id),
       elapsedMs: Math.max(0, now - j.startedAt),
       tokens: null,
       costUsd: null,
       progress: null,
-      detail: j.command,
+      // ONE LINE, always. A rail row is one row, and `App` sizes the transcript by
+      // subtracting `units.length` — so a multi-line command (a `for` loop, a heredoc)
+      // painted extra rows and pushed the composer and the status line off theirs.
+      detail: oneLine(j.command),
     }));
   const agents: LiveUnit[] = subagents
     .filter((s) => s.busy)
@@ -980,7 +983,7 @@ export function liveUnits(opts: {
       kind: "subagent" as const,
       id: s.id,
       sessionId: s.id,
-      title: s.title || "subagent",
+      title: oneLine(s.title || "subagent"),
       elapsedMs: Math.max(0, now - s.createdAt),
       tokens: s.tokens ?? null,
       costUsd: s.costUsd ?? null,
@@ -994,7 +997,7 @@ export function liveUnits(opts: {
       kind: "workflow" as const,
       id: w.id,
       sessionId: w.id,
-      title: w.name || "workflow",
+      title: oneLine(w.name || "workflow"),
       elapsedMs: Math.max(0, now - w.createdAt),
       tokens: null,
       costUsd: null,

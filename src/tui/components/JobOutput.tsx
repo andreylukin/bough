@@ -18,7 +18,7 @@
  * running build is the end that is still moving.
  */
 import type { BackgroundJob } from "../../schema/parts.ts";
-import { accent, bold, danger, dim, fmtDuration, warn } from "../format.ts";
+import { accent, bold, danger, dim, fmtDuration, oneLine, warn } from "../format.ts";
 import { MessageRow, padRow } from "./Message.tsx";
 
 export interface JobOutputProps {
@@ -56,14 +56,22 @@ export function JobOutput(
   // and never less than one row: a claim about available space that is false is how
   // six rows came to be painted into three elsewhere in this tree.
   const body = jobBodyRows(height);
-  const name = job?.name || id;
+  // Both of these are ONE row of a fixed-height box, and a job's command is very
+  // often several lines (a `for` loop, a heredoc) — see `oneLine`.
+  const name = oneLine(job?.name || id);
   const head = `⚙ ${bold(name)}  ${job ? statusText(job, now) : dim("(job not found)")}`;
-  const sub = job ? `${dim(`${id} · pid ${job.pid} ·`)} ${job.command}` : dim(id);
+  const sub = job ? `${dim(`${id} · pid ${job.pid} ·`)} ${oneLine(job.command)}` : dim(id);
 
   // Split on the raw buffer rather than on wrapped rows: long lines are truncated to
   // the width instead of reflowed, so a column of build output stays a column and the
   // row a scroll offset addresses is the same row after a resize.
-  const all = error ? [danger(error)] : output.replace(/\n+$/, "").split("\n");
+  // A carriage return is not text — it is a terminal telling the row to start over,
+  // which is how every progress bar and every `npm` spinner writes. What a terminal
+  // shows is the LAST segment, so that is what a row here is; keeping the whole thing
+  // would paint a build's entire progress history as one unreadable line.
+  const all = error
+    ? [danger(error)]
+    : output.replace(/\n+$/, "").split("\n").map((l) => l.slice(l.lastIndexOf("\r") + 1));
   const lines = all.length === 1 && all[0] === ""
     ? [dim(job?.status === "running" ? "(no output yet)" : "(no output)")]
     : all;

@@ -35,7 +35,16 @@ import { ansiSpans, truncateAnsi, width as displayWidth } from "../format.ts";
  * blanked to the full viewport width before the renderer sees it.
  */
 export function padRow(text: string, w: number): string {
-  return text + " ".repeat(Math.max(0, w - displayWidth(text)));
+  // A newline inside a ROW is a frame-wide defect, not a cosmetic one: every surface
+  // here reserves a fixed number of rows and computes the ones below it by
+  // subtraction, so one string that paints two rows pushes the composer and the
+  // status line off theirs and the screen comes apart. It reached the rail through a
+  // multi-line shell command. Sources sanitize deliberately (`oneLine`, which marks
+  // the join with `¶`); this is the backstop that makes it impossible, and it only
+  // touches line breaks — collapsing runs of spaces here would eat the column
+  // alignment every caller builds before it.
+  const flat = text.replace(/\r?\n/g, " ");
+  return flat + " ".repeat(Math.max(0, w - displayWidth(flat)));
 }
 
 /**

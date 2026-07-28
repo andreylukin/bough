@@ -350,6 +350,30 @@ export function clip(s: string, n: number): string {
 }
 
 /**
+ * Text forced onto ONE row: newlines, tabs and stray control bytes collapse to
+ * single spaces.
+ *
+ * A surface that reserves N rows for N items and then paints a string containing a
+ * newline does not merely look wrong — every row below it is off by one. That is
+ * exactly what a multi-line shell command did to the live-work rail: `App` sizes
+ * the transcript as `rows - railH - …` with `railH = units.length`, so a two-line
+ * command pushed the composer and the status line off their rows and the frame came
+ * apart. Anything that lands in a fixed-height row goes through here first.
+ *
+ * The `¶` is deliberate rather than a plain space: `git commit -m "one" && push`
+ * across two lines is not the same command as one with a space there, and a reader
+ * comparing a rail row to their scrollback should be able to see the join.
+ */
+export function oneLine(s: string): string {
+  // deno-lint-ignore no-control-regex
+  return s.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, " ")
+    .replace(/\s*\r?\n\s*/g, " ¶ ")
+    .replace(/\t/g, " ")
+    .replace(/ {2,}/g, " ")
+    .trim();
+}
+
+/**
  * One-line excerpt of a tool call's input: the first meaningful code line, or
  * compact JSON. A bare tool name ("run_steps") tells the reader nothing about what
  * ran, and the transcript's collapsed fold is the only place most programs are
