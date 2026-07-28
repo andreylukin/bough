@@ -53,7 +53,7 @@ import { createFileHostFns } from "../hostfn/files.ts";
 import { createShellHostFns } from "../hostfn/shell.ts";
 import { runProgram } from "../harness/vm.ts";
 import type { ProgramResult } from "../harness/protocol.ts";
-import type { HostFnName } from "../harness/protocol.ts";
+import { HOST_FN_NAMES, type HostFnName } from "../harness/protocol.ts";
 import {
   type AssembledPrompt,
   assemblePrompt,
@@ -808,6 +808,31 @@ interface ExecutedTool {
 }
 
 /**
+ * What to say when the model calls a tool that does not exist.
+ *
+ * The common case is not a hallucination, and answering it as one wasted rounds.
+ * `view`, `bash`, `patch` and the rest are REAL — they are host functions, called
+ * from inside the program — and a model under pressure reaches for them at the
+ * tool layer, which is exactly where the names look like they should live. A
+ * haiku run did this twice in one turn, got "unknown tool: view", concluded the
+ * capability was missing, and rewrote the whole approach around `bash`.
+ *
+ * So when the name IS a host function, say where it lives and show the call. The
+ * plain unknown-name case keeps the old message, which is right for a name that
+ * really is invented.
+ */
+function unknownToolMessage(name: string): string {
+  const tools = `The only tools are \`${RUN_STEPS}\` and \`${STOP}\`.`;
+  if (!(HOST_FN_NAMES as readonly string[]).includes(name)) {
+    return `unknown tool: ${name}. ${tools}`;
+  }
+  return `unknown tool: ${name} — but \`${name}\` IS available: it is a host ` +
+    `function, already in scope inside the program you pass to \`${RUN_STEPS}\`, ` +
+    `not a tool of its own. ${tools} Call it as code, e.g. ` +
+    `\`const text = await ${name}(...)\`.`;
+}
+
+/**
  * Run one tool call. **This never throws.** Every failure — an unknown name, a
  * malformed input, a program that threw, a program the user stopped — is an
  * ordinary result the next round can act on, and a thrown one would end the turn
@@ -818,10 +843,7 @@ async function executeTool(
   wiring: { program: ProgramRunner; signal: AbortSignal; onLog: (line: string) => void },
 ): Promise<ExecutedTool> {
   if (call.name !== RUN_STEPS) {
-    return {
-      output: `unknown tool: ${call.name}. The only tools are \`${RUN_STEPS}\` and \`${STOP}\`.`,
-      isError: true,
-    };
+    return { output: unknownToolMessage(call.name), isError: true };
   }
 
   const parsed = RunStepsInput.safeParse(call.input);

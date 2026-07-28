@@ -456,6 +456,32 @@ test("an unknown tool name is answered, not executed", async () => {
   f.db.close();
 });
 
+/**
+ * `view` is not invented — it is the file-reading host function. A model that
+ * reaches for it at the TOOL layer has the right capability and the wrong place,
+ * and answering that with a bare "unknown tool" reads as "bough cannot read
+ * files". A haiku run drew exactly that conclusion and rebuilt its approach
+ * around `bash`, twice, in one turn.
+ */
+test("a host function called as a tool is told where it actually lives", async () => {
+  const llm = scriptedLlm([
+    { content: [{ type: "tool_use", id: "c1", name: "view", input: { path: "./x.py" } }] },
+    { content: [text("Right, view is a function inside the program."), stop()] },
+  ]);
+  const f = fixture({ llm: llm.client });
+  userMessage(f.db, f.session.id, "go");
+  const { message, done } = beginTurn(f.ctx, f.session.id, f.deps);
+  await done;
+  assert.equal(f.programs.length, 0);
+  const out = partsOf(f.db, message.id).find((p) => p.type === "tool_result")!.output as string;
+  // It must say the capability EXISTS, where it lives, and how to call it —
+  // "the only tools are ..." alone leaves the model to guess the recovery.
+  assert.match(out, /`view` IS available/);
+  assert.match(out, /host function/);
+  assert.match(out, /await view\(/);
+  f.db.close();
+});
+
 test("a provider failure ends the turn with a message, a closed row and a closed message", async () => {
   const llm = scriptedLlm([{
     throws: () => Object.assign(new Error("Anthropic: 400 bad prompt"), { status: 400 }),
