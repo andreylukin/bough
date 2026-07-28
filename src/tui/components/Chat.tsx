@@ -24,7 +24,7 @@
  */
 import { TextAttributes } from "@opentui/core";
 import type { VLine } from "../lines.ts";
-import { visibleSlice } from "../lines.ts";
+import { chatBodyHeight, visibleSlice } from "../lines.ts";
 import { busyLine, meterLine, UI } from "../format.ts";
 import { MessageRow, padRow } from "./Message.tsx";
 
@@ -125,8 +125,8 @@ export function Chat(
   // The scroll indicator is reserved for the same reason, which also retires the
   // probe slice that used to resolve "the indicator needs a row iff there is one
   // to need it".
-  const extras = queued.length + 2 + (notice ? 1 : 0);
-  const body = Math.max(1, height - extras);
+  // Shared with the click hit-test in the composition root — see `chatBodyHeight`.
+  const body = chatBodyHeight(height, queued.length, Boolean(notice));
   const { start, rows, more, pct } = visibleSlice(lines, body, scrollOff);
   // Pad above, never below: the newest line stays where the eye already is.
   const pad = Math.max(0, body - rows.length);

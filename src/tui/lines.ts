@@ -695,6 +695,38 @@ export function buildLines(
  * tail. `more` is what remains below — the indicator that keeps a scrolled-up
  * reader from mistaking an old frame for the current one.
  */
+/**
+ * Rows the transcript body occupies inside the chat's TOTAL height.
+ *
+ * Lives here rather than in `Chat` because two callers need the same number and
+ * they must not each carry their own copy: `Chat` lays the rows out, and the
+ * composition root hit-tests a mouse click against them. A click that resolves one
+ * row off is worse than a click that does nothing, so the arithmetic is defined
+ * once and tested directly.
+ */
+export function chatBodyHeight(height: number, queued: number, hasNotice: boolean): number {
+  return Math.max(1, height - (queued + 2 + (hasNotice ? 1 : 0)));
+}
+
+/**
+ * The transcript line under a screen slot, counting from the top of the chat body.
+ *
+ * The exact inverse of `Chat`'s row loop, including the pad: a short conversation
+ * hangs from the BOTTOM, so the first `body - rows.length` slots are empty air and
+ * resolve to null rather than to line zero.
+ */
+export function lineAtSlot(
+  lines: VLine[],
+  body: number,
+  scrollOff: number,
+  slot: number,
+): VLine | null {
+  const { start, rows } = visibleSlice(lines, body, scrollOff);
+  const pad = Math.max(0, Math.max(1, body) - rows.length);
+  const i = slot - pad;
+  return i >= 0 && i < rows.length ? rows[i] ?? null : null;
+}
+
 export function visibleSlice(
   lines: VLine[],
   height: number,

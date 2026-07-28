@@ -3,7 +3,9 @@ import { test } from "bun:test";
 import {
   type Branch,
   buildLines,
+  chatBodyHeight,
   jobCardLines,
+  lineAtSlot,
   type JobView,
   messageLines,
   parseBgNote,
@@ -532,4 +534,63 @@ test("visibleSlice: pinned to the tail, scrolled up, and clamped past the top", 
   assert.equal(short.rows.length, 3);
   assert.equal(short.more, 0);
   assert.equal(short.start, 0);
+});
+
+// ---- click hit-testing ------------------------------------------------------
+// The geometry these pin is shared with `Chat`'s render loop. A click that lands
+// one row off its row is worse than one that does nothing, so the inverse is
+// tested directly rather than through a mounted renderer.
+
+test("chatBodyHeight subtracts the reserved strips", () => {
+  // Two strips are always reserved (activity + scroll indicator), plus one per
+  // queued message, plus one for a notice.
+  assert.equal(chatBodyHeight(20, 0, false), 18);
+  assert.equal(chatBodyHeight(20, 3, false), 15);
+  assert.equal(chatBodyHeight(20, 0, true), 17);
+  assert.equal(chatBodyHeight(20, 2, true), 15);
+  // Never zero or negative, however little room there is.
+  assert.equal(chatBodyHeight(1, 9, true), 1);
+});
+
+test("lineAtSlot inverts the pad — a short transcript hangs from the bottom", () => {
+  const lines: VLine[] = [
+    { text: "a", click: "ka" },
+    { text: "b", click: "kb" },
+  ];
+  // Body of 5, two lines: three rows of empty air ABOVE, then the lines.
+  assert.equal(lineAtSlot(lines, 5, 0, 0), null);
+  assert.equal(lineAtSlot(lines, 5, 0, 2), null);
+  assert.equal(lineAtSlot(lines, 5, 0, 3)?.click, "ka");
+  assert.equal(lineAtSlot(lines, 5, 0, 4)?.click, "kb");
+  // Off the bottom of the body.
+  assert.equal(lineAtSlot(lines, 5, 0, 5), null);
+});
+
+test("lineAtSlot follows the scroll offset", () => {
+  const lines: VLine[] = Array.from({ length: 10 }, (_, i) => ({
+    text: `l${i}`,
+    click: `k${i}`,
+  }));
+  // Pinned to the tail: a body of 3 shows the last three, no pad.
+  assert.equal(lineAtSlot(lines, 3, 0, 0)?.click, "k7");
+  assert.equal(lineAtSlot(lines, 3, 0, 2)?.click, "k9");
+  // Scrolled back two: the same slots resolve two lines earlier.
+  assert.equal(lineAtSlot(lines, 3, 2, 0)?.click, "k5");
+  assert.equal(lineAtSlot(lines, 3, 2, 2)?.click, "k7");
+});
+
+test("a subagent card is clickable and descends rather than folds", () => {
+  const out: VLine[] = [];
+  const branch: Branch = {
+    id: "sub_9",
+    title: "explore the parser",
+    busy: false,
+    status: "done",
+  };
+  buildLines([], () => false, () => false, 80, { branches: [branch] })
+    .forEach((l) => out.push(l));
+  const card = out.find((l) => l.click === "open:sub_9");
+  // The target exists AND it is the descend form, not a fold key — the dispatcher
+  // branches on the `open:` prefix, so the prefix is the contract.
+  assert.ok(card, "the branch card carries an open: click target");
 });

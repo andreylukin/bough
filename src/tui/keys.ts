@@ -139,6 +139,15 @@ export type Command =
   | "delete.toEnd"
   | "delete.toStart"
   | "delete.line"
+  /**
+   * Leave the open subagent and re-open the session that spawned it.
+   *
+   * Drill-in had no inverse. You reach a subagent by opening it from the rail or a
+   * report card, and once there `esc` stops a turn and `^s` lists every session in
+   * the install — neither is "back". `←` is the inverse of the `→` that got you in,
+   * which is the grammar the panel already uses (`move.in`/`move.out`).
+   */
+  | "session.out"
   // -- the live work rail ---------------------------------------------------
   | "rail.enter"
   | "rail.up"
@@ -352,6 +361,14 @@ export interface KeyContext {
   tab?: PanelTab | null;
   /** The composer is empty, so a chord can mean something other than editing. */
   emptyDraft: boolean;
+  /**
+   * The open session was spawned by another one, so there is somewhere to go back
+   * to. Gates `←` on an empty draft; with text in the draft `←` is still the cursor.
+   *
+   * OPTIONAL and absent means false — a caller that omits it simply never reaches
+   * `session.out`, which is the safe degrade (the arrow keeps editing).
+   */
+  inSubagent?: boolean;
   /** The draft spans more than one line: ↑/↓ move the cursor, not history. */
   multiline: boolean;
   /** A turn is in flight in the open session. */
@@ -654,6 +671,18 @@ export const BINDINGS: Binding[] = [
   { mode: "chat", chord: "ctrl+e", command: "cursor.end" },
   { mode: "chat", chord: "home", command: "cursor.home" },
   { mode: "chat", chord: "end", command: "cursor.end" },
+  // AHEAD of `cursor.left`, and guarded on an empty draft: with text in the line
+  // `←` is still the cursor, so leaving a subagent can never eat a keystroke you
+  // meant for the draft.
+  {
+    mode: "chat",
+    chord: "left",
+    command: "session.out",
+    when: ["emptyDraft", "inSubagent"],
+    section: "read",
+    label: "←",
+    desc: "back to the session that spawned this one",
+  },
   { mode: "chat", chord: "left", command: "cursor.left" },
   { mode: "chat", chord: "right", command: "cursor.right" },
   {

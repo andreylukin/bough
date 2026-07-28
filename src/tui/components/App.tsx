@@ -42,7 +42,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import type { ModelRow } from "../../llm/client.ts";
 import { api, type SessionRow } from "../api.ts";
 import type { MouseEvent, NavKey } from "../mouse.ts";
-import { buildLines } from "../lines.ts";
+import { buildLines, chatBodyHeight, lineAtSlot } from "../lines.ts";
 import {
   activeTrigger,
   applyCompletion,
@@ -259,6 +259,17 @@ export function App(
   }, []);
   const [scrollOff, setScrollOff] = useState(0);
   const [foldAll, setFoldAll] = useState(false);
+  /**
+   * Groups the reader opened one at a time, and blocks whose line cap they lifted.
+   *
+   * `buildLines` has always taken `isExpanded(key)`/`isFull(key)` per group, and
+   * both were passed `() => foldAll` — so the only fold control in the product was
+   * all-or-nothing and every `click` target `lines.ts` emitted resolved to a state
+   * nothing could set. These are that state. `^e` still flips everything at once;
+   * it now also clears these, so the global toggle stays the thing that wins.
+   */
+  const [openKeys, setOpenKeys] = useState<ReadonlySet<string>>(() => new Set<string>());
+  const [fullKeys, setFullKeys] = useState<ReadonlySet<string>>(() => new Set<string>());
   const [railSel, setRailSel] = useState(0);
   /** The rail unit a first `x` armed. Id, not the unit: the row is re-derived. */
   const [armedStop, setArmedStop] = useState<string | null>(null);
@@ -466,14 +477,30 @@ export function App(
   const marks = useMemo(() => marksFor(state, state.currentId), [state.marks, state.currentId]);
   const lines = useMemo(
     () =>
-      buildLines(state.thread, () => foldAll, () => foldAll, cols, {
-        streaming: state.streaming,
-        toolLogs: state.toolLogs,
-        jobs: exitedJobs,
-        marks,
-        now: now(),
-      }),
-    [state.thread, state.streaming, state.toolLogs, exitedJobs, marks, cols, foldAll],
+      buildLines(
+        state.thread,
+        (key) => foldAll || openKeys.has(key),
+        (key) => foldAll || fullKeys.has(key),
+        cols,
+        {
+          streaming: state.streaming,
+          toolLogs: state.toolLogs,
+          jobs: exitedJobs,
+          marks,
+          now: now(),
+        },
+      ),
+    [
+      state.thread,
+      state.streaming,
+      state.toolLogs,
+      exitedJobs,
+      marks,
+      cols,
+      foldAll,
+      openKeys,
+      fullKeys,
+    ],
   );
   const tree = useMemo(
     () => treeItems({ roots: state.sessions, childrenByOrigin: children, expanded }),
@@ -550,6 +577,10 @@ export function App(
   // An `ask()` takes the composer's place: prompt + options + the typed row + the
   // legend, inside a border.
   const inputH = ask ? 4 + (ask.options?.length ?? 0) : boxH + popupH;
+  // Hoisted out of the JSX because the click hit-test needs the same number the
+  // renderer lays out with; two copies would put a click one row off its row.
+  const chatH = Math.max(1, rows - 1 /* header */ - railH - inputH - 1 /* status */);
+
   // The panel keeps the pinned rows below it (rule 4: state lives in one row), so
   // it gets the screen minus them. `Panel` subtracts its own chrome twice on the
   // way down (`PanelHost` takes 4, `Panel` takes 2 more) and draws `rows - 2`, so
@@ -578,6 +609,52 @@ export function App(
   // A held question owns the keyboard: the card replaces the composer (spec §6).
   // The panel outranks both — while it is open it IS the surface with the keyboard.
   const uiMode: UiMode = panel.open ? "panel" : mode === "chat" && ask ? "ask" : mode;
+
+  /**
+   * Dispatch a click on a screen row.
+   *
+   * `lines.ts` has emitted a `click` target on every foldable group, every capped
+   * block and every branch card since the transcript was written, and its own
+   * comments record that nothing ever read them — a line that said "click to open"
+   * was "an instruction to do something impossible". This is the reader.
+   *
+   * The screen is three stacked regions and the arithmetic is theirs, not this
+   * function's: the header owns row 1, `Chat` owns the next `chatH`, the rail owns
+   * `units.length` after that. `chatBodyHeight`/`lineAtSlot` are shared with the
+   * renderer, so a click cannot land one row off the row that was drawn.
+   */
+  const clickAt = useCallback((y: number) => {
+    if (panel.open) return; // the panel displaces the transcript; nothing under it is live
+    const top = 2; // 1-based, and the header owns row 1
+    if (y >= top && y < top + chatH) {
+      const body = chatBodyHeight(chatH, state.queued.length, Boolean(state.notice));
+      const target = lineAtSlot(lines, body, scrollOff, y - top)?.click;
+      if (!target) return;
+      // A branch card descends; it does not fold. Same route the rail's ⏎ takes.
+      if (target.startsWith("open:")) {
+        const id = target.slice("open:".length);
+        void store.open(id).catch(() => store.notify("could not open that branch"));
+        return;
+      }
+      // "+N more lines" lifts the cap and stays lifted — re-capping it is `^e`.
+      if (target.endsWith("!full")) {
+        const base = target.slice(0, -"!full".length);
+        return setFullKeys((s) => new Set([...s, base]));
+      }
+      return setOpenKeys((s) => {
+        const next = new Set(s);
+        if (!next.delete(target)) next.add(target);
+        return next;
+      });
+    }
+    // Live work: select the unit you clicked and give it the keyboard, so the row's
+    // own legend (`⏎ open · x stop`) is true the moment it lights up.
+    const railTop = top + chatH;
+    if (y >= railTop && y < railTop + units.length) {
+      setRailSel(y - railTop);
+      setMode("rail");
+    }
+  }, [panel.open, chatH, state.queued.length, state.notice, lines, scrollOff, units.length, store]);
 
   // The history cursor is a POSITION IN `sent`, and it only means anything while the
   // draft is holding a prompt taken from there. Every route back to an empty composer
@@ -679,7 +756,18 @@ export function App(
         return setDismissed(true);
 
       case "fold.all":
+        // The global toggle wins: flipping it drops the per-group state, so `^e`
+        // twice is a reset rather than a return to whatever was open before.
+        setOpenKeys(new Set());
+        setFullKeys(new Set());
         return setFoldAll((v) => !v);
+
+      case "session.out": {
+        const origin = state.session?.originId;
+        if (!origin) return;
+        void store.open(origin).catch(() => store.notify("could not reopen the spawning session"));
+        return;
+      }
       // Two surfaces, opposite senses. The transcript's offset counts BACKWARDS
       // from the bottom, so scrolling up raises it; the overlay is a document read
       // top-down, so scrolling up lowers it. Same command, because it is the same
@@ -792,8 +880,9 @@ export function App(
     const off = [
       hooks.onPaste?.((text) => setLine((s) => insertText(s, stripCtl(text)))),
       hooks.onMouse?.((event) => {
-        if (event.kind === "wheel-up") setScrollOff((o) => o + WHEEL_ROWS);
-        if (event.kind === "wheel-down") setScrollOff((o) => Math.max(0, o - WHEEL_ROWS));
+        if (event.kind === "wheel-up") return setScrollOff((o) => o + WHEEL_ROWS);
+        if (event.kind === "wheel-down") return setScrollOff((o) => Math.max(0, o - WHEEL_ROWS));
+        if (event.kind === "down") clickAt(event.y);
       }),
       hooks.onNavKey?.((key) => {
         // Backtab is not line editing: it is the panel's "previous tab". No
@@ -810,7 +899,10 @@ export function App(
     return () => {
       for (const stop of off) stop?.();
     };
-  }, [hooks, run]);
+    // `clickAt` closes over the transcript, the scroll offset and the geometry, so
+    // it MUST be a dep: a stale one would hit-test the screen as it was when the
+    // listener was registered and fold a group the user is no longer looking at.
+  }, [hooks, run, clickAt]);
 
   useKeyboard((event) => {
     const { input, key } = inkKey(event);
@@ -830,6 +922,9 @@ export function App(
       // otherwise typing "opus" into the model tab pauses a workflow on the way past.
       panelFiltering: panel.filtering,
       emptyDraft: lineRef.current.text === "",
+      // Only true when there is somewhere to go back to, so `←` keeps meaning the
+      // cursor in a root session.
+      inSubagent: Boolean(state.session?.originId),
       multiline: lineRef.current.text.includes("\n"),
       busy,
       doubleEsc,
@@ -974,7 +1069,7 @@ export function App(
       <Chat
         lines={lines}
         width={cols}
-        height={Math.max(1, rows - 1 /* header */ - railH - inputH - 1 /* status */)}
+        height={chatH}
         scrollOff={scrollOff}
         activity={state.activity}
         busy={busy}
