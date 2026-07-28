@@ -92,6 +92,7 @@ import { type PanelControls, type PanelHostDeps, usePanelHost } from "./PanelHos
 import { historyTreeRows } from "../historytree.ts";
 import { liveSubagents, SubagentRail } from "./SubagentRail.tsx";
 import { treeItems } from "./Tree.tsx";
+import { palette } from "../theme.ts";
 import { tabAtColumn } from "./Panel.tsx";
 
 /** How long a second Escape still counts as a double-tap. */
@@ -763,7 +764,18 @@ export function App(
             key={`sel-${r.y}`}
             style={{ position: "absolute", left: r.from, top: r.y - 1, zIndex: 100 }}
           >
-            <text attributes={TextAttributes.INVERSE} wrapMode="none">{stripAnsi(r.text)}</text>
+            {/*
+              EXPLICIT COLOURS, not `INVERSE`. Inverting is what a terminal's own
+              selection does, but it needs something to invert: this overlay draws
+              onto a fresh renderable with no colours of its own, and OpenTUI
+              resolved both sides to white — so every selected cell came out
+              #ffffff on #ffffff and the text you were dragging over vanished. The
+              cells reported `inverse: true` the whole time, which is why counting
+              the attribute was not enough to call this verified.
+            */}
+            <text fg={palette.bg} bg={palette.accent} wrapMode="none">
+              {stripAnsi(r.text)}
+            </text>
           </box>
         ))}
       </>
