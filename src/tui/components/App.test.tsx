@@ -883,3 +883,39 @@ test("esc esc still stops a running turn — the rewind never shadows the stop",
     h.unmount();
   }
 });
+
+/**
+ * A fast typist's keystrokes and their Return arrive in ONE stdin read, and the
+ * Bun/OpenTUI port assumed they could not — it dropped the `chunkInput` split on
+ * the belief that the parser emits one event per key. It does not. The trailing
+ * `\r` then fell to `stripCtl`, so the message stayed in the box, unsent, with
+ * nothing on screen to say a keypress had been ignored. Driving the raw bytes is
+ * the only way to see it: pressing "a", "b" and Return separately works fine.
+ */
+test("typed text and its Return in ONE read send that text, not the draft before it", async () => {
+  const sent: string[] = [];
+  const store = fakeStore(STATE);
+  store.send = (text: string) => (sent.push(text), Promise.resolve());
+  const h = await mount(app(store));
+  try {
+    await h.press("ab\r");
+    assert.deepEqual(sent, ["ab"], `the coalesced Return must send: ${h.frame()}`);
+    // …and the composer is empty again, rather than still holding what it sent.
+    assert.equal(h.frame().includes("ab"), false, h.frame());
+  } finally {
+    h.unmount();
+  }
+});
+
+test("a bare \\n in a coalesced chunk is a newline, never a send", async () => {
+  const sent: string[] = [];
+  const store = fakeStore(STATE);
+  store.send = (text: string) => (sent.push(text), Promise.resolve());
+  const h = await mount(app(store));
+  try {
+    await h.press("ab\n");
+    assert.deepEqual(sent, [], `^j is a newline, not a send: ${h.frame()}`);
+  } finally {
+    h.unmount();
+  }
+});

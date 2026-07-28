@@ -934,8 +934,16 @@ export function App(
     if (line.text === "") setHistAt(null);
   }, [line.text]);
 
+  // `lineRef`, NOT the `line` of this render. A fast typist's keystrokes and their
+  // Return arrive in one stdin read; OpenTUI splits them into separate events, but
+  // React batches all of them into a SINGLE commit — so when the Return's handler
+  // runs, the render-scope `line.text` is still the draft as it stood before any of
+  // the typing. It was `""` on a first message, and `submit` returned on the empty
+  // check with no sign anything had happened: the text sat in the box, unsent.
+  // Pressing the keys slowly hid it entirely, because each press then got its own
+  // commit. `setLine` maintains `lineRef` synchronously for exactly this read.
   const submit = useCallback((queue: boolean) => {
-    const text = line.text.trim();
+    const text = lineRef.current.text.trim();
     if (text === "") return;
     setLine(EMPTY_LINE);
     setHistAt(null);
@@ -943,7 +951,7 @@ export function App(
     setScrollOff(0);
     if (state.currentId) void store.send(text, { queue });
     else void store.createSession(defaultWorkspace).then((s) => s && store.send(text));
-  }, [line.text, state.currentId, defaultWorkspace, store]);
+  }, [state.currentId, defaultWorkspace, store]);
 
   /** One command → one effect. Nothing here decides anything; it only dispatches. */
   const run = useCallback((command: Command, input: string) => {
@@ -1377,7 +1385,8 @@ export function App(
     // Under ink a fast typist's keystrokes and their Return arrived in ONE read,
     // so a newline could be data rather than a keypress and had to be split back
     // out (`chunkInput`). OpenTUI's parser emits one event per key, so a Return
-    // is always a Return and never rides along inside typed text.
+    // is always a Return and never rides along inside typed text. What it does NOT
+    // do is give each of those events its own React commit — see `submit`.
     // Typing re-opens a popup an earlier esc closed: esc dismisses THIS token, not
     // completion in general.
     setDismissed(false);
