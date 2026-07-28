@@ -1228,6 +1228,13 @@ export interface Completion {
   label: string;
   detail: string;
   insert: string;
+  /**
+   * A built-in `/command` this row DISPATCHES instead of inserting — the caller
+   * still removes `[trigger.start, trigger.end)`, but sends this rather than
+   * leaving `/model` sitting in the draft as text. Absent on skill and file rows,
+   * which are references and belong in the message.
+   */
+  run?: string;
   /** Label indices the fuzzy match hit, for highlighting. */
   hl?: number[];
 }
@@ -1238,7 +1245,7 @@ export interface Completion {
  * as the whole catalogue and never types to narrow.
  */
 export function rankCompletions(
-  candidates: { name: string; detail?: string }[],
+  candidates: { name: string; detail?: string; run?: string }[],
   trigger: Trigger,
   limit = 6,
 ): { items: Completion[]; total: number } {
@@ -1246,11 +1253,22 @@ export function rankCompletions(
   const ranked = candidates
     .map((c, i) => ({ c, i, score: fuzzyScore(c.name, trigger.query) }))
     .filter((x) => x.score > 0)
-    .sort((a, b) => b.score - a.score || a.c.name.length - b.c.name.length || a.i - b.i);
+    // Shorter-is-better is a statement about how WELL a name matched, so it only
+    // applies once something was typed. On a bare `/` every candidate scores the
+    // same and that tiebreak sorts the menu by name length — which interleaved the
+    // built-in commands with whatever skills happen to have short names, at exactly
+    // the moment the list is being read as "what can this thing do". With no query,
+    // source order wins, and the caller puts the commands first.
+    .sort((a, b) =>
+      b.score - a.score ||
+      (trigger.query ? a.c.name.length - b.c.name.length : 0) ||
+      a.i - b.i
+    );
   const items = ranked.slice(0, limit).map(({ c }) => ({
     label: `${marker}${c.name}`,
     detail: c.detail ?? "",
     insert: `${marker}${c.name}${c.name.endsWith("/") ? "" : " "}`,
+    ...(c.run ? { run: c.run } : {}),
     // Positions are against the bare name; the leading marker shifts them by one.
     hl: fuzzyPositions(c.name, trigger.query).map((p) => p + 1),
   }));

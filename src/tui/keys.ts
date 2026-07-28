@@ -267,6 +267,33 @@ export type TabCommand = `tab.${PanelTab}`;
 /** Tab ids in bar order. Derived, so the bar and the keymap cannot disagree. */
 export const PANEL_TABS: readonly PanelTab[] = TABS.map((t) => t.id);
 
+/** One `/name` row in the composer's popup: a command, not text to insert. */
+export interface SlashCommand {
+  /** What the user types after `/`. */
+  name: string;
+  command: Command;
+  desc: string;
+}
+
+/**
+ * The built-in `/commands`.
+ *
+ * The `/` popup used to list SKILLS and nothing else, so typing `/model` — the
+ * first thing anyone arriving from another harness does — answered "no matching
+ * skills", and every surface bough has was reachable only by a memorised chord.
+ * Typing `/` is how peer harnesses expose their surface area; the chords stay, and
+ * this is the other door to the same commands.
+ *
+ * Derived from `TABS` for the same reason the chords are: a tab and the ways to
+ * reach it are one fact, so a new surface cannot ship without a name to type.
+ * Only the two commands that are not a tab are listed by hand.
+ */
+export const SLASH_COMMANDS: readonly SlashCommand[] = [
+  ...TABS.map((t) => ({ name: t.id, command: `tab.${t.id}` as Command, desc: t.desc })),
+  { name: "rewind", command: "tree.rewind", desc: "go back to a turn and say it differently" },
+  { name: "help", command: "help.open", desc: "every key, by section" },
+];
+
 /** Opens and closes the panel. Never names a tab — that is what the others are for. */
 export const PANEL_TOGGLE = "ctrl+t";
 

@@ -167,7 +167,7 @@ test("Composer's / popup says so when nothing matches, rather than vanishing", a
       completions={[]}
     />,
   );
-  assert.ok(frame.includes("no matching skills"), frame);
+  assert.ok(frame.includes("no matching commands or skills"), frame);
 });
 
 /**

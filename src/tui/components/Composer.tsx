@@ -251,7 +251,7 @@ export function CompletionPopup({ kind, items, sel, more }: CompletionPopupProps
       {items.length === 0
         ? (
           <text attributes={TextAttributes.DIM}>
-            {kind === "file" ? "no matching files" : "no matching skills"}
+            {kind === "file" ? "no matching files" : "no matching commands or skills"}
           </text>
         )
         : items.map((it, i) => {
@@ -287,9 +287,12 @@ export function CompletionPopup({ kind, items, sel, more }: CompletionPopupProps
         {/* ⏎ is named FIRST because it is now the commit key here too: every
             bordered list in this TUI affirms on Enter, and the pickers were the one
             widget where it discarded the highlighted row and sent the raw draft. */}
+        {/* "inserts" is only half true on the `/` list now: a built-in command row
+            RUNS, a skill row inserts. The legend says both rather than promising
+            the one behaviour that would be wrong for whichever row is highlighted. */}
         {kind === "file"
           ? "files & dirs — ↑↓ select · ⏎ or ⇥ inserts · esc closes"
-          : "skills — ↑↓ select · ⏎ or ⇥ inserts · esc closes"}
+          : "commands & skills — ↑↓ select · ⏎ runs or inserts · esc closes"}
       </text>
     </box>
   );

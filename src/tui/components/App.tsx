@@ -78,6 +78,7 @@ import {
   type KeyFlags,
   type LineState,
   lookup,
+  SLASH_COMMANDS,
   stripCtl,
   type UiMode,
 } from "../keys.ts";
@@ -507,9 +508,16 @@ export function App(
   );
   const completion = useMemo(() => {
     if (!trigger) return { items: [], total: 0 };
+    // Built-in commands come FIRST in the candidate list, which is also how they
+    // win a tie: `rankCompletions` breaks equal scores by source order. `/skills`
+    // the tab therefore outranks a skill that happens to be called "skills", and
+    // the row that acts on the harness is never buried under installed content.
     const candidates = trigger.kind === "file"
       ? files.map((name) => ({ name }))
-      : skills.map((sk) => ({ name: sk.name, detail: sk.description ?? "" }));
+      : [
+        ...SLASH_COMMANDS.map((c) => ({ name: c.name, detail: c.desc, run: c.command })),
+        ...skills.map((sk) => ({ name: sk.name, detail: sk.description ?? "" })),
+      ];
     return rankCompletions(candidates, trigger);
   }, [trigger, files, skills]);
   const completing = completion.items.length > 0;
@@ -1015,8 +1023,19 @@ export function App(
       case "complete.accept": {
         const item = completion.items[selAt];
         if (!trigger || !item) return;
-        const next = applyCompletion(line.text, trigger, item);
         setCompletionSel(0);
+        // A built-in `/command` ACTS. The token still comes out of the draft —
+        // leaving `/model ` behind would put it in the next message as text — but
+        // what follows is the command, not an insertion.
+        if (item.run) {
+          const text = line.text;
+          setLine({
+            text: text.slice(0, trigger.start) + text.slice(trigger.end),
+            cursor: trigger.start,
+          });
+          return run(item.run as Command, "");
+        }
+        const next = applyCompletion(line.text, trigger, item);
         return setLine(next);
       }
       case "complete.prev":
