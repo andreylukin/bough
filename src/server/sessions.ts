@@ -54,7 +54,7 @@ import { cheapModel } from "../worker/titles.ts";
 // — deliberately not imported from `server/changes.ts`, which does import `app.ts`.
 import { recordBase } from "../vcs/repodiff.ts";
 import { type Handler, json, parseBody } from "./http.ts";
-import { loadDefaults, saveDefaults } from "./defaults.ts";
+import { loadDefaults, type ModelDefaults, saveDefaults } from "./defaults.ts";
 
 // ---- derived visibility ------------------------------------------------------
 
@@ -137,6 +137,24 @@ export type TurnStarter = (ctx: AppCtx, session: Session, message: Message) => u
 /** The optional ctx field. Declared here because `AppCtx` (T-1) is frozen. */
 export interface WithTurnStarter {
   startTurn?: TurnStarter;
+}
+
+/**
+ * Where the install's model defaults are read from.
+ *
+ * Injected for the same reason the MCP token store's `dir` is: `loadDefaults()`
+ * with no argument reads the REAL `~/.bough/model.json`, so a handler test asserting
+ * "a new session runs on `ctx.model`" passed or failed depending on whether the
+ * developer had ever pinned a model in the picker. That is a test reading the
+ * machine it runs on, which is exactly what the dependency-injection ground rule
+ * exists to prevent. Absent = the real file, which is what production wants.
+ */
+export interface WithModelDefaults {
+  modelDefaultsPath?: string;
+}
+
+function defaultsOf(ctx: AppCtx): ModelDefaults {
+  return loadDefaults((ctx as AppCtx & WithModelDefaults).modelDefaultsPath);
 }
 
 function turnStarterOf(ctx: AppCtx): TurnStarter | undefined {
@@ -267,7 +285,7 @@ export const createSession: Handler = async (req, ctx) => {
   // default HERE rather than resolving it per turn is what keeps the pin readable
   // in the session record and keeps an existing conversation on the model it has
   // always run on when the default later changes.
-  const pinned = loadDefaults();
+  const pinned = defaultsOf(ctx);
   const model = body.model ?? pinned.model;
   const effort = body.effort ?? pinned.effort;
   if (model) ctx.db.setSessionModel(session.id, model);
@@ -490,7 +508,7 @@ export const getModelSettingsH: Handler = (_req, ctx) => {
   // start-up and frozen for the process, so a stored default that did not outrank it
   // could never be reported back and the picker would redraw the ● on the old model
   // the instant it refetched.
-  const pinned = loadDefaults();
+  const pinned = defaultsOf(ctx);
   return json({
     defaultModel: pinned.model ?? ctx.model ?? DEFAULT_MODEL,
     cheapModel: cheapModel(),
@@ -511,7 +529,7 @@ export const getModelSettingsH: Handler = (_req, ctx) => {
  */
 export const putModelSettingsH: Handler = async (req, ctx) => {
   const body = await parseBody(req, PutModelSettingsBody);
-  const current = loadDefaults();
+  const current = defaultsOf(ctx);
   saveDefaults({
     model: body.model === undefined ? current.model : body.model,
     effort: body.effort === undefined ? current.effort : body.effort,

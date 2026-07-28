@@ -17,6 +17,7 @@
  */
 import { test } from "bun:test";
 import { mkdtemp, rm, rmdir, writeFile } from "node:fs/promises";
+import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import assert from "node:assert/strict";
@@ -41,6 +42,7 @@ import {
   type SessionListItem,
   type TurnStarter,
   type WithTurnStarter,
+  type WithModelDefaults,
 } from "./sessions.ts";
 
 // ---- fixtures ---------------------------------------------------------------
@@ -77,10 +79,15 @@ function fixture(opts: { startTurn?: TurnStarter } = {}): Fixture {
   const events: BoughEvent[] = [];
   bus.subscribe((e) => events.push(e));
   const started: { session: Session; message: Message }[] = [];
-  const ctx: AppCtx & WithTurnStarter = {
+  const ctx: AppCtx & WithTurnStarter & WithModelDefaults = {
     db,
     bus,
     model: "test-model",
+    // Pointed at a path that does not exist, so these tests read the INSTALL
+    // default as "unpinned" whatever the developer has actually pinned. Without
+    // it `loadDefaults()` reads the real ~/.bough/model.json and every assertion
+    // about `ctx.model` depends on the machine the suite runs on.
+    modelDefaultsPath: join(mkdtempSync(join(tmpdir(), "bough-sessions-")), "model.json"),
     startTurn: opts.startTurn ?? ((_ctx, session, message) => {
       started.push({ session, message });
     }),

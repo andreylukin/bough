@@ -84,7 +84,54 @@ test("registry: entry shapes are rejected with a sentence naming the fix", () =>
     () => upsertServer("local", { command: "x", headers: { a: "b" } }, { file }),
     (e: unknown) => e instanceof McpError && /stdio server takes/.test(e.message),
   );
+  // A PRE-REGISTERED OAuth client belongs to a remote server and to nothing else.
+  assert.throws(
+    () => upsertServer("local", { command: "x", clientId: "abc" }, { file }),
+    (e: unknown) => e instanceof McpError && /stdio server takes/.test(e.message),
+  );
+  // A secret identifies nothing on its own.
+  assert.throws(
+    () =>
+      upsertServer("remote", {
+        url: "https://y.example",
+        clientSecret: "${SOME_VAR}",
+      }, { file }),
+    (e: unknown) => e instanceof McpError && /needs the `clientId`/.test(e.message),
+  );
+  // THE ONE THAT MATTERS: a literal secret is refused. This file is served by
+  // GET /mcp/servers and rendered in the panel, so a literal would sit in a
+  // response body and in the model's context.
+  assert.throws(
+    () =>
+      upsertServer("remote", {
+        url: "https://y.example",
+        clientId: "abc",
+        clientSecret: "xoxb-the-actual-secret",
+      }, { file }),
+    (e: unknown) => e instanceof McpError && /must be a `\$\{VAR\}` reference/.test(e.message),
+  );
   assert.deepEqual(loadRegistry({ file }), { servers: {} }); // nothing was written
+});
+
+test("a pre-registered OAuth client round-trips, and the secret stays a reference", () => {
+  // The registry keeps the REFERENCE. Expansion happens where the value is used
+  // (`expandEnv`, and `BoughOAuthProvider.clientInformation` through it), never on
+  // the way in — otherwise the resolved secret would be what is written to disk and
+  // served.
+  const file = tmpFile();
+  upsertServer("slack", {
+    url: "https://mcp.slack.com/mcp",
+    clientId: "1234.5678",
+    clientSecret: "${SLACK_MCP_CLIENT_SECRET}",
+  }, { file });
+  const entry = loadRegistry({ file }).servers.slack!;
+  assert.equal(entry.clientId, "1234.5678");
+  assert.equal(entry.clientSecret, "${SLACK_MCP_CLIENT_SECRET}");
+  assert.equal(
+    readFileSync(file, "utf8").includes("${SLACK_MCP_CLIENT_SECRET}"),
+    true,
+    "the reference, not a resolved value, is what is stored",
+  );
 });
 
 test("upsertServer replaces one entry without touching siblings; removeServer deletes", () => {

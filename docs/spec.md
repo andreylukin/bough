@@ -532,7 +532,11 @@ buffers are readable while running and after exit.
 HTTP with OAuth/PKCE against a bough-hosted callback). Per-session grants carry
 into subagents. Servers are managed through bough itself — the model answers MCP
 questions from a fresh `mcpStatus()` call, never from conversation memory, since
-grants and connections change between turns.
+grants and connections change between turns. The OAuth client is registered
+dynamically where the authorization server offers it; where it does not, a registry
+entry may name a pre-registered client with `clientId` and a `clientSecret` given
+only as a `${VAR}` reference, since the registry is served and rendered and a secret
+belongs in the environment.
 
 **LSP.** Curated `lsp.*` verbs with bough-owned names over an external CLI backend,
 so the model-facing surface stays stable if the backing tool changes. Lazy — nothing

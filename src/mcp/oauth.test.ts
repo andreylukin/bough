@@ -18,7 +18,7 @@
  */
 import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, statSync } from "node:fs";
+import { mkdtempSync, statSync, writeFileSync} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { McpError } from "../errors.ts";
@@ -468,4 +468,82 @@ test("a resource identical to what was tried is not a correction", () => {
       "https://x.example/mcp (or origin)",
   );
   assert.equal(declaredResource(err, "https://x.example/mcp"), null);
+});
+
+// ---- a pre-registered OAuth client ------------------------------------------
+// Dynamic registration is the default path and was the ONLY one: against an
+// authorization server publishing `registration_endpoint: null` — Slack's does —
+// the SDK went on to register, failed, and the flow died. These pin the fallback
+// that lets a user supply an app they made themselves.
+
+/** A registry file plus an env lookup, so nothing here reads the real ones. */
+function tempRegistry(
+  entry: Record<string, unknown>,
+  env: Record<string, string> = {},
+): { config: { file: string; env: (n: string) => string | undefined }; dir: string } {
+  const file = join(mkdtempSync(join(tmpdir(), "bough-oauth-reg-")), "mcp.json");
+  writeFileSync(file, JSON.stringify({ servers: { slack: entry }, activations: {} }));
+  return {
+    config: { file, env: (n: string) => env[n] },
+    dir: mkdtempSync(join(tmpdir(), "bough-oauth-")),
+  };
+}
+
+test("a static clientId is used when nothing was ever registered", () => {
+  const { config, dir } = tempRegistry(
+    {
+      url: "https://mcp.slack.com/mcp",
+      clientId: "1234.5678",
+      clientSecret: "${SLACK_MCP_CLIENT_SECRET}",
+    },
+    { SLACK_MCP_CLIENT_SECRET: "shhh" },
+  );
+  const provider = new BoughOAuthProvider("slack", { dir, config });
+  assert.deepEqual(provider.clientInformation(), {
+    client_id: "1234.5678",
+    client_secret: "shhh",
+  });
+});
+
+test("an unset secret variable names itself rather than failing at the token endpoint", () => {
+  // Without this the flow reaches the authorization server with an empty secret and
+  // comes back as an opaque 401 — a failure that looks like the provider's fault.
+  const { config, dir } = tempRegistry({
+    url: "https://mcp.slack.com/mcp",
+    clientId: "1234.5678",
+    clientSecret: "${SLACK_MCP_CLIENT_SECRET}",
+  });
+  const provider = new BoughOAuthProvider("slack", { dir, config });
+  assert.throws(
+    () => provider.clientInformation(),
+    (e: unknown) => e instanceof McpError && /SLACK_MCP_CLIENT_SECRET/.test(e.message),
+  );
+});
+
+test("a clientId with no secret is a public pre-registered client", () => {
+  const { config, dir } = tempRegistry({
+    url: "https://mcp.slack.com/mcp",
+    clientId: "1234.5678",
+  });
+  const provider = new BoughOAuthProvider("slack", { dir, config });
+  assert.deepEqual(provider.clientInformation(), { client_id: "1234.5678" });
+});
+
+test("a DYNAMICALLY registered client shadows the static one", () => {
+  // The registered client is the one the authorization server issued and knows;
+  // the static id is only what to fall back on when there was no registration.
+  const { config, dir } = tempRegistry(
+    { url: "https://mcp.slack.com/mcp", clientId: "static", clientSecret: "${S}" },
+    { S: "shhh" },
+  );
+  new TokenStore({ dir }).patch("slack", { client: { client_id: "registered" } });
+  const provider = new BoughOAuthProvider("slack", { dir, config });
+  assert.deepEqual(provider.clientInformation(), { client_id: "registered" });
+});
+
+test("an entry with no clientId still returns undefined, so DCR runs as before", () => {
+  // The guard on the whole change: a server that never asked for this must reach
+  // the SDK's registration path untouched.
+  const { config, dir } = tempRegistry({ url: "https://mcp.slack.com/mcp" });
+  assert.equal(new BoughOAuthProvider("slack", { dir, config }).clientInformation(), undefined);
 });

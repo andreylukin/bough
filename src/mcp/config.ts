@@ -89,6 +89,26 @@ export const ServerConfig = z.object({
   url: z.string().url().optional(),
   /** Static headers for a remote server. OAuth tokens are NOT stored here (T7.2). */
   headers: z.record(z.string(), z.string()).default({}),
+  /**
+   * A PRE-REGISTERED OAuth client for this server.
+   *
+   * Dynamic client registration (RFC7591) is the path bough takes by default and
+   * the only one it had: the SDK's `auth()` registers on the fly and the result is
+   * stored beside the tokens. Not every authorization server offers it — Slack's
+   * publishes `registration_endpoint: null` — and for those the only way in is an
+   * app the user created themselves, which means a `client_id` bough is told
+   * rather than one it earns.
+   */
+  clientId: z.string().min(1).optional(),
+  /**
+   * The pre-registered client's secret, as a `${VAR}` REFERENCE and never a literal.
+   *
+   * The registry is served over HTTP by `GET /mcp/servers` and rendered in the
+   * `/mcp` panel, so a literal here would sit in a response body and in the model's
+   * context. Same rule the `env` map has held since this module was written, and
+   * the same expansion (`expandEnv`) resolves it at the moment it is used.
+   */
+  clientSecret: z.string().optional(),
 }).superRefine((s, ctx) => {
   if (!s.command === !s.url) {
     ctx.addIssue({
@@ -109,6 +129,28 @@ export const ServerConfig = z.object({
       code: z.ZodIssueCode.custom,
       message: "a stdio server takes `env` — `headers` are sent on an HTTP request " +
         "and there is none",
+    });
+  }
+  if (s.command && (s.clientId !== undefined || s.clientSecret !== undefined)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "a stdio server takes `env` — `clientId`/`clientSecret` are an OAuth " +
+        "client for a remote authorization server and there is none",
+    });
+  }
+  if (s.clientSecret !== undefined && s.clientId === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "`clientSecret` needs the `clientId` it belongs to — a secret alone " +
+        "identifies nothing",
+    });
+  }
+  if (s.clientSecret !== undefined && !/^\$\{\w+\}$/.test(s.clientSecret)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "`clientSecret` must be a `${VAR}` reference, not the secret itself — " +
+        "this file is served by GET /mcp/servers and rendered in the /mcp panel, so a " +
+        "literal would sit in a response body and in the model's context",
     });
   }
 });

@@ -62,7 +62,7 @@ import type {
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { McpError } from "../errors.ts";
 import { boughPath, confine } from "../paths.ts";
-import { getServer, type McpConfigOptions, upsertServer } from "./config.ts";
+import { expandEnv, getServer, type McpConfigOptions, upsertServer } from "./config.ts";
 import type { AppCtx } from "../types.ts";
 
 // ---------------------------------------------------------------------------
@@ -226,6 +226,15 @@ export interface ProviderOptions extends TokenStoreOptions {
   redirectUrl?: string;
   /** Clock, injected so a token-expiry assertion needs no sleeping. */
   now?: () => number;
+  /**
+   * Where the REGISTRY is read from, for the pre-registered-client fallback.
+   *
+   * Injected for the same reason `dir` is: a provider test must not read the
+   * developer's own `~/.bough/mcp.json`, and it carries the `env` lookup that
+   * resolves a `${VAR}` secret without touching the real environment. Production
+   * call sites pass nothing and get the real registry.
+   */
+  config?: McpConfigOptions;
 }
 
 /**
@@ -244,12 +253,14 @@ export class BoughOAuthProvider implements OAuthClientProvider {
   readonly #store: TokenStore;
   readonly #redirectUrl: string | undefined;
   readonly #now: () => number;
+  readonly #config: McpConfigOptions;
 
   constructor(readonly server: string, opts: ProviderOptions = {}) {
     assertServerName(server);
     this.#store = storeFor(opts);
     this.#redirectUrl = opts.redirectUrl;
     this.#now = opts.now ?? Date.now;
+    this.#config = opts.config ?? {};
   }
 
   get redirectUrl(): string {
@@ -274,8 +285,39 @@ export class BoughOAuthProvider implements OAuthClientProvider {
     return `${this.server}.${nonce}`;
   }
 
+  /**
+   * The OAuth client to authorize as, dynamically registered or pre-registered.
+   *
+   * THE GAP THIS CLOSES: this returned only what a previous DCR had stored, so
+   * against an authorization server with no `registration_endpoint` the SDK went on
+   * to register, failed, and the flow died with "does not support dynamic client
+   * registration". Slack publishes exactly that. There was no way to say "here is
+   * the app I already made".
+   *
+   * A STORED client WINS. One that came back from a real registration is the one
+   * the authorization server issued and knows; a static id is what to fall back on
+   * when there was never a registration to do. The SDK skips registration entirely
+   * whenever this returns a value, which is the whole of the fix.
+   *
+   * Read FRESH rather than cached at construction: the panel can write a
+   * `clientId` onto the entry between one attempt and the next, and the second
+   * press of `a` has to see it.
+   */
   clientInformation(): OAuthClientInformationMixed | undefined {
-    return this.#store.load(this.server).client;
+    const stored = this.#store.load(this.server).client;
+    if (stored) return stored;
+    const entry = getServer(this.server, this.#config);
+    if (!entry?.clientId) return undefined;
+    // The secret is a `${VAR}` reference by schema, expanded here and nowhere
+    // earlier — `expandEnv` throws an McpError naming the variable when it is not
+    // set, which is the message the user needs and the one they would otherwise
+    // get as an opaque 401 from the token endpoint.
+    const secret = entry.clientSecret === undefined
+      ? undefined
+      : expandEnv({ clientSecret: entry.clientSecret }, this.#config).clientSecret;
+    return secret === undefined
+      ? { client_id: entry.clientId }
+      : { client_id: entry.clientId, client_secret: secret };
   }
 
   saveClientInformation(client: OAuthClientInformationMixed): void {
@@ -445,6 +487,21 @@ function authFailure(server: string, serverUrl: string, error: unknown): McpErro
   const cause = error instanceof Error && error.cause instanceof Error
     ? `: ${error.cause.message}`
     : "";
+  // NOT A BROKEN URL, so it must not say "check the url". An authorization server
+  // with no `registration_endpoint` is working exactly as designed and wants an app
+  // the user creates; the generic advice sends them to re-check a setting that was
+  // right, which is how a solvable stop becomes a dead end.
+  if (/does not support dynamic client registration/i.test(detail)) {
+    return new McpError(
+      502,
+      `"${server}" (${serverUrl}) requires an OAuth client you register yourself — its ` +
+        `authorization server does not offer dynamic registration. Create an app with ` +
+        `that provider, set its redirect URL to ${callbackUrl()}, then put the id and ` +
+        `secret on the registry entry — \`clientId\`, and \`clientSecret\` as a ` +
+        `\${VAR} reference to a variable in ~/.bough/env — and press a again. ` +
+        `Nothing was stored.`,
+    );
+  }
   return new McpError(
     502,
     `could not run the OAuth flow for "${server}" against ${serverUrl}: ${detail}${cause}. ` +
