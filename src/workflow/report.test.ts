@@ -24,10 +24,13 @@
  * script mirrors, the saved workflows and the stored guideline all land in the temp
  * root and never in the real `~/.bough`.
  *
- * Assertions come from `node:assert/strict` rather than `@std/assert`: jsr.io is denied
- * by this environment's egress policy, so the jsr import declared in `deno.json` cannot
- * resolve.
+ * Assertions come from `node:assert/strict` rather than `@std/assert`, which is not a
+ * dependency of this repo.
  */
+import { test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import assert from "node:assert/strict";
 import type { SubagentLaunch } from "../agents/subagent.ts";
 import { Bus } from "../bus.ts";
@@ -158,7 +161,7 @@ function harness(): Harness {
     agents: new WorkflowAgentRegistry(),
   };
   const ctx: AppCtx & WithWorkflowControl = { db, bus, workflowControl: control };
-  const home = Deno.makeTempDirSync({ prefix: "bough-report-" });
+  const home = mkdtempSync(join(tmpdir(), "bough-report-"));
   return {
     db,
     bus,
@@ -170,7 +173,7 @@ function harness(): Harness {
     close() {
       db.close();
       try {
-        Deno.removeSync(home, { recursive: true });
+        rmSync(home, { recursive: true, force: true });
       } catch { /* already gone */ }
     },
   };
@@ -178,13 +181,13 @@ function harness(): Harness {
 
 /** Relocate `BOUGH_HOME` for one call and put it back. */
 async function withHome<T>(home: string, fn: () => Promise<T>): Promise<T> {
-  const prior = Deno.env.get("BOUGH_HOME");
-  Deno.env.set("BOUGH_HOME", home);
+  const prior = process.env["BOUGH_HOME"];
+  process.env["BOUGH_HOME"] = home;
   try {
     return await fn();
   } finally {
-    if (prior === undefined) Deno.env.delete("BOUGH_HOME");
-    else Deno.env.set("BOUGH_HOME", prior);
+    if (prior === undefined) delete process.env["BOUGH_HOME"];
+    else process.env["BOUGH_HOME"] = prior;
   }
 }
 
@@ -300,7 +303,7 @@ const THREE = `
 // the counts
 // ---------------------------------------------------------------------------
 
-Deno.test("a mixed relaunch counts every call exactly once, and names what ran live", async () => {
+test("a mixed relaunch counts every call exactly once, and names what ran live", async () => {
   const h = harness();
   try {
     const first = await run(h, recorder(h.db, h.sessionId).runner, THREE);
@@ -349,7 +352,7 @@ Deno.test("a mixed relaunch counts every call exactly once, and names what ran l
   }
 });
 
-Deno.test("a relaunch that replayed NOTHING is distinguishable from one that replayed all", async () => {
+test("a relaunch that replayed NOTHING is distinguishable from one that replayed all", async () => {
   const h = harness();
   try {
     const first = await run(h, recorder(h.db, h.sessionId).runner, THREE);
@@ -412,7 +415,7 @@ Deno.test("a relaunch that replayed NOTHING is distinguishable from one that rep
   }
 });
 
-Deno.test("a FIRST run reports no divergence — there is no source to diverge from", async () => {
+test("a FIRST run reports no divergence — there is no source to diverge from", async () => {
   const h = harness();
   try {
     // Found by booting the real server: a first run's calls are all live, and folding
@@ -430,7 +433,7 @@ Deno.test("a FIRST run reports no divergence — there is no source to diverge f
   }
 });
 
-Deno.test("the relaunch response carries the replay block, not just the run row", async () => {
+test("the relaunch response carries the replay block, not just the run row", async () => {
   const h = harness();
   try {
     const started = await request<WorkflowRun>(h, "POST", "/workflows", {
@@ -472,7 +475,7 @@ Deno.test("the relaunch response carries the replay block, not just the run row"
   }
 });
 
-Deno.test("replaySummary refuses an unknown run rather than reporting zeroes", () => {
+test("replaySummary refuses an unknown run rather than reporting zeroes", () => {
   const h = harness();
   try {
     assert.throws(() => replaySummary(h.db, "no-such-run"), NotFoundError);
@@ -485,7 +488,7 @@ Deno.test("replaySummary refuses an unknown run rather than reporting zeroes", (
 // cost
 // ---------------------------------------------------------------------------
 
-Deno.test("cost reports tokens and elapsed time per agent and per phase", async () => {
+test("cost reports tokens and elapsed time per agent and per phase", async () => {
   const h = harness();
   try {
     const finished = await run(
@@ -525,7 +528,7 @@ Deno.test("cost reports tokens and elapsed time per agent and per phase", async 
 // the advisory limits
 // ---------------------------------------------------------------------------
 
-Deno.test("a large run is flagged and still runs to completion — the flag is advice", async () => {
+test("a large run is flagged and still runs to completion — the flag is advice", async () => {
   const h = harness();
   try {
     // `small` targets fewer than 5 agents; this run schedules 6.
@@ -566,7 +569,7 @@ Deno.test("a large run is flagged and still runs to completion — the flag is a
   }
 });
 
-Deno.test("the token threshold flags a run that is on course to be expensive", () => {
+test("the token threshold flags a run that is on course to be expensive", () => {
   const cost = {
     runId: "r1",
     agents: 2,
@@ -607,7 +610,7 @@ Deno.test("the token threshold flags a run that is on course to be expensive", (
   assert.equal(largeRunFlag(cost, "large", 10_000_000), null, "under the threshold, no flag");
 });
 
-Deno.test("the size guideline is stored, read back, and refuses a value it cannot mean", async () => {
+test("the size guideline is stored, read back, and refuses a value it cannot mean", async () => {
   const h = harness();
   try {
     await withHome(h.home, async () => {
@@ -654,7 +657,7 @@ Deno.test("the size guideline is stored, read back, and refuses a value it canno
 // saving a run
 // ---------------------------------------------------------------------------
 
-Deno.test("a saved workflow name cannot escape its directory", async () => {
+test("a saved workflow name cannot escape its directory", async () => {
   const h = harness();
   try {
     await withHome(h.home, async () => {
@@ -696,7 +699,7 @@ Deno.test("a saved workflow name cannot escape its directory", async () => {
   }
 });
 
-Deno.test("a finished run's script is saved by name and invoked with args", async () => {
+test("a finished run's script is saved by name and invoked with args", async () => {
   const h = harness();
   try {
     const started = await request<WorkflowRun>(h, "POST", "/workflows", {

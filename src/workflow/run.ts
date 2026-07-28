@@ -1,5 +1,5 @@
 /**
- * The workflow engine: the host side of the `permissions: "none"` worker, plus the
+ * The workflow engine: the host side of the workflow worker, plus the
  * journal that makes rerun cheap.
  *
  * WHY THIS EXISTS. Subagent fan-out is capped at 8 per turn and 4 concurrent
@@ -116,7 +116,7 @@ import { mirrorScript, resolveRerunScript } from "./journal.ts";
  * as the job needs and this is what meters them (spec §8).
  */
 export function workflowConcurrency(): number {
-  const n = Number(Deno.env.get("BOUGH_WORKFLOW_CONCURRENCY"));
+  const n = Number(process.env["BOUGH_WORKFLOW_CONCURRENCY"]);
   if (Number.isFinite(n) && n > 0) return n;
   return defaultWorkflowConcurrency();
 }
@@ -131,7 +131,7 @@ export function workflowConcurrency(): number {
  * the failure this backs off from — 16 is the ceiling because the meter that matters
  * beyond that is the provider's, not the machine's.
  *
- * `navigator.hardwareConcurrency` is the count Deno exposes; a runtime that reports
+ * `navigator.hardwareConcurrency` is the count Bun exposes; a runtime that reports
  * nothing usable falls back to the old default of 4 rather than to 1, because a
  * conservative guess here costs wall-clock on every fan-out.
  */
@@ -143,7 +143,7 @@ export function defaultWorkflowConcurrency(): number {
 
 /** Wall-clock ceiling on a whole run. A liveness backstop, not a budget. */
 export function workflowTimeoutMs(): number {
-  const n = Number(Deno.env.get("BOUGH_WORKFLOW_TIMEOUT_MS"));
+  const n = Number(process.env["BOUGH_WORKFLOW_TIMEOUT_MS"]);
   return Number.isFinite(n) && n > 0 ? n : 60 * 60_000;
 }
 
@@ -775,8 +775,7 @@ export async function startWorkflow(ctx: WorkflowCtx, opts: StartOpts): Promise<
   const worker = new Worker(new URL("../harness/wf_worker.ts", import.meta.url).href, {
     type: "module",
     // The script orchestrates; it does not act. Its whole world is agent/phase/log
-    // plus `args` (spec §8).
-    deno: { permissions: "none" },
+    // plus `args` (spec §8) — the bridge in `harness/wf_worker.ts` binds nothing else.
   });
   const state: LiveRun = { ctrl, worker, paused: false, gate: [] };
   live.set(id, state);

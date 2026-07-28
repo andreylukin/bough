@@ -36,17 +36,19 @@
  * Assertions come from `node:assert/strict` — jsr.io is unreachable here and a test
  * that cannot run offline does not belong in `deno task test`.
  */
+import { test } from "bun:test";
+import { readFile, readdir } from "node:fs/promises";
 import assert from "node:assert/strict";
 import { z } from "zod";
 import { HttpError } from "../errors.ts";
 import { errorResponse, json, parseBody, route } from "./http.ts";
 
 const SRC_ROOT = new URL("../", import.meta.url);
-const CONFIG = new URL("../../deno.json", import.meta.url);
+const REPO_ROOT = new URL("../../", import.meta.url);
 
 // ---- the primitives ---------------------------------------------------------
 
-Deno.test("json carries the JSON content type and the status it was given", async () => {
+test("json carries the JSON content type and the status it was given", async () => {
   const ok = json({ a: 1 });
   assert.equal(ok.status, 200);
   assert.equal(ok.headers.get("content-type"), "application/json; charset=utf-8");
@@ -55,13 +57,13 @@ Deno.test("json carries the JSON content type and the status it was given", asyn
   assert.equal(json({ a: 1 }, 201).status, 201);
 });
 
-Deno.test("errorResponse is the one envelope every client reads", async () => {
+test("errorResponse is the one envelope every client reads", async () => {
   const res = errorResponse(404, "no session x");
   assert.equal(res.status, 404);
   assert.deepEqual(await res.json(), { error: "no session x" });
 });
 
-Deno.test("parseBody validates, and a bad body becomes a catchable 400", async () => {
+test("parseBody validates, and a bad body becomes a catchable 400", async () => {
   const Body = z.object({ name: z.string() });
   const req = (body: unknown) =>
     new Request("http://x/y", { method: "POST", body: JSON.stringify(body) });
@@ -77,7 +79,7 @@ Deno.test("parseBody validates, and a bad body becomes a catchable 400", async (
   assert.match((bad as HttpError).message, /invalid body/);
 });
 
-Deno.test("parseBody's fallback stands in for an absent or unparseable body", async () => {
+test("parseBody's fallback stands in for an absent or unparseable body", async () => {
   const AllOptional = z.object({ paths: z.array(z.string()).optional() });
   const empty = new Request("http://x/y", { method: "POST" });
   // `{}` is what a route with no required fields passes; without it the schema
@@ -85,7 +87,7 @@ Deno.test("parseBody's fallback stands in for an absent or unparseable body", as
   assert.deepEqual(await parseBody(empty, AllOptional, {}), {});
 });
 
-Deno.test("route compiles its pathname into a matcher and keeps the method verbatim", () => {
+test("route compiles its pathname into a matcher and keeps the method verbatim", () => {
   const handler = () => json({});
   const r = route("POST", "/sessions/:id/messages", handler);
   assert.equal(r.method, "POST");
@@ -120,16 +122,16 @@ function code(src: string): string {
 }
 
 async function* modules(dir: URL, prefix = ""): AsyncGenerator<{ rel: string; path: URL }> {
-  for await (const entry of Deno.readDir(dir)) {
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
     if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
-    const child = new URL(entry.name + (entry.isDirectory ? "/" : ""), dir);
+    const child = new URL(entry.name + (entry.isDirectory() ? "/" : ""), dir);
     const rel = prefix + entry.name;
-    if (entry.isDirectory) yield* modules(child, rel + "/");
+    if (entry.isDirectory()) yield* modules(child, rel + "/");
     else if (/\.tsx?$/.test(entry.name)) yield { rel, path: child };
   }
 }
 
-Deno.test("NOTHING but an entry point imports server/app.ts — the graph stays a DAG", async () => {
+test("NOTHING but an entry point imports server/app.ts — the graph stays a DAG", async () => {
   const offenders: string[] = [];
   for await (const { rel, path } of modules(SRC_ROOT)) {
     // A test file is a graph root by definition: deno enters through it, so it can
@@ -137,7 +139,7 @@ Deno.test("NOTHING but an entry point imports server/app.ts — the graph stays 
     // needs) without ever being the middle of a cycle.
     if (rel.endsWith(".test.ts") || rel.endsWith(".test.tsx")) continue;
     if (rel === "server/app.ts" || MAY_IMPORT_APP.has(rel)) continue;
-    if (APP_IMPORT.test(code(await Deno.readTextFile(path)))) offenders.push(rel);
+    if (APP_IMPORT.test(code(await readFile(path, "utf8")))) offenders.push(rel);
   }
   assert.deepEqual(
     offenders,
@@ -147,8 +149,8 @@ Deno.test("NOTHING but an entry point imports server/app.ts — the graph stays 
   );
 });
 
-Deno.test("server/http.ts depends on nothing inside server/ — it is the bottom", async () => {
-  const src = await Deno.readTextFile(new URL("http.ts", import.meta.url));
+test("server/http.ts depends on nothing inside server/ — it is the bottom", async () => {
+  const src = await readFile(new URL("http.ts", import.meta.url), "utf8");
   const specs = [...code(src).matchAll(/^import\s[^"]*"([^"]+)"/gm)].map((m) => m[1]);
   const inServer = specs.filter((s) => s.startsWith("./") || s.includes("/server/"));
   assert.deepEqual(inServer, [], `http.ts must not import from server/: ${inServer.join(", ")}`);
@@ -156,32 +158,23 @@ Deno.test("server/http.ts depends on nothing inside server/ — it is the bottom
 
 // ---- the runtime probe ------------------------------------------------------
 
-Deno.test({
-  name: "entering the graph through a HANDLER module initializes — the cycle is gone",
-  // Spawning a deno process is the whole point: the failure being pinned is a
-  // module-initialization order fault, and it can only be observed by a process
-  // that enters the graph somewhere other than where this test's own process did.
-  fn: async () => {
-    // Every handler module `app.ts` names in its table, entered directly. Before
-    // the split, each of these threw on import.
-    for (const mod of ["server/sessions.ts", "server/changes.ts", "server/search.ts"]) {
-      const src = new URL(mod, SRC_ROOT).href;
-      const out = await new Deno.Command(Deno.execPath(), {
-        args: [
-          "eval",
-          "--config",
-          CONFIG.pathname,
-          `await import(${JSON.stringify(src)}); console.log("PROBE_OK");`,
-        ],
-        stdout: "piped",
-        stderr: "piped",
-      }).output();
-      const stdout = new TextDecoder().decode(out.stdout);
-      const stderr = new TextDecoder().decode(out.stderr);
-      assert.ok(
-        out.success && stdout.includes("PROBE_OK"),
-        `importing ${mod} first failed — the app.ts cycle is back:\n${stderr}`,
-      );
-    }
-  },
+// Spawning a bun process is the whole point: the failure being pinned is a
+// module-initialization order fault, and it can only be observed by a process
+// that enters the graph somewhere other than where this test's own process did.
+test("entering the graph through a HANDLER module initializes — the cycle is gone", async () => {
+  // Every handler module `app.ts` names in its table, entered directly. Before
+  // the split, each of these threw on import.
+  for (const mod of ["server/sessions.ts", "server/changes.ts", "server/search.ts"]) {
+    const src = new URL(mod, SRC_ROOT).href;
+    const proc = Bun.spawn(
+      [process.execPath, "-e", `await import(${JSON.stringify(src)}); console.log("PROBE_OK");`],
+      { cwd: REPO_ROOT.pathname, stdout: "pipe", stderr: "pipe" },
+    );
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    assert.ok(
+      (await proc.exited) === 0 && stdout.includes("PROBE_OK"),
+      `importing ${mod} first failed — the app.ts cycle is back:\n${stderr}`,
+    );
+  }
 });

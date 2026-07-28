@@ -173,7 +173,7 @@ const liveClients = new Set<McpStdioClient>();
 
 /**
  * SIGTERM every connected MCP server. Synchronous and best-effort, because the
- * caller is a signal handler on its way to `Deno.exit` and has no await to give.
+ * caller is a signal handler on its way to `process.exit` and has no await to give.
  * Returns how many were signalled.
  */
 export function killAllMcpServers(): number {
@@ -195,8 +195,8 @@ export function liveMcpServerCount(): number {
 
 export class McpStdioClient implements McpConnection {
   readonly name: string;
-  #child: Deno.ChildProcess;
-  #writer: WritableStreamDefaultWriter<Uint8Array>;
+  #child: Bun.Subprocess<"pipe", "pipe", "pipe">;
+  #writer: Bun.FileSink;
   #pending = new Map<number, Pending>();
   #timeouts: Required<McpTimeouts>;
   #seq = 0;
@@ -205,25 +205,30 @@ export class McpStdioClient implements McpConnection {
   #closed = false;
   #info: McpServerInfo | undefined;
 
-  private constructor(child: Deno.ChildProcess, name: string, timeouts: Required<McpTimeouts>) {
+  private constructor(
+    child: Bun.Subprocess<"pipe", "pipe", "pipe">,
+    name: string,
+    timeouts: Required<McpTimeouts>,
+  ) {
     this.name = name;
     this.#child = child;
     this.#timeouts = timeouts;
-    this.#writer = child.stdin.getWriter();
+    this.#writer = child.stdin;
     liveClients.add(this);
     void this.#readLoop();
     void this.#drainStderr();
     // The whole point of this handler: when the child dies, everything in flight
     // fails NOW with a message that says it died, instead of sitting until its
     // deadline and reporting a timeout for a process that is already gone.
-    child.status.then((status) => {
+    child.exited.then((code) => {
       this.#exited = true;
       liveClients.delete(this);
+      const signal = child.signalCode;
       this.#failAll(
         new McpError(
           502,
           `MCP server "${this.name}" exited${
-            status.signal ? ` on ${status.signal}` : ` with code ${status.code}`
+            signal ? ` on ${signal}` : ` with code ${code}`
           }${this.#stderrNote()}. Check the command in the registry ` +
             `(GET /mcp/servers) and run it by hand to see why it stopped.`,
         ),
@@ -246,20 +251,21 @@ export class McpStdioClient implements McpConnection {
       throw new McpError(400, `MCP server "${name}" has no command to run — set \`command\`.`);
     }
 
-    let child: Deno.ChildProcess;
+    let child: Bun.Subprocess<"pipe", "pipe", "pipe">;
     try {
-      child = new Deno.Command(opts.argv[0], {
-        args: opts.argv.slice(1),
+      // `env` REPLACES the environment rather than extending it — Bun.spawn
+      // passes exactly what it is given, which is the `clearEnv` guarantee this
+      // module depends on (`config.childEnv` composes the child's whole world).
+      child = Bun.spawn(opts.argv, {
         cwd: opts.cwd,
         env: opts.env,
-        clearEnv: true,
-        stdin: "piped",
-        stdout: "piped",
-        stderr: "piped",
-      }).spawn();
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
     } catch (error) {
       // NOTE (port): the old client let a spawn failure surface as a raw
-      // `Deno.errors.NotFound`, which reads as a missing FILE and says nothing
+      // ENOENT, which reads as a missing FILE and says nothing
       // about which server or which command.
       throw new McpError(
         502,
@@ -406,7 +412,7 @@ export class McpStdioClient implements McpConnection {
   async close(): Promise<void> {
     if (this.#closed) {
       // Still wait for the child, so a second caller does not race the exit.
-      await this.#child.status.catch(() => {});
+      await this.#child.exited.catch(() => {});
       return;
     }
     this.#closed = true;
@@ -415,7 +421,7 @@ export class McpStdioClient implements McpConnection {
       new McpError(502, `MCP server "${this.name}" was disconnected while the call was in flight.`),
     );
     try {
-      await this.#writer.close();
+      await this.#writer.end();
     } catch { /* already closed, or the child is gone */ }
     try {
       this.#child.kill("SIGTERM");
@@ -426,7 +432,7 @@ export class McpStdioClient implements McpConnection {
         this.#child.kill("SIGKILL");
       } catch { /* raced its own exit */ }
     }, KILL_GRACE_MS);
-    await this.#child.status.catch(() => {});
+    await this.#child.exited.catch(() => {});
     clearTimeout(grace);
   }
 
@@ -487,7 +493,8 @@ export class McpStdioClient implements McpConnection {
 
   async #send(message: unknown): Promise<void> {
     try {
-      await this.#writer.write(new TextEncoder().encode(JSON.stringify(message) + "\n"));
+      this.#writer.write(JSON.stringify(message) + "\n");
+      await this.#writer.flush();
     } catch {
       // stdin gone = the child is dead; its status handler fails the pending
       // request with a message that says so.

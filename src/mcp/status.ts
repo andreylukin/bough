@@ -160,7 +160,7 @@ function scopeOf(req: Request, ctx: AppCtx): string | undefined {
 
 /** Where a server spawned for this session runs: its checkout, like every turn's. */
 function workspaceOf(ctx: AppCtx, sessionId: string): string {
-  return ctx.db.getSessionRuntime(sessionId).workspace ?? Deno.cwd();
+  return ctx.db.getSessionRuntime(sessionId).workspace ?? process.cwd();
 }
 
 async function bodyOf(req: Request): Promise<unknown> {

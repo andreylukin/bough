@@ -1,6 +1,6 @@
 /**
  * The journal's on-disk half — the script mirror and the script a relaunch resolves —
- * proved through the REAL `permissions: "none"` workflow worker, with a counting fake
+ * proved through the REAL workflow worker, with a counting fake
  * `AgentRunner` standing in for the subagents (plan §7 — "Subagents/workflows | Fake
  * LLM + real orchestration").
  *
@@ -25,10 +25,14 @@
  * `BOUGH_HOME` pointed at a temp dir for the duration of every engine call, so the
  * script mirror never touches the real `~/.bough`.
  *
- * Assertions come from `node:assert/strict` rather than `@std/assert`: jsr.io is denied
- * by this environment's egress policy, so the jsr import declared in `deno.json` cannot
- * resolve.
+ * Assertions come from `node:assert/strict` rather than `@std/assert`, which is not a
+ * dependency of this repo.
  */
+import { test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import assert from "node:assert/strict";
 import { Bus } from "../bus.ts";
 import { openDb, type SqliteDb } from "../db/db.ts";
@@ -73,7 +77,7 @@ function harness(): Harness {
     workspace: "/tmp/checkout",
     originDir: "/tmp/checkout",
   });
-  const home = Deno.makeTempDirSync({ prefix: "bough-journal-" });
+  const home = mkdtempSync(join(tmpdir(), "bough-journal-"));
   return {
     db,
     bus,
@@ -82,7 +86,7 @@ function harness(): Harness {
     close() {
       db.close();
       try {
-        Deno.removeSync(home, { recursive: true });
+        rmSync(home, { recursive: true, force: true });
       } catch { /* already gone */ }
     },
   };
@@ -94,13 +98,13 @@ function harness(): Harness {
  * globally would reach into every other test in the process.
  */
 async function withHome<T>(home: string, fn: () => Promise<T>): Promise<T> {
-  const prior = Deno.env.get("BOUGH_HOME");
-  Deno.env.set("BOUGH_HOME", home);
+  const prior = process.env["BOUGH_HOME"];
+  process.env["BOUGH_HOME"] = home;
   try {
     return await fn();
   } finally {
-    if (prior === undefined) Deno.env.delete("BOUGH_HOME");
-    else Deno.env.set("BOUGH_HOME", prior);
+    if (prior === undefined) delete process.env["BOUGH_HOME"];
+    else process.env["BOUGH_HOME"] = prior;
   }
 }
 
@@ -171,7 +175,7 @@ function journal(db: SqliteDb, runId: string): string[] {
 // the on-disk mirror — the "edit the file, relaunch" loop
 // ---------------------------------------------------------------------------
 
-Deno.test("a relaunch with no script runs the mirror the user edited", async () => {
+test("a relaunch with no script runs the mirror the user edited", async () => {
   const h = harness();
   try {
     const first = await run(
@@ -184,10 +188,10 @@ Deno.test("a relaunch with no script runs the mirror the user edited", async () 
       `,
     );
     const path = await withHome(h.home, () => Promise.resolve(mirrorPath(first.id)));
-    assert.ok((await Deno.readTextFile(path)).includes("review a.ts"), "the run mirrored itself");
+    assert.ok((await readFile(path, "utf8")).includes("review a.ts"), "the run mirrored itself");
 
     // The user edits the file on disk — no request body, no re-POST.
-    await Deno.writeTextFile(
+    await writeFile(
       path,
       `
         const a = await agent('review a.ts')
@@ -209,12 +213,12 @@ Deno.test("a relaunch with no script runs the mirror the user edited", async () 
   }
 });
 
-Deno.test("a relaunch falls back to the stored script when the mirror is gone", async () => {
+test("a relaunch falls back to the stored script when the mirror is gone", async () => {
   const h = harness();
   try {
     const first = await run(h, recorder().runner, `return await agent('review a.ts')`);
     await withHome(h.home, async () => {
-      await Deno.remove(mirrorPath(first.id));
+      await rm(mirrorPath(first.id));
       assert.deepEqual(await resolveRerunScript(first), {
         script: first.script,
         from: "stored",
@@ -230,24 +234,24 @@ Deno.test("a relaunch falls back to the stored script when the mirror is gone", 
   }
 });
 
-Deno.test("syncScriptMirrors writes what is missing and never touches what is there", async () => {
+test("syncScriptMirrors writes what is missing and never touches what is there", async () => {
   const h = harness();
   try {
     const first = await run(h, recorder().runner, `return await agent('review a.ts')`);
     await withHome(h.home, async () => {
       const path = mirrorPath(first.id);
-      await Deno.remove(path);
+      await rm(path);
 
       // Boot with the file gone: it comes back from the row.
       assert.deepEqual(await syncScriptMirrors(h.db), [first.id]);
-      assert.equal(await Deno.readTextFile(path), first.script);
+      assert.equal(await readFile(path, "utf8"), first.script);
 
       // Boot again with the user's edit in place: untouched, or the restart would
       // replay the edit away on the next relaunch.
-      await Deno.writeTextFile(path, "// mine\nreturn await agent('review a.ts')");
+      await writeFile(path, "// mine\nreturn await agent('review a.ts')");
       assert.deepEqual(await syncScriptMirrors(h.db), [], "an existing mirror is never rewritten");
       assert.equal(
-        await Deno.readTextFile(path),
+        await readFile(path, "utf8"),
         "// mine\nreturn await agent('review a.ts')",
       );
     });
@@ -256,36 +260,36 @@ Deno.test("syncScriptMirrors writes what is missing and never touches what is th
   }
 });
 
-Deno.test("a run id cannot name a file outside the workflows directory", () => {
-  const home = Deno.makeTempDirSync({ prefix: "bough-journal-" });
-  const prior = Deno.env.get("BOUGH_HOME");
-  Deno.env.set("BOUGH_HOME", home);
+test("a run id cannot name a file outside the workflows directory", () => {
+  const home = mkdtempSync(join(tmpdir(), "bough-journal-"));
+  const prior = process.env["BOUGH_HOME"];
+  process.env["BOUGH_HOME"] = home;
   try {
     assert.throws(() => mirrorPath("../../etc/crontab"), PathError);
     assert.throws(() => mirrorPath("/etc/crontab"), PathError);
     assert.ok(mirrorPath("a-b-c").endsWith("/workflows/a-b-c.js"));
   } finally {
-    if (prior === undefined) Deno.env.delete("BOUGH_HOME");
-    else Deno.env.set("BOUGH_HOME", prior);
-    Deno.removeSync(home, { recursive: true });
+    if (prior === undefined) delete process.env["BOUGH_HOME"];
+    else process.env["BOUGH_HOME"] = prior;
+    rmSync(home, { recursive: true, force: true });
   }
 });
 
-Deno.test("mirrorScript and readMirror round-trip, and a missing mirror reads null", async () => {
-  const home = await Deno.makeTempDir({ prefix: "bough-journal-" });
+test("mirrorScript and readMirror round-trip, and a missing mirror reads null", async () => {
+  const home = await mkdtemp(join(tmpdir(), "bough-journal-"));
   await withHome(home, async () => {
     assert.equal(await readMirror("nope"), null);
     assert.equal(await mirrorScript("run-1", "return 1"), true);
     assert.equal(await readMirror("run-1"), "return 1");
   });
-  await Deno.remove(home, { recursive: true });
+  await rm(home, { recursive: true, force: true });
 });
 
 // ---------------------------------------------------------------------------
 // which script a relaunch runs
 // ---------------------------------------------------------------------------
 
-Deno.test("script provenance: explicit wins, then the mirror, then the stored row", async () => {
+test("script provenance: explicit wins, then the mirror, then the stored row", async () => {
   const h = harness();
   try {
     const finished = await run(h, recorder().runner, `return await agent('a')`);
@@ -300,7 +304,7 @@ Deno.test("script provenance: explicit wins, then the mirror, then the stored ro
         script: finished.script,
         from: "mirror",
       });
-      await Deno.writeTextFile(mirrorPath(finished.id), "// edited\nreturn await agent('a')");
+      await writeFile(mirrorPath(finished.id), "// edited\nreturn await agent('a')");
       assert.deepEqual(await resolveRerunScript(finished), {
         script: "// edited\nreturn await agent('a')",
         from: "mirror",

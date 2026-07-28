@@ -23,7 +23,8 @@
  * file stays the single readable definition of the schema and cannot drift from what
  * is actually applied.
  */
-import type { DatabaseSync } from "node:sqlite";
+import type { Database } from "bun:sqlite";
+import { readFileSync } from "node:fs";
 
 /**
  * The schema generation this build writes and understands.
@@ -36,7 +37,7 @@ export const SCHEMA_VERSION = 1;
 
 /** The frozen schema text, read from `db/schema.sql` beside this module. */
 export function schemaSql(): string {
-  return Deno.readTextFileSync(new URL("./schema.sql", import.meta.url));
+  return readFileSync(new URL("./schema.sql", import.meta.url), "utf8");
 }
 
 /**
@@ -49,7 +50,7 @@ export function schemaSql(): string {
  * Throws when the file was written by a newer bough than this one — forward-only
  * means exactly that, and there is no downgrade path.
  */
-export function migrate(db: DatabaseSync): number {
+export function migrate(db: Database): number {
   const found = userVersion(db);
   if (found > SCHEMA_VERSION) {
     throw new Error(
@@ -64,10 +65,11 @@ export function migrate(db: DatabaseSync): number {
 }
 
 /** The file's stamped schema generation; 0 for a database this never touched. */
-export function userVersion(db: DatabaseSync): number {
+export function userVersion(db: Database): number {
+  // `bun:sqlite` returns null, not undefined, when a statement yields no row.
   const row = db.prepare(`PRAGMA user_version`).get() as
     | { user_version?: number }
-    | undefined;
+    | null;
   return Number(row?.user_version ?? 0);
 }
 
@@ -76,7 +78,7 @@ export function userVersion(db: DatabaseSync): number {
  * guarded here because an interpolated non-integer would be a SQL injection in the
  * one place this module writes SQL by concatenation.
  */
-function setUserVersion(db: DatabaseSync, version: number): void {
+function setUserVersion(db: Database, version: number): void {
   if (!Number.isSafeInteger(version) || version < 0) {
     throw new Error(`refusing to stamp a non-integer schema version: ${version}`);
   }

@@ -12,6 +12,7 @@
  * Offline: an in-memory database and a real bus, no LLM (move-into copies, it does not
  * summarize). `node:assert/strict` — jsr.io is unreachable here (plan §7).
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { Bus } from "../bus.ts";
 import { openDb, type SqliteDb } from "../db/db.ts";
@@ -106,7 +107,7 @@ function pair(f: Fixture): {
 
 // ---- the copy ----------------------------------------------------------------
 
-Deno.test("move-into appends copies at the end of the target's own messages", () => {
+test("move-into appends copies at the end of the target's own messages", () => {
   const f = fixture();
   const { source, target, sourceMessages, targetMessages } = pair(f);
 
@@ -133,7 +134,7 @@ Deno.test("move-into appends copies at the end of the target's own messages", ()
   f.db.close();
 });
 
-Deno.test("the source is byte-identical afterwards — this is a copy, not a move", () => {
+test("the source is byte-identical afterwards — this is a copy, not a move", () => {
   const f = fixture();
   const { source, target, sourceMessages } = pair(f);
   const before = snapshot(f.db, source.id);
@@ -147,7 +148,7 @@ Deno.test("the source is byte-identical afterwards — this is a copy, not a mov
   f.db.close();
 });
 
-Deno.test("picks reach into the SOURCE's ancestors, and land in thread order", () => {
+test("picks reach into the SOURCE's ancestors, and land in thread order", () => {
   const f = fixture();
   const parent = session(f.db, { title: "the origin" });
   const inherited = text(f.db, parent.id, "supervisor", "the parser skips comments");
@@ -174,7 +175,7 @@ Deno.test("picks reach into the SOURCE's ancestors, and land in thread order", (
   f.db.close();
 });
 
-Deno.test("a part-level pick copies a turn's prose without its tool calls", () => {
+test("a part-level pick copies a turn's prose without its tool calls", () => {
   const f = fixture();
   const { source, target } = pair(f);
   const turn = message(f.db, source.id, "supervisor", [
@@ -195,7 +196,7 @@ Deno.test("a part-level pick copies a turn's prose without its tool calls", () =
   f.db.close();
 });
 
-Deno.test("each copy is announced as message.started on the target", () => {
+test("each copy is announced as message.started on the target", () => {
   const f = fixture();
   const { source, target, sourceMessages } = pair(f);
   f.events.length = 0;
@@ -213,7 +214,7 @@ Deno.test("each copy is announced as message.started on the target", () => {
 
 // ---- the refusals ------------------------------------------------------------
 
-Deno.test("a session cannot receive its own turns", () => {
+test("a session cannot receive its own turns", () => {
   const f = fixture();
   const { source, sourceMessages } = pair(f);
 
@@ -231,7 +232,7 @@ Deno.test("a session cannot receive its own turns", () => {
   f.db.close();
 });
 
-Deno.test("an ANCESTOR of the source is refused: it would rewrite the source's thread", () => {
+test("an ANCESTOR of the source is refused: it would rewrite the source's thread", () => {
   const f = fixture();
   const parent = session(f.db, { title: "the origin" });
   text(f.db, parent.id, "user", "first");
@@ -254,7 +255,7 @@ Deno.test("an ANCESTOR of the source is refused: it would rewrite the source's t
   f.db.close();
 });
 
-Deno.test("a target running a turn is a 409, not an interleaved transcript", () => {
+test("a target running a turn is a 409, not an interleaved transcript", () => {
   const f = fixture();
   const { source, target, sourceMessages, targetMessages } = pair(f);
   // One turn per session (spec §5): a live turn owns the tail this would append to.
@@ -282,7 +283,7 @@ Deno.test("a target running a turn is a 409, not an interleaved transcript", () 
   f.db.close();
 });
 
-Deno.test("an unknown target or source is a 404 and writes nothing", () => {
+test("an unknown target or source is a 404 and writes nothing", () => {
   const f = fixture();
   const { source, target, sourceMessages } = pair(f);
 
@@ -306,7 +307,7 @@ Deno.test("an unknown target or source is a 404 and writes nothing", () => {
   f.db.close();
 });
 
-Deno.test("a pick outside the source's thread is a 400 naming where it lives", () => {
+test("a pick outside the source's thread is a 400 naming where it lives", () => {
   const f = fixture();
   const { source, target } = pair(f);
   const other = session(f.db, { title: "elsewhere" });
@@ -326,7 +327,7 @@ Deno.test("a pick outside the source's thread is a 400 naming where it lives", (
 
 const TABLE: Route[] = [route("POST", "/sessions/:id/move-into", moveIntoH)];
 
-Deno.test("POST /sessions/:id/move-into answers 200 with the target, its thread and a count", async () => {
+test("POST /sessions/:id/move-into answers 200 with the target, its thread and a count", async () => {
   const f = fixture();
   const { source, target, sourceMessages } = pair(f);
   const call = createHandler(f.ctx, { routes: TABLE });
@@ -360,7 +361,7 @@ Deno.test("POST /sessions/:id/move-into answers 200 with the target, its thread 
   f.db.close();
 });
 
-Deno.test("the route maps an unknown target to 404, self-move to 400, a bad body to 400", async () => {
+test("the route maps an unknown target to 404, self-move to 400, a bad body to 400", async () => {
   const f = fixture();
   const { source, target, sourceMessages } = pair(f);
   const call = createHandler(f.ctx, { routes: TABLE });

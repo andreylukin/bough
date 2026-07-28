@@ -37,6 +37,7 @@
  * Ported from `src/server/comments.ts`. Deltas are marked `NOTE:`.
  */
 import { z } from "zod";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { postSystemNote } from "../agents/notes.ts";
 import { NotFoundError, PathError } from "../errors.ts";
@@ -132,7 +133,7 @@ export function commentsPath(sessionId: string, opts: CommentStoreOptions = {}):
 export function loadComments(sessionId: string, opts: CommentStoreOptions = {}): ArtifactComment[] {
   let raw: string;
   try {
-    raw = Deno.readTextFileSync(commentsPath(sessionId, opts));
+    raw = readFileSync(commentsPath(sessionId, opts), "utf8");
   } catch {
     return [];
   }
@@ -152,8 +153,8 @@ function saveComments(
   opts: CommentStoreOptions = {},
 ): void {
   const path = commentsPath(sessionId, opts);
-  Deno.mkdirSync(dirname(path), { recursive: true });
-  Deno.writeTextFileSync(path, JSON.stringify(comments, null, 2));
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(comments, null, 2));
 }
 
 /** Add one note. Returns the stored comment, id and timestamp included. */

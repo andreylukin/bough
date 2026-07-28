@@ -1,30 +1,34 @@
-/// <reference no-default-lib="true" />
-/// <reference lib="deno.worker" />
 /**
- * The program side of the program worker. This module IS the worker: it runs with
- * `permissions: "inherit"`, so the program it executes has everything the server
- * itself has — filesystem, network, env, subprocesses, `npm:`/`jsr:` imports. The
- * host functions bridged in over `postMessage` are convenience and session
- * integration, not a boundary, and a program may ignore all of them and call `Deno`
- * directly (spec §2.2).
+ * The program side of the program worker. This module IS the worker: a Bun worker
+ * inherits the server process's capabilities, so the program it executes has
+ * everything the server itself has — filesystem, network, env, subprocesses,
+ * `npm:` imports. The host functions bridged in over `postMessage` are convenience
+ * and session integration, not a boundary, and a program may ignore all of them and
+ * call `Bun`/`node:*` directly (spec §2.2).
  *
  * THE INVARIANT THIS HOLDS: **because the isolate is not sealed, everything the
  * program can start must be stoppable from here.** Two things it can start would
  * otherwise outlive the turn or take the server down:
  *
- *   1. **The exit trap.** `process.exit()` / `Deno.exit()` terminate the worker
- *      silently — the turn then hangs until its wall timeout with no error to
- *      report. With inherited permissions the stakes are worse: an uncaught exit
- *      here can take the whole bough server with it (plan §6.2). Weak models emit
- *      `process.exit(1)` as an "assertion failed" idiom, so both are replaced with
- *      a throw the round can catch and report.
+ *   1. **The exit trap.** `process.exit()` terminates the worker silently — the
+ *      turn then hangs until its wall timeout with no error to report. With
+ *      inherited capabilities the stakes are worse: an uncaught exit here can take
+ *      the whole bough server with it (plan §6.2). Weak models emit
+ *      `process.exit(1)` as an "assertion failed" idiom, so it is replaced with a
+ *      throw the round can catch and report.
  *   2. **Child-process tracking.** Every process the program spawns natively is a
  *      child of the SERVER process, and `worker.terminate()` does not touch it. So
- *      `Deno.Command` is wrapped to record what it spawns, and the abort handshake
+ *      `Bun.spawn` is wrapped to record what it spawns, and the abort handshake
  *      sweeps the set with SIGTERM *before* acking — children first, then the
- *      worker (plan §6.3). Only the async paths are tracked: `outputSync()` and
- *      `spawnSync()` block this worker's event loop, so an abort message could not
- *      be handled during one anyway.
+ *      worker (plan §6.3). `node:child_process` routes through `Bun.spawn`, so it
+ *      is covered by the same wrapper. Only the async path is tracked:
+ *      `Bun.spawnSync()` blocks this worker's event loop, so an abort message could
+ *      not be handled during one anyway. `Bun.$` does NOT route through `Bun.spawn`
+ *      — the same kind of second entry point `Deno.Command`'s `output()` was before
+ *      the port — and it exposes no pid and no kill handle, so it cannot be tracked.
+ *      It is therefore REMOVED from the program's reach rather than left as a silent
+ *      hole: an untracked shell survives the sweep, and the interrupt then tells the
+ *      user "the program's children are killed" while a process keeps running.
  *
  * The program's parameters come from `protocol.ts` — the same list the host's
  * pre-flight check parses with, so the two cannot disagree about which names are
@@ -120,21 +124,20 @@ const exitTrap = (code?: unknown): never => {
   );
 };
 try {
-  const g = globalThis as { process?: { exit?: unknown }; Deno?: { exit?: unknown } };
+  const g = globalThis as { process?: { exit?: unknown } };
   if (g.process) g.process.exit = exitTrap;
-  if (g.Deno) g.Deno.exit = exitTrap;
 } catch { /* frozen globals — nothing to guard */ }
 
 // ---------------------------------------------------------------------------
 // Child-process tracking
 // ---------------------------------------------------------------------------
 
-const children = new Set<Deno.ChildProcess>();
+const children = new Set<Bun.Subprocess>();
 
-function trackChild(child: Deno.ChildProcess): Deno.ChildProcess {
+function trackChild(child: Bun.Subprocess): Bun.Subprocess {
   children.add(child);
   // Reap on exit either way — a rejected status is still an exit.
-  child.status.catch(() => {}).finally(() => children.delete(child));
+  child.exited.catch(() => {}).finally(() => children.delete(child));
   return child;
 }
 
@@ -148,36 +151,37 @@ function killChildren(): void {
 }
 
 try {
-  const RealCommand = Deno.Command;
-  class TrackedCommand extends RealCommand {
-    #cmd: string | URL;
-    #opts?: Deno.CommandOptions;
-    constructor(cmd: string | URL, opts?: Deno.CommandOptions) {
-      super(cmd, opts);
-      this.#cmd = cmd;
-      this.#opts = opts;
-    }
-    override spawn(): Deno.ChildProcess {
-      return trackChild(super.spawn());
-    }
-    override output(): Promise<Deno.CommandOutput> {
-      // output() does not route through spawn(), so re-express it as one to get the
-      // handle. It defaults to piped where spawn() defaults to inherit — preserve
-      // output()'s own defaults so the wrapper is invisible to the caller.
-      const opts = {
-        ...this.#opts,
-        stdout: this.#opts?.stdout ?? "piped",
-        stderr: this.#opts?.stderr ?? "piped",
-      } satisfies Deno.CommandOptions;
-      return trackChild(new RealCommand(this.#cmd, opts).spawn()).output();
-    }
-  }
-  Object.defineProperty(Deno, "Command", {
-    value: TrackedCommand,
-    writable: true,
-    configurable: true,
-  });
+  // `Bun.spawn` is a function, not a class, so this is a forwarding wrapper rather
+  // than a subclass — and a plain assignment, because the property is writable but
+  // NOT configurable (defineProperty would throw).
+  //
+  // The wrapper is deliberately signature-agnostic: `Bun.spawn` is overloaded
+  // (`spawn(cmd, opts)` and `spawn({cmd, …})`), and re-declaring either form here
+  // would be a second copy of a contract that is not ours to restate. Arguments go
+  // through untouched, so every default — including which streams are piped — is
+  // still Bun's, and the wrapper is invisible to the caller.
+  const realSpawn = Bun.spawn;
+  const spawnAny = realSpawn as unknown as (...args: unknown[]) => Bun.Subprocess;
+  Bun.spawn = ((...args: unknown[]) => trackChild(spawnAny(...args))) as typeof Bun.spawn;
 } catch { /* namespace locked down — natively spawned children stay untracked */ }
+
+// `Bun.$` has no kill handle and does not route through `Bun.spawn` (verified: a
+// `Bun.$` shell produces zero calls through the wrapper above), so a shell started
+// with it survives the abort sweep — the interrupt then reports "the program's
+// children are killed and the partial result is kept" while a process keeps running,
+// reparented onto the server. A hole that reports itself closed is worse than a
+// missing feature, so the door is shut and the error says which door to use instead.
+// Programs get bash()/sh()/bashBg(): tracked, killable, buffered, and listed in the
+// jobs tab.
+try {
+  Bun.$ = (() => {
+    throw new Error(
+      "Bun.$ is not available inside a program — a shell started with it cannot be " +
+        "interrupted. Use bash(cmd) for one command, sh(a, b, …) to run several at " +
+        "once, or bashBg(cmd) for work that should outlive the round.",
+    );
+  }) as unknown as typeof Bun.$;
+} catch { /* frozen namespace — the hole documented in the header stays open */ }
 
 // ---------------------------------------------------------------------------
 // The program's scope
@@ -186,7 +190,7 @@ try {
 /**
  * One binding per name in `HOST_FN_NAMES`. The `satisfies` clause is load-bearing:
  * a name added to the protocol without a binding here, or a binding here that the
- * protocol does not declare, fails `deno task check`.
+ * protocol does not declare, fails `bun run check`.
  *
  * Where a signature takes an object, it is serialized on the way out and the result
  * is parsed on the way back, so the program deals in real objects while the wire

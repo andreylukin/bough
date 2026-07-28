@@ -23,6 +23,7 @@
  * not reachable here, and a test that cannot run offline does not belong in
  * `deno task test` (plan §7).
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { Bus } from "../bus.ts";
 import { openDb, type SqliteDb } from "../db/db.ts";
@@ -99,7 +100,7 @@ const isCapError = (err: unknown): err is SpawnCapError => err instanceof SpawnC
 
 // ---- the acceptance criterion ------------------------------------------------
 
-Deno.test("allSettled over twelve launches: eight succeed, four are refused, the eight stand", async () => {
+test("allSettled over twelve launches: eight succeed, four are refused, the eight stand", async () => {
   const h = harness();
   try {
     const caps = new SpawnCaps();
@@ -152,7 +153,7 @@ Deno.test("allSettled over twelve launches: eight succeed, four are refused, the
   }
 });
 
-Deno.test("twelve launches that all stay running: four take the tree, eight are refused", async () => {
+test("twelve launches that all stay running: four take the tree, eight are refused", async () => {
   const h = harness();
   try {
     const caps = new SpawnCaps();
@@ -207,7 +208,7 @@ Deno.test("twelve launches that all stay running: four take the tree, eight are 
   }
 });
 
-Deno.test("a refused launch releases nothing it did not take", async () => {
+test("a refused launch releases nothing it did not take", async () => {
   const h = harness();
   try {
     const caps = new SpawnCaps();
@@ -254,7 +255,7 @@ Deno.test("a refused launch releases nothing it did not take", async () => {
 
 // ---- the tree-wide counter ---------------------------------------------------
 
-Deno.test("the concurrency budget is the TREE's, not the session's", () => {
+test("the concurrency budget is the TREE's, not the session's", () => {
   const h = harness();
   try {
     const caps = new SpawnCaps();
@@ -302,7 +303,7 @@ Deno.test("the concurrency budget is the TREE's, not the session's", () => {
   }
 });
 
-Deno.test("a fork is its own tree, and a dangling origin does not hang the walk", () => {
+test("a fork is its own tree, and a dangling origin does not hang the walk", () => {
   const h = harness();
   try {
     const root = seed(h);
@@ -323,7 +324,7 @@ Deno.test("a fork is its own tree, and a dangling origin does not hang the walk"
 
 // ---- releasing --------------------------------------------------------------
 
-Deno.test("releasing twice frees one slot, not two", () => {
+test("releasing twice frees one slot, not two", () => {
   const h = harness();
   try {
     const caps = new SpawnCaps();
@@ -344,7 +345,7 @@ Deno.test("releasing twice frees one slot, not two", () => {
   }
 });
 
-Deno.test("a launch that throws releases the slot it reserved", () => {
+test("a launch that throws releases the slot it reserved", () => {
   const h = harness();
   try {
     const caps = new SpawnCaps();
@@ -371,7 +372,7 @@ Deno.test("a launch that throws releases the slot it reserved", () => {
 
 // ---- the bus backstop -------------------------------------------------------
 
-Deno.test("a dropped lease is released when the child's turn finishes", async () => {
+test("a dropped lease is released when the child's turn finishes", async () => {
   const h = harness();
   try {
     const caps = new SpawnCaps();
@@ -422,7 +423,7 @@ Deno.test("a dropped lease is released when the child's turn finishes", async ()
   }
 });
 
-Deno.test("the bus backstop and the result path releasing together free one slot", async () => {
+test("the bus backstop and the result path releasing together free one slot", async () => {
   const h = harness();
   try {
     const caps = new SpawnCaps();
@@ -469,7 +470,7 @@ Deno.test("the bus backstop and the result path releasing together free one slot
 
 // ---- the nesting rule -------------------------------------------------------
 
-Deno.test("a subagent may delegate blocking, and is refused a detached spawn", () => {
+test("a subagent may delegate blocking, and is refused a detached spawn", () => {
   const h = harness();
   try {
     const caps = new SpawnCaps();
@@ -509,7 +510,7 @@ Deno.test("a subagent may delegate blocking, and is refused a detached spawn", (
 
 // ---- the workflow exemption --------------------------------------------------
 
-Deno.test("a workflow's launches are exempt from both caps", () => {
+test("a workflow's launches are exempt from both caps", () => {
   const h = harness();
   try {
     const caps = new SpawnCaps();
@@ -537,7 +538,7 @@ Deno.test("a workflow's launches are exempt from both caps", () => {
 
 // ---- injectable limits -------------------------------------------------------
 
-Deno.test("the caps are the spec's numbers, and are injectable for tests", () => {
+test("the caps are the spec's numbers, and are injectable for tests", () => {
   assert.equal(MAX_SPAWNS_PER_TURN, 8);
   assert.equal(MAX_TREE_CONCURRENT, 4);
 
@@ -560,7 +561,7 @@ Deno.test("the caps are the spec's numbers, and are injectable for tests", () =>
   assert.equal(tiny.spawnedInTurn("t"), 0);
 });
 
-Deno.test("underLease binds the child session so the ledger can find the lease", async () => {
+test("underLease binds the child session so the ledger can find the lease", async () => {
   const caps = new SpawnCaps();
   const lease = caps.reserve({ turnId: "t", treeId: "tree" });
   assert.equal(lease.sessionId, null);

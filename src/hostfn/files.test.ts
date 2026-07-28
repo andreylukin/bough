@@ -8,7 +8,7 @@
  * an EMPTY tag → succeeds and echoes a new tag → a SECOND patch chains onto that
  * echoed tag without viewing again.
  *
- * Hermetic and offline: every test owns a fresh `Deno.makeTempDir()` workspace it
+ * Hermetic and offline: every test owns a fresh `mkdtemp()` workspace it
  * deletes afterwards, and every fixture injects its own `SnapshotStore`, so no
  * test can see another's snapshots and nothing here touches `~/.bough` or the
  * network.
@@ -19,7 +19,10 @@
  * (Same constraint `patch.test.ts` and `bus.test.ts` document.)
  */
 
+import { test } from "bun:test";
 import { match, notStrictEqual, ok, strictEqual } from "node:assert";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { NotFoundError, PatchError } from "../errors.ts";
 import { createFileHostFns, type FileHostFns, SnapshotStore } from "./files.ts";
@@ -54,12 +57,12 @@ async function withWorkspace(
   body: (ws: Workspace) => Promise<void>,
   storeOpts?: { maxSessions?: number; maxPerSession?: number },
 ): Promise<void> {
-  const dir = await Deno.makeTempDir({ prefix: "bough-files-test-" });
+  const dir = await mkdtemp(join(tmpdir(), "bough-files-test-"));
   const snapshots = new SnapshotStore(storeOpts);
   const put = async (path: string, text: string) => {
     const full = join(dir, path);
-    await Deno.mkdir(dirname(full), { recursive: true });
-    await Deno.writeTextFile(full, text);
+    await mkdir(dirname(full), { recursive: true });
+    await writeFile(full, text);
   };
   try {
     for (const [path, text] of Object.entries(files)) await put(path, text);
@@ -68,11 +71,11 @@ async function withWorkspace(
       snapshots,
       fns: createFileHostFns({ workspace: dir, sessionId: "s1" }, { snapshots }),
       session: (id) => createFileHostFns({ workspace: dir, sessionId: id }, { snapshots }),
-      read: (path) => Deno.readTextFile(join(dir, path)),
+      read: (path) => readFile(join(dir, path), "utf8"),
       put,
     });
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true, force: true });
   }
 }
 
@@ -98,7 +101,7 @@ async function rejects(fn: () => Promise<unknown>): Promise<Error> {
 // The acceptance criterion
 // ---------------------------------------------------------------------------
 
-Deno.test("AC: view → empty-tag patch → echoed tag chains a second patch, no re-view", async () => {
+test("AC: view → empty-tag patch → echoed tag chains a second patch, no re-view", async () => {
   await withWorkspace({ "a.ts": doc("one", "two", "three", "four") }, async (ws) => {
     // 1. view records the version the ops will be written against.
     const listing = await ws.fns.view("a.ts");
@@ -136,7 +139,7 @@ Deno.test("AC: view → empty-tag patch → echoed tag chains a second patch, no
 // view
 // ---------------------------------------------------------------------------
 
-Deno.test("view: [path#TAG] header then numbered lines, padded to a common width", async () => {
+test("view: [path#TAG] header then numbered lines, padded to a common width", async () => {
   const text = doc(...Array.from({ length: 12 }, (_, i) => `line ${i + 1}`));
   await withWorkspace({ "a.ts": text }, async (ws) => {
     const out = await ws.fns.view("a.ts");
@@ -150,7 +153,7 @@ Deno.test("view: [path#TAG] header then numbered lines, padded to a common width
   });
 });
 
-Deno.test("view: the path is echoed as WRITTEN, but recorded as RESOLVED", async () => {
+test("view: the path is echoed as WRITTEN, but recorded as RESOLVED", async () => {
   await withWorkspace({ "sub/a.ts": doc("x") }, async (ws) => {
     const out = await ws.fns.view("./sub/a.ts");
     match(out, /^\[\.\/sub\/a\.ts#[0-9A-F]{4}\]/);
@@ -161,7 +164,7 @@ Deno.test("view: the path is echoed as WRITTEN, but recorded as RESOLVED", async
   });
 });
 
-Deno.test("view: an empty file says so instead of rendering nothing", async () => {
+test("view: an empty file says so instead of rendering nothing", async () => {
   await withWorkspace({ "empty.ts": "" }, async (ws) => {
     const out = await ws.fns.view("empty.ts");
     strictEqual(out.split("\n")[0], `[empty.ts#${tagOf("")}]`);
@@ -173,7 +176,7 @@ Deno.test("view: an empty file says so instead of rendering nothing", async () =
   });
 });
 
-Deno.test("view: a missing file names the path it looked at and how to create it", async () => {
+test("view: a missing file names the path it looked at and how to create it", async () => {
   await withWorkspace({}, async (ws) => {
     const err = await rejects(() => ws.fns.view("nope/a.ts"));
     ok(err instanceof NotFoundError, `expected NotFoundError, got ${err.name}`);
@@ -183,7 +186,7 @@ Deno.test("view: a missing file names the path it looked at and how to create it
   });
 });
 
-Deno.test("view: a directory is named as one, not reported as unreadable", async () => {
+test("view: a directory is named as one, not reported as unreadable", async () => {
   await withWorkspace({ "sub/a.ts": doc("x") }, async (ws) => {
     const err = await rejects(() => ws.fns.view("sub"));
     match(err.message, /it is a directory/);
@@ -191,9 +194,9 @@ Deno.test("view: a directory is named as one, not reported as unreadable", async
   });
 });
 
-Deno.test("view: a binary file is refused before it can be lossily rewritten", async () => {
+test("view: a binary file is refused before it can be lossily rewritten", async () => {
   await withWorkspace({}, async (ws) => {
-    await Deno.writeFile(join(ws.dir, "b.bin"), new Uint8Array([0x89, 0x00, 0x01, 0x02]));
+    await writeFile(join(ws.dir, "b.bin"), new Uint8Array([0x89, 0x00, 0x01, 0x02]));
     const err = await rejects(() => ws.fns.view("b.bin"));
     match(err.message, /NUL bytes/);
     // Nothing on record, so a patch against it is refused too.
@@ -201,16 +204,16 @@ Deno.test("view: a binary file is refused before it can be lossily rewritten", a
   });
 });
 
-Deno.test("view: an oversized file is refused with a way to read part of it", async () => {
+test("view: an oversized file is refused with a way to read part of it", async () => {
   await withWorkspace({}, async (ws) => {
-    await Deno.writeTextFile(join(ws.dir, "big.txt"), "x".repeat(2 * 1024 * 1024 + 1));
+    await writeFile(join(ws.dir, "big.txt"), "x".repeat(2 * 1024 * 1024 + 1));
     const err = await rejects(() => ws.fns.view("big.txt"));
     match(err.message, /over the 2097152-byte view limit/);
     match(err.message, /rg -n PATTERN big\.txt/);
   });
 });
 
-Deno.test("view: an empty path is refused by name rather than resolving to the workspace", async () => {
+test("view: an empty path is refused by name rather than resolving to the workspace", async () => {
   await withWorkspace({}, async (ws) => {
     const err = await rejects(() => ws.fns.view("   "));
     match(err.message, /view\(\) needs a path/);
@@ -221,7 +224,7 @@ Deno.test("view: an empty path is refused by name rather than resolving to the w
 // write
 // ---------------------------------------------------------------------------
 
-Deno.test("write: creates parent directories, echoes the tag, and records it", async () => {
+test("write: creates parent directories, echoes the tag, and records it", async () => {
   await withWorkspace({}, async (ws) => {
     const content = doc("a", "b", "c");
     const out = await ws.fns.write("deep/er/new.ts", content);
@@ -235,7 +238,7 @@ Deno.test("write: creates parent directories, echoes the tag, and records it", a
   });
 });
 
-Deno.test("write: replaces an existing file wholesale and re-anchors it", async () => {
+test("write: replaces an existing file wholesale and re-anchors it", async () => {
   await withWorkspace({ "a.ts": doc("old", "old", "old") }, async (ws) => {
     await ws.fns.view("a.ts");
     const out = await ws.fns.write("a.ts", doc("new"));
@@ -248,7 +251,7 @@ Deno.test("write: replaces an existing file wholesale and re-anchors it", async 
   });
 });
 
-Deno.test("write: an empty file is 0 lines, not one blank one", async () => {
+test("write: an empty file is 0 lines, not one blank one", async () => {
   await withWorkspace({}, async (ws) => {
     const out = await ws.fns.write("e.ts", "");
     strictEqual(await ws.read("e.ts"), "");
@@ -260,7 +263,7 @@ Deno.test("write: an empty file is 0 lines, not one blank one", async () => {
 // patch: what the snapshot store is for
 // ---------------------------------------------------------------------------
 
-Deno.test("patch: a file this session never viewed is refused, and told to view it", async () => {
+test("patch: a file this session never viewed is refused, and told to view it", async () => {
   await withWorkspace({ "a.ts": doc("one", "two") }, async (ws) => {
     const err = await rejects(() => ws.fns.patch(`[a.ts#]\nSWAP 1:\n+ONE\n`));
     ok(err instanceof PatchError, `expected PatchError, got ${err.name}`);
@@ -270,7 +273,7 @@ Deno.test("patch: a file this session never viewed is refused, and told to view 
   });
 });
 
-Deno.test("patch: snapshots are per session — a sibling's view is not mine", async () => {
+test("patch: snapshots are per session — a sibling's view is not mine", async () => {
   await withWorkspace({ "a.ts": doc("one", "two") }, async (ws) => {
     await ws.session("spawner").view("a.ts");
     // A subagent is its own session and must anchor to what IT read.
@@ -284,7 +287,7 @@ Deno.test("patch: snapshots are per session — a sibling's view is not mine", a
   });
 });
 
-Deno.test("patch: a missing file says to write() it, and nothing else in the patch lands", async () => {
+test("patch: a missing file says to write() it, and nothing else in the patch lands", async () => {
   await withWorkspace({ "a.ts": doc("one") }, async (ws) => {
     await ws.fns.view("a.ts");
     const err = await rejects(() =>
@@ -297,7 +300,7 @@ Deno.test("patch: a missing file says to write() it, and nothing else in the pat
   });
 });
 
-Deno.test("patch: a stale explicit tag names the current tag and the empty-tag escape", async () => {
+test("patch: a stale explicit tag names the current tag and the empty-tag escape", async () => {
   await withWorkspace({ "a.ts": doc("one", "two") }, async (ws) => {
     await ws.fns.view("a.ts");
     const err = await rejects(() => ws.fns.patch(`[a.ts#0000]\nSWAP 1:\n+ONE\n`));
@@ -312,7 +315,7 @@ Deno.test("patch: a stale explicit tag names the current tag and the empty-tag e
 // patch: concurrency, the reason any of this exists
 // ---------------------------------------------------------------------------
 
-Deno.test("patch: a concurrent edit OUTSIDE the patched lines rebases and both land", async () => {
+test("patch: a concurrent edit OUTSIDE the patched lines rebases and both land", async () => {
   await withWorkspace({ "a.ts": doc("l1", "l2", "l3", "l4") }, async (ws) => {
     await ws.fns.view("a.ts");
     // Someone else (another subagent, the user's editor) prepends a line.
@@ -325,7 +328,7 @@ Deno.test("patch: a concurrent edit OUTSIDE the patched lines rebases and both l
   });
 });
 
-Deno.test("patch: a concurrent edit INSIDE the patched lines is a named conflict", async () => {
+test("patch: a concurrent edit INSIDE the patched lines is a named conflict", async () => {
   await withWorkspace({ "a.ts": doc("l1", "l2", "l3", "l4") }, async (ws) => {
     await ws.fns.view("a.ts");
     const theirs = doc("l1", "l2", "THEIRS", "l4");
@@ -342,7 +345,7 @@ Deno.test("patch: a concurrent edit INSIDE the patched lines is a named conflict
   });
 });
 
-Deno.test("patch: multi-file — all of them or none", async () => {
+test("patch: multi-file — all of them or none", async () => {
   const a = doc("a1", "a2");
   const b = doc("b1", "b2");
   await withWorkspace({ "a.ts": a, "b.ts": b }, async (ws) => {
@@ -367,7 +370,7 @@ Deno.test("patch: multi-file — all of them or none", async () => {
   });
 });
 
-Deno.test("patch: two spellings of one path in one patch are refused, not merged", async () => {
+test("patch: two spellings of one path in one patch are refused, not merged", async () => {
   await withWorkspace({ "a.ts": doc("one", "two") }, async (ws) => {
     await ws.fns.view("a.ts");
     // Both sections would be computed against the pre-patch text, so the second
@@ -382,25 +385,25 @@ Deno.test("patch: two spellings of one path in one patch are refused, not merged
   });
 });
 
-Deno.test("patch: an absolute path outside the workspace is an ordinary target", async () => {
-  const outside = await Deno.makeTempDir({ prefix: "bough-files-outside-" });
+test("patch: an absolute path outside the workspace is an ordinary target", async () => {
+  const outside = await mkdtemp(join(tmpdir(), "bough-files-outside-"));
   const target = join(outside, "cfg.txt");
   try {
-    await Deno.writeTextFile(target, doc("k=1"));
+    await writeFile(target, doc("k=1"));
     await withWorkspace({}, async (ws) => {
       // The workspace is the ORIGIN for relative paths, never a boundary (spec §2).
       await ws.fns.view(target);
       await ws.fns.patch(`[${target}#]\nSWAP 1:\n+k=2\n`);
-      strictEqual(await Deno.readTextFile(target), doc("k=2"));
+      strictEqual(await readFile(target, "utf8"), doc("k=2"));
     });
   } finally {
-    await Deno.remove(outside, { recursive: true });
+    await rm(outside, { recursive: true, force: true });
   }
 });
 
-Deno.test("patch: CRLF and a missing trailing newline survive the round trip", async () => {
+test("patch: CRLF and a missing trailing newline survive the round trip", async () => {
   await withWorkspace({}, async (ws) => {
-    await Deno.writeTextFile(join(ws.dir, "crlf.ts"), "one\r\ntwo\r\nthree");
+    await writeFile(join(ws.dir, "crlf.ts"), "one\r\ntwo\r\nthree");
     await ws.fns.view("crlf.ts");
     await ws.fns.patch(`[crlf.ts#]\nSWAP 2:\n+TWO\n`);
     strictEqual(await ws.read("crlf.ts"), "one\r\nTWO\r\nthree");
@@ -411,7 +414,7 @@ Deno.test("patch: CRLF and a missing trailing newline survive the round trip", a
 // the store's bounds
 // ---------------------------------------------------------------------------
 
-Deno.test("snapshots: the oldest path is evicted, and a dropped one costs a re-view", async () => {
+test("snapshots: the oldest path is evicted, and a dropped one costs a re-view", async () => {
   await withWorkspace(
     { "a.ts": doc("a"), "b.ts": doc("b"), "c.ts": doc("c") },
     async (ws) => {
@@ -433,7 +436,7 @@ Deno.test("snapshots: the oldest path is evicted, and a dropped one costs a re-v
   );
 });
 
-Deno.test("snapshots: the least recently active session is evicted whole", async () => {
+test("snapshots: the least recently active session is evicted whole", async () => {
   await withWorkspace({ "a.ts": doc("a") }, async (ws) => {
     await ws.session("s-old").view("a.ts");
     await ws.session("s-mid").view("a.ts");
@@ -447,7 +450,7 @@ Deno.test("snapshots: the least recently active session is evicted whole", async
   }, { maxSessions: 2 });
 });
 
-Deno.test("snapshots: recording is keyed by session, so two sessions hold two versions", async () => {
+test("snapshots: recording is keyed by session, so two sessions hold two versions", async () => {
   await withWorkspace({ "a.ts": doc("one") }, async (ws) => {
     const one = ws.session("one");
     const two = ws.session("two");

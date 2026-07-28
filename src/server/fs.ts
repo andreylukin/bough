@@ -35,15 +35,14 @@ export const MAX_FILES = 20_000;
 /** One `git ls-files` pass. Empty on any failure — a keystroke is not worth an error. */
 async function lsFiles(dir: string, extra: string[]): Promise<string[]> {
   try {
-    const cmd = new Deno.Command("git", {
-      args: ["ls-files", ...extra],
+    const proc = Bun.spawn(["git", "ls-files", ...extra], {
       cwd: dir,
-      stdout: "piped",
-      stderr: "null",
+      stdout: "pipe",
+      stderr: "ignore",
     });
-    const out = await cmd.output();
-    if (!out.success) return [];
-    return new TextDecoder().decode(out.stdout).split("\n").map((p) => p.trim()).filter(Boolean);
+    const stdout = await new Response(proc.stdout).text();
+    if ((await proc.exited) !== 0) return [];
+    return stdout.split("\n").map((p) => p.trim()).filter(Boolean);
   } catch {
     // No git, or the directory vanished.
     return [];

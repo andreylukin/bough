@@ -1,12 +1,18 @@
-/// <reference no-default-lib="true" />
-/// <reference lib="deno.worker" />
 /**
- * The script side of the workflow worker. This module IS the worker: it runs with
- * `permissions: "none"`, and the orchestration script it executes gets exactly five
- * names plus its input — `agent`, `phase`, `log`, `parallel`, `pipeline`, `args`.
- * No filesystem, no network, no subprocesses, no imports. A workflow is a *plan*,
+ * The script side of the workflow worker. This module IS the worker, and the
+ * orchestration script it executes gets exactly five names plus its input —
+ * `agent`, `phase`, `log`, `parallel`, `pipeline`, `args`. A workflow is a *plan*,
  * not a program; the work happens in the subagents `agent()` reaches on the host
  * (spec §8).
+ *
+ * That five-name world is a CONTRACT, not a cage. It used to be enforced — the
+ * worker ran under Deno's `permissions: "none"`, so a script that reached for the
+ * filesystem was denied by the runtime. A Bun worker inherits the server process's
+ * capabilities, so the narrow scope is now upheld only by what this file binds: a
+ * script that goes looking for `Bun`, `fetch` or a dynamic `import()` will find
+ * them. Nothing in the engine relies on the denial (the traps below are about
+ * replay correctness, not confinement), but the comments must not claim a boundary
+ * that no longer exists.
  *
  * THE INVARIANT THIS HOLDS: **a workflow script is deterministic, and its
  * combinators have exactly the concurrency semantics the spec states.** Two
@@ -22,7 +28,7 @@
  *      full price and nobody is told. This is Temporal's core workflow constraint,
  *      taken as discipline without the dependency (plan §1, §6.15). The messages say
  *      what to do instead: pass timestamps in through `args`, vary prompts by index.
- *   2. **The exit trap.** `process.exit()`/`Deno.exit()` would terminate the worker
+ *   2. **The exit trap.** `process.exit()` would terminate the worker
  *      silently and strand the run until its wall timeout with nothing to report
  *      (plan §6.2). Same trap the program worker installs, different advice: a
  *      workflow ends by returning a value.
@@ -228,9 +234,8 @@ const exitTrap = (code?: unknown): never => {
   );
 };
 try {
-  const g = globalThis as { process?: { exit?: unknown }; Deno?: { exit?: unknown } };
+  const g = globalThis as { process?: { exit?: unknown } };
   if (g.process) g.process.exit = exitTrap;
-  if (g.Deno) g.Deno.exit = exitTrap;
 } catch { /* frozen globals — nothing to guard */ }
 
 // ---------------------------------------------------------------------------
@@ -270,8 +275,8 @@ function show(v: unknown): string {
  *
  * `workflow/run.ts` repeats this extension for its pre-flight parse and pins it with
  * a probe against a real worker. It is not imported from there because importing a
- * `deno.worker` module into the host would evaluate this file's traps and message
- * handler in the server process.
+ * worker module into the host would evaluate this file's traps and message handler
+ * in the server process — which would break `Date.now()` for the whole server.
  */
 const SCRIPT_PARAMS = [...WORKFLOW_SCRIPT_PARAMS, "parallel", "pipeline", "console"] as const;
 
@@ -454,9 +459,10 @@ async function run(code: string, args: unknown): Promise<unknown> {
 self.onmessage = (e: MessageEvent) => {
   const msg = e.data as ToWorkflowWorker;
 
-  // Stop requested. A permissions-none worker has no children to sweep, so the ack
-  // is immediate — but it is still an ack rather than a bare terminate(), so the
-  // host's wind-down is one handshake for both workers (plan §6.3).
+  // Stop requested. A script binds nothing that spawns, so there are no children to
+  // sweep and the ack is immediate — but it is still an ack rather than a bare
+  // terminate(), so the host's wind-down is one handshake for both workers
+  // (plan §6.3).
   if (msg.type === "abort") {
     for (const p of pending.values()) p.reject(new Error("workflow stopped"));
     pending.clear();

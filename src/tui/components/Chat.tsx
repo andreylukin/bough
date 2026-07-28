@@ -22,19 +22,25 @@
  * The numbers are formatted by `format.ts`; an unknown context limit shows tokens
  * rather than an invented percentage.
  */
-import { Box, Text } from "ink";
+import { TextAttributes } from "@opentui/core";
 import type { VLine } from "../lines.ts";
 import { visibleSlice } from "../lines.ts";
 import { busyLine, meterLine, UI } from "../format.ts";
-import { MessageRow } from "./Message.tsx";
+import { MessageRow, padRow } from "./Message.tsx";
 
 export interface ChatMeter {
   model?: string | null;
+  /** Thinking depth when it is not the default — see `meterLine`. */
+  effort?: string | null;
   costUsd?: number | null;
   contextTokens?: number | null;
   contextLimit?: number | null;
   /** Where the turn runs, already shortened. Leads the line — see `meterLine`. */
   workspace?: string | null;
+  /** The branch those edits land on. */
+  branch?: string | null;
+  /** Background shells still running — see `meterLine`. */
+  shells?: number | null;
   /** Append the `? help` hint. The chat sets it; other surfaces need not. */
   help?: boolean;
   /** A cold-cache or disconnect note from `format.ts`. Rendered as-is. */
@@ -62,6 +68,12 @@ export interface ChatProps {
   busy?: boolean;
   /** How long the running turn has been going. Ignored unless `busy`. */
   elapsedMs?: number;
+  /**
+   * Tokens and dollars accrued so far in the running turn. Ignored unless `busy`;
+   * absent degrades the line to spinner + elapsed — see `busyLine`.
+   */
+  turnTokens?: number | null;
+  turnCostUsd?: number | null;
   /** Spinner phase. The caller owns the clock so this stays render-pure. */
   tick?: number;
   /** Messages typed while a turn ran, held locally until it drains (spec §5). */
@@ -88,6 +100,8 @@ export function Chat(
     activity,
     busy = false,
     elapsedMs = 0,
+    turnTokens,
+    turnCostUsd,
     tick = 0,
     queued = [],
     notice,
@@ -103,73 +117,111 @@ export function Chat(
   // and down the screen while you were typing into it. The input bar is the one
   // thing on screen that must never move; every other harness pins it. So the
   // extras are counted first and the transcript takes what is left.
-  const fixed = queued.length + (busy ? 1 : 0) + (notice ? 1 : 0);
-  // Whether the scroll indicator gets a row depends on the body height, which
-  // depends on whether the indicator gets a row. One probe slice settles it.
-  const probe = visibleSlice(lines, Math.max(1, height - fixed), scrollOff);
-  const extras = fixed + (probe.more > 0 ? 1 : 0);
+  //
+  // The activity strip is reserved WHETHER OR NOT a turn is running. It used to
+  // appear with the spinner and vanish with it, so the whole transcript jumped one
+  // row up at the start of every turn and one row down at the end — the settled
+  // reply landed on a different line than the one you had just been reading.
+  // The scroll indicator is reserved for the same reason, which also retires the
+  // probe slice that used to resolve "the indicator needs a row iff there is one
+  // to need it".
+  const extras = queued.length + 2 + (notice ? 1 : 0);
   const body = Math.max(1, height - extras);
   const { start, rows, more, pct } = visibleSlice(lines, body, scrollOff);
   // Pad above, never below: the newest line stays where the eye already is.
   const pad = Math.max(0, body - rows.length);
+  // Every row this component emits is blanked to the full width — see `padRow`.
+  // A blank spacer of one space does not erase the row it lands on.
+  const blank = padRow(" ", width);
+  const busy2 = busyLine({
+    activity,
+    elapsedMs,
+    tick,
+    tokens: turnTokens,
+    costUsd: turnCostUsd,
+  });
   return (
-    <Box flexDirection="column" width={width}>
-      <Box flexDirection="column" flexGrow={1}>
-        {lines.length === 0
-          ? (
-            <>
-              {Array.from(
-                { length: Math.max(0, body - 1) },
-                (_v, i) => <Text key={`pad-${i}`}>{" "}</Text>,
-              )}
-              <Text dimColor wrap="truncate">{placeholder}</Text>
-            </>
-          )
-          : (
-            <>
-              {Array.from({ length: pad }, (_v, i) => <Text key={`pad-${i}`}>{" "}</Text>)}
-              {rows.map((line, i) => (
-                <MessageRow
-                  key={`l-${start + i}`}
-                  line={line}
-                  width={width}
-                  decorate={decorate && ((text) => decorate(text, line, start + i))}
-                />
-              ))}
-            </>
-          )}
-      </Box>
+    <box flexDirection="column" width={width}>
+      <box flexDirection="column" flexGrow={1}>
+        {/*
+          A FIXED SET OF SLOTS, keyed by screen row — never by transcript index.
+          `key={l-${start + i}}` gave every row a fresh identity each time a
+          streamed line shifted the window, so React unmounted and remounted the
+          whole body on every token and the renderer re-placed ~20 renderables a
+          frame. The viewport is `body` rows whose TEXT changes; the nodes do not.
+        */}
+        {Array.from({ length: body }, (_v, i) => {
+          const line = lines.length === 0
+            ? null
+            : i >= pad
+            ? rows[i - pad]
+            : null;
+          if (line) {
+            const index = start + (i - pad);
+            return (
+              <MessageRow
+                key={`row-${i}`}
+                line={line}
+                width={width}
+                decorate={decorate && ((text) => decorate(text, line, index))}
+              />
+            );
+          }
+          // The empty-transcript hint sits on the last slot, where the first reply
+          // will land.
+          const text = lines.length === 0 && i === body - 1 ? padRow(placeholder, width) : blank;
+          return (
+            <text
+              key={`row-${i}`}
+              attributes={lines.length === 0 && i === body - 1 ? TextAttributes.DIM : undefined}
+              wrapMode="none"
+            >
+              {text}
+            </text>
+          );
+        })}
+      </box>
       {more > 0
         ? (
           // Chrome, not content: the arrow and count carry the emphasis. The
           // percentage is the viewport TOP's position in the thread, so fully
           // scrolled up reads 0%.
-          <Text>
-            <Text color={UI.info}>↓ {more}</Text>
-            <Text dimColor>{" "}more line{more === 1 ? "" : "s"} below · {pct}%</Text>
-          </Text>
+          <text wrapMode="none">
+            <span fg={UI.info}>↓ {more}</span>
+            <span attributes={TextAttributes.DIM}>
+              {padRow(
+                ` more line${more === 1 ? "" : "s"} below · ${pct}%`,
+                width - `↓ ${more}`.length,
+              )}
+            </span>
+          </text>
         )
-        : null}
-      {queued.map((q, i) => <Text key={`q-${i}`} dimColor wrap="truncate">⧖ queued: {q}</Text>)}
+        : <text wrapMode="none">{blank}</text>}
+      {queued.map((q, i) => (
+        <text key={`q-${i}`} attributes={TextAttributes.DIM} wrapMode="none">
+          {padRow(`⧖ queued: ${q}`, width)}
+        </text>
+      ))}
       {busy
         ? (
           // While a turn runs this REPLACES the bare activity blurb: it carries the
           // blurb's text when there is one, and says "working" when there is not,
           // so the running state is never a blank screen.
-          <Text wrap="truncate">
-            <Text color={UI.accent}>{busyLine({ activity, elapsedMs, tick }).slice(0, 2)}</Text>
-            <Text dimColor>{busyLine({ activity, elapsedMs, tick }).slice(2)}</Text>
-          </Text>
+          <text wrapMode="none">
+            <span fg={UI.accent}>{busy2.slice(0, 2)}</span>
+            <span attributes={TextAttributes.DIM}>{padRow(busy2.slice(2), width - 2)}</span>
+          </text>
         )
         : activity
         ? (
-          <Text wrap="truncate">
-            <Text color={UI.accent}>{"⋯ "}</Text>
-            <Text dimColor>{activity}</Text>
-          </Text>
+          <text wrapMode="none">
+            <span fg={UI.accent}>{"⋯ "}</span>
+            <span attributes={TextAttributes.DIM}>{padRow(activity, width - 2)}</span>
+          </text>
         )
-        : null}
-      {notice ? <Text color={UI.warn} wrap="truncate">{notice}</Text> : null}
-    </Box>
+        // Reserved, not conditional — see `extras`.
+        : <text wrapMode="none">{blank}</text>}
+      {notice ? <text fg={UI.warn} wrapMode="none">{padRow(notice, width)}</text> : null}
+    </box>
   );
 }

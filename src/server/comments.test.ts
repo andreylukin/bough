@@ -19,6 +19,9 @@
  *
  * Assertions come from `node:assert/strict`: jsr.io is not reachable here.
  */
+import { test } from "bun:test";
+import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { Bus } from "../bus.ts";
@@ -55,21 +58,21 @@ const TABLE: Route[] = [
 ];
 
 function tmp(): string {
-  return Deno.makeTempDirSync({ prefix: "bough-comments-" });
+  return mkdtempSync(join(tmpdir(), "bough-comments-"));
 }
 
 const anchor = { label: "Files touched", selector: "body > h2", xf: 0.5, yf: 0.3 };
 
 async function withBoughHome(body: (home: string) => Promise<void> | void): Promise<void> {
   const home = tmp();
-  const previous = Deno.env.get("BOUGH_HOME");
-  Deno.env.set("BOUGH_HOME", home);
+  const previous = process.env["BOUGH_HOME"];
+  process.env["BOUGH_HOME"] = home;
   try {
     await body(home);
   } finally {
-    if (previous === undefined) Deno.env.delete("BOUGH_HOME");
-    else Deno.env.set("BOUGH_HOME", previous);
-    Deno.removeSync(home, { recursive: true });
+    if (previous === undefined) delete process.env["BOUGH_HOME"];
+    else process.env["BOUGH_HOME"] = previous;
+    rmSync(home, { recursive: true, force: true });
   }
 }
 
@@ -96,7 +99,7 @@ const del = (path: string) => new Request(url(path), { method: "DELETE" });
 
 // ---- storage ----------------------------------------------------------------
 
-Deno.test("addComment persists, loadComments reads back, deleteComment removes", () => {
+test("addComment persists, loadComments reads back, deleteComment removes", () => {
   const dir = tmp();
   try {
     const c = addComment("s1", { artifact: "index.html", text: "this list is stale", anchor }, {
@@ -111,11 +114,11 @@ Deno.test("addComment persists, loadComments reads back, deleteComment removes",
     assert.deepEqual(loadComments("s1", { dir }), []);
     assert.equal(deleteComment("s1", "nope", { dir }), false);
   } finally {
-    Deno.removeSync(dir, { recursive: true });
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 
-Deno.test("markSent flips only the named notes", () => {
+test("markSent flips only the named notes", () => {
   const dir = tmp();
   try {
     const a = addComment("s2", { artifact: "index.html", text: "one", anchor }, { dir });
@@ -125,24 +128,24 @@ Deno.test("markSent flips only the named notes", () => {
     assert.equal(all.find((c) => c.id === a.id)!.sent, true);
     assert.equal(all.find((c) => c.id === b.id)!.sent, false);
   } finally {
-    Deno.removeSync(dir, { recursive: true });
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 
-Deno.test("a corrupt sidecar reads as empty rather than breaking the page", () => {
+test("a corrupt sidecar reads as empty rather than breaking the page", () => {
   const dir = tmp();
   try {
-    Deno.writeTextFileSync(join(dir, "s3.json"), "{not json at all");
+    writeFileSync(join(dir, "s3.json"), "{not json at all");
     assert.deepEqual(loadComments("s3", { dir }), []);
     // …and a new note still saves over it, so the page stays usable.
     const c = addComment("s3", { artifact: "x.html", text: "still works", anchor }, { dir });
     assert.deepEqual(loadComments("s3", { dir }).map((x) => x.id), [c.id]);
   } finally {
-    Deno.removeSync(dir, { recursive: true });
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 
-Deno.test("an unusable anchor stores a centered default — the text is the point", () => {
+test("an unusable anchor stores a centered default — the text is the point", () => {
   const dir = tmp();
   try {
     const c = addComment("s4", { artifact: "x.html", text: "note", anchor: "nonsense" }, { dir });
@@ -150,11 +153,11 @@ Deno.test("an unusable anchor stores a centered default — the text is the poin
     const d = addComment("s4", { artifact: "x.html", text: "note" }, { dir });
     assert.equal(d.anchor.xf, 0.5);
   } finally {
-    Deno.removeSync(dir, { recursive: true });
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 
-Deno.test("a traversing session id cannot steer the sidecar write", () => {
+test("a traversing session id cannot steer the sidecar write", () => {
   const dir = tmp();
   const outside = tmp();
   try {
@@ -163,8 +166,8 @@ Deno.test("a traversing session id cannot steer the sidecar write", () => {
       assert.throws(() => addComment(bad, { artifact: "x", text: "t", anchor }, { dir }));
       assert.deepEqual(loadComments(bad, { dir }), []); // reads are safe-empty
     }
-    assert.deepEqual([...Deno.readDirSync(dir)].map((e) => e.name), []);
-    assert.deepEqual([...Deno.readDirSync(outside)].map((e) => e.name), []);
+    assert.deepEqual(readdirSync(dir), []);
+    assert.deepEqual(readdirSync(outside), []);
 
     // `..` is not an escape here, because the sidecar name is `<id>.json`: it lands on
     // `...json` INSIDE the store. Asserted rather than assumed — the interesting
@@ -172,22 +175,22 @@ Deno.test("a traversing session id cannot steer the sidecar write", () => {
     const odd = addComment("..", { artifact: "x", text: "t", anchor }, { dir });
     assert.equal(commentsPath("..", { dir }), join(dir, "...json"));
     assert.deepEqual(loadComments("..", { dir }).map((c) => c.id), [odd.id]);
-    assert.deepEqual([...Deno.readDirSync(outside)].map((e) => e.name), []);
+    assert.deepEqual(readdirSync(outside), []);
   } finally {
-    Deno.removeSync(dir, { recursive: true });
-    Deno.removeSync(outside, { recursive: true });
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
   }
 });
 
 // ---- AC: the sidecar is not walked by listArtifacts -------------------------
 
-Deno.test("AC: the sidecar is outside the artifact tree and never listed", async () => {
+test("AC: the sidecar is outside the artifact tree and never listed", async () => {
   await withBoughHome(async (home) => {
     await publishArtifact("s5", "index.html", "<h1>hi</h1>");
     addComment("s5", { artifact: "index.html", text: "note", anchor });
 
     const sidecar = commentsPath("s5");
-    assert.equal(Deno.statSync(sidecar).isFile, true);
+    assert.equal(statSync(sidecar).isFile(), true);
     // A SIBLING of the artifacts tree, never inside it — the whole invariant.
     assert.equal(sidecar.startsWith(join(home, "artifacts")), false);
     assert.equal(sidecar, join(home, "comments", "s5.json"));
@@ -198,7 +201,7 @@ Deno.test("AC: the sidecar is outside the artifact tree and never listed", async
 
 // ---- the agent-facing note --------------------------------------------------
 
-Deno.test("formatForAgent groups by artifact and names the anchor", () => {
+test("formatForAgent groups by artifact and names the anchor", () => {
   const comments: ArtifactComment[] = [
     { id: "1", artifact: "index.html", text: "fix this", anchor, ts: 1, sent: false },
     {
@@ -220,7 +223,7 @@ Deno.test("formatForAgent groups by artifact and names the anchor", () => {
   assert.equal(note.includes("Address the comments, or reply with questions."), true);
 });
 
-Deno.test("formatForAgent stays singular for one comment on one artifact", () => {
+test("formatForAgent stays singular for one comment on one artifact", () => {
   const note = formatForAgent([
     { id: "1", artifact: "a.html", text: "t", anchor, ts: 1, sent: false },
   ]);
@@ -229,7 +232,7 @@ Deno.test("formatForAgent stays singular for one comment on one artifact", () =>
 
 // ---- routes -----------------------------------------------------------------
 
-Deno.test("POST adds a note; GET filters by artifact; DELETE removes it", async () => {
+test("POST adds a note; GET filters by artifact; DELETE removes it", async () => {
   await withBoughHome(async () => {
     const { call, db } = fixture();
     db.createSession(session("sA"));
@@ -268,7 +271,7 @@ Deno.test("POST adds a note; GET filters by artifact; DELETE removes it", async 
   });
 });
 
-Deno.test("posting a comment to an unknown session is a 404, not a stray file", async () => {
+test("posting a comment to an unknown session is a 404, not a stray file", async () => {
   await withBoughHome(async (home) => {
     const { call } = fixture();
     const res = await call(post("/sessions/ghost/comments", {
@@ -278,11 +281,11 @@ Deno.test("posting a comment to an unknown session is a 404, not a stray file", 
     }));
     assert.equal(res.status, 404);
     await res.json();
-    assert.throws(() => Deno.statSync(join(home, "comments", "ghost.json")));
+    assert.throws(() => statSync(join(home, "comments", "ghost.json")));
   });
 });
 
-Deno.test("AC: send posts ONE system note for the batch and marks them sent", async () => {
+test("AC: send posts ONE system note for the batch and marks them sent", async () => {
   await withBoughHome(async () => {
     const { call, db, bus } = fixture();
     db.createSession(session("sB"));
@@ -320,7 +323,7 @@ Deno.test("AC: send posts ONE system note for the batch and marks them sent", as
   });
 });
 
-Deno.test("send can deliver a named subset and leaves the rest unsent", async () => {
+test("send can deliver a named subset and leaves the rest unsent", async () => {
   await withBoughHome(async () => {
     const { call, db } = fixture();
     db.createSession(session("sC"));
@@ -335,7 +338,7 @@ Deno.test("send can deliver a named subset and leaves the rest unsent", async ()
   });
 });
 
-Deno.test("sending into an unknown session is a 404 with nothing delivered", async () => {
+test("sending into an unknown session is a 404 with nothing delivered", async () => {
   await withBoughHome(async () => {
     const { call } = fixture();
     const res = await call(post("/sessions/ghost/comments/send", {}));
@@ -346,7 +349,7 @@ Deno.test("sending into an unknown session is a 404 with nothing delivered", asy
 
 // ---- the injected widget ----------------------------------------------------
 
-Deno.test("the widget is self-contained: no external network references", () => {
+test("the widget is self-contained: no external network references", () => {
   const w = commentWidget();
   assert.equal(/src=["']https?:/i.test(w), false);
   assert.equal(/href=["']https?:/i.test(w), false);
@@ -355,7 +358,7 @@ Deno.test("the widget is self-contained: no external network references", () => 
   assert.equal(w.includes('"/sessions/"'), true);
 });
 
-Deno.test("the widget interpolates nothing — it reads its identity from location", () => {
+test("the widget interpolates nothing — it reads its identity from location", () => {
   // Called twice, byte-identical: there is no per-session or per-artifact templating,
   // so the layer cannot inject anything into the page it is spliced into.
   assert.equal(commentWidget(), commentWidget());

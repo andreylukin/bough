@@ -38,11 +38,11 @@
  * and it is what this module is SHAPED like. It is not what this module CALLS, for
  * three reasons, in order of how hard they are to work around:
  *
- *   1. **The pinned SDK does not have it.** `deno.json` pins
+ *   1. **The pinned SDK does not have it.** `package.json` pins
  *      `@anthropic-ai/sdk@0.68.0`, whose `resources/messages` declares no
  *      `output_config`, no `parse()`, and no `zodOutputFormat` — only the tool
- *      runner's `betaZodTool`. `deno.json` is frozen (plan §4), so a task that
- *      needs a newer dependency stops and asks rather than editing the import map.
+ *      runner's `betaZodTool`. The dependency set is frozen (plan §4), so a task
+ *      that needs a newer dependency stops and asks rather than bumping it.
  *   2. **`LlmParams` has no slot for it.** `types.ts` is frozen and its provider
  *      boundary carries `system`/`messages`/`tools`/`toolChoice`/`effort` and
  *      nothing else, so there is no way to pass an output format through
@@ -89,7 +89,7 @@ export const DEFAULT_ATTEMPTS = 3;
 
 /** Env-overridable so the exhaustion path is testable without three real turns. */
 export function structuredAttempts(): number {
-  const n = Number(Deno.env.get("BOUGH_SCHEMA_ATTEMPTS"));
+  const n = Number(process.env["BOUGH_SCHEMA_ATTEMPTS"]);
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : DEFAULT_ATTEMPTS;
 }
 

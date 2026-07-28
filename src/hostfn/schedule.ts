@@ -36,6 +36,8 @@
  *
  * Ported from `src/schedules.ts`. Deltas from that port are marked `NOTE:`.
  */
+import type { Stats } from "node:fs";
+import { stat as statFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { ScheduleError } from "../errors.ts";
@@ -136,9 +138,9 @@ export const resolveWorkspace: WorkspaceResolver = async (raw) => {
     ? resolve(home, trimmed.slice(2))
     : trimmed;
   const abs = resolve(expanded);
-  let stat: Deno.FileInfo;
+  let stat: Stats;
   try {
-    stat = await Deno.stat(abs);
+    stat = await statFile(abs);
   } catch {
     throw new ScheduleError(
       400,
@@ -146,7 +148,7 @@ export const resolveWorkspace: WorkspaceResolver = async (raw) => {
         `there now — every firing opens a session in it.`,
     );
   }
-  if (!stat.isDirectory) throw new ScheduleError(400, `workspace is not a directory: ${abs}`);
+  if (!stat.isDirectory()) throw new ScheduleError(400, `workspace is not a directory: ${abs}`);
   return abs;
 };
 

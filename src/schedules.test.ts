@@ -16,6 +16,7 @@
  * resolve. (Same constraint `hostfn/shell.test.ts` and `bus.test.ts` document.)
  */
 
+import { test } from "bun:test";
 import assert from "node:assert";
 import { createHandler, type Route, route } from "./server/app.ts";
 import { Bus } from "./bus.ts";
@@ -88,7 +89,7 @@ function seed(db: SqliteDb, over: Partial<Schedule> = {}): Schedule {
 // Catch-up — the invariant
 // ---------------------------------------------------------------------------
 
-Deno.test("a ticker down through five slots fires ONCE, then resumes cadence", () => {
+test("a ticker down through five slots fires ONCE, then resumes cadence", () => {
   const f = fixture();
   const schedule = seed(f.db, { spec: "every:1h", nextRunAt: T0 + HOUR });
   const fired: string[] = [];
@@ -121,7 +122,7 @@ Deno.test("a ticker down through five slots fires ONCE, then resumes cadence", (
   f.close();
 });
 
-Deno.test("a daily schedule missed for a week also fires once", () => {
+test("a daily schedule missed for a week also fires once", () => {
   const f = fixture();
   const at = new Date(2026, 0, 15, 9, 0, 0, 0).getTime();
   const schedule = seed(f.db, { spec: "daily@09:00", nextRunAt: at });
@@ -139,7 +140,7 @@ Deno.test("a daily schedule missed for a week also fires once", () => {
   f.close();
 });
 
-Deno.test("the advance happens before the fire, so a throwing fire cannot hot-loop", () => {
+test("the advance happens before the fire, so a throwing fire cannot hot-loop", () => {
   const f = fixture();
   const schedule = seed(f.db, { nextRunAt: T0 });
   let attempts = 0;
@@ -169,7 +170,7 @@ Deno.test("the advance happens before the fire, so a throwing fire cannot hot-lo
   f.close();
 });
 
-Deno.test("one pass fires every due schedule and skips the disabled ones", () => {
+test("one pass fires every due schedule and skips the disabled ones", () => {
   const f = fixture();
   const a = seed(f.db, { title: "a", nextRunAt: T0 });
   const b = seed(f.db, { title: "b", nextRunAt: T0 - HOUR });
@@ -185,7 +186,7 @@ Deno.test("one pass fires every due schedule and skips the disabled ones", () =>
 // Firing
 // ---------------------------------------------------------------------------
 
-Deno.test("firing opens a FRESH ROOT session carrying the prompt, and starts a turn", () => {
+test("firing opens a FRESH ROOT session carrying the prompt, and starts a turn", () => {
   const f = fixture();
   const schedule = seed(f.db, { workspace: "/work/repo" });
 
@@ -218,14 +219,14 @@ Deno.test("firing opens a FRESH ROOT session carrying the prompt, and starts a t
   f.close();
 });
 
-Deno.test("firing without a workspace leaves the session unpinned", () => {
+test("firing without a workspace leaves the session unpinned", () => {
   const f = fixture();
   const fired = fireSchedule(f.ctx, seed(f.db))!;
   assert.equal(f.db.getSessionRuntime(fired.session.id).workspace, null);
   f.close();
 });
 
-Deno.test("firing never throws when the turn starter fails", () => {
+test("firing never throws when the turn starter fails", () => {
   const f = fixture();
   const errors: unknown[] = [];
   f.ctx.startTurn = () => {
@@ -240,7 +241,7 @@ Deno.test("firing never throws when the turn starter fails", () => {
   f.close();
 });
 
-Deno.test("firing with no turn starter wired still records the session", () => {
+test("firing with no turn starter wired still records the session", () => {
   const f = fixture();
   delete f.ctx.startTurn;
   const fired = fireSchedule(f.ctx, seed(f.db))!;
@@ -253,7 +254,7 @@ Deno.test("firing with no turn starter wired still records the session", () => {
 // The loop
 // ---------------------------------------------------------------------------
 
-Deno.test("the real ticker fires once however many times it ticks past a missed slot", async () => {
+test("the real ticker fires once however many times it ticks past a missed slot", async () => {
   const f = fixture();
   seed(f.db, { spec: "every:1h", nextRunAt: T0 + HOUR });
 
@@ -289,7 +290,7 @@ Deno.test("the real ticker fires once however many times it ticks past a missed 
   f.close();
 });
 
-Deno.test("the ticker's stopper ends it", async () => {
+test("the ticker's stopper ends it", async () => {
   const f = fixture();
   seed(f.db, { nextRunAt: T0 - HOUR });
   let clock = T0;
@@ -322,7 +323,7 @@ const TABLE: Route[] = [
 
 const url = (path: string) => `http://127.0.0.1:4321${path}`;
 
-Deno.test("the schedule routes are CRUD over the same validated path", async () => {
+test("the schedule routes are CRUD over the same validated path", async () => {
   const f = fixture();
   const call = createHandler(f.ctx, { routes: TABLE });
 
@@ -356,7 +357,7 @@ Deno.test("the schedule routes are CRUD over the same validated path", async () 
   f.close();
 });
 
-Deno.test("POST /schedules rejects a bad spec as a 400 naming the grammar", async () => {
+test("POST /schedules rejects a bad spec as a 400 naming the grammar", async () => {
   const f = fixture();
   const call = createHandler(f.ctx, { routes: TABLE });
   const res = await call(
@@ -370,7 +371,7 @@ Deno.test("POST /schedules rejects a bad spec as a 400 naming the grammar", asyn
   f.close();
 });
 
-Deno.test("PATCH and DELETE on an unknown schedule are 404s", async () => {
+test("PATCH and DELETE on an unknown schedule are 404s", async () => {
   const f = fixture();
   const call = createHandler(f.ctx, { routes: TABLE });
   const patched = await call(
@@ -382,7 +383,7 @@ Deno.test("PATCH and DELETE on an unknown schedule are 404s", async () => {
   f.close();
 });
 
-Deno.test("an empty PATCH body is a legal no-op, not a 400", async () => {
+test("an empty PATCH body is a legal no-op, not a 400", async () => {
   const f = fixture();
   const created = await scheduleCreate(f.db, { title: "t", prompt: "p", spec: "every:1h" }, {
     now: () => T0,

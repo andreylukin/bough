@@ -79,7 +79,7 @@ import { createHandler } from "./app.ts";
 import { indexRecoveredMessages, searchSafeDb } from "./search.ts"; // T8.6
 import type { WithTurnStarter } from "./sessions.ts";
 
-const PORT = Number(Deno.env.get("BOUGH_PORT") ?? 4321);
+const PORT = Number(process.env["BOUGH_PORT"] ?? 4321);
 
 const db = openDb();
 const bus = new Bus();
@@ -92,7 +92,7 @@ const ctx: AppCtx & WithTurnStarter = {
   // here; the cheap tier (T10.1) is, when it exists. Until then every feature that
   // needs one degrades rather than failing, which is what `AppCtx`'s optional
   // fields are for.
-  model: Deno.env.get("BOUGH_MODEL") ?? undefined,
+  model: process.env["BOUGH_MODEL"] ?? undefined,
 };
 
 // ── boot wiring: append below, same append-only discipline as the route table ──
@@ -441,23 +441,30 @@ function shutdown(signal: string): void {
   const killed = jobs.killAll();
   console.log(`${signal}: killed ${killed} background shell(s), closing db`);
   db.close();
-  Deno.exit(0);
+  process.exit(0);
 }
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   try {
-    Deno.addSignalListener(signal, () => shutdown(signal));
+    process.on(signal, () => shutdown(signal));
   } catch {
     // Not every platform exposes every signal; teardown is best-effort, and
     // failing to register one must not stop the server from starting.
   }
 }
 
-Deno.serve({
+const server = Bun.serve({
   port: PORT,
   hostname: "127.0.0.1",
-  onListen: ({ hostname, port }) =>
-    console.log(`bough listening on ${hostname}:${port} — db ${dbPath()}`),
-}, createHandler(ctx));
+  // `Deno.serve` had no request deadline; `Bun.serve` defaults to 10 SECONDS and
+  // then tears the connection down. Every long-lived thing bough has is longer than
+  // that — the `/events` SSE stream is idle by design between turns, and one `bough
+  // exec` request is held open for the whole turn (default 900s) — so the default
+  // would show up as the TUI redialing every ten seconds and turns dying mid-flight.
+  // 0 disables it, which is the semantics the code was written against.
+  idleTimeout: 0,
+  fetch: createHandler(ctx),
+});
+console.log(`bough listening on ${server.hostname}:${server.port} — db ${dbPath()}`);
 
 // T7.1 — MCP. Two lines, and only the second one is required.
 //
@@ -485,11 +492,11 @@ try {
 // — an idle HTTP bridge, a server between calls — survives, reparented and
 // invisible, with nothing left that knows it exists.
 //
-// Hung on `unload` rather than on the signal handlers above for two reasons. The
-// handler that is already registered calls `Deno.exit` synchronously, so a second
-// signal listener added here would never run; and `unload` also covers the exits no
-// signal announces. `Deno.exit` fires it, so both paths converge here.
-globalThis.addEventListener("unload", () => {
+// Hung on process `exit` rather than on the signal handlers above for two reasons. The
+// handler that is already registered calls `process.exit` synchronously, so a second
+// signal listener added here would never run; and `exit` also covers the exits no
+// signal announces. `process.exit` fires it, so both paths converge here.
+process.on("exit", () => {
   const killed = killAllMcpServers();
   if (killed > 0) console.log(`shutdown: killed ${killed} MCP server subprocess(es)`);
 });
@@ -586,9 +593,9 @@ ctx.startTurn = createDelegatingTurnStarter({
 // read fresh on every use, grants live in it, and a connection is a live child process
 // that only a call creates (plan §6.13). The process manager is touched here purely so
 // its subprocesses are reported at shutdown beside the count `killAllMcpServers` gives
-// — the kill itself is already hung on `unload` by the T7.1 block above, which is the
-// path every exit converges on.
-globalThis.addEventListener("unload", () => {
+// — the kill itself is already hung on process `exit` by the T7.1 block above, which is
+// the path every exit converges on.
+process.on("exit", () => {
   const open = mcpManager().statuses().length;
   if (open > 0) console.log(`shutdown: ${open} MCP connection(s) were open`);
 });
@@ -706,7 +713,7 @@ ctx.startTurn = createDelegatingTurnStarter({
 // is what boot recovery, the mirrors and the shutdown path above already captured, and
 // they neither index nor should be reading through a wrapper. Every REQUEST and every
 // TURN reads `ctx.db`, which is the whole write path this protects. It lands before the
-// listener can serve anything: `Deno.serve` above cannot dispatch until this module
+// listener can serve anything: `Bun.serve` above cannot dispatch until this module
 // finishes evaluating, and nothing between here and there awaits.
 ctx.db = searchSafeDb(db);
 

@@ -9,7 +9,7 @@ await write(path, content) — new files and wholesale rewrites. It echoes the n
 tag too, so a file you just wrote can be patched immediately without viewing it.
 
 That is the entire editing surface. There is no read() and no edit(). Raw file
-content comes from `Deno.readTextFile` or `bash` — you have the full runtime and do
+content comes from `Bun.file(path).text()` or `bash` — you have the full runtime and do
 not need a host function for it.
 
 view() + patch() is how you change an existing file. You NAME lines instead of

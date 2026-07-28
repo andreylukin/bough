@@ -1,22 +1,23 @@
 /**
  * The host side of the program worker: one `run_steps` program per round, executed
- * in a fresh `Worker` with `permissions: "inherit"`.
+ * in a fresh `Worker`.
  *
  * WHY THIS EXISTS. bough's thesis is one program per round (spec §1), and a program
  * runs as the user with the user's full authority — filesystem, network, env,
- * subprocesses, `npm:`/`jsr:` imports. **Nothing here is a security boundary**
+ * subprocesses, `npm:` imports. A Bun worker inherits everything the server process
+ * has, which is exactly the intent. **Nothing here is a security boundary**
  * (spec §2.2). The bridged host functions are convenience and session integration,
  * never confinement: `bash` carries the turn's interrupt and the 60s
  * auto-background, `view`/`patch` carry the hash anchoring that makes concurrent
  * subagents safe, `agent`/`ask`/`state` reach the session's database and UI. A
- * program is free to ignore every one of them and call `Deno` directly.
+ * program is free to ignore every one of them and call `Bun`/`node:*` directly.
  *
  * THE INVARIANT THIS HOLDS: **a program never outlives its turn, and never takes
  * the server with it.** Three mechanisms, each of which exists because the isolate
  * is *not* sealed:
  *
  *   1. **Pre-flight, before a worker is spawned.** A program that cannot compile
- *      used to reach the model as a bare `SyntaxError` over ten frames of Deno
+ *      used to reach the model as a bare `SyntaxError` over ten frames of runtime
  *      internals — no line, no column, no source — and the model burned the round
  *      guessing. `checkProgramSyntax` parses with the *same* parameter list the
  *      worker binds, so the two can never disagree about what is legal. That is why
@@ -177,15 +178,22 @@ export function checkProgramSyntax(code: string): string | null {
   } catch (err) {
     if ((err as Error)?.name !== "SyntaxError") throw err;
     const why = (err as Error).message;
-    // NOTE: the shadow case is worth naming outright. V8 says "Identifier 'bash'
-    // has already been declared", which reads as a bug in the program's own scope
-    // unless you know `bash` arrived as a parameter.
-    const shadow = /Identifier '([^']+)' has already been declared/.exec(why);
-    if (shadow && (PROGRAM_PARAMS as readonly string[]).includes(shadow[1])) {
-      return `program does not parse: ${why} — \`${shadow[1]}\` is a host function ` +
+    // NOTE: the shadow case is worth naming outright. The engine says "Cannot
+    // declare a let variable twice: 'bash'", which reads as a bug in the program's
+    // own scope unless you know `bash` arrived as a parameter.
+    //
+    // Two phrasings because two engines: JSC (Bun) says "Cannot declare a
+    // {let variable,const variable,class} twice: 'x'", V8 said "Identifier 'x' has
+    // already been declared". Matching both keeps this message — a product surface —
+    // from depending on which engine parsed the program.
+    const shadow = /Cannot declare an? [a-z ]*twice: '([^']+)'|Identifier '([^']+)' has already been declared/
+      .exec(why);
+    const shadowed = shadow?.[1] ?? shadow?.[2];
+    if (shadowed && (PROGRAM_PARAMS as readonly string[]).includes(shadowed)) {
+      return `program does not parse: ${why} — \`${shadowed}\` is a host function ` +
         `already bound in every program's scope, so declaring it shadows the binding. ` +
-        `Rename your variable (\`my${shadow[1][0].toUpperCase()}${shadow[1].slice(1)}\`) ` +
-        `and call \`${shadow[1]}\` as it is.`;
+        `Rename your variable (\`my${shadowed[0].toUpperCase()}${shadowed.slice(1)}\`) ` +
+        `and call \`${shadowed}\` as it is.`;
     }
     const hit = unterminatedString(code);
     if (!hit) return `program does not parse: ${why}`;
@@ -244,12 +252,12 @@ export function runProgram(opts: RunProgramOptions): Promise<ProgramResult> {
   const bad = checkProgramSyntax(code);
   if (bad) return Promise.resolve({ ok: false, logs: [], error: bad });
 
+  // A Bun worker inherits the server process's capabilities, so the program runs
+  // with everything the server itself has — which is the intent. The host functions
+  // are convenience and integration, NOT a boundary, and a program is free to reach
+  // past them to raw `Bun`/`node:*` APIs (spec §2.2).
   const worker = new Worker(new URL("./vm_worker.ts", import.meta.url).href, {
     type: "module",
-    // The program runs with everything the server itself has. The host functions
-    // are convenience and integration, NOT a boundary, and a program is free to
-    // reach past them to raw Deno APIs (spec §2.2).
-    deno: { permissions: "inherit" },
   });
 
   return new Promise<ProgramResult>((resolve) => {
@@ -290,7 +298,7 @@ export function runProgram(opts: RunProgramOptions): Promise<ProgramResult> {
       settled = true;
       clearTimeout(timer);
       // A stop already in flight leaves its grace timer armed; an unclaimed timer
-      // keeps the process (and Deno's test sanitizer) awake for another second.
+      // keeps the process awake for another second.
       if (grace !== undefined) clearTimeout(grace);
       signal?.removeEventListener("abort", onAbort);
       worker.terminate();

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { EventEmitter } from "node:events";
-import { render } from "ink";
-import type { ReactElement } from "react";
+import { test } from "bun:test";
+import { testRender } from "@opentui/react/test-utils";
+import type { ReactNode } from "react";
 import { Chat } from "./Chat.tsx";
 import { Composer } from "./Composer.tsx";
 import { MessageView } from "./Message.tsx";
@@ -10,37 +10,34 @@ import { buildLines } from "../lines.ts";
 import type { Message } from "../../schema/parts.ts";
 
 // The whole point of the components being presentational: they render from a
-// fixture with no server, no store and no terminal. `render` is pointed at a fake
-// stdout that is not a TTY, so these run in CI exactly as they do locally.
+// fixture with no server, no store and no terminal. OpenTUI's test renderer paints
+// into an in-memory cell grid with no tty attached, so these run in CI exactly as
+// they do locally.
 setColorEnabled(false);
 
-function draw(node: ReactElement, columns = 80): string {
-  const out: string[] = [];
-  const stdout = Object.assign(new EventEmitter(), {
-    write: (s: string) => (out.push(s), true),
-    columns,
-    rows: 24,
-    isTTY: false,
-  });
-  const stdin = Object.assign(new EventEmitter(), {
-    isTTY: false,
-    setRawMode() {},
-    ref() {},
-    unref() {},
-    read: () => null,
-    resume() {},
-    pause() {},
-  });
-  const instance = render(node, {
-    // deno-lint-ignore no-explicit-any -- Ink types the streams as Node's own.
-    stdout: stdout as any,
-    // deno-lint-ignore no-explicit-any
-    stdin: stdin as any,
-    exitOnCtrlC: false,
-    patchConsole: false,
-  });
-  instance.unmount();
-  return out.join("");
+/**
+ * The painted cells, as text.
+ *
+ * `captureCharFrame()` reads the render buffer back row by row, so what a test sees
+ * is what a terminal would show — not the escape sequences on the way there. It is
+ * a FIXED GRID: anything past `columns` wraps or is clipped, and anything past
+ * `rows` is simply not painted. `rows` is therefore sized to the tallest thing the
+ * component can produce rather than to a real terminal.
+ */
+async function draw(node: ReactNode, columns = 80, rows = 40): Promise<string> {
+  // `testRender` mounts inside React's `act`, which is what makes the first commit
+  // land before this returns — a bare `createRoot().render()` commits on a later
+  // task and reads back an empty grid. The act ENVIRONMENT is then switched off:
+  // nothing after the mount is act-wrapped, and leaving it on turns every later
+  // repaint into a console warning.
+  const t = await testRender(node, { width: columns, height: rows, exitOnCtrlC: false });
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+  // `renderOnce` is MANDATORY: without a render pass the buffer holds uninitialised
+  // glyphs rather than spaces, and every assertion below fails confusingly.
+  await t.renderOnce();
+  const frame = t.captureCharFrame();
+  t.renderer.destroy();
+  return frame;
 }
 
 const thread: Message[] = [
@@ -67,9 +64,9 @@ const thread: Message[] = [
   },
 ];
 
-Deno.test("Chat renders a transcript and its scroll indicator from fixtures", () => {
+test("Chat renders a transcript and its scroll indicator from fixtures", async () => {
   const lines = buildLines(thread, () => false, () => false, 80);
-  const frame = draw(
+  const frame = await draw(
     <Chat
       lines={lines}
       width={80}
@@ -93,35 +90,35 @@ Deno.test("Chat renders a transcript and its scroll indicator from fixtures", ()
   assert.equal(frame.includes("runner.ts"), false);
 
   // Scrolled up, the window says how much is below and where the top sits.
-  const scrolled = draw(<Chat lines={lines} width={80} height={4} scrollOff={2} />);
+  const scrolled = await draw(<Chat lines={lines} width={80} height={4} scrollOff={2} />);
   assert.ok(/↓ 2 more lines below · \d+%/.test(scrolled), scrolled);
 });
 
-Deno.test("Chat with an empty thread shows the placeholder, not a blank screen", () => {
-  const frame = draw(<Chat lines={[]} width={80} height={4} />);
+test("Chat with an empty thread shows the placeholder, not a blank screen", async () => {
+  const frame = await draw(<Chat lines={[]} width={80} height={4} />);
   assert.ok(frame.includes("one program per round"), frame);
 });
 
-Deno.test("MessageView renders one message standalone", () => {
-  const frame = draw(<MessageView message={thread[1]} width={70} isExpanded={() => true} />);
+test("MessageView renders one message standalone", async () => {
+  const frame = await draw(<MessageView message={thread[1]} width={70} isExpanded={() => true} />);
   assert.ok(frame.includes("bough"));
   assert.ok(frame.includes("thinking (2 lines)"));
   assert.ok(frame.includes("await bash('ls')"));
   assert.ok(frame.includes("runner.test.ts"));
 });
 
-Deno.test("Composer shows the prompt, the placeholder and the mid-turn hint", () => {
-  const empty = draw(<Composer input="" cursor={0} busy={false} width={60} maxRows={6} />);
+test("Composer shows the prompt, the placeholder and the mid-turn hint", async () => {
+  const empty = await draw(<Composer input="" cursor={0} busy={false} width={60} maxRows={6} />);
   assert.ok(empty.includes("type a message · enter sends"), empty);
 
-  const busy = draw(<Composer input="also this" cursor={9} busy width={60} maxRows={6} />);
+  const busy = await draw(<Composer input="also this" cursor={9} busy width={60} maxRows={6} />);
   assert.ok(busy.includes("enter interjects this turn"));
   assert.ok(busy.includes("also this"));
 });
 
-Deno.test("Composer caps its height on a large paste and says what is off-screen", () => {
+test("Composer caps its height on a large paste and says what is off-screen", async () => {
   const input = Array.from({ length: 30 }, (_v, i) => `line ${i}`).join("\n");
-  const frame = draw(
+  const frame = await draw(
     <Composer input={input} cursor={input.length} busy={false} width={60} maxRows={5} />,
   );
   assert.ok(/… \d+ lines above · \d+ below/.test(frame), frame);
@@ -129,7 +126,7 @@ Deno.test("Composer caps its height on a large paste and says what is off-screen
   assert.ok(frame.includes("line 29"));
 });
 
-Deno.test("Composer renders the @ popup for the trigger under the cursor", () => {
+test("Composer renders the @ popup for the trigger under the cursor", async () => {
   const text = "look at @app";
   const trigger = activeTrigger(text, text.length)!;
   const { items, total } = rankCompletions(
@@ -137,7 +134,7 @@ Deno.test("Composer renders the @ popup for the trigger under the cursor", () =>
     trigger,
     2,
   );
-  const frame = draw(
+  const frame = await draw(
     <Composer
       input={text}
       cursor={text.length}
@@ -155,10 +152,10 @@ Deno.test("Composer renders the @ popup for the trigger under the cursor", () =>
   assert.ok(frame.includes("↓ 1"));
 });
 
-Deno.test("Composer's / popup says so when nothing matches, rather than vanishing", () => {
+test("Composer's / popup says so when nothing matches, rather than vanishing", async () => {
   const text = "/zzz";
   const trigger = activeTrigger(text, text.length)!;
-  const frame = draw(
+  const frame = await draw(
     <Composer
       input={text}
       cursor={text.length}

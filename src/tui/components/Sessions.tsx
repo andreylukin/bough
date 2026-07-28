@@ -21,7 +21,7 @@
  * fixtures. The component windows that list around the cursor and paints it; `now` is a
  * prop because `relTime` takes one (plan §0: the clock is injected, never global).
  */
-import { Box, Text } from "ink";
+import { TextAttributes } from "@opentui/core";
 import type { SessionKind } from "../../schema/parts.ts";
 import type { SessionRow } from "../api.ts";
 import { clip, fuzzyScore, relTime, sessionLabel, windowAround } from "../format.ts";
@@ -117,29 +117,73 @@ export interface SessionsProps {
   message?: string | null;
 }
 
+/**
+ * THE ROW BUDGET, EXACT — and it is a shared function because it was neither.
+ *
+ * The tab used to reserve a flat six rows for chrome and then floor the list at three
+ * (`Math.max(3, rows - 6)`), so at twelve terminal rows it painted six rows into
+ * three and OpenTUI shrank them onto each other (see `Panel.tsx`). Every row the
+ * component can emit is counted here instead: the message, the filter line, the
+ * `— n/m —` counter, and the two legend rows. Whatever is left is the list, and when
+ * nothing is left the list is EMPTY rather than three rows deep — the legend is the
+ * last row of the tab and it is the one thing that may not be squeezed out.
+ *
+ * It is EXPORTED because `PanelHost` needs the same window the body draws: `1`–`9`
+ * address rows on screen, so the host and the body disagreeing about which rows are
+ * on screen would make a digit land somewhere the user cannot see.
+ */
+export function sessionsWindow(
+  count: number,
+  selected: number,
+  rows: number,
+  chrome = 0,
+): { start: number; end: number; height: number; glyphKey: boolean; counter: boolean } {
+  // WHEN IT IS TIGHT, CONTENT WINS. The glyph key is a decoder ring and the `— n/m —`
+  // counter is a position report; a panel that spends its last two rows on those and
+  // shows no sessions at all has answered a question nobody asked. The key legend is
+  // never dropped — it is the only row that says how to get out.
+  const glyphKey = rows - chrome >= 5;
+  const avail = Math.max(0, rows - chrome - (glyphKey ? 2 : 1));
+  const counter = count > avail && avail >= 2;
+  const height = Math.max(0, avail - (counter ? 1 : 0));
+  const { start, end } = windowAround(selected, count, height);
+  return { start: Math.max(0, start), end, height, glyphKey, counter };
+}
+
 export function Sessions(
   { items, selected, currentId, filter = "", filtering = false, rows, now, message }: SessionsProps,
 ) {
-  // Chrome above and below the list: the filter line, the legend, the hint.
-  const height = Math.max(3, rows - 6);
-  const { start, end } = windowAround(selected, items.length, height);
-  const window = items.slice(Math.max(0, start), end);
+  const chrome = (message ? 1 : 0) + (filtering || filter ? 1 : 0);
+  const { start, end, height, glyphKey, counter } = sessionsWindow(
+    items.length,
+    selected,
+    rows,
+    chrome,
+  );
+  const window = height === 0 ? [] : items.slice(start, end);
   return (
-    <Box flexDirection="column">
-      {message ? <Text color={palette.warn} wrap="truncate">{message}</Text> : null}
+    <box flexDirection="column">
+      {message ? <text fg={palette.warn} wrapMode="none">{message}</text> : null}
       {filtering
         ? (
-          <Text>
-            <Text color={palette.accent}>{"/ "}</Text>
+          <text>
+            <span fg={palette.accent}>{"/ "}</span>
             {filter}
-            <Text inverse>{" "}</Text>
-          </Text>
+            {/* An explicit pair, not INVERSE: OpenTUI double-signals reverse video
+                (it writes a white background AND leaves SGR 7 set), so the caret
+                came out white-on-white — see `CARET_FG` in `Composer.tsx`. */}
+            <span fg="black" bg={palette.accent}>{" "}</span>
+          </text>
         )
         : filter
-        ? <Text dimColor>/ {filter}</Text>
+        ? <text attributes={TextAttributes.DIM}>/ {filter}</text>
         : null}
-      {items.length === 0
-        ? <Text dimColor>{filter ? "nothing matches that filter" : "no sessions yet"}</Text>
+      {items.length === 0 && height > 0
+        ? (
+          <text attributes={TextAttributes.DIM}>
+            {filter ? "nothing matches that filter" : "no sessions yet"}
+          </text>
+        )
         : null}
       {window.map((item, i) => {
         const idx = Math.max(0, start) + i;
@@ -148,32 +192,61 @@ export function Sessions(
         const here = s.id === currentId;
         const mark = runMark(s);
         return (
-          <Text key={s.id} wrap="truncate">
-            <Text color={sel ? palette.accent : undefined}>{sel ? "❯ " : "  "}</Text>
-            <Text dimColor={s.kind !== "root"}>{KIND_GLYPH[s.kind] ?? "•"}</Text>
+          <text key={s.id} wrapMode="none">
+            {/* The row's own number, so `1`–`9` is a visible affordance and not a
+                shortcut you have to be told about. It addresses the row's position
+                ON SCREEN, which is why it is drawn from the window index. */}
+            <span attributes={TextAttributes.DIM}>{i < 9 ? `${i + 1} ` : "  "}</span>
+            <span fg={sel ? palette.accent : undefined}>{sel ? "❯ " : "  "}</span>
+            <span attributes={s.kind === "root" ? TextAttributes.NONE : TextAttributes.DIM}>
+              {KIND_GLYPH[s.kind] ?? "•"}
+            </span>
             {mark
-              ? <Text color={sel ? undefined : mark.color}>{` ${mark.glyph}`}</Text>
-              : <Text>{"  "}</Text>}
-            <Text bold={here}>{" "}{clip(item.label, 46)}</Text>
-            {item.project ? <Text dimColor>{"  "}{item.project}</Text> : null}
-            <Text dimColor>{"  "}{here ? "here · " : ""}{relTime(s.createdAt, now)}</Text>
-          </Text>
+              ? <span fg={sel ? undefined : mark.color}>{` ${mark.glyph}`}</span>
+              : <span>{"  "}</span>}
+            <span attributes={here ? TextAttributes.BOLD : TextAttributes.NONE}>
+              {" "}
+              {clip(item.label, 46)}
+            </span>
+            {item.project
+              ? <span attributes={TextAttributes.DIM}>{"  "}{item.project}</span>
+              : null}
+            <span attributes={TextAttributes.DIM}>
+              {"  "}
+              {here ? "here · " : ""}
+              {relTime(s.createdAt, now)}
+            </span>
+          </text>
         );
       })}
-      {end < items.length || start > 0
-        ? <Text dimColor>— {Math.max(0, start) + window.length}/{items.length} —</Text>
+      {counter
+        ? (
+          <text attributes={TextAttributes.DIM}>
+            — {Math.max(0, start) + window.length}/{items.length} —
+          </text>
+        )
         : null}
-      <Text dimColor wrap="truncate">● root · ⑂ fork · ≣ compacted · ⋯ running · ✗ failed</Text>
+      {glyphKey
+        ? (
+          <text attributes={TextAttributes.DIM} wrapMode="none">
+            ● root · ⑂ fork · ≣ compacted · ⋯ running · ✗ failed
+          </text>
+        )
+        : null}
       {
         /*
-        Only keys the keymap actually binds. This line used to advertise
-        "/ filter · n new"; neither is in `keys.ts`, so pressing either left the
-        list byte-identical. A footer is a promise, and these two were false —
-        the generated `?` overlay cannot drift because it is derived from the
-        table, but these hand-written per-tab lines can, and had.
+        Only keys the keymap actually binds, and it is the LAST row of the tab —
+        the same position on every tab, so the answer to "what can I press here"
+        is always in the same place. It used to advertise "/ filter · n new" when
+        `keys.ts` bound neither; `/` is bound now (`panel.filter`, scoped to
+        `FILTER_TABS`) and `n` still is not, so `n` is still not named.
       */
       }
-      <Text dimColor wrap="truncate">↑↓ move · ⏎ open · → drill in · esc back</Text>
-    </Box>
+      <text attributes={TextAttributes.DIM} wrapMode="none">
+        {filtering
+          ? "type to narrow · ⌫ back · esc clear the filter · ↑↓ move · ⏎ open"
+          : "↑↓ move · pgup/pgdn page · 1-9 pick · / filter · ⏎ open · → drill in · esc back"}
+      </text>
+    </box>
   );
 }

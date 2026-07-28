@@ -12,6 +12,7 @@
  * Hermetic: no network, no registry file, and the child's environment is composed
  * by `config.childEnv` exactly as production composes it.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { McpError } from "../errors.ts";
 import { childEnv, ServerConfig } from "./config.ts";
@@ -24,18 +25,13 @@ import {
 
 const FIXTURE = new URL("./testdata/echo_server.ts", import.meta.url).pathname;
 
-/** Spawns real children; self-skips if `--allow-run` was not granted. */
-async function canRun(): Promise<boolean> {
-  return (await Deno.permissions.query({ name: "run" })).state === "granted";
-}
-
 function connectFixture(
   args: string[] = [],
   timeouts: McpTimeouts = {},
 ): Promise<McpStdioClient> {
   const server = ServerConfig.parse({
-    command: Deno.execPath(),
-    args: ["run", "--quiet", "--no-config", FIXTURE, ...args],
+    command: process.execPath,
+    args: ["run", FIXTURE, ...args],
   });
   return McpStdioClient.connect({
     name: "echo",
@@ -47,8 +43,7 @@ function connectFixture(
   });
 }
 
-Deno.test("handshake, paginated tools/list, tools/call, close", async () => {
-  if (!(await canRun())) return;
+test("handshake, paginated tools/list, tools/call, close", async () => {
   const client = await connectFixture();
   try {
     assert.equal(client.alive, true);
@@ -82,8 +77,7 @@ Deno.test("handshake, paginated tools/list, tools/call, close", async () => {
   assert.equal(client.alive, false);
 });
 
-Deno.test("a server that logs to stdout still connects", async () => {
-  if (!(await canRun())) return;
+test("a server that logs to stdout still connects", async () => {
   const client = await connectFixture(["--noise"]);
   try {
     assert.equal((await client.listTools()).length, 6);
@@ -92,8 +86,7 @@ Deno.test("a server that logs to stdout still connects", async () => {
   }
 });
 
-Deno.test("a server that dies mid-call fails that call, by name, with its stderr", async () => {
-  if (!(await canRun())) return;
+test("a server that dies mid-call fails that call, by name, with its stderr", async () => {
   const client = await connectFixture();
   try {
     const error = await client.callTool("die", {}).then(
@@ -118,8 +111,7 @@ Deno.test("a server that dies mid-call fails that call, by name, with its stderr
   }
 });
 
-Deno.test("a call the server never answers fails on its deadline, server still alive", async () => {
-  if (!(await canRun())) return;
+test("a call the server never answers fails on its deadline, server still alive", async () => {
   const client = await connectFixture([], { callMs: 300 });
   try {
     const error = await client.callTool("slow", {}).then(() => undefined, (e: unknown) => e);
@@ -134,8 +126,7 @@ Deno.test("a call the server never answers fails on its deadline, server still a
   }
 });
 
-Deno.test("a server that starts and never handshakes fails on the connect deadline", async () => {
-  if (!(await canRun())) return;
+test("a server that starts and never handshakes fails on the connect deadline", async () => {
   const started = Date.now();
   const error = await connectFixture(["--deaf"], { connectMs: 300 }).then(
     () => undefined,
@@ -148,8 +139,7 @@ Deno.test("a server that starts and never handshakes fails on the connect deadli
   assert.ok(Date.now() - started < 10_000, "connect must not outlast its deadline");
 });
 
-Deno.test("a binary that does not exist fails at spawn, naming the command", async () => {
-  if (!(await canRun())) return;
+test("a binary that does not exist fails at spawn, naming the command", async () => {
   const error = await McpStdioClient.connect({
     name: "ghost",
     argv: ["/nonexistent/bough-mcp-server", "--serve"],
@@ -161,20 +151,18 @@ Deno.test("a binary that does not exist fails at spawn, naming the command", asy
   assert.match(error.message, /bough-mcp-server/);
 });
 
-Deno.test("a process that exits immediately fails the handshake instead of hanging", async () => {
-  if (!(await canRun())) return;
+test("a process that exits immediately fails the handshake instead of hanging", async () => {
   const error = await McpStdioClient.connect({
     name: "quitter",
-    argv: [Deno.execPath(), "eval", "--quiet", "Deno.exit(1)"],
-    env: childEnv(ServerConfig.parse({ command: Deno.execPath() })),
+    argv: [process.execPath, "-e", "process.exit(1)"],
+    env: childEnv(ServerConfig.parse({ command: process.execPath })),
     timeouts: { connectMs: 20_000 },
   }).then(() => undefined, (e: unknown) => e);
   assert.ok(error instanceof McpError, `expected McpError, got ${error}`);
   assert.match(error.message, /MCP server "quitter" exited/);
 });
 
-Deno.test("requests after close reject rather than resolving on a dead pipe", async () => {
-  if (!(await canRun())) return;
+test("requests after close reject rather than resolving on a dead pipe", async () => {
   const client = await connectFixture();
   await client.close();
   await assert.rejects(
@@ -184,8 +172,7 @@ Deno.test("requests after close reject rather than resolving on a dead pipe", as
   await assert.rejects(() => client.callTool("echo", { text: "hi" }), McpError);
 });
 
-Deno.test("shutdown kills every live server — the wiring server/main.ts calls", async () => {
-  if (!(await canRun())) return;
+test("shutdown kills every live server — the wiring server/main.ts calls", async () => {
   const before = liveMcpServerCount();
   const a = await connectFixture();
   const b = await connectFixture();

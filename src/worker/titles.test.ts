@@ -18,6 +18,7 @@
  * unreachable here and a test that cannot run offline does not belong in
  * `deno task test`.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { Bus } from "../bus.ts";
 import { openDb, type SqliteDb } from "../db/db.ts";
@@ -124,7 +125,7 @@ const settle = () => new Promise<void>((r) => setTimeout(r, 0));
 // The shared call
 // ---------------------------------------------------------------------------
 
-Deno.test("cheapText returns the concatenated text of a successful round", async () => {
+test("cheapText returns the concatenated text of a successful round", async () => {
   const text = await cheapText({
     system: "s",
     prompt: "p",
@@ -134,7 +135,7 @@ Deno.test("cheapText returns the concatenated text of a successful round", async
   assert.equal(text, "hello");
 });
 
-Deno.test("cheapText resolves null for every provider failure — it never rejects", async () => {
+test("cheapText resolves null for every provider failure — it never rejects", async () => {
   const throwsSync: LlmClient = {
     run: () => {
       throw new Error("no API key for anthropic");
@@ -156,7 +157,7 @@ Deno.test("cheapText resolves null for every provider failure — it never rejec
   }
 });
 
-Deno.test("cheapText abandons a hung provider at its deadline", async () => {
+test("cheapText abandons a hung provider at its deadline", async () => {
   // The failure a try/catch does not cover. Without this the promise never settles,
   // and the activity watcher's one-slot-per-session ledger would never be released.
   const started = Date.now();
@@ -171,7 +172,7 @@ Deno.test("cheapText abandons a hung provider at its deadline", async () => {
   assert.ok(Date.now() - started < 5_000, "the deadline, not the test runner, ended it");
 });
 
-Deno.test("the cheap model is read per call, and defaults when unset", () => {
+test("the cheap model is read per call, and defaults when unset", () => {
   assert.equal(cheapModel(() => undefined), DEFAULT_CHEAP_MODEL);
   assert.equal(cheapModel(() => "   "), DEFAULT_CHEAP_MODEL);
   assert.equal(
@@ -184,13 +185,13 @@ Deno.test("the cheap model is read per call, and defaults when unset", () => {
 // Sanitizing
 // ---------------------------------------------------------------------------
 
-Deno.test("sanitizeTitle strips the label, the quoting and the trailing period", () => {
+test("sanitizeTitle strips the label, the quoting and the trailing period", () => {
   assert.equal(sanitizeTitle('Title: "Fix the patch parser."'), "Fix the patch parser");
   assert.equal(sanitizeTitle("\n\n  rewrite the theme route  \n"), "rewrite the theme route");
   assert.equal(sanitizeTitle("**bold answer**"), "bold answer");
 });
 
-Deno.test("sanitizeTitle caps a model that answered the message instead of titling it", () => {
+test("sanitizeTitle caps a model that answered the message instead of titling it", () => {
   // The live finding the word cap exists for: a session titled with thirteen words
   // of story. It is now REFUSED outright rather than capped — eight words of an
   // answer is still an answer, and a session with no title falls back to its
@@ -205,13 +206,13 @@ Deno.test("sanitizeTitle caps a model that answered the message instead of titli
   assert.equal(sanitizeTitle("theme picker previews live"), "theme picker previews live");
 });
 
-Deno.test("cheapTitle is null for empty input and for an unusable answer", async () => {
+test("cheapTitle is null for empty input and for an unusable answer", async () => {
   assert.equal(await cheapTitle("   ", { llm: sayingClient("x") }), null);
   assert.equal(await cheapTitle("hello", { llm: sayingClient('""') }), null);
   assert.equal(await cheapTitle("hello", { llm: sayingClient("Fix it") }), "Fix it");
 });
 
-Deno.test("userText joins the text parts and ignores everything else", () => {
+test("userText joins the text parts and ignores everything else", () => {
   const message: Message = {
     id: "m",
     sessionId: "s",
@@ -231,7 +232,7 @@ Deno.test("userText joins the text parts and ignores everything else", () => {
 // Auto-titling
 // ---------------------------------------------------------------------------
 
-Deno.test("a posted first message names the untitled session and announces it", async () => {
+test("a posted first message names the untitled session and announces it", async () => {
   const f = fixture({
     title: () => Promise.resolve("fix the patch parser"),
     ghostText: () => Promise.resolve(null),
@@ -253,7 +254,7 @@ Deno.test("a posted first message names the untitled session and announces it", 
   }
 });
 
-Deno.test("a session that already has a title is never re-titled and never billed", async () => {
+test("a session that already has a title is never re-titled and never billed", async () => {
   let calls = 0;
   const f = fixture({
     title: () => {
@@ -275,7 +276,7 @@ Deno.test("a session that already has a title is never re-titled and never bille
   }
 });
 
-Deno.test("a rename during the round-trip is not clobbered by the answer", async () => {
+test("a rename during the round-trip is not clobbered by the answer", async () => {
   let release: (title: string) => void = () => {};
   const f = fixture({
     title: () => new Promise<string>((r) => (release = r)),
@@ -296,7 +297,7 @@ Deno.test("a rename during the round-trip is not clobbered by the answer", async
   }
 });
 
-Deno.test("two messages in quick succession buy exactly one title", async () => {
+test("two messages in quick succession buy exactly one title", async () => {
   let calls = 0;
   let release: (title: string) => void = () => {};
   const f = fixture({
@@ -321,7 +322,7 @@ Deno.test("two messages in quick succession buy exactly one title", async () => 
   }
 });
 
-Deno.test("an images-only message buys no title", async () => {
+test("an images-only message buys no title", async () => {
   let calls = 0;
   const f = fixture({
     title: () => {
@@ -346,7 +347,7 @@ Deno.test("an images-only message buys no title", async () => {
 // Failure is a non-event  (the AC)
 // ---------------------------------------------------------------------------
 
-Deno.test("a REJECTING cheap tier leaves the message path completely unaffected", async () => {
+test("a REJECTING cheap tier leaves the message path completely unaffected", async () => {
   const f = fixture({
     // A tier that violates its own contract, which is the worst case: the type says
     // these never reject, but an implementation is not bound by a type.
@@ -378,7 +379,7 @@ Deno.test("a REJECTING cheap tier leaves the message path completely unaffected"
   }
 });
 
-Deno.test("a THROWING cheap tier does not break bus fan-out to other subscribers", async () => {
+test("a THROWING cheap tier does not break bus fan-out to other subscribers", async () => {
   const f = fixture({
     title: () => {
       throw new Error("synchronous explosion");
@@ -402,7 +403,7 @@ Deno.test("a THROWING cheap tier does not break bus fan-out to other subscribers
   }
 });
 
-Deno.test("no cheap tier at all is a working server, not a degraded one", async () => {
+test("no cheap tier at all is a working server, not a degraded one", async () => {
   const f = fixture(undefined);
   try {
     const session = await newSession(f);
@@ -417,7 +418,7 @@ Deno.test("no cheap tier at all is a working server, not a degraded one", async 
   }
 });
 
-Deno.test("a model that answered instead of titling yields NO title, not a truncated lie", () => {
+test("a model that answered instead of titling yields NO title, not a truncated lie", () => {
   // The live header, from a session where bough had just read the file it claimed
   // no access to. Eight words of an answer is not a title, it is a false sentence
   // shown above every screen.
@@ -443,7 +444,7 @@ Deno.test("a model that answered instead of titling yields NO title, not a trunc
   );
 });
 
-Deno.test("a real title still passes through untouched", () => {
+test("a real title still passes through untouched", () => {
   assert.equal(
     sanitizeTitle("Fix division by zero in calculator"),
     "Fix division by zero in calculator",

@@ -20,6 +20,7 @@
  * key. Each test builds its own `JobRegistry` and installs it for the duration, so
  * nothing leaks into the process-wide one the server wires at boot.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { Bus } from "../bus.ts";
 import { openDb } from "../db/db.ts";
@@ -73,7 +74,7 @@ const post = (path: string) => new Request(url(path), { method: "POST" });
 
 // ---- lineage ----------------------------------------------------------------
 
-Deno.test("AC: the tree walk collects subagents transitively, and only delegates", async () => {
+test("AC: the tree walk collects subagents transitively, and only delegates", async () => {
   await using f = fixture();
   f.db.createSession(session("root"));
   f.db.createSession(session("kid", { kind: "subagent", originId: "root" }));
@@ -88,7 +89,7 @@ Deno.test("AC: the tree walk collects subagents transitively, and only delegates
   assert.deepEqual(jobSessionIds(f.db, "branch"), ["branch"]);
 });
 
-Deno.test("a lineage cycle does not hang the walk", async () => {
+test("a lineage cycle does not hang the walk", async () => {
   await using f = fixture();
   f.db.createSession(session("a"));
   f.db.createSession(session("b", { kind: "subagent", originId: "a" }));
@@ -99,16 +100,16 @@ Deno.test("a lineage cycle does not hang the walk", async () => {
 
 // ---- listing ----------------------------------------------------------------
 
-Deno.test("AC: GET /sessions/:id/jobs includes the subagents' shells", async () => {
+test("AC: GET /sessions/:id/jobs includes the subagents' shells", async () => {
   await using f = fixture();
   f.db.createSession(session("spawner"));
   f.db.createSession(session("child", { kind: "subagent", originId: "spawner" }));
 
   const own = JSON.parse(
-    f.registry.bashBg("sleep 30", { sessionId: "spawner", workspace: Deno.cwd() }),
+    f.registry.bashBg("sleep 30", { sessionId: "spawner", workspace: process.cwd() }),
   ) as { id: string };
   const childs = JSON.parse(
-    f.registry.bashBg("sleep 30", { sessionId: "child", workspace: Deno.cwd() }),
+    f.registry.bashBg("sleep 30", { sessionId: "child", workspace: process.cwd() }),
   ) as { id: string };
 
   const res = await f.call(get("/sessions/spawner/jobs"));
@@ -125,7 +126,7 @@ Deno.test("AC: GET /sessions/:id/jobs includes the subagents' shells", async () 
   assert.deepEqual(childOnly.jobs.map((j) => j.id), [childs.id]);
 });
 
-Deno.test("an unknown session is a 404 rather than an empty job list", async () => {
+test("an unknown session is a 404 rather than an empty job list", async () => {
   await using f = fixture();
   const res = await f.call(get("/sessions/ghost/jobs"));
   assert.equal(res.status, 404);
@@ -134,11 +135,11 @@ Deno.test("an unknown session is a 404 rather than an empty job list", async () 
 
 // ---- kill -------------------------------------------------------------------
 
-Deno.test("AC: killing a job emits job.exited and reports the outcome", async () => {
+test("AC: killing a job emits job.exited and reports the outcome", async () => {
   await using f = fixture();
   f.db.createSession(session("s1"));
   const { id } = JSON.parse(
-    f.registry.bashBg("sleep 30", { sessionId: "s1", workspace: Deno.cwd() }),
+    f.registry.bashBg("sleep 30", { sessionId: "s1", workspace: process.cwd() }),
   ) as { id: string };
 
   const exited: BackgroundJob[] = [];
@@ -155,12 +156,12 @@ Deno.test("AC: killing a job emits job.exited and reports the outcome", async ()
   assert.equal(exited[0].sessionId, "s1");
 });
 
-Deno.test("kill resolves a SUBAGENT's job through its spawner's session", async () => {
+test("kill resolves a SUBAGENT's job through its spawner's session", async () => {
   await using f = fixture();
   f.db.createSession(session("spawner"));
   f.db.createSession(session("child", { kind: "subagent", originId: "spawner" }));
   const { id } = JSON.parse(
-    f.registry.bashBg("sleep 30", { sessionId: "child", workspace: Deno.cwd() }),
+    f.registry.bashBg("sleep 30", { sessionId: "child", workspace: process.cwd() }),
   ) as { id: string };
 
   // The URL names the spawner; the job belongs to the child. Anything the list
@@ -171,7 +172,7 @@ Deno.test("kill resolves a SUBAGENT's job through its spawner's session", async 
   assert.deepEqual(f.registry.runningIds("child"), []);
 });
 
-Deno.test("killing an unknown job is a 404 that says why it might be gone", async () => {
+test("killing an unknown job is a 404 that says why it might be gone", async () => {
   await using f = fixture();
   f.db.createSession(session("s1"));
   const res = await f.call(post("/sessions/s1/jobs/bg_999/kill"));
@@ -181,11 +182,11 @@ Deno.test("killing an unknown job is a 404 that says why it might be gone", asyn
 
 // ---- output -----------------------------------------------------------------
 
-Deno.test("output returns the whole buffer and does NOT steal the model's cursor", async () => {
+test("output returns the whole buffer and does NOT steal the model's cursor", async () => {
   await using f = fixture();
   f.db.createSession(session("s1"));
   const { id } = JSON.parse(
-    f.registry.bashBg("echo hello-from-the-job", { sessionId: "s1", workspace: Deno.cwd() }),
+    f.registry.bashBg("echo hello-from-the-job", { sessionId: "s1", workspace: process.cwd() }),
   ) as { id: string };
   await f.registry.bashWait(id, "s1");
 
@@ -204,7 +205,7 @@ Deno.test("output returns the whole buffer and does NOT steal the model's cursor
   assert.equal(again.output, body.output);
 });
 
-Deno.test("output for an unknown job is a 404", async () => {
+test("output for an unknown job is a 404", async () => {
   await using f = fixture();
   f.db.createSession(session("s1"));
   const res = await f.call(get("/sessions/s1/jobs/bg_404/output"));

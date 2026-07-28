@@ -36,7 +36,8 @@
  * the same array is what a click, a search mark or a drag selection would be
  * addressed against. Two derivations would be two answers to "which row is that".
  */
-import { Box, Text, useApp, useInput, useStdout } from "ink";
+import { type KeyEvent, TextAttributes } from "@opentui/core";
+import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { ModelRow } from "../../llm/client.ts";
 import { api, type SessionRow } from "../api.ts";
@@ -52,10 +53,8 @@ import {
   SPINNER_MS,
   UI,
 } from "../format.ts";
-import { onResize, type TermSize } from "../term.ts";
 import {
   chordOf,
-  chunkInput,
   type Command,
   editLine,
   EMPTY_LINE,
@@ -63,14 +62,22 @@ import {
   insertText,
   isTextInput,
   type KeyContext,
+  type KeyFlags,
   type LineState,
   lookup,
   stripCtl,
   type UiMode,
 } from "../keys.ts";
-import { currentAsk, isBusy, type Store, type TuiState } from "../store.ts";
+import {
+  currentAsk,
+  isBusy,
+  liveUnits,
+  marksFor,
+  type Store,
+  type TuiState,
+} from "../store.ts";
 import { Chat, type ChatMeter } from "./Chat.tsx";
-import { Composer } from "./Composer.tsx";
+import { Composer, completionPopupHeight, composerHeight } from "./Composer.tsx";
 import { type PanelControls, type PanelHostDeps, usePanelHost } from "./PanelHost.tsx";
 import { historyTreeRows } from "../historytree.ts";
 import { liveSubagents, SubagentRail } from "./SubagentRail.tsx";
@@ -93,7 +100,8 @@ const DOUBLE_ESC_MS = 600;
 export type AppControls = PanelControls;
 
 /**
- * What the stdin filter (`mouse.ts`) took out of the stream before ink saw it.
+ * What the stdin filter (`mouse.ts`) took out of the stream before the renderer
+ * saw it.
  *
  * Registration rather than props, because these are *streams* of events and not
  * state: each `on*` takes a handler and returns an unsubscribe. `main.tsx` owns
@@ -141,8 +149,76 @@ const WHEEL_ROWS = 3;
 /** How often the rail re-reads the session's children while a turn is running. */
 const RAIL_POLL_MS = 1500;
 
+/**
+ * How often the rail's elapsed times advance when no turn is running.
+ *
+ * A background shell outlives the turn that started it, so the rail needs a clock of
+ * its own — but it is showing seconds, not a spinner, and a spinner's 120ms would be
+ * eight wakeups a second to move a number once. One clock, two rates.
+ */
+const RAIL_TICK_MS = 1000;
+
 /** Rows the `?` overlay moves per ↑/↓. A keymap is scanned, not paged. */
 const HELP_STEP = 3;
+
+/** The named keys `keys.ts` knows by flag rather than by byte. */
+const NAMED_KEYS: Record<string, keyof KeyFlags> = {
+  up: "upArrow",
+  down: "downArrow",
+  left: "leftArrow",
+  right: "rightArrow",
+  pageup: "pageUp",
+  pagedown: "pageDown",
+  return: "return",
+  enter: "return",
+  escape: "escape",
+  tab: "tab",
+  backspace: "backspace",
+  delete: "delete",
+};
+
+/**
+ * One OpenTUI `KeyEvent` in the `(input, key)` shape `keys.ts` reads.
+ *
+ * `keys.ts` is the keymap and it is heavily tested against ink's `Key` shape, so
+ * the terminal's parser is adapted to IT rather than the other way round —
+ * `chordOf`/`isTextInput`/`resolve` and their thirty cases are unchanged.
+ *
+ * Two things are not a rename. `input` is ink's first argument, which for a chord
+ * is the BASE character (`^c` → `"c"`), and OpenTUI's `sequence` is the raw byte
+ * (`"\x03"`); so a modified key takes its `name` and only unmodified printable
+ * text takes its `sequence` — which is what keeps a capital `A` a capital `A`.
+ * And macOS reports Option as `option`, which is ink's `meta`.
+ *
+ * `home`/`end`/`CSI Z`/forward-delete are deliberately absent: the stdin filter
+ * (`mouse.ts`) consumes them and dispatches them through `hooks.onNavKey`, so
+ * they never reach this handler at all.
+ */
+function inkKey(event: KeyEvent): { input: string; key: KeyFlags } {
+  const key: KeyFlags = {
+    ctrl: event.ctrl,
+    shift: event.shift,
+    meta: event.meta || event.option,
+    super: event.super ?? false,
+  };
+  const named = NAMED_KEYS[event.name];
+  if (named) key[named] = true;
+  // ESC ESC arrives as ONE event flagged meta (the same pathology ink had). It is
+  // an escape, not ⌥esc: the double-tap is recognised below, off the sequence.
+  if (event.name === "escape") key.meta = false;
+
+  const printable = event.sequence.length === 1 && event.sequence >= " " &&
+    event.sequence !== "\x7f";
+  const input = printable && !event.ctrl
+    ? event.sequence
+    : event.name.length === 1
+    ? event.name
+    : event.sequence;
+  return { input, key };
+}
+
+/** ESC ESC in a single read — OpenTUI coalesces it into one event. */
+const DOUBLE_ESC_SEQ = "\x1b\x1b";
 
 export function App(
   {
@@ -157,52 +233,94 @@ export function App(
     now = Date.now,
   }: AppProps,
 ) {
-  const { exit } = useApp();
-  const { stdout } = useStdout();
+  const renderer = useRenderer();
   const state = useSyncExternalStore<TuiState>(store.subscribe, store.getState, store.getState);
 
   const [mode, setMode] = useState<UiMode>("chat");
-  const [line, setLine] = useState<LineState>(EMPTY_LINE);
+  // The draft is kept in a REF as well as in state, and every write goes through
+  // `setLine` so the two cannot drift.
+  //
+  // WHY: a keypress is guarded against the draft (`emptyDraft` decides whether `?`
+  // opens the overlay and whether `^d` jumps to the changes tab), and React state
+  // does not update until the next render. A terminal delivers a burst — a fast
+  // typist, key repeat, a laggy ssh session — as several events processed back to
+  // back BEFORE any render, so every one of them read the draft as it was before
+  // the burst started. Writing `abc?def` in one chunk therefore opened the help
+  // overlay on the fourth character and silently ate the `?`: the composer lost a
+  // character the user typed, which is the one thing it may never do. The `?` was
+  // just the visible case; `quitArmed` below had the same defect (`^c^c` in one
+  // read did not quit), and any future draft-derived guard would inherit it.
+  const [line, setLineState] = useState<LineState>(EMPTY_LINE);
+  const lineRef = useRef<LineState>(EMPTY_LINE);
+  const setLine = useCallback((next: LineState | ((s: LineState) => LineState)) => {
+    const value = typeof next === "function" ? next(lineRef.current) : next;
+    lineRef.current = value;
+    setLineState(value);
+  }, []);
   const [scrollOff, setScrollOff] = useState(0);
   const [foldAll, setFoldAll] = useState(false);
   const [railSel, setRailSel] = useState(0);
+  /** The rail unit a first `x` armed. Id, not the unit: the row is re-derived. */
+  const [armedStop, setArmedStop] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set<string>());
   const [children, setChildren] = useState<Record<string, SessionRow[]>>({});
   const [sent, setSent] = useState<string[]>([]);
   const [histAt, setHistAt] = useState<number | null>(null);
   const [askText, setAskText] = useState("");
-  const [quitArmed, setQuitArmed] = useState(false);
+  // Same reason as the draft ref above: `^c^c` arriving in ONE read left the second
+  // event reading `quitArmed` as false, so the gesture armed the hint twice and
+  // never quit. The ref is what the handler reads; the state is what renders.
+  // A ref and not state: nothing RENDERS from it — the hint is a store notice — so
+  // state bought only the staleness.
+  const quitArmedRef = useRef(false);
+  const setQuitArmed = useCallback((armed: boolean) => {
+    quitArmedRef.current = armed;
+  }, []);
   const lastEsc = useRef(0);
+  /** A first Escape held while we wait to see whether a second one follows. */
+  const escHold = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // The size is TRACKED, not sampled once. ink re-rendered the tree for the first
   // resize and then never again, so a terminal that grew left the bottom of the
-  // screen unused until restart; `onResize` makes this app own the signal. The
-  // initial read still prefers ink's stdout so a test can mount with a fake one.
-  // `|| 80`, not `?? 80`: a stdout with no size reports 0, and a zero-width
+  // screen unused until restart, and this app had to own the SIGWINCH itself
+  // (`term.ts`'s `onResize`). OpenTUI's renderer re-renders on every resize and
+  // `useTerminalDimensions` is that signal, so there is exactly ONE subscription
+  // here rather than two competing ones.
+  // `|| 80`, not `?? 80`: a renderer with no tty reports 0, and a zero-width
   // viewport wraps the transcript one character per line rather than falling back.
-  const [size, setSize] = useState<TermSize>(() => ({
-    cols: Math.max(20, stdout?.columns || 80),
-    rows: Math.max(8, stdout?.rows || 24),
-  }));
-  useEffect(() => onResize(setSize), []);
-  const { cols, rows } = size;
+  const term = useTerminalDimensions();
+  const cols = Math.max(20, term.width || 80);
+  const rows = Math.max(8, term.height || 24);
 
   const ask = currentAsk(state);
   const busy = isBusy(state);
 
   // A spinner needs a clock, and a clock that runs when nothing is happening is a
-  // wakeup per frame forever. This one exists only while a turn does: `busy` gates
-  // the interval, and the turn's start is stamped the moment it goes true.
+  // wakeup per frame forever. This one exists only while something does: a turn
+  // (spinner rate) or a background unit still on the rail (one second, which is the
+  // resolution of the number it moves).
   const [tick, setTick] = useState(0);
-  const busySince = useRef<number | null>(null);
-  if (busy && busySince.current === null) busySince.current = now();
-  if (!busy && busySince.current !== null) busySince.current = null;
+  // Whether anything is running is answered from the RAW sources, never from `units`
+  // below — `units` is derived from this clock, and gating the clock on it would be a
+  // loop through a memo.
+  const railBranches = useMemo(
+    () => liveSubagents(children[state.currentId ?? ""] ?? []),
+    [children, state.currentId],
+  );
+  const anyLive = busy || railBranches.length > 0 ||
+    state.jobs.some((j) => j.status === "running") ||
+    state.workflows.some((w) => w.status === "running" || w.status === "paused");
   useEffect(() => {
-    if (!busy) return;
-    const id = setInterval(() => setTick((t) => t + 1), SPINNER_MS);
+    if (!anyLive) return;
+    const id = setInterval(() => setTick((t) => t + 1), busy ? SPINNER_MS : RAIL_TICK_MS);
     return () => clearInterval(id);
-  }, [busy]);
-  const elapsedMs = busy && busySince.current !== null ? now() - busySince.current : 0;
+  }, [anyLive, busy]);
+  // THE STORE'S METER IS THE ONLY TURN CLOCK. This used to be a local `busySince` ref
+  // stamped when `busy` went true, which meant two answers to "how long has this been
+  // running" — and the ref's one was the one that could not also say what the turn had
+  // cost, because it knew nothing but a timestamp. `state.turn` carries both.
+  const turn = state.turn && state.turn.endedAt === null ? state.turn : null;
+  const elapsedMs = turn ? Math.max(0, now() - turn.startedAt) : 0;
 
   // ---- live delegated work -------------------------------------------------
   // The rail reads `children[currentId]`, and the ONLY thing that ever filled
@@ -213,7 +331,15 @@ export function App(
   //
   // Polled rather than evented because a subagent is a SESSION and its lifecycle
   // arrives as `session.created` on a stream the store does not index by origin.
-  // Only while a turn runs, plus one pull when it stops so finished rows clear.
+  //
+  // Polled while the TURN runs OR while a child is still on the rail — not while the
+  // turn runs alone. A subagent outlives the turn that spawned it, which is the entire
+  // reason the rail is pinned (spec §5), so "one pull when the turn stops" caught the
+  // agent still busy and then never looked again: the rail read `◆ sleep-1 · running`
+  // for as long as the process lived while the server had it `busy:false, interrupted`.
+  // Nothing runs invisibly is half the rule; the other half is that nothing on the rail
+  // is a ghost. This converges rather than loops — the poll writes `children`, and when
+  // the last child settles `railBranches` empties and the interval stops.
   useEffect(() => {
     const id = state.currentId;
     const list = controls.listChildren;
@@ -224,13 +350,13 @@ export function App(
         .then((rows) => alive && setChildren((c) => ({ ...c, [id]: rows })))
         .catch(() => {}); // a failed poll is a stale rail, never an error card
     pull();
-    if (!busy) return () => void (alive = false);
+    if (!busy && railBranches.length === 0) return () => void (alive = false);
     const timer = setInterval(pull, RAIL_POLL_MS);
     return () => {
       alive = false;
       clearInterval(timer);
     };
-  }, [state.currentId, busy, controls.listChildren]);
+  }, [state.currentId, busy, railBranches.length, controls.listChildren]);
 
   // ---- the @// completion -------------------------------------------------
   // Every pure piece of this already existed and was tested — `activeTrigger`,
@@ -300,19 +426,54 @@ export function App(
     // them here would re-announce on any unrelated store identity change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [backgroundSeq]);
-  const rail = useMemo(
-    () => liveSubagents(children[state.currentId ?? ""] ?? []),
-    [children, state.currentId],
+  // THE LIVE-WORK RAIL (spec §5: nothing runs invisibly). Shells, delegated agents and
+  // workflow runs, each as one row with its own elapsed and its own tokens. `liveUnits`
+  // is pure and ordered so a row never moves under the cursor; `tick` is in the deps
+  // because elapsed is measured against the clock, not against the data.
+  const units = useMemo(
+    () =>
+      liveUnits({
+        jobs: state.jobs,
+        subagents: railBranches,
+        workflows: state.workflows,
+        now: now(),
+      }),
+    [state.jobs, railBranches, state.workflows, tick],
   );
+  // A RUNNING shell is on the rail, so its card would be the same fact twice — and the
+  // copy at the tail of the transcript is the one you can only see while scrolled to
+  // the bottom. Exited jobs stay: an outcome belongs in the transcript.
+  const exitedJobs = useMemo(
+    () => state.jobs.filter((j) => j.status !== "running"),
+    [state.jobs],
+  );
+  // THE RAIL IS NOT A MODE YOU CAN BE STRANDED IN. Work finishes on its own — and now
+  // it can also be killed with `x` from inside the rail — so the row under the cursor
+  // can be the last one there is. Without this the rail renders nothing, `mode` is
+  // still "rail", and every subsequent keystroke is swallowed by a surface that is not
+  // on screen: the composer looks focused and eats what you type.
+  useEffect(() => {
+    if (units.length === 0) {
+      setMode((m) => (m === "rail" ? "chat" : m));
+      setRailSel(0);
+      return;
+    }
+    setRailSel((i) => Math.min(i, units.length - 1));
+  }, [units.length]);
+
+  // Memoized on the LEDGER, not on `state`: `marksFor` filters, so a fresh array every
+  // render would rebuild the whole transcript on every keystroke.
+  const marks = useMemo(() => marksFor(state, state.currentId), [state.marks, state.currentId]);
   const lines = useMemo(
     () =>
       buildLines(state.thread, () => foldAll, () => foldAll, cols, {
         streaming: state.streaming,
         toolLogs: state.toolLogs,
-        jobs: state.jobs,
+        jobs: exitedJobs,
+        marks,
         now: now(),
       }),
-    [state.thread, state.streaming, state.toolLogs, state.jobs, cols, foldAll],
+    [state.thread, state.streaming, state.toolLogs, exitedJobs, marks, cols, foldAll],
   );
   const tree = useMemo(
     () => treeItems({ roots: state.sessions, childrenByOrigin: children, expanded }),
@@ -368,10 +529,41 @@ export function App(
     [store],
   );
 
+  // ---- the frame -----------------------------------------------------------
+  // Three fixed regions and one growing one: header, then the growing region
+  // (transcript or panel), then the rail, the composer and the status row pinned
+  // to the bottom. Every fixed region reports its OWN height — `composerHeight`
+  // and `completionPopupHeight` mirror `Composer`'s render, the rail is its rows
+  // plus its hint — so the growing one is exactly what is left. The old math
+  // reserved a quarter of the screen for the composer and then subtracted a
+  // further constant 4, which left six unpainted rows under the status line at
+  // 34 rows: the input bar was not pinned to anything.
+  const composerRows = Math.min(8, Math.max(3, Math.floor(rows / 4)));
+  const railH = units.length === 0 ? 0 : units.length + (mode === "rail" ? 0 : 1);
+  const boxH = composerHeight({ input: line.text, busy, width: cols, maxRows: composerRows });
+  const popupH = trigger
+    ? completionPopupHeight(
+      completion.items.length,
+      Math.max(0, completion.total - completion.items.length),
+    )
+    : 0;
+  // An `ask()` takes the composer's place: prompt + options + the typed row + the
+  // legend, inside a border.
+  const inputH = ask ? 4 + (ask.options?.length ?? 0) : boxH + popupH;
+  // The panel keeps the pinned rows below it (rule 4: state lives in one row), so
+  // it gets the screen minus them. `Panel` subtracts its own chrome twice on the
+  // way down (`PanelHost` takes 4, `Panel` takes 2 more) and draws `rows - 2`, so
+  // it is handed two more than the region it must fit inside.
+  const panelBodyH = Math.max(
+    1,
+    rows - 1 /* header */ - railH - boxH - 1 /* status */ - (state.replay ? 1 : 0),
+  );
+  const panelRows = panelBodyH + 2;
+
   const panel = usePanelHost({
     store,
     state,
-    rows,
+    rows: panelRows,
     cols,
     now: now(),
     controls: { ...controls, forkAt },
@@ -387,6 +579,20 @@ export function App(
   // The panel outranks both — while it is open it IS the surface with the keyboard.
   const uiMode: UiMode = panel.open ? "panel" : mode === "chat" && ask ? "ask" : mode;
 
+  // The history cursor is a POSITION IN `sent`, and it only means anything while the
+  // draft is holding a prompt taken from there. Every route back to an empty composer
+  // — ^u, ^w down to nothing, backspace, esc esc, send — ends the browse, so the next
+  // ↑ is "my last prompt" again rather than wherever browsing happened to stop. Only
+  // `draft.clear` and `submit` reset it before, so the most common gesture of all
+  // (clear the line, ↑ to re-run) came back a prompt or two too far.
+  //
+  // An effect on the draft rather than a case per command: line editing is one
+  // functional `setLine` in `run`'s default arm, and reading `line` there would
+  // rebuild that callback — and re-subscribe the paste/mouse hooks — every keystroke.
+  useEffect(() => {
+    if (line.text === "") setHistAt(null);
+  }, [line.text]);
+
   const submit = useCallback((queue: boolean) => {
     const text = line.text.trim();
     if (text === "") return;
@@ -401,8 +607,10 @@ export function App(
   /** One command → one effect. Nothing here decides anything; it only dispatches. */
   const run = useCallback((command: Command, input: string) => {
     // The panel answers first and says so: every `panel.*`, `tab.*`, list-navigation
-    // and workflow-steering command is its own, and none of them appears below.
-    if (panel.handle(command)) return;
+    // and workflow-steering command is its own, and none of them appears below. The
+    // RAW keypress rides along because `panel.pick` needs the digit — a `1` and a `7`
+    // resolve to the same command, exactly as they do for `ask.pick`.
+    if (panel.handle(command, input)) return;
     const page = Math.max(1, rows - 8);
     const last = (n: number) => Math.max(0, n - 1);
     switch (command) {
@@ -410,7 +618,10 @@ export function App(
         setQuitArmed(true);
         return store.notify("^c again to quit — subagents and workflows keep running");
       case "quit":
-        return exit();
+        // Deferred: `destroy()` synchronously tears down renderables the React
+        // reconciler is still holding. `main.tsx` awaits the renderer's
+        // `onDestroy` in place of ink's `waitUntilExit`, so this IS the exit.
+        return queueMicrotask(() => renderer.destroy());
       // The overlay and the transcript share `scrollOff`, so entering or leaving
       // help must rewind it — otherwise a scrolled-back transcript opens the
       // overlay somewhere in its middle, and vice versa.
@@ -482,21 +693,60 @@ export function App(
           return setScrollOff((o) => Math.min(max, o + HELP_STEP));
         }
         return setScrollOff((o) => Math.max(0, o - page));
+      // A SCREEN rather than a step. ↑↓ scan the overlay three rows at a time, which
+      // put its last section — `won't do`, where the no-sandbox posture is stated —
+      // forty keypresses from the top, on the one surface that advertises pgup/pgdn.
+      case "scroll.pageUp":
+        if (uiMode === "help") return setScrollOff((o) => Math.max(0, o - page));
+        return setScrollOff((o) => Math.min(Math.max(0, lines.length - 1), o + page));
+      case "scroll.pageDown":
+        if (uiMode === "help") {
+          const max = Math.max(0, helpLines().length - Math.max(1, rows - 2));
+          return setScrollOff((o) => Math.min(max, o + page));
+        }
+        return setScrollOff((o) => Math.max(0, o - page));
 
+      // The rail's cursor moving is also the arming being dropped: a confirmation
+      // that outlives the row it was read on is not a confirmation.
       case "rail.enter":
         setRailSel(0);
+        setArmedStop(null);
         return setMode("rail");
       case "rail.up":
+        setArmedStop(null);
         return railSel === 0 ? setMode("chat") : setRailSel((i) => i - 1);
       case "rail.down":
-        return setRailSel((i) => Math.min(last(rail.length), i + 1));
+        setArmedStop(null);
+        return setRailSel((i) => Math.min(last(units.length), i + 1));
       case "rail.open": {
-        const target = rail[railSel];
+        const target = units[railSel];
         setMode("chat");
-        return target ? void store.open(target.id) : undefined;
+        setArmedStop(null);
+        // A shell's session is the one that spawned it, which for the open session's
+        // own shells is where you already are — harmless, and the right answer for a
+        // subagent's shell, which is the case you cannot otherwise reach.
+        return target ? void store.open(target.sessionId) : undefined;
       }
       case "rail.exit":
+        setArmedStop(null);
         return setMode("chat");
+      // Spec §7: consent is never inferred. The first press NAMES what dies, the
+      // second one kills it, and `stopUnit` records the kill where a toast cannot
+      // expire it.
+      case "rail.stop": {
+        const u = units[railSel];
+        if (!u) return;
+        if (armedStop !== u.id) {
+          setArmedStop(u.id);
+          return store.notify(
+            u.kind === "shell"
+              ? `x again to kill ${u.title} — ${u.detail ?? "background shell"}`
+              : `x again to stop ${u.title} — work in flight is lost`,
+          );
+        }
+        setArmedStop(null);
+        return void store.stopUnit(u);
+      }
 
       case "ask.pick": {
         const choice = ask?.options?.[Number(input) - 1];
@@ -519,14 +769,15 @@ export function App(
         return setLine((s) => editLine(s, command));
     }
   }, [
+    armedStop,
     ask,
     askText,
-    exit,
+    renderer,
     histAt,
     lines.length,
     uiMode,
     panel,
-    rail,
+    units,
     railSel,
     rows,
     sent,
@@ -534,7 +785,8 @@ export function App(
     submit,
   ]);
 
-  // A paste, a wheel tick and the Home/End keys ink does not deliver. Registered
+  // A paste, a wheel tick and the Home/End keys the filter takes off the stream
+  // before the renderer's own parser can see them (`mouse.ts`). Registered
   // once; each handler is one line, because none of them is a decision.
   useEffect(() => {
     const off = [
@@ -544,10 +796,10 @@ export function App(
         if (event.kind === "wheel-down") setScrollOff((o) => Math.max(0, o - WHEEL_ROWS));
       }),
       hooks.onNavKey?.((key) => {
-        // Backtab is not line editing: it is the panel's "previous tab", which no
-        // keypress could reach because ink does not decode `CSI Z` (`mouse.ts`).
+        // Backtab is not line editing: it is the panel's "previous tab". No
+        // keypress reaches it — the stdin filter eats `CSI Z` (`mouse.ts`).
         if (key === "shiftTab") return void run("panel.prev", "");
-        // `chordOf` cannot carry this one: ink reports macOS Backspace as
+        // `chordOf` cannot carry this one: macOS Backspace is reported as
         // `key.delete`, so the flag is not the key (`mouse.ts`).
         if (key === "forwardDelete") return setLine((s) => editLine(s, "delete.forward"));
         setLine((s) =>
@@ -560,35 +812,81 @@ export function App(
     };
   }, [hooks, run]);
 
-  useInput((input, key) => {
+  useKeyboard((event) => {
+    const { input, key } = inkKey(event);
     const chord = chordOf(input, key);
-    const doubleEsc = chord === "esc" && now() - lastEsc.current < DOUBLE_ESC_MS;
-    if (chord === "esc") lastEsc.current = now();
-    if (chord !== "ctrl+c" && quitArmed) setQuitArmed(false);
+    if (chord !== "ctrl+c" && quitArmedRef.current) setQuitArmed(false);
 
-    const ctx: KeyContext = {
+    // The two guards derived from React state are read from their REFS, because a
+    // burst of keypresses is processed before any of them re-renders. See `lineRef`.
+    const ctxWith = (doubleEsc: boolean): KeyContext => ({
       mode: uiMode,
-      emptyDraft: line.text === "",
-      multiline: line.text.includes("\n"),
+      // The panel's open tab is the SCOPE a bare letter resolves in (`keys.ts`): `x`
+      // stops a run in `workflows` and arms a revert in `changes`. Omitting it is a
+      // safe degrade — every tab-local letter resolves to nothing — which is exactly
+      // why it must be passed.
+      tab: panel.open ? panel.tab : null,
+      // While the panel's filter buffer has the keyboard, every bare letter is text —
+      // otherwise typing "opus" into the model tab pauses a workflow on the way past.
+      panelFiltering: panel.filtering,
+      emptyDraft: lineRef.current.text === "",
+      multiline: lineRef.current.text.includes("\n"),
       busy,
       doubleEsc,
-      quitArmed,
-      railLive: rail.length > 0,
+      quitArmed: quitArmedRef.current,
+      railLive: units.length > 0,
       completing,
-    };
-    const command = lookup(ctx, chord);
+    });
+
+    // ---- Escape: the one chord whose meaning depends on the NEXT keypress ----
+    // Two escapes 250ms apart used to mean something different from two escapes in
+    // one read. The burst carries `\x1b\x1b` in a single event, so `doubleEsc` was
+    // already true on the first one and `draft.clear` won and the turn survived;
+    // typed by hand, the first Escape saw `doubleEsc: false`, resolved to
+    // `turn.interrupt`, and the user who meant "clear my typo" killed the turn as
+    // well. One gesture, two opposite outcomes, decided by inter-key milliseconds.
+    //
+    // So the AMBIGUOUS case — and only that case, a running turn with text in the
+    // composer, where Escape could honestly mean either — is HELD for the double-tap
+    // window and resolved once the gesture is complete. Every unambiguous case still
+    // fires on the keystroke: with nothing typed there is nothing to clear, so a
+    // stop key at an empty composer is never delayed, which is the state a user is
+    // actually in when they reach for it.
+    if (chord === "esc") {
+      if (escHold.current !== null) {
+        clearTimeout(escHold.current);
+        escHold.current = null;
+        lastEsc.current = now();
+        return run("draft.clear", "");
+      }
+      const doubleEsc = event.sequence === DOUBLE_ESC_SEQ ||
+        now() - lastEsc.current < DOUBLE_ESC_MS;
+      lastEsc.current = now();
+      const command = lookup(ctxWith(doubleEsc), "esc");
+      if (command === "turn.interrupt" && !doubleEsc && lineRef.current.text !== "") {
+        escHold.current = setTimeout(() => {
+          escHold.current = null;
+          run("turn.interrupt", "");
+        }, DOUBLE_ESC_MS);
+        return;
+      }
+      return command ? run(command, "") : undefined;
+    }
+
+    const command = lookup(ctxWith(false), chord);
     if (command) return run(command, input);
     if (!isTextInput(input, key)) return;
     if (uiMode === "ask") return setAskText((t) => t + stripCtl(input));
+    // The panel's `/` buffer is the other surface that takes typing. It is reached only
+    // while `panelFiltering` is true, and while that is true `lookup` returns null for
+    // every bare letter and digit in the panel — so this is the whole of the modal
+    // half: one rule, every tab.
+    if (uiMode === "panel" && panel.filtering) return panel.filterInput(stripCtl(input));
     if (uiMode !== "chat") return;
-    // A fast typist's keystrokes and their Return can arrive in one read, so a
-    // newline may be data rather than a keypress (`chunkInput`).
-    if (/[\r\n]/.test(input)) {
-      const { body, send } = chunkInput(input);
-      if (body) setLine((s) => insertText(s, body));
-      if (send) submit(false);
-      return;
-    }
+    // Under ink a fast typist's keystrokes and their Return arrived in ONE read,
+    // so a newline could be data rather than a keypress and had to be split back
+    // out (`chunkInput`). OpenTUI's parser emits one event per key, so a Return
+    // is always a Return and never rides along inside typed text.
     // Typing re-opens a popup an earlier esc closed: esc dismisses THIS token, not
     // completion in general.
     setDismissed(false);
@@ -608,41 +906,91 @@ export function App(
   // you type. The top line is the conversation's title and nothing else.
   const workspace = shortenPath(state.session?.workspace ?? defaultWorkspace ?? "", home);
   const header = (
-    <Text wrap="truncate">
-      <Text bold>{title}</Text>
-      <Text color={UI.warn}>{state.connected ? "" : "  · disconnected"}</Text>
-    </Text>
+    <text wrapMode="none">
+      <b>{title}</b>
+      <span fg={UI.warn}>{state.connected ? "" : "  · disconnected"}</span>
+    </text>
   );
 
-  // The one non-chat surface. It takes the screen while it is open, and every tab
-  // it holds is `PanelHost`'s business rather than this file's.
+  const status = (
+    <StatusLine
+      width={cols}
+      meter={{
+        model: state.session?.model ?? state.effectiveModel,
+        costUsd: state.usage?.tree.costUsd ?? state.usage?.costUsd ?? null,
+        contextTokens: state.session?.contextTokens ?? null,
+        contextLimit: state.contextLimit,
+        workspace,
+        ...(state.session?.effort ? { effort: state.session.effort } : {}),
+        shells: state.jobs.filter((j) => j.status === "running").length,
+        help: true,
+      }}
+    />
+  );
+
+  // The one non-chat surface. It DISPLACES THE TRANSCRIPT and nothing else: the
+  // rail, the composer and the status row stay pinned under it, because a panel
+  // that blanks the status row means the mode, the workspace, the model, the cost
+  // and the context budget are all unreadable exactly while you are picking one
+  // of them. Every tab it holds is `PanelHost`'s business rather than this file's.
   if (panel.view) {
     return (
-      <Box flexDirection="column">
+      <box flexDirection="column">
         {header}
-        {panel.view}
-        {state.replay ? <Text dimColor wrap="truncate">{state.replay.line}</Text> : null}
-      </Box>
+        {/* Fixed height, so the rows below stay on the LAST rows of the screen.
+            A tab with little in it (`no MCP servers configured`) is five rows, and
+            without this the composer and the status row rode up under it and the
+            rest of the terminal was void. `Panel` sizes its body from the same
+            number, so its content is always shorter than this box. */}
+        <box flexDirection="column" height={panelBodyH}>
+          {panel.view}
+        </box>
+        {state.replay
+          ? <text attributes={TextAttributes.DIM} wrapMode="none">{state.replay.line}</text>
+          : null}
+        <SubagentRail
+          units={units}
+          sel={mode === "rail" ? railSel : null}
+          width={cols}
+          armedId={armedStop}
+        />
+        {/* No completion popup here: the panel owns the keyboard, so the draft
+            cannot change and a menu over it would be a control you cannot reach. */}
+        <Composer
+          input={line.text}
+          cursor={line.cursor}
+          busy={busy}
+          width={cols}
+          maxRows={composerRows}
+        />
+        {status}
+      </box>
     );
   }
 
-  const composerRows = Math.min(8, Math.max(3, Math.floor(rows / 4)));
   return (
-    <Box flexDirection="column">
+    <box flexDirection="column">
       {header}
       <Chat
         lines={lines}
         width={cols}
-        height={Math.max(1, rows - composerRows - 4 - rail.length)}
+        height={Math.max(1, rows - 1 /* header */ - railH - inputH - 1 /* status */)}
         scrollOff={scrollOff}
         activity={state.activity}
         busy={busy}
         elapsedMs={elapsedMs}
         tick={tick}
+        turnTokens={turn?.tokens ?? null}
+        turnCostUsd={turn?.costUsd ?? null}
         queued={state.queued}
         notice={state.notice}
       />
-      <SubagentRail branches={rail} sel={uiMode === "rail" ? railSel : null} />
+      <SubagentRail
+        units={units}
+        sel={uiMode === "rail" ? railSel : null}
+        width={cols}
+        armedId={armedStop}
+      />
       {ask
         ? <AskCard prompt={ask.question} options={ask.options ?? []} typed={askText} />
         : (
@@ -658,18 +1006,8 @@ export function App(
             completionMore={Math.max(0, completion.total - completion.items.length)}
           />
         )}
-      <StatusLine
-        width={cols}
-        meter={{
-          model: state.session?.model ?? state.effectiveModel,
-          costUsd: state.usage?.tree.costUsd ?? state.usage?.costUsd ?? null,
-          contextTokens: state.session?.contextTokens ?? null,
-          contextLimit: state.contextLimit,
-          workspace,
-          help: true,
-        }}
-      />
-    </Box>
+      {status}
+    </box>
   );
 }
 
@@ -688,7 +1026,7 @@ export function App(
 function StatusLine({ width, meter }: { width: number; meter: ChatMeter }) {
   const text = meterLine({ ...meter, width });
   if (!text) return null;
-  return <Text dimColor wrap="truncate">{text}</Text>;
+  return <text attributes={TextAttributes.DIM} wrapMode="none">{text}</text>;
 }
 
 /**
@@ -701,22 +1039,22 @@ function AskCard(
   { prompt, options, typed }: { prompt: string; options: string[]; typed: string },
 ) {
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={UI.warn} paddingX={1}>
-      <Text wrap="truncate">{prompt}</Text>
+    <box flexDirection="column" borderStyle="rounded" borderColor={UI.warn} paddingX={1}>
+      <text wrapMode="none">{prompt}</text>
       {options.map((option, i) => (
-        <Text key={option + i} wrap="truncate">
-          <Text color={UI.accent}>{` ${i + 1} `}</Text>
-          <Text>{option}</Text>
-        </Text>
+        <text key={option + i} wrapMode="none">
+          <span fg={UI.accent}>{` ${i + 1} `}</span>
+          <span>{option}</span>
+        </text>
       ))}
-      <Text wrap="truncate">
-        <Text dimColor>{"› "}</Text>
-        <Text>{typed}</Text>
-      </Text>
-      <Text dimColor wrap="truncate">
+      <text wrapMode="none">
+        <span attributes={TextAttributes.DIM}>{"› "}</span>
+        <span>{typed}</span>
+      </text>
+      <text attributes={TextAttributes.DIM} wrapMode="none">
         {options.length > 0 ? "1-9 pick · " : ""}type an answer · ⏎ send · esc decline
-      </Text>
-    </Box>
+      </text>
+    </box>
   );
 }
 
@@ -737,30 +1075,40 @@ function Help({ rows, offset }: { rows: number; offset: number }) {
   const visible = all.slice(start, start + body);
   const more = all.length - (start + visible.length);
   return (
-    <Box flexDirection="column">
-      <Text bold>{"keys · esc closes"}</Text>
+    <box flexDirection="column">
+      <text><b>{"keys · esc closes"}</b></text>
       {visible.map((l, i) => {
-        if (l.kind === "blank") return <Text key={i}>{" "}</Text>;
+        if (l.kind === "blank") return <text key={i}>{" "}</text>;
         if (l.kind === "header") {
           return (
-            <Text key={i} color={l.muted ? undefined : UI.accent} dimColor={l.muted}>
+            <text
+              key={i}
+              fg={l.muted ? undefined : UI.accent}
+              attributes={l.muted ? TextAttributes.DIM : undefined}
+            >
               {l.desc}
-            </Text>
+            </text>
           );
         }
         return (
-          <Text key={i} wrap="truncate" dimColor={l.muted}>
+          <text key={i} wrapMode="none" attributes={l.muted ? TextAttributes.DIM : undefined}>
             {l.prose
-              ? <Text dimColor>{"  · "}</Text>
-              : <Text color={l.muted ? undefined : UI.info}>{`  ${l.chord.padEnd(12)}`}</Text>}
-            <Text dimColor={l.muted}>{l.desc}</Text>
-          </Text>
+              ? <span attributes={TextAttributes.DIM}>{"  · "}</span>
+              : <span fg={l.muted ? undefined : UI.info}>{`  ${l.chord.padEnd(12)}`}</span>}
+            <span attributes={l.muted ? TextAttributes.DIM : undefined}>{l.desc}</span>
+          </text>
         );
       })}
-      <Text dimColor>
-        {more > 0 ? `↑↓ scroll · ${more} more below` : start > 0 ? "↑↓ scroll · end" : "↑↓ scroll"}
-      </Text>
-    </Box>
+      <text attributes={TextAttributes.DIM}>
+        {/* The legend names both, because the page keys are why the last section is
+            reachable at all — ↑↓ alone put it forty presses down. */}
+        {more > 0
+          ? `↑↓ pgup/pgdn scroll · ${more} more below`
+          : start > 0
+          ? "↑↓ pgup/pgdn scroll · end"
+          : "↑↓ pgup/pgdn scroll"}
+      </text>
+    </box>
   );
 }
 

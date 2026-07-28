@@ -26,7 +26,7 @@
  * `message.retry`.
  *
  * **Nothing here reaches for a global.** The API key reader and `fetch` are
- * injected (defaulting to `Deno.env.get` and the global `fetch`), which is what
+ * injected (defaulting to `process.env` and the global `fetch`), which is what
  * lets `client.test.ts` drive all three encodings offline with a stub transport
  * and no key in sight. Keys are read at `run()` time, not at construction, so a
  * key set through the running server applies without a restart.
@@ -74,11 +74,11 @@ export const API_KEY_ENV: Record<Provider, string> = {
 /** Reads one environment variable. Injected so tests never depend on the shell. */
 export type Env = (key: string) => string | undefined;
 
-const denoEnv: Env = (key) => Deno.env.get(key);
+const processEnv: Env = (key) => process.env[key];
 
 /** The seams a provider client needs from the outside world. Both are injected. */
 export interface ProviderOpts {
-  /** Defaults to `Deno.env.get`. */
+  /** Defaults to reading `process.env`. */
   env?: Env;
   /** Defaults to the global `fetch`. Tests pass a stub transport. */
   fetch?: typeof fetch;
@@ -119,7 +119,7 @@ export function isToolProtocol400(err: unknown): boolean {
  * "Error" for all of them while the console prints the class name. Matching on
  * `.name` alone silently misclassified every SDK connection error as
  * non-retryable, which turned a momentary network flap into an instant turn death.
- * The constructor name is the reliable signal in unbundled Deno.
+ * The constructor name is the reliable signal in unbundled source.
  */
 export function errName(err: unknown): string {
   const e = err as { name?: string; constructor?: { name?: string } } | null;
@@ -354,7 +354,7 @@ export function effortParams(effort?: Effort, model?: string): Record<string, un
  * into eighteen.
  */
 export function anthropicClient(opts: ProviderOpts = {}): LlmClient {
-  const env = opts.env ?? denoEnv;
+  const env = opts.env ?? processEnv;
   return {
     async run(params, onText, signal) {
       const apiKey = requireKey(env, "anthropic", "ANTHROPIC_AUTH_TOKEN");
@@ -504,7 +504,7 @@ export function fromResponsesOutput(
 }
 
 export function openaiClient(opts: ProviderOpts = {}): LlmClient {
-  const env = opts.env ?? denoEnv;
+  const env = opts.env ?? processEnv;
   const doFetch = opts.fetch ?? fetch;
   return {
     async run(params, onText, signal) {
@@ -700,7 +700,7 @@ interface OpenAICompatOpts extends ProviderOpts {
  * message and tool encoding end to end.
  */
 function openAICompatClient(opts: OpenAICompatOpts): LlmClient {
-  const env = opts.env ?? denoEnv;
+  const env = opts.env ?? processEnv;
   const doFetch = opts.fetch ?? fetch;
   return {
     async run(params, onText, signal) {
@@ -953,7 +953,7 @@ export function filterOpenAIModels(ids: string[]): ModelRow[] {
  * be exactly the global this file is written to avoid.
  */
 export async function discoverOpenAIModels(opts: ProviderOpts = {}): Promise<ModelRow[]> {
-  const env = opts.env ?? denoEnv;
+  const env = opts.env ?? processEnv;
   const doFetch = opts.fetch ?? fetch;
   const key = env(API_KEY_ENV.openai)?.trim();
   if (!key) return [];

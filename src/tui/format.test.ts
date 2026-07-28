@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "bun:test";
 import {
   activeTrigger,
   applyCompletion,
@@ -26,6 +27,7 @@ import {
   surface,
   toolSummary,
   truncateAnsi,
+  unitLine,
   width,
   windowAround,
   wordLeft,
@@ -55,7 +57,7 @@ function withoutColor<T>(fn: () => T): T {
   }
 }
 
-Deno.test("color: NO_COLOR is honored and every styled helper degrades to plain text", () => {
+test("color: NO_COLOR is honored and every styled helper degrades to plain text", () => {
   withoutColor(() => {
     assert.equal(colorEnabled(), false);
     assert.equal(md("**bold** and `code`"), "bold and code");
@@ -65,20 +67,20 @@ Deno.test("color: NO_COLOR is honored and every styled helper degrades to plain 
 
 // ---- wrapping ---------------------------------------------------------------
 
-Deno.test("wrapLine: wraps at the width and keeps leading indentation", () => {
+test("wrapLine: wraps at the width and keeps leading indentation", () => {
   // `trim: false` — the two leading columns are indentation the caller meant, and
   // the break keeps its space rather than reflowing the row.
   assert.deepEqual(wrapLine("  alpha beta gamma delta", 20), ["  alpha beta gamma ", "delta"]);
   assert.deepEqual(wrapLine("alpha beta", 40), ["alpha beta"]); // fits: one row
 });
 
-Deno.test("wrapLine: a word longer than the width is split, never overhung", () => {
+test("wrapLine: a word longer than the width is split, never overhung", () => {
   const out = wrapLine("x".repeat(50), 20);
   assert.equal(out.length, 3);
   for (const l of out) assert.ok(width(l) <= 20, `row too wide: ${width(l)}`);
 });
 
-Deno.test("wrapLine: a wrapped styled line measures by display width, not characters", () => {
+test("wrapLine: a wrapped styled line measures by display width, not characters", () => {
   withColor(() => {
     const styled = md("**alphabet** soup with rather a lot of words in it");
     assert.ok(styled.length > 49); // escapes inflate the character count…
@@ -88,7 +90,7 @@ Deno.test("wrapLine: a wrapped styled line measures by display width, not charac
   });
 });
 
-Deno.test("wrapLine: a sub-minimum width clamps instead of producing one column", () => {
+test("wrapLine: a sub-minimum width clamps instead of producing one column", () => {
   const out = wrapLine("alpha beta gamma", 1);
   for (const l of out) assert.ok(width(l) <= 20);
   assert.ok(out.length <= 2);
@@ -96,7 +98,7 @@ Deno.test("wrapLine: a sub-minimum width clamps instead of producing one column"
 
 // ---- ANSI-safe truncation ---------------------------------------------------
 
-Deno.test("truncateAnsi: cuts to display columns and keeps escapes intact", () => {
+test("truncateAnsi: cuts to display columns and keeps escapes intact", () => {
   withColor(() => {
     const styled = md("**abcdefghij** klmno");
     const cut = truncateAnsi(styled, 6);
@@ -107,7 +109,7 @@ Deno.test("truncateAnsi: cuts to display columns and keeps escapes intact", () =
   });
 });
 
-Deno.test("truncateAnsi: zero-width escapes are not counted as content", () => {
+test("truncateAnsi: zero-width escapes are not counted as content", () => {
   withColor(() => {
     const plain = "abcdef";
     const styled = md("`abcdef`"); // same six visible columns, plus escapes
@@ -118,14 +120,14 @@ Deno.test("truncateAnsi: zero-width escapes are not counted as content", () => {
   });
 });
 
-Deno.test("truncateAnsi: a wide glyph never half-fills the last column", () => {
+test("truncateAnsi: a wide glyph never half-fills the last column", () => {
   const text = "日本語テキスト"; // 2 columns each
   assert.equal(width(text), 14);
   assert.equal(width(truncateAnsi(text, 5)), 4); // 2 glyphs fit, the third would not
   assert.equal(width(truncateAnsi(text, 6)), 6);
 });
 
-Deno.test("truncateAnsi: the ellipsis is charged against the budget", () => {
+test("truncateAnsi: the ellipsis is charged against the budget", () => {
   assert.equal(truncateAnsi("abcdefghij", 5, "…"), "abcd…");
   assert.equal(width(truncateAnsi("abcdefghij", 5, "…")), 5);
   assert.equal(truncateAnsi("abc", 5, "…"), "abc"); // fits: no ellipsis
@@ -149,7 +151,7 @@ const result = (callId: string, output: string, extra: Partial<Part> = {}): Part
   ...extra,
 } as Part);
 
-Deno.test("segmentParts: consecutive tool parts fold into ONE step, prose splits them", () => {
+test("segmentParts: consecutive tool parts fold into ONE step, prose splits them", () => {
   const segs = segmentParts([
     { type: "text", text: "first" },
     call("c1", "a()"),
@@ -165,7 +167,7 @@ Deno.test("segmentParts: consecutive tool parts fold into ONE step, prose splits
   assert.equal((segs[3] as { parts: Part[] }).parts.length, 1);
 });
 
-Deno.test("segmentParts: reasoning and a settled ask each stand alone", () => {
+test("segmentParts: reasoning and a settled ask each stand alone", () => {
   const segs = segmentParts([
     { type: "reasoning", text: "thinking" },
     call("c1", "a()"),
@@ -177,7 +179,7 @@ Deno.test("segmentParts: reasoning and a settled ask each stand alone", () => {
   assert.deepEqual(segs.map((s) => s.kind), ["reasoning", "tools", "ask", "tools"]);
 });
 
-Deno.test("toolSummary: names the running call and reports error/interrupt state", () => {
+test("toolSummary: names the running call and reports error/interrupt state", () => {
   const done = toolSummary([call("c1", "a()"), result("c1", "ok")]);
   assert.equal(done.running, undefined);
   assert.equal(done.hasError, false);
@@ -194,14 +196,14 @@ Deno.test("toolSummary: names the running call and reports error/interrupt state
   assert.equal(stopped.hasError, false); // "you stopped it" ≠ "it failed"
 });
 
-Deno.test("codeGist: the first meaningful program line, comments skipped", () => {
+test("codeGist: the first meaningful program line, comments skipped", () => {
   assert.equal(codeGist({ code: "// setup\n\nawait bash('ls')" }), "await bash('ls')");
   assert.equal(codeGist({ path: "x.ts" }), '{"path":"x.ts"}');
   assert.equal(codeGist(undefined), "");
   assert.equal(codeGist({ code: "x".repeat(100) }).length, 61); // clipped + ellipsis
 });
 
-Deno.test("clip / windowAround", () => {
+test("clip / windowAround", () => {
   assert.equal(clip("abcdef", 3), "abc…");
   assert.equal(clip("abc", 3), "abc");
   assert.deepEqual(windowAround(0, 3, 10), { start: 0, end: 10 }); // shorter than the view
@@ -214,7 +216,7 @@ Deno.test("clip / windowAround", () => {
 const LINK_OPEN = (url: string) => `\x1b]8;;${url}\x1b\\`;
 const LINK_CLOSE = "\x1b]8;;\x1b\\";
 
-Deno.test("md: markdown links become one OSC 8 hyperlink, not two", () => {
+test("md: markdown links become one OSC 8 hyperlink, not two", () => {
   withColor(() => {
     const out = md("see [the docs](https://example.com/x)");
     assert.ok(out.includes(LINK_OPEN("https://example.com/x")));
@@ -223,7 +225,7 @@ Deno.test("md: markdown links become one OSC 8 hyperlink, not two", () => {
   });
 });
 
-Deno.test("md: a code span that IS a url is clickable; one inside a command stays literal", () => {
+test("md: a code span that IS a url is clickable; one inside a command stays literal", () => {
   withColor(() => {
     const url = "http://localhost:4321/artifacts/s1/x.html";
     assert.ok(md(`\`${url}\``).includes(LINK_OPEN(url)));
@@ -232,7 +234,7 @@ Deno.test("md: a code span that IS a url is clickable; one inside a command stay
   });
 });
 
-Deno.test("md: fenced code sits on a raised surface when a width is given", () => {
+test("md: fenced code sits on a raised surface when a width is given", () => {
   withColor(() => {
     const out = md("```js\nconst x = 1\n```", 40);
     assert.ok(out.includes("\x1b[48;"), "the block needs a background");
@@ -242,7 +244,7 @@ Deno.test("md: fenced code sits on a raised surface when a width is given", () =
   });
 });
 
-Deno.test("linkAt: resolves the hyperlink under a display column", () => {
+test("linkAt: resolves the hyperlink under a display column", () => {
   withColor(() => {
     const line = md("go **now** [docs](https://example.com/x) end");
     assert.equal(linkAt(line, 0), null);
@@ -255,7 +257,7 @@ Deno.test("linkAt: resolves the hyperlink under a display column", () => {
 
 // ---- numbers ----------------------------------------------------------------
 
-Deno.test("fmtTokens / fmtUsd / ctxPctLeft", () => {
+test("fmtTokens / fmtUsd / ctxPctLeft", () => {
   assert.equal(fmtTokens(999), "999");
   assert.equal(fmtTokens(1234), "1.2k");
   assert.equal(fmtTokens(184_000), "184k");
@@ -267,7 +269,7 @@ Deno.test("fmtTokens / fmtUsd / ctxPctLeft", () => {
   assert.equal(ctxPctLeft({ contextTokens: 10, contextLimit: null }), null);
 });
 
-Deno.test("meterLine: an unknown context limit shows tokens, never a made-up percent", () => {
+test("meterLine: an unknown context limit shows tokens, never a made-up percent", () => {
   assert.equal(
     meterLine({ model: "opus", costUsd: 1.5, contextTokens: 50_000, contextLimit: 200_000 }),
     "opus · $1.50 · 75% ctx left",
@@ -276,7 +278,7 @@ Deno.test("meterLine: an unknown context limit shows tokens, never a made-up per
   assert.equal(meterLine({}), "");
 });
 
-Deno.test("coldCacheNote: fires only for stale, substantial contexts", () => {
+test("coldCacheNote: fires only for stale, substantial contexts", () => {
   const now = 1_000_000_000;
   assert.equal(coldCacheNote({ contextTokens: 180_000, lastLlmAt: now - 60_000 }, now), null);
   assert.equal(
@@ -287,7 +289,7 @@ Deno.test("coldCacheNote: fires only for stale, substantial contexts", () => {
   assert.equal(coldCacheNote({ contextTokens: 180_000, lastLlmAt: null }, now), null);
 });
 
-Deno.test("disconnectNote: a quiet blip first, then escalates with the elapsed time", () => {
+test("disconnectNote: a quiet blip first, then escalates with the elapsed time", () => {
   const t0 = 1_000_000;
   assert.deepEqual(disconnectNote(t0, t0 + 5_000), { text: "reconnecting…", urgent: false });
   const late = disconnectNote(t0, t0 + 42_000);
@@ -297,7 +299,7 @@ Deno.test("disconnectNote: a quiet blip first, then escalates with the elapsed t
 
 // ---- composer ---------------------------------------------------------------
 
-Deno.test("wordLeft/wordRight: readline word boundaries", () => {
+test("wordLeft/wordRight: readline word boundaries", () => {
   const t = "what does this do";
   assert.equal(wordLeft(t, t.length), 15);
   assert.equal(wordLeft(t, 15), 10);
@@ -308,7 +310,7 @@ Deno.test("wordLeft/wordRight: readline word boundaries", () => {
   assert.equal(wordLeft("ab   cd", 5), 0); // a whitespace run collapses into the jump
 });
 
-Deno.test("fuzzyScore: prefix > word boundary > substring > subsequence > none", () => {
+test("fuzzyScore: prefix > word boundary > substring > subsequence > none", () => {
   assert.equal(fuzzyScore("exa", "ex"), 4);
   assert.equal(fuzzyScore("user-testing", "test"), 3);
   assert.equal(fuzzyScore("src/server/app.ts", "server"), 3); // "/" is a boundary too
@@ -318,7 +320,7 @@ Deno.test("fuzzyScore: prefix > word boundary > substring > subsequence > none",
   assert.equal(fuzzyScore("anything", ""), 1);
 });
 
-Deno.test("fuzzyPositions: marks the characters that made it match", () => {
+test("fuzzyPositions: marks the characters that made it match", () => {
   assert.deepEqual(fuzzyPositions("exa", "ex"), [0, 1]);
   assert.deepEqual(fuzzyPositions("user-testing", "test"), [5, 6, 7, 8]);
   assert.deepEqual(fuzzyPositions("restish", "tish"), [3, 4, 5, 6]);
@@ -327,7 +329,7 @@ Deno.test("fuzzyPositions: marks the characters that made it match", () => {
   assert.deepEqual(fuzzyPositions("anything", ""), []);
 });
 
-Deno.test("activeTrigger: @ and / fire at ANY word boundary, not just position 0", () => {
+test("activeTrigger: @ and / fire at ANY word boundary, not just position 0", () => {
   assert.deepEqual(activeTrigger("@src", 4), { kind: "file", query: "src", start: 0, end: 4 });
   assert.deepEqual(activeTrigger("look at @src", 12), {
     kind: "file",
@@ -346,19 +348,19 @@ Deno.test("activeTrigger: @ and / fire at ANY word boundary, not just position 0
   assert.deepEqual(activeTrigger("@", 1), { kind: "file", query: "", start: 0, end: 1 });
 });
 
-Deno.test("activeTrigger: a marker mid-word is not a marker", () => {
+test("activeTrigger: a marker mid-word is not a marker", () => {
   assert.equal(activeTrigger("src/server/app", 14), null); // a path, not a skill
   assert.equal(activeTrigger("user@host", 9), null); // an address, not a reference
   assert.equal(activeTrigger("a/b @c/d", 8)?.kind, "file"); // …but a real one still fires
 });
 
-Deno.test("activeTrigger: a finished reference stops completing", () => {
+test("activeTrigger: a finished reference stops completing", () => {
   assert.equal(activeTrigger("@src/x.ts now what", 18), null);
   assert.equal(activeTrigger("plain text", 10), null);
   assert.equal(activeTrigger("", 0), null);
 });
 
-Deno.test("activeTrigger: the token under the cursor is replaced whole, not split", () => {
+test("activeTrigger: the token under the cursor is replaced whole, not split", () => {
   // Cursor sits mid-token; `end` runs to the next whitespace so accepting a
   // completion cannot leave the tail of the old word behind.
   const t = activeTrigger("@ser/app.ts tail", 4)!;
@@ -366,7 +368,7 @@ Deno.test("activeTrigger: the token under the cursor is replaced whole, not spli
   assert.equal(t.end, 11);
 });
 
-Deno.test("rankCompletions + applyCompletion: replace the token, report what was hidden", () => {
+test("rankCompletions + applyCompletion: replace the token, report what was hidden", () => {
   const trigger = activeTrigger("look at @app", 12)!;
   const files = [
     { name: "server/app.ts" },
@@ -387,13 +389,13 @@ Deno.test("rankCompletions + applyCompletion: replace the token, report what was
   assert.deepEqual(applied, { text: "look at @app.tsx ", cursor: 17 });
 });
 
-Deno.test("rankCompletions: a directory candidate inserts without a trailing space", () => {
+test("rankCompletions: a directory candidate inserts without a trailing space", () => {
   const trigger = activeTrigger("@sr", 3)!;
   const { items } = rankCompletions([{ name: "src/" }], trigger);
   assert.equal(items[0].insert, "@src/"); // keep typing into the directory
 });
 
-Deno.test("rankCompletions: a skill trigger marks rows with the slash it will insert", () => {
+test("rankCompletions: a skill trigger marks rows with the slash it will insert", () => {
   const trigger = activeTrigger("/his", 4)!;
   const { items } = rankCompletions([{ name: "history", detail: "query bough's SQLite" }], trigger);
   assert.equal(items[0].label, "/history");
@@ -405,7 +407,7 @@ Deno.test("rankCompletions: a skill trigger marks rows with the slash it will in
 // The header's context line
 // ---------------------------------------------------------------------------
 
-Deno.test("the meter carries the whole session status, in one line at the bottom", () => {
+test("the meter carries the whole session status, in one line at the bottom", () => {
   // Everything a user needs before pressing enter, beside the composer rather
   // than on a top line a screenful away: where it runs, what it costs, what is
   // left, and how to get help.
@@ -435,7 +437,7 @@ Deno.test("the meter carries the whole session status, in one line at the bottom
   );
 });
 
-Deno.test("a narrow terminal degrades the meter instead of wrapping it", () => {
+test("a narrow terminal degrades the meter instead of wrapping it", () => {
   // A status bar that reflows onto a second row steals a line from the transcript
   // and reads as a rendering bug — which is what 60 columns used to produce.
   const m = {
@@ -461,7 +463,7 @@ Deno.test("a narrow terminal degrades the meter instead of wrapping it", () => {
   assert.equal(meterLine({ ...m, width: 14 }), "98% ctx left");
 });
 
-Deno.test("shortenPath only abbreviates a real home prefix", () => {
+test("shortenPath only abbreviates a real home prefix", () => {
   assert.equal(shortenPath("/Users/me", "/Users/me"), "~");
   assert.equal(shortenPath("/Users/me/x", "/Users/me/"), "~/x");
   // A sibling directory that merely starts with the same characters is not home.
@@ -469,7 +471,7 @@ Deno.test("shortenPath only abbreviates a real home prefix", () => {
   assert.equal(shortenPath("/a/b", ""), "/a/b");
 });
 
-Deno.test("the busy line always names motion, elapsed time, and the way out", () => {
+test("the busy line always names motion, elapsed time, and the way out", () => {
   // The regression it prevents: a running turn that has printed nothing looked
   // identical to a hung terminal, and esc — the fix for a hung terminal — was
   // documented on no screen.
@@ -492,7 +494,77 @@ Deno.test("the busy line always names motion, elapsed time, and the way out", ()
   assert.equal(frames.size, 10);
 });
 
-Deno.test("fmtDuration stays readable from one second to hours", () => {
+test("the busy line carries the turn's own tokens and spend while it runs", () => {
+  // G3: `busyLine` accepted these from the day it was written and nobody passed them,
+  // so a ten-minute turn said "17s" and nothing else and the cost chip jumped in one
+  // step when it ended.
+  assert.equal(
+    busyLine({ activity: null, elapsedMs: 42_000, tick: 0, tokens: 3_200, costUsd: 0.021 }),
+    "⠋ working · 42s · 3.2k tok · $0.021 · esc interrupts",
+  );
+  // A provider that reports usage only at the end leaves zeros here, and a zero is
+  // omitted rather than printed: the line degrades to what it always said.
+  assert.equal(
+    busyLine({ elapsedMs: 1_000, tick: 0, tokens: 0, costUsd: 0 }),
+    "⠋ working · 1s · esc interrupts",
+  );
+});
+
+test("a rail row attributes elapsed, tokens and spend to ONE unit", () => {
+  // G5: every row used to read `◆ <title>  ⋯ working`, which cannot tell a stuck agent
+  // from a slow one — two identical rows, one of them wedged.
+  const base = {
+    id: "s1",
+    sessionId: "s1",
+    title: "review app.ts",
+    elapsedMs: 132_000,
+    tokens: 3_200,
+    costUsd: 0.021,
+    progress: null,
+    detail: null,
+  };
+  const shell = {
+    ...base,
+    kind: "shell" as const,
+    title: "bg_7",
+    tokens: null,
+    costUsd: null,
+    detail: "sleep 90",
+  };
+  withoutColor(() => {
+    assert.equal(
+      unitLine({ ...base, kind: "subagent" }, 80),
+      "◆ review app.ts  2m12s · 3.2k tok · $0.021",
+    );
+    // A shell spends nothing and IS its command, so the command is what identifies it.
+    assert.equal(unitLine(shell, 80), "⚙ bg_7  2m12s · sleep 90");
+    // The detail is the only thing that clips, and it is dropped whole rather than
+    // rendered as an ellipsis when there is no room: the numbers are the message.
+    assert.equal(unitLine(shell, 20), "⚙ bg_7  2m12s");
+  });
+});
+
+test("a bar is drawn only from a fraction somebody actually knows", () => {
+  // Spec §9's failure mode is the invented percentage, not the missing one: a null
+  // progress renders NO bar rather than an empty trough.
+  const run = {
+    kind: "workflow" as const,
+    id: "r1",
+    sessionId: "r1",
+    title: "nightly bench",
+    elapsedMs: 8_000,
+    tokens: null,
+    costUsd: null,
+    detail: null,
+  };
+  withoutColor(() => {
+    assert.equal(unitLine({ ...run, progress: 0.5 }, 80), "⧉ nightly bench  8s · ████░░░░ 50%");
+    assert.equal(unitLine({ ...run, progress: 1 }, 80), "⧉ nightly bench  8s · ████████ 100%");
+    assert.equal(unitLine({ ...run, progress: null }, 80), "⧉ nightly bench  8s");
+  });
+});
+
+test("fmtDuration stays readable from one second to hours", () => {
   assert.equal(fmtDuration(0), "0s");
   assert.equal(fmtDuration(9_400), "9s");
   assert.equal(fmtDuration(59_999), "59s");
@@ -501,7 +573,7 @@ Deno.test("fmtDuration stays readable from one second to hours", () => {
   assert.equal(fmtDuration(-5), "0s");
 });
 
-Deno.test("a retry reason is reduced to something a person can read", () => {
+test("a retry reason is reduced to something a person can read", () => {
   // The real one, off a first-run user's screen mid-turn.
   assert.equal(
     humanizeRetryReason('openrouter: 429 {"error":{"message":"Provider returned error"}}'),
@@ -524,7 +596,7 @@ Deno.test("a retry reason is reduced to something a person can read", () => {
   }
 });
 
-Deno.test("a step is headlined by what the program did, not by its first line of code", () => {
+test("a step is headlined by what the program did, not by its first line of code", () => {
   // The old header was a clipped source line — debug output, not a UI:
   //   ▸ 1 step  run_steps · const out = await bash(`node --input-type=module -e "
   assert.equal(

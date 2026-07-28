@@ -19,6 +19,7 @@
  * Assertions come from `node:assert/strict` — jsr.io is unreachable here, so a test
  * that needs `@std/assert` cannot run offline.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { Bus } from "../bus.ts";
 import { openDb, type SqliteDb } from "../db/db.ts";
@@ -162,7 +163,7 @@ function snapshot(db: SqliteDb, sessionId: string): string {
 
 // ---- mode 1: editedText — edit & resend --------------------------------------
 
-Deno.test("editedText seeds the prefix, appends the replacement, and runs a real turn", async () => {
+test("editedText seeds the prefix, appends the replacement, and runs a real turn", async () => {
   const f = fixture("fresh answer");
   const { parent, target, own } = scenario(f);
   const before = snapshot(f.db, target.id);
@@ -219,7 +220,7 @@ Deno.test("editedText seeds the prefix, appends the replacement, and runs a real
   f.db.close();
 });
 
-Deno.test("the resent turn replays the seeded prefix and nothing after the cut", async () => {
+test("the resent turn replays the seeded prefix and nothing after the cut", async () => {
   const f = fixture("fresh answer");
   const { target, own } = scenario(f);
 
@@ -246,7 +247,7 @@ Deno.test("the resent turn replays the seeded prefix and nothing after the cut",
   f.db.close();
 });
 
-Deno.test("editedText is trimmed, and an empty one is a 400 rather than a turn asked to answer nothing", () => {
+test("editedText is trimmed, and an empty one is a 400 rather than a turn asked to answer nothing", () => {
   const f = fixture();
   const { target, own } = scenario(f);
 
@@ -268,7 +269,7 @@ Deno.test("editedText is trimmed, and an empty one is a 400 rather than a turn a
 
 // ---- mode 2: no editedText — a plain branch point -----------------------------
 
-Deno.test("without editedText the at-message is copied too, and no turn runs", () => {
+test("without editedText the at-message is copied too, and no turn runs", () => {
   const f = fixture();
   const { target, own } = scenario(f);
   const before = snapshot(f.db, target.id);
@@ -307,7 +308,7 @@ Deno.test("without editedText the at-message is copied too, and no turn runs", (
 
 // ---- mode 3: exclusive — the cut lands strictly before ------------------------
 
-Deno.test("exclusive skips the at-message: the branch ends strictly before it", () => {
+test("exclusive skips the at-message: the branch ends strictly before it", () => {
   const f = fixture();
   const { target, own } = scenario(f);
   const before = snapshot(f.db, target.id);
@@ -326,7 +327,7 @@ Deno.test("exclusive skips the at-message: the branch ends strictly before it", 
   f.db.close();
 });
 
-Deno.test("exclusive is a no-op where the at-message's fate is already decided", async () => {
+test("exclusive is a no-op where the at-message's fate is already decided", async () => {
   const f = fixture();
   const { target, own } = scenario(f);
 
@@ -361,7 +362,7 @@ Deno.test("exclusive is a no-op where the at-message's fate is already decided",
 
 // ---- mode 4: atPart — the cut lands inside the at-message ----------------------
 
-Deno.test("atPart copies the at-message truncated to parts[0..atPart]", () => {
+test("atPart copies the at-message truncated to parts[0..atPart]", () => {
   const f = fixture();
   const { target } = scenario(f);
   // A supervisor turn that narrated, ran two programs, and only then answered.
@@ -405,7 +406,7 @@ Deno.test("atPart copies the at-message truncated to parts[0..atPart]", () => {
   f.db.close();
 });
 
-Deno.test("atPart with editedText appends a correction after the cut, whatever the at-message's role", async () => {
+test("atPart with editedText appends a correction after the cut, whatever the at-message's role", async () => {
   const f = fixture("different approach it is");
   const { target } = scenario(f);
   const rich = message(f.db, target.id, "supervisor", [
@@ -452,7 +453,7 @@ Deno.test("atPart with editedText appends a correction after the cut, whatever t
 
 // ---- the two 400s --------------------------------------------------------------
 
-Deno.test("400: editedText may not replace a supervisor turn", () => {
+test("400: editedText may not replace a supervisor turn", () => {
   const f = fixture();
   const { target, own } = scenario(f);
   const before = snapshot(f.db, target.id);
@@ -473,7 +474,7 @@ Deno.test("400: editedText may not replace a supervisor turn", () => {
   f.db.close();
 });
 
-Deno.test("400: a fork point in ancestor history names the ancestor to fork instead", () => {
+test("400: a fork point in ancestor history names the ancestor to fork instead", () => {
   const f = fixture();
   const { parent, target } = scenario(f);
   const ancestorMessage = f.db.messagesFor(parent.id)[0];
@@ -505,7 +506,7 @@ Deno.test("400: a fork point in ancestor history names the ancestor to fork inst
   f.db.close();
 });
 
-Deno.test("404: forking a session that does not exist", () => {
+test("404: forking a session that does not exist", () => {
   const f = fixture();
   assert.throws(
     () => fork(f.ctx, "no-such-session", { atMessageId: "whatever" }),
@@ -516,7 +517,7 @@ Deno.test("404: forking a session that does not exist", () => {
 
 // ---- inheritance and titling ---------------------------------------------------
 
-Deno.test("the branch inherits the source's model and effort pins", () => {
+test("the branch inherits the source's model and effort pins", () => {
   const f = fixture();
   const { target, own } = scenario(f);
   f.db.setSessionModel(target.id, "openai:gpt-5");
@@ -542,7 +543,7 @@ Deno.test("the branch inherits the source's model and effort pins", () => {
   f.db.close();
 });
 
-Deno.test("a fork of a fork does not compound its title, and a text-free fork point falls back", () => {
+test("a fork of a fork does not compound its title, and a text-free fork point falls back", () => {
   const f = fixture();
   const { target, own } = scenario(f);
 
@@ -563,7 +564,7 @@ Deno.test("a fork of a fork does not compound its title, and a text-free fork po
   f.db.close();
 });
 
-Deno.test("forking the first message produces an empty-but-real branch", () => {
+test("forking the first message produces an empty-but-real branch", () => {
   const f = fixture();
   const { target, own } = scenario(f);
 
@@ -581,7 +582,7 @@ Deno.test("forking the first message produces an empty-but-real branch", () => {
 
 const TABLE: Route[] = [route("POST", "/sessions/:id/fork", forkSessionH)];
 
-Deno.test("POST /sessions/:id/fork answers 201 with the branch and its thread", async () => {
+test("POST /sessions/:id/fork answers 201 with the branch and its thread", async () => {
   const f = fixture();
   const { target, own } = scenario(f);
   const call = createHandler(f.ctx, { routes: TABLE });
@@ -611,7 +612,7 @@ Deno.test("POST /sessions/:id/fork answers 201 with the branch and its thread", 
   f.db.close();
 });
 
-Deno.test("the route maps a bad fork point to 400 and an unknown session to 404", async () => {
+test("the route maps a bad fork point to 400 and an unknown session to 404", async () => {
   const f = fixture();
   const { target, own } = scenario(f);
   const call = createHandler(f.ctx, { routes: TABLE });
@@ -637,7 +638,7 @@ Deno.test("the route maps a bad fork point to 400 and an unknown session to 404"
   f.db.close();
 });
 
-Deno.test("the route starts the turn through the ctx seam boot wires", async () => {
+test("the route starts the turn through the ctx seam boot wires", async () => {
   const f = fixture("answered on the branch");
   const { target, own } = scenario(f);
   // The seam `server/main.ts` fills — read off the ctx structurally, exactly as

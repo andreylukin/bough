@@ -12,9 +12,13 @@
  * Hermetic and offline: no database beyond an in-memory one, no network, and
  * `BOUGH_HOME` relocated for every call that touches a path.
  *
- * Assertions come from `node:assert/strict`: jsr.io is denied by this environment's
- * egress policy, so `@std/assert` cannot resolve.
+ * Assertions come from `node:assert/strict`: `@std/assert` is not a dependency of
+ * this repo.
  */
+import { test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import assert from "node:assert/strict";
 import { openDb, type SqliteDb } from "../db/db.ts";
 import { NotFoundError } from "../errors.ts";
@@ -33,15 +37,15 @@ import {
 const META = "export const meta = { name: 'branch-review', description: 'review a branch' }\n";
 
 async function withHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  const home = await Deno.makeTempDir({ prefix: "bough-saved-" });
-  const prior = Deno.env.get("BOUGH_HOME");
-  Deno.env.set("BOUGH_HOME", home);
+  const home = await mkdtemp(join(tmpdir(), "bough-saved-"));
+  const prior = process.env["BOUGH_HOME"];
+  process.env["BOUGH_HOME"] = home;
   try {
     return await fn(home);
   } finally {
-    if (prior === undefined) Deno.env.delete("BOUGH_HOME");
-    else Deno.env.set("BOUGH_HOME", prior);
-    await Deno.remove(home, { recursive: true }).catch(() => {});
+    if (prior === undefined) delete process.env["BOUGH_HOME"];
+    else process.env["BOUGH_HOME"] = prior;
+    await rm(home, { recursive: true, force: true }).catch(() => {});
   }
 }
 
@@ -76,7 +80,7 @@ function seedRun(db: SqliteDb, script: string): string {
   return id;
 }
 
-Deno.test("saving a run saves the mirror the user edited, not the stored row", async () => {
+test("saving a run saves the mirror the user edited, not the stored row", async () => {
   const db = openDb(":memory:");
   try {
     await withHome(async () => {
@@ -104,7 +108,7 @@ Deno.test("saving a run saves the mirror the user edited, not the stored row", a
   }
 });
 
-Deno.test("saving is idempotent on the name, and listing carries meta.description", async () => {
+test("saving is idempotent on the name, and listing carries meta.description", async () => {
   await withHome(async () => {
     assert.equal(await ensureSavedDir(), 0);
     await saveWorkflow("branch-review", META + "return 1");
@@ -123,7 +127,7 @@ Deno.test("saving is idempotent on the name, and listing carries meta.descriptio
   });
 });
 
-Deno.test("a name is normalized once: one trailing .js, trimmed, never doubled", () => {
+test("a name is normalized once: one trailing .js, trimmed, never doubled", () => {
   assert.equal(normalizeName("  branch-review  "), "branch-review");
   assert.equal(normalizeName("branch-review.js"), "branch-review");
   assert.equal(normalizeName("branch-review.JS"), "branch-review");

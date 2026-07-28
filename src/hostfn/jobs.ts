@@ -38,6 +38,7 @@
  * Ported from `src/tools/bash_bg.ts`. Deltas from that port are marked `NOTE:`.
  */
 
+import type { Subprocess } from "bun";
 import type { BackgroundJob } from "../schema/parts.ts";
 import type { Bus } from "../types.ts";
 import { ConflictError, NotFoundError } from "../errors.ts";
@@ -113,6 +114,11 @@ const RECENT_MS = 30 * 60_000;
  * and `written` counts everything the process ever produced so a reader can tell
  * how much it missed.
  */
+export interface ExitStatus {
+  code: number;
+  signal: NodeJS.Signals | null;
+}
+
 export interface Shell {
   /** Assigned by `promote`; `""` while a foreground `bash` still owns it. */
   id: string;
@@ -123,7 +129,7 @@ export interface Shell {
   endedAt: number | null;
   /** Set by `bashKill`/`killJobsOf` so the exit reads as a kill, not a plain exit. */
   killed: boolean;
-  child: Deno.ChildProcess;
+  child: Subprocess<"ignore", "pipe", "pipe">;
   /** First `limits.head` chars, verbatim and immutable once full. */
   head: string;
   /** Rolling last `limits.tail` chars. */
@@ -132,7 +138,10 @@ export interface Shell {
   written: number;
   /** Chars of the stream already handed to `bashOutput`. */
   readTo: number;
-  status: Deno.CommandStatus | null;
+  status: ExitStatus | null;
+  /** Resolves with the exit status. Bun's `exited` yields a bare code; this carries
+   * the signal too, which every exit line and kill report needs. */
+  exit: Promise<ExitStatus>;
   /** Resolves when both stdout and stderr have fully drained. */
   pumps: Promise<void>;
   /** Fired after `status` is set — wired by `promote`. */
@@ -322,20 +331,30 @@ export class JobRegistry {
    * Spawn a shell and start pumping its output. Does NOT register it: a foreground
    * `bash` uses this to stream while it decides whether to background (`promote`)
    * or return inline. Output and status are tracked either way.
+   *
+   * `signal` is honoured by `killTreeOnAbort` in `shell.ts` and is DELIBERATELY NOT
+   * handed to `Bun.spawn`. Bun's `signal` option registers its own abort listener at
+   * spawn time — before the caller can add one — and it SIGTERMs the direct child
+   * only. `sh -c 'sleep 300; echo done'` forks rather than execs, so Bun killed the
+   * `sh`, the `sleep` reparented onto init, and the tree walk that runs next found an
+   * empty tree: the interrupt printed "the program's children are killed" while the
+   * command ran to completion. One killer, and it is the one that walks the tree.
    */
   spawn(
     command: string,
     opts: { cwd?: string; signal?: AbortSignal } = {},
   ): Shell {
     const { argv, cwd } = shellInvocation(command, opts.cwd);
-    const child = new Deno.Command(argv[0], {
-      args: argv.slice(1),
+    const child = Bun.spawn(argv, {
       cwd,
-      stdin: "null",
-      stdout: "piped",
-      stderr: "piped",
-      signal: opts.signal,
-    }).spawn();
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const exit: Promise<ExitStatus> = child.exited.then(() => ({
+      code: child.exitCode ?? 0,
+      signal: child.signalCode ?? null,
+    }));
     const shell: Shell = {
       id: "",
       command,
@@ -345,6 +364,7 @@ export class JobRegistry {
       endedAt: null,
       killed: false,
       child,
+      exit,
       head: "",
       tail: "",
       written: 0,
@@ -357,7 +377,7 @@ export class JobRegistry {
     };
     shell.pumps = Promise.all([pump(child.stdout, shell), pump(child.stderr, shell)])
       .then(() => {});
-    child.status.then((status) => {
+    exit.then((status) => {
       shell.status = status;
       shell.endedAt = this.#now();
       shell.onExit?.();
@@ -435,7 +455,7 @@ export class JobRegistry {
   async bashWait(id: string, sessionId: string): Promise<string> {
     const shell = this.#require(id, sessionId);
     shell.claimed = true; // result taken in band — suppress the exit note
-    if (shell.status === null) await shell.child.status;
+    if (shell.status === null) await shell.exit;
     await shell.pumps.catch(() => {});
     return this.bashOutput(id, sessionId);
   }
@@ -454,12 +474,12 @@ export class JobRegistry {
     shell.killed = true;
     signalTree(shell, "SIGTERM");
     // Backstop for processes that ignore SIGTERM. Unref'd: an idle timer must not
-    // hold the server's event loop (or a test's op sanitizer) hostage.
+    // hold the server's event loop hostage.
     const backstop = setTimeout(() => {
       if (shell.status === null) signalTree(shell, "SIGKILL");
     }, KILL_GRACE_MS);
-    Deno.unrefTimer(backstop);
-    const status = await shell.child.status; // bounded: SIGKILL lands after the grace
+    backstop.unref();
+    const status = await shell.exit; // bounded: SIGKILL lands after the grace
     clearTimeout(backstop);
     await shell.pumps.catch(() => {});
     return `killed ${id} (${status.signal ?? `exit ${status.code}`})`;
@@ -527,7 +547,7 @@ export class JobRegistry {
     const pending: Promise<unknown>[] = [];
     for (const shells of this.#sessions.values()) {
       for (const shell of shells.values()) {
-        pending.push(shell.child.status.catch(() => {}), shell.pumps.catch(() => {}));
+        pending.push(shell.exit.catch(() => {}), shell.pumps.catch(() => {}));
       }
     }
     await Promise.all(pending);
@@ -721,14 +741,13 @@ function jobInfo(shell: Shell): BackgroundJob {
 export function descendantPids(root: number): number[] {
   let text = "";
   try {
-    const r = new Deno.Command("ps", {
-      args: ["-Ao", "pid=,ppid="],
-      stdout: "piped",
-      stderr: "null",
-    }).outputSync();
+    const r = Bun.spawnSync(["ps", "-Ao", "pid=,ppid="], {
+      stdout: "pipe",
+      stderr: "ignore",
+    });
     text = new TextDecoder().decode(r.stdout);
   } catch {
-    return []; // no ps (or no run permission): signal the shell alone
+    return []; // no ps: signal the shell alone
   }
   const kids = new Map<number, number[]>();
   for (const line of text.split("\n")) {
@@ -755,11 +774,11 @@ export function descendantPids(root: number): number[] {
  * Signal the shell AND everything it spawned, descendants first so a parent cannot
  * restart one after we have passed it.
  */
-export function signalTree(shell: Shell, sig: Deno.Signal): void {
+export function signalTree(shell: Shell, sig: NodeJS.Signals): void {
   for (const pid of descendantPids(shell.pid)) {
-    if (pid <= 1 || pid === Deno.pid) continue; // never signal init or ourselves
+    if (pid <= 1 || pid === process.pid) continue; // never signal init or ourselves
     try {
-      Deno.kill(pid, sig);
+      process.kill(pid, sig);
     } catch {
       // already gone
     }

@@ -19,7 +19,7 @@
  * unsupported schema is an authoring mistake, and it is rejected before a single
  * subagent launches rather than after forty of them have billed.
  *
- * The last two tests drive a REAL `permissions: "none"` worker through the real
+ * The last two tests drive a REAL workflow worker through the real
  * engine with a fake `AgentRunner`, because the seam that matters most — canonical
  * JSON in, `JSON.parse` out, throw becomes `null` in a `parallel()` slot — spans
  * three modules and a postMessage wire, and a unit test of any one of them proves
@@ -28,10 +28,13 @@
  * Hermetic and offline: an in-memory database, a real bus, no network, no key, and
  * `BOUGH_HOME` pointed at a temp dir for the duration of each engine call.
  *
- * Assertions come from `node:assert/strict` rather than `@std/assert`: jsr.io is
- * denied by this environment's egress policy, so the jsr import declared in
- * `deno.json` cannot resolve.
+ * Assertions come from `node:assert/strict` rather than `@std/assert`, which is not a
+ * dependency of this repo.
  */
+import { test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import assert from "node:assert/strict";
 import { Bus } from "../bus.ts";
 import { openDb, type SqliteDb } from "../db/db.ts";
@@ -106,7 +109,7 @@ function scripted(reports: string[]): { runner: AgentRunner; prompts: string[] }
 // the submit-time gate
 // ---------------------------------------------------------------------------
 
-Deno.test("a well-formed schema is accepted, including $defs, enum and anyOf unions", () => {
+test("a well-formed schema is accepted, including $defs, enum and anyOf unions", () => {
   assert.equal(checkOutputSchema(FINDINGS), null);
   assert.equal(
     checkOutputSchema({
@@ -132,7 +135,7 @@ Deno.test("a well-formed schema is accepted, including $defs, enum and anyOf uni
   );
 });
 
-Deno.test("an object without additionalProperties: false is rejected, and says why", () => {
+test("an object without additionalProperties: false is rejected, and says why", () => {
   const bad = checkOutputSchema({
     type: "object",
     properties: { a: { type: "string" } },
@@ -144,7 +147,7 @@ Deno.test("an object without additionalProperties: false is rejected, and says w
   assert.match(bad, /invented field/);
 });
 
-Deno.test("numeric, length and regex constraints are rejected by name with the move", () => {
+test("numeric, length and regex constraints are rejected by name with the move", () => {
   for (
     const [keyword, schema] of [
       ["minItems", { findings: { type: "array", items: { type: "string" }, minItems: 3 } }],
@@ -165,7 +168,7 @@ Deno.test("numeric, length and regex constraints are rejected by name with the m
   }
 });
 
-Deno.test("a recursive schema is rejected and the cycle is named", () => {
+test("a recursive schema is rejected and the cycle is named", () => {
   const bad = checkOutputSchema({
     type: "object",
     $defs: {
@@ -185,7 +188,7 @@ Deno.test("a recursive schema is rejected and the cycle is named", () => {
   assert.match(bad, /Node → Node/);
 });
 
-Deno.test("the other unsupported shapes are rejected: oneOf, type arrays, itemless arrays, unknown keywords, dangling $ref", () => {
+test("the other unsupported shapes are rejected: oneOf, type arrays, itemless arrays, unknown keywords, dangling $ref", () => {
   const cases: Array<[RegExp, unknown]> = [
     [/oneOf/, { a: { oneOf: [{ type: "string" }] } }],
     [/type` array/, { a: { type: ["string", "null"] } }],
@@ -210,7 +213,7 @@ Deno.test("the other unsupported shapes are rejected: oneOf, type arrays, itemle
   );
 });
 
-Deno.test("assertOutputSchema throws a 400 the script can catch", () => {
+test("assertOutputSchema throws a 400 the script can catch", () => {
   assert.throws(
     () => assertOutputSchema({ type: "object", properties: { a: { type: "string" } } }),
     (err: unknown) => err instanceof WorkflowError && err.status === 400,
@@ -222,7 +225,7 @@ Deno.test("assertOutputSchema throws a 400 the script can catch", () => {
 // instance validation
 // ---------------------------------------------------------------------------
 
-Deno.test("validateInstance accepts a conforming value and locates every fault by path", () => {
+test("validateInstance accepts a conforming value and locates every fault by path", () => {
   assert.deepEqual(validateInstance(FINDINGS, GOOD), []);
 
   const errors = validateInstance(FINDINGS, {
@@ -236,7 +239,7 @@ Deno.test("validateInstance accepts a conforming value and locates every fault b
   assert.match(joined, /`\/findings\/1`: unexpected property `extra`/);
 });
 
-Deno.test("validateInstance handles anyOf unions, $ref and the error cap", () => {
+test("validateInstance handles anyOf unions, $ref and the error cap", () => {
   const schema = {
     type: "object",
     $defs: {
@@ -280,7 +283,7 @@ Deno.test("validateInstance handles anyOf unions, $ref and the error cap", () =>
 // reading JSON out of a report
 // ---------------------------------------------------------------------------
 
-Deno.test("extractJson reads a bare body, a fenced block, and JSON buried in prose", () => {
+test("extractJson reads a bare body, a fenced block, and JSON buried in prose", () => {
   assert.deepEqual(extractJson(JSON.stringify(GOOD)), { ok: true, value: GOOD });
   assert.deepEqual(
     extractJson("Here is what I found.\n\n```json\n" + JSON.stringify(GOOD) + "\n```\n"),
@@ -292,7 +295,7 @@ Deno.test("extractJson reads a bare body, a fenced block, and JSON buried in pro
   );
 });
 
-Deno.test("extractJson takes the LAST complete value, and reports prose-only honestly", () => {
+test("extractJson takes the LAST complete value, and reports prose-only honestly", () => {
   // The first block is the example the agent was quoting back; the last is its answer.
   const report = '```json\n{"file":"example","findings":[]}\n```\n' +
     "Now the real one:\n```json\n" + JSON.stringify(GOOD) + "\n```";
@@ -310,7 +313,7 @@ Deno.test("extractJson takes the LAST complete value, and reports prose-only hon
 // the runner decorator — the three acceptance facts
 // ---------------------------------------------------------------------------
 
-Deno.test("a valid report resolves to canonical JSON, and the prompt carried the contract", async () => {
+test("a valid report resolves to canonical JSON, and the prompt carried the contract", async () => {
   const { runner, prompts } = scripted([
     "Reviewed the file.\n\n```json\n" + JSON.stringify(GOOD, null, 2) + "\n```",
   ]);
@@ -331,7 +334,7 @@ Deno.test("a valid report resolves to canonical JSON, and the prompt carried the
   assert.match(prompts[0], /"additionalProperties": false/);
 });
 
-Deno.test("a call with no schema passes through untouched", async () => {
+test("a call with no schema passes through untouched", async () => {
   const { runner, prompts } = scripted(["just prose, and that is fine"]);
   const out = await structuredRunner(runner)(
     { prompt: "Summarize", label: "a" },
@@ -342,7 +345,7 @@ Deno.test("a call with no schema passes through untouched", async () => {
   assert.deepEqual(prompts, ["Summarize"], "no contract is appended without a schema");
 });
 
-Deno.test("a schema mismatch RETRIES, and the retry is told exactly what was wrong", async () => {
+test("a schema mismatch RETRIES, and the retry is told exactly what was wrong", async () => {
   const { runner, prompts } = scripted([
     '```json\n{"file":"src/a.ts","findings":[{"title":"unchecked index"}]}\n```',
     "```json\n" + JSON.stringify(GOOD) + "\n```",
@@ -361,7 +364,7 @@ Deno.test("a schema mismatch RETRIES, and the retry is told exactly what was wro
   assert.ok(prompts[1].startsWith("Review src/a.ts"), "the task is still the task");
 });
 
-Deno.test("a report with no JSON at all retries too", async () => {
+test("a report with no JSON at all retries too", async () => {
   const { runner, prompts } = scripted([
     "I read the file and it looks fine to me.",
     JSON.stringify(GOOD),
@@ -375,7 +378,7 @@ Deno.test("a report with no JSON at all retries too", async () => {
   assert.match(prompts[1], /no JSON value at all/);
 });
 
-Deno.test("an exhausted retry FAILS the call rather than returning junk", async () => {
+test("an exhausted retry FAILS the call rather than returning junk", async () => {
   const junk = '```json\n{"file":"src/a.ts"}\n```';
   const { runner, prompts } = scripted([junk, junk, junk]);
 
@@ -401,7 +404,7 @@ Deno.test("an exhausted retry FAILS the call rather than returning junk", async 
   assert.equal(prompts.length, 3, "exactly the budget, no more");
 });
 
-Deno.test("an unusable schema is rejected before a single subagent launches", async () => {
+test("an unusable schema is rejected before a single subagent launches", async () => {
   const { runner, prompts } = scripted([]);
   await assert.rejects(
     () =>
@@ -420,7 +423,7 @@ Deno.test("an unusable schema is rejected before a single subagent launches", as
   assert.equal(prompts.length, 0, "nothing may bill for a schema that cannot work");
 });
 
-Deno.test("a failing subagent is not retried — that is a different failure", async () => {
+test("a failing subagent is not retried — that is a different failure", async () => {
   let calls = 0;
   const runner: AgentRunner = () => {
     calls++;
@@ -438,7 +441,7 @@ Deno.test("a failing subagent is not retried — that is a different failure", a
   assert.equal(calls, 1, "an interrupt must propagate, not burn the retry budget");
 });
 
-Deno.test("a stopped run does not start another attempt", async () => {
+test("a stopped run does not start another attempt", async () => {
   const ctrl = new AbortController();
   let calls = 0;
   const runner: AgentRunner = () => {
@@ -458,7 +461,7 @@ Deno.test("a stopped run does not start another attempt", async () => {
   assert.equal(calls, 1);
 });
 
-Deno.test("the contract and the attempt budget are stable facts", () => {
+test("the contract and the attempt budget are stable facts", () => {
   assert.equal(DEFAULT_ATTEMPTS, 3);
   const contract = schemaContract(FINDINGS);
   assert.match(contract, /exactly one JSON value/);
@@ -489,7 +492,7 @@ function harness(): Harness {
     workspace: "/tmp/checkout",
     originDir: "/tmp/checkout",
   });
-  const home = Deno.makeTempDirSync({ prefix: "bough-schema-" });
+  const home = mkdtempSync(join(tmpdir(), "bough-schema-"));
   return {
     db,
     bus,
@@ -498,20 +501,20 @@ function harness(): Harness {
     close() {
       db.close();
       try {
-        Deno.removeSync(home, { recursive: true });
+        rmSync(home, { recursive: true, force: true });
       } catch { /* already gone */ }
     },
   };
 }
 
 async function withHome<T>(home: string, fn: () => Promise<T>): Promise<T> {
-  const prior = Deno.env.get("BOUGH_HOME");
-  Deno.env.set("BOUGH_HOME", home);
+  const prior = process.env["BOUGH_HOME"];
+  process.env["BOUGH_HOME"] = home;
   try {
     return await fn();
   } finally {
-    if (prior === undefined) Deno.env.delete("BOUGH_HOME");
-    else Deno.env.set("BOUGH_HOME", prior);
+    if (prior === undefined) delete process.env["BOUGH_HOME"];
+    else process.env["BOUGH_HOME"] = prior;
   }
 }
 
@@ -559,7 +562,7 @@ async function runScript(
 
 const SCRIPT_SCHEMA = JSON.stringify(FINDINGS);
 
-Deno.test("a script's agent(prompt, {schema}) receives a PARSED object", async () => {
+test("a script's agent(prompt, {schema}) receives a PARSED object", async () => {
   const h = harness();
   try {
     const runner: AgentRunner = () =>
@@ -582,7 +585,7 @@ Deno.test("a script's agent(prompt, {schema}) receives a PARSED object", async (
   }
 });
 
-Deno.test("a persistently malformed report fails that agent() — parallel slots it null", async () => {
+test("a persistently malformed report fails that agent() — parallel slots it null", async () => {
   const h = harness();
   try {
     let calls = 0;

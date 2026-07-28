@@ -38,10 +38,10 @@
  * with nothing mounted and no terminal (plan §7).
  *
  * NOTE on colour: `tui/theme.ts` (T9.2) has not landed and is not in this task's owned
- * set, so `toneColor` maps the semantic tones onto ink's named colours. One function to
- * repoint. Clipping, windowing and number formatting come from `tui/format.ts`.
+ * set, so `toneColor` maps the semantic tones onto OpenTUI's named colours. One function
+ * to repoint. Clipping, windowing and number formatting come from `tui/format.ts`.
  */
-import { Box, Text } from "ink";
+import { TextAttributes } from "@opentui/core";
 import type { WorkflowRun } from "../../schema/parts.ts";
 import type { WorkflowAgentView } from "../../workflow/control.ts";
 import type { LargeRunFlag, ReplaySummary, RunCost } from "../../workflow/report.ts";
@@ -63,18 +63,18 @@ export type Row = Cell[];
 export const rowText = (row: Row): string => row.map((c) => c.text).join("");
 export const linesOf = (rows: Row[]): string[] => rows.map(rowText);
 
-function toneColor(tone: Tone | undefined): { color?: string; dimColor?: boolean } {
+function toneColor(tone: Tone | undefined): { fg?: string; dim?: boolean } {
   switch (tone) {
     case "accent":
-      return { color: "green" };
+      return { fg: "green" };
     case "warn":
-      return { color: "yellow" };
+      return { fg: "yellow" };
     case "error":
-      return { color: "red" };
+      return { fg: "red" };
     case "info":
-      return { color: "cyan" };
+      return { fg: "cyan" };
     case "muted":
-      return { dimColor: true };
+      return { dim: true };
     default:
       return {};
   }
@@ -82,9 +82,20 @@ function toneColor(tone: Tone | undefined): { color?: string; dimColor?: boolean
 
 function Line({ row }: { row: Row }) {
   return (
-    <Text wrap="truncate">
-      {row.map((c, i) => <Text key={i} bold={c.bold} {...toneColor(c.tone)}>{c.text}</Text>)}
-    </Text>
+    <text wrapMode="none">
+      {row.map((c, i) => {
+        const { fg, dim } = toneColor(c.tone);
+        return (
+          <span
+            key={i}
+            fg={fg}
+            attributes={(c.bold ? TextAttributes.BOLD : 0) | (dim ? TextAttributes.DIM : 0)}
+          >
+            {c.text}
+          </span>
+        );
+      })}
+    </text>
   );
 }
 
@@ -426,7 +437,12 @@ export function scriptRows(detail: WorkflowDetail): Row[] {
       text: detail.live
         ? "the run is still live — pause, then stop, before you edit: dispatched agents that " +
           "finish are journaled and replay"
-        : `R relaunches a NEW run from this one's journal · ${detail.replay.total} calls ` +
+        // LOWERCASE, and checked against the keymap: `r` is `wf.rerun`. There is no
+        // `R` binding in `keys.ts` and there never was, so this row advertised a dead
+        // key on the one screen whose whole job is to explain the steering loop —
+        // the same defect `e` had, one level down. `BOUND_STEER_KEYS` names what the
+        // tab may promise; this sentence is inside that rule now.
+        : `r relaunches a NEW run from this one's journal · ${detail.replay.total} calls ` +
           `journaled here`,
       tone: detail.live ? "warn" : "muted",
     }],
@@ -445,27 +461,83 @@ export function scriptRows(detail: WorkflowDetail): Row[] {
 /** 0 runs · 1 phases · 2 a phase's agents · 3 one agent · 4 the script. */
 export type WfLevel = 0 | 1 | 2 | 3 | 4;
 
+/**
+ * The keys the panel actually delivers to this tab (`keys.ts`, mode `panel`).
+ *
+ * The legend row is the whole discoverability strategy, so it may only name keys that
+ * do something. `e` was filtered out here because the keymap did not bind it and the
+ * script level was therefore unreachable; `wf.script`, `wf.filter` and `wf.openAgent`
+ * are bound now, scoped `tab: ["workflows"]`, so `e` joins the set and `f` and `o` are
+ * named per level below. This set is still the one line to change.
+ */
+const BOUND_STEER_KEYS = new Set(["p", "P", "x", "r", "e"]);
+
 /** Per-level footer — the keys that do something HERE, plus the steering controls. */
 export function footer(level: WfLevel, detail: WorkflowDetail | null): string {
   const steer = detail
-    ? steerActions(detail.workflow.status, detail.live).map((a) => `${a.key} ${a.label}`).join(
-      " · ",
-    )
+    ? steerActions(detail.workflow.status, detail.live)
+      .filter((a) => BOUND_STEER_KEYS.has(a.key))
+      .map((a) => `${a.key} ${a.label}`).join(" · ")
     : "";
-  if (level === 0) return `⏎ open · ${steer || "r rerun"}`;
-  if (level === 4) return `${steer} · esc back`;
-  if (level === 1) return `↑↓ phase · ⏎ agents · ${steer} · esc back`;
-  if (level === 2) return `↑↓ agent · ⏎ open · f filter · o session · ${steer} · esc back`;
-  return `⏎ prompt · j/k scroll · o session · ${steer} · esc back`;
+  // Level 0 has no `detail` — it is not fetched until a run is opened — so the steering
+  // verbs are named from the keymap instead of from a run's state. They ACT at this
+  // level (`PanelHost` steers the selected row), and a verb that works and is never
+  // printed is a verb nobody has.
+  if (level === 0) {
+    return `⏎ open · 1-9 pick · ${steer || "p pause · P resume · x stop · r relaunch"}`;
+  }
+  if (level === 4) return `↑↓ scroll · ${steer} · esc back`;
+  if (level === 1) return `↑↓ phase · ⏎ agents · f filter · ${steer} · esc back`;
+  if (level === 2) return `↑↓ agent · ⏎ open · o session · f filter · ${steer} · esc back`;
+  return `⏎ prompt · ↑↓ scroll · o session · ${steer} · esc back`;
 }
 
-function RunsList({ runs, sel, rows }: { runs: WorkflowSummary[]; sel: number; rows: number }) {
+/**
+ * Rows the level-0 run list may paint.
+ *
+ * The tab's own chrome is three rows: the `marginTop` above the list, the one above
+ * the footer, and the footer. It used to ask for `Math.max(3, rows - 6)` — a floor
+ * of three rows at ANY height, which below six rows was a request for rows that do
+ * not exist, and OpenTUI answers that by shrinking rows onto each other
+ * (`Panel.tsx`). Exported so `PanelHost` resolves `1`–`9` against the same window.
+ */
+export function wfRunsHeight(rows: number): number {
+  return Math.max(0, rows - 1 - 2 * wfGap(rows));
+}
+
+/**
+ * The blank separator rows, which a cramped panel cannot afford.
+ *
+ * Level 0 spends one above the list and one above the footer. At six body rows that
+ * is a third of the tab given to whitespace, and at three it cost the footer its row
+ * entirely — the tab rendered its empty-state sentence and no legend at all. Breathing
+ * room is the first thing to go, and the legend is the last.
+ */
+export function wfGap(rows: number): number {
+  return rows >= 8 ? 1 : 0;
+}
+
+function RunsList(
+  { runs, sel, rows, now }: {
+    runs: WorkflowSummary[];
+    sel: number;
+    rows: number;
+    now: number;
+  },
+) {
   if (runs.length === 0) {
-    return <Text dimColor>no workflow runs in this conversation — ask for one</Text>;
+    return (
+      <text attributes={TextAttributes.DIM}>
+        no workflow runs in this conversation — ask for one
+      </text>
+    );
   }
-  const { slice, from } = windowed(runs, sel, Math.max(3, rows - 6));
+  const height = wfRunsHeight(rows);
+  const { slice, from } = height === 0
+    ? { slice: [] as WorkflowSummary[], from: 0 }
+    : windowed(runs, sel, height);
   return (
-    <Box flexDirection="column">
+    <box flexDirection="column">
       {slice.map((r, i) => {
         const on = from + i === sel;
         const { glyph, tone } = wfGlyph(r.status);
@@ -474,21 +546,26 @@ function RunsList({ runs, sel, rows }: { runs: WorkflowSummary[]; sel: number; r
           <Line
             key={r.id}
             row={[
+              // The digit that picks this run, printed on it (spec §3).
+              { text: i < 9 ? `${i + 1} ` : "  ", tone: "muted" },
               { text: on ? "❯ " : "  ", tone: "info" },
               { text: glyph, tone },
               { text: ` ${r.name}`, bold: true },
               { text: `  ${clip(r.description, 44)}`, tone: "muted" },
               {
+                // The clock is half of "expensive things get a bar": a run with a
+                // counter and no elapsed time cannot be told from a wedged one.
                 text: `  ${a.done}/${a.total}` +
                   `${a.cached ? ` · ${a.cached} replayed` : ""}` +
-                  `${a.failed ? ` · ${a.failed} failed` : ""}`,
+                  `${a.failed ? ` · ${a.failed} failed` : ""}` +
+                  ` · ${elapsed(r.createdAt, r.finishedAt, now)}`,
                 tone: "muted",
               },
             ]}
           />
         );
       })}
-    </Box>
+    </box>
   );
 }
 
@@ -512,35 +589,47 @@ export interface WorkflowsProps {
 
 export function Workflows(props: WorkflowsProps) {
   const { detail, level, rows, cols } = props;
+  const now = props.now ?? Date.now();
   if (level === 0 || detail === null) {
+    const gap = wfGap(rows);
     return (
-      <Box marginTop={1} flexDirection="column">
-        <RunsList runs={props.runs} sel={props.sel} rows={rows} />
-        <Box marginTop={1}>
-          <Text dimColor wrap="truncate">{footer(0, detail)}</Text>
-        </Box>
-      </Box>
+      <box marginTop={gap} flexDirection="column">
+        <RunsList runs={props.runs} sel={props.sel} rows={rows} now={now} />
+        <box marginTop={gap}>
+          <text attributes={TextAttributes.DIM} wrapMode="none">{footer(0, detail)}</text>
+        </box>
+      </box>
     );
   }
 
-  const now = props.now ?? Date.now();
-  const header = runHeaderRows(detail, {
+  const allHeader = runHeaderRows(detail, {
     ...(props.lastLog ? { lastLog: props.lastLog } : {}),
     now,
   });
-  const paneRows = Math.max(4, rows - header.length - 4);
-  const leftW = Math.min(24, Math.max(12, Math.floor(cols / 4)));
 
+  const gap = wfGap(rows);
   if (level === 4) {
+    // gap + header + body + footer.
+    const header = allHeader.slice(0, Math.max(0, rows - gap - 2));
+    const paneRows = Math.max(0, rows - gap - 1 - header.length);
     const body = scriptRows(detail);
     return (
-      <Box marginTop={1} flexDirection="column">
+      <box marginTop={gap} flexDirection="column">
         {header.map((r, i) => <Line key={i} row={r} />)}
-        {windowed(body, props.scroll, paneRows).slice.map((r, i) => <Line key={i} row={r} />)}
-        <Text dimColor wrap="truncate">{footer(4, detail)}</Text>
-      </Box>
+        {(paneRows === 0 ? [] : windowed(body, props.scroll, paneRows).slice)
+          .map((r, i) => <Line key={i} row={r} />)}
+        <text attributes={TextAttributes.DIM} wrapMode="none">{footer(4, detail)}</text>
+      </box>
     );
   }
+
+  // gap + header + gap + 1 column title + panes + footer. The header is clipped rather
+  // than allowed to push the panes past the bottom: a run's header can be nine rows on
+  // its own, and a pane budget floored at four (`Math.max(4, …)`) was a claim about
+  // space that the tab did not have.
+  const header = allHeader.slice(0, Math.max(0, rows - 2 * gap - 3));
+  const paneRows = Math.max(0, rows - 2 * gap - 2 - header.length);
+  const leftW = Math.min(24, Math.max(12, Math.floor(cols / 4)));
 
   const groups = phaseGroups(detail.workflow, detail.agents);
   const group = groups[Math.min(props.phaseSel, Math.max(0, groups.length - 1))] ??
@@ -551,35 +640,36 @@ export function Workflows(props: WorkflowsProps) {
   const left = agent
     ? agentRows(shown, props.agentSel, true, true, now)
     : phaseRows(groups, props.phaseSel, level === 1, detail.workflow.currentPhase);
+  const pane = (list: Row[], sel: number): Row[] =>
+    paneRows === 0 ? [] : windowed(list, sel, paneRows).slice;
   const right = agent
-    ? windowed(agentDetailRows(agent, props.promptOpen, now), props.scroll, paneRows).slice
-    : windowed(agentRows(shown, props.agentSel, level === 2, false, now), props.agentSel, paneRows)
-      .slice;
+    ? pane(agentDetailRows(agent, props.promptOpen, now), props.scroll)
+    : pane(agentRows(shown, props.agentSel, level === 2, false, now), props.agentSel);
 
   return (
-    <Box marginTop={1} flexDirection="column">
+    <box marginTop={gap} flexDirection="column">
       {header.map((r, i) => <Line key={`h${i}`} row={r} />)}
-      <Box flexDirection="row" marginTop={1}>
-        <Box flexDirection="column" width={leftW} marginRight={2}>
-          <Text dimColor wrap="truncate">
+      <box flexDirection="row" marginTop={gap}>
+        <box flexDirection="column" width={leftW} marginRight={2}>
+          <text attributes={TextAttributes.DIM} wrapMode="none">
             {agent ? clip(group.title || "agents", leftW) : "Phases"}
-          </Text>
-          {windowed(left, agent ? props.agentSel : props.phaseSel, paneRows).slice
+          </text>
+          {pane(left, agent ? props.agentSel : props.phaseSel)
             .map((r, i) => <Line key={i} row={r} />)}
-        </Box>
-        <Box flexDirection="column" flexGrow={1}>
-          <Text dimColor wrap="truncate">
+        </box>
+        <box flexDirection="column" flexGrow={1}>
+          <text attributes={TextAttributes.DIM} wrapMode="none">
             {agent
               ? clip(agent.label, 40)
               : `${group.title || "agents"} · ${shown.length}${
                 props.filter ? ` ${props.filter}` : ""
               }`}
-          </Text>
+          </text>
           {right.map((r, i) => <Line key={i} row={r} />)}
-        </Box>
-      </Box>
-      <Text dimColor wrap="truncate">{footer(level, detail)}</Text>
-    </Box>
+        </box>
+      </box>
+      <text attributes={TextAttributes.DIM} wrapMode="none">{footer(level, detail)}</text>
+    </box>
   );
 }
 

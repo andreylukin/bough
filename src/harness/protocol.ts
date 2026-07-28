@@ -186,9 +186,9 @@ export interface ProgramResult {
 // ---- workflow worker --------------------------------------------------------
 
 /**
- * The workflow worker runs with `permissions: "none"` and bridges only these
- * three. `parallel` and `pipeline` are NOT here — they are pure combinators over
- * `agent`, implemented worker-side, so they never cross the wire (spec §8).
+ * The workflow worker bridges only these three. `parallel` and `pipeline` are NOT
+ * here — they are pure combinators over `agent`, implemented worker-side, so they
+ * never cross the wire (spec §8).
  */
 export const WORKFLOW_HOST_FN_NAMES = ["agent", "phase", "log"] as const;
 

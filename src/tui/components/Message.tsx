@@ -9,7 +9,7 @@
  * lacked.
  *
  * SECOND INVARIANT — **a row is one terminal row.** `MessageRow` truncates to the
- * exact display width with `truncateAnsi` before Ink sees the string, so a line
+ * exact display width with `truncateAnsi` before the renderer sees the string, so a line
  * carrying SGR escapes, an OSC 8 hyperlink or a wide CJK glyph occupies the same
  * one row as a plain one. Measuring with `String.length` would let a styled line
  * reflow and shove the whole viewport down by a row per message.
@@ -20,10 +20,56 @@
  * that show one message outside a viewport (a branch drill-in, a fixture test).
  * Both go through `lines.ts`, so the folding rules have exactly one definition.
  */
-import { Box, Text } from "ink";
+import { RGBA, StyledText, type TextChunk, TextAttributes } from "@opentui/core";
 import type { Message } from "../../schema/parts.ts";
 import { messageLines, type VLine } from "../lines.ts";
-import { truncateAnsi } from "../format.ts";
+import { ansiSpans, truncateAnsi, width as displayWidth } from "../format.ts";
+
+/**
+ * Pad to exactly `w` display columns.
+ *
+ * NOT cosmetic — this is what CLEARS the row. A `<text>` node is content-sized, so
+ * a short line drawn over a longer previous one repaints only its own cells and
+ * the tail of the old line survives underneath: `bough` painted over
+ * `  hello world▌` rendered as `boughlo world▌`. Every row this file emits is
+ * blanked to the full viewport width before the renderer sees it.
+ */
+export function padRow(text: string, w: number): string {
+  return text + " ".repeat(Math.max(0, w - displayWidth(text)));
+}
+
+/**
+ * A styled string as the renderer wants it: chunks, not escapes.
+ *
+ * THE OTHER HALF OF THE ROW-CLEARING FIX, and the one that actually mattered. A
+ * `<text>` whose child carries raw SGR escapes desynchronises after its first
+ * repaint — the cell diff and the escape run disagree about which column is
+ * which, so a redrawn row keeps pieces of the row that was there before, escape
+ * tails included. Proven both ways in a bare OpenTUI app: identical content,
+ * corrupt as a string, clean as chunks. `ansiSpans` (format.ts) does the parsing;
+ * this only maps a span onto OpenTUI's `TextChunk`.
+ */
+export function styledRow(text: string): StyledText {
+  const chunks: TextChunk[] = ansiSpans(text).map((s) => {
+    let attributes = 0;
+    if (s.bold) attributes |= TextAttributes.BOLD;
+    if (s.dim) attributes |= TextAttributes.DIM;
+    if (s.italic) attributes |= TextAttributes.ITALIC;
+    if (s.underline) attributes |= TextAttributes.UNDERLINE;
+    if (s.reverse) attributes |= TextAttributes.INVERSE;
+    if (s.strikethrough) attributes |= TextAttributes.STRIKETHROUGH;
+    return {
+      __isChunk: true,
+      text: s.text,
+      fg: s.fg ? RGBA.fromHex(s.fg) : undefined,
+      bg: s.bg ? RGBA.fromHex(s.bg) : undefined,
+      attributes,
+      link: s.link ? { url: s.link } : undefined,
+    };
+  });
+  // A chunkless StyledText renders nothing at all, which would drop the row.
+  return new StyledText(chunks.length ? chunks : [{ __isChunk: true, text: " " }]);
+}
 
 export interface MessageRowProps {
   line: VLine;
@@ -38,10 +84,12 @@ export interface MessageRowProps {
 }
 
 export function MessageRow({ line, width, decorate }: MessageRowProps) {
-  // A blank line must still occupy its row: Ink collapses an empty string.
+  // A blank line must still occupy its row, so an empty string is drawn as a space
+  // rather than handed to the renderer as nothing.
   const raw = line.text === "" ? " " : line.text;
-  const text = truncateAnsi(decorate ? decorate(raw) : raw, Math.max(1, width));
-  return <Text wrap="truncate">{text || " "}</Text>;
+  const w = Math.max(1, width);
+  const text = truncateAnsi(decorate ? decorate(raw) : raw, w);
+  return <text wrapMode="none" content={styledRow(padRow(text || " ", w))} />;
 }
 
 export interface MessageViewProps {
@@ -64,8 +112,8 @@ export function MessageView(
 ) {
   const lines = messageLines(message, isExpanded, isFull, width, streaming, toolLogs);
   return (
-    <Box flexDirection="column">
+    <box flexDirection="column">
       {lines.map((line, i) => <MessageRow key={i} line={line} width={width} />)}
-    </Box>
+    </box>
   );
 }

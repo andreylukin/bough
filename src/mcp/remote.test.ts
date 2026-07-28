@@ -22,7 +22,11 @@
  * Hermetic: loopback only, no real `~/.bough` (the token store is injected at a
  * temp dir), no API keys, no outbound network.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { McpError } from "../errors.ts";
 import { BoughOAuthProvider, TokenStore } from "./oauth.ts";
 import { authPrompt, isAuthRequired, McpAuthRequiredError, McpRemoteClient } from "./remote.ts";
@@ -191,8 +195,8 @@ function startFixture(opts: FixtureOptions = {}): Fixture {
     return json({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "no such method" } });
   };
 
-  const server = Deno.serve({ port: 0, onListen: () => {} }, handler);
-  const { port } = server.addr as Deno.NetAddr;
+  const server = Bun.serve({ port: 0, fetch: handler });
+  const { port } = server;
   base = `http://127.0.0.1:${port}`;
   return {
     url: `${base}/mcp`,
@@ -200,14 +204,14 @@ function startFixture(opts: FixtureOptions = {}): Fixture {
     seen,
     close: async () => {
       for (const release of stalled.splice(0)) release();
-      await server.shutdown();
+      await server.stop();
     },
   };
 }
 
 /** A fresh, throwaway token store. Nothing under the real `~/.bough` is touched. */
 function tempStore(): TokenStore {
-  return new TokenStore({ dir: Deno.makeTempDirSync({ prefix: "bough-mcp-tokens-" }) });
+  return new TokenStore({ dir: mkdtempSync(join(tmpdir(), "bough-mcp-tokens-")) });
 }
 
 /**
@@ -250,7 +254,7 @@ async function catalogEntry(opts: {
 // The happy path
 // ---------------------------------------------------------------------------
 
-Deno.test("remote client: connects, paginates tools, round-trips a call", async () => {
+test("remote client: connects, paginates tools, round-trips a call", async () => {
   const fixture = startFixture();
   const client = await McpRemoteClient.connect({
     name: "fix",
@@ -277,7 +281,7 @@ Deno.test("remote client: connects, paginates tools, round-trips a call", async 
   assert.equal(client.alive, false);
 });
 
-Deno.test("remote client: static registry headers reach the server", async () => {
+test("remote client: static registry headers reach the server", async () => {
   const fixture = startFixture({ accept: "static-token" });
   const client = await McpRemoteClient.connect({
     name: "fix",
@@ -298,7 +302,7 @@ Deno.test("remote client: static registry headers reach the server", async () =>
 // 401 — the authorization prompt
 // ---------------------------------------------------------------------------
 
-Deno.test("a 401 surfaces as an authorization prompt in the catalog, not an error", async () => {
+test("a 401 surfaces as an authorization prompt in the catalog, not an error", async () => {
   const fixture = startFixture({ accept: "never-issued" });
   const store = tempStore();
   const provider = new BoughOAuthProvider("notion", {
@@ -340,16 +344,19 @@ Deno.test("a 401 surfaces as an authorization prompt in the catalog, not an erro
   }
 });
 
-Deno.test("the 401 prompt survives an auth flow that fails after the 401", async () => {
+test("the 401 prompt survives an auth flow that fails after the 401", async () => {
   // A server that answers 401 but publishes no OAuth metadata at all: discovery
   // and registration both fail, and the error that escapes the SDK is about THAT.
   // It must still read as "nobody has authorized this yet", because that is what
   // the user has to fix.
-  const server = Deno.serve({ port: 0, onListen: () => {} }, (req: Request) => {
-    if (req.method !== "POST") return new Response(null, { status: 405 });
-    return new Response("nope", { status: 401 });
+  const server = Bun.serve({
+    port: 0,
+    fetch: (req: Request) => {
+      if (req.method !== "POST") return new Response(null, { status: 405 });
+      return new Response("nope", { status: 401 });
+    },
   });
-  const { port } = server.addr as Deno.NetAddr;
+  const { port } = server;
   const store = tempStore();
   try {
     const error = await McpRemoteClient.connect({
@@ -365,7 +372,7 @@ Deno.test("the 401 prompt survives an auth flow that fails after the 401", async
     assert.ok(error.message.includes(authPrompt("bare")));
     assert.ok(isAuthRequired(error));
   } finally {
-    await server.shutdown();
+    await server.stop();
   }
 });
 
@@ -373,7 +380,7 @@ Deno.test("the 401 prompt survives an auth flow that fails after the 401", async
 // Refresh
 // ---------------------------------------------------------------------------
 
-Deno.test("an expired access token is refreshed inside the transport, invisibly", async () => {
+test("an expired access token is refreshed inside the transport, invisibly", async () => {
   const fixture = startFixture({
     accept: "fresh-1",
     refresh: { "r-good": { access_token: "fresh-1", refresh_token: "r-2" } },
@@ -416,7 +423,7 @@ Deno.test("an expired access token is refreshed inside the transport, invisibly"
   assert.deepEqual(fixture.seen.bearers.slice(0, 2), ["Bearer stale", "Bearer fresh-1"]);
 });
 
-Deno.test("an expired refresh token degrades to the same authorization prompt", async () => {
+test("an expired refresh token degrades to the same authorization prompt", async () => {
   // The token endpoint rejects the refresh with invalid_grant. The SDK drops the
   // tokens and starts a fresh authorization, which is a REDIRECT — so the human
   // gets the same one-command prompt as a server that was never authorized.
@@ -453,7 +460,7 @@ Deno.test("an expired refresh token degrades to the same authorization prompt", 
 // Bounded failure — never a hang
 // ---------------------------------------------------------------------------
 
-Deno.test("a server that accepts and never answers fails on the deadline", async () => {
+test("a server that accepts and never answers fails on the deadline", async () => {
   const fixture = startFixture({ stall: true });
   try {
     const error = await McpRemoteClient.connect({
@@ -472,7 +479,7 @@ Deno.test("a server that accepts and never answers fails on the deadline", async
   }
 });
 
-Deno.test("an unreachable server fails by name, and is not an auth prompt", async () => {
+test("an unreachable server fails by name, and is not an auth prompt", async () => {
   const error = await McpRemoteClient.connect({
     name: "dead",
     url: "http://127.0.0.1:1/mcp",
@@ -486,7 +493,7 @@ Deno.test("an unreachable server fails by name, and is not an auth prompt", asyn
   assert.ok(error.message.includes("http://127.0.0.1:1/mcp"));
 });
 
-Deno.test("an unusable url is refused before anything is opened", async () => {
+test("an unusable url is refused before anything is opened", async () => {
   const error = await McpRemoteClient.connect({
     name: "bad",
     url: "not a url",
@@ -498,7 +505,7 @@ Deno.test("an unusable url is refused before anything is opened", async () => {
   assert.ok(error.message.includes("unusable `url`"));
 });
 
-Deno.test("a closed connection refuses further calls instead of hanging", async () => {
+test("a closed connection refuses further calls instead of hanging", async () => {
   const fixture = startFixture();
   const client = await McpRemoteClient.connect({
     name: "fix",

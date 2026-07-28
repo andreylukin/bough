@@ -22,6 +22,7 @@
  *     known-type list imported from the frozen schema, an unknown name means a server
  *     ahead of this client, not a reason to tear down the stream.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { Bus } from "../bus.ts";
 import { EVENT_TYPES } from "../schema/events.ts";
@@ -32,7 +33,7 @@ import { connectEvents, KNOWN_EVENT_TYPES, parseFrames } from "./events.ts";
 
 // ---- framing ----------------------------------------------------------------
 
-Deno.test("parseFrames returns the unconsumed tail so a split frame survives", () => {
+test("parseFrames returns the unconsumed tail so a split frame survives", () => {
   const seen: [string, string][] = [];
   const emit = (type: string, data: string) => seen.push([type, data]);
 
@@ -45,7 +46,7 @@ Deno.test("parseFrames returns the unconsumed tail so a split frame survives", (
   assert.equal(tail, "");
 });
 
-Deno.test("comment lines are skipped without disturbing the stream", () => {
+test("comment lines are skipped without disturbing the stream", () => {
   const seen: string[] = [];
   const tail = parseFrames(
     ': connected\n\n: ping\n\nevent: tool.log\ndata: {"line":"x"}\n\n',
@@ -55,7 +56,7 @@ Deno.test("comment lines are skipped without disturbing the stream", () => {
   assert.equal(tail, "");
 });
 
-Deno.test("the known-type list is the schema's, so it cannot drift", () => {
+test("the known-type list is the schema's, so it cannot drift", () => {
   assert.deepEqual([...KNOWN_EVENT_TYPES].sort(), [...EVENT_TYPES].sort());
 });
 
@@ -80,7 +81,7 @@ async function until(check: () => boolean, what: string, tries = 200): Promise<v
   throw new Error(`timed out waiting for: ${what}`);
 }
 
-Deno.test("events flow, parsed, and the request never asks to resume", async () => {
+test("events flow, parsed, and the request never asks to resume", async () => {
   const ctx = fixture();
   const handler = createHandler(ctx, { onUnexpectedError: () => {} });
   const requests: Request[] = [];
@@ -120,7 +121,7 @@ Deno.test("events flow, parsed, and the request never asks to resume", async () 
   await until(() => ctx.bus.size === 0, "the subscription to be released");
 });
 
-Deno.test("onOpen reports a RE-connect, which is what triggers the store's re-fetch", async () => {
+test("onOpen reports a RE-connect, which is what triggers the store's re-fetch", async () => {
   const opens: boolean[] = [];
   const closes: number[] = [];
   let live: ReadableStreamDefaultController<Uint8Array> | null = null;
@@ -164,7 +165,7 @@ Deno.test("onOpen reports a RE-connect, which is what triggers the store's re-fe
   assert.equal(stream.connected, false);
 });
 
-Deno.test("an unknown or malformed frame is skipped, and the stream survives it", async () => {
+test("an unknown or malformed frame is skipped, and the stream survives it", async () => {
   const encoder = new TextEncoder();
   const received: BoughEvent[] = [];
   const bad: string[] = [];
@@ -205,7 +206,7 @@ Deno.test("an unknown or malformed frame is skipped, and the stream survives it"
   await stream.done;
 });
 
-Deno.test("?sessionId scopes the stream but never drops un-scoped events", async () => {
+test("?sessionId scopes the stream but never drops un-scoped events", async () => {
   const ctx = fixture();
   const handler = createHandler(ctx, { onUnexpectedError: () => {} });
   const received: BoughEvent[] = [];

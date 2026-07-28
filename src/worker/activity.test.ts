@@ -17,6 +17,7 @@
  * network: the watcher's whole contract is "events in, events out". Assertions come
  * from `node:assert/strict` — jsr.io is unreachable here.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { Bus } from "../bus.ts";
 import type { BoughEvent, EventInput, SessionActivityData } from "../schema/events.ts";
@@ -77,7 +78,7 @@ function rig(cheap?: CheapTier): Rig {
 // Shaping (pure)
 // ---------------------------------------------------------------------------
 
-Deno.test("programOf picks out run_steps code and nothing else", () => {
+test("programOf picks out run_steps code and nothing else", () => {
   assert.equal(
     programOf({
       type: "tool_call",
@@ -98,7 +99,7 @@ Deno.test("programOf picks out run_steps code and nothing else", () => {
   assert.equal(programOf(undefined), null);
 });
 
-Deno.test("programGist truncates from the HEAD — the opening lines are the intent", () => {
+test("programGist truncates from the HEAD — the opening lines are the intent", () => {
   const code = "// INTENT\n" + "x".repeat(MAX_CODE_CHARS + 500) + "\n// FORMATTING";
   const gist = programGist(code);
   assert.ok(gist.includes("// INTENT"));
@@ -106,7 +107,7 @@ Deno.test("programGist truncates from the HEAD — the opening lines are the int
   assert.ok(gist.endsWith("What is it doing?"));
 });
 
-Deno.test("sanitizeBlurb takes the first line, unquoted and uncapitalized-period", () => {
+test("sanitizeBlurb takes the first line, unquoted and uncapitalized-period", () => {
   assert.equal(sanitizeBlurb('"running the test suite."'), "running the test suite");
   assert.equal(
     sanitizeBlurb("\n\nrewriting the patch parser\nthen running tests"),
@@ -116,7 +117,7 @@ Deno.test("sanitizeBlurb takes the first line, unquoted and uncapitalized-period
   assert.equal(sanitizeBlurb("y".repeat(MAX_BLURB + 40))?.length, MAX_BLURB);
 });
 
-Deno.test("cheapActivity is null for empty input without calling anything", async () => {
+test("cheapActivity is null for empty input without calling anything", async () => {
   const never = { run: () => Promise.reject(new Error("must not be called")) };
   assert.equal(await cheapActivity("   ", { llm: never }), null);
 });
@@ -125,7 +126,7 @@ Deno.test("cheapActivity is null for empty input without calling anything", asyn
 // The watcher
 // ---------------------------------------------------------------------------
 
-Deno.test("a run_steps round publishes one session.activity blurb", async () => {
+test("a run_steps round publishes one session.activity blurb", async () => {
   const r = rig({
     title: () => Promise.resolve(null),
     ghostText: () => Promise.resolve(null),
@@ -143,7 +144,7 @@ Deno.test("a run_steps round publishes one session.activity blurb", async () => 
   }
 });
 
-Deno.test("THE DROP RULE: a burst of 12 rounds on one session buys exactly one call", async () => {
+test("THE DROP RULE: a burst of 12 rounds on one session buys exactly one call", async () => {
   let calls = 0;
   let release: (blurb: string) => void = () => {};
   const r = rig({
@@ -179,7 +180,7 @@ Deno.test("THE DROP RULE: a burst of 12 rounds on one session buys exactly one c
   }
 });
 
-Deno.test("the drop rule is PER SESSION — a burst on one does not silence another", async () => {
+test("the drop rule is PER SESSION — a burst on one does not silence another", async () => {
   const asked: string[] = [];
   const r = rig({
     title: () => Promise.resolve(null),
@@ -204,7 +205,7 @@ Deno.test("the drop rule is PER SESSION — a burst on one does not silence anot
   }
 });
 
-Deno.test("turn.finished clears the blurb, and a late answer for that turn is discarded", async () => {
+test("turn.finished clears the blurb, and a late answer for that turn is discarded", async () => {
   let release: (blurb: string) => void = () => {};
   const r = rig({
     title: () => Promise.resolve(null),
@@ -227,7 +228,7 @@ Deno.test("turn.finished clears the blurb, and a late answer for that turn is di
   }
 });
 
-Deno.test("a null blurb publishes nothing at all", async () => {
+test("a null blurb publishes nothing at all", async () => {
   const r = rig({
     title: () => Promise.resolve(null),
     ghostText: () => Promise.resolve(null),
@@ -246,7 +247,7 @@ Deno.test("a null blurb publishes nothing at all", async () => {
 // Failure is a non-event  (the AC)
 // ---------------------------------------------------------------------------
 
-Deno.test("a REJECTING cheap tier leaves the round's events untouched", async () => {
+test("a REJECTING cheap tier leaves the round's events untouched", async () => {
   const r = rig({
     title: () => Promise.resolve(null),
     ghostText: () => Promise.resolve(null),
@@ -281,7 +282,7 @@ Deno.test("a REJECTING cheap tier leaves the round's events untouched", async ()
   }
 });
 
-Deno.test("a failure releases the slot on the SAME watcher, not just a fresh one", async () => {
+test("a failure releases the slot on the SAME watcher, not just a fresh one", async () => {
   let calls = 0;
   const r = rig({
     title: () => Promise.resolve(null),
@@ -303,7 +304,7 @@ Deno.test("a failure releases the slot on the SAME watcher, not just a fresh one
   }
 });
 
-Deno.test("a THROWING cheap tier does not break bus fan-out", async () => {
+test("a THROWING cheap tier does not break bus fan-out", async () => {
   const r = rig({
     title: () => Promise.resolve(null),
     ghostText: () => Promise.resolve(null),
@@ -324,7 +325,7 @@ Deno.test("a THROWING cheap tier does not break bus fan-out", async () => {
   }
 });
 
-Deno.test("no cheap tier at all means no listener work and no events", async () => {
+test("no cheap tier at all means no listener work and no events", async () => {
   const r = rig(undefined);
   try {
     r.bus.publish(runSteps("s1", "await bash('ls')"));
@@ -336,7 +337,7 @@ Deno.test("no cheap tier at all means no listener work and no events", async () 
   }
 });
 
-Deno.test("unsubscribing stops the watcher", async () => {
+test("unsubscribing stops the watcher", async () => {
   let calls = 0;
   const r = rig({
     title: () => Promise.resolve(null),

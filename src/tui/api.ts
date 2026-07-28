@@ -34,6 +34,7 @@
  * caller needs no race-condition branch for a button whose job is to be safe to
  * press.
  */
+import process from "node:process";
 import type {
   AskQuestion,
   BackgroundJob,
@@ -60,12 +61,13 @@ import type {
   HandoffBody,
   MoveBody,
   PatchScheduleBody,
+  PatchSessionBody,
   PostCommentBody,
   PostMessageBody,
   RerunWorkflowBody,
   SectionsBody,
 } from "../schema/requests.ts";
-import type { UsageTotals } from "../types.ts";
+import type { Effort, UsageTotals } from "../types.ts";
 // Type-only, all of them: erased at compile time, so this module has no runtime edge
 // into `server/`, `workflow/` or `mcp/` and cannot participate in an import cycle.
 import type { Artifact } from "../hostfn/artifact.ts";
@@ -90,16 +92,11 @@ export const DEFAULT_PORT = 4321;
 /**
  * The loopback origin the server binds (`server/main.ts`). `BOUGH_PORT` is how the
  * rewrite runs beside the live install (plan §2), so it is read here rather than
- * hard-coded — and read through a `try`, because the TUI may run with no env access
- * and a missing permission must degrade to the default rather than crash the client.
+ * hard-coded — and an unset variable degrades to the default rather than failing
+ * the client.
  */
 export function defaultBase(): string {
-  let port = String(DEFAULT_PORT);
-  try {
-    port = Deno.env.get("BOUGH_PORT") ?? port;
-  } catch {
-    // No --allow-env. The default port is the right answer.
-  }
+  const port = process.env["BOUGH_PORT"] ?? String(DEFAULT_PORT);
   return `http://127.0.0.1:${port}`;
 }
 
@@ -158,6 +155,17 @@ export interface SessionRow extends Session {
   lastTurnStatus?: TurnStatus;
   /** This session's own spend. Omitted when zero. */
   costUsd?: number;
+  /**
+   * This session's own tokens (input + output + reasoning). Omitted when zero.
+   *
+   * Spec §5's rule that nothing runs invisibly is per-unit: the rail lists a
+   * subagent as `◆ review app.ts ⋯ working` and that is the whole of what it says,
+   * so a stuck agent and a slow one look identical. Cost alone does not separate
+   * them either — a cheap model burning tokens for ten minutes reads as free.
+   * Absent from a server that predates the field, which degrades the rail row to
+   * elapsed time rather than breaking it.
+   */
+  tokens?: number;
 }
 
 /** `GET /sessions/:id` — the reconnect payload (spec §3). */
@@ -174,6 +182,39 @@ export interface SessionSnapshot {
   effectiveModel?: string;
   /** The effective model's context window, for the meter's percentage. Null = unknown. */
   contextLimit?: number | null;
+}
+
+/**
+ * `GET /sessions/:id/usage` — the spend meter, live.
+ *
+ * The same two totals `GET /sessions/:id` carries, without the thread. It exists
+ * because a turn's cost is only interesting WHILE the turn is running: `usage`
+ * arrived with a snapshot and a snapshot arrived when a turn ended, so the running
+ * line said "17s" and nothing else for as long as the turn lasted and the cost chip
+ * then jumped in one frame. `turn/runner.ts` writes usage per ROUND, so this is
+ * genuinely live between rounds — polling it is what turns "slow" into "slow, and
+ * here is what it has cost so far" (spec: expensive things get a bar).
+ */
+export interface SessionUsage {
+  usage: UsageTotals;
+  /** This session plus every branch collapsed under it. */
+  tree: UsageTotals;
+}
+
+/**
+ * `GET /model-settings` — what a NEW conversation runs on, both tiers.
+ *
+ * It answered `{defaultModel}` alone, so the picker's cheap row — the tier that
+ * bills continuously for titles, ghost text and activity blurbs — printed
+ * "(unset)" next to a model that was very much set (`BOUGH_CHEAP_MODEL`, default
+ * `claude-haiku-4-5`). A row that names no model reads as a feature that is off.
+ */
+export interface ModelSettings {
+  defaultModel: string;
+  /** The cheap tier's model. Null only if the install genuinely has none. */
+  cheapModel: string | null;
+  /** The default thinking depth, or null for "the provider decides". */
+  defaultEffort: Effort | null;
 }
 
 /** `POST /sessions/:id/messages` — 202. `queued` = a turn was already running. */
@@ -301,8 +342,12 @@ export interface ReindexResult {
 export interface ApiOptions {
   /** Absent = `defaultBase()`. */
   base?: string;
-  /** Absent = the global `fetch`. Injected by tests and by the offline-error wrapper. */
-  fetchFn?: typeof fetch;
+  /**
+   * Absent = the global `fetch`. Injected by tests and by the offline-error wrapper.
+   * Only the call signature is required — `typeof fetch` would also demand the
+   * runtime's extras (Bun hangs `preconnect` off it), which no injector has.
+   */
+  fetchFn?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 }
 
 /** Query-string builder that omits absent values, so no URL ends in a bare `?`. */
@@ -388,6 +433,19 @@ export function createApi(options: ApiOptions = {}) {
     createSession: (body: CreateSessionBody = {}) => post<Session>("/sessions", body),
     /** The reconnect fetch: `{session, thread, usage}`, reconciled by message id. */
     getSession: (id: string) => get<SessionSnapshot>(`/sessions/${seg(id)}`),
+    /**
+     * The per-session `model` / `effort` pin (spec §4).
+     *
+     * The picker had this route the whole time and did not call it, so a model
+     * chosen in the panel lived in client state and died with the process — while
+     * the panel printed a note claiming no such route existed. Absent field = leave
+     * alone, explicit `null` = clear the pin and fall back to the global default;
+     * they are different requests and a picker needs both.
+     */
+    patchSession: (id: string, body: PatchSessionBody) =>
+      patch<Session>(`/sessions/${seg(id)}`, body),
+    /** Usage without the thread — cheap enough to poll while a turn runs. */
+    sessionUsage: (id: string) => get<SessionUsage>(`/sessions/${seg(id)}/usage`),
     postMessage: (id: string, body: PostMessageBody) =>
       post<PostedMessage>(`/sessions/${seg(id)}/messages`, body),
     /** `null` clears the prefilled composer text. No event — the writer is this client. */
@@ -490,7 +548,7 @@ export function createApi(options: ApiOptions = {}) {
     runSavedWorkflow: (name: string, body: { sessionId: string; args?: unknown }) =>
       post<WorkflowRun & { savedAs: string }>(`/saved-workflows/${seg(name)}/runs`, body),
     /** What a NEW conversation runs on, for the picker's ● before any session exists. */
-    getModelSettings: () => get<{ defaultModel: string }>("/model-settings"),
+    getModelSettings: () => get<ModelSettings>("/model-settings"),
     getWorkflowSettings: () => get<WorkflowSettings>("/workflow-settings"),
     putWorkflowSettings: (sizeGuideline: SizeGuideline) =>
       put<WorkflowSettings>("/workflow-settings", { sizeGuideline }),

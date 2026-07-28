@@ -19,6 +19,7 @@
  * reachable here, and a test that cannot run offline does not belong in
  * `deno task test`.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { Bus } from "../bus.ts";
 import { openDb, type SqliteDb } from "../db/db.ts";
@@ -313,7 +314,7 @@ function delegatingDeps(
 
 // ---- the note itself --------------------------------------------------------
 
-Deno.test("the four subagent outcomes read differently in the note", () => {
+test("the four subagent outcomes read differently in the note", () => {
   const done = formatSubagentNote(result());
   assert.ok(done.startsWith(`${SUBAGENT_NOTE_PREFIX} "seatbelt audit" (child-1) — finished.`));
   assert.match(done, /Report:\nChecked every handler/);
@@ -349,7 +350,7 @@ Deno.test("the four subagent outcomes read differently in the note", () => {
 
 // ---- wake path 1: the idle spawner ------------------------------------------
 
-Deno.test("a detached child that finishes while its spawner is idle starts a fresh turn", async () => {
+test("a detached child that finishes while its spawner is idle starts a fresh turn", async () => {
   const h = harness();
   try {
     const session = seedSpawner(h);
@@ -396,7 +397,7 @@ Deno.test("a detached child that finishes while its spawner is idle starts a fre
 
 // ---- wake path 2: the busy spawner ------------------------------------------
 
-Deno.test("a note that lands mid-turn rides the queued drain instead of racing it", async () => {
+test("a note that lands mid-turn rides the queued drain instead of racing it", async () => {
   const h = harness();
   try {
     const session = seedSpawner(h);
@@ -442,7 +443,7 @@ Deno.test("a note that lands mid-turn rides the queued drain instead of racing i
   }
 });
 
-Deno.test("a burst of notes on a busy session drains into exactly one turn", async () => {
+test("a burst of notes on a busy session drains into exactly one turn", async () => {
   const h = harness();
   try {
     const session = seedSpawner(h);
@@ -475,7 +476,7 @@ Deno.test("a burst of notes on a busy session drains into exactly one turn", asy
   }
 });
 
-Deno.test("a burst of notes on an IDLE session also produces exactly one turn", async () => {
+test("a burst of notes on an IDLE session also produces exactly one turn", async () => {
   const h = harness();
   try {
     const session = seedSpawner(h);
@@ -506,7 +507,7 @@ Deno.test("a burst of notes on an IDLE session also produces exactly one turn", 
 
 // ---- the two deliberate non-wakes -------------------------------------------
 
-Deno.test("a stop stays stopped: a note into a session the user interrupted wakes nothing", () => {
+test("a stop stays stopped: a note into a session the user interrupted wakes nothing", () => {
   const h = harness();
   try {
     const session = seedSpawner(h);
@@ -549,7 +550,7 @@ Deno.test("a stop stays stopped: a note into a session the user interrupted wake
   }
 });
 
-Deno.test("a note for a session that is gone is dropped, never thrown", () => {
+test("a note for a session that is gone is dropped, never thrown", () => {
   const h = harness();
   try {
     const deps: TurnDeps = { registry: h.registry, program: fakeProgram };
@@ -567,7 +568,7 @@ Deno.test("a note for a session that is gone is dropped, never thrown", () => {
 
 // ---- the failure matrix (plan T4.4) -----------------------------------------
 
-Deno.test("failure matrix: a detached child that ERRORED reaches its spawner as FAILED", async () => {
+test("failure matrix: a detached child that ERRORED reaches its spawner as FAILED", async () => {
   const h = harness();
   try {
     const session = seedSpawner(h);
@@ -593,7 +594,7 @@ Deno.test("failure matrix: a detached child that ERRORED reaches its spawner as 
   }
 });
 
-Deno.test("failure matrix: a detached child STOPPED by its wall clock says so, and wakes", async () => {
+test("failure matrix: a detached child STOPPED by its wall clock says so, and wakes", async () => {
   const h = harness();
   try {
     const session = seedSpawner(h);
@@ -621,7 +622,7 @@ Deno.test("failure matrix: a detached child STOPPED by its wall clock says so, a
   }
 });
 
-Deno.test("failure matrix: a launch REFUSED at the cap is in-band and owes no note", async () => {
+test("failure matrix: a launch REFUSED at the cap is in-band and owes no note", async () => {
   // One launch per turn, so the second is refused by the per-turn budget.
   const h = harness(new SpawnCaps({ perTurn: 1 }));
   try {
@@ -680,7 +681,7 @@ Deno.test("failure matrix: a launch REFUSED at the cap is in-band and owes no no
   }
 });
 
-Deno.test("failure matrix: a child ORPHANED by a restart reaches its spawner without waking it", async () => {
+test("failure matrix: a child ORPHANED by a restart reaches its spawner without waking it", async () => {
   const h = harness();
   try {
     const spawner = seedSpawner(h);
@@ -750,7 +751,7 @@ Deno.test("failure matrix: a child ORPHANED by a restart reaches its spawner wit
 
 // ---- background jobs post the same way --------------------------------------
 
-Deno.test("a background job's exit posts through the same wake rule", async () => {
+test("a background job's exit posts through the same wake rule", async () => {
   const h = harness();
   const jobs = new JobRegistry();
   try {
@@ -766,7 +767,7 @@ Deno.test("a background job's exit posts through the same wake rule", async () =
 
     // A non-zero exit always notifies. (A silent clean exit deliberately does not —
     // it would wake an idle session into a whole turn to say nothing.)
-    jobs.bashBg("exit 3", { sessionId: session.id, workspace: Deno.cwd() });
+    jobs.bashBg("exit 3", { sessionId: session.id, workspace: process.cwd() });
 
     await until(
       () => h.db.messagesFor(session.id).some((m) => m.role === "system"),
@@ -793,7 +794,7 @@ Deno.test("a background job's exit posts through the same wake rule", async () =
 
 // ---- the production seam ----------------------------------------------------
 
-Deno.test("createNoteDeliverer is the deliver seam hostfn/delegate.ts takes", async () => {
+test("createNoteDeliverer is the deliver seam hostfn/delegate.ts takes", async () => {
   const h = harness();
   try {
     const session = seedSpawner(h);

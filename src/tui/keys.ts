@@ -34,7 +34,15 @@
  * and cannot be reached by a second route: `Panel.tsx` imports this table and
  * re-exports it, and this module imports nothing from `components/`.
  *
- * FIFTH — **`key.super` is only believable under the kitty keyboard protocol.**
+ * FIFTH — **a tab-local key says so in the table, not in its prose.** A bare letter
+ * in the panel means whatever the open tab says it means, and for a while the table
+ * expressed that as "(workflows)" in a description — which the dispatcher could not
+ * read, so `p` steered a run from the sessions list. `Binding.tab` is that scope as
+ * data, matched by `lookup` against `KeyContext.tab`, which is what lets `x` be
+ * `wf.stop` in one tab and `changes.revert` in another with neither shadowing the
+ * other and `deadBindings` still able to tell a collision from a design.
+ *
+ * SIXTH — **`key.super` is only believable under the kitty keyboard protocol.**
  * Without it a terminal sends Cmd+←/→ as `CSI 1;9 C/D` and ink leaks bit 3 of the
  * modifier field into the meta flag, so those sequences are intercepted in
  * `mouse.ts` and delivered as nav-key events instead. `term.ts` decides which path
@@ -80,6 +88,18 @@ export type Command =
   | "panel.confirm"
   /** Branch at the cursor AND carry a summary of the abandoned path (pi's /tree). */
   | "panel.confirmSummarize"
+  /**
+   * Jump straight to row 1-9 of the active tab AND affirm it (spec §3: options are
+   * addressable by digit, not only arrowable). The digit is read off the keypress
+   * by the dispatcher, exactly as `ask.pick` already does.
+   */
+  | "panel.pick"
+  // -- the panel's type-to-filter (one modal buffer, every list tab) --------
+  /** `/` — hand the keyboard to the filter buffer. Guarded OFF while it has it. */
+  | "panel.filter"
+  | "panel.filterBack"
+  /** Clear the buffer and give the keyboard back. The panel stays open. */
+  | "panel.filterExit"
   /** One per tab, derived from `TABS` so a tab cannot exist without a chord. */
   | TabCommand
   // -- composing ------------------------------------------------------------
@@ -101,6 +121,9 @@ export type Command =
   | "fold.all"
   | "scroll.up"
   | "scroll.down"
+  /** A whole screen, not a step. The `?` overlay is 50 rows and ↑↓ scan it. */
+  | "scroll.pageUp"
+  | "scroll.pageDown"
   // -- editing the line -----------------------------------------------------
   | "cursor.left"
   | "cursor.right"
@@ -116,12 +139,23 @@ export type Command =
   | "delete.toEnd"
   | "delete.toStart"
   | "delete.line"
-  // -- the live subagent rail ----------------------------------------------
+  // -- the live work rail ---------------------------------------------------
   | "rail.enter"
   | "rail.up"
   | "rail.down"
   | "rail.open"
   | "rail.exit"
+  /**
+   * Stop the unit under the rail cursor — a background shell, a subagent, a run.
+   *
+   * The ONE keyboard route to stopping something that is not the open turn. Before
+   * this there was none: `bg_7 ⋯ running sleep 90` sat for ninety seconds and the
+   * only exits were waiting and `^c ^c`, which quits bough. Destructive, so the
+   * dispatcher ARMS on the first press (printing the scope — spec §7) and acts on
+   * the second; the keymap binds one chord because arming is a state of the rail,
+   * not a second key.
+   */
+  | "rail.stop"
   // -- a question hold ------------------------------------------------------
   | "ask.pick"
   | "ask.send"
@@ -131,11 +165,25 @@ export type Command =
   | "move.down"
   | "move.in"
   | "move.out"
+  /** A screenful of rows. The model tab is 32 rows in a 20-row viewport. */
+  | "move.pageUp"
+  | "move.pageDown"
   // -- workflow steering (spec §8) -----------------------------------------
   | "wf.pause"
   | "wf.resume"
   | "wf.stop"
-  | "wf.rerun";
+  | "wf.rerun"
+  /** The run's script — Workflows level 4, which nothing could reach. */
+  | "wf.script"
+  /** Cycle the agent-status filter (`WF_FILTERS`) on a big run. */
+  | "wf.filter"
+  /** Open the session of the agent under the cursor. The detail row promises it. */
+  | "wf.openAgent"
+  // -- the changes tab (spec §7: destructive, so it says its scope out loud) -
+  /** Arm a revert of the file under the cursor. Nothing is written until ⏎. */
+  | "changes.revert"
+  /** Arm a revert of the WHOLE change set, in one key rather than two presses. */
+  | "changes.revertAll";
 
 // ---------------------------------------------------------------------------
 // The tabs of the one panel
@@ -283,6 +331,25 @@ export function chordLabel(chord: string): string {
  */
 export interface KeyContext {
   mode: UiMode;
+  /**
+   * The panel's open tab, or null when the panel is closed.
+   *
+   * NOT a boolean, and therefore not a `Guard`: it is the STRUCTURAL scope a
+   * tab-local binding is matched against. A bare letter in the panel means whatever
+   * the open tab says it means — `x` stops a run in `workflows` and arms a revert in
+   * `changes` — and until this field existed the table could only say so in prose.
+   * It did, and the dispatcher did not read prose: `p`, `P` and `r` carried
+   * "(workflows)" in their descriptions and steered `state.workflows[sel]` from every
+   * tab, acting on a row the user was not looking at. Scope is data now, resolved by
+   * `lookup`, so a binding that names a tab cannot fire outside it.
+   *
+   * OPTIONAL, and absent means the same as `null`: the panel is closed. A caller
+   * that omits it reaches no tab-local binding at all — `x`, `X`, `s`, `p`, `P`,
+   * `r`, `e`, `f` and `o` resolve to nothing. That is the SAFE degrade (a bare
+   * letter that does nothing beats one that stops a run you are not looking at),
+   * but it is a degrade: the dispatcher must pass the open tab.
+   */
+  tab?: PanelTab | null;
   /** The composer is empty, so a chord can mean something other than editing. */
   emptyDraft: boolean;
   /** The draft spans more than one line: ↑/↓ move the cursor, not history. */
@@ -304,9 +371,30 @@ export interface KeyContext {
    * and there already is one — the popup closes on esc like any other transient.
    */
   completing: boolean;
+  /**
+   * The panel's filter buffer has the keyboard (`/` opened it).
+   *
+   * The reason type-to-filter could not simply be switched on: `p`, `P`, `x`, `r`,
+   * `s`, `j` and `k` are all live letters in the panel, so a user typing a model
+   * name would have paused a workflow and pinned a model on the way through. The
+   * resolution is MODAL and it is the one Sessions already drew — `/` opens a
+   * buffer, and while the buffer is open every bare letter and digit in the panel is
+   * text. One rule, every tab, and no letter has two meanings that depend on how
+   * fast you typed.
+   *
+   * Optional for the same reason `tab` is, and with the same safe degrade: omitted
+   * reads as "not filtering", which is what every surface outside the panel is.
+   */
+  panelFiltering?: boolean;
 }
 
-export type Guard = Exclude<keyof KeyContext, "mode">;
+/**
+ * The boolean fields of `KeyContext` — everything a `when`/`not` can name.
+ *
+ * `tab` is excluded because it is not a flag: it is matched by `Binding.tab`, which
+ * is a set membership rather than a truth test.
+ */
+export type Guard = Exclude<keyof KeyContext, "mode" | "tab">;
 
 export interface Binding {
   /** `"*"` binds in every mode — the handful of chords that must always work. */
@@ -318,6 +406,15 @@ export interface Binding {
   when?: Guard[];
   /** Every named flag must be false. */
   not?: Guard[];
+  /**
+   * Panel tabs this row is live in. Absent = every tab (and the closed panel).
+   *
+   * The structural half of "a bare letter means what the open tab says it means".
+   * Two rows may share a chord as long as their tab sets are disjoint, which is how
+   * `x` is `wf.stop` in one tab and `changes.revert` in another without either being
+   * dead.
+   */
+  tab?: readonly PanelTab[];
   /** Help section. A binding with no section is an alias and is not documented. */
   section?: string;
   /** Terse: the overlay lays sections out in two columns, ~35 columns each. */
@@ -328,6 +425,17 @@ export interface Binding {
 
 /** The help section the direct-jump chords are printed under. */
 const PANEL_SECTION = "the panel — ^t, or jump straight to a tab";
+
+/**
+ * Tabs whose body is a flat list long enough to need narrowing.
+ *
+ * `changes`, `tree`, `workflows` and `mcp` are structured views with their own
+ * drill-in, and `theme` is eight rows; a filter there would be a second way to move
+ * a cursor rather than a way to find a row. `model` is thirty-two rows in a
+ * twenty-row viewport and `skills` grows with the install, which is the case this
+ * exists for.
+ */
+export const FILTER_TABS: readonly PanelTab[] = ["sessions", "model", "skills"];
 
 /**
  * Chords that reach the panel from outside it and move between its tabs inside it.
@@ -366,11 +474,25 @@ function panelChords(): Binding[] {
   return rows;
 }
 
-const digits = (mode: UiMode | "*", command: Command, section: string, desc: string): Binding[] =>
+/**
+ * `1`…`9`, one row each, documented once as `1-9`.
+ *
+ * `extra` carries the guards a digit row needs where the surface has other uses for
+ * a bare keypress — in the panel, a digit is only a pick while the filter buffer is
+ * closed.
+ */
+const digits = (
+  mode: UiMode | "*",
+  command: Command,
+  section: string,
+  desc: string,
+  extra: Partial<Binding> = {},
+): Binding[] =>
   Array.from({ length: 9 }, (_v, i) => ({
     mode,
     chord: String(i + 1),
     command,
+    ...extra,
     ...(i === 0 ? { section, desc, label: "1-9" } : {}),
   }));
 
@@ -407,7 +529,27 @@ export const BINDINGS: Binding[] = [
     desc: "this overlay",
   },
 
-  { mode: "chat", chord: "enter", command: "send", section: "compose", desc: "send" },
+  // The popup owns ⏎ while it is open, so it sits AHEAD of `send`. "Enter commits"
+  // is the one rule that makes every bordered-list-with-a-cursor in the TUI
+  // learnable once, and the pickers were the only widget that broke it: ⏎ on a
+  // highlighted `/history` row discarded the row and sent the literal draft `/` as
+  // a turn. ⇥ stays bound as the alias a completion menu is also expected to have.
+  {
+    mode: "chat",
+    chord: "enter",
+    command: "complete.accept",
+    when: ["completing"],
+    section: "compose",
+    label: "⏎ ⇥",
+    desc: "accept the @ or / suggestion",
+  },
+  {
+    mode: "chat",
+    chord: "enter",
+    command: "send",
+    section: "compose",
+    desc: "send · interjects while a turn runs",
+  },
   {
     mode: "chat",
     chord: "meta+enter",
@@ -416,22 +558,38 @@ export const BINDINGS: Binding[] = [
     desc: "queue for after this turn",
   },
   { mode: "chat", chord: "ctrl+j", command: "newline", section: "compose", desc: "newline" },
+  // `not: ["emptyDraft"]` is not decoration: with nothing typed there is nothing to
+  // clear, and a double-tap that resolved here anyway SWALLOWED the gesture — a
+  // user hammering Escape at a running turn got "cleared an empty draft" instead of
+  // "stopped it". Falling through lets the rows below answer, which is the honest
+  // reading of "esc esc clears the draft".
   {
     mode: "chat",
     chord: "esc",
     command: "draft.clear",
     when: ["doubleEsc"],
+    not: ["emptyDraft"],
     section: "compose",
     label: "esc esc",
     desc: "clear the draft",
   },
-  // Spec §5's user interrupt. Ordered between the double-tap above and the plain
-  // `cancel` below, which is the whole reason the table resolves top-down: while a
-  // turn is running, one Escape stops it; with nothing running it dismisses a notice,
-  // and the double-tap keeps meaning "clear the draft" either way. Guarded on `busy`
-  // rather than bound to a chord of its own because Escape is the key every user
-  // already reaches for to stop something, and a stop button nobody finds is the gap
-  // this closes, not a smaller version of it.
+  // The @// popup, while it is open. These sit AHEAD of the composer's own ↑/↓ and
+  // esc — and, since the popup's own legend row promises `esc closes`, ahead of
+  // `turn.interrupt` too. The earlier order argued that stopping a turn outranks
+  // closing a menu, but the legend was never told: one Escape with the skills picker
+  // open during a turn killed the turn and left the picker on screen still saying
+  // `esc closes`. Escape unwinds exactly ONE level, nearest surface first, which is
+  // what every other surface in this TUI already does.
+  { mode: "chat", chord: "tab", command: "complete.accept", when: ["completing"] },
+  { mode: "chat", chord: "up", command: "complete.prev", when: ["completing"] },
+  { mode: "chat", chord: "down", command: "complete.next", when: ["completing"] },
+  { mode: "chat", chord: "esc", command: "complete.dismiss", when: ["completing"] },
+  // Spec §5's user interrupt. Ordered between the popup above and the plain `cancel`
+  // below, which is the whole reason the table resolves top-down: while a turn is
+  // running, one Escape stops it; with nothing running it dismisses a notice.
+  // Guarded on `busy` rather than bound to a chord of its own because Escape is the
+  // key every user already reaches for to stop something, and a stop button nobody
+  // finds is the gap this closes, not a smaller version of it.
   {
     mode: "chat",
     chord: "esc",
@@ -440,20 +598,6 @@ export const BINDINGS: Binding[] = [
     section: "leaving",
     desc: "stop the running turn",
   },
-  // The @// popup, while it is open. These sit AHEAD of the composer's own ↑/↓ and
-  // esc because the popup is the nearer surface — but behind `turn.interrupt`,
-  // since stopping a running turn outranks closing a menu.
-  {
-    mode: "chat",
-    chord: "tab",
-    command: "complete.accept",
-    when: ["completing"],
-    section: "compose",
-    desc: "accept the @ or / suggestion",
-  },
-  { mode: "chat", chord: "up", command: "complete.prev", when: ["completing"] },
-  { mode: "chat", chord: "down", command: "complete.next", when: ["completing"] },
-  { mode: "chat", chord: "esc", command: "complete.dismiss", when: ["completing"] },
   { mode: "chat", chord: "esc", command: "cancel" },
   {
     mode: "chat",
@@ -472,7 +616,7 @@ export const BINDINGS: Binding[] = [
     command: "rail.enter",
     when: ["emptyDraft", "railLive"],
     section: "read",
-    desc: "into the live subagent rail",
+    desc: "into the live work rail",
   },
   { mode: "chat", chord: "down", command: "history.next" },
 
@@ -485,14 +629,15 @@ export const BINDINGS: Binding[] = [
     section: "read",
     desc: "fold/unfold every tool call",
   },
-  { mode: "chat", chord: "pageup", command: "scroll.up", section: "read", desc: "scroll back" },
   {
     mode: "chat",
-    chord: "pagedown",
-    command: "scroll.down",
+    chord: "pageup",
+    command: "scroll.pageUp",
     section: "read",
-    desc: "scroll forward",
+    label: "pgup pgdn",
+    desc: "scroll back / forward",
   },
+  { mode: "chat", chord: "pagedown", command: "scroll.pageDown" },
 
   // -- the one tabbed panel -------------------------------------------------
   ...panelChords(),
@@ -577,7 +722,7 @@ export const BINDINGS: Binding[] = [
     chord: "enter",
     command: "rail.open",
     section: "the rail",
-    desc: "open a branch",
+    desc: "open this agent / shell output",
   },
   {
     mode: "rail",
@@ -585,6 +730,18 @@ export const BINDINGS: Binding[] = [
     command: "rail.exit",
     section: "the rail",
     desc: "back to the composer",
+  },
+  // The rail is where running work is listed, so it is where running work is
+  // stopped. `x` is the same letter the workflows tab already uses for "stop", and
+  // the same two-step: the first press names what will be killed, the second does
+  // it (spec §7 — consent is never inferred).
+  {
+    mode: "rail",
+    chord: "x",
+    command: "rail.stop",
+    section: "the rail",
+    label: "x x",
+    desc: "stop this shell / agent / run",
   },
 
   // -- a question hold ------------------------------------------------------
@@ -618,8 +775,21 @@ export const BINDINGS: Binding[] = [
     desc: "move",
   },
   { mode: "panel", chord: "down", command: "move.down" },
-  { mode: "panel", chord: "k", command: "move.up" },
-  { mode: "panel", chord: "j", command: "move.down" },
+  // Bare letters, so they are text while the filter buffer has the keyboard.
+  { mode: "panel", chord: "k", command: "move.up", not: ["panelFiltering"] },
+  { mode: "panel", chord: "j", command: "move.down", not: ["panelFiltering"] },
+  // A screenful. The model tab is thirty-two rows in a twenty-row viewport and ↑↓
+  // walk it one row at a time; the transcript and the help overlay both already
+  // page, and a list that does not is the only list in the TUI that does not.
+  {
+    mode: "panel",
+    chord: "pageup",
+    command: "move.pageUp",
+    section: "inside the panel",
+    label: "pgup pgdn",
+    desc: "a screenful at a time",
+  },
+  { mode: "panel", chord: "pagedown", command: "move.pageDown" },
   {
     mode: "panel",
     chord: "tab",
@@ -645,15 +815,41 @@ export const BINDINGS: Binding[] = [
     desc: "drill into delegated work (tree)",
   },
   { mode: "panel", chord: "left", command: "move.out" },
+  // Spec §3: a list is addressable BY DIGIT, not only arrowable. The dispatcher
+  // reads the digit off the keypress, exactly as the ask card does.
+  ...digits("panel", "panel.pick", "inside the panel", "jump to that row and affirm it", {
+    not: ["panelFiltering"],
+  }),
   // A letter, like the workflow steering keys below and for the same reason: the
-  // panel has the keyboard while it is open. Acted on only by the tree tab.
+  // panel has the keyboard while it is open. `tab` — not the description — is what
+  // keeps it inside the tree tab.
   {
     mode: "panel",
     chord: "s",
     command: "panel.confirmSummarize",
+    tab: ["tree"],
+    not: ["panelFiltering"],
     section: "inside the panel",
-    desc: "branch, carrying a summary of what you left (tree)",
+    desc: "tree: branch, carrying a summary of what you left",
   },
+
+  // -- type-to-filter, the panel's one modal buffer -------------------------
+  // MODAL, and deliberately: bare-letter filtering cannot coexist with `p`/`x`/`r`/
+  // `s`/`j`/`k`, and Sessions already draws a `/ filter` row. So one gesture, in
+  // every list tab that has one, and while it is open a letter is a letter.
+  {
+    mode: "panel",
+    chord: "/",
+    command: "panel.filter",
+    tab: FILTER_TABS,
+    not: ["panelFiltering"],
+    section: "inside the panel",
+    desc: "filter this list · esc clears",
+  },
+  { mode: "panel", chord: "backspace", command: "panel.filterBack", when: ["panelFiltering"] },
+  // Ahead of `panel.close`: escape unwinds exactly ONE level, nearest surface
+  // first, which is the rule every other surface in this TUI already follows.
+  { mode: "panel", chord: "esc", command: "panel.filterExit", when: ["panelFiltering"] },
   {
     mode: "panel",
     chord: "esc",
@@ -663,20 +859,34 @@ export const BINDINGS: Binding[] = [
   },
 
   // -- workflow runs (spec §8: pause, stop, relaunch from the journal) ------
-  // Bound in the panel and acted on only by the workflows tab. They are letters
-  // rather than chords because the panel has the keyboard when it is open.
+  // Bound in the panel and live only in the workflows tab. They are letters rather
+  // than chords because the panel has the keyboard when it is open, and they carry
+  // `tab` because a letter that acts on a list you are not looking at is a bug the
+  // dispatcher already had to patch by hand.
   {
     mode: "panel",
     chord: "p",
     command: "wf.pause",
+    tab: ["workflows"],
+    not: ["panelFiltering"],
     section: "the workflows tab",
     desc: "pause · in-flight agents finish",
   },
-  { mode: "panel", chord: "P", command: "wf.resume", section: "the workflows tab", desc: "resume" },
+  {
+    mode: "panel",
+    chord: "P",
+    command: "wf.resume",
+    tab: ["workflows"],
+    not: ["panelFiltering"],
+    section: "the workflows tab",
+    desc: "resume",
+  },
   {
     mode: "panel",
     chord: "x",
     command: "wf.stop",
+    tab: ["workflows"],
+    not: ["panelFiltering"],
     section: "the workflows tab",
     desc: "stop · pause first to keep work",
   },
@@ -684,8 +894,64 @@ export const BINDINGS: Binding[] = [
     mode: "panel",
     chord: "r",
     command: "wf.rerun",
+    tab: ["workflows"],
+    not: ["panelFiltering"],
     section: "the workflows tab",
     desc: "relaunch from the journal",
+  },
+  // The three verbs the run view has always PRINTED and never bound: `steerActions`
+  // offers "e script", the agent pane offers the `f` status cycle, and an agent's
+  // detail row says "session <id> — o opens it". A promise on screen for a key that
+  // does nothing is worse than no promise.
+  {
+    mode: "panel",
+    chord: "e",
+    command: "wf.script",
+    tab: ["workflows"],
+    not: ["panelFiltering"],
+    section: "the workflows tab",
+    desc: "the run's script",
+  },
+  {
+    mode: "panel",
+    chord: "f",
+    command: "wf.filter",
+    tab: ["workflows"],
+    not: ["panelFiltering"],
+    section: "the workflows tab",
+    desc: "cycle agents: all/running/queued/done/error",
+  },
+  {
+    mode: "panel",
+    chord: "o",
+    command: "wf.openAgent",
+    tab: ["workflows"],
+    not: ["panelFiltering"],
+    section: "the workflows tab",
+    desc: "open this agent's session",
+  },
+
+  // -- the changes tab (spec §7) --------------------------------------------
+  // `x` reached this tab only because it was bound to `wf.stop` and the dispatcher
+  // re-routed it by hand, and `X` could not reach it at all. Both are their own
+  // commands now, scoped by `tab` rather than by an `if` in the panel host.
+  {
+    mode: "panel",
+    chord: "x",
+    command: "changes.revert",
+    tab: ["changes"],
+    not: ["panelFiltering"],
+    section: "the changes tab",
+    desc: "revert this file — ⏎ confirms",
+  },
+  {
+    mode: "panel",
+    chord: "X",
+    command: "changes.revertAll",
+    tab: ["changes"],
+    not: ["panelFiltering"],
+    section: "the changes tab",
+    desc: "revert everything — ⏎ confirms",
   },
 
   // -- the overlay itself ---------------------------------------------------
@@ -696,11 +962,19 @@ export const BINDINGS: Binding[] = [
   { mode: "help", chord: "down", command: "scroll.down" },
   { mode: "help", chord: "k", command: "scroll.up" },
   { mode: "help", chord: "j", command: "scroll.down" },
+  // The overlay is 50-odd rows in a 24-row window and ↑↓ move three at a time, so
+  // the last section — `won't do`, which is where the no-sandbox posture is stated —
+  // was forty keypresses away. It already advertises pgup/pgdn for the transcript.
+  { mode: "help", chord: "pageup", command: "scroll.pageUp" },
+  { mode: "help", chord: "pagedown", command: "scroll.pageDown" },
 ];
 
 function guardsHold(binding: Binding, ctx: KeyContext): boolean {
   for (const g of binding.when ?? []) if (!ctx[g]) return false;
   for (const g of binding.not ?? []) if (ctx[g]) return false;
+  // A tab-scoped row is dead outside its tabs — including with the panel closed,
+  // where `ctx.tab` is null and no tab-local letter can be meant.
+  if (binding.tab && (!ctx.tab || !binding.tab.includes(ctx.tab))) return false;
   return true;
 }
 
@@ -758,6 +1032,14 @@ export const UNAVAILABLE: HelpSection = {
   section: "not bound",
   unavailable: true,
   keys: [
+    // Not a chord, but it belongs here for exactly the reason the section exists:
+    // three of the four sigils a user is told to expect are live, and typing `!ls`
+    // did not fail loudly — it went to the frontier model as an ordinary prompt and
+    // billed for it. A sigil that is silently not a sigil is the one case where
+    // saying nothing costs money.
+    ["!", "not a shell sigil — it goes to the model"],
+    ["^g", "no $EDITOR handoff yet"],
+    ["^v", "your terminal pastes · no image attachments"],
     ["^r", "no reverse search yet"],
     ["^z", "no suspend · ^c ^c quits"],
     ["⌥d", "use ^k"],
@@ -781,7 +1063,15 @@ export function helpSections(bindings: Binding[] = BINDINGS): HelpSection[] {
       bySection.set(b.section, rows);
       out.push({ section: b.section, keys: rows });
     }
-    rows.push([b.label ?? chordLabel(b.chord), b.desc]);
+    // A GUARDED row must say it is guarded. `^d` is printed twice — once as "what
+    // this session changed" and once as "delete char ahead" — with nothing to say
+    // they are one key that reads the composer to decide, and the failure direction
+    // is silent: press `^d` with a half-written draft and the cursor at its end and
+    // absolutely nothing happens. The condition already lives on the binding, so the
+    // generator is the one place that can disclose it without inventing a second
+    // description to keep in sync.
+    const desc = b.when?.includes("emptyDraft") ? `${b.desc} · empty draft` : b.desc;
+    rows.push([b.label ?? chordLabel(b.chord), desc]);
   }
   out.push(LIMITS, UNAVAILABLE);
   return out;
@@ -835,11 +1125,18 @@ export function helpLines(sections: HelpSection[] = helpSections()): HelpLine[] 
  * earlier one's guards are implied by the later one's — the simple cases being
  * identical guards, or an unguarded row placed ahead of a guarded one. Exported so
  * the test asserting the keymap has no dead rows reads as one call.
+ *
+ * TAB SCOPE COUNTS THE SAME WAY. Two rows that share a chord but name disjoint tabs
+ * are the design (`x` stops a run, and reverts a file), so the subset test runs over
+ * the tab sets too: an unscoped row ahead of a scoped one still kills it, and two
+ * scoped rows only collide where their tabs overlap.
  */
 export function deadBindings(bindings: Binding[] = BINDINGS): string[] {
   const dead: string[] = [];
   const sig = (b: Binding) =>
-    `${[...(b.when ?? [])].sort().join(",")}/${[...(b.not ?? [])].sort().join(",")}`;
+    `${[...(b.when ?? [])].sort().join(",")}/${[...(b.not ?? [])].sort().join(",")}${
+      b.tab ? `@${[...b.tab].sort().join(",")}` : ""
+    }`;
   for (let i = 0; i < bindings.length; i++) {
     for (let j = i + 1; j < bindings.length; j++) {
       const a = bindings[i];
@@ -848,8 +1145,11 @@ export function deadBindings(bindings: Binding[] = BINDINGS): string[] {
       const aWhen = new Set(a.when ?? []);
       const aNot = new Set(a.not ?? []);
       // `a` shadows `b` when every context `b` accepts is one `a` also accepts —
-      // i.e. `a`'s guards are a subset of `b`'s.
-      const shadows = [...aWhen].every((g) => (b.when ?? []).includes(g)) &&
+      // i.e. `a`'s guards are a subset of `b`'s, and `a`'s tabs a superset.
+      const tabShadows = a.tab === undefined ||
+        (b.tab !== undefined && b.tab.every((t) => a.tab!.includes(t)));
+      const shadows = tabShadows &&
+        [...aWhen].every((g) => (b.when ?? []).includes(g)) &&
         [...aNot].every((g) => (b.not ?? []).includes(g));
       if (shadows) dead.push(`${b.mode} ${b.chord}${sig(b) === "/" ? "" : ` (${sig(b)})`}`);
     }

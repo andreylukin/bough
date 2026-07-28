@@ -17,14 +17,17 @@
  *
  * Everything runs against `createHandler(ctx)` over a database with no socket bound and
  * nothing on the network (plan §7). Two tests need a real FILE — `:memory:` cannot be
- * opened twice — and use `Deno.makeTempDir`, never `~/.bough`.
+ * opened twice — and use `mkdtemp`, never `~/.bough`.
  *
- * Assertions come from `node:assert/strict` rather than `@std/assert`: jsr.io is not
- * reachable from this environment, and a test that cannot run offline does not belong
- * in `deno task test`.
+ * Assertions come from `node:assert/strict` rather than a matcher library: they run
+ * unchanged under any runtime, and a test that cannot run offline does not belong in
+ * `bun test`.
  */
+import { test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import assert from "node:assert/strict";
-import { DatabaseSync } from "node:sqlite";
+import { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { Bus } from "../bus.ts";
 import { openDb, type SqliteDb } from "../db/db.ts";
@@ -119,7 +122,7 @@ const search = async (f: Fixture, query: string): Promise<SearchResult> => {
 
 // ---- querying ---------------------------------------------------------------
 
-Deno.test("a multi-word query is an implicit AND, not a phrase and not an OR", async () => {
+test("a multi-word query is an implicit AND, not a phrase and not an OR", async () => {
   const f = fixture();
   try {
     const s = session(f.db, "index work");
@@ -141,7 +144,7 @@ Deno.test("a multi-word query is an implicit AND, not a phrase and not an OR", a
   }
 });
 
-Deno.test("a quoted phrase requires adjacency; the same words apart do not match", async () => {
+test("a quoted phrase requires adjacency; the same words apart do not match", async () => {
   const f = fixture();
   try {
     const s = session(f.db, "phrases");
@@ -160,7 +163,7 @@ Deno.test("a quoted phrase requires adjacency; the same words apart do not match
   }
 });
 
-Deno.test("ranking puts the denser match first", async () => {
+test("ranking puts the denser match first", async () => {
   const f = fixture();
   try {
     const s = session(f.db, "ranking");
@@ -186,7 +189,7 @@ Deno.test("ranking puts the denser match first", async () => {
   }
 });
 
-Deno.test("a hit carries the session, its title and kind, the role and the timestamp", async () => {
+test("a hit carries the session, its title and kind, the role and the timestamp", async () => {
   const f = fixture();
   try {
     const root = session(f.db, "the spawner");
@@ -210,7 +213,7 @@ Deno.test("a hit carries the session, its title and kind, the role and the times
   }
 });
 
-Deno.test("?sessionId= scopes the search; an unknown one is a 404, not an empty answer", async () => {
+test("?sessionId= scopes the search; an unknown one is a 404, not an empty answer", async () => {
   const f = fixture();
   try {
     const a = session(f.db, "session a");
@@ -225,13 +228,13 @@ Deno.test("?sessionId= scopes the search; an unknown one is a 404, not an empty 
 
     const missing = await f.call(new Request(url("/search?q=splines&sessionId=nope")));
     assert.equal(missing.status, 404);
-    assert.match((await missing.json()).error, /no session nope/);
+    assert.match((await missing.json() as { error: string }).error, /no session nope/);
   } finally {
     f.close();
   }
 });
 
-Deno.test("limit is clamped and honored; an empty query is a 400 that says what to type", async () => {
+test("limit is clamped and honored; an empty query is a 400 that says what to type", async () => {
   const f = fixture();
   try {
     const s = session(f.db, "many");
@@ -241,24 +244,24 @@ Deno.test("limit is clamped and honored; an empty query is a 400 that says what 
 
     const empty = await f.call(new Request(url("/search?q=%20%20")));
     assert.equal(empty.status, 400);
-    assert.match((await empty.json()).error, /search needs a query/);
+    assert.match((await empty.json() as { error: string }).error, /search needs a query/);
 
     const bad = await f.call(new Request(url("/search?q=splines&limit=0")));
     assert.equal(bad.status, 400, "limit is validated at the boundary, not silently fixed");
-    const why = (await bad.json()).error as string;
+    const why = (await bad.json() as { error: string }).error;
     assert.match(why, /invalid search \(limit: /, "the issue is named, not dumped as JSON");
     assert.doesNotMatch(why, /"code"/);
 
     // Absent entirely, which is how most people arrive here.
     const none = await f.call(new Request(url("/search")));
     assert.equal(none.status, 400);
-    assert.match((await none.json()).error, /search needs a query/);
+    assert.match((await none.json() as { error: string }).error, /search needs a query/);
   } finally {
     f.close();
   }
 });
 
-Deno.test("a query FTS5 cannot parse is rewritten into phrases and the rewrite is reported", async () => {
+test("a query FTS5 cannot parse is rewritten into phrases and the rewrite is reported", async () => {
   const f = fixture();
   try {
     const s = session(f.db, "punctuation");
@@ -281,7 +284,7 @@ Deno.test("a query FTS5 cannot parse is rewritten into phrases and the rewrite i
   }
 });
 
-Deno.test("quoteQuery escapes an embedded quote instead of producing invalid syntax", () => {
+test("quoteQuery escapes an embedded quote instead of producing invalid syntax", () => {
   assert.equal(quoteQuery("a b"), `"a" AND "b"`);
   assert.equal(quoteQuery('say "hi"'), `"say" AND """hi"""`);
   assert.equal(quoteQuery("   "), "");
@@ -298,7 +301,7 @@ Deno.test("quoteQuery escapes an embedded quote instead of producing invalid syn
  * looks like in production.
  */
 function breakFts(path: string): void {
-  const side = new DatabaseSync(path);
+  const side = new Database(path);
   try {
     side.exec("DROP TABLE messages_fts");
   } finally {
@@ -306,8 +309,8 @@ function breakFts(path: string): void {
   }
 }
 
-Deno.test("an FTS write failure does not break message insertion", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "bough-search-" });
+test("an FTS write failure does not break message insertion", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "bough-search-"));
   const path = join(dir, "bough.db");
   const swallowed: unknown[] = [];
   const f = fixture({ path, onIndexError: () => swallowed.push(1) });
@@ -347,12 +350,12 @@ Deno.test("an FTS write failure does not break message insertion", async () => {
     assert.throws(() => f.raw.indexMessage(messages[1]), /messages_fts/);
   } finally {
     f.close();
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true, force: true });
   }
 });
 
-Deno.test("a missing index is a 503 about the index, never a 400 about the query", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "bough-search-" });
+test("a missing index is a 503 about the index, never a 400 about the query", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "bough-search-"));
   const path = join(dir, "bough.db");
   const f = fixture({ path });
   try {
@@ -396,11 +399,11 @@ Deno.test("a missing index is a 503 about the index, never a 400 about the query
       restarted.close();
     }
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true, force: true });
   }
 });
 
-Deno.test("a degraded index is reported on every search until a rebuild repairs it", async () => {
+test("a degraded index is reported on every search until a rebuild repairs it", async () => {
   const f = fixture();
   try {
     const s = session(f.db, "degraded");
@@ -446,7 +449,7 @@ Deno.test("a degraded index is reported on every search until a rebuild repairs 
   }
 });
 
-Deno.test("the wrapper delegates every other method to the real handle", () => {
+test("the wrapper delegates every other method to the real handle", () => {
   const raw = openDb(":memory:");
   const db = searchSafeDb(raw);
   try {
@@ -480,7 +483,7 @@ Deno.test("the wrapper delegates every other method to the real handle", () => {
 
 // ---- rebuild and recovery ---------------------------------------------------
 
-Deno.test("a rebuild produces exactly what incremental indexing produced", () => {
+test("a rebuild produces exactly what incremental indexing produced", () => {
   const f = fixture();
   try {
     const a = session(f.db, "a");
@@ -498,7 +501,7 @@ Deno.test("a rebuild produces exactly what incremental indexing produced", () =>
   }
 });
 
-Deno.test("recovered turn messages are indexed at boot, and a missing one is skipped", () => {
+test("recovered turn messages are indexed at boot, and a missing one is skipped", () => {
   const f = fixture();
   try {
     const s = session(f.db, "crashed mid-turn");
@@ -529,7 +532,7 @@ Deno.test("recovered turn messages are indexed at boot, and a missing one is ski
   }
 });
 
-Deno.test("searchTranscripts skips a hit whose message is gone", () => {
+test("searchTranscripts skips a hit whose message is gone", () => {
   const f = fixture();
   try {
     const s = session(f.db, "drift");

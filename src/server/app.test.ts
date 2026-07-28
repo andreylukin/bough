@@ -24,6 +24,7 @@
  * not reachable from this environment, and a test that cannot run offline does not
  * belong in `deno task test`.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { z } from "zod";
 import { Bus } from "../bus.ts";
@@ -86,7 +87,7 @@ const ok: Handler = () => json({ ok: true });
 
 // ---- dispatch ---------------------------------------------------------------
 
-Deno.test("dispatches a matching method + pathname to its handler", async () => {
+test("dispatches a matching method + pathname to its handler", async () => {
   await withHandler([route("GET", "/sessions", ok)], async (call) => {
     const res = await call(get("/sessions"));
     assert.equal(res.status, 200);
@@ -95,7 +96,7 @@ Deno.test("dispatches a matching method + pathname to its handler", async () => 
   });
 });
 
-Deno.test("hands the handler the exact ctx createHandler was built with", async () => {
+test("hands the handler the exact ctx createHandler was built with", async () => {
   let seen: AppCtx | undefined;
   const capture: Handler = (_req, ctx) => {
     seen = ctx;
@@ -110,7 +111,7 @@ Deno.test("hands the handler the exact ctx createHandler was built with", async 
   });
 });
 
-Deno.test("extracts named groups as params", async () => {
+test("extracts named groups as params", async () => {
   let params: Record<string, string> | undefined;
   const capture: Handler = (_req, _ctx, p) => {
     params = p;
@@ -123,7 +124,7 @@ Deno.test("extracts named groups as params", async () => {
   });
 });
 
-Deno.test("omits an optional group that did not match, rather than passing undefined", async () => {
+test("omits an optional group that did not match, rather than passing undefined", async () => {
   let params: Record<string, string> | undefined;
   const capture: Handler = (_req, _ctx, p) => {
     params = p;
@@ -142,14 +143,14 @@ Deno.test("omits an optional group that did not match, rather than passing undef
   });
 });
 
-Deno.test("matches on pathname only — a query string does not affect routing", async () => {
+test("matches on pathname only — a query string does not affect routing", async () => {
   await withHandler([route("GET", "/events", ok)], async (call) => {
     const res = await call(get("/events?sessionId=abc"));
     assert.equal(res.status, 200);
   });
 });
 
-Deno.test("first match wins, so appending never steals an existing route", async () => {
+test("first match wins, so appending never steals an existing route", async () => {
   const first: Handler = () => json({ which: "first" });
   const second: Handler = () => json({ which: "second" });
   // The second entry also matches /sessions/new. Appending it must not change
@@ -164,7 +165,7 @@ Deno.test("first match wins, so appending never steals an existing route", async
   });
 });
 
-Deno.test("awaits an async handler", async () => {
+test("awaits an async handler", async () => {
   const slow: Handler = async () => {
     await Promise.resolve();
     return json({ ok: true }, 202);
@@ -177,7 +178,7 @@ Deno.test("awaits an async handler", async () => {
 
 // ---- the one try/catch ------------------------------------------------------
 
-Deno.test("maps a thrown HttpError subclass to its status and message", async () => {
+test("maps a thrown HttpError subclass to its status and message", async () => {
   const missing: Handler = () => {
     throw new NotFoundError("session not found");
   };
@@ -190,7 +191,7 @@ Deno.test("maps a thrown HttpError subclass to its status and message", async ()
   });
 });
 
-Deno.test("maps each HttpError status, including ones no generic catch could guess", async () => {
+test("maps each HttpError status, including ones no generic catch could guess", async () => {
   const table = [
     route("POST", "/conflict", () => {
       throw new ConflictError("that subagent already finished");
@@ -207,7 +208,7 @@ Deno.test("maps each HttpError status, including ones no generic catch could gue
   });
 });
 
-Deno.test("maps an HttpError rejected from an async handler too", async () => {
+test("maps an HttpError rejected from an async handler too", async () => {
   const rejects: Handler = async () => {
     await Promise.resolve();
     throw new NotFoundError("gone");
@@ -217,7 +218,7 @@ Deno.test("maps an HttpError rejected from an async handler too", async () => {
   });
 });
 
-Deno.test("turns an unexpected error into a reported 500, never a dropped request", async () => {
+test("turns an unexpected error into a reported 500, never a dropped request", async () => {
   const boom = new TypeError("cannot read properties of undefined");
   await withHandler([route("GET", "/x", () => {
     throw boom;
@@ -230,7 +231,7 @@ Deno.test("turns an unexpected error into a reported 500, never a dropped reques
   });
 });
 
-Deno.test("survives a handler throwing a non-Error value", async () => {
+test("survives a handler throwing a non-Error value", async () => {
   await withHandler([route("GET", "/x", () => {
     throw "just a string";
   })], async (call) => {
@@ -240,7 +241,7 @@ Deno.test("survives a handler throwing a non-Error value", async () => {
   });
 });
 
-Deno.test("one failing request does not poison the next", async () => {
+test("one failing request does not poison the next", async () => {
   const table = [
     route("GET", "/bad", () => {
       throw new Error("boom");
@@ -255,7 +256,7 @@ Deno.test("one failing request does not poison the next", async () => {
 
 // ---- fallbacks --------------------------------------------------------------
 
-Deno.test("GET / returns a plain-text pointer", async () => {
+test("GET / returns a plain-text pointer", async () => {
   await withHandler([], async (call) => {
     const res = await call(get("/"));
     assert.equal(res.status, 200);
@@ -267,7 +268,7 @@ Deno.test("GET / returns a plain-text pointer", async () => {
   });
 });
 
-Deno.test("an unknown path is a 404 naming the method and path", async () => {
+test("an unknown path is a 404 naming the method and path", async () => {
   await withHandler([route("GET", "/sessions", ok)], async (call) => {
     const res = await call(get("/nope"));
     assert.equal(res.status, 404);
@@ -275,7 +276,7 @@ Deno.test("an unknown path is a 404 naming the method and path", async () => {
   });
 });
 
-Deno.test("a known path with the wrong method is a 405 that names the allowed ones", async () => {
+test("a known path with the wrong method is a 405 that names the allowed ones", async () => {
   const table = [
     route("GET", "/sessions/:id", ok),
     route("POST", "/sessions/:id", ok),
@@ -288,7 +289,7 @@ Deno.test("a known path with the wrong method is a 405 that names the allowed on
   });
 });
 
-Deno.test("the root pointer wins over a 405 when some other method owns /", async () => {
+test("the root pointer wins over a 405 when some other method owns /", async () => {
   await withHandler([route("POST", "/", ok)], async (call) => {
     const res = await call(get("/"));
     assert.equal(res.status, 200);
@@ -300,7 +301,7 @@ Deno.test("the root pointer wins over a 405 when some other method owns /", asyn
 
 const Body = z.object({ text: z.string().min(1) });
 
-Deno.test("parseBody yields validated data to the handler", async () => {
+test("parseBody yields validated data to the handler", async () => {
   const handler: Handler = async (req) => json({ echo: (await parseBody(req, Body)).text });
   await withHandler([route("POST", "/m", handler)], async (call) => {
     const res = await call(post("/m", { text: "hello" }));
@@ -309,7 +310,7 @@ Deno.test("parseBody yields validated data to the handler", async () => {
   });
 });
 
-Deno.test("an invalid body becomes a 400 through the router's one catch", async () => {
+test("an invalid body becomes a 400 through the router's one catch", async () => {
   const handler: Handler = async (req) => json(await parseBody(req, Body));
   await withHandler([route("POST", "/m", handler)], async (call, _ctx, reported) => {
     const res = await call(post("/m", { text: 42 }));
@@ -320,7 +321,7 @@ Deno.test("an invalid body becomes a 400 through the router's one catch", async 
   });
 });
 
-Deno.test("an absent body falls back, and the fallback decides the 400", async () => {
+test("an absent body falls back, and the fallback decides the 400", async () => {
   const strict: Handler = async (req) => json(await parseBody(req, Body));
   const lenient: Handler = async (req) =>
     json(await parseBody(req, z.object({ paths: z.array(z.string()).optional() }), {}));
@@ -336,7 +337,7 @@ Deno.test("an absent body falls back, and the fallback decides the 400", async (
   });
 });
 
-Deno.test("malformed JSON is a 400, not a 500", async () => {
+test("malformed JSON is a 400, not a 500", async () => {
   const handler: Handler = async (req) => json(await parseBody(req, Body));
   await withHandler([route("POST", "/m", handler)], async (call, _ctx, reported) => {
     const req = new Request("http://127.0.0.1:4321/m", { method: "POST", body: "{not json" });
@@ -347,7 +348,7 @@ Deno.test("malformed JSON is a 400, not a 500", async () => {
 
 // ---- helpers ----------------------------------------------------------------
 
-Deno.test("json and errorResponse produce the shapes every client reads", async () => {
+test("json and errorResponse produce the shapes every client reads", async () => {
   const res = json({ a: 1 }, 201);
   assert.equal(res.status, 201);
   assert.deepEqual(await res.json(), { a: 1 });
@@ -358,7 +359,7 @@ Deno.test("json and errorResponse produce the shapes every client reads", async 
 
 // ---- the real route table ---------------------------------------------------
 
-Deno.test("the shared route table has no duplicate (method, pathname) entry", () => {
+test("the shared route table has no duplicate (method, pathname) entry", () => {
   const seen = new Set<string>();
   for (const entry of routes) {
     const key = `${entry.method} ${entry.pattern.pathname}`;
@@ -367,7 +368,7 @@ Deno.test("the shared route table has no duplicate (method, pathname) entry", ()
   }
 });
 
-Deno.test("createHandler defaults to the shared route table", async () => {
+test("createHandler defaults to the shared route table", async () => {
   const { ctx, db } = fixture();
   try {
     const call = createHandler(ctx);

@@ -260,6 +260,12 @@ export const routes: Route[] = [
   // exists — "nothing was running" is an answer, not a race the client must handle
   // (`server/turns.ts`).
   route("POST", "/sessions/:id/interrupt", turnsApi.interruptSession),
+  // The live cost meter (spec §9). `GET /sessions/:id` already carries these two
+  // totals, but it carries the whole assembled thread with them; this is the same
+  // answer small enough to poll every few seconds while a turn is running, which is
+  // what lets the running line say what the turn has spent SO FAR instead of only
+  // after it settles (`server/sessions.ts`).
+  route("GET", "/sessions/:id/usage", sessions.getSessionUsageH),
 ];
 
 // ---- dispatch ---------------------------------------------------------------
@@ -286,7 +292,7 @@ export interface CreateHandlerOptions {
 }
 
 /**
- * Build the fetch handler bound to a ctx. `main.ts` passes it to `Deno.serve`;
+ * Build the fetch handler bound to a ctx. `main.ts` passes it to `Bun.serve`;
  * tests call the returned function directly with a `Request` and never bind a
  * socket.
  */

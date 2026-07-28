@@ -1,0 +1,8 @@
+[install]
+# Keep node_modules on disk (the LSP backend + tsc resolve through it).
+linker = "hoisted"
+
+[test]
+# Agent worktrees under .claude are checkouts of other branches; they are not
+# part of this build and must not be walked by the test runner.
+root = "./src"

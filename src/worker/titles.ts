@@ -70,18 +70,10 @@ export const CHEAP_TIMEOUT_MS = 12_000;
 /** Reads one environment variable. Injected so a test needs no real environment. */
 export type Env = (key: string) => string | undefined;
 
-const denoEnv: Env = (key) => {
-  try {
-    return Deno.env.get(key);
-  } catch {
-    // `--allow-env` may be absent. An unreadable environment is the default model,
-    // not a crash: nothing in the cheap tier is allowed to throw.
-    return undefined;
-  }
-};
+const processEnv: Env = (key) => process.env[key];
 
 /** The cheap model in force. Read per call, so a picker change needs no restart. */
-export function cheapModel(env: Env = denoEnv): string {
+export function cheapModel(env: Env = processEnv): string {
   return env(CHEAP_MODEL_ENV)?.trim() || DEFAULT_CHEAP_MODEL;
 }
 

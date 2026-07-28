@@ -24,9 +24,12 @@
  * is injected, and the only child processes are the fixture server in
  * `testdata/echo_server.ts`, which needs no permissions and no network. Assertions
  * come from `node:assert/strict` — jsr.io is not reachable here, and a test that
- * cannot run offline does not belong in `deno task test`.
+ * cannot run offline does not belong in `bun test`.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Bus } from "../bus.ts";
 import { openDb, type SqliteDb } from "../db/db.ts";
@@ -67,13 +70,8 @@ import type { AppCtx } from "../types.ts";
 
 const FIXTURE = new URL("./testdata/echo_server.ts", import.meta.url).pathname;
 
-/** Spawns real children; self-skips if `--allow-run` was not granted. */
-async function canRun(): Promise<boolean> {
-  return (await Deno.permissions.query({ name: "run" })).state === "granted";
-}
-
 function tmpRegistry(): string {
-  return join(Deno.makeTempDirSync({ prefix: "bough-mcp-manager-" }), "mcp.json");
+  return join(mkdtempSync(join(tmpdir(), "bough-mcp-manager-")), "mcp.json");
 }
 
 /** A registry holding the fixture server under `name`, plus anything extra. */
@@ -85,8 +83,8 @@ function seedRegistry(
   saveRegistry({
     servers: {
       [name]: {
-        command: Deno.execPath(),
-        args: ["run", "--quiet", "--no-config", FIXTURE],
+        command: process.execPath,
+        args: ["run", FIXTURE],
       },
       ...extra,
     },
@@ -135,7 +133,7 @@ function turnCtx(sessionId: string, extra: Partial<TurnCtx> = {}): TurnCtx {
     sessionId,
     turnId: `turn-${sessionId}`,
     messageId: `msg-${sessionId}`,
-    workspace: Deno.cwd(),
+    workspace: process.cwd(),
     model: "claude-test-model",
     signal: new AbortController().signal,
     depth: 0,
@@ -155,7 +153,7 @@ async function statusOf(fns: Pick<HostFns, "mcp" | "mcpStatus">) {
 // Grants
 // ---------------------------------------------------------------------------
 
-Deno.test("a registered server is not a callable one until a human grants it", async () => {
+test("a registered server is not a callable one until a human grants it", async () => {
   const file = tmpRegistry();
   seedRegistry(file);
   const mgr = manager(file, ({ name }) => Promise.resolve(fakeConnection(name, ["echo"])));
@@ -185,7 +183,7 @@ Deno.test("a registered server is not a callable one until a human grants it", a
   }
 });
 
-Deno.test("a lapsed grant fails closed, and the clock that decides is injected", async () => {
+test("a lapsed grant fails closed, and the clock that decides is injected", async () => {
   const file = tmpRegistry();
   seedRegistry(file);
   const mgr = manager(file, ({ name }) => Promise.resolve(fakeConnection(name, ["echo"])));
@@ -217,7 +215,7 @@ Deno.test("a lapsed grant fails closed, and the clock that decides is injected",
 // AC: a revoked grant is visible to the very next mcpStatus()
 // ---------------------------------------------------------------------------
 
-Deno.test("AC: a revoked grant is visible to the very next mcpStatus() call", async () => {
+test("AC: a revoked grant is visible to the very next mcpStatus() call", async () => {
   const file = tmpRegistry();
   seedRegistry(file);
   const mgr = manager(file, ({ name }) => Promise.resolve(fakeConnection(name, ["echo"])));
@@ -248,7 +246,7 @@ Deno.test("AC: a revoked grant is visible to the very next mcpStatus() call", as
   }
 });
 
-Deno.test("a registry edited on disk is visible to the very next status call", async () => {
+test("a registry edited on disk is visible to the very next status call", async () => {
   const file = tmpRegistry();
   seedRegistry(file);
   const mgr = manager(file);
@@ -271,8 +269,7 @@ Deno.test("a registry edited on disk is visible to the very next status call", a
 // AC: a subagent inherits its spawner's grant
 // ---------------------------------------------------------------------------
 
-Deno.test("AC: a subagent inherits its spawner's grant and can call the server", async () => {
-  if (!(await canRun())) return;
+test("AC: a subagent inherits its spawner's grant and can call the server", async () => {
   const file = tmpRegistry();
   seedRegistry(file);
   const db: SqliteDb = openDb(":memory:");
@@ -286,8 +283,8 @@ Deno.test("AC: a subagent inherits its spawner's grant and can call the server",
       kind: "root",
       createdAt: 1_000,
       parentId: null,
-      workspace: Deno.cwd(),
-      originDir: Deno.cwd(),
+      workspace: process.cwd(),
+      originDir: process.cwd(),
     });
     const supervisor = db.createMessage({
       id: crypto.randomUUID(),
@@ -305,7 +302,7 @@ Deno.test("AC: a subagent inherits its spawner's grant and can call the server",
         bus,
         llm: reportingLlm("done"),
         messageId: supervisor.id,
-        workspace: Deno.cwd(),
+        workspace: process.cwd(),
       }),
       { file },
     );
@@ -357,7 +354,7 @@ Deno.test("AC: a subagent inherits its spawner's grant and can call the server",
   }
 });
 
-Deno.test("an ungranted spawner hands its subagent nothing, not the global scope", () => {
+test("an ungranted spawner hands its subagent nothing, not the global scope", () => {
   const file = tmpRegistry();
   seedRegistry(file);
   setActivation(undefined, "echo", true, { file }); // granted GLOBALLY
@@ -378,7 +375,7 @@ Deno.test("an ungranted spawner hands its subagent nothing, not the global scope
   }
 });
 
-Deno.test("bindTurnGrant is a live read, never a frozen array, and never overwrites", () => {
+test("bindTurnGrant is a live read, never a frozen array, and never overwrites", () => {
   const file = tmpRegistry();
   seedRegistry(file);
   const ctx = bindTurnGrant(turnCtx("s1"), { file });
@@ -398,7 +395,7 @@ Deno.test("bindTurnGrant is a live read, never a frozen array, and never overwri
 // AC: a down server degrades to a named status
 // ---------------------------------------------------------------------------
 
-Deno.test("AC: a server that cannot start degrades to a named status, not a hang", async () => {
+test("AC: a server that cannot start degrades to a named status, not a hang", async () => {
   const file = tmpRegistry();
   saveRegistry({
     servers: { broken: { command: "/nonexistent/mcp-server-binary", args: [] } },
@@ -433,8 +430,7 @@ Deno.test("AC: a server that cannot start degrades to a named status, not a hang
   }
 });
 
-Deno.test("a server that dies is reported as exited, and the next call restarts it", async () => {
-  if (!(await canRun())) return;
+test("a server that dies is reported as exited, and the next call restarts it", async () => {
   const file = tmpRegistry();
   seedRegistry(file);
   const mgr = manager(file);
@@ -466,8 +462,7 @@ Deno.test("a server that dies is reported as exited, and the next call restarts 
   }
 });
 
-Deno.test("a tool failure is the server's own words, and an unknown tool names the real ones", async () => {
-  if (!(await canRun())) return;
+test("a tool failure is the server's own words, and an unknown tool names the real ones", async () => {
   const file = tmpRegistry();
   seedRegistry(file);
   const mgr = manager(file);
@@ -500,7 +495,7 @@ Deno.test("a tool failure is the server's own words, and an unknown tool names t
 // Connection lifecycle
 // ---------------------------------------------------------------------------
 
-Deno.test("connections are per session, reused across calls, and reaped when idle", async () => {
+test("connections are per session, reused across calls, and reaped when idle", async () => {
   const file = tmpRegistry();
   seedRegistry(file);
   let spawned = 0;
@@ -537,7 +532,7 @@ Deno.test("connections are per session, reused across calls, and reaped when idl
   }
 });
 
-Deno.test("dropServer closes every session's connection to one server", async () => {
+test("dropServer closes every session's connection to one server", async () => {
   const file = tmpRegistry();
   seedRegistry(file);
   const closed: string[] = [];
@@ -568,7 +563,7 @@ Deno.test("dropServer closes every session's connection to one server", async ()
   }
 });
 
-Deno.test("ensure reports one broken server without taking the others down", async () => {
+test("ensure reports one broken server without taking the others down", async () => {
   const file = tmpRegistry();
   saveRegistry({
     servers: {
@@ -600,8 +595,7 @@ Deno.test("ensure reports one broken server without taking the others down", asy
   }
 });
 
-Deno.test("status carries the live tool catalog, so a fresh call is enough to act on", async () => {
-  if (!(await canRun())) return;
+test("status carries the live tool catalog, so a fresh call is enough to act on", async () => {
   const file = tmpRegistry();
   seedRegistry(file);
   const mgr = manager(file);
@@ -673,19 +667,19 @@ const TABLE = [
 
 /** Point `BOUGH_HOME` at a fresh temp root, then put the environment back. */
 async function withBoughHome(body: (home: string) => Promise<void>): Promise<void> {
-  const home = Deno.makeTempDirSync({ prefix: "bough-mcp-home-" });
-  const previous = Deno.env.get("BOUGH_HOME");
-  Deno.env.set("BOUGH_HOME", home);
+  const home = mkdtempSync(join(tmpdir(), "bough-mcp-home-"));
+  const previous = process.env.BOUGH_HOME;
+  process.env.BOUGH_HOME = home;
   try {
     await body(home);
   } finally {
-    if (previous === undefined) Deno.env.delete("BOUGH_HOME");
-    else Deno.env.set("BOUGH_HOME", previous);
-    Deno.removeSync(home, { recursive: true });
+    if (previous === undefined) delete process.env.BOUGH_HOME;
+    else process.env.BOUGH_HOME = previous;
+    rmSync(home, { recursive: true });
   }
 }
 
-Deno.test("the API registers, grants, connects and revokes — and every reply is the state", async () => {
+test("the API registers, grants, connects and revokes — and every reply is the state", async () => {
   await withBoughHome(async () => {
     const db = openDb(":memory:");
     const bus = new Bus({ onListenerError: () => {} });
@@ -701,8 +695,8 @@ Deno.test("the API registers, grants, connects and revokes — and every reply i
       kind: "root",
       createdAt: 1,
       parentId: null,
-      workspace: Deno.cwd(),
-      originDir: Deno.cwd(),
+      workspace: process.cwd(),
+      originDir: process.cwd(),
     });
     const q = `?session=${session.id}`;
     try {
@@ -788,12 +782,11 @@ Deno.test("the API registers, grants, connects and revokes — and every reply i
 // The bridge, as boot wires it
 // ---------------------------------------------------------------------------
 
-Deno.test("a real program calls mcp() and mcpStatus() through the worker bridge", async () => {
-  if (!(await canRun())) return;
+test("a real program calls mcp() and mcpStatus() through the worker bridge", async () => {
   const file = tmpRegistry();
   seedRegistry(file);
   const mgr = manager(file);
-  const workspace = Deno.makeTempDirSync({ prefix: "bough-mcp-ws-" });
+  const workspace = mkdtempSync(join(tmpdir(), "bough-mcp-ws-"));
   const ctx = turnCtx("s1", { workspace });
   try {
     setActivation("s1", "echo", true, { file });
@@ -830,6 +823,6 @@ Deno.test("a real program calls mcp() and mcpStatus() through the worker bridge"
     assert.deepEqual(seen.after, ["connected"]);
   } finally {
     await mgr.dropAll();
-    Deno.removeSync(workspace, { recursive: true });
+    rmSync(workspace, { recursive: true });
   }
 });

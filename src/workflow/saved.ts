@@ -35,6 +35,8 @@
  * workflow independent of whether one can currently be started.
  */
 
+import { mkdir, readdir, readFile, rm, stat as statFile, writeFile } from "node:fs/promises";
+
 import { BadRequestError, NotFoundError } from "../errors.ts";
 import { confine, workflowsDir } from "../paths.ts";
 import type { Db } from "../types.ts";
@@ -137,9 +139,9 @@ export async function saveWorkflow(name: unknown, script: string): Promise<Saved
         "script a finished run actually executed.",
     );
   }
-  await Deno.mkdir(savedDir(), { recursive: true });
-  await Deno.writeTextFile(path, script);
-  const stat = await Deno.stat(path);
+  await mkdir(savedDir(), { recursive: true });
+  await writeFile(path, script);
+  const stat = await statFile(path);
   return {
     name: normalizeName(name),
     path,
@@ -172,12 +174,11 @@ export async function listSavedWorkflows(): Promise<SavedWorkflow[]> {
   const out: SavedWorkflow[] = [];
   const names: string[] = [];
   try {
-    // The `try` must span the ITERATION, not the call: `Deno.readDir` returns an async
-    // iterator and defers the open, so an absent directory throws on the first `next()`
-    // rather than here. Wrapping only the call left "nothing saved yet" as an uncaught
-    // NotFound out of a listing that is supposed to answer with an empty array.
-    for await (const entry of Deno.readDir(dir)) {
-      if (entry.isFile && entry.name.endsWith(".js")) names.push(entry.name.slice(0, -3));
+    // The `try` must span the read: an absent directory rejects with ENOENT, and
+    // "nothing saved yet" must not escape as an error out of a listing that is supposed
+    // to answer with an empty array.
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      if (entry.isFile() && entry.name.endsWith(".js")) names.push(entry.name.slice(0, -3));
     }
   } catch {
     return out; // nothing saved yet — the directory is created at boot and on first save
@@ -190,7 +191,7 @@ export async function listSavedWorkflows(): Promise<SavedWorkflow[]> {
       continue; // a file placed by hand under a name the API cannot address
     }
     try {
-      const [script, stat] = await Promise.all([Deno.readTextFile(path), Deno.stat(path)]);
+      const [script, stat] = await Promise.all([readFile(path, "utf8"), statFile(path)]);
       out.push({
         name,
         path,
@@ -215,7 +216,7 @@ export async function readSavedWorkflow(name: unknown): Promise<SavedWorkflowDet
   const path = savedPath(name);
   let script: string;
   try {
-    script = await Deno.readTextFile(path);
+    script = await readFile(path, "utf8");
   } catch {
     throw new NotFoundError(
       `no saved workflow named ${JSON.stringify(normalizeName(name))} — ` +
@@ -223,7 +224,7 @@ export async function readSavedWorkflow(name: unknown): Promise<SavedWorkflowDet
         `saves a run's script under one.`,
     );
   }
-  const stat = await Deno.stat(path).catch(() => null);
+  const stat = await statFile(path).catch(() => null);
   return {
     name: normalizeName(name),
     path,
@@ -238,7 +239,8 @@ export async function readSavedWorkflow(name: unknown): Promise<SavedWorkflowDet
 export async function deleteSavedWorkflow(name: unknown): Promise<boolean> {
   const path = savedPath(name);
   try {
-    await Deno.remove(path);
+    // No `force`: a missing file must REJECT, so the `catch` below reports `false`.
+    await rm(path);
     return true;
   } catch {
     return false;
@@ -252,7 +254,7 @@ export async function deleteSavedWorkflow(name: unknown): Promise<boolean> {
  */
 export async function ensureSavedDir(): Promise<number> {
   try {
-    await Deno.mkdir(savedDir(), { recursive: true });
+    await mkdir(savedDir(), { recursive: true });
   } catch {
     return 0; // read-only ~/.bough: saving will report its own error when tried
   }

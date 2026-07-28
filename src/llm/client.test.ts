@@ -19,6 +19,7 @@
  * (Same constraint `hostfn/patch.test.ts` and `bus.test.ts` document.)
  */
 
+import { test } from "bun:test";
 import { deepStrictEqual, ok, rejects, strictEqual } from "node:assert";
 import { LlmError } from "../errors.ts";
 import type { LlmClient, LlmParams, LlmResult, LlmToolDef } from "../types.ts";
@@ -98,7 +99,7 @@ const params = (over: Partial<LlmParams> = {}): LlmParams => ({
   ...over,
 });
 
-Deno.test("a fake satisfies LlmClient: streamed deltas, blocks and stop reason", async () => {
+test("a fake satisfies LlmClient: streamed deltas, blocks and stop reason", async () => {
   const { client, calls } = fakeClient([{
     content: [
       { type: "reasoning", text: "thinking about it" },
@@ -119,7 +120,7 @@ Deno.test("a fake satisfies LlmClient: streamed deltas, blocks and stop reason",
   strictEqual(calls[0].model, "claude-opus-5");
 });
 
-Deno.test("completeText drives the interface with no tools and no consumer", async () => {
+test("completeText drives the interface with no tools and no consumer", async () => {
   const { client, calls } = fakeClient([{
     content: [{ type: "text", text: "a " }, { type: "reasoning", text: "hm" }, {
       type: "text",
@@ -142,7 +143,7 @@ Deno.test("completeText drives the interface with no tools and no consumer", asy
 
 // ---- routing ----------------------------------------------------------------
 
-Deno.test("providerFor: openai: prefix, vendor/model, bare id", () => {
+test("providerFor: openai: prefix, vendor/model, bare id", () => {
   const table: [string, Provider][] = [
     ["claude-opus-5", "anthropic"],
     ["claude-haiku-4-5", "anthropic"],
@@ -158,11 +159,11 @@ Deno.test("providerFor: openai: prefix, vendor/model, bare id", () => {
   for (const [model, provider] of table) strictEqual(providerFor(model), provider, model);
 });
 
-Deno.test("every catalog entry routes to the provider it claims", () => {
+test("every catalog entry routes to the provider it claims", () => {
   for (const m of MODELS) strictEqual(providerFor(m.id), m.provider, m.id);
 });
 
-Deno.test("pricing keys and client routing cannot drift apart", () => {
+test("pricing keys and client routing cannot drift apart", () => {
   // pricing.ts derives its catalog key from the model id independently of
   // client.ts. If the two rules diverge, an entire provider silently stops being
   // priced and every cost quietly becomes null — so pin them together here.
@@ -180,7 +181,7 @@ Deno.test("pricing keys and client routing cannot drift apart", () => {
   }
 });
 
-Deno.test("clientFor routes without a key and only fails when asked to run", async () => {
+test("clientFor routes without a key and only fails when asked to run", async () => {
   // Construction must not read a key or touch the network — the server builds a
   // client per model id long before anyone runs a round.
   const env: Env = () => undefined;
@@ -201,7 +202,7 @@ Deno.test("clientFor routes without a key and only fails when asked to run", asy
 
 // ---- retries ----------------------------------------------------------------
 
-Deno.test("withRetries: a transient 500 is re-attempted and then succeeds", async () => {
+test("withRetries: a transient 500 is re-attempted and then succeeds", async () => {
   const good: LlmResult = { content: [{ type: "text", text: "ok" }], stopReason: "end_turn" };
   const { client } = fakeClient([new LlmError("openrouter: 500 upstream", 500), good]);
   const seen: number[] = [];
@@ -216,14 +217,14 @@ Deno.test("withRetries: a transient 500 is re-attempted and then succeeds", asyn
   deepStrictEqual(seen, [1]);
 });
 
-Deno.test("withRetries: a 400 is a caller mistake and is never re-attempted", async () => {
+test("withRetries: a 400 is a caller mistake and is never re-attempted", async () => {
   const { client, calls } = fakeClient([new LlmError("openai: 400 bad schema", 400)]);
   const wrapped = withRetries(client, { baseDelayMs: 0, maxAttempts: 4 });
   await rejects(() => wrapped.run(params(), () => {}), /400 bad schema/);
   strictEqual(calls.length, 1);
 });
 
-Deno.test("withRetries: exhausting the attempts rethrows the last failure", async () => {
+test("withRetries: exhausting the attempts rethrows the last failure", async () => {
   const boom = () => new LlmError("openrouter: stream truncated before completion");
   const { client, calls } = fakeClient([boom(), boom(), boom()]);
   const wrapped = withRetries(client, { baseDelayMs: 0, maxAttempts: 3 });
@@ -231,7 +232,7 @@ Deno.test("withRetries: exhausting the attempts rethrows the last failure", asyn
   strictEqual(calls.length, 3);
 });
 
-Deno.test("withRetries: an aborted signal stops the loop instead of backing off", async () => {
+test("withRetries: an aborted signal stops the loop instead of backing off", async () => {
   const ac = new AbortController();
   const client: LlmClient = {
     run() {
@@ -243,7 +244,7 @@ Deno.test("withRetries: an aborted signal stops the loop instead of backing off"
   await rejects(() => wrapped.run(params(), () => {}, ac.signal), /503/);
 });
 
-Deno.test("isRetryable: transport faults yes, aborts and caller mistakes no", () => {
+test("isRetryable: transport faults yes, aborts and caller mistakes no", () => {
   ok(isRetryable(new LlmError("transport fault"))); // defaults to 502
   ok(isRetryable(new LlmError("rate limited", 429)));
   ok(isRetryable(new LlmError("slow", 408)));
@@ -257,7 +258,7 @@ Deno.test("isRetryable: transport faults yes, aborts and caller mistakes no", ()
   strictEqual(errName(new APIConnectionError("x")), "APIConnectionError");
 });
 
-Deno.test("isToolProtocol400: the self-healed encoding is the one 400 worth retrying", () => {
+test("isToolProtocol400: the self-healed encoding is the one 400 worth retrying", () => {
   ok(isToolProtocol400(new LlmError("openrouter: 400 tool_call_id not found", 400)));
   ok(isRetryable(new LlmError("openrouter: 400 must be followed by tool messages", 400)));
   ok(!isToolProtocol400(new LlmError("openrouter: 400 model not found", 400)));
@@ -265,7 +266,7 @@ Deno.test("isToolProtocol400: the self-healed encoding is the one 400 worth retr
 
 // ---- pricing ----------------------------------------------------------------
 
-Deno.test("withPricing stamps costUsd from the vendored catalog", async () => {
+test("withPricing stamps costUsd from the vendored catalog", async () => {
   const { client } = fakeClient([{
     content: [{ type: "text", text: "hi" }],
     stopReason: "end_turn",
@@ -281,7 +282,7 @@ Deno.test("withPricing stamps costUsd from the vendored catalog", async () => {
   ok(typeof result.usage.costUsd === "number" && result.usage.costUsd > 0);
 });
 
-Deno.test("withPricing leaves an unpriced model at null rather than zero", async () => {
+test("withPricing leaves an unpriced model at null rather than zero", async () => {
   const { client } = fakeClient([{
     content: [],
     stopReason: "end_turn",
@@ -296,7 +297,7 @@ Deno.test("withPricing leaves an unpriced model at null rather than zero", async
 
 // ---- system tiers -----------------------------------------------------------
 
-Deno.test("anthropicSystemBlocks: stable first, a 1h breakpoint on each", () => {
+test("anthropicSystemBlocks: stable first, a 1h breakpoint on each", () => {
   const blocks = anthropicSystemBlocks({ system: "STABLE", systemVolatile: "VOLATILE" });
   ok(blocks);
   strictEqual(blocks.length, 2);
@@ -307,20 +308,20 @@ Deno.test("anthropicSystemBlocks: stable first, a 1h breakpoint on each", () => 
   }
 });
 
-Deno.test("anthropicSystemBlocks: undefined when there is no system text", () => {
+test("anthropicSystemBlocks: undefined when there is no system text", () => {
   strictEqual(anthropicSystemBlocks({}), undefined);
   strictEqual(anthropicSystemBlocks({ system: "" }), undefined);
   strictEqual(anthropicSystemBlocks({ systemVolatile: "only volatile" })?.length, 1);
 });
 
-Deno.test("joinedSystem: stable first, undefined when both are empty", () => {
+test("joinedSystem: stable first, undefined when both are empty", () => {
   strictEqual(joinedSystem({ system: "A", systemVolatile: "B" }), "AB");
   strictEqual(joinedSystem({}), undefined);
 });
 
 // ---- Anthropic encoding -----------------------------------------------------
 
-Deno.test("toApiMessage: a thinking block replays verbatim, signature included", () => {
+test("toApiMessage: a thinking block replays verbatim, signature included", () => {
   const raw = { type: "thinking", thinking: "step one", signature: "sig-abc" };
   const msg = toApiMessage({
     role: "assistant",
@@ -334,7 +335,7 @@ Deno.test("toApiMessage: a thinking block replays verbatim, signature included",
   strictEqual(content[1].type, "tool_use");
 });
 
-Deno.test("toApiMessage: foreign reasoning degrades to prose, empty reasoning vanishes", () => {
+test("toApiMessage: foreign reasoning degrades to prose, empty reasoning vanishes", () => {
   const withText = toApiMessage({
     role: "assistant",
     content: [{ type: "reasoning", text: "a summary", meta: { type: "reasoning" } }],
@@ -349,7 +350,7 @@ Deno.test("toApiMessage: foreign reasoning degrades to prose, empty reasoning va
   deepStrictEqual(empty.content, []);
 });
 
-Deno.test("toApiMessage: tool results and images take their native shapes", () => {
+test("toApiMessage: tool results and images take their native shapes", () => {
   const msg = toApiMessage({
     role: "user",
     content: [
@@ -370,7 +371,7 @@ Deno.test("toApiMessage: tool results and images take their native shapes", () =
   });
 });
 
-Deno.test("effortParams: only sent to models that accept adaptive thinking", () => {
+test("effortParams: only sent to models that accept adaptive thinking", () => {
   deepStrictEqual(effortParams("high", "claude-opus-5"), {
     thinking: { type: "adaptive", display: "summarized" },
     output_config: { effort: "high" },
@@ -415,7 +416,7 @@ const keyed: Env = (k) => (k.endsWith("_API_KEY") ? "test-key" : undefined);
 
 // ---- OpenAI (Responses API) -------------------------------------------------
 
-Deno.test("toResponsesInput: reasoning items ride through verbatim before their call", () => {
+test("toResponsesInput: reasoning items ride through verbatim before their call", () => {
   const reasoning = { type: "reasoning", id: "rs_1", encrypted_content: "enc" };
   const input = toResponsesInput([
     { role: "user", content: [{ type: "text", text: "go" }] },
@@ -443,14 +444,14 @@ Deno.test("toResponsesInput: reasoning items ride through verbatim before their 
   deepStrictEqual(input[3], { type: "function_call_output", call_id: "call_1", output: "1" });
 });
 
-Deno.test("toResponsesInput: reasoning with no meta is dropped, not sent bare", () => {
+test("toResponsesInput: reasoning with no meta is dropped, not sent bare", () => {
   const input = toResponsesInput([
     { role: "assistant", content: [{ type: "reasoning", text: "prose only" }] },
   ]);
   deepStrictEqual(input, []);
 });
 
-Deno.test("fromResponsesOutput: a call missing required arguments is a truncation", () => {
+test("fromResponsesOutput: a call missing required arguments is a truncation", () => {
   // The tool requires `code`, so an argument-less call was cut off mid-stream.
   // Inventing `{}` here would run the wrong program.
   try {
@@ -462,7 +463,7 @@ Deno.test("fromResponsesOutput: a call missing required arguments is a truncatio
   }
 });
 
-Deno.test("fromResponsesOutput: an argument-less call is fine when nothing is required", () => {
+test("fromResponsesOutput: an argument-less call is fine when nothing is required", () => {
   const blocks = fromResponsesOutput(
     [{ type: "function_call", call_id: "c1", name: "stop" }],
     TOOLS,
@@ -470,7 +471,7 @@ Deno.test("fromResponsesOutput: an argument-less call is fine when nothing is re
   deepStrictEqual(blocks, [{ type: "tool_use", id: "c1", name: "stop", input: {} }]);
 });
 
-Deno.test("fromResponsesOutput: malformed argument JSON is a truncation too", () => {
+test("fromResponsesOutput: malformed argument JSON is a truncation too", () => {
   try {
     fromResponsesOutput(
       [{ type: "function_call", call_id: "c1", name: "run_steps", arguments: '{"code":"a' }],
@@ -483,7 +484,7 @@ Deno.test("fromResponsesOutput: malformed argument JSON is a truncation too", ()
   }
 });
 
-Deno.test("openai: a full round over a stub transport strips the prefix and normalizes usage", async () => {
+test("openai: a full round over a stub transport strips the prefix and normalizes usage", async () => {
   const { fetch: f, requests } = stubFetch([
     sse([
       JSON.stringify({ type: "response.output_text.delta", delta: "wor" }),
@@ -545,7 +546,7 @@ Deno.test("openai: a full round over a stub transport strips the prefix and norm
   });
 });
 
-Deno.test("openai: max_output_tokens shows up as max_tokens, not as a finished turn", async () => {
+test("openai: max_output_tokens shows up as max_tokens, not as a finished turn", async () => {
   const { fetch: f } = stubFetch([
     sse([
       JSON.stringify({
@@ -566,7 +567,7 @@ Deno.test("openai: max_output_tokens shows up as max_tokens, not as a finished t
   strictEqual(result.stopReason, "max_tokens");
 });
 
-Deno.test("openai: a stream that ends without response.completed is a transport fault", async () => {
+test("openai: a stream that ends without response.completed is a transport fault", async () => {
   const { fetch: f } = stubFetch([
     sse([JSON.stringify({ type: "response.output_text.delta", delta: "half a th" })]),
   ]);
@@ -578,7 +579,7 @@ Deno.test("openai: a stream that ends without response.completed is a transport 
   ok(isRetryable(err), "a cut stream must be retryable");
 });
 
-Deno.test("openai: a non-2xx carries its status and Retry-After into the error", async () => {
+test("openai: a non-2xx carries its status and Retry-After into the error", async () => {
   const { fetch: f } = stubFetch([
     new Response("slow down", { status: 429, headers: { "retry-after": "3" } }),
   ]);
@@ -591,7 +592,7 @@ Deno.test("openai: a non-2xx carries its status and Retry-After into the error",
   ok(isRetryable(err));
 });
 
-Deno.test("openai: a mid-stream failure event is classified, not swallowed", async () => {
+test("openai: a mid-stream failure event is classified, not swallowed", async () => {
   const { fetch: f } = stubFetch([
     sse([
       JSON.stringify({
@@ -609,7 +610,7 @@ Deno.test("openai: a mid-stream failure event is classified, not swallowed", asy
 
 // ---- OpenRouter (chat completions) ------------------------------------------
 
-Deno.test("toOpenAIMessages: an orphaned tool_call is repaired, not left to 400", () => {
+test("toOpenAIMessages: an orphaned tool_call is repaired, not left to 400", () => {
   const msgs = toOpenAIMessages(undefined, [
     {
       role: "assistant",
@@ -627,7 +628,7 @@ Deno.test("toOpenAIMessages: an orphaned tool_call is repaired, not left to 400"
   strictEqual(msgs[2].role, "user");
 });
 
-Deno.test("toOpenAIMessages: a satisfied tool_call is left exactly as it was", () => {
+test("toOpenAIMessages: a satisfied tool_call is left exactly as it was", () => {
   const msgs = toOpenAIMessages("SYS", [
     {
       role: "assistant",
@@ -644,7 +645,7 @@ Deno.test("toOpenAIMessages: a satisfied tool_call is left exactly as it was", (
   deepStrictEqual(msgs[2], { role: "tool", tool_call_id: "c1", content: "done" });
 });
 
-Deno.test("toOpenAIMessages: images become multimodal parts, text alone stays a string", () => {
+test("toOpenAIMessages: images become multimodal parts, text alone stays a string", () => {
   const plain = toOpenAIMessages(undefined, [
     { role: "user", content: [{ type: "text", text: "hi" }] },
   ]) as Record<string, unknown>[];
@@ -663,7 +664,7 @@ Deno.test("toOpenAIMessages: images become multimodal parts, text alone stays a 
   ]);
 });
 
-Deno.test("openrouter: a full round assembles streamed tool-call fragments in order", async () => {
+test("openrouter: a full round assembles streamed tool-call fragments in order", async () => {
   const chunk = (delta: unknown, finish?: string) =>
     JSON.stringify({ choices: [{ delta, ...(finish ? { finish_reason: finish } : {}) }] });
   const { fetch: f, requests } = stubFetch([
@@ -710,7 +711,7 @@ Deno.test("openrouter: a full round assembles streamed tool-call fragments in or
   });
 });
 
-Deno.test("openrouter: a stream that closes without a finish_reason is a transport fault", async () => {
+test("openrouter: a stream that closes without a finish_reason is a transport fault", async () => {
   const { fetch: f } = stubFetch([
     sse([JSON.stringify({ choices: [{ delta: { content: "partial" } }] })]),
   ]);
@@ -722,7 +723,7 @@ Deno.test("openrouter: a stream that closes without a finish_reason is a transpo
   ok(isRetryable(err));
 });
 
-Deno.test("openrouter: a terminal error chunk on a 200 stream is not passed off as success", async () => {
+test("openrouter: a terminal error chunk on a 200 stream is not passed off as success", async () => {
   const { fetch: f } = stubFetch([
     sse([
       JSON.stringify({ choices: [{ delta: { content: "start" } }] }),
@@ -737,7 +738,7 @@ Deno.test("openrouter: a terminal error chunk on a 200 stream is not passed off 
   ok(/upstream is down/.test(err.message));
 });
 
-Deno.test("openrouter: a truncated tool call is retried rather than run with {}", async () => {
+test("openrouter: a truncated tool call is retried rather than run with {}", async () => {
   const { fetch: f } = stubFetch([
     sse([
       JSON.stringify({
@@ -757,7 +758,7 @@ Deno.test("openrouter: a truncated tool call is retried rather than run with {}"
   ok(isRetryable(err));
 });
 
-Deno.test("openrouter: finish_reason length normalizes to max_tokens", async () => {
+test("openrouter: finish_reason length normalizes to max_tokens", async () => {
   const { fetch: f } = stubFetch([
     sse([
       JSON.stringify({ choices: [{ delta: { content: "cut" }, finish_reason: "length" }] }),
@@ -771,7 +772,7 @@ Deno.test("openrouter: finish_reason length normalizes to max_tokens", async () 
 
 // ---- the model catalog ------------------------------------------------------
 
-Deno.test("filterOpenAIModels: chat ids only, dated snapshots dropped, newest first", () => {
+test("filterOpenAIModels: chat ids only, dated snapshots dropped, newest first", () => {
   const rows = filterOpenAIModels([
     "gpt-5",
     "gpt-5-2026-01-01",
@@ -786,7 +787,7 @@ Deno.test("filterOpenAIModels: chat ids only, dated snapshots dropped, newest fi
   for (const r of rows) strictEqual(providerFor(r.id), "openai");
 });
 
-Deno.test("mergeModels: the static table wins on id collisions", () => {
+test("mergeModels: the static table wins on id collisions", () => {
   const dynamic: ModelRow[] = [
     { id: "openai:gpt-5", label: "gpt-5 (OpenAI)", provider: "openai" },
     { id: "openai:o4", label: "o4 (OpenAI)", provider: "openai" },
@@ -796,7 +797,7 @@ Deno.test("mergeModels: the static table wins on id collisions", () => {
   strictEqual(merged.at(-1)?.id, "openai:o4");
 });
 
-Deno.test("discoverOpenAIModels: no key and a failing request both yield an empty list", async () => {
+test("discoverOpenAIModels: no key and a failing request both yield an empty list", async () => {
   deepStrictEqual(await discoverOpenAIModels({ env: () => undefined }), []);
 
   const { fetch: failing } = stubFetch([new Response("nope", { status: 401 })]);
@@ -806,7 +807,7 @@ Deno.test("discoverOpenAIModels: no key and a failing request both yield an empt
   deepStrictEqual(await discoverOpenAIModels({ env: keyed, fetch: throwing }), []);
 });
 
-Deno.test("discoverOpenAIModels: a good response maps into picker rows", async () => {
+test("discoverOpenAIModels: a good response maps into picker rows", async () => {
   const { fetch: f, requests } = stubFetch([
     new Response(JSON.stringify({ data: [{ id: "gpt-5" }, { id: 42 }, { id: "whisper-1" }] })),
   ]);

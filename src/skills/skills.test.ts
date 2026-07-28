@@ -22,7 +22,10 @@
  * reachable here, and a test that cannot run offline does not belong in
  * `deno task test`.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Bus } from "../bus.ts";
 import { openDb, type SqliteDb } from "../db/db.ts";
@@ -52,14 +55,14 @@ import {
 function tempSource(
   source: SkillSource["source"],
 ): SkillSource & { write: (name: string, text: string) => string } {
-  const dir = Deno.makeTempDirSync({ prefix: `bough-skills-${source}-` });
+  const dir = mkdtempSync(join(tmpdir(), `bough-skills-${source}-`));
   return {
     source,
     dir,
     write(name, text) {
       const folder = join(dir, name);
-      Deno.mkdirSync(folder, { recursive: true });
-      Deno.writeTextFileSync(join(folder, "SKILL.md"), text);
+      mkdirSync(folder, { recursive: true });
+      writeFileSync(join(folder, "SKILL.md"), text);
       return folder;
     },
   };
@@ -71,7 +74,7 @@ function skillFile(fields: string, body: string): string {
 
 // ---- frontmatter ------------------------------------------------------------
 
-Deno.test("frontmatter: fields are read, quotes stripped, and the body starts after the fence", () => {
+test("frontmatter: fields are read, quotes stripped, and the body starts after the fence", () => {
   const fm = parseFrontmatter(
     skillFile(
       `name: review\ndescription: "Review a diff, carefully"\nmcp: linear, github`,
@@ -85,21 +88,21 @@ Deno.test("frontmatter: fields are read, quotes stripped, and the body starts af
   assert.ok(!fm.body.includes("description:"), fm.body);
 });
 
-Deno.test("frontmatter: a file with no fence is all body", () => {
+test("frontmatter: a file with no fence is all body", () => {
   const fm = parseFrontmatter("Just instructions.\n\nMore of them.\n");
   assert.equal(fm.error, undefined);
   assert.deepEqual(fm.fields, {});
   assert.equal(fm.body, "Just instructions.\n\nMore of them.");
 });
 
-Deno.test("frontmatter: an unterminated fence is an error and withholds the body", () => {
+test("frontmatter: an unterminated fence is an error and withholds the body", () => {
   const fm = parseFrontmatter("---\nname: broken\ndescription: no closing fence\n\nThe body.\n");
   assert.match(fm.error ?? "", /opens with `---` and never closes/);
   assert.equal(fm.body, "");
   assert.deepEqual(fm.fields, {});
 });
 
-Deno.test("frontmatter: a `---` inside the body does not truncate it", () => {
+test("frontmatter: a `---` inside the body does not truncate it", () => {
   // The old implementation split the whole file on "---", so a horizontal rule or a
   // fenced block containing one silently ate the rest of the skill.
   const fm = parseFrontmatter(skillFile("description: d", "before\n\n---\n\nafter the rule"));
@@ -107,7 +110,7 @@ Deno.test("frontmatter: a `---` inside the body does not truncate it", () => {
   assert.ok(fm.body.endsWith("after the rule"), fm.body);
 });
 
-Deno.test("frontmatter: comments, blanks and junk lines are tolerated; first key wins", () => {
+test("frontmatter: comments, blanks and junk lines are tolerated; first key wins", () => {
   const fm = parseFrontmatter(
     "---\n# a comment\n\ndescription: first\ndescription: second\nnot a field\n---\nbody\n",
   );
@@ -116,14 +119,14 @@ Deno.test("frontmatter: comments, blanks and junk lines are tolerated; first key
   assert.equal(fm.body, "body");
 });
 
-Deno.test("frontmatter: CRLF line endings parse the same as LF", () => {
+test("frontmatter: CRLF line endings parse the same as LF", () => {
   const fm = parseFrontmatter("---\r\ndescription: windows\r\n---\r\nbody\r\n");
   assert.equal(fm.error, undefined);
   assert.equal(fm.fields.description, "windows");
   assert.equal(fm.body, "body");
 });
 
-Deno.test("mcp lists parse as a comma list or a bracketed one", () => {
+test("mcp lists parse as a comma list or a bracketed one", () => {
   assert.deepEqual(parseList("linear, github"), ["linear", "github"]);
   assert.deepEqual(parseList("[a, b]"), ["a", "b"]);
   assert.deepEqual(parseList(""), []);
@@ -131,7 +134,7 @@ Deno.test("mcp lists parse as a comma list or a bracketed one", () => {
 
 // ---- discovery and precedence ----------------------------------------------
 
-Deno.test("a name in two sources resolves to the bundled one — first source wins", () => {
+test("a name in two sources resolves to the bundled one — first source wins", () => {
   const bundled = tempSource("bundled");
   const user = tempSource("user");
   try {
@@ -154,16 +157,16 @@ Deno.test("a name in two sources resolves to the bundled one — first source wi
     assert.equal(loadSkill("mine", { sources })!.source, "user");
     assert.equal(loadSkill("absent", { sources }), null);
   } finally {
-    Deno.removeSync(bundled.dir, { recursive: true });
-    Deno.removeSync(user.dir, { recursive: true });
+    rmSync(bundled.dir, { recursive: true, force: true });
+    rmSync(user.dir, { recursive: true, force: true });
   }
 });
 
-Deno.test("a folder without a SKILL.md is not a skill, and a missing source dir is not an error", () => {
+test("a folder without a SKILL.md is not a skill, and a missing source dir is not an error", () => {
   const user = tempSource("user");
   try {
-    Deno.mkdirSync(join(user.dir, "scratch"), { recursive: true });
-    Deno.writeTextFileSync(join(user.dir, "loose.md"), "not a skill");
+    mkdirSync(join(user.dir, "scratch"), { recursive: true });
+    writeFileSync(join(user.dir, "loose.md"), "not a skill");
     user.write("real", skillFile("description: d", "body"));
     const sources: SkillSource[] = [
       { source: "bundled", dir: join(user.dir, "does-not-exist") },
@@ -171,24 +174,24 @@ Deno.test("a folder without a SKILL.md is not a skill, and a missing source dir 
     ];
     assert.deepEqual(listSkills({ sources }).map((s) => s.name), ["real"]);
   } finally {
-    Deno.removeSync(user.dir, { recursive: true });
+    rmSync(user.dir, { recursive: true, force: true });
   }
 });
 
-Deno.test("a traversing name never becomes a path", () => {
+test("a traversing name never becomes a path", () => {
   const user = tempSource("user");
   try {
     assert.equal(loadSkill("../../etc", { sources: [user] }), null);
     assert.equal(loadSkill("a/b", { sources: [user] }), null);
     assert.equal(loadSkill(".hidden", { sources: [user] }), null);
   } finally {
-    Deno.removeSync(user.dir, { recursive: true });
+    rmSync(user.dir, { recursive: true, force: true });
   }
 });
 
 // ---- ${SKILL_DIR} -----------------------------------------------------------
 
-Deno.test("${SKILL_DIR} resolves to the skill's own folder, everywhere it appears", () => {
+test("${SKILL_DIR} resolves to the skill's own folder, everywhere it appears", () => {
   const user = tempSource("user");
   try {
     const folder = user.write(
@@ -203,13 +206,13 @@ Deno.test("${SKILL_DIR} resolves to the skill's own folder, everywhere it appear
     assert.equal(skill.body, `Run \`python3 ${folder}/run.py\` then read ${folder}/notes.md`);
     assert.ok(!skill.body.includes("SKILL_DIR"), skill.body);
   } finally {
-    Deno.removeSync(user.dir, { recursive: true });
+    rmSync(user.dir, { recursive: true, force: true });
   }
 });
 
 // ---- invocation -------------------------------------------------------------
 
-Deno.test("a skill is named at a word boundary, and only there", () => {
+test("a skill is named at a word boundary, and only there", () => {
   assert.ok(mentionIndex("/history what did I do", "history") >= 0);
   assert.ok(mentionIndex("please /history now", "history") > 0);
   assert.ok(mentionIndex("look it up with /history", "history") > 0);
@@ -221,7 +224,7 @@ Deno.test("a skill is named at a word boundary, and only there", () => {
   assert.equal(mentionIndex("x/history", "history"), -1);
 });
 
-Deno.test("named skills load in invocation order, with their servers unioned", () => {
+test("named skills load in invocation order, with their servers unioned", () => {
   const user = tempSource("user");
   try {
     user.write("alpha", skillFile("description: a\nmcp: linear, github", "ALPHA BODY"));
@@ -237,11 +240,11 @@ Deno.test("named skills load in invocation order, with their servers unioned", (
     // Nothing named = nothing loaded, and gamma stays out of it.
     assert.deepEqual(activeSkills("no skills here", { sources: [user] }).skills, []);
   } finally {
-    Deno.removeSync(user.dir, { recursive: true });
+    rmSync(user.dir, { recursive: true, force: true });
   }
 });
 
-Deno.test("a named skill that cannot be parsed contributes a note, never a body", () => {
+test("a named skill that cannot be parsed contributes a note, never a body", () => {
   const user = tempSource("user");
   try {
     user.write("broken", "---\nname: broken\ndescription: unterminated\n\nThe instructions.\n");
@@ -258,11 +261,11 @@ Deno.test("a named skill that cannot be parsed contributes a note, never a body"
     assert.equal(listed.length, 1);
     assert.match(listed[0].error ?? "", /never closes/);
   } finally {
-    Deno.removeSync(user.dir, { recursive: true });
+    rmSync(user.dir, { recursive: true, force: true });
   }
 });
 
-Deno.test("the invoking text is the newest USER message, not a system note", () => {
+test("the invoking text is the newest USER message, not a system note", () => {
   const message = (role: Message["role"], text: string, at: number): Message => ({
     id: crypto.randomUUID(),
     sessionId: "s",
@@ -282,7 +285,7 @@ Deno.test("the invoking text is the newest USER message, not a system note", () 
   assert.equal(invokingText([]), "");
 });
 
-Deno.test("turnSkills reads the session's own newest user message", () => {
+test("turnSkills reads the session's own newest user message", () => {
   const user = tempSource("user");
   try {
     user.write("alpha", skillFile("description: a", "ALPHA BODY"));
@@ -305,13 +308,13 @@ Deno.test("turnSkills reads the session's own newest user message", () => {
     assert.deepEqual(turnSkills(db, session.id, { sources: [user] }).names, ["alpha"]);
     db.close();
   } finally {
-    Deno.removeSync(user.dir, { recursive: true });
+    rmSync(user.dir, { recursive: true, force: true });
   }
 });
 
 // ---- the bundled skill ------------------------------------------------------
 
-Deno.test("the bundled `history` skill is discoverable from the default sources", () => {
+test("the bundled `history` skill is discoverable from the default sources", () => {
   assert.equal(defaultSources()[0].dir, BUNDLED_SKILLS_DIR);
   const skill = loadSkill("history")!;
   assert.ok(skill, "the history skill ships bundled (spec §16)");
@@ -319,7 +322,7 @@ Deno.test("the bundled `history` skill is discoverable from the default sources"
   assert.ok(skill.description.length > 0);
   assert.equal(skill.error, undefined);
   // It documents the CURRENT schema — the tables it names must be the real ones.
-  const schema = Deno.readTextFileSync(new URL("../db/schema.sql", import.meta.url));
+  const schema = readFileSync(new URL("../db/schema.sql", import.meta.url), "utf8");
   for (const table of ["messages_fts", "sessions", "messages", "turns"]) {
     assert.ok(skill.body.includes(table), `history skill should mention ${table}`);
     assert.ok(schema.includes(table), `${table} should exist in the schema`);
@@ -334,7 +337,7 @@ Deno.test("the bundled `history` skill is discoverable from the default sources"
 
 // ---- the MCP grant ----------------------------------------------------------
 
-Deno.test("widenGrant unions the skill's servers into a live grant without freezing it", () => {
+test("widenGrant unions the skill's servers into a live grant without freezing it", () => {
   let activations = ["already-granted", "linear"];
   const ctx: { mcpGrant?: string[] } = {};
   Object.defineProperty(ctx, "mcpGrant", { get: () => [...activations], configurable: true });
@@ -362,7 +365,7 @@ Deno.test("widenGrant unions the skill's servers into a live grant without freez
 
 // ---- the body reaches the prompt --------------------------------------------
 
-Deno.test("activeSkills' bodies land in the assembled prompt's volatile tier", () => {
+test("activeSkills' bodies land in the assembled prompt's volatile tier", () => {
   const user = tempSource("user");
   try {
     user.write("alpha", skillFile("description: a", "ALPHA INSTRUCTIONS"));
@@ -376,11 +379,11 @@ Deno.test("activeSkills' bodies land in the assembled prompt's volatile tier", (
     const bare = assemblePrompt({ kind: "root", granted: ["bash"] });
     assert.equal(prompt.system, bare.system);
   } finally {
-    Deno.removeSync(user.dir, { recursive: true });
+    rmSync(user.dir, { recursive: true, force: true });
   }
 });
 
-Deno.test("a real turn sends the named skill's body to the provider", async () => {
+test("a real turn sends the named skill's body to the provider", async () => {
   const user = tempSource("user");
   const db: SqliteDb = openDb(":memory:");
   try {
@@ -446,6 +449,6 @@ Deno.test("a real turn sends the named skill's body to the provider", async () =
     assert.deepEqual(calls[0].tools?.map((t) => t.name), [RUN_STEPS, STOP]);
   } finally {
     db.close();
-    Deno.removeSync(user.dir, { recursive: true });
+    rmSync(user.dir, { recursive: true, force: true });
   }
 });

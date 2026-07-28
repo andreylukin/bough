@@ -19,6 +19,7 @@
  * copies, it does not summarize). Assertions come from `node:assert/strict` — jsr.io is
  * unreachable here, so `@std/assert` cannot resolve (plan §7).
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { Bus } from "../bus.ts";
 import { openDb, type SqliteDb } from "../db/db.ts";
@@ -133,7 +134,7 @@ function lineage(f: Fixture): {
 
 // ---- AC 1: an ancestor message, which fork cannot touch ---------------------
 
-Deno.test("extract copies an ANCESTOR's message — the thing fork refuses", () => {
+test("extract copies an ANCESTOR's message — the thing fork refuses", () => {
   const f = fixture();
   const { parent, child, parentMessages, childMessages } = lineage(f);
   const ancestor = parentMessages[1];
@@ -180,7 +181,7 @@ Deno.test("extract copies an ANCESTOR's message — the thing fork refuses", () 
   f.db.close();
 });
 
-Deno.test("the extracted root keeps the source's workspace, base, originDir and pins", () => {
+test("the extracted root keeps the source's workspace, base, originDir and pins", () => {
   const f = fixture();
   const { child, childMessages } = lineage(f);
   f.db.setSessionModel(child.id, "openai:gpt-5");
@@ -209,7 +210,7 @@ Deno.test("the extracted root keeps the source's workspace, base, originDir and 
 
 // ---- AC 2: part-level picks -------------------------------------------------
 
-Deno.test("a part-level pick copies a turn's prose without its tool calls", () => {
+test("a part-level pick copies a turn's prose without its tool calls", () => {
   const f = fixture();
   const source = session(f.db, { title: "the work" });
   text(f.db, source.id, "user", "find the retry bound");
@@ -244,7 +245,7 @@ Deno.test("a part-level pick copies a turn's prose without its tool calls", () =
   f.db.close();
 });
 
-Deno.test("the copied parts are a deep copy — mutating one cannot reach the other", () => {
+test("the copied parts are a deep copy — mutating one cannot reach the other", () => {
   const f = fixture();
   const source = session(f.db, { title: "the work" });
   const turn = message(f.db, source.id, "supervisor", [
@@ -262,7 +263,7 @@ Deno.test("the copied parts are a deep copy — mutating one cannot reach the ot
 
 // ---- selection semantics ----------------------------------------------------
 
-Deno.test("picks are copied in THREAD order, whatever order they were selected in", () => {
+test("picks are copied in THREAD order, whatever order they were selected in", () => {
   const f = fixture();
   const { parentMessages, child, childMessages } = lineage(f);
 
@@ -284,7 +285,7 @@ Deno.test("picks are copied in THREAD order, whatever order they were selected i
   f.db.close();
 });
 
-Deno.test("a whole-message pick wins over a partial one for the same message", () => {
+test("a whole-message pick wins over a partial one for the same message", () => {
   const f = fixture();
   const source = session(f.db, { title: "the work" });
   const turn = message(f.db, source.id, "supervisor", [
@@ -303,7 +304,7 @@ Deno.test("a whole-message pick wins over a partial one for the same message", (
 
 // ---- the source is untouched -------------------------------------------------
 
-Deno.test("extract leaves the source AND its ancestor byte-identical", () => {
+test("extract leaves the source AND its ancestor byte-identical", () => {
   const f = fixture();
   const { parent, child, parentMessages, childMessages } = lineage(f);
   const before = [snapshot(f.db, parent.id), snapshot(f.db, child.id)];
@@ -322,7 +323,7 @@ Deno.test("extract leaves the source AND its ancestor byte-identical", () => {
 
 // ---- events ------------------------------------------------------------------
 
-Deno.test("the new root is announced before the copies that go into it", () => {
+test("the new root is announced before the copies that go into it", () => {
   const f = fixture();
   const { child, childMessages } = lineage(f);
   f.events.length = 0;
@@ -345,7 +346,7 @@ Deno.test("the new root is announced before the copies that go into it", () => {
 
 // ---- refusals ----------------------------------------------------------------
 
-Deno.test("an unknown session is a 404 and writes nothing", () => {
+test("an unknown session is a 404 and writes nothing", () => {
   const f = fixture();
   const { childMessages } = lineage(f);
   const sessionsBefore = f.db.listSessions().length;
@@ -358,7 +359,7 @@ Deno.test("an unknown session is a 404 and writes nothing", () => {
   f.db.close();
 });
 
-Deno.test("a message from outside the thread is a 400 naming where it lives", () => {
+test("a message from outside the thread is a 400 naming where it lives", () => {
   const f = fixture();
   const { child } = lineage(f);
   // A sibling branch: real message, real session, not in this session's thread.
@@ -378,7 +379,7 @@ Deno.test("a message from outside the thread is a 400 naming where it lives", ()
   f.db.close();
 });
 
-Deno.test("a nonexistent message id, and a part index out of range, are both 400", () => {
+test("a nonexistent message id, and a part index out of range, are both 400", () => {
   const f = fixture();
   const source = session(f.db, { title: "the work" });
   const turn = text(f.db, source.id, "user", "only one part here");
@@ -396,7 +397,7 @@ Deno.test("a nonexistent message id, and a part index out of range, are both 400
   f.db.close();
 });
 
-Deno.test("a session with an empty thread has nothing to extract", () => {
+test("a session with an empty thread has nothing to extract", () => {
   const f = fixture();
   const empty = session(f.db, { title: "brand new" });
   assert.throws(
@@ -410,7 +411,7 @@ Deno.test("a session with an empty thread has nothing to extract", () => {
 
 const TABLE: Route[] = [route("POST", "/sessions/:id/extract", extractH)];
 
-Deno.test("POST /sessions/:id/extract answers 201 with the new root and its thread", async () => {
+test("POST /sessions/:id/extract answers 201 with the new root and its thread", async () => {
   const f = fixture();
   const { parentMessages, child, childMessages } = lineage(f);
   const call = createHandler(f.ctx, { routes: TABLE });
@@ -437,7 +438,7 @@ Deno.test("POST /sessions/:id/extract answers 201 with the new root and its thre
   f.db.close();
 });
 
-Deno.test("the route maps an unknown session to 404 and a bad body to 400", async () => {
+test("the route maps an unknown session to 404 and a bad body to 400", async () => {
   const f = fixture();
   const { child, childMessages } = lineage(f);
   const call = createHandler(f.ctx, { routes: TABLE });

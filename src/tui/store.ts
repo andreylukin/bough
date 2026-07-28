@@ -44,13 +44,21 @@
  * the merge is well-defined: union by id, the longer part list wins, finished beats
  * pending.
  */
-import type { AskQuestion, BackgroundJob, Message, Part, Session } from "../schema/parts.ts";
+import type {
+  AskQuestion,
+  BackgroundJob,
+  Message,
+  Part,
+  Session,
+  TurnStatus,
+} from "../schema/parts.ts";
 import type { AnyBoughEvent, BoughEvent, BoughEventOf, EventType } from "../schema/events.ts";
 import type { SessionChangeSet } from "../server/changes.ts";
+import type { Effort } from "../types.ts";
 import type { Api, ReplayReport, SessionRow, SessionSnapshot, WorkflowSummary } from "./api.ts";
 import { api as defaultApi } from "./api.ts";
 import { connectEvents, type EventStream } from "./events.ts";
-import { humanizeRetryReason } from "./format.ts";
+import { fmtDuration, fmtTokens, fmtUsd, humanizeRetryReason } from "./format.ts";
 
 // ---------------------------------------------------------------------------
 // State
@@ -74,6 +82,76 @@ export const DEDUPE_WINDOW = 256;
  */
 export interface TuiSessionRow extends SessionRow {
   unseen?: boolean;
+}
+
+/**
+ * A fact about this conversation that the SERVER does not store and the transcript
+ * must not lose.
+ *
+ * WHY THIS EXISTS. Reverting a file printed `reverted README.md` on the notice row,
+ * and `NOTICE_TTL_MS` expired that row ten seconds later. Both halves were
+ * reasonable on their own — an outcome belongs on the notice row, and a notice that
+ * never expires becomes a stale claim — and together they meant a destructive act
+ * (files deleted, edits thrown away) left NO record anywhere ten seconds after it
+ * happened. Raising the TTL does not fix that; an audit trail is not a slow toast.
+ *
+ * So a destructive outcome is written HERE as well, and marks do not expire. They
+ * are keyed by session and interleaved into the transcript by `at`, so scrolling
+ * back through a conversation shows what was reverted and what was killed at the
+ * point in the conversation where it happened — which is the only place the fact is
+ * legible.
+ *
+ * Memory-only, deliberately: nothing here is a server record and none of it is
+ * shown to the model. It lives as long as the process, which is as long as the
+ * question "what did I just do to my checkout" is live.
+ */
+export interface TranscriptMark {
+  /** Unique and stable, so a renderer can key rows by it. */
+  id: string;
+  sessionId: string;
+  /** When it happened. What the transcript orders marks by. */
+  at: number;
+  /**
+   * `destructive` — a revert, a kill: something that cannot be undone, recorded
+   * because spec §7 says destructive actions are recorded.
+   * `turn` — how a turn settled: elapsed, tokens, spend. Not destructive, but the
+   * same problem in the other direction: the spinner's numbers vanished the instant
+   * it stopped and the transcript kept no record of what a turn cost.
+   */
+  kind: "destructive" | "turn";
+  /** The whole line, already worded. Rendered as one row. */
+  text: string;
+}
+
+/** How many marks are kept. A ledger of a session, not of a lifetime. */
+export const MARK_LIMIT = 500;
+
+/**
+ * The turn in flight in the OPEN session, and what it has cost so far.
+ *
+ * The running line said `⚀ waiting for a command to complete · 17s · esc interrupts`
+ * — motion and elapsed and nothing else — while `busyLine` had accepted `tokens` and
+ * `costUsd` since the day it was written and nobody passed them. The numbers were
+ * not missing, they were unfetched: `usage` arrived only with a session snapshot,
+ * and a snapshot arrived only when the turn ended. `turn/runner.ts` writes usage per
+ * round, so polling `GET /sessions/:id/usage` while a turn runs makes them live.
+ *
+ * `base*` is the session total at the moment the turn started; the turn's own
+ * numbers are the delta. A session total on the running line would be the wrong
+ * number — it answers "what has this conversation cost", and the question a spinner
+ * raises is "what is THIS costing".
+ */
+export interface TurnMeter {
+  sessionId: string;
+  startedAt: number;
+  baseTokens: number;
+  baseCostUsd: number;
+  /** This turn's own tokens and spend, refreshed while it runs. */
+  tokens: number;
+  costUsd: number;
+  /** Set by `turn.finished`; the settle that follows it reads the final usage. */
+  endedAt: number | null;
+  status: TurnStatus | null;
 }
 
 export interface TuiState {
@@ -117,6 +195,13 @@ export interface TuiState {
   replay: ReplayReport | null;
   /** A NON-open session finished a turn. `seq` makes repeat finishes distinct. */
   background: { sessionId: string; title: string; seq: number } | null;
+  /**
+   * The permanent record of what was destroyed and what each turn cost, every
+   * session, oldest first. Never cleared by a session switch — see `TranscriptMark`.
+   */
+  marks: TranscriptMark[];
+  /** The open session's turn accounting, live. Null between turns. */
+  turn: TurnMeter | null;
   /** sessionId → when its snapshot was requested. The watermark of layer 2. */
   reconciledAt: Record<string, number>;
   /** The dedupe window of layer 1, oldest first. */
@@ -146,6 +231,8 @@ export function initialState(): TuiState {
     workflowSeq: 0,
     replay: null,
     background: null,
+    marks: [],
+    turn: null,
     reconciledAt: {},
     seen: [],
   };
@@ -176,6 +263,23 @@ export type StoreAction =
   | { type: "workflows"; sessionId: string; workflows: WorkflowSummary[] }
   | { type: "replay"; replay: ReplayReport | null }
   | { type: "notice"; notice: string | null }
+  /**
+   * A destructive outcome, recorded permanently. Raised by `record()`, which ALSO
+   * sets the notice — the two are one call precisely so that a future caller cannot
+   * do the reasonable half and leave the other undone (see `TranscriptMark`).
+   */
+  | { type: "mark"; sessionId: string; at: number; text: string }
+  /**
+   * Live usage for a session, polled while its turn runs. Updates the meter and,
+   * when the turn is this session's, the turn's own delta.
+   */
+  | { type: "usage"; sessionId: string; usage: SessionSnapshot["usage"] }
+  /**
+   * The turn is over AND its final usage has landed: compute the delta and write
+   * the settled mark. Separate from `turn.finished` because the numbers are only
+   * final after the refetch that event triggers.
+   */
+  | { type: "turn.settle"; at: number }
   | { type: "queue"; text: string }
   | { type: "queue.drained" };
 
@@ -307,6 +411,68 @@ function patchMessage(
   return changed ? next : thread;
 }
 
+/**
+ * The tokens a session is charged for: what it sent, what it got back, what it
+ * thought. Cache reads and writes are accounted separately by the provider and are
+ * already inside `inputTokens` for billing purposes, so adding them here would
+ * count the same tokens twice on the one line where a doubled number is a lie.
+ */
+export function totalTokens(usage: {
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+}): number {
+  return usage.inputTokens + usage.outputTokens + usage.reasoningTokens;
+}
+
+/**
+ * Fold fresh usage totals in, re-deriving the running turn's own delta.
+ *
+ * Every path that learns a new total goes through here — the poll AND the snapshot —
+ * because the settled line reads the delta the LAST of them left behind, and a
+ * snapshot that updated `usage` without the meter reported a turn as free.
+ */
+function withUsage(state: TuiState, usage: SessionSnapshot["usage"]): TuiState {
+  const turn = state.turn && state.turn.sessionId === state.currentId
+    ? {
+      ...state.turn,
+      tokens: Math.max(0, totalTokens(usage) - state.turn.baseTokens),
+      costUsd: Math.max(0, usage.costUsd - state.turn.baseCostUsd),
+    }
+    : state.turn;
+  return { ...state, usage, turn };
+}
+
+/** Append a mark, oldest first, capped. Marks are a ledger, not a log. */
+function appendMark(marks: TranscriptMark[], mark: TranscriptMark): TranscriptMark[] {
+  const next = [...marks, mark];
+  return next.length > MARK_LIMIT ? next.slice(next.length - MARK_LIMIT) : next;
+}
+
+/**
+ * How a settled turn reads: `✓ 14s · 3.2k tok · $0.021`.
+ *
+ * The glyph carries the outcome because a turn that was interrupted and one that
+ * finished cost the same and mean opposite things. Zero tokens are omitted rather
+ * than printed as `0 tok` — a provider that reports usage only at the end of a
+ * stream leaves a real zero here, and an honest silence beats a wrong number.
+ */
+export function settledLine(turn: TurnMeter, endedAt: number): string {
+  const glyph = turn.status === "error"
+    ? "✗"
+    : turn.status === "interrupted"
+    ? "⏹"
+    : turn.status === "orphaned"
+    ? "⚠"
+    : "✓";
+  const bits = [fmtDuration(Math.max(0, endedAt - turn.startedAt))];
+  if (turn.tokens > 0) bits.push(`${fmtTokens(turn.tokens)} tok`);
+  if (turn.costUsd > 0) bits.push(fmtUsd(turn.costUsd));
+  if (turn.status === "interrupted") bits.push("interrupted");
+  if (turn.status === "error") bits.push("failed");
+  return `${glyph} ${bits.join(" · ")}`;
+}
+
 function withoutKey<T>(record: Record<string, T>, key: string): Record<string, T> {
   if (!(key in record)) return record;
   const next = { ...record };
@@ -359,7 +525,23 @@ function applyEvent(state: TuiState, raw: BoughEvent): TuiState {
         // duplicate-message bug this whole file is arranged to make impossible.
         ? patchMessage(state.thread, m.id, (x) => mergeMessage(m, x))
         : [...state.thread, m];
-      return { ...state, sessions, thread };
+      // A pending message in the open session IS the turn starting. There is no
+      // `turn.started` event, and the clock the meter needs is the event's own `ts`
+      // rather than a wall clock the reducer is not allowed to read.
+      const startTurn = m.pending && (state.turn === null || state.turn.endedAt !== null);
+      const turn: TurnMeter | null = startTurn
+        ? {
+          sessionId: m.sessionId,
+          startedAt: event.ts,
+          baseTokens: state.usage ? totalTokens(state.usage) : 0,
+          baseCostUsd: state.usage?.costUsd ?? 0,
+          tokens: 0,
+          costUsd: 0,
+          endedAt: null,
+          status: null,
+        }
+        : state.turn;
+      return { ...state, sessions, thread, turn };
     }
 
     case "message.delta": {
@@ -448,8 +630,15 @@ function applyEvent(state: TuiState, raw: BoughEvent): TuiState {
 
     case "turn.finished": {
       const { sessionId, status } = event.data;
+      // Stamped, not settled: the tokens this turn cost are only final after the
+      // usage refetch this event triggers, and a settled line that under-reports by
+      // the last round is the number a user would act on.
+      const turn = state.turn?.sessionId === sessionId && state.turn.endedAt === null
+        ? { ...state.turn, endedAt: event.ts, status }
+        : state.turn;
       return {
         ...state,
+        turn,
         sessions: patchSession(state.sessions, sessionId, (s) => ({
           ...s,
           busy: false,
@@ -558,6 +747,10 @@ export function reduce(state: TuiState, action: StoreAction): TuiState {
         jobs: [],
         workflows: [],
         replay: null,
+        // The meter belongs to the turn you were watching. `marks` deliberately do
+        // NOT reset: they are keyed by session and a record you lose by looking away
+        // is the record this whole mechanism exists to stop losing.
+        turn: null,
         sessions: id === null
           ? state.sessions
           : patchSession(state.sessions, id, (s) => s.unseen ? { ...s, unseen: false } : s),
@@ -580,16 +773,15 @@ export function reduce(state: TuiState, action: StoreAction): TuiState {
       for (const [messageId, text] of Object.entries(state.streaming)) {
         if (merged.some((m) => m.id === messageId && m.pending)) streaming[messageId] = text;
       }
-      return {
+      return withUsage({
         ...state,
         session,
         thread: merged,
         streaming,
-        usage,
         effectiveModel: effectiveModel ?? state.effectiveModel,
         contextLimit: contextLimit ?? state.contextLimit,
         reconciledAt: { ...state.reconciledAt, [session.id]: action.at },
-      };
+      }, usage);
     }
 
     case "questions":
@@ -614,6 +806,39 @@ export function reduce(state: TuiState, action: StoreAction): TuiState {
 
     case "notice":
       return { ...state, notice: action.notice };
+
+    case "mark":
+      return {
+        ...state,
+        marks: appendMark(state.marks, {
+          id: `mark:${action.at}:${state.marks.length}`,
+          sessionId: action.sessionId,
+          at: action.at,
+          kind: "destructive",
+          text: action.text,
+        }),
+      };
+
+    case "usage":
+      return action.sessionId === state.currentId ? withUsage(state, action.usage) : state;
+
+    case "turn.settle": {
+      const turn = state.turn;
+      // Only a turn that has ENDED settles. A stray settle mid-turn would print a
+      // "✓" under a spinner that is still going.
+      if (!turn || turn.endedAt === null) return state;
+      return {
+        ...state,
+        turn: null,
+        marks: appendMark(state.marks, {
+          id: `mark:${turn.sessionId}:${turn.startedAt}`,
+          sessionId: turn.sessionId,
+          at: turn.endedAt,
+          kind: "turn",
+          text: settledLine(turn, turn.endedAt),
+        }),
+      };
+    }
 
     case "queue":
       return { ...state, queued: [...state.queued, action.text] };
@@ -642,9 +867,154 @@ export function liveText(state: TuiState, messageId: string): string {
   return state.streaming[messageId] ?? "";
 }
 
+/**
+ * The marks belonging to one session, oldest first — what the transcript interleaves.
+ *
+ * Filtered rather than stored per session because a mark is written against the
+ * session that was open when it happened, and that session can be switched away from
+ * and back to. The list is short by construction (`MARK_LIMIT`).
+ */
+export function marksFor(state: TuiState, sessionId: string | null): TranscriptMark[] {
+  if (!sessionId) return [];
+  return state.marks.filter((m) => m.sessionId === sessionId);
+}
+
+/**
+ * One thing running on this session's behalf, with its own numbers.
+ *
+ * SPEC §5: nothing runs invisibly, and every unit is attributed SEPARATELY. Three
+ * kinds of work were each half-visible in a different way — a background shell only
+ * while you were scrolled to the tail of the transcript, a subagent as a rail row
+ * that said `⋯ working` and nothing more, a workflow as a row in a tab you had to
+ * open. This is the one shape all three reduce to, so one rail can hold them and one
+ * key can stop them.
+ */
+export interface LiveUnit {
+  kind: "shell" | "subagent" | "workflow";
+  /** The job id, the session id, the run id. Unique across kinds by construction. */
+  id: string;
+  /**
+   * The session a stop is addressed to: a shell's owner, the subagent itself, the
+   * run's id. `stopUnit` needs no branch beyond `kind` because of this field.
+   */
+  sessionId: string;
+  /** Short, human: `bg_7`, `review app.ts`, `nightly bench`. */
+  title: string;
+  elapsedMs: number;
+  /** This unit's own tokens. Null for a shell, which spends none. */
+  tokens: number | null;
+  costUsd: number | null;
+  /**
+   * Determinate progress, 0..1, when the unit can know it — a workflow knows how
+   * many of its agents are done. Null everywhere else, and a null must render as no
+   * bar rather than as an empty one: an invented percentage is the failure spec §9
+   * is guarding against, not the fix for it.
+   */
+  progress: number | null;
+  /** The command, the phase — whatever makes this unit identifiable at a glance. */
+  detail: string | null;
+}
+
+/**
+ * Everything running right now, as rows.
+ *
+ * PURE and parameterized rather than reading `TuiState`, because the caller already
+ * holds the subagent list (`GET /sessions?originId=` lives in the composition root,
+ * beside the tree it also feeds) and a second copy in the store would be a second
+ * thing to keep fresh. Ordered oldest-first within kind, and shells before agents
+ * before runs, so a row does not move under the cursor while it works.
+ */
+export function liveUnits(opts: {
+  jobs: readonly BackgroundJob[];
+  /** The open session's delegated children — `liveSubagents` is applied here. */
+  subagents: readonly SessionRow[];
+  workflows: readonly WorkflowSummary[];
+  now: number;
+}): LiveUnit[] {
+  const { jobs, subagents, workflows, now } = opts;
+  const shells: LiveUnit[] = jobs
+    .filter((j) => j.status === "running")
+    .sort((a, b) => a.startedAt - b.startedAt)
+    .map((j) => ({
+      kind: "shell" as const,
+      id: j.id,
+      sessionId: j.sessionId,
+      title: j.id,
+      elapsedMs: Math.max(0, now - j.startedAt),
+      tokens: null,
+      costUsd: null,
+      progress: null,
+      detail: j.command,
+    }));
+  const agents: LiveUnit[] = subagents
+    .filter((s) => s.busy)
+    .sort((a, b) => a.createdAt - b.createdAt)
+    .map((s) => ({
+      kind: "subagent" as const,
+      id: s.id,
+      sessionId: s.id,
+      title: s.title || "subagent",
+      elapsedMs: Math.max(0, now - s.createdAt),
+      tokens: s.tokens ?? null,
+      costUsd: s.costUsd ?? null,
+      progress: null,
+      detail: null,
+    }));
+  const runs: LiveUnit[] = workflows
+    .filter((w) => w.status === "running" || w.status === "paused")
+    .sort((a, b) => a.createdAt - b.createdAt)
+    .map((w) => ({
+      kind: "workflow" as const,
+      id: w.id,
+      sessionId: w.id,
+      title: w.name || "workflow",
+      elapsedMs: Math.max(0, now - w.createdAt),
+      tokens: null,
+      costUsd: null,
+      // The one unit that knows how far along it is. Replays count as done: they
+      // are answers, and the bar measures progress, not spend.
+      progress: w.agents.total > 0
+        ? Math.min(1, (w.agents.done + w.agents.cached) / w.agents.total)
+        : null,
+      detail: w.status === "paused"
+        ? `paused · ${w.currentPhase ?? "no phase"}`
+        : w.currentPhase ?? null,
+    }));
+  return [...shells, ...agents, ...runs];
+}
+
 // ---------------------------------------------------------------------------
 // The shell — the only part of this file that performs I/O
 // ---------------------------------------------------------------------------
+
+/**
+ * How long a notice holds its pinned row before it expires.
+ *
+ * A notice is a SNAPSHOT OF A MOMENT — "0 replayed, 2 ran live, 1 still going",
+ * "✓ that session finished" — printed on a row that is pinned above the composer
+ * and therefore reads as a currently-true fact (spec §4). Seconds later it is
+ * false, and it was set-only: `notice` had no expiry at all, so a run that had
+ * long since reached 4/4 still had a row underneath it claiming one step was in
+ * flight, and a finished-in-the-background toast held its row for a quarter of an
+ * hour. Esc still dismisses one early; this is what happens when nobody presses it.
+ *
+ * One duration for every notice deliberately: two tiers would mean deciding, at
+ * each of the four call sites, which kind of news this is — and a wrong answer
+ * there is exactly the stale row this fixes.
+ */
+const NOTICE_TTL_MS = 10_000;
+
+/**
+ * How often the running turn re-reads its spend.
+ *
+ * Slow enough that a long turn costs a handful of loopback GETs, fast enough that
+ * the number on the running line is never more than a few seconds stale — and it is
+ * only ever a floor anyway, since `turn/runner.ts` writes usage per ROUND and a
+ * round can take a minute. Live only while a turn runs: a poll that outlives what it
+ * measures is a wakeup per interval forever, which is the mistake the spinner clock
+ * already learned not to make.
+ */
+const USAGE_POLL_MS = 3_000;
 
 export interface StoreDeps {
   /** Absent = the production client. A test passes a fake and never binds a socket. */
@@ -682,14 +1052,46 @@ export interface Store {
    * ending arrives as `turn.finished` on the stream like every other turn fact.
    */
   interrupt(): Promise<void>;
+  /**
+   * Stop one unit of running work — a background shell, a subagent, a workflow run.
+   *
+   * ONE method for three kinds because the caller is a rail row and the rail does
+   * not care: a key that stops what the cursor is on must not need the component to
+   * know that a shell is killed, a subagent is interrupted and a run is stopped by
+   * three different routes. It also guarantees the record — every stop lands in the
+   * transcript through `record`, because a destructive act that only produced a
+   * ten-second toast is exactly the trail this store lost once already.
+   */
+  stopUnit(unit: LiveUnit): Promise<void>;
+  /**
+   * Pin (or clear) the open session's model and thinking depth (spec §4).
+   *
+   * `PATCH /sessions/:id` has existed since the schema was frozen, and the picker
+   * called nothing: a model chosen in the panel lived in component state and died
+   * with the process, under a note claiming the route did not exist. Absent field =
+   * leave alone, explicit `null` = clear the pin.
+   */
+  setModel(patch: { model?: string | null; effort?: Effort | null }): Promise<void>;
   refreshChanges(): Promise<void>;
+  /** Re-read spend for the open session. Silent on failure — see `USAGE_POLL_MS`. */
+  refreshUsage(): Promise<void>;
   refreshJobs(): Promise<void>;
   refreshWorkflows(): Promise<void>;
   /** Spec §8: replay is always reported. This is what fetches the counts. */
   refreshReplay(runId: string): Promise<void>;
   /** Re-fetch everything the stream would have carried while it was down. */
   resync(): Promise<void>;
+  /** A transient aside. Expires — see `NOTICE_TTL_MS`. */
   notify(message: string): void;
+  /**
+   * A destructive outcome: said now AND written into the transcript for good.
+   *
+   * THE SEAM. Reverting a file went through `notify`, and notices expire, so ten
+   * seconds after deleting a file there was no record anywhere that it had happened.
+   * Every destructive path — revert, kill, stop — calls THIS, and it does both
+   * halves, so no future call site can do the reasonable half and drop the other.
+   */
+  record(message: string): void;
   dismissNotice(): void;
 }
 
@@ -701,11 +1103,60 @@ export function createStore(deps: StoreDeps = {}): Store {
   let state = initialState();
   const listeners = new Set<(state: TuiState) => void>();
   let stream: EventStream | null = null;
+  let usageTimer: ReturnType<typeof setInterval> | null = null;
+
+  /**
+   * (Re)start the pinned notice's expiry.
+   *
+   * Armed from the STATE TRANSITION rather than from `notify`, because a notice is
+   * set on four unrelated paths — `notify`, `fail`, `interrupt`, and the reducer's
+   * own `message.retry` arm — and the only thing they have in common is that
+   * `state.notice` changed. One place, and a path added later cannot forget.
+   */
+  let noticeTimer: ReturnType<typeof setTimeout> | null = null;
+  function armNoticeExpiry(notice: string | null): void {
+    if (noticeTimer !== null) clearTimeout(noticeTimer);
+    noticeTimer = null;
+    if (notice === null) return;
+    const timer = setTimeout(() => {
+      noticeTimer = null;
+      dispatch({ type: "notice", notice: null });
+    }, NOTICE_TTL_MS);
+    // A pending toast must never be the reason a process — or a test run — stays up.
+    (timer as { unref?: () => void }).unref?.();
+    noticeTimer = timer;
+  }
+
+  /**
+   * The spend poll runs exactly while a turn does.
+   *
+   * Armed from the STATE TRANSITION for the same reason the notice's expiry is: a
+   * turn starts on a `message.started` the reducer sees and ends on a
+   * `turn.finished` it also sees, and a timer started at either call site is a timer
+   * some third path forgets to stop.
+   */
+  function armUsagePoll(live: boolean): void {
+    if (live === (usageTimer !== null)) return;
+    if (!live) {
+      if (usageTimer !== null) clearInterval(usageTimer);
+      usageTimer = null;
+      return;
+    }
+    const timer = setInterval(() => void refreshUsage(), USAGE_POLL_MS);
+    // A poll must never be the reason a process — or a test run — stays up.
+    (timer as { unref?: () => void }).unref?.();
+    usageTimer = timer;
+  }
+
+  const turnRunning = (s: TuiState) => s.turn !== null && s.turn.endedAt === null;
 
   function dispatch(action: StoreAction): void {
+    const previous = state;
     const next = reduce(state, action);
     if (next === state) return;
     state = next;
+    if (next.notice !== previous.notice) armNoticeExpiry(next.notice);
+    if (turnRunning(next) !== turnRunning(previous)) armUsagePoll(turnRunning(next));
     for (const listener of listeners) {
       try {
         listener(state);
@@ -766,6 +1217,23 @@ export function createStore(deps: StoreDeps = {}): Store {
       dispatch({ type: "workflows", sessionId: id, workflows });
     } catch (error) {
       fail(error);
+    }
+  };
+
+  /**
+   * Spend, without the thread. Deliberately SILENT on failure: it runs on a timer
+   * against a route a slightly older server may not have, and a notice per poll
+   * would turn a missing number into a wall of banners. A stale meter says less; a
+   * banner every three seconds says nothing at all.
+   */
+  const refreshUsage = async () => {
+    const id = state.currentId;
+    if (!id) return;
+    try {
+      const { usage, tree } = await api.sessionUsage(id);
+      dispatch({ type: "usage", sessionId: id, usage: { ...usage, tree } });
+    } catch {
+      return;
     }
   };
 
@@ -844,6 +1312,13 @@ export function createStore(deps: StoreDeps = {}): Store {
     }
   };
 
+  /** Said now, and kept. See `Store.record`. */
+  function record(message: string): void {
+    dispatch({ type: "notice", notice: message });
+    const id = state.currentId;
+    if (id) dispatch({ type: "mark", sessionId: id, at: now(), text: message });
+  }
+
   const settleAsk = async (run: (q: AskQuestion) => Promise<unknown>) => {
     const q = currentAsk(state);
     if (!q) return;
@@ -885,7 +1360,12 @@ export function createStore(deps: StoreDeps = {}): Store {
             void refreshChanges();
             const finished = event as BoughEventOf<"turn.finished">;
             if (finished.data.sessionId === state.currentId) {
-              void snapshot(finished.data.sessionId);
+              // Settle AFTER the refetch, never before: the settled line's tokens
+              // are the ones the last round wrote, and a turn reported as free is
+              // worse than one reported late.
+              void snapshot(finished.data.sessionId)
+                .catch(() => refreshUsage())
+                .finally(() => dispatch({ type: "turn.settle", at: now() }));
             }
           }
           if (event.type === "job.spawned" || event.type === "job.exited") void refreshJobs();
@@ -909,6 +1389,8 @@ export function createStore(deps: StoreDeps = {}): Store {
       stream = null;
       open?.close();
       await open?.done;
+      armNoticeExpiry(null);
+      armUsagePoll(false);
       dispatch({ type: "connection", connected: false });
     },
 
@@ -947,13 +1429,49 @@ export function createStore(deps: StoreDeps = {}): Store {
       }
     },
 
+    async stopUnit(unit) {
+      try {
+        if (unit.kind === "shell") await api.killJob(unit.sessionId, unit.id);
+        else if (unit.kind === "subagent") await api.interrupt(unit.sessionId);
+        else await api.stopWorkflow(unit.id);
+      } catch (error) {
+        fail(error);
+        return;
+      }
+      // The scope, in the past tense and in full — spec §7: a destructive action
+      // says what it did, and says it somewhere that outlives a toast.
+      record(
+        unit.kind === "shell"
+          ? `killed ${unit.title} — ${unit.detail ?? "background shell"}`
+          : unit.kind === "subagent"
+          ? `stopped subagent ${unit.title}`
+          : `stopped workflow ${unit.title}`,
+      );
+      if (unit.kind === "shell") await refreshJobs();
+      if (unit.kind === "workflow") await refreshWorkflows();
+    },
+
+    async setModel(patch) {
+      const id = state.currentId;
+      if (!id) return;
+      try {
+        // The row comes back on `session.updated`, so nothing is reconciled here:
+        // the server announces its own write and the reducer applies it.
+        await api.patchSession(id, patch);
+      } catch (error) {
+        fail(error);
+      }
+    },
+
     refreshChanges,
+    refreshUsage,
     refreshJobs,
     refreshWorkflows,
     refreshReplay,
     resync,
 
     notify: (message: string) => dispatch({ type: "notice", notice: message }),
+    record,
     dismissNotice: () => dispatch({ type: "notice", notice: null }),
   };
 }

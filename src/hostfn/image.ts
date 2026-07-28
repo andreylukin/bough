@@ -34,6 +34,7 @@
  * Ported from `src/turn.ts` (the `image()` tool ctx) and `src/server/files.ts`
  * (`attachImageFile`). Deltas from that port are marked `NOTE:`.
  */
+import { copyFileSync, mkdirSync, type Stats, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 import { postSystemNote } from "../agents/notes.ts";
@@ -116,24 +117,24 @@ export function attachImage(
   const mediaType = imageMediaType(abs);
   if (!mediaType) return { ok: false, reason: "unsupported" };
 
-  let info: Deno.FileInfo;
+  let info: Stats;
   try {
-    info = Deno.statSync(abs);
+    info = statSync(abs);
   } catch {
     return { ok: false, reason: "missing" };
   }
-  if (!info.isFile) return { ok: false, reason: "not-a-file" };
+  if (!info.isFile()) return { ok: false, reason: "not-a-file" };
   if (info.size > MAX_IMAGE_BYTES) {
     return { ok: false, reason: "too-large", detail: String(info.size) };
   }
 
   try {
-    Deno.mkdirSync(destDir, { recursive: true });
+    mkdirSync(destDir, { recursive: true });
     // A random name, not the source's: two programs attaching `screenshot.png`
     // seconds apart must not overwrite each other's evidence.
     const ext = abs.slice(abs.lastIndexOf(".") + 1).toLowerCase();
     const dest = resolve(destDir, `${crypto.randomUUID()}.${ext}`);
-    Deno.copyFileSync(abs, dest);
+    copyFileSync(abs, dest);
     return { ok: true, part: { type: "image", path: dest, mediaType, name, size: info.size } };
   } catch (err) {
     return { ok: false, reason: "unreadable", detail: (err as Error)?.message };

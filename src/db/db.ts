@@ -36,7 +36,7 @@
  * Storage conventions, matching `schema.sql`: timestamps are epoch ms integers,
  * booleans are 0/1, and anything structured is JSON text.
  */
-import { DatabaseSync } from "node:sqlite";
+import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { dbPath } from "../paths.ts";
@@ -320,11 +320,11 @@ export interface DbOptions {
  * the port depend on that file, not on this one.
  */
 export class SqliteDb implements DbPort {
-  #db: DatabaseSync;
+  #db: Database;
   #now: () => number;
 
   constructor(path: string, opts: DbOptions = {}) {
-    this.#db = new DatabaseSync(path);
+    this.#db = new Database(path);
     this.#now = opts.now ?? Date.now;
     // Declared foreign keys are only enforced when this is on, and it is a
     // per-connection setting — off by default, so it must be set at every open.
@@ -340,8 +340,13 @@ export class SqliteDb implements DbPort {
     return this.#db.prepare(sql).all(...params) as unknown as T[];
   }
 
+  /**
+   * `bun:sqlite` reports "no row" as `null`. Absence is `undefined` everywhere above
+   * this line — `getSchedule(unknown)` returns `undefined`, not `null` — so the one
+   * place that knows about the driver is the one place that normalises it.
+   */
   #get<T>(sql: string, ...params: (string | number | null)[]): T | undefined {
-    return this.#db.prepare(sql).get(...params) as unknown as T | undefined;
+    return (this.#db.prepare(sql).get(...params) as unknown as T | null) ?? undefined;
   }
 
   #run(sql: string, ...params: (string | number | null)[]): void {

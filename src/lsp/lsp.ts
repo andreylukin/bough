@@ -47,6 +47,7 @@
  * is worse, but it is the reason concurrent agents should not be renaming into each
  * other's files.
  */
+import { statSync } from "node:fs";
 import { z } from "zod";
 import { LspError } from "../errors.ts";
 import { HOST_FN_VERBS } from "../harness/protocol.ts";
@@ -70,27 +71,20 @@ export const BIN_ENV_VAR = "BOUGH_LSP_BIN";
 
 /** Injectable environment, so the lookup is testable without touching the real one. */
 export interface BinLookup {
-  /** Absent = `Deno.env.get`. */
+  /** Absent = reading `process.env`. */
   env?: (name: string) => string | undefined;
-  /** Absent = `Deno.statSync`, answering "is this a file". */
+  /** Absent = `statSync`, answering "is this a file". */
   isFile?: (path: string) => boolean;
 }
 
 function envGet(deps: BinLookup): (name: string) => string | undefined {
-  return deps.env ?? ((name) => {
-    try {
-      return Deno.env.get(name);
-    } catch {
-      // No env permission — treat as unset rather than taking the process down.
-      return undefined;
-    }
-  });
+  return deps.env ?? ((name) => process.env[name]);
 }
 
 function isFileAt(deps: BinLookup): (path: string) => boolean {
   return deps.isFile ?? ((path) => {
     try {
-      return Deno.statSync(path).isFile;
+      return statSync(path).isFile();
     } catch {
       return false;
     }
@@ -301,26 +295,22 @@ export const CALL_TIMEOUT_MS = 120_000;
  */
 export function spawnRunner(bin: string): LspRun {
   return async (args, opts) => {
-    const path = [
-      (() => {
-        try {
-          return Deno.env.get("PATH");
-        } catch {
-          return undefined;
-        }
-      })(),
-      ...EXTRA_BIN_DIRS,
-    ].filter(Boolean).join(":");
-    const out = await new Deno.Command(bin, {
-      args,
+    const path = [process.env["PATH"], ...EXTRA_BIN_DIRS].filter(Boolean).join(":");
+    // Bun.spawn's `env` REPLACES the environment, so the inherited one is spread in
+    // first: only PATH is meant to change, and the backends need the rest (HOME, etc.).
+    const proc = Bun.spawn([bin, ...args], {
       cwd: opts.cwd,
-      env: { PATH: path },
-      stdout: "piped",
-      stderr: "piped",
+      env: { ...process.env, PATH: path },
+      stdout: "pipe",
+      stderr: "pipe",
       ...(opts.signal ? { signal: opts.signal } : {}),
-    }).output();
-    const decode = (b: Uint8Array) => new TextDecoder().decode(b);
-    return { code: out.code, stdout: decode(out.stdout), stderr: decode(out.stderr) };
+    });
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    return { code, stdout, stderr };
   };
 }
 

@@ -12,22 +12,26 @@
  *     fails to compile inside the worker with the model left guessing (plan T3.1).
  *   - **a shadowed host name fails pre-flight** — the same invariant from the
  *     program's side.
- *   - **`Deno.exit()` is catchable** — uncaught, it terminates the worker silently
- *     and, with inherited permissions, can take the server with it (plan §6.2).
+ *   - **`process.exit()` is catchable** — uncaught, it terminates the worker
+ *     silently and, since a Bun worker inherits the server's capabilities, can take
+ *     the server with it (plan §6.2).
  *   - **an aborted program leaves no orphan** — children are killed BEFORE the
  *     worker is terminated; reverse order orphans processes (plan §6.3).
  *
  * Hermetic and offline: no network, no `~/.bough`, no API keys. The one test that
  * spawns a process uses `sh` in a temp dir and cleans up after itself.
  *
- * Assertions come from `node:assert` rather than `@std/assert`: jsr.io is denied by
- * this environment's egress policy, so the jsr import declared in `deno.json`
- * cannot resolve. `node:assert` is built into the runtime and needs no fetch.
- * (Same constraint `bus.test.ts`, `paths.test.ts` and `hostfn/patch.test.ts`
- * document.)
+ * Assertions come from `node:assert` rather than a package: it is built into the
+ * runtime and needs no fetch, and this environment's egress policy denies the
+ * registries. (Same constraint `bus.test.ts`, `paths.test.ts` and
+ * `hostfn/patch.test.ts` document.)
  */
 
+import { test } from "bun:test";
 import { ok, strictEqual } from "node:assert";
+import { mkdtemp, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { HostFns } from "../types.ts";
 import { HOST_FN_NAMES, PROGRAM_PARAMS } from "./protocol.ts";
 import { checkProgramSyntax, runProgram, unterminatedString } from "./vm.ts";
@@ -66,7 +70,7 @@ async function waitForFile(path: string, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      await Deno.stat(path);
+      await stat(path);
       return true;
     } catch {
       await new Promise((r) => setTimeout(r, 25));
@@ -77,7 +81,7 @@ async function waitForFile(path: string, timeoutMs: number): Promise<boolean> {
 
 const exists = async (path: string): Promise<boolean> => {
   try {
-    await Deno.stat(path);
+    await stat(path);
     return true;
   } catch {
     return false;
@@ -88,7 +92,7 @@ const exists = async (path: string): Promise<boolean> => {
 // the name lists — the invariant protocol.ts exists to hold
 // ---------------------------------------------------------------------------
 
-Deno.test("host-name lists: the worker binds exactly PROGRAM_PARAMS, nothing missing", async () => {
+test("host-name lists: the worker binds exactly PROGRAM_PARAMS, nothing missing", async () => {
   // Asked from INSIDE the program: `typeof x` on an undeclared identifier is
   // "undefined" rather than a ReferenceError, so a name the worker forgot to bind
   // shows up as a hole instead of blowing the program up.
@@ -120,13 +124,13 @@ Deno.test("host-name lists: the worker binds exactly PROGRAM_PARAMS, nothing mis
   strictEqual(seen.get("console"), "object");
 });
 
-Deno.test("host-name lists: neither side re-declares the list it imports", async () => {
+test("host-name lists: neither side re-declares the list it imports", async () => {
   // The behavioural test above proves nothing is MISSING. This one proves neither
   // side grew a second copy to drift from — three copies of the list is three
   // chances for the pre-flight check and the worker to disagree (protocol.ts).
   const here = new URL(".", import.meta.url);
-  const vm = await Deno.readTextFile(new URL("vm.ts", here));
-  const worker = await Deno.readTextFile(new URL("vm_worker.ts", here));
+  const vm = await Bun.file(new URL("vm.ts", here)).text();
+  const worker = await Bun.file(new URL("vm_worker.ts", here)).text();
 
   for (const [name, src] of [["vm.ts", vm], ["vm_worker.ts", worker]] as const) {
     ok(src.includes('from "./protocol.ts"'), `${name} does not import the canonical list`);
@@ -143,7 +147,7 @@ Deno.test("host-name lists: neither side re-declares the list it imports", async
 // pre-flight
 // ---------------------------------------------------------------------------
 
-Deno.test("pre-flight: a shadowed host name fails before a worker is spawned", async () => {
+test("pre-flight: a shadowed host name fails before a worker is spawned", async () => {
   // The host object throws on any call — reaching it would mean the program ran.
   const host = fakeHost({
     bash: () => {
@@ -155,14 +159,16 @@ Deno.test("pre-flight: a shadowed host name fails before a worker is spawned", a
   strictEqual(res.ok, false);
   strictEqual(res.logs.length, 0);
   ok(res.error!.includes("does not parse"), res.error);
-  ok(res.error!.includes("already been declared"), res.error);
+  // The engine's own words are carried through, whichever engine parsed: JSC says
+  // "Cannot declare a let variable twice", V8 said "already been declared".
+  ok(/twice|already been declared/.test(res.error!), res.error);
   // Error text is a product surface (spec §6): the message must say WHY the name is
-  // taken and what to do, not just quote V8.
+  // taken and what to do, not just quote the parser.
   ok(res.error!.includes("host function"), res.error);
   ok(res.error!.includes("myBash"), res.error);
 });
 
-Deno.test("pre-flight: every host name is reserved, and clean code passes", () => {
+test("pre-flight: every host name is reserved, and clean code passes", () => {
   for (const name of PROGRAM_PARAMS) {
     const msg = checkProgramSyntax(`let ${name} = 1;`);
     ok(msg, `shadowing ${name} was not caught`);
@@ -173,7 +179,7 @@ Deno.test("pre-flight: every host name is reserved, and clean code passes", () =
   strictEqual(checkProgramSyntax("let notAHostFn = 1; let alsoFine = 2;"), null);
 });
 
-Deno.test("pre-flight: a newline-closed string names its line and the escaping fix", () => {
+test("pre-flight: a newline-closed string names its line and the escaping fix", () => {
   const msg = checkProgramSyntax('const p = "one\ntwo";')!;
   ok(msg.includes("line 1"), msg);
   ok(msg.includes("consumed by the outer literal"), msg);
@@ -188,7 +194,7 @@ Deno.test("pre-flight: a newline-closed string names its line and the escaping f
 // results, logs, host calls
 // ---------------------------------------------------------------------------
 
-Deno.test("a throwing program surfaces its message", async () => {
+test("a throwing program surfaces its message", async () => {
   const res = await runProgram({
     code: `console.log("before"); throw new Error("boom: the thing exploded");`,
     host: fakeHost(),
@@ -202,7 +208,7 @@ Deno.test("a throwing program surfaces its message", async () => {
   strictEqual(res.interrupted, undefined);
 });
 
-Deno.test("a rejected host function is an ordinary catchable exception", async () => {
+test("a rejected host function is an ordinary catchable exception", async () => {
   const host = fakeHost({
     bash: () => Promise.reject(new Error("patch conflict at src/a.ts:74-76")),
   });
@@ -215,7 +221,7 @@ Deno.test("a rejected host function is an ordinary catchable exception", async (
   strictEqual(res.logs[0], "caught patch conflict at src/a.ts:74-76");
 });
 
-Deno.test("an unbridged host name rejects catchably and names the grant", async () => {
+test("an unbridged host name rejects catchably and names the grant", async () => {
   // `agent` is absent from this host — absence IS the capability denial (types.ts).
   const res = await runProgram({
     code: `try { await agent("do a thing") } catch (e) { console.log("caught " + e.message) }`,
@@ -227,7 +233,7 @@ Deno.test("an unbridged host name rejects catchably and names the grant", async 
   ok(res.logs[0].includes("system prompt"), res.logs[0]);
 });
 
-Deno.test("console.* both streams live and batches into the result", async () => {
+test("console.* both streams live and batches into the result", async () => {
   const streamed: string[] = [];
   const res = await runProgram({
     code: `
@@ -249,7 +255,7 @@ Deno.test("console.* both streams live and batches into the result", async () =>
   strictEqual(JSON.stringify(streamed), JSON.stringify(expected));
 });
 
-Deno.test("host calls round-trip: objects out as JSON, objects back in", async () => {
+test("host calls round-trip: objects out as JSON, objects back in", async () => {
   const seen: unknown[][] = [];
   const host = fakeHost({
     bash: (cmd) => {
@@ -293,10 +299,14 @@ Deno.test("host calls round-trip: objects out as JSON, objects back in", async (
 // the exit trap
 // ---------------------------------------------------------------------------
 
-Deno.test("Deno.exit() is catchable and does not kill the worker", async () => {
+// NOTE: this used to be three tests — the same pair over `Deno.exit()` plus one
+// covering `process.exit()`, the node-ism weak models reach for as an "assertion
+// failed" idiom. There is no `Deno` global under Bun and no `Bun.exit`, so
+// `process.exit` is the only exit there is and the third test was its duplicate.
+test("process.exit() is catchable and does not kill the worker", async () => {
   const res = await runProgram({
     code: `
-      try { Deno.exit(1) } catch (e) { console.log("caught Deno.exit: " + e.message) }
+      try { process.exit(1) } catch (e) { console.log("caught process.exit: " + e.message) }
       console.log("still running");
     `,
     host: fakeHost(),
@@ -305,45 +315,25 @@ Deno.test("Deno.exit() is catchable and does not kill the worker", async () => {
   // The program ran to completion — an untrapped exit would have killed the worker
   // and left the turn hanging until its wall timeout (plan §6.2).
   ok(res.ok, res.error);
-  ok(res.logs[0].startsWith("caught Deno.exit:"), res.logs[0]);
+  ok(res.logs[0].startsWith("caught process.exit:"), res.logs[0]);
   ok(res.logs[0].includes("a program ends by returning"), res.logs[0]);
   strictEqual(res.logs[1], "still running");
 });
 
-Deno.test("an uncaught Deno.exit() surfaces as a program error, not a dead worker", async () => {
-  const res = await runProgram({ code: `console.log("a"); Deno.exit(0);`, host: fakeHost() });
+test("an uncaught process.exit() surfaces as a program error, not a dead worker", async () => {
+  const res = await runProgram({ code: `console.log("a"); process.exit(0);`, host: fakeHost() });
 
   strictEqual(res.ok, false);
   ok(res.error!.includes("exit(0) is not available"), res.error);
   strictEqual(res.logs[0], "a");
 });
 
-Deno.test("process.exit() is trapped too — the node-ism weak models reach for", async () => {
-  const res = await runProgram({
-    code: `
-      if (typeof process === "undefined") { console.log("no process global"); }
-      else {
-        try { process.exit(1) } catch (e) { console.log("caught process.exit: " + e.message) }
-      }
-      console.log("still running");
-    `,
-    host: fakeHost(),
-  });
-
-  ok(res.ok, res.error);
-  ok(
-    res.logs[0] === "no process global" || res.logs[0].startsWith("caught process.exit:"),
-    res.logs[0],
-  );
-  strictEqual(res.logs[1], "still running");
-});
-
 // ---------------------------------------------------------------------------
 // wind-down: children first, then the worker
 // ---------------------------------------------------------------------------
 
-Deno.test("an aborted program that spawned a child leaves no orphan process", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "bough_vm_test_" });
+test("an aborted program that spawned a child leaves no orphan process", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "bough_vm_test_"));
   const pidFile = `${dir}/pid`;
   const marker = `${dir}/marker`;
 
@@ -354,13 +344,12 @@ Deno.test("an aborted program that spawned a child leaves no orphan process", as
   try {
     const running = runProgram({
       code: `
-        const child = new Deno.Command("sh", {
-          args: ["-c", ${JSON.stringify(script)}],
-          stdout: "null",
-          stderr: "null",
-        }).spawn();
+        const child = Bun.spawn(["sh", "-c", ${JSON.stringify(script)}], {
+          stdout: "ignore",
+          stderr: "ignore",
+        });
         console.log("spawned");
-        await child.status;
+        await child.exited;
         console.log("child exited on its own");
       `,
       host: fakeHost(),
@@ -388,25 +377,24 @@ Deno.test("an aborted program that spawned a child leaves no orphan process", as
     strictEqual(await exists(marker), false, "the child outlived the abort — orphaned process");
   } finally {
     controller.abort();
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true, force: true });
   }
 });
 
-Deno.test("the abort handshake sweeps children BEFORE it acks", async () => {
+test("the abort handshake sweeps children BEFORE it acks", async () => {
   // The end-to-end test above asserts the OUTCOME (no orphan), which is the thing
   // that matters — but it cannot prove WHO killed the child: the runtime also tears
   // down a terminated worker's spawned processes, so it passes even with the sweep
   // removed. This test drives the worker protocol by hand and never calls
   // `terminate()`, so the worker is still alive when the marker would be written.
   // Nothing but `killChildren()` can have stopped the child (plan §6.3).
-  const dir = await Deno.makeTempDir({ prefix: "bough_vm_sweep_" });
+  const dir = await mkdtemp(join(tmpdir(), "bough_vm_sweep_"));
   const pidFile = `${dir}/pid`;
   const marker = `${dir}/marker`;
   const script = `echo $$ > ${pidFile}; sleep 2; echo alive > ${marker}`;
 
   const worker = new Worker(new URL("./vm_worker.ts", import.meta.url).href, {
     type: "module",
-    deno: { permissions: "inherit" },
   });
   try {
     let ack!: () => void;
@@ -417,12 +405,11 @@ Deno.test("the abort handshake sweeps children BEFORE it acks", async () => {
     worker.postMessage({
       type: "run",
       code: `
-        const child = new Deno.Command("sh", {
-          args: ["-c", ${JSON.stringify(script)}],
-          stdout: "null",
-          stderr: "null",
-        }).spawn();
-        await child.status;
+        const child = Bun.spawn(["sh", "-c", ${JSON.stringify(script)}], {
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+        await child.exited;
       `,
     });
 
@@ -436,11 +423,11 @@ Deno.test("the abort handshake sweeps children BEFORE it acks", async () => {
     strictEqual(await exists(marker), false, "the abort acked without killing the child");
   } finally {
     worker.terminate();
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true, force: true });
   }
 });
 
-Deno.test("a wall-clock timeout is reported as a timeout, not an interrupt", async () => {
+test("a wall-clock timeout is reported as a timeout, not an interrupt", async () => {
   const res = await runProgram({
     code: `console.log("started"); await new Promise((r) => setTimeout(r, 30_000));`,
     host: fakeHost(),
@@ -457,7 +444,7 @@ Deno.test("a wall-clock timeout is reported as a timeout, not an interrupt", asy
   ok(res.error!.includes("bashBg"), res.error);
 });
 
-Deno.test("a signal already aborted never starts the program", async () => {
+test("a signal already aborted never starts the program", async () => {
   const host = fakeHost({
     bash: () => {
       throw new Error("the program must never have started");
@@ -474,7 +461,7 @@ Deno.test("a signal already aborted never starts the program", async () => {
   strictEqual(res.logs.length, 0);
 });
 
-Deno.test("an interrupt mid-host-call still winds down and keeps partial output", async () => {
+test("an interrupt mid-host-call still winds down and keeps partial output", async () => {
   const controller = new AbortController();
   let called = false;
   const host = fakeHost({

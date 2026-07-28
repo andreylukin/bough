@@ -37,6 +37,7 @@
  * which MCP servers connected, whether the LSP backend answered — and passes them
  * in. That is what makes prompt assembly testable without a turn.
  */
+import { readFileSync } from "node:fs";
 import type { HostFnName } from "../harness/protocol.ts";
 import type { SessionKind } from "../schema/parts.ts";
 
@@ -237,7 +238,7 @@ export function readSectionFile(file: string): string {
   if (hit !== undefined) return hit;
   let text: string;
   try {
-    text = Deno.readTextFileSync(new URL(file, SECTION_DIR)).trim();
+    text = readFileSync(new URL(file, SECTION_DIR), "utf8").trim();
   } catch (err) {
     throw new Error(
       `cannot read the prompt section ${file} from ${SECTION_DIR.pathname} ` +
@@ -331,8 +332,8 @@ function skillsSection(skills: readonly PromptSkill[]): string {
  *    but the program worker is a thread of the server process and inherits the
  *    SERVER's working directory — and it cannot simply `chdir`, because cwd is a
  *    process attribute and one turn changing it would move every concurrent turn's
- *    shells with it. So `Deno.readTextFile("x")` and `view("x")` in the same program
- *    name two different files. `files.md` sends the model to `Deno.readTextFile` for
+ *    shells with it. So `Bun.file("x").text()` and `view("x")` in the same program
+ *    name two different files. `files.md` sends the model to `Bun.file` for
  *    raw content (spec §6: "there is no read()"), so this is a reachable trap on the
  *    documented path, not a corner case — say it plainly and give the fix.
  */
@@ -342,8 +343,8 @@ export function workspaceNote(workspace: string): string {
     "file verbs (view/patch/write) all start there, and a relative path you give\n" +
     "THEM resolves against it.\n\n" +
     "Your program's own working directory is NOT the workspace: the runtime inherits\n" +
-    "the server's directory, so a raw `Deno.readTextFile(\"src/x.ts\")`,\n" +
-    "`Deno.readDir(\".\")` or `Deno.cwd()` reads somewhere else entirely. When you\n" +
+    "the server's directory, so a raw `Bun.file(\"src/x.ts\").text()`,\n" +
+    "`readdir(\".\")` or `process.cwd()` reads somewhere else entirely. When you\n" +
     "reach past the host functions to the runtime, pass an ABSOLUTE path — join it\n" +
     "onto the workspace above — or go through bash(), which is already there.\n\n" +
     "Your edits are immediately real: nothing is copied, staged or confined, and git\n" +

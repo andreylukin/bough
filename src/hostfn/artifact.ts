@@ -40,6 +40,8 @@
  *
  * Ported from `src/server/artifacts.ts`. Deltas are marked `NOTE:`.
  */
+import { type Dirent, readdirSync, type Stats, statSync } from "node:fs";
+import { mkdir, stat as statFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { ArtifactError, PathError } from "../errors.ts";
 import { artifactsDir, confine } from "../paths.ts";
@@ -89,7 +91,7 @@ export interface ArtifactStoreOptions {
  * origin-agnostic either way.
  */
 export function serverBaseUrl(): string {
-  return `http://127.0.0.1:${Deno.env.get("BOUGH_PORT") ?? "4321"}`;
+  return `http://127.0.0.1:${process.env.BOUGH_PORT ?? "4321"}`;
 }
 
 /**
@@ -178,9 +180,9 @@ export async function publishArtifact(
 ): Promise<Artifact> {
   const rel = name.replace(/^\/+/, "");
   const full = resolveArtifactPath(sessionId, rel, opts);
-  await Deno.mkdir(dirname(full), { recursive: true });
-  await Deno.writeTextFile(full, content);
-  const info = await Deno.stat(full);
+  await mkdir(dirname(full), { recursive: true });
+  await writeFile(full, content);
+  const info = await statFile(full);
   return toArtifact(sessionId, rel, info.size, info.mtime?.getTime() ?? Date.now(), opts);
 }
 
@@ -201,22 +203,22 @@ export function listArtifacts(sessionId: string, opts: ArtifactStoreOptions = {}
   }
   const out: Artifact[] = [];
   const walk = (abs: string, rel: string): void => {
-    let entries: Deno.DirEntry[];
+    let entries: Dirent[];
     try {
-      entries = [...Deno.readDirSync(abs)];
+      entries = readdirSync(abs, { withFileTypes: true });
     } catch {
       return;
     }
     for (const entry of entries) {
       const childRel = rel ? `${rel}/${entry.name}` : entry.name;
-      if (entry.isDirectory) {
+      if (entry.isDirectory()) {
         walk(join(abs, entry.name), childRel);
         continue;
       }
-      if (!entry.isFile) continue;
-      let info: Deno.FileInfo;
+      if (!entry.isFile()) continue;
+      let info: Stats;
       try {
-        info = Deno.statSync(join(abs, entry.name));
+        info = statSync(join(abs, entry.name));
       } catch {
         continue; // raced a delete
       }

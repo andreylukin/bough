@@ -37,6 +37,7 @@
  * Purity: the image loader is injected. `messageToLlm` reads nothing and calls no
  * clock, so the whole mapping is testable with no filesystem and no `~/.bough`.
  */
+import { readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { attachmentsDir } from "../paths.ts";
 import type { ImagePart, Message, Part } from "../schema/parts.ts";
@@ -75,7 +76,7 @@ export function attachmentPath(part: ImagePart): string {
 export const readAttachment: ImageLoader = (part) => {
   try {
     return {
-      data: Deno.readFileSync(attachmentPath(part)).toBase64(),
+      data: readFileSync(attachmentPath(part)).toString("base64"),
       mediaType: part.mediaType,
     };
   } catch {

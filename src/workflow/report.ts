@@ -52,6 +52,9 @@
  * called; T5.8 deleted it. One counting implementation, one place to change it.
  */
 
+import { readFileSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
+
 import { BadRequestError, NotFoundError } from "../errors.ts";
 import { workflowsDir } from "../paths.ts";
 import type { WorkflowAgent, WorkflowRun } from "../schema/parts.ts";
@@ -394,19 +397,19 @@ export function guidelinePath(): string {
  */
 export function activeGuideline(): SizeGuideline {
   try {
-    const stored = parseGuideline(Deno.readTextFileSync(guidelinePath()));
+    const stored = parseGuideline(readFileSync(guidelinePath(), "utf8"));
     if (stored) return stored;
   } catch {
     // No file, or no permission to read it: fall through to the environment.
   }
-  return parseGuideline(Deno.env.get("BOUGH_WORKFLOW_SIZE")) ?? DEFAULT_GUIDELINE;
+  return parseGuideline(process.env["BOUGH_WORKFLOW_SIZE"]) ?? DEFAULT_GUIDELINE;
 }
 
 /** Persist the guideline. Returns what was stored, so a caller can echo it back. */
 export async function setGuideline(value: unknown): Promise<SizeGuideline> {
   const guideline = requireGuideline(value);
-  await Deno.mkdir(workflowsDir(), { recursive: true });
-  await Deno.writeTextFile(guidelinePath(), `${guideline}\n`);
+  await mkdir(workflowsDir(), { recursive: true });
+  await writeFile(guidelinePath(), `${guideline}\n`);
   return guideline;
 }
 
@@ -431,7 +434,7 @@ export function guidelineAdvice(guideline: SizeGuideline = activeGuideline()): s
 
 /** Projected tokens above which a run is flagged. `BOUGH_WORKFLOW_TOKEN_WARN` moves it. */
 export function tokenWarnThreshold(): number {
-  const n = Number(Deno.env.get("BOUGH_WORKFLOW_TOKEN_WARN"));
+  const n = Number(process.env["BOUGH_WORKFLOW_TOKEN_WARN"]);
   return Number.isFinite(n) && n > 0 ? n : 1_000_000;
 }
 

@@ -1,6 +1,6 @@
 /**
  * The workflow engine and its combinators, driven through a REAL
- * `permissions: "none"` worker with a fake `AgentRunner` in place of the subagents
+ * workflow worker with a fake `AgentRunner` in place of the subagents
  * (plan §7: "Workers | Real workers, trivial programs. Assert on the bridge
  * protocol." and "Subagents/workflows | Fake LLM + real orchestration.").
  *
@@ -38,10 +38,13 @@
  * `BOUGH_HOME` pointed at a temp dir for the duration of each engine call so the
  * script mirror never touches the real `~/.bough`.
  *
- * Assertions come from `node:assert/strict` rather than `@std/assert`: jsr.io is
- * denied by this environment's egress policy, so the jsr import declared in
- * `deno.json` cannot resolve.
+ * Assertions come from `node:assert/strict` rather than `@std/assert`, which is not a
+ * dependency of this repo.
  */
+import { test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import assert from "node:assert/strict";
 import { Bus } from "../bus.ts";
 import { openDb, type SqliteDb } from "../db/db.ts";
@@ -98,7 +101,7 @@ function harness(): Harness {
     workspace: "/tmp/checkout",
     originDir: "/tmp/checkout",
   });
-  const home = Deno.makeTempDirSync({ prefix: "bough-wf-" });
+  const home = mkdtempSync(join(tmpdir(), "bough-wf-"));
   return {
     db,
     bus,
@@ -108,7 +111,7 @@ function harness(): Harness {
     close() {
       db.close();
       try {
-        Deno.removeSync(home, { recursive: true });
+        rmSync(home, { recursive: true, force: true });
       } catch { /* already gone */ }
     },
   };
@@ -121,13 +124,13 @@ function harness(): Harness {
  * every other test in the process.
  */
 async function withHome<T>(home: string, fn: () => Promise<T>): Promise<T> {
-  const prior = Deno.env.get("BOUGH_HOME");
-  Deno.env.set("BOUGH_HOME", home);
+  const prior = process.env["BOUGH_HOME"];
+  process.env["BOUGH_HOME"] = home;
   try {
     return await fn();
   } finally {
-    if (prior === undefined) Deno.env.delete("BOUGH_HOME");
-    else Deno.env.set("BOUGH_HOME", prior);
+    if (prior === undefined) delete process.env["BOUGH_HOME"];
+    else process.env["BOUGH_HOME"] = prior;
   }
 }
 
@@ -240,7 +243,7 @@ const FANOUT_SCRIPT =
 // the combinators
 // ---------------------------------------------------------------------------
 
-Deno.test("pipeline does not barrier — B reaches stage 3 while A is still in stage 1", async () => {
+test("pipeline does not barrier — B reaches stage 3 while A is still in stage 1", async () => {
   const h = harness();
   try {
     const seen: string[] = [];
@@ -301,7 +304,7 @@ Deno.test("pipeline does not barrier — B reaches stage 3 while A is still in s
   }
 });
 
-Deno.test("a throwing pipeline stage drops that item to null and skips its rest", async () => {
+test("a throwing pipeline stage drops that item to null and skips its rest", async () => {
   const h = harness();
   try {
     const seen: string[] = [];
@@ -337,7 +340,7 @@ Deno.test("a throwing pipeline stage drops that item to null and skips its rest"
   }
 });
 
-Deno.test("parallel maps a thrower to null and never rejects", async () => {
+test("parallel maps a thrower to null and never rejects", async () => {
   const h = harness();
   try {
     const runner: AgentRunner = (call) =>
@@ -374,7 +377,7 @@ Deno.test("parallel maps a thrower to null and never rejects", async () => {
   }
 });
 
-Deno.test("parallel is a barrier — it resolves only once every thunk has settled", async () => {
+test("parallel is a barrier — it resolves only once every thunk has settled", async () => {
   const h = harness();
   try {
     let finishedCount = 0;
@@ -416,7 +419,7 @@ Deno.test("parallel is a barrier — it resolves only once every thunk has settl
 // determinism (invariant 15)
 // ---------------------------------------------------------------------------
 
-Deno.test("Date.now(), argless new Date() and Math.random() throw inside the worker", async () => {
+test("Date.now(), argless new Date() and Math.random() throw inside the worker", async () => {
   const h = harness();
   try {
     const { finished } = await runScript(
@@ -458,14 +461,14 @@ Deno.test("Date.now(), argless new Date() and Math.random() throw inside the wor
   }
 });
 
-Deno.test("exit() is catchable inside the workflow worker", async () => {
+test("exit() is catchable inside the workflow worker", async () => {
   const h = harness();
   try {
     const { finished } = await runScript(
       h,
       echoRunner(),
       `
-      try { Deno.exit(1) } catch (err) { return { message: err.message } }
+      try { process.exit(1) } catch (err) { return { message: err.message } }
       return { message: 'NO THROW' }
       `,
     );
@@ -482,7 +485,7 @@ Deno.test("exit() is catchable inside the workflow worker", async () => {
 // the bridge
 // ---------------------------------------------------------------------------
 
-Deno.test("the worker binds exactly the documented script parameters", async () => {
+test("the worker binds exactly the documented script parameters", async () => {
   const h = harness();
   try {
     const { finished } = await runScript(
@@ -504,7 +507,7 @@ Deno.test("the worker binds exactly the documented script parameters", async () 
   }
 });
 
-Deno.test("phase() and log() are fire-and-forget progress", async () => {
+test("phase() and log() are fire-and-forget progress", async () => {
   const h = harness();
   try {
     const { finished } = await runScript(
@@ -532,7 +535,7 @@ Deno.test("phase() and log() are fire-and-forget progress", async () => {
   }
 });
 
-Deno.test("a script that throws fails the run with its message", async () => {
+test("a script that throws fails the run with its message", async () => {
   const h = harness();
   try {
     const { finished } = await runScript(
@@ -547,7 +550,7 @@ Deno.test("a script that throws fails the run with its message", async () => {
   }
 });
 
-Deno.test("a script that does not parse is refused before a worker is spawned", async () => {
+test("a script that does not parse is refused before a worker is spawned", async () => {
   const h = harness();
   try {
     const ctx: WorkflowCtx = { db: h.db, bus: h.bus, runner: echoRunner() };
@@ -628,7 +631,7 @@ function skewedPipelineRunner(): { runner: AgentRunner; seen: string[] } {
   return { runner, seen };
 }
 
-Deno.test(
+test(
   "THE REPRODUCTION: an unchanged pipeline with asymmetric stage-1 latency replays 4/4",
   async () => {
     const h = harness();
@@ -697,7 +700,7 @@ Deno.test(
   },
 );
 
-Deno.test("parallel slots keep stable positions under varying latency", async () => {
+test("parallel slots keep stable positions under varying latency", async () => {
   const h = harness();
   try {
     // Two calls per slot, with an await between them, so the SECOND call of each slot
@@ -754,7 +757,7 @@ Deno.test("parallel slots keep stable positions under varying latency", async ()
   }
 });
 
-Deno.test("nested parallel-inside-pipeline keeps every coordinate distinct", async () => {
+test("nested parallel-inside-pipeline keeps every coordinate distinct", async () => {
   const h = harness();
   try {
     // Spec §8's own script shape: a pipeline whose second stage fans out.
@@ -809,7 +812,7 @@ Deno.test("nested parallel-inside-pipeline keeps every coordinate distinct", asy
   }
 });
 
-Deno.test("a genuinely edited pipeline stage still ends the prefix", async () => {
+test("a genuinely edited pipeline stage still ends the prefix", async () => {
   const h = harness();
   try {
     const edited = TWO_STAGE.replace("s2 ${prev}", "s2 THOROUGHLY ${prev}");
@@ -844,7 +847,7 @@ Deno.test("a genuinely edited pipeline stage still ends the prefix", async () =>
   }
 });
 
-Deno.test("a first run reports no divergence — there is nothing to diverge from", async () => {
+test("a first run reports no divergence — there is nothing to diverge from", async () => {
   const h = harness();
   try {
     const first = await runScript(h, echoRunner(), TWO_STAGE, { args: { items: ["A"] } });
@@ -859,7 +862,7 @@ Deno.test("a first run reports no divergence — there is nothing to diverge fro
   }
 });
 
-Deno.test("comparePos orders coordinates component-wise as numbers", () => {
+test("comparePos orders coordinates component-wise as numbers", () => {
   // Text ordering gets this backwards at ten items, which is not an exotic fan-out.
   assert.equal(comparePos("0.9", "0.10") < 0, true);
   assert.equal(comparePos("0.10", "0.9") > 0, true);
@@ -869,7 +872,7 @@ Deno.test("comparePos orders coordinates component-wise as numbers", () => {
   assert.equal(comparePos("2", "2.0") < 0, true);
 });
 
-Deno.test("journalKey carries the coordinate and the content hash, both recoverable", () => {
+test("journalKey carries the coordinate and the content hash, both recoverable", () => {
   const call: AgentCall = { prompt: "p", label: "l" };
   const key = journalKey("0.1.1.0", callKey(call));
   assert.deepEqual(splitJournalKey(key), { pos: "0.1.1.0", content: callKey(call) });
@@ -881,7 +884,7 @@ Deno.test("journalKey carries the coordinate and the content hash, both recovera
 // the journal
 // ---------------------------------------------------------------------------
 
-Deno.test("rerunning an unchanged script issues zero live agent calls", async () => {
+test("rerunning an unchanged script issues zero live agent calls", async () => {
   const h = harness();
   try {
     const script = `
@@ -918,7 +921,7 @@ Deno.test("rerunning an unchanged script issues zero live agent calls", async ()
 // tree that no longer matches the answer in the journal (spec §8). The full statement of
 // that rule, including the assertion that the unchanged keys really are unchanged, is
 // `workflow/relaunch.test.ts`; this keeps the engine-level version of it honest.
-Deno.test("editing one prompt re-runs that call and everything after it", async () => {
+test("editing one prompt re-runs that call and everything after it", async () => {
   const h = harness();
   try {
     const script = (b: string) => `
@@ -957,7 +960,7 @@ Deno.test("editing one prompt re-runs that call and everything after it", async 
   }
 });
 
-Deno.test("a failed call re-runs live, and so does everything after it", async () => {
+test("a failed call re-runs live, and so does everything after it", async () => {
   const h = harness();
   try {
     const script = `return await parallel([() => agent('flaky'), () => agent('steady')])`;
@@ -996,7 +999,7 @@ Deno.test("a failed call re-runs live, and so does everything after it", async (
   }
 });
 
-Deno.test("callKey changes with every field that changes what the agent is asked", () => {
+test("callKey changes with every field that changes what the agent is asked", () => {
   const base: AgentCall = { prompt: "p", label: "l" };
   const key = callKey(base);
   assert.equal(callKey({ ...base }), key, "the key is a pure function of the call");
@@ -1007,7 +1010,7 @@ Deno.test("callKey changes with every field that changes what the agent is asked
   assert.notEqual(callKey({ ...base, schema: { type: "object" } }), key);
 });
 
-Deno.test("distinctLabel finds the line a shared-preamble sibling has not claimed", () => {
+test("distinctLabel finds the line a shared-preamble sibling has not claimed", () => {
   const prompt = "You are contributing evidence to a thorough audit.\nReview src/server/app.ts";
   // 40 characters INCLUDING the ellipsis — the label is rendered into a fixed-width
   // rail, so the budget is the whole string, not the text before the marker.
@@ -1026,7 +1029,7 @@ Deno.test("distinctLabel finds the line a shared-preamble sibling has not claime
 // lifecycle
 // ---------------------------------------------------------------------------
 
-Deno.test("stop kills the worker and interrupts in-flight agents", async () => {
+test("stop kills the worker and interrupts in-flight agents", async () => {
   const h = harness();
   try {
     let aborted = false;
@@ -1068,7 +1071,7 @@ Deno.test("stop kills the worker and interrupts in-flight agents", async () => {
 // pause and stop — the gate has to bite on a FAN-OUT, and settle every row
 // ---------------------------------------------------------------------------
 
-Deno.test("pause stops a parallel() fan-out from starting anything more", async () => {
+test("pause stops a parallel() fan-out from starting anything more", async () => {
   const h = harness();
   try {
     const g = gatedRunner();
@@ -1153,7 +1156,7 @@ Deno.test("pause stops a parallel() fan-out from starting anything more", async 
   }
 });
 
-Deno.test("pause still gates a strictly sequential script (regression)", async () => {
+test("pause still gates a strictly sequential script (regression)", async () => {
   const h = harness();
   try {
     const g = gatedRunner();
@@ -1207,7 +1210,7 @@ Deno.test("pause still gates a strictly sequential script (regression)", async (
   }
 });
 
-Deno.test("stopping a paused fan-out settles every row — nothing is left queued", async () => {
+test("stopping a paused fan-out settles every row — nothing is left queued", async () => {
   const h = harness();
   try {
     const g = gatedRunner();
@@ -1262,7 +1265,7 @@ Deno.test("stopping a paused fan-out settles every row — nothing is left queue
   }
 });
 
-Deno.test("stopping a paused sequential run leaves no orphan row behind", async () => {
+test("stopping a paused sequential run leaves no orphan row behind", async () => {
   const h = harness();
   try {
     const g = gatedRunner();
@@ -1311,7 +1314,7 @@ Deno.test("stopping a paused sequential run leaves no orphan row behind", async 
   }
 });
 
-Deno.test("a finished run notifies its owning session", async () => {
+test("a finished run notifies its owning session", async () => {
   const h = harness();
   try {
     const notes: Array<{ sessionId: string; text: string }> = [];
@@ -1332,7 +1335,7 @@ Deno.test("a finished run notifies its owning session", async () => {
   }
 });
 
-Deno.test("boot recovery orphans a run the previous process left running", () => {
+test("boot recovery orphans a run the previous process left running", () => {
   const h = harness();
   try {
     const run = h.db.createWorkflow({
@@ -1388,7 +1391,7 @@ Deno.test("boot recovery orphans a run the previous process left running", () =>
   }
 });
 
-Deno.test("workflowSummary omits the script and counts the journal", async () => {
+test("workflowSummary omits the script and counts the journal", async () => {
   const h = harness();
   try {
     const { finished } = await runScript(
@@ -1415,7 +1418,7 @@ Deno.test("workflowSummary omits the script and counts the journal", async () =>
 // Regression: a pure reorder must report `moved`, not `changed`. The occupied-slot
 // test used to run first, which made `moved` unreachable for any reorder that
 // preserves the call count — i.e. the commonest kind.
-Deno.test("classifyDivergence: a swap is a MOVE, not an edit", () => {
+test("classifyDivergence: a swap is a MOVE, not an edit", () => {
   const plan = emptyReplayPlan();
   for (const [i, content] of ["review A", "review B", "review C"].entries()) {
     const step = {
@@ -1438,7 +1441,7 @@ Deno.test("classifyDivergence: a swap is a MOVE, not an edit", () => {
   assert.match(d.reason, /MOVED/);
 });
 
-Deno.test("classifyDivergence: a genuine edit is still reported as changed", () => {
+test("classifyDivergence: a genuine edit is still reported as changed", () => {
   const plan = emptyReplayPlan();
   const step = { pos: "0", content: "review A", key: "0:review A", idx: 0, result: "ok", prompt: "review A" };
   plan.steps.push(step);

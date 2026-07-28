@@ -297,18 +297,23 @@ export function filteredStdin(sinks: InputSinks = {}): typeof process.stdin {
 // Entering and leaving the alternate screen
 // ---------------------------------------------------------------------------
 
-const enc = new TextEncoder();
-
 function writeOut(seq: string) {
   try {
-    Deno.stdout.writeSync(enc.encode(seq));
+    process.stdout.write(seq);
   } catch {
     // stdout already gone — nothing to set up or restore onto.
   }
 }
 
 /**
- * Alt screen + SGR mouse tracking + bracketed paste + focus reporting.
+ * SGR mouse tracking + bracketed paste + focus reporting + the title push.
+ *
+ * NOT the alternate screen. `?1049h` is the one sequence here that is not
+ * idempotent — it saves the cursor and clears — and the OpenTUI renderer writes it
+ * itself from `createCliRenderer({ screenMode: "alternate-screen" })`, so sending
+ * it from both places would nest one entry inside another and pop out of only one
+ * of them. The renderer owns `?1049` and the cursor; this function owns what the
+ * renderer does not send (`main.tsx` states the whole split).
  *
  * 1002 (button-event) adds the drag motion that text selection needs; 1000 stays
  * as the fallback for terminals without it. 1004 reports focus in/out, which gates
@@ -316,12 +321,17 @@ function writeOut(seq: string) {
  * `leaveTui` can pop it back rather than leaving a session id in the tab.
  */
 export function enterTui() {
-  writeOut("\x1b[22;0t\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1006h\x1b[?2004h\x1b[?1004h");
+  writeOut("\x1b[22;0t\x1b[?1000h\x1b[?1002h\x1b[?1006h\x1b[?2004h\x1b[?1004h");
 }
 
 /**
- * Restore the normal buffer: mouse, paste and focus modes off, cursor visible,
- * the pushed title popped back.
+ * Mouse, paste and focus modes off, cursor visible, the pushed title popped back.
+ *
+ * The renderer pops the alternate screen (see `enterTui`), and on its way out it
+ * also BLANKS the window title — so this must run after the renderer's `destroy`,
+ * or the `CSI 23;0t` below would restore a title the renderer then wipes. `?25h`
+ * stays despite the renderer showing the cursor too: it is idempotent, and it is
+ * the only thing that restores the cursor on a path where `destroy` never ran.
  *
  * `cleanup` clears whatever sticky state `term.ts` set (progress, tab tint). It is
  * a parameter rather than an import so this module holds no reference to the
@@ -331,7 +341,7 @@ export function leaveTui(cleanup?: () => void) {
   try {
     cleanup?.();
   } catch {
-    // Leaving must not throw: this runs on the unload path too.
+    // Leaving must not throw: this runs on the process-exit path too.
   }
-  writeOut("\x1b[?1004l\x1b[?2004l\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?1049l\x1b[?25h\x1b[23;0t");
+  writeOut("\x1b[?1004l\x1b[?2004l\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?25h\x1b[23;0t");
 }

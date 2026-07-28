@@ -6,7 +6,7 @@
  * than the panel has rows and the whole point of the view is that any of them is
  * reachable.
  */
-import { Box, Text } from "ink";
+import { TextAttributes } from "@opentui/core";
 import type { TreeRow } from "../historytree.ts";
 import { palette } from "../theme.ts";
 
@@ -14,31 +14,46 @@ export function ConversationTree(
   { rows, selected, height }: { rows: TreeRow[]; selected: number; height: number },
 ) {
   if (rows.length === 0) {
-    return <Text dimColor>this conversation has no turns yet — send one</Text>;
+    return (
+      <text attributes={TextAttributes.DIM}>this conversation has no turns yet — send one</text>
+    );
   }
-  const body = Math.max(3, height - 1);
+  // The legend is the one row of chrome, and the floor is 0 rather than 3: a floor
+  // is a claim about how much room there is, and below four rows it was false —
+  // OpenTUI answers an overrun by shrinking rows onto each other (`Panel.tsx`).
+  const body = Math.max(0, height - 1);
   const at = Math.max(0, Math.min(selected, rows.length - 1));
   const start = Math.max(0, Math.min(at - Math.floor(body / 2), rows.length - body));
-  const window = rows.slice(start, Math.max(start + body, 1));
+  const window = body === 0 ? [] : rows.slice(start, start + body);
   return (
-    <Box flexDirection="column">
+    <box flexDirection="column">
       {window.map((r, i) => {
         const on = start + i === at;
         return (
-          <Text key={`${r.id}-${i}`} wrap="truncate" inverse={on}>
-            <Text
-              color={r.kind === "branch" ? palette.info : r.active ? palette.accent : undefined}
-              dimColor={r.kind === "message" && r.role !== "user" && !on}
+          <text
+            key={`${r.id}-${i}`}
+            wrapMode="none"
+          >
+            {/* `❯` and an accent, not INVERSE: reverse video renders white-on-white
+                after the OpenTUI migration (see `CARET_FG` in `Composer.tsx`), so
+                the selected row was marked with nothing at all. This is the cursor
+                every other list in the panel uses. */}
+            <span fg={palette.accent}>{on ? "❯" : " "}</span>
+            <span
+              fg={r.kind === "branch" ? palette.info : r.active ? palette.accent : undefined}
+              attributes={r.kind === "message" && r.role !== "user" && !on
+                ? TextAttributes.DIM
+                : TextAttributes.NONE}
             >
               {r.text}
-            </Text>
-          </Text>
+            </span>
+          </text>
         );
       })}
-      <Text dimColor wrap="truncate">
+      <text attributes={TextAttributes.DIM} wrapMode="none">
         {rows.length > body ? `${at + 1}/${rows.length} · ` : ""}
-        ↑↓ move · ⏎ branch from this turn · s branch + summary · esc back
-      </Text>
-    </Box>
+        ↑↓ move · pgup/pgdn page · ⏎ branch from this turn · s branch + summary · esc back
+      </text>
+    </box>
   );
 }

@@ -2,11 +2,11 @@
  * The input box, and the completion popup that sits on top of it.
  *
  * THE INVARIANT THIS HOLDS: **the cursor is exactly where the box says it is.**
- * The text is wrapped here, into fixed-width chunks, rather than by Ink — so the
- * character→row mapping is computed, not inferred from a layout pass. Each row is
- * then rendered `truncate`, which means Ink never reflows the block underneath the
- * cursor. A composer whose cursor drifts one row on a wrapped paste is a composer
- * people stop trusting with long input.
+ * The text is wrapped here, into fixed-width chunks, rather than by the renderer —
+ * so the character→row mapping is computed, not inferred from a layout pass. Each
+ * row is then rendered `wrapMode="none"`, which means the renderer never reflows the
+ * block underneath the cursor. A composer whose cursor drifts one row on a wrapped
+ * paste is a composer people stop trusting with long input.
  *
  * SECOND INVARIANT — **the box never grows past its cap.** A large paste is
  * windowed to `maxRows` around the cursor with a counter row saying what is above
@@ -26,9 +26,21 @@
  * the wrong layer (it would need the workspace) and would silently disagree with
  * whatever the server actually searched.
  */
-import { Box, Text } from "ink";
+import { TextAttributes } from "@opentui/core";
 import type { Completion, Trigger } from "../format.ts";
 import { UI } from "../format.ts";
+
+/**
+ * The block caret's foreground, against an accent background.
+ *
+ * NOT `TextAttributes.INVERSE`, which is what this was and which renders the caret
+ * INVISIBLE: OpenTUI double-signals reverse video — it writes an explicit white
+ * background AND leaves SGR 7 set — so the terminal inverts an already-inverted
+ * pair back to white-on-white. A cell dump of the caret returned `fg #ffffff bg
+ * #ffffff inverse=true`, i.e. a composer with no visible cursor at all. An explicit
+ * pair states the colours once and cannot be flipped twice.
+ */
+const CARET_FG = "black";
 
 export interface ComposerProps {
   input: string;
@@ -50,6 +62,39 @@ export interface ComposerProps {
   completionSel?: number;
   /** Matches hidden by the row cap, so the menu can say "↓ N more". */
   completionMore?: number;
+}
+
+/**
+ * Rows the box will draw, so the container can SIZE the region above it instead
+ * of guessing.
+ *
+ * `App` used to reserve `min(8, max(3, rows/4))` rows for this component and then
+ * subtract a further constant 4 "for chrome". At 34 rows that reserved 12 for a
+ * box that draws 3, so a quarter of the terminal below the status line was never
+ * painted at all and the input bar floated six rows off the bottom. A guess is
+ * the wrong shape here: the height depends on the draft's wrapping and on whether
+ * the hint row is showing, both of which only this file knows. Mirrors the render
+ * below — the two must be edited together.
+ */
+export function composerHeight(
+  { input, ghost = "", busy, width, maxRows }: Pick<
+    ComposerProps,
+    "input" | "busy" | "width" | "maxRows"
+  > & { ghost?: string },
+): number {
+  const innerW = Math.max(4, width - 4);
+  const full = "› " + input + ghost + (ghost ? "  ⇥ tab" : "");
+  let n = 0;
+  for (const line of full.split("\n")) n += Math.max(1, Math.ceil(line.length / innerW));
+  const cap = Math.max(2, maxRows);
+  const clipped = n > cap;
+  const hint = (busy && input !== "") || input.startsWith("!") ? 1 : 0;
+  return 2 /* border */ + (clipped ? cap - 1 : n) + (clipped ? 1 : 0) + hint;
+}
+
+/** Rows `CompletionPopup` will draw, for the same reason as `composerHeight`. */
+export function completionPopupHeight(items: number, more: number): number {
+  return 2 /* border */ + Math.max(1, items) + (more > 0 ? 1 : 0) + 1 /* legend */;
 }
 
 export function Composer(
@@ -102,9 +147,19 @@ export function Composer(
   // A context hint under the box: a plain Enter mid-turn steers the running turn
   // rather than starting a new one, and saying so is the difference between
   // "queued" and "ignored" (spec §5).
-  const hint = busy && input !== "" ? "enter interjects this turn" : "";
+  //
+  // The second case says the opposite out loud. `!` is a shell sigil in every
+  // comparable harness and is NOT one here, and the failure was silent and billed:
+  // `!echo hi` went to the frontier model as an ordinary prompt, titled the session
+  // "Echo Command Test", and cost a round trip. A sigil bough does not honour has to
+  // deny itself before Enter, not after.
+  const hint = busy && input !== ""
+    ? "enter interjects this turn"
+    : input.startsWith("!")
+    ? "! is not a shell — this goes to the model"
+    : "";
   return (
-    <Box flexDirection="column">
+    <box flexDirection="column">
       {trigger
         ? (
           <CompletionPopup
@@ -115,9 +170,9 @@ export function Composer(
           />
         )
         : null}
-      <Box
+      <box
         flexDirection="column"
-        borderStyle="round"
+        borderStyle="rounded"
         // Accent while awaiting input: the composer is the focused element in
         // chat mode, and a hairline border made the first action invisible.
         borderColor={busy ? UI.warn : UI.accent}
@@ -131,17 +186,25 @@ export function Composer(
           // Where this row crosses into ghost text — everything from there is dim.
           const gcol = Math.max(prefix, Math.min(ghostStart - r.start, r.text.length));
           return (
-            <Text key={r.start} wrap="truncate">
-              {prefix ? <Text color={UI.accent}>{"› "}</Text> : null}
+            <text key={r.start} wrapMode="none">
+              {prefix ? <span fg={UI.accent}>{"› "}</span> : null}
               {hasCursor
                 ? (
                   <>
                     {r.text.slice(prefix, col)}
-                    <Text inverse>{at ?? " "}</Text>
-                    {placeholder ? <Text dimColor>{placeholder}</Text> : null}
+                    <span fg={CARET_FG} bg={UI.accent}>{at ?? " "}</span>
+                    {placeholder
+                      ? <span attributes={TextAttributes.DIM}>{placeholder}</span>
+                      : null}
                     {at === undefined
                       ? ""
-                      : <Text dimColor={col + 1 >= gcol}>{r.text.slice(col + 1)}</Text>}
+                      : (
+                        <span
+                          attributes={col + 1 >= gcol ? TextAttributes.DIM : TextAttributes.NONE}
+                        >
+                          {r.text.slice(col + 1)}
+                        </span>
+                      )}
                   </>
                 )
                 : r.text.length <= prefix
@@ -149,22 +212,24 @@ export function Composer(
                 : (
                   <>
                     {r.text.slice(prefix, gcol)}
-                    {gcol < r.text.length ? <Text dimColor>{r.text.slice(gcol)}</Text> : null}
+                    {gcol < r.text.length
+                      ? <span attributes={TextAttributes.DIM}>{r.text.slice(gcol)}</span>
+                      : null}
                   </>
                 )}
-            </Text>
+            </text>
           );
         })}
         {clipped
           ? (
-            <Text dimColor>
+            <text attributes={TextAttributes.DIM}>
               … {top} line{top === 1 ? "" : "s"} above · {rows.length - top - shownCount} below
-            </Text>
+            </text>
           )
           : null}
-        {hint ? <Text dimColor>{hint}</Text> : null}
-      </Box>
-    </Box>
+        {hint ? <text attributes={TextAttributes.DIM}>{hint}</text> : null}
+      </box>
+    </box>
   );
 }
 
@@ -182,37 +247,51 @@ export interface CompletionPopupProps {
  */
 export function CompletionPopup({ kind, items, sel, more }: CompletionPopupProps) {
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={UI.muted} paddingX={1}>
+    <box flexDirection="column" borderStyle="rounded" borderColor={UI.muted} paddingX={1}>
       {items.length === 0
-        ? <Text dimColor>{kind === "file" ? "no matching files" : "no matching skills"}</Text>
+        ? (
+          <text attributes={TextAttributes.DIM}>
+            {kind === "file" ? "no matching files" : "no matching skills"}
+          </text>
+        )
         : items.map((it, i) => {
           const selected = i === sel;
-          // File rows dim the directory prefix so basenames stand out — skipped
-          // on the selected row, where dim under the inverse bar goes illegible.
-          const dimTo = kind === "file" && !selected ? it.label.lastIndexOf("/") + 1 : 0;
+          // File rows dim the directory prefix so basenames stand out.
+          const dimTo = kind === "file" ? it.label.lastIndexOf("/") + 1 : 0;
           return (
-            <Text key={it.label} inverse={selected} wrap="truncate">
+            <text key={it.label} wrapMode="none">
+              {/* A `❯` and an accent, not a reverse-video bar: reverse renders
+                  white-on-white here (see CARET_FG), so the row Enter was about to
+                  act on was marked with nothing at all. This is also the cursor
+                  Sessions, Changes, ModelPicker and Theme already use, which is the
+                  point — one cursor glyph across every list in the TUI. */}
+              <span fg={UI.accent}>{selected ? "❯ " : "  "}</span>
               <PopupLabel label={it.label} hl={it.hl} dimTo={dimTo} />
-              {it.detail ? <Text dimColor={!selected}>{"  "}{it.detail}</Text> : null}
-            </Text>
+              {it.detail
+                ? <span attributes={TextAttributes.DIM}>{"  "}{it.detail}</span>
+                : null}
+            </text>
           );
         })}
       {more > 0
         ? (
           // Keeps the row cap honest: without this a first-run user reads the
           // menu as the whole catalogue and never types to narrow it.
-          <Text>
-            <Text color={UI.info}>↓ {more}</Text>
-            <Text dimColor>{" "}more — keep typing to narrow</Text>
-          </Text>
+          <text>
+            <span fg={UI.info}>↓ {more}</span>
+            <span attributes={TextAttributes.DIM}>{" "}more — keep typing to narrow</span>
+          </text>
         )
         : null}
-      <Text dimColor>
+      <text attributes={TextAttributes.DIM}>
+        {/* ⏎ is named FIRST because it is now the commit key here too: every
+            bordered list in this TUI affirms on Enter, and the pickers were the one
+            widget where it discarded the highlighted row and sent the raw draft. */}
         {kind === "file"
-          ? "files & dirs — ↑↓ select · tab inserts · esc closes"
-          : "skills — ↑↓ select · tab inserts · esc closes"}
-      </Text>
-    </Box>
+          ? "files & dirs — ↑↓ select · ⏎ or ⇥ inserts · esc closes"
+          : "skills — ↑↓ select · ⏎ or ⇥ inserts · esc closes"}
+      </text>
+    </box>
   );
 }
 
@@ -222,20 +301,24 @@ function PopupLabel({ label, hl, dimTo }: { label: string; hl?: number[]; dimTo:
   if (marks.size === 0) {
     return dimTo > 0
       ? (
-        <Text>
-          <Text dimColor>{label.slice(0, dimTo)}</Text>
+        <span>
+          <span attributes={TextAttributes.DIM}>{label.slice(0, dimTo)}</span>
           {label.slice(dimTo)}
-        </Text>
+        </span>
       )
-      : <Text>{label}</Text>;
+      : <span>{label}</span>;
   }
   return (
-    <Text>
+    <span>
       {[...label].map((ch, i) => (
         marks.has(i)
-          ? <Text key={i} bold color={UI.accent}>{ch}</Text>
-          : <Text key={i} dimColor={i < dimTo}>{ch}</Text>
+          ? <span key={i} attributes={TextAttributes.BOLD} fg={UI.accent}>{ch}</span>
+          : (
+            <span key={i} attributes={i < dimTo ? TextAttributes.DIM : TextAttributes.NONE}>
+              {ch}
+            </span>
+          )
       ))}
-    </Text>
+    </span>
   );
 }

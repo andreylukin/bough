@@ -33,6 +33,8 @@
  * Pure-ish and server-free: nothing here imports from `server/`, so the whole
  * module is exercised against a real temp repo with no socket and no ctx.
  */
+import { rmdirSync } from "node:fs";
+import { rm, readFile, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Db } from "../types.ts";
 
@@ -108,14 +110,17 @@ export interface GitResult {
  */
 export async function git(dir: string, args: string[]): Promise<GitResult> {
   try {
-    const { code, stdout, stderr } = await new Deno.Command("git", {
-      args: ["-C", dir, ...args],
-      stdin: "null",
-      stdout: "piped",
-      stderr: "piped",
-    }).output();
-    const dec = new TextDecoder();
-    return { ok: code === 0, out: dec.decode(stdout), err: dec.decode(stderr) };
+    const proc = Bun.spawn(["git", "-C", dir, ...args], {
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, code] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    return { ok: code === 0, out, err };
   } catch (e) {
     return { ok: false, out: "", err: e instanceof Error ? e.message : String(e) };
   }
@@ -296,9 +301,9 @@ async function addedFile(dir: string, path: string): Promise<FileDiff> {
 
   let lines: string[] = [];
   try {
-    const info = await Deno.stat(join(dir, path));
+    const info = await stat(join(dir, path));
     if (info.size <= MAX_ADDED_BYTES) {
-      const body = (await Deno.readTextFile(join(dir, path))).split("\n");
+      const body = (await readFile(join(dir, path), "utf8")).split("\n");
       // A trailing "" from a final newline is not a line; a file without a final
       // newline keeps its last one.
       if (body.at(-1) === "") body.pop();
@@ -393,12 +398,12 @@ export async function revertPaths(
     // Absent from the base commit ⇒ the session created it. Delete it, then prune
     // the directories that existed only to hold it.
     try {
-      await Deno.remove(join(dir, path));
+      await rm(join(dir, path));
       result.reverted.push(path);
       pruneEmptyParents(dir, path);
     } catch (e) {
       // Already gone is a success: the reviewer asked for it not to be there.
-      if (e instanceof Deno.errors.NotFound) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") {
         result.reverted.push(path);
         continue;
       }
@@ -418,7 +423,7 @@ function pruneEmptyParents(dir: string, path: string): void {
   let parent = dirname(path);
   while (parent && parent !== "." && parent !== "/") {
     try {
-      Deno.removeSync(join(dir, parent)); // throws once non-empty — that is the stop
+      rmdirSync(join(dir, parent)); // throws once non-empty — that is the stop
     } catch {
       return;
     }

@@ -9,22 +9,29 @@
  *
  * Everything runs against `createHandler(ctx)` over an in-memory database with no
  * socket bound and nothing on the network (plan §7). The one filesystem touch is
- * `Deno.makeTempDir` for the workspace-existence check — never `~/.bough`.
+ * `mkdtemp` for the workspace-existence check — never `~/.bough`.
  *
  * Assertions come from `node:assert/strict` rather than `@std/assert`: jsr.io is
  * not reachable from this environment, and a test that cannot run offline does not
  * belong in `deno task test`.
  */
+import { test } from "bun:test";
+import { mkdtemp, rm, rmdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import assert from "node:assert/strict";
 import { Bus } from "../bus.ts";
 import { openDb, type SqliteDb } from "../db/db.ts";
 import type { BoughEvent } from "../schema/events.ts";
 import type { Message, Session } from "../schema/parts.ts";
 import type { AppCtx } from "../types.ts";
+import { CHEAP_MODEL_ENV, DEFAULT_CHEAP_MODEL } from "../worker/titles.ts";
 import { createHandler, type Route, route } from "./app.ts";
 import {
   createSession,
+  getModelSettingsH,
   getSession,
+  getSessionUsageH,
   isCollapsed,
   listSessions,
   normalizeWorkspace,
@@ -46,6 +53,8 @@ const TABLE: Route[] = [
   route("POST", "/sessions/:id/messages", postMessage),
   route("PUT", "/sessions/:id/draft", putDraft),
   route("PATCH", "/sessions/:id", patchSession),
+  route("GET", "/sessions/:id/usage", getSessionUsageH),
+  route("GET", "/model-settings", getModelSettingsH),
 ];
 
 interface Fixture {
@@ -119,7 +128,7 @@ function seedDelegated(
 
 // ---- derived visibility -----------------------------------------------------
 
-Deno.test("a subagent session is absent from GET /sessions and present under its origin", async () => {
+test("a subagent session is absent from GET /sessions and present under its origin", async () => {
   const f = fixture();
   try {
     const root = await newSession(f, { title: "root" });
@@ -139,7 +148,7 @@ Deno.test("a subagent session is absent from GET /sessions and present under its
   }
 });
 
-Deno.test("a workflow_agent session collapses the same way a subagent does", async () => {
+test("a workflow_agent session collapses the same way a subagent does", async () => {
   const f = fixture();
   try {
     const root = await newSession(f);
@@ -153,7 +162,7 @@ Deno.test("a workflow_agent session collapses the same way a subagent does", asy
   }
 });
 
-Deno.test("roots, forks and compactions are always listed", async () => {
+test("roots, forks and compactions are always listed", async () => {
   const f = fixture();
   try {
     const root = await newSession(f, { title: "root" });
@@ -174,7 +183,7 @@ Deno.test("roots, forks and compactions are always listed", async () => {
   }
 });
 
-Deno.test("the drill-in returns every branch of an origin, collapsed kinds and forks alike", async () => {
+test("the drill-in returns every branch of an origin, collapsed kinds and forks alike", async () => {
   const f = fixture();
   try {
     const root = await newSession(f);
@@ -196,7 +205,7 @@ Deno.test("the drill-in returns every branch of an origin, collapsed kinds and f
   }
 });
 
-Deno.test("an unknown originId is a 404, not an empty list", async () => {
+test("an unknown originId is a 404, not an empty list", async () => {
   const f = fixture();
   try {
     const res = await f.call(get("/sessions?originId=nope"));
@@ -207,7 +216,7 @@ Deno.test("an unknown originId is a 404, not an empty list", async () => {
   }
 });
 
-Deno.test("POST /sessions refuses to create a collapsed kind that no listing could reach", async () => {
+test("POST /sessions refuses to create a collapsed kind that no listing could reach", async () => {
   const f = fixture();
   try {
     for (const kind of ["subagent", "workflow_agent"]) {
@@ -222,7 +231,7 @@ Deno.test("POST /sessions refuses to create a collapsed kind that no listing cou
   }
 });
 
-Deno.test("isCollapsed is the whole visibility rule — no stored flag exists", () => {
+test("isCollapsed is the whole visibility rule — no stored flag exists", () => {
   const base = { id: "x", title: "t", createdAt: 0, parentId: null };
   assert.equal(isCollapsed({ ...base, kind: "subagent" }), true);
   assert.equal(isCollapsed({ ...base, kind: "workflow_agent" }), true);
@@ -233,7 +242,7 @@ Deno.test("isCollapsed is the whole visibility rule — no stored flag exists", 
 
 // ---- creation ---------------------------------------------------------------
 
-Deno.test("POST /sessions announces the session it stored, byte for byte", async () => {
+test("POST /sessions announces the session it stored, byte for byte", async () => {
   const f = fixture();
   try {
     const session = await newSession(f, { title: "hello" });
@@ -248,7 +257,7 @@ Deno.test("POST /sessions announces the session it stored, byte for byte", async
   }
 });
 
-Deno.test("model and effort pins are stored before the announce, not after", async () => {
+test("model and effort pins are stored before the announce, not after", async () => {
   const f = fixture();
   try {
     const session = await newSession(f, { model: "openai:gpt-5", effort: "high" });
@@ -263,7 +272,7 @@ Deno.test("model and effort pins are stored before the announce, not after", asy
   }
 });
 
-Deno.test("an unknown parent is a 400 naming it, and nothing is created", async () => {
+test("an unknown parent is a 400 naming it, and nothing is created", async () => {
   const f = fixture();
   try {
     const res = await f.call(post("/sessions", { parentId: "ghost" }));
@@ -276,20 +285,20 @@ Deno.test("an unknown parent is a 400 naming it, and nothing is created", async 
   }
 });
 
-Deno.test("a workspace that exists is recorded, and originDir mirrors it", async () => {
+test("a workspace that exists is recorded, and originDir mirrors it", async () => {
   const f = fixture();
-  const dir = await Deno.makeTempDir();
+  const dir = await mkdtemp(join(tmpdir(), "bough-"));
   try {
     const session = await newSession(f, { workspace: dir });
     assert.equal(session.workspace, dir);
     assert.equal(session.originDir, dir);
   } finally {
     f.db.close();
-    await Deno.remove(dir);
+    await rmdir(dir);
   }
 });
 
-Deno.test("a workspace that does not exist is rejected at creation, not one turn later", async () => {
+test("a workspace that does not exist is rejected at creation, not one turn later", async () => {
   const f = fixture();
   try {
     const res = await f.call(post("/sessions", { workspace: "/no/such/checkout" }));
@@ -301,22 +310,22 @@ Deno.test("a workspace that does not exist is rejected at creation, not one turn
   }
 });
 
-Deno.test("a workspace that is a file, not a directory, says so", async () => {
+test("a workspace that is a file, not a directory, says so", async () => {
   const f = fixture();
-  const dir = await Deno.makeTempDir();
+  const dir = await mkdtemp(join(tmpdir(), "bough-"));
   const file = `${dir}/not-a-checkout`;
-  await Deno.writeTextFile(file, "");
+  await writeFile(file, "");
   try {
     const res = await f.call(post("/sessions", { workspace: file }));
     assert.equal(res.status, 400);
     assert.match((await res.json()).error, /not a directory/);
   } finally {
     f.db.close();
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true, force: true });
   }
 });
 
-Deno.test("normalizeWorkspace expands ~ and absolutizes, with home as a parameter", () => {
+test("normalizeWorkspace expands ~ and absolutizes, with home as a parameter", () => {
   assert.equal(normalizeWorkspace("~", "/home/dev"), "/home/dev");
   assert.equal(normalizeWorkspace("~/src/bough", "/home/dev"), "/home/dev/src/bough");
   assert.equal(normalizeWorkspace("  /srv/x  ", "/home/dev"), "/srv/x");
@@ -326,7 +335,7 @@ Deno.test("normalizeWorkspace expands ~ and absolutizes, with home as a paramete
 
 // ---- the session view -------------------------------------------------------
 
-Deno.test("GET /sessions/:id returns {session, thread} with ancestors before own messages", async () => {
+test("GET /sessions/:id returns {session, thread} with ancestors before own messages", async () => {
   const f = fixture();
   try {
     const root = await newSession(f, { title: "root" });
@@ -350,7 +359,7 @@ Deno.test("GET /sessions/:id returns {session, thread} with ancestors before own
   }
 });
 
-Deno.test("GET /sessions/:id on an unknown id is a 404 naming it", async () => {
+test("GET /sessions/:id on an unknown id is a 404 naming it", async () => {
   const f = fixture();
   try {
     const res = await f.call(get("/sessions/ghost"));
@@ -367,7 +376,7 @@ function textOf(m: Message): string {
   return m.parts.filter((p) => p.type === "text").map((p) => p.text).join("");
 }
 
-Deno.test("POST messages persists, announces, and hands off to the turn runner", async () => {
+test("POST messages persists, announces, and hands off to the turn runner", async () => {
   const f = fixture();
   try {
     const session = await newSession(f);
@@ -393,7 +402,7 @@ Deno.test("POST messages persists, announces, and hands off to the turn runner",
   }
 });
 
-Deno.test("a message posted while a turn runs is persisted and queued, not started", async () => {
+test("a message posted while a turn runs is persisted and queued, not started", async () => {
   const f = fixture();
   try {
     const session = await newSession(f);
@@ -429,7 +438,7 @@ Deno.test("a message posted while a turn runs is persisted and queued, not start
   }
 });
 
-Deno.test("image attachments become parts carrying a path, never bytes", async () => {
+test("image attachments become parts carrying a path, never bytes", async () => {
   const f = fixture();
   try {
     const session = await newSession(f);
@@ -452,7 +461,7 @@ Deno.test("image attachments become parts carrying a path, never bytes", async (
   }
 });
 
-Deno.test("an image-only message is allowed; an entirely empty one is a 400", async () => {
+test("an image-only message is allowed; an entirely empty one is a 400", async () => {
   const f = fixture();
   try {
     const session = await newSession(f);
@@ -473,7 +482,7 @@ Deno.test("an image-only message is allowed; an entirely empty one is a 400", as
   }
 });
 
-Deno.test("posting into an unknown session is a 404 and starts nothing", async () => {
+test("posting into an unknown session is a 404 and starts nothing", async () => {
   const f = fixture();
   try {
     const res = await f.call(post("/sessions/ghost/messages", { text: "hi" }));
@@ -484,7 +493,7 @@ Deno.test("posting into an unknown session is a 404 and starts nothing", async (
   }
 });
 
-Deno.test("the first post consumes the handoff draft and announces the clear", async () => {
+test("the first post consumes the handoff draft and announces the clear", async () => {
   const f = fixture();
   try {
     const session = await newSession(f);
@@ -499,7 +508,7 @@ Deno.test("the first post consumes the handoff draft and announces the clear", a
   }
 });
 
-Deno.test("a turn starter that throws is contained — the post still answers 202", async () => {
+test("a turn starter that throws is contained — the post still answers 202", async () => {
   const errors: unknown[] = [];
   const original = console.error;
   console.error = (...args: unknown[]) => errors.push(args);
@@ -521,7 +530,7 @@ Deno.test("a turn starter that throws is contained — the post still answers 20
   }
 });
 
-Deno.test("a rejecting turn starter does not reject the request", async () => {
+test("a rejecting turn starter does not reject the request", async () => {
   const errors: unknown[] = [];
   const original = console.error;
   console.error = (...args: unknown[]) => errors.push(args);
@@ -541,7 +550,7 @@ Deno.test("a rejecting turn starter does not reject the request", async () => {
   }
 });
 
-Deno.test("no turn starter wired: the message still lands (M1 has no runner yet)", async () => {
+test("no turn starter wired: the message still lands (M1 has no runner yet)", async () => {
   const db = openDb(":memory:");
   const ctx: AppCtx = { db, bus: new Bus() };
   const call = createHandler(ctx, { routes: TABLE });
@@ -556,7 +565,7 @@ Deno.test("no turn starter wired: the message still lands (M1 has no runner yet)
   }
 });
 
-Deno.test("a posted message is keyword-searchable immediately", async () => {
+test("a posted message is keyword-searchable immediately", async () => {
   const f = fixture();
   try {
     const session = await newSession(f);
@@ -571,7 +580,7 @@ Deno.test("a posted message is keyword-searchable immediately", async () => {
 
 // ---- listing decorations ----------------------------------------------------
 
-Deno.test("listing carries busy and lastTurnStatus derived from turns, not columns", async () => {
+test("listing carries busy and lastTurnStatus derived from turns, not columns", async () => {
   const f = fixture();
   try {
     const idle = await newSession(f, { title: "idle" });
@@ -609,7 +618,7 @@ Deno.test("listing carries busy and lastTurnStatus derived from turns, not colum
 
 // ---- draft ------------------------------------------------------------------
 
-Deno.test("PUT draft stores the text and, deliberately, emits no event", async () => {
+test("PUT draft stores the text and, deliberately, emits no event", async () => {
   const f = fixture();
   try {
     const session = await newSession(f);
@@ -626,7 +635,7 @@ Deno.test("PUT draft stores the text and, deliberately, emits no event", async (
   }
 });
 
-Deno.test("PUT draft with null clears it", async () => {
+test("PUT draft with null clears it", async () => {
   const f = fixture();
   try {
     const session = await newSession(f);
@@ -638,7 +647,7 @@ Deno.test("PUT draft with null clears it", async () => {
   }
 });
 
-Deno.test("PUT draft rejects a missing session and a wrong-shaped body", async () => {
+test("PUT draft rejects a missing session and a wrong-shaped body", async () => {
   const f = fixture();
   try {
     assert.equal((await f.call(put("/sessions/ghost/draft", { draft: "x" }))).status, 404);
@@ -654,7 +663,7 @@ Deno.test("PUT draft rejects a missing session and a wrong-shaped body", async (
 const patch = (path: string, body: unknown) =>
   new Request(url(path), { method: "PATCH", body: JSON.stringify(body) });
 
-Deno.test("PATCH /sessions/:id pins a model, and an explicit null clears it", async () => {
+test("PATCH /sessions/:id pins a model, and an explicit null clears it", async () => {
   const f = fixture();
   const session = await newSession(f, { title: "pin me" });
 
@@ -681,10 +690,130 @@ Deno.test("PATCH /sessions/:id pins a model, and an explicit null clears it", as
   f.db.close();
 });
 
-Deno.test("PATCH /sessions/:id rejects an unknown effort and a missing session", async () => {
+test("PATCH /sessions/:id rejects an unknown effort and a missing session", async () => {
   const f = fixture();
   const session = await newSession(f, {});
   assert.equal((await f.call(patch(`/sessions/${session.id}`, { effort: "turbo" }))).status, 400);
   assert.equal((await f.call(patch("/sessions/nope", { model: "x" }))).status, 404);
   f.db.close();
+});
+
+/**
+ * The pin has to survive the round trip, not just the response body. A picker that
+ * echoed its own choice back would look identical on screen and lose the setting on
+ * the next launch — which is the bug this route was added to fix, so the assertion
+ * reads the STORED row rather than what the handler returned.
+ */
+test("PATCH /sessions/:id persists model AND effort to the row, not just the response", async () => {
+  const f = fixture();
+  const session = await newSession(f, {});
+  await f.call(patch(`/sessions/${session.id}`, { model: "claude-opus-4-8", effort: "high" }));
+  const stored = f.db.getSession(session.id)!;
+  assert.equal(stored.model, "claude-opus-4-8");
+  assert.equal(stored.effort, "high", "effort landing as null is the reported regression");
+  f.db.close();
+});
+
+// ---- the live cost meter ----------------------------------------------------
+
+/**
+ * `GET /sessions/:id/usage` exists so the running line can say what a turn has
+ * spent SO FAR without re-fetching the whole assembled thread every few seconds.
+ * The tree total is included because a spawner's real spend is its subagents'.
+ */
+test("GET /sessions/:id/usage answers both totals, and 404s on an unknown id", async () => {
+  const f = fixture();
+  try {
+    const root = await newSession(f, { title: "root" });
+    const child = seedDelegated(f.db, "subagent", root, "delegated");
+    f.db.addSessionUsage(root.id, {
+      inputTokens: 100,
+      outputTokens: 20,
+      reasoningTokens: 5,
+      costUsd: 0.25,
+    }, Date.now());
+    f.db.addSessionUsage(child.id, {
+      inputTokens: 10,
+      outputTokens: 2,
+      costUsd: 0.5,
+    }, Date.now());
+
+    const body = await (await f.call(get(`/sessions/${root.id}/usage`))).json() as {
+      usage: { inputTokens: number; outputTokens: number; costUsd: number };
+      tree: { inputTokens: number; costUsd: number };
+    };
+    assert.equal(body.usage.inputTokens, 100);
+    assert.equal(body.usage.outputTokens, 20);
+    assert.equal(body.usage.costUsd, 0.25);
+    // The subagent's spend rolls up here and nowhere in `usage`.
+    assert.equal(body.tree.costUsd, 0.75);
+    assert.equal(body.tree.inputTokens, 110);
+
+    assert.equal((await f.call(get("/sessions/ghost/usage"))).status, 404);
+  } finally {
+    f.db.close();
+  }
+});
+
+// ---- model settings ---------------------------------------------------------
+
+/**
+ * The picker chooses TWO tiers (spec §12) and this route used to answer for one, so
+ * the cheap row printed "(unset)" for a tier that is set and bills continuously on
+ * titles, ghost text and activity blurbs. `defaultEffort` is `null` when nothing
+ * pins one — a different fact from "low", and the picker draws it as such.
+ */
+test("GET /model-settings names every tier, not just the frontier one", async () => {
+  const f = fixture();
+  try {
+    const body = await (await f.call(get("/model-settings"))).json() as {
+      defaultModel: string;
+      cheapModel: string;
+      defaultEffort: string | null;
+    };
+    assert.equal(body.defaultModel, "test-model");
+    assert.equal(body.cheapModel, process.env[CHEAP_MODEL_ENV]?.trim() || DEFAULT_CHEAP_MODEL);
+    assert.equal(body.defaultEffort, null);
+  } finally {
+    f.db.close();
+  }
+});
+
+test("GET /model-settings reports a pinned global effort", async () => {
+  const f = fixture();
+  try {
+    const res = await getModelSettingsH(get("/model-settings"), { ...f.ctx, effort: "high" }, {});
+    assert.equal((await res.json() as { defaultEffort: string }).defaultEffort, "high");
+  } finally {
+    f.db.close();
+  }
+});
+
+/**
+ * The live-work rail attributes tokens per unit, and a busy subagent row IS a
+ * `SessionListItem`. Cache traffic is excluded on purpose: it is already priced
+ * into `costUsd`, and folding it in here would make the rail's number jump by tens
+ * of thousands on a cache hit that cost almost nothing.
+ */
+test("a listed session carries `tokens`, omitted when zero and excluding cache traffic", async () => {
+  const f = fixture();
+  try {
+    const spent = await newSession(f, { title: "spent" });
+    const idle = await newSession(f, { title: "idle" });
+    f.db.addSessionUsage(spent.id, {
+      inputTokens: 1_000,
+      outputTokens: 200,
+      reasoningTokens: 50,
+      cacheReadTokens: 90_000,
+      cacheWriteTokens: 4_000,
+      costUsd: 0.1,
+    }, Date.now());
+
+    const rows = await (await f.call(get("/sessions"))).json() as SessionListItem[];
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    assert.equal(byId.get(spent.id)?.tokens, 1_250);
+    assert.equal(Object.hasOwn(byId.get(idle.id)!, "tokens"), false);
+  } finally {
+    f.db.close();
+  }
 });

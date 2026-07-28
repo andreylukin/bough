@@ -12,13 +12,13 @@
  *    path that forgot to call it. It is checked for every departure path there is.
  *
  * No JSX here on purpose: this file is `.ts`, so the components are rendered with
- * `createElement` against a fake, non-TTY stdout. They render from fixtures, with no
- * server, no store and no terminal (plan §7).
+ * `createElement` into OpenTUI's in-memory cell grid. They render from fixtures, with
+ * no server, no store and no terminal (plan §7).
  */
 import assert from "node:assert/strict";
-import { EventEmitter } from "node:events";
-import { createElement, type ReactElement } from "react";
-import { render, Text } from "ink";
+import { test } from "bun:test";
+import { testRender } from "@opentui/react/test-utils";
+import { createElement, type ReactNode } from "react";
 import {
   initialPanel,
   McpTab,
@@ -54,40 +54,35 @@ import { setColorEnabled } from "../format.ts";
 
 setColorEnabled(false);
 
-function draw(node: ReactElement, columns = 100): string {
-  const out: string[] = [];
-  const stdout = Object.assign(new EventEmitter(), {
-    write: (s: string) => (out.push(s), true),
-    columns,
-    rows: 30,
-    isTTY: false,
-  });
-  const stdin = Object.assign(new EventEmitter(), {
-    isTTY: false,
-    setRawMode() {},
-    ref() {},
-    unref() {},
-    read: () => null,
-    resume() {},
-    pause() {},
-  });
-  const instance = render(node, {
-    // deno-lint-ignore no-explicit-any -- ink types the streams as Node's own.
-    stdout: stdout as any,
-    // deno-lint-ignore no-explicit-any
-    stdin: stdin as any,
-    exitOnCtrlC: false,
-    patchConsole: false,
-  });
-  instance.unmount();
-  return out.join("");
+/**
+ * The painted cells, as text.
+ *
+ * `captureCharFrame()` reads the render buffer back row by row, so what a test sees
+ * is what a terminal would show. It is a FIXED GRID: anything past `columns` wraps
+ * or is clipped, and anything past `rows` is simply not painted — so `rows` is sized
+ * to the tallest thing a tab can produce rather than to a real terminal.
+ */
+async function draw(node: ReactNode, columns = 100, rows = 40): Promise<string> {
+  // `testRender` mounts inside React's `act`, which is what makes the first commit
+  // land before this returns — a bare `createRoot().render()` commits on a later
+  // task and reads back an empty grid. The act ENVIRONMENT is then switched off:
+  // nothing after the mount is act-wrapped, and leaving it on turns every later
+  // repaint into a console warning.
+  const t = await testRender(node, { width: columns, height: rows, exitOnCtrlC: false });
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+  // `renderOnce` is MANDATORY: without a render pass the buffer holds uninitialised
+  // glyphs rather than spaces, and every assertion below fails confusingly.
+  await t.renderOnce();
+  const frame = t.captureCharFrame();
+  t.renderer.destroy();
+  return frame;
 }
 
 // ---------------------------------------------------------------------------
 // Tab switching
 // ---------------------------------------------------------------------------
 
-Deno.test("^t toggles the panel and every other chord jumps straight to its tab", () => {
+test("^t toggles the panel and every other chord jumps straight to its tab", () => {
   let state = initialPanel;
   assert.equal(state.open, false);
 
@@ -109,7 +104,7 @@ Deno.test("^t toggles the panel and every other chord jumps straight to its tab"
   assert.deepEqual(closed, { open: false, tab: "changes" });
 });
 
-Deno.test("tab cycles the bar in both directions and wraps", () => {
+test("tab cycles the bar in both directions and wraps", () => {
   const first = PANEL_TABS[0];
   const last = PANEL_TABS[PANEL_TABS.length - 1];
   let state: PanelState = { open: true, tab: first };
@@ -121,7 +116,7 @@ Deno.test("tab cycles the bar in both directions and wraps", () => {
   assert.equal(state.tab, first);
 });
 
-Deno.test("panelActionFor claims the panel's commands and nothing else", () => {
+test("panelActionFor claims the panel's commands and nothing else", () => {
   assert.deepEqual(panelActionFor("panel.close"), { type: "close" });
   assert.deepEqual(panelActionFor("panel.next"), { type: "cycle", delta: 1 });
   assert.deepEqual(panelActionFor("panel.prev"), { type: "cycle", delta: -1 });
@@ -136,7 +131,7 @@ Deno.test("panelActionFor claims the panel's commands and nothing else", () => {
   assert.equal(panelActionFor("wf.pause"), null);
 });
 
-Deno.test("the keymap is data with no duplicate binding", () => {
+test("the keymap is data with no duplicate binding", () => {
   const chords = [PANEL_TOGGLE, ...TABS.map((t) => t.chord)];
   assert.equal(new Set(chords).size, chords.length, chords.join(","));
   assert.equal(new Set(TABS.map((t) => t.id)).size, TABS.length);
@@ -144,17 +139,17 @@ Deno.test("the keymap is data with no duplicate binding", () => {
   assert.equal(tabForChord("zzz"), null);
 });
 
-Deno.test("the tab bar marks the active tab and the body follows it", () => {
-  const bar = draw(createElement(Panel, { tab: "skills", rows: 12, skills: { skills: [] } }));
+test("the tab bar marks the active tab and the body follows it", async () => {
+  const bar = await draw(createElement(Panel, { tab: "skills", rows: 12, skills: { skills: [] } }));
   for (const tab of TABS) assert.ok(bar.includes(tab.title), `${tab.title} missing`);
   assert.ok(bar.includes("no skills installed"), bar);
 
-  const mcp = draw(createElement(Panel, { tab: "mcp", rows: 12 }));
+  const mcp = await draw(createElement(Panel, { tab: "mcp", rows: 12 }));
   assert.ok(mcp.includes("loading…"), mcp);
 
   // A tab another task owns renders the slot it was handed, not an empty box.
-  const slot = draw(
-    createElement(Panel, { tab: "tree", rows: 8 }, createElement(Text, null, "the tree")),
+  const slot = await draw(
+    createElement(Panel, { tab: "tree", rows: 8 }, createElement("text", null, "the tree")),
   );
   assert.ok(slot.includes("the tree"), slot);
 });
@@ -165,7 +160,7 @@ Deno.test("the tab bar marks the active tab and the body follows it", () => {
 
 const START: ThemeState = { theme: null, defaults: {} };
 
-Deno.test("a theme preview paints live and reverts when the tab is left", () => {
+test("a theme preview paints live and reverts when the tab is left", () => {
   const painted: (ThemeState | null)[] = [];
   const preview = createThemePreview({
     current: START,
@@ -188,7 +183,7 @@ Deno.test("a theme preview paints live and reverts when the tab is left", () => 
   assert.equal(preview.index, presetIndex(START));
 });
 
-Deno.test("EVERY departure reverts — toggle, escape, chord, tab and shift-tab", () => {
+test("EVERY departure reverts — toggle, escape, chord, tab and shift-tab", () => {
   const departures: PanelAction[] = [
     { type: "toggle" },
     { type: "close" },
@@ -207,7 +202,7 @@ Deno.test("EVERY departure reverts — toggle, escape, chord, tab and shift-tab"
   }
 });
 
-Deno.test("enter keeps a theme, and leaving afterwards does not undo it", () => {
+test("enter keeps a theme, and leaving afterwards does not undo it", () => {
   const painted: (ThemeState | null)[] = [];
   const saved: string[] = [];
   const preview = createThemePreview({
@@ -226,7 +221,7 @@ Deno.test("enter keeps a theme, and leaving afterwards does not undo it", () => 
   assert.equal(preview.name, THEME_PRESETS[1].name);
 });
 
-Deno.test("a preview repaints the REAL palette, and the revert restores it exactly", () => {
+test("a preview repaints the REAL palette, and the revert restores it exactly", () => {
   const before = { ...palette };
   try {
     const preview = createThemePreview({ current: START }); // the shipped applyTheme
@@ -244,15 +239,19 @@ Deno.test("a preview repaints the REAL palette, and the revert restores it exact
   }
 });
 
-Deno.test("the theme tab renders every preset and says which way is out", () => {
+test("the theme tab renders every preset and says which way is out", async () => {
   const preview = createThemePreview({ current: START });
-  const frame = draw(createElement(ThemeTab, { preview, rows: 20 }));
+  const frame = await draw(createElement(ThemeTab, { preview, rows: 20 }));
   for (const p of THEME_PRESETS) assert.ok(frame.includes(p.name), `${p.name} missing`);
-  assert.ok(frame.includes("leaving the tab reverts"), frame);
+  // The legend is the tab's LAST row now, like every other tab's, and it still says
+  // both halves: how to keep one, and that walking away puts the old one back.
+  assert.ok(frame.includes("leaving reverts"), frame);
   assert.ok(frame.includes("current: Default"), frame);
+  const rows = frame.split("\n").map((r) => r.trimEnd()).filter(Boolean);
+  assert.match(rows[rows.length - 1], /current: Default/, frame);
 });
 
-Deno.test("stateFor treats the empty partial as a reset, not as a named theme", () => {
+test("stateFor treats the empty partial as a reset, not as a named theme", () => {
   const reset = stateFor({ theme: { name: "Fjord", colors: { green: "#1" } }, defaults: {} }, {
     name: "Default",
     note: "",
@@ -265,7 +264,7 @@ Deno.test("stateFor treats the empty partial as a reset, not as a named theme", 
 // The tab bodies
 // ---------------------------------------------------------------------------
 
-Deno.test("the model picker sets BOTH tiers, and pins only this session", () => {
+test("the model picker sets BOTH tiers, and pins only this session", () => {
   const catalog = [
     { id: "claude-opus-5", label: "Opus 5", provider: "anthropic" as const },
     { id: "openai:gpt-5-mini", label: "GPT-5 mini", provider: "openai" as const },
@@ -297,7 +296,7 @@ Deno.test("the model picker sets BOTH tiers, and pins only this session", () => 
   assert.equal(both.defaultModel, "openai:gpt-5-mini");
 });
 
-Deno.test("the changes tab says 'not a repository' rather than showing an empty diff", () => {
+test("the changes tab says 'not a repository' rather than showing an empty diff", async () => {
   const unavailable: SessionChangeSet = {
     available: false,
     reason: "this workspace is not a git repository",
@@ -306,7 +305,7 @@ Deno.test("the changes tab says 'not a repository' rather than showing an empty 
     workspace: "/tmp/x",
   };
   assert.deepEqual(changeItems(unavailable), []);
-  const frame = draw(
+  const frame = await draw(
     createElement(Panel, {
       tab: "changes",
       rows: 12,
@@ -318,7 +317,7 @@ Deno.test("the changes tab says 'not a repository' rather than showing an empty 
   assert.equal(frame.includes("no changes in this checkout yet"), false);
 });
 
-Deno.test("a change set counts its own +/- and flattens hunks for display", () => {
+test("a change set counts its own +/- and flattens hunks for display", async () => {
   const set: SessionChangeSet = {
     available: true,
     base: "abcdef1234",
@@ -336,7 +335,7 @@ Deno.test("a change set counts its own +/- and flattens hunks for display", () =
     "(no textual diff — added)",
   ]);
   const items = changeItems(set);
-  const frame = draw(
+  const frame = await draw(
     createElement(Panel, {
       tab: "changes",
       rows: 16,
@@ -349,7 +348,7 @@ Deno.test("a change set counts its own +/- and flattens hunks for display", () =
   assert.ok(frame.includes("since abcdef12"), frame);
 });
 
-Deno.test("the sessions tab lists conversations only, newest first, and filters", () => {
+test("the sessions tab lists conversations only, newest first, and filters", async () => {
   const rows: SessionRow[] = [
     row("a", "root", { title: "wire the panel", createdAt: 1_000, originDir: "/src/bough" }),
     row("b", "fork", { title: "fork · retry the patch", createdAt: 3_000 }),
@@ -364,7 +363,7 @@ Deno.test("the sessions tab lists conversations only, newest first, and filters"
   assert.deepEqual(sessionItems(rows, "patch").map((i) => i.session.id), ["b"]);
   assert.deepEqual(sessionItems(rows, "zzz"), []);
 
-  const frame = draw(
+  const frame = await draw(
     createElement(Panel, {
       tab: "sessions",
       rows: 14,
@@ -382,24 +381,24 @@ Deno.test("the sessions tab lists conversations only, newest first, and filters"
   assert.equal(frame.includes("review"), false); // the subagent is not listed
 });
 
-Deno.test("the MCP tab reports granted, connected and unauthorized distinctly", () => {
+test("the MCP tab reports granted, connected and unauthorized distinctly", async () => {
   const status = {
     registry: { servers: { alpha: { command: "alpha-server", args: [], env: {}, headers: {} } } },
     auth: { alpha: { authorized: false } },
     active: ["alpha"],
     connections: [],
   };
-  const frame = draw(
-    // deno-lint-ignore no-explicit-any -- a fixture of the four documented keys.
+  const frame = await draw(
+    // A fixture of the four documented keys.
     createElement(McpTab, { status: status as any, selected: 0 }),
   );
   assert.ok(frame.includes("alpha"), frame);
   assert.ok(frame.includes("granted"), frame);
   assert.ok(frame.includes("needs auth"), frame);
 
-  const empty = draw(createElement(SkillsTab, { skills: [], rows: 10 }));
+  const empty = await draw(createElement(SkillsTab, { skills: [], rows: 10 }));
   assert.ok(empty.includes("no skills installed"), empty);
-  const one = draw(
+  const one = await draw(
     createElement(SkillsTab, {
       skills: [{ name: "history", description: "query the db", source: "bundled", dir: "/s" }],
       rows: 10,
@@ -425,18 +424,134 @@ function row(
   };
 }
 
-Deno.test("the open tab is marked in TEXT, not only in colour", () => {
+test("the open tab is marked in TEXT, not only in colour", async () => {
   // `setColorEnabled(false)` is in force for this file, which is the point: the
   // active tab used to be signalled by hue and weight alone, so a colourblind
   // reader, a NO_COLOR terminal and every text assertion in this repo all saw a
   // strip of eight identical words.
   for (const id of ["sessions", "changes", "theme"] as PanelTab[]) {
-    const text = draw(createElement(PanelTabs, { tab: id }));
+    const text = await draw(createElement(PanelTabs, { tab: id }));
     assert.ok(text.includes(`[${id}]`), `tab "${id}" is not marked: ${text.trim()}`);
     // Exactly one tab is marked open at a time.
     assert.equal((text.match(/\[/g) ?? []).length, 1, text.trim());
   }
   // Every tab is still listed, marked or not.
-  const strip = draw(createElement(PanelTabs, { tab: "sessions" as PanelTab }));
+  const strip = await draw(createElement(PanelTabs, { tab: "sessions" as PanelTab }));
   for (const t of TABS) assert.ok(strip.includes(t.title), `missing tab ${t.title}`);
+});
+
+// ---------------------------------------------------------------------------
+// The row budget — the panel resize corruption
+// ---------------------------------------------------------------------------
+
+/**
+ * THE REGRESSION THIS PINS.
+ *
+ * At 100x12 the sessions tab painted rows as character-level interleavings of two
+ * different lines: `❯ ● ✓ wsvewsor28mGreeting Session  ws  4m` is two list rows on
+ * one screen row. It was NOT stale cells and NOT React keying — it reproduced on a
+ * fresh mount, because OpenTUI gives every auto-sized `<text>` `flexShrink: 1`, so a
+ * tab body emitting six rows into a three-row box had all six SHRUNK to half a row
+ * and pairs of them rounded onto the same y.
+ *
+ * The property that makes it impossible: what a tab paints is never taller than the
+ * budget it was given. Asserted on the painted grid, at the height that broke, for
+ * every tab — because the tabs each had their own arithmetic and each got it wrong
+ * in its own way.
+ */
+const rowsOf = (frame: string) => frame.split("\n").map((r) => r.trimEnd());
+
+const CATALOG = [
+  { id: "claude-opus-5", label: "Opus 5", provider: "anthropic" as const },
+  { id: "openai:gpt-5-mini", label: "GPT-5 mini", provider: "openai" as const },
+];
+const MODEL_CFG = {
+  defaultModel: "claude-opus-5",
+  sessionModel: null,
+  cheapModel: null,
+  defaultEffort: "default" as const,
+  sessionEffort: null,
+};
+const LIST: SessionRow[] = Array.from({ length: 27 }, (_v, i) => ({
+  id: `s${i}`,
+  kind: "root",
+  title: `session number ${i}`,
+  workspace: "/tmp/ws",
+  createdAt: 1_000 - i,
+  updatedAt: 1_000 - i,
+  lastTurnStatus: "done",
+  busy: false,
+  parentId: null,
+} as SessionRow));
+
+/** A glyph from a list row appearing on a row that is not a list row. */
+function overdrawn(frame: string): string | null {
+  for (const row of rowsOf(frame)) {
+    // The legend and the counter are the two rows a list row used to land on top of.
+    if (/[—-] \d+\/\d+ [—-].*[●⑂≣✓]/.test(row)) return row;
+    if (/↑↓ move.*[●⑂≣]\s*[✓⋯]/.test(row)) return row;
+  }
+  return null;
+}
+
+test("no tab paints past its row budget — the 100x12 panel corruption", async () => {
+  const items = sessionItems(LIST);
+
+  // 12 terminal rows is what `App` leaves the panel roughly six of. Every height
+  // from "absurdly cramped" up to comfortable must hold the property, because the
+  // corruption appeared at some heights and not others.
+  for (const h of [1, 2, 3, 4, 6, 8, 12, 20]) {
+    for (const tab of PANEL_TABS) {
+      const frame = await draw(
+        createElement(Panel, {
+          tab,
+          rows: h,
+          width: 100,
+          sessions: { items, selected: 0, rows: h, now: 2_000 },
+          changes: { set: null, items: [], selected: 0, rows: h },
+          model: { cfg: MODEL_CFG, entries: modelEntries(CATALOG), selected: 0, rows: h },
+          mcp: { status: null, selected: 0 },
+          skills: { skills: null, selected: 0 },
+          theme: { preview: createThemePreview({ current: START }) },
+        }),
+        100,
+        // Two more than the panel's own box, so an overrun would be VISIBLE as a
+        // painted row below the border rather than clipped by the grid.
+        h + 4,
+      );
+      const painted = rowsOf(frame);
+      // The panel is `rows + 2` tall (its border). Nothing may be painted below it.
+      for (let i = h + 2; i < painted.length; i++) {
+        assert.equal(painted[i], "", `${tab} @${h}: painted below the panel: ${frame}`);
+      }
+      // …and nothing may be painted ON it. At eight terminal rows the sessions
+      // legend landed on the bottom border and rendered as
+      // `╰─↑↓─move─·─pgup/pgdn─page─…─╯`, which is the same overrun one row up.
+      assert.match(
+        painted[h + 1] ?? "",
+        /^╰─+╯$/,
+        `${tab} @${h}: the bottom border was painted over: ${frame}`,
+      );
+      assert.equal(overdrawn(frame), null, `${tab} @${h}: two rows on one: ${frame}`);
+    }
+  }
+});
+
+test("the sessions legend is the LAST row, at every height that has one", async () => {
+  const items = sessionItems(LIST);
+  for (const h of [4, 6, 8, 12, 20]) {
+    const frame = await draw(
+      createElement(Panel, {
+        tab: "sessions",
+        rows: h,
+        width: 100,
+        sessions: { items, selected: 0, rows: h, now: 2_000 },
+      }),
+      100,
+      h + 4,
+    );
+    const painted = rowsOf(frame).filter((r) => r.includes("│"));
+    const last = painted[painted.length - 1] ?? "";
+    assert.match(last, /↑↓ move/, `@${h}: the last row is not the legend: ${frame}`);
+  }
 });

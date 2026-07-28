@@ -16,6 +16,7 @@
  * bound and nothing on the network. Assertions come from `node:assert/strict`: jsr.io is
  * unreachable here.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { Bus } from "../bus.ts";
 import { openDb, type SqliteDb } from "../db/db.ts";
@@ -103,7 +104,7 @@ const tier = (ghost: string | null | Promise<string | null>): CheapTier => ({
 // Shaping (pure)
 // ---------------------------------------------------------------------------
 
-Deno.test("renderConvo keeps the TAIL of a long line, not the head", () => {
+test("renderConvo keeps the TAIL of a long line, not the head", () => {
   const long = "PREAMBLE".padEnd(MAX_LINE_CHARS + 200, "x") + "THE-CONCLUSION";
   const rendered = renderConvo([{ role: "agent", text: long }]);
   assert.ok(rendered.endsWith("THE-CONCLUSION"), "the outcome survives");
@@ -111,7 +112,7 @@ Deno.test("renderConvo keeps the TAIL of a long line, not the head", () => {
   assert.ok(rendered.startsWith("agent: …"));
 });
 
-Deno.test("renderConvo keeps only the last MAX_LINES turns, oldest first", () => {
+test("renderConvo keeps only the last MAX_LINES turns, oldest first", () => {
   const lines: ConvoLine[] = Array.from({ length: MAX_LINES + 4 }, (_, i) => ({
     role: i % 2 === 0 ? "user" : "agent",
     text: `line${i}`,
@@ -122,7 +123,7 @@ Deno.test("renderConvo keeps only the last MAX_LINES turns, oldest first", () =>
   assert.ok(rendered.at(-1)?.endsWith(`line${lines.length - 1}`));
 });
 
-Deno.test("a typed prefix becomes a continuation instruction", () => {
+test("a typed prefix becomes a continuation instruction", () => {
   const lines: ConvoLine[] = [{ role: "agent", text: "done" }];
   assert.match(ghostPrompt(lines), /The user's next message:/);
   const withPrefix = ghostPrompt(lines, "  run the  ");
@@ -130,7 +131,7 @@ Deno.test("a typed prefix becomes a continuation instruction", () => {
   assert.match(withPrefix, /starting from what they typed/);
 });
 
-Deno.test("convoFrom reduces a thread and treats system notes as user-side text", () => {
+test("convoFrom reduces a thread and treats system notes as user-side text", () => {
   const messages: Message[] = [
     {
       id: "1",
@@ -169,14 +170,14 @@ Deno.test("convoFrom reduces a thread and treats system notes as user-side text"
   ]);
 });
 
-Deno.test("sanitizeSuggestion unlabels, unquotes and caps", () => {
+test("sanitizeSuggestion unlabels, unquotes and caps", () => {
   assert.equal(sanitizeSuggestion('next: "run the tests"'), "run the tests");
   assert.equal(sanitizeSuggestion("\n\ncommit it\nand push"), "commit it");
   assert.equal(sanitizeSuggestion("   "), null);
   assert.equal(sanitizeSuggestion("x".repeat(MAX_SUGGESTION + 50))?.length, MAX_SUGGESTION);
 });
 
-Deno.test("cheapGhost is null for an empty prompt without calling anything", async () => {
+test("cheapGhost is null for an empty prompt without calling anything", async () => {
   const never = { run: () => Promise.reject(new Error("must not be called")) };
   assert.equal(await cheapGhost("  ", { llm: never }), null);
 });
@@ -185,7 +186,7 @@ Deno.test("cheapGhost is null for an empty prompt without calling anything", asy
 // The feature
 // ---------------------------------------------------------------------------
 
-Deno.test("a session with history gets a suggestion", async () => {
+test("a session with history gets a suggestion", async () => {
   const f = fixture(tier("run the tests"));
   try {
     say(f.db, f.sessionId, "user", "add the theme route");
@@ -198,7 +199,7 @@ Deno.test("a session with history gets a suggestion", async () => {
   }
 });
 
-Deno.test("an empty conversation is a null ghost, and buys nothing", async () => {
+test("an empty conversation is a null ghost, and buys nothing", async () => {
   let calls = 0;
   const f = fixture({
     title: () => Promise.resolve(null),
@@ -217,7 +218,7 @@ Deno.test("an empty conversation is a null ghost, and buys nothing", async () =>
   }
 });
 
-Deno.test("the typed prefix reaches the model", async () => {
+test("the typed prefix reaches the model", async () => {
   let seen = "";
   const f = fixture({
     title: () => Promise.resolve(null),
@@ -236,7 +237,7 @@ Deno.test("the typed prefix reaches the model", async () => {
   }
 });
 
-Deno.test("an unknown session is the only failure that is not a 200", async () => {
+test("an unknown session is the only failure that is not a 200", async () => {
   const f = fixture(tier("x"));
   try {
     const res = await f.call("/sessions/nope/ghost");
@@ -251,7 +252,7 @@ Deno.test("an unknown session is the only failure that is not a 200", async () =
 // Failure is a non-event  (the AC)
 // ---------------------------------------------------------------------------
 
-Deno.test("a REJECTING cheap tier is 200 {ghost: null}, never a 5xx", async () => {
+test("a REJECTING cheap tier is 200 {ghost: null}, never a 5xx", async () => {
   const f = fixture({
     title: () => Promise.resolve(null),
     ghostText: () => Promise.reject(new Error("provider is down")),
@@ -267,7 +268,7 @@ Deno.test("a REJECTING cheap tier is 200 {ghost: null}, never a 5xx", async () =
   }
 });
 
-Deno.test("a THROWING cheap tier is 200 {ghost: null} too", async () => {
+test("a THROWING cheap tier is 200 {ghost: null} too", async () => {
   const f = fixture({
     title: () => Promise.resolve(null),
     ghostText: () => {
@@ -285,7 +286,7 @@ Deno.test("a THROWING cheap tier is 200 {ghost: null} too", async () => {
   }
 });
 
-Deno.test("no cheap tier at all answers null rather than failing", async () => {
+test("no cheap tier at all answers null rather than failing", async () => {
   const f = fixture(undefined);
   try {
     say(f.db, f.sessionId, "user", "hello");

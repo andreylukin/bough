@@ -31,6 +31,7 @@
  * transport over this module — an envelope parse and a `JSON.stringify` — and the
  * behaviour it has to preserve is the behaviour under test above it.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { HOST_FN_VERBS } from "../harness/protocol.ts";
 import { LspError } from "../errors.ts";
@@ -85,19 +86,19 @@ async function caught(fn: () => Promise<unknown>): Promise<Error> {
 // classify — the pure decision
 // ---------------------------------------------------------------------------
 
-Deno.test("classify: exit 0 with output is an answer", () => {
+test("classify: exit 0 with output is an answer", () => {
   assert.deepEqual(classify(ok("src/gate.ts:12  decide()")), {
     kind: "text",
     text: "src/gate.ts:12  decide()",
   });
 });
 
-Deno.test("classify: exit 0 with no output is EMPTY, not an error", () => {
+test("classify: exit 0 with no output is EMPTY, not an error", () => {
   assert.deepEqual(classify(ok("")), { kind: "empty" });
   assert.deepEqual(classify(ok("   \n ")), { kind: "empty" });
 });
 
-Deno.test("classify: a grep-shaped non-zero exit for no matches is EMPTY", () => {
+test("classify: a grep-shaped non-zero exit for no matches is EMPTY", () => {
   // The single most common non-zero exit a navigation CLI produces, and the case
   // the ported implementation reported as a broken backend.
   assert.deepEqual(classify(fails(1, "no matches")), { kind: "empty" });
@@ -106,7 +107,7 @@ Deno.test("classify: a grep-shaped non-zero exit for no matches is EMPTY", () =>
   assert.deepEqual(classify(fails(1, "", "No references found")), { kind: "empty" });
 });
 
-Deno.test("classify: backend phrases are a BACKEND failure", () => {
+test("classify: backend phrases are a BACKEND failure", () => {
   for (
     const said of [
       "leta: command not found",
@@ -121,13 +122,13 @@ Deno.test("classify: backend phrases are a BACKEND failure", () => {
   }
 });
 
-Deno.test("classify: exit codes that mean the binary did not run are BACKEND", () => {
+test("classify: exit codes that mean the binary did not run are BACKEND", () => {
   assert.equal(classify(fails(127, "")).kind, "backend");
   assert.equal(classify(fails(126, "")).kind, "backend");
   assert.equal(classify(fails(139, "")).kind, "backend"); // SIGSEGV
 });
 
-Deno.test("classify: a bad query is neither empty nor a backend failure", () => {
+test("classify: a bad query is neither empty nor a backend failure", () => {
   // The backend answered. Retiring the verbs over this would be the worst outcome
   // of the three, so ambiguity and bad paths get their own class.
   assert.equal(
@@ -138,7 +139,7 @@ Deno.test("classify: a bad query is neither empty nor a backend failure", () => 
   assert.equal(classify(fails(2, "usage: leta show <symbol>")).kind, "query");
 });
 
-Deno.test("classify: an unexplained non-zero exit is treated as a backend failure", () => {
+test("classify: an unexplained non-zero exit is treated as a backend failure", () => {
   // Documented default: a slower correct answer (drop to rg) beats a confident
   // wrong one ("this symbol has no callers").
   const outcome = classify(fails(3, "wat"));
@@ -150,7 +151,7 @@ Deno.test("classify: an unexplained non-zero exit is treated as a backend failur
 // the verb surface
 // ---------------------------------------------------------------------------
 
-Deno.test("the curated verbs are exactly the protocol's list", () => {
+test("the curated verbs are exactly the protocol's list", () => {
   // The worker rebuilds `lsp.*` from `HOST_FN_VERBS.lsp`; a verb here that is not
   // there is unreachable, and one there that is not here rejects at runtime.
   assert.deepEqual([...LSP_VERBS], [...HOST_FN_VERBS.lsp]);
@@ -174,7 +175,7 @@ function argsFor(verb: string): unknown {
   }
 }
 
-Deno.test("buildArgv maps bough verbs onto the backend's own subcommands", () => {
+test("buildArgv maps bough verbs onto the backend's own subcommands", () => {
   assert.deepEqual(buildArgv("find", { pattern: "Gate", path: "src/" }), [
     "grep",
     "Gate",
@@ -191,7 +192,7 @@ Deno.test("buildArgv maps bough verbs onto the backend's own subcommands", () =>
   assert.deepEqual(buildArgv("calls", { from: "Gate.decide" }), ["calls", "--from", "Gate.decide"]);
 });
 
-Deno.test("buildArgv accepts a bare string for the single-argument verbs", () => {
+test("buildArgv accepts a bare string for the single-argument verbs", () => {
   assert.deepEqual(buildArgv("def", "Gate.decide"), ["declaration", "Gate.decide"]);
   assert.deepEqual(buildArgv("find", "Gate"), ["grep", "Gate"]);
   // `calls` is excluded on purpose: a bare string cannot say to-vs-from.
@@ -208,7 +209,7 @@ function await0(fn: () => unknown): unknown {
   throw new Error("expected a throw");
 }
 
-Deno.test("buildArgv rejects a bad call with the shape that would have worked", () => {
+test("buildArgv rejects a bad call with the shape that would have worked", () => {
   const missing = await0(() => buildArgv("show", {})) as LspError;
   assert.equal(missing.status, 400);
   assert.match(missing.message, /lsp\.show\(\{symbol/);
@@ -226,7 +227,7 @@ Deno.test("buildArgv rejects a bad call with the shape that would have worked", 
 // the bridge: empty vs backend error
 // ---------------------------------------------------------------------------
 
-Deno.test("bridge: nothing runs until the first call (lazy)", async () => {
+test("bridge: nothing runs until the first call (lazy)", async () => {
   const { run, calls } = backend([ok("hit")]);
   const bridge = createLspBridge({ workspace: "/w", run });
   assert.equal(calls.length, 0, "constructing the bridge invoked the backend");
@@ -234,7 +235,7 @@ Deno.test("bridge: nothing runs until the first call (lazy)", async () => {
   assert.ok(calls.length > 0);
 });
 
-Deno.test("bridge: the workspace is registered once, before the first verb", async () => {
+test("bridge: the workspace is registered once, before the first verb", async () => {
   const { run, calls } = backend([ok("a"), ok("b")]);
   const bridge = createLspBridge({ workspace: "/w", run });
   await bridge.call("def", { symbol: "A" });
@@ -243,7 +244,7 @@ Deno.test("bridge: the workspace is registered once, before the first verb", asy
   assert.equal(calls.filter((c) => c[0] === "workspace").length, 1);
 });
 
-Deno.test("bridge: an EMPTY result resolves as an ordinary answer", async () => {
+test("bridge: an EMPTY result resolves as an ordinary answer", async () => {
   const { run } = backend([ok("")]);
   const bridge = createLspBridge({ workspace: "/w", run });
 
@@ -255,7 +256,7 @@ Deno.test("bridge: an EMPTY result resolves as an ordinary answer", async () => 
   assert.equal(bridge.down, undefined, "an empty result must not mark the backend down");
 });
 
-Deno.test("bridge: an empty result leaves every later verb working", async () => {
+test("bridge: an empty result leaves every later verb working", async () => {
   // The behaviour the prompt promises: "keep using the verbs for the next lookup".
   const { run, calls } = backend([ok(""), ok("src/gate.ts:12")]);
   const bridge = createLspBridge({ workspace: "/w", run });
@@ -265,7 +266,7 @@ Deno.test("bridge: an empty result leaves every later verb working", async () =>
   assert.equal(calls.length, 3); // register + two verbs
 });
 
-Deno.test("bridge: a BACKEND error rejects, catchably, saying to drop to rg", async () => {
+test("bridge: a BACKEND error rejects, catchably, saying to drop to rg", async () => {
   const { run } = backend([fails(1, "language server failed to start")]);
   const bridge = createLspBridge({ workspace: "/w", run });
 
@@ -282,7 +283,7 @@ Deno.test("bridge: a BACKEND error rejects, catchably, saying to drop to rg", as
   assert.equal(bridge.down, "language server failed to start");
 });
 
-Deno.test("bridge: the backend failure is reported ONCE and never re-run", async () => {
+test("bridge: the backend failure is reported ONCE and never re-run", async () => {
   const reports: string[] = [];
   const { run, calls } = backend([fails(127, "leta: command not found")]);
   const bridge = createLspBridge({
@@ -311,7 +312,7 @@ Deno.test("bridge: the backend failure is reported ONCE and never re-run", async
   }
 });
 
-Deno.test("bridge: a thrown invocation (no binary, spawn refused) is a backend failure", async () => {
+test("bridge: a thrown invocation (no binary, spawn refused) is a backend failure", async () => {
   const { run } = backend([new Error("No such file or directory (os error 2)")]);
   const bridge = createLspBridge({ workspace: "/w", run });
   const err = await caught(() => bridge.call("def", { symbol: "A" }));
@@ -319,7 +320,7 @@ Deno.test("bridge: a thrown invocation (no binary, spawn refused) is a backend f
   assert.match(err.message, /BACKEND failed/);
 });
 
-Deno.test("bridge: a failed workspace registration is a backend failure, reported once", async () => {
+test("bridge: a failed workspace registration is a backend failure, reported once", async () => {
   const reports: string[] = [];
   const { run, calls } = fakeBackend([fails(1, "could not start the daemon")]);
   const bridge = createLspBridge({
@@ -335,7 +336,7 @@ Deno.test("bridge: a failed workspace registration is a backend failure, reporte
   assert.equal(calls.length, 1, "registration was retried against a dead backend");
 });
 
-Deno.test("bridge: a QUERY error does not retire the backend", async () => {
+test("bridge: a QUERY error does not retire the backend", async () => {
   const { run } = backend([
     fails(2, "ambiguous symbol decide; candidates: Gate.decide, Lock.decide"),
     ok("src/gate.ts:12"),
@@ -352,7 +353,7 @@ Deno.test("bridge: a QUERY error does not retire the backend", async () => {
   assert.equal(await bridge.call("def", { symbol: "Gate.decide" }), "src/gate.ts:12");
 });
 
-Deno.test("bridge: a bad argument never reaches the backend and never latches", async () => {
+test("bridge: a bad argument never reaches the backend and never latches", async () => {
   const { run, calls } = backend([ok("src/gate.ts:12")]);
   const bridge = createLspBridge({ workspace: "/w", run });
 
@@ -364,7 +365,7 @@ Deno.test("bridge: a bad argument never reaches the backend and never latches", 
   assert.equal(await bridge.call("def", { symbol: "Gate.decide" }), "src/gate.ts:12");
 });
 
-Deno.test("bridge: an interrupted turn is not a backend failure", async () => {
+test("bridge: an interrupted turn is not a backend failure", async () => {
   const controller = new AbortController();
   controller.abort();
   const { run, calls } = backend([ok("never")]);
@@ -378,7 +379,7 @@ Deno.test("bridge: an interrupted turn is not a backend failure", async () => {
   assert.equal(bridge.down, undefined, "an interrupt must not retire the backend");
 });
 
-Deno.test("bridge: the call runs in the session's workspace", async () => {
+test("bridge: the call runs in the session's workspace", async () => {
   const seen: string[] = [];
   const run: LspRun = (_args, opts) => {
     seen.push(opts.cwd);
@@ -392,7 +393,7 @@ Deno.test("bridge: the call runs in the session's workspace", async () => {
 // binary discovery — stats only, never a spawn
 // ---------------------------------------------------------------------------
 
-Deno.test("findBackend: an explicit BOUGH_LSP_BIN wins over the PATH scan", () => {
+test("findBackend: an explicit BOUGH_LSP_BIN wins over the PATH scan", () => {
   const env = (n: string) =>
     ({ BOUGH_LSP_BIN: "/opt/custom/leta", PATH: "/usr/bin" } as Record<string, string>)[n];
   assert.equal(findBackend({ env, isFile: (p) => p === "/opt/custom/leta" }), "/opt/custom/leta");
@@ -401,7 +402,7 @@ Deno.test("findBackend: an explicit BOUGH_LSP_BIN wins over the PATH scan", () =
   assert.equal(findBackend({ env, isFile: (p) => p === "/usr/bin/leta" }), undefined);
 });
 
-Deno.test("findBackend: PATH first, then the dirs a launchd PATH omits", () => {
+test("findBackend: PATH first, then the dirs a launchd PATH omits", () => {
   const env = (n: string) => (n === "PATH" ? "/nope:/usr/local/bin" : undefined);
   assert.equal(
     findBackend({ env, isFile: (p) => p === "/usr/local/bin/leta" }),
@@ -434,7 +435,7 @@ function turnCtx(over: Partial<TurnCtx> = {}): TurnCtx {
   };
 }
 
-Deno.test("hostfn: a result crosses the wire JSON-encoded, as the worker expects", async () => {
+test("hostfn: a result crosses the wire JSON-encoded, as the worker expects", async () => {
   const { run } = backend([ok("src/gate.ts:12  decide()")]);
   const { lsp } = createLspHostFn(turnCtx(), { run });
   const wire = await lsp!("def", JSON.stringify({ symbol: "Gate.decide" }));
@@ -442,7 +443,7 @@ Deno.test("hostfn: a result crosses the wire JSON-encoded, as the worker expects
   assert.equal(JSON.parse(wire), "src/gate.ts:12  decide()");
 });
 
-Deno.test("hostfn: an empty result resolves; a dead backend rejects", async () => {
+test("hostfn: an empty result resolves; a dead backend rejects", async () => {
   const empty = createLspHostFn(turnCtx(), { run: backend([ok("")]).run });
   const answer = JSON.parse(await empty.lsp!("refs", JSON.stringify({ symbol: "A" })));
   assert.match(answer, /ordinary answer, not a failure/);
@@ -457,7 +458,7 @@ Deno.test("hostfn: an empty result resolves; a dead backend rejects", async () =
   assert.equal(reports.length, 1);
 });
 
-Deno.test("hostfn: one bridge per turn — the latch spans calls", async () => {
+test("hostfn: one bridge per turn — the latch spans calls", async () => {
   const reports: string[] = [];
   const { run, calls } = backend([fails(127, "leta: command not found")]);
   const { lsp } = createLspHostFn(turnCtx(), { run, onBackendDown: (d) => reports.push(d) });
@@ -468,7 +469,7 @@ Deno.test("hostfn: one bridge per turn — the latch spans calls", async () => {
   assert.deepEqual(reports, ["leta: command not found"]);
 });
 
-Deno.test("hostfn: no-argument and malformed envelopes are verb errors", async () => {
+test("hostfn: no-argument and malformed envelopes are verb errors", async () => {
   const { run, calls } = backend([ok("x")]);
   const { lsp } = createLspHostFn(turnCtx(), { run });
 
@@ -484,7 +485,7 @@ Deno.test("hostfn: no-argument and malformed envelopes are verb errors", async (
   assert.equal(calls.length, 0, "a malformed envelope reached the backend");
 });
 
-Deno.test("hostfn: constructing it touches nothing", () => {
+test("hostfn: constructing it touches nothing", () => {
   // Every turn builds one, including the ones that never ask about a symbol.
   const { run, calls } = backend([ok("x")]);
   createLspHostFn(turnCtx(), { run });

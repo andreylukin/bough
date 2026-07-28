@@ -47,6 +47,8 @@
  * Ported from `src/workflow.ts` (`scriptPath` and the rerun script fallback).
  */
 
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+
 import { confine, workflowScriptPath, workflowsDir } from "../paths.ts";
 import type { WorkflowRun } from "../schema/parts.ts";
 import type { Db } from "../types.ts";
@@ -78,8 +80,8 @@ export function mirrorPath(runId: string): string {
 export async function mirrorScript(runId: string, script: string): Promise<boolean> {
   try {
     const path = mirrorPath(runId);
-    await Deno.mkdir(workflowsDir(), { recursive: true });
-    await Deno.writeTextFile(path, script);
+    await mkdir(workflowsDir(), { recursive: true });
+    await writeFile(path, script);
     return true;
   } catch {
     return false;
@@ -89,7 +91,7 @@ export async function mirrorScript(runId: string, script: string): Promise<boole
 /** A run's mirrored script, or `null` when there is no readable file. */
 export async function readMirror(runId: string): Promise<string | null> {
   try {
-    return await Deno.readTextFile(mirrorPath(runId));
+    return await readFile(mirrorPath(runId), "utf8");
   } catch {
     return null;
   }
@@ -121,7 +123,7 @@ export async function syncScriptMirrors(
       continue; // an id that cannot name a file has no mirror; not fatal at boot
     }
     try {
-      await Deno.stat(path);
+      await stat(path);
       continue; // present — never overwritten, it may hold the user's edit
     } catch {
       // absent (or unreadable): write it below

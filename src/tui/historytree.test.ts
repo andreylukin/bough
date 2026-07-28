@@ -1,6 +1,7 @@
 /**
  * The conversation tree — pi's `/tree`, asserted on fixtures with no terminal.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { historyTreeRows, messageGist, selectionFor } from "./historytree.ts";
 import type { Message } from "../schema/parts.ts";
@@ -34,7 +35,7 @@ const THREAD = [
   msg("m3", "user", "now validate pct"),
 ];
 
-Deno.test("every turn is a node, and the last one is the active leaf", () => {
+test("every turn is a node, and the last one is the active leaf", () => {
   const rows = historyTreeRows({ thread: THREAD, branches: [] });
   assert.equal(rows.length, 3);
   assert.deepEqual(rows.map((r) => r.kind), ["message", "message", "message"]);
@@ -45,7 +46,7 @@ Deno.test("every turn is a node, and the last one is the active leaf", () => {
   assert.ok(rows[2].active && rows[2].text.includes("← active"));
 });
 
-Deno.test("a branch hangs off the turn it cut from, oldest first", () => {
+test("a branch hangs off the turn it cut from, oldest first", () => {
   const rows = historyTreeRows({
     thread: THREAD,
     branches: [branch("s2", "m1", "second attempt"), branch("s1", "m1", "first attempt")],
@@ -61,14 +62,14 @@ Deno.test("a branch hangs off the turn it cut from, oldest first", () => {
   assert.ok(live.find((r) => r.kind === "branch")?.text.includes("⋯ working"));
 });
 
-Deno.test("user-only is a filter on the rows, not on the leaf", () => {
+test("user-only is a filter on the rows, not on the leaf", () => {
   const rows = historyTreeRows({ thread: THREAD, branches: [], userOnly: true });
   assert.deepEqual(rows.map((r) => r.id), ["m1", "m3"]);
   // The leaf is still the thread's real end, not the last row that survived.
   assert.ok(rows[1].active);
 });
 
-Deno.test("a turn with no prose is still a node — it is somewhere you can go back to", () => {
+test("a turn with no prose is still a node — it is somewhere you can go back to", () => {
   const toolOnly = {
     id: "m9",
     role: "supervisor",
@@ -80,7 +81,7 @@ Deno.test("a turn with no prose is still a node — it is somewhere you can go b
   assert.equal(historyTreeRows({ thread: [toolOnly], branches: [] }).length, 1);
 });
 
-Deno.test("a long gist is truncated with an ellipsis, a short one is left alone", () => {
+test("a long gist is truncated with an ellipsis, a short one is left alone", () => {
   const long = "please refactor the discount function so it also handles tiered pricing rules";
   assert.ok(long.length > 56);
   const gist = messageGist(msg("m4", "user", long));
@@ -91,7 +92,7 @@ Deno.test("a long gist is truncated with an ellipsis, a short one is left alone"
   assert.equal(messageGist(msg("m5", "user", "now validate pct")), "now validate pct");
 });
 
-Deno.test("Enter follows pi's selection rules", () => {
+test("Enter follows pi's selection rules", () => {
   const rows = historyTreeRows({ thread: THREAD, branches: [branch("s1", "m1", "other")] });
   // A USER turn cuts BEFORE itself and hands its text back, so you edit and
   // re-send — pi's "leaf set to parent, message text placed in editor".

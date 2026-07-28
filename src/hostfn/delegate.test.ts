@@ -22,6 +22,7 @@
  * reachable here, and a test that cannot run offline does not belong in
  * `deno task test`.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { Bus } from "../bus.ts";
 import { openDb, type SqliteDb } from "../db/db.ts";
@@ -213,7 +214,7 @@ function parse(json: string): Record<string, unknown> {
 
 // ---- the blocking round trip -------------------------------------------------
 
-Deno.test("agent() runs a child to completion and returns its report in-band", async () => {
+test("agent() runs a child to completion and returns its report in-band", async () => {
   const h = harness();
   try {
     const seeded = seedSession(h);
@@ -255,7 +256,7 @@ Deno.test("agent() runs a child to completion and returns its report in-band", a
   }
 });
 
-Deno.test("a blocking child that fails reports why, without throwing at the spawner", async () => {
+test("a blocking child that fails reports why, without throwing at the spawner", async () => {
   const h = harness();
   try {
     const seeded = seedSession(h);
@@ -279,7 +280,7 @@ Deno.test("a blocking child that fails reports why, without throwing at the spaw
   }
 });
 
-Deno.test("agent() refuses options it cannot use, naming the shape it wants", async () => {
+test("agent() refuses options it cannot use, naming the shape it wants", async () => {
   const h = harness();
   try {
     const ctx = spawnerCtx(h, seedSession(h), reportingLlm("x"));
@@ -302,7 +303,7 @@ Deno.test("agent() refuses options it cannot use, naming the shape it wants", as
   }
 });
 
-Deno.test("a launch refused at a cap fails alone, naming the cap", async () => {
+test("a launch refused at a cap fails alone, naming the cap", async () => {
   const h = harness();
   try {
     const seeded = seedSession(h);
@@ -333,7 +334,7 @@ Deno.test("a launch refused at a cap fails alone, naming the cap", async () => {
 
 // ---- detaching ---------------------------------------------------------------
 
-Deno.test("spawn() returns before the child finishes, and the child runs on", async () => {
+test("spawn() returns before the child finishes, and the child runs on", async () => {
   const h = harness();
   try {
     const seeded = seedSession(h);
@@ -373,7 +374,7 @@ Deno.test("spawn() returns before the child finishes, and the child runs on", as
   }
 });
 
-Deno.test("join() claims a detached child's result in-band, so no note is owed", async () => {
+test("join() claims a detached child's result in-band, so no note is owed", async () => {
   const h = harness();
   try {
     const seeded = seedSession(h);
@@ -411,7 +412,7 @@ Deno.test("join() claims a detached child's result in-band, so no note is owed",
   }
 });
 
-Deno.test("join() refuses an id this session never detached, and says what join is for", async () => {
+test("join() refuses an id this session never detached, and says what join is for", async () => {
   const h = harness();
   try {
     const seeded = seedSession(h);
@@ -444,7 +445,7 @@ Deno.test("join() refuses an id this session never detached, and says what join 
 
 // ---- containment -------------------------------------------------------------
 
-Deno.test("the spawning turn's interrupt reaches a blocking child, not a detached one", async () => {
+test("the spawning turn's interrupt reaches a blocking child, not a detached one", async () => {
   const h = harness();
   try {
     const seeded = seedSession(h);
@@ -494,7 +495,7 @@ Deno.test("the spawning turn's interrupt reaches a blocking child, not a detache
   }
 });
 
-Deno.test("an explicit stop of the spawner session does cascade to a detached child", async () => {
+test("an explicit stop of the spawner session does cascade to a detached child", async () => {
   const h = harness();
   try {
     const seeded = seedSession(h);
@@ -525,7 +526,7 @@ Deno.test("an explicit stop of the spawner session does cascade to a detached ch
   }
 });
 
-Deno.test("a verb called after the turn was interrupted refuses instead of branching", async () => {
+test("a verb called after the turn was interrupted refuses instead of branching", async () => {
   const h = harness();
   try {
     const turn = new AbortController();
@@ -549,7 +550,7 @@ Deno.test("a verb called after the turn was interrupted refuses instead of branc
 
 // ---- adopt -------------------------------------------------------------------
 
-Deno.test("adopt() validates the lineage and says there is nothing to merge", async () => {
+test("adopt() validates the lineage and says there is nothing to merge", async () => {
   const h = harness();
   try {
     const seeded = seedSession(h);
@@ -582,7 +583,7 @@ Deno.test("adopt() validates the lineage and says there is nothing to merge", as
 
 // ---- tiers -------------------------------------------------------------------
 
-Deno.test("the tier follows the lineage, and the bridge follows the tier", () => {
+test("the tier follows the lineage, and the bridge follows the tier", () => {
   const h = harness();
   try {
     const root = seedSession(h);
@@ -617,7 +618,7 @@ Deno.test("the tier follows the lineage, and the bridge follows the tier", () =>
   }
 });
 
-Deno.test("each tier's grant matches what it can actually call", () => {
+test("each tier's grant matches what it can actually call", () => {
   // The prompt gate and the bridge are built from one list, per tier, so a section
   // documenting spawn() cannot reach a session that has no spawn() (spec §6).
   const granted = (tier: Parameters<typeof delegationTurnDeps>[0]) =>
@@ -634,7 +635,7 @@ Deno.test("each tier's grant matches what it can actually call", () => {
   }
 });
 
-Deno.test("the wired starter picks the tier from the session it is starting", async () => {
+test("the wired starter picks the tier from the session it is starting", async () => {
   const h = harness();
   try {
     const root = seedSession(h, { title: "a root" });

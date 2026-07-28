@@ -17,6 +17,7 @@
  * reachable here, and a test that cannot run offline does not belong in
  * `deno task test`.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { Bus } from "../bus.ts";
 import { openDb, type SqliteDb } from "../db/db.ts";
@@ -173,7 +174,7 @@ function childTurnDeps(h: Harness, extra: TurnDeps = {}): TurnDeps {
 
 // ---- the invariant ----------------------------------------------------------
 
-Deno.test("a launched subagent's thread is its task and nothing else", async () => {
+test("a launched subagent's thread is its task and nothing else", async () => {
   const h = harness();
   try {
     const seeded = seedSpawner(h);
@@ -220,7 +221,7 @@ Deno.test("a launched subagent's thread is its task and nothing else", async () 
   }
 });
 
-Deno.test("lineage points back at the spawning turn", async () => {
+test("lineage points back at the spawning turn", async () => {
   const h = harness();
   try {
     const seeded = seedSpawner(h);
@@ -260,7 +261,7 @@ Deno.test("lineage points back at the spawning turn", async () => {
 
 // ---- naming -----------------------------------------------------------------
 
-Deno.test("the name defaults to the task's first 40 characters", () => {
+test("the name defaults to the task's first 40 characters", () => {
   assert.equal(taskStubTitle("Audit the handlers"), "Audit the handlers");
   assert.equal(taskStubTitle("  Audit  the\n rest of it "), "Audit the");
 
@@ -278,7 +279,7 @@ Deno.test("the name defaults to the task's first 40 characters", () => {
   assert.equal(taskStubTitle("   "), UNTITLED);
 });
 
-Deno.test("a spawner-supplied name wins, and is safe to render", () => {
+test("a spawner-supplied name wins, and is safe to render", () => {
   assert.equal(cleanSubagentName("audit the seatbelt profile"), "audit the seatbelt profile");
   assert.equal(cleanSubagentName("two\nlines\there"), "two lines here");
   assert.equal(cleanSubagentName("   "), undefined, "empty once cleaned falls back");
@@ -287,7 +288,7 @@ Deno.test("a spawner-supplied name wins, and is safe to render", () => {
   assert.throws(() => cleanSubagentName(42), AgentError);
 });
 
-Deno.test("the given name titles the branch; otherwise the task stub does", async () => {
+test("the given name titles the branch; otherwise the task stub does", async () => {
   const h = harness();
   try {
     const seeded = seedSpawner(h);
@@ -316,7 +317,7 @@ Deno.test("the given name titles the branch; otherwise the task stub does", asyn
 
 // ---- what else crosses the boundary -----------------------------------------
 
-Deno.test("the child runs in the spawner's checkout and inherits its MCP grant", async () => {
+test("the child runs in the spawner's checkout and inherits its MCP grant", async () => {
   const h = harness();
   try {
     const seeded = seedSpawner(h, { workspace: "/tmp/shared-checkout" });
@@ -354,7 +355,7 @@ Deno.test("the child runs in the spawner's checkout and inherits its MCP grant",
   }
 });
 
-Deno.test("the launch announces the branch before its first message", async () => {
+test("the launch announces the branch before its first message", async () => {
   const h = harness();
   try {
     const seeded = seedSpawner(h);
@@ -379,7 +380,7 @@ Deno.test("the launch announces the branch before its first message", async () =
 
 // ---- the result -------------------------------------------------------------
 
-Deno.test("the result carries the child's report and its outcome", async () => {
+test("the result carries the child's report and its outcome", async () => {
   const h = harness();
   try {
     const seeded = seedSpawner(h);
@@ -403,7 +404,7 @@ Deno.test("the result carries the child's report and its outcome", async () => {
   }
 });
 
-Deno.test("a child whose turn errored reports ok:false and says why", async () => {
+test("a child whose turn errored reports ok:false and says why", async () => {
   const h = harness();
   try {
     const seeded = seedSpawner(h);
@@ -425,7 +426,7 @@ Deno.test("a child whose turn errored reports ok:false and says why", async () =
 
 // ---- refusals ---------------------------------------------------------------
 
-Deno.test("an empty task is refused with a message that says what a task is for", () => {
+test("an empty task is refused with a message that says what a task is for", () => {
   const h = harness();
   try {
     const seeded = seedSpawner(h);
@@ -441,7 +442,7 @@ Deno.test("an empty task is refused with a message that says what a task is for"
   }
 });
 
-Deno.test("delegation stops at the depth cap", () => {
+test("delegation stops at the depth cap", () => {
   const h = harness();
   try {
     // root → subagent(1) → subagent(2). The one at depth 2 may not delegate further.

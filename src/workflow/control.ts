@@ -445,7 +445,7 @@ export function workflowLaunchCtx(
     // path is exempt from anyway.
     turnId: `workflow:${sessionId}`,
     messageId: anchorMessageId ?? workflowAnchor(ctx.db, sessionId),
-    workspace: runtime.workspace ?? Deno.cwd(),
+    workspace: runtime.workspace ?? process.cwd(),
     model: session.model ?? ctx.model ?? DEFAULT_MODEL,
     signal: new AbortController().signal,
     depth: 0,

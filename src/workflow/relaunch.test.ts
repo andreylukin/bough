@@ -21,15 +21,18 @@
  * does journal what it already dispatched.
  *
  * Hermetic and offline, in the shape `run.test.ts` established: an in-memory database,
- * a real bus, REAL `permissions: "none"` workers running the scripts, and a fake
+ * a real bus, REAL workflow workers running the scripts, and a fake
  * `AgentRunner` in place of every subagent — no network, no key, no LLM. `BOUGH_HOME`
  * points at a temp dir for the duration of each engine call, so the script mirror never
  * touches the real `~/.bough`.
  *
- * Assertions come from `node:assert/strict` rather than `@std/assert`: jsr.io is denied
- * by this environment's egress policy, so the jsr import declared in `deno.json` cannot
- * resolve.
+ * Assertions come from `node:assert/strict` rather than `@std/assert`, which is not a
+ * dependency of this repo.
  */
+import { test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import assert from "node:assert/strict";
 import { Bus } from "../bus.ts";
 import { openDb, type SqliteDb } from "../db/db.ts";
@@ -83,7 +86,7 @@ function harness(): Harness {
     workspace: "/tmp/checkout",
     originDir: "/tmp/checkout",
   });
-  const home = Deno.makeTempDirSync({ prefix: "bough-relaunch-" });
+  const home = mkdtempSync(join(tmpdir(), "bough-relaunch-"));
   return {
     db,
     bus,
@@ -93,7 +96,7 @@ function harness(): Harness {
     close() {
       db.close();
       try {
-        Deno.removeSync(home, { recursive: true });
+        rmSync(home, { recursive: true, force: true });
       } catch { /* already gone */ }
     },
   };
@@ -101,13 +104,13 @@ function harness(): Harness {
 
 /** Relocate `BOUGH_HOME` for one engine call, then put the environment back. */
 async function withHome<T>(home: string, fn: () => Promise<T>): Promise<T> {
-  const prior = Deno.env.get("BOUGH_HOME");
-  Deno.env.set("BOUGH_HOME", home);
+  const prior = process.env["BOUGH_HOME"];
+  process.env["BOUGH_HOME"] = home;
   try {
     return await fn();
   } finally {
-    if (prior === undefined) Deno.env.delete("BOUGH_HOME");
-    else Deno.env.set("BOUGH_HOME", prior);
+    if (prior === undefined) delete process.env["BOUGH_HOME"];
+    else process.env["BOUGH_HOME"] = prior;
   }
 }
 
@@ -231,7 +234,7 @@ function sixCalls(third: string): string {
 // an unchanged script
 // ---------------------------------------------------------------------------
 
-Deno.test("an unchanged script replays every call and issues zero live agent calls", async () => {
+test("an unchanged script replays every call and issues zero live agent calls", async () => {
   const h = harness();
   try {
     const script = sixCalls("review c.ts");
@@ -264,7 +267,7 @@ Deno.test("an unchanged script replays every call and issues zero live agent cal
 // THE prefix test
 // ---------------------------------------------------------------------------
 
-Deno.test(
+test(
   "editing call 3 of 6 replays 1-2 and runs 3-6 live, INCLUDING the calls whose key never changed",
   async () => {
     const h = harness();
@@ -355,7 +358,7 @@ Deno.test(
   },
 );
 
-Deno.test("a source call that failed ends the prefix — its successors re-run too", async () => {
+test("a source call that failed ends the prefix — its successors re-run too", async () => {
   const h = harness();
   try {
     const script = `${META}
@@ -402,7 +405,7 @@ Deno.test("a source call that failed ends the prefix — its successors re-run t
 // second case is what a barrier-free `pipeline()` produced on every relaunch, so the
 // one surface built to make a key defect visible was actively denying it.
 
-Deno.test("a call whose key is unchanged but whose POSITION moved is reported as moved", async () => {
+test("a call whose key is unchanged but whose POSITION moved is reported as moved", async () => {
   const h = harness();
   try {
     // A perfectly ordinary edit: two sequential calls become a parallel fan-out. The
@@ -455,7 +458,7 @@ Deno.test("a call whose key is unchanged but whose POSITION moved is reported as
   }
 });
 
-Deno.test("an edited call and a new call are reported as themselves, not as each other", async () => {
+test("an edited call and a new call are reported as themselves, not as each other", async () => {
   const h = harness();
   try {
     const source = await sourceRun(h, echoRunner(), sixCalls("review c.ts"));
@@ -522,7 +525,7 @@ Deno.test("an edited call and a new call are reported as themselves, not as each
 // pause, and what survives it
 // ---------------------------------------------------------------------------
 
-Deno.test(
+test(
   "a paused run's in-flight agent finishes and is journaled, so it replays on the next relaunch",
   async () => {
     const h = harness();
@@ -606,7 +609,7 @@ Deno.test(
 // a relaunch is a new run
 // ---------------------------------------------------------------------------
 
-Deno.test("a relaunch gets a new run id and leaves the source run's rows untouched", async () => {
+test("a relaunch gets a new run id and leaves the source run's rows untouched", async () => {
   const h = harness();
   try {
     const script = sixCalls("review c.ts");
@@ -631,7 +634,7 @@ Deno.test("a relaunch gets a new run id and leaves the source run's rows untouch
   }
 });
 
-Deno.test("a relaunch inherits the source run's args unless the caller replaces them", async () => {
+test("a relaunch inherits the source run's args unless the caller replaces them", async () => {
   const h = harness();
   try {
     const script = `${META}
@@ -656,7 +659,7 @@ Deno.test("a relaunch inherits the source run's args unless the caller replaces 
 // refusals and reporting
 // ---------------------------------------------------------------------------
 
-Deno.test("relaunching a run that is still live is refused, not raced", async () => {
+test("relaunching a run that is still live is refused, not raced", async () => {
   const h = harness();
   try {
     const script = `${META}
@@ -701,7 +704,7 @@ Deno.test("relaunching a run that is still live is refused, not raced", async ()
   }
 });
 
-Deno.test("an unknown source run is a 404, not an empty replay", async () => {
+test("an unknown source run is a 404, not an empty replay", async () => {
   const h = harness();
   try {
     await assert.rejects(
@@ -713,7 +716,7 @@ Deno.test("an unknown source run is a 404, not an empty replay", async () => {
   }
 });
 
-Deno.test("an unwired relaunch seam fails loudly instead of running agentless", async () => {
+test("an unwired relaunch seam fails loudly instead of running agentless", async () => {
   const h = harness();
   try {
     const source = await sourceRun(h, echoRunner(), sixCalls("review c.ts"));
@@ -726,7 +729,7 @@ Deno.test("an unwired relaunch seam fails loudly instead of running agentless", 
   }
 });
 
-Deno.test("the preview reports what the source journal offers, before anything runs", async () => {
+test("the preview reports what the source journal offers, before anything runs", async () => {
   const h = harness();
   try {
     const script = `${META}
@@ -756,7 +759,7 @@ Deno.test("the preview reports what the source journal offers, before anything r
   }
 });
 
-Deno.test("the replay report reads the same while a run is still in flight", async () => {
+test("the replay report reads the same while a run is still in flight", async () => {
   const h = harness();
   try {
     const script = `${META}
@@ -810,7 +813,7 @@ Deno.test("the replay report reads the same while a run is still in flight", asy
 // the HTTP surface
 // ---------------------------------------------------------------------------
 
-Deno.test("POST /workflows/:id/relaunch starts a new run and GET .../replay counts it", async () => {
+test("POST /workflows/:id/relaunch starts a new run and GET .../replay counts it", async () => {
   const h = harness();
   try {
     const script = sixCalls("review c.ts");
@@ -833,7 +836,14 @@ Deno.test("POST /workflows/:id/relaunch starts a new run and GET .../replay coun
         ),
     );
     assert.equal(res.status, 201, "the receipt is immediate — the run is detached");
-    const body = await res.json();
+    // Bun types `Response.json()` as `unknown` (Deno typed it `any`), so the shape the
+    // assertions below read is named here.
+    const body = (await res.json()) as {
+      source: string;
+      workflow: { id: string };
+      script: string;
+      replay: { replayablePrefix: number };
+    };
     assert.equal(body.source, source.id);
     assert.notEqual(body.workflow.id, source.id);
     assert.equal(body.script, "explicit");
@@ -844,7 +854,13 @@ Deno.test("POST /workflows/:id/relaunch starts a new run and GET .../replay coun
       new Request(`http://127.0.0.1/workflows/${body.workflow.id}/replay`),
     );
     assert.equal(report.status, 200);
-    const counts = await report.json();
+    const counts = (await report.json()) as {
+      replayed: number;
+      ranLive: number;
+      forced: number;
+      divergedAt: number;
+      line: string;
+    };
     assert.equal(counts.replayed, 2);
     assert.equal(counts.ranLive, 4);
     assert.equal(counts.forced, 3);
@@ -857,7 +873,7 @@ Deno.test("POST /workflows/:id/relaunch starts a new run and GET .../replay coun
       new Request(`http://127.0.0.1/workflows/${source.id}/relaunch`, { method: "POST" }),
     );
     assert.equal(refused.status, 500);
-    assert.match((await refused.json()).error, /not wired/);
+    assert.match(((await refused.json()) as { error: string }).error, /not wired/);
   } finally {
     h.close();
   }

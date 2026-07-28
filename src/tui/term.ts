@@ -9,7 +9,7 @@
  * takes an env record and returns booleans; it reads no globals, writes nothing,
  * and needs no TTY — so the whole capability matrix is asserted in `term.test.ts`
  * by handing it fixture environments (plan §7). The old tree computed these as
- * module-level consts off `Deno.env` at import time, which made "does kitty get
+ * module-level consts off the environment at import time, which made "does kitty get
  * the protocol pushed" a fact you could only discover by running the TUI inside
  * that terminal.
  *
@@ -33,7 +33,7 @@
  * Effects are behind `createTerm(...)`: the writer and the capability set are
  * injected, so a test drives every sequence into a string buffer. `term()` is the
  * process-wide instance the TUI entry point uses, built lazily so importing this
- * module never touches `Deno.env` or stdout.
+ * module never touches the environment or stdout.
  */
 import process from "node:process";
 import { Buffer } from "node:buffer";
@@ -42,7 +42,7 @@ import { Buffer } from "node:buffer";
 // Capabilities (pure)
 // ---------------------------------------------------------------------------
 
-/** Just enough of an environment to classify a terminal. `Deno.env.toObject()` fits. */
+/** Just enough of an environment to classify a terminal. `process.env` fits. */
 export type TermEnv = Record<string, string | undefined>;
 
 export interface TermCaps {
@@ -290,21 +290,19 @@ export function createTerm(options: TermOptions): Term {
 // The process-wide instance
 // ---------------------------------------------------------------------------
 
-const enc = new TextEncoder();
-
 function readEnv(): TermEnv {
   try {
-    return Deno.env.toObject();
+    return { ...process.env };
   } catch {
-    // No --allow-env (a test, a sandboxed child): an unknown terminal is the
-    // conservative answer, and every capability above defaults to off.
+    // No environment to read (a test, a stripped child): an unknown terminal is
+    // the conservative answer, and every capability above defaults to off.
     return {};
   }
 }
 
 function stdoutIsTty(): boolean {
   try {
-    return Deno.stdout.isTerminal();
+    return process.stdout.isTTY === true;
   } catch {
     return false;
   }
@@ -327,7 +325,7 @@ export function term(): Term {
     write: (seq) => {
       if (!isTty) return;
       try {
-        Deno.stdout.writeSync(enc.encode(seq));
+        process.stdout.write(seq);
       } catch {
         // stdout gone (exiting) — there is nothing left to signal to.
       }
@@ -377,13 +375,13 @@ export interface TermSize {
 /**
  * The terminal's current size, measured rather than remembered.
  *
- * `Deno.consoleSize()` and not `process.stdout.rows`, because this is the reading
- * that stays true: the node-compat properties are sampled when the stream is
- * built, and a piped or detached stdout has none at all.
+ * Read off `process.stdout` every time rather than remembered: node keeps these
+ * properties current as the tty resizes, and a piped or detached stdout has none
+ * at all — hence the clamps and the catch below.
  */
 export function terminalSize(): TermSize {
   try {
-    const { columns, rows } = Deno.consoleSize();
+    const { columns, rows } = process.stdout;
     return { cols: Math.max(20, columns || 80), rows: Math.max(8, rows || 24) };
   } catch {
     // Not a tty (a test, a pipe). The fallbacks are the same ones the renderer
@@ -408,13 +406,13 @@ export function terminalSize(): TermSize {
 export function onResize(handler: (size: TermSize) => void): () => void {
   const fire = () => handler(terminalSize());
   try {
-    Deno.addSignalListener("SIGWINCH", fire);
+    process.on("SIGWINCH", fire);
   } catch {
     return () => {};
   }
   return () => {
     try {
-      Deno.removeSignalListener("SIGWINCH", fire);
+      process.off("SIGWINCH", fire);
     } catch {
       // Already torn down with the process.
     }

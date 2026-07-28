@@ -20,7 +20,7 @@
  * Second invariant: **every effect is injected** (plan §0, DI over globals).
  * `runExec` takes a `fetch`, a stdout writer, a stderr writer, stdin, the
  * environment, and the cwd, and it RETURNS an exit code rather than calling
- * `Deno.exit`. The `import.meta.main` block at the bottom is the only code that
+ * `process.exit`. The `import.meta.main` block at the bottom is the only code that
  * touches a real process. That is what lets the whole client be tested against
  * the real route table over an in-memory database, with no socket bound and
  * nothing on the network.
@@ -55,6 +55,7 @@
  * was intended. The exit code does not move: a turn this client gave up on did not
  * complete, whether or not the stop landed.
  */
+import { realpath } from "node:fs/promises";
 import type { Session, TurnStatus } from "../schema/parts.ts";
 import type { MessageDeltaData, MessageRetryData, TurnFinishedData } from "../schema/events.ts";
 import type { UsageTotals } from "../types.ts";
@@ -284,7 +285,13 @@ function parseSseBlock(block: string): SseFrame | undefined {
  * and a string buffer.
  */
 export interface ExecDeps {
-  fetchFn: typeof fetch;
+  /**
+   * The call signature only, not `typeof fetch`: Bun's global carries a
+   * `preconnect` property, and requiring it would make every test stub — a bare
+   * arrow that answers or rejects — fail to typecheck for a method nothing here
+   * calls.
+   */
+  fetchFn(input: string | URL | Request, init?: RequestInit): Promise<Response>;
   /** stdout. Assistant text goes here verbatim, and nothing else does. */
   write(text: string): void | Promise<void>;
   /** stderr. Diagnostics, retry notices, and usage errors — never the answer. */
@@ -456,7 +463,7 @@ export async function runExec(argv: readonly string[], deps: ExecDeps): Promise<
     let streamed = false;
 
     outer: for (;;) {
-      let chunk: ReadableStreamReadResult<string>;
+      let chunk: Awaited<ReturnType<typeof reader.read>>;
       try {
         chunk = await reader.read();
       } catch {
@@ -620,25 +627,22 @@ function messageOf(e: unknown): string {
 
 /** The real process, wired up once. The only impure thing in this file. */
 export function realDeps(): ExecDeps {
-  const encoder = new TextEncoder();
   return {
     fetchFn: (input, init) => fetch(input, init),
+    // `Bun.write` resolves only once the whole string is out, so the partial-write
+    // loop a raw fd write needs is not needed here.
     write: async (text) => {
-      const bytes = encoder.encode(text);
-      let written = 0;
-      // A partial write on a pipe is normal, not an error; a loop is the only
-      // correct way to use `Deno.stdout.write`.
-      while (written < bytes.length) written += await Deno.stdout.write(bytes.subarray(written));
+      await Bun.write(Bun.stdout, text);
     },
     warn: (text) => console.error(text),
-    readStdin: () => new Response(Deno.stdin.readable).text(),
-    stdinIsTerminal: () => Deno.stdin.isTerminal(),
-    env: (name) => Deno.env.get(name),
-    cwd: () => Deno.cwd(),
-    realPath: (path) => Deno.realPath(path),
+    readStdin: () => Bun.stdin.text(),
+    stdinIsTerminal: () => process.stdin.isTTY === true,
+    env: (name) => process.env[name],
+    cwd: () => process.cwd(),
+    realPath: (path) => realpath(path),
   };
 }
 
 if (import.meta.main) {
-  Deno.exit(await runExec(Deno.args, realDeps()));
+  process.exit(await runExec(process.argv.slice(2), realDeps()));
 }

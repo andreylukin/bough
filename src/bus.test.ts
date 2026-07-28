@@ -19,6 +19,7 @@
  * resolve. `node:assert` is built into the runtime and needs no fetch. (Same
  * constraint `paths.test.ts` documents.)
  */
+import { test } from "bun:test";
 import { deepStrictEqual, ok, strictEqual } from "node:assert";
 import { Bus } from "./bus.ts";
 import type { Bus as BusPort } from "./types.ts";
@@ -38,7 +39,7 @@ function quietBus(now?: () => number) {
 
 // ---- invariant 6: a throwing listener must not break fan-out ----------------
 
-Deno.test("a throwing listener does not prevent later listeners from receiving", () => {
+test("a throwing listener does not prevent later listeners from receiving", () => {
   const { bus, errors } = quietBus();
   const seen: string[] = [];
 
@@ -60,7 +61,7 @@ Deno.test("a throwing listener does not prevent later listeners from receiving",
   strictEqual((errors[0] as Error).message, "this SSE connection is gone");
 });
 
-Deno.test("publish itself never throws for a listener's reason", () => {
+test("publish itself never throws for a listener's reason", () => {
   const { bus } = quietBus();
   bus.subscribe(() => {
     throw new Error("boom");
@@ -71,7 +72,7 @@ Deno.test("publish itself never throws for a listener's reason", () => {
   strictEqual(event.seq, 1);
 });
 
-Deno.test("a listener that throws a non-Error, or a reporter that throws, is still isolated", () => {
+test("a listener that throws a non-Error, or a reporter that throws, is still isolated", () => {
   const seen: string[] = [];
   const bus = new Bus({
     onListenerError: () => {
@@ -87,7 +88,7 @@ Deno.test("a listener that throws a non-Error, or a reporter that throws, is sti
   deepStrictEqual(seen, ["survivor"]);
 });
 
-Deno.test("the default error reporter logs and does not rethrow", () => {
+test("the default error reporter logs and does not rethrow", () => {
   const bus = new Bus();
   const logged: unknown[][] = [];
   const original = console.error;
@@ -109,7 +110,7 @@ Deno.test("the default error reporter logs and does not rethrow", () => {
 
 // ---- seq is monotonic ------------------------------------------------------
 
-Deno.test("seq is monotonic: starts at 1 and increments by exactly one per publish", () => {
+test("seq is monotonic: starts at 1 and increments by exactly one per publish", () => {
   const { bus } = quietBus();
   const seqs: number[] = [];
   bus.subscribe((e) => seqs.push(e.seq));
@@ -123,7 +124,7 @@ Deno.test("seq is monotonic: starts at 1 and increments by exactly one per publi
   }
 });
 
-Deno.test("seq advances even with no listeners, and even when every listener throws", () => {
+test("seq advances even with no listeners, and even when every listener throws", () => {
   const { bus, errors } = quietBus();
 
   // Nothing subscribed: the counter is a property of the bus, not of delivery.
@@ -138,7 +139,7 @@ Deno.test("seq advances even with no listeners, and even when every listener thr
   strictEqual(errors.length, 2);
 });
 
-Deno.test("every subscriber sees the same seq for one event, and no repeats across events", () => {
+test("every subscriber sees the same seq for one event, and no repeats across events", () => {
   const { bus } = quietBus();
   const a: number[] = [], b: number[] = [];
   bus.subscribe((e) => a.push(e.seq));
@@ -153,7 +154,7 @@ Deno.test("every subscriber sees the same seq for one event, and no repeats acro
   strictEqual(new Set(a).size, a.length, "seq is a dedupe key — it must never repeat");
 });
 
-Deno.test("seq is per instance — there is no shared global counter", () => {
+test("seq is per instance — there is no shared global counter", () => {
   // Two buses in one process must not interleave counters; this is also what makes
   // each test above independent.
   const one = new Bus(), two = new Bus();
@@ -164,7 +165,7 @@ Deno.test("seq is per instance — there is no shared global counter", () => {
 
 // ---- stamping --------------------------------------------------------------
 
-Deno.test("publish stamps ts from the injected clock and returns the stamped event", () => {
+test("publish stamps ts from the injected clock and returns the stamped event", () => {
   let t = 1000;
   const { bus } = quietBus(() => (t += 5));
   const received: BoughEvent[] = [];
@@ -183,7 +184,7 @@ Deno.test("publish stamps ts from the injected clock and returns the stamped eve
   strictEqual(bus.publish(delta("again")).ts, 1010);
 });
 
-Deno.test("publish does not mutate its input", () => {
+test("publish does not mutate its input", () => {
   const { bus } = quietBus();
   const input = delta("x");
   bus.publish(input);
@@ -191,7 +192,7 @@ Deno.test("publish does not mutate its input", () => {
   ok(!("ts" in input), "the stamp goes on a fresh object");
 });
 
-Deno.test("delivery is synchronous — no microtask hop", () => {
+test("delivery is synchronous — no microtask hop", () => {
   const { bus } = quietBus();
   let delivered = false;
   bus.subscribe(() => {
@@ -204,7 +205,7 @@ Deno.test("delivery is synchronous — no microtask hop", () => {
 
 // ---- subscribe / unsubscribe ----------------------------------------------
 
-Deno.test("subscribe returns an unsubscribe thunk, and size tracks live listeners", () => {
+test("subscribe returns an unsubscribe thunk, and size tracks live listeners", () => {
   const { bus } = quietBus();
   const seen: string[] = [];
   strictEqual(bus.size, 0);
@@ -221,7 +222,7 @@ Deno.test("subscribe returns an unsubscribe thunk, and size tracks live listener
   deepStrictEqual(seen, ["a:1", "b:1", "b:2"]);
 });
 
-Deno.test("unsubscribing twice is a no-op, and N connect/disconnect cycles leak nothing", () => {
+test("unsubscribing twice is a no-op, and N connect/disconnect cycles leak nothing", () => {
   const { bus } = quietBus();
   const off = bus.subscribe(() => {});
   off();
@@ -232,7 +233,7 @@ Deno.test("unsubscribing twice is a no-op, and N connect/disconnect cycles leak 
   strictEqual(bus.size, 0, "the SSE endpoint's cancel path depends on this");
 });
 
-Deno.test("a listener may unsubscribe itself mid-fan-out without affecting the rest", () => {
+test("a listener may unsubscribe itself mid-fan-out without affecting the rest", () => {
   const { bus } = quietBus();
   const seen: string[] = [];
 
@@ -249,7 +250,7 @@ Deno.test("a listener may unsubscribe itself mid-fan-out without affecting the r
   strictEqual(bus.size, 1);
 });
 
-Deno.test("a listener unsubscribed by an earlier listener does not receive that event", () => {
+test("a listener unsubscribed by an earlier listener does not receive that event", () => {
   // Iteration is over the live set: an unsubscribe is a closed connection, so the
   // safe direction is to skip it rather than deliver and swallow the error.
   const { bus } = quietBus();
@@ -270,7 +271,7 @@ Deno.test("a listener unsubscribed by an earlier listener does not receive that 
 
 // ---- the port --------------------------------------------------------------
 
-Deno.test("Bus satisfies the injected port in types.ts", () => {
+test("Bus satisfies the injected port in types.ts", () => {
   // The whole tree depends on the port, not on this class. If the shapes drift,
   // this assignment stops compiling — which is the point of the test.
   const port: BusPort = new Bus();
@@ -284,7 +285,7 @@ Deno.test("Bus satisfies the injected port in types.ts", () => {
   strictEqual(port.size, 0);
 });
 
-Deno.test("an unknown event name is a compile error, not a runtime one", () => {
+test("an unknown event name is a compile error, not a runtime one", () => {
   const { bus } = quietBus();
   // The bus does not validate payloads — `EventInput` is a compile-time contract,
   // and the envelope is only parsed where a client reads it off a socket. So the

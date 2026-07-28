@@ -20,24 +20,31 @@
  * resolve. (Same constraint `hostfn/shell.test.ts` and `bus.test.ts` document.)
  */
 
+import { test } from "bun:test";
 import assert from "node:assert";
 import { Bus } from "../bus.ts";
 import { openDb } from "../db/db.ts";
 import { NetError } from "../errors.ts";
 import type { TurnCtx } from "../types.ts";
-import { createFetchHostFn, type FetchResult, fetchUrl, MAX_BYTES } from "./fetch.ts";
+import {
+  createFetchHostFn,
+  type FetchImpl,
+  type FetchResult,
+  fetchUrl,
+  MAX_BYTES,
+} from "./fetch.ts";
 
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
 
 /** A fetch that answers every request with the same response. */
-function respondWith(res: () => Response): typeof globalThis.fetch {
+function respondWith(res: () => Response): FetchImpl {
   return () => Promise.resolve(res());
 }
 
 /** A fetch that records what it was called with, then answers 200. */
-function recorder(calls: { url: string; init?: RequestInit }[]): typeof globalThis.fetch {
+function recorder(calls: { url: string; init?: RequestInit }[]): FetchImpl {
   return (input: string | URL | Request, init?: RequestInit) => {
     calls.push({ url: String(input), init });
     return Promise.resolve(new Response("ok", { status: 200 }));
@@ -90,7 +97,7 @@ async function rejectsWith(fn: () => unknown, fragment: string): Promise<NetErro
 // A response is data
 // ---------------------------------------------------------------------------
 
-Deno.test("a 200 comes back with status, body, contentType and the final url", async () => {
+test("a 200 comes back with status, body, contentType and the final url", async () => {
   const result = await fetchUrl("https://example.test/a", {}, undefined, {
     fetchImpl: respondWith(() =>
       new Response("hello", {
@@ -107,7 +114,7 @@ Deno.test("a 200 comes back with status, body, contentType and the final url", a
   assert.equal(result.url, "https://example.test/a");
 });
 
-Deno.test("a 404 is DATA, not an exception", async () => {
+test("a 404 is DATA, not an exception", async () => {
   const result = await fetchUrl("https://example.test/missing", {}, undefined, {
     fetchImpl: respondWith(() => new Response("no such page", { status: 404 })),
   });
@@ -116,7 +123,7 @@ Deno.test("a 404 is DATA, not an exception", async () => {
   assert.equal(result.body, "no such page", "the error body is what tells the model why");
 });
 
-Deno.test("a 500 with a body is DATA too", async () => {
+test("a 500 with a body is DATA too", async () => {
   const result = await fetchUrl("https://example.test/boom", {}, undefined, {
     fetchImpl: respondWith(() => new Response('{"error":"upstream"}', { status: 500 })),
   });
@@ -125,7 +132,7 @@ Deno.test("a 500 with a body is DATA too", async () => {
   assert.deepEqual(JSON.parse(result.body), { error: "upstream" });
 });
 
-Deno.test("every non-2xx status resolves rather than throwing", async () => {
+test("every non-2xx status resolves rather than throwing", async () => {
   for (const status of [201, 204, 301, 400, 401, 403, 429, 503]) {
     const result = await fetchUrl("https://example.test/s", {}, undefined, {
       fetchImpl: respondWith(() =>
@@ -137,7 +144,7 @@ Deno.test("every non-2xx status resolves rather than throwing", async () => {
   }
 });
 
-Deno.test("the FINAL url is reported, so a redirect is visible", async () => {
+test("the FINAL url is reported, so a redirect is visible", async () => {
   // What `redirect: "follow"` produces: a response whose `url` is where it landed.
   // `Response.url` is a read-only getter, so a fabricated one is defined onto it.
   const landed = new Response("body", { status: 200 });
@@ -152,7 +159,7 @@ Deno.test("the FINAL url is reported, so a redirect is visible", async () => {
 // The truncation flag
 // ---------------------------------------------------------------------------
 
-Deno.test("a body over the cap comes back cut, with truncated: true", async () => {
+test("a body over the cap comes back cut, with truncated: true", async () => {
   const cap = 1_000;
   const result = await fetchUrl("https://example.test/big", {}, undefined, {
     fetchImpl: respondWith(() => streamOf(10_000, 256)),
@@ -163,7 +170,7 @@ Deno.test("a body over the cap comes back cut, with truncated: true", async () =
   assert.equal(result.body, "a".repeat(cap));
 });
 
-Deno.test("a body exactly at the cap is not flagged truncated", async () => {
+test("a body exactly at the cap is not flagged truncated", async () => {
   const cap = 512;
   const result = await fetchUrl("https://example.test/exact", {}, undefined, {
     fetchImpl: respondWith(() => streamOf(cap, cap)),
@@ -173,7 +180,7 @@ Deno.test("a body exactly at the cap is not flagged truncated", async () => {
   assert.equal(result.truncated, false);
 });
 
-Deno.test("a body under the cap is whole and unflagged", async () => {
+test("a body under the cap is whole and unflagged", async () => {
   const result = await fetchUrl("https://example.test/small", {}, undefined, {
     fetchImpl: respondWith(() => streamOf(100, 7)),
     maxBytes: 1_000,
@@ -182,7 +189,7 @@ Deno.test("a body under the cap is whole and unflagged", async () => {
   assert.equal(result.truncated, false);
 });
 
-Deno.test("an empty body is empty, not truncated", async () => {
+test("an empty body is empty, not truncated", async () => {
   const result = await fetchUrl("https://example.test/none", {}, undefined, {
     fetchImpl: respondWith(() => new Response(null, { status: 204 })),
   });
@@ -190,7 +197,7 @@ Deno.test("an empty body is empty, not truncated", async () => {
   assert.equal(result.truncated, false);
 });
 
-Deno.test("the production cap is 1MB", () => {
+test("the production cap is 1MB", () => {
   assert.equal(MAX_BYTES, 1_000_000);
 });
 
@@ -199,7 +206,7 @@ Deno.test("the production cap is 1MB", () => {
 // ---------------------------------------------------------------------------
 
 /** A fetch that never answers, but honors the signal it is given. */
-const neverAnswers: typeof globalThis.fetch = (_input, init) =>
+const neverAnswers: FetchImpl = (_input, init) =>
   new Promise((_resolve, reject) => {
     const signal = init?.signal;
     if (!signal) return;
@@ -209,7 +216,7 @@ const neverAnswers: typeof globalThis.fetch = (_input, init) =>
     });
   });
 
-Deno.test("the deadline aborts the request and says so", async () => {
+test("the deadline aborts the request and says so", async () => {
   const err = await rejectsWith(
     () =>
       fetchUrl("https://example.test/slow", {}, undefined, {
@@ -221,7 +228,7 @@ Deno.test("the deadline aborts the request and says so", async () => {
   assert.match(err.message, /https:\/\/example\.test\/slow/, "the url must be in the message");
 });
 
-Deno.test("an interrupt is distinguishable from the deadline", async () => {
+test("an interrupt is distinguishable from the deadline", async () => {
   const controller = new AbortController();
   const pending = fetchUrl("https://example.test/slow", {}, controller.signal, {
     fetchImpl: neverAnswers,
@@ -233,7 +240,7 @@ Deno.test("an interrupt is distinguishable from the deadline", async () => {
   assert.ok(!err.message.includes("no response within"));
 });
 
-Deno.test("an already-interrupted turn does not start the request", async () => {
+test("an already-interrupted turn does not start the request", async () => {
   const controller = new AbortController();
   controller.abort();
   await rejectsWith(
@@ -246,7 +253,7 @@ Deno.test("an already-interrupted turn does not start the request", async () => 
   );
 });
 
-Deno.test("a transport failure reports the underlying reason", async () => {
+test("a transport failure reports the underlying reason", async () => {
   await rejectsWith(
     () =>
       fetchUrl("https://nope.invalid/x", {}, undefined, {
@@ -260,7 +267,7 @@ Deno.test("a transport failure reports the underlying reason", async () => {
 // URLs and options
 // ---------------------------------------------------------------------------
 
-Deno.test("only http and https are allowed", async () => {
+test("only http and https are allowed", async () => {
   for (const url of ["file:///etc/passwd", "data:text/plain,hi", "ftp://host/x"]) {
     await rejectsWith(
       () => fetchUrl(url, {}, undefined, { fetchImpl: respondWith(() => new Response("x")) }),
@@ -269,7 +276,7 @@ Deno.test("only http and https are allowed", async () => {
   }
 });
 
-Deno.test("a URL that does not parse is refused before any request", async () => {
+test("a URL that does not parse is refused before any request", async () => {
   let called = false;
   await rejectsWith(
     () =>
@@ -284,7 +291,7 @@ Deno.test("a URL that does not parse is refused before any request", async () =>
   assert.equal(called, false);
 });
 
-Deno.test("method, headers and body reach the request", async () => {
+test("method, headers and body reach the request", async () => {
   const calls: { url: string; init?: RequestInit }[] = [];
   await fetchUrl(
     "https://example.test/post",
@@ -303,7 +310,7 @@ Deno.test("method, headers and body reach the request", async () => {
 // The bridged host function
 // ---------------------------------------------------------------------------
 
-Deno.test("the fetch host fn returns the result as JSON", async () => {
+test("the fetch host fn returns the result as JSON", async () => {
   const ctx = turnCtx(new AbortController().signal);
   const { fetch } = createFetchHostFn(ctx, {
     fetchImpl: respondWith(() =>
@@ -322,7 +329,7 @@ Deno.test("the fetch host fn returns the result as JSON", async () => {
   ctx.db.close();
 });
 
-Deno.test("the fetch host fn carries the turn's interrupt", async () => {
+test("the fetch host fn carries the turn's interrupt", async () => {
   const controller = new AbortController();
   const ctx = turnCtx(controller.signal);
   const { fetch } = createFetchHostFn(ctx, { fetchImpl: neverAnswers, deadlineMs: 60_000 });
@@ -332,7 +339,7 @@ Deno.test("the fetch host fn carries the turn's interrupt", async () => {
   ctx.db.close();
 });
 
-Deno.test("the fetch host fn rejects unknown options rather than ignoring them", async () => {
+test("the fetch host fn rejects unknown options rather than ignoring them", async () => {
   const ctx = turnCtx(new AbortController().signal);
   const { fetch } = createFetchHostFn(ctx, {
     fetchImpl: respondWith(() => new Response("x")),
@@ -344,7 +351,7 @@ Deno.test("the fetch host fn rejects unknown options rather than ignoring them",
   ctx.db.close();
 });
 
-Deno.test("the fetch host fn rejects a non-JSON options argument", async () => {
+test("the fetch host fn rejects a non-JSON options argument", async () => {
   const ctx = turnCtx(new AbortController().signal);
   const { fetch } = createFetchHostFn(ctx, {
     fetchImpl: respondWith(() => new Response("x")),

@@ -35,7 +35,7 @@
  * presentational over a `ModelConfig` the caller owns, and `chooseEntry` returns the
  * next config rather than performing a write. Reported rather than worked around.
  */
-import { Box, Text } from "ink";
+import { TextAttributes } from "@opentui/core";
 import type { ModelRow } from "../../llm/client.ts";
 import type { Effort } from "../../types.ts";
 import { clip, windowAround } from "../format.ts";
@@ -65,6 +65,18 @@ const EFFORT_LABELS: Record<EffortChoice, string> = {
   xhigh: "xhigh — deep (the agentic sweet spot)",
   max: "max — correctness over cost",
 };
+
+/**
+ * A stored effort string narrowed to a row this picker can mark.
+ *
+ * The session row types `effort` as a free `string | null` (it is a column, and the
+ * server accepts whatever a future model names), while the picker's sections are the
+ * fixed `EFFORTS` list. Anything unrecognised reads as "no row of mine" rather than as
+ * a row that does not exist — the same rule the frontier section already follows.
+ */
+export function asEffortChoice(value: string | null | undefined): EffortChoice | null {
+  return EFFORTS.includes(value as EffortChoice) ? (value as EffortChoice) : null;
+}
 
 export interface ModelConfig {
   /** What a NEW session starts on. */
@@ -173,14 +185,47 @@ export function chooseEntry(cfg: ModelConfig, e: ModelEntry): ModelConfig {
 // Presentation
 // ---------------------------------------------------------------------------
 
-type DisplayRow = { header: Tier } | { entry: ModelEntry; index: number };
+/**
+ * What the cheap section says when nothing in it is marked.
+ *
+ * The ● means "this is what runs". Every other section has one, and the cheap section
+ * had none whenever `cheapModel` was unset — so the tab that exists to answer "which
+ * model is selected" answered it for two tiers out of three, and the absence read as a
+ * missing dot rather than as a state. Unset is a real state and it gets a real row.
+ *
+ * It does not NAME a model, because when this row shows there is none to name. The
+ * cheap tier is resolved server-side (`BOUGH_CHEAP_MODEL`, `worker/titles.ts`) and
+ * `GET /model-settings` now reports it alongside the frontier default, so the normal
+ * case marks the real row with a ●. This row is what is left: the settings fetch has
+ * not answered yet, or the install genuinely has no cheap tier. Naming a guess here is
+ * exactly the bug the frontier section already had and had fixed.
+ */
+export const CHEAP_UNSET =
+  "(unset) — no cheap model is known for this install; pick a row to set one";
 
-/** Section headers interleaved with entries — what the cursor window is cut from. */
-export function displayRows(entries: readonly ModelEntry[]): DisplayRow[] {
+export type DisplayRow =
+  | { header: Tier }
+  | { entry: ModelEntry; index: number }
+  | { note: string };
+
+/**
+ * Section headers interleaved with entries — what the cursor window is cut from.
+ *
+ * `cheapUnset` inserts the state row under the cheap header. It goes through here and
+ * not into the component's JSX so the window height still counts every row it paints;
+ * a row rendered outside the count is a row the renderer clips into garbage.
+ */
+export function displayRows(
+  entries: readonly ModelEntry[],
+  opts: { cheapUnset?: boolean } = {},
+): DisplayRow[] {
   const out: DisplayRow[] = [];
   let last: Tier | null = null;
   entries.forEach((entry, index) => {
-    if (entry.tier !== last) out.push({ header: entry.tier });
+    if (entry.tier !== last) {
+      out.push({ header: entry.tier });
+      if (entry.tier === "cheap" && opts.cheapUnset) out.push({ note: CHEAP_UNSET });
+    }
     last = entry.tier;
     out.push({ entry, index });
   });
@@ -193,43 +238,133 @@ export interface ModelPickerProps {
   selected: number;
   rows: number;
   message?: string | null;
+  /** The `/` filter buffer. Narrowing happens in `PanelHost`; this only draws it. */
+  filter?: string;
+  filtering?: boolean;
 }
 
-export function ModelPicker({ cfg, entries, selected, rows, message }: ModelPickerProps) {
-  const display = displayRows(entries);
-  // The list windows itself around the cursor: ink clips an overflowing background
-  // box by merging rows into garbage rather than by scrolling.
-  const height = Math.max(3, rows - 6);
+/**
+ * The visible slice of the interleaved header/entry list.
+ *
+ * Sized from what is ACTUALLY left after the chrome. `Math.max(3, rows - 6)` claimed
+ * three rows it did not have below nine, and the overflow did not scroll — it merged
+ * rows into each other (`Panel.tsx`). Everything countable is counted: the message,
+ * the filter line, the legend, and the two `↑ n more` / `↓ n more` markers.
+ *
+ * Exported, like `sessionsWindow`, so `PanelHost` can resolve a digit against the
+ * rows that are actually on screen rather than against a second guess at them.
+ */
+export function modelWindow(
+  display: readonly DisplayRow[],
+  selected: number,
+  rows: number,
+  chrome = 0,
+): { start: number; end: number; height: number; marks: boolean } {
+  const avail = Math.max(0, rows - chrome - 1 /* legend */);
+  // ONE row for both markers, not two. As a pair they cost two rows, and when only
+  // two were left they cost ALL of them — the tab said "↑ 1 more / ↓ 35 more" above a
+  // list of nothing. Content wins when it is tight; the legend never gives up its row.
+  const marks = display.length > avail && avail >= 3;
+  const height = Math.max(0, avail - (marks ? 1 : 0));
   const cursorAt = Math.max(0, display.findIndex((d) => "entry" in d && d.index === selected));
   const { start, end } = windowAround(cursorAt, display.length, height);
+  return { start: Math.max(0, start), end, height, marks };
+}
+
+/**
+ * Entry indices in the window, top to bottom — exactly what `1`–`9` address.
+ *
+ * Headers and the `(unset)` note are NOT numbered: a digit that lands on a section
+ * title is a digit that does nothing, and spec §3 wants the options addressable, not
+ * the decoration between them.
+ */
+export function visibleEntries(display: readonly DisplayRow[], start: number, end: number) {
+  return display.slice(start, end).flatMap((d) => ("entry" in d ? [d.index] : []));
+}
+
+export function ModelPicker(
+  { cfg, entries, selected, rows, message, filter = "", filtering = false }: ModelPickerProps,
+) {
+  const display = displayRows(entries, { cheapUnset: cfg.cheapModel === null });
+  const chrome = (message ? 1 : 0) + (filtering || filter ? 1 : 0);
+  const { start, end, height, marks } = modelWindow(display, selected, rows, chrome);
+  // The entry ordinal within the window, so the digits run 1,2,3… down the entries
+  // even where a section header sits between two of them.
+  let ordinal = 0;
   return (
-    <Box flexDirection="column">
-      {message ? <Text color={palette.warn} wrap="truncate">{message}</Text> : null}
-      {start > 0 ? <Text dimColor>↑ {start} more</Text> : null}
-      {display.slice(Math.max(0, start), end).map((d) => {
+    <box flexDirection="column">
+      {message
+        ? <text fg={palette.warn} wrapMode="none">{message}</text>
+        : null}
+      {filtering
+        ? (
+          <text>
+            <span fg={palette.accent}>{"/ "}</span>
+            {filter}
+            <span fg="black" bg={palette.accent}>{" "}</span>
+          </text>
+        )
+        : filter
+        ? <text attributes={TextAttributes.DIM}>/ {filter}</text>
+        : null}
+      {height > 0 && display.length === 0
+        ? <text attributes={TextAttributes.DIM}>nothing matches that filter</text>
+        : null}
+
+      {(height === 0 ? [] : display.slice(start, end)).map((d) => {
+        if ("note" in d) {
+          return (
+            <text key="cheap-unset" wrapMode="none">
+              <span>{"    "}</span>
+              <span fg={palette.accent}>●</span>
+              <span attributes={TextAttributes.DIM}>{" "}{clip(d.note, 88)}</span>
+            </text>
+          );
+        }
         if ("header" in d) {
           const section = SECTIONS[d.header];
           return (
-            <Text key={`h-${d.header}`} wrap="truncate">
-              <Text bold color={palette.accent}>{section.title}</Text>
-              <Text dimColor>{"  "}{section.hint}</Text>
-            </Text>
+            <text key={`h-${d.header}`} wrapMode="none">
+              <span attributes={TextAttributes.BOLD} fg={palette.accent}>{section.title}</span>
+              <span attributes={TextAttributes.DIM}>{"  "}{section.hint}</span>
+            </text>
           );
         }
         const { entry, index } = d;
         const sel = index === selected;
         const active = isActive(cfg, entry);
+        ordinal += 1;
         return (
-          <Text key={`${entry.tier}:${entry.id}`} wrap="truncate">
-            <Text color={sel ? palette.accent : undefined}>{sel ? "❯ " : "  "}</Text>
-            <Text color={sel || !active ? undefined : palette.accent}>{active ? "●" : " "}</Text>
-            <Text bold={sel}>{" "}{clip(entry.label, 38)}</Text>
-            <Text dimColor>{"  "}{clip(entry.detail, 34)}</Text>
-          </Text>
+          <text key={`${entry.tier}:${entry.id}`} wrapMode="none">
+            {/* The digit that selects this row, printed on it — spec §3 wants a
+                NUMBERED LIST, not a shortcut you have to be told about. It counts
+                entries and skips headers, which is the same thing `visibleEntries`
+                counts, so what is printed is what `panel.pick` resolves. */}
+            <span attributes={TextAttributes.DIM}>{ordinal <= 9 ? `${ordinal} ` : "  "}</span>
+            <span fg={sel ? palette.accent : undefined}>{sel ? "❯ " : "  "}</span>
+            <span fg={sel || !active ? undefined : palette.accent}>{active ? "●" : " "}</span>
+            <span attributes={sel ? TextAttributes.BOLD : TextAttributes.NONE}>
+              {" "}{clip(entry.label, 38)}
+            </span>
+            <span attributes={TextAttributes.DIM}>{"  "}{clip(entry.detail, 34)}</span>
+          </text>
         );
       })}
-      {end < display.length ? <Text dimColor>↓ {display.length - end} more</Text> : null}
-      <Text dimColor wrap="truncate">↑↓ move · ⏎ choose</Text>
-    </Box>
+      {marks
+        ? (
+          <text attributes={TextAttributes.DIM}>
+            {start > 0 ? `↑ ${start}` : ""}
+            {start > 0 && end < display.length ? " · " : ""}
+            {end < display.length ? `↓ ${display.length - end}` : ""} more
+          </text>
+        )
+        : null}
+      {/* The legend is the LAST row, on every tab, naming only bound keys. */}
+      <text attributes={TextAttributes.DIM} wrapMode="none">
+        {filtering
+          ? "type to narrow · ⌫ back · esc clear the filter · ↑↓ move · ⏎ choose"
+          : "↑↓ move · pgup/pgdn page · 1-9 pick · / filter · ⏎ choose · esc back"}
+      </text>
+    </box>
   );
 }

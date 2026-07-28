@@ -207,7 +207,7 @@ export function startScheduleTicker(ctx: AppCtx, deps: TickerDeps = {}): () => v
       console.error("schedule tick failed:", err);
     }
   }, deps.intervalMs ?? TICK_MS);
-  Deno.unrefTimer(timer);
+  timer.unref();
   return () => clearInterval(timer);
 }
 

@@ -18,12 +18,14 @@
  * The clock is injected everywhere (`now`), so no assertion depends on when the suite
  * runs — an elapsed-time regression would otherwise show up as a flake.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import type { WorkflowRun } from "../../schema/parts.ts";
 import type { WorkflowAgentView } from "../../workflow/control.ts";
 import type { LargeRunFlag, ReplaySummary, RunCost } from "../../workflow/report.ts";
 import { replayLine } from "../../workflow/report.ts";
 import type { WorkflowDetail } from "../api.ts";
+import { BINDINGS } from "../keys.ts";
 import {
   agentDetailRows,
   agentRows,
@@ -159,7 +161,7 @@ const text = (rows: ReturnType<typeof runHeaderRows>) => linesOf(rows).join("\n"
 
 // ---- the replay summary is always on screen ---------------------------------
 
-Deno.test("the run header reports the replay counts for a mixed-status run", () => {
+test("the run header reports the replay counts for a mixed-status run", () => {
   const out = text(runHeaderRows(detail(), { now: NOW }));
 
   // Every bucket, named. `replayed + ranLive + pending === total` is the arithmetic
@@ -176,7 +178,7 @@ Deno.test("the run header reports the replay counts for a mixed-status run", () 
   assert.ok(out.includes(summary().line), `expected the wire line in:\n${out}`);
 });
 
-Deno.test("a run that replayed NOTHING of an available journal is called out", () => {
+test("a run that replayed NOTHING of an available journal is called out", () => {
   const broken = summary({ replayed: 0, ranLive: 4, pending: 2, available: 12, succeeded: 4 });
   const rows = replayRows(broken);
   const out = linesOf(rows).join("\n");
@@ -190,7 +192,7 @@ Deno.test("a run that replayed NOTHING of an available journal is called out", (
   assert.equal(rows[1][0].tone, "error");
 });
 
-Deno.test("an ordinary first run reports its counts without crying wolf", () => {
+test("an ordinary first run reports its counts without crying wolf", () => {
   const first = summary({
     sourceId: null,
     replayed: 0,
@@ -212,7 +214,7 @@ Deno.test("an ordinary first run reports its counts without crying wolf", () => 
 
 // ---- statuses, including cached ---------------------------------------------
 
-Deno.test("cached is its own glyph, distinct from done", () => {
+test("cached is its own glyph, distinct from done", () => {
   assert.equal(wfGlyph("cached").glyph, "≡");
   assert.equal(wfGlyph("done").glyph, "✓");
   assert.notEqual(wfGlyph("cached").glyph, wfGlyph("done").glyph);
@@ -221,7 +223,7 @@ Deno.test("cached is its own glyph, distinct from done", () => {
   assert.equal(wfGlyph("error").glyph, "✗");
 });
 
-Deno.test("the agent list renders every status, and a queued agent shows no clock", () => {
+test("the agent list renders every status, and a queued agent shows no clock", () => {
   const out = linesOf(agentRows(AGENTS, 0, true, false, NOW));
   assert.equal(out.length, 6);
   assert.ok(out[0].startsWith("❯ ≡ a"), out[0]);
@@ -236,33 +238,33 @@ Deno.test("the agent list renders every status, and a queued agent shows no cloc
   assert.match(out[2], /1\.2k tok/);
 });
 
-Deno.test("a cached agent's detail says the answer came from the journal", () => {
+test("a cached agent's detail says the answer came from the journal", () => {
   const out = linesOf(agentDetailRows(AGENTS[0], false, NOW)).join("\n");
   assert.match(out, /replayed from the source run's journal — no agent ran/);
   assert.match(out, /no session — this call was replayed from the journal/);
 });
 
-Deno.test("a failed agent's detail leads with the error, not an empty outcome", () => {
+test("a failed agent's detail leads with the error, not an empty outcome", () => {
   const out = linesOf(agentDetailRows(AGENTS[3], false, NOW)).join("\n");
   assert.match(out, /^✗ error/m);
   assert.match(out, /patch conflict in app\.ts/);
 });
 
-Deno.test("drill-in names the backing session so an agent is reachable", () => {
+test("drill-in names the backing session so an agent is reachable", () => {
   const out = linesOf(agentDetailRows(AGENTS[2], false, NOW)).join("\n");
   assert.match(out, /session sess-c — o opens it/);
 });
 
 // ---- phases -----------------------------------------------------------------
 
-Deno.test("declared phases appear before any agent reaches them", () => {
+test("declared phases appear before any agent reaches them", () => {
   const groups = phaseGroups(RUN, AGENTS);
   assert.deepEqual(groups.map((g) => g.title), ["Review", "Verify", "Report"]);
   assert.equal(groups[2].agents.length, 0); // the shape of the run, before it gets there
   assert.equal(groups[0].agents.length, 4);
 });
 
-Deno.test("the done filter folds in journal replays", () => {
+test("the done filter folds in journal replays", () => {
   assert.equal(visibleAgents(AGENTS, "done").length, 3); // 1 done + 2 cached
   assert.equal(visibleAgents(AGENTS, "error").length, 1);
   assert.equal(visibleAgents(AGENTS, null).length, 6);
@@ -270,14 +272,14 @@ Deno.test("the done filter folds in journal replays", () => {
 
 // ---- cost and the advisory flag ---------------------------------------------
 
-Deno.test("cost is in the header while the run is going, per phase", () => {
+test("cost is in the header while the run is going, per phase", () => {
   const out = text(runHeaderRows(detail(), { now: NOW }));
   assert.match(out, /4\.8k tok/);
   assert.match(out, /Review 3\.6k tok/);
   assert.match(out, /Verify 1\.2k tok/);
 });
 
-Deno.test("a large-run warning names the control that stops it, and stays advisory", () => {
+test("a large-run warning names the control that stops it, and stays advisory", () => {
   const warning: LargeRunFlag = {
     flagged: true,
     advisory: true,
@@ -297,7 +299,7 @@ Deno.test("a large-run warning names the control that stops it, and stays adviso
 
 // ---- steering ---------------------------------------------------------------
 
-Deno.test("a running run offers pause before stop; a paused one offers resume", () => {
+test("a running run offers pause before stop; a paused one offers resume", () => {
   const running = steerActions("running", true).map((a) => a.key);
   assert.deepEqual(running, ["p", "x"]);
   assert.match(steerActions("running", true)[0].label, /pause/);
@@ -310,19 +312,19 @@ Deno.test("a running run offers pause before stop; a paused one offers resume", 
   assert.match(steerActions("paused", true)[0].label, /resume/);
 });
 
-Deno.test("a finished run offers the edit-and-relaunch half of the steering loop", () => {
+test("a finished run offers the edit-and-relaunch half of the steering loop", () => {
   const done = steerActions("done", false);
   assert.deepEqual(done.map((a) => a.key), ["r", "e"]);
   assert.match(done[1].label, /edit script & relaunch/);
 });
 
-Deno.test("a run orphaned by a restart is not offered a pause it cannot honor", () => {
+test("a run orphaned by a restart is not offered a pause it cannot honor", () => {
   const orphaned = steerActions("running", false).map((a) => a.key);
   assert.ok(!orphaned.includes("p"), "a run this process does not hold cannot be paused");
   assert.match(steerActions("running", false)[0].label, /orphaned by a restart/);
 });
 
-Deno.test("the footer carries the steering keys at every level", () => {
+test("the footer carries the steering keys at every level", () => {
   for (const level of [0, 1, 2, 3, 4] as const) {
     const line = footer(level, detail());
     assert.match(line, /p pause/, `level ${level}: ${line}`);
@@ -332,23 +334,43 @@ Deno.test("the footer carries the steering keys at every level", () => {
 
 // ---- the script, which is what steering edits -------------------------------
 
-Deno.test("the script view names the mirror path — the file the loop edits", () => {
+test("the script view names the mirror path — the file the loop edits", () => {
   const out = linesOf(scriptRows(detail({ live: false }))).join("\n");
   assert.match(out, /\/home\/u\/\.bough\/workflows\/run-2\.js/);
-  assert.match(out, /R relaunches a NEW run from this one's journal/);
+  assert.match(out, /r relaunches a NEW run from this one's journal/);
   assert.match(out, /6 calls\s+journaled here/);
   assert.match(out, /1 export const meta/);
 });
 
-Deno.test("a live run is told to pause and stop before editing", () => {
+test("a live run is told to pause and stop before editing", () => {
   const out = linesOf(scriptRows(detail({ live: true }))).join("\n");
   assert.match(out, /pause, then stop, before you edit/);
-  assert.doesNotMatch(out, /R relaunches/);
+  assert.doesNotMatch(out, /relaunches a NEW run/);
+});
+
+/**
+ * The regression this file let through once: the script view read "R relaunches a NEW
+ * run…" and this test asserted the sentence back to itself. There is no `R` in
+ * `keys.ts` and there never was, so the one screen whose job is to explain the
+ * steering loop named a dead key — and the pin agreed with it. A legend assertion that
+ * only checks the string is not an assertion about a key, so this one resolves every
+ * key the script view names against the real keymap.
+ */
+test("every key the script view names is actually bound in the panel", () => {
+  const out = linesOf(scriptRows(detail({ live: false }))).join("\n");
+  const named = [...out.matchAll(/(?:^|[\s·])([A-Za-z]) [a-z]/g)].map((m) => m[1]!);
+  assert.ok(named.length > 0, "the script view names no key at all");
+  const bound = new Set(
+    BINDINGS.filter((b) => b.mode === "panel").map((b) => b.chord),
+  );
+  for (const key of named) {
+    assert.ok(bound.has(key), `the script view names '${key}', which no panel binding has`);
+  }
 });
 
 // ---- the header's identity fields -------------------------------------------
 
-Deno.test("the header says it is a relaunch, and of what", () => {
+test("the header says it is a relaunch, and of what", () => {
   const out = text(runHeaderRows(detail(), { now: NOW }));
   assert.match(out, /audit-handlers/);
   assert.match(out, /relaunch of run-1/);
@@ -356,7 +378,7 @@ Deno.test("the header says it is a relaunch, and of what", () => {
   assert.match(out, /1m30s/);
 });
 
-Deno.test("a run the server restarted under is not drawn as a working one", () => {
+test("a run the server restarted under is not drawn as a working one", () => {
   const out = text(runHeaderRows(detail({ live: false }), { now: NOW }));
   assert.match(out, /\(not live here\)/);
 });

@@ -36,11 +36,12 @@
  *
  * PURE CORE: `parseFrontmatter`, `mentionIndex` and `activeSkills`'s selection are
  * pure functions over strings. Only `readSkill`/`listSkills` touch the filesystem,
- * and only through `Deno.readTextFileSync`/`readDirSync` — no db, no clock, no
+ * and only through node's `readFileSync`/`readdirSync` — no db, no clock, no
  * network.
  *
  * Ported from `src/supervisor/skills.ts`. Deltas are marked `NOTE:`.
  */
+import { type Dirent, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PromptSkill } from "../prompt/assemble.ts";
@@ -249,7 +250,7 @@ function readSkill(source: SkillSourceName, root: string, name: string): Skill |
   const dir = join(root, name);
   let text: string;
   try {
-    text = Deno.readTextFileSync(join(dir, "SKILL.md"));
+    text = readFileSync(join(dir, "SKILL.md"), "utf8");
   } catch {
     return null;
   }
@@ -279,14 +280,14 @@ export function listSkills(opts: SkillOptions = {}): Skill[] {
   const out: Skill[] = [];
   const taken = new Set<string>();
   for (const { source, dir } of opts.sources ?? defaultSources()) {
-    let entries: Deno.DirEntry[];
+    let entries: Dirent[];
     try {
-      entries = [...Deno.readDirSync(dir)];
+      entries = readdirSync(dir, { withFileTypes: true });
     } catch {
       continue;
     }
     for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-      if (!entry.isDirectory || taken.has(entry.name)) continue;
+      if (!entry.isDirectory() || taken.has(entry.name)) continue;
       const skill = readSkill(source, dir, entry.name);
       if (!skill) continue;
       taken.add(skill.name);

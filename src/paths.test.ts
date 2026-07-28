@@ -13,12 +13,14 @@
  * because a `confine` that rejects everything would pass a one-sided test while
  * breaking every caller.
  *
- * Assertions come from `node:assert` rather than `@std/assert`: jsr.io is denied by
- * this environment's egress policy (`host_not_allowed`), so the jsr import declared
- * in `deno.json` cannot resolve. `node:assert` is built into the runtime and needs
- * no fetch. See the task notes — an environment constraint, not a preference.
+ * Assertions come from `node:assert`, which is built into the runtime and needs no
+ * dependency at all — the jsr `@std/assert` this file once used could not resolve
+ * under this environment's egress policy, and nothing replaced it.
  */
+import { test } from "bun:test";
 import { strictEqual, throws } from "node:assert";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { PathError } from "./errors.ts";
 import {
@@ -61,23 +63,23 @@ const assertEscapes = (fn: () => unknown): void => void assertThrowsPath(fn);
 function withEnv(vars: Record<string, string | undefined>, fn: () => void): void {
   const prior = new Map<string, string | undefined>();
   for (const [k, v] of Object.entries(vars)) {
-    prior.set(k, Deno.env.get(k));
-    if (v === undefined) Deno.env.delete(k);
-    else Deno.env.set(k, v);
+    prior.set(k, process.env[k]);
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
   }
   try {
     fn();
   } finally {
     for (const [k, v] of prior) {
-      if (v === undefined) Deno.env.delete(k);
-      else Deno.env.set(k, v);
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
     }
   }
 }
 
 // ---- the layout -------------------------------------------------------------
 
-Deno.test("BOUGH_HOME relocates the entire tree", () => {
+test("BOUGH_HOME relocates the entire tree", () => {
   withEnv({ BOUGH_HOME: "/fake/root", BOUGH_DB: undefined }, () => {
     assertEquals(boughHome(), "/fake/root");
     assertEquals(boughPath("x", "y"), "/fake/root/x/y");
@@ -98,7 +100,7 @@ Deno.test("BOUGH_HOME relocates the entire tree", () => {
   });
 });
 
-Deno.test("an unset or blank BOUGH_HOME falls back to ~/.bough", () => {
+test("an unset or blank BOUGH_HOME falls back to ~/.bough", () => {
   // A blank override is a shell accident (`BOUGH_HOME= bough`), not a request to
   // put the data root at the filesystem root or the cwd.
   for (const v of [undefined, "", "   "]) {
@@ -110,13 +112,13 @@ Deno.test("an unset or blank BOUGH_HOME falls back to ~/.bough", () => {
   }
 });
 
-Deno.test("BOUGH_DB overrides the database path outright, including :memory:", () => {
+test("BOUGH_DB overrides the database path outright, including :memory:", () => {
   withEnv({ BOUGH_HOME: "/fake/root", BOUGH_DB: ":memory:" }, () => {
     assertEquals(dbPath(), ":memory:");
   });
 });
 
-Deno.test("comment sidecars live outside the artifacts tree", () => {
+test("comment sidecars live outside the artifacts tree", () => {
   // Invariant §6.12: a sidecar under artifacts/ would be walked by every listing
   // and served as an artifact itself.
   withEnv({ BOUGH_HOME: "/fake/root" }, () => {
@@ -129,25 +131,25 @@ Deno.test("comment sidecars live outside the artifacts tree", () => {
 
 // ---- confine: the accepting direction ---------------------------------------
 
-Deno.test("confine returns an absolute path under the root", () => {
+test("confine returns an absolute path under the root", () => {
   assertEquals(confine("/a/b", "c"), "/a/b/c");
   assertEquals(confine("/a/b", "c/d/e.html"), "/a/b/c/d/e.html");
   assertEquals(confine("/a/b", "./c"), "/a/b/c");
 });
 
-Deno.test("confine accepts a candidate that contains .. but lands back inside", () => {
+test("confine accepts a candidate that contains .. but lands back inside", () => {
   // The check is on the RESOLVED path, not on the presence of a ".." segment —
   // rejecting the substring would break legitimate callers.
   assertEquals(confine("/a/b", "c/../d"), "/a/b/d");
   assertEquals(confine("/a/b", "c/d/../../e"), "/a/b/e");
 });
 
-Deno.test("confine accepts an absolute candidate that is already inside the root", () => {
+test("confine accepts an absolute candidate that is already inside the root", () => {
   assertEquals(confine("/a/b", "/a/b/c"), "/a/b/c");
   assertEquals(confine("/a/b", "/a/b"), "/a/b");
 });
 
-Deno.test("confine normalizes the root, and an empty candidate is the root itself", () => {
+test("confine normalizes the root, and an empty candidate is the root itself", () => {
   assertEquals(confine("/a/b/", "c"), "/a/b/c");
   assertEquals(confine("/a/b//", "c"), "/a/b/c");
   assertEquals(confine("/a/./b", "c"), "/a/b/c");
@@ -155,11 +157,11 @@ Deno.test("confine normalizes the root, and an empty candidate is the root itsel
   assertEquals(confine("/a/b", "."), "/a/b");
 });
 
-Deno.test("confine resolves a relative root against the cwd", () => {
-  assertEquals(confine("store", "x"), resolve(Deno.cwd(), "store/x"));
+test("confine resolves a relative root against the cwd", () => {
+  assertEquals(confine("store", "x"), resolve(process.cwd(), "store/x"));
 });
 
-Deno.test("confine handles the filesystem root without a doubled separator", () => {
+test("confine handles the filesystem root without a doubled separator", () => {
   assertEquals(confine("/", "etc"), "/etc");
   assertEquals(confine("/", "/etc"), "/etc");
   assertEquals(confine("/", ".."), "/"); // "/.." is "/" — inside, not an escape
@@ -167,7 +169,7 @@ Deno.test("confine handles the filesystem root without a doubled separator", () 
 
 // ---- confine: ".." traversal ------------------------------------------------
 
-Deno.test("confine rejects .. traversal out of the root", () => {
+test("confine rejects .. traversal out of the root", () => {
   assertEscapes(() => confine("/a/b", ".."));
   assertEscapes(() => confine("/a/b", "../c"));
   assertEscapes(() => confine("/a/b", "../../etc/passwd"));
@@ -176,12 +178,12 @@ Deno.test("confine rejects .. traversal out of the root", () => {
   assertEscapes(() => confine("/a/b", "../"));
 });
 
-Deno.test("confine rejects a chain whose segments each look harmless", () => {
+test("confine rejects a chain whose segments each look harmless", () => {
   // Every segment here is a plain name; only the resolved path escapes.
   assertEscapes(() => confine("/a/b", "x/y/z/../../../../etc/passwd"));
 });
 
-Deno.test("confine's error names the candidate, where it landed, and the root", () => {
+test("confine's error names the candidate, where it landed, and the root", () => {
   // Error text is a product surface: the message must say what failed, the state
   // that caused it, and the move that resolves it.
   const err = assertThrowsPath(() => confine("/a/b", "../../etc/passwd"));
@@ -193,25 +195,25 @@ Deno.test("confine's error names the candidate, where it landed, and the root", 
 
 // ---- confine: absolute escapes ----------------------------------------------
 
-Deno.test("confine rejects an absolute candidate outside the root", () => {
+test("confine rejects an absolute candidate outside the root", () => {
   assertEscapes(() => confine("/a/b", "/etc/passwd"));
   assertEscapes(() => confine("/a/b", "/"));
   assertEscapes(() => confine("/a/b", "/a"));
 });
 
-Deno.test("confine rejects a sibling that merely shares a string prefix", () => {
+test("confine rejects a sibling that merely shares a string prefix", () => {
   // "/a/bc" starts with "/a/b" as a STRING but is not under it as a PATH.
   assertEscapes(() => confine("/a/b", "/a/bc"));
   assertEscapes(() => confine("/a/b", "/a/bc/d"));
   assertEscapes(() => confine("/a/b", "../bc/d"));
 });
 
-Deno.test("confine rejects a NUL byte rather than letting it truncate a path", () => {
+test("confine rejects a NUL byte rather than letting it truncate a path", () => {
   assertEscapes(() => confine("/a/b", "ok\0/../../etc/passwd"));
   assertEscapes(() => confine("/a/b\0", "c"));
 });
 
-Deno.test("a session id with traversal cannot steer the artifact directory", () => {
+test("a session id with traversal cannot steer the artifact directory", () => {
   // The shape of the real caller: a session id arriving in a URL.
   withEnv({ BOUGH_HOME: "/fake/root" }, () => {
     assertEquals(confine(artifactsDir(), artifactsDirFor("s1")), "/fake/root/artifacts/s1");
@@ -222,16 +224,16 @@ Deno.test("a session id with traversal cannot steer the artifact directory", () 
 
 // ---- confine: symlink-shaped inputs -----------------------------------------
 
-Deno.test("confine rejects traversal that routes through a symlinked directory", async () => {
-  const tmp = await Deno.makeTempDir({ prefix: "bough-paths-" });
+test("confine rejects traversal that routes through a symlinked directory", async () => {
+  const tmp = await mkdtemp(join(tmpdir(), "bough-paths-"));
   try {
     const root = join(tmp, "root");
     const outside = join(tmp, "outside");
-    await Deno.mkdir(root);
-    await Deno.mkdir(outside);
-    await Deno.writeTextFile(join(outside, "secret.txt"), "no");
+    await mkdir(root);
+    await mkdir(outside);
+    await writeFile(join(outside, "secret.txt"), "no");
     // A real symlink inside the root pointing at a directory outside it.
-    await Deno.symlink(outside, join(root, "link"));
+    await symlink(outside, join(root, "link"));
 
     // Lexical resolution collapses "link/.." to the root, so a traversal that
     // routes through the link still resolves outward and is rejected.
@@ -247,11 +249,11 @@ Deno.test("confine rejects traversal that routes through a symlinked directory",
     assertEquals(confine(root, "link"), join(root, "link"));
     assertEquals(confine(root, "link/secret.txt"), join(root, "link/secret.txt"));
   } finally {
-    await Deno.remove(tmp, { recursive: true });
+    await rm(tmp, { recursive: true, force: true });
   }
 });
 
-Deno.test("confine treats a symlinked root and its realpath as different namespaces", () => {
+test("confine treats a symlinked root and its realpath as different namespaces", () => {
   // The macOS /tmp -> /private/tmp shape. A candidate that has been through
   // realpath no longer matches a root that has not, so callers must build both
   // from the same source — which is why every root comes from boughPath().

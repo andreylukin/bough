@@ -227,7 +227,7 @@ export interface LaunchDeps {
 
 /** 15 minutes. Env-overridable so the timeout path is testable without waiting. */
 function defaultTimeoutMs(): number {
-  const n = Number(Deno.env.get("BOUGH_SUBAGENT_TIMEOUT_MS"));
+  const n = Number(process.env["BOUGH_SUBAGENT_TIMEOUT_MS"]);
   return Number.isFinite(n) && n > 0 ? n : 15 * 60_000;
 }
 

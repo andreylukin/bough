@@ -13,7 +13,9 @@
  * The last test pins the absence: no fixture carries a deprecated flag because no such
  * field exists, and the rendered rows must never grow one.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import type { SessionKind } from "../../schema/parts.ts";
 import type { SessionRow } from "../api.ts";
 import { isDelegated, statusMark, titleOf, Tree, treeItems } from "./Tree.tsx";
@@ -53,7 +55,7 @@ function fixture() {
   };
 }
 
-Deno.test("delegated kinds are the ones that collapse", () => {
+test("delegated kinds are the ones that collapse", () => {
   assert.equal(isDelegated("subagent"), true);
   assert.equal(isDelegated("workflow_agent"), true);
   assert.equal(isDelegated("root"), false);
@@ -61,7 +63,7 @@ Deno.test("delegated kinds are the ones that collapse", () => {
   assert.equal(isDelegated("compaction"), false);
 });
 
-Deno.test("a fan-out collapses to one countable row under its origin", () => {
+test("a fan-out collapses to one countable row under its origin", () => {
   const { roots, childrenByOrigin } = fixture();
   const items = treeItems({ roots, childrenByOrigin, expanded: new Set() });
 
@@ -75,7 +77,7 @@ Deno.test("a fan-out collapses to one countable row under its origin", () => {
   assert.deepEqual(collapsed.map((c) => c.type === "collapsed" && c.count), [3, 1]);
 });
 
-Deno.test("drill-in surfaces exactly the origin that was expanded", () => {
+test("drill-in surfaces exactly the origin that was expanded", () => {
   const { roots, childrenByOrigin } = fixture();
   const items = treeItems({ roots, childrenByOrigin, expanded: new Set(["fork"]) });
 
@@ -86,7 +88,7 @@ Deno.test("drill-in surfaces exactly the origin that was expanded", () => {
   assert.ok(ids.includes("⋯root"));
 });
 
-Deno.test("delegated grandchildren stay collapsed until their own parent is opened", () => {
+test("delegated grandchildren stay collapsed until their own parent is opened", () => {
   const roots = [session("root", "root")];
   const childrenByOrigin = {
     root: [session("sub", "subagent", { originId: "root" })],
@@ -105,7 +107,7 @@ Deno.test("delegated grandchildren stay collapsed until their own parent is open
   );
 });
 
-Deno.test("a fork listed at the top level is drawn once, under what it branched from", () => {
+test("a fork listed at the top level is drawn once, under what it branched from", () => {
   const { roots, childrenByOrigin } = fixture();
   const items = treeItems({ roots, childrenByOrigin, expanded: new Set() });
   const forks = items.filter((i) => i.type === "session" && i.session.id === "fork");
@@ -113,7 +115,7 @@ Deno.test("a fork listed at the top level is drawn once, under what it branched 
   assert.equal(forks[0].type === "session" && forks[0].depth, 1);
 });
 
-Deno.test("a session carries the count of what is delegated under it, open or not", () => {
+test("a session carries the count of what is delegated under it, open or not", () => {
   const { roots, childrenByOrigin } = fixture();
   const closed = treeItems({ roots, childrenByOrigin, expanded: new Set() });
   const fork = closed.find((i) => i.type === "session" && i.session.id === "fork");
@@ -125,7 +127,7 @@ Deno.test("a session carries the count of what is delegated under it, open or no
   assert.equal(opened?.type === "session" && opened.open, true);
 });
 
-Deno.test("a lineage cycle renders a short tree instead of hanging the terminal", () => {
+test("a lineage cycle renders a short tree instead of hanging the terminal", () => {
   // `originId` is a pointer the server sets for the tree, not a foreign key — a
   // malformed one must not be an infinite walk.
   const a = session("a", "root");
@@ -138,7 +140,7 @@ Deno.test("a lineage cycle renders a short tree instead of hanging the terminal"
   assert.deepEqual(items.map((i) => i.type === "session" && i.session.id), ["a", "b"]);
 });
 
-Deno.test("an unfetched drill-in is an empty fan-out, not a crash", () => {
+test("an unfetched drill-in is an empty fan-out, not a crash", () => {
   const items = treeItems({
     roots: [session("root", "root")],
     childrenByOrigin: {},
@@ -147,7 +149,7 @@ Deno.test("an unfetched drill-in is an empty fan-out, not a crash", () => {
   assert.equal(items.length, 1);
 });
 
-Deno.test("branches sort by creation, so a row does not move under the cursor", () => {
+test("branches sort by creation, so a row does not move under the cursor", () => {
   const root = session("root", "root");
   const late = session("late", "fork", { originId: "root", createdAt: 2000 });
   const early = session("early", "fork", { originId: "root", createdAt: 1000 });
@@ -164,24 +166,24 @@ Deno.test("branches sort by creation, so a row does not move under the cursor", 
 
 // ---- outcome markers ---------------------------------------------------------
 
-Deno.test("a session that never ran a turn gets no marker", () => {
+test("a session that never ran a turn gets no marker", () => {
   assert.equal(statusMark(session("x", "root")), null);
 });
 
-Deno.test("a failed delegation is marked even when its turn ended cleanly", () => {
+test("a failed delegation is marked even when its turn ended cleanly", () => {
   const failed = session("x", "subagent", { lastTurnStatus: "done", outcomeOk: false });
   assert.deepEqual(statusMark(failed), { glyph: "✗", color: "red" });
   const ok = session("y", "subagent", { lastTurnStatus: "done", outcomeOk: true });
   assert.equal(statusMark(ok)?.glyph, "✓");
 });
 
-Deno.test("a restart-orphaned branch is distinguishable from a failed one", () => {
+test("a restart-orphaned branch is distinguishable from a failed one", () => {
   assert.equal(statusMark(session("x", "fork", { lastTurnStatus: "orphaned" }))?.glyph, "◼");
   assert.equal(statusMark(session("y", "fork", { lastTurnStatus: "error" }))?.glyph, "✗");
   assert.equal(statusMark(session("z", "fork", { busy: true }))?.glyph, "⋯");
 });
 
-Deno.test("titles drop the kind prefix the server stamped on them", () => {
+test("titles drop the kind prefix the server stamped on them", () => {
   assert.equal(
     titleOf(session("x", "subagent", { title: "subagent · review app.ts" })),
     "review app.ts",
@@ -191,11 +193,11 @@ Deno.test("titles drop the kind prefix the server stamped on them", () => {
 
 // ---- the absence ------------------------------------------------------------
 
-Deno.test("there is no archive or deprecate affordance to render", () => {
+test("there is no archive or deprecate affordance to render", () => {
   // Spec §17: "No archive, deprecate, or purge. Visibility is derived from lineage."
   // The component's props are the item list, a cursor and a height — there is nowhere
   // for a `showDeprecated` toggle to enter, and the source carries no such string.
-  const source = Deno.readTextFileSync(new URL("./Tree.tsx", import.meta.url));
+  const source = readFileSync(new URL("./Tree.tsx", import.meta.url), "utf8");
   // The module comment is where the drop is explained and is expected to name it; the
   // CODE is what must not have grown a field, a prop or a key binding for it.
   const code = source.slice(source.indexOf("*/") + 2).toLowerCase();

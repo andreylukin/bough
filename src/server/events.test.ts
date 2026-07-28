@@ -27,6 +27,7 @@
  * reachable from this environment, and a test that cannot run offline does not
  * belong in `deno task test`.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { Bus } from "../bus.ts";
 import type { EventInput } from "../schema/events.ts";
@@ -130,7 +131,7 @@ const sample = (sessionId?: string): EventInput => ({
 
 // ---- framing ----------------------------------------------------------------
 
-Deno.test("opens with a comment frame and the SSE content type", async () => {
+test("opens with a comment frame and the SSE content type", async () => {
   const ctx = fixture();
   const res = await createEventsHandler({ heartbeatMs: 0 })(get("/events"), ctx, {});
 
@@ -143,7 +144,7 @@ Deno.test("opens with a comment frame and the SSE content type", async () => {
   await sse.cancel();
 });
 
-Deno.test("frames each event as `event: <type>` + one `data:` line", async () => {
+test("frames each event as `event: <type>` + one `data:` line", async () => {
   const ctx = fixture();
   const res = await createEventsHandler({ heartbeatMs: 0 })(get("/events"), ctx, {});
   const sse = new Sse(res);
@@ -167,7 +168,7 @@ Deno.test("frames each event as `event: <type>` + one `data:` line", async () =>
   await sse.cancel();
 });
 
-Deno.test("never emits an SSE `id:` field — seq is a dedupe key, not a resume cursor", async () => {
+test("never emits an SSE `id:` field — seq is a dedupe key, not a resume cursor", async () => {
   const ctx = fixture();
   const res = await createEventsHandler({ heartbeatMs: 0 })(get("/events"), ctx, {});
   const sse = new Sse(res);
@@ -182,7 +183,7 @@ Deno.test("never emits an SSE `id:` field — seq is a dedupe key, not a resume 
   await sse.cancel();
 });
 
-Deno.test("a multi-line payload stays on one `data:` line", async () => {
+test("a multi-line payload stays on one `data:` line", async () => {
   const ctx = fixture();
   const res = await createEventsHandler({ heartbeatMs: 0 })(get("/events"), ctx, {});
   const sse = new Sse(res);
@@ -203,7 +204,7 @@ Deno.test("a multi-line payload stays on one `data:` line", async () => {
   await sse.cancel();
 });
 
-Deno.test("frames every declared event type", async () => {
+test("frames every declared event type", async () => {
   const ctx = fixture();
   const res = await createEventsHandler({ heartbeatMs: 0 })(get("/events"), ctx, {});
   const sse = new Sse(res);
@@ -217,7 +218,7 @@ Deno.test("frames every declared event type", async () => {
   await sse.cancel();
 });
 
-Deno.test("an unencodable payload is skipped, not fatal to the connection", async () => {
+test("an unencodable payload is skipped, not fatal to the connection", async () => {
   const ctx = fixture();
   const reported: { phase: string }[] = [];
   const res = await createEventsHandler({
@@ -242,7 +243,7 @@ Deno.test("an unencodable payload is skipped, not fatal to the connection", asyn
 
 // ---- filtering --------------------------------------------------------------
 
-Deno.test("passesFilter: no filter passes everything; a global event always passes", () => {
+test("passesFilter: no filter passes everything; a global event always passes", () => {
   assert.equal(passesFilter({ sessionId: "s1" }, null), true);
   assert.equal(passesFilter({ sessionId: "s2" }, null), true);
   assert.equal(passesFilter({}, null), true);
@@ -254,7 +255,7 @@ Deno.test("passesFilter: no filter passes everything; a global event always pass
   assert.equal(passesFilter({ sessionId: undefined }, "s1"), true);
 });
 
-Deno.test("?sessionId= drops other sessions but keeps global events", async () => {
+test("?sessionId= drops other sessions but keeps global events", async () => {
   const ctx = fixture();
   const res = await createEventsHandler({ heartbeatMs: 0 })(
     get("/events?sessionId=s1"),
@@ -276,7 +277,7 @@ Deno.test("?sessionId= drops other sessions but keeps global events", async () =
   await sse.cancel();
 });
 
-Deno.test("an unfiltered stream receives every session", async () => {
+test("an unfiltered stream receives every session", async () => {
   const ctx = fixture();
   const res = await createEventsHandler({ heartbeatMs: 0 })(get("/events"), ctx, {});
   const sse = new Sse(res);
@@ -292,7 +293,7 @@ Deno.test("an unfiltered stream receives every session", async () => {
 
 // ---- heartbeat --------------------------------------------------------------
 
-Deno.test("writes a comment heartbeat on each tick and clears it on disconnect", async () => {
+test("writes a comment heartbeat on each tick and clears it on disconnect", async () => {
   const ctx = fixture();
   const timers = fakeTimers();
   const res = await createEventsHandler({ heartbeatMs: 15_000, timers })(
@@ -313,7 +314,7 @@ Deno.test("writes a comment heartbeat on each tick and clears it on disconnect",
   assert.equal(timers.live, 0, "the interval must be cleared on disconnect");
 });
 
-Deno.test("a heartbeat tick after teardown is inert", async () => {
+test("a heartbeat tick after teardown is inert", async () => {
   const ctx = fixture();
   const timers = fakeTimers();
   const res = await createEventsHandler({ heartbeatMs: 15_000, timers })(
@@ -331,7 +332,7 @@ Deno.test("a heartbeat tick after teardown is inert", async () => {
 
 // ---- teardown and the leak check --------------------------------------------
 
-Deno.test("N connect/disconnect cycles leave no listener leak", async () => {
+test("N connect/disconnect cycles leave no listener leak", async () => {
   const ctx = fixture();
   const handler = createEventsHandler({ heartbeatMs: 0 });
   assert.equal(ctx.bus.size, 0);
@@ -355,7 +356,7 @@ Deno.test("N connect/disconnect cycles leave no listener leak", async () => {
   assert.equal(ctx.bus.size, 0);
 });
 
-Deno.test("concurrent streams unsubscribe independently", async () => {
+test("concurrent streams unsubscribe independently", async () => {
   const ctx = fixture();
   const handler = createEventsHandler({ heartbeatMs: 0 });
 
@@ -381,7 +382,7 @@ Deno.test("concurrent streams unsubscribe independently", async () => {
   assert.equal(ctx.bus.size, 0);
 });
 
-Deno.test("an aborted request releases its subscription and ends the stream", async () => {
+test("an aborted request releases its subscription and ends the stream", async () => {
   const ctx = fixture();
   const timers = fakeTimers();
   const controller = new AbortController();
@@ -401,7 +402,7 @@ Deno.test("an aborted request releases its subscription and ends the stream", as
   assert.equal(await sse.ended(), true);
 });
 
-Deno.test("a request aborted before the body starts subscribes to nothing", async () => {
+test("a request aborted before the body starts subscribes to nothing", async () => {
   const ctx = fixture();
   const timers = fakeTimers();
   const controller = new AbortController();
@@ -417,7 +418,7 @@ Deno.test("a request aborted before the body starts subscribes to nothing", asyn
   await res.body?.cancel();
 });
 
-Deno.test("teardown is idempotent across abort and cancel", async () => {
+test("teardown is idempotent across abort and cancel", async () => {
   const ctx = fixture();
   const controller = new AbortController();
   const res = await createEventsHandler({ heartbeatMs: 0 })(
@@ -435,14 +436,14 @@ Deno.test("teardown is idempotent across abort and cancel", async () => {
 
 // ---- route wiring -----------------------------------------------------------
 
-Deno.test("the real route table exposes GET /events exactly once", () => {
+test("the real route table exposes GET /events exactly once", () => {
   const matching = routes.filter((r) =>
     r.method === "GET" && r.pattern.exec({ pathname: "/events" })
   );
   assert.equal(matching.length, 1);
 });
 
-Deno.test("dispatches through createHandler with the production table", async () => {
+test("dispatches through createHandler with the production table", async () => {
   const ctx = fixture();
   const call = createHandler(ctx);
   const res = await call(get("/events?sessionId=s1"));
@@ -459,7 +460,7 @@ Deno.test("dispatches through createHandler with the production table", async ()
   assert.equal(ctx.bus.size, 0, "the production handler must release its subscription too");
 });
 
-Deno.test("the exported handler is the one the table uses", () => {
+test("the exported handler is the one the table uses", () => {
   const entry = routes.find((r) => r.method === "GET" && r.pattern.exec({ pathname: "/events" }));
   assert.equal(entry?.handler, events);
 });

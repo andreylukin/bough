@@ -1,5 +1,5 @@
 /**
- * Workflow lifecycle control, driven END TO END: a real `permissions: "none"` worker
+ * Workflow lifecycle control, driven END TO END: a real workflow worker
  * running a real script, the real engine and journal underneath it, the real HTTP
  * router on top, and a fake subagent launcher standing in for the only part that
  * would need a key.
@@ -47,10 +47,13 @@
  * `BOUGH_HOME` pointed at a temp dir for the duration of every engine call so the
  * script mirror never touches the real `~/.bough`.
  *
- * Assertions come from `node:assert/strict` rather than `@std/assert`: jsr.io is
- * denied by this environment's egress policy, so the jsr import declared in
- * `deno.json` cannot resolve.
+ * Assertions come from `node:assert/strict` rather than `@std/assert`, which is not a
+ * dependency of this repo.
  */
+import { test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import assert from "node:assert/strict";
 import type { SubagentLaunch, SubagentResult } from "../agents/subagent.ts";
 import { Bus } from "../bus.ts";
@@ -201,7 +204,7 @@ function harness(): Harness {
 
   const control: WorkflowControlDeps = { launch, registry, agents };
   const ctx: AppCtx & WithWorkflowControl = { db, bus, workflowControl: control };
-  const home = Deno.makeTempDirSync({ prefix: "bough-wfctl-" });
+  const home = mkdtempSync(join(tmpdir(), "bough-wfctl-"));
 
   return {
     db,
@@ -219,7 +222,7 @@ function harness(): Harness {
     close() {
       db.close();
       try {
-        Deno.removeSync(home, { recursive: true });
+        rmSync(home, { recursive: true, force: true });
       } catch { /* already gone */ }
     },
   };
@@ -227,13 +230,13 @@ function harness(): Harness {
 
 /** Run one call with `BOUGH_HOME` relocated, then put the environment back. */
 async function withHome<T>(home: string, fn: () => Promise<T>): Promise<T> {
-  const prior = Deno.env.get("BOUGH_HOME");
-  Deno.env.set("BOUGH_HOME", home);
+  const prior = process.env["BOUGH_HOME"];
+  process.env["BOUGH_HOME"] = home;
   try {
     return await fn();
   } finally {
-    if (prior === undefined) Deno.env.delete("BOUGH_HOME");
-    else Deno.env.set("BOUGH_HOME", prior);
+    if (prior === undefined) delete process.env["BOUGH_HOME"];
+    else process.env["BOUGH_HOME"] = prior;
   }
 }
 
@@ -329,7 +332,7 @@ function rowsOf(h: Harness, runId: string): WorkflowAgent[] {
 // stop — the acceptance criterion
 // ---------------------------------------------------------------------------
 
-Deno.test("stop kills the worker AND interrupts the subagent turns in flight", async () => {
+test("stop kills the worker AND interrupts the subagent turns in flight", async () => {
   const h = harness();
   try {
     const started = await request<WorkflowRun>(h, "POST", "/workflows", {
@@ -384,7 +387,7 @@ Deno.test("stop kills the worker AND interrupts the subagent turns in flight", a
 // pause — the acceptance criterion
 // ---------------------------------------------------------------------------
 
-Deno.test("pause lets the running agent finish and admits no new ones; resume releases", async () => {
+test("pause lets the running agent finish and admits no new ones; resume releases", async () => {
   const h = harness();
   try {
     const started = await request<WorkflowRun>(h, "POST", "/workflows", {
@@ -439,7 +442,7 @@ Deno.test("pause lets the running agent finish and admits no new ones; resume re
   }
 });
 
-Deno.test("pause holds a parallel() fan-out at the semaphore; resume releases it", async () => {
+test("pause holds a parallel() fan-out at the semaphore; resume releases it", async () => {
   const h = harness();
   try {
     // Two slots, six calls. The engine's own semaphore is the meter, so this is the
@@ -511,7 +514,7 @@ Deno.test("pause holds a parallel() fan-out at the semaphore; resume releases it
   }
 });
 
-Deno.test("stopping a paused fan-out settles every journal row", async () => {
+test("stopping a paused fan-out settles every journal row", async () => {
   const h = harness();
   try {
     const run = await withHome(
@@ -575,7 +578,7 @@ Deno.test("stopping a paused fan-out settles every journal row", async () => {
 // the run's own semaphore, and the caps that do not apply to it
 // ---------------------------------------------------------------------------
 
-Deno.test("a run's semaphore meters the fan-out; the subagent caps do not apply", async () => {
+test("a run's semaphore meters the fan-out; the subagent caps do not apply", async () => {
   const h = harness();
   try {
     const script = META("six-at-once") +
@@ -617,7 +620,7 @@ Deno.test("a run's semaphore meters the fan-out; the subagent caps do not apply"
 // single-agent control
 // ---------------------------------------------------------------------------
 
-Deno.test("stopping one agent fails that call only — the run carries on", async () => {
+test("stopping one agent fails that call only — the run carries on", async () => {
   const h = harness();
   try {
     const started = await request<WorkflowRun>(h, "POST", "/workflows", {
@@ -659,7 +662,7 @@ Deno.test("stopping one agent fails that call only — the run carries on", asyn
   }
 });
 
-Deno.test("restarting one agent re-issues it on a fresh session, script still parked", async () => {
+test("restarting one agent re-issues it on a fresh session, script still parked", async () => {
   const h = harness();
   try {
     const started = await request<WorkflowRun>(h, "POST", "/workflows", {
@@ -698,7 +701,7 @@ Deno.test("restarting one agent re-issues it on a fresh session, script still pa
   }
 });
 
-Deno.test("single-agent control refuses what it cannot reach, and says which", async () => {
+test("single-agent control refuses what it cannot reach, and says which", async () => {
   const h = harness();
   try {
     const started = await request<WorkflowRun>(h, "POST", "/workflows", {
@@ -745,7 +748,7 @@ Deno.test("single-agent control refuses what it cannot reach, and says which", a
 // the REST surface itself
 // ---------------------------------------------------------------------------
 
-Deno.test("the workflow routes are reachable, and refuse at the door", async () => {
+test("the workflow routes are reachable, and refuse at the door", async () => {
   const h = harness();
   try {
     const empty = await request<{ workflows: unknown[] }>(h, "GET", "/workflows");
@@ -814,7 +817,7 @@ Deno.test("the workflow routes are reachable, and refuse at the door", async () 
   }
 });
 
-Deno.test("rerun replays the journal of a finished run and refuses a live one", async () => {
+test("rerun replays the journal of a finished run and refuses a live one", async () => {
   const h = harness();
   try {
     const started = await request<WorkflowRun>(h, "POST", "/workflows", {

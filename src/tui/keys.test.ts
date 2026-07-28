@@ -11,6 +11,7 @@
  *
  * `node:assert/strict` — jsr.io is unreachable in this environment.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import {
   type Binding,
@@ -25,10 +26,12 @@ import {
   helpSections,
   insertText,
   isTextInput,
+  FILTER_TABS,
   type KeyContext,
   type LineState,
   lookup,
   PANEL_TABS,
+  type PanelTab,
   PANEL_TOGGLE,
   resolve,
   stripCtl,
@@ -41,6 +44,7 @@ import {
 
 const ctx = (over: Partial<KeyContext> = {}): KeyContext => ({
   mode: "chat",
+  tab: null,
   emptyDraft: true,
   multiline: false,
   busy: false,
@@ -48,6 +52,7 @@ const ctx = (over: Partial<KeyContext> = {}): KeyContext => ({
   quitArmed: false,
   railLive: false,
   completing: false,
+  panelFiltering: false,
   ...over,
 });
 
@@ -55,7 +60,7 @@ const ctx = (over: Partial<KeyContext> = {}): KeyContext => ({
 // Chords
 // ---------------------------------------------------------------------------
 
-Deno.test("chordOf canonicalizes modifiers, named keys and plain characters", () => {
+test("chordOf canonicalizes modifiers, named keys and plain characters", () => {
   assert.equal(chordOf("p", { ctrl: true }), "ctrl+p");
   assert.equal(chordOf("", { escape: true }), "esc");
   assert.equal(chordOf("", { upArrow: true }), "up");
@@ -69,7 +74,7 @@ Deno.test("chordOf canonicalizes modifiers, named keys and plain characters", ()
   assert.equal(chordOf(" "), "space");
 });
 
-Deno.test("^j is one chord however the terminal spells it", () => {
+test("^j is one chord however the terminal spells it", () => {
   // Kitty-protocol terminals report the modifier…
   assert.equal(chordOf("j", { ctrl: true }), "ctrl+j");
   // …everyone else sends a bare newline with no return flag. Treating that as
@@ -79,13 +84,13 @@ Deno.test("^j is one chord however the terminal spells it", () => {
   assert.equal(chordOf("\r", { return: true }), "enter");
 });
 
-Deno.test("a coalesced chunk is not a chord — it is text", () => {
+test("a coalesced chunk is not a chord — it is text", () => {
   assert.equal(chordOf("hello world"), "");
   assert.equal(chordOf(""), "");
   assert.equal(lookup(ctx(), chordOf("hello")), null);
 });
 
-Deno.test("chordLabel prints what the overlay shows", () => {
+test("chordLabel prints what the overlay shows", () => {
   assert.equal(chordLabel("ctrl+p"), "^p");
   assert.equal(chordLabel("meta+enter"), "⌥⏎");
   assert.equal(chordLabel("super+backspace"), "⌘⌫");
@@ -97,11 +102,11 @@ Deno.test("chordLabel prints what the overlay shows", () => {
 // The table
 // ---------------------------------------------------------------------------
 
-Deno.test("no binding is dead — nothing is shadowed by an earlier row", () => {
+test("no binding is dead — nothing is shadowed by an earlier row", () => {
   assert.deepEqual(deadBindings(), []);
 });
 
-Deno.test("deadBindings catches the two ways a row goes dead", () => {
+test("deadBindings catches the two ways a row goes dead", () => {
   const identical: Binding[] = [
     { mode: "chat", chord: "ctrl+g", command: "cancel" },
     { mode: "chat", chord: "ctrl+g", command: "quit" },
@@ -123,7 +128,7 @@ Deno.test("deadBindings catches the two ways a row goes dead", () => {
   assert.deepEqual(deadBindings(complementary), []);
 });
 
-Deno.test("every binding is reachable — some real context resolves to it", () => {
+test("every binding is reachable — some real context resolves to it", () => {
   // The complement of `deadBindings`, checked the expensive way: walk the whole
   // guard space and record which ROW `lookup` actually picks. A binding no context
   // reaches is a key the user can never press, however plausible the table looks.
@@ -136,26 +141,34 @@ Deno.test("every binding is reachable — some real context resolves to it", () 
     "quitArmed",
     "railLive",
     "completing",
+    "panelFiltering",
   ] as const;
+  // The open tab is part of the context a panel row is matched against, so it is
+  // part of the space this walk covers: a row scoped to a tab is only reachable
+  // from that tab, and `null` (the panel closed) must reach none of them.
+  const tabs: (PanelTab | null)[] = [null, ...PANEL_TABS];
   const reached = new Set<number>();
   const firstMatch = (c: KeyContext, chord: string): number =>
     BINDINGS.findIndex((b) =>
       (b.mode === c.mode || b.mode === "*") && b.chord === chord &&
-      (b.when ?? []).every((g) => c[g]) && (b.not ?? []).every((g) => !c[g])
+      (b.when ?? []).every((g) => c[g]) && (b.not ?? []).every((g) => !c[g]) &&
+      (!b.tab || (c.tab !== null && c.tab !== undefined && b.tab.includes(c.tab)))
     );
   const chords = [...new Set(BINDINGS.map((b) => b.chord))];
   for (const mode of modes) {
-    for (let mask = 0; mask < 1 << flags.length; mask++) {
-      const c = ctx({ mode });
-      flags.forEach((f, i) => (c[f] = (mask & (1 << i)) !== 0));
-      // `multiline` implies a non-empty draft; that context cannot occur.
-      if (c.multiline && c.emptyDraft) continue;
-      for (const chord of chords) {
-        const at = firstMatch(c, chord);
-        if (at < 0) continue;
-        reached.add(at);
-        // The table and the resolver must agree about which row won.
-        assert.equal(lookup(c, chord), BINDINGS[at].command);
+    for (const tab of tabs) {
+      for (let mask = 0; mask < 1 << flags.length; mask++) {
+        const c = ctx({ mode, tab });
+        flags.forEach((f, i) => (c[f] = (mask & (1 << i)) !== 0));
+        // `multiline` implies a non-empty draft; that context cannot occur.
+        if (c.multiline && c.emptyDraft) continue;
+        for (const chord of chords) {
+          const at = firstMatch(c, chord);
+          if (at < 0) continue;
+          reached.add(at);
+          // The table and the resolver must agree about which row won.
+          assert.equal(lookup(c, chord), BINDINGS[at].command);
+        }
       }
     }
   }
@@ -165,7 +178,7 @@ Deno.test("every binding is reachable — some real context resolves to it", () 
   assert.deepEqual(unreachable, []);
 });
 
-Deno.test("the same chord means two things, and the guard decides which", () => {
+test("the same chord means two things, and the guard decides which", () => {
   assert.equal(lookup(ctx({ emptyDraft: true }), "ctrl+f"), "tab.tree");
   assert.equal(lookup(ctx({ emptyDraft: false }), "ctrl+f"), "cursor.right");
   assert.equal(lookup(ctx({ emptyDraft: true }), "ctrl+e"), "fold.all");
@@ -174,25 +187,45 @@ Deno.test("the same chord means two things, and the guard decides which", () => 
   assert.equal(lookup(ctx({ multiline: false }), "up"), "history.prev");
 });
 
-Deno.test("↓ enters the rail only when a subagent is actually working", () => {
+test("↓ enters the rail only when a subagent is actually working", () => {
   assert.equal(lookup(ctx({ emptyDraft: true, railLive: true }), "down"), "rail.enter");
   assert.equal(lookup(ctx({ emptyDraft: true, railLive: false }), "down"), "history.next");
   assert.equal(lookup(ctx({ emptyDraft: false, railLive: true }), "down"), "history.next");
 });
 
-Deno.test("a single ^c arms, a second quits — in every mode", () => {
+test("a single ^c arms, a second quits — in every mode", () => {
   for (const mode of ["chat", "panel", "help", "rail", "ask"] as UiMode[]) {
     assert.equal(lookup(ctx({ mode, quitArmed: false }), "ctrl+c"), "quit.arm", mode);
     assert.equal(lookup(ctx({ mode, quitArmed: true }), "ctrl+c"), "quit", mode);
   }
 });
 
-Deno.test("esc alone cancels; esc esc clears the draft", () => {
+test("esc alone cancels; esc esc clears the draft", () => {
   assert.equal(lookup(ctx({ doubleEsc: false }), "esc"), "cancel");
-  assert.equal(lookup(ctx({ doubleEsc: true }), "esc"), "draft.clear");
+  assert.equal(lookup(ctx({ doubleEsc: true, emptyDraft: false }), "esc"), "draft.clear");
+  // With nothing typed there is nothing to clear, so the double-tap must FALL
+  // THROUGH rather than swallow the gesture: hammering Escape at a running turn
+  // used to resolve to "cleared an empty draft" and leave the turn running.
+  assert.equal(lookup(ctx({ doubleEsc: true, emptyDraft: true, busy: true }), "esc"), "turn.interrupt");
 });
 
-Deno.test("the panel binds its own keys and nothing from chat", () => {
+test("esc unwinds exactly one level: popup, then turn, then notice", () => {
+  // The picker's own legend row says `esc closes`, so it must close — even mid-turn.
+  assert.equal(
+    lookup(ctx({ completing: true, busy: true }), "esc"),
+    "complete.dismiss",
+  );
+  assert.equal(lookup(ctx({ busy: true }), "esc"), "turn.interrupt");
+  assert.equal(lookup(ctx({}), "esc"), "cancel");
+});
+
+test("⏎ commits the highlighted completion before it sends", () => {
+  assert.equal(lookup(ctx({ completing: true }), "enter"), "complete.accept");
+  assert.equal(lookup(ctx({ completing: true }), "tab"), "complete.accept");
+  assert.equal(lookup(ctx({ completing: false }), "enter"), "send");
+});
+
+test("the panel binds its own keys and nothing from chat", () => {
   assert.equal(lookup(ctx({ mode: "panel" }), "j"), "move.down");
   assert.equal(lookup(ctx({ mode: "panel" }), "enter"), "panel.confirm");
   assert.equal(lookup(ctx({ mode: "panel" }), "esc"), "panel.close");
@@ -204,16 +237,78 @@ Deno.test("the panel binds its own keys and nothing from chat", () => {
   // …but the direct jumps do, because a jump that only works from chat is not one.
   assert.equal(lookup(ctx({ mode: "panel" }), "ctrl+k"), "tab.skills");
   assert.equal(lookup(ctx({ mode: "panel" }), "ctrl+t"), "panel.toggle");
-  assert.equal(lookup(ctx({ mode: "panel" }), "p"), "wf.pause");
-  assert.equal(lookup(ctx({ mode: "panel" }), "x"), "wf.stop");
-  assert.equal(lookup(ctx({ mode: "panel" }), "r"), "wf.rerun");
+  // The steering letters are the WORKFLOWS tab's, and the table says so
+  // structurally: from any other tab they are not bound at all.
+  assert.equal(lookup(ctx({ mode: "panel", tab: "workflows" }), "p"), "wf.pause");
+  assert.equal(lookup(ctx({ mode: "panel", tab: "workflows" }), "x"), "wf.stop");
+  assert.equal(lookup(ctx({ mode: "panel", tab: "workflows" }), "r"), "wf.rerun");
   assert.equal(lookup(ctx({ mode: "ask" }), "3"), "ask.pick");
   assert.equal(lookup(ctx({ mode: "ask" }), "esc"), "ask.decline");
   // A held question owns the keyboard: no tab chord steals it (spec §6).
   assert.equal(lookup(ctx({ mode: "ask" }), "ctrl+s"), null);
 });
 
-Deno.test("every tab has exactly one chord, and ^t names no tab", () => {
+test("a bare letter means what the OPEN TAB says it means", () => {
+  // The bug this replaces: `x` was `wf.stop` everywhere and the panel host re-routed
+  // it to the changes tab by hand, so the binding and the behaviour disagreed and
+  // `X` could not be routed at all. Now the table decides, per tab.
+  assert.equal(lookup(ctx({ mode: "panel", tab: "changes" }), "x"), "changes.revert");
+  assert.equal(lookup(ctx({ mode: "panel", tab: "changes" }), "X"), "changes.revertAll");
+  assert.equal(lookup(ctx({ mode: "panel", tab: "workflows" }), "x"), "wf.stop");
+  assert.equal(lookup(ctx({ mode: "panel", tab: "tree" }), "s"), "panel.confirmSummarize");
+  // …and outside its tab a scoped letter is not bound. `s` in the model picker used
+  // to commit a model — a bare letter silently changing a setting.
+  assert.equal(lookup(ctx({ mode: "panel", tab: "model" }), "s"), null);
+  assert.equal(lookup(ctx({ mode: "panel", tab: "model" }), "x"), null);
+  assert.equal(lookup(ctx({ mode: "panel", tab: "sessions" }), "p"), null);
+  // A context that names no tab is the panel closed: no tab-local row can fire.
+  assert.equal(lookup(ctx({ mode: "panel" }), "x"), null);
+});
+
+test("the workflow verbs the run view prints are all bound", () => {
+  const wf = ctx({ mode: "panel", tab: "workflows" });
+  assert.equal(lookup(wf, "e"), "wf.script");
+  assert.equal(lookup(wf, "f"), "wf.filter");
+  assert.equal(lookup(wf, "o"), "wf.openAgent");
+});
+
+test("digits address panel rows, and pgup/pgdn page them", () => {
+  for (const d of ["1", "5", "9"]) {
+    assert.equal(lookup(ctx({ mode: "panel", tab: "model" }), d), "panel.pick");
+  }
+  assert.equal(lookup(ctx({ mode: "panel", tab: "model" }), "pageup"), "move.pageUp");
+  assert.equal(lookup(ctx({ mode: "panel", tab: "model" }), "pagedown"), "move.pageDown");
+});
+
+test("the filter buffer takes the keyboard, and gives every letter back as text", () => {
+  // `/` opens it, but only where a list is long enough to need narrowing.
+  for (const tab of FILTER_TABS) {
+    assert.equal(lookup(ctx({ mode: "panel", tab }), "/"), "panel.filter");
+  }
+  assert.equal(lookup(ctx({ mode: "panel", tab: "changes" }), "/"), null);
+  // While it is open, every bare letter and digit in the panel is unbound — which
+  // is the whole reason filtering is modal: `s`, `x` and `p` are live letters, and
+  // a typist reaching them would have pinned a model and stopped a run.
+  const filtering = ctx({ mode: "panel", tab: "model", panelFiltering: true });
+  for (const chord of ["j", "k", "1", "9", "/"]) assert.equal(lookup(filtering, chord), null);
+  assert.equal(lookup(ctx({ mode: "panel", tab: "workflows", panelFiltering: true }), "x"), null);
+  // Arrows still move and ⏎ still commits: a filter narrows a list, it does not
+  // replace the list's own keyboard.
+  assert.equal(lookup(filtering, "up"), "move.up");
+  assert.equal(lookup(filtering, "enter"), "panel.confirm");
+  // Escape unwinds ONE level — the buffer, not the panel.
+  assert.equal(lookup(filtering, "esc"), "panel.filterExit");
+  assert.equal(lookup(ctx({ mode: "panel", tab: "model" }), "esc"), "panel.close");
+  assert.equal(lookup(filtering, "backspace"), "panel.filterBack");
+});
+
+test("the rail can stop what it lists", () => {
+  assert.equal(lookup(ctx({ mode: "rail" }), "x"), "rail.stop");
+  // …and only there: `x` in the composer is a character.
+  assert.equal(lookup(ctx({ mode: "chat" }), "x"), null);
+});
+
+test("every tab has exactly one chord, and ^t names no tab", () => {
   const chords = [PANEL_TOGGLE, ...TABS.map((t) => t.chord)];
   assert.equal(new Set(chords).size, chords.length, chords.join(","));
   assert.equal(new Set(PANEL_TABS).size, TABS.length);
@@ -230,7 +325,7 @@ Deno.test("every tab has exactly one chord, and ^t names no tab", () => {
   assert.equal(tabForCommand("send"), null);
 });
 
-Deno.test("resolve is lookup straight off an ink keypress", () => {
+test("resolve is lookup straight off an ink keypress", () => {
   assert.equal(resolve(ctx(), "", { escape: true, ...{} }), "cancel");
   assert.equal(resolve(ctx({ mode: "panel" }), "", { downArrow: true }), "move.down");
   assert.equal(resolve(ctx(), "x"), null);
@@ -240,7 +335,7 @@ Deno.test("resolve is lookup straight off an ink keypress", () => {
 // The overlay
 // ---------------------------------------------------------------------------
 
-Deno.test("the overlay documents the table and only the table", () => {
+test("the overlay documents the table and only the table", () => {
   const documented = BINDINGS.filter((b) => b.section && b.desc);
   const sections = helpSections();
   const rows = sections
@@ -255,10 +350,10 @@ Deno.test("the overlay documents the table and only the table", () => {
   }
 });
 
-Deno.test('the "not bound" section is true — none of those chords is bound', () => {
+test('the "not bound" section is true — none of those chords is bound', () => {
   // ^y used to be listed here; it is the theme tab's chord now, so it is gone from
   // the section. That is the section's whole job: it must stay TRUE.
-  const unbound = ["ctrl+r", "ctrl+z", "meta+d"];
+  const unbound = ["!", "ctrl+g", "ctrl+v", "ctrl+r", "ctrl+z", "meta+d"];
   for (const chord of unbound) {
     assert.equal(
       BINDINGS.some((b) => b.chord === chord),
@@ -269,7 +364,7 @@ Deno.test('the "not bound" section is true — none of those chords is bound', (
   assert.equal(UNAVAILABLE.keys.length, unbound.length);
 });
 
-Deno.test("every section header survives flattening, and carries its rows", () => {
+test("every section header survives flattening, and carries its rows", () => {
   // The regression this pins: the overlay used to nest a Box per section under a
   // parent pinned to the terminal height, yoga absorbed the overflow, and every
   // header plus one row per section vanished from the screen. A flat list cannot
@@ -290,13 +385,13 @@ Deno.test("every section header survives flattening, and carries its rows", () =
   }
 });
 
-Deno.test("the overlay is taller than a terminal, which is why it scrolls", () => {
+test("the overlay is taller than a terminal, which is why it scrolls", () => {
   // If this ever stops being true the windowing in `Help` is dead code and should
   // go. While it IS true, a renderer that does not window is a broken renderer.
   assert.ok(helpLines().length > 24);
 });
 
-Deno.test("the prose sections carry no key column of their own", () => {
+test("the prose sections carry no key column of their own", () => {
   const limits = helpSections().find((s) => s.limits);
   assert.ok(limits);
   for (const [chord] of limits.keys) assert.equal(chord, "");
@@ -308,7 +403,7 @@ Deno.test("the prose sections carry no key column of their own", () => {
 
 const line = (text: string, cursor = text.length): LineState => ({ text, cursor });
 
-Deno.test("cursor motion clamps at both ends and returns the same object on a no-op", () => {
+test("cursor motion clamps at both ends and returns the same object on a no-op", () => {
   const start = line("abc", 0);
   assert.equal(editLine(start, "cursor.left"), start);
   const end = line("abc", 3);
@@ -316,13 +411,13 @@ Deno.test("cursor motion clamps at both ends and returns the same object on a no
   assert.deepEqual(editLine(line("abc", 1), "cursor.right"), { text: "abc", cursor: 2 });
 });
 
-Deno.test("home/end are the LOGICAL line's, not the whole draft's", () => {
+test("home/end are the LOGICAL line's, not the whole draft's", () => {
   const s = line("first\nsecond", 8); // inside "second"
   assert.deepEqual(editLine(s, "cursor.home"), { text: "first\nsecond", cursor: 6 });
   assert.deepEqual(editLine(s, "cursor.end"), { text: "first\nsecond", cursor: 12 });
 });
 
-Deno.test("↑/↓ hold the column against the line they land on, and stop at the ends", () => {
+test("↑/↓ hold the column against the line they land on, and stop at the ends", () => {
   const text = "hello\nhi\nworld";
   const up = editLine(line(text, 13), "cursor.up"); // column 4 of "world"
   assert.deepEqual(up, { text, cursor: 8 }); // "hi" is shorter: land on its end
@@ -336,21 +431,21 @@ Deno.test("↑/↓ hold the column against the line they land on, and stop at th
   assert.equal(editLine(only, "cursor.down"), only);
 });
 
-Deno.test("word motion and word delete agree on where a word starts", () => {
+test("word motion and word delete agree on where a word starts", () => {
   const s = line("alpha beta gamma", 16);
   const back = editLine(s, "cursor.wordLeft");
   assert.equal(back.cursor, 11);
   assert.deepEqual(editLine(s, "delete.wordBack"), { text: "alpha beta ", cursor: 11 });
 });
 
-Deno.test("the kill keys cut to the ends of the current line only", () => {
+test("the kill keys cut to the ends of the current line only", () => {
   const s = line("first\nsecond half", 12); // inside "second half"
   assert.deepEqual(editLine(s, "delete.toEnd"), { text: "first\nsecond", cursor: 12 });
   assert.deepEqual(editLine(s, "delete.toStart"), { text: "first\n half", cursor: 6 });
   assert.deepEqual(editLine(s, "delete.line"), EMPTY_LINE);
 });
 
-Deno.test("backspace and delete-forward move the cursor the way each should", () => {
+test("backspace and delete-forward move the cursor the way each should", () => {
   assert.deepEqual(editLine(line("abc", 2), "delete.back"), { text: "ac", cursor: 1 });
   assert.deepEqual(editLine(line("abc", 1), "delete.forward"), { text: "ac", cursor: 1 });
   const atStart = line("abc", 0);
@@ -359,7 +454,7 @@ Deno.test("backspace and delete-forward move the cursor the way each should", ()
   assert.equal(editLine(atEnd, "delete.forward"), atEnd);
 });
 
-Deno.test("newline inserts at the cursor rather than sending", () => {
+test("newline inserts at the cursor rather than sending", () => {
   assert.deepEqual(editLine(line("ab", 1), "newline"), { text: "a\nb", cursor: 2 });
   assert.deepEqual(insertText(line("ab", 1), "XY"), { text: "aXYb", cursor: 3 });
 });
@@ -368,14 +463,14 @@ Deno.test("newline inserts at the cursor rather than sending", () => {
 // Raw input
 // ---------------------------------------------------------------------------
 
-Deno.test("only a trailing \\r sends a coalesced chunk", () => {
+test("only a trailing \\r sends a coalesced chunk", () => {
   assert.deepEqual(chunkInput("hello\r"), { body: "hello", send: true });
   // ^j after fast typing arrives in the same read and must NOT send.
   assert.deepEqual(chunkInput("hello\n"), { body: "hello\n", send: false });
   assert.deepEqual(chunkInput("two\r\nlines\r"), { body: "two\nlines", send: true });
 });
 
-Deno.test("stripCtl removes invisible bytes but keeps newlines and tabs out of harm", () => {
+test("stripCtl removes invisible bytes but keeps newlines and tabs out of harm", () => {
   assert.equal(stripCtl("a\x00b\x07c"), "abc");
   assert.equal(stripCtl("keep\nthe newline"), "keep\nthe newline");
   // This line used to assert "[31mred" — it pinned the bug. Removing the escape
@@ -384,7 +479,7 @@ Deno.test("stripCtl removes invisible bytes but keeps newlines and tabs out of h
   assert.equal(stripCtl("\x1b[31mred"), "red");
 });
 
-Deno.test("isTextInput tells typing from a chord", () => {
+test("isTextInput tells typing from a chord", () => {
   assert.equal(isTextInput("a"), true);
   assert.equal(isTextInput("a", { ctrl: true }), false);
   assert.equal(isTextInput("", { upArrow: true }), false);
@@ -392,7 +487,7 @@ Deno.test("isTextInput tells typing from a chord", () => {
   assert.equal(isTextInput(""), false);
 });
 
-Deno.test("an escape sequence is dropped whole, never typed into the draft", () => {
+test("an escape sequence is dropped whole, never typed into the draft", () => {
   // Alt+Enter under the kitty / modifyOtherKeys encoding. Stripping only the ESC
   // byte left "[27;3;13~" behind, which the composer then inserted as text —
   // observed live as `› and then say done[27;3;13~`.

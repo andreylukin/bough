@@ -3,7 +3,7 @@
  * through to the registry in `jobs.ts`.
  *
  * WHY THIS EXISTS. A program runs as the user with the user's full authority, and
- * could call `Deno.Command` directly for any of this. These exist for the three
+ * could call `Bun.spawn` directly for any of this. These exist for the three
  * things a raw spawn cannot do: carry the **turn's interrupt**, hand a long command
  * to the **background registry** instead of blocking the round on it, and bound the
  * output that crosses back into the model's context **deterministically**. Nothing
@@ -82,13 +82,7 @@ export const SH_TIMEOUT_MS = 120_000;
  * neither hermetic nor parallel-safe.
  */
 export function defaultBgAfterMs(): number {
-  let raw: string | undefined;
-  try {
-    raw = Deno.env.get("BOUGH_BASH_BG_AFTER_MS");
-  } catch {
-    return DEFAULT_BG_AFTER_MS; // no --allow-env; the default is fine
-  }
-  const n = Number(raw);
+  const n = Number(process.env.BOUGH_BASH_BG_AFTER_MS);
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_BG_AFTER_MS;
 }
 
@@ -96,10 +90,10 @@ export function defaultBgAfterMs(): number {
 function raceExit(shell: Shell, ms: number): Promise<"exit" | "timeout"> {
   return new Promise((resolve) => {
     const timer = setTimeout(() => resolve("timeout"), ms);
-    // Unref'd: a pending threshold timer must not keep the process (or a test's op
-    // sanitizer) awake once the command has already been dealt with.
-    Deno.unrefTimer(timer);
-    shell.child.status.then(() => {
+    // Unref'd: a pending threshold timer must not keep the process awake once the
+    // command has already been dealt with.
+    timer.unref();
+    shell.exit.then(() => {
       clearTimeout(timer);
       resolve("exit");
     });
@@ -124,7 +118,7 @@ function drained(shell: Shell, ms: number): Promise<void> {
       resolve();
     };
     const timer = setTimeout(finish, ms);
-    Deno.unrefTimer(timer);
+    timer.unref();
     shell.pumps.then(finish, finish);
   });
 }
@@ -135,7 +129,7 @@ const DRAIN_GRACE_MS = 1_000;
 /**
  * Make the turn's interrupt reach the whole process TREE, not just the shell.
  *
- * `Deno.Command`'s `signal` option SIGTERMs the direct child only, and `sh -c
+ * `Bun.spawn`'s `signal` option SIGTERMs the direct child only, and `sh -c
  * 'printf x; sleep 60'` does not forward SIGTERM to its foreground child. The
  * shell dies, `sleep` is reparented and keeps the inherited stdout pipe open, and
  * the reader waits on a process nobody can see — the stop button looks like it
@@ -144,6 +138,13 @@ const DRAIN_GRACE_MS = 1_000;
 function killTreeOnAbort(shell: Shell, signal: AbortSignal | undefined): () => void {
   if (!signal) return () => {};
   const onAbort = () => signalTree(shell, "SIGTERM");
+  // A listener added to an ALREADY-aborted signal never fires. `JobRegistry.spawn`
+  // no longer passes the signal to `Bun.spawn` (see its docstring), so nothing else
+  // would kill this shell — it would run on with the turn already stopped.
+  if (signal.aborted) {
+    onAbort();
+    return () => {};
+  }
   signal.addEventListener("abort", onAbort, { once: true });
   return () => signal.removeEventListener("abort", onAbort);
 }
@@ -266,12 +267,12 @@ export async function shConcurrent(
       timedOut = true;
       signalTree(shell, "SIGKILL");
     }, timeoutMs);
-    Deno.unrefTimer(timer);
+    timer.unref();
     // `sh -c` does not forward SIGTERM to its foreground child, so the turn's
     // interrupt has to reach the tree the same way the deadline does.
     const detach = killTreeOnAbort(shell, ctx.signal);
     try {
-      const status = await shell.child.status;
+      const status = await shell.exit;
       detach();
       await drained(shell, DRAIN_GRACE_MS);
       // Retention already bounded the buffer; truncate again so the same rule

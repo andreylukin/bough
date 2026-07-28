@@ -18,12 +18,23 @@
  * document.)
  */
 
+import { test } from "bun:test";
 import { deepStrictEqual, ok } from "node:assert";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Bus } from "../bus.ts";
 import { ConflictError, NotFoundError, ProgramError } from "../errors.ts";
 import type { BoughEvent } from "../schema/events.ts";
 import type { BackgroundJob } from "../schema/parts.ts";
-import { JobRegistry, MAX_HEAD_CHARS, MAX_TAIL_CHARS, shellText, truncateMiddle } from "./jobs.ts";
+import {
+  descendantPids,
+  JobRegistry,
+  MAX_HEAD_CHARS,
+  MAX_TAIL_CHARS,
+  shellText,
+  truncateMiddle,
+} from "./jobs.ts";
 import { bash, createShellHostFns, shConcurrent, type ShellCtx } from "./shell.ts";
 
 // ---------------------------------------------------------------------------
@@ -102,7 +113,7 @@ function rig(options: { sessionId?: string; signal?: AbortSignal } = {}): Rig {
     notify: (sessionId, text) => notes.push({ sessionId, text }),
   });
   const sessionId = options.sessionId ?? "sess-1";
-  const ctx: ShellCtx = { sessionId, workspace: Deno.cwd(), signal: options.signal };
+  const ctx: ShellCtx = { sessionId, workspace: process.cwd(), signal: options.signal };
   return {
     registry,
     ctx,
@@ -116,6 +127,17 @@ function rig(options: { sessionId?: string; signal?: AbortSignal } = {}): Rig {
 }
 
 /** Poll `pred` until it holds, or fail after `ms`. */
+/** Whether `pid` still exists. Signal 0 tests for existence without delivering one. */
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+
 async function untilTrue(what: string, pred: () => boolean, ms = 10_000): Promise<void> {
   const deadline = Date.now() + ms;
   while (Date.now() < deadline) {
@@ -153,7 +175,7 @@ const MANY_LINES = "i=1; while [ $i -le 200 ]; do printf 'line%s\\n' $i; i=$((i+
 // bash — the auto-background handoff (the headline AC)
 // ---------------------------------------------------------------------------
 
-Deno.test("bash auto-backgrounds a long command and the job stays readable", async () => {
+test("bash auto-backgrounds a long command and the job stays readable", async () => {
   const r = rig();
   // Prints once before the threshold, once well after, then holds itself open.
   const out = await bash(
@@ -191,7 +213,7 @@ Deno.test("bash auto-backgrounds a long command and the job stays readable", asy
   await r.cleanup();
 });
 
-Deno.test("an auto-backgrounded command is never killed by the threshold", async () => {
+test("an auto-backgrounded command is never killed by the threshold", async () => {
   const r = rig();
   await bash("sleep 60", r.ctx, { registry: r.registry, bgAfterMs: 100 });
   // Well past the threshold, the process is still alive.
@@ -201,7 +223,7 @@ Deno.test("an auto-backgrounded command is never killed by the threshold", async
   await r.cleanup();
 });
 
-Deno.test("auto-background ignores the concurrency cap so no command is ever lost", async () => {
+test("auto-background ignores the concurrency cap so no command is ever lost", async () => {
   // The cap brakes bashBg loops. A foreground command that merely took a while must
   // still be handed over rather than blocked-then-killed (plan §6.7).
   const r = rig();
@@ -214,7 +236,7 @@ Deno.test("auto-background ignores the concurrency cap so no command is ever los
   await r.cleanup();
 });
 
-Deno.test("bash returns output inline when the command finishes first", async () => {
+test("bash returns output inline when the command finishes first", async () => {
   const r = rig();
   eq(await bash("printf 'hi\\n'", r.ctx, { registry: r.registry, bgAfterMs: 5_000 }), "hi");
   eq(r.registry.listJobs(r.ctx.sessionId), []);
@@ -222,7 +244,7 @@ Deno.test("bash returns output inline when the command finishes first", async ()
   await r.cleanup();
 });
 
-Deno.test("bash reports a non-zero exit as data, not as a throw", async () => {
+test("bash reports a non-zero exit as data, not as a throw", async () => {
   const r = rig();
   const out = await bash("printf 'nope\\n'; exit 3", r.ctx, {
     registry: r.registry,
@@ -237,7 +259,7 @@ Deno.test("bash reports a non-zero exit as data, not as a throw", async () => {
 // bash — the turn's interrupt
 // ---------------------------------------------------------------------------
 
-Deno.test("bash on an already-interrupted turn fails without spawning anything", async () => {
+test("bash on an already-interrupted turn fails without spawning anything", async () => {
   const ac = new AbortController();
   ac.abort();
   const r = rig({ signal: ac.signal });
@@ -252,7 +274,7 @@ Deno.test("bash on an already-interrupted turn fails without spawning anything",
   await r.cleanup();
 });
 
-Deno.test("interrupting a running bash kills the child and keeps its partial output", async () => {
+test("interrupting a running bash kills the child and keeps its partial output", async () => {
   const ac = new AbortController();
   const r = rig({ signal: ac.signal });
   const running = bash("printf 'partial\\n'; sleep 60", r.ctx, {
@@ -275,11 +297,48 @@ Deno.test("interrupting a running bash kills the child and keeps its partial out
   await r.cleanup();
 });
 
+/**
+ * THE ONE THAT MATTERS: the interrupt reaches the GRANDCHILD, not just `sh`.
+ *
+ * The test above asserts the promise rejects, which it did even while the work kept
+ * running: `sh -c 'sleep 60'` does not forward SIGTERM, so killing the shell alone
+ * reparented `sleep` onto init and it ran to completion — while the TUI printed
+ * "interrupting — the program's children are killed". A rejected promise is not a
+ * dead process, so this one asserts on `ps`.
+ *
+ * It fails whenever `JobRegistry.spawn` hands the abort signal to `Bun.spawn`:
+ * Bun registers its own listener AT SPAWN TIME, before `killTreeOnAbort` can add
+ * ours, so Bun kills the shell first and our tree walk finds an empty tree.
+ */
+test("interrupting a bash kills the grandchild too, not just the shell", async () => {
+  const ac = new AbortController();
+  const r = rig({ signal: ac.signal });
+  // Diffed against a before-snapshot so only THIS command's processes are asserted
+  // on — the suite shares one process and other shells may be in flight.
+  const before = new Set(descendantPids(process.pid));
+  const running = bash("sleep 47; echo never", r.ctx, { registry: r.registry, bgAfterMs: 30_000 });
+  // Two deep: `sh -c` and the `sleep` it does not forward signals to.
+  await untilTrue(
+    "the shell and its sleep to appear",
+    () => descendantPids(process.pid).filter((p) => !before.has(p)).length >= 2,
+  );
+  const spawned = descendantPids(process.pid).filter((p) => !before.has(p));
+
+  ac.abort();
+  has((await rejectsWith(() => running, ProgramError)).message, "the turn was interrupted");
+  await untilTrue(
+    `every pid of the interrupted command (${spawned.join(",")}) to die`,
+    () => spawned.every((pid) => !alive(pid)),
+    5_000,
+  );
+  await r.cleanup();
+});
+
 // ---------------------------------------------------------------------------
 // sh
 // ---------------------------------------------------------------------------
 
-Deno.test("sh never throws on a non-zero exit and returns codes in input order", async () => {
+test("sh never throws on a non-zero exit and returns codes in input order", async () => {
   const r = rig();
   const res = await shConcurrent(
     ["exit 3", "printf 'ok\\n'", "exit 1", "printf 'err\\n' >&2; exit 7"],
@@ -295,7 +354,7 @@ Deno.test("sh never throws on a non-zero exit and returns codes in input order",
   await r.cleanup();
 });
 
-Deno.test("sh reports a command that does not exist rather than throwing", async () => {
+test("sh reports a command that does not exist rather than throwing", async () => {
   const r = rig();
   const res = await shConcurrent(["definitely-not-a-command-xyzzy"], r.ctx, {
     registry: r.registry,
@@ -306,11 +365,11 @@ Deno.test("sh reports a command that does not exist rather than throwing", async
   await r.cleanup();
 });
 
-Deno.test("sh runs its commands concurrently", async () => {
+test("sh runs its commands concurrently", async () => {
   // A rendezvous rather than a stopwatch: each command creates its own marker and
   // then blocks until the other's exists. Both can only finish if they overlap; if
   // they were serialized the first would spin until the deadline killed it.
-  const dir = await Deno.makeTempDir({ prefix: "bough-sh-" });
+  const dir = await mkdtemp(join(tmpdir(), "bough-sh-"));
   const r = rig();
   try {
     const meet = (mine: string, theirs: string) =>
@@ -323,11 +382,11 @@ Deno.test("sh runs its commands concurrently", async () => {
     eq(res, [{ code: 0, out: "a" }, { code: 0, out: "b" }]);
   } finally {
     await r.cleanup();
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true, force: true });
   }
 });
 
-Deno.test("sh kills a command that outlives its deadline and names the escape hatch", async () => {
+test("sh kills a command that outlives its deadline and names the escape hatch", async () => {
   const r = rig();
   const res = await shConcurrent(["printf 'started\\n'; sleep 60"], r.ctx, {
     registry: r.registry,
@@ -344,7 +403,7 @@ Deno.test("sh kills a command that outlives its deadline and names the escape ha
 // The four job verbs
 // ---------------------------------------------------------------------------
 
-Deno.test("bashBg returns an id and a pid and publishes job.spawned", async () => {
+test("bashBg returns an id and a pid and publishes job.spawned", async () => {
   const r = rig();
   const { id, pid } = JSON.parse(r.registry.bashBg("sleep 60", r.ctx));
   eq(id, "bg_1");
@@ -359,7 +418,7 @@ Deno.test("bashBg returns an id and a pid and publishes job.spawned", async () =
   await r.cleanup();
 });
 
-Deno.test("bashBg refuses past the concurrency cap and names the running ids", async () => {
+test("bashBg refuses past the concurrency cap and names the running ids", async () => {
   const r = rig();
   for (let i = 0; i < 8; i++) r.registry.bashBg("sleep 60", r.ctx);
   const err = throwsWith(() => r.registry.bashBg("sleep 60", r.ctx), ConflictError);
@@ -368,7 +427,7 @@ Deno.test("bashBg refuses past the concurrency cap and names the running ids", a
   await r.cleanup();
 });
 
-Deno.test("bashOutput returns only what accrued since the last call", async () => {
+test("bashOutput returns only what accrued since the last call", async () => {
   const r = rig();
   r.registry.bashBg("printf 'one\\n'; sleep 1.5; printf 'two\\n'; sleep 60", r.ctx);
   const first = await untilAccrued(
@@ -386,7 +445,7 @@ Deno.test("bashOutput returns only what accrued since the last call", async () =
   await r.cleanup();
 });
 
-Deno.test("bashWait blocks until exit, returns the exit line, and suppresses the note", async () => {
+test("bashWait blocks until exit, returns the exit line, and suppresses the note", async () => {
   const r = rig();
   r.registry.bashBg("printf 'done\\n'; exit 4", r.ctx);
   const out = await r.registry.bashWait("bg_1", r.ctx.sessionId);
@@ -398,7 +457,7 @@ Deno.test("bashWait blocks until exit, returns the exit line, and suppresses the
   await r.cleanup();
 });
 
-Deno.test("an unclaimed noisy exit posts a note; a silent clean one does not", async () => {
+test("an unclaimed noisy exit posts a note; a silent clean one does not", async () => {
   const r = rig();
   r.registry.bashBg("printf 'oops\\n'; exit 2", r.ctx);
   await untilTrue("the completion note", () => r.notes.length === 1);
@@ -418,7 +477,7 @@ Deno.test("an unclaimed noisy exit posts a note; a silent clean one does not", a
   await r.cleanup();
 });
 
-Deno.test("bashKill reports the real outcome and a second kill reports the prior exit", async () => {
+test("bashKill reports the real outcome and a second kill reports the prior exit", async () => {
   const r = rig();
   r.registry.bashBg("sleep 60", r.ctx);
   matches(await r.registry.bashKill("bg_1", r.ctx.sessionId), /^killed bg_1 \(/);
@@ -428,7 +487,7 @@ Deno.test("bashKill reports the real outcome and a second kill reports the prior
   await r.cleanup();
 });
 
-Deno.test("an unknown job id says what this session actually has", async () => {
+test("an unknown job id says what this session actually has", async () => {
   const r = rig();
   const empty = throwsWith(
     () => r.registry.bashOutput("bg_9", r.ctx.sessionId),
@@ -446,7 +505,7 @@ Deno.test("an unknown job id says what this session actually has", async () => {
   await r.cleanup();
 });
 
-Deno.test("a session cannot see or read another session's shells", async () => {
+test("a session cannot see or read another session's shells", async () => {
   const r = rig({ sessionId: "sess-a" });
   r.registry.bashBg("sleep 60", r.ctx);
   eq(r.registry.listJobs("sess-b"), []);
@@ -457,7 +516,7 @@ Deno.test("a session cannot see or read another session's shells", async () => {
   await r.cleanup();
 });
 
-Deno.test("jobOutput does not steal the model's bashOutput cursor", async () => {
+test("jobOutput does not steal the model's bashOutput cursor", async () => {
   const r = rig();
   r.registry.bashBg("printf 'shared\\n'; sleep 60", r.ctx);
   await untilTrue(
@@ -469,9 +528,9 @@ Deno.test("jobOutput does not steal the model's bashOutput cursor", async () => 
   await r.cleanup();
 });
 
-Deno.test("killJobsOf stops one session's shells and leaves another's alone", async () => {
+test("killJobsOf stops one session's shells and leaves another's alone", async () => {
   const r = rig({ sessionId: "sess-a" });
-  const other: ShellCtx = { sessionId: "sess-b", workspace: Deno.cwd() };
+  const other: ShellCtx = { sessionId: "sess-b", workspace: process.cwd() };
   r.registry.bashBg("sleep 60", r.ctx);
   r.registry.bashBg("sleep 60", r.ctx);
   r.registry.bashBg("sleep 60", other);
@@ -487,7 +546,7 @@ Deno.test("killJobsOf stops one session's shells and leaves another's alone", as
 // Deterministic truncation
 // ---------------------------------------------------------------------------
 
-Deno.test("truncateMiddle keeps head and tail verbatim with an explicit marker", () => {
+test("truncateMiddle keeps head and tail verbatim with an explicit marker", () => {
   const text = "H".repeat(50) + "M".repeat(500) + "T".repeat(50);
   const out = truncateMiddle(text, { head: 50, tail: 50 });
   ok(out.startsWith("H".repeat(50)), "the head must survive verbatim");
@@ -499,17 +558,17 @@ Deno.test("truncateMiddle keeps head and tail verbatim with an explicit marker",
   eq(truncateMiddle(text, { head: 50, tail: 50 }), out);
 });
 
-Deno.test("truncateMiddle leaves anything within budget completely untouched", () => {
+test("truncateMiddle leaves anything within budget completely untouched", () => {
   const text = "x".repeat(100);
   eq(truncateMiddle(text, { head: 50, tail: 50 }), text);
   eq(truncateMiddle("", { head: 1, tail: 1 }), "");
   eq(MAX_HEAD_CHARS + MAX_TAIL_CHARS, 400_000);
 });
 
-Deno.test("a shell's retained buffer keeps the HEAD when output overruns the budget", async () => {
+test("a shell's retained buffer keeps the HEAD when output overruns the budget", async () => {
   const registry = new JobRegistry({ limits: { head: 40, tail: 40 } });
-  const shell = registry.spawn(MANY_LINES, { cwd: Deno.cwd() });
-  await shell.child.status;
+  const shell = registry.spawn(MANY_LINES, { cwd: process.cwd() });
+  await shell.exit;
   await shell.pumps;
   const text = shellText(shell);
   // The head is the FIRST bytes the command printed, not the last — a rolling
@@ -520,9 +579,9 @@ Deno.test("a shell's retained buffer keeps the HEAD when output overruns the bud
   lacks(text, "line100", "the middle is what gets omitted");
 });
 
-Deno.test("bashOutput reports the hole when unread output falls out of retention", async () => {
+test("bashOutput reports the hole when unread output falls out of retention", async () => {
   const registry = new JobRegistry({ limits: { head: 20, tail: 20 } });
-  const ctx: ShellCtx = { sessionId: "sess-hole", workspace: Deno.cwd() };
+  const ctx: ShellCtx = { sessionId: "sess-hole", workspace: process.cwd() };
   registry.bashBg(MANY_LINES, ctx);
   const seen = await registry.bashWait("bg_1", ctx.sessionId);
   has(seen, "chars omitted from the middle");
@@ -534,7 +593,7 @@ Deno.test("bashOutput reports the hole when unread output falls out of retention
 // The bridged surface
 // ---------------------------------------------------------------------------
 
-Deno.test("the bridged sh takes a JSON array and answers with JSON, in order", async () => {
+test("the bridged sh takes a JSON array and answers with JSON, in order", async () => {
   const r = rig();
   const host = createShellHostFns(r.ctx, { registry: r.registry });
   const out = await host.sh(JSON.stringify(["printf 'a\\n'", "exit 5", "printf 'c\\n'"]));
@@ -546,7 +605,7 @@ Deno.test("the bridged sh takes a JSON array and answers with JSON, in order", a
   await r.cleanup();
 });
 
-Deno.test("the bridged sh rejects a non-array payload with the call it wanted", async () => {
+test("the bridged sh rejects a non-array payload with the call it wanted", async () => {
   const r = rig();
   const host = createShellHostFns(r.ctx, { registry: r.registry });
   for (const bad of ['"ls"', "not json at all", "[1,2]"]) {
@@ -556,7 +615,7 @@ Deno.test("the bridged sh rejects a non-array payload with the call it wanted", 
   await r.cleanup();
 });
 
-Deno.test("the bridged job verbs round-trip through the registry", async () => {
+test("the bridged job verbs round-trip through the registry", async () => {
   const r = rig();
   const host = createShellHostFns(r.ctx, { registry: r.registry });
   const { id } = JSON.parse(await host.bashBg("printf 'bridged\\n'; exit 0"));

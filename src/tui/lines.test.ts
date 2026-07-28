@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "bun:test";
 import {
   type Branch,
   buildLines,
@@ -54,7 +55,7 @@ const joined = (lines: VLine[]) => lines.map((l) => l.text).join("\n");
 
 // ---- wrapping ---------------------------------------------------------------
 
-Deno.test("every emitted line fits the width — long prose, long code, long output", () => {
+test("every emitted line fits the width — long prose, long code, long output", () => {
   const w = 48;
   const m = msg({
     id: "m1",
@@ -69,7 +70,7 @@ Deno.test("every emitted line fits the width — long prose, long code, long out
   }
 });
 
-Deno.test("a hard-wrapped block keeps its gutter on every physical line", () => {
+test("a hard-wrapped block keeps its gutter on every physical line", () => {
   const m = msg({
     id: "m1",
     parts: [call("c1", "const x = 1"), result("c1", "z".repeat(120))],
@@ -81,7 +82,7 @@ Deno.test("a hard-wrapped block keeps its gutter on every physical line", () => 
 
 // ---- folding: the program that ran ------------------------------------------
 
-Deno.test("a collapsed tool step says what the program did", () => {
+test("a collapsed tool step says what the program did", () => {
   const m = msg({
     id: "m1",
     parts: [
@@ -92,7 +93,9 @@ Deno.test("a collapsed tool step says what the program did", () => {
   const collapsed = messageLines(m, CLOSED, CLOSED, 120);
   const head = collapsed.find((l) => l.text.includes("step"))!;
   assert.ok(head.text.includes("▸"), head.text); // closed
-  assert.ok(head.text.includes("run_steps"));
+  // The tool NAME is gone from the header: bough has one tool, so repeating its
+  // internal identifier per call was the whole summary of a multi-step turn.
+  assert.equal(head.text.includes("run_steps"), false, head.text);
   // Was the clipped source line; now the operation, the way every comparable
   // harness labels a step (`Ran 1 shell command`). The code is one keypress away.
   assert.ok(head.text.includes("ran 1 command"), head.text);
@@ -110,7 +113,7 @@ Deno.test("a collapsed tool step says what the program did", () => {
   assert.ok(joined(expanded).includes("↳ output"));
 });
 
-Deno.test("one round of program + result is ONE step, not two entries", () => {
+test("one round of program + result is ONE step, not two entries", () => {
   const m = msg({
     id: "m1",
     parts: [call("c1", "a()"), result("c1", "1"), call("c2", "b()"), result("c2", "2")],
@@ -120,7 +123,7 @@ Deno.test("one round of program + result is ONE step, not two entries", () => {
   assert.ok(heads[0].text.includes("2 steps"));
 });
 
-Deno.test("a running call is visible on the collapsed header and shows live console output", () => {
+test("a running call is visible on the collapsed header and shows live console output", () => {
   const m = msg({
     id: "m1",
     pending: true,
@@ -129,7 +132,10 @@ Deno.test("a running call is visible on the collapsed header and shows live cons
   const logs = { c1: ["first", "second"] };
   const head = messageLines(m, CLOSED, CLOSED, 120, undefined, logs)
     .find((l) => l.text.includes("step"))!;
-  assert.ok(head.text.includes("⚙ run_steps…"), head.text);
+  // The live marker leads the row, where a 100-column screen cannot clip it, and
+  // the summary is present tense while the call is still open.
+  assert.ok(head.text.includes("⚙"), head.text);
+  assert.ok(head.text.indexOf("⚙") < head.text.indexOf("step"), head.text);
 
   const live = joined(messageLines(m, OPEN, CLOSED, 120, undefined, logs));
   assert.ok(live.includes("↳ output (live)"));
@@ -144,7 +150,7 @@ Deno.test("a running call is visible on the collapsed header and shows live cons
   assert.equal(settled.split("first").length - 1, 1);
 });
 
-Deno.test("caps: a long program and a long output truncate; only !full lifts them", () => {
+test("caps: a long program and a long output truncate; only !full lifts them", () => {
   const code = Array.from({ length: 40 }, (_v, i) => `line ${i}`).join("\n");
   const out = Array.from({ length: 60 }, (_v, i) => `out ${i}`).join("\n");
   const m = msg({ id: "m1", parts: [call("c1", code), result("c1", out)] });
@@ -154,17 +160,17 @@ Deno.test("caps: a long program and a long output truncate; only !full lifts the
   assert.equal(capped.includes("line 14"), false);
   assert.ok(capped.includes("out 19")); // OUTPUT_LINES = 20
   assert.equal(capped.includes("out 20"), false);
-  assert.ok(capped.includes("more lines · click to show all"));
+  assert.ok(capped.includes("more lines"));
 
   // The cap-lift is its own key, so expand-all cannot dump the whole thing.
   const more = messageLines(m, OPEN, CLOSED, 120).find((l) => l.text.includes("more lines"))!;
   assert.equal(more.click, "m1:0!full");
   const full = joined(messageLines(m, OPEN, () => true, 120));
   assert.ok(full.includes("line 39") && full.includes("out 59"));
-  assert.equal(full.includes("more lines · click to show all"), false);
+  assert.equal(full.includes("more lines"), false);
 });
 
-Deno.test("an interrupted result keeps its partial output and never reads ✓ done", () => {
+test("an interrupted result keeps its partial output and never reads ✓ done", () => {
   const m = msg({
     id: "m1",
     parts: [
@@ -181,7 +187,7 @@ Deno.test("an interrupted result keeps its partial output and never reads ✓ do
   assert.ok(head.text.includes("⏹ interrupted"));
 });
 
-Deno.test("an errored result is marked on the closed header", () => {
+test("an errored result is marked on the closed header", () => {
   const m = msg({
     id: "m1",
     parts: [call("c1", "boom()"), result("c1", "[program error] boom", { isError: true })],
@@ -192,7 +198,7 @@ Deno.test("an errored result is marked on the closed header", () => {
 
 // ---- folding: reasoning -----------------------------------------------------
 
-Deno.test("reasoning folds: a collapsed gist line, an expanded gutter block", () => {
+test("reasoning folds: a collapsed gist line, an expanded gutter block", () => {
   const m = msg({
     id: "m1",
     parts: [
@@ -214,7 +220,7 @@ Deno.test("reasoning folds: a collapsed gist line, an expanded gutter block", ()
   assert.ok(joined(collapsed).includes("done"));
 });
 
-Deno.test("reasoning with no text renders nothing at all", () => {
+test("reasoning with no text renders nothing at all", () => {
   const m = msg({
     id: "m1",
     parts: [{ type: "reasoning", text: "  \n " }, { type: "text", text: "hi" }],
@@ -224,7 +230,7 @@ Deno.test("reasoning with no text renders nothing at all", () => {
 
 // ---- other part kinds -------------------------------------------------------
 
-Deno.test("a settled ask renders as one always-visible Q → A line", () => {
+test("a settled ask renders as one always-visible Q → A line", () => {
   const answered = msg({
     id: "m1",
     parts: [
@@ -244,7 +250,7 @@ Deno.test("a settled ask renders as one always-visible Q → A line", () => {
   assert.ok(joined(messageLines(declined, CLOSED, CLOSED, 120)).includes("declined"));
 });
 
-Deno.test("an image part renders as a compact placeholder and copies its path", () => {
+test("an image part renders as a compact placeholder and copies its path", () => {
   const m = msg({
     id: "m1",
     role: "user",
@@ -264,7 +270,7 @@ Deno.test("an image part renders as a compact placeholder and copies its path", 
   assert.equal(img.copy, "/home/u/.bough/attachments/x.png");
 });
 
-Deno.test("an [image] system note collapses onto the placeholder — no role label, no path", () => {
+test("an [image] system note collapses onto the placeholder — no role label, no path", () => {
   const m = msg({
     id: "m1",
     role: "system",
@@ -297,7 +303,7 @@ const NOTE = (status: string, files: string, report: string | null) =>
     "before building on top; there is nothing to merge.",
   ].join("\n");
 
-Deno.test("parseSubagentNote: the real note shape from agents/notes.ts", () => {
+test("parseSubagentNote: the real note shape from agents/notes.ts", () => {
   const p = parseSubagentNote(NOTE("finished", "a.ts, b.ts", "# Findings\nAll good."))!;
   assert.equal(p.title, "extract token logic");
   assert.equal(p.sessionId, "sub-1");
@@ -306,7 +312,7 @@ Deno.test("parseSubagentNote: the real note shape from agents/notes.ts", () => {
   assert.equal(p.report, "# Findings\nAll good.");
 });
 
-Deno.test("parseSubagentNote: the four outcomes stay distinguishable", () => {
+test("parseSubagentNote: the four outcomes stay distinguishable", () => {
   assert.equal(parseSubagentNote(NOTE("finished", "none", null))!.ok, true);
   const failed = parseSubagentNote(
     NOTE("FAILED — its turn errored. Nothing retried it", "x", null),
@@ -326,13 +332,13 @@ Deno.test("parseSubagentNote: the four outcomes stay distinguishable", () => {
   assert.equal(parseSubagentNote("just a normal message"), null);
 });
 
-Deno.test("parseSubagentNote: 'not reported' is unknown, not a file named so", () => {
+test("parseSubagentNote: 'not reported' is unknown, not a file named so", () => {
   const p = parseSubagentNote(NOTE("finished", "not reported", null))!;
   assert.deepEqual(p.files, []);
   assert.equal(p.filesUnknown, true);
 });
 
-Deno.test("parseBgNote / parseImageNote", () => {
+test("parseBgNote / parseImageNote", () => {
   assert.equal(
     parseBgNote('[background] bg_2 finished (exit 1) — command "make", 3 lines'),
     "bg_2",
@@ -354,7 +360,7 @@ const branch = (p: Partial<Branch> & { id: string }): Branch => ({
   ...p,
 });
 
-Deno.test("a finished subagent's card replaces its raw note at the spawn point", () => {
+test("a finished subagent's card replaces its raw note at the spawn point", () => {
   const noteText = NOTE("finished", "a.ts", "Found three call sites.");
   const thread = [
     msg({ id: "u1", role: "user", parts: [{ type: "text", text: "go" }] }),
@@ -379,7 +385,7 @@ Deno.test("a finished subagent's card replaces its raw note at the spawn point",
   assert.ok(bare.includes("[subagent finished]"));
 });
 
-Deno.test("a running subagent is left to the rail; a card with no spawn point tails out", () => {
+test("a running subagent is left to the rail; a card with no spawn point tails out", () => {
   const thread = [msg({ id: "a1", parts: [{ type: "text", text: "working" }] })];
   const running = branch({ id: "sub-1", title: "live one", busy: true, originMessageId: "a1" });
   assert.equal(
@@ -393,7 +399,7 @@ Deno.test("a running subagent is left to the rail; a card with no spawn point ta
   assert.ok(out.includes("stranded"));
 });
 
-Deno.test("branch cards state the real outcome — failed and orphaned never read done", () => {
+test("branch cards state the real outcome — failed and orphaned never read done", () => {
   const thread = [msg({ id: "a1", parts: [{ type: "text", text: "x" }] })];
   const render = (b: Partial<Branch>) =>
     joined(buildLines(thread, CLOSED, CLOSED, 100, {
@@ -406,7 +412,7 @@ Deno.test("branch cards state the real outcome — failed and orphaned never rea
   assert.ok(render({ status: "orphaned" }).includes("the server restarted"));
 });
 
-Deno.test("a message steered into a running turn carries a queued ack until a reply follows", () => {
+test("a message steered into a running turn carries a queued ack until a reply follows", () => {
   const withPending = [
     msg({ id: "u1", role: "user", parts: [{ type: "text", text: "go" }] }),
     msg({ id: "a1", pending: true, parts: [{ type: "text", text: "working" }] }),
@@ -420,7 +426,37 @@ Deno.test("a message steered into a running turn carries a queued ack until a re
   );
 });
 
-Deno.test("job cards: a running shell looks alive, an exited one states its outcome", () => {
+test("marks land where they happened, and a destructive one outlives its toast", () => {
+  // G4 + G11. What a turn cost used to vanish with the spinner, and a revert printed a
+  // notice that expired ten seconds later — after which nothing anywhere said a file
+  // had been thrown away. Both are marks now, and a mark is interleaved by TIME rather
+  // than appended, so it stays under the turn it belongs to when the next one lands.
+  const thread = [
+    msg({ id: "u1", role: "user", parts: [{ type: "text", text: "go" }], createdAt: 10 }),
+    msg({ id: "a1", parts: [{ type: "text", text: "done" }], createdAt: 20 }),
+    msg({ id: "u2", role: "user", parts: [{ type: "text", text: "again" }], createdAt: 40 }),
+  ];
+  const marks = [
+    { id: "m2", sessionId: "s1", at: 30, kind: "turn" as const, text: "✓ 14s · 3.2k tok · $0.021" },
+    { id: "m1", sessionId: "s1", at: 15, kind: "destructive" as const, text: "reverted README.md" },
+    { id: "m3", sessionId: "s1", at: 90, kind: "destructive" as const, text: "killed bg_7" },
+  ];
+  const rows = buildLines(thread, CLOSED, CLOSED, 100, { marks }).map((l) => l.text.trim());
+  const at = (text: string) => rows.findIndex((r) => r === text);
+  // Oldest first regardless of the order they were handed over, each in its own place.
+  assert.ok(at("reverted README.md") > at("go"));
+  assert.ok(at("reverted README.md") < at("done"));
+  assert.ok(at("✓ 14s · 3.2k tok · $0.021") > at("done"));
+  assert.ok(at("✓ 14s · 3.2k tok · $0.021") < at("again"));
+  // A mark newer than every message still renders — at the tail, where it happened.
+  assert.equal(at("killed bg_7"), rows.length - 1);
+  // A copy yields the line itself, not the two columns of indent it hangs from.
+  const killed = buildLines(thread, CLOSED, CLOSED, 100, { marks })
+    .find((l) => l.text.trim() === "killed bg_7");
+  assert.equal(killed?.copy, "killed bg_7");
+});
+
+test("job cards: a running shell looks alive, an exited one states its outcome", () => {
   const now = 100_000;
   const running: JobView = {
     id: "bg_1",
@@ -452,7 +488,7 @@ Deno.test("job cards: a running shell looks alive, an exited one states its outc
   assert.ok(out.every((l) => l.click === "jobs" || l.text.trim() === ""));
 });
 
-Deno.test("a [background] wake note is dropped while its job card shows it", () => {
+test("a [background] wake note is dropped while its job card shows it", () => {
   const note = '[background] bg_1 finished (exit 0) — command "make", 2 lines of output.';
   const thread = [msg({ id: "n1", role: "system", parts: [{ type: "text", text: note }] })];
   const job: JobView = {
@@ -474,7 +510,7 @@ Deno.test("a [background] wake note is dropped while its job card shows it", () 
 
 // ---- the viewport window ----------------------------------------------------
 
-Deno.test("visibleSlice: pinned to the tail, scrolled up, and clamped past the top", () => {
+test("visibleSlice: pinned to the tail, scrolled up, and clamped past the top", () => {
   const lines: VLine[] = Array.from({ length: 100 }, (_v, i) => ({ text: `l${i}` }));
   const tail = visibleSlice(lines, 10, 0);
   assert.equal(tail.rows[0].text, "l90");

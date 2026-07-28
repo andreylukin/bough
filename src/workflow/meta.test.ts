@@ -10,12 +10,12 @@
  * inside a line comment and inside a block comment, a commented-out declaration
  * above the real one — and, on the other side, every shape of computed value.
  *
- * Assertions come from `node:assert` rather than `@std/assert`: jsr.io is denied by
- * this environment's egress policy, so the jsr import declared in `deno.json` cannot
- * resolve. `node:assert` is built into the runtime and needs no fetch. (Same
+ * Assertions come from `node:assert` rather than `@std/assert`, which is not a
+ * dependency of this repo. `node:assert` is built into the runtime. (Same
  * constraint `bus.test.ts`, `paths.test.ts` and `patch.test.ts` document.)
  */
 
+import { test } from "bun:test";
 import { deepStrictEqual, match, ok, strictEqual, throws } from "node:assert";
 import { WorkflowScriptError } from "../errors.ts";
 import {
@@ -47,7 +47,7 @@ return rest
 // The scan
 // ---------------------------------------------------------------------------
 
-Deno.test("metaLiteral: braces in a string do not end the literal", () => {
+test("metaLiteral: braces in a string do not end the literal", () => {
   const lit = metaLiteral(
     `export const meta = { name: 'x', description: "has {braces} and } more" }\nconst rest = 1`,
   );
@@ -57,7 +57,7 @@ Deno.test("metaLiteral: braces in a string do not end the literal", () => {
   ok(!lit.includes("rest"));
 });
 
-Deno.test("metaLiteral: a template literal with ${} interpolation does not end it", () => {
+test("metaLiteral: a template literal with ${} interpolation does not end it", () => {
   // The interpolation contributes a `{` and a `}` of its own, and nests a string
   // and a template that each carry more braces. A scan that treats a backtick as an
   // ordinary quote closes at the inner backtick and truncates the literal.
@@ -72,7 +72,7 @@ Deno.test("metaLiteral: a template literal with ${} interpolation does not end i
   strictEqual(lit.at(-1), "}");
 });
 
-Deno.test("metaLiteral: braces inside line and block comments are skipped", () => {
+test("metaLiteral: braces inside line and block comments are skipped", () => {
   const lit = metaLiteral(HAZARDS);
   ok(lit !== null);
   ok(lit.includes("trailing { comment }"));
@@ -81,7 +81,7 @@ Deno.test("metaLiteral: braces inside line and block comments are skipped", () =
   ok(!lit.includes("not:"));
 });
 
-Deno.test("metaLiteral: a commented-out or quoted declaration is not mistaken for it", () => {
+test("metaLiteral: a commented-out or quoted declaration is not mistaken for it", () => {
   const span = metaSpan(HAZARDS)!;
   ok(span !== null);
   // Line 3, not the decoy on line 1.
@@ -97,7 +97,7 @@ Deno.test("metaLiteral: a commented-out or quoted declaration is not mistaken fo
   strictEqual(metaLiteral("return 1"), null);
 });
 
-Deno.test("metaLiteral: an unterminated literal is an error, not a short literal", () => {
+test("metaLiteral: an unterminated literal is an error, not a short literal", () => {
   throws(
     () => metaLiteral("export const meta = { name: 'x',\n  description: 'y'\n"),
     (err: Error) => err instanceof WorkflowScriptError && /never closed/.test(err.message),
@@ -112,7 +112,7 @@ Deno.test("metaLiteral: an unterminated literal is an error, not a short literal
 // The parse
 // ---------------------------------------------------------------------------
 
-Deno.test("extractMeta: reads the whole literal, comments and escapes and all", () => {
+test("extractMeta: reads the whole literal, comments and escapes and all", () => {
   const meta = extractMeta(HAZARDS);
   strictEqual(meta.name, "audit-handlers");
   strictEqual(meta.description, `matches {a} and {b}, 'quoted' "too"`);
@@ -122,7 +122,7 @@ Deno.test("extractMeta: reads the whole literal, comments and escapes and all", 
   ]);
 });
 
-Deno.test("extractMeta: accepts an interpolation-free template and decodes escapes", () => {
+test("extractMeta: accepts an interpolation-free template and decodes escapes", () => {
   const meta = extractMeta(
     "export const meta = {\n" +
       "  name: `audit`,\n" +
@@ -133,7 +133,7 @@ Deno.test("extractMeta: accepts an interpolation-free template and decodes escap
   strictEqual(meta.description, "line\none\ttab \u2713 A");
 });
 
-Deno.test("extractMeta: trailing commas and no phases are fine", () => {
+test("extractMeta: trailing commas and no phases are fine", () => {
   const meta = extractMeta("export const meta = { name: 'n', description: 'd', }\n");
   strictEqual(meta.phases, undefined);
 });
@@ -168,7 +168,7 @@ const COMPUTED: Array<[string, string, RegExp]> = [
 ];
 
 for (const [what, script, expected] of COMPUTED) {
-  Deno.test(`extractMeta: rejects ${what}, saying why`, () => {
+  test(`extractMeta: rejects ${what}, saying why`, () => {
     throws(
       () => extractMeta(script),
       (err: Error) => {
@@ -186,7 +186,7 @@ for (const [what, script, expected] of COMPUTED) {
   });
 }
 
-Deno.test("extractMeta: a `__proto__` key is data, never a prototype swap", () => {
+test("extractMeta: a `__proto__` key is data, never a prototype swap", () => {
   const value = parseLiteral(`{ "__proto__": { "polluted": true } }`, 0, 36) as Record<
     string,
     unknown
@@ -200,7 +200,7 @@ Deno.test("extractMeta: a `__proto__` key is data, never a prototype swap", () =
 // Shape validation
 // ---------------------------------------------------------------------------
 
-Deno.test("extractMeta: a missing meta names the declaration the author must write", () => {
+test("extractMeta: a missing meta names the declaration the author must write", () => {
   throws(
     () => extractMeta("phase('Review')\nreturn 1\n"),
     (err: Error) =>
@@ -209,7 +209,7 @@ Deno.test("extractMeta: a missing meta names the declaration the author must wri
   );
 });
 
-Deno.test("extractMeta: a wrong shape is reported per field", () => {
+test("extractMeta: a wrong shape is reported per field", () => {
   throws(
     () => extractMeta("export const meta = { name: 'x' }\nreturn 1"),
     (err: Error) => err instanceof WorkflowScriptError && /invalid workflow meta/.test(err.message),
@@ -237,7 +237,7 @@ Deno.test("extractMeta: a wrong shape is reported per field", () => {
 // Stripping
 // ---------------------------------------------------------------------------
 
-Deno.test("stripMeta: removes the statement and keeps every line number", () => {
+test("stripMeta: removes the statement and keeps every line number", () => {
   const body = stripMeta(HAZARDS);
   strictEqual(body.split("\n").length, HAZARDS.split("\n").length);
   ok(!body.includes("audit-handlers"));
@@ -250,19 +250,19 @@ Deno.test("stripMeta: removes the statement and keeps every line number", () => 
   ok(body.includes(`const rest = { not: "meta" }`));
 });
 
-Deno.test("stripMeta: the stripped body is what the workflow worker can compile", () => {
+test("stripMeta: the stripped body is what the workflow worker can compile", () => {
   // `export` is illegal inside the function body the worker builds, so this is the
   // property that matters — asserted against the real pre-flight from `run.ts`.
   ok(checkWorkflowSyntax(HAZARDS) !== null, "the raw script must not compile as a body");
   strictEqual(checkWorkflowSyntax(stripMeta(HAZARDS)), null);
 });
 
-Deno.test("stripMeta: a script with no meta is returned untouched", () => {
+test("stripMeta: a script with no meta is returned untouched", () => {
   const script = "phase('Review')\nreturn 1\n";
   strictEqual(stripMeta(script), script);
 });
 
-Deno.test("readWorkflowMeta: validated meta plus the runnable body, in one pass", () => {
+test("readWorkflowMeta: validated meta plus the runnable body, in one pass", () => {
   const { meta, body } = readWorkflowMeta(HAZARDS);
   strictEqual(meta.name, "audit-handlers");
   strictEqual(meta.phases?.length, 2);

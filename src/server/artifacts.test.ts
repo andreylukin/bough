@@ -20,6 +20,9 @@
  * `~/.bough`. Assertions come from `node:assert/strict` rather than `@std/assert`:
  * jsr.io is not reachable from this environment.
  */
+import { test } from "bun:test";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { Bus } from "../bus.ts";
@@ -49,7 +52,7 @@ const TABLE: Route[] = [
 ];
 
 function tmp(): string {
-  return Deno.makeTempDirSync({ prefix: "bough-artifacts-" });
+  return mkdtempSync(join(tmpdir(), "bough-artifacts-"));
 }
 
 function store(root: string): ArtifactStoreOptions {
@@ -63,14 +66,14 @@ function store(root: string): ArtifactStoreOptions {
  */
 async function withBoughHome(body: (home: string) => Promise<void> | void): Promise<void> {
   const home = tmp();
-  const previous = Deno.env.get("BOUGH_HOME");
-  Deno.env.set("BOUGH_HOME", home);
+  const previous = process.env["BOUGH_HOME"];
+  process.env["BOUGH_HOME"] = home;
   try {
     await body(home);
   } finally {
-    if (previous === undefined) Deno.env.delete("BOUGH_HOME");
-    else Deno.env.set("BOUGH_HOME", previous);
-    Deno.removeSync(home, { recursive: true });
+    if (previous === undefined) delete process.env["BOUGH_HOME"];
+    else process.env["BOUGH_HOME"] = previous;
+    rmSync(home, { recursive: true, force: true });
   }
 }
 
@@ -86,7 +89,7 @@ const get = (path: string, headers?: HeadersInit) =>
 
 // ---- publish ----------------------------------------------------------------
 
-Deno.test("publishArtifact writes under the session dir and returns url + href", async () => {
+test("publishArtifact writes under the session dir and returns url + href", async () => {
   const root = tmp();
   try {
     const art = await publishArtifact("sessAbc", "index.html", "<h1>hi</h1>", store(root));
@@ -94,40 +97,40 @@ Deno.test("publishArtifact writes under the session dir and returns url + href",
     assert.equal(art.url, "/artifacts/sessAbc/index.html");
     assert.equal(art.href, "http://127.0.0.1:4321/artifacts/sessAbc/index.html");
     assert.equal(art.bytes, "<h1>hi</h1>".length);
-    assert.equal(Deno.readTextFileSync(join(root, "sessAbc", "index.html")), "<h1>hi</h1>");
+    assert.equal(readFileSync(join(root, "sessAbc", "index.html"), "utf8"), "<h1>hi</h1>");
   } finally {
-    Deno.removeSync(root, { recursive: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
-Deno.test("publishArtifact creates nested paths and overwrites in place", async () => {
+test("publishArtifact creates nested paths and overwrites in place", async () => {
   const root = tmp();
   try {
     await publishArtifact("s1", "assets/app.js", "v1", store(root));
     const two = await publishArtifact("s1", "assets/app.js", "v2-longer", store(root));
     assert.equal(two.name, "assets/app.js");
-    assert.equal(Deno.readTextFileSync(join(root, "s1", "assets", "app.js")), "v2-longer");
+    assert.equal(readFileSync(join(root, "s1", "assets", "app.js"), "utf8"), "v2-longer");
     // Republishing must not leave two files behind; the link the user has stays valid.
     assert.deepEqual(listArtifacts("s1", store(root)).map((a) => a.name), ["assets/app.js"]);
   } finally {
-    Deno.removeSync(root, { recursive: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
-Deno.test("a leading slash means the store root, not the filesystem root", async () => {
+test("a leading slash means the store root, not the filesystem root", async () => {
   const root = tmp();
   try {
     const art = await publishArtifact("s1", "/index.html", "x", store(root));
     assert.equal(art.name, "index.html");
-    assert.equal(Deno.readTextFileSync(join(root, "s1", "index.html")), "x");
+    assert.equal(readFileSync(join(root, "s1", "index.html"), "utf8"), "x");
   } finally {
-    Deno.removeSync(root, { recursive: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
 // ---- AC 1: traversal is blocked in BOTH the name and the session id ----------
 
-Deno.test("AC: traversal in the NAME is blocked", async () => {
+test("AC: traversal in the NAME is blocked", async () => {
   const root = tmp();
   try {
     for (const bad of ["../escaped.html", "sub/../../escaped.html", "..", "", "sub/.."]) {
@@ -139,19 +142,19 @@ Deno.test("AC: traversal in the NAME is blocked", async () => {
       await assert.rejects(() => publishArtifact("s1", bad, "pwned", store(root)));
     }
     // Nothing escaped: the only thing under the root is the session dir we never made.
-    assert.deepEqual([...Deno.readDirSync(root)].map((e) => e.name), []);
+    assert.deepEqual(readdirSync(root), []);
 
     // An absolute-LOOKING name is not a traversal — the leading slash means the
     // store's own root, so it lands inside the session dir rather than at /etc.
     const art = await publishArtifact("s1", "/etc/passwd", "not the real one", store(root));
     assert.equal(art.name, "etc/passwd");
-    assert.equal(Deno.readTextFileSync(join(root, "s1", "etc", "passwd")), "not the real one");
+    assert.equal(readFileSync(join(root, "s1", "etc", "passwd"), "utf8"), "not the real one");
   } finally {
-    Deno.removeSync(root, { recursive: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
-Deno.test("AC: traversal in the SESSION ID is blocked", async () => {
+test("AC: traversal in the SESSION ID is blocked", async () => {
   const root = tmp();
   const outside = tmp();
   try {
@@ -165,15 +168,15 @@ Deno.test("AC: traversal in the SESSION ID is blocked", async () => {
       // An unaddressable id has published nothing, and says so rather than throwing.
       assert.deepEqual(listArtifacts(bad, store(root)), []);
     }
-    assert.deepEqual([...Deno.readDirSync(root)].map((e) => e.name), []);
-    assert.deepEqual([...Deno.readDirSync(outside)].map((e) => e.name), []);
+    assert.deepEqual(readdirSync(root), []);
+    assert.deepEqual(readdirSync(outside), []);
   } finally {
-    Deno.removeSync(root, { recursive: true });
-    Deno.removeSync(outside, { recursive: true });
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
   }
 });
 
-Deno.test("one session cannot read or write another's artifacts", async () => {
+test("one session cannot read or write another's artifacts", async () => {
   const root = tmp();
   try {
     await publishArtifact("victim", "secret.html", "<b>secret</b>", store(root));
@@ -183,11 +186,11 @@ Deno.test("one session cannot read or write another's artifacts", async () => {
     assert.equal(res.status, 403);
     assert.deepEqual(listArtifacts("attacker", store(root)), []);
   } finally {
-    Deno.removeSync(root, { recursive: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
-Deno.test("the artifact route rejects an escaping path with 403, not 404", async () => {
+test("the artifact route rejects an escaping path with 403, not 404", async () => {
   await withBoughHome(async () => {
     const { call } = fixture();
     await publishArtifact("s1", "index.html", "<h1>hi</h1>");
@@ -212,7 +215,7 @@ Deno.test("the artifact route rejects an escaping path with 403, not 404", async
 
 // ---- AC 2: listing survives a database reset --------------------------------
 
-Deno.test("AC: listArtifacts survives a database reset — no row required", async () => {
+test("AC: listArtifacts survives a database reset — no row required", async () => {
   await withBoughHome(async () => {
     await publishArtifact("ghost", "index.html", "<h1>still here</h1>");
     await publishArtifact("ghost", "assets/app.js", "console.log(1)");
@@ -232,7 +235,7 @@ Deno.test("AC: listArtifacts survives a database reset — no row required", asy
   });
 });
 
-Deno.test("listArtifacts is newest-first and empty for a session that published none", async () => {
+test("listArtifacts is newest-first and empty for a session that published none", async () => {
   const root = tmp();
   try {
     assert.deepEqual(listArtifacts("nobody", store(root)), []);
@@ -243,13 +246,13 @@ Deno.test("listArtifacts is newest-first and empty for a session that published 
     assert.deepEqual(list.map((a) => a.name).sort(), ["a.html", "sub/b.css"]);
     assert.equal(list[0].name, "sub/b.css");
   } finally {
-    Deno.removeSync(root, { recursive: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
 // ---- AC 3: the comments sidecar is not reachable ----------------------------
 
-Deno.test("AC: the comments sidecar is neither listed nor served as an artifact", async () => {
+test("AC: the comments sidecar is neither listed nor served as an artifact", async () => {
   await withBoughHome(async (home) => {
     const { call } = fixture();
     await publishArtifact("s9", "index.html", "<html><body>hi</body></html>");
@@ -257,7 +260,7 @@ Deno.test("AC: the comments sidecar is neither listed nor served as an artifact"
 
     // It exists, and it is OUTSIDE the artifact tree (plan §6.12).
     const sidecar = commentsPathFor("s9");
-    assert.equal(Deno.statSync(sidecar).isFile, true);
+    assert.equal(statSync(sidecar).isFile(), true);
     assert.equal(sidecar.startsWith(join(home, "artifacts")), false);
 
     // Not walked by the listing.
@@ -284,7 +287,7 @@ Deno.test("AC: the comments sidecar is neither listed nor served as an artifact"
 
 // ---- serving ----------------------------------------------------------------
 
-Deno.test("serveArtifact sets the content type and never caches", async () => {
+test("serveArtifact sets the content type and never caches", async () => {
   const root = tmp();
   try {
     await publishArtifact("s3", "page.html", "<!doctype html><title>x</title>", store(root));
@@ -305,11 +308,11 @@ Deno.test("serveArtifact sets the content type and never caches", async () => {
     assert.equal(csv.headers.get("content-type"), "text/csv; charset=utf-8");
     await csv.text();
   } finally {
-    Deno.removeSync(root, { recursive: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
-Deno.test("serveArtifact sniffs an extensionless HTML file so it renders", async () => {
+test("serveArtifact sniffs an extensionless HTML file so it renders", async () => {
   const root = tmp();
   try {
     await publishArtifact("s7", "my-explorer", "<!doctype html>\n<title>x</title>", store(root));
@@ -323,11 +326,11 @@ Deno.test("serveArtifact sniffs an extensionless HTML file so it renders", async
     assert.equal(plain.headers.get("content-type"), "application/octet-stream");
     await plain.text();
   } finally {
-    Deno.removeSync(root, { recursive: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
-Deno.test("a missing artifact is JSON for a client and a page for a browser", async () => {
+test("a missing artifact is JSON for a client and a page for a browser", async () => {
   const root = tmp();
   try {
     const api = await serveArtifact("s5", "nope.html", store(root));
@@ -343,17 +346,17 @@ Deno.test("a missing artifact is JSON for a client and a page for a browser", as
     assert.equal(browser.headers.get("content-type"), "text/html; charset=utf-8");
     assert.equal(await browser.text(), NOT_FOUND_PAGE);
   } finally {
-    Deno.removeSync(root, { recursive: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
-Deno.test("the 404 page is self-contained — no external network references", () => {
+test("the 404 page is self-contained — no external network references", () => {
   assert.equal(/src=["']https?:/i.test(NOT_FOUND_PAGE), false);
   assert.equal(/href=["']https?:/i.test(NOT_FOUND_PAGE), false);
   assert.equal(/cdn\.|googleapis|unpkg|jsdelivr/i.test(NOT_FOUND_PAGE), false);
 });
 
-Deno.test("a directory is a 404, not a directory listing", async () => {
+test("a directory is a 404, not a directory listing", async () => {
   const root = tmp();
   try {
     await publishArtifact("s6", "assets/app.js", "x", store(root));
@@ -361,11 +364,11 @@ Deno.test("a directory is a 404, not a directory listing", async () => {
     assert.equal(res.status, 404);
     await res.text();
   } finally {
-    Deno.removeSync(root, { recursive: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
-Deno.test("a percent-encoded name round-trips through the route", async () => {
+test("a percent-encoded name round-trips through the route", async () => {
   await withBoughHome(async () => {
     const { call } = fixture();
     const art = await publishArtifact("s8", "my report.html", "<html><body>ok</body></html>");
@@ -376,10 +379,10 @@ Deno.test("a percent-encoded name round-trips through the route", async () => {
   });
 });
 
-Deno.test("the store root is created lazily and lives outside any workspace", async () => {
+test("the store root is created lazily and lives outside any workspace", async () => {
   await withBoughHome(async (home) => {
-    assert.throws(() => Deno.statSync(artifactsDir()));
+    assert.throws(() => statSync(artifactsDir()));
     await publishArtifact("s10", "index.html", "x");
-    assert.equal(Deno.statSync(join(home, "artifacts", "s10", "index.html")).isFile, true);
+    assert.equal(statSync(join(home, "artifacts", "s10", "index.html")).isFile(), true);
   });
 });

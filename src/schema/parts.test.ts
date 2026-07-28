@@ -11,6 +11,7 @@
  * Each of these is a thing a later task could quietly re-add. This test is what
  * makes that show up as a red run rather than as a second source of truth.
  */
+import { test } from "bun:test";
 import { Message, Part, Session, Turn } from "./parts.ts";
 import { BoughEvent, EVENT_TYPES } from "./events.ts";
 import { CompactBody, CreateSessionBody, PartPick } from "./requests.ts";
@@ -35,7 +36,7 @@ function assertThrows(fn: () => unknown, msg = "expected a throw"): void {
   throw new Error(msg);
 }
 
-Deno.test("every part kind round-trips", () => {
+test("every part kind round-trips", () => {
   const parts = [
     { type: "text", text: "hi" },
     { type: "reasoning", text: "thinking" },
@@ -57,13 +58,13 @@ Deno.test("every part kind round-trips", () => {
   assertEquals(parts.length, 6, "spec §4 names exactly six part kinds");
 });
 
-Deno.test("the part union is closed — removed kinds are rejected", () => {
+test("the part union is closed — removed kinds are rejected", () => {
   // `prose` existed in the old tree; `run_steps` output is not a part kind.
   assertThrows(() => Part.parse({ type: "prose", text: "x" }));
   assertThrows(() => Part.parse({ type: "worker", text: "x" }));
 });
 
-Deno.test("a message carries an ordered parts array and a pending flag", () => {
+test("a message carries an ordered parts array and a pending flag", () => {
   const m = Message.parse({
     id: "m1",
     sessionId: "s1",
@@ -78,7 +79,7 @@ Deno.test("a message carries an ordered parts array and a pending flag", () => {
   assertThrows(() => Message.parse({ ...m, role: "worker" }));
 });
 
-Deno.test("visibility is derived: a Session has no archive/deprecate field", () => {
+test("visibility is derived: a Session has no archive/deprecate field", () => {
   const s = Session.parse({
     id: "s1",
     title: "t",
@@ -96,7 +97,7 @@ Deno.test("visibility is derived: a Session has no archive/deprecate field", () 
   assertEquals(s.originId, "s0");
 });
 
-Deno.test("session kinds are the five of spec §4", () => {
+test("session kinds are the five of spec §4", () => {
   for (const kind of ["root", "fork", "compaction", "subagent", "workflow_agent"]) {
     assertEquals(
       Session.parse({ id: "s", title: "t", kind, createdAt: 0, parentId: null }).kind,
@@ -108,7 +109,7 @@ Deno.test("session kinds are the five of spec §4", () => {
   );
 });
 
-Deno.test("a turn can be orphaned — restart recovery depends on it", () => {
+test("a turn can be orphaned — restart recovery depends on it", () => {
   const t = Turn.parse({
     id: "t1",
     sessionId: "s1",
@@ -124,7 +125,7 @@ Deno.test("a turn can be orphaned — restart recovery depends on it", () => {
   }
 });
 
-Deno.test("the event-name set is closed and stamped", () => {
+test("the event-name set is closed and stamped", () => {
   // Spec §3's list, plus tool.log (spec §5.3's live console stream).
   assertEquals(EVENT_TYPES.length, 16);
   assert(EVENT_TYPES.includes("turn.finished"));
@@ -140,7 +141,7 @@ Deno.test("the event-name set is closed and stamped", () => {
   assertThrows(() => BoughEvent.parse({ type: "message.invented", seq: 1, ts: 1 }));
 });
 
-Deno.test("host names: one list, with the dropped verbs actually dropped", () => {
+test("host names: one list, with the dropped verbs actually dropped", () => {
   assertEquals(new Set(HOST_FN_NAMES).size, HOST_FN_NAMES.length, "no duplicate host names");
   // Spec §17: one editing idiom, no output digestion, no semantic recall.
   for (const gone of ["read", "edit", "extract", "recall"]) {
@@ -168,7 +169,7 @@ Deno.test("host names: one list, with the dropped verbs actually dropped", () =>
   assertEquals(PROGRAM_PARAMS.at(-1), "console");
 });
 
-Deno.test("request bodies reject the empty selections that make a no-op branch", () => {
+test("request bodies reject the empty selections that make a no-op branch", () => {
   assertThrows(() => PartPick.parse({ messageId: "m1", parts: [] }));
   assertEquals(PartPick.parse({ messageId: "m1" }).parts, undefined);
   assertThrows(() => CompactBody.parse({ picks: [] }));

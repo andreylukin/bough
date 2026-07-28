@@ -15,14 +15,17 @@
  *
  * Hermetic: `root` is a temp directory, so nothing touches the real `~/.bough`.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ArtifactError } from "../errors.ts";
 import type { TurnCtx } from "../types.ts";
 import { createArtifactHostFn, listArtifacts } from "./artifact.ts";
 
 function tmp(): string {
-  return Deno.makeTempDirSync({ prefix: "bough-hostfn-artifact-" });
+  return mkdtempSync(join(tmpdir(), "bough-hostfn-artifact-"));
 }
 
 /** A fabricated turn context — no server, no database reads on this path. */
@@ -33,14 +36,14 @@ function turnCtx(sessionId: string): TurnCtx {
     sessionId,
     turnId: "t1",
     messageId: "m1",
-    workspace: Deno.cwd(),
+    workspace: process.cwd(),
     model: "test-model",
     signal: new AbortController().signal,
     depth: 0,
   };
 }
 
-Deno.test("artifact() writes into the session's store and returns url + href as JSON", async () => {
+test("artifact() writes into the session's store and returns url + href as JSON", async () => {
   const root = tmp();
   try {
     const { artifact } = createArtifactHostFn(turnCtx("sX"), {
@@ -59,13 +62,13 @@ Deno.test("artifact() writes into the session's store and returns url + href as 
       href: "http://127.0.0.1:4321/artifacts/sX/index.html",
       bytes: "<h1>report</h1>".length,
     });
-    assert.equal(Deno.readTextFileSync(join(root, "sX", "index.html")), "<h1>report</h1>");
+    assert.equal(readFileSync(join(root, "sX", "index.html"), "utf8"), "<h1>report</h1>");
   } finally {
-    Deno.removeSync(root, { recursive: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
-Deno.test("artifact() is scoped to its own session — it cannot name another's", async () => {
+test("artifact() is scoped to its own session — it cannot name another's", async () => {
   const root = tmp();
   try {
     const spawner = createArtifactHostFn(turnCtx("spawner"), { root });
@@ -73,19 +76,19 @@ Deno.test("artifact() is scoped to its own session — it cannot name another's"
     await spawner.artifact!("a.html", "spawner");
     await child.artifact!("a.html", "child");
 
-    assert.equal(Deno.readTextFileSync(join(root, "spawner", "a.html")), "spawner");
-    assert.equal(Deno.readTextFileSync(join(root, "child", "a.html")), "child");
+    assert.equal(readFileSync(join(root, "spawner", "a.html"), "utf8"), "spawner");
+    assert.equal(readFileSync(join(root, "child", "a.html"), "utf8"), "child");
     assert.deepEqual(listArtifacts("child", { root }).map((a) => a.name), ["a.html"]);
 
     // Reaching sideways is a path escape, not a write into the sibling's store.
     await assert.rejects(() => child.artifact!("../spawner/a.html", "pwned"));
-    assert.equal(Deno.readTextFileSync(join(root, "spawner", "a.html")), "spawner");
+    assert.equal(readFileSync(join(root, "spawner", "a.html"), "utf8"), "spawner");
   } finally {
-    Deno.removeSync(root, { recursive: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
-Deno.test("an escaping name is refused with text naming the move, and writes nothing", async () => {
+test("an escaping name is refused with text naming the move, and writes nothing", async () => {
   const root = tmp();
   try {
     const { artifact } = createArtifactHostFn(turnCtx("sY"), { root });
@@ -98,13 +101,13 @@ Deno.test("an escaping name is refused with text naming the move, and writes not
       assert.equal(message.includes("index.html"), true);
       assert.equal(message.includes("nothing was written"), true);
     }
-    assert.deepEqual([...Deno.readDirSync(root)].map((e) => e.name), []);
+    assert.deepEqual(readdirSync(root), []);
   } finally {
-    Deno.removeSync(root, { recursive: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
-Deno.test("republishing overwrites in place so an open link keeps working", async () => {
+test("republishing overwrites in place so an open link keeps working", async () => {
   const root = tmp();
   try {
     const { artifact } = createArtifactHostFn(turnCtx("sZ"), { root });
@@ -117,11 +120,11 @@ Deno.test("republishing overwrites in place so an open link keeps working", asyn
     assert.equal(second.bytes, "v2-longer".length);
     assert.deepEqual(listArtifacts("sZ", { root }).map((a) => a.name), ["page.html"]);
   } finally {
-    Deno.removeSync(root, { recursive: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
-Deno.test("nested asset paths publish and list with forward slashes", async () => {
+test("nested asset paths publish and list with forward slashes", async () => {
   const root = tmp();
   try {
     const { artifact } = createArtifactHostFn(turnCtx("sN"), { root });
@@ -137,6 +140,6 @@ Deno.test("nested asset paths publish and list with forward slashes", async () =
       ["assets/app.js", "index.html"],
     );
   } finally {
-    Deno.removeSync(root, { recursive: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });

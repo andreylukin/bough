@@ -10,6 +10,7 @@
  * Assertions come from `node:assert/strict`: jsr.io is unreachable here and a test
  * that cannot run offline does not belong in `deno task test`.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { Bus } from "../bus.ts";
 import { openDb, type SqliteDb } from "../db/db.ts";
@@ -41,7 +42,7 @@ function interrupt(id: string): Request {
   return new Request(`http://127.0.0.1:4321/sessions/${id}/interrupt`, { method: "POST" });
 }
 
-Deno.test("interrupting a running turn aborts it and reports that it did", async () => {
+test("interrupting a running turn aborts it and reports that it did", async () => {
   const { ctx, db, registry } = fixture();
   const id = seedSession(db);
 
@@ -61,7 +62,7 @@ Deno.test("interrupting a running turn aborts it and reports that it did", async
   assert.equal(cascaded, true, "the cascade hooks must fire — that is what kills the children");
 });
 
-Deno.test("interrupting an idle session is an ANSWER, not an error", async () => {
+test("interrupting an idle session is an ANSWER, not an error", async () => {
   const { ctx, db } = fixture();
   const id = seedSession(db);
 
@@ -75,7 +76,7 @@ Deno.test("interrupting an idle session is an ANSWER, not an error", async () =>
   assert.match(body.message, /nothing was running/);
 });
 
-Deno.test("a second interrupt is safe — the verb is idempotent", async () => {
+test("a second interrupt is safe — the verb is idempotent", async () => {
   const { ctx, db, registry } = fixture();
   const id = seedSession(db);
   registry.begin(id);
@@ -89,7 +90,7 @@ Deno.test("a second interrupt is safe — the verb is idempotent", async () => {
   assert.equal(typeof second.interrupted, "boolean");
 });
 
-Deno.test("interrupting an unknown session is a 404, not a silent success", async () => {
+test("interrupting an unknown session is a 404, not a silent success", async () => {
   const { ctx } = fixture();
   const res = await createHandler(ctx)(interrupt("no-such-session"));
   assert.equal(res.status, 404);

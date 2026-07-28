@@ -10,8 +10,10 @@
  * reference is never expanded into the stored file, and writing one part of the
  * document never silently erases the other.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { McpError } from "../errors.ts";
 import {
@@ -31,10 +33,10 @@ import {
 } from "./config.ts";
 
 function tmpFile(): string {
-  return join(Deno.makeTempDirSync({ prefix: "bough-mcp-config-" }), "mcp.json");
+  return join(mkdtempSync(join(tmpdir(), "bough-mcp-config-")), "mcp.json");
 }
 
-Deno.test("registry: empty when absent, round-trips, and a definition is not a grant", () => {
+test("registry: empty when absent, round-trips, and a definition is not a grant", () => {
   const file = tmpFile();
   assert.deepEqual(loadRegistry({ file }), { servers: {} });
 
@@ -49,7 +51,7 @@ Deno.test("registry: empty when absent, round-trips, and a definition is not a g
   assert.deepEqual(activationsFor("s1", { file }), []);
 });
 
-Deno.test("registry: a corrupt file contributes nothing rather than half a catalog", () => {
+test("registry: a corrupt file contributes nothing rather than half a catalog", () => {
   const file = tmpFile();
   writeFileSync(file, "{ this is not json");
   assert.deepEqual(loadRegistry({ file }), { servers: {} });
@@ -57,7 +59,7 @@ Deno.test("registry: a corrupt file contributes nothing rather than half a catal
   assert.deepEqual(loadRegistry({ file }), { servers: {} });
 });
 
-Deno.test("registry: entry shapes are rejected with a sentence naming the fix", () => {
+test("registry: entry shapes are rejected with a sentence naming the fix", () => {
   const file = tmpFile();
   // Neither transport, and both, are the same mistake reported the same way.
   for (const bad of [{}, { command: "x", url: "https://y.example" }]) {
@@ -85,7 +87,7 @@ Deno.test("registry: entry shapes are rejected with a sentence naming the fix", 
   assert.deepEqual(loadRegistry({ file }), { servers: {} }); // nothing was written
 });
 
-Deno.test("upsertServer replaces one entry without touching siblings; removeServer deletes", () => {
+test("upsertServer replaces one entry without touching siblings; removeServer deletes", () => {
   const file = tmpFile();
   saveRegistry({ servers: { exa: { command: "npx", args: ["exa-mcp"] } } }, { file });
   upsertServer("echo", { command: "deno", args: ["run", "srv.ts"] }, { file });
@@ -101,7 +103,7 @@ Deno.test("upsertServer replaces one entry without touching siblings; removeServ
   assert.deepEqual(Object.keys(loadRegistry({ file }).servers), ["exa"]);
 });
 
-Deno.test("requireServer names the alternatives instead of saying 'not found'", () => {
+test("requireServer names the alternatives instead of saying 'not found'", () => {
   const file = tmpFile();
   saveRegistry({ servers: { exa: { command: "npx" }, linear: { url: "https://l.example" } } }, {
     file,
@@ -116,7 +118,7 @@ Deno.test("requireServer names the alternatives instead of saying 'not found'", 
   );
 });
 
-Deno.test("saveRegistry preserves grants; removeServer revokes the ones it orphans", () => {
+test("saveRegistry preserves grants; removeServer revokes the ones it orphans", () => {
   const file = tmpFile();
   saveRegistry({ servers: { echo: { command: "deno" }, exa: { command: "npx" } } }, { file });
   setActivation("s1", "echo", true, { file });
@@ -135,7 +137,7 @@ Deno.test("saveRegistry preserves grants; removeServer revokes the ones it orpha
   assert.deepEqual(activationsFor("s1", { file }), ["exa"]);
 });
 
-Deno.test("activations: per-session and global scopes, and a lapsed TTL fails closed", () => {
+test("activations: per-session and global scopes, and a lapsed TTL fails closed", () => {
   const file = tmpFile();
   const now = Date.parse("2026-07-27T12:00:00Z");
   saveRegistry({ servers: { echo: { command: "deno" }, linear: { url: "https://l.example" } } }, {
@@ -163,7 +165,7 @@ Deno.test("activations: per-session and global scopes, and a lapsed TTL fails cl
   assert.deepEqual(activationsFor("s1", { file, now }), []);
 });
 
-Deno.test("ttlToExpires parses the three forms and refuses anything else", () => {
+test("ttlToExpires parses the three forms and refuses anything else", () => {
   const now = Date.parse("2026-07-27T12:00:00Z");
   assert.equal(ttlToExpires("90m", now), new Date(now + 90 * 60_000).toISOString());
   assert.equal(ttlToExpires(" 2h ", now), new Date(now + 2 * 3_600_000).toISOString());
@@ -174,7 +176,7 @@ Deno.test("ttlToExpires parses the three forms and refuses anything else", () =>
   );
 });
 
-Deno.test("expandEnv substitutes ${VAR} and refuses to start on a missing one", () => {
+test("expandEnv substitutes ${VAR} and refuses to start on a missing one", () => {
   const env = (name: string) => ({ TOK: "s3cr3t" } as Record<string, string>)[name];
   assert.deepEqual(
     expandEnv({ TOKEN: "${TOK}", MIXED: "Bearer ${TOK}", PLAIN: "as-is" }, { env }),
@@ -186,7 +188,7 @@ Deno.test("expandEnv substitutes ${VAR} and refuses to start on a missing one", 
   );
 });
 
-Deno.test("the secret reference is stored, never the secret", () => {
+test("the secret reference is stored, never the secret", () => {
   const file = tmpFile();
   upsertServer("linear", { url: "https://l.example", headers: {} }, { file });
   upsertServer("gh", { command: "gh-mcp", env: { TOKEN: "${GH_TOKEN}" } }, { file });
@@ -200,7 +202,7 @@ Deno.test("the secret reference is stored, never the secret", () => {
   assert.equal(composed.TOKEN, "s3cr3t");
 });
 
-Deno.test("childEnv composes the child's whole environment: inherited names plus declared", () => {
+test("childEnv composes the child's whole environment: inherited names plus declared", () => {
   const host: Record<string, string> = {
     PATH: "/usr/bin",
     HOME: "/home/u",

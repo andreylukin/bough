@@ -19,6 +19,7 @@
  * `deno.json` cannot resolve. `node:assert` is built into the runtime and needs no
  * fetch. (Same constraint `db.test.ts` and `patch.test.ts` document.)
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { SqliteDb } from "../db/db.ts";
 import { StateError } from "../errors.ts";
@@ -89,7 +90,7 @@ async function call(
 // the verbs
 // ---------------------------------------------------------------------------
 
-Deno.test("get / set / list / delete round-trip any JSON", () => {
+test("get / set / list / delete round-trip any JSON", () => {
   const db = mem();
   assert.equal(stateVerb(db, "root", "get", "todo"), null);
 
@@ -128,7 +129,7 @@ Deno.test("get / set / list / delete round-trip any JSON", () => {
   assert.equal(stateVerb(db, "root", "get", "todo"), null);
 });
 
-Deno.test("an unset key reads as null, not an error — `?? default` is the idiom", () => {
+test("an unset key reads as null, not an error — `?? default` is the idiom", () => {
   const db = mem();
   assert.equal(stateVerb(db, "root", "get", "never-written"), null);
   // A stored null is indistinguishable from unset, and that is fine: both mean
@@ -141,7 +142,7 @@ Deno.test("an unset key reads as null, not an error — `?? default` is the idio
   ]);
 });
 
-Deno.test("set re-set overwrites in place and re-stamps updatedAt", () => {
+test("set re-set overwrites in place and re-stamps updatedAt", () => {
   const db = mem();
   stateVerb(db, "root", "set", { key: "k", value: 1 }, at(1_000));
   stateVerb(db, "root", "set", { key: "k", value: 2 }, at(2_000));
@@ -151,7 +152,7 @@ Deno.test("set re-set overwrites in place and re-stamps updatedAt", () => {
   assert.equal(list[0].updatedAt, 2_000);
 });
 
-Deno.test("two roots keep separate stores", () => {
+test("two roots keep separate stores", () => {
   const db = mem();
   stateVerb(db, "a", "set", { key: "k", value: 1 });
   stateVerb(db, "b", "set", { key: "k", value: 2 });
@@ -165,7 +166,7 @@ Deno.test("two roots keep separate stores", () => {
 // scope — the acceptance criterion
 // ---------------------------------------------------------------------------
 
-Deno.test("AC: a fork and its parent read the SAME store", async () => {
+test("AC: a fork and its parent read the SAME store", async () => {
   const db = mem();
   db.createSession(session("root1"));
   // A fork is parented at the target's parent, so it shares every ancestor.
@@ -191,7 +192,7 @@ Deno.test("AC: a fork and its parent read the SAME store", async () => {
   assert.equal(lineageRoot(db, "root1"), "root1");
 });
 
-Deno.test("a compaction child and a deep fork chain resolve to the same root", () => {
+test("a compaction child and a deep fork chain resolve to the same root", () => {
   const db = mem();
   db.createSession(session("root1"));
   db.createSession(session("f1", { kind: "fork", parentId: "root1", originId: "root1" }));
@@ -199,7 +200,7 @@ Deno.test("a compaction child and a deep fork chain resolve to the same root", (
   assert.equal(lineageRoot(db, "c1"), "root1");
 });
 
-Deno.test("a subagent shares its spawner's store — parentId is null, originId is not", async () => {
+test("a subagent shares its spawner's store — parentId is null, originId is not", async () => {
   const db = mem();
   db.createSession(session("root1"));
   // What `agents/subagent.ts` creates: a fresh, task-only thread (`parentId: null`)
@@ -218,7 +219,7 @@ Deno.test("a subagent shares its spawner's store — parentId is null, originId 
   assert.equal(await call(child, "get", "plan"), "port files 1-40");
 });
 
-Deno.test("a workflow agent, and a subagent of a fork, both reach the lineage root", () => {
+test("a workflow agent, and a subagent of a fork, both reach the lineage root", () => {
   const db = mem();
   db.createSession(session("root1"));
   db.createSession(session("f1", { kind: "fork", parentId: "root1", originId: "root1" }));
@@ -228,7 +229,7 @@ Deno.test("a workflow agent, and a subagent of a fork, both reach the lineage ro
   assert.equal(lineageRoot(db, "wa1"), "root1");
 });
 
-Deno.test("lineageRoot survives a cycle and an unknown session", () => {
+test("lineageRoot survives a cycle and an unknown session", () => {
   const db = mem();
   // A session whose origin points back at a descendant: a bad write, not a shape the
   // system creates. It must terminate, not hang every state call in the process.
@@ -244,7 +245,7 @@ Deno.test("lineageRoot survives a cycle and an unknown session", () => {
 // caps — the other acceptance criterion
 // ---------------------------------------------------------------------------
 
-Deno.test("AC: a value over 16KB is rejected, and nothing is stored", () => {
+test("AC: a value over 16KB is rejected, and nothing is stored", () => {
   const db = mem();
   const oversized = "x".repeat(MAX_VALUE_BYTES); // + 2 quote bytes once serialized
   const err = caught(() => stateVerb(db, "root", "set", { key: "log", value: oversized }));
@@ -259,7 +260,7 @@ Deno.test("AC: a value over 16KB is rejected, and nothing is stored", () => {
   assert.deepEqual(stateVerb(db, "root", "list", null), []);
 });
 
-Deno.test("the cap is on BYTES, so a value just under it still lands", () => {
+test("the cap is on BYTES, so a value just under it still lands", () => {
   const db = mem();
   // JSON adds the two quotes, so this serializes to exactly MAX_VALUE_BYTES.
   const exact = "y".repeat(MAX_VALUE_BYTES - 2);
@@ -278,7 +279,7 @@ Deno.test("the cap is on BYTES, so a value just under it still lands", () => {
   );
 });
 
-Deno.test("the key cap refuses a 201st key but still lets an existing one be rewritten", () => {
+test("the key cap refuses a 201st key but still lets an existing one be rewritten", () => {
   const db = mem();
   for (let i = 0; i < MAX_KEYS; i++) stateVerb(db, "root", "set", { key: `k${i}`, value: i });
   const err = caught(() => stateVerb(db, "root", "set", { key: "one-too-many", value: 1 }));
@@ -298,7 +299,7 @@ Deno.test("the key cap refuses a 201st key but still lets an existing one be rew
 // argument errors — the text is a product surface
 // ---------------------------------------------------------------------------
 
-Deno.test("bad arguments name the verb and the fix", () => {
+test("bad arguments name the verb and the fix", () => {
   const db = mem();
   const empty = caught(() => stateVerb(db, "root", "get", ""));
   assert.ok(empty instanceof StateError);
@@ -331,7 +332,7 @@ Deno.test("bad arguments name the verb and the fix", () => {
   assert.match(unknown.message, /get, set, list, delete/);
 });
 
-Deno.test("a row that is not JSON is reported, not thrown raw at the program", () => {
+test("a row that is not JSON is reported, not thrown raw at the program", () => {
   const db = mem();
   db.setState("root", "corrupt", "{not json", 1_000);
   const err = caught(() => stateVerb(db, "root", "get", "corrupt"));
@@ -344,7 +345,7 @@ Deno.test("a row that is not JSON is reported, not thrown raw at the program", (
 // the bridge
 // ---------------------------------------------------------------------------
 
-Deno.test("the host fn is string-in/string-out and an unset key comes back as `null`", async () => {
+test("the host fn is string-in/string-out and an unset key comes back as `null`", async () => {
   const db = mem();
   db.createSession(session("s1"));
   const fns = createStateHostFn(turnCtx(db, "s1"));
@@ -363,7 +364,7 @@ Deno.test("the host fn is string-in/string-out and an unset key comes back as `n
   assert.equal(await fns.state!("list", ""), '[{"key":"k","bytes":7,"updatedAt":5000}]');
 });
 
-Deno.test("the host fn rejects rather than throwing junk at the program", async () => {
+test("the host fn rejects rather than throwing junk at the program", async () => {
   const db = mem();
   db.createSession(session("s1"));
   const fns = createStateHostFn(turnCtx(db, "s1"));
@@ -371,7 +372,7 @@ Deno.test("the host fn rejects rather than throwing junk at the program", async 
   await assert.rejects(() => fns.state!("frobnicate", "null"), StateError);
 });
 
-Deno.test("the injected clock is used, and rootId can be pinned", async () => {
+test("the injected clock is used, and rootId can be pinned", async () => {
   const db = mem();
   const fns = createStateHostFn(turnCtx(db, "whatever"), { rootId: "pinned", now: at(777) });
   await call(fns, "set", { key: "k", value: 1 });

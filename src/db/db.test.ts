@@ -18,12 +18,16 @@
  * file and uses a temp directory it removes. Nothing touches `~/.bough`, and no
  * test reads `BOUGH_DB` or `BOUGH_HOME` — every database is opened by explicit path.
  *
- * Assertions come from `node:assert/strict` rather than `@std/assert`: jsr.io is not
- * reachable from this environment, and a test that cannot run offline does not
- * belong in `deno task test` (plan §7).
+ * Assertions come from `node:assert/strict` rather than a matcher library: they run
+ * unchanged under any runtime, and a test that cannot run offline does not belong in
+ * `bun test` (plan §7).
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { DatabaseSync } from "node:sqlite";
+import { Database } from "bun:sqlite";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { openDb, SqliteDb } from "./db.ts";
 import { migrate, SCHEMA_VERSION, userVersion } from "./migrate.ts";
 import type { Message, Session, Turn } from "../schema/parts.ts";
@@ -74,7 +78,7 @@ const texts = (ms: Message[]) =>
 
 // ---- invariant 1: same-millisecond ordering ---------------------------------
 
-Deno.test("messagesFor breaks a created_at tie by insertion order", () => {
+test("messagesFor breaks a created_at tie by insertion order", () => {
   const db = mem();
   db.createSession(session("s"));
   // Everything in the same millisecond: only rowid can order these.
@@ -85,7 +89,7 @@ Deno.test("messagesFor breaks a created_at tie by insertion order", () => {
   db.close();
 });
 
-Deno.test("a turn started in the same millisecond as a seed sorts after it", () => {
+test("a turn started in the same millisecond as a seed sorts after it", () => {
   // The branch-seeding scenario of plan §6.1: openBranch() writes seeded messages
   // with a REAL clock, and the fresh turn posted immediately afterwards lands on the
   // same timestamp. The seed must still come first.
@@ -103,7 +107,7 @@ Deno.test("a turn started in the same millisecond as a seed sorts after it", () 
   db.close();
 });
 
-Deno.test("created_at still dominates rowid when timestamps differ", () => {
+test("created_at still dominates rowid when timestamps differ", () => {
   // The tie-break must not become the primary key: a message inserted later but
   // stamped earlier still sorts earlier.
   const db = mem();
@@ -116,7 +120,7 @@ Deno.test("created_at still dominates rowid when timestamps differ", () => {
 
 // ---- threadFor / ancestorChain ----------------------------------------------
 
-Deno.test("threadFor concatenates three levels root -> parent -> own", () => {
+test("threadFor concatenates three levels root -> parent -> own", () => {
   const db = mem();
   db.createSession(session("root", { createdAt: 1 }));
   db.createSession(session("mid", { parentId: "root", kind: "fork", createdAt: 2 }));
@@ -146,7 +150,7 @@ Deno.test("threadFor concatenates three levels root -> parent -> own", () => {
   db.close();
 });
 
-Deno.test("ancestorChain is root-first and inclusive; unknown ids are empty", () => {
+test("ancestorChain is root-first and inclusive; unknown ids are empty", () => {
   const db = mem();
   db.createSession(session("root"));
   db.createSession(session("mid", { parentId: "root" }));
@@ -157,7 +161,7 @@ Deno.test("ancestorChain is root-first and inclusive; unknown ids are empty", ()
   db.close();
 });
 
-Deno.test("a subagent's thread is its own messages only", () => {
+test("a subagent's thread is its own messages only", () => {
   // Spec §7: a subagent gets a fresh, task-only thread — parentId is null even
   // though origin_id points back at the spawner.
   const db = mem();
@@ -174,8 +178,8 @@ Deno.test("a subagent's thread is its own messages only", () => {
 
 // ---- migration --------------------------------------------------------------
 
-Deno.test("migration is idempotent across two opens", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "bough-db-test-" });
+test("migration is idempotent across two opens", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "bough-db-test-"));
   const path = `${dir}/bough.db`;
   try {
     const first = openDb(path);
@@ -213,7 +217,7 @@ Deno.test("migration is idempotent across two opens", async () => {
     assert.deepEqual(texts(third.messagesFor("s")), ["hello"]);
     third.close();
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true, force: true });
   }
 });
 
@@ -222,7 +226,7 @@ function introspect(path: string, keepAlive: SqliteDb): unknown {
   // `keepAlive` is the open handle whose file we are inspecting — taking it as an
   // argument documents that the caller must not have closed it yet.
   void keepAlive;
-  const raw = new DatabaseSync(path);
+  const raw = new Database(path);
   try {
     const objects = raw
       .prepare(`SELECT type, name, sql FROM sqlite_master ORDER BY type, name`)
@@ -233,8 +237,8 @@ function introspect(path: string, keepAlive: SqliteDb): unknown {
   }
 }
 
-Deno.test("migrate reports the version it found and stamps the current one", () => {
-  const raw = new DatabaseSync(":memory:");
+test("migrate reports the version it found and stamps the current one", () => {
+  const raw = new Database(":memory:");
   try {
     assert.equal(userVersion(raw), 0);
     assert.equal(migrate(raw), 0, "a fresh file is at version 0");
@@ -246,8 +250,8 @@ Deno.test("migrate reports the version it found and stamps the current one", () 
   }
 });
 
-Deno.test("migration is forward-only: a newer schema version is refused", () => {
-  const raw = new DatabaseSync(":memory:");
+test("migration is forward-only: a newer schema version is refused", () => {
+  const raw = new Database(":memory:");
   try {
     raw.exec(`PRAGMA user_version = ${SCHEMA_VERSION + 1}`);
     assert.throws(
@@ -263,11 +267,11 @@ Deno.test("migration is forward-only: a newer schema version is refused", () => 
   }
 });
 
-Deno.test("dropped columns are absent from the schema", () => {
+test("dropped columns are absent from the schema", () => {
   // The port's promise, made checkable: archived_at / deprecated_at /
   // first_output_at and message_embeddings do not exist, so no caller can start
   // depending on them (spec §4, §17).
-  const raw = new DatabaseSync(":memory:");
+  const raw = new Database(":memory:");
   try {
     migrate(raw);
     const cols = (t: string) =>
@@ -287,7 +291,7 @@ Deno.test("dropped columns are absent from the schema", () => {
 
 // ---- sessions ---------------------------------------------------------------
 
-Deno.test("createSession returns the row as stored", () => {
+test("createSession returns the row as stored", () => {
   const db = mem();
   const created = db.createSession(
     session("s", { workspace: "/w", originDir: "/w", model: "m", draft: "hi" }),
@@ -298,7 +302,7 @@ Deno.test("createSession returns the row as stored", () => {
   db.close();
 });
 
-Deno.test("listSessions is newest first and hides nothing", () => {
+test("listSessions is newest first and hides nothing", () => {
   const db = mem();
   db.createSession(session("a", { createdAt: 1 }));
   db.createSession(session("sub", { createdAt: 2, kind: "subagent", originId: "a" }));
@@ -308,7 +312,7 @@ Deno.test("listSessions is newest first and hides nothing", () => {
   db.close();
 });
 
-Deno.test("session setters round-trip, and null clears a pin", () => {
+test("session setters round-trip, and null clears a pin", () => {
   const db = mem();
   db.createSession(session("s"));
   db.setSessionTitle("s", "renamed");
@@ -334,7 +338,7 @@ Deno.test("session setters round-trip, and null clears a pin", () => {
   db.close();
 });
 
-Deno.test("addSessionUsage accumulates cost and overwrites the context gauge", () => {
+test("addSessionUsage accumulates cost and overwrites the context gauge", () => {
   const db = mem();
   db.createSession(session("s"));
   db.addSessionUsage("s", {
@@ -370,7 +374,7 @@ Deno.test("addSessionUsage accumulates cost and overwrites the context gauge", (
   db.close();
 });
 
-Deno.test("treeUsage rolls up delegated branches and excludes forks", () => {
+test("treeUsage rolls up delegated branches and excludes forks", () => {
   const db = mem();
   const spend = (id: string, cost: number) =>
     db.addSessionUsage(id, { inputTokens: 10, outputTokens: 1, costUsd: cost }, 1);
@@ -391,7 +395,7 @@ Deno.test("treeUsage rolls up delegated branches and excludes forks", () => {
   db.close();
 });
 
-Deno.test("busySessionIds reads running turns, not pending messages", () => {
+test("busySessionIds reads running turns, not pending messages", () => {
   const db = mem();
   db.createSession(session("a"));
   db.createSession(session("b"));
@@ -408,7 +412,7 @@ Deno.test("busySessionIds reads running turns, not pending messages", () => {
 
 // ---- messages ---------------------------------------------------------------
 
-Deno.test("updateMessage overwrites parts and the pending flag", () => {
+test("updateMessage overwrites parts and the pending flag", () => {
   const db = mem();
   db.createSession(session("s"));
   db.createMessage({
@@ -432,7 +436,7 @@ Deno.test("updateMessage overwrites parts and the pending flag", () => {
 
 // ---- turns ------------------------------------------------------------------
 
-Deno.test("updateTurn checkpoints with the injected clock", () => {
+test("updateTurn checkpoints with the injected clock", () => {
   let clock = 5_000;
   const db = mem(() => clock);
   db.createSession(session("s"));
@@ -475,7 +479,7 @@ Deno.test("updateTurn checkpoints with the injected clock", () => {
   db.close();
 });
 
-Deno.test("turn lookups: by status, by message, latest per session", () => {
+test("turn lookups: by status, by message, latest per session", () => {
   let clock = 1;
   const db = mem(() => clock);
   db.createSession(session("s"));
@@ -500,7 +504,7 @@ Deno.test("turn lookups: by status, by message, latest per session", () => {
 
 // ---- durable KV -------------------------------------------------------------
 
-Deno.test("session_state is upserted, listed by key, and reports real deletes", () => {
+test("session_state is upserted, listed by key, and reports real deletes", () => {
   const db = mem();
   db.setState("root", "b", `{"n":2}`, 10);
   db.setState("root", "a", `{"n":1}`, 20);
@@ -522,7 +526,7 @@ Deno.test("session_state is upserted, listed by key, and reports real deletes", 
 
 // ---- schedules --------------------------------------------------------------
 
-Deno.test("dueSchedules returns enabled, past-due rows soonest first", () => {
+test("dueSchedules returns enabled, past-due rows soonest first", () => {
   const db = mem();
   const make = (id: string, next: number, enabled: boolean) =>
     db.createSchedule({
@@ -559,7 +563,7 @@ Deno.test("dueSchedules returns enabled, past-due rows soonest first", () => {
 
 // ---- workflows --------------------------------------------------------------
 
-Deno.test("workflow rows round-trip and patch by field membership", () => {
+test("workflow rows round-trip and patch by field membership", () => {
   const db = mem();
   db.createSession(session("s"));
   const run = db.createWorkflow({
@@ -599,7 +603,7 @@ Deno.test("workflow rows round-trip and patch by field membership", () => {
   db.close();
 });
 
-Deno.test("the agent journal is keyed lookup plus ordered listing", () => {
+test("the agent journal is keyed lookup plus ordered listing", () => {
   const db = mem();
   db.createSession(session("s"));
   db.createWorkflow({
@@ -662,7 +666,7 @@ Deno.test("the agent journal is keyed lookup plus ordered listing", () => {
 
 // ---- keyword search ---------------------------------------------------------
 
-Deno.test("search indexes prose, is idempotent, and rebuilds identically", () => {
+test("search indexes prose, is idempotent, and rebuilds identically", () => {
   const db = mem();
   db.createSession(session("s1"));
   db.createSession(session("s2"));
@@ -721,7 +725,7 @@ Deno.test("search indexes prose, is idempotent, and rebuilds identically", () =>
   db.close();
 });
 
-Deno.test("a malformed search query is a 400 that says what to do", () => {
+test("a malformed search query is a 400 that says what to do", () => {
   const db = mem();
   let e: (Error & { status?: number }) | undefined;
   try {
@@ -738,7 +742,7 @@ Deno.test("a malformed search query is a 400 that says what to do", () => {
 
 // ---- integrity --------------------------------------------------------------
 
-Deno.test("foreign keys are enforced on every connection", () => {
+test("foreign keys are enforced on every connection", () => {
   const db = mem();
   assert.throws(
     () => db.createMessage(message("m", "no-such-session", "orphan", 1)),
@@ -747,14 +751,14 @@ Deno.test("foreign keys are enforced on every connection", () => {
   db.close();
 });
 
-Deno.test("openDb creates the parent directory", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "bough-db-test-" });
+test("openDb creates the parent directory", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "bough-db-test-"));
   try {
     const db = openDb(`${dir}/nested/deeper/bough.db`);
     db.createSession(session("s"));
     assert.equal(db.getSession("s")!.id, "s");
     db.close();
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true, force: true });
   }
 });

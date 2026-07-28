@@ -10,7 +10,9 @@
  *
  * `node:assert/strict` — jsr.io is unreachable in this environment.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
+import process from "node:process";
 import { Bus } from "../bus.ts";
 import { openDb } from "../db/db.ts";
 import { createHandler } from "../server/app.ts";
@@ -25,7 +27,8 @@ function fixture() {
   const db = openDb(":memory:");
   const ctx: AppCtx = { db, bus: new Bus() };
   const handler = createHandler(ctx, { onUnexpectedError: () => {} });
-  const fetchFn: typeof fetch = (input, init) => handler(new Request(input as string | URL, init));
+  const fetchFn = (input: string | URL | Request, init?: RequestInit) =>
+    handler(new Request(input as string | URL, init));
   return {
     ctx,
     api: createApi({ base: "http://127.0.0.1:4321", fetchFn }),
@@ -33,20 +36,20 @@ function fixture() {
   };
 }
 
-Deno.test("the base tracks BOUGH_PORT, because the rewrite runs beside the live install", () => {
-  const previous = Deno.env.get("BOUGH_PORT");
+test("the base tracks BOUGH_PORT, because the rewrite runs beside the live install", () => {
+  const previous = process.env["BOUGH_PORT"];
   try {
-    Deno.env.set("BOUGH_PORT", "4399");
+    process.env["BOUGH_PORT"] = "4399";
     assert.equal(defaultBase(), "http://127.0.0.1:4399");
-    Deno.env.delete("BOUGH_PORT");
+    delete process.env["BOUGH_PORT"];
     assert.equal(defaultBase(), "http://127.0.0.1:4321");
   } finally {
-    if (previous === undefined) Deno.env.delete("BOUGH_PORT");
-    else Deno.env.set("BOUGH_PORT", previous);
+    if (previous === undefined) delete process.env["BOUGH_PORT"];
+    else process.env["BOUGH_PORT"] = previous;
   }
 });
 
-Deno.test("session round trip: create, list, fetch, post, draft", async () => {
+test("session round trip: create, list, fetch, post, draft", async () => {
   const { api, close } = fixture();
   try {
     const created = await api.createSession({ title: "first" });
@@ -75,7 +78,7 @@ Deno.test("session round trip: create, list, fetch, post, draft", async () => {
   }
 });
 
-Deno.test("the drill-in query is how collapsed sessions are reached at all", async () => {
+test("the drill-in query is how collapsed sessions are reached at all", async () => {
   const { ctx, api, close } = fixture();
   try {
     const root = await api.createSession({ title: "root" });
@@ -97,7 +100,7 @@ Deno.test("the drill-in query is how collapsed sessions are reached at all", asy
   }
 });
 
-Deno.test("a server error arrives as its own sentence, not as a status code", async () => {
+test("a server error arrives as its own sentence, not as a status code", async () => {
   const { api, close } = fixture();
   try {
     await assert.rejects(
@@ -115,7 +118,7 @@ Deno.test("a server error arrives as its own sentence, not as a status code", as
   }
 });
 
-Deno.test("a dead server says so in one sentence, with the command that fixes it", async () => {
+test("a dead server says so in one sentence, with the command that fixes it", async () => {
   const api = createApi({
     base: "http://127.0.0.1:4321",
     fetchFn: () => Promise.reject(new TypeError("error sending request: Connection refused")),
@@ -139,7 +142,7 @@ Deno.test("a dead server says so in one sentence, with the command that fixes it
   );
 });
 
-Deno.test("changes: a non-repository workspace is an answer, not an error", async () => {
+test("changes: a non-repository workspace is an answer, not an error", async () => {
   const { api, close } = fixture();
   try {
     const s = await api.createSession({});
@@ -151,7 +154,7 @@ Deno.test("changes: a non-repository workspace is an answer, not an error", asyn
   }
 });
 
-Deno.test("jobs, artifacts and questions answer for a session with nothing in them", async () => {
+test("jobs, artifacts and questions answer for a session with nothing in them", async () => {
   const { api, close } = fixture();
   try {
     const s = await api.createSession({});
@@ -164,7 +167,7 @@ Deno.test("jobs, artifacts and questions answer for a session with nothing in th
   }
 });
 
-Deno.test("workflows: the list is empty and a missing run 404s with its id", async () => {
+test("workflows: the list is empty and a missing run 404s with its id", async () => {
   const { api, close } = fixture();
   try {
     assert.deepEqual((await api.listWorkflows()).workflows, []);
@@ -184,7 +187,7 @@ Deno.test("workflows: the list is empty and a missing run 404s with its id", asy
   }
 });
 
-Deno.test("search answers over an empty index rather than failing", async () => {
+test("search answers over an empty index rather than failing", async () => {
   const { api, close } = fixture();
   try {
     const result = await api.search("anything");
@@ -196,7 +199,7 @@ Deno.test("search answers over an empty index rather than failing", async () => 
   }
 });
 
-Deno.test("schedules round trip through the client's verbs", async () => {
+test("schedules round trip through the client's verbs", async () => {
   const { api, close } = fixture();
   try {
     const created = await api.createSchedule({
@@ -216,7 +219,7 @@ Deno.test("schedules round trip through the client's verbs", async () => {
   }
 });
 
-Deno.test("URLs are built in one place, and segments are encoded", () => {
+test("URLs are built in one place, and segments are encoded", () => {
   const api = createApi({ base: "http://127.0.0.1:4321" });
   assert.equal(api.eventsUrl(), "http://127.0.0.1:4321/events");
   assert.equal(api.eventsUrl("a b"), "http://127.0.0.1:4321/events?sessionId=a+b");

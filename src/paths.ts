@@ -21,7 +21,7 @@ import { PathError } from "./errors.ts";
 
 /** The data root: `$BOUGH_HOME`, else `~/.bough`. */
 export function boughHome(): string {
-  const override = Deno.env.get("BOUGH_HOME");
+  const override = process.env["BOUGH_HOME"];
   if (override && override.trim()) return override;
   return join(homedir(), ".bough");
 }
@@ -35,7 +35,7 @@ export function boughPath(...segs: string[]): string {
 
 /** The SQLite database. `BOUGH_DB` overrides it outright (`:memory:` in tests). */
 export function dbPath(): string {
-  return Deno.env.get("BOUGH_DB") ?? boughPath("bough.db");
+  return process.env["BOUGH_DB"] ?? boughPath("bough.db");
 }
 
 /**

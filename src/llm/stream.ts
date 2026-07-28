@@ -50,7 +50,10 @@ function readWithStallGuard(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   provider: string,
   stallMs: number,
-): Promise<ReadableStreamReadResult<Uint8Array>> {
+  // Whatever shape the runtime's `read()` resolves to — Bun's `done: true` result
+  // leaves `value` optional where the DOM lib requires it, and spelling the type
+  // out by hand picks the wrong one.
+): ReturnType<ReadableStreamDefaultReader<Uint8Array>["read"]> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       reader.cancel().catch(() => {});

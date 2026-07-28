@@ -1,0 +1,39 @@
+{
+  "name": "bough",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "module": "./src/server/main.ts",
+  "scripts": {
+    "dev": "bun --watch src/server/main.ts",
+    "check": "tsc --noEmit",
+    "test": "bun test",
+    "tui": "bun src/tui/main.tsx",
+    "exec": "bun src/cli/exec.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "0.68.0",
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "@opentui/core": "0.4.5",
+    "@opentui/react": "0.4.5",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "slice-ansi": "9.0.0",
+    "string-width": "7.2.0",
+    "strip-ansi": "7.2.0",
+    "wrap-ansi": "9.0.2",
+    "zod": "3.25.76",
+    "zod4": "npm:zod@4.3.6"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "24",
+    "@types/react": "19",
+    "typescript": "^5"
+  },
+  "// @types/node": "Pinned to 24 (bun-types would pull `*`). 26 retyped node:assert so `message` is `Error | AssertMessageFunction` on one overload and a REQUIRED `string` on the other, which rejects every `ok(cond, maybeUndefinedString)` in the suite.",
+  "// overrides":"One zod, not two. The MCP SDK's own dep range (^3.25 || ^4.0) resolves to zod 4 by default, so the `z3.ZodTypeAny` in its request() signature came from a SECOND copy of zod and no schema of ours was assignable to it. The old deno.json import map collapsed them; this does the same.",
+  "overrides": {
+    "zod": "3.25.76"
+  }
+}

@@ -27,11 +27,15 @@
  * so the SGR parameters live in `colors` below and a theme installs itself with
  * `setColors` rather than this file reaching for one.
  */
+import process from "node:process";
 import stringWidth from "string-width";
 import sliceAnsi from "slice-ansi";
 import stripAnsi from "strip-ansi";
 import wrapAnsi from "wrap-ansi";
 import type { Part } from "../schema/parts.ts";
+// Type-only, so this stays a leaf: `store.ts` imports the formatters below at
+// runtime, and a value import back would be a cycle.
+import type { LiveUnit } from "./store.ts";
 
 export type ToolCall = Extract<Part, { type: "tool_call" }>;
 export type ToolResult = Extract<Part, { type: "tool_result" }>;
@@ -46,15 +50,7 @@ export type AskPart = Extract<Part, { type: "ask" }>;
  * would otherwise leak styling into a colorless terminal. Read once; a test flips
  * it with `setColorEnabled` rather than mutating the environment.
  */
-let COLOR = (safeEnv("NO_COLOR") ?? "") === "";
-
-function safeEnv(name: string): string | undefined {
-  try {
-    return Deno.env.get(name);
-  } catch {
-    return undefined; // no --allow-env: treat as unset rather than dying at import
-  }
-}
+let COLOR = (process.env["NO_COLOR"] ?? "") === "";
 
 export function colorEnabled(): boolean {
   return COLOR;
@@ -176,6 +172,177 @@ export function wrapLine(text: string, max: number): string[] {
 /** Below this a wrap produces one column of letters; clamp instead. */
 export const MIN_WRAP = 20;
 
+// ---- escapes back into structure --------------------------------------------
+
+/**
+ * One run of text with a single style. The unit `Message.tsx` hands the renderer.
+ *
+ * WHY THIS EXISTS. Everything above builds strings with SGR escapes INSIDE them,
+ * which is the right shape for measuring, wrapping, truncating and copying — and
+ * the wrong shape for OpenTUI. A `<text>` whose child string carries raw escapes
+ * paints correctly on the frame it is first drawn and then desynchronises: the
+ * renderer's cell diff and the escape run stop agreeing about which column is
+ * which, so an updated row repaints only part of itself and the rest of the old
+ * row shows through — including, when the overwrite lands mid-escape, the tail of
+ * the sequence as literal text (`78;201;143mbough`). It is reproducible in a
+ * twenty-line OpenTUI app: the same content renders perfectly as chunks and
+ * corrupts as an escaped string.
+ *
+ * So the escapes are parsed back out at the last possible moment and handed over
+ * as structure. `lines.ts` and every string helper here are unchanged; only the
+ * boundary with the renderer is.
+ */
+export interface AnsiSpan {
+  text: string;
+  /** `#rrggbb`, resolved from either truecolor or 256-color params. */
+  fg?: string;
+  bg?: string;
+  bold?: boolean;
+  dim?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  reverse?: boolean;
+  strikethrough?: boolean;
+  /** OSC 8 target — the run is a hyperlink. */
+  link?: string;
+}
+
+/** The 6-value ramp the xterm cube is built from. */
+const CUBE = [0, 95, 135, 175, 215, 255];
+/** xterm's first sixteen, which are palette-defined and have no formula. */
+const BASE16 = [
+  "#000000",
+  "#cd0000",
+  "#00cd00",
+  "#cdcd00",
+  "#0000ee",
+  "#cd00cd",
+  "#00cdcd",
+  "#e5e5e5",
+  "#7f7f7f",
+  "#ff0000",
+  "#00ff00",
+  "#ffff00",
+  "#5c5cff",
+  "#ff00ff",
+  "#00ffff",
+  "#ffffff",
+];
+
+const hex = (r: number, g: number, b: number) =>
+  `#${[r, g, b].map((c) => Math.max(0, Math.min(255, c)).toString(16).padStart(2, "0")).join("")}`;
+
+/** 256-color index → hex. 0–15 from the table, 16–231 the cube, 232–255 the ramp. */
+function xterm256(n: number): string {
+  if (n < 16) return BASE16[n] ?? "#ffffff";
+  if (n < 232) {
+    const i = n - 16;
+    return hex(CUBE[Math.floor(i / 36) % 6], CUBE[Math.floor(i / 6) % 6], CUBE[i % 6]);
+  }
+  const v = 8 + (n - 232) * 10;
+  return hex(v, v, v);
+}
+
+/**
+ * Read one SGR parameter list into `style`, returning how many extra parameters
+ * the code at `i` consumed. Only the codes this file and `theme.ts` actually
+ * emit are honoured; an unknown parameter is skipped rather than guessed at.
+ */
+function applySgr(style: AnsiSpan, ps: number[], i: number): number {
+  const p = ps[i];
+  if (p === 0) {
+    const cleared: AnsiSpan = { text: style.text, link: style.link };
+    // A full reset clears colour and attributes; an OSC 8 link is not SGR state
+    // and survives one, which is what keeps a bolded URL clickable to its end.
+    if (!style.link) delete cleared.link;
+    Object.assign(style, cleared);
+    for (const k of ["fg", "bg"] as const) if (!cleared[k]) delete style[k];
+    delete style.bold;
+    delete style.dim;
+    delete style.italic;
+    delete style.underline;
+    delete style.reverse;
+    delete style.strikethrough;
+    return 0;
+  }
+  if (p === 1) style.bold = true;
+  else if (p === 2) style.dim = true;
+  else if (p === 3) style.italic = true;
+  else if (p === 4) style.underline = true;
+  else if (p === 7) style.reverse = true;
+  else if (p === 9) style.strikethrough = true;
+  else if (p === 22) {
+    delete style.bold;
+    delete style.dim;
+  } else if (p === 23) delete style.italic;
+  else if (p === 24) delete style.underline;
+  else if (p === 27) delete style.reverse;
+  else if (p === 29) delete style.strikethrough;
+  else if (p === 39) delete style.fg;
+  else if (p === 49) delete style.bg;
+  else if (p >= 30 && p <= 37) style.fg = BASE16[p - 30];
+  else if (p >= 90 && p <= 97) style.fg = BASE16[p - 90 + 8];
+  else if (p >= 40 && p <= 47) style.bg = BASE16[p - 40];
+  else if (p >= 100 && p <= 107) style.bg = BASE16[p - 100 + 8];
+  else if (p === 38 || p === 48) {
+    const key = p === 38 ? "fg" : "bg";
+    if (ps[i + 1] === 5) {
+      style[key] = xterm256(ps[i + 2] ?? 0);
+      return 2;
+    }
+    if (ps[i + 1] === 2) {
+      style[key] = hex(ps[i + 2] ?? 0, ps[i + 3] ?? 0, ps[i + 4] ?? 0);
+      return 4;
+    }
+  }
+  return 0;
+}
+
+// Anything that is not a printable run: an SGR sequence, an OSC 8 open or close
+// (both string terminators), or any other CSI, which is dropped.
+// deno-lint-ignore no-control-regex -- parsing escapes is the point.
+const ESCAPES = /\x1b\[([0-9;]*)m|\x1b\]8;;([^\x07\x1b]*)(?:\x07|\x1b\\)|\x1b\[[0-9;?]*[A-Za-z]/g;
+
+/**
+ * Split a styled string into runs. Every escape is consumed; the returned spans
+ * concatenate to exactly `stripAnsi(text)`, which is what makes the rendered row
+ * the same width as the measured one.
+ */
+export function ansiSpans(text: string): AnsiSpan[] {
+  const out: AnsiSpan[] = [];
+  const style: AnsiSpan = { text: "" };
+  let last = 0;
+  const push = (chunk: string) => {
+    if (!chunk) return;
+    const prev = out[out.length - 1];
+    // Adjacent runs that agree on style are one run: fewer chunks is less work for
+    // the renderer, and a style that never changed must not look like it did.
+    if (prev && sameStyle(prev, style)) prev.text += chunk;
+    else out.push({ ...style, text: chunk });
+  };
+  ESCAPES.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = ESCAPES.exec(text)) !== null) {
+    push(text.slice(last, m.index));
+    last = m.index + m[0].length;
+    if (m[1] !== undefined) {
+      const ps = m[1] === "" ? [0] : m[1].split(";").map((p) => (p === "" ? 0 : Number(p)));
+      for (let i = 0; i < ps.length; i++) i += applySgr(style, ps, i);
+    } else if (m[2] !== undefined) {
+      if (m[2]) style.link = m[2];
+      else delete style.link;
+    }
+  }
+  push(text.slice(last));
+  return out;
+}
+
+function sameStyle(a: AnsiSpan, b: AnsiSpan): boolean {
+  return a.fg === b.fg && a.bg === b.bg && a.bold === b.bold && a.dim === b.dim &&
+    a.italic === b.italic && a.underline === b.underline && a.reverse === b.reverse &&
+    a.strikethrough === b.strikethrough && a.link === b.link;
+}
+
 // ---- text helpers -----------------------------------------------------------
 
 export function clip(s: string, n: number): string {
@@ -286,8 +453,12 @@ export function toolSummary(parts: Part[]) {
  * allowed to be — it is a LABEL. When nothing is recognized the code gist is still
  * the fallback, so an unusual program degrades to what was shown before rather
  * than to nothing.
+ *
+ * `running` puts the verbs in the present tense. A call with no result yet is a
+ * call still in flight, and "ran 1 command" under a shell that has been blocked
+ * for ten seconds is a statement the reader acts on and should not.
  */
-export function programSummary(code: string, max = 64): string {
+export function programSummary(code: string, max = 64, running = false): string {
   if (!code) return "";
   const bits: string[] = [];
   const files = (re: RegExp): string[] => {
@@ -304,16 +475,18 @@ export function programSummary(code: string, max = 64): string {
 
   const wrote = files(/\b(?:write|edit|patch)\s*\(\s*["'`]([^"'`]+)/g);
   const read = files(/\b(?:view|read)\s*\(\s*["'`]([^"'`]+)/g);
-  if (wrote.length) bits.push(`wrote ${list(wrote)}`);
-  if (read.length) bits.push(`read ${list(read)}`);
+  if (wrote.length) bits.push(`${running ? "writing" : "wrote"} ${list(wrote)}`);
+  if (read.length) bits.push(`${running ? "reading" : "read"} ${list(read)}`);
 
   const count = (re: RegExp) => [...code.matchAll(re)].length;
   const shells = count(/\bbash\s*\(/g) + count(/\bsh\s*\(/g);
-  if (shells) bits.push(`ran ${shells} command${shells === 1 ? "" : "s"}`);
+  if (shells) {
+    bits.push(`${running ? "running" : "ran"} ${shells} command${shells === 1 ? "" : "s"}`);
+  }
   const agents = count(/\bagent\s*\(/g);
   if (agents) bits.push(`${agents} subagent${agents === 1 ? "" : "s"}`);
   const searches = count(/\b(?:grep|glob|search)\s*\(/g);
-  if (searches && bits.length === 0) bits.push("searched the tree");
+  if (searches && bits.length === 0) bits.push(running ? "searching the tree" : "searched the tree");
 
   // Nothing recognized: fall back to the old gist rather than to an empty header.
   if (bits.length === 0) return "";
@@ -562,6 +735,9 @@ export function fmtUsd(n: number): string {
  * chip, because the number people act on is "am I about to overflow" (spec §5:
  * context overflow fails the turn with an explicit error).
  */
+/** Below this the context chip raises its voice — see `meterLine`. */
+export const CTX_WARN_PCT = 20;
+
 export function ctxPctLeft(
   usage: { contextTokens: number; contextLimit?: number | null },
 ): number | null {
@@ -579,8 +755,21 @@ export function meterLine(m: {
   contextTokens?: number | null;
   contextLimit?: number | null;
   model?: string | null;
+  /**
+   * Thinking depth, when it is not the default. It multiplies the price of every
+   * later turn and lived only inside `^o` page 2, so the one screen you could not
+   * learn it from was the one you spend on.
+   */
+  effort?: string | null;
   /** Where the turn runs. Shortened by the caller — this only joins. */
   workspace?: string | null;
+  /**
+   * The branch the workspace is on. Edits land in the checkout as they happen, so
+   * "where" is only half an answer without "on what".
+   */
+  branch?: string | null;
+  /** Background shells still running. Nothing may run with no pixels on screen. */
+  shells?: number | null;
   /** Append the `? help` hint. False for surfaces that are not the chat. */
   help?: boolean;
   /** Columns available. Omitted = no degradation, the caller accepts any length. */
@@ -590,31 +779,41 @@ export function meterLine(m: {
   // that is where the eye already is when you are about to press enter. It sat on
   // a top line a whole screen above the input before, which is a status bar you
   // have to go and look for.
-  const workspace = m.workspace ?? "";
-  const model = m.model ?? "";
+  const place = (dir: string) => (dir && m.branch ? `${dir}@${m.branch}` : dir);
+  const workspace = place(m.workspace ?? "");
+  // The effort rides the model token rather than taking a separator of its own:
+  // it is a property OF the model choice, and the two read as one fact.
+  const model = m.model ? (m.effort ? `${m.model} · ${m.effort}` : m.model) : "";
   const cost = typeof m.costUsd === "number" && m.costUsd > 0 ? fmtUsd(m.costUsd) : "";
   let context = "";
   if (typeof m.contextTokens === "number" && m.contextTokens > 0) {
     const pct = ctxPctLeft({ contextTokens: m.contextTokens, contextLimit: m.contextLimit });
-    context = pct === null ? `${fmtTokens(m.contextTokens)} ctx` : `${pct}% ctx left`;
+    // bough has no auto-compaction by design, so this chip is the ONLY warning
+    // before a turn fails on overflow — and 97% and 7% used to read identically.
+    // The mark is text, not colour: the caller renders this row as one dim string.
+    context = pct === null
+      ? `${fmtTokens(m.contextTokens)} ctx`
+      : `${pct <= CTX_WARN_PCT ? "⚠ " : ""}${pct}% ctx left`;
   }
+  const shells = m.shells && m.shells > 0 ? `⚙ ${m.shells} shell${m.shells === 1 ? "" : "s"}` : "";
   const help = m.help ? "? help" : "";
   const join = (...bits: string[]) => bits.filter(Boolean).join(" · ");
 
-  const full = join(workspace, model, cost, context, help);
+  const full = join(workspace, model, cost, context, shells, help);
   if (!m.width || width(full) <= m.width) return full;
 
   // Too narrow for everything. Degrade in priority order instead of wrapping onto
   // a second row: a status bar that reflows steals a line from the transcript and
   // reads as a rendering bug. Cost and context go last because they are the two
   // numbers that change, and the whole point of a live meter is watching them.
-  const base = workspace.replace(/\/+$/, "").split("/").pop() ?? "";
+  const base = place((m.workspace ?? "").replace(/\/+$/, "").split("/").pop() ?? "");
   for (
     const candidate of [
-      join(base, model, cost, context, help),
-      join(model, cost, context, help),
-      join(cost, context, help),
-      join(cost, context),
+      join(base, model, cost, context, shells, help),
+      join(model, cost, context, shells, help),
+      join(cost, context, shells, help),
+      join(cost, context, shells),
+      join(context, shells),
       join(context),
     ]
   ) {
@@ -748,11 +947,79 @@ export const SPINNER_MS = 120;
  * The activity blurb rides along when there is one rather than replacing this.
  */
 export function busyLine(
-  opts: { activity?: string | null; elapsedMs: number; tick: number },
+  opts: {
+    activity?: string | null;
+    elapsedMs: number;
+    tick: number;
+    /**
+     * Tokens streamed and dollars accrued SO FAR in this turn.
+     *
+     * The spinner and the elapsed seconds were the whole running line, and the two
+     * numbers that actually move — cost and context — sat frozen on the status row
+     * for the entire turn and then jumped in one frame when it settled. A long turn
+     * is allowed to be slow; it is not allowed to be opaque (spec: expensive things
+     * get a bar). Absent is the normal case for a provider that reports usage only
+     * at the end, and the line degrades to what it always said.
+     */
+    tokens?: number | null;
+    costUsd?: number | null;
+  },
 ): string {
   const frame = SPINNER[Math.abs(Math.trunc(opts.tick)) % SPINNER.length];
   const what = (opts.activity ?? "").trim() || "working";
-  return `${frame} ${what} · ${fmtDuration(opts.elapsedMs)} · esc interrupts`;
+  const bits = [what, fmtDuration(opts.elapsedMs)];
+  if (typeof opts.tokens === "number" && opts.tokens > 0) bits.push(`${fmtTokens(opts.tokens)} tok`);
+  if (typeof opts.costUsd === "number" && opts.costUsd > 0) bits.push(fmtUsd(opts.costUsd));
+  bits.push("esc interrupts");
+  return `${frame} ${bits.join(" · ")}`;
+}
+
+/** Cells in a unit's progress bar. Eight, so 12.5% is the smallest visible step. */
+const BAR_CELLS = 8;
+
+/**
+ * A determinate bar, and ONLY when the fraction is real.
+ *
+ * Spec §9: an expensive thing gets a bar. The failure the rule guards against is the
+ * other one — a bar drawn from a number nobody knows, which reads as progress and is
+ * decoration. So this is called only where `progress !== null`; a null unit renders
+ * no bar rather than an empty trough.
+ */
+function progressBar(fraction: number): string {
+  const filled = Math.max(0, Math.min(BAR_CELLS, Math.round(fraction * BAR_CELLS)));
+  return `${"█".repeat(filled)}${"░".repeat(BAR_CELLS - filled)} ${
+    Math.round(Math.max(0, Math.min(1, fraction)) * 100)
+  }%`;
+}
+
+/**
+ * One row of the live-work rail: what is running, for how long, and what it costs.
+ *
+ * SPEC §5 — nothing runs invisibly, and every unit is attributed SEPARATELY. The rail
+ * used to say `◆ sleep 45  ⋯ working` for every agent alive, which cannot tell a stuck
+ * one from a slow one: two identical rows, one of them wedged. Elapsed answers that
+ * question, and tokens answer the next one (an agent burning tokens is thinking; one
+ * that has burnt none in four minutes is blocked on a shell).
+ *
+ * Nothing is re-derived here — `LiveUnit` already carries elapsed, tokens, spend and
+ * progress (`store.ts`), because the numbers must be the same ones a stop acts on.
+ * The DETAIL is last and is the only thing that clips: a command line is context, and
+ * the numbers are the message.
+ */
+export function unitLine(u: LiveUnit, cols: number): string {
+  const glyph = u.kind === "shell" ? "⚙" : u.kind === "subagent" ? "◆" : "⧉";
+  const hue = u.kind === "shell" ? warn : u.kind === "subagent" ? info : accent;
+  const bits = [fmtDuration(u.elapsedMs)];
+  if (typeof u.tokens === "number" && u.tokens > 0) bits.push(`${fmtTokens(u.tokens)} tok`);
+  if (typeof u.costUsd === "number" && u.costUsd > 0) bits.push(fmtUsd(u.costUsd));
+  if (u.progress !== null) bits.push(progressBar(u.progress));
+  const name = clip(u.title, 28);
+  const tail = bits.join(" · ");
+  // Two spaces separate the name from the numbers; the detail takes whatever is left
+  // and is dropped entirely rather than rendered as an ellipsis on its own.
+  const room = cols - width(`${glyph} ${name}`) - width(tail) - 6;
+  const detail = u.detail && room >= 8 ? dim(` · ${clip(u.detail, room)}`) : "";
+  return `${hue(glyph)} ${name}  ${dim(tail)}${detail}`;
 }
 
 /** `9s`, `1m04s`. Seconds below a minute; a turn that runs an hour still reads. */

@@ -32,6 +32,8 @@
  * persisted and left for the queue drain (T2.4) rather than racing the live turn
  * or being dropped (spec §5).
  */
+import type { Stats } from "node:fs";
+import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { BadRequestError, NotFoundError } from "../errors.ts";
@@ -45,6 +47,8 @@ import {
 import type { AppCtx } from "../types.ts";
 import { contextWindowFor } from "../llm/pricing.ts";
 import { DEFAULT_MODEL } from "../turn/runner.ts";
+// The cheap tier's id, read per call from `BOUGH_CHEAP_MODEL` — see `getModelSettingsH`.
+import { cheapModel } from "../worker/titles.ts";
 // T8.5. `vcs/` is below `server/` and imports nothing from it, so this adds no cycle
 // — deliberately not imported from `server/changes.ts`, which does import `app.ts`.
 import { recordBase } from "../vcs/repodiff.ts";
@@ -77,6 +81,20 @@ export interface SessionListItem extends Session {
   lastTurnStatus?: TurnStatus;
   /** This session's own spend, omitted when zero so untouched rows stay small. */
   costUsd?: number;
+  /**
+   * This session's own token count — input + output + reasoning, the three that
+   * are billed as fresh tokens. Omitted when zero, same as `costUsd`.
+   *
+   * Why it is here and not derived client-side: the live-work rail attributes
+   * cost and tokens PER UNIT (spec §5), and a subagent row in that rail is a
+   * `SessionListItem` and nothing else. Without this it could name a subagent's
+   * dollars but not its tokens, which reads as a stuck agent rather than a busy
+   * one. Cache reads/writes are deliberately excluded: they are already folded
+   * into `costUsd` at their own rates, and adding them here would make the
+   * number the rail prints jump by tens of thousands on a cache hit that cost
+   * almost nothing.
+   */
+  tokens?: number;
 }
 
 /**
@@ -88,12 +106,14 @@ function decorate(ctx: AppCtx, sessions: Session[]): SessionListItem[] {
   const statuses = ctx.db.latestTurnStatuses();
   return sessions.map((s) => {
     const status = statuses.get(s.id);
-    const { costUsd } = ctx.db.sessionUsage(s.id);
+    const usage = ctx.db.sessionUsage(s.id);
+    const tokens = usage.inputTokens + usage.outputTokens + usage.reasoningTokens;
     return {
       ...s,
       busy: busy.has(s.id),
       ...(status ? { lastTurnStatus: status } : {}),
-      ...(costUsd > 0 ? { costUsd } : {}),
+      ...(usage.costUsd > 0 ? { costUsd: usage.costUsd } : {}),
+      ...(tokens > 0 ? { tokens } : {}),
     };
   });
 }
@@ -157,13 +177,13 @@ export function normalizeWorkspace(raw: string, home: string): string {
  * here beats a confusing one there.
  */
 async function requireDirectory(path: string): Promise<void> {
-  let stat: Deno.FileInfo;
+  let info: Stats;
   try {
-    stat = await Deno.stat(path);
+    info = await stat(path);
   } catch {
     throw new BadRequestError(`workspace does not exist: ${path}`);
   }
-  if (!stat.isDirectory) throw new BadRequestError(`workspace is not a directory: ${path}`);
+  if (!info.isDirectory()) throw new BadRequestError(`workspace is not a directory: ${path}`);
 }
 
 // ---- handlers ----------------------------------------------------------------
@@ -390,6 +410,25 @@ export const putDraft: Handler = async (req, ctx, params) => {
 };
 
 /**
+ * `GET /sessions/:id/usage` — this session's totals and its tree's, and nothing else.
+ *
+ * `GET /sessions/:id` already carries both numbers, but it carries the assembled
+ * THREAD with them, which is every message of every ancestor. The running line has
+ * to say what the turn in flight has spent SO FAR (spec §9: a long operation shows
+ * its cost, and slow is fine but opaque is not), and it can only do that by asking
+ * again while the turn runs. Polling the full session for two integers would ship
+ * the whole transcript every three seconds.
+ *
+ * The number genuinely moves mid-turn: `turn/runner.ts` folds each round's usage in
+ * with `db.addSessionUsage` as the round completes, so a five-round turn updates
+ * five times rather than once at the end.
+ */
+export const getSessionUsageH: Handler = (_req, ctx, params) => {
+  requireSession(ctx, params.id);
+  return json({ usage: ctx.db.sessionUsage(params.id), tree: ctx.db.treeUsage(params.id) });
+};
+
+/**
  * `PATCH /sessions/:id` — the per-session `model` and `effort` overrides (spec §4).
  *
  * These columns have existed since the schema was frozen and nothing wrote them, so
@@ -423,7 +462,22 @@ export const patchSession: Handler = async (req, ctx, params) => {
  * A session that exists answers this through its snapshot's `effectiveModel`.
  * This route is for the case where there is no session yet, which is the first
  * screen a user ever sees.
+ *
+ * ALL THREE TIERS, not just the frontier one. Spec §12's two model tiers are
+ * chosen separately, and this route used to answer for the frontier alone — so
+ * the picker's cheap row printed "(unset)" for a tier that is very much set and
+ * bills continuously on titles, ghost text and activity blurbs. It is asked of
+ * `cheapModel()` rather than of the ctx because that is where every cheap-tier
+ * call reads it (`worker/titles.ts`), and a settings route that answered from a
+ * second place could name a model nothing was actually running.
+ *
+ * `defaultEffort` is `null` when nothing pins one — a different fact from "low",
+ * and the picker draws it as such.
  */
 export const getModelSettingsH: Handler = (_req, ctx) => {
-  return json({ defaultModel: ctx.model ?? DEFAULT_MODEL });
+  return json({
+    defaultModel: ctx.model ?? DEFAULT_MODEL,
+    cheapModel: cheapModel(),
+    defaultEffort: ctx.effort ?? null,
+  });
 };

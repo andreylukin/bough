@@ -12,6 +12,7 @@
  * (Same constraint `bus.test.ts` and `paths.test.ts` document.)
  */
 
+import { test } from "bun:test";
 import { deepStrictEqual, ok } from "node:assert";
 import { PatchError } from "../errors.ts";
 import {
@@ -83,7 +84,7 @@ const SIX = doc("one", "two", "three", "four", "five", "six");
 // tags, normalization, joining
 // ---------------------------------------------------------------------------
 
-Deno.test("tagOf: CRLF and a BOM do not change a file's identity", () => {
+test("tagOf: CRLF and a BOM do not change a file's identity", () => {
   const lf = "a\nb\n";
   deepStrictEqual(tagOf(lf), tagOf("a\r\nb\r\n"));
   deepStrictEqual(tagOf(lf), tagOf("﻿a\nb\n"));
@@ -91,7 +92,7 @@ Deno.test("tagOf: CRLF and a BOM do not change a file's identity", () => {
   ok(/^[0-9A-F]{4}$/.test(tagOf(lf)), tagOf(lf));
 });
 
-Deno.test("normalize / toLines: a trailing newline is not a line", () => {
+test("normalize / toLines: a trailing newline is not a line", () => {
   deepStrictEqual(normalize("﻿a\r\nb\r\n"), "a\nb\n");
   deepStrictEqual(toLines("a\nb\n"), ["a", "b"]);
   deepStrictEqual(toLines("a\nb"), ["a", "b"]);
@@ -99,7 +100,7 @@ Deno.test("normalize / toLines: a trailing newline is not a line", () => {
   deepStrictEqual(toLines("\n"), [""]);
 });
 
-Deno.test("joinLines: line-ending style and trailing newline survive a patch", () => {
+test("joinLines: line-ending style and trailing newline survive a patch", () => {
   deepStrictEqual(joinLines(["a", "b"], "x\r\ny\r\n"), "a\r\nb\r\n");
   deepStrictEqual(joinLines(["a", "b"], "x\ny\n"), "a\nb\n");
   deepStrictEqual(joinLines(["a", "b"], "x\ny"), "a\nb");
@@ -107,7 +108,7 @@ Deno.test("joinLines: line-ending style and trailing newline survive a patch", (
   deepStrictEqual(joinLines([], "x\ny\n"), "");
 });
 
-Deno.test("renderNumbered: the exact shape view() hands the model", () => {
+test("renderNumbered: the exact shape view() hands the model", () => {
   const text = doc("alpha", "beta");
   deepStrictEqual(renderNumbered("a.ts", text), `[a.ts#${tagOf(text)}]\n1:alpha\n2:beta`);
   // Numbers are right-aligned once the file needs two digits.
@@ -120,7 +121,7 @@ Deno.test("renderNumbered: the exact shape view() hands the model", () => {
 // parsing
 // ---------------------------------------------------------------------------
 
-Deno.test("parsePatch: every operation, with path and tag attached", () => {
+test("parsePatch: every operation, with path and tag attached", () => {
   const ops = parsePatch(
     [
       "[src/a.ts#A1B2]",
@@ -159,7 +160,7 @@ Deno.test("parsePatch: every operation, with path and tag attached", () => {
   deepStrictEqual(ops[0].at, 2);
 });
 
-Deno.test("parsePatch: tagless headers and lowercase tags", () => {
+test("parsePatch: tagless headers and lowercase tags", () => {
   deepStrictEqual(parsePatch("[a.ts#]\nDEL 1")[0].tag, "");
   deepStrictEqual(parsePatch("[a.ts]\nDEL 1")[0].tag, "");
   deepStrictEqual(parsePatch("[a.ts#a1b2]\nDEL 1")[0].tag, "A1B2");
@@ -169,7 +170,7 @@ Deno.test("parsePatch: tagless headers and lowercase tags", () => {
   deepStrictEqual(parsePatch("[weird#name.ts]\nDEL 1")[0].path, "weird#name.ts");
 });
 
-Deno.test("parsePatch: single-line and alternate range spellings", () => {
+test("parsePatch: single-line and alternate range spellings", () => {
   for (const spelling of ["SWAP 5:", "SWAP 5.=5:", "SWAP 5..5:", "SWAP 5-5:", "SWAP 5 5:"]) {
     const [op] = parsePatch(`[a.ts#]\n${spelling}\n+x`);
     deepStrictEqual([op.a, op.b], [5, 5], spelling);
@@ -178,7 +179,7 @@ Deno.test("parsePatch: single-line and alternate range spellings", () => {
   deepStrictEqual(parsePatch("[a.ts#]\nDEL 7..9")[0].b, 9);
 });
 
-Deno.test("parsePatch: multiple files in one patch", () => {
+test("parsePatch: multiple files in one patch", () => {
   const ops = parsePatch("[a.ts#]\nDEL 1\n\n[b.ts#C0DE]\nINS.TAIL:\n+z");
   deepStrictEqual(groupByFile(ops).map((g) => [g.path, g.tag, g.ops.length]), [
     ["a.ts", "", 1],
@@ -186,17 +187,17 @@ Deno.test("parsePatch: multiple files in one patch", () => {
   ]);
 });
 
-Deno.test("parsePatch: a blank line ends a body without becoming content", () => {
+test("parsePatch: a blank line ends a body without becoming content", () => {
   const ops = parsePatch("[a.ts#]\nINS.HEAD:\n+x\n\nINS.TAIL:\n+y");
   deepStrictEqual(ops[0].body, ["x"]);
   deepStrictEqual(ops[1].body, ["y"]);
 });
 
-Deno.test("parsePatch: Codex-style envelopes are swallowed", () => {
+test("parsePatch: Codex-style envelopes are swallowed", () => {
   deepStrictEqual(parsePatch("*** Begin Patch\n[a.ts#]\nDEL 1\n*** End Patch").length, 1);
 });
 
-Deno.test("parsePatch: rejections name the input line and the fix", () => {
+test("parsePatch: rejections name the input line and the fix", () => {
   const cases: Array<[string, string]> = [
     ["", "empty patch"],
     ["DEL 1\n+x", "expected a section header"],
@@ -213,13 +214,13 @@ Deno.test("parsePatch: rejections name the input line and the fix", () => {
   }
 });
 
-Deno.test("parsePatch: pasting view() output back is diagnosed, not guessed at", () => {
+test("parsePatch: pasting view() output back is diagnosed, not guessed at", () => {
   const listing = renderNumbered("a.ts", SIX);
   const err = throwsPatch(() => parsePatch(listing), "Do not pass view()'s output");
   ok(err.message.includes('"[a.ts#]"'), err.message);
 });
 
-Deno.test("groupByFile: one path with two different tags is refused", () => {
+test("groupByFile: one path with two different tags is refused", () => {
   throwsPatch(
     () => groupByFile(parsePatch("[a.ts#A1B2]\nDEL 1\n\n[a.ts#C3D4]\nDEL 5")),
     "appears twice with different tags",
@@ -234,7 +235,7 @@ Deno.test("groupByFile: one path with two different tags is refused", () => {
 // every operation, end to end
 // ---------------------------------------------------------------------------
 
-Deno.test("apply SWAP: single line, multi-line range, collapse and expand", () => {
+test("apply SWAP: single line, multi-line range, collapse and expand", () => {
   deepStrictEqual(
     apply("[a#]\nSWAP 2:\n+TWO", { a: SIX }).get("a"),
     doc("one", "TWO", "three", "four", "five", "six"),
@@ -249,7 +250,7 @@ Deno.test("apply SWAP: single line, multi-line range, collapse and expand", () =
   );
 });
 
-Deno.test("apply DEL: single line, range, and the whole file", () => {
+test("apply DEL: single line, range, and the whole file", () => {
   deepStrictEqual(
     apply("[a#]\nDEL 3", { a: SIX }).get("a"),
     doc("one", "two", "four", "five", "six"),
@@ -258,7 +259,7 @@ Deno.test("apply DEL: single line, range, and the whole file", () => {
   deepStrictEqual(apply("[a#]\nDEL 1.=6", { a: SIX }).get("a"), "");
 });
 
-Deno.test("apply INS.PRE: text lands before the named line", () => {
+test("apply INS.PRE: text lands before the named line", () => {
   deepStrictEqual(
     apply("[a#]\nINS.PRE 1:\n+ZERO", { a: SIX }).get("a"),
     doc("ZERO", "one", "two", "three", "four", "five", "six"),
@@ -269,7 +270,7 @@ Deno.test("apply INS.PRE: text lands before the named line", () => {
   );
 });
 
-Deno.test("apply INS.POST: text lands after the named line", () => {
+test("apply INS.POST: text lands after the named line", () => {
   deepStrictEqual(
     apply("[a#]\nINS.POST 1:\n+ONE-AND-A-HALF", { a: SIX }).get("a"),
     doc("one", "ONE-AND-A-HALF", "two", "three", "four", "five", "six"),
@@ -280,7 +281,7 @@ Deno.test("apply INS.POST: text lands after the named line", () => {
   );
 });
 
-Deno.test("apply INS.HEAD / INS.TAIL", () => {
+test("apply INS.HEAD / INS.TAIL", () => {
   deepStrictEqual(
     apply("[a#]\nINS.HEAD:\n+top\nINS.TAIL:\n+bottom", { a: SIX }).get("a"),
     doc("top", "one", "two", "three", "four", "five", "six", "bottom"),
@@ -290,11 +291,11 @@ Deno.test("apply INS.HEAD / INS.TAIL", () => {
   deepStrictEqual(apply("[a#]\nINS.TAIL:\n+last", { a: "" }).get("a"), doc("last"));
 });
 
-Deno.test("apply: an empty INS body is a no-op, not a corruption", () => {
+test("apply: an empty INS body is a no-op, not a corruption", () => {
   deepStrictEqual(apply("[a#]\nINS.HEAD:\nINS.TAIL:", { a: SIX }).get("a"), SIX);
 });
 
-Deno.test("apply: all six operations at once", () => {
+test("apply: all six operations at once", () => {
   const out = apply(
     [
       "[a#]",
@@ -319,7 +320,7 @@ Deno.test("apply: all six operations at once", () => {
 // viewed coordinates — the "never apply sequentially" rule
 // ---------------------------------------------------------------------------
 
-Deno.test("line numbers are in the VIEWED version's coordinates", () => {
+test("line numbers are in the VIEWED version's coordinates", () => {
   // DEL 1.=2 removes two lines; applied sequentially, SWAP 5 would then point at
   // "six". It must still mean "five".
   deepStrictEqual(
@@ -333,7 +334,7 @@ Deno.test("line numbers are in the VIEWED version's coordinates", () => {
   );
 });
 
-Deno.test("op order in the patch text does not change the result", () => {
+test("op order in the patch text does not change the result", () => {
   const forwards = "[a#]\nDEL 1\nINS.POST 3:\n+X\nSWAP 6:\n+SIX";
   const backwards = "[a#]\nSWAP 6:\n+SIX\nINS.POST 3:\n+X\nDEL 1";
   deepStrictEqual(apply(forwards, { a: SIX }).get("a"), apply(backwards, { a: SIX }).get("a"));
@@ -343,7 +344,7 @@ Deno.test("op order in the patch text does not change the result", () => {
   );
 });
 
-Deno.test("materialize: gap ordering is fixed and documented", () => {
+test("materialize: gap ordering is fixed and documented", () => {
   const lines = ["one", "two", "three"];
   deepStrictEqual(
     materialize(lines, parsePatch("[a#]\nINS.PRE 2:\n+pre2\nSWAP 2:\n+TWO\nINS.POST 2:\n+post2")),
@@ -361,7 +362,7 @@ Deno.test("materialize: gap ordering is fixed and documented", () => {
   );
 });
 
-Deno.test("INS.POST at the last line of a DEL span still lands", () => {
+test("INS.POST at the last line of a DEL span still lands", () => {
   deepStrictEqual(
     apply("[a#]\nDEL 2.=4\nINS.POST 4:\n+X", { a: SIX }).get("a"),
     doc("one", "X", "five", "six"),
@@ -372,7 +373,7 @@ Deno.test("INS.POST at the last line of a DEL span still lands", () => {
 // rejections
 // ---------------------------------------------------------------------------
 
-Deno.test("out-of-bounds anchors are rejected", () => {
+test("out-of-bounds anchors are rejected", () => {
   throwsPatch(() => apply("[a#]\nSWAP 7:\n+x", { a: SIX }), "out of range");
   throwsPatch(() => apply("[a#]\nDEL 0", { a: SIX }), "out of range");
   throwsPatch(() => apply("[a#]\nINS.PRE 9:\n+x", { a: SIX }), "out of range");
@@ -383,12 +384,12 @@ Deno.test("out-of-bounds anchors are rejected", () => {
   throwsPatch(() => apply("[a#]\nSWAP 7:\n+x", { a: SIX }), "a has 6 lines");
 });
 
-Deno.test("an empty file rejects line-anchored ops by name", () => {
+test("an empty file rejects line-anchored ops by name", () => {
   throwsPatch(() => apply("[a#]\nSWAP 1:\n+x", { a: "" }), "a is empty");
   throwsPatch(() => apply("[a#]\nDEL 1", { a: "" }), "INS.HEAD");
 });
 
-Deno.test("overlapping ranges are rejected rather than silently ordered", () => {
+test("overlapping ranges are rejected rather than silently ordered", () => {
   throwsPatch(() => apply("[a#]\nSWAP 2.=4:\n+x\nDEL 3.=5", { a: SIX }), "operations overlap");
   // Identical spans overlap too.
   throwsPatch(() => apply("[a#]\nDEL 2\nDEL 2", { a: SIX }), "operations overlap");
@@ -401,7 +402,7 @@ Deno.test("overlapping ranges are rejected rather than silently ordered", () => 
   );
 });
 
-Deno.test("an INS anchored inside a replaced span is rejected", () => {
+test("an INS anchored inside a replaced span is rejected", () => {
   throwsPatch(
     () => apply("[a#]\nSWAP 2.=4:\n+X\nINS.PRE 3:\n+Y", { a: SIX }),
     "anchors inside lines 2.=4",
@@ -422,19 +423,19 @@ Deno.test("an INS anchored inside a replaced span is rejected", () => {
   );
 });
 
-Deno.test("SWAP with no body is rejected — DEL is how you remove lines", () => {
+test("SWAP with no body is rejected — DEL is how you remove lines", () => {
   throwsPatch(() => apply("[a#]\nSWAP 2.=3:", { a: SIX }), "has no body rows");
   throwsPatch(() => apply("[a#]\nSWAP 2.=3:", { a: SIX }), "use DEL 2.=3");
 });
 
-Deno.test("a path missing from the file set is named", () => {
+test("a path missing from the file set is named", () => {
   throwsPatch(
     () => apply("[nope.ts#]\nDEL 1", { a: SIX }),
     "nope.ts is not in this patch's file set",
   );
 });
 
-Deno.test("checkOps is callable directly and judges one file's ops", () => {
+test("checkOps is callable directly and judges one file's ops", () => {
   const ops = parsePatch("[a#]\nDEL 1.=2");
   checkOps("a", ops, 6);
   throwsPatch(() => checkOps("a", ops, 1), "is invalid");
@@ -444,27 +445,27 @@ Deno.test("checkOps is callable directly and judges one file's ops", () => {
 // tags: explicit, chained, stale
 // ---------------------------------------------------------------------------
 
-Deno.test("an explicit tag matching the current text applies", () => {
+test("an explicit tag matching the current text applies", () => {
   deepStrictEqual(
     apply(`[a#${tagOf(SIX)}]\nDEL 1`, { a: SIX }).get("a"),
     doc("two", "three", "four", "five", "six"),
   );
 });
 
-Deno.test("a patch chains: the second is written against the first's echoed tag", () => {
+test("a patch chains: the second is written against the first's echoed tag", () => {
   const first = apply("[a#]\nDEL 1", { a: SIX }).get("a")!;
   const second = apply(`[a#${tagOf(first)}]\nSWAP 1:\n+TWO`, { a: first }).get("a");
   deepStrictEqual(second, doc("TWO", "three", "four", "five", "six"));
 });
 
-Deno.test("a stale tag is refused with the empty-tag escape hatch spelled out", () => {
+test("a stale tag is refused with the empty-tag escape hatch spelled out", () => {
   const err = throwsPatch(() => apply(`[a#${wrongTag(SIX)}]\nDEL 1`, { a: SIX }), "stale tag");
   ok(err.message.includes(`is now #${tagOf(SIX)}`), err.message);
   ok(err.message.includes('"[a#]"'), err.message);
   deepStrictEqual(err.status, 400);
 });
 
-Deno.test("a tag that does not match the recorded snapshot is stale", () => {
+test("a tag that does not match the recorded snapshot is stale", () => {
   const viewed = doc("alpha", "beta");
   throwsPatch(
     () => apply(`[a#${wrongTag(viewed)}]\nDEL 1`, { a: viewed }, { a: viewed }),
@@ -472,7 +473,7 @@ Deno.test("a tag that does not match the recorded snapshot is stale", () => {
   );
 });
 
-Deno.test("patching a file this session never viewed is refused", () => {
+test("patching a file this session never viewed is refused", () => {
   // `base` is present but missing the path: there is no version to rebase from,
   // so applying against the current text would be exactly the silent clobber.
   throwsPatch(
@@ -487,7 +488,7 @@ Deno.test("patching a file this session never viewed is refused", () => {
 
 const BASE4 = doc("alpha", "beta", "gamma", "delta");
 
-Deno.test("REBASE: the file moved but the patched range is untouched", () => {
+test("REBASE: the file moved but the patched range is untouched", () => {
   // Another agent inserted a line at the top of the version we viewed.
   const current = doc("header", "alpha", "beta", "gamma", "delta");
   const out = apply("[a#]\nSWAP 4:\n+DELTA", { a: current }, { a: BASE4 });
@@ -495,30 +496,30 @@ Deno.test("REBASE: the file moved but the patched range is untouched", () => {
   deepStrictEqual(out.get("a"), doc("header", "alpha", "beta", "gamma", "DELTA"));
 });
 
-Deno.test("REBASE: an insert in the middle shifts only the ops below it", () => {
+test("REBASE: an insert in the middle shifts only the ops below it", () => {
   const current = doc("one", "two", "NEW", "three", "four", "five", "six");
   const out = apply("[a#]\nSWAP 5.=6:\n+FIVE-SIX", { a: current }, { a: SIX });
   deepStrictEqual(out.get("a"), doc("one", "two", "NEW", "three", "four", "FIVE-SIX"));
 });
 
-Deno.test("REBASE: a deletion above shifts the ops below it", () => {
+test("REBASE: a deletion above shifts the ops below it", () => {
   const current = doc("one", "three", "four", "five", "six");
   const out = apply("[a#]\nDEL 6", { a: current }, { a: SIX });
   deepStrictEqual(out.get("a"), doc("one", "three", "four", "five"));
 });
 
-Deno.test("REBASE: an explicit tag naming a superseded-but-known version still rebases", () => {
+test("REBASE: an explicit tag naming a superseded-but-known version still rebases", () => {
   const current = doc("header", "alpha", "beta", "gamma", "delta");
   const out = apply(`[a#${tagOf(BASE4)}]\nSWAP 4:\n+DELTA`, { a: current }, { a: BASE4 });
   deepStrictEqual(out.get("a"), doc("header", "alpha", "beta", "gamma", "DELTA"));
 });
 
-Deno.test("REBASE: unchanged file needs no rebase and is byte-identical elsewhere", () => {
+test("REBASE: unchanged file needs no rebase and is byte-identical elsewhere", () => {
   const out = apply("[a#]\nSWAP 4:\n+DELTA", { a: BASE4 }, { a: BASE4 });
   deepStrictEqual(out.get("a"), doc("alpha", "beta", "gamma", "DELTA"));
 });
 
-Deno.test("CONFLICT: the patched line itself was rewritten", () => {
+test("CONFLICT: the patched line itself was rewritten", () => {
   const current = doc("alpha", "beta", "gamma", "delta -- edited elsewhere");
   const err = throwsPatch(
     () => apply("[a#]\nSWAP 4:\n+DELTA", { a: current }, { a: BASE4 }),
@@ -531,7 +532,7 @@ Deno.test("CONFLICT: the patched line itself was rewritten", () => {
   ok(err.message.includes("Nothing was written"), err.message);
 });
 
-Deno.test("CONFLICT: lines were inserted INSIDE the patched span", () => {
+test("CONFLICT: lines were inserted INSIDE the patched span", () => {
   // The op's footprint would now cover a line the agent never saw; rewriting it
   // would silently discard the other agent's insert.
   const current = doc("one", "two", "NEW", "three", "four", "five", "six");
@@ -541,7 +542,7 @@ Deno.test("CONFLICT: lines were inserted INSIDE the patched span", () => {
   );
 });
 
-Deno.test("CONFLICT: the patched line was deleted by the other write", () => {
+test("CONFLICT: the patched line was deleted by the other write", () => {
   const current = doc("alpha", "gamma", "delta");
   throwsPatch(
     () => apply("[a#]\nSWAP 2:\n+BETA", { a: current }, { a: BASE4 }),
@@ -549,7 +550,7 @@ Deno.test("CONFLICT: the patched line was deleted by the other write", () => {
   );
 });
 
-Deno.test("CONFLICT: every conflicting range is listed, not just the first", () => {
+test("CONFLICT: every conflicting range is listed, not just the first", () => {
   const current = doc("alpha!", "beta", "gamma!", "delta");
   const err = throwsPatch(
     () => apply("[a#]\nSWAP 1:\n+A\nSWAP 3:\n+G", { a: current }, { a: BASE4 }),
@@ -558,7 +559,7 @@ Deno.test("CONFLICT: every conflicting range is listed, not just the first", () 
   ok(err.message.includes("lines 3.=3"), err.message);
 });
 
-Deno.test("CONFLICT: one touched range refuses the whole file's other, clean ops", () => {
+test("CONFLICT: one touched range refuses the whole file's other, clean ops", () => {
   const current = doc("alpha", "beta!", "gamma", "delta");
   throwsPatch(
     () => apply("[a#]\nSWAP 2:\n+B\nSWAP 4:\n+D", { a: current }, { a: BASE4 }),
@@ -571,13 +572,13 @@ Deno.test("CONFLICT: one touched range refuses the whole file's other, clean ops
   );
 });
 
-Deno.test("INS.HEAD / INS.TAIL never conflict — they name no line", () => {
+test("INS.HEAD / INS.TAIL never conflict — they name no line", () => {
   const current = doc("totally", "different", "content");
   const out = apply("[a#]\nINS.TAIL:\n+z", { a: current }, { a: BASE4 });
   deepStrictEqual(out.get("a"), doc("totally", "different", "content", "z"));
 });
 
-Deno.test("bounds are judged in VIEWED coordinates, not the current file's", () => {
+test("bounds are judged in VIEWED coordinates, not the current file's", () => {
   // The other write truncated the file; our op named line 4 of what we viewed,
   // which no longer exists. That is a conflict, not an out-of-range parse error.
   const current = doc("alpha", "beta");
@@ -587,7 +588,7 @@ Deno.test("bounds are judged in VIEWED coordinates, not the current file's", () 
   );
 });
 
-Deno.test("rebaseOps and lineMap are usable directly", () => {
+test("rebaseOps and lineMap are usable directly", () => {
   const base = ["a", "b", "c"];
   deepStrictEqual(lineMap(base, ["x", "a", "b", "c"]), [1, 2, 3]);
   deepStrictEqual(lineMap(base, ["a", "B", "c"]), [0, null, 2]);
@@ -605,7 +606,7 @@ Deno.test("rebaseOps and lineMap are usable directly", () => {
 // multi-file atomicity
 // ---------------------------------------------------------------------------
 
-Deno.test("multi-file: all files change together on success", () => {
+test("multi-file: all files change together on success", () => {
   const out = apply("[a#]\nDEL 1\n\n[b#]\nINS.TAIL:\n+z", {
     a: SIX,
     b: doc("x", "y"),
@@ -617,7 +618,7 @@ Deno.test("multi-file: all files change together on success", () => {
   deepStrictEqual(out.get("untouched"), doc("keep"));
 });
 
-Deno.test("multi-file: ALL or NONE — one conflict discards the whole patch", () => {
+test("multi-file: ALL or NONE — one conflict discards the whole patch", () => {
   const current = { a: SIX, b: doc("x", "CHANGED ELSEWHERE") };
   const base = { a: SIX, b: doc("x", "y") };
   const files = new Map(Object.entries(current));
@@ -640,7 +641,7 @@ Deno.test("multi-file: ALL or NONE — one conflict discards the whole patch", (
   );
 });
 
-Deno.test("multi-file: a later out-of-range op discards the earlier valid file", () => {
+test("multi-file: a later out-of-range op discards the earlier valid file", () => {
   const files = new Map(Object.entries({ a: SIX, b: doc("x") }));
   throwsPatch(
     () => applyPatch(files, parsePatch("[a#]\nDEL 1\n\n[b#]\nDEL 9"), {}),
@@ -649,7 +650,7 @@ Deno.test("multi-file: a later out-of-range op discards the earlier valid file",
   deepStrictEqual(files.get("a"), SIX);
 });
 
-Deno.test("multi-file: a stale tag on the second file discards the first", () => {
+test("multi-file: a stale tag on the second file discards the first", () => {
   const files = new Map(Object.entries({ a: SIX, b: doc("x") }));
   const input = `[a#]\nDEL 1\n\n[b#${wrongTag(doc("x"))}]\nDEL 1`;
   throwsPatch(() => applyPatch(files, parsePatch(input), {}), "stale tag");
@@ -660,7 +661,7 @@ Deno.test("multi-file: a stale tag on the second file discards the first", () =>
 // purity
 // ---------------------------------------------------------------------------
 
-Deno.test("applyPatch mutates neither argument and is repeatable", () => {
+test("applyPatch mutates neither argument and is repeatable", () => {
   const files = new Map(Object.entries({ a: SIX }));
   const base = new Map(Object.entries({ a: SIX }));
   const ops = parsePatch("[a#]\nSWAP 1:\n+ONE");
@@ -677,7 +678,7 @@ Deno.test("applyPatch mutates neither argument and is repeatable", () => {
   deepStrictEqual(applyPatch(files, ops, { base }).get("a"), out.get("a"));
 });
 
-Deno.test("CRLF files keep their line endings through a patch", () => {
+test("CRLF files keep their line endings through a patch", () => {
   deepStrictEqual(
     apply("[a#]\nDEL 2", { a: "one\r\ntwo\r\nthree\r\n" }).get("a"),
     "one\r\nthree\r\n",
@@ -689,7 +690,7 @@ Deno.test("CRLF files keep their line endings through a patch", () => {
   );
 });
 
-Deno.test("a file with no trailing newline keeps having none", () => {
+test("a file with no trailing newline keeps having none", () => {
   deepStrictEqual(apply("[a#]\nSWAP 1:\n+ONE", { a: "one\ntwo" }).get("a"), "ONE\ntwo");
 });
 
@@ -701,7 +702,7 @@ Deno.test("a file with no trailing newline keeps having none", () => {
 // exists to prevent.
 // ---------------------------------------------------------------------------
 
-Deno.test("CONFLICT: a multi-line SWAP whose interior was rewritten in place", () => {
+test("CONFLICT: a multi-line SWAP whose interior was rewritten in place", () => {
   const base = doc("X", "Y", "Z");
   const cur = doc("X", "Y-EDITED", "Z"); // another writer changed line 2; count unchanged
   const err = throwsPatch(
@@ -711,13 +712,13 @@ Deno.test("CONFLICT: a multi-line SWAP whose interior was rewritten in place", (
   ok(err.message.includes("a"), "names the file");
 });
 
-Deno.test("CONFLICT: a multi-line DEL whose interior was rewritten in place", () => {
+test("CONFLICT: a multi-line DEL whose interior was rewritten in place", () => {
   const base = doc("a", "b", "c", "d", "e");
   const cur = doc("a", "B!", "C!", "d", "e");
   throwsPatch(() => apply("[f#]\nDEL 1.=5", { f: cur }, { f: base }), "1.=5");
 });
 
-Deno.test("REBASE still succeeds when the span is untouched and merely shifts", () => {
+test("REBASE still succeeds when the span is untouched and merely shifts", () => {
   const base = doc("a", "b", "c");
   const cur = doc("header", "a", "b", "c"); // inserted ABOVE the span
   const out = apply("[g#]\nSWAP 1.=3:\n+N", { g: cur }, { g: base });

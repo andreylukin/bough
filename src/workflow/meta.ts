@@ -5,7 +5,7 @@
  * before the script executes: they are what the run row is created with, what the
  * run view labels its phases from, and what a rerun inherits when the author edited
  * only the body (`workflow/run.ts`). The script itself runs detached, minutes to
- * hours later, in a `permissions: "none"` worker — so "just run it and read the
+ * hours later, in the workflow worker — so "just run it and read the
  * export" is not available at submit time, and even if it were, a script whose
  * `meta` came from a function call would report one name on the run and a different
  * one on the rerun.

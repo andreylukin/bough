@@ -19,6 +19,7 @@
  * reachable from this environment, and a test that cannot run offline does not belong
  * in `deno task test`.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { Bus } from "../bus.ts";
 import { openDb } from "../db/db.ts";
@@ -61,7 +62,7 @@ async function sweep(...raised: RaisedAsk[]): Promise<void> {
 
 // ---- GET /questions ---------------------------------------------------------
 
-Deno.test("AC: a fresh client rebuilds its hold cards from GET /questions", async () => {
+test("AC: a fresh client rebuilds its hold cards from GET /questions", async () => {
   const f = fixture();
   const a = askHolds.raise(f.bus, { sessionId: "sA", messageId: "m1", question: "Which env?" });
   const b = askHolds.raise(f.bus, {
@@ -97,7 +98,7 @@ Deno.test("AC: a fresh client rebuilds its hold cards from GET /questions", asyn
 
 // ---- POST /sessions/:id/questions/:qid --------------------------------------
 
-Deno.test("an answer settles the parked program", async () => {
+test("an answer settles the parked program", async () => {
   const f = fixture();
   const q = askHolds.raise(f.bus, { sessionId: "sA", messageId: "m1", question: "Which env?" });
 
@@ -109,7 +110,7 @@ Deno.test("an answer settles the parked program", async () => {
   await sweep();
 });
 
-Deno.test("a decline rejects it catchably", async () => {
+test("a decline rejects it catchably", async () => {
   const f = fixture();
   const q = askHolds.raise(f.bus, { sessionId: "sA", messageId: "m1", question: "Drop it?" });
 
@@ -121,7 +122,7 @@ Deno.test("a decline rejects it catchably", async () => {
   await sweep();
 });
 
-Deno.test("an unknown or restarted question is a 404 that says why", async () => {
+test("an unknown or restarted question is a 404 that says why", async () => {
   const f = fixture();
   const res = await f.call(post(`/sessions/sA/questions/nope`, { answer: "x" }));
   assert.equal(res.status, 404);
@@ -131,7 +132,7 @@ Deno.test("an unknown or restarted question is a 404 that says why", async () =>
   assert.match(body.error, /memory-only/);
 });
 
-Deno.test("another session's question cannot be answered by guessing its id", async () => {
+test("another session's question cannot be answered by guessing its id", async () => {
   const f = fixture();
   const q = askHolds.raise(f.bus, { sessionId: "sA", messageId: "m1", question: "Which env?" });
 
@@ -143,7 +144,7 @@ Deno.test("another session's question cannot be answered by guessing its id", as
   await sweep(q);
 });
 
-Deno.test("an empty answer is a 400, not a resolution with nothing in it", async () => {
+test("an empty answer is a 400, not a resolution with nothing in it", async () => {
   const f = fixture();
   const q = askHolds.raise(f.bus, { sessionId: "sA", messageId: "m1", question: "Which env?" });
 
@@ -159,7 +160,7 @@ Deno.test("an empty answer is a 400, not a resolution with nothing in it", async
   await sweep(q);
 });
 
-Deno.test("a second answer to the same question is refused, not applied", async () => {
+test("a second answer to the same question is refused, not applied", async () => {
   const f = fixture();
   const q = askHolds.raise(f.bus, { sessionId: "sA", messageId: "m1", question: "Which env?" });
 

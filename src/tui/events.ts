@@ -88,7 +88,11 @@ export interface EventStreamOptions {
    */
   onBadFrame?: (info: { type: string; data: string; error?: unknown }) => void;
   retryMs?: number;
-  fetchFn?: typeof fetch;
+  /**
+   * Only the call signature is required — `typeof fetch` would also demand the
+   * runtime's extras (Bun hangs `preconnect` off it), which no injector has.
+   */
+  fetchFn?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
   /** Injected so a test does not wait two seconds for a redial. */
   delay?: (ms: number, signal: AbortSignal) => Promise<void>;
 }

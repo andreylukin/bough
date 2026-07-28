@@ -49,6 +49,7 @@ import {
   warn,
   wrapLine,
 } from "./format.ts";
+import type { TranscriptMark } from "./store.ts";
 
 export interface VLine {
   text: string;
@@ -154,8 +155,14 @@ const REPORT_LINES = 6;
 /**
  * A gutter-framed block: each logical line wraps to the remaining width and every
  * physical line carries a dim `│` (clickable — anywhere in the block collapses
- * it). A truncated block ends on a "+N more · click to show all" line whose target
- * is `fullKey`, so lifting one block's cap is separate from the fold itself.
+ * it). A truncated block ends on a "+N more lines" line whose target is `fullKey`,
+ * so lifting one block's cap is separate from the fold itself.
+ *
+ * That line used to end "· click to show all". No click is dispatched anywhere in
+ * the TUI and `isFull` has no caller, so the cap cannot be lifted by any means —
+ * the row was instructing the reader to do something that does not exist. The
+ * count stays, because knowing how much was cut is the useful half; the promise
+ * goes.
  */
 function pushBlock(
   out: VLine[],
@@ -180,7 +187,7 @@ function pushBlock(
   if (logical.length > shown.length) {
     out.push({
       text: finish(
-        `${dim("│")} ${dim(`… +${logical.length - shown.length} more lines · click to show all`)}`,
+        `${dim("│")} ${dim(`… +${logical.length - shown.length} more lines`)}`,
       ),
       click: opts.fullKey ?? opts.click,
     });
@@ -218,27 +225,44 @@ function toolGroupLines(
   const capOut = full ? Infinity : OUTPUT_LINES;
   const { calls, results, running, hasError, interrupted } = toolSummary(parts);
   if (calls.length === 0) return;
+  // THE STATUS COMES FIRST, where nothing can clip it. It used to be appended —
+  // `⚙ run_steps…` after the summary — and on a 100-column screen it never once
+  // reached the glass, so the only sign a step was in flight was the spinner line
+  // shared by the whole turn.
+  const state = running
+    ? warn("⚙ ")
+    : hasError
+    ? danger("✗ error  ")
+    : interrupted
+    ? warn("⏹ interrupted  ")
+    : "";
+  // Names only when they DIFFER. bough has one tool, so `calls.map(name)` rendered
+  // a four-call turn as `run_steps · run_steps · run_steps · run_steps` — four
+  // copies of an internal identifier where the prose summary should be.
+  const names = [...new Set(calls.map((c) => c.name))];
+  const count = `${calls.length} ${calls.length === 1 ? "step" : "steps"}`;
   // The fold glyph stays at text weight — it is the affordance that says
   // "expandable"; an all-dim header reads as inert.
-  let head = `${expanded ? "▾" : "▸"} ` + dim(
-    `${calls.length} ${calls.length === 1 ? "step" : "steps"}  ${
-      calls.map((c) => c.name).join(" · ")
-    }`,
-  );
-  // A collapsed single-call group carries a gist of the program. Expanded shows
-  // the real thing; multi-call headers are already crowded with names.
-  if (!expanded && calls.length === 1) {
+  let head = `${expanded ? "▾" : "▸"} ` + state +
+    dim(names.length > 1 ? `${count}  ${names.join(" · ")}` : count);
+  // A collapsed group carries WHAT IT DID — every call's gist, not just the first
+  // one's. Expanded shows the real thing, so the summary would only repeat it.
+  if (!expanded) {
     // WHAT IT DID first, and the code only when nothing was recognized. A clipped
     // line of source as the headline reads as debug output and answers none of the
     // questions a reader actually has (`programSummary`).
-    const input = calls[0].input as { code?: unknown } | null | undefined;
-    const code = input && typeof input.code === "string" ? input.code : "";
-    const label = programSummary(code) || codeGist(calls[0].input);
-    if (label) head += dim(` · ${label}`);
+    const gists = calls.map((call) => {
+      const input = call.input as { code?: unknown } | null | undefined;
+      const code = input && typeof input.code === "string" ? input.code : "";
+      // Present tense while the call is still open: "ran 1 command" under a shell
+      // that has been blocked for ten seconds is a lie the reader acts on.
+      const live = !results.get(call.id);
+      return programSummary(code, 64, live) || codeGist(call.input);
+    }).filter(Boolean);
+    // One budget for the whole tail, so a four-step turn clips once at the end
+    // rather than losing its last step silently off the edge of the row.
+    if (gists.length) head += dim(` · ${clip(gists.join(" · "), Math.max(20, w - 16))}`);
   }
-  if (hasError) head += "  " + danger("✗ error");
-  else if (interrupted) head += "  " + warn("⏹ interrupted");
-  if (running) head += "  " + warn(`⚙ ${running.name}…`);
   // Never wrapped: the whole visual row stays one click target.
   out.push({ text: head, click: key });
   if (!expanded) return;
@@ -453,14 +477,20 @@ function subagentNoteLines(out: VLine[], note: SubagentNote, w: number, full: bo
     }
     if (physical.length > shown.length) {
       out.push({
-        text: `${dim("│")} ${dim(`… +${physical.length - shown.length} more · click to show all`)}`,
+        text: `${dim("│")} ${dim(`… +${physical.length - shown.length} more`)}`,
         click: `report:${note.sessionId}!full`,
       });
     }
   }
   // It shared this checkout, so there is nothing to merge — the single most
   // common wrong move after a delegated report is looking for the merge step.
-  push(out, dim("  ↳ click to open · its edits are already in this checkout"), w, open);
+  //
+  // It used to say "click to open". Nothing in the TUI dispatches a click (App's
+  // mouse handler is wheel-only), so the one instruction the transcript gave the
+  // reader was an instruction to do something impossible. The `click` targets on
+  // these lines are kept — they are what a wired pointer would use — but the row
+  // names the key that works today.
+  push(out, dim("  ↳ ^s opens it · its edits are already in this checkout"), w, open);
 }
 
 function branchCardLines(out: VLine[], b: Branch, w: number, isFull: (key: string) => boolean) {
@@ -556,8 +586,32 @@ export interface BuildOptions {
   branches?: Branch[];
   toolLogs?: Record<string, string[]>;
   jobs?: JobView[];
+  /**
+   * The session's permanent ledger (`store.ts`), oldest first.
+   *
+   * Two things the transcript used to forget the moment they happened: what a turn
+   * cost (the spinner's numbers vanished with the spinner) and what was destroyed (a
+   * revert printed a notice that expired ten seconds later, leaving no record
+   * anywhere that a file had been thrown away). Both are written as marks and both
+   * are interleaved HERE rather than pushed into `thread`, because `mergeThread`
+   * appends local-only messages at the end and a mark would drift off its position
+   * as soon as the next turn's messages landed.
+   */
+  marks?: TranscriptMark[];
   /** Injected clock — elapsed times are the only thing here that needs one. */
   now?: number;
+}
+
+/**
+ * One mark as one row: two columns in, like a message body, so it reads as part of
+ * the conversation rather than as chrome. A destructive mark is amber — it is the
+ * only row in the transcript that reports something the user cannot get back.
+ */
+function markLine(mark: TranscriptMark): VLine {
+  return {
+    text: "  " + (mark.kind === "destructive" ? warn(mark.text) : dim(mark.text)),
+    copy: mark.text,
+  };
 }
 
 export function buildLines(
@@ -587,6 +641,14 @@ export function buildLines(
     } else orphans.push(b);
   }
   const out: VLine[] = [];
+  // The ledger, drained in step with the thread: every mark older than the message
+  // about to be pushed is flushed before it, so a settled-turn line lands under the
+  // turn it measured and a revert lands where the conversation was when it happened.
+  const marks = [...(opts.marks ?? [])].sort((a, b) => a.at - b.at);
+  let markAt = 0;
+  const flushMarks = (until: number) => {
+    while (markAt < marks.length && marks[markAt].at <= until) out.push(markLine(marks[markAt++]));
+  };
   // True once a pending reply has rendered: any user message after it was posted
   // into a running turn and is only QUEUED server-side (spec §5).
   let midTurn = false;
@@ -599,6 +661,7 @@ export function buildLines(
       const bg = parseBgNote(t);
       if (bg && jobIds.has(bg)) continue;
     }
+    flushMarks(m.createdAt);
     out.push(...messageLines(m, isExpanded, isFull, w, streaming[m.id], opts.toolLogs));
     // An honest ack under a steered message: the turn drains it at the next round
     // boundary, and a blocking host call can hold that off for minutes — silence
@@ -610,6 +673,9 @@ export function buildLines(
     for (const b of byOrigin.get(m.id) ?? []) branchCardLines(out, b, w, isFull);
     byOrigin.delete(m.id);
   }
+  // Everything that happened after the last message — the turn that just settled,
+  // the file reverted while nothing was being said.
+  flushMarks(Infinity);
   // Anything left is anchored to a message not in this thread (a fork or
   // compaction dropped the spawn turn). Those cards would render nowhere at all.
   const tail = [...orphans, ...[...byOrigin.values()].flat()];

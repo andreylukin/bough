@@ -14,6 +14,10 @@
  *
  * Assertions come from `node:assert/strict`: jsr.io is not reachable here.
  */
+import { test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import assert from "node:assert/strict";
 import { Bus } from "../bus.ts";
 import { openDb } from "../db/db.ts";
@@ -32,9 +36,9 @@ const TABLE: Route[] = [
  * (`paths.ts`: the override exists precisely so a test gets a hermetic root).
  */
 function fixture() {
-  const home = Deno.makeTempDirSync({ prefix: "bough-home-" });
-  const previous = Deno.env.get("BOUGH_HOME");
-  Deno.env.set("BOUGH_HOME", home);
+  const home = mkdtempSync(join(tmpdir(), "bough-home-"));
+  const previous = process.env["BOUGH_HOME"];
+  process.env["BOUGH_HOME"] = home;
   const db = openDb(":memory:");
   const ctx: AppCtx = { db, bus: new Bus() };
   const call = createHandler(ctx, { routes: TABLE });
@@ -43,14 +47,14 @@ function fixture() {
     get: (path: string) => call(new Request(`http://127.0.0.1${path}`)),
     close() {
       db.close();
-      if (previous === undefined) Deno.env.delete("BOUGH_HOME");
-      else Deno.env.set("BOUGH_HOME", previous);
-      Deno.removeSync(home, { recursive: true });
+      if (previous === undefined) delete process.env["BOUGH_HOME"];
+      else process.env["BOUGH_HOME"] = previous;
+      rmSync(home, { recursive: true, force: true });
     },
   };
 }
 
-Deno.test("GET /skills lists the bundled history skill and names its sources", async () => {
+test("GET /skills lists the bundled history skill and names its sources", async () => {
   const f = fixture();
   try {
     const res = await f.get("/skills");
@@ -72,7 +76,7 @@ Deno.test("GET /skills lists the bundled history skill and names its sources", a
   }
 });
 
-Deno.test("GET /skills/:name returns the body with ${SKILL_DIR} resolved", async () => {
+test("GET /skills/:name returns the body with ${SKILL_DIR} resolved", async () => {
   const f = fixture();
   try {
     const res = await f.get("/skills/history");
@@ -87,7 +91,7 @@ Deno.test("GET /skills/:name returns the body with ${SKILL_DIR} resolved", async
   }
 });
 
-Deno.test("an unknown skill 404s with what IS installed, and a traversal is just unknown", async () => {
+test("an unknown skill 404s with what IS installed, and a traversal is just unknown", async () => {
   const f = fixture();
   try {
     const missing = await f.get("/skills/nope");

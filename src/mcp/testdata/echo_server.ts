@@ -6,8 +6,7 @@
  * on demand, because the client's whole contract is what happens when a server
  * does not cooperate.
  *
- * Run with `deno run --quiet --no-config` and NO permissions: it reads stdin and
- * writes stdout/stderr, nothing else.
+ * Run with `bun`: it reads stdin and writes stdout/stderr, nothing else.
  *
  * Tools:
  *   echo   {text}  — readOnlyHint; returns the text plus structuredContent
@@ -22,8 +21,13 @@
  *   --noise  print a non-JSON banner to stdout before the handshake
  */
 
-const DEAF = Deno.args.includes("--deaf");
-const NOISE = Deno.args.includes("--noise");
+// This fixture imports nothing, and top-level `await` is only legal in a module —
+// so say so explicitly. Deno called every file a module; tsc does not.
+export {};
+
+const args = process.argv.slice(2);
+const DEAF = args.includes("--deaf");
+const NOISE = args.includes("--noise");
 
 function reply(message: unknown): void {
   console.log(JSON.stringify(message));
@@ -71,7 +75,7 @@ function callTool(id: number | undefined, name: string, args: Record<string, unk
   if (name === "die") {
     // Mid-call death: no reply, a diagnostic on stderr, gone.
     console.error("echo-fixture: asked to die, taking the server down");
-    Deno.exit(3);
+    process.exit(3);
   }
   if (name === "slow") return; // alive, and never answering
 
@@ -124,7 +128,7 @@ function handle(message: {
 if (NOISE) console.log("echo-fixture starting up (this line is not JSON)");
 
 let buffer = "";
-for await (const chunk of Deno.stdin.readable.pipeThrough(new TextDecoderStream())) {
+for await (const chunk of Bun.stdin.stream().pipeThrough(new TextDecoderStream())) {
   buffer += chunk;
   for (;;) {
     const newline = buffer.indexOf("\n");

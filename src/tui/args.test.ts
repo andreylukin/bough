@@ -1,8 +1,9 @@
 /**
- * The TUI had no command line at all: `main.tsx` never read `Deno.args`, so every
+ * The TUI had no command line at all: `main.tsx` never read `process.argv`, so every
  * flag was discarded in silence. These assert the two properties that matters —
  * `-w` is honoured, and anything unrecognized STOPS rather than starting anyway.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { isTuiHelpRequest, isTuiUsageError, parseTuiArgs, type TuiArgs, USAGE } from "./args.ts";
 
@@ -12,7 +13,7 @@ const ok = (argv: string[]): TuiArgs => {
   return parsed;
 };
 
-Deno.test("-w and --workspace both name where a new conversation starts", () => {
+test("-w and --workspace both name where a new conversation starts", () => {
   // The bug: `bough -w /other/repo` opened in the cwd and said nothing, which
   // points an unsandboxed agent at a repository the user did not choose.
   assert.equal(ok(["-w", "/tmp/x"]).workspace, "/tmp/x");
@@ -23,7 +24,7 @@ Deno.test("-w and --workspace both name where a new conversation starts", () => 
   assert.equal(ok([]).workspace, undefined);
 });
 
-Deno.test("an unknown flag stops, rather than starting anyway", () => {
+test("an unknown flag stops, rather than starting anyway", () => {
   for (const argv of [["--wrokspace", "/tmp"], ["-q"], ["--json"]]) {
     const parsed = parseTuiArgs(argv);
     assert.ok(isTuiUsageError(parsed), `${argv.join(" ")} should be refused`);
@@ -33,7 +34,7 @@ Deno.test("an unknown flag stops, rather than starting anyway", () => {
   assert.ok(isTuiUsageError(parseTuiArgs(["-w", "  "])));
 });
 
-Deno.test("a positional argument is refused, and points at bough exec", () => {
+test("a positional argument is refused, and points at bough exec", () => {
   // Typing a prompt at the TUI is a real mistake, and silently swallowing it into
   // a screen that ignores it is the unhelpful answer.
   const parsed = parseTuiArgs(["fix the tests"]);
@@ -41,7 +42,7 @@ Deno.test("a positional argument is refused, and points at bough exec", () => {
   assert.match(parsed.usageError, /bough exec/);
 });
 
-Deno.test("--help is answered, and the usage states the posture", () => {
+test("--help is answered, and the usage states the posture", () => {
   for (const argv of [["--help"], ["-h"], ["-w", "/tmp", "--help"]]) {
     assert.ok(isTuiHelpRequest(parseTuiArgs(argv)), argv.join(" "));
   }

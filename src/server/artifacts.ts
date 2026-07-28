@@ -34,6 +34,7 @@
  *
  * Ported from `src/server/artifacts.ts`. Deltas are marked `NOTE:`.
  */
+import { open, readFile, stat } from "node:fs/promises";
 import { listArtifacts, resolveArtifactPath } from "../hostfn/artifact.ts";
 import type { ArtifactStoreOptions } from "../hostfn/artifact.ts";
 import { type Handler, json } from "./http.ts";
@@ -80,14 +81,14 @@ export function contentTypeFor(path: string): string {
  */
 async function sniffHtml(full: string): Promise<string | null> {
   const head = new Uint8Array(64);
-  let n: number | null = 0;
-  const file = await Deno.open(full);
+  let n = 0;
+  const file = await open(full);
   try {
-    n = await file.read(head);
+    n = (await file.read(head, 0, head.length, 0)).bytesRead;
   } finally {
-    file.close();
+    await file.close();
   }
-  return new TextDecoder().decode(head.subarray(0, n ?? 0)).trimStart().startsWith("<")
+  return new TextDecoder().decode(head.subarray(0, n)).trimStart().startsWith("<")
     ? "text/html; charset=utf-8"
     : null;
 }
@@ -172,7 +173,7 @@ export async function serveArtifact(
   }
 
   try {
-    if (!(await Deno.stat(full)).isFile) throw new Error("not a file");
+    if (!(await stat(full)).isFile()) throw new Error("not a file");
 
     let type = contentTypeFor(full);
     if (type === "application/octet-stream" && !basename(full).includes(".")) {
@@ -180,13 +181,13 @@ export async function serveArtifact(
     }
 
     if (type.startsWith("text/html")) {
-      const html = await Deno.readTextFile(full);
+      const html = await readFile(full, "utf8");
       return new Response(injectCommentLayer(html), {
         headers: { "content-type": type, "cache-control": "no-cache" },
       });
     }
 
-    return new Response(await Deno.readFile(full), {
+    return new Response(await readFile(full), {
       headers: { "content-type": type, "cache-control": "no-cache" },
     });
   } catch {

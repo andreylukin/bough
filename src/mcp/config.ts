@@ -324,7 +324,7 @@ export function expandEnv(
   env: Record<string, string>,
   opts: McpConfigOptions = {},
 ): Record<string, string> {
-  const lookup: EnvLookup = opts.env ?? ((name) => Deno.env.get(name));
+  const lookup: EnvLookup = opts.env ?? ((name) => process.env[name]);
   const out: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) {
     out[key] = value.replace(/\$\{(\w+)\}/g, (_match, name: string) => {
@@ -385,7 +385,7 @@ export function childEnv(
   server: ServerConfig,
   opts: McpConfigOptions = {},
 ): Record<string, string> {
-  const lookup: EnvLookup = opts.env ?? ((name) => Deno.env.get(name));
+  const lookup: EnvLookup = opts.env ?? ((name) => process.env[name]);
   const out: Record<string, string> = {};
   for (const name of INHERITED_ENV) {
     const value = lookup(name);

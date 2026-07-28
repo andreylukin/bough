@@ -11,6 +11,7 @@
  * egress policy (same constraint the other test files document).
  */
 
+import { test } from "bun:test";
 import { deepStrictEqual, ok, strictEqual } from "node:assert";
 import {
   catalogKey,
@@ -21,7 +22,7 @@ import {
   usageCostUsd,
 } from "./pricing.ts";
 
-Deno.test("catalogKeys mirrors the client's routing rule", () => {
+test("catalogKeys mirrors the client's routing rule", () => {
   deepStrictEqual(catalogKeys("claude-opus-5"), ["anthropic/claude-opus-5"]);
   deepStrictEqual(catalogKeys("openai:gpt-5"), ["openai/gpt-5"]);
   // OpenRouter first, then the vendor's own models.dev row as a fallback — many
@@ -32,7 +33,7 @@ Deno.test("catalogKeys mirrors the client's routing rule", () => {
   ]);
 });
 
-Deno.test("the vendored snapshot prices the models bough ships with", () => {
+test("the vendored snapshot prices the models bough ships with", () => {
   for (const model of ["claude-opus-5", "claude-haiku-4-5", "openai:gpt-5"]) {
     ok(isPriced(model), `${model} should be in the catalog`);
     const rates = ratesFor(model);
@@ -41,7 +42,7 @@ Deno.test("the vendored snapshot prices the models bough ships with", () => {
   }
 });
 
-Deno.test("an unknown model is null everywhere, never zero", () => {
+test("an unknown model is null everywhere, never zero", () => {
   const model = "no-such-vendor/no-such-model";
   strictEqual(isPriced(model), false);
   strictEqual(catalogKey(model), undefined);
@@ -50,7 +51,7 @@ Deno.test("an unknown model is null everywhere, never zero", () => {
   strictEqual(usageCostUsd(model, { inputTokens: 1e6, outputTokens: 1e6 }), null);
 });
 
-Deno.test("cache rates fall back to the input rate when the catalog has none", () => {
+test("cache rates fall back to the input rate when the catalog has none", () => {
   // Pick a row the snapshot carries with null cache slots.
   const rates = ratesFor("openai:gpt-5");
   ok(rates);
@@ -58,12 +59,12 @@ Deno.test("cache rates fall back to the input rate when the catalog has none", (
   ok(rates.cacheRead <= rates.input, "a cache read is never dearer than fresh input");
 });
 
-Deno.test("contextWindowFor reports a real window for a known model", () => {
+test("contextWindowFor reports a real window for a known model", () => {
   const window = contextWindowFor("claude-opus-5");
   ok(typeof window === "number" && window > 100_000, `got ${window}`);
 });
 
-Deno.test("usageCostUsd: the cached share is subtracted out and re-priced", () => {
+test("usageCostUsd: the cached share is subtracted out and re-priced", () => {
   const model = "claude-opus-5";
   const r = ratesFor(model);
   ok(r);
@@ -84,7 +85,7 @@ Deno.test("usageCostUsd: the cached share is subtracted out and re-priced", () =
   ok(uncached !== null && uncached > cost);
 });
 
-Deno.test("usageCostUsd: nullish cache counts behave like zero, not like NaN", () => {
+test("usageCostUsd: nullish cache counts behave like zero, not like NaN", () => {
   const withNulls = usageCostUsd("claude-opus-5", {
     inputTokens: 1000,
     outputTokens: 1000,
@@ -96,7 +97,7 @@ Deno.test("usageCostUsd: nullish cache counts behave like zero, not like NaN", (
   ok(withNulls !== null && Number.isFinite(withNulls));
 });
 
-Deno.test("usageCostUsd: an over-counted cache share cannot drive the fresh share negative", () => {
+test("usageCostUsd: an over-counted cache share cannot drive the fresh share negative", () => {
   // Defensive: a provider that reports reads exceeding the total must not produce
   // a negative bill.
   const cost = usageCostUsd("claude-opus-5", {

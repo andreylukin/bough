@@ -25,12 +25,12 @@
  * cursor and paints it.
  *
  * NOTE on colour: `tui/theme.ts` (T9.2) has not landed and is not in this task's owned
- * set, so the status hues here are ink's named colours rather than the server-served
- * palette. They are confined to `statusMark`/`KIND_GLYPH` — one record to repoint when
- * the palette arrives. Measurement and clipping DO come from `tui/format.ts`, which has
- * landed: display width is never `String.length`.
+ * set, so the status hues here are the terminal's named colours rather than the
+ * server-served palette. They are confined to `statusMark`/`KIND_GLYPH` — one record to
+ * repoint when the palette arrives. Measurement and clipping DO come from
+ * `tui/format.ts`, which has landed: display width is never `String.length`.
  */
-import { Box, Text } from "ink";
+import { TextAttributes } from "@opentui/core";
 import type { SessionKind } from "../../schema/parts.ts";
 import type { SessionRow } from "../api.ts";
 import { clip, fmtUsd, windowAround } from "../format.ts";
@@ -166,15 +166,18 @@ export function titleOf(s: SessionRow): string {
 export function Tree(
   { items, selected, rows }: { items: TreeItem[]; selected: number; rows: number },
 ) {
-  const height = Math.max(3, rows - 4);
+  // One row of chrome: the legend, and it goes LAST. It used to be the tab's FIRST
+  // row — the only tab that put it there — and the budget reserved four rows for it
+  // while flooring the list at three, so a short panel painted rows it did not have
+  // and OpenTUI shrank them onto each other (`Panel.tsx`).
+  const height = Math.max(0, rows - 1);
   const { start, end } = windowAround(selected, items.length, height);
-  const window = items.slice(Math.max(0, start), end);
+  const window = height === 0 ? [] : items.slice(Math.max(0, start), end);
   return (
-    <Box flexDirection="column">
-      <Text dimColor wrap="truncate">
-        ↑↓ move · ⏎ open · → drill into delegated work · esc back
-      </Text>
-      {items.length === 0 ? <Text dimColor>no sessions yet</Text> : null}
+    <box flexDirection="column">
+      {items.length === 0
+        ? <text attributes={TextAttributes.DIM}>no sessions yet</text>
+        : null}
       {window.map((item, i) => {
         const idx = Math.max(0, start) + i;
         const sel = idx === selected;
@@ -182,35 +185,46 @@ export function Tree(
         const indent = "  ".repeat(item.depth);
         if (item.type === "collapsed") {
           return (
-            <Text key={`c-${item.originId}`} wrap="truncate">
-              <Text color={sel ? "cyan" : undefined}>{cursor}</Text>
-              <Text dimColor>
+            <text key={`c-${item.originId}`} wrapMode="none">
+              <span fg={sel ? "cyan" : undefined}>{cursor}</span>
+              <span attributes={TextAttributes.DIM}>
                 {indent}⋯ {item.count} delegated · → drill in
-              </Text>
-            </Text>
+              </span>
+            </text>
           );
         }
         const s = item.session;
         const mark = statusMark(s);
         return (
-          <Text key={s.id} wrap="truncate">
-            <Text color={sel ? "cyan" : undefined}>{cursor}</Text>
-            <Text>{indent}</Text>
-            <Text dimColor={!isDelegated(s.kind)}>{KIND_GLYPH[s.kind]}</Text>
-            {mark ? <Text color={mark.color}>{` ${mark.glyph}`}</Text> : <Text>{"  "}</Text>}
-            <Text bold={sel}>{" "}{clip(titleOf(s), 52 - item.depth * 2)}</Text>
+          <text key={s.id} wrapMode="none">
+            <span fg={sel ? "cyan" : undefined}>{cursor}</span>
+            <span>{indent}</span>
+            <span attributes={isDelegated(s.kind) ? TextAttributes.NONE : TextAttributes.DIM}>
+              {KIND_GLYPH[s.kind]}
+            </span>
+            {mark ? <span fg={mark.color}>{` ${mark.glyph}`}</span> : <span>{"  "}</span>}
+            <span attributes={sel ? TextAttributes.BOLD : TextAttributes.NONE}>
+              {" "}
+              {clip(titleOf(s), 52 - item.depth * 2)}
+            </span>
             {item.delegated > 0
               ? (
-                <Text dimColor>
+                <span attributes={TextAttributes.DIM}>
                   {"  "}
                   {item.open ? "▾" : "▸"} {item.delegated}
-                </Text>
+                </span>
               )
               : null}
-            {s.costUsd ? <Text dimColor>{`  ${fmtUsd(s.costUsd)}`}</Text> : null}
-          </Text>
+            {s.costUsd
+              ? <span attributes={TextAttributes.DIM}>{`  ${fmtUsd(s.costUsd)}`}</span>
+              : null}
+          </text>
         );
       })}
-    </Box>
+      <text attributes={TextAttributes.DIM} wrapMode="none">
+        {items.length > height ? `${selected + 1}/${items.length} · ` : ""}
+        ↑↓ move · pgup/pgdn page · ⏎ open · → drill into delegated work · esc back
+      </text>
+    </box>
   );
 }

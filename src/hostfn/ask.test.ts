@@ -27,6 +27,7 @@
  * `deno.json` cannot resolve. `node:assert` is built into the runtime and needs no
  * fetch. (Same constraint `db.test.ts` and `patch.test.ts` document.)
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { Bus } from "../bus.ts";
 import { SqliteDb } from "../db/db.ts";
@@ -135,7 +136,7 @@ async function rejection(p: Promise<unknown>): Promise<Error> {
 // the registry
 // ---------------------------------------------------------------------------
 
-Deno.test("raise → answer: resolves, and the SAME id is re-emitted as answered", async () => {
+test("raise → answer: resolves, and the SAME id is re-emitted as answered", async () => {
   const f = fixture();
   const { record, answer } = f.holds.raise(f.bus, {
     sessionId: SESSION,
@@ -168,7 +169,7 @@ Deno.test("raise → answer: resolves, and the SAME id is re-emitted as answered
   assert.equal(f.questions.length, 2);
 });
 
-Deno.test("raise → decline: rejects catchably with 'user declined'", async () => {
+test("raise → decline: rejects catchably with 'user declined'", async () => {
   const f = fixture();
   const { record, answer } = f.holds.raise(f.bus, {
     sessionId: SESSION,
@@ -187,7 +188,7 @@ Deno.test("raise → decline: rejects catchably with 'user declined'", async () 
   assert.equal(f.holds.size, 0);
 });
 
-Deno.test("AC: an interrupt settles the hold rather than hanging", async () => {
+test("AC: an interrupt settles the hold rather than hanging", async () => {
   const f = fixture();
   const { answer } = f.holds.raise(
     f.bus,
@@ -210,7 +211,7 @@ Deno.test("AC: an interrupt settles the hold rather than hanging", async () => {
   assert.equal(f.questions[1].status, "interrupted");
 });
 
-Deno.test("an already-aborted signal settles immediately, without registering", async () => {
+test("an already-aborted signal settles immediately, without registering", async () => {
   const f = fixture();
   f.abort.abort();
   const { answer } = f.holds.raise(
@@ -223,7 +224,7 @@ Deno.test("an already-aborted signal settles immediately, without registering", 
   assert.equal(f.questions.at(-1)?.status, "interrupted");
 });
 
-Deno.test("expire clears one session's holds and leaves the other's", async () => {
+test("expire clears one session's holds and leaves the other's", async () => {
   const f = fixture();
   const a = f.holds.raise(f.bus, { sessionId: "sA", messageId: "m1", question: "a?" });
   const b = f.holds.raise(f.bus, { sessionId: "sB", messageId: "m2", question: "b?" });
@@ -239,7 +240,7 @@ Deno.test("expire clears one session's holds and leaves the other's", async () =
   assert.equal(f.holds.expire(), 0);
 });
 
-Deno.test("list is oldest-first and scoped, so a client can rebuild its cards", async () => {
+test("list is oldest-first and scoped, so a client can rebuild its cards", async () => {
   let t = 0;
   const holds = new AskHolds(() => ++t);
   const bus = new Bus({ onListenerError: () => {} });
@@ -262,7 +263,7 @@ Deno.test("list is oldest-first and scoped, so a client can rebuild its cards", 
 // AC: a restart leaves nothing pending
 // ---------------------------------------------------------------------------
 
-Deno.test("AC: a restart leaves nothing pending — there is nothing to heal", async () => {
+test("AC: a restart leaves nothing pending — there is nothing to heal", async () => {
   const f = fixture();
   const before = new AskHolds();
   const { record, answer } = before.raise(f.bus, {
@@ -297,7 +298,7 @@ Deno.test("AC: a restart leaves nothing pending — there is nothing to heal", a
 // the settled part
 // ---------------------------------------------------------------------------
 
-Deno.test("appendAskPart preserves `pending` and is idempotent on the id", () => {
+test("appendAskPart preserves `pending` and is idempotent on the id", () => {
   const f = fixture();
   const part: AskPart = {
     type: "ask",
@@ -331,7 +332,7 @@ Deno.test("appendAskPart preserves `pending` and is idempotent on the id", () =>
 // the bridged host function
 // ---------------------------------------------------------------------------
 
-Deno.test("ask() resolves with the answer and records it on the message", async () => {
+test("ask() resolves with the answer and records it on the message", async () => {
   const f = fixture();
   const { ask } = createAskHostFn(f.ctx, { holds: f.holds });
 
@@ -362,7 +363,7 @@ Deno.test("ask() resolves with the answer and records it on the message", async 
   assert.equal(f.message().pending, false);
 });
 
-Deno.test("a part written during the turn would be erased — the buffer is why it is not", async () => {
+test("a part written during the turn would be erased — the buffer is why it is not", async () => {
   const f = fixture();
   const { ask } = createAskHostFn(f.ctx, { holds: f.holds });
   const parked = ask!("Which env?", "{}");
@@ -379,7 +380,7 @@ Deno.test("a part written during the turn would be erased — the buffer is why 
   assert.equal(f.askParts()[0].status, "answered");
 });
 
-Deno.test("ask() rejects catchably on decline and records the dismissal", async () => {
+test("ask() rejects catchably on decline and records the dismissal", async () => {
   const f = fixture();
   const { ask } = createAskHostFn(f.ctx, { holds: f.holds });
   const parked = ask!("Drop the table?", "{}");
@@ -396,7 +397,7 @@ Deno.test("ask() rejects catchably on decline and records the dismissal", async 
   assert.equal(parts[0].answer, undefined);
 });
 
-Deno.test("AC: interrupting the turn settles a parked ask() rather than hanging it", async () => {
+test("AC: interrupting the turn settles a parked ask() rather than hanging it", async () => {
   const f = fixture();
   const { ask } = createAskHostFn(f.ctx, { holds: f.holds });
   const parked = ask!("Which branch?", "{}");
@@ -412,7 +413,7 @@ Deno.test("AC: interrupting the turn settles a parked ask() rather than hanging 
   assert.equal(f.askParts()[0].status, "interrupted");
 });
 
-Deno.test("AC: a hold still parked when the turn ends is swept, not left haunting", async () => {
+test("AC: a hold still parked when the turn ends is swept, not left haunting", async () => {
   const f = fixture();
   const { ask } = createAskHostFn(f.ctx, { holds: f.holds });
   // No signal abort and no answer: the shape a wall-clock timeout leaves behind,
@@ -434,7 +435,7 @@ Deno.test("AC: a hold still parked when the turn ends is swept, not left hauntin
   assert.equal(f.message().pending, false, "and the message is not reopened");
 });
 
-Deno.test("the turn's bus subscription is released when the turn ends", async () => {
+test("the turn's bus subscription is released when the turn ends", async () => {
   const f = fixture();
   const before = f.bus.size;
   const { ask } = createAskHostFn(f.ctx, { holds: f.holds });
@@ -449,7 +450,7 @@ Deno.test("the turn's bus subscription is released when the turn ends", async ()
   assert.equal(f.bus.size, before, "no listener leak per turn");
 });
 
-Deno.test("two questions in one turn both land, in the order they were asked", async () => {
+test("two questions in one turn both land, in the order they were asked", async () => {
   const f = fixture();
   const { ask } = createAskHostFn(f.ctx, { holds: f.holds });
 
@@ -468,7 +469,7 @@ Deno.test("two questions in one turn both land, in the order they were asked", a
   ]);
 });
 
-Deno.test("ask() refuses before announcing a card nobody can answer", async () => {
+test("ask() refuses before announcing a card nobody can answer", async () => {
   const f = fixture();
   f.abort.abort();
   const { ask } = createAskHostFn(f.ctx, { holds: f.holds });
@@ -479,7 +480,7 @@ Deno.test("ask() refuses before announcing a card nobody can answer", async () =
   assert.equal(f.holds.size, 0);
 });
 
-Deno.test("options are read leniently; a malformed bag is refused with the fix", async () => {
+test("options are read leniently; a malformed bag is refused with the fix", async () => {
   const f = fixture();
   const appended: AskPart[] = [];
   const { ask } = createAskHostFn(f.ctx, { holds: f.holds, append: (p) => appended.push(p) });
@@ -510,7 +511,7 @@ Deno.test("options are read leniently; a malformed bag is refused with the fix",
   f.finishTurn();
 });
 
-Deno.test("a settled ask never reopens a message the runner already closed", async () => {
+test("a settled ask never reopens a message the runner already closed", async () => {
   const f = fixture();
   const { ask } = createAskHostFn(f.ctx, { holds: f.holds });
   const parked = ask!("Which env?", "{}");

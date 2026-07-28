@@ -15,6 +15,7 @@
  * records the prompts it was given. `node:assert/strict` — jsr.io is unreachable here
  * (plan §7).
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { Bus } from "../bus.ts";
 import { openDb, type SqliteDb } from "../db/db.ts";
@@ -136,7 +137,7 @@ function scenario(f: Fixture): { parent: Session; source: Session; last: Message
 
 // ---- the draft ---------------------------------------------------------------
 
-Deno.test("handoff opens a root carrying the draft and seeds NO messages", async () => {
+test("handoff opens a root carrying the draft and seeds NO messages", async () => {
   const f = fixture(() => "Finish the relaunch path in workflow/relaunch.ts.");
   const { source, last } = scenario(f);
 
@@ -163,7 +164,7 @@ Deno.test("handoff opens a root carrying the draft and seeds NO messages", async
   f.db.close();
 });
 
-Deno.test("the prompt carries the WHOLE visible thread and the stated goal", async () => {
+test("the prompt carries the WHOLE visible thread and the stated goal", async () => {
   const f = fixture();
   const { source } = scenario(f);
 
@@ -181,7 +182,7 @@ Deno.test("the prompt carries the WHOLE visible thread and the stated goal", asy
   f.db.close();
 });
 
-Deno.test("the draft is trimmed, and an empty one is a 502 that writes nothing", async () => {
+test("the draft is trimmed, and an empty one is a 502 that writes nothing", async () => {
   const f = fixture(() => "  \n  Fix the ticker.  \n");
   const { source } = scenario(f);
   const created = await handoff(f.ctx, source.id, { goal: "fix the ticker" });
@@ -203,7 +204,7 @@ Deno.test("the draft is trimmed, and an empty one is a 502 that writes nothing",
 
 // ---- the source is untouched --------------------------------------------------
 
-Deno.test("handoff leaves the source AND its ancestor byte-identical", async () => {
+test("handoff leaves the source AND its ancestor byte-identical", async () => {
   const f = fixture();
   const { parent, source } = scenario(f);
   const before = [snapshot(f.db, parent.id), snapshot(f.db, source.id)];
@@ -216,7 +217,7 @@ Deno.test("handoff leaves the source AND its ancestor byte-identical", async () 
 
 // ---- model resolution ----------------------------------------------------------
 
-Deno.test("the session's own pin decides the model, then the global default", async () => {
+test("the session's own pin decides the model, then the global default", async () => {
   const f = fixture();
   const { source } = scenario(f);
 
@@ -241,7 +242,7 @@ Deno.test("the session's own pin decides the model, then the global default", as
 
 // ---- refusals -------------------------------------------------------------------
 
-Deno.test("an unknown session is a 404 and an empty thread is a 400", async () => {
+test("an unknown session is a 404 and an empty thread is a 400", async () => {
   const f = fixture();
   const empty = session(f.db, { title: "brand new" });
 
@@ -262,7 +263,7 @@ Deno.test("an unknown session is a 404 and an empty thread is a 400", async () =
 
 // ---- events ----------------------------------------------------------------------
 
-Deno.test("the root is created, then updated with the draft", async () => {
+test("the root is created, then updated with the draft", async () => {
   const f = fixture(() => "the draft text");
   const { source } = scenario(f);
   f.events.length = 0;
@@ -281,7 +282,7 @@ Deno.test("the root is created, then updated with the draft", async () => {
 
 const TABLE: Route[] = [route("POST", "/sessions/:id/handoff", handoffH)];
 
-Deno.test("POST /sessions/:id/handoff answers 201 with the drafted root", async () => {
+test("POST /sessions/:id/handoff answers 201 with the drafted root", async () => {
   const f = fixture(() => "Pick up the relaunch path.");
   const { source } = scenario(f);
   const call = createHandler(f.ctx, { routes: TABLE });
@@ -300,7 +301,7 @@ Deno.test("POST /sessions/:id/handoff answers 201 with the drafted root", async 
   f.db.close();
 });
 
-Deno.test("the route maps an unknown session to 404 and an empty goal to 400", async () => {
+test("the route maps an unknown session to 404 and an empty goal to 400", async () => {
   const f = fixture();
   const { source } = scenario(f);
   const call = createHandler(f.ctx, { routes: TABLE });
@@ -320,7 +321,7 @@ Deno.test("the route maps an unknown session to 404 and an empty goal to 400", a
   f.db.close();
 });
 
-Deno.test("posting the first message clears the draft", async () => {
+test("posting the first message clears the draft", async () => {
   const f = fixture(() => "Pick up the relaunch path.");
   const { source } = scenario(f);
   // The REAL route table: the half of this contract that lives in `server/sessions.ts`

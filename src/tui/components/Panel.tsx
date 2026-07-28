@@ -30,7 +30,7 @@
  * Ported from `src/tui/components/Panel.tsx` (tab list, preview-on-cursor theme tab);
  * the state machine and the keymap-as-data are new.
  */
-import { Box, Text } from "ink";
+import { TextAttributes } from "@opentui/core";
 import type { ReactNode } from "react";
 import {
   type Command,
@@ -179,29 +179,34 @@ export function PanelTabs({ tab, width }: { tab: PanelTab; width?: number }) {
   if (width !== undefined && width < full) {
     const at = TABS.findIndex((t) => t.id === tab) + 1;
     return (
-      <Text wrap="truncate">
-        <Text dimColor>{" ["}</Text>
-        <Text bold color={palette.accent}>{tab}</Text>
-        <Text dimColor>{`] ${at}/${TABS.length} · ⇥ next · ^t close`}</Text>
-      </Text>
+      <text wrapMode="none">
+        <span attributes={TextAttributes.DIM}>{" ["}</span>
+        <span attributes={TextAttributes.BOLD} fg={palette.accent}>{tab}</span>
+        <span attributes={TextAttributes.DIM}>
+          {`] ${at}/${TABS.length} · ⇥ next · ^t close`}
+        </span>
+      </text>
     );
   }
   return (
-    <Text wrap="truncate">
+    <text wrapMode="none">
       {TABS.map((t) => {
         const active = t.id === tab;
         return (
-          <Text key={t.id}>
-            <Text dimColor>{active ? " [" : "  "}</Text>
-            <Text bold={active} color={active ? palette.accent : undefined}>
+          <span key={t.id}>
+            <span attributes={TextAttributes.DIM}>{active ? " [" : "  "}</span>
+            <span
+              attributes={active ? TextAttributes.BOLD : TextAttributes.NONE}
+              fg={active ? palette.accent : undefined}
+            >
               {t.title}
-            </Text>
-            <Text dimColor>{active ? "]" : ""}</Text>
-          </Text>
+            </span>
+            <span attributes={TextAttributes.DIM}>{active ? "]" : ""}</span>
+          </span>
         );
       })}
-      <Text dimColor>{"   ^t close"}</Text>
-    </Text>
+      <span attributes={TextAttributes.DIM}>{"   ^t close"}</span>
+    </text>
   );
 }
 
@@ -220,25 +225,62 @@ export interface PanelProps {
     note?: string;
     sources?: readonly SkillSourceRow[];
     selected?: number;
+    filter?: string;
+    filtering?: boolean;
   };
   theme?: { preview: ThemePreview | null };
   /** Body for the tabs other tasks own (`tree`, `workflows`). */
   children?: ReactNode;
 }
 
+/**
+ * The blank row between the tab strip and the body — the first thing to go.
+ *
+ * At eight terminal rows the panel gets ONE content row, and spending it on
+ * whitespace pushed the body onto the bottom border: the sessions legend rendered
+ * as `╰─↑↓─move─·─pgup/pgdn─page─…─╯`. Breathing room is a luxury and a budget is
+ * not; below five rows there is none.
+ */
+function gapRows(rows: number): number {
+  return rows >= 5 ? 1 : 0;
+}
+
+/**
+ * Rows a tab body may paint — the panel's own budget, minus its own chrome.
+ *
+ * EXPORTED because `PanelHost` must hand the SAME number to the two tabs whose body
+ * arrives as `children` (`tree`, `workflows`). It used to pass them the panel's
+ * `rows`, two more than they had, so those two tabs overflowed by two rows every
+ * time. One function, so the tab strip's height is subtracted exactly once.
+ *
+ * The floor is ZERO. `Math.max(3, …)` was the original defect and `Math.max(1, …)`
+ * is the same defect one row smaller: a floor is a CLAIM about how much room there
+ * is, and a claim that outruns the room is what OpenTUI answers by shrinking rows
+ * onto each other. A panel with no room for a body renders no body.
+ */
+export function panelBodyRows(rows: number): number {
+  return Math.max(0, rows - 1 /* the tab strip */ - gapRows(rows));
+}
+
 function Body(
   { tab, rows, width, sessions, changes, model, mcp, skills, theme, children }: PanelProps,
 ) {
-  const body = Math.max(3, rows - 2);
+  const body = panelBodyRows(rows);
   switch (tab) {
     case "sessions":
-      return sessions ? <Sessions {...sessions} rows={body} /> : <Text dimColor>loading…</Text>;
+      return sessions
+        ? <Sessions {...sessions} rows={body} />
+        : <text attributes={TextAttributes.DIM}>loading…</text>;
     case "changes":
-      return changes ? <Changes {...changes} rows={body} /> : <Text dimColor>loading…</Text>;
+      return changes
+        ? <Changes {...changes} rows={body} />
+        : <text attributes={TextAttributes.DIM}>loading…</text>;
     case "model":
-      return model ? <ModelPicker {...model} rows={body} /> : <Text dimColor>loading…</Text>;
+      return model
+        ? <ModelPicker {...model} rows={body} />
+        : <text attributes={TextAttributes.DIM}>loading…</text>;
     case "mcp":
-      return <McpTab {...(mcp ?? { status: null, selected: 0 })} />;
+      return <McpTab {...(mcp ?? { status: null, selected: 0 })} rows={body} />;
     case "skills":
       return (
         <SkillsTab
@@ -247,6 +289,8 @@ function Body(
           skills={skills?.skills ?? null}
           note={skills?.note}
           sources={skills?.sources}
+          filter={skills?.filter}
+          filtering={skills?.filtering}
           rows={body}
         />
       );
@@ -254,17 +298,65 @@ function Body(
       return <ThemeTab preview={theme?.preview ?? null} rows={body} />;
     default:
       // `tree` and `workflows`: the slot, or an honest line saying it was not passed.
-      return <>{children ?? <Text dimColor>nothing to show here</Text>}</>;
+      return <>{children ?? <text attributes={TextAttributes.DIM}>nothing to show here</text>}</>;
   }
 }
 
 export function Panel(props: PanelProps) {
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={palette.border} paddingX={1}>
+    // Fixed height, and therefore `flexShrink: 0` — OpenTUI gives an auto-sized
+    // renderable `flexShrink: 1`, which is the whole of the corruption below.
+    // `props.rows` is the budget for the strip and the body; the border takes two more.
+    <box
+      flexDirection="column"
+      height={props.rows + 2}
+      borderStyle="rounded"
+      borderColor={palette.border}
+      paddingX={1}
+    >
       <PanelTabs tab={props.tab} width={props.width} />
-      <Box flexDirection="column" marginTop={1}>
-        <Body {...props} />
-      </Box>
-    </Box>
+      {/*
+        TWO BOXES, AND BOTH ARE LOAD-BEARING. This is the fix for the panel resize
+        corruption — rows rendering as character-level interleavings of two different
+        lines, e.g. `❯ ● ✓ wsvewsor28mGreeting Session  ws  4m`, which was two list
+        rows painted onto one screen row.
+
+        The cause was NOT stale cells and NOT React keying: it reproduced on a FRESH
+        mount at 100x12. Every `<text>` OpenTUI lays out defaults to `flexShrink: 1`
+        (`Renderable`: shrink is 0 only when an explicit width or height is set), so a
+        tab body emitting six rows into a three-row box did not overflow — yoga SHRANK
+        all six to half a row each, and pairs of them rounded onto the same y and
+        overdrew each other. Chat never showed it because Chat renders exactly `body`
+        row slots and never one more.
+
+        So: the outer box pins the height and CLIPS (`overflow: hidden` pushes a
+        scissor rect), and the inner box carries `flexShrink={0}` so the shrink cannot
+        propagate into the tab's own rows. A body that overruns its budget now loses
+        its last rows — legible, and the row above it stays a row — instead of
+        dissolving. The budgets below are what keep it from overrunning at all; this
+        pair is what makes a future tab unable to bring the corruption back.
+      */}
+      {/*
+        A ZERO-ROW BODY IS NOT MOUNTED, and that is not an optimisation. OpenTUI
+        pushes a scissor rect only when `width > 0 && height > 0`, so a box of height
+        zero clips NOTHING and its children paint wherever yoga puts them — which was
+        onto the bottom border: at eight terminal rows the sessions legend rendered as
+        `╰─↑↓─move─·─pgup/pgdn─page─…─╯`. No room means no body.
+      */}
+      {panelBodyRows(props.rows) > 0
+        ? (
+          <box
+            flexDirection="column"
+            marginTop={gapRows(props.rows)}
+            height={panelBodyRows(props.rows)}
+            overflow="hidden"
+          >
+            <box flexDirection="column" flexShrink={0}>
+              <Body {...props} />
+            </box>
+          </box>
+        )
+        : null}
+    </box>
   );
 }

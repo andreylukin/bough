@@ -17,7 +17,11 @@
  * Offline and hermetic: an in-memory database where a file is not needed, a temp
  * file where it is, and never `~/.bough`.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Bus } from "../bus.ts";
 import { openDb, type SqliteDb } from "../db/db.ts";
 import type { BoughEvent } from "../schema/events.ts";
@@ -82,7 +86,7 @@ function answeringLlm(text: string): LlmClient {
 
 // ---- checkpointing ----------------------------------------------------------
 
-Deno.test("a turn opens running and every checkpoint records where it got to", () => {
+test("a turn opens running and every checkpoint records where it got to", () => {
   const db = openDb(":memory:");
   const session = seedSession(db);
   const message = userMessage(db, session.id, "hi", 2_000);
@@ -116,7 +120,7 @@ Deno.test("a turn opens running and every checkpoint records where it got to", (
   db.close();
 });
 
-Deno.test("finishing clears a stale error rather than leaving the previous attempt's", () => {
+test("finishing clears a stale error rather than leaving the previous attempt's", () => {
   const db = openDb(":memory:");
   const session = seedSession(db);
   const message = userMessage(db, session.id, "hi", 2_000);
@@ -131,8 +135,8 @@ Deno.test("finishing clears a stale error rather than leaving the previous attem
 
 // ---- the crash --------------------------------------------------------------
 
-Deno.test("a mid-turn crash leaves a session that is usable after restart", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "bough-state-test-" });
+test("a mid-turn crash leaves a session that is usable after restart", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "bough-state-test-"));
   const path = `${dir}/bough.db`;
   try {
     // ── before the crash ──
@@ -217,11 +221,11 @@ Deno.test("a mid-turn crash leaves a session that is usable after restart", asyn
     // is never observed, exactly as it would not be after a real process death.
     void started.done.catch(() => {});
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true, force: true });
   }
 });
 
-Deno.test("recovery is idempotent and touches nothing that already ended", () => {
+test("recovery is idempotent and touches nothing that already ended", () => {
   const db = openDb(":memory:");
   const bus = new Bus();
   const session = seedSession(db);
@@ -252,7 +256,7 @@ Deno.test("recovery is idempotent and touches nothing that already ended", () =>
   db.close();
 });
 
-Deno.test("a message already closed still gets its turn.finished, and the hook still fires", () => {
+test("a message already closed still gets its turn.finished, and the hook still fires", () => {
   const db = openDb(":memory:");
   const bus = new Bus();
   const events: BoughEvent[] = [];
@@ -281,7 +285,7 @@ Deno.test("a message already closed still gets its turn.finished, and the hook s
   db.close();
 });
 
-Deno.test("a throwing orphan hook does not abandon the remaining orphans", () => {
+test("a throwing orphan hook does not abandon the remaining orphans", () => {
   const db = openDb(":memory:");
   const bus = new Bus();
   const a = seedSession(db);
@@ -312,7 +316,7 @@ Deno.test("a throwing orphan hook does not abandon the remaining orphans", () =>
   db.close();
 });
 
-Deno.test("recovery leaves the run_steps transcript replayable", () => {
+test("recovery leaves the run_steps transcript replayable", () => {
   // A turn that died between a tool call and its result: replay has to close the
   // pair, and recovery must not invent one on the message itself.
   const db = openDb(":memory:");

@@ -16,6 +16,7 @@
  * `createInputFilter` is a pure state machine over strings, so none of this needs
  * a process, a stream or a terminal. `node:assert/strict` — jsr.io is unreachable.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { createInputFilter, decodeModifyOther, type MouseEvent, type NavKey } from "./mouse.ts";
 
@@ -35,7 +36,7 @@ function harness() {
   return { filter, mouse, pastes, navKeys, focus, bg };
 }
 
-Deno.test("ordinary keystrokes pass through untouched", () => {
+test("ordinary keystrokes pass through untouched", () => {
   const h = harness();
   assert.equal(h.filter.feed("hello"), "hello");
   assert.equal(h.filter.feed("\r"), "\r");
@@ -44,13 +45,13 @@ Deno.test("ordinary keystrokes pass through untouched", () => {
   assert.equal(h.mouse.length, 0);
 });
 
-Deno.test("SGR mouse reports are consumed, never forwarded", () => {
+test("SGR mouse reports are consumed, never forwarded", () => {
   const h = harness();
   assert.equal(h.filter.feed("a\x1b[<0;10;5Mb"), "ab");
   assert.deepEqual(h.mouse, [{ x: 10, y: 5, kind: "down" }]);
 });
 
-Deno.test("the left button reports its whole press/drag/release cycle", () => {
+test("the left button reports its whole press/drag/release cycle", () => {
   const h = harness();
   h.filter.feed("\x1b[<0;3;4M"); // press
   h.filter.feed("\x1b[<32;6;4M"); // motion while held (mode 1002)
@@ -59,19 +60,19 @@ Deno.test("the left button reports its whole press/drag/release cycle", () => {
   assert.deepEqual(h.mouse.at(-1), { x: 9, y: 7, kind: "up" });
 });
 
-Deno.test("wheel and right-click are their own kinds", () => {
+test("wheel and right-click are their own kinds", () => {
   const h = harness();
   h.filter.feed("\x1b[<64;1;1M\x1b[<65;1;1M\x1b[<2;4;4M");
   assert.deepEqual(h.mouse.map((e) => e.kind), ["wheel-up", "wheel-down", "right-click"]);
 });
 
-Deno.test("a bracketed paste arrives whole, with newlines normalized", () => {
+test("a bracketed paste arrives whole, with newlines normalized", () => {
   const h = harness();
   assert.equal(h.filter.feed("\x1b[200~one\r\ntwo\rthree\x1b[201~"), "");
   assert.deepEqual(h.pastes, ["one\ntwo\nthree"]);
 });
 
-Deno.test("a paste split across three reads is reassembled, not leaked", () => {
+test("a paste split across three reads is reassembled, not leaked", () => {
   const h = harness();
   // The start marker itself is split, then the body, then the end marker.
   assert.equal(h.filter.feed("x\x1b[20"), "x");
@@ -81,7 +82,7 @@ Deno.test("a paste split across three reads is reassembled, not leaked", () => {
   assert.deepEqual(h.pastes, ["hello world"]);
 });
 
-Deno.test("a mouse report split across reads is held and then consumed", () => {
+test("a mouse report split across reads is held and then consumed", () => {
   const h = harness();
   assert.equal(h.filter.feed("a\x1b[<0;10"), "a");
   assert.equal(h.mouse.length, 0);
@@ -89,7 +90,7 @@ Deno.test("a mouse report split across reads is held and then consumed", () => {
   assert.deepEqual(h.mouse, [{ x: 10, y: 5, kind: "down" }]);
 });
 
-Deno.test("terminal REPLIES are consumed — they are not keystrokes", () => {
+test("terminal REPLIES are consumed — they are not keystrokes", () => {
   const h = harness();
   assert.equal(h.filter.feed("\x1b[Ihi\x1b[O"), "hi");
   assert.deepEqual(h.focus, [true, false]);
@@ -97,7 +98,7 @@ Deno.test("terminal REPLIES are consumed — they are not keystrokes", () => {
   assert.deepEqual(h.bg, ["rgb:1e1e/1e1e/2e2e"]);
 });
 
-Deno.test("Home/End and Cmd+←/→ are intercepted rather than left to ink", () => {
+test("Home/End and Cmd+←/→ are intercepted rather than left to ink", () => {
   const h = harness();
   // Ink drops the Home/End forms; all three spellings must land the same way.
   assert.equal(h.filter.feed("\x1b[H\x1bOH\x1b[1~"), "");
@@ -106,13 +107,13 @@ Deno.test("Home/End and Cmd+←/→ are intercepted rather than left to ink", ()
   assert.deepEqual(h.navKeys.slice(3), ["end", "end", "end"]);
 });
 
-Deno.test("Cmd+←/→ is caught before ink can misparse it as meta+arrow", () => {
+test("Cmd+←/→ is caught before ink can misparse it as meta+arrow", () => {
   const h = harness();
   assert.equal(h.filter.feed("\x1b[1;9D\x1b[1;9C"), "");
   assert.deepEqual(h.navKeys, ["cmdHome", "cmdEnd"]);
 });
 
-Deno.test("a mouse drag during a paste does not corrupt either", () => {
+test("a mouse drag during a paste does not corrupt either", () => {
   const h = harness();
   // Inside a paste everything is literal text, including what looks like a report.
   assert.equal(h.filter.feed("\x1b[200~a\x1b[<0;1;1Mb\x1b[201~"), "");
@@ -120,12 +121,12 @@ Deno.test("a mouse drag during a paste does not corrupt either", () => {
   assert.equal(h.mouse.length, 0);
 });
 
-Deno.test("a filter with no sinks still strips what it recognises", () => {
+test("a filter with no sinks still strips what it recognises", () => {
   const filter = createInputFilter();
   assert.equal(filter.feed("a\x1b[<0;1;1Mb\x1b[200~junk\x1b[201~c"), "abc");
 });
 
-Deno.test("CSI 27;m;k~ is decoded, never forwarded as text", () => {
+test("CSI 27;m;k~ is decoded, never forwarded as text", () => {
   // The live symptom: ⌥⏎ typed "[27;3;13~" into the composer, because ink splits
   // the escape byte from a sequence it cannot parse and delivers the rest as text.
   const filter = createInputFilter();
@@ -143,7 +144,7 @@ Deno.test("CSI 27;m;k~ is decoded, never forwarded as text", () => {
   assert.ok(!undecodable.includes("27"));
 });
 
-Deno.test("decodeModifyOther maps the modifier bitfield ink actually understands", () => {
+test("decodeModifyOther maps the modifier bitfield ink actually understands", () => {
   assert.equal(decodeModifyOther(1, 65), "A"); // no modifiers
   assert.equal(decodeModifyOther(3, 65), "\x1bA"); // alt → ESC prefix
   assert.equal(decodeModifyOther(5, 97), "\x01"); // ctrl+a → C0
@@ -153,7 +154,7 @@ Deno.test("decodeModifyOther maps the modifier bitfield ink actually understands
   assert.equal(decodeModifyOther(1, 57441), ""); // a kitty keypad code: no byte form
 });
 
-Deno.test("a CSI 27 sequence split across two reads is not typed as text", () => {
+test("a CSI 27 sequence split across two reads is not typed as text", () => {
   // The failure this guards: half a sequence forwarded now and the rest next read
   // is exactly the shape that reaches the draft as printable characters.
   const filter = createInputFilter();
@@ -161,7 +162,7 @@ Deno.test("a CSI 27 sequence split across two reads is not typed as text", () =>
   assert.equal(filter.feed("13~"), "\x1b\r");
 });
 
-Deno.test("shift+tab is delivered as a nav key, in both encodings", () => {
+test("shift+tab is delivered as a nav key, in both encodings", () => {
   // It reaches the app as `CSI 27;2;9~` under the kitty protocol and as `CSI Z`
   // without it. Decoding the first by the general rule produced a bare tab, which
   // is why ⇧⇥ moved FORWARD through the panel — `panel.prev` was unreachable.
@@ -176,7 +177,7 @@ Deno.test("shift+tab is delivered as a nav key, in both encodings", () => {
   assert.deepEqual(seen, ["shiftTab", "shiftTab"]);
 });
 
-Deno.test("forward-delete has a key again, without breaking macOS backspace", () => {
+test("forward-delete has a key again, without breaking macOS backspace", () => {
   // `chordOf` folds ink's `key.delete` into the backspace chord, and must: on
   // macOS the Backspace key sends \x7f, which ink reports as `key.delete`. The
   // real forward-delete key sends this sequence instead, and it is unambiguous.

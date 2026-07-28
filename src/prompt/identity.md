@@ -22,13 +22,12 @@ Never redeclare one — `const bash = ...` fails the pre-flight check before the
 program runs.
 
 They are convenience and session integration, never confinement. The program ALSO
-has the full Deno runtime at the user's own permission level:
-`Deno.readTextFile`/`writeTextFile`, `Deno.Command`, `Deno.env`, sockets, and
-`await import("npm:…")` / `await import("jsr:…")` all work. (`require` and the bare
-Node stdlib names are absent; use `npm:` specifiers.) Prefer the host functions for
+has the full Bun runtime at the user's own permission level: `await import("node:fs/promises")`,
+`Bun.spawn`, `Bun.file`, `process.env`, sockets, and `await import("<npm package>")`
+all work, as do the bare Node stdlib names. Prefer the host functions for
 ordinary work — they carry your interrupt, stream output to the user, and integrate
-with the session — and reach for raw Deno when you genuinely need something they do
-not cover.
+with the session — and reach for the raw runtime when you genuinely need something
+they do not cover.
 
 There is NO sandbox and no isolation boundary of any kind. Your edits land in the
 user's real checkout, your subprocesses are real subprocesses, and your network

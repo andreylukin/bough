@@ -10,14 +10,14 @@ skills/       the one bundled skill
 assets/       logo and screenshots
 ```
 
-Everything builds from the root `deno.json`. There is no build step and no web UI — the server and
-the Ink TUI both run from source.
+Everything runs on `bun` from the root `package.json`. There is no build step and no web UI — the
+server and the OpenTUI TUI both run from source.
 
 ```
-deno task check    # typecheck — must pass before every commit
-deno task test     # unit + integration, offline and hermetic
-deno task dev      # server with --watch
-deno task tui      # the TUI against the local server
+bun run check      # typecheck (tsc --noEmit) — must pass before every commit
+bun test           # unit + integration, offline and hermetic
+bun run dev        # server with --watch
+bun run tui        # the TUI against the local server
 ```
 
 `docs/spec.md` is authoritative for behavior; `docs/implementation-plan.md` carries the module

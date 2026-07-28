@@ -14,6 +14,7 @@
  * (plan §7). Assertions come from `node:assert/strict` — jsr.io is unreachable here, so
  * a test that needs `@std/assert` cannot run offline.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { Bus } from "../bus.ts";
 import { openDb, type SqliteDb } from "../db/db.ts";
@@ -130,7 +131,7 @@ function turnDeps(now: () => number) {
 
 // ---- the ordering invariant (plan §6.1) --------------------------------------
 
-Deno.test("a seeded branch and the turn that follows it order correctly in one millisecond", async () => {
+test("a seeded branch and the turn that follows it order correctly in one millisecond", async () => {
   const f = fixture();
 
   // A parent with shared history, and the session about to be forked.
@@ -210,7 +211,7 @@ Deno.test("a seeded branch and the turn that follows it order correctly in one m
   ]);
 });
 
-Deno.test("the same ordering holds on the real clock, with no injected time at all", async () => {
+test("the same ordering holds on the real clock, with no injected time at all", async () => {
   const db = openDb(":memory:");
   const bus = new Bus();
   const target = db.createSession({
@@ -251,7 +252,7 @@ Deno.test("the same ordering holds on the real clock, with no injected time at a
   db.close();
 });
 
-Deno.test("the seeder stamps the clock it is handed and never advances it", () => {
+test("the seeder stamps the clock it is handed and never advances it", () => {
   const f = fixture();
   f.clock.now = 42;
   const seeder = openBranch(f.ctx, { parentId: null, title: "b", kind: "root" });
@@ -274,7 +275,7 @@ Deno.test("the seeder stamps the clock it is handed and never advances it", () =
 
 // ---- announcing ---------------------------------------------------------------
 
-Deno.test("the session is announced before its messages, and every seeded message is a message.started", () => {
+test("the session is announced before its messages, and every seeded message is a message.started", () => {
   const f = fixture();
   const seeder = openBranch(f.ctx, {
     parentId: null,
@@ -311,7 +312,7 @@ Deno.test("the session is announced before its messages, and every seeded messag
   assert.equal((f.events[1].data as Message).pending, false);
 });
 
-Deno.test("lineage fields absent from the spec stay absent from the row", () => {
+test("lineage fields absent from the spec stay absent from the row", () => {
   const f = fixture();
   const seeder = openBranch(f.ctx, { parentId: null, title: "bare", kind: "root" });
   const stored = f.db.getSession(seeder.session.id)!;
@@ -323,7 +324,7 @@ Deno.test("lineage fields absent from the spec stay absent from the row", () => 
 
 // ---- copying ------------------------------------------------------------------
 
-Deno.test("copy takes a new id and a deep copy of the parts", () => {
+test("copy takes a new id and a deep copy of the parts", () => {
   const f = fixture();
   const source = session(f.db, { title: "source" });
   const parts: Part[] = [
@@ -355,7 +356,7 @@ Deno.test("copy takes a new id and a deep copy of the parts", () => {
   assert.notEqual(copied.parts[1], original.parts[1]);
 });
 
-Deno.test("a seeded message is searchable immediately, and a rebuild agrees", () => {
+test("a seeded message is searchable immediately, and a rebuild agrees", () => {
   const f = fixture();
   const seeder = openBranch(f.ctx, { parentId: null, title: "b", kind: "root" });
   seeder.add("user", [{ type: "text", text: "the peculiar zarquon problem" }]);
@@ -370,7 +371,7 @@ Deno.test("a seeded message is searchable immediately, and a rebuild agrees", ()
 
 // ---- move-into: a Seeder over an existing session ------------------------------
 
-Deno.test("a Seeder constructed on an existing session appends to it", () => {
+test("a Seeder constructed on an existing session appends to it", () => {
   const f = fixture();
   const target = session(f.db, { title: "target" });
   message(f.db, target.id, "user", "already here", 1);
@@ -392,7 +393,7 @@ Deno.test("a Seeder constructed on an existing session appends to it", () => {
 
 // ---- picks ---------------------------------------------------------------------
 
-Deno.test("mergePicks: a whole-message pick wins, partials union and sort", () => {
+test("mergePicks: a whole-message pick wins, partials union and sort", () => {
   const merged = mergePicks([
     { messageId: "a", parts: [3, 1] },
     { messageId: "a", parts: [2] },
@@ -406,7 +407,7 @@ Deno.test("mergePicks: a whole-message pick wins, partials union and sort", () =
   assert.equal(merged.get("c"), null, "…and is not narrowed by a later partial");
 });
 
-Deno.test("pickParts: null takes everything, an out-of-range index is undefined", () => {
+test("pickParts: null takes everything, an out-of-range index is undefined", () => {
   const m: Message = {
     id: "m",
     sessionId: "s",
@@ -424,7 +425,7 @@ Deno.test("pickParts: null takes everything, an out-of-range index is undefined"
   assert.equal(pickParts(m, [3]), undefined);
 });
 
-Deno.test("resolvePicks: restores thread order and reports bad picks through the caller's error", () => {
+test("resolvePicks: restores thread order and reports bad picks through the caller's error", () => {
   const f = fixture();
   const s = session(f.db, { title: "s" });
   const a = message(f.db, s.id, "user", "first", 1);
@@ -455,7 +456,7 @@ Deno.test("resolvePicks: restores thread order and reports bad picks through the
   );
 });
 
-Deno.test("baseTitle strips accumulated branch prefixes, once", () => {
+test("baseTitle strips accumulated branch prefixes, once", () => {
   assert.equal(baseTitle("fork · fork · rename the router"), "rename the router");
   assert.equal(baseTitle("extract · subagent · handoff · thing"), "thing");
   assert.equal(baseTitle("rename the router"), "rename the router");

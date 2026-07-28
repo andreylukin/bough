@@ -11,6 +11,7 @@
  * resolve. (Same constraint `hostfn/shell.test.ts` and `bus.test.ts` document.)
  */
 
+import { test } from "bun:test";
 import assert from "node:assert";
 import { Bus } from "../bus.ts";
 import { openDb, type SqliteDb } from "../db/db.ts";
@@ -89,19 +90,19 @@ async function rejects(fn: () => unknown, status: number, fragment: string): Pro
 // The grammar
 // ---------------------------------------------------------------------------
 
-Deno.test("parseSpec accepts every:<N><m|h|d>", () => {
+test("parseSpec accepts every:<N><m|h|d>", () => {
   assert.deepEqual(parseSpec("every:30m"), { kind: "every", ms: 30 * MINUTE });
   assert.deepEqual(parseSpec("every:2h"), { kind: "every", ms: 2 * HOUR });
   assert.deepEqual(parseSpec("every:1d"), { kind: "every", ms: 86_400_000 });
 });
 
-Deno.test("parseSpec accepts daily@HH:MM", () => {
+test("parseSpec accepts daily@HH:MM", () => {
   assert.deepEqual(parseSpec("daily@09:00"), { kind: "daily", hh: 9, mm: 0 });
   assert.deepEqual(parseSpec("daily@9:05"), { kind: "daily", hh: 9, mm: 5 });
   assert.deepEqual(parseSpec("daily@23:59"), { kind: "daily", hh: 23, mm: 59 });
 });
 
-Deno.test("parseSpec rejects everything else", () => {
+test("parseSpec rejects everything else", () => {
   for (
     const bad of [
       "",
@@ -127,14 +128,14 @@ Deno.test("parseSpec rejects everything else", () => {
 // nextRun
 // ---------------------------------------------------------------------------
 
-Deno.test("nextRun for every: adds the interval to the instant it is given", () => {
+test("nextRun for every: adds the interval to the instant it is given", () => {
   assert.equal(nextRun("every:30m", T0), T0 + 30 * MINUTE);
   // The invariant, stated as arithmetic: five hours of downtime does not compound.
   // Whatever `from` is, the answer is exactly one interval later.
   assert.equal(nextRun("every:30m", T0 + 5 * HOUR), T0 + 5 * HOUR + 30 * MINUTE);
 });
 
-Deno.test("nextRun for daily@ lands at the next local wall-clock occurrence", () => {
+test("nextRun for daily@ lands at the next local wall-clock occurrence", () => {
   // Local time, so the assertion is built with the local constructor rather than UTC.
   const morning = new Date(2026, 0, 15, 8, 0, 0, 0).getTime();
   const nine = new Date(2026, 0, 15, 9, 0, 0, 0).getTime();
@@ -148,7 +149,7 @@ Deno.test("nextRun for daily@ lands at the next local wall-clock occurrence", ()
   assert.equal(nextRun("daily@09:00", nine), new Date(2026, 0, 16, 9, 0, 0, 0).getTime());
 });
 
-Deno.test("nextRun throws on a spec that does not parse", () => {
+test("nextRun throws on a spec that does not parse", () => {
   assert.throws(() => nextRun("weekly", T0), ScheduleError);
 });
 
@@ -156,7 +157,7 @@ Deno.test("nextRun throws on a spec that does not parse", () => {
 // CRUD
 // ---------------------------------------------------------------------------
 
-Deno.test("scheduleCreate stores the row with next_run_at one interval out", async () => {
+test("scheduleCreate stores the row with next_run_at one interval out", async () => {
   const store = db();
   const created = await scheduleCreate(
     store,
@@ -172,7 +173,7 @@ Deno.test("scheduleCreate stores the row with next_run_at one interval out", asy
   store.close();
 });
 
-Deno.test("scheduleCreate rejects a bad spec with the grammar", async () => {
+test("scheduleCreate rejects a bad spec with the grammar", async () => {
   const store = db();
   await rejects(
     () =>
@@ -187,7 +188,7 @@ Deno.test("scheduleCreate rejects a bad spec with the grammar", async () => {
   store.close();
 });
 
-Deno.test("scheduleCreate resolves the workspace through the injected resolver", async () => {
+test("scheduleCreate resolves the workspace through the injected resolver", async () => {
   const store = db();
   const created = await scheduleCreate(
     store,
@@ -198,7 +199,7 @@ Deno.test("scheduleCreate resolves the workspace through the injected resolver",
   store.close();
 });
 
-Deno.test("scheduleCreate surfaces a workspace that does not exist", async () => {
+test("scheduleCreate surfaces a workspace that does not exist", async () => {
   const store = db();
   await rejects(
     () =>
@@ -212,7 +213,7 @@ Deno.test("scheduleCreate surfaces a workspace that does not exist", async () =>
   store.close();
 });
 
-Deno.test("schedulePatch leaves next_run_at alone for a cosmetic edit", async () => {
+test("schedulePatch leaves next_run_at alone for a cosmetic edit", async () => {
   const store = db();
   const created = await seed(store);
   const patched = await schedulePatch(store, created.id, { title: "renamed" }, {
@@ -224,7 +225,7 @@ Deno.test("schedulePatch leaves next_run_at alone for a cosmetic edit", async ()
   store.close();
 });
 
-Deno.test("schedulePatch recomputes next_run_at from now when the spec changes", async () => {
+test("schedulePatch recomputes next_run_at from now when the spec changes", async () => {
   const store = db();
   const created = await seed(store);
   const at = T0 + 5 * MINUTE;
@@ -236,7 +237,7 @@ Deno.test("schedulePatch recomputes next_run_at from now when the spec changes",
   store.close();
 });
 
-Deno.test("re-enabling recomputes from now — the disabled stretch is not downtime", async () => {
+test("re-enabling recomputes from now — the disabled stretch is not downtime", async () => {
   const store = db();
   const created = await seed(store);
   await schedulePatch(store, created.id, { enabled: false }, {
@@ -257,7 +258,7 @@ Deno.test("re-enabling recomputes from now — the disabled stretch is not downt
   store.close();
 });
 
-Deno.test("disabling does not recompute, and a disabled row is never due", async () => {
+test("disabling does not recompute, and a disabled row is never due", async () => {
   const store = db();
   const created = await seed(store);
   const patched = await schedulePatch(store, created.id, { enabled: false }, {
@@ -269,7 +270,7 @@ Deno.test("disabling does not recompute, and a disabled row is never due", async
   store.close();
 });
 
-Deno.test("schedulePatch clears the workspace with an explicit null", async () => {
+test("schedulePatch clears the workspace with an explicit null", async () => {
   const store = db();
   const created = await scheduleCreate(
     store,
@@ -284,14 +285,14 @@ Deno.test("schedulePatch clears the workspace with an explicit null", async () =
   store.close();
 });
 
-Deno.test("patching and removing an unknown id is a 404, not a silent success", async () => {
+test("patching and removing an unknown id is a 404, not a silent success", async () => {
   const store = db();
   await rejects(() => schedulePatch(store, "nope", { title: "x" }), 404, "not found");
   await rejects(() => Promise.resolve(scheduleRemove(store, "nope")), 404, "not found");
   store.close();
 });
 
-Deno.test("scheduleRemove deletes the row", async () => {
+test("scheduleRemove deletes the row", async () => {
   const store = db();
   const created = await seed(store);
   scheduleRemove(store, created.id);
@@ -303,7 +304,7 @@ Deno.test("scheduleRemove deletes the row", async () => {
 // The verbs
 // ---------------------------------------------------------------------------
 
-Deno.test("scheduleVerb add defaults the workspace to the caller's", async () => {
+test("scheduleVerb add defaults the workspace to the caller's", async () => {
   const store = db();
   const added = await scheduleVerb(
     store,
@@ -316,7 +317,7 @@ Deno.test("scheduleVerb add defaults the workspace to the caller's", async () =>
   store.close();
 });
 
-Deno.test("scheduleVerb add keeps an explicit workspace over the default", async () => {
+test("scheduleVerb add keeps an explicit workspace over the default", async () => {
   const store = db();
   const added = await scheduleVerb(
     store,
@@ -329,7 +330,7 @@ Deno.test("scheduleVerb add keeps an explicit workspace over the default", async
   store.close();
 });
 
-Deno.test("scheduleVerb add reports a malformed argument object", async () => {
+test("scheduleVerb add reports a malformed argument object", async () => {
   const store = db();
   await rejects(
     () => scheduleVerb(store, "add", { title: "t" }, null, { now: () => T0 }),
@@ -339,7 +340,7 @@ Deno.test("scheduleVerb add reports a malformed argument object", async () => {
   store.close();
 });
 
-Deno.test("scheduleVerb enable/disable/remove take a bare id string", async () => {
+test("scheduleVerb enable/disable/remove take a bare id string", async () => {
   const store = db();
   const created = await seed(store);
 
@@ -362,13 +363,13 @@ Deno.test("scheduleVerb enable/disable/remove take a bare id string", async () =
   store.close();
 });
 
-Deno.test("scheduleVerb says how to call a verb that got the wrong argument", async () => {
+test("scheduleVerb says how to call a verb that got the wrong argument", async () => {
   const store = db();
   await rejects(() => scheduleVerb(store, "enable", { id: "x" }, null), 400, "as a string");
   store.close();
 });
 
-Deno.test("scheduleVerb names the verbs when it gets an unknown one", async () => {
+test("scheduleVerb names the verbs when it gets an unknown one", async () => {
   const store = db();
   await rejects(() => scheduleVerb(store, "pause", null, null), 400, "list, add, enable");
   store.close();
@@ -378,7 +379,7 @@ Deno.test("scheduleVerb names the verbs when it gets an unknown one", async () =
 // The bridged host function
 // ---------------------------------------------------------------------------
 
-Deno.test("the schedule host fn takes JSON in and returns JSON out", async () => {
+test("the schedule host fn takes JSON in and returns JSON out", async () => {
   const store = db();
   const { schedule } = createScheduleHostFn(turnCtx(store), { workspace: anyWorkspace });
 
@@ -398,7 +399,7 @@ Deno.test("the schedule host fn takes JSON in and returns JSON out", async () =>
   store.close();
 });
 
-Deno.test("the schedule host fn rejects non-JSON arguments catchably", async () => {
+test("the schedule host fn rejects non-JSON arguments catchably", async () => {
   const store = db();
   const { schedule } = createScheduleHostFn(turnCtx(store));
   await rejects(() => schedule!("add", "{not json"), 400, "valid JSON");

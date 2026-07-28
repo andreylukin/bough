@@ -1,12 +1,12 @@
-# bough (Deno). Root shorthands for the deno tasks.
+# bough (Bun). Root shorthands for the package.json scripts.
 
 .PHONY: serve check test
 
 serve: ## Run the server on 127.0.0.1:4321
-	deno task dev
+	bun run dev
 
 check: ## Typecheck
-	deno task check
+	bun run check
 
 test: ## Run tests
-	deno task test
+	bun test

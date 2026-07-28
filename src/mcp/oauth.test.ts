@@ -16,7 +16,11 @@
  * Hermetic: loopback only, no real `~/.bough` (the store is injected, or
  * `BOUGH_HOME` is relocated), no API keys, no outbound network.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { McpError } from "../errors.ts";
 import { saveRegistry } from "./config.ts";
 import { mcpRegistryPath } from "../paths.ts";
@@ -42,7 +46,7 @@ import {
 
 /** A throwaway store. Nothing under the real `~/.bough` is read or written. */
 function tempStore(): TokenStore {
-  return new TokenStore({ dir: Deno.makeTempDirSync({ prefix: "bough-oauth-" }) });
+  return new TokenStore({ dir: mkdtempSync(join(tmpdir(), "bough-oauth-")) });
 }
 
 /**
@@ -51,14 +55,14 @@ function tempStore(): TokenStore {
  * process-default registry and store by design.
  */
 async function withHome(body: (home: string) => Promise<void>): Promise<void> {
-  const home = Deno.makeTempDirSync({ prefix: "bough-oauth-home-" });
-  const prior = Deno.env.get("BOUGH_HOME");
-  Deno.env.set("BOUGH_HOME", home);
+  const home = mkdtempSync(join(tmpdir(), "bough-oauth-home-"));
+  const prior = process.env.BOUGH_HOME;
+  process.env.BOUGH_HOME = home;
   try {
     await body(home);
   } finally {
-    if (prior === undefined) Deno.env.delete("BOUGH_HOME");
-    else Deno.env.set("BOUGH_HOME", prior);
+    if (prior === undefined) delete process.env.BOUGH_HOME;
+    else process.env.BOUGH_HOME = prior;
   }
 }
 
@@ -71,7 +75,7 @@ function startAuthServer(codes: Record<string, string> = { "the-code": "granted-
       status,
       headers: { "content-type": "application/json" },
     });
-  const server = Deno.serve({ port: 0, onListen: () => {} }, async (req: Request) => {
+  const handler = async (req: Request) => {
     const { pathname } = new URL(req.url);
     if (pathname.startsWith("/.well-known/oauth-protected-resource")) {
       return json({ resource: `${base}/mcp`, authorization_servers: [base] });
@@ -104,16 +108,17 @@ function startAuthServer(codes: Record<string, string> = { "the-code": "granted-
       return json({ access_token: minted, token_type: "Bearer", expires_in: 3600 });
     }
     return new Response("not found", { status: 404 });
-  });
-  base = `http://127.0.0.1:${(server.addr as Deno.NetAddr).port}`;
-  return { base, mcpUrl: () => `${base}/mcp`, seen, close: () => server.shutdown() };
+  };
+  const server = Bun.serve({ port: 0, fetch: handler });
+  base = `http://127.0.0.1:${server.port}`;
+  return { base, mcpUrl: () => `${base}/mcp`, seen, close: () => server.stop() };
 }
 
 // ---------------------------------------------------------------------------
 // The store and the provider
 // ---------------------------------------------------------------------------
 
-Deno.test("the provider persists registration, tokens and verifier; tokens end the flow", () => {
+test("the provider persists registration, tokens and verifier; tokens end the flow", () => {
   const store = tempStore();
   const provider = new BoughOAuthProvider("notion", { dir: store.dir, now: () => 1_000 });
 
@@ -147,7 +152,7 @@ Deno.test("the provider persists registration, tokens and verifier; tokens end t
   assert.equal(hasTokens("notion", { dir: store.dir }), false);
 });
 
-Deno.test("a missing verifier is a restartable message, not a crash", () => {
+test("a missing verifier is a restartable message, not a crash", () => {
   const store = tempStore();
   const provider = new BoughOAuthProvider("notion", { dir: store.dir });
   assert.throws(
@@ -156,7 +161,7 @@ Deno.test("a missing verifier is a restartable message, not a crash", () => {
   );
 });
 
-Deno.test("invalidateCredentials drops exactly its scope", () => {
+test("invalidateCredentials drops exactly its scope", () => {
   const store = tempStore();
   const provider = new BoughOAuthProvider("linear", { dir: store.dir });
   const seed = () =>
@@ -185,9 +190,9 @@ Deno.test("invalidateCredentials drops exactly its scope", () => {
   assert.deepEqual(store.load("linear"), {});
 });
 
-Deno.test("the provider is a public client whose redirect is bough's own callback", () => {
-  const prior = Deno.env.get("BOUGH_PORT");
-  Deno.env.set("BOUGH_PORT", "9999");
+test("the provider is a public client whose redirect is bough's own callback", () => {
+  const prior = process.env.BOUGH_PORT;
+  process.env.BOUGH_PORT = "9999";
   try {
     assert.equal(callbackUrl(), "http://127.0.0.1:9999/mcp/oauth/callback");
     // Boot wiring wins over the environment: the redirect URI has to name the port
@@ -203,23 +208,23 @@ Deno.test("the provider is a public client whose redirect is bough's own callbac
     assert.equal(provider.redirectUrl, "http://127.0.0.1:4444/mcp/oauth/callback");
   } finally {
     configureOAuthCallback({ port: Number(prior ?? 4321) });
-    if (prior === undefined) Deno.env.delete("BOUGH_PORT");
-    else Deno.env.set("BOUGH_PORT", prior);
+    if (prior === undefined) delete process.env.BOUGH_PORT;
+    else process.env.BOUGH_PORT = prior;
   }
 });
 
-Deno.test("token files are private, one per server, under ~/.bough/mcp/tokens", async () => {
+test("token files are private, one per server, under ~/.bough/mcp/tokens", async () => {
   await withHome(async (home) => {
     assert.equal(defaultTokensDir(), `${home}/mcp/tokens`);
     new BoughOAuthProvider("sec").saveTokens({ access_token: "t", token_type: "Bearer" });
     const file = `${home}/mcp/tokens/sec.json`;
-    assert.equal(Deno.statSync(file).mode! & 0o777, 0o600);
-    assert.equal(Deno.statSync(`${home}/mcp/tokens`).mode! & 0o777, 0o700);
+    assert.equal(statSync(file).mode! & 0o777, 0o600);
+    assert.equal(statSync(`${home}/mcp/tokens`).mode! & 0o777, 0o700);
     await Promise.resolve();
   });
 });
 
-Deno.test("a server name that is not a slug never becomes a path", () => {
+test("a server name that is not a slug never becomes a path", () => {
   const store = tempStore();
   for (const name of ["../evil", "a/b", "Notion", ""]) {
     assert.throws(
@@ -234,7 +239,7 @@ Deno.test("a server name that is not a slug never becomes a path", () => {
 // The flow
 // ---------------------------------------------------------------------------
 
-Deno.test("completeAuth validates the state round-trip before touching the network", async () => {
+test("completeAuth validates the state round-trip before touching the network", async () => {
   const store = tempStore();
   const never = () => {
     throw new Error("the network must not be touched before the state check");
@@ -264,7 +269,7 @@ Deno.test("completeAuth validates the state round-trip before touching the netwo
   );
 });
 
-Deno.test("beginAuth captures the authorization URL instead of navigating", async () => {
+test("beginAuth captures the authorization URL instead of navigating", async () => {
   const as = startAuthServer();
   const store = tempStore();
   const provider = new BoughOAuthProvider("acme", {
@@ -300,7 +305,7 @@ Deno.test("beginAuth captures the authorization URL instead of navigating", asyn
 
 const CTX = {} as AppCtx; // these handlers read nothing off the ctx
 
-Deno.test("the callback route is in the table at the path the redirect URI names", () => {
+test("the callback route is in the table at the path the redirect URI names", () => {
   assert.equal(CALLBACK_PATH, "/mcp/oauth/callback");
   const has = (method: string, path: string) =>
     routes.some((r) => r.method === method && r.pattern.exec({ pathname: path }) !== null);
@@ -310,7 +315,7 @@ Deno.test("the callback route is in the table at the path the redirect URI names
   assert.ok(has("DELETE", "/mcp/servers/notion/auth"));
 });
 
-Deno.test("the callback refuses a request that is not a bough callback", async () => {
+test("the callback refuses a request that is not a bough callback", async () => {
   const missing = await oauthCallbackH(new Request("http://127.0.0.1/mcp/oauth/callback"));
   assert.equal(missing.status, 400);
   assert.match(missing.headers.get("content-type") ?? "", /text\/html/);
@@ -325,7 +330,7 @@ Deno.test("the callback refuses a request that is not a bough callback", async (
   assert.match(body, /access_denied/);
 });
 
-Deno.test("the callback exchanges the code and stores the tokens", async () => {
+test("the callback exchanges the code and stores the tokens", async () => {
   await withHome(async (home) => {
     const as = startAuthServer();
     try {
@@ -346,7 +351,7 @@ Deno.test("the callback exchanges the code and stores the tokens", async () => {
 
       // The tokens landed, under BOUGH_HOME and nowhere else.
       assert.equal(store.load("acme").tokens?.access_token, "granted-1");
-      assert.equal(Deno.statSync(`${home}/mcp/tokens/acme.json`).mode! & 0o777, 0o600);
+      assert.equal(statSync(`${home}/mcp/tokens/acme.json`).mode! & 0o777, 0o600);
       // PKCE was actually proven, and the flow state is spent.
       assert.deepEqual(as.seen.grants, ["authorization_code"]);
       assert.deepEqual(as.seen.verifiers, ["verifier-1"]);
@@ -366,7 +371,7 @@ Deno.test("the callback exchanges the code and stores the tokens", async () => {
   });
 });
 
-Deno.test("the /mcp auth verbs: status, start, and forget", async () => {
+test("the /mcp auth verbs: status, start, and forget", async () => {
   await withHome(async () => {
     const as = startAuthServer();
     try {

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Fresh-machine bootstrap for bough. macOS-only because the service is launchd —
 # nothing here is confined; bough runs as you (spec §2).
-# Installs toolchain deps via Homebrew, caches Deno dependencies, and links the
+# Installs toolchain deps via Homebrew, installs the npm dependencies, and links the
 # `bough` server manager onto PATH. Safe to re-run.
 set -euo pipefail
 
@@ -24,8 +24,8 @@ if ! command -v git >/dev/null; then
   exit 1
 fi
 
-# rg is what the prompt tells the model to search with. (deno has its own block
-# below — it needs a version floor, and may already be on PATH from the deno.land
+# rg is what the prompt tells the model to search with. (bun has its own block
+# below — it needs a version floor, and may already be on PATH from the bun.sh
 # installer.) There is no local inference: the cheap tier is a hosted model you pick
 # in the model picker, so no llama.cpp and no GGUF. There is no tunnel: the server
 # binds loopback and has no auth layer (spec §17).
@@ -43,29 +43,28 @@ else
   echo "==> all packages already installed"
 fi
 
-# Deno >= 2.9 via Homebrew. That is the floor the tree is developed and tested
-# against — it needs `node:sqlite` and the `worker-options` unstable flag (see
-# deno.json). We install/upgrade through brew even when an older deno is already on
-# PATH from the deno.land installer (brew upgrade would fail on that one).
-deno_ok() {
-  command -v deno >/dev/null || return 1
+# Bun >= 1.3 via Homebrew. That is the floor the tree is developed and tested
+# against. We install/upgrade through brew even when an older bun is already on
+# PATH from the bun.sh installer (brew upgrade would fail on that one).
+bun_ok() {
+  command -v bun >/dev/null || return 1
   local v
-  v="$(deno --version | head -1 | awk '{print $2}')"
-  [ "$(printf '%s\n' "2.9.0" "$v" | sort -V | head -1)" = "2.9.0" ]
+  v="$(bun --version | head -1)"
+  [ "$(printf '%s\n' "1.3.0" "$v" | sort -V | head -1)" = "1.3.0" ]
 }
-if deno_ok; then
-  echo "==> deno $(deno --version | head -1 | awk '{print $2}') ok"
-elif brew list --formula deno >/dev/null 2>&1; then
-  echo "==> upgrading deno via brew"
-  brew upgrade deno
+if bun_ok; then
+  echo "==> bun $(bun --version) ok"
+elif brew list --formula oven-sh/bun/bun >/dev/null 2>&1; then
+  echo "==> upgrading bun via brew"
+  brew upgrade oven-sh/bun/bun
 else
-  echo "==> installing deno via brew"
-  brew install deno
+  echo "==> installing bun via brew"
+  brew install oven-sh/bun/bun
 fi
-if ! deno_ok; then
-  echo "error: need deno >= 2.9 on PATH — have '$(command -v deno || echo none)'." >&2
-  echo "  A non-brew deno (e.g. ~/.deno/bin) may be shadowing brew's; fix your PATH so" >&2
-  echo "  $(brew --prefix)/bin comes first, or remove the old deno." >&2
+if ! bun_ok; then
+  echo "error: need bun >= 1.3 on PATH — have '$(command -v bun || echo none)'." >&2
+  echo "  A non-brew bun (e.g. ~/.bun/bin) may be shadowing brew's; fix your PATH so" >&2
+  echo "  $(brew --prefix)/bin comes first, or remove the old bun." >&2
   exit 1
 fi
 
@@ -87,8 +86,8 @@ else
   echo "==> typescript-language-server already installed"
 fi
 
-echo "==> caching Deno dependencies + typecheck"
-(cd "$ROOT" && deno install && deno task check)
+echo "==> installing dependencies + typecheck"
+(cd "$ROOT" && bun install && bun run check)
 
 
 echo "==> linking bough CLI to ~/.local/bin/bough"

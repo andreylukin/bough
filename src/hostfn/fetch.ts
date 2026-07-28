@@ -79,10 +79,17 @@ export interface FetchResult {
   truncated: boolean;
 }
 
+/**
+ * A stand-in for `fetch`. Structural rather than `typeof globalThis.fetch`: Bun's
+ * global carries a `preconnect` property no stub has, and a stub is all this seam
+ * ever wants.
+ */
+export type FetchImpl = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+
 /** The seams. All three default to production behavior. */
 export interface FetchDeps {
   /** Injected so tests need no socket and no network. Absent = `globalThis.fetch`. */
-  fetchImpl?: typeof globalThis.fetch;
+  fetchImpl?: FetchImpl;
   maxBytes?: number;
   deadlineMs?: number;
 }
@@ -119,7 +126,7 @@ export async function fetchUrl(
     throw new NetError(
       400,
       `fetch: only http and https URLs are allowed — got ${parsed.protocol} in ` +
-        `${url}. Read local files with Deno.readTextFile or bash instead.`,
+        `${url}. Read local files with readFile from node:fs/promises or bash instead.`,
     );
   }
 

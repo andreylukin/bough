@@ -431,7 +431,7 @@ async function drive(
   // `effort` below, which is not a coincidence: they are one rule.
   const model = session?.model ?? ctx.model ?? DEFAULT_MODEL;
   const effort = (session?.effort ?? ctx.effort ?? undefined) as TurnCtx["effort"];
-  const workspace = db.getSessionRuntime(sessionId).workspace ?? Deno.cwd();
+  const workspace = db.getSessionRuntime(sessionId).workspace ?? process.cwd();
 
   const turn = startTurn(db, sessionId, messageId, now);
 

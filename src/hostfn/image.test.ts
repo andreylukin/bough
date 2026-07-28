@@ -19,7 +19,19 @@
  * resolve. (Same constraint `hostfn/shell.test.ts` and `bus.test.ts` document.)
  */
 
+import { test } from "bun:test";
 import assert from "node:assert";
+import {
+  closeSync,
+  ftruncateSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Bus } from "../bus.ts";
 import { openDb, type SqliteDb } from "../db/db.ts";
@@ -56,7 +68,7 @@ function fixture(): Fixture {
   const bus = new Bus();
   const events: BoughEvent[] = [];
   bus.subscribe((e) => events.push(e));
-  const dir = Deno.makeTempDirSync({ prefix: "bough-image-" });
+  const dir = mkdtempSync(join(tmpdir(), "bough-image-"));
   const dest = join(dir, "attachments");
   const session = db.createSession({
     id: crypto.randomUUID(),
@@ -87,7 +99,7 @@ function fixture(): Fixture {
     dest,
     close: () => {
       db.close();
-      Deno.removeSync(dir, { recursive: true });
+      rmSync(dir, { recursive: true, force: true });
     },
   };
 }
@@ -95,7 +107,7 @@ function fixture(): Fixture {
 /** Write `bytes` bytes into `name` under the fixture's workspace. */
 function writeFile(dir: string, name: string, bytes = 8): string {
   const path = join(dir, name);
-  Deno.writeFileSync(path, new Uint8Array(bytes).fill(1));
+  writeFileSync(path, new Uint8Array(bytes).fill(1));
   return path;
 }
 
@@ -117,7 +129,7 @@ function rejects(fn: () => unknown, fragment: string): void {
 // Types and paths
 // ---------------------------------------------------------------------------
 
-Deno.test("imageMediaType covers png/jpg/gif/webp and nothing else", () => {
+test("imageMediaType covers png/jpg/gif/webp and nothing else", () => {
   assert.equal(imageMediaType("a.png"), "image/png");
   assert.equal(imageMediaType("a.PNG"), "image/png");
   assert.equal(imageMediaType("a.jpg"), "image/jpeg");
@@ -129,7 +141,7 @@ Deno.test("imageMediaType covers png/jpg/gif/webp and nothing else", () => {
   }
 });
 
-Deno.test("paths resolve absolute, ~/-relative, or against the workspace", () => {
+test("paths resolve absolute, ~/-relative, or against the workspace", () => {
   assert.equal(resolveImagePath("/tmp/a.png", "/work", "/home/u"), "/tmp/a.png");
   assert.equal(resolveImagePath("~/shots/a.png", "/work", "/home/u"), "/home/u/shots/a.png");
   assert.equal(resolveImagePath("out/a.png", "/work", "/home/u"), "/work/out/a.png");
@@ -142,7 +154,7 @@ Deno.test("paths resolve absolute, ~/-relative, or against the workspace", () =>
 // The attach
 // ---------------------------------------------------------------------------
 
-Deno.test("attachImage copies the bytes and stores the COPY's path", () => {
+test("attachImage copies the bytes and stores the COPY's path", () => {
   const f = fixture();
   const src = writeFile(f.dir, "shot.png", 12);
   const result = attachImage(src, "shot.png", f.dest);
@@ -154,28 +166,28 @@ Deno.test("attachImage copies the bytes and stores the COPY's path", () => {
   assert.equal(part.name, "shot.png", "the name is what the program spelled, not the abs path");
   assert.equal(part.size, 12);
   assert.notEqual(part.path, src);
-  assert.equal(Deno.statSync(part.path).size, 12);
+  assert.equal(statSync(part.path).size, 12);
 
   // The durability property: the original can go and the attachment stays.
-  Deno.removeSync(src);
-  assert.equal(Deno.statSync(part.path).size, 12);
+  rmSync(src);
+  assert.equal(statSync(part.path).size, 12);
   f.close();
 });
 
-Deno.test("two attachments of the same filename do not overwrite each other", () => {
+test("two attachments of the same filename do not overwrite each other", () => {
   const f = fixture();
   const a = writeFile(f.dir, "shot.png", 4);
   const first = attachImage(a, "shot.png", f.dest);
-  Deno.writeFileSync(a, new Uint8Array(9).fill(2));
+  writeFileSync(a, new Uint8Array(9).fill(2));
   const second = attachImage(a, "shot.png", f.dest);
   assert.ok(first.ok && second.ok);
   assert.notEqual(first.part.path, second.part.path);
-  assert.equal(Deno.statSync(first.part.path).size, 4);
-  assert.equal(Deno.statSync(second.part.path).size, 9);
+  assert.equal(statSync(first.part.path).size, 4);
+  assert.equal(statSync(second.part.path).size, 9);
   f.close();
 });
 
-Deno.test("attachImage reports each refusal distinctly and never throws", () => {
+test("attachImage reports each refusal distinctly and never throws", () => {
   const f = fixture();
   assert.deepEqual(attachImage(join(f.dir, "a.svg"), "a.svg", f.dest), {
     ok: false,
@@ -185,7 +197,7 @@ Deno.test("attachImage reports each refusal distinctly and never throws", () => 
     ok: false,
     reason: "missing",
   });
-  Deno.mkdirSync(join(f.dir, "dir.png"));
+  mkdirSync(join(f.dir, "dir.png"));
   assert.deepEqual(attachImage(join(f.dir, "dir.png"), "dir.png", f.dest), {
     ok: false,
     reason: "not-a-file",
@@ -193,13 +205,13 @@ Deno.test("attachImage reports each refusal distinctly and never throws", () => 
   f.close();
 });
 
-Deno.test("a file over 5MB is refused", () => {
+test("a file over 5MB is refused", () => {
   const f = fixture();
   const src = join(f.dir, "big.png");
   // Sparse-ish: one byte written at the far end gives the size without the memory.
-  const file = Deno.openSync(src, { create: true, write: true });
-  file.truncateSync(MAX_IMAGE_BYTES + 1);
-  file.close();
+  const file = openSync(src, "w");
+  ftruncateSync(file, MAX_IMAGE_BYTES + 1);
+  closeSync(file);
   const result = attachImage(src, "big.png", f.dest);
   assert.equal(result.ok, false);
   assert.equal(result.ok === false && result.reason, "too-large");
@@ -210,7 +222,7 @@ Deno.test("a file over 5MB is refused", () => {
 // The host function
 // ---------------------------------------------------------------------------
 
-Deno.test("image() posts a system note carrying the image part", () => {
+test("image() posts a system note carrying the image part", () => {
   const f = fixture();
   writeFile(f.dir, "chart.png", 20);
   const { image } = createImageHostFn(f.ctx, { destDir: f.dest });
@@ -237,7 +249,7 @@ Deno.test("image() posts a system note carrying the image part", () => {
     assert.equal(part.type, "image");
     assert.equal(part.name, "chart.png");
     assert.equal(part.mediaType, "image/png");
-    assert.equal(Deno.statSync(part.path).size, 20);
+    assert.equal(statSync(part.path).size, 20);
 
     // Nothing was injected into the running turn's own message — the note is a new
     // message, which is what makes it arrive next turn.
@@ -247,7 +259,7 @@ Deno.test("image() posts a system note carrying the image part", () => {
   });
 });
 
-Deno.test("the note omits the dash when there is no note text", async () => {
+test("the note omits the dash when there is no note text", async () => {
   const f = fixture();
   writeFile(f.dir, "a.png");
   const { image } = createImageHostFn(f.ctx, { destDir: f.dest });
@@ -259,11 +271,11 @@ Deno.test("the note omits the dash when there is no note text", async () => {
   f.close();
 });
 
-Deno.test("image() resolves an absolute path and a ~/ one", async () => {
+test("image() resolves an absolute path and a ~/ one", async () => {
   const f = fixture();
   const abs = writeFile(f.dir, "abs.png", 5);
   const home = join(f.dir, "home");
-  Deno.mkdirSync(home);
+  mkdirSync(home);
   writeFile(home, "tilde.png", 6);
 
   const { image } = createImageHostFn(f.ctx, { destDir: f.dest, home });
@@ -276,7 +288,7 @@ Deno.test("image() resolves an absolute path and a ~/ one", async () => {
   f.close();
 });
 
-Deno.test("each refusal is a catchable ProgramError naming its own fix", () => {
+test("each refusal is a catchable ProgramError naming its own fix", () => {
   const f = fixture();
   const { image } = createImageHostFn(f.ctx, { destDir: f.dest });
 
@@ -285,9 +297,9 @@ Deno.test("each refusal is a catchable ProgramError naming its own fix", () => {
   rejects(() => image!("notes.txt"), "not a supported image type");
 
   const big = join(f.dir, "big.jpg");
-  const file = Deno.openSync(big, { create: true, write: true });
-  file.truncateSync(MAX_IMAGE_BYTES + 1);
-  file.close();
+  const file = openSync(big, "w");
+  ftruncateSync(file, MAX_IMAGE_BYTES + 1);
+  closeSync(file);
   rejects(() => image!("big.jpg"), "over the");
 
   // Nothing was written for any of them.
@@ -295,7 +307,7 @@ Deno.test("each refusal is a catchable ProgramError naming its own fix", () => {
   f.close();
 });
 
-Deno.test("image() posts through the injected seam so a caller can observe it", async () => {
+test("image() posts through the injected seam so a caller can observe it", async () => {
   const f = fixture();
   writeFile(f.dir, "a.png");
   const posted: { sessionId: string; text: string; extra: unknown }[] = [];

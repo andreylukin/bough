@@ -13,6 +13,7 @@
  * Offline and hermetic: an in-memory database and a scripted fake `LlmClient`.
  * `node:assert/strict`, because jsr.io is unreachable and `@std/assert` cannot resolve.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { Bus } from "../bus.ts";
 import { openDb, type SqliteDb } from "../db/db.ts";
@@ -81,7 +82,7 @@ function ranges(sections: Section[]): [number, number, string][] {
 
 // ---- parsing ----------------------------------------------------------------
 
-Deno.test("parseSections tolerates code fences and surrounding prose", () => {
+test("parseSections tolerates code fences and surrounding prose", () => {
   const wanted = [{ start: 0, end: 1, label: "auth" }];
   assert.deepEqual(parseSections('[{"start":0,"end":1,"label":"auth"}]'), wanted);
   assert.deepEqual(
@@ -94,7 +95,7 @@ Deno.test("parseSections tolerates code fences and surrounding prose", () => {
   );
 });
 
-Deno.test("parseSections returns null on anything it cannot read", () => {
+test("parseSections returns null on anything it cannot read", () => {
   assert.equal(parseSections("I'd rather not."), null);
   assert.equal(parseSections("[not json]"), null);
   assert.equal(parseSections('[{"start":"zero","end":1,"label":"auth"}]'), null, "wrong types");
@@ -104,7 +105,7 @@ Deno.test("parseSections returns null on anything it cannot read", () => {
 
 // ---- normalization ----------------------------------------------------------
 
-Deno.test("normalizeSections fills gaps so every turn is selectable", () => {
+test("normalizeSections fills gaps so every turn is selectable", () => {
   const out = normalizeSections([{ start: 2, end: 3, label: "theme picker" }], 6);
   assert.deepEqual(ranges(out), [
     [0, 1, "…"],
@@ -113,7 +114,7 @@ Deno.test("normalizeSections fills gaps so every turn is selectable", () => {
   ]);
 });
 
-Deno.test("normalizeSections trims overlaps so no turn wears two labels", () => {
+test("normalizeSections trims overlaps so no turn wears two labels", () => {
   const out = normalizeSections([
     { start: 0, end: 3, label: "first" },
     { start: 2, end: 5, label: "second" },
@@ -122,7 +123,7 @@ Deno.test("normalizeSections trims overlaps so no turn wears two labels", () => 
   assert.deepEqual(ranges(out), [[0, 3, "first"], [4, 5, "second"]]);
 });
 
-Deno.test("normalizeSections sorts, clips to bounds, and drops the impossible", () => {
+test("normalizeSections sorts, clips to bounds, and drops the impossible", () => {
   const out = normalizeSections([
     { start: 3, end: 99, label: "past the end" },
     { start: 0, end: 2, label: "first" },
@@ -132,7 +133,7 @@ Deno.test("normalizeSections sorts, clips to bounds, and drops the impossible", 
   assert.deepEqual(ranges(out), [[0, 2, "first"], [3, 4, "past the end"]]);
 });
 
-Deno.test("normalizeSections always covers exactly [0, n)", () => {
+test("normalizeSections always covers exactly [0, n)", () => {
   for (
     const raw of [
       [],
@@ -150,14 +151,14 @@ Deno.test("normalizeSections always covers exactly [0, n)", () => {
   }
 });
 
-Deno.test("normalizeSections clips a runaway label", () => {
+test("normalizeSections clips a runaway label", () => {
   const [only] = normalizeSections([{ start: 0, end: 0, label: "x".repeat(500) }], 1);
   assert.equal(only.label.length, 60);
 });
 
 // ---- the pass ---------------------------------------------------------------
 
-Deno.test("sectionize numbers the turns it sends and labels them on the cheap model", async () => {
+test("sectionize numbers the turns it sends and labels them on the cheap model", async () => {
   const llm = fakeLlm(
     '[{"start":0,"end":1,"label":"token refresh race"},{"start":2,"end":2,"label":"theme picker"}]',
   );
@@ -179,7 +180,7 @@ Deno.test("sectionize numbers the turns it sends and labels them on the cheap mo
   ], "one line per turn — a newline in a gist would shift every index after it");
 });
 
-Deno.test("an unparseable reply is a 502 that says nothing was stored", async () => {
+test("an unparseable reply is a 502 that says nothing was stored", async () => {
   const llm = fakeLlm("I can't do that.");
 
   const err = await sectionize({ llm }, gists("a", "b")).then(
@@ -192,7 +193,7 @@ Deno.test("an unparseable reply is a 502 that says nothing was stored", async ()
   assert.match(err.message, /nothing was stored/);
 });
 
-Deno.test("a sloppy reply still comes back as a usable partition", async () => {
+test("a sloppy reply still comes back as a usable partition", async () => {
   const llm = fakeLlm('[{"start":1,"end":99,"label":"the rest"}]');
 
   const out = await sectionize({ llm }, gists("a", "b", "c"));
@@ -202,7 +203,7 @@ Deno.test("a sloppy reply still comes back as a usable partition", async () => {
 
 // ---- the route --------------------------------------------------------------
 
-Deno.test("POST /sessions/:id/sections is reachable, returns ranges, and stores nothing", async () => {
+test("POST /sessions/:id/sections is reachable, returns ranges, and stores nothing", async () => {
   const f = fixture('[{"start":0,"end":1,"label":"auth token refresh"}]');
   const s = session(f.db, "the work");
   f.db.createMessage({
@@ -237,7 +238,7 @@ Deno.test("POST /sessions/:id/sections is reachable, returns ranges, and stores 
   );
 });
 
-Deno.test("the route refuses an unknown session and an empty turn list", async () => {
+test("the route refuses an unknown session and an empty turn list", async () => {
   const f = fixture("[]");
   const handler = createHandler(f.ctx);
 

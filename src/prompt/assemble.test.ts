@@ -6,6 +6,7 @@
  * as the rest of this tree: jsr.io is denied in the sandbox these tests run in, so
  * a jsr import cannot resolve. `node:assert` is built into the runtime.
  */
+import { test } from "bun:test";
 import { deepStrictEqual, ok, throws } from "node:assert";
 import { HOST_FN_NAMES, type HostFnName } from "../harness/protocol.ts";
 import {
@@ -76,7 +77,7 @@ function flat(text: string): string {
 // Delegation tier — the AC
 // ---------------------------------------------------------------------------
 
-Deno.test("a subagent gets the nested delegation section and not the top-level one", () => {
+test("a subagent gets the nested delegation section and not the top-level one", () => {
   const sub = build({ kind: "subagent" });
   assert(sub.sections.includes("delegation-nested"));
   assert(!sub.sections.includes("delegation"));
@@ -87,7 +88,7 @@ Deno.test("a subagent gets the nested delegation section and not the top-level o
   assert(!sub.system.includes("await join("));
 });
 
-Deno.test("a top-level session gets the top-level section and not the nested one", () => {
+test("a top-level session gets the top-level section and not the nested one", () => {
   for (const kind of ["root", "fork", "compaction"] as const) {
     const p = build({ kind });
     assert(p.sections.includes("delegation"), `${kind} should delegate`);
@@ -96,7 +97,7 @@ Deno.test("a top-level session gets the top-level section and not the nested one
   }
 });
 
-Deno.test("subagent framing rides on kind, delegation on the grant", () => {
+test("subagent framing rides on kind, delegation on the grant", () => {
   const sub = build({ kind: "subagent" });
   assertStringIncludes(sub.system, "## You are a subagent");
 
@@ -115,7 +116,7 @@ Deno.test("subagent framing rides on kind, delegation on the grant", () => {
   assert(!root.system.includes("## You are a subagent"));
 });
 
-Deno.test("workflows are offered only to a session that may start one", () => {
+test("workflows are offered only to a session that may start one", () => {
   assert(build({ kind: "root" }).sections.includes("workflow"));
   assert(!build({ kind: "root", granted: without("workflow") }).sections.includes("workflow"));
   assert(!build({ kind: "subagent" }).sections.includes("workflow"));
@@ -142,7 +143,7 @@ const GRANTS: { id: SectionId; fn: HostFnName; phrase: string }[] = [
   { id: "lsp", fn: "lsp", phrase: "lsp.impls({symbol})" },
 ];
 
-Deno.test("a section granting a host function is absent when the capability is absent", () => {
+test("a section granting a host function is absent when the capability is absent", () => {
   for (const { id, fn, phrase } of GRANTS) {
     const granted = build();
     assert(granted.sections.includes(id), `${id} should be present when ${fn} is granted`);
@@ -157,7 +158,7 @@ Deno.test("a section granting a host function is absent when the capability is a
   }
 });
 
-Deno.test("a core-only turn gets exactly the always-on sections", () => {
+test("a core-only turn gets exactly the always-on sections", () => {
   const p = assemblePrompt({ kind: "root", granted: CORE });
   assertEquals(p.sections, [
     "identity",
@@ -172,7 +173,7 @@ Deno.test("a core-only turn gets exactly the always-on sections", () => {
   assertEquals(p.systemVolatile, "");
 });
 
-Deno.test("lsp needs both the backend and the bridge", () => {
+test("lsp needs both the backend and the bridge", () => {
   assert(build({ lsp: true }).sections.includes("lsp"));
   assert(!build({ lsp: false }).sections.includes("lsp"));
   assert(!build({ lsp: undefined }).sections.includes("lsp"));
@@ -183,7 +184,7 @@ Deno.test("lsp needs both the backend and the bridge", () => {
 // The volatile tier
 // ---------------------------------------------------------------------------
 
-Deno.test("MCP tools appear only when servers are connected, and stay out of the stable tier", () => {
+test("MCP tools appear only when servers are connected, and stay out of the stable tier", () => {
   const none = build();
   assert(!none.sections.includes("mcp-tools"));
   assertEquals(none.systemVolatile, "");
@@ -214,7 +215,7 @@ Deno.test("MCP tools appear only when servers are connected, and stay out of the
   );
 });
 
-Deno.test("skills and caller notes land in the volatile tier only", () => {
+test("skills and caller notes land in the volatile tier only", () => {
   const p = build({
     skills: [{ name: "history", body: "Query ~/.bough/bough.db with sqlite3." }],
     notes: ["# Workspace\nbash starts in /repo.", "   ", ""],
@@ -228,7 +229,7 @@ Deno.test("skills and caller notes land in the volatile tier only", () => {
   assert(!p.systemVolatile.includes("\n\n\n"));
 });
 
-Deno.test("the stable tier is byte-identical for the same shape", () => {
+test("the stable tier is byte-identical for the same shape", () => {
   const a = build({ mcpServers: [{ name: "x", tools: [] }], notes: ["# A\nfirst"] });
   const b = build({ mcpServers: [{ name: "y", tools: [] }], notes: ["# B\nsecond"] });
   assertEquals(a.system, b.system);
@@ -239,7 +240,7 @@ Deno.test("the stable tier is byte-identical for the same shape", () => {
 // Content: the prompt has to match THIS spec
 // ---------------------------------------------------------------------------
 
-Deno.test("the prompt grants view + patch + write and nothing else for files", () => {
+test("the prompt grants view + patch + write and nothing else for files", () => {
   const text = whole(build());
   for (const gone of ["await read(", "await edit(", "await extract(", "await recall("]) {
     assert(!text.includes(gone), `${gone} was removed from the spec`);
@@ -248,7 +249,7 @@ Deno.test("the prompt grants view + patch + write and nothing else for files", (
   assertStringIncludes(text, "await write(path, content)");
 });
 
-Deno.test("there is no done-gate and no committed check", () => {
+test("there is no done-gate and no committed check", () => {
   const text = flat(whole(build()));
   for (const gone of ["done-gate", "committed check", "checkpassed", "re-runs the committed"]) {
     assert(!text.includes(gone), `"${gone}" belongs to the old acceptance gate`);
@@ -259,7 +260,7 @@ Deno.test("there is no done-gate and no committed check", () => {
   assertStringIncludes(text, "call the stop tool");
 });
 
-Deno.test("the network section states plainly that nothing filters egress", () => {
+test("the network section states plainly that nothing filters egress", () => {
   const p = build();
   assert(p.sections.includes("network"));
   assertStringIncludes(p.system, "## Network");
@@ -276,7 +277,7 @@ Deno.test("the network section states plainly that nothing filters egress", () =
 // The section files themselves
 // ---------------------------------------------------------------------------
 
-Deno.test("every section in the table has a readable, headed file", () => {
+test("every section in the table has a readable, headed file", () => {
   for (const { id, file } of SECTION_FILES) {
     const text = readSectionFile(file);
     assert(text.startsWith("## "), `${id} (${file}) must start with its own "## " heading`);
@@ -284,7 +285,7 @@ Deno.test("every section in the table has a readable, headed file", () => {
   }
 });
 
-Deno.test("a missing section file is fatal and says why", () => {
+test("a missing section file is fatal and says why", () => {
   const err = captureError(() => readSectionFile("no-such-section.md"));
   assertStringIncludes(err.message, "no-such-section.md");
   assertStringIncludes(err.message, "not a recoverable condition");
@@ -294,7 +295,7 @@ Deno.test("a missing section file is fatal and says why", () => {
 // The workspace note
 // ---------------------------------------------------------------------------
 
-Deno.test("the workspace note names the path, and rides the VOLATILE tier", () => {
+test("the workspace note names the path, and rides the VOLATILE tier", () => {
   const note = workspaceNote("/home/u/proj");
   assert(note.startsWith("## Workspace"), "a note is a complete section with its own heading");
   assertStringIncludes(note, "/home/u/proj");
@@ -307,18 +308,18 @@ Deno.test("the workspace note names the path, and rides the VOLATILE tier", () =
   assertStringIncludes(p.systemVolatile, "/home/u/proj");
 });
 
-Deno.test("the workspace note warns that the program's own cwd is NOT the workspace", () => {
+test("the workspace note warns that the program's own cwd is NOT the workspace", () => {
   // The trap this closes: bash() and view() are handed the workspace explicitly,
   // but the program worker inherits the SERVER's directory, so
-  // `Deno.readTextFile("x")` and `view("x")` in one program name two different
-  // files — and files.md sends the model to Deno.readTextFile for raw content.
+  // `Bun.file("x").text()` and `view("x")` in one program name two different
+  // files — and files.md sends the model to Bun.file for raw content.
   const text = flat(workspaceNote("/w"));
   assertStringIncludes(text, "your program's own working directory is not the workspace");
-  assertStringIncludes(text, "deno.readtextfile");
+  assertStringIncludes(text, "bun.file");
   assertStringIncludes(text, "absolute");
 });
 
-Deno.test("the workspace note is not gated on a capability — every kind edits a real checkout", () => {
+test("the workspace note is not gated on a capability — every kind edits a real checkout", () => {
   for (const kind of ["root", "fork", "compaction", "subagent", "workflow_agent"] as const) {
     const p = assemblePrompt({ kind, granted: CORE, notes: [workspaceNote("/w/" + kind)] });
     assertStringIncludes(p.systemVolatile, "/w/" + kind);

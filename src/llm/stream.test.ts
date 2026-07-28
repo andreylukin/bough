@@ -13,6 +13,7 @@
  * egress policy (same constraint the other test files document).
  */
 
+import { test } from "bun:test";
 import { deepStrictEqual, ok, strictEqual } from "node:assert";
 import { LlmError } from "../errors.ts";
 import type { LlmBlock, LlmToolDef } from "../types.ts";
@@ -35,14 +36,14 @@ async function collect(stream: AsyncIterable<string>): Promise<string[]> {
   return out;
 }
 
-Deno.test("sseEvents: yields data payloads and passes [DONE] through untouched", async () => {
+test("sseEvents: yields data payloads and passes [DONE] through untouched", async () => {
   const events = await collect(
     sseEvents(bodyOf(['data: {"a":1}\n', "data: [DONE]\n"]), "test"),
   );
   deepStrictEqual(events, ['{"a":1}', "[DONE]"]);
 });
 
-Deno.test("sseEvents: a frame split across chunk boundaries still parses", async () => {
+test("sseEvents: a frame split across chunk boundaries still parses", async () => {
   // The transport decides where the packets break; a payload cut mid-JSON must be
   // reassembled, not dropped or half-parsed.
   const events = await collect(
@@ -51,7 +52,7 @@ Deno.test("sseEvents: a frame split across chunk boundaries still parses", async
   deepStrictEqual(events, ['{"delta":"hi"}', '{"x":2}']);
 });
 
-Deno.test("sseEvents: comments, blank lines and event: lines are skipped", async () => {
+test("sseEvents: comments, blank lines and event: lines are skipped", async () => {
   const events = await collect(
     sseEvents(
       bodyOf([": keepalive\n", "\n", "event: ping\n", 'data: {"real":true}\n']),
@@ -61,14 +62,14 @@ Deno.test("sseEvents: comments, blank lines and event: lines are skipped", async
   deepStrictEqual(events, ['{"real":true}']);
 });
 
-Deno.test("sseEvents: a trailing un-newlined fragment is dropped, not half-yielded", async () => {
+test("sseEvents: a trailing un-newlined fragment is dropped, not half-yielded", async () => {
   // It is by definition incomplete. The caller's "did I see a completion marker?"
   // check is what turns this into a retryable transport fault.
   const events = await collect(sseEvents(bodyOf(['data: {"ok":1}\n', 'data: {"cut":']), "test"));
   deepStrictEqual(events, ['{"ok":1}']);
 });
 
-Deno.test("sseEvents: a stalled stream fails instead of hanging the turn", async () => {
+test("sseEvents: a stalled stream fails instead of hanging the turn", async () => {
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       controller.enqueue(new TextEncoder().encode('data: {"a":1}\n'));
@@ -89,7 +90,7 @@ Deno.test("sseEvents: a stalled stream fails instead of hanging the turn", async
   }
 });
 
-Deno.test("throwHttpError: status, body text and Retry-After all survive", async () => {
+test("throwHttpError: status, body text and Retry-After all survive", async () => {
   const res = new Response("quota exhausted", {
     status: 429,
     headers: { "retry-after": "7" },
@@ -106,7 +107,7 @@ Deno.test("throwHttpError: status, body text and Retry-After all survive", async
   }
 });
 
-Deno.test("throwHttpError: no Retry-After leaves the hint undefined", async () => {
+test("throwHttpError: no Retry-After leaves the hint undefined", async () => {
   try {
     await throwHttpError("openai", new Response("nope", { status: 500 }));
     ok(false, "expected a throw");
@@ -135,14 +136,14 @@ const stop: LlmToolDef = {
   inputSchema: { type: "object", properties: {}, additionalProperties: false },
 };
 
-Deno.test("parseToolArgs: well-formed arguments decode", () => {
+test("parseToolArgs: well-formed arguments decode", () => {
   deepStrictEqual(
     parseToolArgs("openai", '{"code":"console.log(1)"}', runSteps, "run_steps"),
     { code: "console.log(1)" },
   );
 });
 
-Deno.test("parseToolArgs: the schema decides whether emptiness is legitimate", () => {
+test("parseToolArgs: the schema decides whether emptiness is legitimate", () => {
   // `stop` requires nothing, so no arguments is a real call.
   deepStrictEqual(parseToolArgs("openai", undefined, stop, "stop"), {});
   // `run_steps` requires `code`, so no arguments means the stream was cut.
@@ -155,13 +156,13 @@ Deno.test("parseToolArgs: the schema decides whether emptiness is legitimate", (
   }
 });
 
-Deno.test("parseToolArgs: an unknown tool with no arguments is not assumed truncated", () => {
+test("parseToolArgs: an unknown tool with no arguments is not assumed truncated", () => {
   // No schema to judge by — `{}` is the only defensible reading, and the tool
   // dispatcher will report the unknown name properly.
   deepStrictEqual(parseToolArgs("openrouter", undefined, undefined, "mystery"), {});
 });
 
-Deno.test("parseToolArgs: half a JSON object is a truncation, not a parse bug", () => {
+test("parseToolArgs: half a JSON object is a truncation, not a parse bug", () => {
   try {
     parseToolArgs("openrouter", '{"code":"a', runSteps, "run_steps");
     ok(false, "expected a truncation error");
@@ -174,7 +175,7 @@ Deno.test("parseToolArgs: half a JSON object is a truncation, not a parse bug", 
 
 // ---- blocks → parts ---------------------------------------------------------
 
-Deno.test("blocksToParts: text, reasoning and tool calls map across in order", () => {
+test("blocksToParts: text, reasoning and tool calls map across in order", () => {
   const blocks: LlmBlock[] = [
     { type: "reasoning", text: "weighing options", meta: { signature: "sig" } },
     { type: "text", text: "here goes" },
@@ -187,7 +188,7 @@ Deno.test("blocksToParts: text, reasoning and tool calls map across in order", (
   ]);
 });
 
-Deno.test("blocksToParts: provider meta never reaches the database", () => {
+test("blocksToParts: provider meta never reaches the database", () => {
   // Reasoning is display-only and dropped from cross-turn replay (plan §6.4).
   // Persisting a signature would only invite someone to echo it back.
   const parts = blocksToParts([
@@ -197,7 +198,7 @@ Deno.test("blocksToParts: provider meta never reaches the database", () => {
   deepStrictEqual(parts, [{ type: "reasoning", text: "hmm" }]);
 });
 
-Deno.test("blocksToParts: empty text and empty reasoning produce no part at all", () => {
+test("blocksToParts: empty text and empty reasoning produce no part at all", () => {
   // A redacted thinking block has nothing displayable; persisting it would render
   // as a blank fold in the transcript.
   deepStrictEqual(
@@ -210,7 +211,7 @@ Deno.test("blocksToParts: empty text and empty reasoning produce no part at all"
   );
 });
 
-Deno.test("blocksToParts: a tool call with no input still yields a part", () => {
+test("blocksToParts: a tool call with no input still yields a part", () => {
   // `stop` takes no arguments; the call is the whole message.
   deepStrictEqual(
     blocksToParts([{ type: "tool_use", id: "t9", name: "stop", input: {} }]),

@@ -17,6 +17,7 @@
  * `node:assert/strict` — jsr.io is unreachable here, so `@std/assert` cannot resolve
  * (plan §7: every test hermetic and offline).
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { Bus } from "../bus.ts";
 import { openDb, type SqliteDb } from "../db/db.ts";
@@ -159,7 +160,7 @@ function picks(messages: Message[], ...indexes: number[]) {
 
 // ---- the AC -----------------------------------------------------------------
 
-Deno.test("a non-contiguous selection collapses each run to one summary, keeping the messages between them", async () => {
+test("a non-contiguous selection collapses each run to one summary, keeping the messages between them", async () => {
   const f = fixture();
   // 0 1 2 3 4 5 6, selecting {1,2} and {5}: two runs, so two summaries, with 3 and 4
   // copied verbatim between them and 0 and 6 copied around them.
@@ -199,7 +200,7 @@ Deno.test("a non-contiguous selection collapses each run to one summary, keeping
   ]);
 });
 
-Deno.test("the compacted session is byte-unchanged", async () => {
+test("the compacted session is byte-unchanged", async () => {
   const f = fixture();
   const { source, messages } = conversation(f.db, ["a", "b", "c", "d", "e"]);
   const before = snapshot(f.db, source.id);
@@ -211,7 +212,7 @@ Deno.test("the compacted session is byte-unchanged", async () => {
 
 // ---- selection semantics ----------------------------------------------------
 
-Deno.test("a contiguous selection is one summary in place", async () => {
+test("a contiguous selection is one summary in place", async () => {
   const f = fixture();
   const { source, messages } = conversation(f.db, ["a", "b", "c", "d"]);
 
@@ -221,7 +222,7 @@ Deno.test("a contiguous selection is one summary in place", async () => {
   assert.equal(f.llm.prompts.length, 1);
 });
 
-Deno.test("picks are ordered and de-duplicated, whatever order the client sent them in", async () => {
+test("picks are ordered and de-duplicated, whatever order the client sent them in", async () => {
   const f = fixture();
   const { source, messages } = conversation(f.db, ["a", "b", "c", "d", "e"]);
 
@@ -241,13 +242,13 @@ Deno.test("picks are ordered and de-duplicated, whatever order the client sent t
   assert.match(f.llm.prompts[1], /d/);
 });
 
-Deno.test("runsOf groups only ADJACENT indexes", () => {
+test("runsOf groups only ADJACENT indexes", () => {
   const view = (i: number) => ({ id: `m${i}`, parts: [] } as unknown as Message);
   const runs = runsOf([0, 1, 2, 5, 7, 8].map((idx) => ({ idx, view: view(idx) })));
   assert.deepEqual(runs.map((r) => [r.start, r.end]), [[0, 2], [5, 5], [7, 8]]);
 });
 
-Deno.test("a part pick narrows what the summarizer sees; the whole message is still replaced", async () => {
+test("a part pick narrows what the summarizer sees; the whole message is still replaced", async () => {
   const f = fixture();
   const source = session(f.db, { title: "parts" });
   message(f.db, source.id, "user", [{ type: "text", text: "keep-me" }]);
@@ -266,7 +267,7 @@ Deno.test("a part pick narrows what the summarizer sees; the whole message is st
   assert.deepEqual(textsOf(f.db.messagesFor(branch.id)), ["keep-me", "SUMMARY-0"]);
 });
 
-Deno.test("instructions steer the summary prompt", async () => {
+test("instructions steer the summary prompt", async () => {
   const f = fixture();
   const { source, messages } = conversation(f.db, ["a", "b"]);
 
@@ -280,7 +281,7 @@ Deno.test("instructions steer the summary prompt", async () => {
 
 // ---- the branch -------------------------------------------------------------
 
-Deno.test("the branch is a SIBLING, so shared ancestors come through the parent chain", async () => {
+test("the branch is a SIBLING, so shared ancestors come through the parent chain", async () => {
   const f = fixture();
   const root = session(f.db, { title: "root" });
   message(f.db, root.id, "user", [{ type: "text", text: "ancestor-1" }]);
@@ -308,7 +309,7 @@ Deno.test("the branch is a SIBLING, so shared ancestors come through the parent 
   ]);
 });
 
-Deno.test("the branch inherits the checkout, the base sha, and the session's pins", async () => {
+test("the branch inherits the checkout, the base sha, and the session's pins", async () => {
   const f = fixture();
   const source = session(f.db, {
     title: "pinned",
@@ -330,7 +331,7 @@ Deno.test("the branch inherits the checkout, the base sha, and the session's pin
   assert.equal(branch.effort, "high");
 });
 
-Deno.test("the summarizer runs on the session's pinned model, not the global default", async () => {
+test("the summarizer runs on the session's pinned model, not the global default", async () => {
   const f = fixture();
   f.ctx.model = "claude-opus-4-8";
   const source = session(f.db, { title: "pinned", model: "openai:gpt-5" });
@@ -341,7 +342,7 @@ Deno.test("the summarizer runs on the session's pinned model, not the global def
   assert.deepEqual(f.llm.models, ["openai:gpt-5"]);
 });
 
-Deno.test("the branch is announced before the messages seeded into it", async () => {
+test("the branch is announced before the messages seeded into it", async () => {
   const f = fixture();
   const { source, messages } = conversation(f.db, ["a", "b", "c"]);
 
@@ -358,7 +359,7 @@ Deno.test("the branch is announced before the messages seeded into it", async ()
 
 // ---- refusals ---------------------------------------------------------------
 
-Deno.test("a selection reaching into ancestor history is a 400 naming the ancestor", async () => {
+test("a selection reaching into ancestor history is a 400 naming the ancestor", async () => {
   const f = fixture();
   const root = session(f.db, { title: "root" });
   const ancestorMessage = message(f.db, root.id, "user", [{ type: "text", text: "ancestor" }]);
@@ -376,7 +377,7 @@ Deno.test("a selection reaching into ancestor history is a 400 naming the ancest
   assert.equal(f.llm.prompts.length, 0, "and nothing was paid for");
 });
 
-Deno.test("an unknown message, an out-of-range part, an empty session and an unknown session all refuse", async () => {
+test("an unknown message, an out-of-range part, an empty session and an unknown session all refuse", async () => {
   const f = fixture();
   const { source, messages } = conversation(f.db, ["a", "b"]);
 
@@ -403,7 +404,7 @@ Deno.test("an unknown message, an out-of-range part, an empty session and an unk
   assert.equal(missing.status, 404);
 });
 
-Deno.test("a failed summarizer leaves no half-seeded branch", async () => {
+test("a failed summarizer leaves no half-seeded branch", async () => {
   const f = fixture();
   const { source, messages } = conversation(f.db, ["a", "b", "c", "d", "e"]);
   const before = snapshot(f.db, source.id);
@@ -432,7 +433,7 @@ Deno.test("a failed summarizer leaves no half-seeded branch", async () => {
   assert.equal(snapshot(f.db, source.id), before);
 });
 
-Deno.test("an empty summary is a 502, not a message that silently lost the span", async () => {
+test("an empty summary is a 502, not a message that silently lost the span", async () => {
   const f = fixture(() => "   ");
   const { source, messages } = conversation(f.db, ["a", "b"]);
 
@@ -444,7 +445,7 @@ Deno.test("an empty summary is a 502, not a message that silently lost the span"
 
 // ---- the title --------------------------------------------------------------
 
-Deno.test("the deterministic title counts picked messages and never compounds", async () => {
+test("the deterministic title counts picked messages and never compounds", async () => {
   const f = fixture();
   const { source, messages } = conversation(f.db, ["a", "b", "c", "d"]);
 
@@ -460,7 +461,7 @@ Deno.test("the deterministic title counts picked messages and never compounds", 
   assert.equal(again.title, "compacted · 1 turn");
 });
 
-Deno.test("the cheap tier renames the branch from its first summary, and a failure keeps the placeholder", async () => {
+test("the cheap tier renames the branch from its first summary, and a failure keeps the placeholder", async () => {
   const f = fixture();
   const { source, messages } = conversation(f.db, ["a", "b", "c"]);
   const seen: string[] = [];
@@ -502,7 +503,7 @@ function flush(): Promise<void> {
 
 // ---- rendering --------------------------------------------------------------
 
-Deno.test("renderSpan renders every part kind, and clips oversized tool output", () => {
+test("renderSpan renders every part kind, and clips oversized tool output", () => {
   const m: Message = {
     id: "m",
     sessionId: "s",
@@ -540,7 +541,7 @@ Deno.test("renderSpan renders every part kind, and clips oversized tool output",
 
 // ---- the route --------------------------------------------------------------
 
-Deno.test("POST /sessions/:id/compact is reachable and answers 201 with the branch and its thread", async () => {
+test("POST /sessions/:id/compact is reachable and answers 201 with the branch and its thread", async () => {
   const f = fixture();
   const { source, messages } = conversation(f.db, ["a", "b", "c"]);
   const handler = createHandler(f.ctx as AppCtx);
@@ -558,7 +559,7 @@ Deno.test("POST /sessions/:id/compact is reachable and answers 201 with the bran
   assert.deepEqual(textsOf(body.thread), ["a", "SUMMARY-0", "c"]);
 });
 
-Deno.test("the route maps domain refusals to their statuses", async () => {
+test("the route maps domain refusals to their statuses", async () => {
   const f = fixture();
   const handler = createHandler(f.ctx as AppCtx);
 

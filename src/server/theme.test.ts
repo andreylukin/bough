@@ -21,6 +21,7 @@
  * from `node:assert/strict`: jsr.io is unreachable here and a test that cannot run
  * offline does not belong in `deno task test`.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -58,14 +59,14 @@ function fakeCtx(): AppCtx {
 
 /** Point `BOUGH_HOME` at a fresh temp dir for the body of `fn`, then restore it. */
 async function withHome(fn: (home: string) => Promise<void> | void): Promise<void> {
-  const previous = Deno.env.get("BOUGH_HOME");
+  const previous = process.env["BOUGH_HOME"];
   const home = mkdtempSync(join(tmpdir(), "bough-theme-"));
-  Deno.env.set("BOUGH_HOME", home);
+  process.env["BOUGH_HOME"] = home;
   try {
     await fn(home);
   } finally {
-    if (previous === undefined) Deno.env.delete("BOUGH_HOME");
-    else Deno.env.set("BOUGH_HOME", previous);
+    if (previous === undefined) delete process.env["BOUGH_HOME"];
+    else process.env["BOUGH_HOME"] = previous;
   }
 }
 
@@ -90,7 +91,7 @@ async function request<T>(
 // Validation
 // ---------------------------------------------------------------------------
 
-Deno.test("an unknown token is rejected with a message naming it and the real tokens", () => {
+test("an unknown token is rejected with a message naming it and the real tokens", () => {
   let err!: Error & { status?: number };
   assert.throws(
     () => validateTheme({ name: "Typo", colors: { accent: "#ffffff", forground: "#000000" } }),
@@ -109,7 +110,7 @@ Deno.test("an unknown token is rejected with a message naming it and the real to
   assert.match(err.message, /panelInset/);
 });
 
-Deno.test("a non-hex colour is rejected, naming the token and the value", () => {
+test("a non-hex colour is rejected, naming the token and the value", () => {
   let err!: Error & { status?: number };
   assert.throws(
     () => validateTheme({ name: "Bad", colors: { green: "rebeccapurple" } }),
@@ -123,7 +124,7 @@ Deno.test("a non-hex colour is rejected, naming the token and the value", () => 
   assert.match(err.message, /rebeccapurple/);
 });
 
-Deno.test("every hex length the TUI can paint is accepted, and the name is trimmed", () => {
+test("every hex length the TUI can paint is accepted, and the name is trimmed", () => {
   const theme = validateTheme({
     name: "  Spaced  ",
     colors: { green: "#abc", amber: "#abcd", red: "#aabbcc", blue: "#aabbccdd" },
@@ -132,11 +133,11 @@ Deno.test("every hex length the TUI can paint is accepted, and the name is trimm
   assert.deepEqual(Object.keys(theme.colors).sort(), ["amber", "blue", "green", "red"]);
 });
 
-Deno.test("an empty name is rejected", () => {
+test("an empty name is rejected", () => {
   assert.throws(() => validateTheme({ name: "   ", colors: {} }));
 });
 
-Deno.test("THEME_DEFAULTS covers every token, and every default is hex", () => {
+test("THEME_DEFAULTS covers every token, and every default is hex", () => {
   // The defaults are the floor a partial theme falls through to; a missing one would
   // paint a token as terminal-default grey with nothing to notice it by.
   for (const token of THEME_TOKENS) {
@@ -151,7 +152,7 @@ Deno.test("THEME_DEFAULTS covers every token, and every default is hex", () => {
 // Persistence
 // ---------------------------------------------------------------------------
 
-Deno.test("a corrupt theme file reads as the default palette, not an error", async () => {
+test("a corrupt theme file reads as the default palette, not an error", async () => {
   await withHome((home) => {
     const path = join(home, "theme.json");
     writeFileSync(path, "{ not json,");
@@ -159,7 +160,7 @@ Deno.test("a corrupt theme file reads as the default palette, not an error", asy
   });
 });
 
-Deno.test("a hand-edited file keeps its valid tokens and drops the rest", async () => {
+test("a hand-edited file keeps its valid tokens and drops the rest", async () => {
   await withHome((home) => {
     const path = join(home, "theme.json");
     writeFileSync(
@@ -171,7 +172,7 @@ Deno.test("a hand-edited file keeps its valid tokens and drops the rest", async 
   });
 });
 
-Deno.test("clearTheme on a theme that was never set is a success", async () => {
+test("clearTheme on a theme that was never set is a success", async () => {
   await withHome((home) => {
     const path = join(home, "theme.json");
     clearTheme(path); // no file yet
@@ -180,7 +181,7 @@ Deno.test("clearTheme on a theme that was never set is a success", async () => {
   });
 });
 
-Deno.test("saveTheme creates the data root on first write", async () => {
+test("saveTheme creates the data root on first write", async () => {
   await withHome((home) => {
     const path = join(home, "nested", "theme.json");
     saveTheme({ name: "Fjord", colors: { green: "#5c88c9" } }, path);
@@ -195,7 +196,7 @@ Deno.test("saveTheme creates the data root on first write", async () => {
 // The routes
 // ---------------------------------------------------------------------------
 
-Deno.test("GET /theme with nothing stored is 200 with the defaults — not a 404", async () => {
+test("GET /theme with nothing stored is 200 with the defaults — not a 404", async () => {
   await withHome(async () => {
     const res = await request<ThemeState>("GET");
     assert.equal(res.status, 200);
@@ -204,7 +205,7 @@ Deno.test("GET /theme with nothing stored is 200 with the defaults — not a 404
   });
 });
 
-Deno.test("PUT then GET round-trips a PARTIAL palette with defaults kept separate", async () => {
+test("PUT then GET round-trips a PARTIAL palette with defaults kept separate", async () => {
   await withHome(async () => {
     const put = await request<ThemeState>("PUT", { name: "Iris", colors: { green: "#9a7fd1" } });
     assert.equal(put.status, 200);
@@ -220,7 +221,7 @@ Deno.test("PUT then GET round-trips a PARTIAL palette with defaults kept separat
   });
 });
 
-Deno.test("PUT with an unknown token is a 400 naming it, and does not overwrite", async () => {
+test("PUT with an unknown token is a 400 naming it, and does not overwrite", async () => {
   await withHome(async () => {
     await request("PUT", { name: "Iris", colors: { green: "#9a7fd1" } });
     const bad = await request<{ error: string }>("PUT", {
@@ -235,7 +236,7 @@ Deno.test("PUT with an unknown token is a 400 naming it, and does not overwrite"
   });
 });
 
-Deno.test("DELETE /theme returns to the built-in palette and is idempotent", async () => {
+test("DELETE /theme returns to the built-in palette and is idempotent", async () => {
   await withHome(async () => {
     await request("PUT", { name: "Iris", colors: { green: "#9a7fd1" } });
     const first = await request<ThemeState>("DELETE");

@@ -21,6 +21,7 @@
  * Everything is offline: a fake `LlmClient`, a fake program runner, an in-memory
  * database, no worker and no socket.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { Bus } from "../bus.ts";
 import { openDb, type SqliteDb } from "../db/db.ts";
@@ -138,7 +139,7 @@ function post(db: SqliteDb, sessionId: string, body: string): Message {
 
 // ---- AC 1: interrupt mid-program --------------------------------------------
 
-Deno.test("interrupting mid-program leaves a well-formed, replayable transcript", async () => {
+test("interrupting mid-program leaves a well-formed, replayable transcript", async () => {
   const llm = scriptedLlm([{
     content: [text("Starting the build."), runSteps("c1", "await bash('make')")],
   }]);
@@ -206,7 +207,7 @@ Deno.test("interrupting mid-program leaves a well-formed, replayable transcript"
   f.db.close();
 });
 
-Deno.test("an interrupt names the background shells that survive it", async () => {
+test("an interrupt names the background shells that survive it", async () => {
   const llm = scriptedLlm([{ content: [runSteps("c1", "x")] }]);
   const f = fixture({
     llm: llm.client,
@@ -234,7 +235,7 @@ Deno.test("an interrupt names the background shells that survive it", async () =
   f.db.close();
 });
 
-Deno.test("an interrupt cascades to registered detached children, even when the session is idle", () => {
+test("an interrupt cascades to registered detached children, even when the session is idle", () => {
   const registry = new TurnRegistry();
   const stopped: string[] = [];
   const off = registry.onInterrupt("parent", () => stopped.push("child-a"));
@@ -255,7 +256,7 @@ Deno.test("an interrupt cascades to registered detached children, even when the 
   assert.equal(registry.interrupt("nobody"), false);
 });
 
-Deno.test("a session cannot run two turns at once", () => {
+test("a session cannot run two turns at once", () => {
   const registry = new TurnRegistry();
   const first = registry.begin("s1");
   assert.throws(() => registry.begin("s1"), /already running/);
@@ -267,7 +268,7 @@ Deno.test("a session cannot run two turns at once", () => {
 
 // ---- AC 2: two rapid messages ------------------------------------------------
 
-Deno.test("two rapid messages produce two ordered turns with no loss", async () => {
+test("two rapid messages produce two ordered turns with no loss", async () => {
   // Turn 1 answers the first message; turn 2 answers the second. The fake hands
   // each round back only after the test has had a chance to post.
   const llm = scriptedLlm([
@@ -331,7 +332,7 @@ Deno.test("two rapid messages produce two ordered turns with no loss", async () 
   f.db.close();
 });
 
-Deno.test("the drain condition is derived from the transcript, not from an in-memory flag", () => {
+test("the drain condition is derived from the transcript, not from an in-memory flag", () => {
   const db = openDb(":memory:");
   const registry = new TurnRegistry();
   const session = db.createSession({
@@ -378,7 +379,7 @@ Deno.test("the drain condition is derived from the transcript, not from an in-me
 
 // ---- AC 3: the truncated tool call ------------------------------------------
 
-Deno.test("a tool call truncated mid-stream is retried, never executed", async () => {
+test("a tool call truncated mid-stream is retried, never executed", async () => {
   // What `llm/stream.ts` raises rather than falling back to `{}`.
   const truncation = () =>
     new LlmError("anthropic: run_steps call arrived with no arguments (truncated mid-call)");
@@ -418,7 +419,7 @@ Deno.test("a tool call truncated mid-stream is retried, never executed", async (
   f.db.close();
 });
 
-Deno.test("an exhausted retry surfaces as a turn error rather than an executed guess", async () => {
+test("an exhausted retry surfaces as a turn error rather than an executed guess", async () => {
   const truncation = () =>
     new LlmError("openai: run_steps call has malformed arguments (truncated mid-call)");
   const llm = scriptedLlm([
@@ -438,7 +439,7 @@ Deno.test("an exhausted retry surfaces as a turn error rather than an executed g
   f.db.close();
 });
 
-Deno.test("classification: what retries, what waits, and what does not", () => {
+test("classification: what retries, what waits, and what does not", () => {
   const truncated = new LlmError(
     "provider: run_steps call arrived with no arguments (truncated mid-call)",
   );
@@ -471,7 +472,7 @@ Deno.test("classification: what retries, what waits, and what does not", () => {
   assert.ok(!reason.includes("\n"));
 });
 
-Deno.test("a retry wait is cut short by an interrupt", async () => {
+test("a retry wait is cut short by an interrupt", async () => {
   const controller = new AbortController();
   const waited = abortableDelay(60_000, controller.signal);
   controller.abort();

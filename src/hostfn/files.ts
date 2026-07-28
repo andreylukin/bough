@@ -32,7 +32,7 @@
  * (spec §7), is the common case rather than the exotic one.
  *
  * There is no `read()` and no `edit()` (spec §17). One editing idiom. Raw content
- * comes from `Deno.readTextFile` or `bash` — a program has the full runtime and
+ * comes from `readFile` or `bash` — a program has the full runtime and
  * does not need a host function for it.
  *
  * The workspace is the ORIGIN for relative paths, never a boundary: an absolute
@@ -44,6 +44,8 @@
  * store and LRU bounds are ported reasoning. Deltas from it are marked `NOTE:`.
  */
 
+import type { Stats } from "node:fs";
+import { mkdir, readFile, stat as statFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { BadRequestError, NotFoundError, PatchError } from "../errors.ts";
 import type { HostFns, TurnCtx } from "../types.ts";
@@ -198,13 +200,13 @@ export function createFileHostFns(ctx: FileCtx, opts: FileHostFnsOptions = {}): 
     const p = requirePath(path, "view");
     const full = abs(p);
 
-    let stat: Deno.FileInfo;
+    let stat: Stats;
     try {
-      stat = await Deno.stat(full);
+      stat = await statFile(full);
     } catch (err) {
       throw viewReadError(p, full, err);
     }
-    if (stat.isDirectory) {
+    if (stat.isDirectory()) {
       throw new BadRequestError(
         `cannot view ${p}: it is a directory, not a file. List it with ` +
           `bash("ls -la ${shellQuote(p)}") and view one of the files inside it.`,
@@ -222,7 +224,7 @@ export function createFileHostFns(ctx: FileCtx, opts: FileHostFnsOptions = {}): 
 
     let text: string;
     try {
-      text = await Deno.readTextFile(full);
+      text = await readFile(full, "utf8");
     } catch (err) {
       throw viewReadError(p, full, err);
     }
@@ -285,7 +287,7 @@ export function createFileHostFns(ctx: FileCtx, opts: FileHostFnsOptions = {}): 
 
       let text: string;
       try {
-        text = await Deno.readTextFile(p);
+        text = await readFile(p, "utf8");
       } catch (err) {
         throw patchReadError(g.path, p, err);
       }
@@ -307,7 +309,7 @@ export function createFileHostFns(ctx: FileCtx, opts: FileHostFnsOptions = {}): 
       const p = full.get(g.path)!;
       const text = next.get(g.path)!;
       try {
-        await Deno.writeTextFile(p, text);
+        await writeFile(p, text);
       } catch (err) {
         // Every file was decided before any was written, so this is a filesystem
         // failure (permissions, a full disk), not a patch decision. Say exactly how
@@ -354,8 +356,8 @@ export function createFileHostFns(ctx: FileCtx, opts: FileHostFnsOptions = {}): 
     }
     try {
       const dir = dirname(full);
-      if (dir && dir !== full) await Deno.mkdir(dir, { recursive: true });
-      await Deno.writeTextFile(full, content);
+      if (dir && dir !== full) await mkdir(dir, { recursive: true });
+      await writeFile(full, content);
     } catch (err) {
       throw new BadRequestError(`cannot write ${p}: ${errText(err)}`);
     }
@@ -383,7 +385,7 @@ function requirePath(path: string, verb: string): string {
 }
 
 function viewReadError(path: string, full: string, err: unknown): Error {
-  if (err instanceof Deno.errors.NotFound) {
+  if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
     return new NotFoundError(
       `cannot view ${path}: no such file (looked at ${full}). Relative paths ` +
         `resolve against the workspace — check the path with ` +
@@ -395,7 +397,7 @@ function viewReadError(path: string, full: string, err: unknown): Error {
 }
 
 function patchReadError(path: string, full: string, err: unknown): PatchError {
-  if (err instanceof Deno.errors.NotFound) {
+  if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
     return new PatchError(
       `cannot patch ${path}: no such file (looked at ${full}). patch() edits a file ` +
         `that exists — create it with write("${path}", …) instead. Nothing was ` +

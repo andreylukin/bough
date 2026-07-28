@@ -10,17 +10,20 @@
  *
  * 1. **The import graph.** `App.tsx` reaches `Panel.tsx` transitively, walked from the
  *    source text. An existence check would have passed the whole time it was dead.
- * 2. **A keypress reaches it.** `App` is mounted against a fake TTY and driven by raw
- *    control bytes, exactly as a terminal would deliver them. Each of the eight tabs
- *    spec §15 names is opened by its own chord and asserted to have painted.
+ * 2. **A keypress reaches it.** `App` is mounted against OpenTUI's in-memory renderer
+ *    and driven by raw control bytes, exactly as a terminal would deliver them. Each of
+ *    the eight tabs spec §15 names is opened by its own chord and asserted to have
+ *    painted.
  *
- * Everything is a fixture: a fake store, an in-memory stdout, no server, no socket,
+ * Everything is a fixture: a fake store, an off-screen cell grid, no server, no socket,
  * no `~/.bough`.
  */
 import assert from "node:assert/strict";
-import { EventEmitter } from "node:events";
-import { render } from "ink";
-import type { ReactElement } from "react";
+import { test } from "bun:test";
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import { testRender } from "@opentui/react/test-utils";
+import type { ReactNode } from "react";
 import { App } from "./App.tsx";
 import { TABS } from "../keys.ts";
 import { initialState, type Store, type TuiState } from "../store.ts";
@@ -56,7 +59,7 @@ async function reachable(entry: URL): Promise<Set<string>> {
     seen.add(href);
     let source: string;
     try {
-      source = await Deno.readTextFile(new URL(href));
+      source = await readFile(fileURLToPath(href), "utf8");
     } catch {
       continue; // a package specifier resolved into node_modules; not our graph
     }
@@ -65,7 +68,7 @@ async function reachable(entry: URL): Promise<Set<string>> {
   return seen;
 }
 
-Deno.test("the panel and every tab it holds are reachable from App", async () => {
+test("the panel and every tab it holds are reachable from App", async () => {
   const graph = await reachable(new URL("App.tsx", HERE));
   const named = (file: string) => new URL(file, HERE).href;
 
@@ -89,7 +92,7 @@ Deno.test("the panel and every tab it holds are reachable from App", async () =>
 
   // …and the tab table is the keymap's, so there is exactly one of it.
   assert.ok(graph.has(new URL("../keys.ts", HERE).href));
-  const panel = await Deno.readTextFile(new URL("Panel.tsx", HERE));
+  const panel = await readFile(fileURLToPath(new URL("Panel.tsx", HERE)), "utf8");
   assert.ok(panel.includes('from "../keys.ts"'), "Panel declares its own chord table");
 });
 
@@ -102,89 +105,68 @@ const ctrl = (letter: string) => String.fromCharCode(letter.toLowerCase().charCo
 
 interface Harness {
   frame(): string;
+  /** One render pass, then re-read the cells. What `settle` polls with. */
+  paint(): Promise<void>;
   press(bytes: string): Promise<void>;
   unmount(): void;
 }
 
-async function mount(node: ReactElement, columns = 100, rows = 30): Promise<Harness> {
-  // The LAST frame written, not everything since the last keypress. Ink skips the
-  // write entirely when a render produces the same bytes, so "what was printed since
-  // I pressed a key" is empty exactly when nothing changed — and an empty string
-  // satisfies every `assert.equal(frame.includes(x), false)` for free. Holding the
-  // current frame instead means a negative assertion is about what is ON SCREEN.
-  // A frame may arrive as several writes, so it is reassembled on the synchronized-
-  // output marker `term.ts` wraps every repaint in — that sequence is the frame
-  // boundary the terminal itself uses.
-  const SYNC_BEGIN = String.fromCharCode(27) + "[?2026h";
+async function mount(node: ReactNode, columns = 100, rows = 30): Promise<Harness> {
+  // The frame is the CELL GRID read back, not the bytes on the way to a terminal.
+  // That is what makes a negative assertion mean something: `frame()` is what is ON
+  // SCREEN, so `assert.equal(frame.includes(x), false)` is a claim about the screen
+  // rather than about "nothing was written since I pressed a key" — which is
+  // vacuously true whenever a render produced identical output.
+  //
+  // `testRender` mounts inside React's `act`, which is what makes the first commit
+  // land before this returns; a bare `createRoot().render()` commits on a later task
+  // and the first `frame()` would be blank. The act ENVIRONMENT is then switched
+  // off, because nothing after the mount is act-wrapped and leaving it on turns
+  // every keypress-driven repaint into a console warning.
+  const t = await testRender(node, { width: columns, height: rows, exitOnCtrlC: false });
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+  // `renderOnce` is MANDATORY: without a render pass the buffer holds uninitialised
+  // glyphs rather than the painted cells, and every assertion fails confusingly.
   let last = "";
-  let frames = 0;
-  const stdout = Object.assign(new EventEmitter(), {
-    write: (s: string) => {
-      if (s.includes(SYNC_BEGIN)) (last = s, frames++);
-      else last += s;
-      return true;
-    },
-    columns,
-    rows,
-    isTTY: true,
-  });
-  // A real terminal, as far as ink is concerned: `isTTY` (or `useInput` is inert and
-  // this whole file proves nothing), and the pull-based `readable`/`read()` pair ink
-  // actually consumes rather than the `data` event it stopped using.
-  const pending: string[] = [];
-  const stdin = Object.assign(new EventEmitter(), {
-    isTTY: true,
-    setRawMode() {},
-    setEncoding() {},
-    ref() {},
-    unref() {},
-    read: () => pending.shift() ?? null,
-    resume() {},
-    pause() {},
-  });
-  const instance = render(node, {
-    // deno-lint-ignore no-explicit-any -- ink types the streams as Node's own.
-    stdout: stdout as any,
-    // deno-lint-ignore no-explicit-any
-    stdin: stdin as any,
-    exitOnCtrlC: false,
-    patchConsole: false,
-  });
-  // Ink attaches its `readable` listener and `useInput` subscribes to the parsed
-  // input from EFFECTS, which React runs after the first paint. A key delivered in
-  // the same tick as `render` is therefore read off the stream and dropped on the
-  // floor — silently, which is why this is awaited here rather than papered over
-  // with a retry: the first keypress of every test must count.
-  await settle(() => frames > 0);
+  const paint = async () => {
+    await t.renderOnce();
+    last = t.captureCharFrame();
+  };
+  await paint();
   return {
     frame: () => last,
+    paint,
     async press(bytes: string) {
-      const before = frames;
-      pending.push(bytes);
-      stdin.emit("readable");
-      await settle(() => frames > before);
+      // Straight onto the renderer's stdin, as bytes — OpenTUI's own parser is what
+      // turns `\x14` into `{name:"t",ctrl:true}` and `\x1b[Z` into a shift-tab, and
+      // that parser is the thing under test as much as `keys.ts` is.
+      const before = last;
+      t.renderer.stdin.emit("data", Buffer.from(bytes));
+      await settle(paint, () => last !== before);
     },
-    unmount: () => instance.unmount(),
+    unmount: () => t.renderer.destroy(),
   };
 }
 
 /**
  * Wait for the next painted frame.
  *
- * Polled rather than slept, because ink's repaint is not on a fixed delay: a lone ESC
- * is held for 20ms to see whether a CSI sequence follows it, and a heavier tab takes
- * an extra pass. A fixed sleep long enough for the slowest of them makes the suite
- * crawl, and one tuned to the fastest reads a stale frame and blames the panel. When
- * a keypress genuinely paints nothing this returns after the ceiling, and the caller's
- * assertion is then about the frame that IS on screen.
+ * Polled rather than slept, because a repaint is not on a fixed delay: React commits
+ * a keypress's state off a microtask, and a heavier tab takes an extra pass. A fixed
+ * sleep long enough for the slowest of them makes the suite crawl, and one tuned to
+ * the fastest reads a stale frame and blames the panel. When a keypress genuinely
+ * paints nothing this returns after the ceiling, and the caller's assertion is then
+ * about the frame that IS on screen.
  */
-async function settle(painted: () => boolean): Promise<void> {
+async function settle(paint: () => Promise<void>, painted: () => boolean): Promise<void> {
   for (let waited = 0; waited < 500 && !painted(); waited += 10) {
     await new Promise((r) => setTimeout(r, 10));
+    await paint();
   }
   // One more pass: a paint can be followed by a second render (an effect's fetch
   // landing), and the assertion should see where it settled, not where it passed.
   await new Promise((r) => setTimeout(r, 30));
+  await paint();
 }
 
 /**
@@ -205,6 +187,7 @@ async function settle(painted: () => boolean): Promise<void> {
 async function frameShowing(h: Harness, needle: string): Promise<string> {
   for (let waited = 0; waited < 2_000 && !h.frame().includes(needle); waited += 10) {
     await new Promise((r) => setTimeout(r, 10));
+    await h.paint();
   }
   return h.frame();
 }
@@ -275,12 +258,16 @@ function fakeStore(over: Partial<TuiState> = {}): Store & { calls: string[] } {
     answerAsk: noop,
     declineAsk: noop,
     interrupt: track("interrupt"),
+    stopUnit: (unit) => (calls.push(`stop:${unit.kind}:${unit.id}`), Promise.resolve()),
+    setModel: (patch) => (calls.push(`model:${JSON.stringify(patch)}`), Promise.resolve()),
     refreshChanges: track("refreshChanges"),
+    refreshUsage: track("refreshUsage"),
     refreshJobs: track("refreshJobs"),
     refreshWorkflows: track("refreshWorkflows"),
     refreshReplay: (id: string) => (calls.push(`replay:${id}`), Promise.resolve()),
     resync: noop,
     notify: () => {},
+    record: (m: string) => calls.push(`record:${m}`),
     dismissNotice: () => {},
   };
 }
@@ -320,26 +307,21 @@ function app(store: Store, over: Record<string, unknown> = {}) {
 // 2. A chord opens the panel, and every tab spec §15 names paints
 // ---------------------------------------------------------------------------
 
-Deno.test({
-  name: "^t opens the one panel, and it is not open before that",
-  sanitizeOps: false,
-  sanitizeResources: false,
-  fn: async () => {
-    const h = await mount(app(fakeStore(STATE)));
-    try {
-      await h.press("x"); // ordinary typing: the composer takes it, no panel
-      assert.equal(h.frame().includes("^t close"), false, h.frame());
-      await h.press(ctrl("t"));
-      const open = h.frame();
-      for (const tab of TABS) assert.ok(open.includes(tab.title), `${tab.title}: ${open}`);
-      assert.ok(open.includes("^t close"), open);
-      // …and ^t again closes it, back to the composer.
-      await h.press(ctrl("t"));
-      assert.equal(h.frame().includes("^t close"), false, h.frame());
-    } finally {
-      h.unmount();
-    }
-  },
+test("^t opens the one panel, and it is not open before that", async () => {
+  const h = await mount(app(fakeStore(STATE)));
+  try {
+    await h.press("x"); // ordinary typing: the composer takes it, no panel
+    assert.equal(h.frame().includes("^t close"), false, h.frame());
+    await h.press(ctrl("t"));
+    const open = h.frame();
+    for (const tab of TABS) assert.ok(open.includes(tab.title), `${tab.title}: ${open}`);
+    assert.ok(open.includes("^t close"), open);
+    // …and ^t again closes it, back to the composer.
+    await h.press(ctrl("t"));
+    assert.equal(h.frame().includes("^t close"), false, h.frame());
+  } finally {
+    h.unmount();
+  }
 });
 
 /**
@@ -354,39 +336,34 @@ const EVIDENCE: Record<string, string> = Object.fromEntries(
   TABS.map((t) => [t.id, `[${t.id}]`]),
 );
 
-/** Raw bytes a terminal sends for the keys ink has no letter for. */
+/** Raw bytes a terminal sends for the keys there is no letter for. */
 const ESC = String.fromCharCode(27);
 const SHIFT_TAB = ESC + "[Z";
 const DOWN = ESC + "[B";
 
-Deno.test({
-  name: "every tab spec §15 names is selected by its own direct-jump chord",
-  sanitizeOps: false,
-  sanitizeResources: false,
-  fn: async () => {
-    const store = fakeStore(STATE);
-    const h = await mount(app(store));
-    try {
-      for (const tab of TABS) {
-        // Straight from chat, with the panel CLOSED: that is what a direct jump means.
-        const letter = tab.chord.replace("ctrl+", "");
-        await h.press(ctrl(letter));
-        const frame = await frameShowing(h, EVIDENCE[tab.id]);
-        assert.ok(frame.includes("^t close"), `^${letter} did not open the panel: ${frame}`);
-        assert.ok(
-          frame.includes(EVIDENCE[tab.id]),
-          `^${letter} did not show the ${tab.id} tab: ${frame}`,
-        );
-        await h.press(ESC); // back to chat, ready for the next jump
-        assert.equal(h.frame().includes("^t close"), false, `esc left ${tab.id} open`);
-      }
-      // Entering a tab is what refreshes it — nothing is painted from a cache.
-      assert.ok(store.calls.includes("refreshChanges"), store.calls.join(","));
-      assert.ok(store.calls.includes("refreshWorkflows"), store.calls.join(","));
-    } finally {
-      h.unmount();
+test("every tab spec §15 names is selected by its own direct-jump chord", async () => {
+  const store = fakeStore(STATE);
+  const h = await mount(app(store));
+  try {
+    for (const tab of TABS) {
+      // Straight from chat, with the panel CLOSED: that is what a direct jump means.
+      const letter = tab.chord.replace("ctrl+", "");
+      await h.press(ctrl(letter));
+      const frame = await frameShowing(h, EVIDENCE[tab.id]);
+      assert.ok(frame.includes("^t close"), `^${letter} did not open the panel: ${frame}`);
+      assert.ok(
+        frame.includes(EVIDENCE[tab.id]),
+        `^${letter} did not show the ${tab.id} tab: ${frame}`,
+      );
+      await h.press(ESC); // back to chat, ready for the next jump
+      assert.equal(h.frame().includes("^t close"), false, `esc left ${tab.id} open`);
     }
-  },
+    // Entering a tab is what refreshes it — nothing is painted from a cache.
+    assert.ok(store.calls.includes("refreshChanges"), store.calls.join(","));
+    assert.ok(store.calls.includes("refreshWorkflows"), store.calls.join(","));
+  } finally {
+    h.unmount();
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -408,160 +385,130 @@ const BUSY: Partial<TuiState> = {
   ] as TuiState["thread"],
 };
 
-Deno.test({
-  name: "esc STOPS a running turn, and only dismisses a notice when none is running",
-  sanitizeOps: false,
-  sanitizeResources: false,
-  fn: async () => {
-    // The gap this closes: `turn/runner.ts` has always been able to interrupt and
-    // nothing in either client could reach it, so the only stop button was killing
-    // the server. The guard is the binding — `keys.ts` routes esc to `turn.interrupt`
-    // only while a turn is in flight — which is why both halves are asserted here.
-    const busy = fakeStore(BUSY);
-    const h = await mount(app(busy));
-    try {
-      await h.press(ESC);
-      assert.ok(busy.calls.includes("interrupt"), busy.calls.join(","));
-    } finally {
-      h.unmount();
-    }
+test("esc STOPS a running turn, and only dismisses a notice when none is running", async () => {
+  // The gap this closes: `turn/runner.ts` has always been able to interrupt and
+  // nothing in either client could reach it, so the only stop button was killing
+  // the server. The guard is the binding — `keys.ts` routes esc to `turn.interrupt`
+  // only while a turn is in flight — which is why both halves are asserted here.
+  const busy = fakeStore(BUSY);
+  const h = await mount(app(busy));
+  try {
+    await h.press(ESC);
+    assert.ok(busy.calls.includes("interrupt"), busy.calls.join(","));
+  } finally {
+    h.unmount();
+  }
 
-    const idle = fakeStore(STATE);
-    const h2 = await mount(app(idle));
-    try {
-      await h2.press(ESC);
-      assert.equal(
-        idle.calls.includes("interrupt"),
-        false,
-        `esc must not raise an interrupt with nothing running: ${idle.calls.join(",")}`,
-      );
-    } finally {
-      h2.unmount();
-    }
-  },
-});
-
-Deno.test({
-  name: "the theme picker starts from the SERVER's theme and persists the one kept",
-  sanitizeOps: false,
-  sanitizeResources: false,
-  fn: async () => {
-    // Two failures this covers, both of which shipped: with no `current` the picker's
-    // baseline is "Default", so leaving the tab reverts a stored theme off the screen;
-    // with no `persist` keeping one lasts until the process exits.
-    const stored = { theme: { name: "Fjord", colors: { green: "#5c88c9" } }, defaults: {} };
-    const saved: string[] = [];
-    const store = fakeStore(STATE);
-    const h = await mount(
-      app(store, {
-        theme: { current: stored, persist: (p: { name: string }) => saved.push(p.name) },
-      }),
+  const idle = fakeStore(STATE);
+  const h2 = await mount(app(idle));
+  try {
+    await h2.press(ESC);
+    assert.equal(
+      idle.calls.includes("interrupt"),
+      false,
+      `esc must not raise an interrupt with nothing running: ${idle.calls.join(",")}`,
     );
-    try {
-      await h.press(ctrl("y"));
-      // The cursor starts on the theme in force, not on row zero.
-      assert.match(await frameShowing(h, "current: Fjord"), /current: Fjord/);
-      await h.press(DOWN);
-      await h.press("\r");
-      assert.equal(saved.length, 1, `keeping a theme must write it through: ${saved.join(",")}`);
-    } finally {
-      h.unmount();
-    }
-  },
+  } finally {
+    h2.unmount();
+  }
 });
 
-Deno.test({
-  name: "⇥ cycles the tab bar, and ⏎ on a session opens it and closes the panel",
-  sanitizeOps: false,
-  sanitizeResources: false,
-  fn: async () => {
-    const store = fakeStore(STATE);
-    const h = await mount(app(store));
-    try {
-      await h.press(ctrl("t"));
-      await h.press("\t");
-      assert.ok(h.frame().includes(EVIDENCE.tree), h.frame()); // sessions → tree
-      await h.press(SHIFT_TAB); // shift-tab, back to sessions
-      assert.ok(h.frame().includes(EVIDENCE.sessions), h.frame());
-      await h.press("\r");
-      assert.ok(store.calls.includes("open:s1"), store.calls.join(","));
-      assert.equal(h.frame().includes("^t close"), false, h.frame());
-    } finally {
-      h.unmount();
-    }
-  },
+test("the theme picker starts from the SERVER's theme and persists the one kept", async () => {
+  // Two failures this covers, both of which shipped: with no `current` the picker's
+  // baseline is "Default", so leaving the tab reverts a stored theme off the screen;
+  // with no `persist` keeping one lasts until the process exits.
+  const stored = { theme: { name: "Fjord", colors: { green: "#5c88c9" } }, defaults: {} };
+  const saved: string[] = [];
+  const store = fakeStore(STATE);
+  const h = await mount(
+    app(store, {
+      theme: { current: stored, persist: (p: { name: string }) => saved.push(p.name) },
+    }),
+  );
+  try {
+    await h.press(ctrl("y"));
+    // The cursor starts on the theme in force, not on row zero.
+    assert.match(await frameShowing(h, "current: Fjord"), /current: Fjord/);
+    await h.press(DOWN);
+    await h.press("\r");
+    assert.equal(saved.length, 1, `keeping a theme must write it through: ${saved.join(",")}`);
+  } finally {
+    h.unmount();
+  }
 });
 
-Deno.test({
-  name: "a draft keeps the composer's chords, and never blocks ^t",
-  sanitizeOps: false,
-  sanitizeResources: false,
-  fn: async () => {
-    const h = await mount(app(fakeStore(STATE)));
-    try {
-      await h.press("abc");
-      // ^f is the tree's chord on an empty draft and the composer's forward-char
-      // with text in it. With a draft, it must NOT open the panel.
-      await h.press(ctrl("f"));
-      assert.equal(h.frame().includes("^t close"), false, h.frame());
-      // ^t collides with nothing, so a half-written message never hides the panel.
-      await h.press(ctrl("t"));
-      assert.ok(h.frame().includes("^t close"), h.frame());
-    } finally {
-      h.unmount();
-    }
-  },
+test("⇥ cycles the tab bar, and ⏎ on a session opens it and closes the panel", async () => {
+  const store = fakeStore(STATE);
+  const h = await mount(app(store));
+  try {
+    await h.press(ctrl("t"));
+    await h.press("\t");
+    assert.ok(h.frame().includes(EVIDENCE.tree), h.frame()); // sessions → tree
+    await h.press(SHIFT_TAB); // shift-tab, back to sessions
+    assert.ok(h.frame().includes(EVIDENCE.sessions), h.frame());
+    await h.press("\r");
+    assert.ok(store.calls.includes("open:s1"), store.calls.join(","));
+    assert.equal(h.frame().includes("^t close"), false, h.frame());
+  } finally {
+    h.unmount();
+  }
 });
 
-Deno.test({
-  name: "the theme tab repaints as the cursor moves, and reverts when it is left",
-  sanitizeOps: false,
-  sanitizeResources: false,
-  fn: async () => {
-    const h = await mount(app(fakeStore(STATE)));
-    try {
-      await h.press(ctrl("y"));
-      assert.ok(h.frame().includes("current: Default"), h.frame());
-      // ↓ previews live. The preview object is mutable and lives OUTSIDE React, so
-      // this is the assertion that catches a moved palette with a frozen cursor —
-      // the defect the first live run of this panel actually had.
-      await h.press(DOWN);
-      const moved = h.frame();
-      assert.ok(moved.includes("previewing Fjord"), moved);
-      await h.press(DOWN);
-      assert.ok(h.frame().includes("previewing Iris"), h.frame());
-      // Leaving without ⏎ reverts: spec §16, browsing never commits.
-      await h.press(ESC);
-      await h.press(ctrl("y"));
-      assert.ok(h.frame().includes("current: Default"), h.frame());
-    } finally {
-      h.unmount();
-    }
-  },
+test("a draft keeps the composer's chords, and never blocks ^t", async () => {
+  const h = await mount(app(fakeStore(STATE)));
+  try {
+    await h.press("abc");
+    // ^f is the tree's chord on an empty draft and the composer's forward-char
+    // with text in it. With a draft, it must NOT open the panel.
+    await h.press(ctrl("f"));
+    assert.equal(h.frame().includes("^t close"), false, h.frame());
+    // ^t collides with nothing, so a half-written message never hides the panel.
+    await h.press(ctrl("t"));
+    assert.ok(h.frame().includes("^t close"), h.frame());
+  } finally {
+    h.unmount();
+  }
 });
 
-Deno.test({
-  name: "with no conversation open the changes tab says so, and never spins",
-  sanitizeOps: false,
-  sanitizeResources: false,
-  fn: async () => {
-    // No `currentId`: `store.refreshChanges()` fetches nothing, so a tab that trusted
-    // `state.changes === null` to mean "in flight" would sit on "loading" forever.
-    const h = await mount(app(fakeStore({ connected: true })));
-    try {
-      await h.press(ctrl("d"));
-      const frame = h.frame();
-      assert.ok(frame.includes("no conversation is open"), frame);
-      assert.equal(frame.includes("loading changes"), false, frame);
-      // …and NOT the non-git sentence. "the agent still works here" is a claim about
-      // a checkout, and with no session open there is no checkout to make it about.
-      assert.equal(
-        frame.includes("the agent still works here"),
-        false,
-        `the non-git hint must not be shown when there is no session at all: ${frame}`,
-      );
-    } finally {
-      h.unmount();
-    }
-  },
+test("the theme tab repaints as the cursor moves, and reverts when it is left", async () => {
+  const h = await mount(app(fakeStore(STATE)));
+  try {
+    await h.press(ctrl("y"));
+    assert.ok(h.frame().includes("current: Default"), h.frame());
+    // ↓ previews live. The preview object is mutable and lives OUTSIDE React, so
+    // this is the assertion that catches a moved palette with a frozen cursor —
+    // the defect the first live run of this panel actually had.
+    await h.press(DOWN);
+    const moved = h.frame();
+    assert.ok(moved.includes("previewing Fjord"), moved);
+    await h.press(DOWN);
+    assert.ok(h.frame().includes("previewing Iris"), h.frame());
+    // Leaving without ⏎ reverts: spec §16, browsing never commits.
+    await h.press(ESC);
+    await h.press(ctrl("y"));
+    assert.ok(h.frame().includes("current: Default"), h.frame());
+  } finally {
+    h.unmount();
+  }
+});
+
+test("with no conversation open the changes tab says so, and never spins", async () => {
+  // No `currentId`: `store.refreshChanges()` fetches nothing, so a tab that trusted
+  // `state.changes === null` to mean "in flight" would sit on "loading" forever.
+  const h = await mount(app(fakeStore({ connected: true })));
+  try {
+    await h.press(ctrl("d"));
+    const frame = h.frame();
+    assert.ok(frame.includes("no conversation is open"), frame);
+    assert.equal(frame.includes("loading changes"), false, frame);
+    // …and NOT the non-git sentence. "the agent still works here" is a claim about
+    // a checkout, and with no session open there is no checkout to make it about.
+    assert.equal(
+      frame.includes("the agent still works here"),
+      false,
+      `the non-git hint must not be shown when there is no session at all: ${frame}`,
+    );
+  } finally {
+    h.unmount();
+  }
 });

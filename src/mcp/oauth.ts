@@ -91,7 +91,7 @@ export function configureOAuthCallback(opts: { port: number }): void {
 
 /** The port the callback URL names. */
 export function callbackPort(): number {
-  return configuredPort ?? Number(Deno.env.get("BOUGH_PORT") ?? 4321);
+  return configuredPort ?? Number(process.env.BOUGH_PORT ?? 4321);
 }
 
 /** The redirect target — bough's own HTTP surface, loopback only. */

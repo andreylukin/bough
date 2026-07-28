@@ -9,6 +9,7 @@
  * because a mapping that dropped the whole message would pass a test that only
  * checked the first half.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import type { ImagePart, Message, Part } from "../schema/parts.ts";
 import type { LlmContentBlock } from "../types.ts";
@@ -53,7 +54,7 @@ function types(blocks: LlmContentBlock[]): string[] {
 
 // ---- user and system messages ----------------------------------------------
 
-Deno.test("a user message becomes one user message of text and image blocks", () => {
+test("a user message becomes one user message of text and image blocks", () => {
   const out = messageToLlm(
     message("user", [{ type: "text", text: "look at this" }, image]),
     { loadImage: found },
@@ -69,7 +70,7 @@ Deno.test("a user message becomes one user message of text and image blocks", ()
   });
 });
 
-Deno.test("a lost attachment replays as placeholder text, never as a failure", () => {
+test("a lost attachment replays as placeholder text, never as a failure", () => {
   const out = messageToLlm(message("user", [image]), { loadImage: lost });
   assert.equal(out.length, 1);
   assert.deepEqual(types(out[0].content), ["text"]);
@@ -81,7 +82,7 @@ Deno.test("a lost attachment replays as placeholder text, never as a failure", (
   assert.match(placeholder, /no longer on disk/);
 });
 
-Deno.test("a system note replays user-side: it is input to the model, not words it said", () => {
+test("a system note replays user-side: it is input to the model, not words it said", () => {
   const out = messageToLlm(
     message("system", [{ type: "text", text: "[subagent finished] audit-handlers" }]),
   );
@@ -89,7 +90,7 @@ Deno.test("a system note replays user-side: it is input to the model, not words 
   assert.equal(out[0].role, "user");
 });
 
-Deno.test("a message with nothing to say produces no message at all", () => {
+test("a message with nothing to say produces no message at all", () => {
   assert.deepEqual(messageToLlm(message("user", [])), []);
   assert.deepEqual(messageToLlm(message("user", [{ type: "text", text: "" }])), []);
   assert.deepEqual(messageToLlm(message("supervisor", [])), []);
@@ -97,7 +98,7 @@ Deno.test("a message with nothing to say produces no message at all", () => {
 
 // ---- supervisor messages ----------------------------------------------------
 
-Deno.test("a supervisor round becomes an assistant message and then its tool results", () => {
+test("a supervisor round becomes an assistant message and then its tool results", () => {
   const out = messageToLlm(message("supervisor", [
     { type: "text", text: "Running it." },
     { type: "tool_call", id: "c1", name: "run_steps", input: { code: "1" } },
@@ -114,7 +115,7 @@ Deno.test("a supervisor round becomes an assistant message and then its tool res
   }]);
 });
 
-Deno.test("reasoning is dropped on replay and takes nothing else with it", () => {
+test("reasoning is dropped on replay and takes nothing else with it", () => {
   const out = messageToLlm(message("supervisor", [
     { type: "reasoning", text: "SECRET-THINKING" },
     { type: "text", text: "Here is the answer." },
@@ -126,11 +127,11 @@ Deno.test("reasoning is dropped on replay and takes nothing else with it", () =>
   assert.deepEqual(types(out[0].content), ["text", "tool_use"], "everything else survives");
 });
 
-Deno.test("a reasoning-only message vanishes rather than replaying as an empty turn", () => {
+test("a reasoning-only message vanishes rather than replaying as an empty turn", () => {
   assert.deepEqual(messageToLlm(message("supervisor", [{ type: "reasoning", text: "hm" }])), []);
 });
 
-Deno.test("a settled ask replays as plain text, after the tool results", () => {
+test("a settled ask replays as plain text, after the tool results", () => {
   const out = messageToLlm(message("supervisor", [
     { type: "tool_call", id: "c1", name: "run_steps", input: { code: "1" } },
     {
@@ -155,7 +156,7 @@ Deno.test("a settled ask replays as plain text, after the tool results", () => {
   assert.ok(!JSON.stringify(out).includes('"ask"'));
 });
 
-Deno.test("a declined or interrupted ask says which, in the past tense", () => {
+test("a declined or interrupted ask says which, in the past tense", () => {
   const declined = messageToLlm(message("supervisor", [
     { type: "ask", id: "q1", question: "Proceed?", status: "declined" },
   ]));
@@ -170,7 +171,7 @@ Deno.test("a declined or interrupted ask says which, in the past tense", () => {
   );
 });
 
-Deno.test("a tool_use with no result gets a synthetic one so the thread stays valid", () => {
+test("a tool_use with no result gets a synthetic one so the thread stays valid", () => {
   // The shape a crash, an orphaned turn or an interrupt between call and result
   // leaves behind. Every provider rejects the open pair.
   const out = messageToLlm(message("supervisor", [
@@ -185,7 +186,7 @@ Deno.test("a tool_use with no result gets a synthetic one so the thread stays va
   assert.match(results[1].content, /interrupted/);
 });
 
-Deno.test("non-string tool output is stringified rather than dropped", () => {
+test("non-string tool output is stringified rather than dropped", () => {
   assert.equal(stringifyOutput("plain"), "plain");
   assert.equal(stringifyOutput({ a: 1 }), '{"a":1}');
   assert.equal(stringifyOutput(undefined), "");
@@ -196,7 +197,7 @@ Deno.test("non-string tool output is stringified rather than dropped", () => {
 
 // ---- whole threads ----------------------------------------------------------
 
-Deno.test("a thread replays in order, minus the message being written", () => {
+test("a thread replays in order, minus the message being written", () => {
   const user = message("user", [{ type: "text", text: "do it" }]);
   const supervisor = message("supervisor", [
     { type: "reasoning", text: "thinking" },
@@ -213,7 +214,7 @@ Deno.test("a thread replays in order, minus the message being written", () => {
   assert.equal(buildThread([user, supervisor]).length, 2);
 });
 
-Deno.test("stripReasoning drops in-turn thinking and the messages left empty by it", () => {
+test("stripReasoning drops in-turn thinking and the messages left empty by it", () => {
   const messages = [
     { role: "user" as const, content: [{ type: "text", text: "go" } as LlmContentBlock] },
     {

@@ -14,7 +14,11 @@
  * Everything here is offline and hermetic — no socket is bound, no port claimed,
  * nothing reads `~/.bough`. `node:assert/strict` because jsr.io is unreachable.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Bus } from "../bus.ts";
 import { openDb } from "../db/db.ts";
 import { createHandler } from "../server/app.ts";
@@ -108,7 +112,7 @@ function fixture(options: {
     stdinIsTerminal: () => options.isTerminal ?? true,
     env: (name) => options.env?.[name],
     cwd: () => options.cwd ?? "/tmp",
-    realPath: (path) => Deno.realPath(path),
+    realPath: (path) => realpath(path),
   };
 
   return { deps, calls, out: () => out, err: () => err, ctx, close: () => db.close() };
@@ -116,7 +120,7 @@ function fixture(options: {
 
 // ---- THE ordering test ----------------------------------------------------------
 
-Deno.test("a turn that finishes inside the post is still seen — stream before post", async () => {
+test("a turn that finishes inside the post is still seen — stream before post", async () => {
   const f = fixture({ turn: instantTurn("the answer") });
   try {
     const code = await runExec(["--timeout", "1", "do the thing"], f.deps);
@@ -183,7 +187,7 @@ async function postFirst(deps: ExecDeps): Promise<{ sawFinish: boolean; text: st
   return { sawFinish, text };
 }
 
-Deno.test("proof the ordering test discriminates: post-then-subscribe sees nothing", async () => {
+test("proof the ordering test discriminates: post-then-subscribe sees nothing", async () => {
   const f = fixture({ turn: instantTurn("the answer") });
   try {
     const observed = await postFirst(f.deps);
@@ -200,7 +204,7 @@ Deno.test("proof the ordering test discriminates: post-then-subscribe sees nothi
 
 // ---- exit codes ------------------------------------------------------------------
 
-Deno.test("exit 0: a completed turn", async () => {
+test("exit 0: a completed turn", async () => {
   const f = fixture({ turn: instantTurn("done here") });
   try {
     assert.equal(await runExec(["--timeout", "1", "go"], f.deps), 0);
@@ -210,7 +214,7 @@ Deno.test("exit 0: a completed turn", async () => {
   }
 });
 
-Deno.test("exit 1: an errored turn, with the server's reason on stderr", async () => {
+test("exit 1: an errored turn, with the server's reason on stderr", async () => {
   const f = fixture({ turn: instantTurn("partial", "error", "context window exceeded: 200000") });
   try {
     assert.equal(await runExec(["--timeout", "1", "go"], f.deps), 1);
@@ -222,7 +226,7 @@ Deno.test("exit 1: an errored turn, with the server's reason on stderr", async (
   }
 });
 
-Deno.test("exit 1: an interrupted or orphaned turn is not a completed turn", async () => {
+test("exit 1: an interrupted or orphaned turn is not a completed turn", async () => {
   for (const status of ["interrupted", "orphaned"] as const) {
     const f = fixture({ turn: instantTurn("", status) });
     try {
@@ -233,7 +237,7 @@ Deno.test("exit 1: an interrupted or orphaned turn is not a completed turn", asy
   }
 });
 
-Deno.test("exit 1: the timeout elapses, and the abandoned turn is INTERRUPTED", async () => {
+test("exit 1: the timeout elapses, and the abandoned turn is INTERRUPTED", async () => {
   // A turn that starts and never reports. `--timeout` is fractional so the test
   // costs milliseconds rather than the 900s default.
   //
@@ -263,7 +267,7 @@ Deno.test("exit 1: the timeout elapses, and the abandoned turn is INTERRUPTED", 
   }
 });
 
-Deno.test("exit 1: a stop that finds nothing running says so, and still exits 1", async () => {
+test("exit 1: a stop that finds nothing running says so, and still exits 1", async () => {
   // The race: the turn ended between the stream closing and the stop being raised.
   // The client must not claim it interrupted anything, and must not change its mind
   // about the exit code — a turn it gave up on did not complete either way.
@@ -276,7 +280,7 @@ Deno.test("exit 1: a stop that finds nothing running says so, and still exits 1"
   }
 });
 
-Deno.test("exit 2: no server on the port", async () => {
+test("exit 2: no server on the port", async () => {
   const f = fixture();
   try {
     const deps: ExecDeps = {
@@ -291,7 +295,7 @@ Deno.test("exit 2: no server on the port", async () => {
   }
 });
 
-Deno.test("exit 2: the server refuses the session", async () => {
+test("exit 2: the server refuses the session", async () => {
   const f = fixture();
   try {
     // A workspace that is not a directory is a 400 from `POST /sessions` — a
@@ -307,7 +311,7 @@ Deno.test("exit 2: the server refuses the session", async () => {
   }
 });
 
-Deno.test("exit 2: no prompt, and no piped stdin to take one from", async () => {
+test("exit 2: no prompt, and no piped stdin to take one from", async () => {
   const f = fixture({ isTerminal: true });
   try {
     assert.equal(await runExec([], f.deps), 2);
@@ -318,7 +322,7 @@ Deno.test("exit 2: no prompt, and no piped stdin to take one from", async () => 
   }
 });
 
-Deno.test("exit 2: an unknown flag stops rather than streaming", async () => {
+test("exit 2: an unknown flag stops rather than streaming", async () => {
   const f = fixture();
   try {
     assert.equal(await runExec(["--jsno", "go"], f.deps), 2);
@@ -330,7 +334,7 @@ Deno.test("exit 2: an unknown flag stops rather than streaming", async () => {
 
 // ---- --json ------------------------------------------------------------------------
 
-Deno.test("--json suppresses streaming and prints one envelope carrying the text", async () => {
+test("--json suppresses streaming and prints one envelope carrying the text", async () => {
   const f = fixture({ turn: instantTurn("hello there") });
   try {
     assert.equal(await runExec(["--json", "--timeout", "1", "go"], f.deps), 0);
@@ -352,7 +356,7 @@ Deno.test("--json suppresses streaming and prints one envelope carrying the text
   }
 });
 
-Deno.test("--json on a failed turn is still one envelope, with ok false", async () => {
+test("--json on a failed turn is still one envelope, with ok false", async () => {
   const f = fixture({ turn: instantTurn("", "error", "provider 500") });
   try {
     assert.equal(await runExec(["--json", "--timeout", "1", "go"], f.deps), 1);
@@ -367,7 +371,7 @@ Deno.test("--json on a failed turn is still one envelope, with ok false", async 
 
 // ---- the prompt ---------------------------------------------------------------------
 
-Deno.test("the prompt comes from stdin when the positional is `-`", async () => {
+test("the prompt comes from stdin when the positional is `-`", async () => {
   const f = fixture({ turn: instantTurn("ok"), stdin: "  from a pipe  \n", isTerminal: true });
   try {
     assert.equal(await runExec(["--timeout", "1", "-"], f.deps), 0);
@@ -382,7 +386,7 @@ Deno.test("the prompt comes from stdin when the positional is `-`", async () => 
   }
 });
 
-Deno.test("the prompt comes from stdin when it is absent and stdin is piped", async () => {
+test("the prompt comes from stdin when it is absent and stdin is piped", async () => {
   const f = fixture({ turn: instantTurn("ok"), stdin: "piped prompt", isTerminal: false });
   try {
     assert.equal(await runExec(["--timeout", "1"], f.deps), 0);
@@ -398,8 +402,8 @@ Deno.test("the prompt comes from stdin when it is absent and stdin is piped", as
 
 // ---- session shape --------------------------------------------------------------------
 
-Deno.test("-w and -m land on the created session; the default workspace is the cwd", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "bough-exec-" });
+test("-w and -m land on the created session; the default workspace is the cwd", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "bough-exec-"));
   const f = fixture({ turn: instantTurn("ok") });
   try {
     assert.equal(
@@ -407,19 +411,19 @@ Deno.test("-w and -m land on the created session; the default workspace is the c
       0,
     );
     const session = f.ctx.db.listSessions()[0];
-    assert.equal(session.workspace, await Deno.realPath(dir));
+    assert.equal(session.workspace, await realpath(dir));
     // `originDir` is the stable project record and mirrors the workspace at creation.
-    assert.equal(session.originDir, await Deno.realPath(dir));
+    assert.equal(session.originDir, await realpath(dir));
     assert.equal(session.model, "openai:gpt-5");
     assert.equal(session.kind, "root");
     assert.match(session.title, /^exec: go$/);
   } finally {
     f.close();
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true, force: true });
   }
 });
 
-Deno.test("--port beats BOUGH_PORT, which beats the built-in default", async () => {
+test("--port beats BOUGH_PORT, which beats the built-in default", async () => {
   // Observed through the only thing that varies with the port: the URL the client
   // reports it could not reach.
   for (
@@ -445,7 +449,7 @@ Deno.test("--port beats BOUGH_PORT, which beats the built-in default", async () 
 
 // ---- pure parsing -----------------------------------------------------------------------
 
-Deno.test("parseExecArgs: the flag set, in both spellings", () => {
+test("parseExecArgs: the flag set, in both spellings", () => {
   const parsed = parseExecArgs([
     "-w",
     "/w",
@@ -467,7 +471,7 @@ Deno.test("parseExecArgs: the flag set, in both spellings", () => {
   });
 });
 
-Deno.test("parseExecArgs: defaults", () => {
+test("parseExecArgs: defaults", () => {
   const parsed = parseExecArgs(["hi"]);
   assert.ok(!isUsageError(parsed) && !isHelpRequest(parsed));
   assert.equal(parsed.json, false);
@@ -476,33 +480,33 @@ Deno.test("parseExecArgs: defaults", () => {
   assert.equal(parsed.workspace, undefined);
 });
 
-Deno.test("parseExecArgs: `-` is the stdin sentinel, not a flag", () => {
+test("parseExecArgs: `-` is the stdin sentinel, not a flag", () => {
   const parsed = parseExecArgs(["-"]);
   assert.ok(!isUsageError(parsed) && !isHelpRequest(parsed));
   assert.equal(parsed.prompt, "-");
 });
 
-Deno.test("parseExecArgs: `--` ends flag parsing, so a prompt may start with a dash", () => {
+test("parseExecArgs: `--` ends flag parsing, so a prompt may start with a dash", () => {
   const parsed = parseExecArgs(["--json", "--", "--not-a-flag"]);
   assert.ok(!isUsageError(parsed) && !isHelpRequest(parsed));
   assert.equal(parsed.prompt, "--not-a-flag");
   assert.equal(parsed.json, true);
 });
 
-Deno.test("parseExecArgs: a value flag may take a dash-leading value", () => {
+test("parseExecArgs: a value flag may take a dash-leading value", () => {
   const parsed = parseExecArgs(["-m", "-weird-model", "go"]);
   assert.ok(!isUsageError(parsed) && !isHelpRequest(parsed));
   assert.equal(parsed.model, "-weird-model");
   assert.equal(parsed.prompt, "go");
 });
 
-Deno.test("parseExecArgs: a forgotten pair of quotes is an error, not a one-word prompt", () => {
+test("parseExecArgs: a forgotten pair of quotes is an error, not a one-word prompt", () => {
   const parsed = parseExecArgs(["write", "the", "tests"]);
   assert.ok(isUsageError(parsed));
   assert.match(parsed.usageError, /quote it as a single string/);
 });
 
-Deno.test("parseExecArgs: rejects the malformed rest", () => {
+test("parseExecArgs: rejects the malformed rest", () => {
   for (
     const [argv, pattern] of [
       [["--nope"], /unknown flag --nope/],
@@ -524,20 +528,20 @@ Deno.test("parseExecArgs: rejects the malformed rest", () => {
 
 // ---- the SSE reader ---------------------------------------------------------------------
 
-Deno.test("createSseReader: a frame split across chunks is not read until it is whole", () => {
+test("createSseReader: a frame split across chunks is not read until it is whole", () => {
   const feed = createSseReader();
   assert.deepEqual(feed("event: turn.fin"), []);
   assert.deepEqual(feed('ished\ndata: {"a":1}'), []);
   assert.deepEqual(feed("\n\n"), [{ name: "turn.finished", data: { a: 1 } }]);
 });
 
-Deno.test("createSseReader: field order does not matter, and comments carry nothing", () => {
+test("createSseReader: field order does not matter, and comments carry nothing", () => {
   const feed = createSseReader();
   const frames = feed(': connected\n\ndata: {"a":1}\nevent: message.delta\n\n: ping\n\n');
   assert.deepEqual(frames, [{ name: "message.delta", data: { a: 1 } }]);
 });
 
-Deno.test("createSseReader: several frames in one chunk, and a malformed one is dropped", () => {
+test("createSseReader: several frames in one chunk, and a malformed one is dropped", () => {
   const feed = createSseReader();
   const frames = feed(
     'event: a\ndata: 1\n\nevent: b\ndata: {oops\n\nevent: c\ndata: {"ok":true}\n\n',
@@ -548,14 +552,14 @@ Deno.test("createSseReader: several frames in one chunk, and a malformed one is 
   ]);
 });
 
-Deno.test("createSseReader: CRLF framing parses the same as LF", () => {
+test("createSseReader: CRLF framing parses the same as LF", () => {
   const feed = createSseReader();
   assert.deepEqual(feed("event: x\r\ndata: 2\r\n\r\n"), [{ name: "x", data: 2 }]);
 });
 
 // ---- retry ---------------------------------------------------------------------------------
 
-Deno.test("a retry announces itself on stderr and drops the false start from the envelope", async () => {
+test("a retry announces itself on stderr and drops the false start from the envelope", async () => {
   const f = fixture({
     turn: (ctx, session) => {
       const messageId = crypto.randomUUID();
@@ -591,7 +595,7 @@ Deno.test("a retry announces itself on stderr and drops the false start from the
   }
 });
 
-Deno.test("--help is answered, not rejected", () => {
+test("--help is answered, not rejected", () => {
   // It used to fall through to "unknown flag --help" and exit 2, so the first
   // thing anyone types at a new CLI printed an error and failed a shell `&&`.
   for (const argv of [["--help"], ["-h"], ["-w", "/tmp", "--help"]]) {
@@ -603,7 +607,7 @@ Deno.test("--help is answered, not rejected", () => {
   assert.ok(!isHelpRequest(prompt));
 });
 
-Deno.test("the usage text names every flag it accepts, and the no-sandbox posture", () => {
+test("the usage text names every flag it accepts, and the no-sandbox posture", () => {
   for (const flag of ["--workspace", "--model", "--json", "--timeout", "--port", "--help"]) {
     assert.ok(USAGE.includes(flag), `usage does not document ${flag}`);
   }

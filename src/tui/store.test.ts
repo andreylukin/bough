@@ -31,6 +31,7 @@
  * `node:assert/strict`, not `@std/assert`: jsr.io is unreachable here and a test that
  * cannot run offline does not belong in `deno task test`.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import type { BoughEvent, EventType } from "../schema/events.ts";
 import type { AskQuestion, Message, Part, Session } from "../schema/parts.ts";
@@ -43,6 +44,9 @@ import {
   initialState,
   isBusy,
   isDuplicate,
+  type LiveUnit,
+  liveUnits,
+  marksFor,
   mergeThread,
   partKey,
   reduce,
@@ -203,7 +207,7 @@ function snapshotAfterOutage(): SessionSnapshot {
 
 // ---- the acceptance test ----------------------------------------------------
 
-Deno.test("reconnect re-delivers applied events: no duplicate messages, no lost deltas", () => {
+test("reconnect re-delivers applied events: no duplicate messages, no lost deltas", () => {
   const { rec, before, missed } = record();
 
   // 1. Live, through the outage point.
@@ -267,7 +271,7 @@ Deno.test("reconnect re-delivers applied events: no duplicate messages, no lost 
   assert.equal(listed.lastTurnStatus, "done");
 });
 
-Deno.test("the delta text that reaches the finalized part is neither doubled nor short", () => {
+test("the delta text that reaches the finalized part is neither doubled nor short", () => {
   // The same property stated as arithmetic: the streamed prefix plus the post-snapshot
   // delta is exactly the text the model produced, with the whole log delivered twice.
   const rec = new Recorder();
@@ -297,7 +301,7 @@ Deno.test("the delta text that reaches the finalized part is neither doubled nor
   assert.equal(state.streaming["m-1"], "one two three");
 });
 
-Deno.test("`seq` resets on restart, so the dedupe key cannot be `seq` alone", () => {
+test("`seq` resets on restart, so the dedupe key cannot be `seq` alone", () => {
   const rec = new Recorder();
   let state = apply(initialState(), { type: "open", sessionId: SESSION });
   state = replay(state, [
@@ -327,7 +331,7 @@ Deno.test("`seq` resets on restart, so the dedupe key cannot be `seq` alone", ()
   assert.equal(state.streaming["m-2"], "after", "a restarted server's seq 1 is not the old seq 1");
 });
 
-Deno.test("the snapshot watermark drops only events the fetch already contains", () => {
+test("the snapshot watermark drops only events the fetch already contains", () => {
   const state = apply(initialState(), {
     type: "snapshot",
     at: 5_000,
@@ -366,7 +370,7 @@ Deno.test("the snapshot watermark drops only events the fetch already contains",
   assert.equal(isDuplicate(state, global), false, "an un-scoped event is never watermarked away");
 });
 
-Deno.test("the dedupe window is bounded and keeps the most recent identities", () => {
+test("the dedupe window is bounded and keeps the most recent identities", () => {
   let state = apply(initialState(), { type: "open", sessionId: SESSION });
   const first: BoughEvent = {
     type: "tool.log",
@@ -394,7 +398,7 @@ Deno.test("the dedupe window is bounded and keeps the most recent identities", (
 
 // ---- reducer rules ----------------------------------------------------------
 
-Deno.test("a subagent announcement never enters the top-level list", () => {
+test("a subagent announcement never enters the top-level list", () => {
   let state = initialState();
   state = reduce(state, {
     type: "event",
@@ -415,7 +419,7 @@ Deno.test("a subagent announcement never enters the top-level list", () => {
   assert.deepEqual(state.sessions.map((s) => s.id), ["root-2"]);
 });
 
-Deno.test("another session's turn marks its row busy without touching the open thread", () => {
+test("another session's turn marks its row busy without touching the open thread", () => {
   let state = apply(
     initialState(),
     { type: "sessions", sessions: [row(SESSION), row(OTHER)] },
@@ -435,7 +439,7 @@ Deno.test("another session's turn marks its row busy without touching the open t
   assert.equal(state.sessions.find((s) => s.id === OTHER)!.busy, true);
 });
 
-Deno.test("a background session finishing is announced once, with a distinct seq", () => {
+test("a background session finishing is announced once, with a distinct seq", () => {
   let state = apply(
     initialState(),
     { type: "sessions", sessions: [row(SESSION), row(OTHER, { busy: true })] },
@@ -462,7 +466,7 @@ Deno.test("a background session finishing is announced once, with a distinct seq
   assert.equal(state.sessions.find((s) => s.id === OTHER)!.unseen, undefined);
 });
 
-Deno.test("a subagent's finish raises no background toast", () => {
+test("a subagent's finish raises no background toast", () => {
   let state = apply(
     initialState(),
     { type: "sessions", sessions: [row(SESSION), row("sub-1", { kind: "subagent", busy: true })] },
@@ -481,7 +485,7 @@ Deno.test("a subagent's finish raises no background toast", () => {
   assert.equal(state.background, null, "a subagent finishes inside its spawner's turn — not news");
 });
 
-Deno.test("message.retry drops the partial text rather than prefixing the re-stream", () => {
+test("message.retry drops the partial text rather than prefixing the re-stream", () => {
   let state = apply(initialState(), { type: "open", sessionId: SESSION });
   state = replay(state, [
     {
@@ -517,7 +521,7 @@ Deno.test("message.retry drops the partial text rather than prefixing the re-str
   assert.match(state.notice ?? "", /attempt 2/);
 });
 
-Deno.test("ask() holds surface oldest-first and settle out of the queue", () => {
+test("ask() holds surface oldest-first and settle out of the queue", () => {
   const hold = (id: string, status: AskQuestion["status"]): AskQuestion => ({
     id,
     sessionId: SESSION,
@@ -550,7 +554,7 @@ Deno.test("ask() holds surface oldest-first and settle out of the queue", () => 
   assert.deepEqual(state.asks.map((q) => q.id), ["q2"]);
 });
 
-Deno.test("opening a session drops everything that belonged to the previous one", () => {
+test("opening a session drops everything that belonged to the previous one", () => {
   let state = apply(
     initialState(),
     { type: "sessions", sessions: [row(SESSION), row(OTHER)] },
@@ -583,7 +587,7 @@ Deno.test("opening a session drops everything that belonged to the previous one"
   assert.equal(state.streaming["m-1"], undefined);
 });
 
-Deno.test("mergeThread keeps stream-only messages and the longer part list", () => {
+test("mergeThread keeps stream-only messages and the longer part list", () => {
   const fromDb = [message("a", { parts: [TOOL_CALL] }), message("b")];
   const local = [
     message("a", { parts: [TOOL_CALL, TOOL_RESULT], pending: true }),
@@ -595,7 +599,7 @@ Deno.test("mergeThread keeps stream-only messages and the longer part list", () 
   assert.equal(merged[0].pending, false, "finished beats pending — `pending` only ever clears");
 });
 
-Deno.test("part identity is what makes an append idempotent", () => {
+test("part identity is what makes an append idempotent", () => {
   assert.equal(partKey(TOOL_CALL), "tool_call:call-1");
   assert.equal(partKey(TOOL_RESULT), "tool_result:call-1");
   assert.equal(partKey({ type: "text", text: "hi" }), null);
@@ -675,7 +679,7 @@ function fakeStream() {
 /** Let every promise the store kicked off settle. */
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-Deno.test("the shell re-fetches on RE-connect only, and re-delivered events stay no-ops", async () => {
+test("the shell re-fetches on RE-connect only, and re-delivered events stay no-ops", async () => {
   const { api, calls } = fakeApi();
   const events = fakeStream();
   let clock = 10_000;
@@ -727,7 +731,7 @@ Deno.test("the shell re-fetches on RE-connect only, and re-delivered events stay
   await store.stop();
 });
 
-Deno.test("a queued message drains once the turn ends, and only into its own session", async () => {
+test("a queued message drains once the turn ends, and only into its own session", async () => {
   const { api, calls } = fakeApi({
     getSession: (id: string) =>
       Promise.resolve({
@@ -763,7 +767,7 @@ Deno.test("a queued message drains once the turn ends, and only into its own ses
   await store.stop();
 });
 
-Deno.test("a failing request becomes a notice, never a thrown render", async () => {
+test("a failing request becomes a notice, never a thrown render", async () => {
   const { api } = fakeApi({
     listSessions: () => Promise.reject(new Error("can't reach the bough server")),
   });
@@ -775,7 +779,7 @@ Deno.test("a failing request becomes a notice, never a thrown render", async () 
   await store.stop();
 });
 
-Deno.test("interrupt raises the stop on the OPEN session, and says what happened", async () => {
+test("interrupt raises the stop on the OPEN session, and says what happened", async () => {
   // Spec §5's user interrupt, from the client end. Two properties, both of which the
   // route's shape is designed around: it is always addressed at the session the user
   // is looking at, and its answer is REPORTED either way — a stop that finds nothing
@@ -811,7 +815,7 @@ Deno.test("interrupt raises the stop on the OPEN session, and says what happened
   await store.stop();
 });
 
-Deno.test("a failed interrupt is a notice, not a throw into the render", async () => {
+test("a failed interrupt is a notice, not a throw into the render", async () => {
   const { api } = fakeApi({
     interrupt: () => Promise.reject(new Error("the server went away")),
   });
@@ -824,4 +828,268 @@ Deno.test("a failed interrupt is a notice, not a throw into the render", async (
   await store.interrupt();
   assert.match(store.getState().notice ?? "", /the server went away/);
   await store.stop();
+});
+
+// ---- attribution, and the audit trail ---------------------------------------
+
+const USAGE = (over: Partial<SessionSnapshot["usage"]> = {}): SessionSnapshot["usage"] => ({
+  inputTokens: 0,
+  outputTokens: 0,
+  reasoningTokens: 0,
+  cacheReadTokens: 0,
+  cacheWriteTokens: 0,
+  costUsd: 0,
+  tree: {
+    inputTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    costUsd: 0,
+  },
+  ...over,
+});
+
+test("a turn's tokens are its OWN, measured from where the session already stood", () => {
+  // The number a spinner raises the question about is what THIS turn is costing, not
+  // what the conversation has cost since it began. So the meter is a delta from the
+  // session total at the moment the turn started, and a session that had already
+  // spent 1.2k tokens does not begin its next turn reading 1.2k.
+  const rec = new Recorder();
+  let state = apply(initialState(), { type: "open", sessionId: SESSION });
+  state = apply(state, {
+    type: "snapshot",
+    at: 0,
+    snapshot: {
+      session: session(SESSION),
+      thread: [],
+      usage: USAGE({ inputTokens: 1_000, outputTokens: 200, costUsd: 0.02 }),
+    },
+  });
+  state = replay(state, [rec.emit("message.started", message("m-1", { pending: true }), SESSION)]);
+  assert.equal(state.turn?.baseTokens, 1_200);
+  assert.equal(state.turn?.tokens, 0);
+
+  state = apply(state, {
+    type: "usage",
+    sessionId: SESSION,
+    usage: USAGE({ inputTokens: 1_500, outputTokens: 700, costUsd: 0.05 }),
+  });
+  assert.equal(state.turn?.tokens, 1_000);
+  assert.equal(Math.round((state.turn?.costUsd ?? 0) * 1000), 30);
+  // The session meter still reports the session.
+  assert.equal(state.usage?.inputTokens, 1_500);
+});
+
+test("a finished turn leaves a settled line in the transcript, and the spinner's numbers do not vanish", () => {
+  const rec = new Recorder();
+  let state = apply(initialState(), { type: "open", sessionId: SESSION });
+  state = replay(state, [rec.emit("message.started", message("m-1", { pending: true }), SESSION)]);
+  const startedAt = state.turn!.startedAt;
+  state = apply(state, {
+    type: "usage",
+    sessionId: SESSION,
+    usage: USAGE({ inputTokens: 3_000, outputTokens: 200, costUsd: 0.021 }),
+  });
+  state = replay(state, [
+    rec.emit("turn.finished", { sessionId: SESSION, turnId: "t1", status: "done" }, SESSION),
+  ]);
+  // Ended, but not settled: the numbers are only final after the refetch.
+  assert.equal(state.turn?.endedAt !== null, true);
+  assert.equal(state.marks.length, 0);
+
+  state = apply(state, { type: "turn.settle", at: startedAt + 14_000 });
+  assert.equal(state.turn, null);
+  const mark = state.marks.at(-1)!;
+  assert.equal(mark.kind, "turn");
+  assert.match(mark.text, /^✓ /);
+  assert.match(mark.text, /3\.2k tok/);
+  assert.match(mark.text, /\$0\.021/);
+  // A settle with nothing to settle is a no-op, not a "✓" under a live spinner.
+  assert.equal(reduce(state, { type: "turn.settle", at: 0 }), state);
+});
+
+test("an interrupted turn says so, and does not wear a ✓", () => {
+  const rec = new Recorder();
+  let state = apply(initialState(), { type: "open", sessionId: SESSION });
+  state = replay(state, [
+    rec.emit("message.started", message("m-1", { pending: true }), SESSION),
+    rec.emit("turn.finished", { sessionId: SESSION, turnId: "t1", status: "interrupted" }, SESSION),
+  ]);
+  state = apply(state, { type: "turn.settle", at: 0 });
+  assert.match(state.marks.at(-1)!.text, /^⏹ /);
+  assert.match(state.marks.at(-1)!.text, /interrupted/);
+});
+
+test("a destructive outcome outlives the notice that announced it", async () => {
+  // THE SEAM. `notify` puts a line on a row that expires in ten seconds; a revert
+  // deletes files. Routing the outcome through `record` writes both, so the fact is
+  // still there when the toast is gone — and it is filed against the session it
+  // happened in, so switching away and back does not lose it.
+  const { api } = fakeApi();
+  const events = fakeStream();
+  const store = createStore({ api, connect: events.connect });
+  store.start();
+  await settle();
+  await store.open(SESSION);
+  await settle();
+
+  store.record("reverted README.md");
+  assert.equal(store.getState().notice, "reverted README.md");
+  assert.deepEqual(
+    marksFor(store.getState(), SESSION).map((m) => [m.kind, m.text]),
+    [["destructive", "reverted README.md"]],
+  );
+
+  // The notice expires. The mark does not.
+  store.dismissNotice();
+  assert.equal(store.getState().notice, null);
+  assert.equal(marksFor(store.getState(), SESSION).length, 1);
+
+  // …and neither does looking somewhere else and coming back.
+  await store.open(OTHER);
+  await settle();
+  assert.deepEqual(marksFor(store.getState(), OTHER), []);
+  await store.open(SESSION);
+  await settle();
+  assert.equal(marksFor(store.getState(), SESSION).length, 1);
+  await store.stop();
+});
+
+test("stopping a unit uses the right route and records what it killed", async () => {
+  const killed: string[] = [];
+  const { api } = fakeApi({
+    killJob: (id: string, jobId: string) => {
+      killed.push(`kill:${id}/${jobId}`);
+      return Promise.resolve({ message: "killed" });
+    },
+    interrupt: (id: string) => {
+      killed.push(`interrupt:${id}`);
+      return Promise.resolve({ sessionId: id, interrupted: true, message: "stopping" });
+    },
+    stopWorkflow: (id: string) => {
+      killed.push(`stopWorkflow:${id}`);
+      return Promise.resolve({} as never);
+    },
+  });
+  const events = fakeStream();
+  const store = createStore({ api, connect: events.connect });
+  store.start();
+  await settle();
+  await store.open(SESSION);
+  await settle();
+
+  const unit = (over: Partial<LiveUnit>): LiveUnit => ({
+    kind: "shell",
+    id: "bg_7",
+    sessionId: SESSION,
+    title: "bg_7",
+    elapsedMs: 0,
+    tokens: null,
+    costUsd: null,
+    progress: null,
+    detail: "sleep 90",
+    ...over,
+  });
+
+  await store.stopUnit(unit({}));
+  await store.stopUnit(unit({ kind: "subagent", id: "sub-1", sessionId: "sub-1", title: "review" }));
+  await store.stopUnit(unit({ kind: "workflow", id: "run-1", sessionId: "run-1", title: "bench" }));
+  assert.deepEqual(killed, [
+    `kill:${SESSION}/bg_7`,
+    "interrupt:sub-1",
+    "stopWorkflow:run-1",
+  ]);
+  // Every one of them is in the ledger, with its scope named.
+  assert.deepEqual(
+    marksFor(store.getState(), SESSION).map((m) => m.text),
+    ["killed bg_7 — sleep 90", "stopped subagent review", "stopped workflow bench"],
+  );
+  await store.stop();
+});
+
+test("a failed kill is a notice and leaves NO mark — nothing was destroyed", async () => {
+  const { api } = fakeApi({ killJob: () => Promise.reject(new Error("no such job")) });
+  const events = fakeStream();
+  const store = createStore({ api, connect: events.connect });
+  store.start();
+  await settle();
+  await store.open(SESSION);
+  await settle();
+  await store.stopUnit({
+    kind: "shell",
+    id: "bg_9",
+    sessionId: SESSION,
+    title: "bg_9",
+    elapsedMs: 0,
+    tokens: null,
+    costUsd: null,
+    progress: null,
+    detail: "sleep 1",
+  });
+  assert.match(store.getState().notice ?? "", /no such job/);
+  assert.deepEqual(marksFor(store.getState(), SESSION), []);
+  await store.stop();
+});
+
+test("liveUnits attributes every running thing separately", () => {
+  const now = 100_000;
+  const units = liveUnits({
+    now,
+    jobs: [
+      {
+        id: "bg_7",
+        sessionId: SESSION,
+        pid: 1,
+        command: "sleep 90",
+        status: "running",
+        startedAt: now - 30_000,
+      },
+      {
+        id: "bg_6",
+        sessionId: SESSION,
+        pid: 2,
+        command: "done",
+        status: "exited",
+        startedAt: now - 60_000,
+      },
+    ],
+    subagents: [
+      row("sub-1", { title: "review app.ts", busy: true, createdAt: now - 45_000, tokens: 3_200 }),
+      row("sub-2", { title: "finished", busy: false, createdAt: now - 90_000 }),
+    ],
+    workflows: [
+      {
+        id: "run-1",
+        name: "bench",
+        description: "",
+        status: "running",
+        currentPhase: "measure",
+        phases: [],
+        agents: { total: 8, done: 2, cached: 1, running: 2, queued: 3, failed: 0 },
+        result: null,
+        error: null,
+        resumeOf: null,
+        createdAt: now - 120_000,
+        finishedAt: null,
+        scriptFile: "x.js",
+      },
+    ],
+  });
+  // Exited shells, finished agents and terminal runs are not "running": the rail
+  // pins live work only, which is what keeps it from growing past the terminal.
+  assert.deepEqual(units.map((u) => `${u.kind}:${u.id}`), [
+    "shell:bg_7",
+    "subagent:sub-1",
+    "workflow:run-1",
+  ]);
+  assert.equal(units[0].elapsedMs, 30_000);
+  assert.equal(units[0].tokens, null);
+  assert.equal(units[0].detail, "sleep 90");
+  assert.equal(units[1].tokens, 3_200);
+  // A run is the one unit that knows how far along it is — replays count as done.
+  assert.equal(units[2].progress, 3 / 8);
+  // …and everything else must report NO progress rather than an invented bar.
+  assert.equal(units[0].progress, null);
+  assert.equal(units[1].progress, null);
 });

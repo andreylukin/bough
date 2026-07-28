@@ -1,7 +1,7 @@
 /**
  * The TUI's command line.
  *
- * It did not have one. `main.tsx` never touched `Deno.args`, so every flag a user
+ * It did not have one. `main.tsx` never touched `process.argv`, so every flag a user
  * passed was silently discarded — `bough -w /other/repo` opened a session in the
  * current directory and said nothing. That is the worst possible failure for this
  * particular flag: bough edits the real checkout with the user's authority and no

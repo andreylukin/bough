@@ -18,6 +18,7 @@
  * reachable here, and a test that cannot run offline does not belong in
  * `deno task test`.
  */
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { Bus } from "../bus.ts";
 import type { PromptInput } from "../prompt/assemble.ts";
@@ -166,7 +167,7 @@ function eventTypes(events: BoughEvent[]): string[] {
 
 // ---- the multi-round turn ---------------------------------------------------
 
-Deno.test("a multi-round turn runs the program, ends on stop, and never replays reasoning", async () => {
+test("a multi-round turn runs the program, ends on stop, and never replays reasoning", async () => {
   const llm = scriptedLlm([
     // Round 1: thinks, narrates, runs a program.
     {
@@ -315,7 +316,7 @@ Deno.test("a multi-round turn runs the program, ends on stop, and never replays 
 
 // ---- ending rules -----------------------------------------------------------
 
-Deno.test("a turn that would end mute is nudged for a closing report", async () => {
+test("a turn that would end mute is nudged for a closing report", async () => {
   const llm = scriptedLlm([
     // Runs a program and tries to stop having said nothing.
     { content: [runSteps("c1", "console.log(1)"), stop()] },
@@ -342,7 +343,7 @@ Deno.test("a turn that would end mute is nudged for a closing report", async () 
   f.db.close();
 });
 
-Deno.test("a persistently mute turn is forced into a text-only round", async () => {
+test("a persistently mute turn is forced into a text-only round", async () => {
   const llm = scriptedLlm([
     { content: [runSteps("c1", "console.log(1)"), stop()] },
     // Answers the nudge with empty thinking and another stop — the observed failure.
@@ -363,7 +364,7 @@ Deno.test("a persistently mute turn is forced into a text-only round", async () 
   f.db.close();
 });
 
-Deno.test("a turn that trails off without stop is nudged, and the nudges are bounded", async () => {
+test("a turn that trails off without stop is nudged, and the nudges are bounded", async () => {
   // Never calls stop, never calls a tool: the runaway shape.
   const rounds = Array.from({ length: 8 }, () => ({ content: [text("...thinking out loud")] }));
   const llm = scriptedLlm(rounds);
@@ -384,7 +385,7 @@ Deno.test("a turn that trails off without stop is nudged, and the nudges are bou
   f.db.close();
 });
 
-Deno.test("an emitted <stop/> sentinel ends the turn and is stripped from the transcript", async () => {
+test("an emitted <stop/> sentinel ends the turn and is stripped from the transcript", async () => {
   const llm = scriptedLlm([{ content: [text("All done.\n<stop/>")] }]);
   const f = fixture({ llm: llm.client });
   userMessage(f.db, f.session.id, "go");
@@ -399,7 +400,7 @@ Deno.test("an emitted <stop/> sentinel ends the turn and is stripped from the tr
 
 // ---- failure paths ----------------------------------------------------------
 
-Deno.test("a program that fails is a tool result the next round can act on, not a turn error", async () => {
+test("a program that fails is a tool result the next round can act on, not a turn error", async () => {
   const llm = scriptedLlm([
     { content: [runSteps("c1", "boom()")] },
     { content: [text("That threw; I will try another way."), stop()] },
@@ -423,7 +424,7 @@ Deno.test("a program that fails is a tool result the next round can act on, not 
   f.db.close();
 });
 
-Deno.test("a malformed run_steps input is refused rather than executed", async () => {
+test("a malformed run_steps input is refused rather than executed", async () => {
   const llm = scriptedLlm([
     { content: [{ type: "tool_use", id: "c1", name: RUN_STEPS, input: { code: 42 } }] },
     { content: [text("Retrying with a string."), stop()] },
@@ -440,7 +441,7 @@ Deno.test("a malformed run_steps input is refused rather than executed", async (
   f.db.close();
 });
 
-Deno.test("an unknown tool name is answered, not executed", async () => {
+test("an unknown tool name is answered, not executed", async () => {
   const llm = scriptedLlm([
     { content: [{ type: "tool_use", id: "c1", name: "read_file", input: {} }] },
     { content: [text("Right, I only have run_steps."), stop()] },
@@ -455,7 +456,7 @@ Deno.test("an unknown tool name is answered, not executed", async () => {
   f.db.close();
 });
 
-Deno.test("a provider failure ends the turn with a message, a closed row and a closed message", async () => {
+test("a provider failure ends the turn with a message, a closed row and a closed message", async () => {
   const llm = scriptedLlm([{
     throws: () => Object.assign(new Error("Anthropic: 400 bad prompt"), { status: 400 }),
   }]);
@@ -476,7 +477,7 @@ Deno.test("a provider failure ends the turn with a message, a closed row and a c
   f.db.close();
 });
 
-Deno.test("a turn that would overflow the context window fails naming the limit", async () => {
+test("a turn that would overflow the context window fails naming the limit", async () => {
   const llm = scriptedLlm([
     // One enormous round, then the loop should refuse to send another.
     {
@@ -502,7 +503,7 @@ Deno.test("a turn that would overflow the context window fails naming the limit"
 
 // ---- the server seam --------------------------------------------------------
 
-Deno.test("createTurnStarter runs a turn when idle and only queues when busy", async () => {
+test("createTurnStarter runs a turn when idle and only queues when busy", async () => {
   const llm = scriptedLlm([
     { content: [text("first answer"), stop("s1")] },
     { content: [text("second answer"), stop("s2")] },
@@ -528,7 +529,7 @@ Deno.test("createTurnStarter runs a turn when idle and only queues when busy", a
   f.db.close();
 });
 
-Deno.test("a subagent session records its turn's outcome for the tree view", async () => {
+test("a subagent session records its turn's outcome for the tree view", async () => {
   const ok = scriptedLlm([{ content: [text("Report: did the thing."), stop()] }]);
   const f = fixture({ llm: ok.client, kind: "subagent" });
   userMessage(f.db, f.session.id, "do the thing");
@@ -537,7 +538,7 @@ Deno.test("a subagent session records its turn's outcome for the tree view", asy
   f.db.close();
 });
 
-Deno.test("a session's model pin beats the global default, the way effort does", async () => {
+test("a session's model pin beats the global default, the way effort does", async () => {
   // Spec §4: `model` and `effort` are per-session OVERRIDES; absent = the global
   // default. `AppCtx.model` IS that global default, so reading it first would make
   // `setSessionModel` a no-op on any install that sets `BOUGH_MODEL` — and the two
@@ -556,7 +557,7 @@ Deno.test("a session's model pin beats the global default, the way effort does",
   f.db.close();
 });
 
-Deno.test("with no pin, the ctx default wins, and with neither, the built-in does", async () => {
+test("with no pin, the ctx default wins, and with neither, the built-in does", async () => {
   const pinned = scriptedLlm([{ content: [text("done"), stop()] }]);
   const f = fixture({ llm: pinned.client, model: "claude-opus-4-8" });
   userMessage(f.db, f.session.id, "hi");
@@ -575,7 +576,7 @@ Deno.test("with no pin, the ctx default wins, and with neither, the built-in doe
 
 // ---- the workspace note -----------------------------------------------------
 
-Deno.test("every turn's prompt is told which checkout it is editing", async () => {
+test("every turn's prompt is told which checkout it is editing", async () => {
   // The seam this closes: `PromptInput.notes` and `TurnDeps.notes` both existed and
   // nobody filled either, so the model was never told where `bash` starts or where a
   // relative `view()` path resolves — and the program's own cwd is the SERVER's
@@ -602,7 +603,7 @@ Deno.test("every turn's prompt is told which checkout it is editing", async () =
   );
 });
 
-Deno.test("a caller's own notes are kept, and the workspace note leads", async () => {
+test("a caller's own notes are kept, and the workspace note leads", async () => {
   const llm = scriptedLlm([{ content: [text("done"), stop("c1")] }]);
   const f = fixture({ llm: llm.client });
   f.db.setSessionWorkspace(f.session.id, "/checkouts/acme");
