@@ -42,10 +42,18 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import type { ModelRow } from "../../llm/client.ts";
 import { api, type SessionRow } from "../api.ts";
 import type { MouseEvent, NavKey } from "../mouse.ts";
-import { buildLines, chatBodyHeight, lineAtSlot } from "../lines.ts";
+import { buildLines, chatBodyHeight, lineAtSlot, type VLine, visibleSlice } from "../lines.ts";
+import {
+  highlightSpan,
+  isEmptySelection,
+  rowSpan,
+  type Selection,
+  selectedText,
+} from "../selection.ts";
 import {
   activeTrigger,
   applyCompletion,
+  linkAt,
   meterLine,
   rankCompletions,
   sessionLabel,
@@ -139,12 +147,36 @@ export interface AppProps {
    * A prop for the same reason `theme` is — the composition root owns transport.
    */
   notifyDesktop?: (body: string) => void;
+  /**
+   * Put text on the system clipboard (OSC 52 — `term.ts`).
+   *
+   * A prop for the same reason `notifyDesktop` is: this file owns no transport. It
+   * decides only WHAT is worth copying; whether that reaches the clipboard over an
+   * escape sequence, and whether this terminal even honours it, is `term.ts`'s.
+   */
+  copyText?: (text: string) => void;
+  /**
+   * Hand a URL to the OS.
+   *
+   * bough turns mouse reporting ON (`mouse.ts`), which takes the terminal's own
+   * hyperlink hit-testing out of the loop — the click arrives here instead of
+   * opening anything. `linkAt` has existed to answer "what is under this column"
+   * since OSC 8 links were added; this is the half that acts on the answer.
+   */
+  openUrl?: (url: string) => void;
   /** Injected so a render is reproducible and the esc double-tap is testable. */
   now?: () => number;
 }
 
 /** Rows a wheel tick moves. Three, like every other pager. */
 const WHEEL_ROWS = 3;
+
+/**
+ * The 1-based screen row the transcript starts on. The header owns row 1 and is a
+ * single `<text>`; everything that maps a mouse report to a transcript line goes
+ * through this rather than re-deriving it.
+ */
+const CHAT_TOP = 2;
 
 /** How often the rail re-reads the session's children while a turn is running. */
 const RAIL_POLL_MS = 1500;
@@ -230,6 +262,8 @@ export function App(
     models,
     theme,
     notifyDesktop,
+    copyText,
+    openUrl,
     now = Date.now,
   }: AppProps,
 ) {
@@ -268,6 +302,18 @@ export function App(
    * nothing could set. These are that state. `^e` still flips everything at once;
    * it now also clears these, so the global toggle stays the thing that wins.
    */
+  /**
+   * The drag in progress, or the one that finished and is still highlighted.
+   *
+   * `selection.ts` has held the whole arithmetic for this — ordering, per-row
+   * spans, inverse-video highlighting, clipboard extraction — since it was written,
+   * and its only importer was its own test. Turning mouse reporting on is what made
+   * this necessary: the terminal's native drag-select never sees the drag, so a
+   * transcript you could not select was the price of a transcript you could scroll.
+   */
+  const [sel, setSel] = useState<Selection | null>(null);
+  /** The same value, readable synchronously mid-burst — see the mouse handler. */
+  const selRef = useRef<Selection | null>(null);
   const [openKeys, setOpenKeys] = useState<ReadonlySet<string>>(() => new Set<string>());
   const [fullKeys, setFullKeys] = useState<ReadonlySet<string>>(() => new Set<string>());
   const [railSel, setRailSel] = useState(0);
@@ -623,12 +669,46 @@ export function App(
    * `units.length` after that. `chatBodyHeight`/`lineAtSlot` are shared with the
    * renderer, so a click cannot land one row off the row that was drawn.
    */
+  /**
+   * The styled text painted on 1-based screen row `y`, or null where nothing is.
+   *
+   * The one place that answers "what is on that row", shared by the link hit-test,
+   * the highlight and the clipboard extraction — three readers that must agree, or
+   * you copy one row and see another highlighted.
+   */
+  const rowAt = useCallback((y: number): string | null => {
+    if (panel.open) return null;
+    const slot = y - CHAT_TOP;
+    if (slot < 0 || slot >= chatH) return null;
+    const body = chatBodyHeight(chatH, state.queued.length, Boolean(state.notice));
+    return lineAtSlot(lines, body, scrollOff, slot)?.text ?? null;
+  }, [panel.open, chatH, state.queued.length, state.notice, lines, scrollOff]);
+
+  /**
+   * The selection, painted.
+   *
+   * `Chat` addresses a row by its index in `lines`, and a selection is addressed by
+   * SCREEN row — so the index is converted back rather than the selection being
+   * stored in transcript coordinates. That is deliberate: a drag is a gesture on
+   * the screen, and storing it against the transcript would make it slide when new
+   * output arrives underneath it, highlighting text nobody selected.
+   */
+  const decorate = useMemo(() => {
+    if (!sel || isEmptySelection(sel)) return undefined;
+    const body = chatBodyHeight(chatH, state.queued.length, Boolean(state.notice));
+    const { start, rows } = visibleSlice(lines, body, scrollOff);
+    const pad = Math.max(0, body - rows.length);
+    return (text: string, _line: VLine, index: number): string => {
+      const span = rowSpan(sel, index - start + pad + CHAT_TOP);
+      return span ? highlightSpan(text, span.from, span.to) : text;
+    };
+  }, [sel, chatH, state.queued.length, state.notice, lines, scrollOff]);
+
   const clickAt = useCallback((y: number) => {
     if (panel.open) return; // the panel displaces the transcript; nothing under it is live
-    const top = 2; // 1-based, and the header owns row 1
-    if (y >= top && y < top + chatH) {
+    if (y >= CHAT_TOP && y < CHAT_TOP + chatH) {
       const body = chatBodyHeight(chatH, state.queued.length, Boolean(state.notice));
-      const target = lineAtSlot(lines, body, scrollOff, y - top)?.click;
+      const target = lineAtSlot(lines, body, scrollOff, y - CHAT_TOP)?.click;
       if (!target) return;
       // A branch card descends; it does not fold. Same route the rail's ⏎ takes.
       if (target.startsWith("open:")) {
@@ -649,7 +729,7 @@ export function App(
     }
     // Live work: select the unit you clicked and give it the keyboard, so the row's
     // own legend (`⏎ open · x stop`) is true the moment it lights up.
-    const railTop = top + chatH;
+    const railTop = CHAT_TOP + chatH;
     if (y >= railTop && y < railTop + units.length) {
       setRailSel(y - railTop);
       setMode("rail");
@@ -882,7 +962,50 @@ export function App(
       hooks.onMouse?.((event) => {
         if (event.kind === "wheel-up") return setScrollOff((o) => o + WHEEL_ROWS);
         if (event.kind === "wheel-down") return setScrollOff((o) => Math.max(0, o - WHEEL_ROWS));
-        if (event.kind === "down") clickAt(event.y);
+        const at = { x: event.x, y: event.y };
+        // READ AND WRITTEN THROUGH A REF, not through the state alone. A drag is a
+        // burst — down, drag, drag, …, up — and React batches the whole burst before
+        // it renders, so an `up` reading `sel` from the closure would see the value
+        // from before the press. Same reason `lineRef` and `quitArmedRef` exist.
+        // The side effects below MUST NOT live in a `setSel` updater: an updater is
+        // required to be pure, and React is free to call it twice or defer it.
+        const write = (next: Selection | null) => {
+          selRef.current = next;
+          setSel(next);
+        };
+        // A press opens a selection rather than acting. Which gesture it turns out
+        // to be is not knowable until the button comes back up: a click and the
+        // first cell of a drag are the same event.
+        if (event.kind === "down") return write({ anchor: at, focus: at });
+        if (event.kind === "drag") {
+          const s = selRef.current;
+          return s ? write({ ...s, focus: at }) : undefined;
+        }
+        if (event.kind !== "up") return;
+        const s = selRef.current;
+        if (s && !isEmptySelection({ ...s, focus: at })) {
+          // A DRAG. Copy on release, the way a terminal's own selection does —
+          // requiring a second keystroke to keep what you just highlighted is a
+          // step nobody expects.
+          const text = selectedText({ ...s, focus: at }, rowAt);
+          if (text.trim()) {
+            copyText?.(text);
+            store.notify(`copied ${text.length} character${text.length === 1 ? "" : "s"}`);
+          }
+          // AND DROPPED. The highlight is stored in SCREEN coordinates, and the
+          // notice this just raised takes a row from the transcript — so keeping it
+          // would slide every row under it up by one and leave the inverse video
+          // sitting on text nobody selected until the notice expired. The notice is
+          // the feedback; the highlight has done its job.
+          return write(null);
+        }
+        write(null);
+        // A CLICK. Links first: the row's OSC 8 target under this exact column
+        // beats the fold the line belongs to, because a URL is the more specific
+        // thing to have aimed at.
+        const url = openUrl ? linkAt(rowAt(at.y) ?? "", at.x - 1) : null;
+        if (url) openUrl?.(url);
+        else clickAt(at.y);
       }),
       hooks.onNavKey?.((key) => {
         // Backtab is not line editing: it is the panel's "previous tab". No
@@ -902,7 +1025,7 @@ export function App(
     // `clickAt` closes over the transcript, the scroll offset and the geometry, so
     // it MUST be a dep: a stale one would hit-test the screen as it was when the
     // listener was registered and fold a group the user is no longer looking at.
-  }, [hooks, run, clickAt]);
+  }, [hooks, run, clickAt, rowAt, copyText, openUrl, store]);
 
   useKeyboard((event) => {
     const { input, key } = inkKey(event);
@@ -1070,6 +1193,7 @@ export function App(
         lines={lines}
         width={cols}
         height={chatH}
+        decorate={decorate}
         scrollOff={scrollOff}
         activity={state.activity}
         busy={busy}

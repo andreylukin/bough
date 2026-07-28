@@ -45,6 +45,36 @@ import { term } from "./term.ts";
 import { App, type AppControls, type InputHooks } from "./components/App.tsx";
 
 /**
+ * Hand a clicked link to the OS.
+ *
+ * HTTP(S) ONLY, and that is a security boundary rather than a convenience. The
+ * transcript is written by a model and by tool output, so the URL under the cursor
+ * is untrusted text; `open` on macOS will happily launch a `file://` path, and
+ * other schemes are how a click becomes an arbitrary application launch. A link
+ * that is not http(s) is left as text — visible, copyable, and inert.
+ *
+ * Detached and ignored: a browser that is slow to start, or absent, must not stall
+ * the render loop or take the TUI down with it.
+ */
+function openUrl(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return;
+  const argv = process.platform === "darwin"
+    ? ["open", parsed.href]
+    : ["xdg-open", parsed.href];
+  try {
+    Bun.spawn(argv, { stdout: "ignore", stderr: "ignore", stdin: "ignore" }).unref();
+  } catch {
+    // No opener on this machine. The URL is still on screen to copy.
+  }
+}
+
+/**
  * A one-listener fan-out for the events the stdin filter pulls out of the stream.
  *
  * One listener and not a set: there is exactly one mounted app, and a registry
@@ -233,6 +263,8 @@ async function main() {
       models={MODELS}
       theme={{ current: theme, persist: persistTheme }}
       notifyDesktop={(body) => terminal.notifyDesktop(body)}
+      copyText={(text) => terminal.osc52Copy(text)}
+      openUrl={openUrl}
     />,
   );
 

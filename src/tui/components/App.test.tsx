@@ -512,3 +512,112 @@ test("with no conversation open the changes tab says so, and never spins", async
     h.unmount();
   }
 });
+
+// ---------------------------------------------------------------------------
+// 12. The mouse: drag selects and copies, a click opens the link under it
+// ---------------------------------------------------------------------------
+// `selection.ts` (ordering, per-row spans, inverse video, clipboard extraction),
+// `format.ts`'s `linkAt`, and `term.ts`'s `osc52Copy` were all written, tested, and
+// called from NOWHERE — turning mouse reporting on takes the terminal's own
+// drag-select and hyperlink hit-testing out of the loop, so the transcript you
+// could scroll was a transcript you could neither select nor click. These pin the
+// wiring, which is the part that was missing.
+
+const LINKED: Partial<TuiState> = {
+  ...STATE,
+  thread: [
+    {
+      id: "m1",
+      sessionId: "s1",
+      role: "supervisor",
+      parts: [{ type: "text", text: "see https://example.com/docs for details" }],
+      pending: false,
+      createdAt: 1_000,
+    },
+  ] as TuiState["thread"],
+};
+
+/** Mount with a captured mouse handler, so a test can post synthetic reports. */
+async function withMouse(state: Partial<TuiState>, over: Record<string, unknown> = {}) {
+  let fire: ((e: { x: number; y: number; kind: string }) => void) | null = null;
+  const h = await mount(
+    app(fakeStore(state), {
+      input: { onMouse: (handler: (e: unknown) => void) => {
+        fire = handler as typeof fire;
+        return () => {};
+      } },
+      ...over,
+    }),
+  );
+  await h.frame();
+  return { h, fire: (e: { x: number; y: number; kind: string }) => fire?.(e) };
+}
+
+test("a drag copies what it covered; a bare click does not", async () => {
+  const copied: string[] = [];
+  const { h, fire } = await withMouse(LINKED, { copyText: (t: string) => copied.push(t) });
+  try {
+    // A drag wide enough to cover the transcript wherever it hangs — it is pinned
+    // to the BOTTOM of the body, so the row is a function of the terminal height.
+    fire({ x: 1, y: 2, kind: "down" });
+    fire({ x: 80, y: 26, kind: "drag" });
+    fire({ x: 80, y: 26, kind: "up" });
+    await h.frame();
+    assert.equal(copied.length, 1, `expected one copy, got ${copied.length}`);
+    assert.ok(
+      copied[0]?.includes("example.com/docs"),
+      `the drag must carry the transcript text, got: ${JSON.stringify(copied[0])}`,
+    );
+
+    // A press and release on ONE cell is a click, not a zero-width selection.
+    copied.length = 0;
+    fire({ x: 5, y: 10, kind: "down" });
+    fire({ x: 5, y: 10, kind: "up" });
+    await h.frame();
+    assert.deepEqual(copied, [], "a click must not put anything on the clipboard");
+  } finally {
+    await h.unmount();
+  }
+});
+
+test("clicking the link under the cursor opens it", async () => {
+  // `osc8()` is a no-op with colour off, and this file disables it globally — with
+  // no escapes in the row there is no link to find, and the test would pass or fail
+  // for a reason that has nothing to do with the wiring.
+  setColorEnabled(true);
+  const opened: string[] = [];
+  const { h, fire } = await withMouse(LINKED, { openUrl: (u: string) => opened.push(u) });
+  try {
+    // The row the reply lands on depends on the height, so sweep the body at a
+    // column inside the URL. Exactly one row carries it, so exactly one open.
+    for (let y = 2; y < 27; y++) {
+      fire({ x: 12, y, kind: "down" });
+      fire({ x: 12, y, kind: "up" });
+    }
+    await h.frame();
+    assert.deepEqual(opened, ["https://example.com/docs"], `got ${JSON.stringify(opened)}`);
+  } finally {
+    setColorEnabled(false);
+    await h.unmount();
+  }
+});
+
+test("a click NEXT TO a link opens nothing", async () => {
+  // `linkAt` is column-exact; the guard is that the whole ROW is not treated as a
+  // link just because it contains one.
+  setColorEnabled(true);
+  const opened: string[] = [];
+  const { h, fire } = await withMouse(LINKED, { openUrl: (u: string) => opened.push(u) });
+  try {
+    for (let y = 2; y < 27; y++) {
+      // Column 2 is the row's indent, before "see" and well before the URL.
+      fire({ x: 2, y, kind: "down" });
+      fire({ x: 2, y, kind: "up" });
+    }
+    await h.frame();
+    assert.deepEqual(opened, [], `nothing should have opened, got ${JSON.stringify(opened)}`);
+  } finally {
+    setColorEnabled(false);
+    await h.unmount();
+  }
+});
