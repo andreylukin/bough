@@ -60,12 +60,29 @@ export interface VLine {
   click?: string;
   /** The raw, unstyled, unwrapped text of this line's section — a copy yields it. */
   copy?: string;
+  /**
+   * The single unwrapped LINE this row was laid out from.
+   *
+   * Finer than `copy`, which is the whole section: a drag that crosses a wrap
+   * should paste the line, not the block it sits in. `selectedCopy` yields one
+   * `src` per run of rows that share it, which un-wraps the line and drops the `│`
+   * gutter in the same step — neither the window's break points nor the gutter was
+   * ever in the source.
+   */
+  src?: string;
 }
 
 const wrap = (text: string, w: number) => wrapLine(text, Math.max(MIN_WRAP, w));
 
 function push(out: VLine[], text: string, w: number, click?: string) {
-  for (const l of wrap(text, w)) out.push(click ? { text: l, click } : { text: l });
+  // EVERY wrapped row carries its own raw source, not just the ones that had a
+  // reason to before. A copy that spans a wrap used to break the line where the
+  // WINDOW broke it — "…a very long command line\n that will certainly wrap" — and
+  // a paste of that is not the text anyone selected. `src` is deduped by the
+  // reader (`selectedCopy`), so a run of rows sharing one source yields it once.
+  for (const l of wrap(text, w)) {
+    out.push(click ? { text: l, click, src: text } : { text: l, src: text });
+  }
 }
 
 /**
@@ -181,7 +198,13 @@ function pushBlock(
   const shown = logical.slice(0, opts.maxLines);
   for (const line of shown) {
     for (const l of wrap(line, w - 2)) {
-      out.push({ text: finish(`${dim("│")} ${l ? opts.style(l) : ""}`), click: opts.click });
+      out.push({
+        text: finish(`${dim("│")} ${l ? opts.style(l) : ""}`),
+        click: opts.click,
+        // The block's own line, so a copy across a wrapped one rejoins it and
+        // leaves the gutter behind.
+        src: line,
+      });
     }
   }
   if (logical.length > shown.length) {

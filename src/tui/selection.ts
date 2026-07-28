@@ -88,13 +88,130 @@ export function extractSpan(text: string, from: number, to: number): string {
   return stripAnsi(to === Infinity ? sliceAnsi(text, from) : sliceAnsi(text, from, to)).trimEnd();
 }
 
+/** What a row can offer a copy: what is painted, and the raw source behind it. */
+export interface CopyRow {
+  /** The styled row as it appears on screen. */
+  text: string;
+  /** The unwrapped source this row was laid out from, when the caller knows it. */
+  src?: string;
+}
+
 /**
- * The whole selection as clipboard text.
+ * Leading block chrome: the `│` gutter and the `╭`/`╰` fence a raised block is
+ * drawn in. None of it was in the source, and all of it is worse than useless in a
+ * paste — `│ const x = 1` does not run.
+ */
+const CHROME = /^(\s*)[│╭╰]\s?/;
+
+/**
+ * A fence row: `╭ ts` opening a block or `╰` closing it.
  *
- * `rowAt` maps a screen row to the styled line rendered there, returning null for
- * a row that shows nothing — padding above a short transcript, a row past the last
- * line. Those rows contribute an empty line rather than being skipped, because a
- * selection that spans a gap should paste with the gap in it.
+ * Both are chrome for the whole of their width — the opener's label included. It
+ * names the block's language to a READER; pasted into a file it is a stray word on
+ * a line of its own, which is worse than not saying it.
+ */
+const FENCE_ONLY = /^\s*[╭╰]/;
+
+/**
+ * A source line as it should reach the clipboard.
+ *
+ * `src` is the line the row was LAID OUT from, which is not the same as the line
+ * the user wrote: a code block is syntax-highlighted before it is wrapped, so the
+ * source still carries SGR. Pasting that puts escape bytes in the buffer — the
+ * exact failure `extractSpan` exists to avoid on the other path.
+ */
+function cleanSource(src: string): string | null {
+  const lines = stripAnsi(src).split("\n");
+  const out: string[] = [];
+  let droppedChrome = false;
+  for (const line of lines) {
+    // A fence is chrome down to its last cell and pastes as a stray glyph or a
+    // phantom blank line. A genuinely EMPTY source line is not the same thing and
+    // survives, which is why this tests for the fence rather than for emptiness.
+    if (FENCE_ONLY.test(line)) {
+      droppedChrome = true;
+      continue;
+    }
+    out.push(line.replace(CHROME, "$1").trimEnd());
+  }
+  while (out.length && out[out.length - 1] === "") out.pop();
+  // NOTHING TO CONTRIBUTE vs A BLANK LINE. A source that was all fence yields
+  // null and is skipped; a source that was genuinely empty yields "" and pastes
+  // as the blank line it is.
+  if (out.length === 0) return droppedChrome ? null : "";
+  return out.join("\n");
+}
+
+/**
+ * The selection as text worth pasting.
+ *
+ * DIFFERENT FROM `selectedText`, deliberately. That one answers "what is on those
+ * cells", which is right for a single-row drag and wrong the moment a selection
+ * crosses a wrap: the window's line breaks are not the text's, so a copied code
+ * block came out broken at the column the terminal happened to be, with bough's
+ * `│` block gutter down the left of every continuation row. Neither was ever in
+ * the source.
+ *
+ * So a MULTI-ROW selection is answered from the source instead. Rows carry the raw
+ * line they were wrapped from (`VLine.src`), and a run of consecutive rows sharing
+ * one source yields that source ONCE — which is what un-wraps the block and drops
+ * the gutter in the same step. A row with no source falls back to its cells, minus
+ * the gutter.
+ *
+ * A single-row selection stays exact: dragging across part of one line means that
+ * part, not the paragraph it belongs to.
+ */
+export function selectedCopy(
+  sel: Selection,
+  rowAt: (y: number) => CopyRow | null,
+): string {
+  const [top, bottom] = selRows(sel);
+  if (top === bottom) {
+    const span = rowSpan(sel, top);
+    const row = rowAt(top);
+    if (!span || !row) return "";
+    return extractSpan(row.text, span.from, span.to).replace(CHROME, "$1");
+  }
+  const out: string[] = [];
+  let lastSource: string | null = null;
+  for (let y = top; y <= bottom; y++) {
+    const span = rowSpan(sel, y);
+    if (!span) continue;
+    const row = rowAt(y);
+    if (row === null) {
+      // A gap the selection crossed — padding above a short transcript. It pastes
+      // as a blank line, because a selection that spans a gap should keep it.
+      out.push("");
+      lastSource = null;
+      continue;
+    }
+    if (row.src !== undefined) {
+      // One source, however many rows it was wrapped across.
+      if (row.src !== lastSource) {
+        const clean = cleanSource(row.src);
+        if (clean !== null) out.push(clean);
+      }
+      lastSource = row.src;
+      continue;
+    }
+    lastSource = null;
+    // No source to consult — the panel, the rail, the composer. A row that is
+    // nothing but chrome is still dropped.
+    if (FENCE_ONLY.test(stripAnsi(row.text))) continue;
+    out.push(extractSpan(row.text, span.from, span.to).replace(CHROME, "$1"));
+  }
+  return out.join("\n");
+}
+
+/**
+ * The whole selection as the CELLS hold it, one line per screen row.
+ *
+ * `rowAt` maps a screen row to the styled line rendered there, returning null for a
+ * row that shows nothing. Those rows contribute an empty line rather than being
+ * skipped, because a selection that spans a gap should paste with the gap in it.
+ *
+ * `selectedCopy` is what the clipboard gets; this is the literal reading, kept for
+ * callers that want exactly what is on screen.
  */
 export function selectedText(
   sel: Selection,

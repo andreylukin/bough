@@ -19,6 +19,7 @@ import {
   rowSpan,
   selectedText,
   selRows,
+  selectedCopy,
 } from "./selection.ts";
 
 test("a single-row drag clips both ends and includes the release cell", () => {
@@ -94,4 +95,94 @@ test("a drag ending on empty padding does not paste trailing blank lines", () =>
   const at = (y: number) => (y <= 2 ? `row ${y}` : null);
   const sel = { anchor: { x: 1, y: 1 }, focus: { x: 9, y: 5 } };
   assert.equal(selectedText(sel, at), "row 1\nrow 2");
+});
+
+// ---- what the clipboard actually gets ---------------------------------------
+// `selectedText` answers "what is on those cells". That is right for one row and
+// wrong across a wrap: the window's line breaks are not the text's, and bough's
+// `│` block gutter is chrome. `selectedCopy` answers from the source instead.
+
+const row = (text: string, src?: string) => (src === undefined ? { text } : { text, src });
+
+test("a copy across a wrap rejoins the line and drops the gutter", () => {
+  // Two screen rows, one source line — exactly what a wrapped code block is.
+  const rows = [
+    row("  │ const x = await bash(\"a very long", "const x = await bash(\"a very long command\");"),
+    row("  │  command\");", "const x = await bash(\"a very long command\");"),
+  ];
+  const out = selectedCopy(
+    { anchor: { x: 1, y: 1 }, focus: { x: 40, y: 2 } },
+    (y) => rows[y - 1] ?? null,
+  );
+  assert.equal(out, "const x = await bash(\"a very long command\");");
+  assert.equal(out.includes("│"), false, "the gutter is chrome, not content");
+  assert.equal(out.includes("\n"), false, "one source line pastes as one line");
+});
+
+test("distinct source lines stay on distinct lines", () => {
+  // The inverse guard: dedupe must not collapse two real lines into one.
+  const rows = [row("  │ first()", "first()"), row("  │ second()", "second()")];
+  assert.equal(
+    selectedCopy({ anchor: { x: 1, y: 1 }, focus: { x: 20, y: 2 } }, (y) => rows[y - 1] ?? null),
+    "first()\nsecond()",
+  );
+});
+
+test("a row with no source falls back to its cells, minus the gutter", () => {
+  // The panel, the rail and the composer have no `src` — only what is painted.
+  const rows = [row("  │ painted only"), row("plain row")];
+  assert.equal(
+    selectedCopy({ anchor: { x: 1, y: 1 }, focus: { x: 20, y: 2 } }, (y) => rows[y - 1] ?? null),
+    "  painted only\nplain row",
+  );
+});
+
+test("a single-row drag stays EXACT — the span, not the source line", () => {
+  // Dragging across part of one line means that part. Yielding the whole source
+  // would make a deliberate partial selection impossible to express.
+  const rows = [row("hello wide world", "hello wide world and much more beyond the edge")];
+  assert.equal(
+    selectedCopy({ anchor: { x: 7, y: 1 }, focus: { x: 10, y: 1 } }, (y) => rows[y - 1] ?? null),
+    "wide",
+  );
+});
+
+test("a gap the selection crossed pastes as a blank line", () => {
+  const rows: ({ text: string; src?: string } | null)[] = [row("top", "top"), null, row("bottom", "bottom")];
+  assert.equal(
+    selectedCopy({ anchor: { x: 1, y: 1 }, focus: { x: 10, y: 3 } }, (y) => rows[y - 1] ?? null),
+    "top\n\nbottom",
+  );
+});
+
+test("a highlighted source is stripped — no escape bytes reach the clipboard", () => {
+  // `src` is the line as LAID OUT, and a code block is syntax-highlighted before it
+  // is wrapped. Emitting it verbatim put raw SGR in the buffer — caught by driving
+  // a real copy, not by this file, which is why it is pinned here now.
+  const styled = "\x1b[38;5;140mconst\x1b[39m x = 1";
+  const rows = [
+    { text: "  \x1b[2m│\x1b[22m " + styled, src: styled },
+    { text: "  next", src: "next" },
+  ];
+  const out = selectedCopy(
+    { anchor: { x: 1, y: 1 }, focus: { x: 30, y: 2 } },
+    (y) => rows[y - 1] ?? null,
+  );
+  assert.equal(out, "const x = 1\nnext");
+  assert.equal(/\x1b/.test(out), false, `escapes leaked: ${JSON.stringify(out)}`);
+});
+
+test("a fence contributes nothing — opener, label and closer alike", () => {
+  // `╭ code` / `╰` frame a raised block. Neither is content: the opener's label
+  // names the language to a reader and is a stray word in a paste, and a trailing
+  // `╰` pasting as a blank line is the tell that the chrome was only half-removed.
+  const rows = [
+    { text: "  ╭ code", src: "╭ code" },
+    { text: "  │ body()", src: "body()" },
+    { text: "  ╰", src: "╰" },
+  ];
+  assert.equal(
+    selectedCopy({ anchor: { x: 1, y: 1 }, focus: { x: 20, y: 3 } }, (y) => rows[y - 1] ?? null),
+    "body()",
+  );
 });

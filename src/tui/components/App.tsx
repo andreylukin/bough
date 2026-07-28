@@ -42,7 +42,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import type { ModelRow } from "../../llm/client.ts";
 import { api, type SessionRow } from "../api.ts";
 import type { MouseEvent, NavKey } from "../mouse.ts";
-import { buildLines, chatBodyHeight, lineAtSlot } from "../lines.ts";
+import { buildLines, chatBodyHeight, lineAtSlot, type VLine } from "../lines.ts";
 import sliceAnsi from "slice-ansi";
 import stripAnsi from "strip-ansi";
 import {
@@ -50,7 +50,7 @@ import {
   rowSpan,
   selRows,
   type Selection,
-  selectedText,
+  selectedCopy,
 } from "../selection.ts";
 import {
   activeTrigger,
@@ -690,11 +690,11 @@ export function App(
    * the highlight and the clipboard extraction — three readers that must agree, or
    * you copy one row and see another highlighted.
    */
-  const rowAt = useCallback((y: number): string | null => {
+  const rowAt = useCallback((y: number): VLine | null => {
     const slot = y - CHAT_TOP;
     if (panel.open || slot < 0 || slot >= chatH) return null;
     const body = chatBodyHeight(chatH, state.queued.length, Boolean(state.notice));
-    return lineAtSlot(lines, body, scrollOff, slot)?.text ?? null;
+    return lineAtSlot(lines, body, scrollOff, slot);
   }, [panel.open, chatH, state.queued.length, state.notice, lines, scrollOff]);
 
   /**
@@ -1076,8 +1076,17 @@ export function App(
           // and its tabs, the rail, the composer, the status row — falls back to
           // what is painted on screen. That fallback is what makes a drag over the
           // mcp tab copy the mcp tab.
+          // The TRANSCRIPT's own line first, because it carries the unwrapped
+          // source a paste should actually contain; anything the transcript does
+          // not own — the panel, the rail, the composer — has only what is painted,
+          // and that is answered from the snapshot.
           const painted = paintedRef.current;
-          const text = selectedText({ ...s, focus: at }, (y) => painted[y - 1] ?? null);
+          const text = selectedCopy({ ...s, focus: at }, (y) => {
+            const line = rowAt(y);
+            if (line) return line;
+            const row = painted[y - 1];
+            return row === undefined ? null : { text: row };
+          });
           if (text.trim()) {
             copyText?.(text);
             store.notify(`copied ${text.length} character${text.length === 1 ? "" : "s"}`);
@@ -1093,7 +1102,7 @@ export function App(
         // A CLICK. Links first: the row's OSC 8 target under this exact column
         // beats the fold the line belongs to, because a URL is the more specific
         // thing to have aimed at.
-        const url = openUrl ? linkAt(rowAt(at.y) ?? "", at.x - 1) : null;
+        const url = openUrl ? linkAt(rowAt(at.y)?.text ?? "", at.x - 1) : null;
         if (url) openUrl?.(url);
         else clickAt(at.y, at.x);
       }),
