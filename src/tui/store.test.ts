@@ -1041,6 +1041,7 @@ test("liveUnits attributes every running thing separately", () => {
     jobs: [
       {
         id: "bg_7",
+        name: "the long sleep",
         sessionId: SESSION,
         pid: 1,
         command: "sleep 90",
@@ -1049,6 +1050,7 @@ test("liveUnits attributes every running thing separately", () => {
       },
       {
         id: "bg_6",
+        name: "finished one",
         sessionId: SESSION,
         pid: 2,
         command: "done",
@@ -1094,4 +1096,48 @@ test("liveUnits attributes every running thing separately", () => {
   // …and everything else must report NO progress rather than an invented bar.
   assert.equal(units[0].progress, null);
   assert.equal(units[1].progress, null);
+});
+
+test("openJob reads a job's buffer, and a failed refresh keeps the last one", async () => {
+  const JOB = {
+    id: "bg_1",
+    name: "dev server",
+    sessionId: SESSION,
+    pid: 7,
+    command: "npm run dev",
+    status: "running" as const,
+    startedAt: 0,
+  };
+  let fail = false;
+  const { api } = fakeApi({
+    jobOutput: () =>
+      fail
+        ? Promise.reject(new Error("the server went away"))
+        : Promise.resolve({ output: "listening on 5173", job: JOB }),
+  });
+  const events = fakeStream();
+  const store = createStore({ api, connect: events.connect });
+  store.start();
+  await settle();
+  await store.open(SESSION);
+  await settle();
+
+  await store.openJob("bg_1", SESSION);
+  assert.equal(store.getState().jobView?.output, "listening on 5173");
+  assert.equal(store.getState().jobView?.job?.name, "dev server");
+  assert.equal(store.getState().jobView?.error, null);
+
+  // A failed poll must not blank the screen: losing everything printed so far
+  // because one round trip missed is worse than a stale tail with a reason on it.
+  fail = true;
+  await store.refreshJob();
+  assert.equal(store.getState().jobView?.output, "listening on 5173");
+  assert.match(store.getState().jobView?.error ?? "", /went away/);
+
+  store.closeJob();
+  assert.equal(store.getState().jobView, null);
+  // …and with nothing open, a refresh is a no-op rather than a throw.
+  await store.refreshJob();
+  assert.equal(store.getState().jobView, null);
+  await store.stop();
 });

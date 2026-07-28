@@ -247,7 +247,7 @@ at the user's permission level and may ignore every host function.
 |---|---|
 | `await bash(cmd)` | Combined output. Carries the turn's interrupt. **Auto-backgrounds past 60s** — returns `…moved to background as bg_N` and keeps running; a `[background]` system note announces its exit. |
 | `await sh(...cmds)` | Runs commands **concurrently**, returns `[{code, out}, …]` in order. Never throws on non-zero exit. |
-| `await bashBg(cmd)` | Explicit background shell that outlives the turn. Returns `{id, pid}`. |
+| `await bashBg(name, cmd)` | Explicit background shell that outlives the turn. The name is required and is what the user sees in the rail and the job view. Returns `{id, name, pid}`. |
 | `await bashOutput(id)` | Output since the last call plus a `[running]`/`[exited]` status line. Safe to call while running. |
 | `await bashWait(id)` | Block until the job finishes. |
 | `await bashKill(id)` | SIGTERM the job. |

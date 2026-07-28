@@ -128,7 +128,7 @@ test("workflows are offered only to a session that may start one", () => {
 
 /** Section → the host function it grants, and a phrase only that section carries. */
 const GRANTS: { id: SectionId; fn: HostFnName; phrase: string }[] = [
-  { id: "shell", fn: "bash", phrase: "await bashBg(cmd)" },
+  { id: "shell", fn: "bash", phrase: "await bashBg(name, cmd)" },
   { id: "files", fn: "view", phrase: "await view(path)" },
   { id: "patch-grammar", fn: "patch", phrase: "INS.HEAD:" },
   { id: "ask", fn: "ask", phrase: "await ask(question" },

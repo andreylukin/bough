@@ -280,7 +280,7 @@ export async function shConcurrent(
       let out = truncateMiddle(shellText(shell)).trimEnd();
       if (timedOut) {
         out = `[killed after ${timeoutMs / 1000}s — sh has no background handoff; use ` +
-          `bashBg() for a command that needs to keep running]\n${out}`.trimEnd();
+          `bashBg(name, cmd) for a command that needs to keep running]\n${out}`.trimEnd();
       } else if (ctx.signal?.aborted) {
         out = `[the turn was interrupted; this command was killed]\n${out}`.trimEnd();
       }
@@ -349,7 +349,7 @@ export function createShellHostFns(ctx: ShellCtx, opts: ShellOptions = {}): Shel
       return JSON.stringify(await shConcurrent(parsed.data, ctx, opts));
     },
 
-    bashBg: (cmd: string) => Promise.resolve(registry.bashBg(cmd, ctx)),
+    bashBg: (name: string, cmd: string) => Promise.resolve(registry.bashBg(name, cmd, ctx)),
     bashOutput: (id: string) => Promise.resolve(registry.bashOutput(id, ctx.sessionId)),
     bashWait: (id: string) => registry.bashWait(id, ctx.sessionId),
     bashKill: (id: string) => registry.bashKill(id, ctx.sessionId),

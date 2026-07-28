@@ -178,7 +178,7 @@ try {
     throw new Error(
       "Bun.$ is not available inside a program — a shell started with it cannot be " +
         "interrupted. Use bash(cmd) for one command, sh(a, b, …) to run several at " +
-        "once, or bashBg(cmd) for work that should outlive the round.",
+        "once, or bashBg(name, cmd) for work that should outlive the round.",
     );
   }) as unknown as typeof Bun.$;
 } catch { /* frozen namespace — the hole documented in the header stays open */ }
@@ -203,7 +203,7 @@ const bindings = {
   sh: (...cmds: string[]) => jsonCall("sh", [JSON.stringify(cmds)]),
   // Background shells: the handle comes back as JSON ({id, pid}); output/kill are
   // plain text.
-  bashBg: (cmd: string) => jsonCall("bashBg", [cmd]),
+  bashBg: (name: string, cmd: string) => jsonCall("bashBg", [name, cmd]),
   bashOutput: (id: string) => hostCall("bashOutput", [id]),
   bashWait: (id: string) => hostCall("bashWait", [id]),
   bashKill: (id: string) => hostCall("bashKill", [id]),

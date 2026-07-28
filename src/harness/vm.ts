@@ -290,7 +290,7 @@ export function runProgram(opts: RunProgramOptions): Promise<ProgramResult> {
       ok: false,
       logs: streamed,
       error: `program timed out after ${timeoutMs}ms — ${survived()}. ` +
-        `Long-running commands belong in bashBg(), not in a foreground wait.`,
+        `Long-running commands belong in bashBg(name, cmd), not in a foreground wait.`,
     });
 
     const finish = (result: ProgramResult) => {

@@ -767,7 +767,7 @@ test("a background job's exit posts through the same wake rule", async () => {
 
     // A non-zero exit always notifies. (A silent clean exit deliberately does not —
     // it would wake an idle session into a whole turn to say nothing.)
-    jobs.bashBg("exit 3", { sessionId: session.id, workspace: process.cwd() });
+    jobs.bashBg("failing job", "exit 3", { sessionId: session.id, workspace: process.cwd() });
 
     await until(
       () => h.db.messagesFor(session.id).some((m) => m.role === "system"),
@@ -776,7 +776,7 @@ test("a background job's exit posts through the same wake rule", async () => {
     const note = h.db.messagesFor(session.id).find((m) => m.role === "system")!;
     assert.match(
       (note.parts[0] as { text: string }).text,
-      /^\[background\] bg_1 finished \(exit 3/,
+      /^\[background\] bg_1 "failing job" finished \(exit 3/,
     );
 
     // And it woke the idle session exactly once — the same rule the subagent note

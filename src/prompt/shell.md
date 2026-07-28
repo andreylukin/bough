@@ -14,8 +14,13 @@ await sh(...cmds) — the same shell, running the commands CONCURRENTLY, returni
 Use it whenever independent commands would otherwise be awaited one after another
 (a build and a lint, three greps, status in two repos).
 
-await bashBg(cmd) — an explicit background shell that outlives your turn (dev
-servers, watchers, long builds). Returns {id, pid} immediately.
+await bashBg(name, cmd) — an explicit background shell that outlives your turn (dev
+servers, watchers, long builds). Returns {id, name, pid} immediately.
+
+The NAME comes first and is REQUIRED — a blank one is refused. It is what the user
+sees in the live-work rail and in the job view they open to watch the output, so
+name the PURPOSE, short and in their words: bashBg("dev server", "npm run dev"),
+bashBg("full test run", "npm test -- --run"). Not "job 1", not the command again.
 
 await bashOutput(id) — a job's output since your last call, plus a [running] or
 [exited] status line. Safe to call WHILE it runs, to watch progress.

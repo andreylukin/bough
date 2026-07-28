@@ -106,10 +106,10 @@ test("AC: GET /sessions/:id/jobs includes the subagents' shells", async () => {
   f.db.createSession(session("child", { kind: "subagent", originId: "spawner" }));
 
   const own = JSON.parse(
-    f.registry.bashBg("sleep 30", { sessionId: "spawner", workspace: process.cwd() }),
+    f.registry.bashBg("long sleep", "sleep 30", { sessionId: "spawner", workspace: process.cwd() }),
   ) as { id: string };
   const childs = JSON.parse(
-    f.registry.bashBg("sleep 30", { sessionId: "child", workspace: process.cwd() }),
+    f.registry.bashBg("long sleep", "sleep 30", { sessionId: "child", workspace: process.cwd() }),
   ) as { id: string };
 
   const res = await f.call(get("/sessions/spawner/jobs"));
@@ -139,7 +139,7 @@ test("AC: killing a job emits job.exited and reports the outcome", async () => {
   await using f = fixture();
   f.db.createSession(session("s1"));
   const { id } = JSON.parse(
-    f.registry.bashBg("sleep 30", { sessionId: "s1", workspace: process.cwd() }),
+    f.registry.bashBg("long sleep", "sleep 30", { sessionId: "s1", workspace: process.cwd() }),
   ) as { id: string };
 
   const exited: BackgroundJob[] = [];
@@ -161,7 +161,7 @@ test("kill resolves a SUBAGENT's job through its spawner's session", async () =>
   f.db.createSession(session("spawner"));
   f.db.createSession(session("child", { kind: "subagent", originId: "spawner" }));
   const { id } = JSON.parse(
-    f.registry.bashBg("sleep 30", { sessionId: "child", workspace: process.cwd() }),
+    f.registry.bashBg("long sleep", "sleep 30", { sessionId: "child", workspace: process.cwd() }),
   ) as { id: string };
 
   // The URL names the spawner; the job belongs to the child. Anything the list
@@ -186,7 +186,7 @@ test("output returns the whole buffer and does NOT steal the model's cursor", as
   await using f = fixture();
   f.db.createSession(session("s1"));
   const { id } = JSON.parse(
-    f.registry.bashBg("echo hello-from-the-job", { sessionId: "s1", workspace: process.cwd() }),
+    f.registry.bashBg("greeter", "echo hello-from-the-job", { sessionId: "s1", workspace: process.cwd() }),
   ) as { id: string };
   await f.registry.bashWait(id, "s1");
 

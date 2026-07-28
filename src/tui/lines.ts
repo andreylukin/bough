@@ -144,7 +144,10 @@ export function parseSubagentNote(text: string): SubagentNote | null {
  * not to inform the user — the job card says the same thing in the user's
  * language, so the raw note is dropped while that card is showing.
  */
-const BG_NOTE_RE = /^\[background\] (\S+) finished/;
+// The quoted name is optional because the note carries one only for a job that has
+// one — and because a note left in an old transcript predates names entirely. Miss
+// this and the raw note renders BESIDE the card that restates it.
+const BG_NOTE_RE = /^\[background\] (\S+)(?: "[^"]*")? finished/;
 export function parseBgNote(text: string): string | null {
   return BG_NOTE_RE.exec(text.trim())?.[1] ?? null;
 }
@@ -586,8 +589,8 @@ export function jobCardLines(out: VLine[], job: JobView, w: number, now: number)
     : danger("⚙");
   const took = fmtElapsed((job.exitedAt ?? now) - job.startedAt);
   body.push({
-    text: `${glyph} ${bold(job.id)} ${jobStatusText(job)}  ${
-      dim(`${clip(job.command, 60)} · ${took}`)
+    text: `${glyph} ${bold(job.name || job.id)} ${jobStatusText(job)}  ${
+      dim(`${job.name ? `${job.id} · ` : ""}${clip(job.command, 60)} · ${took}`)
     }`,
   });
   for (const line of job.tail ?? []) {
@@ -599,7 +602,12 @@ export function jobCardLines(out: VLine[], job: JobView, w: number, now: number)
   }
   const copy = [`${job.id} · ${job.command}`, ...(job.tail ?? [])].join("\n");
   out.push({ text: "" });
-  out.push(...body.map((l) => ({ ...l, copy, click: "jobs", text: "  " + l.text })));
+  // Clicking the card OPENS the job. The target used to be the bare word `jobs`,
+  // which no handler knew, so it fell through to the fold toggle and a click on a
+  // finished build did nothing at all — and an exited job is off the rail, so the
+  // card is the only door left to its output.
+  const click = `job:${job.sessionId}:${job.id}`;
+  out.push(...body.map((l) => ({ ...l, copy, click, text: "  " + l.text })));
 }
 
 // ---- the whole transcript ---------------------------------------------------

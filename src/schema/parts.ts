@@ -278,6 +278,13 @@ export type AskQuestion = z.infer<typeof AskQuestion>;
  */
 export const BackgroundJob = z.object({
   id: z.string(),
+  /**
+   * What the job is for, in the starter's words — required of `bashBg`, derived
+   * from the command for an auto-backgrounded `bash` (`hostfn/jobs.ts`). Defaulted
+   * rather than required on the wire so a job row from an older server parses as
+   * unnamed instead of failing the whole response.
+   */
+  name: z.string().default(""),
   sessionId: z.string(),
   pid: z.number(),
   command: z.string(),

@@ -41,7 +41,7 @@
 import type { Subprocess } from "bun";
 import type { BackgroundJob } from "../schema/parts.ts";
 import type { Bus } from "../types.ts";
-import { ConflictError, NotFoundError } from "../errors.ts";
+import { ConflictError, NotFoundError, ProgramError } from "../errors.ts";
 
 // ---------------------------------------------------------------------------
 // Deterministic truncation
@@ -122,6 +122,17 @@ export interface ExitStatus {
 export interface Shell {
   /** Assigned by `promote`; `""` while a foreground `bash` still owns it. */
   id: string;
+  /**
+   * What this job IS, in the words of whoever started it — `dev server`, `full
+   * test run`. Assigned by `promote` alongside the id.
+   *
+   * Required of `bashBg` and never inferred there: `bg_7` beside 200 characters of
+   * `NODE_ENV=test npx vitest run --reporter=…` told the user which shell it was
+   * only if they read the command and already knew why it was running. An
+   * auto-backgrounded `bash` gets `deriveName(command)` instead, because the model
+   * never chose to background that one and cannot be asked after the fact.
+   */
+  name: string;
   command: string;
   sessionId: string;
   pid: number;
@@ -164,6 +175,39 @@ export interface Shell {
  * This is deliberate. Running in the real checkout is what makes `git commit &&
  * git push` simply work, which is the whole delivery mechanism (spec §2.3).
  */
+/** Longest job name kept. Past this it is a description, not a label. */
+const MAX_NAME_CHARS = 60;
+
+/**
+ * A job name, normalized — or `null` when there is nothing usable in it.
+ *
+ * Whitespace collapses (a name arriving off a template literal is often indented)
+ * and control characters go, because this string is painted into a single rail row
+ * and an embedded escape sequence would repaint the screen.
+ */
+export function normalizeJobName(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  // deno-lint-ignore no-control-regex
+  const clean = raw.replace(/[\x00-\x1f\x7f]/g, " ").replace(/\s+/g, " ").trim();
+  if (!clean) return null;
+  return clean.length > MAX_NAME_CHARS ? `${clean.slice(0, MAX_NAME_CHARS - 1)}…` : clean;
+}
+
+/**
+ * A name for a shell nobody named: the auto-background path, where the model ran a
+ * plain `bash` and the 60s threshold — not a decision — made it a job.
+ *
+ * The command's first meaningful words, with a `cd … &&` prelude and leading
+ * `VAR=value` assignments dropped, because `NODE_ENV=test npm test` is a test run
+ * and not an environment variable.
+ */
+export function deriveName(command: string): string {
+  let rest = command.trim().split("\n")[0] ?? "";
+  rest = rest.replace(/^(?:cd\s+\S+\s*&&\s*)+/, "");
+  rest = rest.replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|\S*)\s+)+/, "");
+  return normalizeJobName(rest.split(/\s*(?:\||&&|;)\s*/)[0] ?? "") ?? "shell";
+}
+
 export function shellInvocation(
   command: string,
   cwd?: string,
@@ -244,7 +288,8 @@ export function backgroundNote(shell: Shell, id: string, afterMs: number): strin
   const { text } = retainedFrom(shell, shell.readTo);
   shell.readTo = shell.written;
   const head = `[still running after ${Math.round(afterMs / 1000)}s — moved to background as ` +
-    `${id}. It keeps running; you'll be notified when it finishes. Read progress: ` +
+    `${id}${shell.name ? ` "${shell.name}"` : ""}. It keeps running; you'll be notified ` +
+    `when it finishes. Read progress: ` +
     `bashOutput("${id}"); block until done: bashWait("${id}"); stop it: bashKill("${id}").]`;
   const soFar = text.trimEnd();
   return soFar ? `${head}\n${soFar}` : head;
@@ -357,6 +402,7 @@ export class JobRegistry {
     }));
     const shell: Shell = {
       id: "",
+      name: "",
       command,
       sessionId: "",
       pid: child.pid,
@@ -397,10 +443,17 @@ export class JobRegistry {
    * took a while. So the auto-background path forces registration and the cap stays
    * where it belongs, on explicit `bashBg`.
    */
-  promote(shell: Shell, ctx: JobCtx, opts: { force?: boolean } = {}): string | null {
+  promote(
+    shell: Shell,
+    ctx: JobCtx,
+    opts: { force?: boolean; name?: string } = {},
+  ): string | null {
     const shells = this.#shellsOf(ctx.sessionId);
     if (!opts.force && this.#runningCount(ctx.sessionId) >= this.#maxRunning) return null;
     shell.id = `bg_${++this.#seq}`;
+    // Never empty. `bashBg` has already refused a blank one; the auto-background
+    // path passes none and gets the command's own first words.
+    shell.name = normalizeJobName(opts.name) ?? deriveName(shell.command);
     shell.sessionId = ctx.sessionId;
     shells.set(shell.id, shell);
     shell.onExit = () => this.#onExit(shell);
@@ -412,8 +465,32 @@ export class JobRegistry {
 
   // -- the four job verbs ---------------------------------------------------
 
-  /** Spawn `command` detached; returns `{id, pid}` as JSON immediately. */
-  bashBg(command: string, ctx: JobCtx): string {
+  /**
+   * Spawn `command` detached under `name`; returns `{id, name, pid}` as JSON.
+   *
+   * The name is REQUIRED and refused when blank rather than derived from the
+   * command. A background job is the one thing here the user watches without
+   * having read the round that started it — the rail row, the completion note and
+   * the job view all lead with this string — and only the caller knows whether
+   * `npm run build` is "the release build" or "reproducing the cache bug". The
+   * auto-background path is the exception (`promote`), because nothing chose it.
+   */
+  bashBg(name: string, command: string, ctx: JobCtx): string {
+    const label = normalizeJobName(name);
+    if (!label) {
+      throw new ProgramError(
+        `bashBg needs a NAME for the job before the command: ` +
+          `bashBg("dev server", "npm run dev"). The name is what the user sees in ` +
+          `the live-work rail and in the finished-job note, so make it say what the ` +
+          `job is for, not what the command is.`,
+      );
+    }
+    if (!command || !command.trim()) {
+      throw new ProgramError(
+        `bashBg("${label}", …) has no command to run — the name comes first now: ` +
+          `bashBg(name, cmd).`,
+      );
+    }
     const running = this.#runningCount(ctx.sessionId);
     if (running >= this.#maxRunning) {
       throw new ConflictError(
@@ -425,8 +502,8 @@ export class JobRegistry {
     }
     // No signal: an explicit background shell survives the turn's stop button.
     const shell = this.spawn(command, { cwd: ctx.workspace });
-    const id = this.promote(shell, ctx, { force: true })!;
-    return JSON.stringify({ id, pid: shell.pid });
+    const id = this.promote(shell, ctx, { force: true, name: label })!;
+    return JSON.stringify({ id, name: shell.name, pid: shell.pid });
   }
 
   /**
@@ -664,12 +741,13 @@ export class JobRegistry {
   #require(id: string, sessionId: string): Shell {
     const shell = this.#sessions.get(sessionId)?.get(id);
     if (shell) return shell;
-    const known = [...(this.#sessions.get(sessionId)?.keys() ?? [])];
+    const known = [...(this.#sessions.get(sessionId)?.values() ?? [])]
+      .map((s) => (s.name ? `${s.id} "${s.name}"` : s.id));
     throw new NotFoundError(
       `no background shell ${id} in this session` +
         (known.length
           ? ` — this session has ${known.join(", ")}.`
-          : ` — this session has started none; bashBg(cmd) starts one, and a bash() ` +
+          : ` — this session has started none; bashBg(name, cmd) starts one, and a bash() ` +
             `command that runs past the background threshold reports the id it was ` +
             `moved to.`),
     );
@@ -695,7 +773,7 @@ export class JobRegistry {
     if ((status?.code ?? 0) === 0 && !status?.signal && lines === 0) return;
     this.#notify(
       shell.sessionId,
-      `[background] ${shell.id} finished (exit ${status?.code ?? "?"}${
+      `[background] ${shell.id} "${shell.name}" finished (exit ${status?.code ?? "?"}${
         status?.signal ? ` on ${status.signal}` : ""
       }) — command "${shell.command.slice(0, 60)}", ${lines} line${
         lines === 1 ? "" : "s"
@@ -715,6 +793,7 @@ export class JobRegistry {
 function jobInfo(shell: Shell): BackgroundJob {
   return {
     id: shell.id,
+    name: shell.name,
     sessionId: shell.sessionId,
     pid: shell.pid,
     command: shell.command,

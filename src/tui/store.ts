@@ -183,6 +183,17 @@ export interface TuiState {
   changes: SessionChangeSet | null;
   /** The open session's background shells AND its subagents' (spec §9). */
   jobs: BackgroundJob[];
+  /**
+   * The job the user has OPENED, with its whole retained buffer — null when none is.
+   *
+   * The rail said `⚙ dev server  4m12s · npm run dev` and that was the end of it:
+   * the only way to see what a background job had printed was to ask the model to
+   * call `bashOutput` and read the answer through a round of the LLM. This is the
+   * user's own door to the same buffer, read through `GET
+   * /sessions/:id/jobs/:jobId/output`, which does NOT move the model's cursor —
+   * watching a job must never eat output the next round was going to be given.
+   */
+  jobView: JobViewState | null;
   workflows: WorkflowSummary[];
   /** runId → the last narrator `log()` line. Memory-only, like the run's chip. */
   workflowLogs: Record<string, string>;
@@ -226,6 +237,7 @@ export function initialState(): TuiState {
     contextLimit: null,
     changes: null,
     jobs: [],
+    jobView: null,
     workflows: [],
     workflowLogs: {},
     workflowSeq: 0,
@@ -260,6 +272,8 @@ export type StoreAction =
   | { type: "ask.settled"; id: string }
   | { type: "changes"; sessionId: string; changes: SessionChangeSet }
   | { type: "jobs"; sessionId: string; jobs: BackgroundJob[] }
+  /** Open, refresh, or (with `view: null`) close the job output view. */
+  | { type: "jobView"; view: JobViewState | null }
   | { type: "workflows"; sessionId: string; workflows: WorkflowSummary[] }
   | { type: "replay"; replay: ReplayReport | null }
   | { type: "notice"; notice: string | null }
@@ -748,6 +762,9 @@ export function reduce(state: TuiState, action: StoreAction): TuiState {
         contextLimit: null,
         changes: null,
         jobs: [],
+        // The open job belonged to the session being left, and its buffer is fetched
+        // per session — carrying it across would paint another conversation's shell.
+        jobView: null,
         workflows: [],
         replay: null,
         // The meter belongs to the turn you were watching. `marks` deliberately do
@@ -798,6 +815,9 @@ export function reduce(state: TuiState, action: StoreAction): TuiState {
 
     case "jobs":
       return action.sessionId === state.currentId ? { ...state, jobs: action.jobs } : state;
+
+    case "jobView":
+      return { ...state, jobView: action.view };
 
     case "workflows":
       return action.sessionId === state.currentId
@@ -942,7 +962,11 @@ export function liveUnits(opts: {
       kind: "shell" as const,
       id: j.id,
       sessionId: j.sessionId,
-      title: j.id,
+      // The NAME the job was started under (`hostfn/jobs.ts` refuses a blank one),
+      // falling back to the id for a row from a server that predates names. `bg_7`
+      // beside a clipped command identified a shell only to someone who had read the
+      // round that started it.
+      title: j.name || j.id,
       elapsedMs: Math.max(0, now - j.startedAt),
       tokens: null,
       costUsd: null,
@@ -1019,6 +1043,24 @@ const NOTICE_TTL_MS = 10_000;
  */
 const USAGE_POLL_MS = 3_000;
 
+/**
+ * One background job, opened for reading.
+ *
+ * `output` is the WHOLE retained buffer rather than a delta: this is a screen the
+ * user scrolls, and a view that could only ever show what arrived since it opened
+ * would answer "what has the dev server printed" with "nothing yet".
+ */
+export interface JobViewState {
+  id: string;
+  /** The session that owns the shell — a subagent's job is not the open session's. */
+  sessionId: string;
+  /** The row, re-read with the output so the header's status cannot go stale. */
+  job: BackgroundJob | null;
+  output: string;
+  /** Why the buffer is not on screen. Null once one has been read. */
+  error: string | null;
+}
+
 export interface StoreDeps {
   /** Absent = the production client. A test passes a fake and never binds a socket. */
   api?: Api;
@@ -1079,6 +1121,14 @@ export interface Store {
   /** Re-read spend for the open session. Silent on failure — see `USAGE_POLL_MS`. */
   refreshUsage(): Promise<void>;
   refreshJobs(): Promise<void>;
+  /**
+   * Open one job for reading and fetch its buffer. Idempotent: calling it again for
+   * the job already open is the refresh, so the poller and the keypress are one path.
+   */
+  openJob(id: string, sessionId: string): Promise<void>;
+  /** Re-read the open job's buffer. No-op when none is open. */
+  refreshJob(): Promise<void>;
+  closeJob(): void;
   refreshWorkflows(): Promise<void>;
   /** Spec §8: replay is always reported. This is what fetches the counts. */
   refreshReplay(runId: string): Promise<void>;
@@ -1209,6 +1259,34 @@ export function createStore(deps: StoreDeps = {}): Store {
       dispatch({ type: "jobs", sessionId: id, jobs });
     } catch (error) {
       fail(error);
+    }
+  };
+
+  /**
+   * Open (or re-read) one job's buffer.
+   *
+   * A failure is kept IN the view rather than raised as a notice: the screen it
+   * belongs to is on top, and a job whose fetch failed must say so where the output
+   * would have been instead of leaving the last good buffer on screen looking live.
+   * The previous output survives a failed refresh for the same reason — losing
+   * everything printed so far because one poll missed is worse than a stale tail.
+   */
+  const openJob = async (id: string, sessionId: string) => {
+    const previous = state.jobView?.id === id ? state.jobView : null;
+    try {
+      const { output, job } = await api.jobOutput(sessionId, id);
+      dispatch({ type: "jobView", view: { id, sessionId, job, output, error: null } });
+    } catch (error) {
+      dispatch({
+        type: "jobView",
+        view: {
+          id,
+          sessionId,
+          job: previous?.job ?? null,
+          output: previous?.output ?? "",
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
     }
   };
 
@@ -1476,6 +1554,12 @@ export function createStore(deps: StoreDeps = {}): Store {
     refreshChanges,
     refreshUsage,
     refreshJobs,
+    openJob,
+    refreshJob: () => {
+      const open = state.jobView;
+      return open ? openJob(open.id, open.sessionId) : Promise.resolve();
+    },
+    closeJob: () => dispatch({ type: "jobView", view: null }),
     refreshWorkflows,
     refreshReplay,
     resync,

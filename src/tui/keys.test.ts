@@ -132,7 +132,7 @@ test("every binding is reachable — some real context resolves to it", () => {
   // The complement of `deadBindings`, checked the expensive way: walk the whole
   // guard space and record which ROW `lookup` actually picks. A binding no context
   // reaches is a key the user can never press, however plausible the table looks.
-  const modes: UiMode[] = ["chat", "rail", "ask", "panel", "help"];
+  const modes: UiMode[] = ["chat", "rail", "ask", "panel", "help", "job"];
   const flags = [
     "emptyDraft",
     "multiline",

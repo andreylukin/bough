@@ -28,6 +28,7 @@ import { ConflictError, NotFoundError, ProgramError } from "../errors.ts";
 import type { BoughEvent } from "../schema/events.ts";
 import type { BackgroundJob } from "../schema/parts.ts";
 import {
+  deriveName,
   descendantPids,
   JobRegistry,
   MAX_HEAD_CHARS,
@@ -227,7 +228,7 @@ test("auto-background ignores the concurrency cap so no command is ever lost", a
   // The cap brakes bashBg loops. A foreground command that merely took a while must
   // still be handed over rather than blocked-then-killed (plan §6.7).
   const r = rig();
-  for (let i = 0; i < 8; i++) r.registry.bashBg("sleep 60", r.ctx);
+  for (let i = 0; i < 8; i++) r.registry.bashBg("sleeper", "sleep 60", r.ctx);
   eq(r.registry.runningIds(r.ctx.sessionId).length, 8);
 
   const out = await bash("sleep 60", r.ctx, { registry: r.registry, bgAfterMs: 100 });
@@ -394,7 +395,7 @@ test("sh kills a command that outlives its deadline and names the escape hatch",
   });
   eq(res.length, 1);
   has(res[0].out, "killed after 0.2s");
-  has(res[0].out, "bashBg()");
+  has(res[0].out, "bashBg(name, cmd)");
   has(res[0].out, "started");
   await r.cleanup();
 });
@@ -405,7 +406,7 @@ test("sh kills a command that outlives its deadline and names the escape hatch",
 
 test("bashBg returns an id and a pid and publishes job.spawned", async () => {
   const r = rig();
-  const { id, pid } = JSON.parse(r.registry.bashBg("sleep 60", r.ctx));
+  const { id, pid } = JSON.parse(r.registry.bashBg("sleeper", "sleep 60", r.ctx));
   eq(id, "bg_1");
   ok(typeof pid === "number" && pid > 0, "a live pid must come back to the program");
   eq(r.events.length, 1);
@@ -418,10 +419,50 @@ test("bashBg returns an id and a pid and publishes job.spawned", async () => {
   await r.cleanup();
 });
 
+test("bashBg refuses a nameless job and carries the name it was given", async () => {
+  const r = rig();
+  // Blank, whitespace-only and missing all fail the same way, and the message says
+  // the order — a caller that passed the command first must be told which argument
+  // it landed in, not just that something was wrong.
+  for (const bad of ["", "   ", "\n\t"]) {
+    const err = throwsWith(() => r.registry.bashBg(bad, "sleep 60", r.ctx), ProgramError);
+    has(err.message, "bashBg needs a NAME");
+    has(err.message, 'bashBg("dev server", "npm run dev")');
+  }
+  // A name with no command is the same mistake seen from the other side.
+  has(
+    throwsWith(() => r.registry.bashBg("dev server", "", r.ctx), ProgramError).message,
+    "has no command to run",
+  );
+
+  const { name } = JSON.parse(r.registry.bashBg("  dev   server \n", "sleep 60", r.ctx));
+  // Normalized on the way in: this string is painted into one rail row.
+  eq(name, "dev server");
+  eq((r.events[0].data as BackgroundJob).name, "dev server");
+  // …and the completion note leads with it, because that is what the user reads.
+  has(r.registry.bashOutput("bg_1", r.ctx.sessionId), "[running]");
+  await r.cleanup();
+});
+
+test("an auto-backgrounded bash is named from its command — nobody chose it", async () => {
+  const r = rig();
+  // The 60s threshold, not a decision, made this a job, so there is no caller to
+  // ask for a name and the command's own first words are the honest answer.
+  const note = await bash("NODE_ENV=test sleep 60", r.ctx, {
+    registry: r.registry,
+    bgAfterMs: 50,
+  });
+  has(note, "moved to background as bg_1");
+  has(note, '"sleep 60"');
+  eq(deriveName("cd /src/bough && npm run build -- --watch"), "npm run build -- --watch");
+  eq(deriveName("   "), "shell");
+  await r.cleanup();
+});
+
 test("bashBg refuses past the concurrency cap and names the running ids", async () => {
   const r = rig();
-  for (let i = 0; i < 8; i++) r.registry.bashBg("sleep 60", r.ctx);
-  const err = throwsWith(() => r.registry.bashBg("sleep 60", r.ctx), ConflictError);
+  for (let i = 0; i < 8; i++) r.registry.bashBg("sleeper", "sleep 60", r.ctx);
+  const err = throwsWith(() => r.registry.bashBg("sleeper", "sleep 60", r.ctx), ConflictError);
   has(err.message, "bashKill");
   has(err.message, "bg_1");
   await r.cleanup();
@@ -429,7 +470,7 @@ test("bashBg refuses past the concurrency cap and names the running ids", async 
 
 test("bashOutput returns only what accrued since the last call", async () => {
   const r = rig();
-  r.registry.bashBg("printf 'one\\n'; sleep 1.5; printf 'two\\n'; sleep 60", r.ctx);
+  r.registry.bashBg("two writes", "printf 'one\\n'; sleep 1.5; printf 'two\\n'; sleep 60", r.ctx);
   const first = await untilAccrued(
     "the first chunk",
     () => r.registry.bashOutput("bg_1", r.ctx.sessionId),
@@ -447,7 +488,7 @@ test("bashOutput returns only what accrued since the last call", async () => {
 
 test("bashWait blocks until exit, returns the exit line, and suppresses the note", async () => {
   const r = rig();
-  r.registry.bashBg("printf 'done\\n'; exit 4", r.ctx);
+  r.registry.bashBg("quick failure", "printf 'done\\n'; exit 4", r.ctx);
   const out = await r.registry.bashWait("bg_1", r.ctx.sessionId);
   has(out, "done");
   has(out, "[exited with code 4]");
@@ -459,16 +500,16 @@ test("bashWait blocks until exit, returns the exit line, and suppresses the note
 
 test("an unclaimed noisy exit posts a note; a silent clean one does not", async () => {
   const r = rig();
-  r.registry.bashBg("printf 'oops\\n'; exit 2", r.ctx);
+  r.registry.bashBg("oops", "printf 'oops\\n'; exit 2", r.ctx);
   await untilTrue("the completion note", () => r.notes.length === 1);
   eq(r.notes[0].sessionId, r.ctx.sessionId);
-  has(r.notes[0].text, "[background] bg_1 finished (exit 2)");
+  has(r.notes[0].text, '[background] bg_1 "oops" finished (exit 2)');
   has(r.notes[0].text, '1 line of output. Read it with bashOutput("bg_1")');
 
   // A clean, silent, fire-and-forget exit has nothing to report: notifying would
   // wake an idle session into a whole LLM turn just to say "bg_2 finished". The
   // job.exited event still carries the outcome to the jobs panel.
-  r.registry.bashBg("exit 0", r.ctx);
+  r.registry.bashBg("silent success", "exit 0", r.ctx);
   await untilTrue(
     "the second job.exited",
     () => r.events.filter((e) => e.type === "job.exited").length === 2,
@@ -479,7 +520,7 @@ test("an unclaimed noisy exit posts a note; a silent clean one does not", async 
 
 test("bashKill reports the real outcome and a second kill reports the prior exit", async () => {
   const r = rig();
-  r.registry.bashBg("sleep 60", r.ctx);
+  r.registry.bashBg("sleeper", "sleep 60", r.ctx);
   matches(await r.registry.bashKill("bg_1", r.ctx.sessionId), /^killed bg_1 \(/);
   matches(await r.registry.bashKill("bg_1", r.ctx.sessionId), /^bg_1 already exited/);
   // A deliberate kill is claimed: it must not also wake the model with a note.
@@ -496,7 +537,7 @@ test("an unknown job id says what this session actually has", async () => {
   has(empty.message, "has started none");
   has(empty.message, "bashBg");
 
-  r.registry.bashBg("sleep 60", r.ctx);
+  r.registry.bashBg("sleeper", "sleep 60", r.ctx);
   const known = throwsWith(
     () => r.registry.bashOutput("bg_9", r.ctx.sessionId),
     NotFoundError,
@@ -507,7 +548,7 @@ test("an unknown job id says what this session actually has", async () => {
 
 test("a session cannot see or read another session's shells", async () => {
   const r = rig({ sessionId: "sess-a" });
-  r.registry.bashBg("sleep 60", r.ctx);
+  r.registry.bashBg("sleeper", "sleep 60", r.ctx);
   eq(r.registry.listJobs("sess-b"), []);
   throwsWith(() => r.registry.bashOutput("bg_1", "sess-b"), NotFoundError);
   // The jobs API, by contrast, reaches across sessions on purpose: anything the UI
@@ -518,7 +559,7 @@ test("a session cannot see or read another session's shells", async () => {
 
 test("jobOutput does not steal the model's bashOutput cursor", async () => {
   const r = rig();
-  r.registry.bashBg("printf 'shared\\n'; sleep 60", r.ctx);
+  r.registry.bashBg("shared", "printf 'shared\\n'; sleep 60", r.ctx);
   await untilTrue(
     "the UI read",
     () => (r.registry.jobOutput("bg_1")?.output ?? "").includes("shared"),
@@ -531,9 +572,9 @@ test("jobOutput does not steal the model's bashOutput cursor", async () => {
 test("killJobsOf stops one session's shells and leaves another's alone", async () => {
   const r = rig({ sessionId: "sess-a" });
   const other: ShellCtx = { sessionId: "sess-b", workspace: process.cwd() };
-  r.registry.bashBg("sleep 60", r.ctx);
-  r.registry.bashBg("sleep 60", r.ctx);
-  r.registry.bashBg("sleep 60", other);
+  r.registry.bashBg("sleeper", "sleep 60", r.ctx);
+  r.registry.bashBg("sleeper", "sleep 60", r.ctx);
+  r.registry.bashBg("sleeper", "sleep 60", other);
   eq(r.registry.killJobsOf("sess-a"), 2);
   await untilTrue("both exits", () => r.registry.runningIds("sess-a").length === 0);
   eq(r.registry.runningIds("sess-b").length, 1);
@@ -582,7 +623,7 @@ test("a shell's retained buffer keeps the HEAD when output overruns the budget",
 test("bashOutput reports the hole when unread output falls out of retention", async () => {
   const registry = new JobRegistry({ limits: { head: 20, tail: 20 } });
   const ctx: ShellCtx = { sessionId: "sess-hole", workspace: process.cwd() };
-  registry.bashBg(MANY_LINES, ctx);
+  registry.bashBg("noisy", MANY_LINES, ctx);
   const seen = await registry.bashWait("bg_1", ctx.sessionId);
   has(seen, "chars omitted from the middle");
   has(seen, "[exited with code 0]");
@@ -618,7 +659,7 @@ test("the bridged sh rejects a non-array payload with the call it wanted", async
 test("the bridged job verbs round-trip through the registry", async () => {
   const r = rig();
   const host = createShellHostFns(r.ctx, { registry: r.registry });
-  const { id } = JSON.parse(await host.bashBg("printf 'bridged\\n'; exit 0"));
+  const { id } = JSON.parse(await host.bashBg("bridge check", "printf 'bridged\\n'; exit 0"));
   eq(id, "bg_1");
   const waited = await host.bashWait(id);
   has(waited, "bridged");

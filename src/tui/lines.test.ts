@@ -462,6 +462,7 @@ test("job cards: a running shell looks alive, an exited one states its outcome",
   const now = 100_000;
   const running: JobView = {
     id: "bg_1",
+    name: "test run",
     sessionId: "s1",
     pid: 10,
     command: "deno test",
@@ -487,7 +488,9 @@ test("job cards: a running shell looks alive, an exited one states its outcome",
   assert.ok(text.includes("running tests"));
   assert.ok(text.includes("12 lines total"));
   assert.ok(text.includes("✗ exit 1")); // the outcome survives the exit
-  assert.ok(out.every((l) => l.click === "jobs" || l.text.trim() === ""));
+  // Every card row is a door INTO that job — `job:<session>:<id>`, which `App`
+  // resolves. The old target was the bare word "jobs" and nothing handled it.
+  assert.ok(out.every((l) => l.click?.startsWith("job:s1:bg_") || l.text.trim() === ""));
 });
 
 test("a [background] wake note is dropped while its job card shows it", () => {
@@ -495,6 +498,7 @@ test("a [background] wake note is dropped while its job card shows it", () => {
   const thread = [msg({ id: "n1", role: "system", parts: [{ type: "text", text: note }] })];
   const job: JobView = {
     id: "bg_1",
+    name: "make",
     sessionId: "s1",
     pid: 1,
     command: "make",

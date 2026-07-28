@@ -70,7 +70,12 @@ import { wordLeft, wordRight } from "./format.ts";
  * `workflows` mode, which is the shape the 3,618-line `App.tsx` grew out of: every
  * surface with its own mode, its own way in, and its own escape.
  */
-export type UiMode = "chat" | "rail" | "ask" | "panel" | "help";
+/**
+ * `job` is the surface one background shell's output gets when you open it from
+ * the rail — its own mode and not a panel tab, because it is addressed to ONE job
+ * and is entered from the row that names it, the way a workflow's drill-in is.
+ */
+export type UiMode = "chat" | "rail" | "ask" | "panel" | "help" | "job";
 
 export type Command =
   // -- global ---------------------------------------------------------------
@@ -165,6 +170,16 @@ export type Command =
    * not a second key.
    */
   | "rail.stop"
+  // -- one job's output, opened from the rail -------------------------------
+  /**
+   * Leave the job view for the rail it was opened from.
+   *
+   * Back to the RAIL and not to chat: you opened this row to look at it, and a
+   * surface that dumps you two levels out is one you stop using for a glance.
+   */
+  | "job.close"
+  /** Kill the job being watched — the rail's two-step `x`, on the open job. */
+  | "job.stop"
   // -- a question hold ------------------------------------------------------
   | "ask.pick"
   | "ask.send"
@@ -1027,6 +1042,47 @@ export const BINDINGS: Binding[] = [
     not: ["panelFiltering"],
     section: "the changes tab",
     desc: "revert everything — ⏎ confirms",
+  },
+
+  // -- one job's output -----------------------------------------------------
+  // Documented as its own section: it is reached with ⏎ from the rail, and every
+  // key here is one the rail or the transcript already means the same thing by.
+  {
+    mode: "job",
+    chord: "esc",
+    command: "job.close",
+    section: "a background job (⏎ on a rail row)",
+    desc: "back to the rail",
+  },
+  { mode: "job", chord: "q", command: "job.close" },
+  { mode: "job", chord: "left", command: "job.close" },
+  {
+    mode: "job",
+    chord: "up",
+    command: "scroll.up",
+    section: "a background job (⏎ on a rail row)",
+    label: "↑/↓",
+    desc: "scroll the output",
+  },
+  { mode: "job", chord: "down", command: "scroll.down" },
+  { mode: "job", chord: "k", command: "scroll.up" },
+  { mode: "job", chord: "j", command: "scroll.down" },
+  {
+    mode: "job",
+    chord: "pageup",
+    command: "scroll.pageUp",
+    section: "a background job (⏎ on a rail row)",
+    label: "pgup/pgdn",
+    desc: "a screenful",
+  },
+  { mode: "job", chord: "pagedown", command: "scroll.pageDown" },
+  {
+    mode: "job",
+    chord: "x",
+    command: "job.stop",
+    section: "a background job (⏎ on a rail row)",
+    label: "x x",
+    desc: "kill this job",
   },
 
   // -- the overlay itself ---------------------------------------------------

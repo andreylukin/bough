@@ -363,8 +363,12 @@ export interface HostFns {
    * code is data.
    */
   sh(cmdsJson: string): Promise<string>;
-  /** Explicit background shell outliving the turn. Returns `{id, pid}` as JSON. */
-  bashBg(cmd: string): Promise<string>;
+  /**
+   * Explicit background shell outliving the turn. Returns `{id, name, pid}` as
+   * JSON. The NAME comes first and is required — it is what the user sees in the
+   * rail and in the job view, and it is refused when blank (`hostfn/jobs.ts`).
+   */
+  bashBg(name: string, cmd: string): Promise<string>;
   /** Output since the last call plus a `[running]`/`[exited]` line. Safe while running. */
   bashOutput(id: string): Promise<string>;
   bashWait(id: string): Promise<string>;

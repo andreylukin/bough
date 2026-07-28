@@ -89,6 +89,7 @@ import {
   type TuiState,
 } from "../store.ts";
 import { Chat, type ChatMeter } from "./Chat.tsx";
+import { JobOutput, jobBodyRows } from "./JobOutput.tsx";
 import { Composer, completionPopupHeight, composerHeight } from "./Composer.tsx";
 import { type PanelControls, type PanelHostDeps, usePanelHost } from "./PanelHost.tsx";
 import { historyTreeRows } from "../historytree.ts";
@@ -204,6 +205,19 @@ const RAIL_TICK_MS = 1000;
 
 /** Rows the `?` overlay moves per ↑/↓. A keymap is scanned, not paged. */
 const HELP_STEP = 3;
+
+/** Rows the open job's output moves per ↑/↓. Build output is read, not scanned. */
+const JOB_STEP = 3;
+
+/**
+ * How often the open job's buffer is re-read while it runs.
+ *
+ * The same second the rail's clock ticks on: this is a `tail -f` and a slower one
+ * reads as a frozen screen. It stops the moment the job exits — the fetch that
+ * returns an exited row is the last one, so a finished job costs nothing to leave
+ * open.
+ */
+const JOB_POLL_MS = 1000;
 
 /** The named keys `keys.ts` knows by flag rather than by byte. */
 const NAMED_KEYS: Record<string, keyof KeyFlags> = {
@@ -335,6 +349,11 @@ export function App(
   const [railSel, setRailSel] = useState(0);
   /** The rail unit a first `x` armed. Id, not the unit: the row is re-derived. */
   const [armedStop, setArmedStop] = useState<string | null>(null);
+  // The open job's scroll, counted up from the tail like the transcript's. Its own
+  // state and not `scrollOff`: sharing one offset with the transcript is what makes
+  // help open in its middle (see `help.open`), and a job is opened and left far more
+  // often than the overlay is.
+  const [jobScroll, setJobScroll] = useState(0);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set<string>());
   const [children, setChildren] = useState<Record<string, SessionRow[]>>({});
   const [sent, setSent] = useState<string[]>([]);
@@ -533,6 +552,25 @@ export function App(
     }
     setRailSel((i) => Math.min(i, units.length - 1));
   }, [units.length]);
+
+  // THE OPEN JOB, FOLLOWED. A background shell publishes no output events — the
+  // buffer lives in the registry and is read over HTTP (`server/jobs.ts`) — so the
+  // only way for an open job view to be live is to re-read it. Running only: the
+  // fetch that first sees an exit is the last one, and a finished job then sits
+  // there costing nothing.
+  const jobRunning = state.jobView?.job?.status === "running";
+  // The job view is not a mode you can be stranded in either — the rail's rule. A
+  // session switch clears `jobView` from under it (`store.ts`), and a mode with no
+  // surface on screen swallows every keypress into a composer that only looks focused.
+  useEffect(() => {
+    if (mode === "job" && !state.jobView) setMode("chat");
+  }, [mode, state.jobView]);
+  useEffect(() => {
+    if (mode !== "job" || !jobRunning) return;
+    const timer = setInterval(() => void store.refreshJob(), JOB_POLL_MS);
+    (timer as { unref?: () => void }).unref?.();
+    return () => clearInterval(timer);
+  }, [mode, jobRunning, store]);
 
   // Memoized on the LEDGER, not on `state`: `marksFor` filters, so a fresh array every
   // render would rebuild the whole transcript on every keystroke.
@@ -806,6 +844,16 @@ export function App(
         void store.open(id).catch(() => store.notify("could not open that branch"));
         return;
       }
+      // A job card opens that job's output — the same surface ⏎ reaches from the
+      // rail, and the only route to a job that has already exited off it.
+      if (target.startsWith("job:")) {
+        const [, sessionId, jobId] = target.split(":");
+        if (!sessionId || !jobId) return;
+        setJobScroll(0);
+        setMode("job");
+        void store.openJob(jobId, sessionId);
+        return;
+      }
       // "+N more lines" lifts the cap and stays lifted — re-capping it is `^e`.
       if (target.endsWith("!full")) {
         const base = target.slice(0, -"!full".length);
@@ -943,9 +991,13 @@ export function App(
       // top-down, so scrolling up lowers it. Same command, because it is the same
       // key doing the same thing to whatever is on screen.
       case "scroll.up":
+        if (uiMode === "job") return setJobScroll((o) => o + JOB_STEP);
         if (uiMode === "help") return setScrollOff((o) => Math.max(0, o - HELP_STEP));
         return setScrollOff((o) => Math.min(Math.max(0, lines.length - 1), o + page));
       case "scroll.down":
+        // No upper clamp here and none needed: `JobOutput` clamps to its own buffer,
+        // which is the only thing that knows how many lines there are.
+        if (uiMode === "job") return setJobScroll((o) => Math.max(0, o - JOB_STEP));
         if (uiMode === "help") {
           const max = Math.max(0, helpLines().length - Math.max(1, rows - 2));
           return setScrollOff((o) => Math.min(max, o + HELP_STEP));
@@ -955,9 +1007,13 @@ export function App(
       // put its last section — `won't do`, where the no-sandbox posture is stated —
       // forty keypresses from the top, on the one surface that advertises pgup/pgdn.
       case "scroll.pageUp":
+        if (uiMode === "job") return setJobScroll((o) => o + jobBodyRows(chatH));
         if (uiMode === "help") return setScrollOff((o) => Math.max(0, o - page));
         return setScrollOff((o) => Math.min(Math.max(0, lines.length - 1), o + page));
       case "scroll.pageDown":
+        if (uiMode === "job") {
+          return setJobScroll((o) => Math.max(0, o - jobBodyRows(chatH)));
+        }
         if (uiMode === "help") {
           const max = Math.max(0, helpLines().length - Math.max(1, rows - 2));
           return setScrollOff((o) => Math.min(max, o + page));
@@ -978,12 +1034,47 @@ export function App(
         return setRailSel((i) => Math.min(last(units.length), i + 1));
       case "rail.open": {
         const target = units[railSel];
-        setMode("chat");
         setArmedStop(null);
-        // A shell's session is the one that spawned it, which for the open session's
-        // own shells is where you already are — harmless, and the right answer for a
-        // subagent's shell, which is the case you cannot otherwise reach.
-        return target ? void store.open(target.sessionId) : undefined;
+        if (!target) return;
+        // A SHELL opens its output, which is what the row is about and what the
+        // legend has always promised ("open this agent / shell output"). It used to
+        // open the owning session instead — for the session's own shells that is the
+        // screen you are already on, so ⏎ on a background job did nothing at all,
+        // and the only route to the buffer was asking the model to read it back.
+        if (target.kind === "shell") {
+          setJobScroll(0);
+          setMode("job");
+          return void store.openJob(target.id, target.sessionId);
+        }
+        setMode("chat");
+        return void store.open(target.sessionId);
+      }
+      // Back to the rail, not to chat: you opened this to glance at it.
+      case "job.close":
+        setArmedStop(null);
+        store.closeJob();
+        return setMode(units.length > 0 ? "rail" : "chat");
+      // The rail's two-step, on the job you are watching — same letter, same arm,
+      // same record (spec §7). A job that has already exited has nothing to kill.
+      case "job.stop": {
+        const view = state.jobView;
+        if (!view || view.job?.status !== "running") return;
+        if (armedStop !== view.id) {
+          setArmedStop(view.id);
+          return store.notify(`x again to kill ${view.job.name || view.id}`);
+        }
+        setArmedStop(null);
+        return void store.stopUnit({
+          kind: "shell",
+          id: view.id,
+          sessionId: view.sessionId,
+          title: view.job.name || view.id,
+          elapsedMs: 0,
+          tokens: null,
+          costUsd: null,
+          progress: null,
+          detail: view.job.command,
+        });
       }
       case "rail.exit":
         setArmedStop(null);
@@ -1317,6 +1408,40 @@ export function App(
         />
         {/* No completion popup here: the panel owns the keyboard, so the draft
             cannot change and a menu over it would be a control you cannot reach. */}
+        <Composer
+          input={line.text}
+          cursor={line.cursor}
+          busy={busy}
+          width={cols}
+          maxRows={composerRows}
+        />
+        {status}
+        <SelectionLayer />
+      </box>
+    );
+  }
+
+  // One job's output, in the transcript's place. Everything pinned stays pinned —
+  // the rail (so the row you came from is still under the cursor), the composer and
+  // the status line — for the same reason the panel keeps them: a surface that
+  // blanks the status row hides the model, the cost and the context budget exactly
+  // while you are watching something run.
+  if (uiMode === "job" && state.jobView) {
+    return (
+      <box flexDirection="column">
+        {header}
+        <JobOutput
+          id={state.jobView.id}
+          job={state.jobView.job}
+          output={state.jobView.output}
+          error={state.jobView.error}
+          scroll={jobScroll}
+          width={cols}
+          height={chatH}
+          now={now()}
+          armed={armedStop === state.jobView.id}
+        />
+        <SubagentRail units={units} sel={null} width={cols} armedId={armedStop} />
         <Composer
           input={line.text}
           cursor={line.cursor}

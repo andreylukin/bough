@@ -263,6 +263,11 @@ function fakeStore(over: Partial<TuiState> = {}): Store & { calls: string[] } {
     refreshChanges: track("refreshChanges"),
     refreshUsage: track("refreshUsage"),
     refreshJobs: track("refreshJobs"),
+    openJob: (id: string, sessionId: string) => (
+      calls.push(`openJob:${sessionId}:${id}`), Promise.resolve()
+    ),
+    refreshJob: track("refreshJob"),
+    closeJob: () => calls.push("closeJob"),
     refreshWorkflows: track("refreshWorkflows"),
     refreshReplay: (id: string) => (calls.push(`replay:${id}`), Promise.resolve()),
     resync: noop,
@@ -669,3 +674,84 @@ test("a drag over the PANEL copies what is on screen, not the transcript", async
 // while the equivalent `^d` chord in the same harness does. That is a harness
 // interaction, not a product one, and a test that fails against working code is
 // worse than no test.
+
+// ---------------------------------------------------------------------------
+// A background job, opened
+// ---------------------------------------------------------------------------
+
+/** A running shell on the rail, and its buffer already fetched. */
+const WITH_JOB: Partial<TuiState> = {
+  ...STATE,
+  jobs: [{
+    id: "bg_1",
+    name: "dev server",
+    sessionId: "s1",
+    pid: 4321,
+    command: "npm run dev",
+    status: "running",
+    startedAt: 9_000,
+  }],
+  jobView: {
+    id: "bg_1",
+    sessionId: "s1",
+    job: {
+      id: "bg_1",
+      name: "dev server",
+      sessionId: "s1",
+      pid: 4321,
+      command: "npm run dev",
+      status: "running",
+      startedAt: 9_000,
+    },
+    output: "listening on 5173\nready in 812ms",
+    error: null,
+  },
+};
+
+test("⏎ on a rail shell opens THAT JOB's output, not the session it belongs to", async () => {
+  // The regression this pins: `rail.open` opened `target.sessionId` for every kind,
+  // and a shell's session is the one you are already looking at — so ⏎ on a
+  // background job repainted the same screen and the buffer stayed unreachable
+  // without spending an LLM round on `bashOutput`.
+  const store = fakeStore(WITH_JOB);
+  const h = await mount(app(store));
+  try {
+    await h.press(DOWN); // empty composer + a live rail = enter the rail
+    await h.press("\r");
+    const frame = await frameShowing(h, "listening on 5173");
+    assert.ok(frame.includes("dev server"), frame);
+    assert.ok(frame.includes("listening on 5173"), frame);
+    assert.ok(frame.includes("ready in 812ms"), frame);
+    // The buffer is FETCHED for the job under the cursor…
+    assert.ok(store.calls.includes("openJob:s1:bg_1"), store.calls.join(","));
+    // …and the session was NOT opened, which is what used to happen instead.
+    assert.equal(store.calls.includes("open:s1"), false, store.calls.join(","));
+
+    // esc leaves it, and says so to the store rather than only to local state.
+    await h.press(ESC);
+    assert.ok(store.calls.includes("closeJob"), store.calls.join(","));
+  } finally {
+    h.unmount();
+  }
+});
+
+test("the open job's x is armed before it kills, like the rail's", async () => {
+  const store = fakeStore(WITH_JOB);
+  const h = await mount(app(store));
+  try {
+    await h.press(DOWN);
+    await h.press("\r");
+    await frameShowing(h, "listening on 5173");
+    await h.press("x");
+    // Spec §7: the first press NAMES what dies and kills nothing.
+    assert.equal(
+      store.calls.some((c) => c.startsWith("stop:")),
+      false,
+      store.calls.join(","),
+    );
+    await h.press("x");
+    assert.ok(store.calls.includes("stop:shell:bg_1"), store.calls.join(","));
+  } finally {
+    h.unmount();
+  }
+});
