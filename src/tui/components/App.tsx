@@ -478,6 +478,20 @@ export function App(
       .then((r) => setSkills(r.skills))
       .catch(() => {}); // no skills, no `/` rows — never a modal
   }, []);
+  /**
+   * What a NEW conversation would run on, for the meter to name before one exists.
+   *
+   * `state.effectiveModel` arrives with a session snapshot, so on the "new
+   * conversation" screen the meter had no model at all — the one screen where you
+   * are about to commit to spending, and the only one that would not say on what.
+   * The default is an install-wide fact, so once per process, like the skills above.
+   */
+  const [defaultModel, setDefaultModel] = useState<string | null>(null);
+  useEffect(() => {
+    void api.getModelSettings()
+      .then((s) => setDefaultModel(s.defaultModel))
+      .catch(() => {}); // unreachable server: the meter simply stays quiet
+  }, []);
   const [completionSel, setCompletionSel] = useState(0);
   const [dismissed, setDismissed] = useState(false);
   // Once per session, not per keystroke: the list is thousands of paths and the
@@ -1435,7 +1449,7 @@ export function App(
     <StatusLine
       width={cols}
       meter={{
-        model: state.session?.model ?? state.effectiveModel,
+        model: state.session?.model ?? state.effectiveModel ?? defaultModel,
         costUsd: state.usage?.tree.costUsd ?? state.usage?.costUsd ?? null,
         contextTokens: state.session?.contextTokens ?? null,
         contextLimit: state.contextLimit,
