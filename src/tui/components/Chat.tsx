@@ -73,7 +73,6 @@ export interface ChatProps {
    * absent degrades the line to spinner + elapsed — see `busyLine`.
    */
   turnTokens?: number | null;
-  turnCostUsd?: number | null;
   /** Spinner phase. The caller owns the clock so this stays render-pure. */
   tick?: number;
   /** Messages typed while a turn ran, held locally until it drains (spec §5). */
@@ -101,7 +100,6 @@ export function Chat(
     busy = false,
     elapsedMs = 0,
     turnTokens,
-    turnCostUsd,
     tick = 0,
     queued = [],
     notice,
@@ -138,7 +136,6 @@ export function Chat(
     elapsedMs,
     tick,
     tokens: turnTokens,
-    costUsd: turnCostUsd,
   });
   return (
     <box flexDirection="column" width={width}>

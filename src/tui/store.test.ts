@@ -904,7 +904,9 @@ test("a finished turn leaves a settled line in the transcript, and the spinner's
   assert.equal(mark.kind, "turn");
   assert.match(mark.text, /^✓ /);
   assert.match(mark.text, /3\.2k tok/);
-  assert.match(mark.text, /\$0\.021/);
+  // NO per-turn cost: asked for and removed. The session total lives on the status
+  // row, which is the only place a dollar figure is actually read.
+  assert.equal(/\$/.test(mark.text), false, mark.text);
   // A settle with nothing to settle is a no-op, not a "✓" under a live spinner.
   assert.equal(reduce(state, { type: "turn.settle", at: 0 }), state);
 });

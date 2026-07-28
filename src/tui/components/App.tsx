@@ -1076,7 +1076,6 @@ export function App(
         elapsedMs={elapsedMs}
         tick={tick}
         turnTokens={turn?.tokens ?? null}
-        turnCostUsd={turn?.costUsd ?? null}
         queued={state.queued}
         notice={state.notice}
       />

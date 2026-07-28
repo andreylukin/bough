@@ -85,6 +85,19 @@ export const PatchSessionBody = z.object({
 export type PatchSessionBody = z.infer<typeof PatchSessionBody>;
 
 /**
+ * PUT /model-settings — what a NEW conversation runs on, for the whole install.
+ *
+ * The same shape as a session pin and deliberately so: the picker commits one
+ * choice to two scopes, this session and the next one. An absent key is left alone;
+ * an explicit `null` clears the pin.
+ */
+export const PutModelSettingsBody = z.object({
+  model: z.string().min(1).nullable().optional(),
+  effort: z.enum(["low", "medium", "high", "xhigh", "max"]).nullable().optional(),
+});
+export type PutModelSettingsBody = z.infer<typeof PutModelSettingsBody>;
+
+/**
  * POST /sessions/:id/questions/:qid — `{answer}` settles the hold; `{decline:
  * true}` rejects the program's `ask()` with a catchable "user declined" so the
  * program can proceed on a stated default or stop cleanly (spec §6).

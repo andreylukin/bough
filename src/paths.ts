@@ -94,6 +94,18 @@ export function themePath(): string {
   return boughPath("theme.json");
 }
 
+/**
+ * What a NEW conversation runs on, chosen in the model picker.
+ *
+ * A sibling of `theme.json` and for the same reason: exactly one per install, not
+ * per session, and not something the frozen SQLite schema should grow a table for.
+ * `BOUGH_MODEL` in `env` is the floor under this — this file is what the picker
+ * writes, so choosing a model does not mean editing a shell file and restarting.
+ */
+export function modelSettingsPath(): string {
+  return boughPath("model.json");
+}
+
 /** The launcher env file — provider keys and the default model live here. */
 export function envPath(): string {
   return boughPath("env");

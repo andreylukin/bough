@@ -465,9 +465,12 @@ export function settledLine(turn: TurnMeter, endedAt: number): string {
     : turn.status === "orphaned"
     ? "⚠"
     : "✓";
+  // Elapsed and tokens, NOT cost. A per-turn dollar figure is noise at the density
+  // a transcript is read at — what a turn cost is only ever interesting as part of
+  // what the SESSION has cost, and that number is on the status row, live. Asked
+  // for directly.
   const bits = [fmtDuration(Math.max(0, endedAt - turn.startedAt))];
   if (turn.tokens > 0) bits.push(`${fmtTokens(turn.tokens)} tok`);
-  if (turn.costUsd > 0) bits.push(fmtUsd(turn.costUsd));
   if (turn.status === "interrupted") bits.push("interrupted");
   if (turn.status === "error") bits.push("failed");
   return `${glyph} ${bits.join(" · ")}`;
@@ -1452,12 +1455,19 @@ export function createStore(deps: StoreDeps = {}): Store {
     },
 
     async setModel(patch) {
-      const id = state.currentId;
-      if (!id) return;
       try {
-        // The row comes back on `session.updated`, so nothing is reconciled here:
-        // the server announces its own write and the reducer applies it.
-        await api.patchSession(id, patch);
+        // TWO SCOPES, ONE CHOICE. Patching the session alone was the whole of this
+        // and it is why picking a model looked broken: `ctx.model` is `BOUGH_MODEL`
+        // frozen at server start, so the pin died with the conversation and the next
+        // one reverted to the built-in default. The install default is written
+        // FIRST, so if the second call fails the durable half has still landed —
+        // the reverse order loses exactly the part the user was complaining about.
+        await api.putModelSettings(patch);
+        // The open conversation, so the choice applies to what is on screen rather
+        // than only to the next one. The row comes back on `session.updated`, so
+        // nothing is reconciled here.
+        const id = state.currentId;
+        if (id) await api.patchSession(id, patch);
       } catch (error) {
         fail(error);
       }

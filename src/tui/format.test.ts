@@ -494,18 +494,20 @@ test("the busy line always names motion, elapsed time, and the way out", () => {
   assert.equal(frames.size, 10);
 });
 
-test("the busy line carries the turn's own tokens and spend while it runs", () => {
-  // G3: `busyLine` accepted these from the day it was written and nobody passed them,
-  // so a ten-minute turn said "17s" and nothing else and the cost chip jumped in one
-  // step when it ended.
+test("the busy line carries the turn's own tokens while it runs — but not its cost", () => {
+  // G3: `busyLine` accepted tokens from the day it was written and nobody passed them,
+  // so a ten-minute turn said "17s" and nothing else.
+  // Cost per turn was then asked for and REMOVED: the session total on the status row
+  // is the number that matters, and a dollar figure per turn is noise at the density a
+  // transcript is read at.
   assert.equal(
-    busyLine({ activity: null, elapsedMs: 42_000, tick: 0, tokens: 3_200, costUsd: 0.021 }),
-    "⠋ working · 42s · 3.2k tok · $0.021 · esc interrupts",
+    busyLine({ activity: null, elapsedMs: 42_000, tick: 0, tokens: 3_200 }),
+    "⠋ working · 42s · 3.2k tok · esc interrupts",
   );
   // A provider that reports usage only at the end leaves zeros here, and a zero is
   // omitted rather than printed: the line degrades to what it always said.
   assert.equal(
-    busyLine({ elapsedMs: 1_000, tick: 0, tokens: 0, costUsd: 0 }),
+    busyLine({ elapsedMs: 1_000, tick: 0, tokens: 0 }),
     "⠋ working · 1s · esc interrupts",
   );
 });

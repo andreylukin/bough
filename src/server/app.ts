@@ -157,6 +157,10 @@ export const routes: Route[] = [
   route("PUT", "/saved-workflows/:name", workflows.putSavedWorkflowH),
   route("POST", "/saved-workflows/:name/runs", workflows.runSavedWorkflowH),
   route("GET", "/model-settings", sessions.getModelSettingsH),
+  // The write half. Without it a chosen model lasted one conversation: `ctx.model`
+  // is `BOUGH_MODEL` frozen at start-up, so the next session reverted to the
+  // built-in default and the picker looked broken because it was.
+  route("PUT", "/model-settings", sessions.putModelSettingsH),
   // Candidates for the composer's `@` completion (`server/fs.ts`).
   route("GET", "/sessions/:id/files", fsapi.listFilesH),
   route("GET", "/files", fsapi.listFilesForWorkspaceH),

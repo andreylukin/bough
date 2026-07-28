@@ -549,6 +549,16 @@ export function createApi(options: ApiOptions = {}) {
       post<WorkflowRun & { savedAs: string }>(`/saved-workflows/${seg(name)}/runs`, body),
     /** What a NEW conversation runs on, for the picker's ● before any session exists. */
     getModelSettings: () => get<ModelSettings>("/model-settings"),
+    /**
+     * Pin what a NEW conversation runs on, for the whole install.
+     *
+     * The write half `patchSession` had and this did not: a pin used to reach the
+     * open session only, so the choice survived one conversation and the next one
+     * silently went back to `BOUGH_MODEL`. Absent field = leave alone, explicit
+     * `null` = unpin.
+     */
+    putModelSettings: (body: { model?: string | null; effort?: Effort | null }) =>
+      put<ModelSettings>("/model-settings", body),
     getWorkflowSettings: () => get<WorkflowSettings>("/workflow-settings"),
     putWorkflowSettings: (sizeGuideline: SizeGuideline) =>
       put<WorkflowSettings>("/workflow-settings", { sizeGuideline }),

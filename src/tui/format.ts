@@ -952,24 +952,23 @@ export function busyLine(
     elapsedMs: number;
     tick: number;
     /**
-     * Tokens streamed and dollars accrued SO FAR in this turn.
+     * Tokens streamed SO FAR in this turn.
      *
-     * The spinner and the elapsed seconds were the whole running line, and the two
-     * numbers that actually move — cost and context — sat frozen on the status row
-     * for the entire turn and then jumped in one frame when it settled. A long turn
-     * is allowed to be slow; it is not allowed to be opaque (spec: expensive things
-     * get a bar). Absent is the normal case for a provider that reports usage only
-     * at the end, and the line degrades to what it always said.
+     * The spinner and the elapsed seconds were the whole running line, so a long
+     * turn moved nothing that said how much work it was doing. Absent is the normal
+     * case for a provider that reports usage only at the end, and the line degrades
+     * to what it always said.
+     *
+     * Deliberately NOT cost: a per-turn dollar figure was asked to be removed. The
+     * session total is on the status row and is the number that matters.
      */
     tokens?: number | null;
-    costUsd?: number | null;
   },
 ): string {
   const frame = SPINNER[Math.abs(Math.trunc(opts.tick)) % SPINNER.length];
   const what = (opts.activity ?? "").trim() || "working";
   const bits = [what, fmtDuration(opts.elapsedMs)];
   if (typeof opts.tokens === "number" && opts.tokens > 0) bits.push(`${fmtTokens(opts.tokens)} tok`);
-  if (typeof opts.costUsd === "number" && opts.costUsd > 0) bits.push(fmtUsd(opts.costUsd));
   bits.push("esc interrupts");
   return `${frame} ${bits.join(" · ")}`;
 }

@@ -42,6 +42,7 @@ import {
   CreateSessionBody,
   PatchSessionBody,
   PostMessageBody,
+  PutModelSettingsBody,
   SetDraftBody,
 } from "../schema/requests.ts";
 import type { AppCtx } from "../types.ts";
@@ -53,6 +54,7 @@ import { cheapModel } from "../worker/titles.ts";
 // — deliberately not imported from `server/changes.ts`, which does import `app.ts`.
 import { recordBase } from "../vcs/repodiff.ts";
 import { type Handler, json, parseBody } from "./http.ts";
+import { loadDefaults, saveDefaults } from "./defaults.ts";
 
 // ---- derived visibility ------------------------------------------------------
 
@@ -259,8 +261,17 @@ export const createSession: Handler = async (req, ctx) => {
   // Pins are separate writes, not create columns. Applying them before the
   // announce is what makes the event and the response carry the same session the
   // database holds.
-  if (body.model) ctx.db.setSessionModel(session.id, body.model);
-  if (body.effort) ctx.db.setSessionEffort(session.id, body.effort);
+  //
+  // The body wins, then the install default (`~/.bough/model.json`), then nothing —
+  // and "nothing" leaves the runner to fall back to `ctx.model`. Stamping the
+  // default HERE rather than resolving it per turn is what keeps the pin readable
+  // in the session record and keeps an existing conversation on the model it has
+  // always run on when the default later changes.
+  const pinned = loadDefaults();
+  const model = body.model ?? pinned.model;
+  const effort = body.effort ?? pinned.effort;
+  if (model) ctx.db.setSessionModel(session.id, model);
+  if (effort) ctx.db.setSessionEffort(session.id, effort);
 
   // T8.5 — the sha this session starts from, which is the whole of the Changes
   // rail's state (spec §13: the working tree is the tip, `base` is where the
@@ -475,9 +486,35 @@ export const patchSession: Handler = async (req, ctx, params) => {
  * and the picker draws it as such.
  */
 export const getModelSettingsH: Handler = (_req, ctx) => {
+  // The picker's own write comes first: `ctx.model` is `BOUGH_MODEL` read once at
+  // start-up and frozen for the process, so a stored default that did not outrank it
+  // could never be reported back and the picker would redraw the ● on the old model
+  // the instant it refetched.
+  const pinned = loadDefaults();
   return json({
-    defaultModel: ctx.model ?? DEFAULT_MODEL,
+    defaultModel: pinned.model ?? ctx.model ?? DEFAULT_MODEL,
     cheapModel: cheapModel(),
-    defaultEffort: ctx.effort ?? null,
+    defaultEffort: pinned.effort ?? ctx.effort ?? null,
   });
+};
+
+/**
+ * `PUT /model-settings` — pin what a NEW conversation runs on.
+ *
+ * The write half that never existed. Without it the picker could only pin the open
+ * session, so a chosen model lasted exactly one conversation and the next one
+ * silently reverted to the built-in default.
+ *
+ * A partial: an absent key is left alone, and an explicit `null` clears the pin
+ * (the picker's "adaptive" effort row means "let the provider decide", which is a
+ * real state and not the absence of one).
+ */
+export const putModelSettingsH: Handler = async (req, ctx) => {
+  const body = await parseBody(req, PutModelSettingsBody);
+  const current = loadDefaults();
+  saveDefaults({
+    model: body.model === undefined ? current.model : body.model,
+    effort: body.effort === undefined ? current.effort : body.effort,
+  });
+  return getModelSettingsH(req, ctx, {});
 };

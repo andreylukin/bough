@@ -107,6 +107,14 @@ const SKILLS_NOTE =
  * `server/app.ts:99` and `patchSession` has always honoured `model` and `effort`. An
  * apology for a gap that had closed is worse than no message — it tells the user to
  * stop trying, so the working feature stays unused.
+ *
+ * The second half of it — "and set as the default for new ones" — was then ALSO
+ * false for a while, in the other direction: nothing wrote a default, because
+ * `/model-settings` was GET-only and `ctx.model` is `BOUGH_MODEL` frozen at server
+ * start. The choice survived one conversation and the next reverted. `store.setModel`
+ * writes both scopes now (`PUT /model-settings` + `PATCH /sessions/:id`), so the
+ * sentence is finally true. Both halves of it are load-bearing; check the writes
+ * before editing the words.
  */
 const MODEL_NOTE = "pinned for this conversation and set as the default for new ones";
 
