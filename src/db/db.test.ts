@@ -603,6 +603,80 @@ test("workflow rows round-trip and patch by field membership", () => {
   db.close();
 });
 
+/**
+ * A fork's transcript IS its ancestor chain's messages, so it renders the parent's
+ * workflow cards. Scoping the run list to one session id left every one of those
+ * cards with no run row: they fell back to `⧉ name · launched`, dropping the status,
+ * the agent counts and the elapsed time of a run that had already finished.
+ */
+test("a fork and a compaction list their ancestors' runs, not just their own", () => {
+  const db = mem();
+  db.createSession(session("root"));
+  db.createSession(session("fork", { parentId: "root", kind: "fork" }));
+  db.createSession(session("compact", { parentId: "fork", kind: "compaction" }));
+  db.createSession(session("other"));
+  const run = (id: string, sessionId: string) =>
+    db.createWorkflow({
+      id,
+      sessionId,
+      name: id,
+      description: "",
+      script: "",
+      phases: [],
+      status: "done",
+      currentPhase: null,
+      result: null,
+      error: null,
+      args: null,
+      resumeOf: null,
+      createdAt: 1,
+      finishedAt: 2,
+    });
+  run("wRoot", "root");
+  run("wFork", "fork");
+  run("wOther", "other");
+
+  assert.deepEqual(db.listWorkflows("root").map((w) => w.id).sort(), ["wRoot"]);
+  assert.deepEqual(db.listWorkflows("fork").map((w) => w.id).sort(), ["wFork", "wRoot"]);
+  // Two levels down, and still not the unrelated session's run.
+  assert.deepEqual(db.listWorkflows("compact").map((w) => w.id).sort(), ["wFork", "wRoot"]);
+  assert.deepEqual(db.listWorkflows("other").map((w) => w.id), ["wOther"]);
+  db.close();
+});
+
+/**
+ * The case the parent-only walk missed. Forking a ROOT parents the branch at the
+ * root's parent — which is nothing — and copies the turns, so `parent_id` is NULL and
+ * `origin_id` is the only edge back to the run that produced the copied card.
+ */
+test("a fork seeded by copy reads its origin's runs; a subagent does not", () => {
+  const db = mem();
+  db.createSession(session("root"));
+  db.createSession(session("branch", { kind: "fork", originId: "root" }));
+  db.createSession(session("helper", { kind: "subagent", originId: "root" }));
+  db.createWorkflow({
+    id: "w1",
+    sessionId: "root",
+    name: "n",
+    description: "",
+    script: "",
+    phases: [],
+    status: "done",
+    currentPhase: null,
+    result: null,
+    error: null,
+    args: null,
+    resumeOf: null,
+    createdAt: 1,
+    finishedAt: 2,
+  });
+
+  assert.deepEqual(db.listWorkflows("branch").map((w) => w.id), ["w1"]);
+  // `origin_id` on a delegate means its SPAWNER. Its runs are not the delegate's.
+  assert.deepEqual(db.listWorkflows("helper"), []);
+  db.close();
+});
+
 test("the agent journal is keyed lookup plus ordered listing", () => {
   const db = mem();
   db.createSession(session("s"));

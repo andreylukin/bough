@@ -871,13 +871,47 @@ export class SqliteDb implements DbPort {
     return r && toWorkflow(r);
   }
 
+  /**
+   * Runs belonging to a session — meaning its whole LINEAGE's runs, not the ones
+   * whose `session_id` matches exactly.
+   *
+   * A branch shows its source's transcript by two different mechanisms and needs both
+   * covered. Shared ancestors are inherited by reference (`threadFor` walks
+   * `parent_id`); the forked turns themselves are COPIED into the new session
+   * (`history/branch.ts`), and the edge back to where they came from is `origin_id`.
+   * Either way the inherited messages carry the source's `workflow` parts, so scoping
+   * this to one id left every one of those cards with no run row to read: a fork of a
+   * finished 4/4 fan-out rendered `⧉ name · launched`, with no status, no agent counts
+   * and no elapsed time.
+   *
+   * `origin_id` is followed only for fork/compaction. On a subagent or a workflow
+   * agent the same column means the SPAWNER, and a delegate listing its spawner's
+   * runs would be showing work that is not its own.
+   */
   listWorkflows(sessionId?: string): WorkflowRun[] {
-    const rows = sessionId === undefined
-      ? this.#all<WorkflowRow>(`SELECT * FROM workflows ORDER BY created_at DESC, rowid DESC`)
-      : this.#all<WorkflowRow>(
-        `SELECT * FROM workflows WHERE session_id = ? ORDER BY created_at DESC, rowid DESC`,
-        sessionId,
-      );
+    if (sessionId === undefined) {
+      return this.#all<WorkflowRow>(`SELECT * FROM workflows ORDER BY created_at DESC, rowid DESC`)
+        .map(toWorkflow);
+    }
+    const ids: string[] = [];
+    const seen = new Set<string>();
+    const queue = [sessionId];
+    while (queue.length > 0) {
+      const id = queue.shift()!;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const s = this.getSession(id);
+      if (!s) continue;
+      ids.push(id);
+      if (s.parentId) queue.push(s.parentId);
+      if (s.originId && (s.kind === "fork" || s.kind === "compaction")) queue.push(s.originId);
+    }
+    if (ids.length === 0) return [];
+    const rows = this.#all<WorkflowRow>(
+      `SELECT * FROM workflows WHERE session_id IN (${ids.map(() => "?").join(", ")})
+       ORDER BY created_at DESC, rowid DESC`,
+      ...ids,
+    );
     return rows.map(toWorkflow);
   }
 
