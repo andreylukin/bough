@@ -441,6 +441,8 @@ usage() {
   echo "  run      run the server in the foreground (what launchd executes)"
   echo "  exec     headless one-shot turn (auto-starts the server; alias: prompt):"
   echo "           bough exec [-w dir] [-m model] [--json] \"...\" — or prompt on stdin"
+  echo "  sync-mcp adopt Claude Code's MCP servers into bough's registry:"
+  echo "           bough sync-mcp [--from DIR] [--dry-run] [--force]"
   echo "  purge    hard-delete sessions archived over 30 days ago (also runs on boot)"
 }
 
@@ -467,6 +469,14 @@ case "${1:-}" in
     require_bun
     case " $* " in *" --port "*) ;; *) ensure_up ;; esac
     exec bun "$ROOT/src/cli/exec.ts" "$@"
+    ;;
+  sync-mcp)
+    shift
+    # No server needed: this reads two config files and writes the registry, which
+    # is a file. The server re-reads it per turn (MCP state is never cached), so a
+    # running bough picks the new entries up without a restart.
+    require_bun
+    exec bun "$ROOT/src/cli/sync_mcp.ts" "$@"
     ;;
   purge)
     cmd_purge
