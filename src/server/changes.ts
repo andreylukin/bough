@@ -30,6 +30,7 @@
  * Ported from `src/server/changes.ts`, dropping the clonefile source and the apply
  * path. Deltas are marked `NOTE:`.
  */
+import { postSystemNote } from "../agents/notes.ts";
 import { BadRequestError, NotFoundError } from "../errors.ts";
 import { RevertChangesBody } from "../schema/requests.ts";
 import type { AppCtx, Db } from "../types.ts";
@@ -208,5 +209,29 @@ export const getChangesH: Handler = async (_req, ctx, params) => {
 export const revertChangesH: Handler = async (req, ctx, params) => {
   requireSession(ctx, params.id);
   const body = await parseBody(req, RevertChangesBody, {});
-  return json(await revertChanges(ctx.db, params.id, body.paths));
+  const outcome = await revertChanges(ctx.db, params.id, body.paths);
+  // AND TELL THE MODEL. Reverting wrote nothing anywhere the agent can read, so the
+  // next turn replayed its own successful patch, its green test run and its summary
+  // — and then found the old code back. The only reading available to it was that
+  // its write had silently failed, so it "fixed" the regression by applying the edit
+  // again: the one gesture that means "no, not that" was the one the model was
+  // guaranteed to undo. Observed twice, verbatim ("No—the cart.js fix didn't apply.
+  // Let me check the file and re-apply it").
+  //
+  // A system note is exactly the shape the schema already has for this — a
+  // harness-injected fact that replays as user-side text — and it is what a job exit
+  // and a detached subagent's report already use. It does NOT wake a turn: reverting
+  // is the human's verb and must stay free (the reason this is REST at all).
+  if (outcome.reverted.length > 0) {
+    postSystemNote(
+      ctx,
+      params.id,
+      `The human reverted ${outcome.reverted.join(", ")} to the state before this ` +
+        `session. Those edits are gone from the working tree on purpose — this is not ` +
+        `a failed write and not a regression to repair. Do not re-apply them unless ` +
+        `you are asked to.`,
+      { wake: "never" },
+    );
+  }
+  return json(outcome);
 };

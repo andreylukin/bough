@@ -247,17 +247,20 @@ function fakeStore(over: Partial<TuiState> = {}): Store & { calls: string[] } {
   // published a view, and the guard that watches for a viewless "job" mode bounced
   // it straight back — invisible to a fake that never republishes.
   let state: TuiState = { ...initialState(), ...over };
-  const listeners = new Set<() => void>();
+  const listeners = new Set<(s: TuiState) => void>();
   const publish = (patch: Partial<TuiState>) => {
     state = { ...state, ...patch };
-    for (const fn of listeners) fn();
+    for (const fn of listeners) fn(state);
   };
   const noop = () => Promise.resolve();
   const track = (name: string) => () => (calls.push(name), Promise.resolve());
   return {
     calls,
     getState: () => state,
-    subscribe: (fn: () => void) => (listeners.add(fn), () => listeners.delete(fn)),
+    subscribe: (fn: (s: TuiState) => void) => {
+      listeners.add(fn);
+      return () => void listeners.delete(fn);
+    },
     dispatch: () => {},
     start: () => {},
     stop: noop,

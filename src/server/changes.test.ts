@@ -346,6 +346,58 @@ test.skipIf(!gitAvailable)("AC: per-path revert restores one file and leaves its
   }
 });
 
+test.skipIf(!gitAvailable)("revert tells the MODEL, or the next turn re-applies the edit", async () => {
+  // The bug this pins, measured end to end: reverting wrote nothing the agent could
+  // read — no message, no event, no session state — so the next turn replayed its own
+  // successful patch, its green test run and its summary, found the old code back,
+  // and concluded its write had failed. It then "fixed the regression" by applying
+  // the edit again. The one gesture that means "no, not that" was the one the model
+  // was guaranteed to undo.
+  using f = fixture();
+  const repo = await tempRepo();
+  try {
+    const s = await startSession(f, repo);
+    await writeFile(`${repo}/README.md`, "the agent's edit\n");
+    const before = f.db.messagesFor(s.id).length;
+
+    const res = await f.call(post(`/sessions/${s.id}/changes/revert`, { paths: ["README.md"] }));
+    assert.equal(res.status, 200, await res.clone().text());
+
+    const messages = f.db.messagesFor(s.id);
+    assert.equal(messages.length, before + 1, "a revert must leave a record the model replays");
+    const note = messages.at(-1)!;
+    assert.equal(note.role, "system");
+    const text = note.parts.map((p) => (p.type === "text" ? p.text : "")).join("");
+    // It must name the file, and say the two things that stop a re-apply: this was
+    // deliberate, and it is not yours to repair.
+    assert.match(text, /README\.md/);
+    assert.match(text, /revert/i);
+    assert.match(text, /not.*(re-?apply|repair|regression)/is);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test.skipIf(!gitAvailable)("revert: a revert that changed nothing says nothing to the model", async () => {
+  // Skipped paths revert nothing, and a note about an edit that is still on disk
+  // would be a lie the model acts on — the mirror image of the bug above.
+  using f = fixture();
+  const repo = await tempRepo();
+  try {
+    const s = await startSession(f, repo);
+    await writeFile(`${repo}/README.md`, "the agent's edit\n");
+    const before = f.db.messagesFor(s.id).length;
+    const res = await f.call(post(`/sessions/${s.id}/changes/revert`, { paths: ["nope.txt"] }));
+    assert.equal(res.status, 200, await res.clone().text());
+    const outcome = await res.json() as { reverted: string[]; skipped: string[] };
+    assert.deepEqual(outcome.reverted, []);
+    assert.deepEqual(outcome.skipped, ["nope.txt"]);
+    assert.equal(f.db.messagesFor(s.id).length, before);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
 test.skipIf(!gitAvailable)("revert: an ABSENT `paths` reverts everything the rail is showing", async () => {
   using f = fixture();
   const repo = await tempRepo();
