@@ -11,7 +11,13 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { collectClaudeServers, looksSecret, parseSyncArgs, runSyncMcp } from "./sync_mcp.ts";
+import {
+  boughName,
+  collectClaudeServers,
+  looksSecret,
+  parseSyncArgs,
+  runSyncMcp,
+} from "./sync_mcp.ts";
 
 const HOME = "/home/t";
 
@@ -194,6 +200,52 @@ test("a server that exists ONLY as a keychain grant is synced — the Slack case
   assert.equal(text.includes("claudeAiOauth"), false);
   // And no secret is written down, which is the invariant the whole command holds.
   assert.equal(text.includes("slack-secret-token"), false);
+});
+
+test("a plugin-namespaced name is renamed to a slug bough accepts", async () => {
+  // The real failure, verbatim: `plugin:slack:slack  failed — invalid server name`.
+  // Claude Code namespaces a plugin's server; bough's registry takes slugs. The
+  // name is what you type in /mcp, so `slack` is the right answer and the rename
+  // has to be said out loud.
+  const file = await registryFile();
+  const lines: string[] = [];
+  const code = await runSyncMcp([], {
+    out: (l) => lines.push(l),
+    err: (l) => lines.push(l),
+    readJson: () => null,
+    keychain: keychain({
+      "plugin:slack:slack|a1b2c3": {
+        serverName: "plugin:slack:slack",
+        serverUrl: "https://slack.example.com/mcp",
+        accessToken: "t",
+        expiresAt: Date.now() + 3_600_000,
+      },
+    }),
+    home: HOME,
+    cwd: "/w",
+    config: { file },
+  });
+  assert.equal(code, 0);
+  const servers = JSON.parse(await readFile(file, "utf8")).servers;
+  assert.deepEqual(Object.keys(servers), ["slack"]);
+  // The grant is keyed by CLAUDE CODE's name — the rename is bough's business only.
+  assert.equal(
+    servers.slack.headers.Authorization,
+    "Bearer ${keychain:Claude Code-credentials#mcpOAuth.plugin:slack:slack|a1b2c3.accessToken}",
+  );
+  assert.match(lines.join("\n"), /renamed from plugin:slack:slack/);
+});
+
+test("a rename never lands on top of another server", () => {
+  assert.equal(boughName("slack", new Set()), "slack"); // already valid: untouched
+  assert.equal(boughName("plugin:slack:slack", new Set()), "slack");
+  // `slack` is spoken for, so the whole name is slugified rather than merged.
+  assert.equal(boughName("plugin:slack:slack", new Set(["slack"])), "plugin-slack-slack");
+  assert.equal(
+    boughName("plugin:slack:slack", new Set(["slack", "plugin-slack-slack"])),
+    null,
+  );
+  assert.equal(boughName("Weird Name!", new Set()), "weird-name");
 });
 
 test("a configured server is matched to its grant by name, then by url", async () => {

@@ -205,6 +205,8 @@ export interface SyncResult {
   action: "added" | "updated" | "skipped" | "failed";
   /** True when the entry carries the keychain reference. */
   authed?: boolean;
+  /** Claude Code's name for it, when bough had to rename it to a valid slug. */
+  renamedFrom?: string;
   reason?: string;
 }
 
@@ -368,6 +370,35 @@ export function toBoughServer(
 }
 
 /**
+ * A name bough's registry will accept, derived from whatever Claude Code called it.
+ *
+ * Claude Code namespaces a plugin's server — the Slack connector arrives as
+ * `plugin:slack:slack` — and bough's registry takes lowercase slugs, so adopting one
+ * failed on the name alone with everything else about it correct. Renaming is the
+ * right answer rather than loosening the registry: the name is what a person types
+ * in `/mcp` and what a skill's `mcp:` frontmatter names, and `plugin:slack:slack` is
+ * a namespace detail of the other tool, not something anyone wants to type here.
+ *
+ * The LAST segment is preferred (`plugin:slack:slack` → `slack`) because that is the
+ * server's own name and what a person would call it. When that is taken by something
+ * else, or is not a usable slug on its own, the whole name is slugified instead
+ * (`plugin-slack-slack`) — ugly, but unambiguous, and reported either way. `taken`
+ * carries the names already claimed in this run, so two plugins that both end in
+ * `slack` cannot collapse into one entry.
+ */
+export function boughName(raw: string, taken: ReadonlySet<string>): string | null {
+  const valid = (s: string) => /^[a-z0-9][a-z0-9_-]*$/.test(s);
+  if (valid(raw)) return raw;
+  const slug = (s: string) =>
+    s.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+  const last = slug(raw.split(":").pop() ?? "");
+  if (valid(last) && !taken.has(last)) return last;
+  const whole = slug(raw);
+  if (valid(whole) && !taken.has(whole)) return whole;
+  return null;
+}
+
+/**
  * An env value that looks like a pasted credential rather than a setting.
  *
  * A heuristic, and it is allowed to be: it drives a WARNING, never a refusal. The
@@ -449,7 +480,20 @@ export async function runSyncMcp(argv: string[], deps: SyncDeps = {}): Promise<n
   const results: SyncResult[] = [];
   const warnings: string[] = [];
 
-  for (const { name, server, source } of found) {
+  // Names claimed so far, so a rename cannot land on top of another server.
+  const taken = new Set([...Object.keys(existing), ...found.map((f) => f.name)]);
+  for (const { name: claudeName, server, source } of found) {
+    const name = boughName(claudeName, taken);
+    if (!name) {
+      results.push({
+        name: claudeName,
+        source,
+        action: "failed",
+        reason: `no free name could be derived from "${claudeName}"`,
+      });
+      continue;
+    }
+    if (name !== claudeName) taken.add(name);
     if (existing[name] && !parsed.args.force) {
       results.push({
         name,
@@ -459,7 +503,9 @@ export async function runSyncMcp(argv: string[], deps: SyncDeps = {}): Promise<n
       });
       continue;
     }
-    const grant = grantFor(name, server.url);
+    // Matched on what CLAUDE CODE calls it — the grant is keyed by that name, and
+    // the rename above is bough's business, not the keychain's.
+    const grant = grantFor(claudeName, server.url);
     const mapped = toBoughServer(server, grant);
     if ("reason" in mapped) {
       results.push({ name, source, action: "failed", reason: mapped.reason });
@@ -493,13 +539,26 @@ export async function runSyncMcp(argv: string[], deps: SyncDeps = {}): Promise<n
         continue;
       }
     }
-    results.push({ name, source, action, authed: mapped.authed });
+    results.push({
+      name,
+      source,
+      action,
+      authed: mapped.authed,
+      // A rename is not a detail to swallow: this name is what you type in `/mcp`
+      // and what a skill's `mcp:` frontmatter has to say.
+      ...(name === claudeName ? {} : { renamedFrom: claudeName }),
+    });
   }
 
   for (const r of results) {
     const mark = r.action === "added" || r.action === "updated" ? "✓" : "·";
-    const note = r.reason ? ` — ${r.reason}` : r.authed ? " — using Claude Code's keychain token" : "";
-    out(`${mark} ${r.name}  ${r.action}${note}   (${r.source})`);
+    const note = r.reason
+      ? ` — ${r.reason}`
+      : r.authed
+      ? " — using Claude Code's keychain token"
+      : "";
+    const renamed = r.renamedFrom ? ` (renamed from ${r.renamedFrom})` : "";
+    out(`${mark} ${r.name}${renamed}  ${r.action}${note}   (${r.source})`);
   }
   for (const w of warnings) err(`warning: ${w}`);
 
