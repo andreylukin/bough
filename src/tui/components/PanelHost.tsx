@@ -911,8 +911,27 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
         if (!controls.setMcpEnabled) {
           return setMessage("granting an MCP server is not wired into this client yet");
         }
-        return void controls.setMcpEnabled(name, on, state.currentId ?? "")
-          .then(() => controls.loadMcp?.(state.currentId ?? undefined).then(setMcp))
+        // GLOBAL, not this conversation. A grant scoped to `state.currentId` lasted
+        // exactly as long as the conversation it was made in, so every new one
+        // started with every server off and the same server had to be granted again
+        // and again — a setting wearing a per-conversation permission's clothes.
+        // The scope has existed since the registry did (`""` in `mcp/config.ts`,
+        // meaning every session) and the panel never used it.
+        //
+        // Session-scoped grants remain in the model and are still what a skill's
+        // `mcp:` frontmatter and a TTL grant produce; this is about the verb a human
+        // presses. A global revoke clears every scope server-side
+        // (`revokeEverywhere`), so the message below is true of older conversations
+        // too — grants made one at a time, which is how they were all made before.
+        return void controls.setMcpEnabled(name, on, "")
+          .then(() => {
+            setMessage(
+              on
+                ? `${name} is granted in every conversation`
+                : `${name} is off in every conversation`,
+            );
+            return controls.loadMcp?.(state.currentId ?? undefined).then(setMcp);
+          })
           .catch((e: unknown) => setMessage(e instanceof Error ? e.message : String(e)));
       }
       default:

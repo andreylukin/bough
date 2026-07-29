@@ -562,6 +562,27 @@ export function setActivation(
 }
 
 /**
+ * Revoke `name` in EVERY scope — the global one and every session that holds it.
+ *
+ * What makes this the right shape for a global revoke rather than an overreach: the
+ * panel's ⏎ grants globally, so its opposite has to mean what it says. Clearing only
+ * the global scope left a server still granted in whichever conversations had been
+ * granted it one at a time (which is how every grant was made before that change),
+ * so the screen said "off in every conversation" while the next turn in an older
+ * conversation could still call it. A permission surface may not be approximately
+ * right.
+ */
+export function revokeEverywhere(name: string, opts: ActivationOptions = {}): void {
+  const doc = readDocument(opts);
+  for (const [scope, list] of Object.entries(doc.activations)) {
+    const rest = list.filter((a) => a.name !== name);
+    if (rest.length > 0) doc.activations[scope] = rest;
+    else delete doc.activations[scope];
+  }
+  writeDocument(doc, opts);
+}
+
+/**
  * Parse a `"90m" | "2h" | "7d"` TTL into an absolute ISO expiry.
  *
  * Absolute, not a duration stored as-is: a duration would silently restart every

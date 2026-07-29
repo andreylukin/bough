@@ -51,6 +51,7 @@ import {
   type McpConfigOptions,
   type Registry,
   removeServer,
+  revokeEverywhere,
   requireServer,
   saveRegistry,
   setActivation,
@@ -315,7 +316,11 @@ export const setMcpActivationH = (on: boolean): Handler => async (req, ctx, para
   }
   if (on) requireServer(params.name);
   const expires = on && parsed.data.ttl?.trim() ? ttlToExpires(parsed.data.ttl.trim()) : undefined;
-  setActivation(sessionId || undefined, params.name, on, expires ? { expires } : {});
+  // A GLOBAL revoke means every scope, not just the global row: grants made one
+  // conversation at a time (which is how they were all made before the panel's ⏎
+  // became global) would otherwise survive a revoke that said it covered them.
+  if (!on && !sessionId) revokeEverywhere(params.name);
+  else setActivation(sessionId || undefined, params.name, on, expires ? { expires } : {});
   if (!on) {
     if (sessionId) await mcpManager().drop(sessionId, params.name);
     else await mcpManager().dropServer(params.name);

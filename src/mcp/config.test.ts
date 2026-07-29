@@ -24,6 +24,7 @@ import {
   isStdio,
   loadRegistry,
   removeServer,
+  revokeEverywhere,
   requireServer,
   saveRegistry,
   ServerConfig,
@@ -182,6 +183,25 @@ test("saveRegistry preserves grants; removeServer revokes the ones it orphans", 
   assert.deepEqual(activationsFor("s1", { file }), ["exa"]);
   upsertServer("echo", { command: "deno" }, { file });
   assert.deepEqual(activationsFor("s1", { file }), ["exa"]);
+});
+
+test("revokeEverywhere clears the global scope AND every session that holds it", () => {
+  // The panel's ⏎ grants globally, so its opposite has to mean what it says.
+  // Clearing only the global row left a server granted in whichever conversations
+  // had been granted it one at a time — which is how every grant was made before ⏎
+  // became global — so the screen said "off in every conversation" while the next
+  // turn in an older one could still call it.
+  const file = tmpFile();
+  saveRegistry({ servers: { echo: { command: "deno" }, exa: { command: "npx" } } }, { file });
+  setActivation("s1", "echo", true, { file });
+  setActivation("s2", "echo", true, { file });
+  setActivation(undefined, "echo", true, { file });
+  setActivation("s1", "exa", true, { file }); // a sibling grant, which must survive
+
+  revokeEverywhere("echo", { file });
+  assert.deepEqual(activationsFor("s1", { file }), ["exa"]);
+  assert.deepEqual(activationsFor("s2", { file }), []);
+  assert.deepEqual(activationsFor(undefined, { file }), []);
 });
 
 test("activations: per-session and global scopes, and a lapsed TTL fails closed", () => {
