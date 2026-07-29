@@ -307,6 +307,126 @@ test("an expired grant is synced and said out loud, not silently sent", async ()
   assert.match(lines.join("\n"), /claude/i); // …and how to refresh it
 });
 
+test("the same endpoint under a different name is ONE server, not two", async () => {
+  // The screenshot that reported this: `slack` and `plugin-slack-slack` side by
+  // side, same URL, and `linear` (authorized, working) beside a `linear-server`
+  // that says "needs auth". The registry is keyed by name, so nothing downstream
+  // would ever have noticed the duplicate.
+  const file = await registryFile();
+  const deps = { ...silent, readJson: () => null, home: HOME, cwd: "/w", config: { file } };
+  await runSyncMcp([], { ...deps, keychain: keychain(SLACK_GRANT) });
+  // Now the same endpoint arrives under Claude Code's namespaced name.
+  await runSyncMcp([], {
+    ...deps,
+    keychain: keychain({
+      "plugin:slack:slack|zz99": {
+        serverName: "plugin:slack:slack",
+        serverUrl: "https://slack.example.com/mcp",
+        accessToken: "t",
+        expiresAt: Date.now() + 3_600_000,
+      },
+    }),
+  });
+  assert.deepEqual(Object.keys(JSON.parse(await readFile(file, "utf8")).servers), ["slack"]);
+});
+
+test("with a duplicate already there, the credential lands on the better name", async () => {
+  // The reported screen: `slack` AND `plugin-slack-slack`, same URL, both without
+  // credentials. `boughName` refuses a name that is taken — and here the taker IS
+  // this same server, so name-first logic renamed it into a duplicate of itself and
+  // credentialed the ugly one. The endpoint decides first.
+  const file = await registryFile();
+  await Bun.write(
+    file,
+    JSON.stringify({
+      servers: {
+        slack: { url: "https://mcp.slack.com/mcp", args: [], env: {}, headers: {} },
+        "plugin-slack-slack": { url: "https://mcp.slack.com/mcp", args: [], env: {}, headers: {} },
+      },
+      activations: {},
+    }),
+  );
+  const lines: string[] = [];
+  await runSyncMcp([], {
+    out: (l) => lines.push(l),
+    err: (l) => lines.push(l),
+    readJson: () => null,
+    keychain: keychain({
+      "plugin:slack:slack|a1b2": {
+        serverName: "plugin:slack:slack",
+        serverUrl: "https://mcp.slack.com/mcp",
+        accessToken: "t",
+        expiresAt: Date.now() + 3_600_000,
+      },
+    }),
+    home: HOME,
+    cwd: "/w",
+    config: { file },
+  });
+  const servers = JSON.parse(await readFile(file, "utf8")).servers;
+  assert.match(servers.slack.headers.Authorization, /mcpOAuth\.plugin:slack:slack\|a1b2/);
+  assert.deepEqual(servers["plugin-slack-slack"].headers, {});
+  // …and the duplicate that was already there is named, since silence is how it
+  // survives. Removing it is the user's call, not this command's.
+  assert.match(lines.join("\n"), /same endpoint/);
+});
+
+test("an entry with no credential GETS one when a grant exists for it", async () => {
+  // Directly the reported complaint — "it should copy over everything, I shouldn't
+  // need to auth". A server registered before this command could read grants sits
+  // there with no Authorization at all, so the panel says "needs auth" and pressing
+  // `a` fails against a provider with no dynamic registration. The credential is
+  // right there on the machine.
+  const file = await registryFile();
+  const files = {
+    [`${HOME}/.claude.json`]: {
+      mcpServers: { slack: { type: "http", url: "https://slack.example.com/mcp" } },
+    },
+  };
+  // First sync with no keychain at all: registered, unauthenticated.
+  await runSyncMcp([], { ...silent, readJson: reader(files), home: HOME, cwd: "/w", config: { file } });
+  assert.deepEqual(JSON.parse(await readFile(file, "utf8")).servers.slack.headers, {});
+
+  // Second sync, now that the grant is readable — WITHOUT --force.
+  const lines: string[] = [];
+  await runSyncMcp([], {
+    out: (l) => lines.push(l),
+    err: (l) => lines.push(l),
+    readJson: reader(files),
+    keychain: keychain(SLACK_GRANT),
+    home: HOME,
+    cwd: "/w",
+    config: { file },
+  });
+  const slack = JSON.parse(await readFile(file, "utf8")).servers.slack;
+  assert.match(slack.headers.Authorization, /mcpOAuth\.slack\|a1b2c3/);
+  assert.match(lines.join("\n"), /added the missing credential/);
+});
+
+test("an entry that already has a credential is left alone", async () => {
+  // The complement: adding a header where there was none is not a clobber, but
+  // REPLACING one is exactly what --force exists for.
+  const file = await registryFile();
+  const files = {
+    [`${HOME}/.claude.json`]: {
+      mcpServers: {
+        slack: {
+          type: "http",
+          url: "https://slack.example.com/mcp",
+          headers: { Authorization: "Bearer ${MY_OWN_TOKEN}" },
+        },
+      },
+    },
+  };
+  const deps = { ...silent, readJson: reader(files), home: HOME, cwd: "/w", config: { file } };
+  await runSyncMcp([], deps);
+  await runSyncMcp([], { ...deps, keychain: keychain(SLACK_GRANT) });
+  assert.equal(
+    JSON.parse(await readFile(file, "utf8")).servers.slack.headers.Authorization,
+    "Bearer ${MY_OWN_TOKEN}",
+  );
+});
+
 test("an existing entry is kept unless --force, and --dry-run writes nothing", async () => {
   const file = await registryFile();
   const files = {

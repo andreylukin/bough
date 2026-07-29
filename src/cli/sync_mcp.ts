@@ -406,6 +406,13 @@ export function boughName(raw: string, taken: ReadonlySet<string>): string | nul
  * into one that is served over HTTP, and the person doing it should hear about it
  * once rather than discover it in a response body.
  */
+/** The entry already carries a credential of its own — see `Mcp.tsx`'s row label. */
+function hasAuthHeader(entry: { headers?: Record<string, string> }): boolean {
+  return Object.entries(entry.headers ?? {}).some(
+    ([k, v]) => k.toLowerCase() === "authorization" && v.trim() !== "",
+  );
+}
+
 export function looksSecret(key: string, value: string): boolean {
   if (/^\$\{[^}]+\}$/.test(value)) return false; // already a reference
   return /(token|secret|key|password|passwd|credential)/i.test(key) && value.length >= 12;
@@ -482,8 +489,37 @@ export async function runSyncMcp(argv: string[], deps: SyncDeps = {}): Promise<n
 
   // Names claimed so far, so a rename cannot land on top of another server.
   const taken = new Set([...Object.keys(existing), ...found.map((f) => f.name)]);
+  // AN ENDPOINT IS A SERVER, whatever either tool calls it. Without this, adopting
+  // a server bough already had under a different name minted a SECOND entry beside
+  // it — `plugin-slack-slack` next to `slack`, `linear-server` next to an already
+  // authorized `linear`, both pointing at the same URL, one of them working. The
+  // registry is keyed by name, so nothing downstream would ever have noticed.
+  const norm = (u: string) => u.replace(/\/+$/, "");
+  const byUrl = new Map<string, string[]>();
+  for (const n of Object.keys(existing).sort()) {
+    const u = existing[n].url;
+    if (u) byUrl.set(norm(u), [...(byUrl.get(norm(u)) ?? []), n]);
+  }
+  // A duplicate that is ALREADY there is not this run's doing and not this
+  // command's to delete — but silence about it is how it survives. `F` forgets one.
+  for (const [url, names] of byUrl) {
+    if (names.length > 1) {
+      warnings.push(
+        `${names.join(" and ")} are the same endpoint (${url}). Only one is needed — ` +
+          `open /mcp and press F on the one you do not want.`,
+      );
+    }
+  }
   for (const { name: claudeName, server, source } of found) {
-    const name = boughName(claudeName, taken);
+    // THE ENDPOINT DECIDES FIRST, and it has to: `boughName` refuses a name that is
+    // taken, and when the taker IS this same server the refusal renames a server
+    // into a duplicate of itself. Among entries sharing the URL, the one a person
+    // would have named wins (`slack`, not `plugin-slack-slack`) — `natural` is the
+    // preferred name computed against no collisions at all.
+    const urlNames = server.url ? byUrl.get(norm(server.url)) ?? [] : [];
+    const natural = boughName(claudeName, new Set());
+    const sameEndpoint = natural && urlNames.includes(natural) ? natural : urlNames[0];
+    const name = sameEndpoint ?? boughName(claudeName, taken);
     if (!name) {
       results.push({
         name: claudeName,
@@ -494,12 +530,30 @@ export async function runSyncMcp(argv: string[], deps: SyncDeps = {}): Promise<n
       continue;
     }
     if (name !== claudeName) taken.add(name);
-    if (existing[name] && !parsed.args.force) {
+    const already = existing[name];
+    if (already && !parsed.args.force) {
+      // ONE THING IS STILL WORTH DOING TO AN ENTRY WE ARE NOT REPLACING: giving it
+      // the credential it is missing. An entry registered before this command could
+      // read grants — or by hand, or by an older bough — sits there with no
+      // `Authorization` at all, so the panel says "needs auth" and pressing `a`
+      // fails against a provider that does not do dynamic registration. There IS a
+      // credential for it on this machine. Adding a header where there was none is
+      // not the clobber `--force` guards against: nothing is overwritten, and every
+      // other field is left exactly as it was found.
+      const grant = grantFor(claudeName, server.url);
+      if (grant && already.url && !hasAuthHeader(already)) {
+        const headers = { ...already.headers, Authorization: `Bearer ${grantRef(grant.key)}` };
+        if (!parsed.args.dryRun) upsertServer(name, { ...already, headers }, config);
+        results.push({ name, source, action: "updated", authed: true, reason: "added the missing credential" });
+        continue;
+      }
       results.push({
         name,
         source,
         action: "skipped",
-        reason: "already registered here — --force replaces it",
+        reason: sameEndpoint && sameEndpoint !== claudeName
+          ? `already registered as "${name}" — same endpoint`
+          : "already registered here — --force replaces it",
       });
       continue;
     }

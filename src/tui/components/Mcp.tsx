@@ -58,6 +58,19 @@ export function mcpWindow(
   return { start: Math.max(0, start), end, height, counter };
 }
 
+/**
+ * The entry carries its own credential — a static `Authorization` header, which
+ * `expandHeaders` resolves (from `${VAR}` or the keychain) at connect time.
+ *
+ * Any auth-bearing header counts, not only a keychain reference: a server given a
+ * literal or an env-var token is equally not waiting for anyone to press `a`.
+ */
+function hasAuthHeader(entry: { headers?: Record<string, string> }): boolean {
+  return Object.entries(entry.headers ?? {}).some(
+    ([k, v]) => k.toLowerCase() === "authorization" && v.trim() !== "",
+  );
+}
+
 /** The dim tail of an MCP row: grant, live connection, credentials, transport. */
 export function mcpDetail(status: McpStatus, name: string): string {
   const granted = status.active.includes(name);
@@ -68,14 +81,26 @@ export function mcpDetail(status: McpStatus, name: string): string {
     granted ? "granted" : "off",
     conn?.alive ? `${conn.toolCount} tools` : null,
     conn?.error ? clip(conn.error, 40) : null,
-    // "needs auth" is about tokens BOUGH stored, and for a host the machine's own
-    // Claude Code credential covers it would be a lie by omission: nobody has to
-    // press `a` there, because the connection is tried with that credential first
-    // (`mcp/keychain.ts`). Derived from the URL alone — the panel must not spawn a
-    // keychain read to paint a row, and this says what will be TRIED, not that the
-    // server has already accepted it.
+    // "needs auth" is about tokens BOUGH stored, and saying it of a server that
+    // already carries a credential is the lie this row used to tell: `sync-mcp`
+    // writes an `Authorization` header referencing the grant Claude Code holds, and
+    // the panel still said "needs auth" — so the one server that needed nothing
+    // pressed was the one the UI sent you to press `a` on, where authorizing fails
+    // because the provider does not do dynamic registration.
+    //
+    // Three states, in order of how the connection will actually be made: a token
+    // bough stored; an explicit header on the entry; the machine's Claude Code
+    // credential for a host it covers (`mcp/keychain.ts`). All derived from the
+    // entry alone — the panel must not spawn a keychain read to paint a row — so
+    // this says what will be TRIED, not that the server has already accepted it.
     auth
-      ? auth.authorized ? "authed" : isCoveredHost(entry.url ?? "") ? "keychain" : "needs auth"
+      ? auth.authorized
+        ? "authed"
+        : hasAuthHeader(entry)
+        ? "keychain"
+        : isCoveredHost(entry.url ?? "")
+        ? "keychain"
+        : "needs auth"
       : null,
     clip(entry.url ?? entry.command ?? "", 30),
   ].filter(Boolean).join(" · ");

@@ -396,6 +396,32 @@ test("the MCP tab reports granted, connected and unauthorized distinctly", async
   assert.ok(frame.includes("granted"), frame);
   assert.ok(frame.includes("needs auth"), frame);
 
+  // A server carrying its own credential is NOT waiting for anyone to press `a`.
+  // `sync-mcp` writes an Authorization header referencing the grant Claude Code
+  // already holds, and this row said "needs auth" anyway — sending the user to
+  // authorize the one server that needed nothing, where authorizing then fails
+  // because the provider does not support dynamic registration.
+  const withHeader = {
+    registry: {
+      servers: {
+        slack: {
+          url: "https://mcp.slack.com/mcp",
+          args: [],
+          env: {},
+          headers: { Authorization: "Bearer ${keychain:Claude Code-credentials#mcpOAuth.s|1.accessToken}" },
+        },
+      },
+    },
+    auth: { slack: { authorized: false } },
+    active: ["slack"],
+    connections: [],
+  };
+  const authedFrame = await draw(
+    createElement(McpTab, { status: withHeader as any, selected: 0 }),
+  );
+  assert.ok(authedFrame.includes("keychain"), authedFrame);
+  assert.equal(authedFrame.includes("needs auth"), false, authedFrame);
+
   const empty = await draw(createElement(SkillsTab, { skills: [], rows: 10 }));
   assert.ok(empty.includes("no skills installed"), empty);
   const one = await draw(
