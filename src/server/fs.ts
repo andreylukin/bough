@@ -35,10 +35,10 @@ import { type Handler, json } from "./http.ts";
  */
 export const MAX_FILES = 20_000;
 
-/** One `git ls-files` pass. Empty on any failure — a keystroke is not worth an error. */
-async function lsFiles(dir: string, extra: string[]): Promise<string[]> {
+/** One git invocation, as trimmed lines. Empty on any failure — a keystroke is not worth an error. */
+async function git(dir: string, args: string[]): Promise<string[]> {
   try {
-    const proc = Bun.spawn(["git", "ls-files", ...extra], {
+    const proc = Bun.spawn(["git", ...args], {
       cwd: dir,
       stdout: "pipe",
       stderr: "ignore",
@@ -51,6 +51,9 @@ async function lsFiles(dir: string, extra: string[]): Promise<string[]> {
     return [];
   }
 }
+
+/** One `git ls-files` pass. */
+const lsFiles = (dir: string, extra: string[]) => git(dir, ["ls-files", ...extra]);
 
 /**
  * Candidates for `@`, repo-relative, tracked first. Empty when `dir` is not a repo.
@@ -108,6 +111,25 @@ export const listFilesForWorkspaceH: Handler = async (req, _ctx: AppCtx) => {
   const dir = new URL(req.url).searchParams.get("workspace") ?? "";
   if (!dir) throw new BadRequestError("workspace is required");
   return json({ files: await listWorkspaceFiles(dir) });
+};
+
+/**
+ * `GET /fs/branch?dir=<path>` — the branch that directory's checkout is on.
+ *
+ * The meter has rendered `~/repos/bough@main` since it was written and nothing ever
+ * passed it a branch, so the bottom line said WHERE a turn runs but not on what.
+ * That is half an answer in a harness whose edits land in the working tree as they
+ * happen (spec §2): "which branch am I about to let it write to" is the question
+ * you ask before pressing enter, not after.
+ *
+ * Empty for a detached HEAD or a directory that is not a repository — both are
+ * "there is no branch name to show", and neither is worth an error on a status bar.
+ */
+export const branchH: Handler = async (req, _ctx: AppCtx) => {
+  const dir = new URL(req.url).searchParams.get("dir") ?? "";
+  if (!dir) throw new BadRequestError("dir is required");
+  const [name] = await git(dir, ["rev-parse", "--abbrev-ref", "HEAD"]);
+  return json({ branch: name && name !== "HEAD" ? name : "" });
 };
 
 /** The most entries one directory listing returns. */

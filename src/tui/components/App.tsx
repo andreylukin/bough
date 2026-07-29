@@ -222,6 +222,14 @@ const JOB_STEP = 3;
  */
 const JOB_POLL_MS = 1000;
 
+/**
+ * How often the meter re-reads the workspace's branch.
+ *
+ * Slow on purpose: a branch changes when a human checks one out in another
+ * terminal, which is minutes-apart, not seconds. This is one `git rev-parse`.
+ */
+const BRANCH_POLL_MS = 10_000;
+
 /** The named keys `keys.ts` knows by flag rather than by byte. */
 const NAMED_KEYS: Record<string, keyof KeyFlags> = {
   up: "upArrow",
@@ -516,6 +524,33 @@ export function App(
       live = false;
     };
   }, [state.currentId, defaultWorkspace]);
+
+  /**
+   * The workspace's branch, for the meter.
+   *
+   * Polled rather than fetched once: a checkout happens in ANOTHER terminal, so
+   * there is no event here to hang it on, and a status bar naming the branch you
+   * left is worse than one naming none. One `git rev-parse` on a slow interval is
+   * cheaper than the mistake it prevents — edits land in the checkout as they
+   * happen, so this is the line you read before pressing enter.
+   */
+  const wsDir = state.session?.workspace ?? defaultWorkspace ?? "";
+  const [branch, setBranch] = useState("");
+  useEffect(() => {
+    if (!wsDir) return setBranch("");
+    let live = true;
+    const pull = () =>
+      void api.branch(wsDir)
+        .then((r) => live && setBranch(r.branch))
+        .catch(() => {}); // not a repo, or no server: the meter simply says less
+    pull();
+    const timer = setInterval(pull, BRANCH_POLL_MS);
+    (timer as { unref?: () => void }).unref?.();
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [wsDir]);
 
   const trigger = useMemo(
     () => (dismissed ? null : activeTrigger(line.text, line.cursor)),
@@ -1505,7 +1540,8 @@ export function App(
         : `branched here · the files were not rewound — ${n} still changed on disk · ^d shows them`;
     })()
     : null;
-  const workspace = shortenPath(state.session?.workspace ?? defaultWorkspace ?? "", home);
+  const workspaceDir = state.session?.workspace ?? defaultWorkspace ?? "";
+  const workspace = shortenPath(workspaceDir, home);
   const header = (
     <text wrapMode="none">
       <b>{title}</b>
@@ -1522,6 +1558,7 @@ export function App(
         contextTokens: state.session?.contextTokens ?? null,
         contextLimit: state.contextLimit,
         workspace,
+        branch,
         ...(state.session?.effort ? { effort: state.session.effort } : {}),
         shells: state.jobs.filter((j) => j.status === "running").length,
         help: true,

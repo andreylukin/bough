@@ -166,6 +166,8 @@ export const routes: Route[] = [
   route("GET", "/files", fsapi.listFilesForWorkspaceH),
   // The same completion, for a path that leaves the workspace (`@~/…`, `@/…`).
   route("GET", "/fs/entries", fsapi.listDirEntriesH),
+  // The branch the meter names beside the workspace.
+  route("GET", "/fs/branch", fsapi.branchH),
   route("GET", "/workflow-settings", workflows.getWorkflowSettingsH),
   route("PUT", "/workflow-settings", workflows.putWorkflowSettingsH),
   // T7.2 — OAuth for remote MCP servers. The callback is the load-bearing one: the

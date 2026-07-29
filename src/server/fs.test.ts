@@ -4,7 +4,7 @@ import { mkdir } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "bun:test";
-import { expandTilde, listDirEntries } from "./fs.ts";
+import { branchH, expandTilde, listDirEntries } from "./fs.ts";
 
 test("expandTilde: `~` is the home directory, and nothing else is touched", () => {
   assert.equal(expandTilde("~"), homedir());
@@ -25,6 +25,21 @@ test("listDirEntries: one level, directories marked with a trailing slash", asyn
   // Dotfiles are included — the client filters by what was typed — and the nested
   // file is NOT, because browsing is one segment at a time.
   assert.deepEqual(entries, [".hidden", "a.txt", "sub/"]);
+});
+
+test("branchH: names the branch, and says nothing rather than erroring", async () => {
+  const ctx = {} as never;
+  const call = (dir: string) =>
+    branchH(new Request(`http://x/fs/branch?dir=${encodeURIComponent(dir)}`), ctx, {})
+      .then((r) => r.json() as Promise<{ branch: string }>);
+
+  // This repo is a checkout on a branch, so the answer is a non-empty name.
+  const here = await call(new URL("../..", import.meta.url).pathname);
+  assert.ok(here.branch.length > 0, `expected a branch name, got ${JSON.stringify(here)}`);
+  // A directory that is not a repository has no branch to name. Not an error: the
+  // meter simply says less, and a status bar is not a place to raise one.
+  const outside = await call(await mkdtemp(join(tmpdir(), "bough-nogit-")));
+  assert.equal(outside.branch, "");
 });
 
 test("listDirEntries: a half-typed path answers empty, not an error", async () => {

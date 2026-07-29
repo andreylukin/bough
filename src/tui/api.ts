@@ -678,6 +678,8 @@ export function createApi(options: ApiOptions = {}) {
           base ? `&base=${encodeURIComponent(base)}` : ""
         }`,
       ),
+    /** The workspace's current branch, for the meter. Empty when there is none to name. */
+    branch: (dir: string) => get<{ branch: string }>(`/fs/branch?dir=${encodeURIComponent(dir)}`),
     listSkills: () => get<{ skills: SkillListRow[]; sources: SkillSource[] }>("/skills"),
   };
 }
