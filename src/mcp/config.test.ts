@@ -23,6 +23,7 @@ import {
   getServer,
   isStdio,
   loadRegistry,
+  promoteSessionGrants,
   removeServer,
   revokeEverywhere,
   requireServer,
@@ -183,6 +184,34 @@ test("saveRegistry preserves grants; removeServer revokes the ones it orphans", 
   assert.deepEqual(activationsFor("s1", { file }), ["exa"]);
   upsertServer("echo", { command: "deno" }, { file });
   assert.deepEqual(activationsFor("s1", { file }), ["exa"]);
+});
+
+test("promoteSessionGrants lifts old per-conversation grants to the global scope", () => {
+  // Every grant written before the panel's ⏎ became install-wide is scoped to the
+  // conversation it was made in. Those servers then read `off` everywhere else —
+  // and on the new-conversation screen, which has no session at all, `off` full
+  // stop, which is what a person sees after upgrading and reports as "broken".
+  const file = tmpFile();
+  saveRegistry({
+    servers: {
+      echo: { command: "deno" },
+      exa: { command: "npx" },
+      linear: { url: "https://l.example" },
+    },
+  }, { file });
+  setActivation("s1", "echo", true, { file });
+  setActivation("s2", "echo", true, { file }); // the same server in two conversations
+  setActivation("s2", "exa", true, { file });
+  setActivation(undefined, "linear", true, { file }); // already global: kept, not doubled
+  // A TTL grant is a deliberate limit and must not become permanent.
+  setActivation("s1", "linear", true, { file, expires: ttlToExpires("2h") });
+
+  assert.deepEqual(promoteSessionGrants({ file }).sort(), ["echo", "exa"]);
+  assert.deepEqual(activationsFor(undefined, { file }), ["echo", "exa", "linear"]);
+  // The session rows are gone, so a conversation resolves exactly the global set…
+  assert.deepEqual(activationsFor("s1", { file }), ["echo", "exa", "linear"]);
+  // …and running it again is a no-op, which is what makes it safe at every boot.
+  assert.deepEqual(promoteSessionGrants({ file }), []);
 });
 
 test("revokeEverywhere clears the global scope AND every session that holds it", () => {

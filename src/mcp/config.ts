@@ -583,6 +583,52 @@ export function revokeEverywhere(name: string, opts: ActivationOptions = {}): vo
 }
 
 /**
+ * Promote every per-conversation grant to the global scope, once.
+ *
+ * WHY THIS IS A MIGRATION AND NOT A POLICY. The panel's ⏎ used to grant to the
+ * conversation you were in, so that is how every existing grant was written: a
+ * person pressed a key meaning "let it use this server" and got a permission that
+ * expired with the conversation. Now that the same key means "in every
+ * conversation", those old rows are stranded — the servers read `off` everywhere
+ * except the conversations they were granted in, and on the new-conversation screen
+ * (which has no session at all) they read `off` full stop. Re-granting each one by
+ * hand is a chore that exists only because the meaning of the key changed.
+ *
+ * It BROADENS a permission, which is not a thing to do lightly or twice: it runs
+ * only where session-scoped rows exist, empties them, and is therefore a no-op ever
+ * after. A TTL is dropped with the row it was on — a grant meant to lapse in two
+ * hours must not be promoted into a permanent one, so those are discarded rather
+ * than widened, and the human can re-grant if they meant it to last.
+ *
+ * Returns the names promoted, for the boot log: a permission change nobody is told
+ * about is the kind that is discovered later, in the wrong way.
+ */
+export function promoteSessionGrants(opts: ActivationOptions = {}): string[] {
+  const now = opts.now ?? Date.now();
+  const doc = readDocument(opts);
+  const scopes = Object.keys(doc.activations).filter((s) => s !== GLOBAL_SCOPE);
+  if (scopes.length === 0) return [];
+
+  const global = new Set((doc.activations[GLOBAL_SCOPE] ?? []).map((a) => a.name));
+  const promoted = new Set<string>();
+  for (const scope of scopes) {
+    for (const a of doc.activations[scope] ?? []) {
+      // A lapsed grant is already gone as far as every reader is concerned, and a
+      // live TTL was a deliberate limit. Neither becomes permanent here.
+      if (a.expires && Date.parse(a.expires) <= now) continue;
+      if (a.expires) continue;
+      if (!global.has(a.name)) promoted.add(a.name);
+    }
+    delete doc.activations[scope];
+  }
+  const merged = [...global, ...promoted].sort();
+  if (merged.length > 0) doc.activations[GLOBAL_SCOPE] = merged.map((name) => ({ name }));
+  else delete doc.activations[GLOBAL_SCOPE];
+  writeDocument(doc, opts);
+  return [...promoted].sort();
+}
+
+/**
  * Parse a `"90m" | "2h" | "7d"` TTL into an absolute ISO expiry.
  *
  * Absolute, not a duration stored as-is: a duration would silently restart every

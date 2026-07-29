@@ -34,7 +34,7 @@ import { createFetchHostFn } from "../hostfn/fetch.ts"; // T6.5
 import { createImageHostFn } from "../hostfn/image.ts"; // T6.4
 import { jobs } from "../hostfn/jobs.ts";
 import { killAllMcpServers } from "../mcp/client.ts"; // T7.1
-import { loadRegistry, registryFile } from "../mcp/config.ts"; // T7.1
+import { loadRegistry, promoteSessionGrants, registryFile } from "../mcp/config.ts"; // T7.1
 import { authStatus, callbackUrl, configureOAuthCallback } from "../mcp/oauth.ts"; // T7.2
 import { createMcpHostFns } from "../hostfn/mcp.ts"; // T7.3
 import { bindTurnGrant, mcpManager } from "../mcp/manager.ts"; // T7.3
@@ -488,6 +488,19 @@ try {
   // both statements about this machine; the connection had no business being
   // narrower (`mcp/service.ts`). Detached and best-effort: a server that is down or
   // unauthorized is a `failed` row in the panel, never a slow start-up.
+  // A ONE-TIME NORMALIZATION, before the first reconcile reads the grants. Every
+  // grant written before the panel's ⏎ became install-wide is scoped to the
+  // conversation it was made in, so those servers read `off` everywhere else — and
+  // on the new-conversation screen, which has no session, they read `off` full stop.
+  // Announced rather than silent: this widens a permission, once.
+  const promoted = promoteSessionGrants();
+  if (promoted.length > 0) {
+    console.log(
+      `MCP: ${promoted.join(", ")} — grants made in one conversation are now granted ` +
+        `in every conversation (the /mcp panel's ⏎ is install-wide). Revoke there if ` +
+        `that is not what you want.`,
+    );
+  }
   void reconcileMcp()
     .then((r) => {
       const line = reconcileSummary(r);
