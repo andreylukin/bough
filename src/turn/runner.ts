@@ -62,6 +62,8 @@ import {
   scratchNote,
   workspaceNote,
 } from "../prompt/assemble.ts";
+import { findProjectRules, projectRulesNote } from "../prompt/project.ts";
+import { boughHome } from "../paths.ts";
 import type { Message, Part, Session, Usage } from "../schema/parts.ts";
 import type {
   AppCtx,
@@ -504,10 +506,21 @@ async function drive(
   // (`prompt/assemble.ts`'s `workspaceNote` says why, including the cwd trap). It is
   // built HERE because `workspace` is resolved here, per session, and `deps.notes`
   // is fixed for the life of a starter — boot cannot supply a per-session fact.
+  const rulesNote = projectRulesNote(findProjectRules(workspace, boughHome()), workspace);
+  const projectRules = rulesNote === null ? [] : [rulesNote];
   const prompt = (deps.assemble ?? assemblePrompt)({
     kind: session?.kind ?? "root",
     granted: deps.granted ?? BASE_HOST_FNS,
-    notes: [workspaceNote(workspace), scratchNote(scratch), ...(deps.notes ?? [])],
+    notes: [
+      workspaceNote(workspace),
+      scratchNote(scratch),
+      // Read HERE, per turn, for the same reason the workspace note is built here:
+      // it is a per-session fact boot cannot supply. Per turn rather than per
+      // session so that editing AGENTS.md to correct a misbehaving model takes
+      // effect on the next message instead of after a restart (`prompt/project.ts`).
+      ...projectRules,
+      ...(deps.notes ?? []),
+    ],
   });
 
   /**

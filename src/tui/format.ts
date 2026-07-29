@@ -521,8 +521,24 @@ export function programSummary(code: string, max = 64, running = false): string 
   if (shells) {
     bits.push(`${running ? "running" : "ran"} ${shells} command${shells === 1 ? "" : "s"}`);
   }
-  const agents = count(/\bagent\s*\(/g);
+  // `bashBg(` does not match `\bbash\s*\(`, so a round that only backgrounded a
+  // command was unrecognized — the one round whose whole point is that something is
+  // still running after it returns.
+  const bg = count(/\bbashBg\s*\(/g);
+  if (bg) bits.push(`started ${bg} background command${bg === 1 ? "" : "s"}`);
+  // Delegation is FOUR verbs, not one. Counting only `agent(` meant the round that
+  // fanned three subagents out with `spawn()` matched nothing and fell back to the
+  // gist — the header read `const tasks = [`, raw source, on the single round a
+  // reader most needs named. `join`/`adopt` collect reports for spawns issued in an
+  // earlier round, so they are named only when no spawn happens here.
+  const agents = count(/\b(?:agent|spawn)\s*\(/g);
   if (agents) bits.push(`${agents} subagent${agents === 1 ? "" : "s"}`);
+  else if (count(/\b(?:join|adopt)\s*\(/g)) {
+    bits.push(running ? "collecting subagent reports" : "collected subagent reports");
+  }
+  if (count(/\bworkflow\s*\(/g)) bits.push(running ? "running a workflow" : "ran a workflow");
+  if (count(/\bask\s*\(/g)) bits.push("asked you a question");
+  if (count(/\bartifact\s*\(/g)) bits.push(running ? "publishing an artifact" : "published an artifact");
   const searches = count(/\b(?:grep|glob|search)\s*\(/g);
   if (searches && bits.length === 0) bits.push(running ? "searching the tree" : "searched the tree");
 

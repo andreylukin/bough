@@ -646,6 +646,20 @@ test("a step is headlined by what the program did, not by its first line of code
     programSummary('await Promise.all([agent("one"), agent("two")]);'),
     "2 subagents",
   );
+  // Delegation has four verbs. A fan-out written with `spawn()` — which is what the
+  // model actually reaches for when it wants the reports later — matched nothing,
+  // so the header fell back to the gist and read `const tasks = [`.
+  assert.equal(
+    programSummary("const r = await Promise.allSettled(tasks.map((t) => spawn(t.prompt)));"),
+    "1 subagent",
+  );
+  assert.equal(
+    programSummary("const reports = await Promise.all(ids.map((id) => join(id)));"),
+    "collected subagent reports",
+  );
+  assert.equal(programSummary('await workflow("review", args);'), "ran a workflow");
+  assert.equal(programSummary('await ask("which one?", ["a", "b"]);'), "asked you a question");
+  assert.equal(programSummary('await bashBg("npm run dev");'), "started 1 background command");
   // patch() takes ONE string — the patch body — and naming it like a path-first
   // call captured the whole template literal, so the most-read line in the UI read
   // `wrote cart.js#8902] SWAP 3.=3: + for (let i = 0; …`. Its files are the section
