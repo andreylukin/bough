@@ -219,6 +219,7 @@ export type Command =
   | "mcp.auth"
   /** Drop stored credentials for the selected server, so the next call re-authorizes. */
   | "mcp.forget"
+  | "mcp.remove"
   /** Register a remote server by URL — the buffer, not the write. */
   | "mcp.add"
   // -- workflow steering (spec §8) -----------------------------------------
@@ -1077,6 +1078,20 @@ export const BINDINGS: Binding[] = [
     not: ["panelFiltering"],
     section: "the mcp tab",
     desc: "forget this server's credentials",
+  },
+  // Removing the ENTRY, which `F` deliberately does not do. The two were one verb in
+  // everyone's head and neither was the other: `F` leaves the server registered and
+  // unauthorized, so a server added by mistake — or a duplicate pointing at an
+  // endpoint another entry already covers — could only be removed by hand-editing
+  // `~/.bough/mcp.json`. Same two-step as every other destructive key (spec §7).
+  {
+    mode: "panel",
+    chord: "d",
+    command: "mcp.remove",
+    tab: ["mcp"],
+    not: ["panelFiltering"],
+    section: "the mcp tab",
+    desc: "delete this registration · d again confirms",
   },
 
   // Bound in the panel and live only in the workflows tab. They are letters rather

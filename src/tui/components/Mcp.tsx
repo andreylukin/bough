@@ -112,7 +112,7 @@ export function McpTab({ status, selected, message, rows = 20, entry = null }: M
   const legend = (
     <text attributes={TextAttributes.DIM} wrapMode="none">
       {entry === null
-        ? "↑↓ move · 1-9 pick · ⏎ grant/revoke · a authorize · n add by URL · F forget · esc back"
+        ? "↑↓ move · 1-9 pick · ⏎ grant/revoke · a authorize · n add by URL · F forget · d delete · esc back"
         : "⏎ registers · ⌫ back · esc cancels"}
     </text>
   );

@@ -209,6 +209,8 @@ export interface PanelControls {
   beginMcpAuth?: (name: string) => Promise<{ status: string; authorizationUrl?: string }>;
   /** `DELETE /mcp/servers/:name/auth` — drop stored credentials. */
   clearMcpAuth?: (name: string) => Promise<unknown>;
+  /** `DELETE /mcp/servers/:name` — remove the registration itself. */
+  deleteMcpServer?: (name: string) => Promise<unknown>;
   /** `GET /mcp/servers/:name/auth` — polled after the browser half of the flow. */
   mcpAuthStatus?: (name: string) => Promise<{ authorized: boolean }>;
   /** `PUT /mcp/servers/:name` — register a definition. Registering grants nothing. */
@@ -1259,6 +1261,36 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
         return true;
       }
 
+      // Deleting the REGISTRATION, armed then confirmed — the same idiom as the
+      // rail's `x` and the workflows tab's, because it is the same kind of act.
+      // `F` next door drops credentials and keeps the entry; these were one verb in
+      // everyone's head and neither did the other's job, so each says which it is.
+      case "mcp.remove": {
+        const name = mcpNameAt(sel);
+        if (!name) return true;
+        if (!controls.deleteMcpServer) {
+          setMessage("removing an MCP server is not wired into this client");
+          return true;
+        }
+        if (armedStop !== `mcp:${name}`) {
+          setArmedStop(`mcp:${name}`);
+          // The scope, out loud: removing an entry also revokes the grants it
+          // orphans (`mcp/config.ts`), and that is not obvious from "delete".
+          setMessage(
+            `d again to delete ${name} — its registration and any grants it holds. ` +
+              `Stored credentials are dropped with it; the server itself is untouched.`,
+          );
+          return true;
+        }
+        setArmedStop(null);
+        void controls.deleteMcpServer(name)
+          .then(() => {
+            setMessage(`deleted ${name}`);
+            return refreshMcp();
+          })
+          .catch((e: unknown) => setMessage(e instanceof Error ? e.message : String(e)));
+        return true;
+      }
       case "mcp.forget": {
         const name = mcpNameAt(sel);
         if (!name) return true;

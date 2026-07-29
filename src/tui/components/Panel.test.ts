@@ -422,6 +422,13 @@ test("the MCP tab reports granted, connected and unauthorized distinctly", async
   assert.ok(authedFrame.includes("keychain"), authedFrame);
   assert.equal(authedFrame.includes("needs auth"), false, authedFrame);
 
+  // Deleting a registration is reachable and advertised. `F` next door drops
+  // CREDENTIALS and keeps the entry, so a server added by mistake — or a duplicate
+  // pointing at an endpoint another entry already covers — used to be removable
+  // only by hand-editing ~/.bough/mcp.json.
+  assert.ok(authedFrame.includes("d delete"), authedFrame);
+  assert.ok(authedFrame.includes("F forget"), authedFrame);
+
   const empty = await draw(createElement(SkillsTab, { skills: [], rows: 10 }));
   assert.ok(empty.includes("no skills installed"), empty);
   const one = await draw(

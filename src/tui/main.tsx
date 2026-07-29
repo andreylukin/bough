@@ -157,6 +157,7 @@ async function main() {
     clearMcpAuth: (name) => api.clearMcpAuth(name),
     mcpAuthStatus: (name) => api.mcpAuthStatus(name),
     putMcpServer: (name, config) => api.putMcpServer(name, config),
+    deleteMcpServer: (name) => api.deleteMcpServer(name),
     pauseWorkflow: async (id) => void (await api.pauseWorkflow(id)),
     resumeWorkflow: async (id) => void (await api.resumeWorkflow(id)),
     stopWorkflow: async (id) => void (await api.stopWorkflow(id)),
