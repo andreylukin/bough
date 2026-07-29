@@ -351,6 +351,30 @@ test("the overlay documents the table and only the table", () => {
   }
 });
 
+test("every control chord live in chat is documented somewhere", () => {
+  // `^s` was bound to the tree, carried no `desc`, and so appeared in NEITHER the
+  // table nor the `not bound` list: a reflex chord that silently moved the keyboard
+  // to another surface and that the overlay denied all knowledge of. The rule the
+  // file already states in its header — bound implies documented — now has a test.
+  const unavailable = new Set(UNAVAILABLE.keys.map(([c]) => c));
+  const chatChords = new Set(
+    BINDINGS.filter((b) => (b.mode === "chat" || b.mode === "*") && b.chord.startsWith("ctrl+"))
+      .map((b) => b.chord),
+  );
+  for (const chord of chatChords) {
+    const pretty = chord.replace("ctrl+", "^");
+    // A row may document two chords at once (`label: "^k ^u"`), which is a real
+    // pattern here and not a gap — the reader still finds the key.
+    const documented = BINDINGS.some((b) =>
+      b.section && b.desc && (b.chord === chord || (b.label ?? "").split(" ").includes(pretty))
+    );
+    assert.ok(
+      documented || unavailable.has(pretty),
+      `${chord} is bound in chat but documented nowhere`,
+    );
+  }
+});
+
 test('the "not bound" section is true — none of those chords is bound', () => {
   // ^y used to be listed here; it is the theme tab's chord now, so it is gone from
   // the section. That is the section's whole job: it must stay TRUE.

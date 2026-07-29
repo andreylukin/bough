@@ -570,12 +570,19 @@ function panelChords(): Binding[] {
   // conversations", and that question is now answered by the tree. Kept as an alias
   // rather than retired: the tab it used to open no longer exists, and a chord that
   // silently does nothing is worse than one that lands somewhere sensible.
+  // DOCUMENTED, not just bound. It carried no `desc`, so `helpSections` skipped it
+  // and the overlay never mentioned `^s` at all — nor did the `not bound` list,
+  // which is where a reader who tried it would look next. A reflex chord that is
+  // live, undocumented, and lands you in a surface that owns the keyboard is the
+  // worst of the three states it could be in.
   for (const mode of ["chat", "panel", "rail"] as const) {
     rows.push({
       mode,
       chord: SESSIONS_ALIAS,
       command: "tab.tree",
-      ...(mode === "chat" ? { when: ["emptyDraft" as Guard] } : {}),
+      ...(mode === "chat"
+        ? { when: ["emptyDraft" as Guard], section: PANEL_SECTION, desc: "the tree, too" }
+        : {}),
     });
   }
   return rows;
@@ -997,7 +1004,11 @@ export const BINDINGS: Binding[] = [
     tab: FILTER_TABS,
     not: ["panelFiltering"],
     section: "inside the panel",
-    desc: "filter this list · esc clears",
+    // Naming the tree case is not padding: in every other tab `/` narrows the rows
+    // on screen, but in the tree it is a FULL-TEXT search of every message that
+    // expands the turns it hit — the single most useful thing in the panel, and
+    // "filter this list" is not a sentence anyone reads as "search my history".
+    desc: "filter this list — in the tree, searches every message · esc clears",
   },
   { mode: "panel", chord: "backspace", command: "panel.filterBack", when: ["panelFiltering"] },
   // Ahead of `panel.close`: escape unwinds exactly ONE level, nearest surface
@@ -1278,7 +1289,10 @@ export const UNAVAILABLE: HelpSection = {
     ["!", "not a shell sigil — it goes to the model"],
     ["^g", "no $EDITOR handoff yet"],
     ["^v", "your terminal pastes · no image attachments"],
-    ["^r", "no reverse search yet"],
+    // The two halves of "search" are different questions and this line answered
+    // neither: ^r is still not bound, but saying only that left the reader believing
+    // bough cannot search at all, when ^f then / searches every message.
+    ["^r", "no reverse search · ^f then / searches every message"],
     ["^z", "no suspend · ^c ^c quits"],
     ["⌥d", "use ^k"],
   ],
