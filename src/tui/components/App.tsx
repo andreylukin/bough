@@ -672,6 +672,25 @@ export function App(
   useEffect(() => {
     if (mode === "job" && !state.jobView) setMode("chat");
   }, [mode, state.jobView]);
+  /**
+   * Open a job's buffer: FETCH FIRST, then switch surfaces.
+   *
+   * The order is the whole fix. Setting `mode` to "job" and firing the fetch beside
+   * it put the guard above in a race it won every time — React commits the new mode
+   * on the next render, the view is still null because the fetch is in flight, and
+   * the guard reads that as "stranded" and bounces you back to the transcript. ⏎ on
+   * the rail therefore did nothing at all, and the only opens that appeared to work
+   * were the ones where a PREVIOUS view was still lying around for the guard to
+   * find — which is why this read as "only the first row opens" (the row you had
+   * already opened once) rather than as "the first open after a close always fails".
+   *
+   * `openJob` publishes a view even when the fetch fails, so an error still lands on
+   * a surface instead of silently doing nothing.
+   */
+  const openJobView = useCallback(async (jobId: string, sessionId: string) => {
+    await store.openJob(jobId, sessionId);
+    setMode("job");
+  }, [store]);
   useEffect(() => {
     if (mode !== "job" || !jobRunning) return;
     const timer = setInterval(() => void store.refreshJob(), JOB_POLL_MS);
@@ -983,8 +1002,8 @@ export function App(
         const [, sessionId, jobId] = target.split(":");
         if (!sessionId || !jobId) return;
         setJobScroll(0);
-        setMode("job");
-        void store.openJob(jobId, sessionId);
+        // Mode AFTER the view lands — see `openJobView`.
+        void openJobView(jobId, sessionId);
         return;
       }
       // A workflow card opens that run's view. The run is detached and off the live
@@ -1211,8 +1230,7 @@ export function App(
         // and the only route to the buffer was asking the model to read it back.
         if (target.kind === "shell") {
           setJobScroll(0);
-          setMode("job");
-          return void store.openJob(target.id, target.sessionId);
+          return void openJobView(target.id, target.sessionId);
         }
         setMode("chat");
         return void store.open(target.sessionId);

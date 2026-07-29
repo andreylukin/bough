@@ -239,13 +239,25 @@ function session(id: string, over: Partial<SessionRow> = {}): SessionRow {
 /** A store that is a value, not a service: no socket, no fetch, no timers. */
 function fakeStore(over: Partial<TuiState> = {}): Store & { calls: string[] } {
   const calls: string[] = [];
-  const state: TuiState = { ...initialState(), ...over };
+  // A NEW SNAPSHOT PER CHANGE, and listeners that are actually called. The fake
+  // used to mutate one object and return it from `getState` with a `subscribe` that
+  // did nothing, so `useSyncExternalStore` never re-rendered on store changes and
+  // no test could observe an effect that reacts to one. That is precisely the shape
+  // of bug this harness kept missing: `rail.open` switched surface before its fetch
+  // published a view, and the guard that watches for a viewless "job" mode bounced
+  // it straight back — invisible to a fake that never republishes.
+  let state: TuiState = { ...initialState(), ...over };
+  const listeners = new Set<() => void>();
+  const publish = (patch: Partial<TuiState>) => {
+    state = { ...state, ...patch };
+    for (const fn of listeners) fn();
+  };
   const noop = () => Promise.resolve();
   const track = (name: string) => () => (calls.push(name), Promise.resolve());
   return {
     calls,
     getState: () => state,
-    subscribe: () => () => {},
+    subscribe: (fn: () => void) => (listeners.add(fn), () => listeners.delete(fn)),
     dispatch: () => {},
     start: () => {},
     stop: noop,
@@ -263,11 +275,28 @@ function fakeStore(over: Partial<TuiState> = {}): Store & { calls: string[] } {
     refreshChanges: track("refreshChanges"),
     refreshUsage: track("refreshUsage"),
     refreshJobs: track("refreshJobs"),
-    openJob: (id: string, sessionId: string) => (
-      calls.push(`openJob:${sessionId}:${id}`), Promise.resolve()
-    ),
+    // Like the real one: the view arrives AFTER the fetch, never in the same tick
+    // as the keypress. A fake that resolved without publishing anything could not
+    // see the race where the "job" mode is bounced before its buffer lands.
+    openJob: (id: string, sessionId: string) => {
+      calls.push(`openJob:${sessionId}:${id}`);
+      const job = state.jobs.find((j) => j.id === id) ?? null;
+      const seeded = over.jobView?.id === id ? over.jobView : null;
+      // A TIMER, not a microtask. A resolved promise settles before React flushes
+      // effects, so a microtask-fast fake hides every ordering bug between "I
+      // switched surface" and "the data arrived" — which is exactly the class this
+      // fixture exists to catch. A loopback GET is milliseconds; this is one.
+      return new Promise<void>((r) => setTimeout(r, 15)).then(() => {
+        publish({
+          jobView: seeded ?? { id, sessionId, job, output: `output of ${id}`, error: null },
+        });
+      });
+    },
     refreshJob: track("refreshJob"),
-    closeJob: () => calls.push("closeJob"),
+    closeJob: () => {
+      calls.push("closeJob");
+      publish({ jobView: null });
+    },
     refreshWorkflows: track("refreshWorkflows"),
     refreshReplay: (id: string) => (calls.push(`replay:${id}`), Promise.resolve()),
     resync: noop,
@@ -731,6 +760,50 @@ test("⏎ on a rail shell opens THAT JOB's output, not the session it belongs to
     // esc leaves it, and says so to the store rather than only to local state.
     await h.press(ESC);
     assert.ok(store.calls.includes("closeJob"), store.calls.join(","));
+  } finally {
+    h.unmount();
+  }
+});
+
+test("⏎ opens a job that is not already fetched — every row, not just the first", async () => {
+  // FOUND BY DRIVING THE TUI: with two shells running, ⏎ on the second row did
+  // nothing — the rail lost focus and the transcript came back. `x` on that same
+  // row killed exactly the right job, so `units[railSel]` was never wrong.
+  //
+  // The mode was: `rail.open` set mode "job" and fired the fetch, and the guard that
+  // keeps "job" from being a mode you are stranded in ("no view? go back to chat")
+  // ran on the very next render, while the fetch was still in flight. It bounced
+  // every open. The FIRST row appeared to work only when a previous open had left a
+  // stale `jobView` behind for the guard to find. `jobView` starts null here, which
+  // is the real state before you have opened anything.
+  const two = [
+    { ...WITH_JOB.jobs![0] },
+    {
+      id: "bg_2",
+      name: "beta",
+      sessionId: "s1",
+      pid: 4322,
+      command: "npm test -- --watch",
+      status: "running" as const,
+      startedAt: 9_500,
+    },
+  ];
+  const store = fakeStore({ ...STATE, jobs: two, jobView: null });
+  const h = await mount(app(store));
+  try {
+    await h.press(DOWN); // into the rail, row 0
+    await h.press(DOWN); // row 1 — "beta"
+    await h.press("\r");
+    assert.ok(
+      store.calls.includes("openJob:s1:bg_2"),
+      `expected beta's buffer to be fetched: ${store.calls.join(",")}`,
+    );
+    // And the row it fetched is the row the cursor was on, not the first one.
+    assert.equal(store.calls.includes("openJob:s1:bg_1"), false, store.calls.join(","));
+    // The buffer must actually be ON SCREEN. Fetching it and then bouncing back to
+    // the transcript is the bug, and it is invisible to a call-log assertion.
+    const frame = await frameShowing(h, "output of bg_2");
+    assert.ok(frame.includes("output of bg_2"), `job view never appeared:\n${frame}`);
   } finally {
     h.unmount();
   }

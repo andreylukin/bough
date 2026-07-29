@@ -29,9 +29,10 @@ test("listDirEntries: one level, directories marked with a trailing slash", asyn
 
 test("branchH: names the branch, and says nothing rather than erroring", async () => {
   const ctx = {} as never;
-  const call = (dir: string) =>
-    branchH(new Request(`http://x/fs/branch?dir=${encodeURIComponent(dir)}`), ctx, {})
-      .then((r) => r.json() as Promise<{ branch: string }>);
+  const call = async (dir: string) => {
+    const res = await branchH(new Request(`http://x/fs/branch?dir=${encodeURIComponent(dir)}`), ctx, {});
+    return await res.json() as { branch: string };
+  };
 
   // This repo is a checkout on a branch, so the answer is a non-empty name.
   const here = await call(new URL("../..", import.meta.url).pathname);
