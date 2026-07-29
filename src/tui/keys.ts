@@ -121,6 +121,7 @@ export type Command =
    * an existing conversation and fork a turn; it could not start one.
    */
   | "session.new"
+  | "session.compact"
   // -- composing ------------------------------------------------------------
   | "send"
   | "send.queue"
@@ -284,6 +285,15 @@ export interface SlashCommand {
   name: string;
   command: Command;
   desc: string;
+  /**
+   * Whether trailing text is an ARGUMENT rather than prose.
+   *
+   * Off for almost everything, and that default is load-bearing: `/help me name this`
+   * is a sentence about a command, not a command, and dispatching it would swallow a
+   * message. It is on only where the trailing text has an obvious meaning the command
+   * needs — `/compact focus on the parser`.
+   */
+  takesArg?: boolean;
 }
 
 /**
@@ -302,6 +312,12 @@ export interface SlashCommand {
 export const SLASH_COMMANDS: readonly SlashCommand[] = [
   ...TABS.map((t) => ({ name: t.id, command: `tab.${t.id}` as Command, desc: t.desc })),
   { name: "new", command: "session.new", desc: "start a fresh conversation" },
+  {
+    name: "compact",
+    command: "session.compact",
+    desc: "hand off to a fresh conversation · /compact <goal>",
+    takesArg: true,
+  },
   { name: "rewind", command: "tree.rewind", desc: "go back to a turn and say it differently" },
   { name: "help", command: "help.open", desc: "every key, by section" },
 ];
@@ -329,6 +345,25 @@ export function slashCommandFor(draft: string): Command | null {
   if (!m) return null;
   const name = m[1].toLowerCase();
   return SLASH_COMMANDS.find((c) => c.name === name)?.command ?? null;
+}
+
+/**
+ * A draft as an INVOCATION: the command it names plus its argument.
+ *
+ * `slashCommandFor` answers the exact case and is what the strict no-argument
+ * commands need. This is the same match widened to the commands that declare
+ * `takesArg`, so `/compact focus on the parser` reaches the handoff with a goal
+ * instead of being sent to the model as a sentence beginning with a command name.
+ */
+export function slashInvocation(draft: string): { command: Command; arg: string } | null {
+  const trimmed = draft.trim();
+  const exact = slashCommandFor(trimmed);
+  if (exact) return { command: exact, arg: "" };
+  const m = /^\/([a-z][a-z0-9-]*)\s+([\s\S]+)$/i.exec(trimmed);
+  if (!m) return null;
+  const spec = SLASH_COMMANDS.find((c) => c.name === m[1].toLowerCase());
+  if (!spec?.takesArg) return null;
+  return { command: spec.command, arg: m[2].trim() };
 }
 
 /** Opens and closes the panel. Never names a tab — that is what the others are for. */

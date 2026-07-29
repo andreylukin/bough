@@ -81,7 +81,7 @@ import {
   type LineState,
   lookup,
   SLASH_COMMANDS,
-  slashCommandFor,
+  slashInvocation,
   stripCtl,
   type UiMode,
 } from "../keys.ts";
@@ -1065,11 +1065,11 @@ export function App(
     // enough to render — so a pasted `/model` went to the frontier model as prose
     // and was billed for it. Queueing is ignored on purpose: `⌥⏎` means "after this
     // turn", and there is nothing about opening a panel that should wait for a turn.
-    const command = slashCommandFor(text);
-    if (command) {
+    const invocation = slashInvocation(text);
+    if (invocation) {
       setLine(EMPTY_LINE);
       setHistAt(null);
-      return runRef.current?.(command, "");
+      return runRef.current?.(invocation.command, invocation.arg);
     }
     setLine(EMPTY_LINE);
     setHistAt(null);
@@ -1120,6 +1120,17 @@ export function App(
         setScrollOff(0);
         store.newConversation();
         return setMode("chat");
+      // The old conversation is neither mutated nor inherited, so there is nothing to
+      // confirm — but it does call the model, which is why the store announces itself
+      // before it starts. The distilled prompt lands in the COMPOSER: the user reads
+      // what was carried over and edits it before any of it is sent.
+      case "session.compact":
+        return void store.compact(input || undefined).then((draft) => {
+          if (draft) {
+            setLine({ text: draft, cursor: draft.length });
+            setScrollOff(0);
+          }
+        });
       case "draft.clear":
         setHistAt(null);
         return setLine(EMPTY_LINE);

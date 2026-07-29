@@ -40,6 +40,7 @@ import {
   TABS,
   type UiMode,
   slashCommandFor,
+  slashInvocation,
   UNAVAILABLE,
 } from "./keys.ts";
 
@@ -547,4 +548,29 @@ test("an escape sequence is dropped whole, never typed into the draft", () => {
   assert.equal(stripCtl("emoji 🎉 and 日本語"), "emoji 🎉 and 日本語");
   // Newlines and tabs are content, not control noise.
   assert.equal(stripCtl("one\ntwo\tthree"), "one\ntwo\tthree");
+});
+
+/**
+ * `/compact` is the one command whose trailing text is an argument, not prose. The
+ * strict rule (`slashCommandFor`) is still what protects everything else: `/help me
+ * name this` is a sentence, and dispatching it would swallow a message.
+ */
+test("slashInvocation: an argument reaches the commands that declare one", () => {
+  assert.deepEqual(slashInvocation("/compact"), { command: "session.compact", arg: "" });
+  assert.deepEqual(
+    slashInvocation("/compact focus on the parser"),
+    { command: "session.compact", arg: "focus on the parser" },
+  );
+  // Case and surrounding space are the draft's, not the command's.
+  assert.deepEqual(
+    slashInvocation("  /COMPACT   keep the migration plan  "),
+    { command: "session.compact", arg: "keep the migration plan" },
+  );
+  // Commands that take no argument keep the exact-match rule.
+  assert.deepEqual(slashInvocation("/model"), { command: "tab.model", arg: "" });
+  assert.equal(slashInvocation("/help me name this variable"), null);
+  assert.equal(slashInvocation("/model the domain first"), null);
+  assert.equal(slashInvocation("/nosuchcommand anything"), null);
+  assert.equal(slashInvocation("look at /compact"), null);
+  assert.equal(slashInvocation(""), null);
 });

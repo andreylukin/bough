@@ -1096,6 +1096,27 @@ export interface Store {
    */
   newConversation(): void;
   /**
+   * Hand this conversation off to a FRESH one, distilled toward `goal`.
+   *
+   * The route and the client method both existed; nothing in the TUI ever called
+   * either, so a session that filled its context had no door but starting over from
+   * nothing. bough deliberately does not auto-compact (a model quietly dropping what
+   * the user was relying on is worse than a full context), which makes the manual
+   * door the entire feature — and it was missing.
+   *
+   * A HANDOFF, NOT A BRANCH YOU STAY IN. Compaction proper seeds a sibling with
+   * copies plus a summary, so you are still inside the old conversation, reading its
+   * whole history with one span replaced. That is the wrong shape for "I am out of
+   * room and want to keep going": what the user wants is a clean thread that knows
+   * what matters. So this opens a fresh ROOT whose composer is prefilled with the
+   * distilled prompt — visible, editable, and not sent until they send it. The old
+   * conversation is not mutated and not inherited; it stays in the tree.
+   *
+   * Returns the draft so the caller can put it in the composer, or `null` if the
+   * handoff failed — the composer is App's state, not the store's.
+   */
+  compact(goal?: string): Promise<string | null>;
+  /**
    * Post a message. While a turn runs, `queue` holds it locally and it drains into a
    * fresh turn when the current one ends; without `queue` it is posted immediately
    * and the server queues it (spec §5) — steering, rather than staging.
@@ -1514,6 +1535,35 @@ export function createStore(deps: StoreDeps = {}): Store {
 
     answerAsk: (answer: string) => settleAsk((q) => api.answerQuestion(q.sessionId, q.id, answer)),
     declineAsk: () => settleAsk((q) => api.declineQuestion(q.sessionId, q.id)),
+
+    async compact(goal?: string) {
+      const id = state.currentId;
+      if (!id) return null;
+      if (state.thread.length === 0) {
+        dispatch({ type: "notice", notice: "nothing to hand off yet — this conversation is empty" });
+        return null;
+      }
+      // The goal steers what survives. With none stated the instruction has to say
+      // what "keep going" means, or the summarizer is left guessing which of two
+      // finished threads of work the next message is about.
+      const stated = goal?.trim() ||
+        "continue this work from where it stands, keeping whatever is still needed";
+      dispatch({ type: "notice", notice: "distilling this conversation into a fresh one…" });
+      try {
+        const { session } = await api.handoff(id, { goal: stated });
+        await open(session.id);
+        await reload();
+        dispatch({
+          type: "notice",
+          notice: "handed off to a fresh conversation — read the draft, edit it, then send. " +
+            "The old thread is untouched (^f)",
+        });
+        return session.draft ?? null;
+      } catch (error) {
+        fail(error);
+        return null;
+      }
+    },
 
     async interrupt() {
       const id = state.currentId;
