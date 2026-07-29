@@ -1337,14 +1337,11 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
           setMessage("testing an MCP connection is not wired into this client");
           return true;
         }
-        // Per-session by construction: a stdio server runs in that session's
-        // checkout, so there is nothing to connect from before one exists.
-        if (!state.currentId) {
-          setMessage("open a conversation first — a server connects in its workspace");
-          return true;
-        }
+        // No conversation needed for a remote server — its connection belongs to the
+        // process (`mcp/service.ts`). A stdio server still does, because it is a
+        // subprocess spawned in a conversation's checkout, and the server says so.
         setMessage(`connecting to ${name}…`);
-        void controls.connectMcpServer(name, state.currentId)
+        void controls.connectMcpServer(name, state.currentId ?? "")
           .then((r) => {
             const tools = r.tools ?? [];
             setMessage(

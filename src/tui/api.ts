@@ -599,9 +599,14 @@ export function createApi(options: ApiOptions = {}) {
       put<McpStatus>(`/mcp/servers/${seg(name)}`, config),
     deleteMcpServer: (name: string) => del<McpStatus>(`/mcp/servers/${seg(name)}`),
     /** Proves the command works. Connecting is NOT granting. */
+    /**
+     * `sessionId: ""` connects in the process's own scope — which is where a remote
+     * server's connection lives (`mcp/service.ts`), and what makes the panel usable
+     * before the first message of a conversation is sent.
+     */
     connectMcpServer: (name: string, sessionId: string) =>
       post<McpConnectResult>(
-        `/mcp/servers/${seg(name)}/connect${query({ session: sessionId })}`,
+        `/mcp/servers/${seg(name)}/connect${sessionId ? query({ session: sessionId }) : ""}`,
       ),
     restartMcpServer: (name: string, sessionId: string) =>
       post<McpStatus & { restarted: boolean }>(

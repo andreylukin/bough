@@ -38,6 +38,7 @@ import { loadRegistry, registryFile } from "../mcp/config.ts"; // T7.1
 import { authStatus, callbackUrl, configureOAuthCallback } from "../mcp/oauth.ts"; // T7.2
 import { createMcpHostFns } from "../hostfn/mcp.ts"; // T7.3
 import { bindTurnGrant, mcpManager } from "../mcp/manager.ts"; // T7.3
+import { reconcileMcp, reconcileSummary } from "../mcp/service.ts";
 import { createScheduleHostFn } from "../hostfn/schedule.ts"; // T6.3
 import { createStateHostFn } from "../hostfn/state.ts"; // T6.2
 import { createLspHostFn } from "../hostfn/lsp.ts"; // T7.4
@@ -480,6 +481,19 @@ try {
     `${registered.length} MCP server(s) registered in ${registryFile()}` +
       (registered.length > 0 ? `: ${registered.join(", ")}` : ""),
   );
+  // …and CONNECT the granted remote ones now, rather than waiting for a turn to
+  // want them. A connection used to be made on demand in a conversation's name, so
+  // a fresh conversation truthfully reported every server as disconnected and the
+  // panel could do nothing before the first message. Registering and granting are
+  // both statements about this machine; the connection had no business being
+  // narrower (`mcp/service.ts`). Detached and best-effort: a server that is down or
+  // unauthorized is a `failed` row in the panel, never a slow start-up.
+  void reconcileMcp()
+    .then((r) => {
+      const line = reconcileSummary(r);
+      if (line) console.log(line);
+    })
+    .catch(() => {});
 } catch (error) {
   // Best-effort, like the workflow mirrors above: an unreadable registry must not
   // stop the server from starting. The turn that needs a server will say so itself.

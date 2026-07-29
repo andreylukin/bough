@@ -50,6 +50,7 @@ import {
   loadRegistry,
   type McpConfigOptions,
   type Registry,
+  isStdio,
   removeServer,
   revokeEverywhere,
   requireServer,
@@ -59,7 +60,15 @@ import {
   upsertServer,
 } from "./config.ts";
 import { hasTokens } from "./oauth.ts";
-import { type ConnStatus, type GrantCtx, McpManager, mcpManager, resolveGrant } from "./manager.ts";
+import { reconcileMcp } from "./service.ts";
+import {
+  type ConnStatus,
+  type GrantCtx,
+  McpManager,
+  mcpManager,
+  resolveGrant,
+  SHARED_SCOPE,
+} from "./manager.ts";
 // Type-only: erased at compile time, so this module has no runtime edge into
 // `server/`. See the header.
 import type { Handler } from "../server/http.ts";
@@ -250,16 +259,21 @@ export const deleteMcpServerH: Handler = async (req, ctx, params) => {
  */
 export const connectMcpServerH: Handler = async (req, ctx, params) => {
   const sessionId = scopeOf(req, ctx);
-  if (!sessionId) {
+  const server = requireServer(params.name);
+  // ONLY A STDIO SERVER NEEDS A CONVERSATION, and only because it is a subprocess
+  // that has to be spawned somewhere — the session's checkout. A remote server is a
+  // URL: it has no cwd, its connection is shared by every conversation
+  // (`manager.ts`), and requiring a session to reach it meant the whole panel was
+  // unusable before the first message was sent.
+  if (!sessionId && isStdio(server)) {
     throw new McpError(
       400,
-      `connecting is per-session (the server runs in that session's checkout) — ` +
-        `pass ?session=<id>.`,
+      `"${params.name}" is a local command, so it runs in a conversation's checkout ` +
+        `— open a conversation and try again, or pass ?session=<id>.`,
     );
   }
-  requireServer(params.name);
-  const [catalog] = await mcpManager().ensure(sessionId, [params.name], {
-    workspace: workspaceOf(ctx, sessionId),
+  const [catalog] = await mcpManager().ensure(sessionId ?? SHARED_SCOPE, [params.name], {
+    workspace: sessionId ? workspaceOf(ctx, sessionId) : process.cwd(),
   });
   return jsonResponse({
     server: params.name,
@@ -324,6 +338,12 @@ export const setMcpActivationH = (on: boolean): Handler => async (req, ctx, para
   if (!on) {
     if (sessionId) await mcpManager().drop(sessionId, params.name);
     else await mcpManager().dropServer(params.name);
+  } else if (!sessionId) {
+    // GRANTED GLOBALLY: connect it now, in the service's own scope, rather than
+    // leaving it to whichever conversation happens to want it first (`service.ts`).
+    // Awaited, so the response the panel renders already reflects the attempt —
+    // "granted" and "not connected" on the same row is the state this removes.
+    await reconcileMcp().catch(() => {});
   }
   return jsonResponse({
     scope: sessionId ? { sessionId } : "global",
