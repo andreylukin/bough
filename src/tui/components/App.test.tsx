@@ -942,3 +942,50 @@ test("^n starts a fresh conversation, and takes the old draft with it", async ()
     h.unmount();
   }
 });
+
+/**
+ * Forking rewinds the conversation and nothing else — bough keeps no snapshot
+ * store by design — so the working tree still holds every edit the original
+ * thread made after the branch point. The branch-point screen is blank, so it
+ * said nothing at all about that, and the conversation and the files disagreed
+ * silently. It cannot restore them; it can refuse to hide the mismatch.
+ */
+test("a fresh branch says the files were NOT rewound, and how many still differ", async () => {
+  const store = fakeStore({
+    connected: true,
+    currentId: "f1",
+    sessions: [session("f1", { kind: "fork", title: "fork · redo the docstring" })],
+    session: session("f1", { kind: "fork", title: "fork · redo the docstring" }),
+    thread: [],
+    changes: {
+      available: true,
+      reason: null,
+      base: "abc123",
+      files: [
+        { path: "ledger.py", hunks: [{ header: "@@", lines: ["+a", "-b"] }] },
+        { path: "test_ledger.py", hunks: [{ header: "@@", lines: ["+c"] }] },
+      ],
+      workspace: "/src/bough",
+    } as unknown as TuiState["changes"],
+  });
+  const h = await mount(app(store));
+  try {
+    const frame = h.frame();
+    assert.ok(frame.includes("branched here"), frame);
+    assert.ok(frame.includes("not rewound"), frame);
+    assert.ok(frame.includes("2 still changed"), frame);
+  } finally {
+    h.unmount();
+  }
+});
+
+test("a ROOT conversation keeps the ordinary empty-screen prompt", async () => {
+  const store = fakeStore({ connected: true, currentId: "s1", session: session("s1"), thread: [] });
+  const h = await mount(app(store));
+  try {
+    assert.equal(h.frame().includes("branched here"), false, h.frame());
+    assert.ok(h.frame().includes("type to start"), h.frame());
+  } finally {
+    h.unmount();
+  }
+});

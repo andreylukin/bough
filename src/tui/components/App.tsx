@@ -1446,6 +1446,28 @@ export function App(
   // the composer — not up here. A status bar a screen away from the input is one
   // the user has to go looking for; every other harness keeps this next to where
   // you type. The top line is the conversation's title and nothing else.
+  /**
+   * What the empty screen of a FRESH BRANCH says instead of "type to start".
+   *
+   * Forking a turn rewinds the conversation and nothing else. bough keeps no
+   * snapshot store by design (AGENTS.md: plain git, edits land in the real files),
+   * so the working tree still holds every edit the original thread made after this
+   * point — and the branch-point screen, which is blank, gave no sign of it. The
+   * conversation says one thing and the files say another, silently, which is the
+   * documented failure mode of rewinding two stores that move independently.
+   *
+   * This does not restore anything and does not claim to. It states the mismatch
+   * and names the key that shows the files. Only on a branch with nothing said yet:
+   * once the fork has its own turns, the transcript is the answer.
+   */
+  const branchPointNote = state.session?.kind === "fork" && state.thread.length === 0
+    ? (() => {
+      const n = state.changes?.available ? state.changes.files.length : 0;
+      return n === 0
+        ? "branched here · say it differently"
+        : `branched here · the files were not rewound — ${n} still changed on disk · ^d shows them`;
+    })()
+    : null;
   const workspace = shortenPath(state.session?.workspace ?? defaultWorkspace ?? "", home);
   const header = (
     <text wrapMode="none">
@@ -1567,6 +1589,7 @@ export function App(
         turnTokens={turn?.tokens ?? null}
         queued={state.queued}
         notice={state.notice}
+        {...(branchPointNote ? { placeholder: branchPointNote } : {})}
       />
       <SubagentRail
         units={units}
