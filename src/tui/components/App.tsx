@@ -1563,13 +1563,17 @@ export function App(
           armedId={armedStop}
         />
         {/* No completion popup here: the panel owns the keyboard, so the draft
-            cannot change and a menu over it would be a control you cannot reach. */}
+            cannot change and a menu over it would be a control you cannot reach.
+            `keyboardOwner` says the same thing to the reader — the box below is
+            pinned but inert, and until it said so, a correction typed into an open
+            tree was swallowed whole and its Enter opened a row instead. */}
         <Composer
           input={line.text}
           cursor={line.cursor}
           busy={busy}
           width={cols}
           maxRows={composerRows}
+          keyboardOwner={`the ${panel.tab}`}
         />
         {status}
         <SelectionLayer />
@@ -1604,6 +1608,7 @@ export function App(
           busy={busy}
           width={cols}
           maxRows={composerRows}
+          keyboardOwner="this job view"
         />
         {status}
         <SelectionLayer />
@@ -1647,6 +1652,9 @@ export function App(
             completions={completion.items}
             completionSel={selAt}
             completionMore={Math.max(0, completion.total - completion.items.length)}
+            // The rail is the third surface that takes the keyboard while this box
+            // stays painted below it. `chat` is the only mode that types.
+            keyboardOwner={uiMode === "rail" ? "the rail" : null}
           />
         )}
       {status}

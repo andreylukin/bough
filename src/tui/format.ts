@@ -503,7 +503,15 @@ export function programSummary(code: string, max = 64, running = false): string 
   const list = (paths: string[]) =>
     paths.length <= 2 ? paths.map(name).join(", ") : `${name(paths[0])} +${paths.length - 1} more`;
 
-  const wrote = files(/\b(?:write|edit|patch)\s*\(\s*["'`]([^"'`]+)/g);
+  // `patch` is NOT in this alternation, and that is the whole point: it takes ONE
+  // string — the patch body — not a path, so matching it here captured the entire
+  // template literal and the header read `wrote cart.js#8902] SWAP 3.=3: + for (…`.
+  // Its files are the `[path#hash]` section tags inside that body, and there may be
+  // several of them in one call.
+  const wrote = [
+    ...files(/\b(?:write|edit)\s*\(\s*["'`]([^"'`]+)/g),
+    ...(/\bpatch\s*\(/.test(code) ? files(/\[([^\]\s#]+)#[^\]\s]*\]/g) : []),
+  ].filter((p, i, a) => a.indexOf(p) === i);
   const read = files(/\b(?:view|read)\s*\(\s*["'`]([^"'`]+)/g);
   if (wrote.length) bits.push(`${running ? "writing" : "wrote"} ${list(wrote)}`);
   if (read.length) bits.push(`${running ? "reading" : "read"} ${list(read)}`);

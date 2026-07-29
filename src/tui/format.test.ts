@@ -646,6 +646,18 @@ test("a step is headlined by what the program did, not by its first line of code
     programSummary('await Promise.all([agent("one"), agent("two")]);'),
     "2 subagents",
   );
+  // patch() takes ONE string — the patch body — and naming it like a path-first
+  // call captured the whole template literal, so the most-read line in the UI read
+  // `wrote cart.js#8902] SWAP 3.=3: + for (let i = 0; …`. Its files are the section
+  // tags inside the body, and one call may carry several.
+  const onePatch = "await patch(`[src/cart.js#8902]\nSWAP 3.=3:\n+  const x = 1;`);";
+  assert.equal(programSummary(onePatch), "wrote cart.js");
+  assert.equal(
+    programSummary("await patch(`[a.ts#]\nDEL 2.=3\n[b/c.ts#F1]\nINS.TAIL:\n+x`);"),
+    "wrote a.ts, c.ts",
+  );
+  // A bracket that is not a patch section tag must not invent a file.
+  assert.equal(programSummary('const rows = data["k#1"]; await bash("ls");'), "ran 1 command");
   // Unrecognized programs yield "", so the caller falls back to the code gist
   // rather than to an empty header.
   assert.equal(programSummary("const x = 1 + 1;"), "");

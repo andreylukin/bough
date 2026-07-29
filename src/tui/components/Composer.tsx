@@ -62,6 +62,18 @@ export interface ComposerProps {
   completionSel?: number;
   /** Matches hidden by the row cap, so the menu can say "↓ N more". */
   completionMore?: number;
+  /**
+   * The surface that has the keyboard INSTEAD of this one, e.g. `"the tree"`.
+   * Null (the default) means the composer is focused.
+   *
+   * THE LIE THIS ENDS: the composer is pinned under the panel, the rail and the job
+   * view, and it painted an accent border, a block caret and "type a message · enter
+   * sends" in every one of them — while `App` drops typed characters unless the mode
+   * is `chat`. Open the tree, type a correction, press Enter: 27 characters and the
+   * Return vanished, and Enter opened whatever row the tree cursor was on. Nothing on
+   * screen had said the box was inert. A component that looks focused must be focused.
+   */
+  keyboardOwner?: string | null;
 }
 
 /**
@@ -109,6 +121,7 @@ export function Composer(
     completions = [],
     completionSel = 0,
     completionMore = 0,
+    keyboardOwner = null,
   }: ComposerProps,
 ) {
   // Wrap ourselves (fixed-width chunks) so the cursor→row mapping is exact.
@@ -116,7 +129,15 @@ export function Composer(
   // An empty composer states the first action: without it the box reads as
   // decoration. Kept even when a ghost exists — a ghost only appears once you
   // have started typing, so the two never collide.
-  const placeholder = input === "" ? "type a message · enter sends" : "";
+  // When another surface has the keyboard the placeholder names it instead, because
+  // the empty box is exactly where "type a message" is read as an invitation. A
+  // draft that IS there stays visible and untouched — it is still your draft, it
+  // just is not taking keys this second.
+  const placeholder = keyboardOwner
+    ? (input === "" ? `${keyboardOwner} has the keyboard · esc returns here` : "")
+    : input === ""
+    ? "type a message · enter sends"
+    : "";
   const ghostHint = ghost ? "  ⇥ tab" : "";
   const full = "› " + input + ghost + ghostHint;
   const ghostStart = 2 + input.length;
@@ -174,12 +195,16 @@ export function Composer(
         flexDirection="column"
         borderStyle="rounded"
         // Accent while awaiting input: the composer is the focused element in
-        // chat mode, and a hairline border made the first action invisible.
-        borderColor={busy ? UI.warn : UI.accent}
+        // chat mode, and a hairline border made the first action invisible. A
+        // hairline is right for the opposite case — another surface holds the
+        // keyboard and this box is not where the next keystroke lands.
+        borderColor={keyboardOwner ? UI.muted : busy ? UI.warn : UI.accent}
         paddingX={1}
       >
         {shown.map((r, i) => {
-          const hasCursor = top + i === curRow;
+          // No caret when the keyboard is elsewhere: a block cursor is the single
+          // strongest claim a terminal UI can make about where typing goes.
+          const hasCursor = !keyboardOwner && top + i === curRow;
           const col = cur - r.start;
           const at = hasCursor ? r.text[col] : undefined;
           const prefix = r.start === 0 ? 2 : 0; // the accent "› " on the first row
@@ -207,8 +232,14 @@ export function Composer(
                       )}
                   </>
                 )
+                // An empty first row with no caret: the placeholder lives here
+                // instead. Unfocused, the caret branch above never runs, and
+                // without this the box that has just lost the keyboard is the one
+                // that says nothing about it.
                 : r.text.length <= prefix
-                ? " "
+                ? (placeholder
+                  ? <span attributes={TextAttributes.DIM}>{placeholder}</span>
+                  : " ")
                 : (
                   <>
                     {r.text.slice(prefix, gcol)}
