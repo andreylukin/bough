@@ -304,6 +304,31 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
   { name: "help", command: "help.open", desc: "every key, by section" },
 ];
 
+/**
+ * The command a DRAFT names, if the whole draft is one — `"/model"` → `tab.model`.
+ *
+ * WHY THE SEND PATH NEEDS THIS AT ALL. `/` commands used to fire from exactly one
+ * place: accepting a row in the completion popup. The popup opens as you type, so
+ * text that arrives faster than a render — a paste, a fast typist, anything that
+ * delivers the line and its Return in one read — never opened it, and Enter then
+ * sent `/model` to the frontier model as an ordinary sentence. Measured: 19k
+ * tokens, a real charge, and a conversation auto-titled "Model Architecture
+ * Discussion". Typing it slowly worked, which made it intermittent and therefore
+ * harder to believe.
+ *
+ * EXACT AND WHOLE, deliberately. `/model` dispatches; `/help me name this` is
+ * prose about a command and is sent, because a message that begins with a command
+ * name is not the same thing as a command. Skills are not here either — a skill
+ * reference is text the model reads (`/prewalk fix the parser`), so it must stay
+ * in the message.
+ */
+export function slashCommandFor(draft: string): Command | null {
+  const m = /^\/([a-z][a-z0-9-]*)$/i.exec(draft.trim());
+  if (!m) return null;
+  const name = m[1].toLowerCase();
+  return SLASH_COMMANDS.find((c) => c.name === name)?.command ?? null;
+}
+
 /** Opens and closes the panel. Never names a tab — that is what the others are for. */
 export const PANEL_TOGGLE = "ctrl+t";
 

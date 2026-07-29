@@ -80,6 +80,7 @@ import {
   type LineState,
   lookup,
   SLASH_COMMANDS,
+  slashCommandFor,
   stripCtl,
   type UiMode,
 } from "../keys.ts";
@@ -1058,6 +1059,17 @@ export function App(
   const submit = useCallback((queue: boolean) => {
     const text = lineRef.current.text.trim();
     if (text === "") return;
+    // A DRAFT THAT IS A COMMAND IS RUN, NOT SENT. Dispatching used to happen only
+    // when a popup row was accepted, and the popup only exists if the text was slow
+    // enough to render — so a pasted `/model` went to the frontier model as prose
+    // and was billed for it. Queueing is ignored on purpose: `⌥⏎` means "after this
+    // turn", and there is nothing about opening a panel that should wait for a turn.
+    const command = slashCommandFor(text);
+    if (command) {
+      setLine(EMPTY_LINE);
+      setHistAt(null);
+      return runRef.current?.(command, "");
+    }
     setLine(EMPTY_LINE);
     setHistAt(null);
     setSent((h) => [...h, text]);

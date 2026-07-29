@@ -39,6 +39,7 @@ import {
   tabForCommand,
   TABS,
   type UiMode,
+  slashCommandFor,
   UNAVAILABLE,
 } from "./keys.ts";
 
@@ -373,6 +374,24 @@ test("every control chord live in chat is documented somewhere", () => {
       `${chord} is bound in chat but documented nowhere`,
     );
   }
+});
+
+test("slashCommandFor: a draft that IS a command, and nothing looser", () => {
+  // The bug: `/` commands fired only from the completion popup, and the popup only
+  // exists if the text rendered a keystroke at a time. A PASTED `/model` therefore
+  // went to the frontier model as prose — 19k tokens, billed, and the conversation
+  // auto-titled "Model Architecture Discussion".
+  assert.equal(slashCommandFor("/model"), "tab.model");
+  assert.equal(slashCommandFor("  /help  "), "help.open"); // trimmed like the draft is
+  assert.equal(slashCommandFor("/NEW"), "session.new"); // a command is not case
+  // Prose that merely starts with one is a message, not a command.
+  assert.equal(slashCommandFor("/help me name this variable"), null);
+  assert.equal(slashCommandFor("look at /model"), null);
+  assert.equal(slashCommandFor("/nosuchcommand"), null);
+  assert.equal(slashCommandFor("/"), null);
+  assert.equal(slashCommandFor(""), null);
+  // A skill reference is TEXT the model reads, so it must still be sent.
+  assert.equal(slashCommandFor("/prewalk"), null);
 });
 
 test('the "not bound" section is true — none of those chords is bound', () => {

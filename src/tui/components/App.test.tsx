@@ -268,7 +268,7 @@ function fakeStore(over: Partial<TuiState> = {}): Store & { calls: string[] } {
     open: (id: string) => (calls.push(`open:${id}`), Promise.resolve()),
     createSession: () => Promise.resolve(null),
     newConversation: () => calls.push("newConversation"),
-    send: noop,
+    send: (text: string) => (calls.push(`send:${text}`), Promise.resolve()),
     drainQueue: noop,
     answerAsk: noop,
     declineAsk: noop,
@@ -763,6 +763,43 @@ test("⏎ on a rail shell opens THAT JOB's output, not the session it belongs to
     // esc leaves it, and says so to the store rather than only to local state.
     await h.press(ESC);
     assert.ok(store.calls.includes("closeJob"), store.calls.join(","));
+  } finally {
+    h.unmount();
+  }
+});
+
+test("a PASTED /command runs instead of being sent to the model", async () => {
+  // The whole line and its Return in ONE read — which is what a paste is, and what
+  // a fast typist produces. The completion popup never opens on that path, and the
+  // popup was the only thing that dispatched a `/` command, so `/model` went to the
+  // frontier model as an ordinary sentence: 19k tokens, billed, and a conversation
+  // auto-titled "Model Architecture Discussion". Pressing the same keys slowly
+  // worked, which is what made it intermittent and hard to believe.
+  const store = fakeStore(STATE);
+  const h = await mount(app(store));
+  try {
+    await h.press("/model\r");
+    const frame = await frameShowing(h, "^t close");
+    assert.ok(frame.includes("^t close"), `the model tab did not open:\n${frame}`);
+    // …and nothing was sent. `send` is the call that costs money.
+    assert.equal(
+      store.calls.some((c) => c.startsWith("send")),
+      false,
+      store.calls.join(","),
+    );
+  } finally {
+    h.unmount();
+  }
+});
+
+test("a pasted message that merely BEGINS with a command is still a message", async () => {
+  const store = fakeStore(STATE);
+  const h = await mount(app(store));
+  try {
+    await h.press("/help me name this variable\r");
+    await h.paint();
+    assert.ok(store.calls.some((c) => c.startsWith("send")), store.calls.join(","));
+    assert.equal(h.frame().includes("^t close"), false, h.frame());
   } finally {
     h.unmount();
   }
