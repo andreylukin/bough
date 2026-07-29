@@ -64,6 +64,31 @@ test("a field is read out of a JSON item; a plain item is used whole", async () 
   assert.equal(await readKeychainRef(whole, { keychain: ok("plain-secret") }), "plain-secret");
 });
 
+test("a key with dots in it is still addressable", async () => {
+  // Claude Code stores a per-server OAuth grant under `<serverName>|<hash>`, and a
+  // server named for its host puts DOTS in that key — which a dotted path splits
+  // straight through. Rejoining the remaining segments finds the literal key.
+  const item = JSON.stringify({
+    mcpOAuth: {
+      "slack|a1b2": { accessToken: "plain-key-token" },
+      "notion|mcp.notion.com|d4": { accessToken: "dotted-key-token" },
+    },
+  });
+  const plain = parseKeychainRef("${keychain:x#mcpOAuth.slack|a1b2.accessToken}")!;
+  assert.equal(await readKeychainRef(plain, { keychain: ok(item) }), "plain-key-token");
+  const dotted = parseKeychainRef(
+    "${keychain:x#mcpOAuth.notion|mcp.notion.com|d4.accessToken}",
+  )!;
+  assert.equal(await readKeychainRef(dotted, { keychain: ok(item) }), "dotted-key-token");
+});
+
+test("an exact key still wins over a rejoined one", async () => {
+  // The fallback must never change what an existing reference resolves to.
+  const item = JSON.stringify({ a: { b: { c: "nested" } }, "a.b": { c: "flat" } });
+  const nested = parseKeychainRef("${keychain:x#a.b.c}")!;
+  assert.equal(await readKeychainRef(nested, { keychain: ok(item) }), "nested");
+});
+
 test("`security -w` newline is not part of the secret", async () => {
   // A token with a trailing newline makes a header the remote end rejects for
   // reasons it will not explain.

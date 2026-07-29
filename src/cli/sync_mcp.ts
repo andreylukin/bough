@@ -18,19 +18,29 @@
  * asked for (bough connects using the authorization Claude Code already holds)
  * without a second copy of the credential to leak or to revoke.
  *
- * AND THE TOKEN IS NOT ATTACHED TO STRANGERS. A keychain header is added only for
- * hosts the credential actually belongs to (`claude.ai`, `*.anthropic.com`). The
- * obvious generalization — "it is a remote server, give it the bearer token" —
- * would send the user's Anthropic OAuth token to whatever third party is on the
- * other end of a `url` in a config file. That is not a convenience, it is a
- * credential leak with a helpful tone of voice, so a third-party remote server is
- * registered WITHOUT auth and reported as needing its own `/mcp` → `a` flow.
+ * EVERY SERVER GETS THE CREDENTIAL THAT IS ACTUALLY ITS OWN. The login item holds
+ * TWO things: the account token above, and `mcpOAuth` — one OAuth grant per remote
+ * server Claude Code has authorized, keyed `<serverName>|<hash>`, each with its own
+ * token, URL and expiry. A server with a grant is referenced to THAT grant. Only a
+ * host the account token belongs to (`claude.ai`, `*.anthropic.com`) is referenced
+ * to the account token, and everything else is registered unauthenticated. The
+ * generalization this refuses — "it is remote, so give it the bearer token" — would
+ * post the user's Anthropic credential to whatever third party a config file names,
+ * which is a credential leak with a helpful tone of voice.
  *
  * WHAT IT READS, in Claude Code's own order of scope:
  *
  *   ~/.claude.json            → `mcpServers`                    (user scope)
  *   ~/.claude.json            → `projects[<dir>].mcpServers`    (that project)
  *   <dir>/.mcp.json           → `mcpServers`                    (checked in)
+ *   login keychain            → `mcpOAuth`                      (authorized remotes)
+ *
+ * That last source is not only a credential lookup — it DEFINES servers. A
+ * connector authorized through Claude Code (Slack is the case that exposed this)
+ * leaves nothing behind in any config file, so the keychain entry is the only
+ * record that the server exists, and it carries both halves: a URL and a token.
+ * Without it, `sync-mcp` had neither a definition to copy nor a credential to point
+ * at, and simply reported nothing to do.
  *
  * WHAT IT NEVER DOES: overwrite. A name already in bough's registry is left
  * exactly as it is and reported, because the local definition may be the one that
@@ -53,12 +63,95 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { loadRegistry, type McpConfigOptions, upsertServer } from "../mcp/config.ts";
+import { CLAUDE_CODE_ITEM, type KeychainReader, securityReader } from "../mcp/keychain.ts";
+
+/**
+ * One `mcpOAuth` entry, read for the two fields that describe a server. The tokens
+ * in it are deliberately NOT read into this shape: nothing in this process needs
+ * their value, and a secret that is never loaded cannot be logged by accident.
+ */
+const Grant = z.object({
+  serverName: z.string().min(1),
+  serverUrl: z.string().url(),
+  expiresAt: z.number().optional(),
+}).passthrough();
+
+/** A remote server Claude Code has authorized, with the key its grant is under. */
+export interface KeychainGrant {
+  key: string;
+  name: string;
+  url: string;
+  /** Epoch ms, when the entry carried one. */
+  expiresAt?: number;
+}
+
+/**
+ * Every server in the login item's `mcpOAuth` map.
+ *
+ * A read failure is NOT an error here: no keychain (another platform), a denied
+ * dialog, or simply no such item all mean "there are no grants to adopt", and the
+ * config-file half of this command must still work. The one thing worth saying out
+ * loud is a denied prompt, since that is a decision the user just made and might
+ * want to reverse.
+ */
+export async function readGrants(
+  read: KeychainReader,
+): Promise<{ grants: KeychainGrant[]; note: string | null }> {
+  const { value, code, error } = await read(CLAUDE_CODE_ITEM);
+  if (code !== 0 || !value) {
+    // 128 is the "allow access?" dialog being dismissed — worth a sentence.
+    const note = code === 128
+      ? `keychain access to "${CLAUDE_CODE_ITEM}" was denied, so no authorized ` +
+        `remote servers were adopted. Re-run and choose Allow to include them.`
+      : null;
+    return { grants: [], note: note ?? (error && code !== 44 ? error : null) };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return { grants: [], note: `keychain item "${CLAUDE_CODE_ITEM}" is not JSON` };
+  }
+  const map = (parsed as { mcpOAuth?: Record<string, unknown> } | null)?.mcpOAuth;
+  if (!map || typeof map !== "object") return { grants: [], note: null };
+  const grants: KeychainGrant[] = [];
+  for (const [key, raw] of Object.entries(map)) {
+    const entry = Grant.safeParse(raw);
+    if (!entry.success) continue; // a shape we do not recognize is not a server
+    grants.push({
+      key,
+      name: entry.data.serverName,
+      url: entry.data.serverUrl,
+      ...(entry.data.expiresAt === undefined ? {} : { expiresAt: entry.data.expiresAt }),
+    });
+  }
+  return { grants, note: null };
+}
 
 /**
  * The keychain item Claude Code keeps its claude.ai OAuth blob in, and the path to
  * the access token inside it. Same reference `mcp/config.ts` documents.
  */
-const CLAUDE_TOKEN_REF = "${keychain:Claude Code-credentials#claudeAiOauth.accessToken}";
+const CLAUDE_TOKEN_REF = `\${keychain:${CLAUDE_CODE_ITEM}#claudeAiOauth.accessToken}`;
+
+/**
+ * A per-server grant Claude Code obtained, as a reference to it.
+ *
+ * The SAME keychain item holds a second map — `mcpOAuth`, keyed by
+ * `<serverName>|<hash>` — with one OAuth grant per remote server it has authorized:
+ * Slack, Linear, Notion, anything reached by `claude mcp add` and a browser round
+ * trip. That map is why the first cut of this command could not sync Slack at all:
+ * a Slack connector is not in `~/.claude.json` (nothing local defines it) and the
+ * claude.ai token is deliberately not offered to a third party, so there was
+ * neither a definition to copy nor a credential to point at. Both are here.
+ *
+ * Each entry carries its own `expiresAt` beside the token, which is exactly what
+ * `keychain.ts` checks before handing one out — so a stale Slack grant is reported
+ * as stale rather than sent and 401'd.
+ */
+function grantRef(key: string): string {
+  return `\${keychain:${CLAUDE_CODE_ITEM}#mcpOAuth.${key}.accessToken}`;
+}
 
 /**
  * Hosts the claude.ai credential belongs to.
@@ -152,9 +245,11 @@ export const USAGE = [
   "  -n, --dry-run    report what would change and write nothing",
   "      --force      replace entries bough already has under the same name",
   "",
-  "  Tokens are never copied: a claude.ai server is registered with a keychain",
-  "  REFERENCE, resolved at connect time. Registering grants nothing — activate",
-  "  a server in the /mcp panel before a turn can use it.",
+  "  Servers Claude Code has authorized (its keychain mcpOAuth grants) are synced",
+  "  too, even when no config file defines them — that is how a Slack connector",
+  "  gets here. Tokens are never copied: what is written is a keychain REFERENCE,",
+  "  resolved at connect time. Registering grants nothing — activate a server in",
+  "  the /mcp panel before a turn can use it.",
 ].join("\n");
 
 /** Reads one JSON file. `null` for absent; throws only on unreadable/malformed. */
@@ -240,12 +335,20 @@ export function collectClaudeServers(
  */
 export function toBoughServer(
   s: ClaudeServer,
+  grant?: KeychainGrant,
 ): { server: Record<string, unknown>; authed: boolean } | { reason: string } {
   const remote = s.url && (!s.command || s.type === "http" || s.type === "sse");
   if (remote && s.url) {
     const headers = { ...(s.headers ?? {}) };
     const hasAuth = Object.keys(headers).some((h) => h.toLowerCase() === "authorization");
-    // The credential is Anthropic's, so it goes only to Anthropic. See the header.
+    // THE SERVER'S OWN GRANT FIRST. When Claude Code has authorized this server,
+    // the right credential is the one it obtained FOR it — not the account token,
+    // which that server would reject anyway. This is what makes Slack work.
+    if (!hasAuth && grant) {
+      headers["Authorization"] = `Bearer ${grantRef(grant.key)}`;
+      return { server: { url: s.url, headers }, authed: true };
+    }
+    // Otherwise the account token, and only to hosts it belongs to. See the header.
     const authed = !hasAuth && isAnthropicHost(s.url);
     if (authed) headers["Authorization"] = `Bearer ${CLAUDE_TOKEN_REF}`;
     return { server: { url: s.url, headers }, authed };
@@ -279,6 +382,8 @@ export function looksSecret(key: string, value: string): boolean {
 
 export interface SyncDeps {
   readJson?: ReadJson;
+  /** Injected so tests never touch a real keychain — see `mcp/keychain.ts`. */
+  keychain?: KeychainReader;
   /** Injected so tests write to a temp file rather than `~/.bough`. */
   config?: McpConfigOptions;
   home?: string;
@@ -307,6 +412,31 @@ export async function runSyncMcp(argv: string[], deps: SyncDeps = {}): Promise<n
   const dirs = parsed.args.dirs.length > 0 ? parsed.args.dirs : [deps.cwd ?? process.cwd()];
 
   const { found, errors } = collectClaudeServers(dirs, readJson, home);
+  const { grants, note } = await readGrants(deps.keychain ?? securityReader);
+  if (note) err(`warning: ${note}`);
+  // Matched by NAME first, then by URL: the name is what Claude Code keys the grant
+  // under and what the config calls the server, and the URL catches the case where
+  // the two disagree about spelling but plainly mean the same endpoint.
+  const sameUrl = (a: string, b: string) => a.replace(/\/+$/, "") === b.replace(/\/+$/, "");
+  const grantFor = (name: string, url?: string): KeychainGrant | undefined =>
+    grants.find((g) => g.name === name) ??
+      (url ? grants.find((g) => sameUrl(g.url, url)) : undefined);
+
+  // A grant with no definition anywhere is STILL a server — and it is the whole
+  // reason Slack could not be synced before. A connector authorized through Claude
+  // Code leaves nothing in `~/.claude.json`; the keychain entry is the only record
+  // that it exists, and it carries both halves (a URL and a credential).
+  const claimed = new Set(found.map((f) => f.name));
+  for (const g of grants) {
+    if (claimed.has(g.name) || found.some((f) => f.server.url && sameUrl(f.server.url, g.url))) {
+      continue;
+    }
+    found.push({
+      name: g.name,
+      server: { type: "http", url: g.url },
+      source: "Claude Code's keychain grants",
+    });
+  }
   for (const e of errors) err(`warning: ${e}`);
   if (found.length === 0) {
     out("no MCP servers found in Claude Code's config — nothing to sync.");
@@ -329,10 +459,22 @@ export async function runSyncMcp(argv: string[], deps: SyncDeps = {}): Promise<n
       });
       continue;
     }
-    const mapped = toBoughServer(server);
+    const grant = grantFor(name, server.url);
+    const mapped = toBoughServer(server, grant);
     if ("reason" in mapped) {
       results.push({ name, source, action: "failed", reason: mapped.reason });
       continue;
+    }
+    // Said at sync time as well as at connect time. `keychain.ts` refuses an expired
+    // token when the request is about to go out, which is correct but arrives much
+    // later and looks like the server's fault; the fix is the same either way and
+    // the moment to mention it is while the person is here.
+    if (grant?.expiresAt !== undefined && grant.expiresAt <= Date.now()) {
+      warnings.push(
+        `${name}: Claude Code's grant for this server expired ` +
+          `${new Date(grant.expiresAt).toISOString()}. bough does not refresh a credential ` +
+          `it did not obtain — run \`claude\` once to refresh it in place.`,
+      );
     }
     for (const [k, v] of Object.entries(server.env ?? {})) {
       if (looksSecret(k, v)) {

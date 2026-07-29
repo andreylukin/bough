@@ -24,7 +24,17 @@ async function registryFile(): Promise<string> {
   return join(await mkdtemp(join(tmpdir(), "bough-syncmcp-")), "mcp.json");
 }
 
-const silent = { out: () => {}, err: () => {} };
+/**
+ * `security` reporting "no such item" (44).
+ *
+ * The DEFAULT for every test that is not about grants, and not an incidental one:
+ * without it the command falls through to `securityReader` and a test run reads the
+ * developer's real login keychain — which can raise the system's "allow access?"
+ * dialog and hang a suite on a machine nobody is watching.
+ */
+const noKeychain = async () => ({ value: "", code: 44, error: "" });
+
+const silent = { out: () => {}, err: () => {}, keychain: noKeychain };
 
 test("parseSyncArgs: flags only, and it never throws", () => {
   assert.deepEqual(parseSyncArgs([]), {
@@ -131,6 +141,120 @@ test("a THIRD-PARTY remote server is registered without Anthropic's token", asyn
   assert.deepEqual(doc.servers.lookalike.headers, {});
 });
 
+// ---- the keychain's own grants ------------------------------------------------
+
+/** A `Claude Code-credentials` item, shaped like the real one. */
+function keychain(mcpOAuth: Record<string, unknown>) {
+  return async () => ({
+    value: JSON.stringify({
+      mcpOAuth,
+      claudeAiOauth: { accessToken: "account-token", expiresAt: Date.now() + 3_600_000 },
+    }),
+    code: 0,
+    error: "",
+  });
+}
+
+const SLACK_GRANT = {
+  "slack|a1b2c3": {
+    serverName: "slack",
+    serverUrl: "https://slack.example.com/mcp",
+    accessToken: "slack-secret-token",
+    refreshToken: "slack-refresh",
+    redirectUri: "http://localhost:1/callback",
+    expiresAt: Date.now() + 3_600_000,
+    scope: "read",
+    discoveryState: { authorizationServerUrl: "https://slack.example.com", oauthMetadataFound: true },
+  },
+};
+
+test("a server that exists ONLY as a keychain grant is synced — the Slack case", async () => {
+  // What made this the reported bug: a connector authorized through Claude Code
+  // leaves NOTHING in ~/.claude.json, so there was no definition to copy; and the
+  // account token is deliberately withheld from third parties, so there was no
+  // credential to point at either. The grant supplies both.
+  const file = await registryFile();
+  const code = await runSyncMcp([], {
+    ...silent,
+    readJson: () => null, // no config files at all
+    keychain: keychain(SLACK_GRANT),
+    home: HOME,
+    cwd: "/w",
+    config: { file },
+  });
+  assert.equal(code, 0);
+  const text = await readFile(file, "utf8");
+  const slack = JSON.parse(text).servers.slack;
+  assert.equal(slack.url, "https://slack.example.com/mcp");
+  assert.equal(
+    slack.headers.Authorization,
+    "Bearer ${keychain:Claude Code-credentials#mcpOAuth.slack|a1b2c3.accessToken}",
+  );
+  // Its OWN grant, never the account token — Slack would reject that one anyway.
+  assert.equal(text.includes("claudeAiOauth"), false);
+  // And no secret is written down, which is the invariant the whole command holds.
+  assert.equal(text.includes("slack-secret-token"), false);
+});
+
+test("a configured server is matched to its grant by name, then by url", async () => {
+  const file = await registryFile();
+  const files = {
+    [`${HOME}/.claude.json`]: {
+      mcpServers: {
+        // Same name as the grant…
+        slack: { type: "http", url: "https://slack.example.com/mcp" },
+        // …and a different name, same endpoint but for a trailing slash.
+        notes: { type: "http", url: "https://notion.example.com/mcp/" },
+      },
+    },
+  };
+  await runSyncMcp([], {
+    ...silent,
+    readJson: reader(files),
+    keychain: keychain({
+      ...SLACK_GRANT,
+      "notion|d4e5": {
+        serverName: "notion",
+        serverUrl: "https://notion.example.com/mcp",
+        accessToken: "t",
+        expiresAt: Date.now() + 3_600_000,
+      },
+    }),
+    home: HOME,
+    cwd: "/w",
+    config: { file },
+  });
+  const servers = JSON.parse(await readFile(file, "utf8")).servers;
+  assert.match(servers.slack.headers.Authorization, /mcpOAuth\.slack\|a1b2c3/);
+  assert.match(servers.notes.headers.Authorization, /mcpOAuth\.notion\|d4e5/);
+  // Matched, so the grant does not ALSO land as a second server under its own name.
+  assert.equal("notion" in servers, false);
+});
+
+test("an expired grant is synced and said out loud, not silently sent", async () => {
+  const file = await registryFile();
+  const lines: string[] = [];
+  await runSyncMcp([], {
+    out: (l) => lines.push(l),
+    err: (l) => lines.push(l),
+    readJson: () => null,
+    keychain: keychain({
+      "slack|a1b2c3": {
+        serverName: "slack",
+        serverUrl: "https://slack.example.com/mcp",
+        accessToken: "stale",
+        expiresAt: Date.now() - 60_000,
+      },
+    }),
+    home: HOME,
+    cwd: "/w",
+    config: { file },
+  });
+  assert.ok(JSON.parse(await readFile(file, "utf8")).servers.slack, "still registered");
+  assert.match(lines.join("\n"), /expired/i);
+  assert.match(lines.join("\n"), /claude/i); // …and how to refresh it
+});
+
 test("an existing entry is kept unless --force, and --dry-run writes nothing", async () => {
   const file = await registryFile();
   const files = {
@@ -163,6 +287,7 @@ test("an unusable entry is reported and the others still land", async () => {
   const code = await runSyncMcp([], {
     out: (l) => lines.push(l),
     err: (l) => lines.push(l),
+    keychain: noKeychain,
     readJson: reader(files),
     home: HOME,
     cwd: "/w",
@@ -185,6 +310,7 @@ test("no servers anywhere is a true answer, not a failure", async () => {
   const code = await runSyncMcp([], {
     out: (l) => lines.push(l),
     err: () => {},
+    keychain: noKeychain,
     readJson: () => null,
     home: HOME,
     cwd: "/w",

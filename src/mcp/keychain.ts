@@ -250,10 +250,31 @@ function assertFresh(ref: KeychainRef, container: unknown): void {
 function walk(root: unknown, path: string[]): { found: unknown; container: unknown } {
   let container: unknown = undefined;
   let node: unknown = root;
-  for (const key of path) {
+  for (let i = 0; i < path.length; i++) {
     if (!node || typeof node !== "object") return { found: undefined, container };
+    const here = node as Record<string, unknown>;
     container = node;
-    node = (node as Record<string, unknown>)[key];
+    if (path[i] in here) {
+      node = here[path[i]];
+      continue;
+    }
+    // A KEY THAT CONTAINS DOTS. The path is dotted, so a literal key with a dot in
+    // it — `mcpOAuth."slack|mcp.example.com#a1b2"`, which is the shape Claude Code
+    // stores a per-server OAuth grant under — is unaddressable by splitting alone.
+    // Rejoining the remaining segments longest-first finds it, and only ever runs
+    // when the plain segment missed, so an exact key still wins and no existing
+    // reference changes meaning.
+    let matched = false;
+    for (let end = path.length; end > i + 1; end--) {
+      const joined = path.slice(i, end).join(".");
+      if (joined in here) {
+        node = here[joined];
+        i = end - 1;
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) return { found: undefined, container };
   }
   return { found: node, container };
 }
