@@ -787,7 +787,7 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
         continue; // a blip mid-flow is not a failed flow
       }
       if (ok) {
-        setMessage(`${name} is authorized — ⏎ grants it to this conversation`);
+        setMessage(`${name} is authorized — ⏎ grants it in every conversation`);
         await refreshMcp();
         return;
       }
@@ -817,7 +817,7 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
       void controls.putMcpServer(name, { url })
         .then(() => refreshMcp())
         .then(() => {
-          setMessage(`registered ${name} — a authorizes it, ⏎ grants it to this conversation`);
+          setMessage(`registered ${name} — a authorizes it, ⏎ grants it in every conversation`);
         })
         .catch((e: unknown) => setMessage(e instanceof Error ? e.message : String(e)));
       return;
