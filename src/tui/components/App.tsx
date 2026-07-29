@@ -98,7 +98,7 @@ import { JobOutput, jobBodyRows } from "./JobOutput.tsx";
 import { Composer, completionPopupHeight, composerHeight } from "./Composer.tsx";
 import { type PanelControls, type PanelHostDeps, usePanelHost } from "./PanelHost.tsx";
 import { liveSubagents, SubagentRail } from "./SubagentRail.tsx";
-import { forestRows, rewindIndex } from "../forest.ts";
+import { forestRows, revealPath, rewindIndex } from "../forest.ts";
 
 import { palette } from "../theme.ts";
 import { tabAtColumn } from "./Panel.tsx";
@@ -822,6 +822,23 @@ export function App(
   const askLines = ask ? askPromptLines(ask.question, rows, cols) : [];
   // 2 border + N prompt + one row per option + the typed row + the legend.
   const inputH = ask ? 4 + askLines.length + (ask.options?.length ?? 0) : boxH + popupH;
+  /**
+   * What the tree shows the turns of: whatever the user opened, PLUS the chain of
+   * origins down to the conversation on screen.
+   *
+   * Opening the tree used to show everything except where you were: a handoff, a fork
+   * and a compaction all hang under the conversation they came from, so the session
+   * being typed into was a collapsed row inside another one. Seeding rather than
+   * forcing keeps the disclosure the user's — collapsing an ancestor sticks, because
+   * `collapseTurns` removes it from `openTurns` and this only ever adds the path for
+   * the CURRENT id.
+   */
+  const revealed = useMemo(() => {
+    const path = revealPath(state.sessions, children, state.currentId);
+    if (path.length === 0) return openTurns;
+    return new Set([...openTurns, ...path]);
+  }, [state.sessions, children, state.currentId, openTurns]);
+
   // Hoisted out of the JSX because the click hit-test needs the same number the
   // renderer lays out with; two copies would put a click one row off its row.
   const chatH = Math.max(1, rows - 1 /* header */ - railH - inputH - 1 /* status */);
@@ -852,7 +869,7 @@ export function App(
       sessions: state.sessions,
       childrenByOrigin: children,
       threads: allThreads,
-      expanded: openTurns,
+      expanded: revealed,
       drilled: expanded,
     },
     expand,

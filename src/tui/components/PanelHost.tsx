@@ -416,6 +416,10 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
       }),
     [deps.forest, state.currentId, panel.tab, filter],
   );
+  // Read by the arrival effect, which must not re-run when the rows change — only
+  // when the tab does.
+  const treeRef = useRef(tree);
+  treeRef.current = tree;
   const threads = deps.forest.threads;
   const changes = useMemo(() => changeItems(state.changes), [state.changes]);
   const entries = useMemo(() => {
@@ -581,7 +585,13 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
   // armed revert (a confirm that outlives the screen it was read on is not a confirm)
   // and no run drilled into.
   useEffect(() => {
-    setSel(landOn.current ?? 0);
+    // ARRIVING AT THE TREE LANDS ON THE CONVERSATION YOU ARE IN, not on row 0. The
+    // tree is the switcher, and a switcher that opens somewhere else makes the user's
+    // first job finding themselves — worse once branches nest, because the row is
+    // then inside another conversation entirely. Every other tab keeps "arrive at the
+    // top": their lists have no you-are-here.
+    const here = panel.tab === "tree" ? treeRef.current.findIndex((r) => r.kind === "session" && r.current) : -1;
+    setSel(landOn.current ?? (here >= 0 ? here : 0));
     landOn.current = null;
     setMessage(null);
     setFocusDiff(false);

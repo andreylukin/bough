@@ -71,6 +71,16 @@ export type ForestRow =
     delegated: number;
     /** This is the conversation currently on screen. */
     current: boolean;
+    /**
+     * Conversations BELOW this one that are running right now — delegated or branched,
+     * at any depth.
+     *
+     * A collapsed row was reporting its own last turn and nothing else, so a root
+     * whose whole point was the five subagents still working under it rendered
+     * `● ✓ done`: the tree said finished while the rail two rows down said "5 agents
+     * running". A row that hides live work has to say so.
+     */
+    busyBelow: number;
     /** It has turns to show (or might — an unfetched thread is not "empty"). */
     expandable: boolean;
   }
@@ -153,6 +163,18 @@ export function forestRows(input: ForestInput): ForestRow[] {
     return [...byId.values()];
   };
 
+  /** Running descendants at any depth. Cycle-guarded like the walk itself. */
+  const busyBelow = (id: string, guard = new Set<string>()): number => {
+    if (guard.has(id)) return 0;
+    guard.add(id);
+    let n = 0;
+    for (const c of childrenOf(id)) {
+      if (c.busy || c.lastTurnStatus === "running") n++;
+      n += busyBelow(c.id, guard);
+    }
+    return n;
+  };
+
   const walk = (session: SessionRow, depth: number): void => {
     if (seen.has(session.id)) return;
     seen.add(session.id);
@@ -169,6 +191,7 @@ export function forestRows(input: ForestInput): ForestRow[] {
       open,
       delegated: delegated.length,
       current: session.id === input.currentId,
+      busyBelow: busyBelow(session.id),
       // A conversation with a fetched-and-empty thread and no branches has nothing
       // under it; one whose thread has not been fetched MIGHT, and rendering it as
       // a leaf would be a claim the caller has not made yet.
@@ -237,6 +260,41 @@ function matches(s: SessionRow, filter: string | undefined, currentId?: string |
   if (!q) return true;
   if (s.id === currentId) return true;
   return `${s.title} ${s.workspace ?? ""}`.toLowerCase().includes(q);
+}
+
+
+/**
+ * The conversations that must be EXPANDED for `currentId` to be on screen — its
+ * chain of origins, nearest last, excluding itself.
+ *
+ * Opening the tree used to show you everything except where you were. A handoff, a
+ * fork and a compaction all hang under the conversation they came from, so the
+ * session you were typing into was a collapsed row deep inside another one: the tree
+ * offered `← active` on the PARENT's last turn and no hint that the row you wanted
+ * was two disclosures away. Seeding the expansion with this puts the cursor's target
+ * on screen the moment the panel opens, and because it only SEEDS, a row the user
+ * then collapses stays collapsed.
+ *
+ * Pure and cycle-guarded: `originId` is a pointer the server sets, not a foreign key.
+ */
+export function revealPath(
+  sessions: readonly SessionRow[],
+  childrenByOrigin: Readonly<Record<string, readonly SessionRow[]>>,
+  currentId: string | null | undefined,
+): string[] {
+  if (!currentId) return [];
+  const byId = new Map<string, SessionRow>();
+  for (const s of sessions) byId.set(s.id, s);
+  for (const list of Object.values(childrenByOrigin)) for (const s of list) byId.set(s.id, s);
+  const path: string[] = [];
+  const seen = new Set<string>([currentId]);
+  let cur = byId.get(currentId)?.originId ?? null;
+  while (cur && !seen.has(cur)) {
+    seen.add(cur);
+    path.unshift(cur);
+    cur = byId.get(cur)?.originId ?? null;
+  }
+  return path;
 }
 
 /** The row a cursor at `selected` is on, or null past the end. */

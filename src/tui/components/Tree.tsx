@@ -39,8 +39,15 @@ const KIND_GLYPH: Record<SessionKind, string> = {
  * no acceptance gate behind it — it records that the turn errored, not that a check
  * ran.
  */
-export function statusMark(s: SessionRow): { glyph: string; color: string } | null {
+export function statusMark(
+  s: SessionRow,
+  busyBelow = 0,
+): { glyph: string; color: string } | null {
   if (s.busy) return { glyph: "⋯", color: "cyan" };
+  // Work running UNDER this conversation counts as this conversation running. Without
+  // it a root sitting on five live subagents rendered `✓` — the tree saying finished
+  // while the rail said "5 agents running".
+  if (busyBelow > 0) return { glyph: "⋯", color: "cyan" };
   if (s.outcomeOk === false) return { glyph: "✗", color: "red" };
   switch (s.lastTurnStatus) {
     case "running":
@@ -58,7 +65,12 @@ export function statusMark(s: SessionRow): { glyph: string; color: string } | nu
 }
 
 export function titleOf(s: SessionRow): string {
-  return (s.title || "(untitled)").replace(/^(fork|compacted|subagent|workflow) · /, "");
+  // `handoff` belongs in this list and was missing, which was visible: a handoff of a
+  // still-untitled conversation is titled `handoff · ` server-side, and the row read
+  // `handoff ·` — a prefix with nothing after it. Stripped first, so the fallback can
+  // do its job.
+  const base = (s.title || "").replace(/^(fork|compacted|handoff|subagent|workflow) · /, "").trim();
+  return base || "(untitled)";
 }
 
 /** `supervisor` is the agent — the transcript calls it "bough" and so does this. */
@@ -158,7 +170,7 @@ export function Tree({ rows: items, selected, height, filter, filtering }: TreeP
           );
         }
         const s = item.session;
-        const mark = statusMark(s);
+        const mark = statusMark(s, item.busyBelow);
         return (
           <text key={item.id} wrapMode="none">
             <span fg={sel ? "cyan" : undefined}>{cursor}</span>
@@ -180,6 +192,11 @@ export function Tree({ rows: items, selected, height, filter, filtering }: TreeP
             </span>
             {item.delegated > 0
               ? <span attributes={TextAttributes.DIM}>{`  ⋯${item.delegated}`}</span>
+              : null}
+            {/* Named, not just glyphed: `⋯` says something is live, this says how much
+                and is the difference between "look inside" and "leave it alone". */}
+            {item.busyBelow > 0
+              ? <span fg="cyan">{`  ${item.busyBelow} running`}</span>
               : null}
             {s.costUsd
               ? <span attributes={TextAttributes.DIM}>{`  ${fmtUsd(s.costUsd)}`}</span>

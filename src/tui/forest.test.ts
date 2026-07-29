@@ -21,7 +21,14 @@ import { test } from "bun:test";
 import assert from "node:assert/strict";
 import type { Message, SessionKind } from "../schema/parts.ts";
 import type { SessionRow } from "./api.ts";
-import { forestRows, isDelegated, messageGist, rewindIndex, selectionFor } from "./forest.ts";
+import {
+  forestRows,
+  isDelegated,
+  messageGist,
+  revealPath,
+  rewindIndex,
+  selectionFor,
+} from "./forest.ts";
 
 let clock = 1_700_000_000_000;
 
@@ -306,4 +313,59 @@ test("rewind lands on the open conversation's last USER turn", () => {
   const bare = build({ sessions: [session("root", "root")], threads: { root: [] } });
   assert.equal(rewindIndex(bare, "root"), 0);
   assert.equal(rewindIndex(bare, null), 0);
+});
+
+/**
+ * A row that hides live work must not read as finished. Driving a fan-out and then
+ * opening the tree showed `● ✓` on the conversation whose five subagents were, two
+ * rows below on the same screen, reported as "5 agents running".
+ */
+test("running work under a conversation is counted on its row", () => {
+  const root = session("root", "root");
+  const a = session("a", "subagent", { originId: "root", busy: true });
+  const b = session("b", "subagent", { originId: "root" });
+  // A branch of a branch: depth must not hide it.
+  const fork = session("fork", "fork", { originId: "root" });
+  const deep = session("deep", "subagent", { originId: "fork", lastTurnStatus: "running" });
+
+  const rows = forestRows({
+    sessions: [root, fork],
+    childrenByOrigin: { root: [a, b, fork], fork: [deep] },
+    threads: { root: [msg("m1", "user", "go")] },
+    expanded: new Set(["root"]),
+    drilled: new Set(),
+  });
+  const rootRow = rows.find((r) => r.kind === "session" && r.id === "root");
+  assert.equal(rootRow?.kind === "session" && rootRow.busyBelow, 2);
+  // The idle sibling reports nothing, so the count means what it says.
+  const forkRow = rows.find((r) => r.kind === "session" && r.id === "fork");
+  assert.equal(forkRow?.kind === "session" && forkRow.busyBelow, 1);
+});
+
+/**
+ * The navigation bug: a handoff, a fork and a compaction all hang under what they came
+ * from, so the conversation being typed into was a COLLAPSED row inside another one —
+ * the tree showed everything except where you were.
+ */
+test("revealPath names the origins to expand to reach the current conversation", () => {
+  const root = session("root", "root");
+  const fork = session("fork", "fork", { originId: "root" });
+  const handoff = session("hand", "root", { originId: "fork" });
+  const sessions = [root, fork, handoff];
+
+  assert.deepEqual(revealPath(sessions, {}, "hand"), ["root", "fork"]);
+  assert.deepEqual(revealPath(sessions, {}, "fork"), ["root"]);
+  // A root is already at the top level: nothing to open.
+  assert.deepEqual(revealPath(sessions, {}, "root"), []);
+  assert.deepEqual(revealPath(sessions, {}, null), []);
+  assert.deepEqual(revealPath(sessions, {}, "unknown"), []);
+  // Children fetched on drill-in are part of the map too.
+  assert.deepEqual(revealPath([root], { root: [fork] }, "fork"), ["root"]);
+});
+
+test("revealPath survives a lineage cycle rather than hanging the terminal", () => {
+  const x = session("x", "fork", { originId: "y" });
+  const y = session("y", "fork", { originId: "x" });
+  const path = revealPath([x, y], {}, "x");
+  assert.ok(path.length <= 2, path.join(","));
 });
