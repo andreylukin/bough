@@ -56,6 +56,7 @@ import {
 } from "../selection.ts";
 import {
   activeTrigger,
+  browsePrefix,
   applyCompletion,
   linkAt,
   meterLine,
@@ -520,8 +521,44 @@ export function App(
     () => (dismissed ? null : activeTrigger(line.text, line.cursor)),
     [line.text, line.cursor, dismissed],
   );
+  /**
+   * `@~/…` and `@/…`: browse the filesystem instead of the repo.
+   *
+   * The workspace listing comes from `git ls-files`, which by construction cannot
+   * name a file outside the repo — so the one thing you could not do with `@` was
+   * mention a file elsewhere on the machine. A path-shaped query fetches ONE
+   * directory (the one already visible in what was typed) and the popup ranks its
+   * entries; picking a directory leaves the trailing `/`, so the next fetch drills
+   * one level down and the whole path is typed by selection.
+   */
+  const browse = trigger?.kind === "file" ? browsePrefix(trigger.query) : null;
+  const [browsed, setBrowsed] = useState<{ prefix: string; entries: string[] }>({
+    prefix: "",
+    entries: [],
+  });
+  useEffect(() => {
+    if (!browse) return;
+    let live = true;
+    void api.listDirEntries(browse, defaultWorkspace ?? undefined)
+      .then((r) => live && setBrowsed({ prefix: browse, entries: r.entries }))
+      .catch(() => {}); // a half-typed path is the middle of typing, not an error
+    return () => {
+      live = false;
+    };
+  }, [browse, defaultWorkspace]);
+
   const completion = useMemo(() => {
     if (!trigger) return { items: [], total: 0 };
+    if (browse) {
+      // Until the fetch for THIS prefix lands, the previous directory's entries
+      // would rank against a query they do not belong to — an empty popup is the
+      // honest state for that beat.
+      if (browsed.prefix !== browse) return { items: [], total: 0 };
+      return rankCompletions(
+        browsed.entries.map((name) => ({ name: browse + name })),
+        trigger,
+      );
+    }
     // Built-in commands come FIRST in the candidate list, which is also how they
     // win a tie: `rankCompletions` breaks equal scores by source order. `/skills`
     // the tab therefore outranks a skill that happens to be called "skills", and
@@ -533,7 +570,7 @@ export function App(
         ...skills.map((sk) => ({ name: sk.name, detail: sk.description ?? "" })),
       ];
     return rankCompletions(candidates, trigger);
-  }, [trigger, files, skills]);
+  }, [trigger, files, skills, browse, browsed]);
   const completing = completion.items.length > 0;
   // The cursor must never point past a list that just got shorter as you typed.
   const selAt = completing ? Math.min(completionSel, completion.items.length - 1) : 0;

@@ -666,6 +666,18 @@ export function createApi(options: ApiOptions = {}) {
     /** The same, for a conversation that has not started and so has no session. */
     listFilesIn: (workspace: string) =>
       get<{ files: string[] }>(`/files?workspace=${encodeURIComponent(workspace)}`),
+    /**
+     * One directory's entries, for an `@` path that leaves the workspace.
+     *
+     * `git ls-files` cannot name anything outside the repo, so `@~/` had nothing to
+     * offer; this is what fills the popup once the typed path looks absolute.
+     */
+    listDirEntries: (dir: string, base?: string) =>
+      get<{ entries: string[] }>(
+        `/fs/entries?dir=${encodeURIComponent(dir)}${
+          base ? `&base=${encodeURIComponent(base)}` : ""
+        }`,
+      ),
     listSkills: () => get<{ skills: SkillListRow[]; sources: SkillSource[] }>("/skills"),
   };
 }

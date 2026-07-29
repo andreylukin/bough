@@ -1223,6 +1223,26 @@ export function activeTrigger(text: string, cursor: number): Trigger | null {
   return null;
 }
 
+/**
+ * The directory an `@` query is browsing, when it points OUTSIDE the workspace.
+ *
+ * `git ls-files` is the right candidate source for `@src/x.ts` and cannot answer
+ * `@~/notes/todo.md` at all — nothing outside the repo is tracked by it — so a
+ * path-shaped query switches the popup to a plain directory listing instead. The
+ * shapes that count as "leaving": `~`, an absolute `/`, and explicit `./` or `../`.
+ * A bare `src/` is NOT one of them; that is a repo path and stays on git.
+ *
+ * Returns the literal prefix to prepend to each entry — so a completed row reads
+ * back as the same path the user was typing — and nothing when the query is a
+ * plain workspace reference.
+ */
+export function browsePrefix(query: string): string | null {
+  if (!/^(~|\/|\.\.?\/)/.test(query)) return null;
+  const q = query === "~" ? "~/" : query;
+  const cut = q.lastIndexOf("/");
+  return cut < 0 ? null : q.slice(0, cut + 1);
+}
+
 /** One popup row. `insert` replaces `[trigger.start, trigger.end)` wholesale. */
 export interface Completion {
   label: string;

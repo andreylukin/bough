@@ -18,6 +18,9 @@
  * client ranks them. The cap exists so a monorepo cannot stream 200k paths into a
  * terminal on every keystroke.
  */
+import { readdir } from "node:fs/promises";
+import { homedir } from "node:os";
+import { isAbsolute, join, resolve } from "node:path";
 import { BadRequestError, NotFoundError } from "../errors.ts";
 import type { AppCtx } from "../types.ts";
 import { type Handler, json } from "./http.ts";
@@ -105,4 +108,66 @@ export const listFilesForWorkspaceH: Handler = async (req, _ctx: AppCtx) => {
   const dir = new URL(req.url).searchParams.get("workspace") ?? "";
   if (!dir) throw new BadRequestError("workspace is required");
   return json({ files: await listWorkspaceFiles(dir) });
+};
+
+/** The most entries one directory listing returns. */
+export const MAX_ENTRIES = 2_000;
+
+/** `~` and `~/x` against the real home; everything else is left alone. */
+export function expandTilde(p: string): string {
+  if (p === "~") return homedir();
+  if (p.startsWith("~/")) return join(homedir(), p.slice(2));
+  return p;
+}
+
+/**
+ * One directory's entries, names only, directories suffixed with `/`.
+ *
+ * Non-recursive on purpose: this backs `@~/`-style browsing, where the user drills
+ * down one segment at a time and a recursive walk of `$HOME` would be a stat storm
+ * with no gitignore to save it. Dotfiles are included — the caller filters, because
+ * only the caller knows whether the typed prefix started with a dot.
+ *
+ * An unreadable or missing directory answers empty rather than erroring: a
+ * half-typed path is not a mistake, it is the middle of typing.
+ */
+export async function listDirEntries(dir: string): Promise<string[]> {
+  try {
+    const out: string[] = [];
+    for (const e of await readdir(dir, { withFileTypes: true })) {
+      out.push(e.isDirectory() ? `${e.name}/` : e.name);
+      if (out.length >= MAX_ENTRIES) break;
+    }
+    return out.sort();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * `GET /fs/entries?dir=<path>[&base=<workspace>]` — one directory, for `@` paths
+ * that leave the workspace.
+ *
+ * The `@` popup's normal candidates come from `git ls-files`, which by construction
+ * cannot name a file outside the repo — so `@~/notes/todo.md` completed to nothing
+ * and the only way to mention a file elsewhere was to type its full path blind.
+ * This is the escape hatch, and it is deliberately one level deep: the client asks
+ * for the directory it can already see in what you typed.
+ *
+ * `base` resolves relative dirs (`./x`, `../x`) against the session's workspace
+ * rather than against bough's own cwd, which is not a directory the user is
+ * thinking about.
+ */
+export const listDirEntriesH: Handler = async (req, _ctx: AppCtx) => {
+  const q = new URL(req.url).searchParams;
+  const raw = q.get("dir") ?? "";
+  if (!raw) throw new BadRequestError("dir is required");
+  const base = q.get("base") ?? "";
+  const expanded = expandTilde(raw);
+  const dir = isAbsolute(expanded)
+    ? expanded
+    : base
+    ? resolve(base, expanded)
+    : resolve(expanded);
+  return json({ entries: await listDirEntries(dir) });
 };

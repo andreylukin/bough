@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "bun:test";
 import {
   activeTrigger,
+  browsePrefix,
   applyCompletion,
   busyLine,
   clip,
@@ -354,6 +355,30 @@ test("activeTrigger: a marker mid-word is not a marker", () => {
   assert.equal(activeTrigger("src/server/app", 14), null); // a path, not a skill
   assert.equal(activeTrigger("user@host", 9), null); // an address, not a reference
   assert.equal(activeTrigger("a/b @c/d", 8)?.kind, "file"); // …but a real one still fires
+});
+
+test("browsePrefix: only a path that leaves the workspace browses the filesystem", () => {
+  assert.equal(browsePrefix("~/repos/bo"), "~/repos/");
+  assert.equal(browsePrefix("~"), "~/"); // a bare `@~` opens the home directory
+  assert.equal(browsePrefix("/etc/ho"), "/etc/");
+  assert.equal(browsePrefix("./sr"), "./");
+  assert.equal(browsePrefix("../sibling/x"), "../sibling/");
+  // A plain repo path stays on `git ls-files` — that is where its candidates are.
+  assert.equal(browsePrefix("src/tui/"), null);
+  assert.equal(browsePrefix(""), null);
+});
+
+test("browsePrefix: entries rank as the full path the user is typing", () => {
+  const trigger = activeTrigger("@~/rep", 6)!;
+  const prefix = browsePrefix(trigger.query)!;
+  const { items } = rankCompletions(
+    ["repos/", "Desktop/", ".zshrc"].map((name) => ({ name: prefix + name })),
+    trigger,
+  );
+  assert.equal(items[0].label, "@~/repos/");
+  // A directory keeps its slash and gains no trailing space, so accepting it
+  // re-triggers and drills one level down instead of ending the reference.
+  assert.equal(items[0].insert, "@~/repos/");
 });
 
 test("activeTrigger: a finished reference stops completing", () => {
