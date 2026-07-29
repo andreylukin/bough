@@ -536,7 +536,12 @@ export function programSummary(code: string, max = 64, running = false): string 
   else if (count(/\b(?:join|adopt)\s*\(/g)) {
     bits.push(running ? "collecting subagent reports" : "collected subagent reports");
   }
+  // `workflow(…)` starts one; `workflow.status(…)` asks after one already running.
+  // Naming only the first left every poll round falling back to the gist, so waiting
+  // for a fan-out read as `await new Promise(r => setTimeout(r, 2000));`.
   if (count(/\bworkflow\s*\(/g)) bits.push(running ? "running a workflow" : "ran a workflow");
+  else if (count(/\bworkflow\.\w+\s*\(/g)) bits.push("checked the workflow run");
+  else if (/setTimeout\s*\(/.test(code)) bits.push(running ? "waiting" : "waited");
   if (count(/\bask\s*\(/g)) bits.push("asked you a question");
   if (count(/\bartifact\s*\(/g)) bits.push(running ? "publishing an artifact" : "published an artifact");
   const searches = count(/\b(?:grep|glob|search)\s*\(/g);

@@ -194,3 +194,22 @@ test("a multi-line ask reports every line, and clips instead of overflowing", ()
   assert.equal(clipped.length, 10, "capped at rows/3");
   assert.match(clipped.at(-1) ?? "", /… 31 more lines/);
 });
+
+/**
+ * The line that says how to STOP a run was the one being cut off. Splitting on
+ * newlines fixed the overpaint but left every line clipped at the card's width, so
+ * the workflow approval card ended `…\`x\` in the workflows t` at 120 columns.
+ */
+test("a long question wraps to the card instead of being clipped mid-word", () => {
+  const sentence = "It runs detached and fans out subagents in parallel, so it can spend a lot " +
+    "of tokens quickly. `x` in the workflows tab (^w) stops a run at any point.";
+  const wrapped = askPromptLines(sentence, 60, 60);
+  assert.ok(wrapped.length > 1, "one logical line becomes several rows");
+  assert.ok(wrapped.every((l) => l.length <= 56), "every row fits inside border + padding");
+  // The tail survives: the whole point is that the escape hatch stays readable.
+  assert.ok(wrapped.join(" ").includes("stops a run at any point."));
+});
+
+test("a question narrower than the width is left alone", () => {
+  assert.deepEqual(askPromptLines("prod or staging?", 46, 120), ["prod or staging?"]);
+});

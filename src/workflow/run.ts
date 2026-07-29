@@ -912,7 +912,12 @@ export async function startWorkflow(ctx: WorkflowCtx, opts: StartOpts): Promise<
             (divergence === null
               ? " (the whole prefix matched)."
               : `, from ${divergedPos} (call ${divergedAt}) on — ${divergence.reason}.`)
-          : `Replay: none — this run had no journal to replay.`);
+          // A FIRST run has no PRIOR journal to replay from — it writes one. The old
+          // wording ("this run had no journal to replay") read as though the run had
+          // failed to journal itself, i.e. as though its results could not be reused,
+          // which is the opposite of what happened and appears on every first run.
+          : `Replay: not a relaunch — this run started fresh and journalled as it ` +
+            `went, so a rerun can replay its unchanged prefix.`);
       const tail = status === "done"
         ? `Result:\n${clip(JSON.stringify(result ?? null, null, 2), 4000)}`
         : status === "error"

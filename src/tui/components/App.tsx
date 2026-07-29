@@ -62,6 +62,7 @@ import {
   meterLine,
   urlAcross,
   rankCompletions,
+  wrapLine,
   sessionLabel,
   shortenPath,
   SPINNER_MS,
@@ -818,7 +819,7 @@ export function App(
   // `4 + options`, a constant that silently assumed every question is one line, and
   // a multi-line one then painted its later rows on top of the options because the
   // region it was laid out in was smaller than the card.
-  const askLines = ask ? askPromptLines(ask.question, rows) : [];
+  const askLines = ask ? askPromptLines(ask.question, rows, cols) : [];
   // 2 border + N prompt + one row per option + the typed row + the legend.
   const inputH = ask ? 4 + askLines.length + (ask.options?.length ?? 0) : boxH + popupH;
   // Hoisted out of the JSX because the click hit-test needs the same number the
@@ -1758,15 +1759,23 @@ function StatusLine({ width, meter }: { width: number; meter: ChatMeter }) {
  * a multi-line question and the numbered options below it painted into the SAME
  * cells. The workflow approval card (`workflow/control.ts`), whose entire value is
  * the phase list it shows before anything bills, rendered as
- * `21noneitew files — One agent per f*.js file`. Splitting here rather than wrapping
- * keeps the no-wrap discipline the rest of the card has.
+ * `21noneitew files — One agent per f*.js file`.
+ *
+ * AND WRAPPED TO THE CARD, which the first fix left out. Splitting on newlines alone
+ * kept the no-wrap discipline of the rest of the card — but the rest of the card is
+ * short labels, and a question is PROSE the harness wrote. The workflow approval
+ * card's last line is the sentence that says how to stop a run, and at 120 columns
+ * it read `…`x` in the workflows t` — clipped mid-word, on the card whose whole job
+ * is to be read before something bills. Rows are cheap here (the card is sized from
+ * this function's own output); a sentence the user cannot finish is not.
  */
-export function askPromptLines(prompt: string, rows: number): string[] {
+export function askPromptLines(prompt: string, rows: number, width = 80): string[] {
   // At most a third of the screen. A question is asked INSTEAD of the composer, so a
   // long one squeezes the transcript it is asking about; past the cap the card says
   // it clipped rather than quietly dropping the tail.
   const cap = Math.max(1, Math.floor(rows / 3));
-  const lines = prompt.split("\n");
+  // 2 border columns + 2 paddingX, matching `AskCard`'s own box.
+  const lines = prompt.split("\n").flatMap((l) => l === "" ? [""] : wrapLine(l, width - 4));
   if (lines.length <= cap) return lines;
   return [...lines.slice(0, cap - 1), `… ${lines.length - cap + 1} more lines`];
 }
