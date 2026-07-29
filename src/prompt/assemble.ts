@@ -353,6 +353,32 @@ export function workspaceNote(workspace: string): string {
     "asks; never as a routine end-of-task step.";
 }
 
+/**
+ * Where temporary files go.
+ *
+ * NAMED, ABSOLUTE, AND PER SESSION — all three, because the version of this that
+ * does not work is well documented: told only "use a scratch directory" (which is
+ * what `AGENTS.md` said and all this used to be), a model keeps reaching for `/tmp`,
+ * and the instruction reads as advice rather than as an address. So the path is
+ * spelled out, and the reason is stated in the one form that transfers: a file
+ * written into the checkout is a file the human has to review or revert.
+ *
+ * The permission sentence matters as much as the path. bough runs programs with the
+ * user's full authority and no sandbox (spec §2), so "you may write here freely" is
+ * not a grant — it is a statement about which writes are NOISE-FREE, and it is what
+ * stops a model asking itself whether a debug dump is worth the intrusion.
+ */
+export function scratchNote(dir: string): string {
+  return "## Scratchpad\n" +
+    `Temporary files go in ${dir} — this session's own directory, outside the\n` +
+    "workspace. Intermediate results, debug dumps, a script you are about to run\n" +
+    "once, anything you would otherwise put in /tmp.\n\n" +
+    "Write there freely: nothing in it is reviewed, diffed or reverted. A temp file\n" +
+    "written into the workspace instead is one the human has to read in the changes\n" +
+    "rail and decide about, which is a cost you are imposing on them for your own\n" +
+    "convenience. Use /tmp only if the user asks for it.";
+}
+
 // ---------------------------------------------------------------------------
 // Assembly
 // ---------------------------------------------------------------------------

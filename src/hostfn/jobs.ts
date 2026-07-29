@@ -387,11 +387,17 @@ export class JobRegistry {
    */
   spawn(
     command: string,
-    opts: { cwd?: string; signal?: AbortSignal } = {},
+    opts: { cwd?: string; signal?: AbortSignal; scratch?: string } = {},
   ): Shell {
     const { argv, cwd } = shellInvocation(command, opts.cwd);
     const child = Bun.spawn(argv, {
       cwd,
+      // `$BOUGH_SCRATCH` in the shell, because the prompt's sentence about a
+      // scratchpad reaches the model and not the command it writes. A `curl -o` or a
+      // `pytest --junitxml` is composed as text, and without a variable to name the
+      // one place it should point at, it points at /tmp — the exact gap every report
+      // of this problem describes.
+      ...(opts.scratch ? { env: { ...process.env, BOUGH_SCRATCH: opts.scratch } } : {}),
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",

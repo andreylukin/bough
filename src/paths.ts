@@ -74,6 +74,36 @@ export function attachmentsDir(): string {
   return boughPath("attachments");
 }
 
+/**
+ * The scratchpad root: somewhere a turn's temporary files can go that is NOT the
+ * user's checkout.
+ *
+ * UNDER `~/.bough`, NOT UNDER `/tmp`, and that is the one decision worth defending.
+ * The obvious home for scratch is the system temp directory, and it is wrong for a
+ * process that runs for days: macOS empties `/tmp` on reboot and systemd-tmpfiles
+ * reaps entries older than ten days, so a long-lived session silently loses the
+ * working directory it was told to use — the failure arrives as a missing file in a
+ * turn that did nothing wrong. Everything else bough keeps for a session (artifacts,
+ * attachments, workflow mirrors) already lives here, and `bough purge` already knows
+ * how to sweep this root.
+ */
+export function scratchRoot(): string {
+  return boughPath("scratch");
+}
+
+/**
+ * One session's scratchpad: `~/.bough/scratch/<sessionId>`.
+ *
+ * PER SESSION, because the alternative is what every report of this problem
+ * describes: two conversations both writing `/tmp/build.log`, one clobbering the
+ * other, and a later `find /tmp -mmin -5` matching a third tool's debris and being
+ * read as this task's own output. A session id is already unique and already what
+ * everything else here is keyed by.
+ */
+export function scratchDirFor(sessionId: string): string {
+  return join(scratchRoot(), sessionId);
+}
+
 /** Workflow scripts, mirrored per run so they can be edited on disk (spec §8). */
 export function workflowsDir(): string {
   return boughPath("workflows");

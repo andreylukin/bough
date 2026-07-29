@@ -646,7 +646,11 @@ test("a caller's own notes are kept, and the workspace note leads", async () => 
   } as TurnDeps).done;
 
   const notes = [...(seen?.notes ?? [])];
-  assert.equal(notes.length, 2);
+  assert.equal(notes.length, 3);
+  // The two per-session facts lead, in the order a turn needs them: where the real
+  // work goes, then where the throwaway files go.
   assert.ok(notes[0].startsWith("## Workspace"));
-  assert.ok(notes[1].includes("no emoji"), "a caller's notes must survive");
+  assert.ok(notes[1].startsWith("## Scratchpad"));
+  assert.ok(notes[1].includes(f.session.id), "the scratchpad note names THIS session's dir");
+  assert.ok(notes[2].includes("no emoji"), "a caller's notes must survive");
 });

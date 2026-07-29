@@ -49,6 +49,7 @@ import { z } from "zod";
 import { ContextOverflowError } from "../errors.ts";
 import { clientFor, errName } from "../llm/client.ts";
 import { contextWindowFor } from "../llm/pricing.ts";
+import { ensureScratchDir } from "../scratch.ts";
 import { createFileHostFns } from "../hostfn/files.ts";
 import { createShellHostFns } from "../hostfn/shell.ts";
 import { runProgram } from "../harness/vm.ts";
@@ -58,6 +59,7 @@ import {
   type AssembledPrompt,
   assemblePrompt,
   type PromptInput,
+  scratchNote,
   workspaceNote,
 } from "../prompt/assemble.ts";
 import type { Message, Part, Session, Usage } from "../schema/parts.ts";
@@ -228,6 +230,7 @@ export function baseHostFns(ctx: TurnCtx): HostFns {
       sessionId: ctx.sessionId,
       workspace: ctx.workspace,
       signal: ctx.signal,
+      scratch: ensureScratchDir(ctx.sessionId),
     }),
     ...createFileHostFns({ sessionId: ctx.sessionId, workspace: ctx.workspace }),
   };
@@ -432,6 +435,8 @@ async function drive(
   const model = session?.model ?? ctx.model ?? DEFAULT_MODEL;
   const effort = (session?.effort ?? ctx.effort ?? undefined) as TurnCtx["effort"];
   const workspace = db.getSessionRuntime(sessionId).workspace ?? process.cwd();
+  // The session's scratchpad, made before the prompt names it (`scratch.ts`).
+  const scratch = ensureScratchDir(sessionId);
 
   const turn = startTurn(db, sessionId, messageId, now);
 
@@ -502,7 +507,7 @@ async function drive(
   const prompt = (deps.assemble ?? assemblePrompt)({
     kind: session?.kind ?? "root",
     granted: deps.granted ?? BASE_HOST_FNS,
-    notes: [workspaceNote(workspace), ...(deps.notes ?? [])],
+    notes: [workspaceNote(workspace), scratchNote(scratch), ...(deps.notes ?? [])],
   });
 
   /**

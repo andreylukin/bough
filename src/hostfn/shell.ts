@@ -47,6 +47,14 @@ import {
 export type ShellCtx = Pick<TurnCtx, "sessionId" | "workspace"> & {
   /** The turn's interrupt. Absent in unit tests that never interrupt. */
   signal?: AbortSignal;
+  /**
+   * The session's scratchpad, exported to every command as `$BOUGH_SCRATCH`.
+   *
+   * The prompt's sentence about a scratchpad reaches the MODEL; a shell command is
+   * text the model composes, and without a variable to name in it, `--output` goes
+   * to /tmp. Absent in tests, which then spawn with the plain environment.
+   */
+  scratch?: string;
 };
 
 /** Injected seams. Every default is a constant, never a hidden global. */
@@ -189,7 +197,11 @@ export async function bash(
   // actual process. The output is streamed rather than collected with
   // `child.output()` so a long command can be handed to the registry mid-run
   // instead of being blocked on and then killed.
-  const shell = registry.spawn(command, { cwd: ctx.workspace, signal: ctx.signal });
+  const shell = registry.spawn(command, {
+    cwd: ctx.workspace,
+    signal: ctx.signal,
+    ...(ctx.scratch ? { scratch: ctx.scratch } : {}),
+  });
   const untrack = registry.trackForeground(shell, ctx.sessionId);
   // Stays attached past a promotion on purpose: an interrupt kills the running
   // program's children (spec §5), and an auto-backgrounded shell is one of them.
@@ -257,7 +269,11 @@ export async function shConcurrent(
   return await Promise.all(commands.map(async (command): Promise<ShResult> => {
     let shell: Shell;
     try {
-      shell = registry.spawn(command, { cwd: ctx.workspace, signal: ctx.signal });
+      shell = registry.spawn(command, {
+        cwd: ctx.workspace,
+        signal: ctx.signal,
+        ...(ctx.scratch ? { scratch: ctx.scratch } : {}),
+      });
     } catch (err) {
       // Spawn failure (no /bin/sh, an already-aborted signal). Reported, not thrown.
       return { code: -1, out: `could not start command: ${message(err)}` };

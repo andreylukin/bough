@@ -39,6 +39,7 @@ import { authStatus, callbackUrl, configureOAuthCallback } from "../mcp/oauth.ts
 import { createMcpHostFns } from "../hostfn/mcp.ts"; // T7.3
 import { bindTurnGrant, mcpManager } from "../mcp/manager.ts"; // T7.3
 import { reconcileMcp, reconcileSummary } from "../mcp/service.ts";
+import { sweepScratch } from "../scratch.ts";
 import { createScheduleHostFn } from "../hostfn/schedule.ts"; // T6.3
 import { createStateHostFn } from "../hostfn/state.ts"; // T6.2
 import { createLspHostFn } from "../hostfn/lsp.ts"; // T7.4
@@ -466,6 +467,19 @@ const server = Bun.serve({
   fetch: createHandler(ctx),
 });
 console.log(`bough listening on ${server.hostname}:${server.port} — db ${dbPath()}`);
+
+// The scratchpad root (`scratch.ts`). Swept at boot rather than on a timer or on the
+// path of a turn: a directory nothing has touched in two weeks belongs to a
+// conversation nobody is coming back to, and there is no session-delete verb to hang
+// this on — sessions are append-only by design.
+try {
+  const swept = sweepScratch();
+  if (swept.length > 0) {
+    console.log(`swept ${swept.length} scratch director${swept.length === 1 ? "y" : "ies"}`);
+  }
+} catch {
+  // A scratch root that cannot be read is not a reason to refuse to start.
+}
 
 // T7.1 — MCP. Two lines, and only the second one is required.
 //

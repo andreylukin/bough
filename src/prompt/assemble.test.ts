@@ -15,6 +15,7 @@ import {
   readSectionFile,
   SECTION_FILES,
   type SectionId,
+  scratchNote,
   workspaceNote,
 } from "./assemble.ts";
 
@@ -306,6 +307,25 @@ test("the workspace note names the path, and rides the VOLATILE tier", () => {
   // session's workspace path in it would defeat that for every other session.
   assert(!p.system.includes("/home/u/proj"), "a per-session path must never enter the stable tier");
   assertStringIncludes(p.systemVolatile, "/home/u/proj");
+});
+
+test("the scratchpad note names an absolute path and stays out of the stable tier", () => {
+  // The version of this that does NOT work is documented: told only "use a scratch
+  // directory", a model keeps reaching for /tmp, because that is advice and not an
+  // address. So the assertion is that the path itself is in the text.
+  const note = scratchNote("/home/u/.bough/scratch/abc123");
+  assert(note.startsWith("## Scratchpad"));
+  assertStringIncludes(note, "/home/u/.bough/scratch/abc123");
+  const text = flat(note);
+  assertStringIncludes(text, "/tmp"); // …and says what it replaces
+  // The reason, in the form that transfers: a temp file in the checkout is work the
+  // human has to review.
+  assertStringIncludes(text, "changes");
+
+  const p = build({ notes: [scratchNote("/home/u/.bough/scratch/abc123")] });
+  // Per-session, so it must never enter the prefix every other session shares.
+  assert(!p.system.includes("abc123"), "a per-session path must never enter the stable tier");
+  assertStringIncludes(p.systemVolatile, "abc123");
 });
 
 test("the workspace note warns that the program's own cwd is NOT the workspace", () => {
