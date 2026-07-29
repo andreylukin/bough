@@ -532,6 +532,46 @@ test("connections are per session, reused across calls, and reaped when idle", a
   }
 });
 
+test("a REMOTE server is one connection for every conversation", async () => {
+  // Reported as "after I start the conversation, all of the mcps disconnect". Keying
+  // by session is a statement about a subprocess and its cwd; a remote server has
+  // neither, so every new conversation opened a second connection to the same
+  // endpoint and showed the server as not connected until it did.
+  const file = tmpRegistry();
+  saveRegistry({ servers: { remote: { url: "https://mcp.example.com/mcp" } } }, { file });
+  let connects = 0;
+  const mgr = new McpManager({
+    config: { file },
+    connect: ({ name }) => {
+      connects++;
+      return Promise.resolve(fakeConnection(name, ["echo"]));
+    },
+  });
+  try {
+    setActivation(undefined, "remote", true, { file });
+    const one = hostFns(bindTurnGrant(turnCtx("s1"), { file }), mgr, file);
+    const two = hostFns(bindTurnGrant(turnCtx("s2"), { file }), mgr, file);
+
+    await one.mcp!("remote", "echo", "{}");
+    await two.mcp!("remote", "echo", "{}");
+    assert.equal(connects, 1, "the second conversation reuses the first's connection");
+
+    // …and BOTH conversations see it as connected. The panel asks per session, and a
+    // shared connection that only one of them could see would report "not connected"
+    // about a server that is connected and about to answer.
+    assert.equal(mgr.statuses("s1").length, 1);
+    assert.equal(mgr.statuses("s2").length, 1);
+    assert.equal(mgr.statuses().length, 1, "one connection, not one per session");
+
+    // Revoking from either conversation closes the shared one — a drop that missed it
+    // would leave it serving every other conversation.
+    await mgr.drop("s2", "remote");
+    assert.equal(mgr.statuses().length, 0);
+  } finally {
+    await mgr.dropAll();
+  }
+});
+
 test("dropServer closes every session's connection to one server", async () => {
   const file = tmpRegistry();
   seedRegistry(file);

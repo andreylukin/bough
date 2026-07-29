@@ -37,9 +37,14 @@
  * has to have caught, or to a spinner. A connection whose child died since the last
  * call reports `state: "exited"` and is respawned on the next use.
  *
- * CONNECTIONS ARE PER (SESSION, SERVER). Two sessions working on different checkouts
- * must not share one child process: the child's cwd is the session's workspace, and
- * a filesystem-backed server handed the wrong tree answers about the wrong project.
+ * A STDIO CONNECTION IS PER (SESSION, SERVER); A REMOTE ONE IS SHARED. Two sessions
+ * working on different checkouts must not share one child process: the child's cwd
+ * is the session's workspace, and a filesystem-backed server handed the wrong tree
+ * answers about the wrong project. That reasoning is entirely about a subprocess and
+ * a directory, and a remote server has neither — it is a URL and a credential — so
+ * keying one by session bought nothing and cost the obvious thing: every new
+ * conversation opened a second connection to the same endpoint and, until it did,
+ * reported the server as not connected. `scopeFor` is where the two part company.
  * Idle connections are reaped opportunistically on use — no background timer, so a
  * quiet server holds a subprocess for at most `IDLE_MS` past its last call and the
  * process has nothing to shut down.
@@ -379,26 +384,43 @@ export class McpManager {
   statuses(sessionId?: string): ConnStatus[] {
     const rows: ConnStatus[] = [];
     for (const [k, conn] of this.#conns) {
-      if (sessionId !== undefined && conn.sessionId !== sessionId) continue;
+      // A shared (remote) connection belongs to every conversation, so it is
+      // reported in all of them — otherwise the panel says "not connected" about a
+      // server that is connected and about to answer.
+      if (
+        sessionId !== undefined && conn.sessionId !== sessionId &&
+        conn.sessionId !== SHARED_SCOPE
+      ) continue;
       rows.push(statusOf(conn));
       this.#failures.delete(k); // a live connection supersedes an old failure
     }
     for (const [k, failure] of this.#failures) {
-      if (sessionId !== undefined && failure.sessionId !== sessionId) continue;
+      if (
+        sessionId !== undefined && failure.sessionId !== sessionId &&
+        failure.sessionId !== SHARED_SCOPE
+      ) continue;
       if (this.#conns.has(k)) continue;
       rows.push(failureStatus(failure));
     }
     return rows.sort((a, b) => a.server.localeCompare(b.server));
   }
 
-  /** Close one session's connection to one server. No-op when there is none. */
+  /**
+   * Close one session's connection to one server. No-op when there is none.
+   *
+   * Both scopes are tried, because the caller knows a session id and not which kind
+   * of entry this is — and a revoke that missed a shared remote connection would
+   * leave it serving every OTHER conversation.
+   */
   async drop(sessionId: string, server: string): Promise<void> {
-    const k = key(sessionId, server);
-    const conn = this.#conns.get(k);
-    this.#failures.delete(k);
-    if (!conn) return;
-    this.#conns.delete(k);
-    await conn.client.close();
+    for (const scope of new Set([sessionId, SHARED_SCOPE])) {
+      const k = key(scope, server);
+      const conn = this.#conns.get(k);
+      this.#failures.delete(k);
+      if (!conn) continue;
+      this.#conns.delete(k);
+      await conn.client.close();
+    }
   }
 
   /**
@@ -424,10 +446,11 @@ export class McpManager {
 
   /** An alive connection, reconnecting a dead or absent one. */
   async #live(sessionId: string, server: string, spawn: SpawnCtx): Promise<Conn> {
-    const existing = this.#conns.get(key(sessionId, server));
+    const cfg = requireServer(server, this.config);
+    const existing = this.#conns.get(key(scopeFor(sessionId, cfg), server));
     if (existing?.client.alive) return existing;
     if (existing) await this.drop(sessionId, server);
-    return await this.#acquire(sessionId, server, requireServer(server, this.config), spawn);
+    return await this.#acquire(sessionId, server, cfg, spawn);
   }
 
   #acquire(
@@ -436,7 +459,9 @@ export class McpManager {
     cfg: ServerConfig,
     spawn: SpawnCtx,
   ): Promise<Conn> {
-    const k = key(sessionId, server);
+    // Remote servers pool under one shared scope — see `scopeFor`.
+    const scope = scopeFor(sessionId, cfg);
+    const k = key(scope, server);
     const live = this.#conns.get(k);
     if (live && live.client.alive) {
       live.lastUsed = this.#now;
@@ -445,14 +470,14 @@ export class McpManager {
     }
     let connecting = this.#connecting.get(k);
     if (!connecting) {
-      connecting = this.#connect(sessionId, server, cfg, spawn)
+      connecting = this.#connect(scope, server, cfg, spawn)
         .then((conn) => {
           this.#conns.set(k, conn);
           this.#failures.delete(k);
           return conn;
         })
         .catch((e: unknown) => {
-          this.#recordFailure(sessionId, server, messageOf(e));
+          this.#recordFailure(scope, server, messageOf(e));
           throw e;
         })
         .finally(() => this.#connecting.delete(k));
@@ -574,6 +599,29 @@ export function setMcpManager(next: McpManager): McpManager {
 
 function key(sessionId: string, server: string): string {
   return `${sessionId} ${server}`;
+}
+
+/**
+ * The scope a REMOTE connection is pooled under: one, shared by every conversation.
+ *
+ * Not a session id, and it cannot collide with one — session ids are UUIDs.
+ */
+export const SHARED_SCOPE = "";
+
+/**
+ * Which scope owns this server's connection.
+ *
+ * PER SESSION IS A STDIO PROPERTY, and only that. The reason connections are keyed
+ * by conversation at all is written at the top of this file: a stdio child is
+ * spawned in the session's checkout, so sharing one across conversations would hand
+ * a filesystem-backed server the wrong tree. A remote server has no tree — it is a
+ * URL and a credential — so the same reasoning says the opposite for it, and keying
+ * it by session meant every new conversation opened a second connection to the same
+ * endpoint and, until it did, showed the server as not connected. Connect once,
+ * stays connected, which is what "registered once" has to mean to be worth anything.
+ */
+function scopeFor(sessionId: string, cfg: ServerConfig): string {
+  return isStdio(cfg) ? sessionId : SHARED_SCOPE;
 }
 
 function statusOf(conn: Conn): ConnStatus {
