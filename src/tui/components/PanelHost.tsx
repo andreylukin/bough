@@ -911,6 +911,22 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
         if (!controls.setMcpEnabled) {
           return setMessage("granting an MCP server is not wired into this client yet");
         }
+        // REVOKING ARMS FIRST (spec §7: consent is never inferred). Granting is
+        // additive and stays one press; taking a server away from every conversation
+        // is not, and it was reachable by ACCIDENT: the panel owns the keyboard while
+        // it is open, so typing a message into what looks like the composer drops the
+        // characters and delivers the Return here — where ⏎ toggled the row under the
+        // cursor. Reproduced: with the mcp tab open, `hello there⏎` revoked
+        // chrome-devtools install-wide and the only trace was a notice that expires.
+        // Making the grant global (which is what it should always have been) is
+        // exactly what turned that slip from one conversation into all of them.
+        if (!on && armedStop !== `mcp:off:${name}`) {
+          setArmedStop(`mcp:off:${name}`);
+          return setMessage(
+            `⏎ again to turn ${name} off in every conversation — it is granted now`,
+          );
+        }
+        setArmedStop(null);
         // GLOBAL, not this conversation. A grant scoped to `state.currentId` lasted
         // exactly as long as the conversation it was made in, so every new one
         // started with every server off and the same server had to be granted again
