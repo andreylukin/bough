@@ -65,8 +65,10 @@ export function mcpWindow(
  * Any auth-bearing header counts, not only a keychain reference: a server given a
  * literal or an env-var token is equally not waiting for anyone to press `a`.
  */
-function hasAuthHeader(entry: { headers?: Record<string, string> }): boolean {
-  return Object.entries(entry.headers ?? {}).some(
+export function hasStaticAuth(
+  entry?: { headers?: Record<string, string> },
+): boolean {
+  return Object.entries(entry?.headers ?? {}).some(
     ([k, v]) => k.toLowerCase() === "authorization" && v.trim() !== "",
   );
 }
@@ -96,7 +98,7 @@ export function mcpDetail(status: McpStatus, name: string): string {
     auth
       ? auth.authorized
         ? "authed"
-        : hasAuthHeader(entry)
+        : hasStaticAuth(entry)
         ? "keychain"
         : isCoveredHost(entry.url ?? "")
         ? "keychain"
@@ -112,7 +114,7 @@ export function McpTab({ status, selected, message, rows = 20, entry = null }: M
   const legend = (
     <text attributes={TextAttributes.DIM} wrapMode="none">
       {entry === null
-        ? "↑↓ move · 1-9 pick · ⏎ grant/revoke · a authorize · n add by URL · F forget · d delete · esc back"
+        ? "↑↓ move · 1-9 pick · ⏎ grant/revoke · c test · a authorize · n add · F forget · d delete · esc back"
         : "⏎ registers · ⌫ back · esc cancels"}
     </text>
   );

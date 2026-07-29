@@ -220,6 +220,7 @@ export type Command =
   /** Drop stored credentials for the selected server, so the next call re-authorizes. */
   | "mcp.forget"
   | "mcp.remove"
+  | "mcp.connect"
   /** Register a remote server by URL — the buffer, not the write. */
   | "mcp.add"
   // -- workflow steering (spec §8) -----------------------------------------
@@ -1078,6 +1079,21 @@ export const BINDINGS: Binding[] = [
     not: ["panelFiltering"],
     section: "the mcp tab",
     desc: "forget this server's credentials",
+  },
+  // PROOF, which the panel could not offer at all. Every other row here states an
+  // intention — granted, keychain, needs auth — and none of them survives contact
+  // with the server: "keychain" says which credential will be TRIED, and the only
+  // way to find out whether it is accepted was to spend a turn on a tool call and
+  // read the failure. `POST /mcp/servers/:name/connect` has always answered exactly
+  // this and nothing in the TUI called it.
+  {
+    mode: "panel",
+    chord: "c",
+    command: "mcp.connect",
+    tab: ["mcp"],
+    not: ["panelFiltering"],
+    section: "the mcp tab",
+    desc: "test the connection · names the tools, or the error",
   },
   // Removing the ENTRY, which `F` deliberately does not do. The two were one verb in
   // everyone's head and neither was the other: `F` leaves the server registered and

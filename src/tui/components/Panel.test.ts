@@ -427,6 +427,9 @@ test("the MCP tab reports granted, connected and unauthorized distinctly", async
   // pointing at an endpoint another entry already covers — used to be removable
   // only by hand-editing ~/.bough/mcp.json.
   assert.ok(authedFrame.includes("d delete"), authedFrame);
+  // And proof: `c` connects now and reports, so "keychain" (which credential will
+  // be TRIED) can be turned into an answer without spending a turn on a tool call.
+  assert.ok(authedFrame.includes("c test"), authedFrame);
   assert.ok(authedFrame.includes("F forget"), authedFrame);
 
   const empty = await draw(createElement(SkillsTab, { skills: [], rows: 10 }));

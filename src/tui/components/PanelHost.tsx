@@ -64,6 +64,7 @@ import {
   reducePanel,
 } from "./Panel.tsx";
 import { changeItems, type PendingRevert } from "./Changes.tsx";
+import { hasStaticAuth } from "./Mcp.tsx";
 import {
   asEffortChoice,
   chooseEntry,
@@ -211,6 +212,14 @@ export interface PanelControls {
   clearMcpAuth?: (name: string) => Promise<unknown>;
   /** `DELETE /mcp/servers/:name` — remove the registration itself. */
   deleteMcpServer?: (name: string) => Promise<unknown>;
+  /**
+   * `POST /mcp/servers/:name/connect` — connect now and report. Proof, not a
+   * grant: the panel otherwise states only what WILL be tried.
+   */
+  connectMcpServer?: (
+    name: string,
+    sessionId: string,
+  ) => Promise<{ connected: boolean; error?: string; tools?: { name: string }[] }>;
   /** `GET /mcp/servers/:name/auth` — polled after the browser half of the flow. */
   mcpAuthStatus?: (name: string) => Promise<{ authorized: boolean }>;
   /** `PUT /mcp/servers/:name` — register a definition. Registering grants nothing. */
@@ -1237,6 +1246,21 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
           setMessage("authorizing an MCP server is not wired into this client");
           return true;
         }
+        // ALREADY HAS ONE. Pressing `a` on a server carrying its own credential
+        // starts a flow that answers a question nobody asked, and for a provider
+        // without dynamic registration it ends in a wall of text about creating an
+        // OAuth app — which is what you get for the ONE server that needed nothing.
+        // Not a refusal: bringing your own authorization is legitimate, and `a`
+        // again does it. What was missing is the sentence before the wall.
+        if (hasStaticAuth(mcp?.registry.servers[name]) && armedStop !== `auth:${name}`) {
+          setArmedStop(`auth:${name}`);
+          setMessage(
+            `${name} already has a credential (keychain) — press c to test it. ` +
+              `a again starts a separate OAuth authorization anyway.`,
+          );
+          return true;
+        }
+        setArmedStop(null);
         setMessage(`authorizing ${name}…`);
         void controls.beginMcpAuth(name)
           .then((start) => {
@@ -1261,6 +1285,44 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
         return true;
       }
 
+      /**
+       * `c` — connect to this server NOW and say what happened.
+       *
+       * The tab was full of intentions and had no proof. "keychain" says which
+       * credential will be tried, not that the endpoint accepts it, so the only way
+       * to learn that a synced Slack grant actually works was to spend a turn on a
+       * tool call and read the failure — or to press `a`, which starts an OAuth
+       * flow the server may not even support and answers a question nobody asked.
+       * Connecting is not granting (`mcp/status.ts`), so this changes no permission.
+       */
+      case "mcp.connect": {
+        const name = mcpNameAt(sel);
+        if (!name) return true;
+        if (!controls.connectMcpServer) {
+          setMessage("testing an MCP connection is not wired into this client");
+          return true;
+        }
+        // Per-session by construction: a stdio server runs in that session's
+        // checkout, so there is nothing to connect from before one exists.
+        if (!state.currentId) {
+          setMessage("open a conversation first — a server connects in its workspace");
+          return true;
+        }
+        setMessage(`connecting to ${name}…`);
+        void controls.connectMcpServer(name, state.currentId)
+          .then((r) => {
+            const tools = r.tools ?? [];
+            setMessage(
+              r.connected
+                ? `${name} connected · ${tools.length} tool${tools.length === 1 ? "" : "s"}` +
+                  (tools.length > 0 ? ` · ${tools.slice(0, 6).map((t) => t.name).join(", ")}` : "")
+                : `${name} did not connect — ${r.error ?? "no reason given"}`,
+            );
+            return refreshMcp();
+          })
+          .catch((e: unknown) => setMessage(e instanceof Error ? e.message : String(e)));
+        return true;
+      }
       // Deleting the REGISTRATION, armed then confirmed — the same idiom as the
       // rail's `x` and the workflows tab's, because it is the same kind of act.
       // `F` next door drops credentials and keeps the entry; these were one verb in
