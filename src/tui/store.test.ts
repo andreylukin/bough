@@ -817,6 +817,43 @@ test("interrupt raises the stop on the OPEN session, and says what happened", as
   await store.stop();
 });
 
+test("a turn finishing elsewhere refreshes the rows, so its cost is not left at zero", async () => {
+  // `turn.finished` patches the row's `busy` and status and nothing else, so a session that
+  // ran while you were looking at another one kept the cost its row carried when it
+  // arrived — none, for a row created after the list was fetched. Walked it: two scheduled
+  // runs that each billed $0.003 sat in the tree with no figure while an older sibling
+  // showed `$0.006`.
+  let costs = 0;
+  const { api } = fakeApi({
+    listSessions: () => {
+      costs++;
+      return Promise.resolve([
+        row(SESSION),
+        row(OTHER, { title: "line check", costUsd: costs > 1 ? 0.0036 : 0 }),
+      ]);
+    },
+  });
+  const events = fakeStream();
+  const store = createStore({ api, connect: events.connect });
+  store.start();
+  await settle();
+  await store.open(SESSION);
+  await settle();
+  const before = costs;
+
+  events.emit({
+    type: "turn.finished",
+    seq: 1,
+    ts: 1,
+    sessionId: OTHER,
+    data: { sessionId: OTHER, status: "done" },
+  } as BoughEvent);
+  await settle();
+  assert.ok(costs > before, "a turn finishing in another session must re-read the rows");
+  assert.equal(store.getState().sessions.find((s) => s.id === OTHER)?.costUsd, 0.0036);
+  await store.stop();
+});
+
 test("the artifact list names them and does not try to fit their URLs", async () => {
   // A notice is ONE line. One artifact's name plus its
   // `http://127.0.0.1:4325/artifacts/<uuid>/<file>` href is 111 characters, so the list was

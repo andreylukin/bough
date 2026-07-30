@@ -1589,6 +1589,17 @@ export function createStore(deps: StoreDeps = {}): Store {
               void snapshot(finished.data.sessionId)
                 .catch(() => refreshUsage())
                 .finally(() => dispatch({ type: "turn.settle", at: now() }));
+            } else {
+              // A TURN THAT FINISHED SOMEWHERE ELSE. `turn.finished` patches the row's
+              // `busy` and status, and nothing else — so a session that ran while you were
+              // not looking at it kept whatever cost its row carried when it arrived, which
+              // for one created after the list was fetched is none at all. Walked it: two
+              // scheduled runs that each billed $0.003 sat in the tree with no figure beside
+              // them while an older sibling showed `$0.006`.
+              //
+              // The whole list rather than one row, because there is no per-row endpoint and
+              // a fan-out finishing together coalesces into one refetch either way.
+              void reload();
             }
           }
           if (event.type === "job.spawned" || event.type === "job.exited") void refreshJobs();
