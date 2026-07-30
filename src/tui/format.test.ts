@@ -1053,5 +1053,7 @@ test("emphasis renders, and identifiers with underscores are left alone", () => 
     // operators: `2 * 3 * 4` is a product, not an italic " 3 ".
     assert.equal(md("2 * 3 * 4 = 24"), "2 * 3 * 4 = 24");
     assert.equal(md("a_b _c_ d"), "a_b c d");
+    // Strikethrough, which a model uses for a superseded step. Left literal until now.
+    assert.equal(md("~~gone~~ and kept"), "gone and kept");
   });
 });

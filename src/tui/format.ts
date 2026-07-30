@@ -132,6 +132,8 @@ export const underline = (s: string) => sgr("4", s, "24");
  * is the text without its slant, never a stray escape on the screen.
  */
 export const italic = (s: string) => sgr("3", s, "23");
+/** SGR 9, closed with 29 — same deal as italics: unsupported terminals ignore the pair. */
+export const strike = (s: string) => sgr("9", s, "29");
 export const dim = (s: string) => fg(colors.muted, s);
 export const accent = (s: string) => fg(colors.accent, s);
 export const warn = (s: string) => fg(colors.warn, s);
@@ -851,6 +853,10 @@ function mdInline(line: string): string {
     // — it is not a word character anywhere.
     // The delimiter must HUG its text (CommonMark's rule), or `2 * 3 * 4` becomes an
     // italic " 3 " and arithmetic in prose comes out slanted and missing its operators.
+    // `~~struck~~`, before the single-delimiter passes for the same reason bold goes before
+    // italic. Left literal until now, so a model striking out a superseded step wrote tildes
+    // at the reader.
+    .replace(/~~([^~\n]+)~~/g, (_m, inner: string) => strike(inner))
     // The edge characters exclude the delimiter itself as well as whitespace, or `__init__`
     // is read as an italic `_init_` — the boundary character is allowed to BE an underscore
     // otherwise, and dunder names are everywhere in this kind of prose.
