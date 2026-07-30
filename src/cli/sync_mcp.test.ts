@@ -14,12 +14,14 @@ import { join } from "node:path";
 import {
   boughName,
   collectClaudeServers,
+  collectPluginServers,
   looksSecret,
   parseSyncArgs,
   runSyncMcp,
 } from "./sync_mcp.ts";
 
 const HOME = "/home/t";
+const CONFIG_DIR = `${HOME}/.claude`;
 
 /** A fake filesystem of JSON documents, keyed by absolute path. */
 function reader(files: Record<string, unknown>) {
@@ -44,11 +46,16 @@ const silent = { out: () => {}, err: () => {}, keychain: noKeychain };
 
 test("parseSyncArgs: flags only, and it never throws", () => {
   assert.deepEqual(parseSyncArgs([]), {
-    args: { dirs: [], force: false, dryRun: false, help: false },
+    args: { dirs: [], force: false, dryRun: false, help: false, plugins: true },
   });
   assert.deepEqual(
     parseSyncArgs(["--from", "/a", "-C", "/b", "-n", "--force"]).valueOf(),
-    { args: { dirs: ["/a", "/b"], force: true, dryRun: true, help: false } },
+    { args: { dirs: ["/a", "/b"], force: true, dryRun: true, help: false, plugins: true } },
+  );
+  // Plugin servers are the default source, so the flag that matters is the opt-OUT.
+  assert.deepEqual(
+    parseSyncArgs(["--no-plugins"]).valueOf(),
+    { args: { dirs: [], force: false, dryRun: false, help: false, plugins: false } },
   );
   assert.ok("usage" in parseSyncArgs(["--nope"]));
   assert.ok("usage" in parseSyncArgs(["--from"]));
@@ -72,6 +79,33 @@ test("collect: user scope, project scope and a checked-in .mcp.json, later wins"
   // Claude Code's own precedence: the checked-in file is the last word.
   assert.equal(byName.shared.server.command, "team-version");
   assert.equal(byName.beta.source, "~/.claude.json projects[/w]");
+});
+
+test("collect: the config directory's .claude.json is read, and wins", () => {
+  // The bug this covers, verbatim from a machine with three servers working in Claude
+  // Code: `~/.claude.json` does not exist on a current install (the file is inside the
+  // config directory), so reading only the old path took ENOENT for "no servers
+  // configured" and reported that as a fact about the user's setup.
+  const files = {
+    [`${CONFIG_DIR}/.claude.json`]: {
+      mcpServers: { alpha: { command: "from-config-dir" } },
+      projects: { "/w": { mcpServers: { beta: { command: "b" } } } },
+    },
+  };
+  const { found, errors } = collectClaudeServers(["/w"], reader(files), HOME, CONFIG_DIR);
+  assert.deepEqual(errors, []);
+  const byName = Object.fromEntries(found.map((f) => [f.name, f]));
+  assert.deepEqual(Object.keys(byName).sort(), ["alpha", "beta"]);
+  assert.equal(byName.alpha.source, "~/.claude/.claude.json");
+  assert.equal(byName.beta.source, "~/.claude/.claude.json projects[/w]");
+
+  // With BOTH present the config-directory file is the live one and takes the name.
+  const both = {
+    [`${HOME}/.claude.json`]: { mcpServers: { alpha: { command: "legacy" } } },
+    ...files,
+  };
+  const merged = collectClaudeServers([], reader(both), HOME, CONFIG_DIR).found;
+  assert.equal(merged.find((f) => f.name === "alpha")?.server.command, "from-config-dir");
 });
 
 test("a stdio server keeps its command, args, env and cwd", async () => {
@@ -147,7 +181,221 @@ test("a THIRD-PARTY remote server is registered without Anthropic's token", asyn
   assert.deepEqual(doc.servers.lookalike.headers, {});
 });
 
-// ---- the keychain's own grants ------------------------------------------------
+// ---- installed plugins' own servers -------------------------------------------
+
+/** Where a plugin lands when Claude Code installs it. */
+const SLACK_ROOT = `${CONFIG_DIR}/plugins/cache/official/slack/1.1.0`;
+const CDT_ROOT = `${CONFIG_DIR}/plugins/cache/cdt-plugins/chrome-devtools-mcp/1.4.0`;
+
+/** `installed_plugins.json` plus the two definition shapes that exist in the wild. */
+const PLUGIN_FILES: Record<string, unknown> = {
+  [`${CONFIG_DIR}/plugins/installed_plugins.json`]: {
+    version: 2,
+    plugins: {
+      "slack@official": [{ scope: "user", installPath: SLACK_ROOT, version: "1.1.0" }],
+      "chrome-devtools-mcp@cdt-plugins": [{ scope: "user", installPath: CDT_ROOT }],
+    },
+  },
+  // Shape one: a `.mcp.json` beside the plugin, wrapped in `mcpServers`.
+  [`${SLACK_ROOT}/.mcp.json`]: {
+    mcpServers: {
+      slack: {
+        type: "http",
+        url: "https://mcp.slack.com/mcp",
+        oauth: { clientId: "1601185624273.8899143856786", callbackPort: 3118 },
+      },
+    },
+  },
+  [`${SLACK_ROOT}/.claude-plugin/plugin.json`]: { name: "slack", version: "1.1.0" },
+  // Shape two: declared inline in the manifest, no `.mcp.json` at all.
+  [`${CDT_ROOT}/.claude-plugin/plugin.json`]: {
+    name: "chrome-devtools-mcp",
+    mcpServers: { "chrome-devtools": { command: "npx", args: ["chrome-devtools-mcp@1.4.0"] } },
+  },
+};
+
+test("collect: a plugin's servers are found in EITHER shape, namespaced as Claude Code does", () => {
+  // Both shapes are live on the machine that reported this: slack ships a `.mcp.json`,
+  // chrome-devtools declares its server in the manifest. Neither is in any file
+  // this command used to read. That is why it found nothing while three servers worked.
+  const { found, errors } = collectPluginServers(CONFIG_DIR, [], reader(PLUGIN_FILES));
+  assert.deepEqual(errors, []);
+  const byName = Object.fromEntries(found.map((f) => [f.name, f]));
+  assert.deepEqual(
+    Object.keys(byName).sort(),
+    ["plugin:chrome-devtools-mcp:chrome-devtools", "plugin:slack:slack"],
+  );
+  // The namespaced name is kept verbatim because it is the key the OAuth grant is
+  // stored under. Renaming happens later, in `boughName`.
+  assert.equal(byName["plugin:slack:slack"].server.url, "https://mcp.slack.com/mcp");
+  assert.equal(byName["plugin:chrome-devtools-mcp:chrome-devtools"].server.command, "npx");
+});
+
+test("collect: a bare server map is read too, not just the mcpServers wrapper", () => {
+  // Several official plugins ship `{ "<name>": { … } }` with no wrapper (terraform,
+  // linear, github). Reading only the documented shape found nothing in them and said
+  // nothing about it, which is the worst of the two failures.
+  const root = `${CONFIG_DIR}/plugins/cache/o/linear/1.0.0`;
+  const { found } = collectPluginServers(CONFIG_DIR, [], reader({
+    [`${CONFIG_DIR}/plugins/installed_plugins.json`]: {
+      plugins: { "linear@o": [{ scope: "user", installPath: root }] },
+    },
+    [`${root}/.mcp.json`]: { linear: { type: "http", url: "https://mcp.linear.app/mcp" } },
+  }));
+  assert.deepEqual(found.map((f) => f.name), ["plugin:linear:linear"]);
+  assert.equal(found[0].server.url, "https://mcp.linear.app/mcp");
+});
+
+test("collect: ${CLAUDE_PLUGIN_ROOT} becomes the directory the plugin is installed in", () => {
+  // Claude Code sets that variable when it spawns the child. Copied verbatim, bough
+  // would spawn in a directory literally named `${CLAUDE_PLUGIN_ROOT}`.
+  const root = `${CONFIG_DIR}/plugins/cache/o/discord/1.0.0`;
+  const { found } = collectPluginServers(CONFIG_DIR, [], reader({
+    [`${CONFIG_DIR}/plugins/installed_plugins.json`]: {
+      plugins: { "discord@o": [{ scope: "user", installPath: root }] },
+    },
+    [`${root}/.mcp.json`]: {
+      mcpServers: {
+        discord: {
+          command: "bun",
+          args: ["run", "--cwd", "${CLAUDE_PLUGIN_ROOT}", "start"],
+          env: { ROOT: "${CLAUDE_PLUGIN_ROOT}/lib" },
+        },
+      },
+    },
+  }));
+  assert.deepEqual(found[0].server.args, ["run", "--cwd", root, "start"]);
+  assert.deepEqual(found[0].server.env, { ROOT: `${root}/lib` });
+});
+
+test("collect: only INSTALLED plugins, and a project-scoped one only for its project", () => {
+  // The marketplace cache holds a `.mcp.json` for every plugin ever indexed (dozens
+  // of them), so `installed_plugins.json` is what decides. And a plugin scoped to one
+  // checkout is scoped precisely so it does not follow you into unrelated ones.
+  const root = `${CONFIG_DIR}/plugins/cache/m/frontend/1.2.0`;
+  const files = {
+    [`${CONFIG_DIR}/plugins/installed_plugins.json`]: {
+      plugins: {
+        "frontend@m": [{ scope: "project", projectPath: "/repos/theirs", installPath: root }],
+      },
+    },
+    [`${root}/.mcp.json`]: { mcpServers: { fe: { command: "fe" } } },
+  };
+  assert.deepEqual(collectPluginServers(CONFIG_DIR, ["/repos/mine"], reader(files)).found, []);
+  assert.deepEqual(
+    collectPluginServers(CONFIG_DIR, ["/repos/theirs"], reader(files)).found.map((f) => f.name),
+    ["plugin:frontend:fe"],
+  );
+  // No registry file at all: no plugins, and not an error either.
+  assert.deepEqual(collectPluginServers(CONFIG_DIR, [], () => null), { found: [], errors: [] });
+});
+
+test("a plugin server is synced, renamed, and given its plugin's OAuth client", async () => {
+  const file = await registryFile();
+  const lines: string[] = [];
+  const code = await runSyncMcp([], {
+    out: (l) => lines.push(l),
+    err: (l) => lines.push(l),
+    readJson: reader(PLUGIN_FILES),
+    keychain: keychain({
+      "plugin:slack:slack|38801a": {
+        serverName: "plugin:slack:slack",
+        serverUrl: "https://mcp.slack.com/mcp",
+        accessToken: "slack-secret-token",
+        expiresAt: Date.now() + 3_600_000,
+      },
+    }),
+    home: HOME,
+    configDir: CONFIG_DIR,
+    cwd: "/w",
+    config: { file },
+  });
+  assert.equal(code, 0);
+  const text = await readFile(file, "utf8");
+  const servers = JSON.parse(text).servers;
+  assert.deepEqual(Object.keys(servers).sort(), ["chrome-devtools", "slack"]);
+  // Its own grant, referenced and not copied.
+  assert.equal(
+    servers.slack.headers.Authorization,
+    "Bearer ${keychain:Claude Code-credentials#mcpOAuth.plugin:slack:slack|38801a.accessToken}",
+  );
+  assert.equal(text.includes("slack-secret-token"), false);
+  // Slack publishes `registration_endpoint: null`, so without the plugin's client id
+  // this entry becomes un-reauthorizable the moment the adopted grant expires.
+  assert.equal(servers.slack.clientId, "1601185624273.8899143856786");
+  assert.deepEqual(servers["chrome-devtools"].args, ["chrome-devtools-mcp@1.4.0"]);
+  assert.match(lines.join("\n"), /renamed from plugin:slack:slack/);
+});
+
+test("--no-plugins leaves a plugin's servers alone", async () => {
+  const lines: string[] = [];
+  const code = await runSyncMcp(["--no-plugins"], {
+    out: (l) => lines.push(l),
+    err: () => {},
+    keychain: noKeychain,
+    readJson: reader(PLUGIN_FILES),
+    home: HOME,
+    configDir: CONFIG_DIR,
+    cwd: "/w",
+    config: { file: await registryFile() },
+  });
+  assert.equal(code, 0);
+  // Plugins were the only source with anything in it, so opting out leaves nothing.
+  assert.match(lines.join("\n"), /no MCP servers found/);
+});
+
+test("syncing twice is the same as syncing once, stdio servers included", async () => {
+  // The bug, on the second real run: every plugin server needs a rename, so
+  // `mcp-search` came back "taken" by the entry the FIRST run had just written,
+  // `boughName` fell through to slugifying the whole name, and the registry grew
+  // `plugin-claude-mem-mcp-search` beside the `mcp-search` that was already there.
+  // A URL identified a server; a subprocess did not, so nothing caught it.
+  const file = await registryFile();
+  const deps = {
+    ...silent,
+    readJson: reader({
+      ...PLUGIN_FILES,
+      [`${CONFIG_DIR}/plugins/installed_plugins.json`]: {
+        plugins: {
+          "claude-mem@t": [{ scope: "user", installPath: `${CONFIG_DIR}/plugins/cache/t/cm/1` }],
+        },
+      },
+      [`${CONFIG_DIR}/plugins/cache/t/cm/1/.mcp.json`]: {
+        mcpServers: { "mcp-search": { command: "node", args: ["-e", "boot"] } },
+      },
+    }),
+    home: HOME,
+    configDir: CONFIG_DIR,
+    cwd: "/w",
+    config: { file },
+  };
+  await runSyncMcp([], deps);
+  assert.deepEqual(Object.keys(JSON.parse(await readFile(file, "utf8")).servers), ["mcp-search"]);
+  await runSyncMcp([], deps);
+  assert.deepEqual(Object.keys(JSON.parse(await readFile(file, "utf8")).servers), ["mcp-search"]);
+});
+
+test("a user's own definition beats the plugin's under the same name", async () => {
+  // A plugin's definition is the default; somebody who has written their own entry for
+  // that server is saying they want theirs, and a source read later must not clobber it.
+  const file = await registryFile();
+  await runSyncMcp([], {
+    ...silent,
+    readJson: reader({
+      ...PLUGIN_FILES,
+      [`${CONFIG_DIR}/.claude.json`]: {
+        mcpServers: { "plugin:slack:slack": { type: "http", url: "https://slack.mine/mcp" } },
+      },
+    }),
+    home: HOME,
+    configDir: CONFIG_DIR,
+    cwd: "/w",
+    config: { file },
+  });
+  assert.equal(JSON.parse(await readFile(file, "utf8")).servers.slack.url, "https://slack.mine/mcp");
+});
+
+// ---- the credential store's own grants ----------------------------------------
 
 /** A `Claude Code-credentials` item, shaped like the real one. */
 function keychain(mcpOAuth: Record<string, unknown>) {
@@ -368,7 +616,7 @@ test("with a duplicate already there, the credential lands on the better name", 
   assert.deepEqual(servers["plugin-slack-slack"].headers, {});
   // …and the duplicate that was already there is named, since silence is how it
   // survives. Removing it is the user's call, not this command's.
-  assert.match(lines.join("\n"), /same endpoint/);
+  assert.match(lines.join("\n"), /are the same server/);
 });
 
 test("an entry with no credential GETS one when a grant exists for it", async () => {

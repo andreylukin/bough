@@ -30,17 +30,35 @@
  *
  * WHAT IT READS, in Claude Code's own order of scope:
  *
- *   ~/.claude.json            → `mcpServers`                    (user scope)
- *   ~/.claude.json            → `projects[<dir>].mcpServers`    (that project)
- *   <dir>/.mcp.json           → `mcpServers`                    (checked in)
- *   login keychain            → `mcpOAuth`                      (authorized remotes)
+ *   ~/.claude.json                    → `mcpServers`                 (user scope)
+ *   $CLAUDE_CONFIG_DIR/.claude.json   → `mcpServers`                 (user scope, current)
+ *   either of those                   → `projects[<dir>].mcpServers` (that project)
+ *   <dir>/.mcp.json                   → `mcpServers`                 (checked in)
+ *   installed plugins                 → `.mcp.json`, `plugin.json`   (plugin servers)
+ *   the credential store              → `mcpOAuth`                   (authorized remotes)
  *
- * That last source is not only a credential lookup — it DEFINES servers. A
- * connector authorized through Claude Code (Slack is the case that exposed this)
- * leaves nothing behind in any config file, so the keychain entry is the only
- * record that the server exists, and it carries both halves: a URL and a token.
- * Without it, `sync-mcp` had neither a definition to copy nor a credential to point
- * at, and simply reported nothing to do.
+ * TWO OF THOSE SIX WERE ADDED BECAUSE THE COMMAND FOUND NOTHING ON A MACHINE WITH
+ * SERVERS RUNNING, which is the worst way for a sync to fail: it reported "no MCP
+ * servers found in Claude Code's config" as though that were a fact about the setup.
+ * A current install keeps the user-scope file INSIDE the config directory, so reading
+ * only `~/.claude.json` took an ENOENT for an empty configuration. And a plugin's
+ * servers are in neither file: they live in the plugin's own install directory, which
+ * is how Slack, chrome-devtools and claude-mem can all be working over there while
+ * every path this command knew about is empty. On that machine they were ALL of them.
+ *
+ * The last source is not only a credential lookup, it DEFINES servers. A connector
+ * authorized through Claude Code (Slack is the case that exposed this) may leave
+ * nothing behind in any config file, so its grant is the only record that the server
+ * exists, and it carries both halves: a URL and a token.
+ *
+ * WHERE THE CREDENTIAL ACTUALLY IS is a question about the machine, not about its
+ * operating system, and `mcp/keychain.ts` answers it by asking BOTH stores: the login
+ * keychain and `$CLAUDE_CONFIG_DIR/.credentials.json` (default
+ * `~/.claude/.credentials.json`). Platform decides only which is asked first, so a Mac
+ * running with the keychain opted out and a Linux box with no keychain at all are both
+ * ordinary cases rather than unsupported ones. `${keychain:…}` is the reference in
+ * every case, so a registry entry does not change shape between machines. Reading only
+ * the keychain is why this command adopted nothing at all on Linux.
  *
  * WHAT IT NEVER DOES: overwrite. A name already in bough's registry is left
  * exactly as it is and reported, because the local definition may be the one that
@@ -63,7 +81,12 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { loadRegistry, type McpConfigOptions, upsertServer } from "../mcp/config.ts";
-import { CLAUDE_CODE_ITEM, type KeychainReader, securityReader } from "../mcp/keychain.ts";
+import {
+  CLAUDE_CODE_ITEM,
+  claudeConfigDir,
+  defaultCredentialReader,
+  type KeychainReader,
+} from "../mcp/keychain.ts";
 
 /**
  * One `mcpOAuth` entry, read for the two fields that describe a server. The tokens
@@ -88,7 +111,7 @@ export interface KeychainGrant {
 /**
  * Every server in the login item's `mcpOAuth` map.
  *
- * A read failure is NOT an error here: no keychain (another platform), a denied
+ * A read failure is NOT an error here: no store on this machine holding it, a denied
  * dialog, or simply no such item all mean "there are no grants to adopt", and the
  * config-file half of this command must still work. The one thing worth saying out
  * loud is a denied prompt, since that is a decision the user just made and might
@@ -99,10 +122,11 @@ export async function readGrants(
 ): Promise<{ grants: KeychainGrant[]; note: string | null }> {
   const { value, code, error } = await read(CLAUDE_CODE_ITEM);
   if (code !== 0 || !value) {
-    // 128 is the "allow access?" dialog being dismissed — worth a sentence.
+    // 128 is the macOS "allow access?" dialog being dismissed, or the credentials file
+    // being unreadable. Either way it is access being withheld, not access being absent.
     const note = code === 128
-      ? `keychain access to "${CLAUDE_CODE_ITEM}" was denied, so no authorized ` +
-        `remote servers were adopted. Re-run and choose Allow to include them.`
+      ? `access to "${CLAUDE_CODE_ITEM}" was denied, so no authorized remote servers ` +
+        `were adopted${error ? `: ${error}` : ""}. On macOS, re-run and choose Allow.`
       : null;
     return { grants: [], note: note ?? (error && code !== 44 ? error : null) };
   }
@@ -110,7 +134,7 @@ export async function readGrants(
   try {
     parsed = JSON.parse(value);
   } catch {
-    return { grants: [], note: `keychain item "${CLAUDE_CODE_ITEM}" is not JSON` };
+    return { grants: [], note: `the "${CLAUDE_CODE_ITEM}" credential item is not JSON` };
   }
   const map = (parsed as { mcpOAuth?: Record<string, unknown> } | null)?.mcpOAuth;
   if (!map || typeof map !== "object") return { grants: [], note: null };
@@ -187,6 +211,14 @@ const ClaudeServer = z.object({
   cwd: z.string().optional(),
   url: z.string().optional(),
   headers: z.record(z.string(), z.string()).optional(),
+  /**
+   * A PRE-REGISTERED OAuth client, which a plugin ships when its provider does not do
+   * dynamic registration. Slack is the case: it publishes `registration_endpoint: null`,
+   * so bough's own `a`-to-authorize cannot get in without a `client_id` it is told
+   * (`config.ts`), and the plugin has one. Dropping it made an adopted Slack entry
+   * un-reauthorizable the moment its copied grant expired.
+   */
+  oauth: z.object({ clientId: z.string().min(1).optional() }).passthrough().optional(),
 }).passthrough();
 type ClaudeServer = z.infer<typeof ClaudeServer>;
 
@@ -216,16 +248,20 @@ export interface SyncArgs {
   force: boolean;
   dryRun: boolean;
   help: boolean;
+  /** Installed plugins' own servers. On by default; `--no-plugins` opts out. */
+  plugins: boolean;
 }
 
 /** Pure, total, and it never throws — the same contract `parseExecArgs` holds. */
 export function parseSyncArgs(argv: string[]): { args: SyncArgs } | { usage: string } {
-  const args: SyncArgs = { dirs: [], force: false, dryRun: false, help: false };
+  const args: SyncArgs = { dirs: [], force: false, dryRun: false, help: false, plugins: true };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "-h" || a === "--help") args.help = true;
     else if (a === "--force") args.force = true;
     else if (a === "--dry-run" || a === "-n") args.dryRun = true;
+    else if (a === "--no-plugins") args.plugins = false;
+    else if (a === "--plugins") args.plugins = true;
     else if (a === "--from" || a === "-C") {
       const dir = argv[++i];
       if (!dir) return { usage: `${a} needs a directory` };
@@ -237,21 +273,27 @@ export function parseSyncArgs(argv: string[]): { args: SyncArgs } | { usage: str
 }
 
 export const USAGE = [
-  "usage: bough sync-mcp [--from DIR]... [--dry-run] [--force]",
+  "usage: bough sync-mcp [--from DIR]... [--dry-run] [--force] [--no-plugins]",
   "",
-  "  Adopt Claude Code's MCP servers (~/.claude.json, <dir>/.mcp.json) into",
-  "  bough's registry. Existing entries are kept unless --force is given.",
+  "  Adopt Claude Code's MCP servers into bough's registry. Existing entries are",
+  "  kept unless --force is given. Four sources are read:",
+  "",
+  "    ~/.claude.json and $CLAUDE_CONFIG_DIR/.claude.json   user scope",
+  "    <dir>/.mcp.json                                      checked in",
+  "    installed plugins' .mcp.json / plugin.json           plugin servers",
+  "    Claude Code's credential store (mcpOAuth grants)     authorized remotes",
   "",
   "  -C, --from DIR   also read that project's scope and its .mcp.json",
   "                   (default: the current directory)",
   "  -n, --dry-run    report what would change and write nothing",
   "      --force      replace entries bough already has under the same name",
+  "      --no-plugins skip installed plugins' own servers",
   "",
-  "  Servers Claude Code has authorized (its keychain mcpOAuth grants) are synced",
-  "  too, even when no config file defines them — that is how a Slack connector",
-  "  gets here. Tokens are never copied: what is written is a keychain REFERENCE,",
-  "  resolved at connect time. Registering grants nothing — activate a server in",
-  "  the /mcp panel before a turn can use it.",
+  "  Servers Claude Code has authorized are synced even when no config file defines",
+  "  them, which is how a Slack connector gets here. Tokens are never copied: what",
+  "  is written is a REFERENCE to the credential store (the login keychain on macOS,",
+  "  ~/.claude/.credentials.json elsewhere), resolved at connect time. Registering",
+  "  grants nothing — activate a server in the /mcp panel before a turn can use it.",
 ].join("\n");
 
 /** Reads one JSON file. `null` for absent; throws only on unreadable/malformed. */
@@ -287,11 +329,20 @@ function serversIn(blob: unknown): Record<string, unknown> {
  * The order mirrors Claude Code's own scope precedence — user, then project, then
  * the checked-in file — so a team `.mcp.json` overriding a personal entry here
  * lands the same way round it does there.
+ *
+ * TWO CANDIDATES FOR THE USER-SCOPE FILE, and the second one is why this command
+ * reported "nothing to sync" on a machine with servers configured. `~/.claude.json`
+ * is where Claude Code used to keep it; a current install keeps it inside the config
+ * directory, at `~/.claude/.claude.json`, which `CLAUDE_CONFIG_DIR` moves. Reading
+ * only the first found an absent file, took the ENOENT for an empty configuration,
+ * and said so in a sentence that sounded like a fact about the user's setup. Both are
+ * read, the config-directory one last because when it exists it is the live one.
  */
 export function collectClaudeServers(
   dirs: string[],
   readJson: ReadJson,
   home: string,
+  configDir: string = join(home, ".claude"),
 ): { found: Found[]; errors: string[] } {
   const errors: string[] = [];
   const byName = new Map<string, Found>();
@@ -304,8 +355,16 @@ export function collectClaudeServers(
     }
   };
 
-  const claudeJsonPath = join(home, ".claude.json");
-  const claudeJson = read(claudeJsonPath);
+  // Labelled by the path, not by a fixed string: a person looking at two entries that
+  // disagree needs to know WHICH of the two files won.
+  const label = (path: string) => path.startsWith(home) ? `~${path.slice(home.length)}` : path;
+  const candidates = [join(home, ".claude.json"), join(configDir, ".claude.json")];
+  const docs: { doc: unknown; source: string }[] = [];
+  for (const path of candidates) {
+    const doc = read(path);
+    if (doc) docs.push({ doc, source: label(path) });
+  }
+
   const take = (raw: Record<string, unknown>, source: string) => {
     for (const [name, value] of Object.entries(raw)) {
       const parsed = ClaudeServer.safeParse(value);
@@ -317,15 +376,165 @@ export function collectClaudeServers(
     }
   };
 
-  take(serversIn(claudeJson), "~/.claude.json");
+  for (const { doc, source } of docs) take(serversIn(doc), source);
   for (const dir of dirs) {
-    const projects = (claudeJson as { projects?: Record<string, unknown> } | null)?.projects;
-    const project = projects?.[dir];
-    if (project) take(serversIn(project), `~/.claude.json projects[${dir}]`);
+    for (const { doc, source } of docs) {
+      const projects = (doc as { projects?: Record<string, unknown> } | null)?.projects;
+      const project = projects?.[dir];
+      if (project) take(serversIn(project), `${source} projects[${dir}]`);
+    }
     const local = read(join(dir, ".mcp.json"));
     if (local) take(serversIn(local), join(dir, ".mcp.json"));
   }
   return { found: [...byName.values()], errors };
+}
+
+// ---------------------------------------------------------------------------
+// Installed plugins
+// ---------------------------------------------------------------------------
+
+/**
+ * One install of one plugin, out of `plugins/installed_plugins.json`.
+ *
+ * `passthrough` and mostly optional for the same reason `ClaudeServer` is: this is
+ * another tool's bookkeeping file and a key bough does not know about is not an error.
+ */
+const PluginInstall = z.object({
+  installPath: z.string().min(1),
+  scope: z.string().optional(),
+  projectPath: z.string().optional(),
+}).passthrough();
+
+/** A plugin's own manifest, read for its name and any servers declared inline. */
+const PluginManifest = z.object({
+  name: z.string().min(1).optional(),
+  mcpServers: z.record(z.string(), z.unknown()).optional(),
+}).passthrough();
+
+/**
+ * Every MCP server an INSTALLED Claude Code plugin defines.
+ *
+ * WHY THIS IS A SEPARATE SOURCE. A plugin's servers are not in `~/.claude.json` and
+ * not in any `.mcp.json` under a project. They live inside the plugin's own install
+ * directory, which is how Slack, chrome-devtools and claude-mem can all be working in
+ * Claude Code while every file this command used to read is empty. On the machine that
+ * reported this, that was ALL of them: the config file's `mcpServers` was `{}` and the
+ * three servers actually in use were plugin-defined.
+ *
+ * INSTALLED, not merely available. The marketplace cache holds a `.mcp.json` for every
+ * plugin ever indexed (terraform, discord, firebase, a dozen more), and adopting
+ * those would fill the registry with servers the user never chose. `installed_plugins.json`
+ * is the list of what was actually installed, so it is the list that is read.
+ *
+ * A project-scoped install is only taken when its project is one of `dirs`, which is
+ * the same rule Claude Code applies: it is scoped to that checkout precisely so it does
+ * not follow you into unrelated ones.
+ *
+ * Names are `plugin:<plugin>:<server>`, Claude Code's own namespacing, kept verbatim
+ * because that is the key its OAuth grants are stored under (`plugin:slack:slack`) and
+ * matching them is the entire point. `boughName` renames it to `slack` afterwards.
+ */
+export function collectPluginServers(
+  configDir: string,
+  dirs: string[],
+  readJson: ReadJson,
+): { found: Found[]; errors: string[] } {
+  const errors: string[] = [];
+  const found: Found[] = [];
+  const read = (path: string): unknown | null => {
+    try {
+      return readJson(path);
+    } catch (e) {
+      errors.push((e as Error).message);
+      return null;
+    }
+  };
+
+  const registry = read(join(configDir, "plugins", "installed_plugins.json"));
+  const plugins = (registry as { plugins?: Record<string, unknown> } | null)?.plugins;
+  if (!plugins || typeof plugins !== "object") return { found, errors };
+
+  const claimed = new Set<string>();
+  for (const [key, raw] of Object.entries(plugins)) {
+    // `<plugin>@<marketplace>`; the marketplace is not part of the server's name.
+    const fallbackName = key.split("@")[0];
+    for (const rawInstall of Array.isArray(raw) ? raw : [raw]) {
+      const install = PluginInstall.safeParse(rawInstall);
+      if (!install.success) continue;
+      const { installPath, scope, projectPath } = install.data;
+      if (scope === "project" && (!projectPath || !dirs.includes(projectPath))) continue;
+
+      const manifest = PluginManifest.safeParse(
+        read(join(installPath, ".claude-plugin", "plugin.json")) ?? {},
+      );
+      const pluginName = (manifest.success ? manifest.data.name : undefined) ?? fallbackName;
+
+      // Two shapes in the wild, and both are live on the machine that reported this:
+      // chrome-devtools declares its server in the manifest, slack and claude-mem in a
+      // `.mcp.json` beside it. The file wins, being the more specific of the two.
+      const declared: Record<string, unknown> = {
+        ...(manifest.success ? manifest.data.mcpServers ?? {} : {}),
+        ...pluginServersIn(read(join(installPath, ".mcp.json"))),
+      };
+
+      for (const [serverName, value] of Object.entries(declared)) {
+        const name = `plugin:${pluginName}:${serverName}`;
+        // First install wins. A plugin present at two versions or two scopes is one
+        // server, and the alternative is the same endpoint registered twice.
+        if (claimed.has(name)) continue;
+        const parsed = ClaudeServer.safeParse(value);
+        if (!parsed.success) {
+          errors.push(`plugin ${pluginName}: ${serverName} is not a server definition, skipped`);
+          continue;
+        }
+        claimed.add(name);
+        found.push({
+          name,
+          server: expandPluginRoot(parsed.data, installPath),
+          source: `plugin ${pluginName}`,
+        });
+      }
+    }
+  }
+  return { found, errors };
+}
+
+/**
+ * A plugin's server map, out of either shape a `.mcp.json` comes in.
+ *
+ * `{ "mcpServers": { … } }` is the documented one; a bare `{ "<name>": { … } }` map is
+ * what several official plugins actually ship (terraform, linear, github), and reading
+ * only the wrapper form silently found nothing in them.
+ */
+function pluginServersIn(blob: unknown): Record<string, unknown> {
+  if (!blob || typeof blob !== "object") return {};
+  const wrapped = (blob as { mcpServers?: unknown }).mcpServers;
+  if (wrapped && typeof wrapped === "object") return wrapped as Record<string, unknown>;
+  return blob as Record<string, unknown>;
+}
+
+/**
+ * `${CLAUDE_PLUGIN_ROOT}` resolved to the directory the plugin is installed in.
+ *
+ * Claude Code sets that variable when it spawns a plugin's server, so a definition
+ * carrying it is complete THERE and broken here: `bun run --cwd ${CLAUDE_PLUGIN_ROOT}`
+ * copied verbatim spawns in a directory literally named that. Substituted at sync time
+ * rather than left as a bough `${VAR}` reference because the value is not a secret and
+ * not a setting: it is where this install happens to be, and writing it down is what
+ * makes the entry readable in the `/mcp` panel.
+ */
+function expandPluginRoot(s: ClaudeServer, installPath: string): ClaudeServer {
+  const sub = (v: string) => v.replaceAll("${CLAUDE_PLUGIN_ROOT}", installPath);
+  return {
+    ...s,
+    ...(s.command === undefined ? {} : { command: sub(s.command) }),
+    ...(s.args === undefined ? {} : { args: s.args.map(sub) }),
+    ...(s.cwd === undefined ? {} : { cwd: sub(s.cwd) }),
+    ...(s.url === undefined ? {} : { url: sub(s.url) }),
+    ...(s.env === undefined
+      ? {}
+      : { env: Object.fromEntries(Object.entries(s.env).map(([k, v]) => [k, sub(v)])) }),
+  };
 }
 
 /**
@@ -343,17 +552,20 @@ export function toBoughServer(
   if (remote && s.url) {
     const headers = { ...(s.headers ?? {}) };
     const hasAuth = Object.keys(headers).some((h) => h.toLowerCase() === "authorization");
+    // Carried so the entry stays usable AFTER the adopted grant expires: without it,
+    // reauthorizing a provider that has no dynamic registration is impossible here.
+    const client = s.oauth?.clientId ? { clientId: s.oauth.clientId } : {};
     // THE SERVER'S OWN GRANT FIRST. When Claude Code has authorized this server,
     // the right credential is the one it obtained FOR it — not the account token,
     // which that server would reject anyway. This is what makes Slack work.
     if (!hasAuth && grant) {
       headers["Authorization"] = `Bearer ${grantRef(grant.key)}`;
-      return { server: { url: s.url, headers }, authed: true };
+      return { server: { url: s.url, headers, ...client }, authed: true };
     }
     // Otherwise the account token, and only to hosts it belongs to. See the header.
     const authed = !hasAuth && isAnthropicHost(s.url);
     if (authed) headers["Authorization"] = `Bearer ${CLAUDE_TOKEN_REF}`;
-    return { server: { url: s.url, headers }, authed };
+    return { server: { url: s.url, headers, ...client }, authed };
   }
   if (!s.command) {
     return { reason: "has neither a `command` nor a `url` bough can use" };
@@ -420,11 +632,13 @@ export function looksSecret(key: string, value: string): boolean {
 
 export interface SyncDeps {
   readJson?: ReadJson;
-  /** Injected so tests never touch a real keychain — see `mcp/keychain.ts`. */
+  /** Injected so tests never touch a real credential store. See `mcp/keychain.ts`. */
   keychain?: KeychainReader;
   /** Injected so tests write to a temp file rather than `~/.bough`. */
   config?: McpConfigOptions;
   home?: string;
+  /** Claude Code's config directory. Absent = `CLAUDE_CONFIG_DIR`, else `<home>/.claude`. */
+  configDir?: string;
   cwd?: string;
   out?: (line: string) => void;
   err?: (line: string) => void;
@@ -448,9 +662,19 @@ export async function runSyncMcp(argv: string[], deps: SyncDeps = {}): Promise<n
     return 0;
   }
   const dirs = parsed.args.dirs.length > 0 ? parsed.args.dirs : [deps.cwd ?? process.cwd()];
+  const configDir = deps.configDir ?? claudeConfigDir(process.env, home);
 
-  const { found, errors } = collectClaudeServers(dirs, readJson, home);
-  const { grants, note } = await readGrants(deps.keychain ?? securityReader);
+  const { found, errors } = collectClaudeServers(dirs, readJson, home, configDir);
+  if (parsed.args.plugins) {
+    // AFTER the config files, so a user's own entry under the same name still wins: a
+    // plugin's definition is the default, and someone who has written their own is
+    // saying they want theirs.
+    const plugins = collectPluginServers(configDir, dirs, readJson);
+    errors.push(...plugins.errors);
+    const claimedByConfig = new Set(found.map((f) => f.name));
+    for (const p of plugins.found) if (!claimedByConfig.has(p.name)) found.push(p);
+  }
+  const { grants, note } = await readGrants(deps.keychain ?? defaultCredentialReader);
   if (note) err(`warning: ${note}`);
   // Matched by NAME first, then by URL: the name is what Claude Code keys the grant
   // under and what the config calls the server, and the URL catches the case where
@@ -494,19 +718,32 @@ export async function runSyncMcp(argv: string[], deps: SyncDeps = {}): Promise<n
   // it — `plugin-slack-slack` next to `slack`, `linear-server` next to an already
   // authorized `linear`, both pointing at the same URL, one of them working. The
   // registry is keyed by name, so nothing downstream would ever have noticed.
+  //
+  // A SUBPROCESS HAS AN IDENTITY TOO, and leaving it out made this command
+  // non-idempotent the moment plugin servers arrived. Every plugin server needs a
+  // rename (`plugin:claude-mem:mcp-search` is not a slug), so a second run found
+  // `mcp-search` "taken" by the entry the FIRST run had just written, fell through to
+  // slugifying the whole name, and added `plugin-claude-mem-mcp-search` beside it.
+  // Running a sync twice must be the same as running it once.
   const norm = (u: string) => u.replace(/\/+$/, "");
-  const byUrl = new Map<string, string[]>();
+  /** What makes two entries the same server. `null` when the entry describes neither. */
+  const identityOf = (
+    s: { url?: string; command?: string; args?: readonly string[] },
+  ): string | null =>
+    s.url ? norm(s.url) : s.command ? `${s.command} ${(s.args ?? []).join(" ")}`.trim() : null;
+
+  const byIdentity = new Map<string, string[]>();
   for (const n of Object.keys(existing).sort()) {
-    const u = existing[n].url;
-    if (u) byUrl.set(norm(u), [...(byUrl.get(norm(u)) ?? []), n]);
+    const id = identityOf(existing[n]);
+    if (id) byIdentity.set(id, [...(byIdentity.get(id) ?? []), n]);
   }
   // A duplicate that is ALREADY there is not this run's doing and not this
   // command's to delete — but silence about it is how it survives. `F` forgets one.
-  for (const [url, names] of byUrl) {
+  for (const [id, names] of byIdentity) {
     if (names.length > 1) {
       warnings.push(
-        `${names.join(" and ")} are the same endpoint (${url}). Only one is needed — ` +
-          `open /mcp and press F on the one you do not want.`,
+        `${names.join(" and ")} are the same server (${id}). Only one is ` +
+          `needed. Open /mcp and press F on the one you do not want.`,
       );
     }
   }
@@ -516,9 +753,10 @@ export async function runSyncMcp(argv: string[], deps: SyncDeps = {}): Promise<n
     // into a duplicate of itself. Among entries sharing the URL, the one a person
     // would have named wins (`slack`, not `plugin-slack-slack`) — `natural` is the
     // preferred name computed against no collisions at all.
-    const urlNames = server.url ? byUrl.get(norm(server.url)) ?? [] : [];
+    const id = identityOf(server);
+    const sameNames = id ? byIdentity.get(id) ?? [] : [];
     const natural = boughName(claudeName, new Set());
-    const sameEndpoint = natural && urlNames.includes(natural) ? natural : urlNames[0];
+    const sameEndpoint = natural && sameNames.includes(natural) ? natural : sameNames[0];
     const name = sameEndpoint ?? boughName(claudeName, taken);
     if (!name) {
       results.push({
@@ -552,7 +790,7 @@ export async function runSyncMcp(argv: string[], deps: SyncDeps = {}): Promise<n
         source,
         action: "skipped",
         reason: sameEndpoint && sameEndpoint !== claudeName
-          ? `already registered as "${name}" — same endpoint`
+          ? `already registered as "${name}", the same server`
           : "already registered here — --force replaces it",
       });
       continue;
@@ -609,7 +847,7 @@ export async function runSyncMcp(argv: string[], deps: SyncDeps = {}): Promise<n
     const note = r.reason
       ? ` — ${r.reason}`
       : r.authed
-      ? " — using Claude Code's keychain token"
+      ? " (using the token Claude Code already holds)"
       : "";
     const renamed = r.renamedFrom ? ` (renamed from ${r.renamedFrom})` : "";
     out(`${mark} ${r.name}${renamed}  ${r.action}${note}   (${r.source})`);
