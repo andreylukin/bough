@@ -35,6 +35,8 @@ import {
   dbPath,
   envPath,
   logsDir,
+  mapDirFor,
+  mapsDir,
   mcpAuthPath,
   mcpRegistryPath,
   themePath,
@@ -92,6 +94,8 @@ test("BOUGH_HOME relocates the entire tree", () => {
     assertEquals(workflowsDir(), "/fake/root/workflows");
     assertEquals(workflowScriptPath("w7"), "/fake/root/workflows/w7.js");
     assertEquals(userSkillsDir(), "/fake/root/skills");
+    assertEquals(mapsDir(), "/fake/root/maps");
+    assertEquals(mapDirFor("payments-rewrite"), "/fake/root/maps/payments-rewrite");
     assertEquals(themePath(), "/fake/root/theme.json");
     assertEquals(envPath(), "/fake/root/env");
     assertEquals(mcpRegistryPath(), "/fake/root/mcp.json");

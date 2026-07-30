@@ -114,6 +114,30 @@ export function workflowScriptPath(runId: string): string {
   return join(workflowsDir(), `${runId}.js`);
 }
 
+/**
+ * Wayfinder maps: `~/.bough/maps`.
+ *
+ * DELIBERATELY NOT IN THE WORKSPACE. A map is planning state, not a deliverable —
+ * putting it under the checkout would file every ticket edit into the changes rail
+ * and, worse, into whatever branch happened to be checked out when a session
+ * claimed one. Here it survives worktrees, rewinds and `git clean`, and it is
+ * global rather than per-workspace because an effort routinely spans repos; the
+ * map's own `Workspace:` line records where the work lands.
+ */
+export function mapsDir(): string {
+  return boughPath("maps");
+}
+
+/**
+ * One effort's map directory: `~/.bough/maps/<effort>`.
+ *
+ * `effort` is a slug, so it goes through `confine` — the name reaches this from a
+ * model-authored string, and `../` in one would write a map over `theme.json`.
+ */
+export function mapDirFor(effort: string): string {
+  return confine(mapsDir(), join(mapsDir(), effort));
+}
+
 /** User skills. Bundled skills win on a name collision (spec §16). */
 export function userSkillsDir(): string {
   return boughPath("skills");
