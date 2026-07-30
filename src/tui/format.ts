@@ -553,7 +553,15 @@ export function programSummary(code: string, max = 64, running = false): string 
   if (read.length) bits.push(`${running ? "reading" : "read"} ${list(read)}`);
 
   const count = (re: RegExp) => [...code.matchAll(re)].length;
-  const shells = count(/\bbash\s*\(/g) + count(/\bsh\s*\(/g);
+  // `execSync`/`spawnSync`/`Bun.$` are running a command too. A program that reached for
+  // `node:child_process` instead of `bash()` was unrecognized, so the header fell back to
+  // source: `const { execSync } = require("node:child_process");`.
+  //
+  // The SYNC names only, plus `Bun.$`. Bare `spawn(` and `exec(` are excluded and that is
+  // not fussiness: `spawn` IS bough's detached-delegation verb, so counting it here made
+  // a fan-out report `ran 1 command · 1 subagent`.
+  const shells = count(/\bbash\s*\(/g) + count(/\bsh\s*\(/g) +
+    count(/\b(?:execSync|execFileSync|spawnSync)\s*\(/g) + count(/\bBun\.\$/g);
   if (shells) {
     bits.push(`${running ? "running" : "ran"} ${shells} command${shells === 1 ? "" : "s"}`);
   }

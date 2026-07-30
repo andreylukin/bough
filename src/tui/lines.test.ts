@@ -716,3 +716,35 @@ test("an exited job card lands where the command finished, not at the tail", () 
   });
   assert.ok(joined(running).indexOf("live") > joined(running).indexOf("answer two"));
 });
+
+/**
+ * A four-round turn of shell calls headlined as `4 steps · ran 1 command · ran 1 command
+ * · ran 1 command · ran 1 command` — the same three words four times, filling the row
+ * that is supposed to say what the turn did.
+ */
+test("a collapsed step's repeated summaries collapse to a count", () => {
+  const parts: Part[] = [];
+  for (let i = 1; i <= 4; i++) {
+    parts.push({ type: "tool_call", id: `c${i}`, name: "run_steps", input: { code: 'await bash("ls");' } });
+    parts.push({ type: "tool_result", callId: `c${i}`, output: "ok", isError: false } as Part);
+  }
+  const thread = [msg({ id: "a1", role: "supervisor", parts })];
+  const text = joined(buildLines(thread, () => false, () => false, 100, {}));
+  assert.match(text, /4 steps/);
+  assert.match(text, /ran 1 command ×4/);
+  // The un-collapsed repetition is what this replaces.
+  assert.equal(/ran 1 command · ran 1 command/.test(text), false, text);
+
+  // Different summaries are still listed separately — the collapse must not merge
+  // unlike steps into one claim.
+  const mixed: Part[] = [
+    { type: "tool_call", id: "d1", name: "run_steps", input: { code: 'await bash("ls");' } },
+    { type: "tool_result", callId: "d1", output: "ok", isError: false } as Part,
+    { type: "tool_call", id: "d2", name: "run_steps", input: { code: 'await write("a.ts", x);' } },
+    { type: "tool_result", callId: "d2", output: "ok", isError: false } as Part,
+  ];
+  const mixedText = joined(
+    buildLines([msg({ id: "a2", role: "supervisor", parts: mixed })], () => false, () => false, 100, {}),
+  );
+  assert.match(mixedText, /ran 1 command · wrote a\.ts/);
+});

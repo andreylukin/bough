@@ -285,9 +285,21 @@ function toolGroupLines(
       const live = !results.get(call.id);
       return programSummary(code, 64, live) || codeGist(call.input);
     }).filter(Boolean);
+    // REPEATS COLLAPSE. A four-round turn of shell calls read `4 steps · ran 1 command ·
+    // ran 1 command · ran 1 command · ran 1 command` — the same three words four times,
+    // filling the row that is supposed to say what the turn did.
+    const merged: string[] = [];
+    for (const g of gists) {
+      const last = merged[merged.length - 1];
+      const bare = last?.replace(/ ×\d+$/, "");
+      if (bare === g) {
+        const n = Number(/ ×(\d+)$/.exec(last ?? "")?.[1] ?? 1) + 1;
+        merged[merged.length - 1] = `${g} ×${n}`;
+      } else merged.push(g);
+    }
     // One budget for the whole tail, so a four-step turn clips once at the end
     // rather than losing its last step silently off the edge of the row.
-    if (gists.length) head += dim(` · ${clip(gists.join(" · "), Math.max(20, w - 16))}`);
+    if (merged.length) head += dim(` · ${clip(merged.join(" · "), Math.max(20, w - 16))}`);
   }
   // Never wrapped: the whole visual row stays one click target.
   out.push({ text: head, click: key });

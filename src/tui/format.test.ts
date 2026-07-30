@@ -683,6 +683,17 @@ test("a step is headlined by what the program did, not by its first line of code
   assert.equal(programSummary('await workflow("review", args);'), "ran a workflow");
   assert.equal(programSummary('await ask("which one?", ["a", "b"]);'), "asked you a question");
   assert.equal(programSummary('await bashBg("npm run dev");'), "started 1 background command");
+  // A program that reached for `node:child_process` instead of `bash()` was
+  // unrecognized, so the header read `const { execSync } = require("node:child_process");`.
+  assert.equal(
+    programSummary('const { execSync } = require("node:child_process"); execSync("ls");'),
+    "ran 1 command",
+  );
+  assert.equal(programSummary("await Bun.$`ls -1`;"), "ran 1 command");
+  // But NOT the delegation verbs that happen to share those names: `spawn` is bough's
+  // own detached-delegation verb, and counting it as a shell made a fan-out report
+  // `ran 1 command · 1 subagent`.
+  assert.equal(programSummary('const r = await spawn("do the thing");'), "1 subagent");
   // patch() takes ONE string — the patch body — and naming it like a path-first
   // call captured the whole template literal, so the most-read line in the UI read
   // `wrote cart.js#8902] SWAP 3.=3: + for (let i = 0; …`. Its files are the section
