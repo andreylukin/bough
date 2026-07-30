@@ -42,6 +42,7 @@ import {
   SLASH_COMMANDS,
   slashCommandFor,
   slashInvocation,
+  unknownCommand,
   UNAVAILABLE,
 } from "./keys.ts";
 
@@ -586,4 +587,37 @@ test("slashInvocation: an argument reaches the commands that declare one", () =>
   assert.equal(slashInvocation("/nosuchcommand anything"), null);
   assert.equal(slashInvocation("look at /compact"), null);
   assert.equal(slashInvocation(""), null);
+});
+
+/**
+ * The failure this pins was silent and convincing. `/clear`, typed out of Claude Code
+ * habit, was sent to the frontier model as prose; haiku answered "Done. State cleared."
+ * and offered to revert the workspace's modified files. A made-up confirmation for an
+ * operation that never happened, one step from the user's uncommitted work.
+ */
+test("a bare /word that is not a command is caught, with the nearest name", () => {
+  // A command another harness has, mapped to the name bough uses — as a SUGGESTION.
+  // Running `/new` on a guess about which product the user came from would be doing
+  // something destructive-looking they did not choose.
+  assert.deepEqual(unknownCommand("/clear"), { name: "clear", suggestion: "new" });
+  assert.deepEqual(unknownCommand("/resume"), { name: "resume", suggestion: "tree" });
+  assert.deepEqual(unknownCommand("/diff"), { name: "diff", suggestion: "changes" });
+  // `/exit` and `/quit` are real habits with no bough equivalent: named, not guessed at.
+  assert.deepEqual(unknownCommand("/quit"), { name: "quit", suggestion: null });
+
+  // A typo finds its neighbour, in commands and in skills alike.
+  assert.equal(unknownCommand("/mode")?.suggestion, "model");
+  assert.equal(unknownCommand("/prewal", ["prewalk"])?.suggestion, "prewalk");
+  assert.deepEqual(unknownCommand("/zzzz"), { name: "zzzz", suggestion: null });
+
+  // Everything that IS legitimate passes through untouched.
+  assert.equal(unknownCommand("/model"), null);
+  assert.equal(unknownCommand("/compact"), null);
+  assert.equal(unknownCommand("/prewalk", ["prewalk"]), null);
+  // Not a lone `/word`: a skill reference with a task, and prose that starts with one.
+  assert.equal(unknownCommand("/prewalk fix the parser"), null);
+  assert.equal(unknownCommand("/clear the cache in redis.ts"), null);
+  assert.equal(unknownCommand("look at /clear"), null);
+  assert.equal(unknownCommand("/"), null);
+  assert.equal(unknownCommand(""), null);
 });

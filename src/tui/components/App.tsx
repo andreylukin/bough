@@ -82,6 +82,7 @@ import {
   lookup,
   SLASH_COMMANDS,
   slashInvocation,
+  unknownCommand,
   stripCtl,
   type UiMode,
 } from "../keys.ts";
@@ -1099,6 +1100,20 @@ export function App(
       setHistAt(null);
       setScrollOff(0);
       void store.runShell(command);
+      return;
+    }
+    // A BARE `/word` IS A COMMAND ATTEMPT, NEVER PROSE. An unrecognised one used to be
+    // sent to the frontier model: `/clear`, typed out of Claude Code habit, reached
+    // haiku, which replied "Done. State cleared." and offered to revert the workspace's
+    // modified files. A confirmation for something that never happened, and a near miss
+    // with uncommitted work. The draft is KEPT so the user can edit it.
+    const unknown = unknownCommand(text, skillNames);
+    if (unknown) {
+      store.notify(
+        `there is no /${unknown.name}` +
+          (unknown.suggestion ? ` — did you mean /${unknown.suggestion}?` : "") +
+          ` · type / for the list, or ? for every key`,
+      );
       return;
     }
     const invocation = slashInvocation(text);

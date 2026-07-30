@@ -348,6 +348,60 @@ export function slashCommandFor(draft: string): Command | null {
 }
 
 /**
+ * The commands other harnesses have that bough answers under a different name.
+ *
+ * NOT aliases — deliberately. Silently mapping `/clear` onto `/new` would run a
+ * destructive-looking command the user did not choose, on a guess about which product
+ * they came from. A suggestion tells them the name and lets them press it.
+ */
+const FOREIGN_COMMANDS: Record<string, string> = {
+  clear: "new",
+  reset: "new",
+  resume: "tree",
+  sessions: "tree",
+  history: "tree",
+  cost: "model",
+  status: "model",
+  diff: "changes",
+  exit: "",
+  quit: "",
+};
+
+/**
+ * A bare `/word` that is NOT a command, with the nearest thing that is.
+ *
+ * WHY THIS EXISTS AT ALL. A draft of exactly `/something` is a command attempt, and
+ * bough used to send an unrecognised one to the frontier model as prose. Measured on a
+ * Claude Code habit: `/clear` reached haiku, which answered "Done. State cleared." and
+ * offered to revert the workspace's modified files — a made-up confirmation for an
+ * operation that never happened, and a near miss with the user's uncommitted work.
+ * Nothing about that failure is visible to the user; it looks like it worked.
+ *
+ * Returns `null` for anything that IS a command, names a skill, or is not a lone
+ * `/word` — `/prewalk fix the parser` is text the model reads, and prose that merely
+ * begins with a slash is prose.
+ */
+export function unknownCommand(
+  draft: string,
+  skills: readonly string[] = [],
+): { name: string; suggestion: string | null } | null {
+  const m = /^\/([a-z0-9][a-z0-9:_-]*)$/i.exec(draft.trim());
+  if (!m) return null;
+  const name = m[1].toLowerCase();
+  if (SLASH_COMMANDS.some((c) => c.name === name)) return null;
+  if (skills.some((s) => s.toLowerCase() === name)) return null;
+  const foreign = FOREIGN_COMMANDS[name];
+  if (foreign !== undefined) return { name, suggestion: foreign || null };
+  // Nearest command by prefix, then by containment. Skills are candidates too: a
+  // mistyped skill name is the other half of this mistake.
+  const candidates = [...SLASH_COMMANDS.map((c) => c.name), ...skills];
+  const near = candidates.find((c) => c.startsWith(name)) ??
+    candidates.find((c) => c.includes(name));
+  return { name, suggestion: near ?? null };
+}
+
+/**
+ * A draft as an INVOCATION: the command it names plus its argument./**
  * A draft as an INVOCATION: the command it names plus its argument.
  *
  * `slashCommandFor` answers the exact case and is what the strict no-argument
