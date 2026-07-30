@@ -122,7 +122,9 @@ export type ModelEntry =
 export const SECTIONS: Record<Tier, { title: string; hint: string }> = {
   frontier: {
     title: "frontier model — the supervisor",
-    hint: "pins this session and becomes the default for new ones; other sessions are left alone",
+    // Kept under 70 characters ON PURPOSE: the hint is indented two columns inside the
+    // panel border, and 80 columns is the narrowest terminal bough claims to support.
+    hint: "pins this session, and new ones; others keep what they have",
   },
   cheap: {
     title: "cheap model — titles, ghost text, activity",
@@ -205,6 +207,8 @@ export const CHEAP_UNSET =
 
 export type DisplayRow =
   | { header: Tier }
+  /** A section's explanation, on its own row so the window height counts it. */
+  | { hint: string }
   | { entry: ModelEntry; index: number }
   | { note: string };
 
@@ -224,6 +228,7 @@ export function displayRows(
   entries.forEach((entry, index) => {
     if (entry.tier !== last) {
       out.push({ header: entry.tier });
+      out.push({ hint: SECTIONS[entry.tier].hint });
       if (entry.tier === "cheap" && opts.cheapUnset) out.push({ note: CHEAP_UNSET });
     }
     last = entry.tier;
@@ -312,6 +317,13 @@ export function ModelPicker(
         : null}
 
       {(height === 0 ? [] : display.slice(start, end)).map((d) => {
+        if ("hint" in d) {
+          return (
+            <text key={`hint-${d.hint.slice(0, 12)}`} attributes={TextAttributes.DIM} wrapMode="none">
+              {`  ${d.hint}`}
+            </text>
+          );
+        }
         if ("note" in d) {
           return (
             <text key="cheap-unset" wrapMode="none">
@@ -323,10 +335,15 @@ export function ModelPicker(
         }
         if ("header" in d) {
           const section = SECTIONS[d.header];
+          // The TITLE only. The hint is a `hint` row of its own (`displayRows`), because
+          // sharing one row put a 76-character sentence after a 32-character heading and
+          // `wrapMode="none"` cut it at the panel border: at 120 columns the frontier
+          // hint read `…other sessions are left alo`. It could not simply be rendered as
+          // a second row here — the window height counts DisplayRows, and a row painted
+          // outside that count is a row the renderer clips into garbage.
           return (
             <text key={`h-${d.header}`} wrapMode="none">
               <span attributes={TextAttributes.BOLD} fg={palette.accent}>{section.title}</span>
-              <span attributes={TextAttributes.DIM}>{"  "}{section.hint}</span>
             </text>
           );
         }
