@@ -104,6 +104,23 @@ is_up() {
 # Per-user LaunchAgent. KeepAlive on SuccessfulExit=false: relaunch after a crash,
 # stay down after a clean exit (so a missing API key doesn't loop). No WatchPaths —
 # on purpose.
+# THE LAUNCHAGENT BELONGS TO THE DEFAULT PROFILE, AND ONLY TO IT. `write_plist` stamps
+# this invocation's paths into the ONE plist every profile shares, so
+# `BOUGH_HOME=/tmp/x bough start` silently repointed the login service's log path at a
+# scratch directory — the running server was fine, and the next login would have come up
+# pointing into a directory that no longer existed. Found by doing exactly that on a walk,
+# to my own install.
+require_default_profile() {
+  if [ "$BOUGH_HOME" != "$HOME/.bough" ]; then
+    echo "error: the $LABEL launchd service is the DEFAULT profile's ($HOME/.bough)." >&2
+    echo "  \`bough $1\` with BOUGH_HOME=$BOUGH_HOME would repoint your login service." >&2
+    echo "  Run this profile in the foreground instead:" >&2
+    echo "  BOUGH_HOME=$BOUGH_HOME BOUGH_PORT=$PORT bough run" >&2
+    exit 1
+  fi
+  return 0
+}
+
 write_plist() {
   mkdir -p "$HOME/Library/LaunchAgents"
   tee "$PLIST" >/dev/null <<EOF
@@ -137,8 +154,27 @@ wait_up() {
     fi
     sleep 0.5
   done
-  echo "error: server did not answer on port $PORT within 15s — last log lines:" >&2
-  tail -n 20 "$LOG_FILE" >&2 2>/dev/null
+  echo "error: server did not answer on port $PORT within 15s" >&2
+  # THE LOG, OR WHY THERE IS NONE. This used to end with "— last log lines:" and then
+  # `tail` a file that does not exist, printing nothing: the message promised the useful
+  # half and delivered an empty line, which reads as truncated output rather than as a
+  # missing file. An empty log is itself the clue — the process never got far enough to
+  # write one.
+  if [ -s "$LOG_FILE" ]; then
+    echo "last log lines:" >&2
+    tail -n 20 "$LOG_FILE" >&2
+  else
+    echo "(no log at $LOG_FILE — the server process never started)" >&2
+  fi
+  # ONE SERVICE PER USER. The LaunchAgent is a single label, so a second profile —
+  # `BOUGH_HOME=… BOUGH_PORT=… bough` — asks launchd to start something it already has
+  # running for the main install, and times out here with nothing to show for it. Walked
+  # exactly that way on a fresh profile.
+  if [ -f "$PLIST" ] && launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
+    echo "note: the $LABEL service is already loaded for another profile — launchd runs" >&2
+    echo "  one per user. For a second profile run it in the foreground instead:" >&2
+    echo "  BOUGH_HOME=$BOUGH_HOME BOUGH_PORT=$PORT bough run" >&2
+  fi
   return 1
 }
 
@@ -168,6 +204,7 @@ cmd_start() {
     echo "error: ANTHROPIC_API_KEY is not set — put it in $ENV_FILE" >&2
     exit 1
   fi
+  require_default_profile start
   write_plist
   echo "starting bough service on port $PORT (logs: $LOG_FILE)"
   launchctl enable "$DOMAIN/$LABEL" 2>/dev/null || true
@@ -211,6 +248,12 @@ cmd_kill() {
 
 cmd_restart() {
   if service_loaded; then
+    require_default_profile restart
+    # REWRITTEN, not just kickstarted. `restart` used to bounce the job and leave the plist
+    # exactly as it was, so a stale one — a moved repo, or a log path left behind by another
+    # profile — survived every restart and could only be fixed with `kill` + `start`. That
+    # is precisely how I had to repair my own install after the bug above.
+    write_plist
     echo "restarting service"
     launchctl kickstart -k "$DOMAIN/$LABEL"
     wait_up
