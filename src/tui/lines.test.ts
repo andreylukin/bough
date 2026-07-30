@@ -729,6 +729,28 @@ test("an exited job card lands where the command finished, not at the tail", () 
  * · ran 1 command · ran 1 command` — the same three words four times, filling the row
  * that is supposed to say what the turn did.
  */
+/**
+ * A call that is not the program tool is the model reaching for a host function AS a tool. Saying
+ * so beats printing the arguments: on a fresh walk one such row read
+ * `✗ error  1 step · {"input":"[/private/tmp/claude-501/-Users-andrey…`.
+ */
+test("a host function called as a tool is named, not dumped as JSON", () => {
+  const parts: Part[] = [
+    { type: "tool_call", id: "p1", name: "patch", input: { input: "[src/cart.py#a1]\nDEL 2.=3" } },
+    {
+      type: "tool_result",
+      callId: "p1",
+      output: "patch is a host function, not a tool",
+      isError: true,
+    } as Part,
+  ];
+  const text = joined(
+    buildLines([msg({ id: "a1", role: "supervisor", parts })], () => false, () => false, 100, {}),
+  );
+  assert.match(text, /called patch as a tool/);
+  assert.equal(text.includes('{"input"'), false, text);
+});
+
 test("a collapsed step's repeated summaries collapse to a count", () => {
   const parts: Part[] = [];
   for (let i = 1; i <= 4; i++) {

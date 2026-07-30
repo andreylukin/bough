@@ -285,6 +285,13 @@ function toolGroupLines(
       // Present tense while the call is still open: "ran 1 command" under a shell
       // that has been blocked for ten seconds is a lie the reader acts on.
       const live = !results.get(call.id);
+      // A call that is NOT the program tool is the model reaching for a host function AS a tool
+      // (`harness/protocol.ts` grants two tools; everything else is a name it invented). Saying so
+      // beats printing the arguments: on a fresh walk one of those rows read
+      // `✗ error  1 step · {"input":"[/private/tmp/claude-501/-Users-andrey…` — raw JSON at the
+      // reader, on the row that is supposed to explain what went wrong. The error text below the
+      // fold already says what to do about it.
+      if (call.name !== "run_steps") return `called ${call.name} as a tool`;
       return programSummary(code, 64, live) || codeGist(call.input);
     }).filter(Boolean);
     // REPEATS COLLAPSE. A four-round turn of shell calls read `4 steps · ran 1 command ·

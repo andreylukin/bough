@@ -561,6 +561,14 @@ export function programSummary(code: string, max = 64, running = false): string 
     /import\s*\{[^}]*\bjoin\b[^}]*\}\s*from\s*["'`](?:node:)?path/.test(code);
 
   const name = (p: string) => p.split("/").filter(Boolean).pop() ?? p;
+  /**
+   * A path with `${…}` in it is a TEMPLATE, not a name.
+   *
+   * Seen on a fresh walk: `▸ 1 step · wrote ${cartPath}` — the regex captured the text between
+   * the backticks and printed the placeholder at the reader. An interpolated path is unnamed, so
+   * it falls through to the counting branch below and reads `wrote 1 file`.
+   */
+  const named = (p: string) => !p.includes("${");
   const list = (paths: string[]) =>
     paths.length <= 2 ? paths.map(name).join(", ") : `${name(paths[0])} +${paths.length - 1} more`;
 
@@ -572,7 +580,7 @@ export function programSummary(code: string, max = 64, running = false): string 
   const wrote = [
     ...files(/(?:(?<![.\w])(?:write|edit)|writeFileSync|writeFile)\s*\(\s*["'`]([^"'`]+)/g),
     ...(/\bpatch\s*\(/.test(code) ? files(/\[([^\]\s#]+)#[^\]\s]*\]/g) : []),
-  ].filter((p, i, a) => a.indexOf(p) === i);
+  ].filter(named).filter((p, i, a) => a.indexOf(p) === i);
   // `Bun.file(path)` counts as reading it. `files.md` sends the model there for raw content
   // ("there is no read()"), so it is a DOCUMENTED path — and a documented path that produces
   // an unlabeled row is the same defect as an undocumented one. Seen:
@@ -581,9 +589,10 @@ export function programSummary(code: string, max = 64, running = false): string 
   // the `Bun.file` the prompt recommends, and `node:fs` — which models reach for whatever the
   // prompt says. `readFileSync`/`readFile` are matched WITH a possible dot (`fs.readFileSync`)
   // unlike the host names, because those two words mean the same thing on any object.
-  const read = files(
+  const readAll = files(
     /(?:(?<![.\w])(?:view|read)|Bun\.file|readFileSync|readFile)\s*\(\s*["'`]([^"'`]+)/g,
   );
+  const read = readAll.filter(named);
   if (wrote.length) bits.push(`${running ? "writing" : "wrote"} ${list(wrote)}`);
   if (read.length) bits.push(`${running ? "reading" : "read"} ${list(read)}`);
   // A call whose path is a VARIABLE yields no name — `fs.readFileSync(filePath, "utf8")` —

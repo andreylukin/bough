@@ -725,6 +725,18 @@ test("a step is headlined by what the program did, not by its first line of code
   );
   assert.equal(programSummary('await workflow("review", args);'), "ran a workflow");
   assert.equal(programSummary('await ask("which one?", ["a", "b"]);'), "asked you a question");
+  // A path built from a template is not a name. Seen on a fresh walk:
+  // `▸ 1 step · wrote ${cartPath}` — the placeholder printed at the reader.
+  assert.equal(programSummary('await write(`${cartPath}`, body);'), "wrote 1 file");
+  assert.equal(
+    programSummary('const t = await Bun.file(`${ws}/src/a.py`).text();'),
+    "read 1 file",
+  );
+  // A real name alongside an interpolated one still names the one it can.
+  assert.equal(
+    programSummary('await write("src/a.py", x); await write(`${p}`, y);'),
+    "wrote a.py",
+  );
   assert.equal(programSummary('await bashBg("npm run dev");'), "started 1 background command");
   // The three shell-management verbs. Observed unnamed this campaign:
   // `▸ 1 step · const output = await bashOutput("bg_1");`.
