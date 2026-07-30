@@ -730,7 +730,10 @@ export function workflowCardLines(
   // The way in, named on the card. `^w` is bound (keys.ts) and was findable only by
   // reading the keymap: the panel's own tab bar advertises `^t close` and nothing
   // else, so the run view was a surface you had to already know about.
-  body.push({ text: dim("⎿ ") + dim("^w opens the run view · click to open it here") });
+  // Click FIRST, like the subagent card: `^w` is composer-owned and guarded on an empty
+  // draft, so leading with it names a dead key to anyone mid-sentence — and this card is
+  // most often read while the user is typing the next thing.
+  body.push({ text: dim("⎿ ") + dim("click to open the run view · or ^w") });
   // No extra indent and no leading blank: this renders as a message SEGMENT, and
   // `messageLines` indents the whole body once at the end. The job and branch cards
   // pad themselves because they are pushed straight into the transcript instead.
