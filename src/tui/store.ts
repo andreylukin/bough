@@ -302,6 +302,16 @@ export type StoreAction =
    * Live usage for a session, polled while its turn runs. Updates the meter and,
    * when the turn is this session's, the turn's own delta.
    */
+  /**
+   * The model a NEW conversation would run on just changed, with none open.
+   *
+   * `effectiveModel` otherwise arrives only with a session snapshot, and the meter's other
+   * fallback is fetched once per process — so choosing a model on the "new conversation"
+   * screen moved the picker's ● and left the status bar naming the old one until restart.
+   * Two surfaces of the same app disagreeing about what will run, on the screen where you
+   * are about to commit to spending.
+   */
+  | { type: "effectiveModel"; model: string | null }
   | { type: "usage"; sessionId: string; usage: SessionSnapshot["usage"] }
   /**
    * The turn is over AND its final usage has landed: compute the delta and write
@@ -858,6 +868,9 @@ export function reduce(state: TuiState, action: StoreAction): TuiState {
           text: action.text,
         }),
       };
+
+    case "effectiveModel":
+      return { ...state, effectiveModel: action.model };
 
     case "usage":
       return action.sessionId === state.currentId ? withUsage(state, action.usage) : state;
@@ -1855,6 +1868,10 @@ export function createStore(deps: StoreDeps = {}): Store {
         // nothing is reconciled here.
         const id = state.currentId;
         if (id) await api.patchSession(id, patch);
+        // No conversation to patch means no `session.updated` either — see the action.
+        else if (patch.model !== undefined) {
+          dispatch({ type: "effectiveModel", model: patch.model });
+        }
       } catch (error) {
         fail(error);
       }

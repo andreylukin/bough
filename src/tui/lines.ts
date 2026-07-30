@@ -319,6 +319,8 @@ function toolGroupLines(
   // "expandable"; an all-dim header reads as inert.
   let head = `${expanded ? "▾" : "▸"} ` + state +
     dim(names.length > 1 ? `${count}  ${names.join(" · ")}` : count);
+  /** Collapsed steps that get their own rows — see below. */
+  let steps: string[] = [];
   // A collapsed group carries WHAT IT DID — every call's gist, not just the first
   // one's. Expanded shows the real thing, so the summary would only repeat it.
   if (!expanded) {
@@ -352,12 +354,26 @@ function toolGroupLines(
         merged[merged.length - 1] = `${g} ×${n}`;
       } else merged.push(g);
     }
-    // One budget for the whole tail, so a four-step turn clips once at the end
-    // rather than losing its last step silently off the edge of the row.
-    if (merged.length) head += dim(` · ${clip(merged.join(" · "), Math.max(20, w - 16))}`);
+    // ONE ROW PER STEP once there is more than one.
+    //
+    // They used to be joined onto the header — `2 steps · wrote parse.py · read parse.py` —
+    // so a four-round turn packed four different operations into one line, clipped at the
+    // right edge, with the last one silently gone. A step is a THING THAT HAPPENED; things
+    // that happened are a list.
+    //
+    // A single step stays on the header, because `1 step` over one indented line is a row
+    // spent saying "one". Repeats still collapse to `… ×4` first, so a four-round shell loop
+    // is one row rather than four identical ones.
+    if (merged.length === 1) {
+      head += dim(` · ${clip(merged[0], Math.max(20, w - 16))}`);
+    } else if (merged.length > 1) {
+      steps = merged.map((g) => clip(g, Math.max(20, w - 6)));
+    }
   }
   // Never wrapped: the whole visual row stays one click target.
   out.push({ text: head, click: key });
+  // Indented under the header and carrying the SAME key: every row of a fold opens it.
+  for (const step of steps) out.push({ text: `  ${dim(step)}`, click: key });
   if (!expanded) return;
   for (const call of calls) {
     const res = results.get(call.id);

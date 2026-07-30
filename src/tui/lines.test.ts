@@ -268,14 +268,18 @@ test("a round that failed once and then worked is amber with a count, not red", 
       result("c2", "wrote a.py"),
     ],
   });
-  const head = messageLines(m, CLOSED, CLOSED, 120).find((l) => l.text.includes("step"))!;
+  const lines = messageLines(m, CLOSED, CLOSED, 120);
+  const head = lines.find((l) => l.text.includes("step"))!;
   assert.ok(head.text.includes("1 of 2 failed"), head.text);
   assert.equal(head.text.includes("✗ error"), false, head.text);
   // And the INVENTED name is not printed as an identifier: the gist already explains it,
   // so the header read `patch · run_steps · called patch as a tool · …` — two internal
   // names, one of them fictional, in front of the prose that covers both.
-  assert.ok(head.text.includes("called patch as a tool"), head.text);
   assert.equal(head.text.includes("patch · run_steps"), false, head.text);
+  // Two steps, so each gets its OWN row under the header.
+  const rows = lines.map((l) => l.text);
+  assert.ok(rows.some((t) => t.includes("called patch as a tool")), rows.join("\n"));
+  assert.ok(rows.some((t) => t.includes("wrote a.py")), rows.join("\n"));
 
   // Every call failing is still red: nothing recovered.
   const allBad = msg({
@@ -897,7 +901,11 @@ test("a collapsed step's repeated summaries collapse to a count", () => {
   const mixedText = joined(
     buildLines([msg({ id: "a2", role: "supervisor", parts: mixed })], () => false, () => false, 100, {}),
   );
-  assert.match(mixedText, /ran 1 command · wrote a\.ts/);
+  // Unlike steps are listed separately — and now on separate ROWS, one per thing that
+  // happened, rather than packed onto the header and clipped at the right edge.
+  assert.match(mixedText, /ran 1 command\n/);
+  assert.match(mixedText, /wrote a\.ts/);
+  assert.equal(/ran 1 command · wrote a\.ts/.test(mixedText), false, mixedText);
 });
 
 /**
@@ -971,4 +979,56 @@ test("branchesFrom reports a running child as running, and leaves an unpaired no
   assert.equal(branchesFrom([], [{ ...sibling, kind: "workflow_agent" }]).length, 1);
   const text = joined(buildLines(thread, () => false, () => false, 100, { branches: [] }));
   assert.ok(text.includes("[subagent finished]"), text);
+});
+
+test("several steps are several rows, one step stays on the header", () => {
+  // Asked for: collapsed tool calls printed on their own rows instead of packed onto one.
+  // Four different operations used to read
+  //   ▸ 4 steps · read a.ts · wrote b.ts · ran 1 command · started 1 background command
+  // — clipped at the right edge, with the last one silently gone.
+  const many: Part[] = [];
+  const codes = [
+    'await view("a.ts");',
+    'await write("b.ts", x);',
+    'await bash("ls");',
+    'await bashBg("npm run dev");',
+  ];
+  codes.forEach((code, i) => {
+    many.push({ type: "tool_call", id: `c${i}`, name: "run_steps", input: { code } });
+    many.push({ type: "tool_result", callId: `c${i}`, output: "ok", isError: false } as Part);
+  });
+  const rows = messageLines(msg({ id: "m1", parts: many }), CLOSED, CLOSED, 100).map((l) =>
+    l.text
+  );
+  assert.ok(rows.some((t) => t.includes("4 steps")), rows.join("\n"));
+  for (const gist of ["read a.ts", "wrote b.ts", "ran 1 command", "started 1 background"]) {
+    assert.equal(
+      rows.filter((t) => t.includes(gist)).length,
+      1,
+      `${gist} should be on exactly one row of:\n${rows.join("\n")}`,
+    );
+  }
+  // Every row opens the same fold — a list whose rows are not all click targets is worse
+  // than the packed header it replaces.
+  const keys = new Set(messageLines(msg({ id: "m1", parts: many }), CLOSED, CLOSED, 100)
+    .map((l) => l.click).filter(Boolean));
+  assert.equal(keys.size, 1, [...keys].join(","));
+
+  // ONE step still shares the header: `1 step` over a single indented line is a row spent
+  // saying "one".
+  const one = messageLines(
+    msg({
+      id: "m2",
+      parts: [
+        { type: "tool_call", id: "x", name: "run_steps", input: { code: 'await view("a.ts");' } },
+        { type: "tool_result", callId: "x", output: "ok", isError: false } as Part,
+      ],
+    }),
+    CLOSED,
+    CLOSED,
+    100,
+    // `messageLines` also emits the role row, which is not a step.
+  ).map((l) => l.text).filter((t) => t.trim() && !t.includes("bough"));
+  assert.equal(one.length, 1, one.join("\n"));
+  assert.ok(one[0].includes("1 step") && one[0].includes("read a.ts"), one[0]);
 });

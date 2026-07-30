@@ -854,6 +854,24 @@ test("a turn finishing elsewhere refreshes the rows, so its cost is not left at 
   await store.stop();
 });
 
+test("choosing a model with nothing open still moves the meter", async () => {
+  // `effectiveModel` otherwise arrives only with a session snapshot, and the meter's other
+  // fallback is fetched once per process — so picking a model on the "new conversation"
+  // screen moved the picker's ● and left the status bar naming the old one until restart.
+  const { api } = fakeApi({
+    putModelSettings: () => Promise.resolve({ defaultModel: "claude-sonnet-5" } as never),
+  });
+  const events = fakeStream();
+  const store = createStore({ api, connect: events.connect });
+  store.start();
+  await settle();
+  assert.ok(!store.getState().currentId, "no conversation is open");
+  await store.setModel({ model: "claude-sonnet-5", effort: null });
+  await settle();
+  assert.equal(store.getState().effectiveModel, "claude-sonnet-5");
+  await store.stop();
+});
+
 test("the artifact list names them and does not try to fit their URLs", async () => {
   // A notice is ONE line. One artifact's name plus its
   // `http://127.0.0.1:4325/artifacts/<uuid>/<file>` href is 111 characters, so the list was
