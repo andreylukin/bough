@@ -1112,7 +1112,9 @@ export function App(
       // message would. Nothing is sent to the model.
       if (state.currentId) void store.runShell(command);
       else {
-        void store.createSession(defaultWorkspace).then((created) =>
+        // Titled from the command: the cheap tier titles a session from its first
+        // MESSAGE, and a shell-only conversation never sends one.
+        void store.createSession(defaultWorkspace, `! ${command}`.slice(0, 60)).then((created) =>
           created ? store.runShell(command) : undefined
         );
       }

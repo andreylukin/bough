@@ -1132,7 +1132,7 @@ export interface Store {
   stop(): Promise<void>;
   reload(): Promise<void>;
   open(sessionId: string): Promise<void>;
-  createSession(workspace?: string): Promise<Session | null>;
+  createSession(workspace?: string, title?: string): Promise<Session | null>;
   /**
    * Focus nothing, so the next message starts a fresh root conversation.
    *
@@ -1583,10 +1583,16 @@ export function createStore(deps: StoreDeps = {}): Store {
       dispatch({ type: "open", sessionId: null });
     },
 
-    async createSession(workspace?: string) {
+    async createSession(workspace?: string, title?: string) {
       try {
-        // No title: the cheap tier names the session from its first message (§12).
-        const session = await api.createSession(workspace ? { workspace } : {});
+        // No title unless the caller has one: the cheap tier names the session from its
+        // first MESSAGE (§12), and a conversation that only ever ran `!` commands never
+        // has one — it sat in the tree as `(untitled)` forever. `runShell` passes the
+        // command, which is the only thing that conversation is about.
+        const session = await api.createSession({
+          ...(workspace ? { workspace } : {}),
+          ...(title ? { title } : {}),
+        });
         await open(session.id);
         await reload();
         return session;
