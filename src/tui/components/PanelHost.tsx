@@ -200,6 +200,16 @@ export interface PanelControls {
    * (`history/extract.ts`).
    */
   extractFrom?: (sessionId: string, picks: { messageId: string }[]) => Promise<void>;
+  /**
+   * `POST /sessions/:id/move-into` — copy this turn and every later turn of its thread
+   * onto the END of the open conversation. Extract's sibling, and a copy just as much:
+   * the source keeps everything (`history/move.ts`).
+   */
+  moveIntoOpen?: (
+    targetId: string,
+    sourceId: string,
+    picks: { messageId: string }[],
+  ) => Promise<void>;
   /** `GET /sessions?originId=` — delegated children, for the tree and the rail. */
   listChildren?: (originId: string) => Promise<SessionRow[]>;
   /** `GET /mcp/servers?session=` — re-read on every entry, never cached. */
@@ -1246,6 +1256,55 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
       }
       dispatch({ type: "close" });
       void controls.extractFrom(row.sessionId, picks);
+      return true;
+    }
+    /**
+     * `m` — BRING THESE TURNS HERE. The other direction from `e`: the turn under the
+     * cursor and every later turn of its conversation are copied onto the end of the
+     * conversation that is OPEN.
+     *
+     * `POST /sessions/:id/move-into` was the second op in this pair with no key on it.
+     * It is what you want when the context you need is in a conversation you already
+     * abandoned — the alternative today is scrolling the tree and retyping it.
+     *
+     * The three unsound targets (itself, a session mid-turn, an ancestor of the source)
+     * are refused BY THE SERVER with reasons — `history/move.ts` documents why each one
+     * is unsound — and the refusal now lands in the tree's message row. Only the two
+     * cases the server cannot see are checked here: no conversation open to receive
+     * them, and the row being a turn at all.
+     */
+    if (command === "tree.moveInto") {
+      const row = tree[sel];
+      const target = state.currentId;
+      if (!row || row.kind !== "message") {
+        setMessage("m brings a TURN here — move onto one first");
+        return true;
+      }
+      if (!target) {
+        setMessage("no conversation is open to bring these turns into");
+        return true;
+      }
+      if (row.sessionId === target) {
+        // Said locally rather than as a 400: this is the likely slip, and "a session
+        // cannot append its own turns to its own tail" reads as a fault when it is
+        // really just the wrong row.
+        setMessage("those turns are already in this conversation");
+        return true;
+      }
+      const thread = threads[row.sessionId] ?? [];
+      const at = thread.findIndex((m) => m.id === row.id);
+      if (at < 0) {
+        setMessage("that turn is no longer in the thread");
+        return true;
+      }
+      if (!controls.moveIntoOpen) {
+        setMessage("move-into is not wired into this client");
+        return true;
+      }
+      dispatch({ type: "close" });
+      void controls.moveIntoOpen(target, row.sessionId, thread.slice(at).map((m) => ({
+        messageId: m.id,
+      })));
       return true;
     }
     const action = panelActionFor(command);

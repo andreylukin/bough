@@ -276,6 +276,9 @@ test("a bare letter means what the OPEN TAB says it means", () => {
   // key at all until this, and a stray `e` must not reach it from the model picker.
   assert.equal(lookup(ctx({ mode: "panel", tab: "tree" }), "e"), "tree.extract");
   assert.equal(lookup(ctx({ mode: "panel", tab: "changes" }), "e"), null);
+  // `m` is extract's mirror and lives in the same scope.
+  assert.equal(lookup(ctx({ mode: "panel", tab: "tree" }), "m"), "tree.moveInto");
+  assert.equal(lookup(ctx({ mode: "panel", tab: "model" }), "m"), null);
   assert.equal(lookup(ctx({ mode: "panel", tab: "tree", panelFiltering: true }), "e"), null);
   // …and outside its tab a scoped letter is not bound. `s` in the model picker used
   // to commit a model — a bare letter silently changing a setting.

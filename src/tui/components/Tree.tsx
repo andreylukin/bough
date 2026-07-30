@@ -286,6 +286,7 @@ export function Tree(
           "⏎ open",
           "⏎ on a turn forks",
           "e splits",
+          "m brings here",
           "/ find",
           "esc back",
         ], cols)}

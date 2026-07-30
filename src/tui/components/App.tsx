@@ -971,6 +971,22 @@ export function App(
     [store],
   );
 
+  /** `move-into`, executed. `extractFrom`'s mirror — same copy, landing on a tail. */
+  const moveIntoOpen = useCallback(
+    async (targetId: string, sourceId: string, picks: { messageId: string }[]) => {
+      try {
+        await api.moveInto(targetId, { sourceId, picks });
+        await store.open(targetId);
+        store.notify(
+          `${plural(picks.length, "turn")} copied in — the other conversation kept its own`,
+        );
+      } catch (error) {
+        store.notify(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [store],
+  );
+
   // ---- the frame -----------------------------------------------------------
   // Three fixed regions and one growing one: header, then the growing region
   // (transcript or panel), then the rail, the composer and the status row pinned
@@ -1044,7 +1060,7 @@ export function App(
     rows: panelRows,
     cols,
     now: now(),
-    controls: { ...controls, forkAt, extractFrom },
+    controls: { ...controls, forkAt, extractFrom, moveIntoOpen },
     models,
     ...(theme ? { theme } : {}),
     // The raw material for the ONE tree. `PanelHost` folds it into rows because it

@@ -113,6 +113,7 @@ export type Command =
    */
   | "tree.rewind"
   | "tree.extract"
+  | "tree.moveInto"
   /**
    * Start a fresh root conversation.
    *
@@ -1325,6 +1326,15 @@ export const BINDINGS: Binding[] = [
     not: ["panelFiltering"],
     section: "the tree tab",
     desc: "split here — this turn on becomes its own conversation",
+  },
+  {
+    mode: "panel",
+    chord: "m",
+    command: "tree.moveInto",
+    tab: ["tree"],
+    not: ["panelFiltering"],
+    section: "the tree tab",
+    desc: "bring this turn on into the open conversation",
   },
 
   // -- the changes tab (spec §7) --------------------------------------------
