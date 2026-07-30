@@ -156,7 +156,7 @@ export interface ChangesProps {
 
 /** Spec §13's non-git case: the agent works, it just produces nothing reviewable. */
 export const NOT_A_REPO_HINT =
-  "the agent still works here — this checkout just produces nothing reviewable, and revert is unavailable";
+  "the agent still works here — its edits just aren't reviewable, and revert is unavailable";
 
 export function Changes(
   {

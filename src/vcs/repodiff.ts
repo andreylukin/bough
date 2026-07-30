@@ -330,9 +330,13 @@ async function addedFile(dir: string, path: string): Promise<FileDiff> {
 export async function changeSet(dir: string, base: string | null): Promise<ChangeSet> {
   if (!(await isRepo(dir))) {
     return unavailable(
-      `${dir} is not a git repository — bough reviews changes with git, so this ` +
-        `session has no change set and revert is unavailable. The agent still works ` +
-        `here; its edits are simply not reviewable in the Changes rail (spec §13).`,
+      // THE FACT, and only the fact. The Changes tab renders this reason with its own
+      // hint directly underneath, so anything about consequences is said twice: the
+      // screen read "the agent still works here" in both, and "revert is unavailable" in
+      // both. The client's hint owns the consequences; this owns what is true. The
+      // `(spec §13)` citation is gone too — an internal document reference pointed at a
+      // user who cannot open it.
+      `${dir} is not a git repository, so there is nothing to diff.`,
     );
   }
   if (!base) {
