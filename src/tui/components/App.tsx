@@ -217,6 +217,14 @@ const RAIL_POLL_MS = 1500;
  */
 const RAIL_TICK_MS = 1000;
 
+/**
+ * Below this many turns a conversation needs no topic headers.
+ *
+ * The sections route is a cheap-tier LLM pass over every turn gist: worth it on a thirty-turn
+ * conversation whose subject moved three times, waste on a four-turn one you can read whole.
+ */
+const SECTION_MIN_TURNS = 8;
+
 /** Rows the `?` overlay moves per ↑/↓. A keymap is scanned, not paged. */
 const HELP_STEP = 3;
 
@@ -561,7 +569,38 @@ export function App(
     };
   }, [state.currentId, busy, line.text, state.thread.length]);
 
-  /** Just the names, memoized: the transcript compares against this every rebuild. */  /** Just the names, memoized: the transcript compares against this every rebuild. */
+  /**
+   * Topic sections per conversation, for the tree's turn list.
+   *
+   * `POST /sessions/:id/sections`, its LLM pass and `api.sections` all shipped and nothing ever
+   * called them: a long conversation expanded into forty rows of `you …` / `bough …` with no
+   * sign of where the subject changed, on the surface whose whole job is finding a turn again.
+   *
+   * FETCHED ONCE PER CONVERSATION, and only for one long enough to need it. The route is a
+   * cheap-tier LLM pass over every turn gist, and it is stateless — so the answer is cached
+   * here rather than re-asked as the cursor moves.
+   */
+  const [sections, setSections] = useState<
+    Record<string, readonly { start: number; end: number; label: string }[]>
+  >({});
+  useEffect(() => {
+    for (const id of openTurns) {
+      if (sections[id]) continue;
+      const thread = id === state.currentId ? state.thread : threads[id];
+      if (!thread || thread.length < SECTION_MIN_TURNS) continue;
+      const turns = thread.map((m) => ({
+        gist: (m.parts.filter((p) => p.type === "text")
+          .map((p) => (p as { text: string }).text).join(" ") || m.role).slice(0, 200),
+      }));
+      // Marked BEFORE the fetch resolves, so a re-render mid-flight does not ask twice.
+      setSections((prev) => (prev[id] ? prev : { ...prev, [id]: [] }));
+      void api.sections(id, { turns })
+        .then((r) => setSections((prev) => ({ ...prev, [id]: r.sections })))
+        .catch(() => {}); // no topics is the same non-answer as a failed cheap call
+    }
+  }, [openTurns, state.currentId, state.thread, threads, sections]);
+
+  /** Just the names, memoized: the transcript compares against this every rebuild. */
   const skillNames = useMemo(() => skills.map((s) => s.name), [skills]);
   const [defaultModel, setDefaultModel] = useState<string | null>(null);
   useEffect(() => {
@@ -954,6 +993,7 @@ export function App(
       threads: allThreads,
       expanded: revealed,
       drilled: expanded,
+      sections,
     },
     expand,
     collapseTurns,

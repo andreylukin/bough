@@ -54,7 +54,13 @@ const THREAD = [
 /** Row ids, with a marker for the two non-session kinds, so a shape reads at a glance. */
 const shape = (rows: ReturnType<typeof forestRows>) =>
   rows.map((r) =>
-    r.kind === "session" ? r.id : r.kind === "message" ? `·${r.id}` : `⋯${r.originId}`
+    r.kind === "session"
+      ? r.id
+      : r.kind === "message"
+      ? `·${r.id}`
+      : r.kind === "section"
+      ? `§${r.label}`
+      : `⋯${r.originId}`
   );
 
 function build(over: Partial<Parameters<typeof forestRows>[0]> = {}) {
@@ -403,4 +409,70 @@ test("a conversation whose MESSAGES match survives the filter", () => {
   );
   // The open conversation is never filtered out, matched or not.
   assert.deepEqual(rows({ currentId: "alpha" }), ["alpha"]);
+});
+
+/**
+ * `POST /sessions/:id/sections`, its LLM pass and `api.sections` all shipped and nothing called
+ * them, so a long conversation expanded into row after row of `you …` / `bough …` with no sign
+ * of where the subject changed — on the surface whose whole job is finding a turn again.
+ */
+test("topic sections caption the turns beneath them", () => {
+  const root = session("root", "root");
+  const thread = [
+    msg("m1", "user", "fix the discount"),
+    msg("m2", "supervisor", "fixed"),
+    msg("m3", "user", "now the shipping rules"),
+    msg("m4", "supervisor", "done"),
+  ];
+  const rows = forestRows({
+    sessions: [root],
+    childrenByOrigin: {},
+    threads: { root: thread },
+    expanded: new Set(["root"]),
+    drilled: new Set(),
+    sections: {
+      root: [
+        { start: 0, end: 1, label: "the discount bug" },
+        { start: 2, end: 3, label: "shipping rules" },
+      ],
+    },
+  });
+  assert.deepEqual(shape(rows), [
+    "root",
+    "§the discount bug",
+    "·m1",
+    "·m2",
+    "§shipping rules",
+    "·m3",
+    "·m4",
+  ]);
+  // A section belongs to its conversation, which is what lets ← close that conversation from it.
+  const first = rows.find((r) => r.kind === "section");
+  assert.equal(first?.kind === "section" && first.sessionId, "root");
+
+  // A label with no letters is not a topic. The route returns them: a real answer for an
+  // 8-turn conversation ended `{"start":7,"end":7,"label":"…"}`.
+  assert.deepEqual(
+    shape(forestRows({
+      sessions: [root],
+      childrenByOrigin: {},
+      threads: { root: thread },
+      expanded: new Set(["root"]),
+      drilled: new Set(),
+      sections: { root: [{ start: 0, end: 1, label: "…" }, { start: 2, end: 3, label: "shipping" }] },
+    })),
+    ["root", "·m1", "·m2", "§shipping", "·m3", "·m4"],
+  );
+
+  // Absent sections render no headers — "not fetched" is not "no topics".
+  assert.deepEqual(
+    shape(forestRows({
+      sessions: [root],
+      childrenByOrigin: {},
+      threads: { root: thread },
+      expanded: new Set(["root"]),
+      drilled: new Set(),
+    })),
+    ["root", "·m1", "·m2", "·m3", "·m4"],
+  );
 });

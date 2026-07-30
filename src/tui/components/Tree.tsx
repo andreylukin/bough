@@ -211,6 +211,15 @@ export function Tree(
             </text>
           );
         }
+        if (item.kind === "section") {
+          // A CAPTION, not a row you act on: the label sits where a turn would, dim and
+          // prefixed, so the eye reads it as a heading over the turns beneath it.
+          return (
+            <text key={item.id} attributes={TextAttributes.DIM} wrapMode="none">
+              {`${cursor}${indent}── ${clip(item.label, Math.max(12, 56 - item.depth * 2))}`}
+            </text>
+          );
+        }
         const s = item.session;
         const mark = statusMark(s, item.busyBelow);
         return (

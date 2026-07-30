@@ -84,6 +84,15 @@ export type ForestRow =
     /** It has turns to show (or might — an unfetched thread is not "empty"). */
     expandable: boolean;
   }
+  /**
+   * A TOPIC HEADER over the turns beneath it, from `POST /sessions/:id/sections`.
+   *
+   * The route, its LLM pass and `api.sections` all shipped and nothing ever called them, so a
+   * long conversation's turn list was forty rows of `you …` / `bough …` with no way to see
+   * where the subject changed. Not selectable in any meaningful sense — it is a caption on the
+   * rows below it — but it IS a row, so the window math counts it like any other.
+   */
+  | { kind: "section"; id: string; sessionId: string; depth: number; label: string }
   | {
     kind: "message";
     id: string;
@@ -131,6 +140,12 @@ export interface ForestInput {
   expanded: ReadonlySet<string>;
   /** Sessions whose delegated fan-out is drilled into. */
   drilled: ReadonlySet<string>;
+  /**
+   * Topic sections per session, as index ranges over that session's OWN turns — exactly what
+   * `POST /sessions/:id/sections` returns for the gists the caller sent. Absent = not fetched,
+   * which renders as no headers rather than as "no topics".
+   */
+  sections?: Readonly<Record<string, readonly { start: number; end: number; label: string }[]>>;
   /** The conversation on screen, marked and never filtered out. */
   currentId?: string | null;
   /** Narrows the TOP LEVEL by title. A branch is never hidden from its parent. */
@@ -216,7 +231,21 @@ export function forestRows(input: ForestInput): ForestRow[] {
     const shown = input.userOnly ? (thread ?? []).filter((m) => m.role === "user") : thread ?? [];
     const lastId = thread?.at(-1)?.id;
     const placed = new Set<string>();
+    const sections = input.sections?.[session.id] ?? [];
     shown.forEach((m, i) => {
+      // A label with no letters is not a topic. The route really does return them — a real
+      // answer for an 8-turn conversation ended `{"start":7,"end":7,"label":"…"}` — and a header
+      // reading `── …` is worse than no header, the same reason `sanitizeTitle` has a floor.
+      const head = sections.find((sec) => sec.start === i && /[a-z]/i.test(sec.label));
+      if (head) {
+        rows.push({
+          kind: "section",
+          id: `section:${session.id}:${i}`,
+          sessionId: session.id,
+          depth: depth + 1,
+          label: head.label,
+        });
+      }
       const under = branches.filter((b) => b.originMessageId === m.id);
       rows.push({
         kind: "message",

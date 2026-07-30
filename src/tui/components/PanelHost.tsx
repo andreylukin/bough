@@ -1257,8 +1257,11 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
         if (item.kind === "session") {
           collapseTurns(item.id);
           collapse(item.id);
-        } else if (item.kind === "message") collapseTurns(item.sessionId);
-        else collapse(item.originId);
+        } else if (item.kind === "message" || item.kind === "section") {
+          // A section header belongs to a conversation the same way a turn does, so ← out of
+          // one closes that conversation rather than doing nothing.
+          collapseTurns(item.sessionId);
+        } else collapse(item.originId);
         return true;
       }
       // ---- a screenful at a time (spec §3: a list you can only walk one row at a
