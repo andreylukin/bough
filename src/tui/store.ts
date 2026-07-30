@@ -1783,9 +1783,17 @@ export function createStore(deps: StoreDeps = {}): Store {
           type: "notice",
           notice: rows.length === 0
             ? "no saved workflows — open a run in ^w and press s to save its script"
+            // NOT "ask the agent to run one by name": no host function does that. The route
+            // exists (`POST /saved-workflows/:name/runs`) and the client method exists, and
+            // between them nothing calls either — so the hint named an action that could not
+            // be taken, the same defect as the "keys panel" that does not exist.
+            //
+            // Deliberately not building the verb: the owner's own read is that a workflow is
+            // one-time, edited and re-run rather than recalled by name, which is what `r` in
+            // the workflows tab already does.
             : `${plural(rows.length, "saved workflow")}: ${
               rows.map((r) => r.name).join(" · ")
-            } — ask the agent to run one by name`,
+            } — open a run in ^w and press r to re-run its script`,
         });
       } catch (error) {
         fail(error);
