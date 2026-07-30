@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import type { SessionKind } from "../../schema/parts.ts";
 import type { SessionRow } from "../api.ts";
-import { statusMark, titleOf, Tree } from "./Tree.tsx";
+import { kindGlyph, statusMark, titleOf, Tree } from "./Tree.tsx";
 
 let clock = 1_700_000_000_000;
 
@@ -91,4 +91,19 @@ test("there is no archive or deprecate affordance to render", () => {
     assert.ok(!code.includes(gone), `"${gone}" appears in Tree.tsx below the module comment`);
   }
   assert.equal(typeof Tree, "function");
+});
+
+
+/**
+ * A handoff is a `root` with an `originId`, and `titleOf` strips its `handoff · ` prefix —
+ * so a handoff and the conversation it distilled rendered as the same glyph AND the same
+ * words, one nested under the other, with nothing on either row saying which was which.
+ */
+test("a root that came from another conversation is marked as derived", () => {
+  assert.equal(kindGlyph(session("a", "root")), "●");
+  assert.equal(kindGlyph(session("b", "root", { originId: "a" })), "↦");
+  // The mark distinguishes; it does not replace the kinds that already have their own.
+  assert.equal(kindGlyph(session("c", "fork", { originId: "a" })), "⑂");
+  assert.equal(kindGlyph(session("d", "compaction", { originId: "a" })), "≣");
+  assert.equal(kindGlyph(session("e", "subagent", { originId: "a" })), "◆");
 });

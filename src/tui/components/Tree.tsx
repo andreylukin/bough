@@ -21,6 +21,21 @@ import type { SessionRow } from "../api.ts";
 import { clip, fmtUsd, legendLine, shortenPath, windowAround } from "../format.ts";
 import { type ForestRow, isDelegated } from "../forest.ts";
 
+/**
+ * A root that CAME FROM another conversation — a handoff, an extract — gets its own mark.
+ *
+ * `kind` cannot say this: both are `root`, so a handoff and the conversation it distilled
+ * rendered as the same glyph and, because `titleOf` strips the `handoff · ` prefix, the
+ * same words. Two identical rows, one nested under the other, and nothing on either
+ * saying which was which.
+ */
+const DERIVED_ROOT = "↦";
+
+/** The row's kind mark. Exported so the derived-root rule is asserted, not eyeballed. */
+export function kindGlyph(s: SessionRow): string {
+  return s.kind === "root" && s.originId ? DERIVED_ROOT : KIND_GLYPH[s.kind];
+}
+
 const KIND_GLYPH: Record<SessionKind, string> = {
   root: "●",
   fork: "⑂",
@@ -200,7 +215,7 @@ export function Tree(
               {item.expandable ? (item.open ? "▾ " : "▸ ") : "  "}
             </span>
             <span attributes={isDelegated(s.kind) ? TextAttributes.NONE : TextAttributes.DIM}>
-              {KIND_GLYPH[s.kind]}
+              {kindGlyph(s)}
             </span>
             {mark ? <span fg={mark.color}>{` ${mark.glyph}`}</span> : <span>{"  "}</span>}
             <span
