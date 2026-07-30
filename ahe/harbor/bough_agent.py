@@ -1,0 +1,198 @@
+"""bough as a Harbor agent, so the Terminal-Bench task bank can be reused.
+
+WHY AN INSTALLED AGENT AND NOT AN EXTERNAL ONE. Harbor offers two shapes. An
+*external* agent drives the container from outside through `environment.exec`,
+which would mean reimplementing bough's whole loop in terms of someone else's
+exec primitive — and bough's file verbs (`view`, `patch`, `write`) would still be
+operating on the HOST filesystem while the task lives in the container. An
+*installed* agent runs inside the environment, which is where bough's host
+functions already expect to be. So bough is installed into the task image and
+driven headlessly by the CLI it already has.
+
+WHAT HARBOR OWNS AND WHAT WE OWN. Harbor owns the container lifecycle, the
+network policy, the verifier and the reward — everything that made reusing this
+bank look expensive. We own exactly two things: getting bough into the image, and
+running one turn. The AHE trace layer rides along by pointing `BOUGH_TRACE_DIR`
+at a directory inside the container and pulling it out afterwards, so a harbor
+run produces the same per-round evidence `ahe/materialize.ts` already reads.
+
+THE ONE THING THAT WILL BITE. Many Terminal-Bench tasks declare
+`network_mode = "no-network"`, and bough's own API calls go out over that same
+network. Harbor applies network policy per phase, so the agent phase needs the
+provider host allowlisted (`--allow-agent-host`) even when the task's baseline is
+closed. A task whose agent phase cannot reach the API does not fail as "the model
+was wrong" — it fails as a connection error, and the ERROR_PATTERNS inherited
+from BaseInstalledAgent will classify it as such rather than scoring it as a
+capability result.
+"""
+
+import json
+import os
+import shlex
+from typing import override
+
+from harbor.agents.installed.base import BaseInstalledAgent, with_prompt_template
+from harbor.environments.base import BaseEnvironment
+from harbor.models.agent.context import AgentContext
+
+# Where bough is installed and where it keeps its state, inside the container.
+BOUGH_DIR = "/opt/bough"
+BOUGH_HOME = "/opt/bough-home"
+TRACE_DIR = "/opt/bough-trace"
+PORT = "4321"
+
+
+class Bough(BaseInstalledAgent):
+    """Runs one headless bough turn against the task's working directory."""
+
+    @staticmethod
+    @override
+    def name() -> str:
+        return "bough"
+
+    @override
+    def version(self) -> str | None:
+        return self._version
+
+    @override
+    async def install(self, environment: BaseEnvironment) -> None:
+        # bough is not published anywhere, so the source comes from this checkout
+        # rather than a package manager. That is also what keeps the experiment
+        # honest: the harness under test is the working tree, at whatever sha the
+        # sweep recorded, not a release someone built last week.
+        await self.exec_as_root(
+            environment,
+            command=(
+                "if command -v apk >/dev/null 2>&1; then"
+                "  apk add --no-cache curl bash unzip git;"
+                " elif command -v apt-get >/dev/null 2>&1; then"
+                "  apt-get update && apt-get install -y curl unzip git;"
+                " elif command -v yum >/dev/null 2>&1; then"
+                "  yum install -y curl unzip git;"
+                " fi"
+            ),
+            env={"DEBIAN_FRONTEND": "noninteractive"},
+        )
+        await self.exec_as_root(
+            environment,
+            command=(
+                "set -eu; "
+                "command -v bun >/dev/null 2>&1 || "
+                "(curl -fsSL https://bun.sh/install | bash && "
+                " install -m 0755 $HOME/.bun/bin/bun /usr/local/bin/bun)"
+            ),
+        )
+
+        repo = os.environ.get("BOUGH_REPO", "/Users/andrey/repos/bough")
+        await environment.upload_dir(source_dir=repo + "/src", target_dir=BOUGH_DIR + "/src")
+        for f in ("package.json", "bun.lock", "bunfig.toml", "tsconfig.json"):
+            await environment.upload_file(
+                source_path=f"{repo}/{f}", target_path=f"{BOUGH_DIR}/{f}"
+            )
+        await self.exec_as_root(
+            environment,
+            command=f"cd {BOUGH_DIR} && bun install --frozen-lockfile",
+        )
+        await self.exec_as_root(
+            environment, command=f"mkdir -p {BOUGH_HOME} {TRACE_DIR} && chmod 777 {BOUGH_HOME} {TRACE_DIR}"
+        )
+
+    @with_prompt_template
+    @override
+    async def run(
+        self, instruction: str, environment: BaseEnvironment, context: AgentContext
+    ) -> None:
+        env = {
+            "ANTHROPIC_API_KEY": self._get_env("ANTHROPIC_API_KEY") or "",
+            "OPENAI_API_KEY": self._get_env("OPENAI_API_KEY") or "",
+            "OPENROUTER_API_KEY": self._get_env("OPENROUTER_API_KEY") or "",
+            "BOUGH_HOME": BOUGH_HOME,
+            "BOUGH_PORT": PORT,
+            # The AHE trace layer, inert everywhere else, on for every harbor run:
+            # a rollout whose per-round request was not recorded cannot be analyzed
+            # later, and there is no second chance to record it.
+            "BOUGH_TRACE_DIR": TRACE_DIR,
+        }
+        env = {k: v for k, v in env.items() if v}
+
+        # `bough exec` talks to a server; the server is not a daemon the image
+        # ships, so this starts one and waits for it to answer. Polling the real
+        # endpoint rather than sleeping: a fixed sleep is either a wasted 10s on
+        # every trial or a flake on a slow image, and usually both.
+        await self.exec_as_root(
+            environment,
+            command=(
+                f"cd {BOUGH_DIR} && (nohup bun src/server/main.ts >{BOUGH_HOME}/server.log 2>&1 &) && "
+                f"for i in $(seq 1 60); do "
+                f"  curl -sf http://127.0.0.1:{PORT}/sessions >/dev/null && exit 0; sleep 1; "
+                f"done; echo 'bough server did not start' >&2; cat {BOUGH_HOME}/server.log >&2; exit 1"
+            ),
+            env=env,
+        )
+
+        model = (self.model_name or "claude-haiku-4-5").split("/")[-1]
+        workdir = self._get_env("BOUGH_WORKDIR") or "/app"
+        result = await self.exec_as_agent(
+            environment,
+            command=(
+                f"cd {BOUGH_DIR} && bun src/cli/exec.ts -w {shlex.quote(workdir)} "
+                f"-m {shlex.quote(model)} --json {self.build_cli_flags()} "
+                f"-- {shlex.quote(instruction)} | tee {BOUGH_HOME}/envelope.json"
+            ),
+            env=env,
+        )
+        self._stdout = result.stdout or ""
+
+        # Pull the evidence out before the container goes away. The envelope is
+        # the outcome; the trace is why.
+        await environment.download_dir(source_dir=TRACE_DIR, target_dir=self.logs_dir / "trace")
+        (self.logs_dir / "agent-stdout.txt").write_text(self._stdout)
+
+    @override
+    def populate_context_post_run(self, context: AgentContext) -> None:
+        # `bough exec --json` already reports exactly what AgentContext wants, so
+        # this is a field rename rather than a trajectory parse.
+        line = next(
+            (l for l in reversed(self._stdout.splitlines()) if l.startswith("{")), None
+        )
+        if not line:
+            return
+        try:
+            envelope = json.loads(line)
+        except json.JSONDecodeError:
+            return
+        usage = envelope.get("treeUsage") or envelope.get("usage") or {}
+        context.n_input_tokens = usage.get("inputTokens")
+        context.n_output_tokens = usage.get("outputTokens")
+        context.n_cache_tokens = usage.get("cacheReadTokens")
+        context.cost_usd = usage.get("costUsd")
+        context.metadata = {
+            "session": envelope.get("session"),
+            "status": envelope.get("status"),
+        }
+
+
+# ---------------------------------------------------------------------------
+# Running this locally — three environment facts, each of which cost a debug
+# cycle and none of which produce a useful error message.
+#
+# 1. RUN FROM UNDER $HOME. colima mounts only /Users/<you> into the VM. Harbor
+#    bind-mounts the trial's log directory into the container, so a job started
+#    from /tmp writes its reward file into a path the VM cannot see, and the run
+#    fails with RewardFileNotFoundError — which reads exactly like a broken
+#    verifier. The oracle agent failing is the tell: it cannot be wrong.
+#
+# 2. `docker buildx` must exist. Harbor builds task images through BuildKit;
+#    without the plugin the build silently no-ops and every trial fails at the
+#    same place. `brew install docker-buildx` and link it into
+#    ~/.docker/cli-plugins/.
+#
+# 3. Watch the VM disk. Terminal-Bench images are ~1GB each and colima's default
+#    disk fills fast. A full /var/lib/docker shows up as
+#    "apt-get update: At least one invalid signature was encountered" inside the
+#    container — a GPG error for what is actually ENOSPC. `colima ssh -- df -h
+#    /var/lib/docker` before believing anything else.
+#
+# Smoke test:
+#   cd ~/hb && PYTHONPATH=$HOME/hb harbor run -p smoke -a bough_agent:Bough \
+#     -m claude-haiku-4-5
