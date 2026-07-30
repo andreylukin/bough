@@ -86,7 +86,17 @@ import {
  */
 export type DelegationTier = "top" | "nested" | "none";
 
-/** Everything a top-level session may call. */
+/**
+ * Everything a top-level session may call.
+ *
+ * `adopt` is STILL BRIDGED but no longer documented in `prompt/delegation.md`. It is a
+ * vestige of the era when each subagent had its own workspace and its work had to be
+ * taken over; since subagents share their spawner's checkout there is nothing to take —
+ * both of its branches now just explain that. Walked it live: haiku called it, got a
+ * paragraph back, and spent a whole round relaying that paragraph to the user. Left
+ * callable so an old transcript replays unchanged; taken out of the prompt so no round is
+ * ever spent on it again.
+ */
 export const TOP_LEVEL_DELEGATION: readonly HostFnName[] = ["agent", "spawn", "join", "adopt"];
 
 /**

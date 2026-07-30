@@ -139,7 +139,11 @@ const GRANTS: { id: SectionId; fn: HostFnName; phrase: string }[] = [
   { id: "fetch", fn: "fetch", phrase: "await fetch(url" },
   { id: "artifact", fn: "artifact", phrase: "await artifact(name, content)" },
   { id: "mcp-status", fn: "mcpStatus", phrase: "await mcpStatus()" },
-  { id: "delegation", fn: "spawn", phrase: "await adopt(sessionId)" },
+  // The probe is `spawn`'s own line, not `adopt`'s. It used to be the latter, which meant
+  // this test — whose subject is "the delegation section appears iff spawn is granted" —
+  // was pinned to a sentence about a DIFFERENT verb, and removing that undocumented verb
+  // failed it for no reason connected to what it checks.
+  { id: "delegation", fn: "spawn", phrase: "await spawn(task, {name})" },
   { id: "workflow", fn: "workflow", phrase: "await workflow.start(" },
   { id: "lsp", fn: "lsp", phrase: "lsp.impls({symbol})" },
 ];

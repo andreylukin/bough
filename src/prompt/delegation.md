@@ -12,8 +12,6 @@ working, or end your turn. When it finishes, its report arrives as a
 
 await join(sessionId) — wait for a detached subagent and take its result in-band.
 
-await adopt(sessionId) — take over a subagent's session.
-
 ALWAYS pass a name. It labels the branch everywhere the user sees it — the live
 rail, the finished card, the session tree. Without one, siblings in a fan-out that
 share an opening sentence are indistinguishable. Name it for what it is FOR, a few
