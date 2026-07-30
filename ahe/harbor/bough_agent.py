@@ -45,6 +45,12 @@ PORT = "4321"
 class Bough(BaseInstalledAgent):
     """Runs one headless bough turn against the task's working directory."""
 
+    # Harbor calls populate_context_post_run even when run() raised — a timeout, a
+    # container that died, an API error. Without a class-level default that reads
+    # as AttributeError and takes down the WHOLE job: one bad trial killed an
+    # 89-task run at task 4. A failed trial must cost one trial.
+    _stdout: str = ""
+
     @staticmethod
     @override
     def name() -> str:
@@ -153,8 +159,14 @@ class Bough(BaseInstalledAgent):
         self._stdout = result.stdout or ""
 
         # Pull the evidence out before the container goes away. The envelope is
-        # the outcome; the trace is why.
-        await environment.download_dir(source_dir=TRACE_DIR, target_dir=self.logs_dir / "trace")
+        # the outcome; the trace is why. Best-effort: a trial that produced a
+        # result must not be turned into a crashed job by a missing log directory.
+        try:
+            await environment.download_dir(
+                source_dir=TRACE_DIR, target_dir=self.logs_dir / "trace"
+            )
+        except Exception as exc:
+            self.logger.warning(f"could not download the bough trace: {exc}")
         (self.logs_dir / "agent-stdout.txt").write_text(self._stdout)
 
     @override
