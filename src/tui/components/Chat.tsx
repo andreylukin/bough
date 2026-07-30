@@ -41,6 +41,9 @@ export interface ChatMeter {
   branch?: string | null;
   /** Background shells still running — see `meterLine`. */
   shells?: number | null;
+  /** Delegated agents and workflow runs still going — see `meterLine`. */
+  agents?: number | null;
+  runs?: number | null;
   /** Append the `? help` hint. The chat sets it; other surfaces need not. */
   help?: boolean;
   /** A cold-cache or disconnect note from `format.ts`. Rendered as-is. */

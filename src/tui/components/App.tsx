@@ -1639,6 +1639,11 @@ export function App(
         branch,
         ...(state.session?.effort ? { effort: state.session.effort } : {}),
         shells: state.jobs.filter((j) => j.status === "running").length,
+        // The rail answers this in detail and the PANEL displaces the rail, so without
+        // these two a tree-tab visit made three running subagents invisible everywhere.
+        agents: railBranches.length,
+        runs: state.workflows.filter((w) => w.status === "running" || w.status === "paused")
+          .length,
         help: true,
       }}
     />

@@ -904,6 +904,16 @@ export function meterLine(m: {
   branch?: string | null;
   /** Background shells still running. Nothing may run with no pixels on screen. */
   shells?: number | null;
+  /**
+   * Delegated agents and workflow runs still going.
+   *
+   * The same rule as `shells`, applied to the two units it did not cover. The rail is
+   * the detailed answer, and the rail is DISPLACED by the panel — so while you were in
+   * the tree or the changes tab, three running subagents had no pixels anywhere on the
+   * screen and the one row that survives said `⚙ 0 shells`-worth of nothing about them.
+   */
+  agents?: number | null;
+  runs?: number | null;
   /** Append the `? help` hint. False for surfaces that are not the chat. */
   help?: boolean;
   /** Columns available. Omitted = no degradation, the caller accepts any length. */
@@ -935,10 +945,20 @@ export function meterLine(m: {
       : `${pct}% ctx left`;
   }
   const shells = m.shells && m.shells > 0 ? `⚙ ${m.shells} shell${m.shells === 1 ? "" : "s"}` : "";
+  const agents = m.agents && m.agents > 0 ? `◆ ${m.agents} agent${m.agents === 1 ? "" : "s"}` : "";
+  const runs = m.runs && m.runs > 0 ? `⧉ ${m.runs} run${m.runs === 1 ? "" : "s"}` : "";
+  // Glyph-and-number, for the widths where the spelled-out words do not fit. What is
+  // running must survive degradation: it is the one part of this row that is not a
+  // property of the session but a statement about right now.
+  const live = [
+    m.shells && m.shells > 0 ? `⚙${m.shells}` : "",
+    m.agents && m.agents > 0 ? `◆${m.agents}` : "",
+    m.runs && m.runs > 0 ? `⧉${m.runs}` : "",
+  ].filter(Boolean).join(" ");
   const help = m.help ? "? help" : "";
   const join = (...bits: string[]) => bits.filter(Boolean).join(" · ");
 
-  const full = join(workspace, model, cost, context, shells, help);
+  const full = join(workspace, model, cost, context, shells, agents, runs, help);
   if (!m.width || width(full) <= m.width) return full;
 
   // Too narrow for everything. Degrade in priority order instead of wrapping onto
@@ -948,11 +968,11 @@ export function meterLine(m: {
   const base = place((m.workspace ?? "").replace(/\/+$/, "").split("/").pop() ?? "");
   for (
     const candidate of [
-      join(base, model, cost, context, shells, help),
-      join(model, cost, context, shells, help),
-      join(cost, context, shells, help),
-      join(cost, context, shells),
-      join(context, shells),
+      join(base, model, cost, context, shells, agents, runs, help),
+      join(model, cost, context, shells, agents, runs, help),
+      join(cost, context, live, help),
+      join(cost, context, live),
+      join(context, live),
       join(context),
     ]
   ) {

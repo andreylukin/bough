@@ -489,6 +489,20 @@ test("a narrow terminal degrades the meter instead of wrapping it", () => {
   // At the narrowest, context left is the last thing standing.
   assert.equal(meterLine({ ...m, width: 14 }), "98% ctx left");
 
+  // What is RUNNING survives degradation, because it is the only part of this row that
+  // is a statement about right now rather than a property of the session. The rail says
+  // it in detail and the panel displaces the rail, so a tree-tab visit used to make
+  // three running subagents invisible on every surface at once.
+  const live = { ...m, shells: 2, agents: 3, runs: 1 };
+  assert.match(meterLine(live), /⚙ 2 shells · ◆ 3 agents · ⧉ 1 run/);
+  assert.match(meterLine({ ...live, agents: 1, runs: 2 }), /◆ 1 agent · ⧉ 2 runs/);
+  // Narrow: the words collapse to glyphs rather than dropping the fact.
+  const narrow = meterLine({ ...live, width: 30 });
+  assert.match(narrow, /⚙2 ◆3 ⧉1/);
+  assert.ok(width(narrow) <= 30, narrow);
+  // Nothing running says nothing at all.
+  assert.equal(meterLine({ ...m, shells: 0, agents: 0, runs: 0 }), meterLine(m));
+
   // The warning names the way out. bough never compacts on its own, so this chip is
   // the only notice before a turn fails on overflow — and it used to state the
   // problem without the one command that solves it.
