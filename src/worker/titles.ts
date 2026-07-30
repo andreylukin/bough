@@ -144,6 +144,7 @@ export async function cheapText(opts: CheapCallOpts): Promise<string | null> {
 export const TITLE_SYSTEM = [
   "You name coding sessions. Given the user's first message, reply with a short",
   "title only: 3-6 words, no quotes, no trailing period, no preamble like 'Title:'.",
+  "Write it in sentence case — capitalize only the first word and real names.",
 ].join(" ");
 
 /** A title needs the gist, not a 50KB paste — and the paste is what is being billed. */
@@ -203,7 +204,39 @@ export function sanitizeTitle(raw: string): string {
     if (!/^(and|or|but|so|because|that|which|with|for|to|of|in|on|a|an|the)$/.test(last)) break;
     capped.pop();
   }
-  return capped.join(" ").slice(0, TITLE_MAX_CHARS).replace(/[,;:]$/, "").trim();
+  return sentenceCase(capped.join(" ")).slice(0, TITLE_MAX_CHARS).replace(/[,;:]$/, "").trim();
+}
+
+/**
+ * Undo the model's Title Case. The prompt now asks for sentence case, but a prompt is a
+ * request and the tree is where it shows: two sibling rows read
+ *
+ *   ● ✓ C Function Implementation
+ *   ● ✓ Add b() function to mod.py
+ *
+ * — same install, same model, minutes apart. Mixed casing down a column looks like two
+ * different programs wrote it, which is exactly the "not quite finished" feel the TUI
+ * work is chasing out.
+ *
+ * ONLY fires when EVERY word is capitalized, which is the decorating tic and nothing
+ * else: a title already in sentence case has a lowercase second word and is returned
+ * untouched. Words that carry their own capitalization are never lowered — `C`, `CI` and
+ * `API` pass through a title that IS rewritten, while a lowercase-initial word such as
+ * `getUser` or `mod.py` stops the rewrite entirely. Both directions protect the same
+ * thing: an identifier is not prose, and recasing one makes the title wrong rather than
+ * merely inconsistent.
+ */
+function sentenceCase(title: string): string {
+  const words = title.split(" ");
+  // An ordinary capitalized word — the only kind that gets lowered.
+  const prose = (w: string) => /^[A-Z][a-z]+$/.test(w);
+  // Anything else a Title-Cased title may legitimately contain: `C`, `API`, `b()`, `3`.
+  const opaque = (w: string) => !/^[a-z]/.test(w);
+  // A single lowercase-initial word ends it: the title is already sentence case (or is
+  // Title Case with a lowercased "of", which is worth leaving alone to never mangle one).
+  if (!words.every((w) => prose(w) || opaque(w))) return title;
+  if (!words.some(prose)) return title;
+  return words.map((w, i) => (i === 0 || !prose(w) ? w : w.toLowerCase())).join(" ");
 }
 
 /**

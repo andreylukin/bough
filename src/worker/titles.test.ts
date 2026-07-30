@@ -505,3 +505,17 @@ test("a real title still passes through untouched", () => {
   );
   assert.equal(sanitizeTitle("Image input support"), "Image input support");
 });
+
+test("sanitizeTitle lowers the model's Title Case so the tree reads as one column", () => {
+  // The live pair that prompted this: two sibling rows, same install, minutes apart.
+  assert.equal(sanitizeTitle("C Function Implementation"), "C function implementation");
+  assert.equal(sanitizeTitle("Add b() function to mod.py"), "Add b() function to mod.py");
+  // Identifiers and acronyms carry their own capitalization — lowering them would make
+  // the title wrong, not merely inconsistent.
+  assert.equal(sanitizeTitle("Fix CI Flake"), "Fix CI flake");
+  // A lowercase-initial word (here a camelCase identifier) means hands off the whole
+  // title — the rule never guesses about prose that might be code.
+  assert.equal(sanitizeTitle("Rename getUser Everywhere"), "Rename getUser Everywhere");
+  // Already sentence case: untouched.
+  assert.equal(sanitizeTitle("Image input support"), "Image input support");
+});
