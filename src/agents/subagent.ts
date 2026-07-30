@@ -347,14 +347,22 @@ export function launchSubagent(
 
   // An overrun is interrupted rather than left to run: the spawner is holding a
   // promise, and a child that never ends is a turn that never ends above it too.
-  const timer = setTimeout(
-    () => interruptTurn(session.id, deps.turn?.registry),
-    deps.timeoutMs ?? defaultTimeoutMs(),
-  );
+  //
+  // `timedOut` is recorded because the SPAWNER cannot otherwise tell an overrun from a
+  // human pressing `x x` on the rail — both arrive as `status: "interrupted"`. Watched a
+  // model guess: told only "The subagent was interrupted before reporting", it announced
+  // "likely by a system limit or timeout" and offered to retry with a shorter sleep, when
+  // in fact the user had stopped it deliberately. A wrong reason invites a wrong remedy.
+  const capMs = deps.timeoutMs ?? defaultTimeoutMs();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    interruptTurn(session.id, deps.turn?.registry);
+  }, capMs);
 
   const result = done
     .finally(() => clearTimeout(timer))
-    .then(() => buildResult(ctx, session.id, message.id, deps))
+    .then(() => buildResult(ctx, session.id, message.id, deps, { timedOut, capMs }))
     .then((r) => {
       // The turn runner already stamped `outcome_ok` on the row. Announcing it is
       // this module's job: without a `session.updated` the rail keeps rendering a
@@ -391,10 +399,19 @@ export async function buildResult(
   sessionId: string,
   messageId: string,
   deps: Pick<LaunchDeps, "changedFiles"> = {},
+  /** Why an interrupt happened, when this module is the one that caused it. */
+  cause: { timedOut?: boolean; capMs?: number } = {},
 ): Promise<SubagentResult> {
   const { db } = ctx;
   const session = db.getSession(sessionId);
   const status = finalStatus(db.turnForMessage(messageId));
+  const interruptReason = status !== "interrupted"
+    ? undefined
+    : cause.timedOut
+    ? `It ran past its ${Math.round((cause.capMs ?? 0) / 1000)}s cap and was stopped. ` +
+      `Give the next one less to do, or split it.`
+    : `It was stopped deliberately — by you, or by someone stopping this turn. ` +
+      `Do not just retry it; the reason was a decision, not a fault.`;
 
   let changedFiles: string[] = [];
   if (deps.changedFiles && session) {
@@ -412,7 +429,7 @@ export async function buildResult(
     title: session?.title ?? UNTITLED,
     ok: status === "done",
     status,
-    report: reportOf(db, messageId, status),
+    report: reportOf(db, messageId, status, interruptReason),
     changedFiles,
   };
 }
@@ -432,17 +449,36 @@ function finalStatus(turn: Turn | undefined): SubagentResult["status"] {
  * and "" travelling up to the spawner as a report reads as a child that succeeded
  * silently, which is the one thing it did not do.
  */
-function reportOf(db: Db, messageId: string, status: SubagentResult["status"]): string {
+function reportOf(
+  db: Db,
+  messageId: string,
+  status: SubagentResult["status"],
+  interruptReason?: string,
+): string {
   const text = (db.getMessage(messageId)?.parts ?? [])
     .filter((p): p is Extract<typeof p, { type: "text" }> => p.type === "text")
     .map((p) => p.text)
     .join("\n")
     .trim();
-  if (text) return text;
+  // An interrupt REASON is appended, not used as a fallback. A stopped child often has
+  // written something first — this one's whole report was `⏹ Stopped.` — and the old
+  // `if (text) return text` handed that up with no cause attached, so the spawner was
+  // told WHAT happened and left to invent WHY. Measured: it guessed "the task itself
+  // didn't contain the sleep command" and spawned a replacement, which is precisely the
+  // retry a deliberate stop must not trigger.
+  if (text) return interruptReason ? `${text}\n\n${interruptReason}` : text;
   return {
     done: "The subagent finished without writing a report.",
     error: "The subagent errored before reporting.",
-    interrupted: "The subagent was interrupted before reporting.",
+    // The REASON, when the caller knows it. "Interrupted" alone made a model guess
+    // "likely by a system limit or timeout" about a stop the user had chosen, and then
+    // offer a remedy for the wrong problem.
+    // The REASON, when the caller knows it. "Interrupted" alone made a model guess
+    // "likely by a system limit or timeout" about a stop the user had chosen, and then
+    // offer a remedy for the wrong problem.
+    interrupted: interruptReason
+      ? `The subagent was stopped before reporting. ${interruptReason}`
+      : "The subagent was interrupted before reporting.",
     orphaned: "The subagent was orphaned (the server restarted) before reporting.",
   }[status];
 }

@@ -29,6 +29,7 @@ import type { LlmBlock, LlmClient, LlmParams, TurnCtx } from "../types.ts";
 import { TurnRegistry } from "../turn/queue.ts";
 import { type ProgramRunner, STOP, type TurnDeps } from "../turn/runner.ts";
 import {
+  buildResult,
   cleanSubagentName,
   launchSubagent,
   MAX_SUBAGENT_DEPTH,
@@ -475,6 +476,84 @@ test("delegation stops at the depth cap", () => {
       assert.match(err.message, /depth limit \(2\)/);
       return true;
     });
+  } finally {
+    h.close();
+  }
+});
+
+/**
+ * "The subagent was interrupted before reporting" told the spawner WHAT happened and not
+ * WHY, and the two causes want opposite responses. Watched a model receive it after a user
+ * pressed `x x` on the rail: it announced "likely by a system limit or timeout" and offered
+ * to retry with a shorter sleep — a remedy for the wrong problem.
+ */
+test("an interrupted subagent's report says WHY, when the cause is known", async () => {
+  const h = harness();
+  try {
+    const session = h.db.createSession({
+      id: crypto.randomUUID(),
+      title: "child",
+      kind: "subagent",
+      createdAt: 1_000,
+      parentId: null,
+    });
+    const msg = h.db.createMessage({
+      id: "m-int",
+      sessionId: session.id,
+      role: "supervisor",
+      parts: [],
+      pending: false,
+      createdAt: 1,
+    });
+    h.db.createTurn({
+      id: "t-int",
+      sessionId: session.id,
+      messageId: msg.id,
+      status: "interrupted",
+      step: "run_steps",
+      createdAt: 1,
+      updatedAt: 2,
+    });
+
+    // A child that wrote something before it was stopped STILL carries the reason: the
+    // partial text used to short-circuit it, so the spawner got "⏹ Stopped." and nothing
+    // about why.
+    f2: {
+      const partial = h.db.createMessage({
+        id: "m-partial",
+        sessionId: session.id,
+        role: "supervisor",
+        parts: [{ type: "text", text: "⏹ Stopped." }],
+        pending: false,
+        createdAt: 3,
+      });
+      h.db.createTurn({
+        id: "t-partial",
+        sessionId: session.id,
+        messageId: partial.id,
+        status: "interrupted",
+        step: "run_steps",
+        createdAt: 3,
+        updatedAt: 4,
+      });
+      const r = await buildResult({ db: h.db }, session.id, partial.id, {}, {});
+      assert.match(r.report, /⏹ Stopped\./);
+      assert.match(r.report, /stopped deliberately/i);
+    }
+
+    // A deliberate stop: do not just retry it.
+    const stopped = await buildResult({ db: h.db }, session.id, msg.id, {}, {});
+    assert.match(stopped.report, /stopped deliberately/i);
+    assert.match(stopped.report, /not just retry/i);
+
+    // An overrun: the remedy IS to give the next one less to do, and the cap is named.
+    const over = await buildResult({ db: h.db }, session.id, msg.id, {}, {
+      timedOut: true,
+      capMs: 90_000,
+    });
+    assert.match(over.report, /90s cap/);
+    assert.match(over.report, /less to do/i);
+    assert.equal(/stopped deliberately/i.test(over.report), false, over.report);
   } finally {
     h.close();
   }
