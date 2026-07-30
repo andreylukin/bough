@@ -131,6 +131,7 @@ export function McpTab(
             "1-9 pick",
             "⏎ grant/revoke",
             "c test",
+            "r restart",
             "a authorize",
             "n add",
             "F forget",

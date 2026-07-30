@@ -114,6 +114,7 @@ export type Command =
   | "tree.rewind"
   | "tree.extract"
   | "tree.moveInto"
+  | "mcp.restart"
   /**
    * Start a fresh root conversation.
    *
@@ -1213,6 +1214,20 @@ export const BINDINGS: Binding[] = [
     not: ["panelFiltering"],
     section: "the mcp tab",
     desc: "test the connection · names the tools, or the error",
+  },
+  // RECOVERY. `c` says a stdio server is dead; nothing said how to bring it back. A
+  // crashed or wedged subprocess kept answering every `mcp()` call with the same
+  // failure until the whole bough server was restarted, because the manager caches the
+  // child per session. `POST /mcp/servers/:name/restart` drops it and starts a new one,
+  // and had no key.
+  {
+    mode: "panel",
+    chord: "r",
+    command: "mcp.restart",
+    tab: ["mcp"],
+    not: ["panelFiltering"],
+    section: "the mcp tab",
+    desc: "restart this server's process",
   },
   // Removing the ENTRY, which `F` deliberately does not do. The two were one verb in
   // everyone's head and neither was the other: `F` leaves the server registered and

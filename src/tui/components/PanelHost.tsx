@@ -236,6 +236,11 @@ export interface PanelControls {
     name: string,
     sessionId: string,
   ) => Promise<{ connected: boolean; error?: string; tools?: { name: string }[] }>;
+  /**
+   * `POST /mcp/servers/:name/restart` — drop this session's child process and start a
+   * new one. `restarted: false` means there was nothing running to replace.
+   */
+  restartMcpServer?: (name: string, sessionId: string) => Promise<{ restarted: boolean }>;
   /** `GET /mcp/servers/:name/auth` — polled after the browser half of the flow. */
   mcpAuthStatus?: (name: string) => Promise<{ authorized: boolean }>;
   /** `PUT /mcp/servers/:name` — register a definition. Registering grants nothing. */
@@ -1496,6 +1501,36 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
        * flow the server may not even support and answers a question nobody asked.
        * Connecting is not granting (`mcp/status.ts`), so this changes no permission.
        */
+      case "mcp.restart": {
+        const name = mcpNameAt(sel);
+        if (!name) return true;
+        if (!controls.restartMcpServer) {
+          setMessage("restarting an MCP server is not wired into this client");
+          return true;
+        }
+        // Per-session by construction: what is being restarted is a subprocess spawned in
+        // a conversation's checkout, so the server refuses a scopeless restart (400) and
+        // saying so here is clearer than relaying that.
+        if (!state.currentId) {
+          setMessage(`open a conversation first — a server's process runs in its checkout`);
+          return true;
+        }
+        setMessage(`restarting ${name}…`);
+        void controls.restartMcpServer(name, state.currentId)
+          .then((r) => {
+            // `restarted: false` is not a failure: there was nothing running to replace,
+            // and the next call will start one. Saying "restarted" there would claim an
+            // action that did not happen.
+            setMessage(
+              r.restarted
+                ? `${name} restarted — c tests it`
+                : `${name} was not running · the next call starts it`,
+            );
+            return refreshMcp();
+          })
+          .catch((e: unknown) => setMessage(e instanceof Error ? e.message : String(e)));
+        return true;
+      }
       case "mcp.connect": {
         const name = mcpNameAt(sel);
         if (!name) return true;
