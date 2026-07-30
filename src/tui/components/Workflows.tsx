@@ -46,7 +46,7 @@ import type { WorkflowRun } from "../../schema/parts.ts";
 import type { WorkflowAgentView } from "../../workflow/control.ts";
 import type { LargeRunFlag, ReplaySummary, RunCost } from "../../workflow/report.ts";
 import type { WorkflowDetail, WorkflowSummary } from "../api.ts";
-import { clip, fmtTokens, plural, windowAround } from "../format.ts";
+import { clip, fmtTokens, legendLine, plural, windowAround } from "../format.ts";
 
 // ---------------------------------------------------------------------------
 // Rows: the testable rendering unit
@@ -512,7 +512,13 @@ export function footer(level: WfLevel, detail: WorkflowDetail | null): string {
   // level (`PanelHost` steers the selected row), and a verb that works and is never
   // printed is a verb nobody has.
   if (level === 0) {
-    return `⏎ open · 1-9 pick · ${steer || "p pause · P resume · x stop · r relaunch"}`;
+    // `esc back` LAST, like every other level and every other tab. It was the one footer
+    // in the panel that never said how to leave — and once footers degrade by dropping
+    // items from the middle and pinning the tail, an absent way out is also nothing to
+    // pin, so the narrow render had no exit on screen at all.
+    return `⏎ open · 1-9 pick · ${
+      steer || "p pause · P resume · x stop · r relaunch"
+    } · esc back`;
   }
   if (level === 4) return `↑↓ scroll · ${steer} · esc back`;
   if (level === 1) return `↑↓ phase · ⏎ agents · f filter · ${steer} · esc back`;
@@ -624,7 +630,7 @@ export function Workflows(props: WorkflowsProps) {
       <box marginTop={gap} flexDirection="column">
         <RunsList runs={props.runs} sel={props.sel} rows={rows} now={now} />
         <box marginTop={gap}>
-          <text attributes={TextAttributes.DIM} wrapMode="none">{footer(0, detail)}</text>
+          <text attributes={TextAttributes.DIM} wrapMode="none">{legendLine(footer(0, detail).split(" · "), cols)}</text>
         </box>
       </box>
     );
@@ -646,7 +652,7 @@ export function Workflows(props: WorkflowsProps) {
         {header.map((r, i) => <Line key={i} row={r} />)}
         {(paneRows === 0 ? [] : windowed(body, props.scroll, paneRows).slice)
           .map((r, i) => <Line key={i} row={r} />)}
-        <text attributes={TextAttributes.DIM} wrapMode="none">{footer(4, detail)}</text>
+        <text attributes={TextAttributes.DIM} wrapMode="none">{legendLine(footer(4, detail).split(" · "), cols)}</text>
       </box>
     );
   }
@@ -696,7 +702,7 @@ export function Workflows(props: WorkflowsProps) {
           {right.map((r, i) => <Line key={i} row={r} />)}
         </box>
       </box>
-      <text attributes={TextAttributes.DIM} wrapMode="none">{footer(level, detail)}</text>
+      <text attributes={TextAttributes.DIM} wrapMode="none">{legendLine(footer(level, detail).split(" · "), cols)}</text>
     </box>
   );
 }

@@ -392,3 +392,17 @@ test("a run the server restarted under is not drawn as a working one", () => {
   const out = text(runHeaderRows(detail({ live: false }), { now: NOW }));
   assert.match(out, /\(not live here\)/);
 });
+
+
+/**
+ * Level 0 was the one footer in the panel that never said how to leave. Once footers
+ * degrade by dropping items from the middle and pinning the tail, an absent way out is
+ * also nothing to pin — so the narrow render had no exit on screen at all.
+ */
+test("every level's footer ends with the way out", () => {
+  const detail = null;
+  for (const level of [0, 1, 2, 3, 4] as const) {
+    const line = footer(level, detail);
+    assert.ok(line.endsWith("esc back"), `level ${level}: ${line}`);
+  }
+});

@@ -1629,7 +1629,10 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
                 filter={wfFilter}
                 promptOpen={wfPromptOpen}
                 rows={bodyRows - (message ? 1 : 0)}
-                cols={cols}
+                // Minus the border and padding, like the tree beside it: measured against
+                // the panel's full width, this tab's footer lost its last character and
+                // ended `· esc` instead of `· esc back`.
+                cols={Math.max(20, cols - 4)}
                 now={now}
               />
             </>
