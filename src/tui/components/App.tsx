@@ -497,6 +497,8 @@ export function App(
    * are about to commit to spending, and the only one that would not say on what.
    * The default is an install-wide fact, so once per process, like the skills above.
    */
+  /** Just the names, memoized: the transcript compares against this every rebuild. */
+  const skillNames = useMemo(() => skills.map((s) => s.name), [skills]);
   const [defaultModel, setDefaultModel] = useState<string | null>(null);
   useEffect(() => {
     void api.getModelSettings()
@@ -718,6 +720,7 @@ export function App(
           // purpose is that a finished run still reads its outcome in place.
           runs: state.workflows,
           marks,
+          skills: skillNames,
           now: now(),
         },
       ),
@@ -726,6 +729,7 @@ export function App(
       state.streaming,
       state.toolLogs,
       exitedJobs,
+      skillNames,
       state.workflows,
       marks,
       cols,

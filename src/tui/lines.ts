@@ -743,6 +743,11 @@ export interface BuildOptions {
    * as soon as the next turn's messages landed.
    */
   marks?: TranscriptMark[];
+  /**
+   * Installed skill names, so a message that loaded one can say so. Absent = the list
+   * has not been fetched, and no row is claimed.
+   */
+  skills?: readonly string[];
   /** Injected clock — elapsed times are the only thing here that needs one. */
   now?: number;
 }
@@ -757,6 +762,30 @@ function markLine(mark: TranscriptMark): VLine {
     text: "  " + (mark.kind === "destructive" ? warn(mark.text) : dim(mark.text)),
     copy: mark.text,
   };
+}
+
+/**
+ * The installed skills a user message NAMED, in the order they appear.
+ *
+ * Loading a skill was completely invisible: the named skill's whole SKILL.md goes
+ * into that turn's prompt, and the transcript said nothing — so `/prewalk fix the
+ * parser` and `fix the parser` produced identical-looking turns with very different
+ * prompts, and a typo'd name looked exactly like a working one. Only a BROKEN skill
+ * produced any sign, and that came from the model.
+ *
+ * Matched against the INSTALLED list rather than against the `/name` shape, so a row
+ * appears only when a skill really was loaded. `/model`-style built-in commands never
+ * reach a message (`slashInvocation` dispatches them), so they cannot collide.
+ */
+export function skillsNamed(text: string, installed: readonly string[]): string[] {
+  if (installed.length === 0) return [];
+  const known = new Set(installed.map((n) => n.toLowerCase()));
+  const found: string[] = [];
+  for (const m of text.matchAll(/(?:^|\s)\/([a-z0-9][a-z0-9:_-]*)/gi)) {
+    const name = m[1].toLowerCase();
+    if (known.has(name) && !found.includes(name)) found.push(name);
+  }
+  return found;
 }
 
 export function buildLines(
@@ -814,6 +843,19 @@ export function buildLines(
     // An honest ack under a steered message: the turn drains it at the next round
     // boundary, and a blocking host call can hold that off for minutes — silence
     // reads as being ignored.
+    // Named directly under the message that named it: this is a fact ABOUT that
+    // message (what its prompt carried), not an event that happened afterwards.
+    if (m.role === "user" && (opts.skills?.length ?? 0) > 0) {
+      const text = m.parts.filter((p) => p.type === "text")
+        .map((p) => (p as { text: string }).text).join(" ");
+      const named = skillsNamed(text, opts.skills ?? []);
+      if (named.length > 0) {
+        out.push({
+          text: "  " + dim(`↳ skill loaded: ${named.map((n) => `/${n}`).join(", ")}`),
+          copy: named.join(", "),
+        });
+      }
+    }
     if (midTurn && m.role === "user") {
       out.push({ text: "  " + dim("⧖ queued — the agent sees this after the current step") });
     }

@@ -5,6 +5,7 @@ import {
   buildLines,
   chatBodyHeight,
   jobCardLines,
+  skillsNamed,
   lineAtSlot,
   type JobView,
   messageLines,
@@ -632,4 +633,33 @@ test("a subagent card is clickable and descends rather than folds", () => {
   // The target exists AND it is the descend form, not a fold key — the dispatcher
   // branches on the `open:` prefix, so the prefix is the contract.
   assert.ok(card, "the branch card carries an open: click target");
+});
+
+/**
+ * Loading a skill was invisible. The named skill's whole SKILL.md goes into that
+ * turn's prompt, and the transcript said nothing — so a typo'd name looked exactly
+ * like a working one, and the only sign a skill was involved at all came from the
+ * model when the file was broken.
+ */
+test("a message that names an installed skill says so, under the message", () => {
+  const installed = ["prewalk", "exa", "shell-use"];
+  assert.deepEqual(skillsNamed("/prewalk fix the parser", installed), ["prewalk"]);
+  // Mid-sentence counts: a skill reference is text the model reads, wherever it sits.
+  assert.deepEqual(skillsNamed("fix this, use /exa to check", installed), ["exa"]);
+  assert.deepEqual(skillsNamed("/exa and /shell-use please", installed), ["exa", "shell-use"]);
+  // Names not installed claim nothing — the row must never invent a skill.
+  assert.deepEqual(skillsNamed("/model", installed), []);
+  assert.deepEqual(skillsNamed("/prewalkk typo", installed), []);
+  // A path is not a skill reference.
+  assert.deepEqual(skillsNamed("look at src/exa/mod.ts", installed), []);
+  assert.deepEqual(skillsNamed("/prewalk", []), []);
+  // Repeats collapse.
+  assert.deepEqual(skillsNamed("/exa then /exa again", installed), ["exa"]);
+
+  const thread = [msg({ id: "u1", role: "user", parts: [{ type: "text", text: "/exa search" }] })];
+  const text = joined(buildLines(thread, () => false, () => false, 80, { skills: installed }));
+  assert.match(text, /↳ skill loaded: \/exa/);
+  // With no skills fetched yet, no claim is made.
+  const bare = joined(buildLines(thread, () => false, () => false, 80, {}));
+  assert.equal(bare.includes("skill loaded"), false);
 });
