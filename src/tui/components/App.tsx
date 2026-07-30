@@ -43,7 +43,13 @@ import type { ModelRow } from "../../llm/client.ts";
 import { api, type SessionRow } from "../api.ts";
 import type { Message } from "../../schema/parts.ts";
 import type { MouseEvent, NavKey } from "../mouse.ts";
-import { buildLines, chatBodyHeight, lineAtSlot, type VLine } from "../lines.ts";
+import {
+  buildLines,
+  chatBodyHeight,
+  lineAtSlot,
+  parseSubagentNote,
+  type VLine,
+} from "../lines.ts";
 import sliceAnsi from "slice-ansi";
 import stripAnsi from "strip-ansi";
 import {
@@ -425,6 +431,48 @@ export function App(
   // Whether anything is running is answered from the RAW sources, never from `units`
   // below — `units` is derived from this clock, and gating the clock on it would be a
   // loop through a memo.
+  /**
+   * THE DELEGATED-REPORT CARDS. `buildLines` has taken a `branches` option since it was
+   * written, and NOTHING EVER PASSED ONE — so `branchCardLines`/`subagentNoteLines`, with
+   * their outcome glyph, changed-file list, capped report and next-action row, had never
+   * rendered in this build. Every subagent report showed as the raw system note instead,
+   * including the sentence written for the MODEL: "It worked in THIS session's checkout,
+   * so its edits are already here — read them before building on them."
+   *
+   * Built from the two halves the client already has: the delegated sessions this
+   * conversation spawned (`children`, polled for the rail) and their completion notes,
+   * parsed out of the thread's own system messages. A note with no matching child still
+   * renders — as the note — because `buildLines` only drops a note whose branch is
+   * present to replace it, and a report that reaches nobody is the one outcome this card
+   * exists to prevent.
+   */
+  const branches = useMemo(() => {
+    const notes = new Map<string, ReturnType<typeof parseSubagentNote>>();
+    const origins = new Map<string, string>();
+    for (const m of state.thread) {
+      if (m.role !== "system") continue;
+      const text = m.parts.filter((p) => p.type === "text")
+        .map((p) => (p as { text: string }).text).join("\n");
+      const note = parseSubagentNote(text);
+      if (note) notes.set(note.sessionId, note);
+    }
+    // Where each card is DRAWN: the turn that spawned the child. The server records it on
+    // the child (`origin_message_id`); the note itself does not carry it.
+    for (const row of children[state.currentId ?? ""] ?? []) {
+      if (row.originMessageId) origins.set(row.id, row.originMessageId);
+    }
+    return (children[state.currentId ?? ""] ?? []).map((row) => ({
+      id: row.id,
+      title: row.title,
+      busy: row.busy,
+      ...(row.lastTurnStatus && row.lastTurnStatus !== "running"
+        ? { status: row.lastTurnStatus as "done" | "error" | "interrupted" | "orphaned" }
+        : {}),
+      ...(row.outcomeOk === undefined ? {} : { ok: row.outcomeOk }),
+      ...(origins.get(row.id) ? { originMessageId: origins.get(row.id) } : {}),
+      ...(notes.get(row.id) ? { note: notes.get(row.id) } : {}),
+    }));
+  }, [state.thread, children, state.currentId]);
   const railBranches = useMemo(
     () => liveSubagents(children[state.currentId ?? ""] ?? []),
     [children, state.currentId],
@@ -724,6 +772,7 @@ export function App(
           // Every run of this session, not just the live ones: the card's whole
           // purpose is that a finished run still reads its outcome in place.
           runs: state.workflows,
+          branches,
           marks,
           skills: skillNames,
           now: now(),
@@ -734,6 +783,7 @@ export function App(
       state.streaming,
       state.toolLogs,
       exitedJobs,
+      branches,
       skillNames,
       state.workflows,
       marks,
