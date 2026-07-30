@@ -249,8 +249,19 @@ test("the panel binds its own keys and nothing from chat", () => {
   assert.equal(lookup(ctx({ mode: "panel", tab: "workflows" }), "r"), "wf.rerun");
   assert.equal(lookup(ctx({ mode: "ask" }), "3"), "ask.pick");
   assert.equal(lookup(ctx({ mode: "ask" }), "esc"), "ask.decline");
-  // A held question owns the keyboard: no tab chord steals it (spec §6).
-  assert.equal(lookup(ctx({ mode: "ask" }), "ctrl+s"), null);
+  // A HELD QUESTION DOES NOT LOCK YOU OUT OF THE PANEL. It used to: `ask` was left out
+  // of the jump rows, so every tab chord was swallowed and the answer had to be given
+  // blind — worst of all on the workflow approval card, whose own text says "`x` in the
+  // workflows tab (^w) stops a run at any point" about a tab you could not open until
+  // you had answered. (The comment here used to cite spec §6 for the exclusivity; §6
+  // says only that `ask` parks the program until the human answers, nothing about the
+  // keyboard.) The hold survives the detour — it lives in the store, not in the mode.
+  assert.equal(lookup(ctx({ mode: "ask" }), "ctrl+s"), "tab.tree");
+  assert.equal(lookup(ctx({ mode: "ask" }), "ctrl+w"), "tab.workflows");
+  assert.equal(lookup(ctx({ mode: "ask" }), "ctrl+d"), "tab.changes");
+  // The question's own keys still win where they overlap: a digit picks an option.
+  assert.equal(lookup(ctx({ mode: "ask" }), "3"), "ask.pick");
+  assert.equal(lookup(ctx({ mode: "ask" }), "esc"), "ask.decline");
 });
 
 test("a bare letter means what the OPEN TAB says it means", () => {

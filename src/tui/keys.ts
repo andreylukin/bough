@@ -681,6 +681,13 @@ function panelChords(): Binding[] {
     // A direct jump must work from anywhere it is not being typed into.
     rows.push({ mode: "panel", chord, command });
     rows.push({ mode: "rail", chord, command });
+    // INCLUDING while a question is held. `ask` was left out, so a held `ask()` swallowed
+    // every panel chord and the answer had to be given blind — worst of all on the
+    // workflow approval card, whose own text says "`x` in the workflows tab (^w) stops a
+    // run at any point" about a tab that could not be opened until the card was answered.
+    // The card sits in the composer's place, so the panel displaces the transcript and the
+    // question stays on screen beside it.
+    rows.push({ mode: "ask", chord, command });
   }
   // `^s` is the chord everyone's fingers already have for "where are my
   // conversations", and that question is now answered by the tree. Kept as an alias
@@ -691,7 +698,7 @@ function panelChords(): Binding[] {
   // which is where a reader who tried it would look next. A reflex chord that is
   // live, undocumented, and lands you in a surface that owns the keyboard is the
   // worst of the three states it could be in.
-  for (const mode of ["chat", "panel", "rail"] as const) {
+  for (const mode of ["chat", "panel", "rail", "ask"] as const) {
     rows.push({
       mode,
       chord: SESSIONS_ALIAS,
