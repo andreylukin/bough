@@ -99,7 +99,13 @@ test("with a saturated bank, a named waste metric settles the edit", () => {
   const dropped = settle([change], before, { ...result({ alpha: [3, 3] }), parseErrors: 1 });
   strictEqual(dropped[0].held, true);
   strictEqual(dropped[0].basis, "waste");
-  deepStrictEqual(dropped[0].waste, { metric: "parseErrors", before: 6, after: 1 });
+  deepStrictEqual(dropped[0].waste, {
+    metric: "parseErrors",
+    before: 6,
+    after: 1,
+    roundsBefore: 0,
+    roundsAfter: 0,
+  });
 
   const flat = settle([change], before, { ...result({ alpha: [3, 3] }), parseErrors: 6 });
   strictEqual(flat[0].held, false, "unchanged waste is not a win");
@@ -116,4 +122,34 @@ test("a tidier trace does not excuse a lost task", () => {
   );
   strictEqual(v[0].held, false);
   strictEqual(v[0].basis, "none");
+});
+
+test("a waste win bought with more work is refuted", () => {
+  // The real first iteration: parse errors 3 → 0, and every trial ran ~45% more
+  // rounds. Settled on the named metric alone this reads as a clean win, which is
+  // precisely how a loop banks a regression and then evolves on top of it.
+  const change = { ...change_([]), predicted_waste: "parseErrors" as const };
+  const v = settle(
+    [change],
+    { ...result({ alpha: [4, 4] }), parseErrors: 3, rounds: 88 },
+    { ...result({ alpha: [4, 4] }), parseErrors: 0, rounds: 128 },
+  );
+  strictEqual(v[0].held, false);
+  deepStrictEqual(v[0].waste, {
+    metric: "parseErrors",
+    before: 3,
+    after: 0,
+    roundsBefore: 88,
+    roundsAfter: 128,
+  });
+});
+
+test("round-count noise does not revert a real waste win", () => {
+  const change = { ...change_([]), predicted_waste: "parseErrors" as const };
+  const v = settle(
+    [change],
+    { ...result({ alpha: [4, 4] }), parseErrors: 3, rounds: 88 },
+    { ...result({ alpha: [4, 4] }), parseErrors: 0, rounds: 93 },
+  );
+  strictEqual(v[0].held, true, "under the tolerance, the win stands");
 });

@@ -49,7 +49,15 @@ export async function sweep(
   const dir = iterDir(iteration);
   mkdirSync(dir, { recursive: true });
 
-  await start();
+  // A sweep that dies on its own infrastructure must say so on the way out. The
+  // first time this failed it left an empty log and an empty run directory, which
+  // reads exactly like "nothing happened" and cost an hour to tell apart from it.
+  try {
+    await start();
+  } catch (err) {
+    console.error(`bench server did not start: ${err instanceof Error ? err.message : err}`);
+    throw err;
+  }
 
   const rows: TrialRow[] = [];
   const stats: TrialStats[] = [];

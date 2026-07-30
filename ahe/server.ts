@@ -34,10 +34,24 @@ async function waitUntil(want: boolean, ms = 30_000): Promise<void> {
   throw new Error(`bench server did not come ${want ? "up" : "down"} within ${ms}ms`);
 }
 
-/** Kill whatever holds the bench port. Blunt on purpose: the port is ours alone. */
+/**
+ * Kill whatever holds the bench port. Blunt on purpose: the port is ours alone.
+ *
+ * `xargs -r` is GNU-only — on macOS it is an illegal option, so the pipeline failed
+ * before killing anything and the wait below then timed out on a shutdown that had
+ * never been requested. It cost a sweep, and it was invisible because the whole
+ * pipeline's output was discarded. Hence `while read`, and hence waiting
+ * synchronously for the kill rather than firing it off unref'd.
+ */
 export async function stop(): Promise<void> {
   if (!await isUp()) return;
-  spawn("sh", ["-c", `lsof -ti tcp:${PORT} | xargs -r kill`], { stdio: "ignore" }).unref();
+  await new Promise<void>((resolve) => {
+    const child = spawn("sh", [
+      "-c",
+      `lsof -ti tcp:${PORT} | while read pid; do kill "$pid"; done`,
+    ], { stdio: "ignore" });
+    child.on("close", () => resolve());
+  });
   await waitUntil(false, 10_000);
 }
 

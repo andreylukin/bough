@@ -27,6 +27,13 @@ import { iterDir, PROMPT_DIR, REPO } from "./config.ts";
 import { analyze, evolve, readManifest, type ChangeEntry } from "./agents.ts";
 import { sweep, type SweepResult } from "./sweep.ts";
 
+/**
+ * How much more work a waste-settled edit may cost before it is refuted anyway.
+ * Loose enough that k=4 round-count noise does not revert a real improvement,
+ * tight enough that a 45% rise cannot pass as one.
+ */
+export const ROUND_TOLERANCE = 1.10;
+
 const git = (...args: string[]): string =>
   execFileSync("git", args, { cwd: REPO, encoding: "utf8" }).trim();
 
@@ -45,7 +52,13 @@ export interface Verdict {
   reverted: boolean;
   /** How the verdict was reached — a flip is strong evidence, a waste drop is weak. */
   basis: "flip" | "waste" | "none";
-  waste?: { metric: string; before: number; after: number };
+  waste?: {
+    metric: string;
+    before: number;
+    after: number;
+    roundsBefore: number;
+    roundsAfter: number;
+  };
 }
 
 /**
@@ -85,8 +98,23 @@ export function settle(
     const metric = change.predicted_waste;
     if (metric && up.length === 0 && down.length === 0) {
       const waste = { metric, before: before[metric], after: after[metric] };
+      // The named metric must fall AND the agent must not have bought that with
+      // more work. This is the waste path's version of "no net regression", and it
+      // exists because the first edit this loop ever produced drove its named
+      // metric to zero while every trial ran ~45% more rounds — the paper's
+      // reported blind spot (self-attribution is reliable for fixes, blind to
+      // regressions), reproduced on iteration one. Without this the loop would have
+      // banked that edit and evolved on top of it.
       const dropped = after[metric] < before[metric];
-      return { ...base, held: dropped, reverted: !dropped, basis: "waste" as const, waste };
+      const affordable = after.rounds <= before.rounds * ROUND_TOLERANCE;
+      const held = dropped && affordable;
+      return {
+        ...base,
+        held,
+        reverted: !held,
+        basis: "waste" as const,
+        waste: { ...waste, roundsBefore: before.rounds, roundsAfter: after.rounds },
+      };
     }
     return { ...base, held: false, reverted: true, basis: "none" as const };
   });
