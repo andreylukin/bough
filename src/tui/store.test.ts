@@ -33,6 +33,7 @@
  */
 import { test } from "bun:test";
 import assert from "node:assert/strict";
+import type { SearchResultHit } from "../server/search.ts";
 import type { BoughEvent, EventType } from "../schema/events.ts";
 import type { AskQuestion, Message, Part, Session } from "../schema/parts.ts";
 import type { Api, SessionRow, SessionSnapshot } from "./api.ts";
@@ -1239,7 +1240,7 @@ test("the ask card shows only this conversation's holds — and its delegates'",
  * wrote — on a fan-out, most of them.
  */
 test("a search hit inside a collapsed session is attributed to its spawner", async () => {
-  const hit = (over: Record<string, unknown>) => ({
+  const hit = (over: Partial<SearchResultHit>): SearchResultHit => ({
     messageId: "m1",
     sessionId: "s1",
     title: "t",
@@ -1268,7 +1269,7 @@ test("a search hit inside a collapsed session is attributed to its spawner", asy
         ],
       }),
   });
-  const store = createStore({ api, stream: () => fakeStream().stream });
+  const store = createStore({ api, connect: fakeStream().connect });
   const ids = await store.searchSessions("compound");
   assert.deepEqual(ids.sort(), ["orphan-3", "root-1", "root-2"]);
 });
