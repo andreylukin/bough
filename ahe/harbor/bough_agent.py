@@ -56,6 +56,14 @@ class Bough(BaseInstalledAgent):
 
     @override
     async def install(self, environment: BaseEnvironment) -> None:
+        # Baked image? Then there is nothing to do. Checking rather than assuming
+        # keeps one adapter working for both paths: a prebuilt bough/<task> image
+        # skips straight to the turn, and a bare task image still runs.
+        probe = await environment.exec(f"test -d {BOUGH_DIR}/node_modules")
+        if probe.return_code == 0:
+            self.logger.debug("bough is already baked into this image")
+            return
+
         # bough is not published anywhere, so the source comes from this checkout
         # rather than a package manager. That is also what keeps the experiment
         # honest: the harness under test is the working tree, at whatever sha the
@@ -94,7 +102,8 @@ class Bough(BaseInstalledAgent):
             command=f"cd {BOUGH_DIR} && bun install --frozen-lockfile",
         )
         await self.exec_as_root(
-            environment, command=f"mkdir -p {BOUGH_HOME} {TRACE_DIR} && chmod 777 {BOUGH_HOME} {TRACE_DIR}"
+            environment,
+            command=f"mkdir -p {BOUGH_HOME} {TRACE_DIR} && chmod 777 {BOUGH_HOME} {TRACE_DIR}",
         )
 
     @with_prompt_template

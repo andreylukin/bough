@@ -20,6 +20,12 @@ reproducing them, so the code you are editing never has to survive your own stri
 quoting: backticks and `${...}` in the target file cannot corrupt the match, which
 is the most common way an edit round is wasted.
 
+The `+` body rows are the exception, and the only place quoting still bites: that NEW
+text does travel through your JS literal. A backtick or `${` you are INSERTING — a
+Python docstring that names `resolve` in backticks, a shell snippet, a markdown span —
+must be written escaped (`` \` `` and `\${`) inside a template literal, or the literal
+ends early and the whole program never parses.
+
 It is also what makes shared work safe. The TAG pins the version you read. If the
 file changed underneath you but your lines were untouched, your edit is rebased
 onto the new version and lands. If your lines WERE touched, you get a conflict
