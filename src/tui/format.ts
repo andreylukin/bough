@@ -1193,6 +1193,16 @@ export function meterLine(m: {
   runs?: number | null;
   /** Append the `? help` hint. False for surfaces that are not the chat. */
   help?: boolean;
+  /**
+   * This conversation was spawned by another, so `←` goes back to it.
+   *
+   * The key is bound and documented (`keys.ts`, the "read" section), and a delegator
+   * persona still pressed Escape three times and concluded there was no way out — Escape is
+   * the back key on every other surface here, and nothing ON the subagent screen named the
+   * one that works. Overloading Escape is not the fix: with a turn running it must stay the
+   * interrupt. Saying so where they were looking is.
+   */
+  out?: boolean;
   /** Columns available. Omitted = no degradation, the caller accepts any length. */
   width?: number;
 }): string {
@@ -1233,9 +1243,10 @@ export function meterLine(m: {
     m.runs && m.runs > 0 ? `⧉${m.runs}` : "",
   ].filter(Boolean).join(" ");
   const help = m.help ? "? help" : "";
+  const out = m.out ? "← back" : "";
   const join = (...bits: string[]) => bits.filter(Boolean).join(" · ");
 
-  const full = join(workspace, model, cost, context, shells, agents, runs, help);
+  const full = join(workspace, model, cost, context, shells, agents, runs, out, help);
   if (!m.width || width(full) <= m.width) return full;
 
   // Too narrow for everything. Degrade in priority order instead of wrapping onto

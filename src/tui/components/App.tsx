@@ -1966,6 +1966,9 @@ export function App(
         runs: state.workflows.filter((w) => w.status === "running" || w.status === "paused")
           .length,
         help: true,
+        // Only when there IS somewhere to go back to — the same condition the key itself is
+        // guarded on, so the chip and the binding cannot disagree.
+        out: Boolean(state.session?.originId),
       }}
     />
   );

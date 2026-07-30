@@ -1057,3 +1057,18 @@ test("emphasis renders, and identifiers with underscores are left alone", () => 
     assert.equal(md("~~gone~~ and kept"), "gone and kept");
   });
 });
+
+test("a spawned conversation says how to get back to the one that spawned it", () => {
+  withoutColor(() => {
+    // A delegator persona opened a subagent from the tree, pressed Escape three times, and
+    // concluded there was no way out. `←` was bound AND in the help the whole time — nothing
+    // on that screen named it, and Escape is the back key everywhere else here.
+    const base = { workspace: "/w/repo", model: "claude-haiku-4-5", help: true };
+    assert.ok(meterLine({ ...base, out: true }).includes("← back"));
+    // A root conversation has nowhere to go back to, and must not offer.
+    assert.equal(meterLine(base).includes("← back"), false);
+    // It sits before the help hint, which stays last.
+    const line = meterLine({ ...base, out: true });
+    assert.ok(line.indexOf("← back") < line.indexOf("? help"), line);
+  });
+});
