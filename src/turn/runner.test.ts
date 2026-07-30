@@ -133,7 +133,7 @@ function fixture(opts: {
     reportError: (err: unknown) => reported.push(err),
     // A stub prompt: what assembly produces is `prompt/assemble.test.ts`'s subject,
     // and reading twenty markdown files here would only couple this test to their text.
-    assemble: () => ({ system: "SYSTEM", systemVolatile: "", sections: [] }),
+    assemble: () => ({ system: "SYSTEM", systemVolatile: "", sections: [], shas: [] }),
     program: async (run: ProgramRun): Promise<ProgramResult> => {
       programs.push(run);
       return await (opts.program?.(run) ?? { ok: true, logs: [] });
@@ -619,7 +619,7 @@ test("every turn's prompt is told which checkout it is editing", async () => {
     ...f.deps,
     assemble: (input: PromptInput) => {
       seen = input;
-      return { system: "SYSTEM", systemVolatile: "", sections: [] };
+      return { system: "SYSTEM", systemVolatile: "", sections: [], shas: [] };
     },
   } as TurnDeps).done;
 
@@ -643,7 +643,7 @@ test("a caller's own notes are kept, and the workspace note leads", async () => 
     notes: ["## Project rules\n\nno emoji"],
     assemble: (input: PromptInput) => {
       seen = input;
-      return { system: "SYSTEM", systemVolatile: "", sections: [] };
+      return { system: "SYSTEM", systemVolatile: "", sections: [], shas: [] };
     },
   } as TurnDeps).done;
 

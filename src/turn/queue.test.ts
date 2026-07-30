@@ -43,7 +43,7 @@ import {
 
 // ---- fixtures ---------------------------------------------------------------
 
-const STUB_PROMPT = () => ({ system: "SYSTEM", systemVolatile: "", sections: [] as never[] });
+const STUB_PROMPT = () => ({ system: "SYSTEM", systemVolatile: "", sections: [] as never[], shas: [] });
 
 const text = (t: string): LlmBlock => ({ type: "text", text: t });
 const runSteps = (id: string, code: string): LlmBlock => ({

@@ -120,7 +120,7 @@ function turnDeps(now: () => number) {
   return {
     registry: new TurnRegistry(),
     now,
-    assemble: () => ({ system: "SYSTEM", systemVolatile: "", sections: [] }),
+    assemble: () => ({ system: "SYSTEM", systemVolatile: "", sections: [], shas: [] }),
     program: () => Promise.resolve({ ok: true as const, logs: [] }),
     outageDelayMs: 0,
     reportError: (err: unknown) => {

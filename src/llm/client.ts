@@ -46,6 +46,8 @@ import type {
 } from "../types.ts";
 import { parseToolArgs, sseEvents, throwHttpError } from "./stream.ts";
 import { usageCostUsd } from "./pricing.ts";
+import { withTrace } from "./trace.ts";
+import type { TraceLabel } from "./trace.ts";
 
 // ---- routing ----------------------------------------------------------------
 
@@ -845,6 +847,11 @@ export function openrouterClient(opts: ProviderOpts = {}): LlmClient {
 
 export interface ClientOpts extends ProviderOpts {
   retry?: RetryOpts;
+  /**
+   * Record raw provider I/O for this turn. Null or absent = no tracing and no
+   * wrapper (`llm/trace.ts`).
+   */
+  trace?: TraceLabel | null;
 }
 
 /** The bare provider client for a model id, without retries or pricing. */
@@ -867,7 +874,9 @@ export function providerClient(model: string, opts: ProviderOpts = {}): LlmClien
  * `message.retry`.
  */
 export function clientFor(model: string, opts: ClientOpts = {}): LlmClient {
-  return withRetries(withPricing(providerClient(model, opts)), opts.retry);
+  // Tracing sits INSIDE the retries so a recorded trace shows each attempt, and
+  // outside pricing so a recorded round already carries its cost (`llm/trace.ts`).
+  return withRetries(withTrace(withPricing(providerClient(model, opts)), opts.trace ?? null), opts.retry);
 }
 
 /**

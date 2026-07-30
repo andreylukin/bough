@@ -41,7 +41,7 @@ import {
 
 // ---- fixtures ---------------------------------------------------------------
 
-const STUB_PROMPT = () => ({ system: "SYSTEM", systemVolatile: "", sections: [] as never[] });
+const STUB_PROMPT = () => ({ system: "SYSTEM", systemVolatile: "", sections: [] as never[], shas: [] });
 
 function seedSession(db: SqliteDb, kind: Session["kind"] = "root"): Session {
   return db.createSession({

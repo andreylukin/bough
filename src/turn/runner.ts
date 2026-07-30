@@ -49,6 +49,7 @@ import { z } from "zod";
 import { ContextOverflowError } from "../errors.ts";
 import { API_KEY_ENV, clientFor, errName } from "../llm/client.ts";
 import { contextWindowFor } from "../llm/pricing.ts";
+import { traceLabel, writeManifest } from "../llm/trace.ts";
 import { ensureScratchDir } from "../scratch.ts";
 import { createFileHostFns } from "../hostfn/files.ts";
 import { createShellHostFns } from "../hostfn/shell.ts";
@@ -531,7 +532,12 @@ async function drive(
 
   const program = deps.program ?? (deps.programFor ?? defaultProgramRunner)(turnCtx);
 
+  // Null unless BOUGH_TRACE_DIR is set. Resolved here because this is the only
+  // place that knows both ids, and written to below once the prompt is assembled.
+  const trace = traceLabel(sessionId, turn.id);
+
   const llm: LlmClient = ctx.llm ?? clientFor(model, {
+    trace,
     retry: {
       // The provider client's own backoff is invisible otherwise: the UI would show
       // a stalled stream for half a minute with no explanation. A retried round
@@ -571,6 +577,21 @@ async function drive(
       ...(deps.notes ?? []),
     ],
   });
+
+  // The section identities the raw trace cannot see: `LlmParams` carries the
+  // assembled prefix as one opaque string, so which .md files went into it has to
+  // be recorded from here (`llm/trace.ts`).
+  if (trace) {
+    writeManifest(trace, {
+      sessionId,
+      turnId: turn.id,
+      model,
+      effort,
+      workspace,
+      sections: prompt.shas,
+      startedAt: Date.now(),
+    });
+  }
 
   /**
    * The thread as the provider sees it, minus the message we are writing. Built

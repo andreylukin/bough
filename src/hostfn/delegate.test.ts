@@ -648,7 +648,7 @@ test("the wired starter picks the tier from the session it is starting", async (
         program: fakeProgram,
         assemble: (input) => {
           started.push({ sessionId: "", granted: [...input.granted] });
-          return { system: "", systemVolatile: "", sections: [] };
+          return { system: "", systemVolatile: "", sections: [], shas: [] };
         },
       },
     });

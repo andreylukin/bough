@@ -79,7 +79,7 @@ function fixture(said = "fresh answer"): Fixture {
 function turnDeps() {
   return {
     registry: new TurnRegistry(),
-    assemble: () => ({ system: "SYSTEM", systemVolatile: "", sections: [] }),
+    assemble: () => ({ system: "SYSTEM", systemVolatile: "", sections: [], shas: [] }),
     program: () => Promise.resolve({ ok: true as const, logs: [] }),
     outageDelayMs: 0,
     reportError: (err: unknown) => {

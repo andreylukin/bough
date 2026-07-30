@@ -16,6 +16,7 @@ import {
   SECTION_FILES,
   type SectionId,
   scratchNote,
+  sectionSha,
   workspaceNote,
 } from "./assemble.ts";
 
@@ -348,4 +349,30 @@ test("the workspace note is not gated on a capability — every kind edits a rea
     const p = assemblePrompt({ kind, granted: CORE, notes: [workspaceNote("/w/" + kind)] });
     assertStringIncludes(p.systemVolatile, "/w/" + kind);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Section fingerprints — what makes prompt attribution possible
+// ---------------------------------------------------------------------------
+
+test("every included section is fingerprinted, in prompt order", () => {
+  const p = build({ skills: [{ name: "s", body: "B" }], notes: ["## N\nnote"] });
+  assertEquals(p.shas.map((s) => s.id), p.sections, "shas parallel sections exactly");
+  assert(p.shas.every((s) => /^[0-9a-f]{16}$/.test(s.sha)), "each sha is truncated sha256");
+});
+
+test("a section's sha is over the text that actually went into the prefix", () => {
+  const p = build();
+  const identity = p.shas.find((s) => s.id === "identity")!;
+  assertEquals(identity.sha, sectionSha(readSectionFile("identity.md")));
+  // The point of the exercise: an edit to one .md moves exactly one sha, so a
+  // flipped task can be attributed to a file rather than to "the prompt".
+  const shell = p.shas.find((s) => s.id === "shell")!;
+  assert(shell.sha !== identity.sha);
+});
+
+test("a turn without a capability carries no fingerprint for its section", () => {
+  const p = build({ granted: without("fetch") });
+  assertEquals(p.shas.some((s) => s.id === "fetch"), false);
+  // An experiment editing fetch.md must not count this turn as exposed to it.
 });

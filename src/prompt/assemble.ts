@@ -38,6 +38,7 @@
  * in. That is what makes prompt assembly testable without a turn.
  */
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import type { HostFnName } from "../harness/protocol.ts";
 import type { SessionKind } from "../schema/parts.ts";
 
@@ -112,6 +113,25 @@ export interface AssembledPrompt {
    * the brittleness this avoids.
    */
   sections: SectionId[];
+  /**
+   * Each included section's id paired with the sha of the exact text that went
+   * into the prefix, in the same order as `sections`.
+   *
+   * This exists for prompt attribution: an experiment that edits `shell.md` can
+   * only be credited or blamed on turns whose prefix actually CONTAINED that
+   * text, and inclusion here is conditional (see the section table), so "the
+   * file was edited" and "the turn ran with the edit" are different facts. The
+   * sha is over the section text rather than the file so a volatile section —
+   * rendered, never read from disk — is fingerprinted on the same terms.
+   */
+  shas: SectionSha[];
+}
+
+/** One included section's identity: what it was, and the exact bytes it contributed. */
+export interface SectionSha {
+  id: SectionId;
+  /** sha256 of the section text, truncated — collision-free at this scale, readable in a log. */
+  sha: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -258,6 +278,15 @@ export function readSectionFile(file: string): string {
   return text;
 }
 
+/**
+ * Fingerprint one section's text. Truncated sha256: 16 hex chars is 64 bits, so a
+ * collision across the few hundred distinct section texts a campaign ever sees is
+ * not a thing that happens, and the value stays readable in a trace line.
+ */
+export function sectionSha(text: string): string {
+  return createHash("sha256").update(text).digest("hex").slice(0, 16);
+}
+
 // ---------------------------------------------------------------------------
 // Volatile rendering
 // ---------------------------------------------------------------------------
@@ -399,33 +428,41 @@ export function assemblePrompt(input: PromptInput): AssembledPrompt {
   };
 
   const sections: SectionId[] = [];
+  const shas: SectionSha[] = [];
   const stable: string[] = [];
+  /** Record one section in all three parallel outputs, so they cannot drift apart. */
+  const include = (id: SectionId, text: string, tier: string[]): void => {
+    sections.push(id);
+    shas.push({ id, sha: sectionSha(text) });
+    tier.push(text);
+  };
+
   for (const spec of SECTIONS) {
     if (!spec.when(facts)) continue;
-    sections.push(spec.id);
-    stable.push(readSectionFile(spec.file));
+    include(spec.id, readSectionFile(spec.file), stable);
   }
 
   const volatile: string[] = [];
   const servers = input.mcpServers ?? [];
   if (servers.length > 0 && granted.has("mcp")) {
-    sections.push("mcp-tools");
-    volatile.push(mcpToolsSection(servers));
+    include("mcp-tools", mcpToolsSection(servers), volatile);
   }
   const skills = input.skills ?? [];
   if (skills.length > 0) {
-    sections.push("skills");
-    volatile.push(skillsSection(skills));
+    include("skills", skillsSection(skills), volatile);
   }
   const notes = (input.notes ?? []).map((n) => n.trim()).filter((n) => n !== "");
   if (notes.length > 0) {
-    sections.push("notes");
-    volatile.push(...notes);
+    // The notes join into ONE section: they are separate strings only because the
+    // caller resolves them separately, and a per-note id would not name anything
+    // an experiment can edit.
+    include("notes", notes.join("\n\n"), volatile);
   }
 
   return {
     system: stable.join("\n\n"),
     systemVolatile: volatile.join("\n\n"),
     sections,
+    shas,
   };
 }
