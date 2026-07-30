@@ -126,6 +126,12 @@ const sgr = (
 export const fg = (params: string, s: string) => sgr(params, s, "39");
 export const bold = (s: string) => sgr("1", s, "22");
 export const underline = (s: string) => sgr("4", s, "24");
+/**
+ * SGR 3, closed with 23. Terminals that do not support italics ignore the pair rather
+ * than printing anything, which is why emphasis is safe to render at all: the worst case
+ * is the text without its slant, never a stray escape on the screen.
+ */
+export const italic = (s: string) => sgr("3", s, "23");
 export const dim = (s: string) => fg(colors.muted, s);
 export const accent = (s: string) => fg(colors.accent, s);
 export const warn = (s: string) => fg(colors.warn, s);
@@ -836,6 +842,23 @@ function mdInline(line: string): string {
         BARE_URL.test(inner) ? guard(linkifyUrl(inner)) : guard(fg(colors.code, inner)),
     )
     .replace(/\*\*([^*]+)\*\*/g, (_m, inner: string) => bold(inner))
+    // ITALIC, after bold so `**x**` is never seen as two single-star spans. A model uses
+    // `*emphasis*` and `_emphasis_` as freely as it uses bold, and untouched they reached
+    // the screen as literal asterisks and underscores in the middle of prose.
+    //
+    // `_` only at a word boundary: `snake_case_name` and `__init__` are identifiers, not
+    // emphasis, and they appear in this kind of prose constantly. `*` needs no such guard
+    // — it is not a word character anywhere.
+    // The delimiter must HUG its text (CommonMark's rule), or `2 * 3 * 4` becomes an
+    // italic " 3 " and arithmetic in prose comes out slanted and missing its operators.
+    // The edge characters exclude the delimiter itself as well as whitespace, or `__init__`
+    // is read as an italic `_init_` — the boundary character is allowed to BE an underscore
+    // otherwise, and dunder names are everywhere in this kind of prose.
+    .replace(/\*([^*\s][^*\n]*?[^*\s]|[^*\s])\*/g, (_m, inner: string) => italic(inner))
+    .replace(
+      /(?<![\w\\])_([^_\s][^_\n]*?[^_\s]|[^_\s])_(?!\w)/g,
+      (_m, inner: string) => italic(inner),
+    )
     // [text](url) → clickable underlined text with the url dimmed alongside. The
     // lookbehind keeps the "[" of an already-inserted SGR escape from being taken
     // as the link opener and swallowing the escape.
@@ -965,11 +988,120 @@ export function surface(line: string, w: number): string {
   return `${bg}${line.replaceAll("\x1b[0m", `\x1b[0m${bg}`)}${" ".repeat(pad)}\x1b[0m`;
 }
 
+/**
+ * A GitHub-style table, laid out as columns instead of printed as pipes.
+ *
+ * `md` is otherwise line-by-line, and a table is the one construct that is not: the
+ * column widths depend on every row, so it has to be gathered before any of it can be
+ * drawn. Untouched, a model's table reached the screen as its raw source —
+ * `| name | lines |` over `|------|-------|` — which is the single most common thing a
+ * frontier model emits and the least readable way to show it.
+ *
+ * Header in bold over a dim rule, cells padded to the column, two spaces between. No outer
+ * pipes: they cost four columns a terminal does not have and add nothing the alignment
+ * does not already say. Alignment comes from the separator row (`--:` right, `:-:` centre),
+ * which is also how a numeric column ends up reading as one.
+ *
+ * When the natural width does not fit, the WIDEST column is shrunk until it does and its
+ * cells are clipped with an ellipsis — narrowing the long prose column keeps the numbers
+ * beside it, where scaling everything equally would lose both.
+ */
+function tableLines(rows: string[][], aligns: Align[], max: number): string[] {
+  const cols = Math.max(...rows.map((r) => r.length));
+  const cell = (r: string[], i: number) => r[i] ?? "";
+  const widths = Array.from(
+    { length: cols },
+    (_v, i) => Math.max(...rows.map((r) => width(stripAnsi(mdInline(cell(r, i)))))),
+  );
+  const GUTTER = 2;
+  let total = widths.reduce((a, b) => a + b, 0) + GUTTER * (cols - 1);
+  while (max > 0 && total > max) {
+    const widest = widths.indexOf(Math.max(...widths));
+    if (widths[widest] <= 4) break;
+    widths[widest]--;
+    total--;
+  }
+  const pad = (text: string, i: number) => {
+    const shown = truncateAnsi(mdInline(text), widths[i], "…");
+    const slack = Math.max(0, widths[i] - width(stripAnsi(shown)));
+    if (aligns[i] === "right") return " ".repeat(slack) + shown;
+    if (aligns[i] === "center") {
+      const left = Math.floor(slack / 2);
+      return " ".repeat(left) + shown + " ".repeat(slack - left);
+    }
+    return shown + " ".repeat(slack);
+  };
+  const line = (r: string[], bolded: boolean) =>
+    widths.map((_w, i) => (bolded ? bold(pad(cell(r, i), i)) : pad(cell(r, i), i)))
+      .join(" ".repeat(GUTTER))
+      .trimEnd();
+  const [head, ...body] = rows;
+  return [
+    line(head, true),
+    dim(widths.map((w) => "─".repeat(w)).join(" ".repeat(GUTTER))),
+    ...body.map((r) => line(r, false)),
+  ];
+}
+
+type Align = "left" | "right" | "center";
+
+/** `| a | b |` → `["a", "b"]`, tolerant of a missing leading or trailing pipe. */
+function tableCells(line: string): string[] {
+  return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+}
+
+/** The `|---|:--:|` row under a header, which is what makes a table a table. */
+function tableAligns(line: string): Align[] | null {
+  const cells = tableCells(line);
+  if (cells.length === 0 || !cells.every((c) => /^:?-{1,}:?$/.test(c))) return null;
+  return cells.map((c) =>
+    c.startsWith(":") && c.endsWith(":")
+      ? "center"
+      : c.endsWith(":")
+      ? "right"
+      : "left"
+  );
+}
+
 /** Markdown-lite for one block of prose. With `codeWidth`, fences get a surface. */
 export function md(text: string, codeWidth?: number): string {
   let fence: string | null = null; // the open fence's language tag
   const raise = (line: string) => (codeWidth ? surface(line, codeWidth) : line);
-  return text.split("\n").map((line) => {
+  const src = text.split("\n");
+  // TABLES FIRST, because they are the one block construct here: a header line, the
+  // separator that identifies it, and every body row until something that is not a row.
+  // Rendered rows are marked so the line pass below leaves them alone.
+  const done = new Map<number, string[]>();
+  let scanFence = false;
+  for (let i = 0; i < src.length; i++) {
+    // INSIDE A FENCE NOTHING IS A TABLE. A code block showing markdown source — or any
+    // language with `|` in it — must reach the reader as it was written; laying it out as
+    // columns would be the renderer editing the code it was asked to display.
+    if (/^\s*```/.test(src[i])) {
+      scanFence = !scanFence;
+      continue;
+    }
+    if (scanFence) continue;
+    if (!src[i].includes("|")) continue;
+    const aligns = i + 1 < src.length ? tableAligns(src[i + 1]) : null;
+    if (!aligns) continue;
+    const rows = [tableCells(src[i])];
+    let j = i + 2;
+    for (; j < src.length && src[j].includes("|") && src[j].trim() !== ""; j++) {
+      rows.push(tableCells(src[j]));
+    }
+    done.set(i, tableLines(rows, aligns, codeWidth ?? 0));
+    for (let k = i + 1; k < j; k++) done.set(k, []);
+    i = j - 1;
+  }
+  return src.flatMap((line, i) => {
+    const table = done.get(i);
+    if (table) return table;
+    if (table !== undefined) return [];
+    return [oneMdLine(line)];
+  }).join("\n");
+
+  function oneMdLine(line: string): string {
     const open = line.match(/^\s*```(\S*)\s*$/);
     if (open) {
       // Fence markers frame the block instead of rendering as raw backticks.
@@ -987,7 +1119,7 @@ export function md(text: string, codeWidth?: number): string {
     const quoted = line.match(/^>\s?(.*)$/);
     if (quoted) return dim(`│ ${quoted[1]}`);
     return mdInline(line.replace(/^(\s*)- /, "$1• "));
-  }).join("\n");
+  }
 }
 
 // ---- numbers in view --------------------------------------------------------

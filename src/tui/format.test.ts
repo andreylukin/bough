@@ -998,3 +998,60 @@ test("no host function is left without a label", () => {
     assert.notEqual(programSummary(code), "", `${name} has no label — the step shows source`);
   }
 });
+
+test("a markdown table is laid out as columns, not printed as pipes", () => {
+  withoutColor(() => {
+    const doc = [
+      "| file | lines |",
+      "|------|------:|",
+      "| parse.py | 2 |",
+      "| render.py | 1204 |",
+    ].join("\n");
+    const out = md(doc, 40).split("\n");
+    // Header, rule, one row per body line — and no raw separator row.
+    assert.equal(out.length, 4, out.join("|"));
+    assert.equal(out.some((l) => l.includes("---")), false, out.join("|"));
+    assert.equal(out.some((l) => l.includes("|")), false, out.join("|"));
+    assert.ok(out[0].startsWith("file"), out[0]);
+    assert.ok(/^─+ +─+$/.test(out[1]), out[1]);
+    // `--:` right-aligns, so both numbers end in the same column.
+    const at = (l: string) => l.indexOf("2") >= 0 ? l.indexOf("2") : l.indexOf("1204");
+    assert.equal(out[2].trimEnd().length, out[3].trimEnd().length, `${out[2]}|${out[3]}`);
+    assert.ok(at(out[2]) > 0);
+  });
+});
+
+test("a lone pipe is prose, and a table inside a fence is code", () => {
+  withoutColor(() => {
+    // No separator row underneath, so this is a shell command someone wrote in a sentence.
+    const prose = md("run `wc -l < a.txt | tr -d ' '` to count");
+    assert.ok(prose.includes("|"), prose);
+
+    // Inside a fence the SOURCE is the content: laying it out as columns would be the
+    // renderer editing the code it was asked to display.
+    const fenced = ["```markdown", "| a | b |", "|---|---|", "| 1 | 2 |", "```"].join("\n");
+    const out = md(fenced);
+    assert.ok(out.includes("| a | b |"), out);
+    assert.ok(out.includes("|---|---|"), out);
+  });
+});
+
+test("emphasis renders, and identifiers with underscores are left alone", () => {
+  withoutColor(() => {
+    // Bold already worked; `*italic*` and `_italic_` reached the screen as literal
+    // asterisks and underscores in the middle of prose.
+    assert.equal(md("Some *emphasis* here"), "Some emphasis here");
+    assert.equal(md("Some _emphasis_ here"), "Some emphasis here");
+    assert.equal(md("Some **strong** here"), "Some strong here");
+    // Bold is matched FIRST, so `**x**` is never seen as two single-star spans.
+    assert.equal(md("**a** and *b*"), "a and b");
+    // Identifiers are not emphasis, and this kind of prose is full of them.
+    assert.equal(md("call snake_case_name and __init__ now"), "call snake_case_name and __init__ now");
+    // A lone star in prose (a footnote marker, a glob) stays put.
+    assert.equal(md("use *.ts files"), "use *.ts files");
+    // The delimiter must hug its text, or arithmetic comes out slanted and missing its
+    // operators: `2 * 3 * 4` is a product, not an italic " 3 ".
+    assert.equal(md("2 * 3 * 4 = 24"), "2 * 3 * 4 = 24");
+    assert.equal(md("a_b _c_ d"), "a_b c d");
+  });
+});
