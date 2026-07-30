@@ -346,6 +346,11 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
    * would otherwise overwrite it, and one render later it is nobody's business.
    */
   const landOn = useRef<number | null>(null);
+  /**
+   * A row to keep the cursor on across a list that is about to be rebuilt, addressed by
+   * ID because the INDEX is exactly what changes. Set when `/` closes; see there.
+   */
+  const landOnId = useRef<string | null>(null);
   const [focusDiff, setFocusDiff] = useState(false);
   // Rows scrolled into the focused file's hunks. The tab has always PRINTED "↑↓ scroll
   // the diff" and always passed `scroll` as its default 0, so the arrow keys moved the
@@ -643,6 +648,17 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
     setPendingRun(runId);
     setPanel(reducePanel(panel, { type: "jump", tab: "workflows" }, { theme: preview }));
   }, [panel, preview]);
+
+  // Applying `landOnId`, once the rows it names exist. Separate from the parking so the
+  // widened list is the one searched: `panel.filterExit` runs before the re-render that
+  // rebuilds `tree`, so there is nothing to find at the moment the id is recorded.
+  useEffect(() => {
+    const id = landOnId.current;
+    if (id === null) return;
+    const at = tree.findIndex((r) => r.id === id);
+    landOnId.current = null;
+    if (at >= 0) setSel(at);
+  }, [tree]);
 
   // Arriving at a tab arrives at its top, with no message, no held diff focus, no
   // armed revert (a confirm that outlives the screen it was read on is not a confirm)
@@ -1426,6 +1442,13 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
       case "panel.filterExit":
         // Esc unwinds ONE level: it drops the filter and keeps the panel open. The
         // keymap orders this ahead of `panel.close`, so the next esc closes.
+        //
+        // AND IT KEEPS THE ROW YOU FOUND. Dropping the filter reset the cursor to 0, so
+        // searching "binary", landing on the one conversation that matched, and pressing
+        // esc put you back at the top of a nine-row forest with the found row somewhere
+        // in it — the search's whole result, discarded by the key that ends the search.
+        // Parked by ID because the widened list renumbers every index.
+        landOnId.current = tree[sel]?.id ?? null;
         setFiltering(false);
         setFilter("");
         setEntryKind("filter");
