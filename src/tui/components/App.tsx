@@ -1649,8 +1649,17 @@ export function App(
     const off = [
       hooks.onPaste?.((text) => setLine((s) => insertText(s, stripCtl(text)))),
       hooks.onMouse?.((event) => {
-        if (event.kind === "wheel-up") return setScrollOff((o) => o + WHEEL_ROWS);
-        if (event.kind === "wheel-down") return setScrollOff((o) => Math.max(0, o - WHEEL_ROWS));
+        // THE PANEL GETS FIRST REFUSAL. With a diff focused, the wheel was scrolling the
+        // transcript hidden underneath it — so the one surface whose whole job is reading a
+        // long diff was the only one the wheel did not move.
+        if (event.kind === "wheel-up") {
+          return panel.scrollBy(-WHEEL_ROWS) ? undefined : setScrollOff((o) => o + WHEEL_ROWS);
+        }
+        if (event.kind === "wheel-down") {
+          return panel.scrollBy(WHEEL_ROWS)
+            ? undefined
+            : setScrollOff((o) => Math.max(0, o - WHEEL_ROWS));
+        }
         const at = { x: event.x, y: event.y };
         // READ AND WRITTEN THROUGH A REF, not through the state alone. A drag is a
         // burst — down, drag, drag, …, up — and React batches the whole burst before

@@ -311,6 +311,14 @@ export interface PanelHandle {
    */
   handle: (command: Command, input?: string) => boolean;
   /**
+   * A wheel tick, offered to the panel before the transcript takes it. True when the panel
+   * consumed it.
+   *
+   * Only a FOCUSED DIFF consumes one. A tick over a list would move the cursor, and the
+   * cursor is what a revert key targets — a scroll gesture must never change that.
+   */
+  scrollBy: (rows: number) => boolean;
+  /**
    * The `/` filter buffer holds the keyboard.
    *
    * `App` must put this in its `KeyContext` and route `isTextInput` keypresses into
@@ -934,6 +942,20 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
     setMessage(`${name}: still waiting on the browser — press a to start over`);
   }, [controls, refreshMcp]);
 
+  /**
+   * Page the FOCUSED diff, when there is one. Returns whether it consumed the key.
+   *
+   * Also what a wheel tick reaches (`scrollBy` on the handle): the wheel scrolled the
+   * transcript underneath an open panel, so the one surface whose whole job is reading a
+   * long diff was the one surface the wheel did not touch.
+   */
+  const pageDiff = (dir: -1 | 1): boolean => {
+    if (!(panel.tab === "changes" && focusDiff)) return false;
+    const page = Math.max(1, bodyRows - 2);
+    setDiffScroll((i) => Math.max(0, i + dir * page));
+    return true;
+  };
+
   const confirm = useCallback((summarize = false, at = sel) => {
     // The URL buffer takes ⏎ before any tab does: while it is open the panel is
     // asking a question, and the row under the cursor is not what the key is about.
@@ -1455,10 +1477,16 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
       // ---- a screenful at a time (spec §3: a list you can only walk one row at a
       // time is a list whose far end does not exist — the model tab is 32 rows in a
       // ~20-row viewport). The page is the tab's OWN viewport, not a constant.
+      // A SCREENFUL OF WHAT THE CURSOR IS IN. In focus mode ↑↓ scroll the diff and the
+      // legend says so — but paging moved the FILE cursor, so `PageDown` while reading a
+      // 121-line diff silently switched which file `x revert this path` would take, with the
+      // legend unchanged. A reviewer persona found it by pressing the obvious key.
       case "move.pageUp":
+        if (pageDiff(-1)) return true;
         moveTo(sel - Math.max(1, bodyRows - 2));
         return true;
       case "move.pageDown":
+        if (pageDiff(1)) return true;
         moveTo(sel + Math.max(1, bodyRows - 2));
         return true;
 
@@ -1880,6 +1908,17 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
     open: panel.open,
     tab: panel.tab,
     handle,
+    /**
+     * A wheel tick, offered to the panel first. Returns whether the panel took it.
+     *
+     * Only the focused diff takes one today: a wheel tick over a LIST would move the cursor,
+     * which changes what a revert key targets — a scroll gesture must never do that.
+     */
+    scrollBy: (rows: number) => {
+      if (!(panel.open && panel.tab === "changes" && focusDiff)) return false;
+      setDiffScroll((i) => Math.max(0, i + rows));
+      return true;
+    },
     filtering,
     filterInput,
     openRun,
