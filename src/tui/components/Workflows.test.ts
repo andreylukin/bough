@@ -322,7 +322,13 @@ test("a running run offers pause before stop; a paused one offers resume", () =>
 test("a finished run offers the edit-and-relaunch half of the steering loop", () => {
   const done = steerActions("done", false);
   assert.deepEqual(done.map((a) => a.key), ["r", "e", "s"]);
-  assert.match(done[1].label, /edit script & relaunch/);
+  // `e` SHOWS the script and the path to edit; `r` is what relaunches, picking up the edited
+  // mirror (`server/workflows.ts`: "edit the file, press r"). The old label said "edit script &
+  // relaunch", which implied `e` did both — so the loop read as broken to anyone who pressed it
+  // and watched a script appear and nothing run. The label names its partner instead.
+  assert.match(done[1].label, /script/);
+  assert.match(done[1].label, /then r/);
+  assert.doesNotMatch(done[1].label, /relaunch/);
   // Save rides with the settled state, not with a running one: the point of saving a
   // script is that you have seen it finish.
   assert.match(done[2].label, /save/);

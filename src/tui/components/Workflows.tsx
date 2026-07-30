@@ -289,7 +289,11 @@ export function steerActions(status: WorkflowRun["status"], live: boolean): Stee
   // script, and the reason to store one is that you watched it work.
   return [
     { key: "r", label: "rerun (replays the journal)" },
-    { key: "e", label: "edit script & relaunch" },
+    // `e` SHOWS the script and its mirror path; `r` is what relaunches, picking up the edited
+    // mirror ("with no script the edited mirror wins, which is what makes 'edit the file, press
+    // r' the whole iteration loop" — `server/workflows.ts`). The old label implied `e` did both,
+    // which is why the loop reads as broken: you press it, a script appears, nothing relaunches.
+    { key: "e", label: "the script + path to edit (then r)" },
     { key: "s", label: "save to run again by name" },
   ];
 }
