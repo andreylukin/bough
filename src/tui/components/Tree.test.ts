@@ -57,6 +57,24 @@ test("titles drop the kind prefix the server stamped on them", () => {
     "review app.ts",
   );
   assert.equal(titleOf(session("y", "root", { title: "" })), "(untitled)");
+  // `handoff` was missing from the list, and a handoff of a still-untitled conversation
+  // is titled `handoff · ` server-side — the row rendered as a prefix with nothing
+  // after it.
+  assert.equal(titleOf(session("z", "root", { title: "handoff · " })), "(untitled)");
+  assert.equal(
+    titleOf(session("w", "root", { title: "handoff · fix the parser" })),
+    "fix the parser",
+  );
+});
+
+test("live work under a collapsed conversation is glyphed, not hidden", () => {
+  // The row reported its own last turn and nothing else, so a conversation sitting on
+  // five running subagents rendered `✓` while the rail said "5 agents running".
+  const idle = session("x", "root", { lastTurnStatus: "done" });
+  assert.equal(statusMark(idle)?.glyph, "✓");
+  assert.deepEqual(statusMark(idle, 5), { glyph: "⋯", color: "cyan" });
+  // Its own busy state still wins the same way — the two are the same statement.
+  assert.equal(statusMark(session("y", "root", { busy: true }), 0)?.glyph, "⋯");
 });
 
 // ---- the absence ------------------------------------------------------------

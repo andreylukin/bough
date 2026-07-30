@@ -1566,6 +1566,7 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
               height={bodyRows}
               filter={filter}
               filtering={filtering}
+              workspace={state.sessions.find((s) => s.id === state.currentId)?.workspace ?? null}
             />
           )
           : (

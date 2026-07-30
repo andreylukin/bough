@@ -18,7 +18,7 @@
 import { TextAttributes } from "@opentui/core";
 import type { SessionKind } from "../../schema/parts.ts";
 import type { SessionRow } from "../api.ts";
-import { clip, fmtUsd, windowAround } from "../format.ts";
+import { clip, fmtUsd, shortenPath, windowAround } from "../format.ts";
 import { type ForestRow, isDelegated } from "../forest.ts";
 
 const KIND_GLYPH: Record<SessionKind, string> = {
@@ -117,9 +117,21 @@ export interface TreeProps {
   /** The `/` buffer, echoed so a narrowed list says what narrowed it. */
   filter?: string;
   filtering?: boolean;
+  /**
+   * The open conversation's workspace. A top-level row in a DIFFERENT one says so.
+   *
+   * The tree is the switcher across every project on the machine, and it showed titles
+   * only — two conversations from two checkouts read as
+   * `● ✓ Bough TUI Development Session` twice, with nothing to tell them apart, and the
+   * `/` filter searched a workspace the rows never displayed. Shown only when it
+   * differs: labelling every row with the directory you are already in is noise.
+   */
+  workspace?: string | null;
 }
 
-export function Tree({ rows: items, selected, height, filter, filtering }: TreeProps) {
+export function Tree(
+  { rows: items, selected, height, filter, filtering, workspace }: TreeProps,
+) {
   const chrome = filtering || filter ? 1 : 0;
   const { start, height: shown } = forestWindow(items.length, selected, height, chrome);
   const window = items.slice(start, start + shown);
@@ -197,6 +209,13 @@ export function Tree({ rows: items, selected, height, filter, filtering }: TreeP
                 and is the difference between "look inside" and "leave it alone". */}
             {item.busyBelow > 0
               ? <span fg="cyan">{`  ${item.busyBelow} running`}</span>
+              : null}
+            {item.depth === 0 && s.workspace && workspace && s.workspace !== workspace
+              ? (
+                <span attributes={TextAttributes.DIM}>
+                  {`  ${shortenPath(s.workspace).split("/").slice(-2).join("/")}`}
+                </span>
+              )
               : null}
             {s.costUsd
               ? <span attributes={TextAttributes.DIM}>{`  ${fmtUsd(s.costUsd)}`}</span>
