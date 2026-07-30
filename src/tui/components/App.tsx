@@ -409,7 +409,9 @@ export function App(
   const cols = Math.max(20, term.width || 80);
   const rows = Math.max(8, term.height || 24);
 
-  const ask = currentAsk(state);
+  // The delegates are passed in because `GET /sessions` hides them from the top level:
+  // without them a subagent's `ask()` would be filtered out as another session's.
+  const ask = currentAsk(state, children[state.currentId ?? ""] ?? []);
   const busy = isBusy(state);
 
   // A spinner needs a clock, and a clock that runs when nothing is happening is a

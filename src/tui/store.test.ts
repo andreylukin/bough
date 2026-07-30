@@ -1168,3 +1168,66 @@ test("a multi-line command still makes ONE rail row", async () => {
   assert.match(units[0].detail ?? "", /for i in 1 2 3; do ¶ echo "request \$i"/);
   assert.equal(unitLine(units[0], 80).includes("\n"), false);
 });
+
+/**
+ * A hold raised in ANOTHER conversation used to take over this one's composer, and
+ * answering it there settled it. Found in a persona audit: an approval card for a
+ * workflow the tester never created appeared in their conversation, and pressing
+ * Escape to get their composer back DECLINED a different conversation's run.
+ *
+ * `GET /questions` is unscoped (it is a reconnect path) and the event stream is
+ * global, so the filtering has to happen here.
+ */
+test("the ask card shows only this conversation's holds — and its delegates'", () => {
+  const hold = (id: string, sessionId: string) => ({
+    id,
+    sessionId,
+    messageId: `m-${id}`,
+    question: `q ${id}`,
+    status: "pending" as const,
+    ts: 1,
+  });
+  let state = apply(initialState(), { type: "open", sessionId: SESSION });
+  state = reduce(state, {
+    type: "sessions",
+    sessions: [
+      { id: SESSION, title: "mine", kind: "root", createdAt: 1, parentId: null, busy: false },
+      { id: "other", title: "theirs", kind: "root", createdAt: 2, parentId: null, busy: false },
+      {
+        id: "branch",
+        title: "fork of mine",
+        kind: "fork",
+        createdAt: 3,
+        parentId: null,
+        originId: SESSION,
+        busy: false,
+      },
+    ],
+  } as StoreAction);
+
+  // Another root's hold: never mine, whatever order it arrived in.
+  state = replay(state, [
+    { type: "ask.question", sessionId: "other", seq: 1, ts: 1, data: hold("foreign", "other") },
+  ]);
+  assert.equal(currentAsk(state), null);
+
+  // My own hold surfaces even though the foreign one is older.
+  state = replay(state, [
+    { type: "ask.question", sessionId: SESSION, seq: 2, ts: 2, data: hold("mine", SESSION) },
+  ]);
+  assert.equal(currentAsk(state)?.id, "mine");
+
+  // A branch of mine is mine, resolved through `originId`.
+  const branchOnly = { ...state, asks: [hold("fromBranch", "branch")] };
+  assert.equal(currentAsk(branchOnly)?.id, "fromBranch");
+
+  // A SUBAGENT's hold must stay answerable: `GET /sessions` hides delegates from the
+  // top level, so it is only known because the caller passes the delegate list. Without
+  // it the hold would be filtered out and the delegate would park until its turn died.
+  const delegateOnly = { ...state, asks: [hold("fromAgent", "agent-1")] };
+  assert.equal(currentAsk(delegateOnly), null);
+  assert.equal(currentAsk(delegateOnly, [{ id: "agent-1" }])?.id, "fromAgent");
+
+  // No conversation open: nothing may claim the composer.
+  assert.equal(currentAsk({ ...state, currentId: null }), null);
+});

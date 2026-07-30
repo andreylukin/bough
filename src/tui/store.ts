@@ -882,9 +882,49 @@ export function isBusy(state: TuiState): boolean {
   return state.thread.some((m) => m.pending);
 }
 
-/** The hold the card shows. One at a time, oldest first (spec §6). */
-export function currentAsk(state: TuiState): AskQuestion | null {
-  return state.asks[0] ?? null;
+/**
+ * The hold the card shows. One at a time, oldest first (spec §6) — and **only a hold
+ * that belongs to the conversation on screen or to something running under it.**
+ *
+ * `asks[0]` was every session's holds in one list. `GET /questions` is unscoped (it is
+ * a reconnect path) and the event stream is global, so a workflow approval raised in
+ * ANOTHER conversation took over this one's composer — and answering it there settled
+ * it. Observed in a persona audit: an approval card for a workflow the tester never
+ * created appeared in their conversation, and pressing Escape to get their composer
+ * back DECLINED a different conversation's run. The server already refuses to settle a
+ * hold through the wrong session id, deliberately; the client simply never asked the
+ * question.
+ *
+ * A DESCENDANT'S HOLD DOES BELONG HERE. A subagent that calls `ask()` is work the user
+ * started from this conversation and is looking at; filtering to an exact id match
+ * would make that hold unanswerable and park the delegate until its turn timed out.
+ * `descendants` is the caller's list of this conversation's delegates — it has to be
+ * passed in, because `GET /sessions` excludes subagents and workflow agents from the
+ * top level (spec §4), so `state.sessions` cannot answer the question on its own.
+ * Lineage is also walked over `state.sessions` for branches — `originId`, then
+ * `parentId` — and cycle-guarded, because both are pointers the server sets rather
+ * than foreign keys.
+ */
+export function currentAsk(
+  state: TuiState,
+  descendants: readonly { id: string }[] = [],
+): AskQuestion | null {
+  const current = state.currentId;
+  if (!current) return null;
+  const mine = new Set([current, ...descendants.map((d) => d.id)]);
+  const byId = new Map(state.sessions.map((s) => [s.id, s]));
+  const belongs = (sessionId: string): boolean => {
+    const seen = new Set<string>();
+    let cur: string | undefined = sessionId;
+    while (cur && !seen.has(cur)) {
+      if (mine.has(cur)) return true;
+      seen.add(cur);
+      const s = byId.get(cur);
+      cur = s?.originId ?? s?.parentId ?? undefined;
+    }
+    return false;
+  };
+  return state.asks.find((q) => belongs(q.sessionId)) ?? null;
 }
 
 /** The message's live text, or the text it finalized into. */
