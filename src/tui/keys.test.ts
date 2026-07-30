@@ -376,6 +376,20 @@ test("the overlay documents the table and only the table", () => {
   }
 });
 
+/**
+ * `esc esc` prints twice — "clear the draft" and "go back to a turn and fork it · empty
+ * draft" — and only the second said which state it belonged to, so on the one screen
+ * that exists to answer what a key does, the pair read as a contradiction.
+ */
+test("a guarded row says WHICH state it belongs to, both ways round", () => {
+  const rows = helpSections().filter((s) => !s.limits && !s.unavailable && !s.commands)
+    .flatMap((s) => s.keys);
+  const escEsc = rows.filter(([chord]) => chord === "esc esc").map(([, desc]) => desc);
+  assert.equal(escEsc.length, 2, escEsc.join(" | "));
+  assert.ok(escEsc.some((d) => d.endsWith("· with a draft")), escEsc.join(" | "));
+  assert.ok(escEsc.some((d) => d.endsWith("· empty draft")), escEsc.join(" | "));
+});
+
 test("every control chord live in chat is documented somewhere", () => {
   // `^s` was bound to the tree, carried no `desc`, and so appeared in NEITHER the
   // table nor the `not bound` list: a reflex chord that silently moved the keyboard

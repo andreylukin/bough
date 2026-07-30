@@ -1475,7 +1475,15 @@ export function helpSections(bindings: Binding[] = BINDINGS): HelpSection[] {
     // absolutely nothing happens. The condition already lives on the binding, so the
     // generator is the one place that can disclose it without inventing a second
     // description to keep in sync.
-    const desc = b.when?.includes("emptyDraft") ? `${b.desc} · empty draft` : b.desc;
+    // A `not` guard is disclosed for the same reason a `when` guard is. `esc esc` prints
+    // TWICE — "clear the draft" and "go back to a turn and fork it · empty draft" — and
+    // only the second said which state it belonged to, so the pair read as a
+    // contradiction on the one screen that exists to answer what a key does.
+    const desc = b.when?.includes("emptyDraft")
+      ? `${b.desc} · empty draft`
+      : b.not?.includes("emptyDraft")
+      ? `${b.desc} · with a draft`
+      : b.desc;
     rows.push([b.label ?? chordLabel(b.chord), desc]);
   }
   // The `/` commands, listed BY NAME. The overlay is generated from chords, so a
