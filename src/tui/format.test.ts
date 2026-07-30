@@ -1070,5 +1070,21 @@ test("a spawned conversation says how to get back to the one that spawned it", (
     // It sits before the help hint, which stays last.
     const line = meterLine({ ...base, out: true });
     assert.ok(line.indexOf("← back") < line.indexOf("? help"), line);
+    // AND IT SURVIVES DEGRADATION. The full line begins with an ABSOLUTE workspace path, so
+    // on a real terminal it always degrades — a chip added only to the full form is a chip
+    // that never renders, which is how the first version of this shipped.
+    const narrow = meterLine({
+      workspace: "/private/tmp/a/very/long/path/that/forces/the/ladder/sa-bough",
+      branch: "main",
+      model: "claude-haiku-4-5",
+      costUsd: 0.003,
+      contextTokens: 14000,
+      contextLimit: 200000,
+      help: true,
+      out: true,
+      width: 100,
+    });
+    assert.ok(narrow.includes("← back"), narrow);
+    assert.ok(width(narrow) <= 100, `${width(narrow)}: ${narrow}`);
   });
 });

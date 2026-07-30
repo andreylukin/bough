@@ -1256,10 +1256,15 @@ export function meterLine(m: {
   const base = place((m.workspace ?? "").replace(/\/+$/, "").split("/").pop() ?? "");
   for (
     const candidate of [
-      join(base, model, cost, context, shells, agents, runs, help),
-      join(model, cost, context, shells, agents, runs, help),
-      join(cost, context, live, help),
-      join(cost, context, live),
+      // `out` rides with `help` down the ladder: both are three-character hints, and the
+      // one that says how to LEAVE a conversation you did not open on purpose is worth more
+      // than a token count. Adding it only to `full` above is exactly how the first version
+      // of this shipped invisible — the full line begins with an ABSOLUTE workspace path, so
+      // on a 100-column terminal it always degrades and the chip was always dropped.
+      join(base, model, cost, context, shells, agents, runs, out, help),
+      join(model, cost, context, shells, agents, runs, out, help),
+      join(cost, context, live, out, help),
+      join(cost, context, out, live),
       join(context, live),
       join(context),
     ]
