@@ -543,6 +543,23 @@ export function programSummary(code: string, max = 64, running = false): string 
     }
     return out;
   };
+  // `(?<![.\w])`, not `\b`: `\b` matches between a dot and a letter, so EVERY host-fn
+  // name also matched its member-call twin. Seen on screen: a program whose only host call
+  // was `artifact()` was headlined `collected subagent reports · published an artifact`,
+  // because it also contained `functions.join("\n")`. The same trap was waiting in
+  // `.write(` on a stream, `.search(` on a string, and `.view(`/`.ask(` on anything.
+  const count = (re: RegExp) => [...code.matchAll(re)].length;
+  /**
+   * `join` pulled out of `node:path`, in either spelling — the host verb is shadowed.
+   *
+   * BOTH forms, because the one I did not write is the one the model used: it wrote
+   * `import { join } from "node:path"` and the row said "collected subagent reports".
+   */
+  const shadowsJoin =
+    /\{[^}]*\bjoin\b[^}]*\}\s*=\s*(?:await\s+)?(?:import|require)\s*\(\s*["'`](?:node:)?path/
+      .test(code) ||
+    /import\s*\{[^}]*\bjoin\b[^}]*\}\s*from\s*["'`](?:node:)?path/.test(code);
+
   const name = (p: string) => p.split("/").filter(Boolean).pop() ?? p;
   const list = (paths: string[]) =>
     paths.length <= 2 ? paths.map(name).join(", ") : `${name(paths[0])} +${paths.length - 1} more`;
@@ -553,25 +570,33 @@ export function programSummary(code: string, max = 64, running = false): string 
   // Its files are the `[path#hash]` section tags inside that body, and there may be
   // several of them in one call.
   const wrote = [
-    ...files(/(?<![.\w])(?:write|edit)\s*\(\s*["'`]([^"'`]+)/g),
+    ...files(/(?:(?<![.\w])(?:write|edit)|writeFileSync|writeFile)\s*\(\s*["'`]([^"'`]+)/g),
     ...(/\bpatch\s*\(/.test(code) ? files(/\[([^\]\s#]+)#[^\]\s]*\]/g) : []),
   ].filter((p, i, a) => a.indexOf(p) === i);
   // `Bun.file(path)` counts as reading it. `files.md` sends the model there for raw content
   // ("there is no read()"), so it is a DOCUMENTED path — and a documented path that produces
   // an unlabeled row is the same defect as an undocumented one. Seen:
   // `▸ 1 step · const content = await Bun.file("/private/tmp/…")`.
+  // Three spellings, because a program reads a file three ways in practice: the host verb,
+  // the `Bun.file` the prompt recommends, and `node:fs` — which models reach for whatever the
+  // prompt says. `readFileSync`/`readFile` are matched WITH a possible dot (`fs.readFileSync`)
+  // unlike the host names, because those two words mean the same thing on any object.
   const read = files(
-    /(?:(?<![.\w])(?:view|read)|Bun\.file)\s*\(\s*["'`]([^"'`]+)/g,
+    /(?:(?<![.\w])(?:view|read)|Bun\.file|readFileSync|readFile)\s*\(\s*["'`]([^"'`]+)/g,
   );
   if (wrote.length) bits.push(`${running ? "writing" : "wrote"} ${list(wrote)}`);
   if (read.length) bits.push(`${running ? "reading" : "read"} ${list(read)}`);
+  // A call whose path is a VARIABLE yields no name — `fs.readFileSync(filePath, "utf8")` —
+  // and naming nothing is not a reason to fall back to a line of source. Count it instead.
+  if (wrote.length === 0) {
+    const n = count(/(?:(?<![.\w])(?:write|edit)|writeFileSync|writeFile)\s*\(/g);
+    if (n) bits.push(`${running ? "writing" : "wrote"} ${plural(n, "file")}`);
+  }
+  if (read.length === 0) {
+    const n = count(/(?:(?<![.\w])view|Bun\.file|readFileSync|readFile)\s*\(/g);
+    if (n) bits.push(`${running ? "reading" : "read"} ${plural(n, "file")}`);
+  }
 
-  // `(?<![.\w])`, not `\b`: `\b` matches between a dot and a letter, so EVERY host-fn
-  // name also matched its member-call twin. Seen on screen: a program whose only host call
-  // was `artifact()` was headlined `collected subagent reports · published an artifact`,
-  // because it also contained `functions.join("\n")`. The same trap was waiting in
-  // `.write(` on a stream, `.search(` on a string, and `.view(`/`.ask(` on anything.
-  const count = (re: RegExp) => [...code.matchAll(re)].length;
   // `execSync`/`spawnSync`/`Bun.$` are running a command too. A program that reached for
   // `node:child_process` instead of `bash()` was unrecognized, so the header fell back to
   // source: `const { execSync } = require("node:child_process");`.
@@ -603,7 +628,13 @@ export function programSummary(code: string, max = 64, running = false): string 
   // earlier round, so they are named only when no spawn happens here.
   const agents = count(/(?<![.\w])(?:agent|spawn)\s*\(/g);
   if (agents) bits.push(`${agents} subagent${agents === 1 ? "" : "s"}`);
-  else if (count(/(?<![.\w])(?:join|adopt)\s*\(/g)) {
+  // `node:path` exports a BARE `join`, so a program that did
+  // `const { join } = await import("node:path")` was headlined "collected subagent reports".
+  // Requiring `await` does not separate them — the real delegation pattern is
+  // `Promise.all(ids.map((id) => join(id)))`, with no await in sight. What DOES separate them
+  // is the destructure: a program that pulled `join` out of `path` has shadowed the host verb
+  // and cannot be calling it.
+  else if (!shadowsJoin && count(/(?<![.\w])(?:join|adopt)\s*\(/g)) {
     bits.push(running ? "collecting subagent reports" : "collected subagent reports");
   }
   // `workflow(…)` starts one; `workflow.status(…)` asks after one already running.

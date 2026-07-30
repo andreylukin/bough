@@ -664,9 +664,27 @@ test("a step is headlined by what the program did, not by its first line of code
     programSummary('const t = await Bun.file("/w/src/order.py").text();'),
     "read order.py",
   );
+  // And `node:fs`, which models reach for whatever the prompt recommends. Seen:
+  // `▸ 1 step · const path = require('path');`
+  assert.equal(
+    programSummary('const fs = require("fs"); const t = fs.readFileSync("/w/src/a.py", "utf8");'),
+    "read a.py",
+  );
+  assert.equal(
+    programSummary('const { readFile } = await import("node:fs/promises");\n' +
+      'const t = await readFile("/w/src/b.py", "utf8");'),
+    "read b.py",
+  );
   assert.equal(
     programSummary('await write("src/a.ts", body); await bash("deno test");'),
     "wrote a.ts · ran 1 command",
+  );
+  // A write through `node:fs` is still a write. Subagent programs in this campaign reached
+  // for `mkdir` + `writeFile` rather than `write()`, and their rows showed source.
+  assert.equal(
+    programSummary('const { writeFile } = await import("node:fs/promises");\n' +
+      'await writeFile("/w/lib/slugify.py", body);'),
+    "wrote slugify.py",
   );
   // Several files collapse rather than running off the row.
   assert.equal(
@@ -687,6 +705,23 @@ test("a step is headlined by what the program did, not by its first line of code
   assert.equal(
     programSummary("const reports = await Promise.all(ids.map((id) => join(id)));"),
     "collected subagent reports",
+  );
+  // `node:path` exports a bare `join` too, and a program that destructured it was headlined
+  // "collected subagent reports". The destructure is the signal — the host verb is shadowed,
+  // so it cannot be the one being called. Requiring `await` would NOT work: the real
+  // delegation pattern is the `Promise.all(...map(...))` above, with no await in sight.
+  assert.equal(
+    programSummary('const { join } = await import("node:path");\n' +
+      'const p = join(dir, "a.py"); await bash(`ls ${p}`);'),
+    "ran 1 command",
+  );
+  // The STATIC import too — which is the spelling the model actually used, and the reason
+  // the first version of this fix did nothing on screen.
+  assert.equal(
+    programSummary('import { readFileSync } from "node:fs";\n' +
+      'import { join } from "node:path";\n' +
+      'const p = join(ws, "src/util.py"); const t = readFileSync(p, "utf8");'),
+    "read 1 file",
   );
   assert.equal(programSummary('await workflow("review", args);'), "ran a workflow");
   assert.equal(programSummary('await ask("which one?", ["a", "b"]);'), "asked you a question");
