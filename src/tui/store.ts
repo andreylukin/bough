@@ -1663,7 +1663,14 @@ export function createStore(deps: StoreDeps = {}): Store {
     async searchSessions(q: string) {
       try {
         const { hits } = await api.search(q, { limit: 60 });
-        return [...new Set(hits.map((h) => h.sessionId))];
+        // A hit inside a COLLAPSED session (a subagent, a workflow agent) is not a row the
+        // tree can show: those surface only under their spawner on drill-in (spec §4). The
+        // spawner IS the row, so the hit is attributed to it — otherwise "searches every
+        // message" quietly excluded every message a delegate ever wrote, which on a
+        // fan-out is most of them.
+        return [
+          ...new Set(hits.map((h) => (h.collapsed && h.originId ? h.originId : h.sessionId))),
+        ];
       } catch {
         return [];
       }

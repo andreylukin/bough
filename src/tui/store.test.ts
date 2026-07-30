@@ -1231,3 +1231,44 @@ test("the ask card shows only this conversation's holds — and its delegates'",
   // No conversation open: nothing may claim the composer.
   assert.equal(currentAsk({ ...state, currentId: null }), null);
 });
+
+/**
+ * The tree's `/` filter narrows TOP-LEVEL rows, and a subagent is not one — it surfaces
+ * only under its spawner on drill-in (spec §4). So a hit inside a delegate had no row to
+ * land on, and "searches every message" quietly excluded every message a delegate ever
+ * wrote — on a fan-out, most of them.
+ */
+test("a search hit inside a collapsed session is attributed to its spawner", async () => {
+  const hit = (over: Record<string, unknown>) => ({
+    messageId: "m1",
+    sessionId: "s1",
+    title: "t",
+    kind: "root",
+    collapsed: false,
+    role: "supervisor",
+    snippet: "…compound…",
+    createdAt: 1,
+    ...over,
+  });
+  const { api } = fakeApi({
+    search: () =>
+      Promise.resolve({
+        query: "q",
+        effectiveQuery: "q",
+        rewritten: false,
+        scope: null,
+        limit: 20,
+        count: 3,
+        hits: [
+          hit({ sessionId: "root-1" }),
+          hit({ sessionId: "agent-9", kind: "subagent", collapsed: true, originId: "root-2" }),
+          // A collapsed session with no origin is all bough knows — keep its own id
+          // rather than dropping the hit on the floor.
+          hit({ sessionId: "orphan-3", kind: "subagent", collapsed: true }),
+        ],
+      }),
+  });
+  const store = createStore({ api, stream: () => fakeStream().stream });
+  const ids = await store.searchSessions("compound");
+  assert.deepEqual(ids.sort(), ["orphan-3", "root-1", "root-2"]);
+});
