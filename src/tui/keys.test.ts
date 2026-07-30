@@ -361,13 +361,21 @@ test("the overlay documents the table and only the table", () => {
   // The `/` commands are their own section: the overlay is generated from chords, so
   // a command with no chord (`/compact`) was listed in the `/` popup and NOWHERE else,
   // while `?` claimed to be the place you find out what bough can do.
-  const commands = sections.find((s) => s.commands);
+  const commands = sections.find((s) => s.section === "typed at the prompt");
   assert.ok(commands, "the overlay lists the / commands");
   assert.deepEqual(
     commands.keys.map(([name]) => name),
     ["!cmd", "@path", ...SLASH_COMMANDS.map((c) => `/${c.name}`)],
   );
   assert.ok(commands.keys.every(([, desc]) => desc.length > 0));
+
+  // The tree's marks decide how every row in the switcher reads, and they were documented
+  // nowhere — not in the overlay, not in the keymap, not in the spec.
+  const marks = sections.find((s) => s.section === "marks in the tree");
+  assert.ok(marks, "the overlay explains the tree's glyphs");
+  for (const glyph of ["●", "↦", "⑂", "≣"]) {
+    assert.ok(marks.keys.some(([g]) => g.includes(glyph)), `${glyph} is unexplained`);
+  }
   // Every documented row carries a description; an empty one would render a key
   // with nothing beside it, which is how the old overlay rotted.
   for (const [chord, desc] of rows) {

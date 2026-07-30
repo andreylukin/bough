@@ -1499,6 +1499,21 @@ export function helpSections(bindings: Binding[] = BINDINGS): HelpSection[] {
       ...SLASH_COMMANDS.map((c) => [`/${c.name}`, c.desc] as [string, string]),
     ],
   });
+  // WHAT THE TREE'S MARKS MEAN. Six glyphs decide how every row in the switcher reads —
+  // and they were documented nowhere: not here, not in the keymap, not in the spec. A
+  // user who sees `⑂` or `↦` had no way to find out what it was.
+  out.push({
+    section: "marks in the tree",
+    commands: true,
+    keys: [
+      ["●", "a conversation you started"],
+      ["↦", "a fresh conversation handed off from another"],
+      ["⑂", "a fork — the same thread, cut at one turn"],
+      ["≣", "a compaction — a span replaced by a summary"],
+      ["◆ ◈", "a subagent · a workflow agent"],
+      ["⋯ ✓ ✗ ◼", "running · finished · failed · stopped by a restart"],
+    ],
+  });
   out.push(LIMITS, UNAVAILABLE);
   return out;
 }
