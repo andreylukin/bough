@@ -191,6 +191,35 @@ test("the cheap model is read per call, and defaults when unset", () => {
  * Refusing is better than a bad name: the session falls back to its workspace, which is
  * at least true.
  */
+/**
+ * The TUI names a conversation after the shell command that created it, so a `!`-only conversation
+ * is not "(untitled)" forever. This guard only ever replaced an EMPTY title, so one that went on
+ * to do real work stayed called `! ls -1 src` — seen on a fresh-install walk where the first thing
+ * typed was `!ls -1 src` and the second was a real task.
+ */
+test("a `! command` title is provisional and gets replaced by a real one", async () => {
+  const f = fixture({ title: () => Promise.resolve("Add a discount helper"), ghost: () => Promise.resolve(null), activity: () => Promise.resolve(null) } as unknown as CheapTier);
+  try {
+    // The TUI writes this when `!command` creates the conversation (`store.runShell`).
+    const provisional = await newSession(f, "! ls -1 src");
+    await post(f, provisional.id, "Add a discount(items, pct) helper to src/cart.py");
+    await settle();
+    await settle();
+    assert.equal(f.db.getSession(provisional.id)?.title, "Add a discount helper");
+
+    // A title the user or the cheap tier already chose is left alone: the provisional rule is only
+    // for the `! ` prefix the shell path writes.
+    const chosen = await newSession(f, "Pricing rewrite");
+    await post(f, chosen.id, "and now the shipping rules");
+    await settle();
+    await settle();
+    assert.equal(f.db.getSession(chosen.id)?.title, "Pricing rewrite");
+  } finally {
+    f.stop();
+    f.db.close();
+  }
+});
+
 test("sanitizeTitle refuses a title that carries no information", () => {
   assert.equal(sanitizeTitle("1"), "");
   assert.equal(sanitizeTitle("42"), "");

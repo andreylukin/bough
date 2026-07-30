@@ -282,7 +282,13 @@ export function maybeAutoTitle(
   if (!text.trim()) return;
 
   const session: Session | undefined = ctx.db.getSession(sessionId);
-  if (!session || session.title !== placeholder) return;
+  // A `! command` title is PROVISIONAL. The TUI names a conversation after the shell command that
+  // created it (`store.runShell`, so a shell-only conversation is not "(untitled)" forever) — and
+  // this guard, which only ever replaced an EMPTY title, then left a conversation that went on to
+  // do real work permanently called `! ls -1 src`. Seen on a fresh-install walk: the first thing
+  // typed was `!ls -1 src`, the second was a real task, and the header still said the former.
+  const provisional = session?.title.startsWith("! ") === true;
+  if (!session || (session.title !== placeholder && !provisional)) return;
 
   const inflight = opts.inflight;
   if (inflight?.has(sessionId)) return;
@@ -294,7 +300,12 @@ export function maybeAutoTitle(
   Promise.resolve(cheap.title(text.slice(0, TITLE_MAX_INPUT)))
     .then((title) => {
       if (!title) return;
-      if (ctx.db.getSession(sessionId)?.title !== placeholder) return;
+      // The SAME provisional rule as the guard above — re-checked here because the title may
+      // have been set while the cheap call was in flight, and missing it here is why the first
+      // version of this fix did nothing: a `! command` title passed the entry guard and was then
+      // rejected on the way out.
+      const now = ctx.db.getSession(sessionId)?.title;
+      if (now !== placeholder && !(now?.startsWith("! ") === true)) return;
       ctx.db.setSessionTitle(sessionId, title);
       const updated = ctx.db.getSession(sessionId);
       if (updated) ctx.bus.publish({ type: "session.updated", sessionId, data: updated });
