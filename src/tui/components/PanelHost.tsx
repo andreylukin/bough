@@ -1042,17 +1042,21 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
   }, [state.workflows, sel, wfOpen, armedStop, steer, controls.stopWorkflow]);
 
   /**
-   * `x` in the changes tab. Arms a revert, or widens an armed one to the whole change
-   * set — the escalation the second press performs is spelled out on screen before it
-   * is available, and it is still one more ⏎ away from happening.
+   * `x` in the changes tab: arm a revert of the file under the cursor. Idempotent.
+   *
+   * A SECOND `x` USED TO WIDEN THE SCOPE TO EVERY CHANGED FILE, and that was a trap
+   * built out of bough's own idioms. The rail's destructive key is `x x` — arm, then
+   * confirm with the same key — so a user arriving here with that reflex pressed `x`
+   * twice and landed on "revert all 3 files", one ⏎ from throwing away the whole
+   * session's work, having asked for one file. The escalation was on screen, but the
+   * gesture that produced it was the one they had been taught means "yes".
+   *
+   * Nothing is lost by removing it: `X` is bound to exactly that scope, says so in the
+   * keymap and in the tab's own footer, and still needs its own ⏎.
    */
   const armRevert = useCallback(() => {
     if (changes.length === 0) return;
-    if (pendingRevert?.scope === "file") {
-      if (changes.length > 1) setPendingRevert({ scope: "all" });
-      return;
-    }
-    if (pendingRevert) return; // already at the widest scope there is
+    if (pendingRevert) return;
     const item = changes[sel];
     if (item) setPendingRevert({ scope: "file", item });
   }, [changes, sel, pendingRevert]);

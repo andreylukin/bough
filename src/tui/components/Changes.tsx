@@ -333,7 +333,11 @@ function RevertConfirm(
       <text wrapMode="none">
         <span fg={palette.warn}>⏎ revert it</span>
         <span attributes={TextAttributes.DIM}>
-          {items.length > 1 ? `  ·  x widen to all ${items.length} files` : ""}
+          {/* `X`, not a second `x`. The escalation used to ride the second `x` — the
+              same gesture the rail teaches as "arm, then confirm" — so the reflex
+              landed on "revert all N files" one ⏎ from wiping the session's work
+              (`PanelHost.tsx`). The capital is a separate key and a separate decision. */}
+          {items.length > 1 ? `  ·  X all ${items.length} files` : ""}
           {"  ·  esc cancel"}
         </span>
       </text>
