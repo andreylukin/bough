@@ -40,6 +40,7 @@ BOUGH_DIR = "/opt/bough"
 BOUGH_HOME = "/opt/bough-home"
 TRACE_DIR = "/opt/bough-trace"
 PORT = "4321"
+MODEL_DEFAULT = "openai/gpt-5.6-luna"
 
 
 class Bough(BaseInstalledAgent):
@@ -97,6 +98,17 @@ class Bough(BaseInstalledAgent):
             ),
         )
 
+        # The destination's parent must exist FIRST: `docker compose cp` does not
+        # create it, and the failure reads "Could not find the file /opt/bough in
+        # container" — which looks like a missing source, not a missing target. An
+        # 89-task run scored 52 straight zeros on this, every one of them a bough
+        # that was never installed rather than a task it could not do.
+        await self.exec_as_root(
+            environment,
+            command=f"mkdir -p {BOUGH_DIR} {BOUGH_HOME} {TRACE_DIR} && "
+                    f"chmod 777 {BOUGH_HOME} {TRACE_DIR}",
+        )
+
         repo = os.environ.get("BOUGH_REPO", "/Users/andrey/repos/bough")
         await environment.upload_dir(source_dir=repo + "/src", target_dir=BOUGH_DIR + "/src")
         for f in ("package.json", "bun.lock", "bunfig.toml", "tsconfig.json"):
@@ -107,9 +119,12 @@ class Bough(BaseInstalledAgent):
             environment,
             command=f"cd {BOUGH_DIR} && bun install --frozen-lockfile",
         )
+        # Prove the install actually landed. Without this the next failure surfaces
+        # much later as "bough server did not start", which reads like a bough bug
+        # rather than an upload that silently put nothing there.
         await self.exec_as_root(
             environment,
-            command=f"mkdir -p {BOUGH_HOME} {TRACE_DIR} && chmod 777 {BOUGH_HOME} {TRACE_DIR}",
+            command=f"test -f {BOUGH_DIR}/src/server/main.ts && test -d {BOUGH_DIR}/node_modules",
         )
 
     @with_prompt_template
@@ -145,7 +160,12 @@ class Bough(BaseInstalledAgent):
             env=env,
         )
 
-        model = (self.model_name or "claude-haiku-4-5").split("/")[-1]
+        # Pass the id through UNCHANGED. bough routes by the id itself — a bare
+        # name goes to Anthropic, `vendor/model` to OpenRouter, `openai:` to OpenAI
+        # (llm/client.ts providerFor) — so stripping the prefix the way most
+        # adapters do sent `openai/gpt-5.6-luna` to Anthropic as `gpt-5.6-luna`
+        # and every trial died on a 404.
+        model = self.model_name or MODEL_DEFAULT
         workdir = self._get_env("BOUGH_WORKDIR") or "/app"
         result = await self.exec_as_agent(
             environment,
