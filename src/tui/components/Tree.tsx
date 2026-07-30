@@ -41,6 +41,10 @@ const KIND_GLYPH: Record<SessionKind, string> = {
   fork: "⑂",
   compaction: "≣",
   subagent: "◆",
+  // NOTHING CREATES THIS KIND. A workflow agent is launched by `launchSubagent`, so its
+  // session is kind `subagent` (`workflow/control.ts` documents the delta). Kept because the
+  // schema still has the value and this map must be total over it — but the help no longer
+  // advertises the glyph, since a legend cannot promise a mark the tree never draws.
   workflow_agent: "◈",
 };
 

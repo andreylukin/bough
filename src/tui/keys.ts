@@ -1577,7 +1577,13 @@ export function helpSections(bindings: Binding[] = BINDINGS): HelpSection[] {
       ["↦", "a fresh conversation handed off from another"],
       ["⑂", "a fork — the same thread, cut at one turn"],
       ["≣", "a compaction — a span replaced by a summary"],
-      ["◆ ◈", "a subagent · a workflow agent"],
+      // ONE GLYPH, because there is one kind. A workflow agent's session is created by
+      // `launchSubagent`, so its kind is `subagent` — `workflow/control.ts` says so — and
+      // `◈` could never render. A legend promising a mark the tree cannot draw is the same
+      // defect as one naming an unbound key, and a delegator persona duly reported that
+      // workflow agents and ad-hoc ones look identical. They are identical; the legend was
+      // the thing that was wrong.
+      ["◆", "a subagent — including a workflow's own agents"],
       ["⋯ ✓ ✗ ◼", "running · finished · failed · stopped by a restart"],
     ],
   });
