@@ -657,6 +657,13 @@ test("a step is headlined by what the program did, not by its first line of code
     "ran 1 command",
   );
   assert.equal(programSummary('console.log(await view("/tmp/x/app.mjs"));'), "read app.mjs");
+  // `Bun.file` is where `files.md` sends the model for raw content ("there is no read()"), so
+  // a program using it was following instructions and still got a source line for a header:
+  // `▸ 1 step · const content = await Bun.file("/private/tmp/…")`.
+  assert.equal(
+    programSummary('const t = await Bun.file("/w/src/order.py").text();'),
+    "read order.py",
+  );
   assert.equal(
     programSummary('await write("src/a.ts", body); await bash("deno test");'),
     "wrote a.ts · ran 1 command",

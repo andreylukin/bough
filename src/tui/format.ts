@@ -556,7 +556,13 @@ export function programSummary(code: string, max = 64, running = false): string 
     ...files(/(?<![.\w])(?:write|edit)\s*\(\s*["'`]([^"'`]+)/g),
     ...(/\bpatch\s*\(/.test(code) ? files(/\[([^\]\s#]+)#[^\]\s]*\]/g) : []),
   ].filter((p, i, a) => a.indexOf(p) === i);
-  const read = files(/(?<![.\w])(?:view|read)\s*\(\s*["'`]([^"'`]+)/g);
+  // `Bun.file(path)` counts as reading it. `files.md` sends the model there for raw content
+  // ("there is no read()"), so it is a DOCUMENTED path — and a documented path that produces
+  // an unlabeled row is the same defect as an undocumented one. Seen:
+  // `▸ 1 step · const content = await Bun.file("/private/tmp/…")`.
+  const read = files(
+    /(?:(?<![.\w])(?:view|read)|Bun\.file)\s*\(\s*["'`]([^"'`]+)/g,
+  );
   if (wrote.length) bits.push(`${running ? "writing" : "wrote"} ${list(wrote)}`);
   if (read.length) bits.push(`${running ? "reading" : "read"} ${list(read)}`);
 
