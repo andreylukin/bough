@@ -1688,7 +1688,9 @@ export function App(
           busy={busy}
           width={cols}
           maxRows={composerRows}
-          keyboardOwner={`the ${panel.tab}`}
+          // `the ${tab}` produced "the changes has the keyboard" and "the mcp has the
+          // keyboard" — only the tree reads as a noun on its own.
+          keyboardOwner={panel.tab === "tree" ? "the tree" : `the ${panel.tab} tab`}
         />
         {status}
         <SelectionLayer />
