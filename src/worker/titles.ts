@@ -166,6 +166,11 @@ export function sanitizeTitle(raw: string): string {
   const line = raw.trim().split("\n").map((l) => l.trim()).find((l) => l.length > 0) ?? "";
   const cleaned = line
     .replace(/^(title\s*:)\s*/i, "")
+    // MARKDOWN LEADERS. A live row read `# Big Python File Creation`: asked for a short
+    // title, a small model answers with a heading or a bullet, and the marker rode all the
+    // way into the tree — it also masked the casing fix below, since `#` is not prose. The
+    // quote-stripping right after this never saw them.
+    .replace(/^\s*(#{1,6}|[-*•])\s+/, "")
     .replace(/^["'“”`*]+|["'“”`*.]+$/g, "")
     .trim();
   if (cleaned === "") return "";

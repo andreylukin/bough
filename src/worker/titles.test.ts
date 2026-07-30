@@ -519,3 +519,12 @@ test("sanitizeTitle lowers the model's Title Case so the tree reads as one colum
   // Already sentence case: untouched.
   assert.equal(sanitizeTitle("Image input support"), "Image input support");
 });
+
+test("sanitizeTitle drops a markdown leader the model decorated with", () => {
+  // Live row: `# Big Python File Creation`. The marker also masked the casing rewrite.
+  assert.equal(sanitizeTitle("# Big Python File Creation"), "Big python file creation");
+  assert.equal(sanitizeTitle("### Fix the parser"), "Fix the parser");
+  assert.equal(sanitizeTitle("- Add retry logic"), "Add retry logic");
+  // A `#` that is part of the name, not a leader, stays put.
+  assert.equal(sanitizeTitle("Fix #412 in the parser"), "Fix #412 in the parser");
+});
