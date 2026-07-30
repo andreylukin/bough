@@ -49,20 +49,38 @@ require_bun() {
 LABEL="com.bough.server"
 
 # The server runs as you, in your own account, via a per-user LaunchAgent.
-# State lives under ~/.bough.
-BOUGH_HOME="$HOME/.bough"
+# State lives under ~/.bough, unless the caller says otherwise. It used to be a bare
+# assignment, which OVERWROTE an exported BOUGH_HOME one line after the header comment
+# promises this script honours `BOUGH_*` settings — so `BOUGH_HOME=/tmp/x bough` silently
+# attached to the main install instead of the profile the user asked for.
+BOUGH_HOME="${BOUGH_HOME:-$HOME/.bough}"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 DOMAIN="gui/$(id -u)"
 
 LOG_FILE="$BOUGH_HOME/server.log"
 ENV_FILE="$BOUGH_HOME/env"
 
-mkdir -p "$HOME/.bough"
+mkdir -p "$BOUGH_HOME"
 if [ -f "$ENV_FILE" ] && [ -r "$ENV_FILE" ]; then
+  # THE CALLER'S ENVIRONMENT WINS OVER THE FILE. `set -a` + `.` exports every assignment
+  # in the file over whatever was already exported, so `BOUGH_PORT=4327 bough` connected
+  # to 4321 anyway — the file's value beat the flag, which is backwards for a config file
+  # and gave no sign it had happened. Snapshotted and restored around the source, for the
+  # settings the header comment actually documents.
+  _pre_port="${BOUGH_PORT-}"
+  _pre_model="${BOUGH_MODEL-}"
+  _pre_effort="${BOUGH_EFFORT-}"
   set -a
   # shellcheck source=/dev/null
   . "$ENV_FILE"
   set +a
+  # `if`, not `[ … ] && …`: under `set -e` a failing test as the last command of this
+  # block would abort the script, which is a spectacular way to break `bough` for anyone
+  # who has not set the variable.
+  if [ -n "$_pre_port" ]; then BOUGH_PORT="$_pre_port"; fi
+  if [ -n "$_pre_model" ]; then BOUGH_MODEL="$_pre_model"; fi
+  if [ -n "$_pre_effort" ]; then BOUGH_EFFORT="$_pre_effort"; fi
+  unset _pre_port _pre_model _pre_effort
 fi
 PORT="${BOUGH_PORT:-4321}"
 
