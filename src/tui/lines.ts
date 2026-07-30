@@ -27,7 +27,8 @@
  * Ported from `src/tui/lines.ts`. Gone with the rewrite: the `prose` part kind and
  * the check-passed hue on subagent cards (there is no acceptance gate — spec §17).
  */
-import type { BackgroundJob, Message, Role, WorkflowStatus } from "../schema/parts.ts";
+import type { BackgroundJob, Message, Role, SessionKind, WorkflowStatus } from "../schema/parts.ts";
+import { isDelegated } from "./forest.ts";
 import {
   accent,
   bold,
@@ -504,6 +505,12 @@ export interface Branch {
  * the part with rules in it — which status counts, where the card is drawn, what happens
  * to a note with no session — so it belongs where those rules can be asserted directly.
  *
+ * DELEGATED CHILDREN ONLY — the same lineage rule the rail states and that I failed to
+ * apply here: `originId` also holds forks, compactions and handoffs, so a handoff of this
+ * conversation was rendered as `◆ handoff · Banana Word Challenge ✓ done`, a sibling
+ * conversation dressed up as a subagent's report. A branch belongs in the tree; only
+ * delegated work reports back into a transcript.
+ *
  * A note whose session is NOT among the children still yields nothing here, and that is
  * deliberate: `buildLines` drops a raw note only when a branch is present to replace it,
  * so the report still reaches the reader as the note rather than vanishing.
@@ -513,6 +520,7 @@ export function branchesFrom(
   children: readonly {
     id: string;
     title: string;
+    kind: SessionKind;
     busy: boolean;
     lastTurnStatus?: string;
     outcomeOk?: boolean | null;
@@ -528,7 +536,7 @@ export function branchesFrom(
     if (note) notes.set(note.sessionId, note);
   }
   const settled = ["done", "error", "interrupted", "orphaned"] as const;
-  return children.map((row) => {
+  return children.filter((row) => isDelegated(row.kind)).map((row) => {
     const status = settled.find((s) => s === row.lastTurnStatus);
     const note = notes.get(row.id);
     return {

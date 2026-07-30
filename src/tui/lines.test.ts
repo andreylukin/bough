@@ -777,6 +777,7 @@ test("branchesFrom pairs a spawned child with its report note", () => {
   const child = {
     id: "agent-1",
     title: "subagent · create mango.py",
+    kind: "subagent" as const,
     busy: false,
     lastTurnStatus: "done",
     outcomeOk: true,
@@ -806,7 +807,7 @@ test("branchesFrom reports a running child as running, and leaves an unpaired no
   const thread = [msg({ id: "n1", role: "system", parts: [{ type: "text", text: noteText }] })];
 
   // `running` is not a settled status and must not be reported as one.
-  const [live] = branchesFrom([], [{ id: "a", title: "t", busy: true, lastTurnStatus: "running" }]);
+  const [live] = branchesFrom([], [{ id: "a", title: "t", kind: "subagent", busy: true, lastTurnStatus: "running" }]);
   assert.equal(live.status, undefined);
   assert.equal(live.busy, true);
   assert.equal(live.ok, undefined);
@@ -814,6 +815,16 @@ test("branchesFrom reports a running child as running, and leaves an unpaired no
   // A note whose session is not among the children yields no branch — so `buildLines`
   // keeps the raw note, and the report reaches the reader rather than vanishing.
   assert.deepEqual(branchesFrom(thread, []), []);
+
+  // DELEGATED KINDS ONLY. `originId` also holds forks, compactions and handoffs, so a
+  // handoff of this conversation rendered as `◆ handoff · … ✓ done` — a sibling
+  // conversation dressed as a subagent's report. Caught by switching conversations while
+  // a fan-out ran, which is also how the ask leak was caught.
+  const sibling = { id: "hand-1", title: "handoff · x", busy: false, lastTurnStatus: "done" };
+  assert.deepEqual(branchesFrom([], [{ ...sibling, kind: "root" }]), []);
+  assert.deepEqual(branchesFrom([], [{ ...sibling, kind: "fork" }]), []);
+  assert.deepEqual(branchesFrom([], [{ ...sibling, kind: "compaction" }]), []);
+  assert.equal(branchesFrom([], [{ ...sibling, kind: "workflow_agent" }]).length, 1);
   const text = joined(buildLines(thread, () => false, () => false, 100, { branches: [] }));
   assert.ok(text.includes("[subagent finished]"), text);
 });
