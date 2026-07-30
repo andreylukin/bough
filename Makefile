@@ -10,3 +10,4 @@ check: ## Typecheck
 
 test: ## Run tests
 	bun test
+	bun test ./ahe   # bunfig pins the runner's root to ./src (see bunfig.toml)

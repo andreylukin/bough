@@ -10,3 +10,5 @@ __pycache__/
 scripts/guest-image/golden-rootfs/
 *.smolmachine
 
+ahe/state/
+ahe/runs/
