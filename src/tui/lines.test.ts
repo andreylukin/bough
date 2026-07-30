@@ -545,6 +545,27 @@ test("job cards: a running shell looks alive, an exited one states its outcome",
   // Every card row is a door INTO that job — `job:<session>:<id>`, which `App`
   // resolves. The old target was the bare word "jobs" and nothing handled it.
   assert.ok(out.every((l) => l.click?.startsWith("job:s1:bg_") || l.text.trim() === ""));
+
+  // A JOB THE USER KILLED IS NOT A JOB THAT SUCCEEDED. `exitCode` is null for a signalled
+  // process and `?? 0` read that as success, so `x x` on a running shell produced
+  // `⚙ sleep 120 ✓ done` — a green tick on the thing cancelled two seconds earlier.
+  const killed: JobView = {
+    ...running,
+    id: "bg_3",
+    status: "exited",
+    exitCode: null,
+    signal: "SIGTERM",
+    exitedAt: now,
+    tail: [],
+    outputLines: 0,
+  };
+  const killedText = joined((() => {
+    const o: VLine[] = [];
+    jobCardLines(o, killed, 80, now);
+    return o;
+  })());
+  assert.ok(killedText.includes("◼ stopped (SIGTERM)"), killedText);
+  assert.equal(killedText.includes("✓ done"), false, killedText);
 });
 
 /**

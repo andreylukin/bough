@@ -838,6 +838,7 @@ function jobInfo(shell: Shell): BackgroundJob {
     command: shell.command,
     status: shell.status === null ? "running" : "exited",
     exitCode: shell.status?.code ?? null,
+    signal: shell.status?.signal ?? null,
     startedAt: shell.startedAt,
     exitedAt: shell.endedAt,
   };

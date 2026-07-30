@@ -738,6 +738,10 @@ function fmtElapsed(ms: number): string {
 
 function jobStatusText(job: JobView): string {
   if (job.status === "running") return warn("⋯ running");
+  // A SIGNALLED JOB IS NOT A FINISHED ONE. `exitCode` is null for a signalled process and
+  // `?? 0` read that as success, so a shell the user had just stopped with `x x` reported
+  // `✓ done` — a green tick on the thing they had cancelled two seconds earlier.
+  if (job.signal) return warn(`◼ stopped (${job.signal})`);
   return (job.exitCode ?? 0) === 0 ? accent("✓ done") : danger(`✗ exit ${job.exitCode}`);
 }
 
@@ -749,7 +753,7 @@ function jobStatusText(job: JobView): string {
 export function jobCardLines(out: VLine[], job: JobView, w: number, now: number) {
   const inner = w - 2;
   const body: VLine[] = [];
-  const glyph = job.status === "running"
+  const glyph = job.status === "running" || job.signal
     ? warn("⚙")
     : (job.exitCode ?? 0) === 0
     ? accent("⚙")

@@ -594,6 +594,24 @@ test("a rail row attributes elapsed, tokens and spend to ONE unit", () => {
     // The detail is the only thing that clips, and it is dropped whole rather than
     // rendered as an ellipsis when there is no room: the numbers are the message.
     assert.equal(unitLine(shell, 20), "⚙ bg_7  2m12s");
+    // A job started with `!` is NAMED after its command, so the title and the detail were
+    // the same string and the rail read `⚙ sleep 120  5s · sleep 120` — the same six
+    // characters twice with the numbers wedged between them.
+    assert.equal(
+      unitLine({ ...shell, title: "sleep 120", detail: "sleep 120" }, 80),
+      "⚙ sleep 120  2m12s",
+    );
+    // Still dropped when the clipped title is a prefix of it: the extra words are the
+    // part that got clipped, not new information.
+    assert.equal(
+      unitLine({ ...shell, title: "a".repeat(40), detail: "a".repeat(40) }, 80),
+      `⚙ ${"a".repeat(28)}…  2m12s`,
+    );
+    // A detail that says something the title does not still shows.
+    assert.equal(
+      unitLine({ ...shell, title: "bg_7", detail: "npm run dev" }, 80),
+      "⚙ bg_7  2m12s · npm run dev",
+    );
   });
 });
 

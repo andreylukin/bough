@@ -1315,7 +1315,19 @@ export function unitLine(u: LiveUnit, cols: number): string {
   // Two spaces separate the name from the numbers; the detail takes whatever is left
   // and is dropped entirely rather than rendered as an ellipsis on its own.
   const room = cols - width(`${glyph} ${name}`) - width(tail) - 6;
-  const detail = u.detail && room >= 8 ? dim(` · ${clip(u.detail, room)}`) : "";
+  // A DETAIL THAT REPEATS THE NAME IS NOT CONTEXT. A background shell's title and detail
+  // are both its command line, so the rail read
+  //
+  //   ⚙ sleep 120  5s · sleep 120
+  //
+  // — the same six characters twice, with the numbers wedged between them. The field is
+  // there for a unit whose detail says something the title does not (a subagent's task
+  // under its label); when it does not, the row is better without it.
+  // Compared against the UNCLIPPED title: `name` may carry a trailing ellipsis, which no
+  // detail starts with, so comparing to it silently never matched.
+  const repeats = u.detail !== null && u.detail !== undefined &&
+    (u.detail === u.title || u.detail.startsWith(u.title));
+  const detail = u.detail && room >= 8 && !repeats ? dim(` · ${clip(u.detail, room)}`) : "";
   return `${hue(glyph)} ${name}  ${dim(tail)}${detail}`;
 }
 

@@ -314,6 +314,15 @@ export const BackgroundJob = z.object({
   command: z.string(),
   status: z.enum(["running", "exited"]),
   exitCode: z.number().nullish(),
+  /**
+   * The signal that ended it, when one did — `"SIGTERM"` for a job the user killed.
+   *
+   * The row used to carry only `exitCode`, which is null for a signalled process, and the
+   * transcript card reads `(exitCode ?? 0) === 0` as success — so a shell the user had just
+   * stopped with `x x` reported `✓ done`. The kill path knew the signal all along
+   * (`hostfn/jobs.ts` reports it in band); it simply never reached the wire.
+   */
+  signal: z.string().nullish(),
   startedAt: z.number(),
   exitedAt: z.number().nullish(),
 });

@@ -1593,7 +1593,11 @@ export function App(
           setArmedStop(u.id);
           return store.notify(
             u.kind === "shell"
-              ? `x again to kill ${u.title} — ${u.detail ?? "background shell"}`
+              // The detail is dropped when it only repeats the title: a `!`-started job is
+              // NAMED after its command, so this read `x again to kill sleep 120 — sleep 120`.
+              ? `x again to kill ${u.title}${
+                u.detail && u.detail !== u.title ? ` — ${u.detail}` : ""
+              }`
               : `x again to stop ${u.title} — work in flight is lost`,
           );
         }
