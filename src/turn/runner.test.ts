@@ -31,6 +31,7 @@ import {
   beginTurn,
   createTurnStarter,
   DEFAULT_MODEL,
+  friendlyTurnError,
   MAX_STOP_NUDGES,
   type ProgramRun,
   RUN_STEPS,
@@ -653,4 +654,26 @@ test("a caller's own notes are kept, and the workspace note leads", async () => 
   assert.ok(notes[1].startsWith("## Scratchpad"));
   assert.ok(notes[1].includes(f.session.id), "the scratchpad note names THIS session's dir");
   assert.ok(notes[2].includes("no emoji"), "a caller's notes must survive");
+});
+
+test("an auth failure names the environment variable, because there is no keys panel", () => {
+  // Walked as a first-run persona with a bad key: the very first screen said "update it in
+  // the keys panel". There is no keys panel — `ModelPicker.tsx` states in its header that
+  // the API-keys section was never ported, since keys are environment variables here and
+  // there is no `/config/keys` route to write to. A message naming a surface that does not
+  // exist is the same defect as a legend naming a key that is not bound, on the one screen
+  // where the reader has nothing else to go on.
+  const rejected = new Error("invalid x-api-key");
+  const missing = new Error("Could not resolve authentication method");
+
+  assert.match(friendlyTurnError(rejected, "claude-haiku-4-5"), /ANTHROPIC_API_KEY/);
+  assert.match(friendlyTurnError(missing, "claude-haiku-4-5"), /ANTHROPIC_API_KEY/);
+  // Per provider, from the same map the client reads keys with.
+  assert.match(friendlyTurnError(rejected, "openai:gpt-5"), /OPENAI_API_KEY/);
+  assert.match(friendlyTurnError(rejected, "meta/llama-3"), /OPENROUTER_API_KEY/);
+  // And nothing still points at the panel.
+  for (const m of ["claude-haiku-4-5", "openai:gpt-5", "meta/llama-3"]) {
+    assert.equal(friendlyTurnError(rejected, m).includes("keys panel"), false);
+    assert.equal(friendlyTurnError(missing, m).includes("keys panel"), false);
+  }
 });

@@ -47,7 +47,7 @@
  */
 import { z } from "zod";
 import { ContextOverflowError } from "../errors.ts";
-import { clientFor, errName } from "../llm/client.ts";
+import { API_KEY_ENV, clientFor, errName } from "../llm/client.ts";
 import { contextWindowFor } from "../llm/pricing.ts";
 import { ensureScratchDir } from "../scratch.ts";
 import { createFileHostFns } from "../hostfn/files.ts";
@@ -972,17 +972,22 @@ function indexQuietly(db: Db, _sessionId: string, messageId: string): void {
  */
 export function friendlyTurnError(err: unknown, model: string): string {
   const msg = (err as Error)?.message ?? String(err);
-  const provider = model.startsWith("openai:")
-    ? "OpenAI"
-    : model.includes("/")
-    ? "OpenRouter"
-    : "Anthropic";
+  const openai = model.startsWith("openai:");
+  const openrouter = !openai && model.includes("/");
+  const provider = openai ? "OpenAI" : openrouter ? "OpenRouter" : "Anthropic";
+  // THE ENV VAR, BECAUSE THERE IS NO KEYS PANEL. Both messages below used to send the
+  // reader to one; `ModelPicker.tsx` says in its header that the API-keys section was
+  // never ported, since keys are environment variables in this tree and there is no
+  // `/config/keys` route to write to. So the very first screen a new user with a bad key
+  // saw named a surface that does not exist — the same defect as a legend naming a key
+  // that is not bound, on the one screen where the reader has nothing else to go on.
+  const envVar = API_KEY_ENV[openai ? "openai" : openrouter ? "openrouter" : "anthropic"];
 
   if (/Could not resolve authentication method|apiKey or authToken|API_KEY is not set/i.test(msg)) {
-    return `No ${provider} API key set — add one in the keys panel.`;
+    return `No ${provider} API key set — export ${envVar} and restart the bough server.`;
   }
   if (/invalid x-api-key|authentication_error|Incorrect API key/i.test(msg)) {
-    return `${provider} rejected the API key — update it in the keys panel.`;
+    return `${provider} rejected the key in ${envVar} — fix it and restart the bough server.`;
   }
   const http = /:\s*(\d{3})\s+([\s\S]+)$/.exec(msg);
   if (http) {
