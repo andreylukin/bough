@@ -1621,8 +1621,12 @@ export function createStore(deps: StoreDeps = {}): Store {
         await reload();
         dispatch({
           type: "notice",
+          // `^t`, NOT `^f`. The composer-owned chords (^f ^d ^w ^k) are guarded on an
+          // empty draft because they are also line-editing keys — and a handoff ALWAYS
+          // lands with a draft in the composer, so this notice named the one key that
+          // could not work at the one moment it was shown.
           notice: "handed off to a fresh conversation — read the draft, edit it, then send. " +
-            "The old thread is untouched (^f)",
+            "The old thread is untouched: ^t opens the tree",
         });
         return session.draft ?? null;
       } catch (error) {
