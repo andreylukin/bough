@@ -112,6 +112,7 @@ export type Command =
    * A separate command from `tab.tree` because the landing row is the whole point.
    */
   | "tree.rewind"
+  | "tree.extract"
   /**
    * Start a fresh root conversation.
    *
@@ -1310,6 +1311,20 @@ export const BINDINGS: Binding[] = [
     not: ["panelFiltering"],
     section: "the workflows tab",
     desc: "open this agent's session",
+  },
+
+  // -- the tree tab ---------------------------------------------------------
+  // The server has had `POST /sessions/:id/extract` since the port with no key on it.
+  // `⏎` on a turn FORKS (keep the prefix, redo from here); `e` is the other half —
+  // keep the SUFFIX, as its own conversation — and neither destroys anything.
+  {
+    mode: "panel",
+    chord: "e",
+    command: "tree.extract",
+    tab: ["tree"],
+    not: ["panelFiltering"],
+    section: "the tree tab",
+    desc: "split here — this turn on becomes its own conversation",
   },
 
   // -- the changes tab (spec §7) --------------------------------------------

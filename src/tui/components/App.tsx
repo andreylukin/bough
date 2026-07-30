@@ -67,6 +67,7 @@ import {
   applyCompletion,
   linkAt,
   meterLine,
+  plural,
   urlAcross,
   rankCompletions,
   wrapLine,
@@ -948,6 +949,28 @@ export function App(
     [store],
   );
 
+  /**
+   * `extract`, executed. The complement of `forkAt`: fork keeps the prefix and redoes it,
+   * extract keeps the SUFFIX as a fresh root. Lives here rather than in a `controls`
+   * thunk only because the result has to be opened, same as fork.
+   */
+  const extractFrom = useCallback(
+    async (sessionId: string, picks: { messageId: string }[]) => {
+      try {
+        const res = await api.extract(sessionId, { picks });
+        await store.open(res.session.id);
+        // Said out loud because the source is untouched and the screen has just changed
+        // conversations: without it, "e" looks like it MOVED the turns out.
+        store.notify(
+          `split into a new conversation — ${plural(picks.length, "turn")} copied, the original kept its own`,
+        );
+      } catch (error) {
+        store.notify(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [store],
+  );
+
   // ---- the frame -----------------------------------------------------------
   // Three fixed regions and one growing one: header, then the growing region
   // (transcript or panel), then the rail, the composer and the status row pinned
@@ -1021,7 +1044,7 @@ export function App(
     rows: panelRows,
     cols,
     now: now(),
-    controls: { ...controls, forkAt },
+    controls: { ...controls, forkAt, extractFrom },
     models,
     ...(theme ? { theme } : {}),
     // The raw material for the ONE tree. `PanelHost` folds it into rows because it

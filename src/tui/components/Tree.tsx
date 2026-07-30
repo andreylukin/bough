@@ -152,12 +152,23 @@ export interface TreeProps {
   workspace?: string | null;
   /** Columns available, so the legend degrades instead of being cut mid-word. */
   cols?: number;
+  /**
+   * A refusal or a result, from the panel host's `message` state.
+   *
+   * The tree was the one tab that was never handed it — the same bug the workflows tab
+   * had and whose fix is commented at that call site. So `e` on a conversation row (it
+   * splits at a TURN) and `esc esc` with nothing open ("there is no turn to go back to")
+   * both computed a sentence and dropped it, and the key looked simply dead.
+   */
+  message?: string | null;
 }
 
 export function Tree(
-  { rows: items, selected, height, filter, filtering, workspace, cols }: TreeProps,
+  { rows: items, selected, height, filter, filtering, workspace, cols, message }: TreeProps,
 ) {
-  const chrome = filtering || filter ? 1 : 0;
+  // The message takes a row from the list, like the filter echo above it — otherwise it
+  // is drawn on top of one, or past the tab's budget.
+  const chrome = (filtering || filter ? 1 : 0) + (message ? 1 : 0);
   const { start, height: shown } = forestWindow(items.length, selected, height, chrome);
   const window = items.slice(start, start + shown);
   return (
@@ -274,10 +285,12 @@ export function Tree(
           "→← turns",
           "⏎ open",
           "⏎ on a turn forks",
+          "e splits",
           "/ find",
           "esc back",
         ], cols)}
       </text>
+      {message ? <text fg={UI.warn} wrapMode="none">{message}</text> : null}
     </box>
   );
 }

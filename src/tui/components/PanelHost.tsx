@@ -194,6 +194,12 @@ export interface PanelControls {
     body: { atMessageId: string; exclusive?: boolean; summarizeAbandoned?: boolean },
     editorText?: string,
   ) => Promise<void>;
+  /**
+   * `POST /sessions/:id/extract` — copy this turn and every later turn of its thread
+   * into a fresh ROOT, and open it. A copy, never a move: the source keeps everything
+   * (`history/extract.ts`).
+   */
+  extractFrom?: (sessionId: string, picks: { messageId: string }[]) => Promise<void>;
   /** `GET /sessions?originId=` — delegated children, for the tree and the rail. */
   listChildren?: (originId: string) => Promise<SessionRow[]>;
   /** `GET /mcp/servers?session=` — re-read on every entry, never cached. */
@@ -1201,6 +1207,47 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
       setSel(landOn.current);
       return true;
     }
+    /**
+     * `e` — SPLIT THE THREAD HERE. The turn under the cursor and every later turn of its
+     * conversation become a fresh root, and it opens.
+     *
+     * `POST /sessions/:id/extract` has existed since the port with no key on it: the
+     * server op, its schema and its tests all shipped, and nothing in the TUI ever
+     * called it (found by grepping `api.ts` for methods with no caller). It answers the
+     * case fork cannot — "this conversation turned into two pieces of work" — because
+     * the new session is a ROOT that inherits no thread, so what it keeps is a
+     * SELECTION rather than a prefix.
+     *
+     * Ahead of `panelActionFor` for the same reason `tree.rewind` is: it needs the row
+     * under the cursor, which lives here and not in the dispatcher.
+     *
+     * Nothing is destroyed — the source keeps every turn (`history/extract.ts`) — so
+     * this needs no arm-and-confirm the way `changes.revert` does.
+     */
+    if (command === "tree.extract") {
+      const row = tree[sel];
+      // Statements, not `return void f(), true` — `void` binds tighter than the comma, so
+      // that form returns `undefined` and the key falls through to the dispatcher as
+      // unhandled. Cost me a live run where `e` on a session row did nothing at all.
+      if (!row || row.kind !== "message") {
+        setMessage("e splits a conversation at a TURN — move onto one first");
+        return true;
+      }
+      const thread = threads[row.sessionId] ?? [];
+      const at = thread.findIndex((m) => m.id === row.id);
+      if (at < 0) {
+        setMessage("that turn is no longer in the thread");
+        return true;
+      }
+      const picks = thread.slice(at).map((m) => ({ messageId: m.id }));
+      if (!controls.extractFrom) {
+        setMessage("extract is not wired into this client");
+        return true;
+      }
+      dispatch({ type: "close" });
+      void controls.extractFrom(row.sessionId, picks);
+      return true;
+    }
     const action = panelActionFor(command);
     if (action) {
       // A chord opens the panel from outside it; everything else needs it open.
@@ -1622,6 +1669,7 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
               height={bodyRows}
               filter={filter}
               filtering={filtering}
+              message={message}
               workspace={state.sessions.find((s) => s.id === state.currentId)?.workspace ?? null}
               // Inside the panel's border and padding, like every other tab's legend.
               cols={Math.max(20, cols - 4)}
