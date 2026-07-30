@@ -65,7 +65,15 @@ import type {
 } from "./api.ts";
 import { api as defaultApi } from "./api.ts";
 import { connectEvents, type EventStream } from "./events.ts";
-import { fmtDuration, fmtTokens, fmtUsd, humanizeRetryReason, oneLine } from "./format.ts";
+import {
+  clip,
+  fmtDuration,
+  fmtTokens,
+  fmtUsd,
+  humanizeRetryReason,
+  oneLine,
+  plural,
+} from "./format.ts";
 
 // ---------------------------------------------------------------------------
 // State
@@ -1183,6 +1191,20 @@ export interface Store {
    */
   searchSessions(q: string): Promise<string[]>;
   /**
+   * Every schedule, as one line for a notice — the TUI's only window onto them.
+   *
+   * `api.listSchedules` and its create/patch/delete siblings have existed since schedules
+   * shipped and NOTHING in the TUI ever called any of them: no tab, no chord, no command. So
+   * the agent could create a recurring run that fires daily and spends money, and the user had
+   * no way to see it, let alone stop it — the worst shape an invisible cost can take.
+   *
+   * A NOTICE, not a tab. A tab is the right long-term home (it needs enable/disable/delete on
+   * a cursor); a notice is what can be built without inventing a surface, and it turns
+   * "invisible" into "visible", which is the part that matters. It says how to change one,
+   * since only the agent can.
+   */
+  describeSchedules(): Promise<void>;
+  /**
    * Post a message. While a turn runs, `queue` holds it locally and it drains into a
    * fresh turn when the current one ends; without `queue` it is posted immediately
    * and the server queues it (spec §5) — steering, rather than staging.
@@ -1673,6 +1695,35 @@ export function createStore(deps: StoreDeps = {}): Store {
         ];
       } catch {
         return [];
+      }
+    },
+
+    async describeSchedules() {
+      try {
+        const rows = await api.listSchedules();
+        if (rows.length === 0) {
+          dispatch({ type: "notice", notice: "no schedules — ask the agent to add one" });
+          return;
+        }
+        const when = (at: number) => {
+          const d = new Date(at);
+          const pad = (n: number) => String(n).padStart(2, "0");
+          return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${
+            pad(d.getMinutes())
+          }`;
+        };
+        const list = rows
+          .map((r) =>
+            `${r.enabled ? "" : "(off) "}${r.spec} ${clip(oneLine(r.title || r.prompt), 32)}` +
+            ` → next ${when(r.nextRunAt)}`
+          )
+          .join(" · ");
+        dispatch({
+          type: "notice",
+          notice: `${plural(rows.length, "schedule")}: ${list} — ask the agent to change one`,
+        });
+      } catch (error) {
+        fail(error);
       }
     },
 

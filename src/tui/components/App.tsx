@@ -1224,6 +1224,11 @@ export function App(
       // confirm — but it does call the model, which is why the store announces itself
       // before it starts. The distilled prompt lands in the COMPOSER: the user reads
       // what was carried over and edits it before any of it is sent.
+      // The TUI's only window onto recurring runs. `api.listSchedules` and its siblings have
+      // existed since schedules shipped with nothing calling them, so an agent could create a
+      // daily run that spends money and the user could not see it.
+      case "schedules.show":
+        return void store.describeSchedules();
       case "session.compact":
         return void store.compact(input || undefined).then((draft) => {
           if (draft) {

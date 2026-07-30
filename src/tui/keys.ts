@@ -122,6 +122,8 @@ export type Command =
    */
   | "session.new"
   | "session.compact"
+  /** Show the recurring runs — the only window the TUI has onto them. */
+  | "schedules.show"
   // -- composing ------------------------------------------------------------
   | "send"
   | "send.queue"
@@ -319,6 +321,7 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     takesArg: true,
   },
   { name: "rewind", command: "tree.rewind", desc: "go back to a turn and say it differently" },
+  { name: "schedules", command: "schedules.show", desc: "the recurring runs and when they fire" },
   { name: "help", command: "help.open", desc: "every key, by section" },
 ];
 
