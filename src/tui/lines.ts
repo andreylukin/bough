@@ -122,6 +122,12 @@ const roleLabel = (role: Role): string =>
  */
 const GRANTED_TOOLS = new Set(["run_steps", "stop"]);
 
+/** A call's program source, or "" for a tool the model invented. */
+function callCode(call: { input?: unknown }): string {
+  const input = call.input as { code?: unknown } | null | undefined;
+  return input && typeof input.code === "string" ? input.code : "";
+}
+
 export interface SubagentNote {
   title: string;
   sessionId: string;
@@ -387,7 +393,14 @@ function toolGroupLines(
     // The ◇ marker takes the call's status color — accent green next to red error
     // text misreads as success.
     const mark = res?.isError ? danger("◇") : res?.interrupted ? warn("◇") : accent("◇");
-    push(out, `${mark} ${call.name} ${status}`, w, key);
+    // WHAT IT DID, not what it was called. Every row here said `run_steps` — bough grants one
+    // program tool, so an expanded four-call turn was the same internal identifier four times,
+    // directly under a collapsed list that had just named each one. The gist is the same
+    // string that list uses, so expanding a step keeps the label you clicked on.
+    const label = call.name === "run_steps"
+      ? programSummary(callCode(call), 64, !res) || call.name
+      : `${call.name} (as a tool)`;
+    push(out, `${mark} ${label} ${status}`, w, key);
     const input = callInput(call.input);
     if (input) {
       // `run_steps` code is JavaScript; a JSON input highlights fine as C-family.

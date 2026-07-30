@@ -1032,3 +1032,34 @@ test("several steps are several rows, one step stays on the header", () => {
   assert.equal(one.length, 1, one.join("\n"));
   assert.ok(one[0].includes("1 step") && one[0].includes("read a.ts"), one[0]);
 });
+
+test("an expanded call is labelled by what it did, not by the tool's name", () => {
+  // bough grants ONE program tool, so an expanded four-call turn read `◇ run_steps ✓ done`
+  // four times — the same internal identifier, directly under a collapsed list that had just
+  // named each step. Expanding should keep the label you clicked on.
+  const parts: Part[] = [
+    { type: "tool_call", id: "c1", name: "run_steps", input: { code: 'await view("a.ts");' } },
+    { type: "tool_result", callId: "c1", output: "ok", isError: false } as Part,
+    { type: "tool_call", id: "c2", name: "run_steps", input: { code: 'await bash("ls");' } },
+    { type: "tool_result", callId: "c2", output: "ok", isError: false } as Part,
+  ];
+  const open = () => true;
+  const rows = messageLines(msg({ id: "m1", parts }), open, () => false, 100).map((l) => l.text);
+  assert.ok(rows.some((t) => t.includes("read a.ts") && t.includes("✓ done")), rows.join("\n"));
+  assert.ok(rows.some((t) => t.includes("ran 1 command") && t.includes("✓ done")), rows.join("\n"));
+  assert.equal(
+    rows.filter((t) => t.includes("◇") && t.includes("run_steps")).length,
+    0,
+    rows.join("\n"),
+  );
+
+  // A name the model INVENTED is still shown — it is the only thing identifying that call —
+  // but marked as what it was: a host function reached for as a tool.
+  const invented: Part[] = [
+    { type: "tool_call", id: "d1", name: "patch", input: { path: "a.ts" } },
+    { type: "tool_result", callId: "d1", output: "unknown tool", isError: true } as Part,
+  ];
+  const bad = messageLines(msg({ id: "m2", parts: invented }), open, () => false, 100)
+    .map((l) => l.text);
+  assert.ok(bad.some((t) => t.includes("patch (as a tool)")), bad.join("\n"));
+});
