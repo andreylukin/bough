@@ -108,6 +108,34 @@ and it is why the waste path carries a round-count guard. The analysis also caug
 a real bug in this harness's own instrument: one failed program was being counted
 as several failures, once per host function it named.
 
+## The second iteration — a discriminating task
+
+`perf-overlap` (baseline 0/4) put the loop on a task with real headroom.
+
+The analyzer's finding, reached independently of my own reading of the same
+traces: every trial *did* benchmark its work — and every one built the benchmark
+at a size it chose itself (10k-50k events, a handful of windows) rather than the
+200,000 events and 1,000 queries the request named. At that scale a prefix-bounded
+scan looks fast, so the measurement confirmed the complexity story the agent had
+already told itself. Trial 1 closed with "Performance test on 50k events: ~2.1ms
+per query" and failed the budget by 3.6x.
+
+Its edit added one paragraph to `ending.md`: a speed claim counts as verified only
+if measured at the size the request named. Targeted at the step that failed,
+not exhortation. Predicted: `perf-overlap` flips.
+
+Settled at k=4: **0/4 → 0/4. Refuted, reverted.** With the edit in place, one trial
+benchmarked at 100k and the rest stayed at 1,000; the stated 200,000 never appeared
+in any trial in either sweep. The waste metrics did improve (parse errors 3 → 0,
+host-function errors 6 → 1, rounds 144 → 129, cost $0.565 → $0.489) — but the edit
+predicted a flip, not that, and `settle()` refuses to credit an unpredicted
+improvement. At k=4 those deltas are not evidence anyway.
+
+Which is the point of the apparatus. A well-argued, evidence-backed, correctly
+diagnosed prompt edit did nothing to the outcome it named, and the loop said so
+and removed it, in the same shape the paper's ablation predicts for system-prompt
+edits.
+
 ## Known limits
 
 **Bank size.** The paper runs 89 Terminal-Bench 2 tasks. Below roughly 40 a single
