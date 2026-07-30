@@ -267,10 +267,26 @@ function badForkPoint(ctx: AppCtx, source: Session, atMessageId: string): string
       `— fork a session at one of its own messages`;
 }
 
-/** The at-message's first line of text, for the branch title. */
+/**
+ * The at-message's first line of text, for the branch title.
+ *
+ * Cut at a WORD boundary with an ellipsis, because this string is a heading. A hard
+ * `slice(48)` produced titles like
+ *
+ *   fork · Create a Python file that implements a binary se
+ *
+ * — every fork read as a sentence that got interrupted, in the header, the tree and the
+ * switcher. The ellipsis is the difference between "shortened" and "broken".
+ */
 function excerptOf(at: Message): string {
   const text = at.parts.find((p): p is Extract<Part, { type: "text" }> => p.type === "text");
-  return text ? text.text.split("\n")[0].trim().slice(0, 48) : "";
+  const line = text ? text.text.split("\n")[0].trim() : "";
+  if (line.length <= 48) return line;
+  const cut = line.slice(0, 48);
+  // Back up to the last space, unless that would throw away most of the excerpt — one
+  // 48-character word is better shown truncated than reduced to nothing.
+  const space = cut.lastIndexOf(" ");
+  return `${(space > 24 ? cut.slice(0, space) : cut).replace(/[,;:.]$/, "")}…`;
 }
 
 /**

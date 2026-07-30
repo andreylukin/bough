@@ -564,6 +564,28 @@ test("a fork of a fork does not compound its title, and a text-free fork point f
   f.db.close();
 });
 
+test("a long fork point is shortened at a word, not cut mid-word", () => {
+  const f = fixture();
+  const { target } = scenario(f);
+  // The live title that prompted this ended `…implements a binary se`.
+  const long = message(f.db, target.id, "user", [{
+    type: "text",
+    text: "Create a Python file that implements a binary search tree with insert and lookup.",
+  }]);
+  const forked = fork(f.ctx, target.id, { atMessageId: long.id });
+  assert.equal(forked.session.title, "fork · Create a Python file that implements a binary…");
+
+  // One unbroken 48-character word has no boundary to back up to, and is better shown
+  // truncated than reduced to nothing.
+  const nospace = message(f.db, target.id, "user", [{
+    type: "text",
+    text: "A".repeat(60),
+  }]);
+  const forked2 = fork(f.ctx, target.id, { atMessageId: nospace.id });
+  assert.equal(forked2.session.title, `fork · ${"A".repeat(48)}…`);
+  f.db.close();
+});
+
 test("forking the first message produces an empty-but-real branch", () => {
   const f = fixture();
   const { target, own } = scenario(f);
