@@ -1346,6 +1346,8 @@ export interface HelpSection {
   limits?: boolean;
   /** Chords a terminal veteran will try that bough does not bind. */
   unavailable?: boolean;
+  /** `/name` rows rather than chords — the same commands the `/` popup lists. */
+  commands?: boolean;
 }
 
 /**
@@ -1377,7 +1379,6 @@ export const UNAVAILABLE: HelpSection = {
     // did not fail loudly — it went to the frontier model as an ordinary prompt and
     // billed for it. A sigil that is silently not a sigil is the one case where
     // saying nothing costs money.
-    ["!", "not a shell sigil — it goes to the model"],
     ["^g", "no $EDITOR handoff yet"],
     ["^v", "your terminal pastes · no image attachments"],
     // The two halves of "search" are different questions and this line answered
@@ -1416,6 +1417,19 @@ export function helpSections(bindings: Binding[] = BINDINGS): HelpSection[] {
     const desc = b.when?.includes("emptyDraft") ? `${b.desc} · empty draft` : b.desc;
     rows.push([b.label ?? chordLabel(b.chord), desc]);
   }
+  // The `/` commands, listed BY NAME. The overlay is generated from chords, so a
+  // command with no chord — `/compact`, and any future one — appeared in the `/` popup
+  // and nowhere else: `?` is the discoverability surface, and it was answering "every
+  // key" when the user's question is "everything I can do".
+  out.push({
+    section: "typed at the prompt",
+    commands: true,
+    keys: [
+      ["!cmd", "run it in your shell — not a message, not billed; output in the rail"],
+      ["@path", "complete a file or directory into the message"],
+      ...SLASH_COMMANDS.map((c) => [`/${c.name}`, c.desc] as [string, string]),
+    ],
+  });
   out.push(LIMITS, UNAVAILABLE);
   return out;
 }

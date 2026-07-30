@@ -135,6 +135,7 @@ export const routes: Route[] = [
   // T6.8 — jobs. Scoped to a session AND its subagents, so a spawner's jobs tab shows
   // the work running on its behalf and the human can kill it without spending a turn.
   route("GET", "/sessions/:id/jobs", jobsApi.listJobsH),
+  route("POST", "/sessions/:id/jobs", jobsApi.runShellH),
   route("POST", "/sessions/:id/jobs/:jobId/kill", jobsApi.killJobH),
   route("GET", "/sessions/:id/jobs/:jobId/output", jobsApi.jobOutputH),
   // T5.7 — relaunch from a journal, with prefix-bounded replay. `relaunch` is the

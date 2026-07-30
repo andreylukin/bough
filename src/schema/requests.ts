@@ -188,6 +188,15 @@ export const HandoffBody = z.object({
 });
 export type HandoffBody = z.infer<typeof HandoffBody>;
 
+/**
+ * POST /sessions/:id/jobs — the user's own `!command`. Runs as a background shell in
+ * the session's workspace; it is not a turn and never enters the thread.
+ */
+export const RunShellBody = z.object({
+  command: z.string().min(1).max(4000),
+});
+export type RunShellBody = z.infer<typeof RunShellBody>;
+
 // ---- changes (spec §13) ------------------------------------------------------
 
 /**

@@ -479,6 +479,9 @@ export function createApi(options: ApiOptions = {}) {
 
     /** The session AND its subagents — the work running on its behalf. */
     listJobs: (id: string) => get<{ jobs: BackgroundJob[] }>(`/sessions/${seg(id)}/jobs`),
+    /** The user's own `!command` — a background shell, not a turn. */
+    runShell: (id: string, command: string) =>
+      post<{ id: string; name: string; pid: number }>(`/sessions/${seg(id)}/jobs`, { command }),
     /** The human's kill switch, so stopping a runaway shell costs no LLM round-trip. */
     killJob: (id: string, jobId: string) =>
       post<{ message: string }>(`/sessions/${seg(id)}/jobs/${seg(jobId)}/kill`),

@@ -1082,6 +1082,19 @@ export function App(
     // enough to render — so a pasted `/model` went to the frontier model as prose
     // and was billed for it. Queueing is ignored on purpose: `⌥⏎` means "after this
     // turn", and there is nothing about opening a panel that should wait for a turn.
+    // `!command` IS THE USER'S OWN SHELL, not a message. Every comparable harness
+    // honours the sigil; bough printed "! is not a shell — this goes to the model"
+    // and made the user ask the agent to run `ls`. It is not a turn: nothing is
+    // billed, nothing enters the thread, and the job lands in the rail where its
+    // output is already readable on ⏎.
+    if (text.startsWith("!") && text.slice(1).trim() !== "") {
+      const command = text.slice(1).trim();
+      setLine(EMPTY_LINE);
+      setHistAt(null);
+      setScrollOff(0);
+      void store.runShell(command);
+      return;
+    }
     const invocation = slashInvocation(text);
     if (invocation) {
       setLine(EMPTY_LINE);

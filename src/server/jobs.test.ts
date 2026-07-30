@@ -29,10 +29,18 @@ import type { BackgroundJob, Session } from "../schema/parts.ts";
 import type { AppCtx } from "../types.ts";
 // `./app.ts` first — see the note in `artifacts.test.ts` about the documented cycle.
 import { createHandler, type Route, route } from "./app.ts";
-import { jobOutputH, jobSessionIds, killJobH, listJobsH, setJobRegistry } from "./jobs.ts";
+import {
+  jobOutputH,
+  jobSessionIds,
+  killJobH,
+  listJobsH,
+  runShellH,
+  setJobRegistry,
+} from "./jobs.ts";
 
 const TABLE: Route[] = [
   route("GET", "/sessions/:id/jobs", listJobsH),
+  route("POST", "/sessions/:id/jobs", runShellH),
   route("POST", "/sessions/:id/jobs/:jobId/kill", killJobH),
   route("GET", "/sessions/:id/jobs/:jobId/output", jobOutputH),
 ];
@@ -211,4 +219,60 @@ test("output for an unknown job is a 404", async () => {
   const res = await f.call(get("/sessions/s1/jobs/bg_404/output"));
   assert.equal(res.status, 404);
   await res.json();
+});
+
+
+// ---- the user's own shell ----------------------------------------------------
+
+/**
+ * `!command` in the composer. The gap this closes: every other verb here exists so a
+ * human does not spend a turn to manage a shell, and yet STARTING one was the model's
+ * privilege alone — the TUI answered `!ls` with "! is not a shell — this goes to the
+ * model".
+ */
+test("POST /sessions/:id/jobs starts a shell in the session's workspace", async () => {
+  await using f = fixture();
+  f.db.createSession(session("s", { workspace: process.cwd() }));
+
+  const res = await f.call(
+    new Request(url("/sessions/s/jobs"), {
+      method: "POST",
+      body: JSON.stringify({ command: "echo hello-from-the-user" }),
+    }),
+  );
+  assert.equal(res.status, 201);
+  const started = await res.json() as { id: string; name: string; pid: number };
+  assert.ok(started.id);
+  assert.ok(started.pid > 0);
+  // The command IS the label: the user typed it and knows what they meant.
+  assert.equal(started.name, "echo hello-from-the-user");
+
+  await f.registry.bashWait(started.id, "s");
+  const out = await (await f.call(get(`/sessions/s/jobs/${started.id}/output`))).json() as {
+    output: string;
+  };
+  assert.match(out.output, /hello-from-the-user/);
+
+  // It is listed like any other job, so the rail shows it with nothing new built.
+  const { jobs } = await (await f.call(get("/sessions/s/jobs"))).json() as {
+    jobs: BackgroundJob[];
+  };
+  assert.deepEqual(jobs.map((j) => j.id), [started.id]);
+});
+
+test("an empty command is rejected, and an unknown session is a 404", async () => {
+  await using f = fixture();
+  f.db.createSession(session("s", { workspace: process.cwd() }));
+  const empty = await f.call(
+    new Request(url("/sessions/s/jobs"), { method: "POST", body: JSON.stringify({ command: "" }) }),
+  );
+  assert.equal(empty.status, 400);
+
+  const ghost = await f.call(
+    new Request(url("/sessions/ghost/jobs"), {
+      method: "POST",
+      body: JSON.stringify({ command: "echo x" }),
+    }),
+  );
+  assert.equal(ghost.status, 404);
 });

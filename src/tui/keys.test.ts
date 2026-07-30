@@ -39,6 +39,7 @@ import {
   tabForCommand,
   TABS,
   type UiMode,
+  SLASH_COMMANDS,
   slashCommandFor,
   slashInvocation,
   UNAVAILABLE,
@@ -342,9 +343,19 @@ test("the overlay documents the table and only the table", () => {
   const documented = BINDINGS.filter((b) => b.section && b.desc);
   const sections = helpSections();
   const rows = sections
-    .filter((s) => !s.limits && !s.unavailable)
+    .filter((s) => !s.limits && !s.unavailable && !s.commands)
     .flatMap((s) => s.keys);
   assert.equal(rows.length, documented.length);
+  // The `/` commands are their own section: the overlay is generated from chords, so
+  // a command with no chord (`/compact`) was listed in the `/` popup and NOWHERE else,
+  // while `?` claimed to be the place you find out what bough can do.
+  const commands = sections.find((s) => s.commands);
+  assert.ok(commands, "the overlay lists the / commands");
+  assert.deepEqual(
+    commands.keys.map(([name]) => name),
+    ["!cmd", "@path", ...SLASH_COMMANDS.map((c) => `/${c.name}`)],
+  );
+  assert.ok(commands.keys.every(([, desc]) => desc.length > 0));
   // Every documented row carries a description; an empty one would render a key
   // with nothing beside it, which is how the old overlay rotted.
   for (const [chord, desc] of rows) {
@@ -397,8 +408,10 @@ test("slashCommandFor: a draft that IS a command, and nothing looser", () => {
 
 test('the "not bound" section is true — none of those chords is bound', () => {
   // ^y used to be listed here; it is the theme tab's chord now, so it is gone from
-  // the section. That is the section's whole job: it must stay TRUE.
-  const unbound = ["!", "ctrl+g", "ctrl+v", "ctrl+r", "ctrl+z", "meta+d"];
+  // the section. `!` left for a different reason — it is a real sigil now (it starts
+  // a shell job), so listing it as unavailable would be the section telling a lie,
+  // which is the one thing it may not do.
+  const unbound = ["ctrl+g", "ctrl+v", "ctrl+r", "ctrl+z", "meta+d"];
   for (const chord of unbound) {
     assert.equal(
       BINDINGS.some((b) => b.chord === chord),

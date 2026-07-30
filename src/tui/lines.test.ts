@@ -493,6 +493,41 @@ test("job cards: a running shell looks alive, an exited one states its outcome",
   assert.ok(out.every((l) => l.click?.startsWith("job:s1:bg_") || l.text.trim() === ""));
 });
 
+/**
+ * A `!command` the user typed is labelled with the command itself, so the card printed
+ * it twice — `ls -1 src ✓ done  bg_2 · ls -1 src · 0s`. Every field was right and the
+ * row still read as a rendering bug.
+ */
+test("a job whose name IS its command shows the command once", () => {
+  const now = 1_700_000_000_000;
+  const job: JobView = {
+    id: "bg_2",
+    name: "ls -1 src",
+    sessionId: "s1",
+    pid: 11,
+    command: "ls -1 src",
+    status: "exited",
+    exitCode: 0,
+    exitedAt: now,
+    startedAt: now - 400,
+    tail: ["cart.py"],
+    outputLines: 1,
+  };
+  const out: VLine[] = [];
+  jobCardLines(out, job, 80, now);
+  const text = joined(out);
+  assert.equal(text.match(/ls -1 src/g)?.length, 1, text);
+  // The id still shows: it is what `bashKill`/the rail address the job by.
+  assert.ok(text.includes("bg_2"), text);
+
+  // A named job with a DIFFERENT command still shows both — that is the normal case.
+  const named: JobView = { ...job, name: "dev server", command: "npm run dev" };
+  const out2: VLine[] = [];
+  jobCardLines(out2, named, 80, now);
+  const text2 = joined(out2);
+  assert.ok(text2.includes("dev server") && text2.includes("npm run dev"), text2);
+});
+
 test("a [background] wake note is dropped while its job card shows it", () => {
   const note = '[background] bg_1 finished (exit 0) — command "make", 2 lines of output.';
   const thread = [msg({ id: "n1", role: "system", parts: [{ type: "text", text: note }] })];

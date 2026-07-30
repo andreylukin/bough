@@ -31,7 +31,7 @@ A headless server owns all state and execution. Clients are views over it.
 
 ```
 ┌─────────────┐   HTTP + SSE    ┌──────────────────────────────────────┐
-│  TUI (Ink)  │ ───────────────▶│  server  (Deno, 127.0.0.1:4321)      │
+│ TUI (OpenTUI)│ ──────────────▶│  server  (Bun, 127.0.0.1:4321)       │
 │  CLI (exec) │ ◀─────────────── │  ├─ turn runner                      │
 └─────────────┘   events         │  ├─ program worker   (inherit perms) │
                                  │  ├─ workflow worker  (no perms)      │
@@ -40,13 +40,15 @@ A headless server owns all state and execution. Clients are views over it.
                                  └──────────────────────────────────────┘
 ```
 
-- **Server** — one Deno process. JSON API, SSE event stream, static artifact
+- **Server** — one Bun process. JSON API, SSE event stream, static artifact
   hosting. Binds loopback only; no auth layer.
-- **Program worker** — a fresh `Worker` per round with `permissions: "inherit"`.
-  Host functions bridge over `postMessage`.
-- **Workflow worker** — a `Worker` with `permissions: "none"` running one
-  orchestration script. Its only capabilities are `agent()`, `phase()`, `log()`.
-- **Clients** — an Ink TUI and a headless `bough exec` one-shot CLI.
+- **Program worker** — a fresh `Worker` per round, running at the user's own
+  authority: there is no permission layer to narrow (§2). Host functions bridge over
+  `postMessage`.
+- **Workflow worker** — a `Worker` running one orchestration script. It is a
+  scripting surface, not a sandbox: its capabilities are `agent()`, `phase()`,
+  `log()`, and the pipeline helpers, and it reaches the world only through them.
+- **Clients** — an OpenTUI TUI and a headless `bough exec` one-shot CLI.
 
 ### The event stream
 
@@ -233,12 +235,22 @@ capabilities:
 | MCP tools + calling convention | The turn has connected MCP servers |
 | Symbol navigation (`lsp`) | LSP backend is available |
 | Skill bodies | The user's message named a skill |
+| Project rules (`AGENTS.md`) | The workspace or `$BOUGH_HOME` has one |
+
+**Project rules.** bough reads `AGENTS.md` — never `CLAUDE.md`, which is written
+about another tool's verbs. Two tiers: `$BOUGH_HOME/AGENTS.md`, then every
+`AGENTS.md` from the git root down to the workspace directory, nearest last, so a
+monorepo's package rules win over its house style. The walk stops at the git root; a
+workspace outside a checkout reads only its own. Read **per turn**, not per session,
+so editing the file to correct a misbehaving model takes effect on the next message.
+The section states that these rules outrank the model's habits, and names each
+block's source path.
 
 A host function exists **only** when the prompt grants it. The model never guesses
 at capabilities, and a section that grants one must document its failure mode
 alongside its signature.
 
-Host functions are pre-injected globals. The program also has the full Deno runtime
+Host functions are pre-injected globals. The program also has the full Bun runtime
 at the user's permission level and may ignore every host function.
 
 ### Shell
@@ -296,7 +308,10 @@ INS.TAIL:
   the same patch do not shift later numbers.
 - One patch may carry several files. It applies **all of them or none**.
 
-Raw file content comes from `Deno.readTextFile` or `bash`; there is no `read()`.
+Raw file content comes from `Bun.file(path).text()` or `bash`; there is no `read()`.
+A raw runtime read takes an ABSOLUTE path: the worker inherits the SERVER's working
+directory, not the workspace, so `view("src/x")` and `Bun.file("src/x")` in one
+program name two different files (§6, the workspace note).
 
 ### Delegation
 
@@ -602,6 +617,13 @@ All operate by **branching**, never by mutating history in place.
 | **Move-into** | Append copies of picked messages onto an **existing** session. |
 | **Handoff** | LLM drafts the opening prompt for a fresh root from a stated goal — the goal restated, only the context that matters, and the relevant paths. Persisted as the new session's `draft`; the source is never mutated. |
 
+**The TUI's `/compact` is a handoff, not a compaction.** Filling a context and
+wanting to keep going is answered by a clean thread that knows what matters, not by
+the same thread with one span summarized — so `/compact [goal]` runs Handoff and
+prefills the new root's composer with the distilled prompt, editable and unsent.
+Compaction proper remains the operation for shortening a thread you intend to stay
+in. bough never compacts on its own (§17).
+
 Fork and compact rely on thread-through-parents: a new session parented at the
 target's parent inherits shared ancestors for free, and its own seeded messages
 reconstruct the rest. Both are limited to the session's *own* messages; a selection
@@ -609,7 +631,7 @@ reaching into ancestor history is a 400.
 
 ## 15. Clients
 
-**TUI (Ink).** State layer separated from rendering; no monolithic component. One
+**TUI (OpenTUI).** State layer separated from rendering; no monolithic component. One
 tabbed panel holds every non-chat surface (tree, changes, model picker, MCP,
 skills, theme) with direct-jump keys. Chat shows folded reasoning, the program that
 ran, live cost and context. A rail pins live subagents and background jobs, and ⏎

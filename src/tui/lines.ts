@@ -593,10 +593,16 @@ export function jobCardLines(out: VLine[], job: JobView, w: number, now: number)
     ? accent("⚙")
     : danger("⚙");
   const took = fmtElapsed((job.exitedAt ?? now) - job.startedAt);
+  // The command is NOT repeated when it is already the title. A `!command` the user
+  // typed is labelled with the command itself, so the card read
+  // `ls -1 src ✓ done  bg_2 · ls -1 src · 0s` — the same six characters twice on one
+  // row, which reads as a rendering bug even though every field was correct.
+  const titled = job.name && oneLine(job.name) !== oneLine(job.command);
+  const facts = [job.name ? job.id : "", titled ? clip(oneLine(job.command), 60) : "", took]
+    .filter(Boolean)
+    .join(" · ");
   body.push({
-    text: `${glyph} ${bold(job.name || job.id)} ${jobStatusText(job)}  ${
-      dim(`${job.name ? `${job.id} · ` : ""}${clip(oneLine(job.command), 60)} · ${took}`)
-    }`,
+    text: `${glyph} ${bold(job.name || job.id)} ${jobStatusText(job)}  ${dim(facts)}`,
   });
   for (const line of job.tail ?? []) {
     for (const l of wrap(line, inner - 2)) body.push({ text: `${dim("│")} ${dim(l)}` });

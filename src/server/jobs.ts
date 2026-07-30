@@ -28,6 +28,8 @@
  * Ported from `src/server/app.ts` (the three job handlers). Deltas are marked `NOTE:`.
  */
 import { NotFoundError } from "../errors.ts";
+import { RunShellBody } from "../schema/requests.ts";
+import { parseBody } from "./http.ts";
 import { JobRegistry, jobs as processJobs } from "../hostfn/jobs.ts";
 import type { BackgroundJob } from "../schema/parts.ts";
 import type { AppCtx, Db } from "../types.ts";
@@ -101,6 +103,34 @@ function requireSession(ctx: AppCtx, id: string): void {
 export const listJobsH: Handler = (_req, ctx, params) => {
   requireSession(ctx, params.id);
   return json({ jobs: jobsForTree(ctx.db, params.id) });
+};
+
+/**
+ * `POST /sessions/:id/jobs` — the USER starts a shell, in the session's workspace.
+ *
+ * The one thing the jobs API could not do. Every other verb here exists so a human
+ * does not have to spend a turn to manage a shell — list, read, kill — and yet
+ * starting one was the model's privilege alone: `!ls` in the composer had nowhere to
+ * go, so the TUI printed "! is not a shell — this goes to the model" and a reflex
+ * every comparable harness honours was a dead end.
+ *
+ * It is a `bashBg` shell, deliberately: it runs in the workspace, it publishes
+ * `job.spawned`/`job.exited` like any other, it appears in the rail with its output
+ * readable, and it does NOT carry a turn's abort signal — a command the user started
+ * is not something the agent's stop button should kill. It also does not consume a
+ * turn and never enters the thread, so nothing here is billed or replayed.
+ */
+export const runShellH: Handler = async (req, ctx, params) => {
+  requireSession(ctx, params.id);
+  const body = await parseBody(req, RunShellBody);
+  const workspace = ctx.db.getSessionRuntime(params.id).workspace ?? process.cwd();
+  // The name is what the rail shows. The command IS the name here: the user typed it
+  // and knows exactly what they meant, so a summary would be a worse label.
+  const started = registry.bashBg(body.command.trim().slice(0, 60), body.command, {
+    sessionId: params.id,
+    workspace,
+  });
+  return json(JSON.parse(started), 201);
 };
 
 /**

@@ -1117,6 +1117,16 @@ export interface Store {
    */
   compact(goal?: string): Promise<string | null>;
   /**
+   * Run `command` as a background shell in this session's workspace — the composer's
+   * `!` sigil.
+   *
+   * NOT A TURN. It is not billed, it does not enter the thread, and the agent is not
+   * asked anything: `!` is the user reaching past the agent to their own shell, which
+   * is what it means in every harness that has it. The job appears in the rail with
+   * its output on ⏎, like any other, so nothing new had to be built to read it.
+   */
+  runShell(command: string): Promise<void>;
+  /**
    * Post a message. While a turn runs, `queue` holds it locally and it drains into a
    * fresh turn when the current one ends; without `queue` it is posted immediately
    * and the server queues it (spec §5) — steering, rather than staging.
@@ -1562,6 +1572,25 @@ export function createStore(deps: StoreDeps = {}): Store {
       } catch (error) {
         fail(error);
         return null;
+      }
+    },
+
+    async runShell(command: string) {
+      const id = state.currentId;
+      if (!id) {
+        // `!` before there is a session has nowhere to run: a job belongs to a session
+        // and a session is created by sending a message. Say that rather than nothing.
+        dispatch({
+          type: "notice",
+          notice: "! runs in a conversation's workspace — send a message first",
+        });
+        return;
+      }
+      try {
+        await api.runShell(id, command);
+        await refreshJobs();
+      } catch (error) {
+        fail(error);
       }
     },
 

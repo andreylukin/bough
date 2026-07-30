@@ -169,15 +169,16 @@ export function Composer(
   // rather than starting a new one, and saying so is the difference between
   // "queued" and "ignored" (spec §5).
   //
-  // The second case says the opposite out loud. `!` is a shell sigil in every
-  // comparable harness and is NOT one here, and the failure was silent and billed:
-  // `!echo hi` went to the frontier model as an ordinary prompt, titled the session
-  // "Echo Command Test", and cost a round trip. A sigil bough does not honour has to
-  // deny itself before Enter, not after.
+  // The second says where a `!` line is about to go. It used to deny the sigil
+  // outright ("! is not a shell — this goes to the model"), which was honest about a
+  // real gap: `!echo hi` reached the frontier model as a prompt, titled the session
+  // "Echo Command Test", and billed a round trip. The sigil is honoured now, so the
+  // hint says what it does instead — a shell in the workspace, not a message, which
+  // is the one thing the user needs to know before pressing Enter.
   const hint = busy && input !== ""
     ? "enter interjects this turn"
     : input.startsWith("!")
-    ? "! is not a shell — this goes to the model"
+    ? "runs in your shell · not a message · output lands in the rail"
     : "";
   return (
     <box flexDirection="column">
