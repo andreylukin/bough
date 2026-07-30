@@ -79,7 +79,19 @@ const SYSTEM =
   "matters for it — decisions made, constraints, the current state of the work; list the " +
   "relevant file paths. Drop everything unrelated to the goal, including dead ends and " +
   "resolved back-and-forth. Write as direct instructions to the agent, in the user's " +
-  "voice. Output only the prompt text.";
+  "voice. Output only the prompt text.\n\n" +
+  // WITHOUT THIS, THE DRAFT ASKS THE USER A QUESTION. Observed: a short transcript plus
+  // a goal it had no context for produced "Once you provide that, I can write a focused
+  // opening prompt for the new conversation." — which lands verbatim in the user's
+  // composer as if it were the distilled prompt, addressed to nobody. The transcript
+  // being thin is not a reason to stop working; it is a reason for a shorter prompt.
+  "NEVER reply to the user and never ask for more information: you are writing text " +
+  "the user will SEND, not a message to them. Do not describe what you are doing, do " +
+  "not offer alternatives, and do not preface the prompt. If the transcript holds " +
+  "little or nothing relevant to the goal, say so in one line and then state the goal " +
+  "as the task — a short prompt is a correct answer, a request for input is not. State " +
+  "it as an INSTRUCTION (\"fix the coupon stacking in src/cart.py\"), never as a request " +
+  "for details: whoever reads this prompt is the one who will do the work.";
 
 const MAX_TOKENS = 2048;
 

@@ -374,3 +374,23 @@ test("a handoff from an untitled conversation is named after its goal", async ()
   assert.ok(long.title.endsWith("…"), long.title);
   f.db.close();
 });
+
+/**
+ * The instruction that stops the draft addressing the user. Observed before it existed:
+ * a thin transcript plus a goal it had no context for produced "Once you provide that, I
+ * can write a focused opening prompt for the new conversation." — which lands verbatim
+ * in the composer as if it were the distilled prompt, addressed to nobody.
+ */
+test("the drafting prompt forbids replying to the user or asking for input", async () => {
+  const f = fixture((prompt) => `saw: ${prompt.length}`);
+  const source = session(f.db, { title: "t", workspace: "/tmp/checkout" });
+  text(f.db, source.id, "user", "anything");
+  await handoff(f.ctx, source.id, { goal: "g" });
+
+  const system = f.llm.systems.at(-1) ?? "";
+  assert.match(system, /never ask for more information/i);
+  assert.match(system, /text the user will SEND/i);
+  // And it says what to do INSTEAD, or the model is left to invent a fallback.
+  assert.match(system, /a short prompt is a correct answer/i);
+  f.db.close();
+});
