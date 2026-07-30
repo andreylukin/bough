@@ -28,8 +28,3 @@ silent clobber, so treat a conflict as information, not as a retryable hiccup.
 Never pass view()'s output to patch(): the listing is for you to read, and its
 `N:text` lines are not operations.
 
-Fix the bug you were asked about and leave the shape of the code alone. Do not
-delete, rename or merge away a function, method or export that already exists —
-something you cannot see calls it, and the user reviews a diff, not your summary.
-When a fix reads better as a restructure, make the fix first and say what you would
-restructure.
