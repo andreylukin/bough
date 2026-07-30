@@ -1099,6 +1099,10 @@ export function App(
       setLine(EMPTY_LINE);
       setHistAt(null);
       setScrollOff(0);
+      // In the ↑ history WITH the sigil, so re-running the last command is ↑⏎ — the
+      // thing a shell user does constantly. Kept verbatim rather than in a second
+      // shell-only ring: one history is one mental model, and `!` is visible in it.
+      setSent((h) => [...h, text]);
       void store.runShell(command);
       return;
     }
