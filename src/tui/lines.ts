@@ -492,7 +492,61 @@ export interface Branch {
   note?: SubagentNote | null;
 }
 
-/** The card for a finished subagent: header, files, capped report, next action. */
+/**
+ * The branch rows a transcript draws, from the two halves a client has: the delegated
+ * sessions this conversation spawned, and their completion notes sitting in its own
+ * thread as system messages.
+ *
+ * WHY THIS IS A FUNCTION AND NOT A `useMemo`. `buildLines` has taken `branches` since it
+ * was written and nothing ever passed one, so every card below had never rendered; when I
+ * finally wired it, the test I wrote went green while the bug was still live, because it
+ * asserted through the render harness on text the RAW note also contains. The mapping is
+ * the part with rules in it — which status counts, where the card is drawn, what happens
+ * to a note with no session — so it belongs where those rules can be asserted directly.
+ *
+ * A note whose session is NOT among the children still yields nothing here, and that is
+ * deliberate: `buildLines` drops a raw note only when a branch is present to replace it,
+ * so the report still reaches the reader as the note rather than vanishing.
+ */
+export function branchesFrom(
+  thread: readonly Message[],
+  children: readonly {
+    id: string;
+    title: string;
+    busy: boolean;
+    lastTurnStatus?: string;
+    outcomeOk?: boolean | null;
+    originMessageId?: string | null;
+  }[],
+): Branch[] {
+  const notes = new Map<string, SubagentNote>();
+  for (const m of thread) {
+    if (m.role !== "system") continue;
+    const text = m.parts.filter((p) => p.type === "text")
+      .map((p) => (p as { text: string }).text).join("\n");
+    const note = parseSubagentNote(text);
+    if (note) notes.set(note.sessionId, note);
+  }
+  const settled = ["done", "error", "interrupted", "orphaned"] as const;
+  return children.map((row) => {
+    const status = settled.find((s) => s === row.lastTurnStatus);
+    const note = notes.get(row.id);
+    return {
+      id: row.id,
+      title: row.title,
+      busy: row.busy,
+      // `running` is not a settled status and must not be reported as one.
+      ...(status ? { status } : {}),
+      ...(row.outcomeOk === undefined || row.outcomeOk === null ? {} : { ok: row.outcomeOk }),
+      // Where the card is DRAWN: the turn that spawned it. The server records this on the
+      // child (`origin_message_id`); the note does not carry it.
+      ...(row.originMessageId ? { originMessageId: row.originMessageId } : {}),
+      ...(note ? { note } : {}),
+    };
+  });
+}
+
+/** The card for a finished subagent: header, files, capped report, next action. *//** The card for a finished subagent: header, files, capped report, next action. */
 function subagentNoteLines(out: VLine[], note: SubagentNote, w: number, full: boolean) {
   const open = `open:${note.sessionId}`;
   // Amber = stopped or orphaned (an infra restart, not the agent's fault); red is

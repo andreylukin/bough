@@ -4,6 +4,7 @@ import {
   type Branch,
   buildLines,
   chatBodyHeight,
+  branchesFrom,
   jobCardLines,
   skillsNamed,
   lineAtSlot,
@@ -753,4 +754,66 @@ test("a collapsed step's repeated summaries collapse to a count", () => {
     buildLines([msg({ id: "a2", role: "supervisor", parts: mixed })], () => false, () => false, 100, {}),
   );
   assert.match(mixedText, /ran 1 command · wrote a\.ts/);
+});
+
+/**
+ * The mapping behind the delegated-report card, which had never rendered at all because
+ * nothing passed `branches` to `buildLines`. Asserted HERE rather than through the render
+ * harness: the version of this test that went through `App` passed while the bug was
+ * still live, because it matched text the raw note also contains.
+ */
+test("branchesFrom pairs a spawned child with its report note", () => {
+  const noteText = [
+    '[subagent finished] "create mango.py" (agent-1) — finished.',
+    "Changed files: src/mango.py.",
+    "Report:",
+    "Created src/mango.py with a mango() function.",
+    "It worked in THIS session's checkout, so its edits are already here — read them.",
+  ].join("\n");
+  const thread = [
+    msg({ id: "u1", role: "user", parts: [{ type: "text", text: "spawn one" }] }),
+    msg({ id: "n1", role: "system", parts: [{ type: "text", text: noteText }] }),
+  ];
+  const child = {
+    id: "agent-1",
+    title: "subagent · create mango.py",
+    busy: false,
+    lastTurnStatus: "done",
+    outcomeOk: true,
+    originMessageId: "u1",
+  };
+
+  const [b] = branchesFrom(thread, [child]);
+  assert.equal(b.id, "agent-1");
+  assert.equal(b.busy, false);
+  assert.equal(b.status, "done");
+  assert.equal(b.ok, true);
+  // Where the card is drawn — the note does not carry this, the child does.
+  assert.equal(b.originMessageId, "u1");
+  assert.equal(b.note?.sessionId, "agent-1");
+  assert.deepEqual(b.note?.files, ["src/mango.py"]);
+
+  // AND the note it paired is then dropped from the raw thread, so the reader sees the
+  // card instead of the prose written for the model.
+  const text = joined(buildLines(thread, () => false, () => false, 100, { branches: [b] }));
+  assert.ok(text.includes("create mango.py"), text);
+  assert.equal(text.includes("It worked in THIS session"), false, text);
+  assert.equal(text.includes("[subagent finished]"), false, text);
+});
+
+test("branchesFrom reports a running child as running, and leaves an unpaired note raw", () => {
+  const noteText = '[subagent finished] "other" (agent-9) — finished.\nChanged files: none.';
+  const thread = [msg({ id: "n1", role: "system", parts: [{ type: "text", text: noteText }] })];
+
+  // `running` is not a settled status and must not be reported as one.
+  const [live] = branchesFrom([], [{ id: "a", title: "t", busy: true, lastTurnStatus: "running" }]);
+  assert.equal(live.status, undefined);
+  assert.equal(live.busy, true);
+  assert.equal(live.ok, undefined);
+
+  // A note whose session is not among the children yields no branch — so `buildLines`
+  // keeps the raw note, and the report reaches the reader rather than vanishing.
+  assert.deepEqual(branchesFrom(thread, []), []);
+  const text = joined(buildLines(thread, () => false, () => false, 100, { branches: [] }));
+  assert.ok(text.includes("[subagent finished]"), text);
 });

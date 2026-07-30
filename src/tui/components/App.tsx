@@ -44,10 +44,10 @@ import { api, type SessionRow } from "../api.ts";
 import type { Message } from "../../schema/parts.ts";
 import type { MouseEvent, NavKey } from "../mouse.ts";
 import {
+  branchesFrom,
   buildLines,
   chatBodyHeight,
   lineAtSlot,
-  parseSubagentNote,
   type VLine,
 } from "../lines.ts";
 import sliceAnsi from "slice-ansi";
@@ -446,33 +446,10 @@ export function App(
    * present to replace it, and a report that reaches nobody is the one outcome this card
    * exists to prevent.
    */
-  const branches = useMemo(() => {
-    const notes = new Map<string, ReturnType<typeof parseSubagentNote>>();
-    const origins = new Map<string, string>();
-    for (const m of state.thread) {
-      if (m.role !== "system") continue;
-      const text = m.parts.filter((p) => p.type === "text")
-        .map((p) => (p as { text: string }).text).join("\n");
-      const note = parseSubagentNote(text);
-      if (note) notes.set(note.sessionId, note);
-    }
-    // Where each card is DRAWN: the turn that spawned the child. The server records it on
-    // the child (`origin_message_id`); the note itself does not carry it.
-    for (const row of children[state.currentId ?? ""] ?? []) {
-      if (row.originMessageId) origins.set(row.id, row.originMessageId);
-    }
-    return (children[state.currentId ?? ""] ?? []).map((row) => ({
-      id: row.id,
-      title: row.title,
-      busy: row.busy,
-      ...(row.lastTurnStatus && row.lastTurnStatus !== "running"
-        ? { status: row.lastTurnStatus as "done" | "error" | "interrupted" | "orphaned" }
-        : {}),
-      ...(row.outcomeOk === undefined ? {} : { ok: row.outcomeOk }),
-      ...(origins.get(row.id) ? { originMessageId: origins.get(row.id) } : {}),
-      ...(notes.get(row.id) ? { note: notes.get(row.id) } : {}),
-    }));
-  }, [state.thread, children, state.currentId]);
+  const branches = useMemo(
+    () => branchesFrom(state.thread, children[state.currentId ?? ""] ?? []),
+    [state.thread, children, state.currentId],
+  );
   const railBranches = useMemo(
     () => liveSubagents(children[state.currentId ?? ""] ?? []),
     [children, state.currentId],
