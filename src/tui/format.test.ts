@@ -732,6 +732,17 @@ test("a step is headlined by what the program did, not by its first line of code
     programSummary('const t = await Bun.file(`${ws}/src/a.py`).text();'),
     "read 1 file",
   );
+  // A PATCH whose section tag is built from a variable. `patch` is deliberately absent from
+  // the naming alternation (its files are the `[path#tag]` tags inside its body), and it was
+  // missing from the counting fallback too — so this program, which is what a skill told to
+  // view-then-patch actually writes, named nothing, counted nothing, and the header fell back
+  // to `const path = "/private/tmp/claude-501/-Users-andrey-repos-bo…`.
+  assert.equal(
+    programSummary('const path = f();\nawait patch(`[${path}#3AF0]\nSWAP 1.=1:\n+x`);'),
+    "wrote 1 file",
+  );
+  // A named tag still NAMES the file rather than counting it.
+  assert.equal(programSummary('await patch(`[src/a.py#3AF0]\nSWAP 1.=1:\n+x`);'), "wrote a.py");
   // A real name alongside an interpolated one still names the one it can.
   assert.equal(
     programSummary('await write("src/a.py", x); await write(`${p}`, y);'),

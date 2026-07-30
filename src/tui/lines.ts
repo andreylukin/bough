@@ -253,14 +253,24 @@ function toolGroupLines(
 ) {
   const capCode = full ? Infinity : CODE_LINES;
   const capOut = full ? Infinity : OUTPUT_LINES;
-  const { calls, results, running, hasError, interrupted } = toolSummary(parts);
+  const { calls, results, running, hasError, errors, interrupted } = toolSummary(parts);
   if (calls.length === 0) return;
   // THE STATUS COMES FIRST, where nothing can clip it. It used to be appended —
   // `⚙ run_steps…` after the summary — and on a 100-column screen it never once
   // reached the glass, so the only sign a step was in flight was the spinner line
   // shared by the whole turn.
+  // A RECOVERED ROUND IS NOT A FAILED ONE. `hasError` is any-error, so a round where the
+  // model reached for a host function as a tool, got told off, and then wrote the program
+  // properly led with `✗ error` — on a turn that finished `✓` and did the work. Seen live
+  // on a skill run that succeeded:
+  //
+  //   ▸ ✗ error  2 steps  patch · run_steps · called patch as a tool · wrote parse.py
+  //
+  // Red is for a round that failed; amber and a count for one that had to retry.
   const state = running
     ? warn("⚙ ")
+    : errors > 0 && errors < calls.length
+    ? warn(`⚠ ${errors} of ${calls.length} failed  `)
     : hasError
     ? danger("✗ error  ")
     : interrupted

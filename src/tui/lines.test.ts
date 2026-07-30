@@ -200,6 +200,37 @@ test("an errored result is marked on the closed header", () => {
   assert.ok(head.text.includes("✗ error"), head.text);
 });
 
+test("a round that failed once and then worked is amber with a count, not red", () => {
+  // Live on a skill run that finished ✓ and did the work: the model reached for `patch` as
+  // a tool, was told off, wrote the program properly — and the header still led with
+  // `✗ error  2 steps`, which reads as "this round failed".
+  const m = msg({
+    id: "m1",
+    parts: [
+      call("c1", "", "patch"),
+      result("c1", "unknown tool: patch", { isError: true }),
+      call("c2", "await write('a.py', 'x')"),
+      result("c2", "wrote a.py"),
+    ],
+  });
+  const head = messageLines(m, CLOSED, CLOSED, 120).find((l) => l.text.includes("step"))!;
+  assert.ok(head.text.includes("1 of 2 failed"), head.text);
+  assert.equal(head.text.includes("✗ error"), false, head.text);
+
+  // Every call failing is still red: nothing recovered.
+  const allBad = msg({
+    id: "m2",
+    parts: [
+      call("c1", "boom()"),
+      result("c1", "[program error] boom", { isError: true }),
+      call("c2", "boom()"),
+      result("c2", "[program error] boom", { isError: true }),
+    ],
+  });
+  const head2 = messageLines(allBad, CLOSED, CLOSED, 120).find((l) => l.text.includes("step"))!;
+  assert.ok(head2.text.includes("✗ error"), head2.text);
+});
+
 // ---- folding: reasoning -----------------------------------------------------
 
 test("reasoning folds: a collapsed gist line, an expanded gutter block", () => {

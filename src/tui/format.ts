@@ -504,9 +504,12 @@ export function toolSummary(parts: Part[]) {
     parts.filter((p): p is ToolResult => p.type === "tool_result").map((p) => [p.callId, p]),
   );
   const running = calls.find((c) => !results.has(c.id));
-  const hasError = [...results.values()].some((r) => r.isError);
+  const errors = [...results.values()].filter((r) => r.isError).length;
+  const hasError = errors > 0;
   const interrupted = [...results.values()].some((r) => r.interrupted);
-  return { calls, results, running, hasError, interrupted };
+  // `errors` as well as `hasError`, because "one call failed and the next one worked" and
+  // "every call failed" are different news and the header used to render them identically.
+  return { calls, results, running, hasError, errors, interrupted };
 }
 
 /**
@@ -598,7 +601,14 @@ export function programSummary(code: string, max = 64, running = false): string 
   // A call whose path is a VARIABLE yields no name — `fs.readFileSync(filePath, "utf8")` —
   // and naming nothing is not a reason to fall back to a line of source. Count it instead.
   if (wrote.length === 0) {
-    const n = count(/(?:(?<![.\w])(?:write|edit)|writeFileSync|writeFile)\s*\(/g);
+    // `patch` belongs in the COUNT even though it is deliberately absent from the naming
+    // alternation above. Its files come from the `[path#tag]` tags inside its body, so a
+    // program that builds that path — `patch(\`[${path}#3AF0]…\`)`, which is exactly what a
+    // skill told to view-then-patch writes — named nothing AND counted nothing, and the
+    // header fell all the way back to a line of source:
+    //
+    //   ▸ 1 step · const path = "/private/tmp/claude-501/-Users-andrey-repos-bo…
+    const n = count(/(?:(?<![.\w])(?:write|edit|patch)|writeFileSync|writeFile)\s*\(/g);
     if (n) bits.push(`${running ? "writing" : "wrote"} ${plural(n, "file")}`);
   }
   if (read.length === 0) {
