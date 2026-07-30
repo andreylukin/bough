@@ -453,7 +453,11 @@ test('the "not bound" section is true — none of those chords is bound', () => 
       `${chord} is listed as not bound but the table binds it`,
     );
   }
-  assert.equal(UNAVAILABLE.keys.length, unbound.length);
+  // `home end` is one prose row rather than a chord: those keys are not bound because
+  // OpenTUI's React layer never delivers them, so there is nothing to shadow. It is in the
+  // section for the same reason the rest are — a reader will press End and deserves a why.
+  assert.equal(UNAVAILABLE.keys.length, unbound.length + 1);
+  assert.ok(UNAVAILABLE.keys.some(([chord]) => chord === "home end"));
 });
 
 test("every section header survives flattening, and carries its rows", () => {

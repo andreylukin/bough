@@ -1448,6 +1448,12 @@ export const UNAVAILABLE: HelpSection = {
     ["^r", "no reverse search · ^f then / searches every message"],
     ["^z", "no suspend · ^c ^c quits"],
     ["⌥d", "use ^k"],
+    // NOT bough's choice: OpenTUI's React key layer delivers pgup/pgdn and drops these
+    // two entirely — instrumented `useKeyboard` and saw `{"name":"pageup"}` arrive while
+    // End and Home produced no event at all. `chordOf` even has `key.home`/`key.end`
+    // branches, unreachable, waiting for the day they land. Listed here because a reader
+    // WILL press End after scrolling back, and "nothing happens" needs a reason.
+    ["home end", "not delivered by the terminal layer · use pgup/pgdn"],
   ],
 };
 
