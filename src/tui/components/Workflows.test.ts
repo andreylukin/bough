@@ -210,6 +210,13 @@ test("an ordinary first run reports its counts without crying wolf", () => {
   assert.doesNotMatch(out, /available/);
   assert.doesNotMatch(out, /NOTHING/);
   assert.notEqual(rows[0][1].tone, "error");
+  // ONE row. The counts and the server's sentence used to print on consecutive lines in
+  // two formats — `0 replayed · 3 ran live · of 3` above `0 replayed, 3 ran live of 3` —
+  // which reads as a rendering bug on the one panel whose job is to be believed about
+  // what was and was not re-run. The sentence returns when it carries something the
+  // counts cannot say (a source run, a divergence, the alarm), which the two tests above
+  // this one cover.
+  assert.equal(rows.length, 1, out);
 });
 
 // ---- statuses, including cached ---------------------------------------------

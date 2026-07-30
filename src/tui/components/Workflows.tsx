@@ -207,9 +207,14 @@ export function visibleAgents(agents: WorkflowAgentView[], filter: WfFilter): Wo
 // ---------------------------------------------------------------------------
 
 /**
- * The replay accounting. NEVER conditional — see the header. Two rows: the counts,
- * broken out so the arithmetic is visible (`replayed + ranLive + pending === total`),
- * then the server's one-line form, so every client says the same sentence.
+ * The replay accounting. NEVER conditional — see the header. The counts always show,
+ * broken out so the arithmetic is visible (`replayed + ranLive + pending === total`).
+ *
+ * The server's one-line form is a SECOND row only when it carries something the counts
+ * do not: a source run to compare against, or the alarm case. On a first run it restated
+ * them in a different format on the very next line — `0 replayed · 2 ran live · of 2`
+ * above `0 replayed, 2 ran live of 2` — which reads as a rendering bug on the one panel
+ * whose job is to be believed about what was and was not re-run.
  */
 export function replayRows(replay: ReplaySummary): Row[] {
   const alarm = replay.available > 0 && replay.replayed === 0;
@@ -225,7 +230,9 @@ export function replayRows(replay: ReplaySummary): Row[] {
       { text: "≡ replay  ", tone: "muted" },
       { text: counts + source, tone: alarm ? "error" : "text", bold: alarm },
     ],
-    [{ text: `  ${replay.line}`, tone: alarm ? "error" : "muted" }],
+    ...(replay.sourceId || alarm
+      ? [[{ text: `  ${replay.line}`, tone: alarm ? "error" : "muted" }] as Row]
+      : []),
   ];
 }
 
