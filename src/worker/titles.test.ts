@@ -185,6 +185,24 @@ test("the cheap model is read per call, and defaults when unset", () => {
 // Sanitizing
 // ---------------------------------------------------------------------------
 
+/**
+ * Asked to "List the numbers 1 to 60", the cheap tier titled a session `1` — a row in the
+ * switcher that names nothing, on the one surface where every row has to be recognisable.
+ * Refusing is better than a bad name: the session falls back to its workspace, which is
+ * at least true.
+ */
+test("sanitizeTitle refuses a title that carries no information", () => {
+  assert.equal(sanitizeTitle("1"), "");
+  assert.equal(sanitizeTitle("42"), "");
+  assert.equal(sanitizeTitle("-"), "");
+  assert.equal(sanitizeTitle("ok"), "");
+  assert.equal(sanitizeTitle("1 2 3"), "");
+  // Three letters is the floor, and real short titles clear it.
+  assert.equal(sanitizeTitle("Bug"), "Bug");
+  assert.equal(sanitizeTitle("CI fix"), "CI fix");
+  assert.equal(sanitizeTitle("Fix cart pricing"), "Fix cart pricing");
+});
+
 test("sanitizeTitle strips the label, the quoting and the trailing period", () => {
   assert.equal(sanitizeTitle('Title: "Fix the patch parser."'), "Fix the patch parser");
   assert.equal(sanitizeTitle("\n\n  rewrite the theme route  \n"), "rewrite the theme route");

@@ -169,6 +169,13 @@ export function sanitizeTitle(raw: string): string {
     .trim();
   if (cleaned === "") return "";
 
+  // A TITLE HAS TO CARRY INFORMATION. Asked to "List the numbers 1 to 60", the cheap tier
+  // titled a session `1` — a row in the switcher that names nothing, and the tree is the
+  // one surface where every row has to be recognisable. Refusing falls back to the
+  // workspace name, which is at least true (see the reply case below for the same logic).
+  // Three LETTERS is the floor: "Bug" and "CI fix" pass, `1`, `42`, `-` and `ok` do not.
+  if ((cleaned.match(/[a-z]/gi)?.length ?? 0) < 3) return "";
+
   const words = cleaned.split(/\s+/);
   // The model ANSWERED instead of titling. Capping that at eight words does not
   // rescue it, it manufactures a lie: a live session was headed

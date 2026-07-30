@@ -56,7 +56,16 @@ test("titles drop the kind prefix the server stamped on them", () => {
     titleOf(session("x", "subagent", { title: "subagent · review app.ts" })),
     "review app.ts",
   );
-  assert.equal(titleOf(session("y", "root", { title: "" })), "(untitled)");
+  // The WORKSPACE before "(untitled)": `worker/titles.ts` refuses an uninformative title
+  // and documents this fallback, which existed only in the header. The tree is the
+  // switcher — a directory name beats nothing.
+  assert.equal(
+    titleOf(session("y", "root", { title: "", workspace: "/Users/a/repos/bough" })),
+    "bough",
+  );
+  assert.equal(titleOf(session("y2", "root", { title: "", workspace: "/tmp/proj/" })), "proj");
+  // Nothing to fall back to at all is the only case that still reads "(untitled)".
+  assert.equal(titleOf(session("y3", "root", { title: "" })), "(untitled)");
   // `handoff` was missing from the list, and a handoff of a still-untitled conversation
   // is titled `handoff · ` server-side — the row rendered as a prefix with nothing
   // after it.

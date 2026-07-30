@@ -85,7 +85,15 @@ export function titleOf(s: SessionRow): string {
   // `handoff ·` — a prefix with nothing after it. Stripped first, so the fallback can
   // do its job.
   const base = (s.title || "").replace(/^(fork|compacted|handoff|subagent|workflow) · /, "").trim();
-  return base || "(untitled)";
+  if (base) return base;
+  // THE WORKSPACE, before "(untitled)". `worker/titles.ts` refuses a title that carries no
+  // information — a model that answers instead of naming, or names a session `1` — and its
+  // comment says the session "then falls back to its workspace name, which is true". That
+  // fallback existed only in the header (`sessionLabel`); the TREE, which is the switcher
+  // and the one surface where every row has to be recognisable, said "(untitled)". A
+  // directory name is a worse title than a good title and a much better one than nothing.
+  const dir = (s.workspace ?? "").replace(/\/+$/, "").split("/").filter(Boolean).pop();
+  return dir || "(untitled)";
 }
 
 /** `supervisor` is the agent — the transcript calls it "bough" and so does this. */
