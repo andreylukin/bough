@@ -824,6 +824,23 @@ export function buildLines(
   const flushMarks = (until: number) => {
     while (markAt < marks.length && marks[markAt].at <= until) out.push(markLine(marks[markAt++]));
   };
+  /**
+   * Exited job cards, drained the same way — IN TIME ORDER rather than all at the tail.
+   *
+   * They used to be appended after the whole thread, so a `!python3 tests/…` that failed
+   * three turns ago sat permanently below the newest reply, still showing its traceback
+   * after the bug had been fixed: the most recent thing on screen was the oldest news.
+   * A card belongs where the command finished, which is what makes it readable as part
+   * of the conversation instead of as a footer.
+   */
+  const timed = [...jobs].filter((j) => j.status !== "running")
+    .sort((a, b) => (a.exitedAt ?? a.startedAt) - (b.exitedAt ?? b.startedAt));
+  let jobAt = 0;
+  const flushJobs = (until: number) => {
+    while (jobAt < timed.length && (timed[jobAt].exitedAt ?? timed[jobAt].startedAt) <= until) {
+      jobCardLines(out, timed[jobAt++], w, now);
+    }
+  };
   // True once a pending reply has rendered: any user message after it was posted
   // into a running turn and is only QUEUED server-side (spec §5).
   let midTurn = false;
@@ -837,6 +854,7 @@ export function buildLines(
       if (bg && jobIds.has(bg)) continue;
     }
     flushMarks(m.createdAt);
+    flushJobs(m.createdAt);
     out.push(
       ...messageLines(m, isExpanded, isFull, w, streaming[m.id], opts.toolLogs, runsById, now),
     );
@@ -874,9 +892,10 @@ export function buildLines(
     out.push({ text: "  " + dim("subagents with no spawn point in this thread") });
   }
   for (const b of tail) branchCardLines(out, b, w, isFull);
-  // Background shells at the tail — including the finished ones: the outcome is
-  // the whole point, and dropping exited jobs put a failure nowhere at all.
-  for (const job of jobs) jobCardLines(out, job, w, now);
+  // Whatever exited AFTER the last message — including still-running ones, which have
+  // no exit time to place them by and belong at the bottom next to the composer.
+  flushJobs(Number.MAX_SAFE_INTEGER);
+  for (const job of jobs) if (job.status === "running") jobCardLines(out, job, w, now);
   return out;
 }
 

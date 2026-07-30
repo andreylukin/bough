@@ -663,3 +663,56 @@ test("a message that names an installed skill says so, under the message", () =>
   const bare = joined(buildLines(thread, () => false, () => false, 80, {}));
   assert.equal(bare.includes("skill loaded"), false);
 });
+
+/**
+ * Job cards used to be appended after the WHOLE thread, so a `!python3 tests/…` that
+ * failed three turns ago sat permanently below the newest reply, still showing its
+ * traceback after the bug had been fixed — the most recent thing on screen was the
+ * oldest news. Seen in a multi-turn soak.
+ */
+test("an exited job card lands where the command finished, not at the tail", () => {
+  const job = (id: string, exitedAt: number, code: number): JobView => ({
+    id,
+    name: id,
+    sessionId: "s1",
+    pid: 1,
+    command: `run ${id}`,
+    status: "exited",
+    exitCode: code,
+    startedAt: exitedAt - 100,
+    exitedAt,
+    tail: [`${id}-output`],
+    outputLines: 1,
+  });
+  const thread = [
+    msg({ id: "u1", role: "user", parts: [{ type: "text", text: "first" }], createdAt: 10 }),
+    msg({ id: "a1", role: "supervisor", parts: [{ type: "text", text: "answer one" }], createdAt: 20 }),
+    msg({ id: "u2", role: "user", parts: [{ type: "text", text: "second" }], createdAt: 40 }),
+    msg({ id: "a2", role: "supervisor", parts: [{ type: "text", text: "answer two" }], createdAt: 50 }),
+  ];
+  const out = buildLines(thread, () => false, () => false, 80, {
+    jobs: [job("bg_1", 30, 1)],
+    now: 100,
+  });
+  const text = joined(out);
+  // Between the two exchanges, in time order.
+  assert.ok(text.indexOf("bg_1-output") > text.indexOf("answer one"), text);
+  assert.ok(text.indexOf("bg_1-output") < text.indexOf("second"), text);
+
+  // A job that exited after the last message stays at the bottom — there is nothing
+  // later to place it before.
+  const late = buildLines(thread, () => false, () => false, 80, {
+    jobs: [job("bg_2", 90, 0)],
+    now: 100,
+  });
+  const lateText = joined(late);
+  assert.ok(lateText.indexOf("bg_2-output") > lateText.indexOf("answer two"), lateText);
+
+  // A RUNNING job also sits at the bottom: it has no exit time to place it by, and it
+  // is the one card whose value is being next to the composer.
+  const running = buildLines(thread, () => false, () => false, 80, {
+    jobs: [{ ...job("bg_3", 0, 0), status: "running", exitedAt: undefined, tail: ["live"] }],
+    now: 100,
+  });
+  assert.ok(joined(running).indexOf("live") > joined(running).indexOf("answer two"));
+});
