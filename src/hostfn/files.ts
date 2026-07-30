@@ -150,6 +150,43 @@ export class SnapshotStore {
  */
 export const sessionSnapshots = new SnapshotStore();
 
+/**
+ * Which paths a session's own programs WROTE, keyed by session id.
+ *
+ * Delegated reports said `Changed files: not reported` on every fan-out — the field exists,
+ * the code that fills it was never wired, and a delegator persona pointed out that for a
+ * review the file→agent mapping IS the review. Git cannot answer it: subagents share their
+ * spawner's checkout by design, so `git diff` at the end reports the union of every
+ * concurrent sibling's work and attributes it to whoever asked last.
+ *
+ * The write verbs know exactly what they wrote, so this records it at the source. Keyed the
+ * same way as the snapshots above and, like them, module-level so nothing has to be threaded
+ * through the bridge.
+ */
+const sessionWrites = new Map<string, Set<string>>();
+
+/** Cap per session: a report lists files, and a runaway loop must not grow this forever. */
+const MAX_TRACKED_WRITES = 200;
+
+function recordWrite(sessionId: string, path: string): void {
+  const set = sessionWrites.get(sessionId) ?? new Set<string>();
+  if (set.size < MAX_TRACKED_WRITES) set.add(path);
+  sessionWrites.set(sessionId, set);
+}
+
+/**
+ * The paths this session wrote, in write order, and FORGET them.
+ *
+ * Read-and-clear because the only caller is a report built once, and a store that only ever
+ * grows in a process that runs for weeks is a leak with extra steps.
+ */
+export function takeSessionWrites(sessionId: string): string[] {
+  const set = sessionWrites.get(sessionId);
+  if (!set) return [];
+  sessionWrites.delete(sessionId);
+  return [...set];
+}
+
 // ---------------------------------------------------------------------------
 // The verbs
 // ---------------------------------------------------------------------------
@@ -327,6 +364,7 @@ export function createFileHostFns(ctx: FileCtx, opts: FileHostFnsOptions = {}): 
       // echoed tag is live: a follow-up patch may anchor to it, or use "[path#]",
       // without viewing again (spec §6).
       snapshots.record(ctx.sessionId, p, text);
+      recordWrite(ctx.sessionId, g.path);
       written.push(g.path);
       out.push(
         `[${g.path}#${tagOf(text)}] patched — ${plural(g.ops.length, "operation")}, ` +
@@ -362,6 +400,7 @@ export function createFileHostFns(ctx: FileCtx, opts: FileHostFnsOptions = {}): 
       throw new BadRequestError(`cannot write ${p}: ${errText(err)}`);
     }
     snapshots.record(ctx.sessionId, full, content);
+    recordWrite(ctx.sessionId, p);
     const bytes = new TextEncoder().encode(content).length;
     return `[${p}#${tagOf(content)}] wrote ${plural(toLines(content).length, "line")} ` +
       `(${plural(bytes, "byte")})`;

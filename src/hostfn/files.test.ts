@@ -25,7 +25,12 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { NotFoundError, PatchError } from "../errors.ts";
-import { createFileHostFns, type FileHostFns, SnapshotStore } from "./files.ts";
+import {
+  createFileHostFns,
+  type FileHostFns,
+  SnapshotStore,
+  takeSessionWrites,
+} from "./files.ts";
 import { tagOf } from "./patch.ts";
 
 // ---------------------------------------------------------------------------
@@ -461,5 +466,30 @@ test("snapshots: recording is keyed by session, so two sessions hold two version
     await one.patch(`[a.ts#]\nINS.HEAD:\n+header\n`);
     await two.patch(`[a.ts#]\nINS.TAIL:\n+footer\n`);
     strictEqual(await ws.read("a.ts"), doc("header", "one", "footer"));
+  });
+});
+
+test("the write verbs record what a session wrote, and the record is read once", async () => {
+  // Every delegated report read `Changed files: not reported`. Git cannot answer it —
+  // subagents share their spawner's checkout, so a diff at the end is the union of every
+  // concurrent sibling's work — but the write verbs know exactly what they wrote.
+  await withWorkspace({}, async (ws) => {
+    // The store is module-level and keyed by session id, so earlier tests in this file have
+    // already written under "s1". Draining first is what a real caller does anyway.
+    takeSessionWrites("s1");
+    await ws.fns.write("lib/alpha.py", doc("def a(): pass"));
+    await ws.fns.write("lib/beta.py", doc("def b(): pass"));
+    // A patch counts too: it is the other way a file changes.
+    const shown = await ws.fns.view("lib/alpha.py");
+    const tag = /\[lib\/alpha\.py#([^\]]+)\]/.exec(shown)![1];
+    await ws.fns.patch(`[lib/alpha.py#${tag}]\nSWAP 1.=1:\n+def a(): return 1`);
+
+    const wrote = takeSessionWrites("s1").sort();
+    strictEqual(wrote.join(","), "lib/alpha.py,lib/beta.py");
+    // READ ONCE: the only caller builds a report once, and a store that only grows in a
+    // process running for weeks is a leak with extra steps.
+    strictEqual(takeSessionWrites("s1").length, 0);
+    // Another session's writes are its own.
+    strictEqual(takeSessionWrites("s2").length, 0);
   });
 });

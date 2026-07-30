@@ -212,11 +212,14 @@ export interface LaunchDeps {
   /**
    * The paths the child changed, for its report. Absent = `[]`.
    *
-   * A seam rather than a call into git, for two reasons: `server/changes.ts` (T8.8)
-   * is the one module that owns "what changed since `sessions.base`", and duplicating
-   * its diff here would give delegation a second answer to the same question. Until
-   * it is wired, an empty list is the honest answer — the child's writes are in the
-   * shared checkout either way, which is what the report says.
+   * A seam rather than a call into git, and the reason has sharpened since it was written:
+   * `server/changes.ts` owns "what changed since `sessions.base`", and it CANNOT answer this
+   * question. Subagents share their spawner's checkout by design, so a git diff at the end
+   * reports the union of every concurrent sibling's work and hands it to whoever asked last.
+   *
+   * What can answer it is the write verbs, which know what they wrote —
+   * `hostfn/files.ts: takeSessionWrites`. Wired in `hostfn/delegate.ts`; left a seam so a
+   * test can hand over a list without touching the module-level store.
    */
   changedFiles?: (session: Session) => Promise<string[]> | string[];
 }

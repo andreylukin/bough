@@ -62,6 +62,7 @@ import {
   type SubagentOptions,
   type SubagentResult,
 } from "../agents/subagent.ts";
+import { takeSessionWrites } from "./files.ts";
 import { TurnRegistry, turns as defaultRegistry } from "../turn/queue.ts";
 import {
   BASE_HOST_FNS,
@@ -335,7 +336,23 @@ export function createDelegationHostFns(
   const registry = deps.registry ?? defaultRegistry;
   const detached = deps.detached ?? detachedSubagents;
   const launch = deps.launch ?? launchSubagent;
-  const childDeps = deps.child ?? (() => ({}));
+  /**
+   * WHAT THE CHILD WROTE, for its report.
+   *
+   * Every delegated report read `Changed files: not reported` — the field existed and
+   * nothing filled it. Git cannot: subagents share this checkout, so a diff at the end is
+   * the union of every concurrent sibling's work. The write verbs know, so the answer comes
+   * from them (`hostfn/files.ts: takeSessionWrites`), per session, read once and cleared.
+   *
+   * Composed with whatever a caller already supplies, so a test's own `child` deps still
+   * win — this only fills the field when nothing else did.
+   */
+  const childDeps = (turnCtx: TurnCtx): Partial<LaunchDeps> => {
+    const base = deps.child?.(turnCtx) ?? {};
+    return base.changedFiles
+      ? base
+      : { ...base, changedFiles: (session: Session) => takeSessionWrites(session.id) };
+  };
   const reportError = deps.reportError ??
     ((err, sessionId) => console.error(`detached subagent ${sessionId} failed:`, err));
 
