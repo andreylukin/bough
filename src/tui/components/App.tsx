@@ -600,7 +600,46 @@ export function App(
     }
   }, [openTurns, state.currentId, state.thread, threads, sections]);
 
-  /** Just the names, memoized: the transcript compares against this every rebuild. */
+  /**
+   * A HALF-TYPED MESSAGE SURVIVES A SWITCH, AND A RESTART.
+   *
+   * `PUT /sessions/:id/draft` says in its own doc comment that it is "where the TUI stashes a
+   * half-typed prompt on session switch" — intent that was never implemented: `api.putDraft` was
+   * called by nothing, so switching conversations, or quitting, silently threw away whatever was
+   * in the composer. The server already persists the field (handoff writes it, and posting a
+   * message clears it), so this is the missing half of a working mechanism.
+   *
+   * Written on the way OUT, not per keystroke: the route deliberately publishes no event
+   * (announcing the writer's own write races the prefill it is about to render), and a PUT per
+   * character would be chatty for a value only read on the way back in.
+   */
+  const draftsRef = useRef<Record<string, string>>({});
+  if (state.currentId) draftsRef.current[state.currentId] = line.text;
+  useEffect(() => {
+    const leaving = state.currentId;
+    if (!leaving) return;
+    return () => {
+      // KEYED BY SESSION, and read with the id captured at setup. My first version kept a single
+      // `{id, text}` ref assigned during render, so by the time React ran this cleanup the ref
+      // already held the NEW conversation's id and its empty composer — it PUT an empty draft to
+      // the wrong session and stored nothing. A map per id cannot be overwritten that way.
+      const text = draftsRef.current[leaving] ?? "";
+      void api.putDraft(leaving, text === "" ? null : text).catch(() => {});
+    };
+  }, [state.currentId]);
+  // …and restored on the way in, but ONLY once the snapshot for THAT session has arrived:
+  // marking it restored before `state.session` catches up meant the guard below skipped the
+  // retry when the draft finally landed, which is why the first version restored nothing.
+  const restoredFor = useRef<string | null>(null);
+  useEffect(() => {
+    const id = state.currentId;
+    if (!id || restoredFor.current === id || state.session?.id !== id) return;
+    restoredFor.current = id;
+    const stored = state.session.draft ?? "";
+    if (stored && lineRef.current.text === "") setLine({ text: stored, cursor: stored.length });
+  }, [state.currentId, state.session]);
+
+  /** Just the names, memoized: the transcript compares against this every rebuild. */  /** Just the names, memoized: the transcript compares against this every rebuild. */
   const skillNames = useMemo(() => skills.map((s) => s.name), [skills]);
   const [defaultModel, setDefaultModel] = useState<string | null>(null);
   useEffect(() => {
