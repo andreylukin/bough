@@ -133,6 +133,16 @@ test("comment sidecars live outside the artifacts tree", () => {
   });
 });
 
+test("an effort name cannot steer a map out of the maps tree", () => {
+  // The name reaches mapDirFor from a model-authored string in a SKILL.md's
+  // instructions, so `../theme.json` is the case worth stopping.
+  withEnv({ BOUGH_HOME: "/fake/root" }, () => {
+    assertEscapes(() => mapDirFor("../theme.json"));
+    assertEscapes(() => mapDirFor("a/../.."));
+    assertEscapes(() => mapDirFor("/etc"));
+  });
+});
+
 // ---- confine: the accepting direction ---------------------------------------
 
 test("confine returns an absolute path under the root", () => {

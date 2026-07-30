@@ -135,7 +135,7 @@ export function mapsDir(): string {
  * model-authored string, and `../` in one would write a map over `theme.json`.
  */
 export function mapDirFor(effort: string): string {
-  return confine(mapsDir(), join(mapsDir(), effort));
+  return confine(mapsDir(), effort);
 }
 
 /** User skills. Bundled skills win on a name collision (spec §16). */
