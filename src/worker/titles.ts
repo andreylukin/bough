@@ -141,10 +141,25 @@ export async function cheapText(opts: CheapCallOpts): Promise<string | null> {
 // Titles
 // ---------------------------------------------------------------------------
 
+/**
+ * CONSOLIDATED, never appended to. A small model asked to satisfy a list of clauses
+ * satisfies the first few; the measured failure mode on haiku (see the harness-bench
+ * memory) is that a fourth sentence dilutes the first three rather than adding to them.
+ *
+ * The grounding sentence came from a measurement, not from taste. Asked to title "What
+ * does parse.py do? One sentence.", the cheap tier returned
+ *
+ *   Parse.py parses code into syntax trees
+ *
+ * — a claim about a file nothing had read, shown as the conversation's name in the tree,
+ * in the switcher, and in the title of every handoff branched from it. Sampled three
+ * prompts three times each: with the clause, nothing invented a subject.
+ */
 export const TITLE_SYSTEM = [
-  "You name coding sessions. Given the user's first message, reply with a short",
-  "title only: 3-6 words, no quotes, no trailing period, no preamble like 'Title:'.",
-  "Write it in sentence case — capitalize only the first word and real names.",
+  "You name coding sessions. Given the user's first message, reply with a short title only:",
+  "3-6 words, sentence case, no quotes, no trailing period, no preamble like 'Title:'.",
+  "Name only what the message names — never invent a subject, file, or domain it does not",
+  "mention.",
 ].join(" ");
 
 /** A title needs the gist, not a 50KB paste — and the paste is what is being billed. */
