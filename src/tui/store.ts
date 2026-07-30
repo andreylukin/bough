@@ -1189,7 +1189,7 @@ export interface Store {
    * the index is unavailable is a degraded search, and a modal error over a list the user
    * is typing into is worse than that.
    */
-  searchSessions(q: string): Promise<string[]>;
+  searchSessions(q: string): Promise<{ sessions: string[]; messages: string[] }>;
   /**
    * Every schedule, as one line for a notice — the TUI's only window onto them.
    *
@@ -1709,11 +1709,17 @@ export function createStore(deps: StoreDeps = {}): Store {
         // spawner IS the row, so the hit is attributed to it — otherwise "searches every
         // message" quietly excluded every message a delegate ever wrote, which on a
         // fan-out is most of them.
-        return [
-          ...new Set(hits.map((h) => (h.collapsed && h.originId ? h.originId : h.sessionId))),
-        ];
+        return {
+          sessions: [
+            ...new Set(hits.map((h) => (h.collapsed && h.originId ? h.originId : h.sessionId))),
+          ],
+          // The MESSAGE ids too. Narrowing to the conversation answers "which one" and leaves
+          // the reader to re-find the turn by eye in forty rows — which is the job they opened
+          // search to avoid.
+          messages: [...new Set(hits.map((h) => h.messageId))],
+        };
       } catch {
-        return [];
+        return { sessions: [], messages: [] };
       }
     },
 

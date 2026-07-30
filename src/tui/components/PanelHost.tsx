@@ -373,22 +373,29 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
    * the switcher is asking. The snippet the server returns is the next thing to surface
    * and is deliberately not guessed at here.
    */
-  const [searchHits, setSearchHits] = useState<{ q: string; ids: readonly string[] }>({
-    q: "",
-    ids: [],
-  });
+  const [searchHits, setSearchHits] = useState<
+    { q: string; ids: readonly string[]; messages: readonly string[] }
+  >({ q: "", ids: [], messages: [] });
   useEffect(() => {
     const q = panel.tab === "tree" ? filter.trim() : "";
     if (q.length < 2) {
-      setSearchHits({ q: "", ids: [] });
+      setSearchHits({ q: "", ids: [], messages: [] });
       return;
     }
     // Debounced: this fires per keystroke, and FTS over every transcript is not free.
     const timer = setTimeout(() => {
-      void store.searchSessions(q).then((ids) => setSearchHits({ q, ids }));
+      void store.searchSessions(q).then((r) => {
+        setSearchHits({ q, ids: r.sessions, messages: r.messages });
+        // EXPAND each hit, which is also what FETCHES its thread (`App`'s `expand`). A
+        // conversation's turns only render when it is open, so marking the matching turn and
+        // leaving the row collapsed would be marking something nobody can see — and spreading the
+        // ids into `expanded` here would open rows whose threads had never been fetched, which
+        // renders as a conversation with no turns at all.
+        for (const id of r.sessions) deps.expand(id);
+      });
     }, 180);
     return () => clearTimeout(timer);
-  }, [filter, panel.tab, store]);
+  }, [filter, panel.tab, store, deps.expand]);
   /**
    * What the typed buffer IS. `filtering` means "the panel has the text keyboard";
    * this says what happens on ⏎.
@@ -443,7 +450,10 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
         // narrow the conversation list underneath it.
         filter: panel.tab === "tree" ? filter : "",
         ...(searchHits.q === filter.trim() && searchHits.ids.length > 0
-          ? { matchedSessions: searchHits.ids }
+          ? {
+            matchedSessions: searchHits.ids,
+            matchedMessages: searchHits.messages,
+          }
           : {}),
       }),
     [deps.forest, state.currentId, panel.tab, filter, searchHits],

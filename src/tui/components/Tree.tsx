@@ -18,7 +18,7 @@
 import { TextAttributes } from "@opentui/core";
 import type { SessionKind } from "../../schema/parts.ts";
 import type { SessionRow } from "../api.ts";
-import { clip, fmtUsd, legendLine, shortenPath, windowAround } from "../format.ts";
+import { clip, fmtUsd, legendLine, shortenPath, UI, windowAround } from "../format.ts";
 import { type ForestRow, isDelegated } from "../forest.ts";
 
 /**
@@ -207,6 +207,11 @@ export function Tree(
               <span attributes={sel ? TextAttributes.BOLD : TextAttributes.NONE}>
                 {` ${clip(item.gist, Math.max(12, 54 - item.depth * 2))}`}
               </span>
+              {item.matched
+                // The row that actually said the word. Without it the filter answers "which
+                // conversation" and leaves the reader to find the turn by eye.
+                ? <span fg={UI.info}>{"  ◂ match"}</span>
+                : null}
               {item.active ? <span attributes={TextAttributes.DIM}>{"  ← active"}</span> : null}
             </text>
           );

@@ -1270,6 +1270,9 @@ test("a search hit inside a collapsed session is attributed to its spawner", asy
       }),
   });
   const store = createStore({ api, connect: fakeStream().connect });
-  const ids = await store.searchSessions("compound");
-  assert.deepEqual(ids.sort(), ["orphan-3", "root-1", "root-2"]);
+  const { sessions, messages } = await store.searchSessions("compound");
+  assert.deepEqual(sessions.sort(), ["orphan-3", "root-1", "root-2"]);
+  // The MESSAGE ids ride along, so the tree can mark the turn that actually said the word
+  // rather than only the conversation it lives in.
+  assert.deepEqual(messages, ["m1"]);
 });

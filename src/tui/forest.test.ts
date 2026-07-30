@@ -499,3 +499,45 @@ test("⏎ on a topic caption does nothing at all", () => {
     { drill: "root" },
   );
 });
+
+/**
+ * The `/` filter narrowing to a conversation answers "which one" and leaves the reader to find
+ * the turn by eye in forty rows — the job they opened search to avoid. The row that actually
+ * said the word is marked.
+ */
+test("a searched turn is marked, and only that turn", () => {
+  const root = session("root", "root", { title: "pricing" });
+  const thread = [
+    msg("m1", "user", "fix the discount"),
+    msg("m2", "supervisor", "the compound bug is in fees_total"),
+    msg("m3", "user", "thanks"),
+  ];
+  const rows = forestRows({
+    sessions: [root],
+    childrenByOrigin: {},
+    threads: { root: thread },
+    expanded: new Set(["root"]),
+    drilled: new Set(),
+    filter: "compound",
+    matchedSessions: ["root"],
+    matchedMessages: ["m2"],
+  });
+  const marked = rows.filter((r) => r.kind === "message" && r.matched).map((r) => r.id);
+  assert.deepEqual(marked, ["m2"]);
+  // Every turn still renders — search marks, it does not filter turns away, because the
+  // surrounding turns are the context that makes a hit readable.
+  assert.deepEqual(
+    rows.filter((r) => r.kind === "message").map((r) => r.id),
+    ["m1", "m2", "m3"],
+  );
+
+  // With no match list nothing is marked.
+  const plain = forestRows({
+    sessions: [root],
+    childrenByOrigin: {},
+    threads: { root: thread },
+    expanded: new Set(["root"]),
+    drilled: new Set(),
+  });
+  assert.equal(plain.some((r) => r.kind === "message" && r.matched), false);
+});

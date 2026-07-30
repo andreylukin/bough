@@ -101,6 +101,8 @@ export type ForestRow =
     depth: number;
     role: Message["role"];
     gist: string;
+    /** The `/` filter's search matched this turn's own text. */
+    matched?: boolean;
     /** The thread's last message: where the next turn would append. */
     active: boolean;
     /** Drawn with `└─` rather than `├─`. */
@@ -159,6 +161,13 @@ export interface ForestInput {
    * does not contain the query.
    */
   matchedSessions?: readonly string[];
+  /**
+   * Message ids the search matched, so the row that actually said the word can be marked.
+   *
+   * Without it the filter answers "which conversation" and leaves the reader to find the turn by
+   * eye in forty rows — the job they opened search to avoid.
+   */
+  matchedMessages?: readonly string[];
   /** Show only user turns — pi's `Ctrl+U`. */
   userOnly?: boolean;
 }
@@ -254,6 +263,7 @@ export function forestRows(input: ForestInput): ForestRow[] {
         depth: depth + 1,
         role: m.role,
         gist: messageGist(m),
+        ...(input.matchedMessages?.includes(m.id) ? { matched: true } : {}),
         active: m.id === lastId,
         last: i === shown.length - 1 && under.length === 0,
       });
