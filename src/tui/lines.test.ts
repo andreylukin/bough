@@ -420,6 +420,16 @@ test("branch cards state the real outcome — failed and orphaned never read don
   assert.ok(render({ status: "done", ok: false }).includes("✗ failed"));
   assert.ok(render({ status: "interrupted" }).includes("◼ interrupted"));
   assert.ok(render({ status: "orphaned" }).includes("the server restarted"));
+
+  // WHAT IT COST, next to the outcome. Measured against Claude Code's agent rail, which
+  // keeps `12s · ↓ 18.0k tokens` per agent; bough's card said `✓ done` and nothing else
+  // while the row it is built from carried the numbers.
+  const paid = render({ status: "done", ok: true, tokens: 18000, costUsd: 0.031 });
+  assert.ok(paid.includes("18k tok"), paid);
+  assert.ok(paid.includes("$0.03"), paid);
+  // Zero tokens is a fact, not missing data: an agent interrupted before its first call
+  // really did bill nothing.
+  assert.ok(render({ status: "interrupted", tokens: 0 }).includes("0 tok"));
 });
 
 test("a message steered into a running turn carries a queued ack until a reply follows", () => {

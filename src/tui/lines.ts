@@ -36,6 +36,8 @@ import {
   codeGist,
   danger,
   dim,
+  fmtTokens,
+  fmtUsd,
   highlightCode,
   info,
   linkifyUrls,
@@ -498,6 +500,10 @@ export interface Branch {
   originMessageId?: string | null;
   /** Parsed completion note once it finished. */
   note?: SubagentNote | null;
+  /** Tokens the delegated session billed, for the card's accounting. */
+  tokens?: number | null;
+  /** Dollars it billed. Shown next to the tokens when both are known. */
+  costUsd?: number | null;
 }
 
 /**
@@ -532,6 +538,8 @@ export function branchesFrom(
     lastTurnStatus?: string;
     outcomeOk?: boolean | null;
     originMessageId?: string | null;
+    tokens?: number | null;
+    costUsd?: number | null;
   }[],
 ): Branch[] {
   const notes = new Map<string, SubagentNote>();
@@ -557,12 +565,28 @@ export function branchesFrom(
       // child (`origin_message_id`); the note does not carry it.
       ...(row.originMessageId ? { originMessageId: row.originMessageId } : {}),
       ...(note ? { note } : {}),
+      // WHAT IT COST. Measured against Claude Code on the same delegation: its rail keeps a
+      // row per agent reading `12s · ↓ 18.0k tokens`, so "was delegating worth it" is
+      // answerable from the screen. bough's card said `✓ done` and nothing else, while the
+      // session row it is built from has carried the numbers all along.
+      //
+      // Tokens and dollars, NOT elapsed: the only clock on the row is
+      // `lastLlmAt - createdAt`, which counts the wait for a free slot as work done and
+      // would overstate a queued subagent's time.
+      ...(row.tokens === undefined ? {} : { tokens: row.tokens }),
+      ...(row.costUsd === undefined ? {} : { costUsd: row.costUsd }),
     };
   });
 }
 
 /** The card for a finished subagent: header, files, capped report, next action. *//** The card for a finished subagent: header, files, capped report, next action. */
-function subagentNoteLines(out: VLine[], note: SubagentNote, w: number, full: boolean) {
+function subagentNoteLines(
+  out: VLine[],
+  note: SubagentNote,
+  w: number,
+  full: boolean,
+  spent = "",
+) {
   const open = `open:${note.sessionId}`;
   // Amber = stopped or orphaned (an infra restart, not the agent's fault); red is
   // reserved for a genuine failure. Four outcomes, four readings (plan T4.4).
@@ -574,7 +598,7 @@ function subagentNoteLines(out: VLine[], note: SubagentNote, w: number, full: bo
     ? warn(note.status)
     : danger(note.status);
   const title = note.title.replace(/^subagent · /, "");
-  out.push({ text: `${dot} ${bold(title)}  ${clip(statusTag, 200)}`, click: open });
+  out.push({ text: `${dot} ${bold(title)}  ${clip(statusTag, 200)}${dim(spent)}`, click: open });
   const fileNote = note.filesUnknown
     ? "changed files not reported"
     : note.files.length
@@ -618,7 +642,13 @@ function branchCardLines(out: VLine[], b: Branch, w: number, isFull: (key: strin
   const body: VLine[] = [];
   let copy: string;
   if (b.note) {
-    subagentNoteLines(body, b.note, inner, isFull(`report:${b.note.sessionId}`));
+    subagentNoteLines(
+      body,
+      b.note,
+      inner,
+      isFull(`report:${b.note.sessionId}`),
+      billed(b.tokens, b.costUsd),
+    );
     copy = b.note.report ?? b.note.title;
   } else {
     // A blocking subagent reports in-band and leaves no note, so its card reads
@@ -633,8 +663,13 @@ function branchCardLines(out: VLine[], b: Branch, w: number, isFull: (key: strin
       : b.status === "error" || b.ok === false
       ? { dot: danger("◆"), tail: danger(" ✗ failed") }
       : { dot: accent("◆"), tail: accent(" ✓ done") };
+    // The accounting the row carried. No `busy` check: `buildLines` drops a running
+    // branch that has no note before it ever reaches this card, so every card built here
+    // is settled. See `branchesFrom` for why there is no elapsed.
     body.push({
-      text: `${dot} ${b.title.replace(/^subagent · /, "")}${dim(tail)}`,
+      text: `${dot} ${b.title.replace(/^subagent · /, "")}${dim(tail)}${
+        dim(billed(b.tokens, b.costUsd))
+      }`,
       click: `open:${b.id}`,
     });
     copy = b.title;
@@ -652,6 +687,19 @@ function branchCardLines(out: VLine[], b: Branch, w: number, isFull: (key: strin
 export interface JobView extends BackgroundJob {
   tail?: string[];
   outputLines?: number;
+}
+
+/**
+ * ` · 18k tok · $0.01` for a settled delegated session, or "" when nothing is known.
+ *
+ * Zero tokens is not "unknown": a subagent that was interrupted before its first call
+ * really did bill nothing, and printing nothing there would read as missing data.
+ */
+function billed(tokens?: number | null, costUsd?: number | null): string {
+  const parts: string[] = [];
+  if (typeof tokens === "number") parts.push(`${fmtTokens(tokens)} tok`);
+  if (typeof costUsd === "number" && costUsd > 0) parts.push(fmtUsd(costUsd));
+  return parts.length === 0 ? "" : ` · ${parts.join(" · ")}`;
 }
 
 /** Two most significant units only; nobody needs seconds on a two-day run. */
