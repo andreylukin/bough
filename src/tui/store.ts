@@ -1778,11 +1778,17 @@ export function createStore(deps: StoreDeps = {}): Store {
         const { artifacts } = await api.listArtifacts(id);
         dispatch({
           type: "notice",
+          // NAMES, NOT URLS. A notice is one line, and one artifact's name plus its
+          // `http://127.0.0.1:4325/artifacts/<uuid>/<file>` href is 111 characters — so the
+          // list was clipped mid-URL on a 100-column screen and the only thing a reader
+          // wanted from it was the half that got cut. The full link is already in the
+          // transcript on the line that published it, wrapped and clickable; this says
+          // WHAT exists and where the links are.
           notice: artifacts.length === 0
             ? "this conversation has published no artifacts"
             : `${plural(artifacts.length, "artifact")}: ${
-              artifacts.map((a) => `${a.name} ${a.href}`).join(" · ")
-            }`,
+              artifacts.map((a) => a.name).join(", ")
+            } — the link is on the turn that published each one`,
         });
       } catch (error) {
         fail(error);

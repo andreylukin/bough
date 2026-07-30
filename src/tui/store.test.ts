@@ -817,6 +817,46 @@ test("interrupt raises the stop on the OPEN session, and says what happened", as
   await store.stop();
 });
 
+test("the artifact list names them and does not try to fit their URLs", async () => {
+  // A notice is ONE line. One artifact's name plus its
+  // `http://127.0.0.1:4325/artifacts/<uuid>/<file>` href is 111 characters, so the list was
+  // clipped mid-URL on a 100-column screen — and the clipped half was the only part the
+  // reader wanted. The full link is in the transcript on the turn that published it.
+  const { api } = fakeApi({
+    listArtifacts: () =>
+      Promise.resolve({
+        artifacts: [
+          {
+            name: "line_counts.html",
+            url: `/artifacts/${"a".repeat(36)}/line_counts.html`,
+            href: `http://127.0.0.1:4325/artifacts/${"a".repeat(36)}/line_counts.html`,
+            bytes: 512,
+            ts: 1,
+          },
+          {
+            name: "report.html",
+            url: `/artifacts/${"b".repeat(36)}/report.html`,
+            href: `http://127.0.0.1:4325/artifacts/${"b".repeat(36)}/report.html`,
+            bytes: 256,
+            ts: 2,
+          },
+        ],
+      }),
+  });
+  const events = fakeStream();
+  const store = createStore({ api, connect: events.connect });
+  store.start();
+  await settle();
+  await store.open(SESSION);
+  await settle();
+  await store.describeArtifacts();
+  const notice = store.getState().notice ?? "";
+  assert.match(notice, /2 artifacts: line_counts\.html, report\.html/);
+  assert.equal(notice.includes("http://"), false, notice);
+  assert.ok(notice.length <= 100, `${notice.length}: ${notice}`);
+  await store.stop();
+});
+
 test("a failed interrupt is a notice, not a throw into the render", async () => {
   const { api } = fakeApi({
     interrupt: () => Promise.reject(new Error("the server went away")),
