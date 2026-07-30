@@ -149,7 +149,12 @@ export function Tree(
       {items.length === 0
         ? (
           <text attributes={TextAttributes.DIM}>
-            {filter ? `nothing matches "${filter}"` : "no conversations yet"}
+            {filter
+              // Says WHAT was searched. `/` covers titles, workspaces and every message
+              // in every transcript (`store.searchSessions`), and a bare "nothing
+              // matches" leaves the user wondering whether it looked inside at all.
+              ? `nothing matches "${filter}" — titles, paths or messages`
+              : "no conversations yet"}
           </text>
         )
         : null}
