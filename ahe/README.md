@@ -168,6 +168,38 @@ prompt most likely to transfer is the host-function contracts, a bank that never
 exercises those contracts cannot produce evidence about them. Use TB as a source
 for calibrated difficulty, and keep hand-written tasks for the verbs it misses.
 
+## Three prompt edits, three refutations
+
+Run on gpt-5.6-luna (~20x cheaper per trial than haiku, same discriminating
+shape), the loop has now produced three well-argued, evidence-backed, correctly
+diagnosed edits and settled all three as refuted:
+
+| iteration | edit | prediction | outcome |
+|---|---|---|---|
+| 1 | `identity.md` — name the shapes that shadow a host function | parse errors fall | fell 3 -> 0, but every trial ran ~45% more rounds. Reverted. |
+| 2 | `ending.md` — verify a speed claim at the size the request named | perf-overlap flips | 0/4 -> 0/4. Reverted. |
+| 3 | `files.md` — the `+` body rows DO travel through the JS literal | parse errors fall | rose 9 -> 12. Reverted. |
+
+The third is the one that should have worked. `files.md` did not merely omit the
+rule — it stated the opposite: "backticks and `${...}` in the target file cannot
+corrupt the match" is true of matched lines, which are named by line number and
+never quoted, and false of `+` body rows, which are new text travelling through
+the JS literal. The prompt was telling the model that the failure it kept hitting
+could not happen. Correcting a false contract statement is the most promising
+edit class there is, and it still did not hold.
+
+That is now consistent evidence rather than a suspicion, and it matches the
+paper's ablation exactly: the system prompt is the component that does not carry.
+Both defects the loop found — host-function name shadowing, and file content
+breaking the JS literal it is embedded in — have structural fixes outside the
+prompt, and the loop keeps correctly identifying causes it is not allowed to fix.
+
+**Do not change the bank mid-experiment.** `patch-refactor` was added between
+sweeps 1 and 2, so the summary totals compared 8 trials against 12, and `settle()`
+would have read a new task's numbers as an effect of the edit. Settlements are
+computed over the tasks present in both sweeps. This is the same class of silent
+invalidation as a stale server.
+
 ## Known limits
 
 **Bank size.** The paper runs 89 Terminal-Bench 2 tasks. Below roughly 40 a single
