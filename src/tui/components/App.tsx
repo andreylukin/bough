@@ -1314,11 +1314,24 @@ export function App(
       case "quit.arm":
         setQuitArmed(true);
         return store.notify("^c again to quit — subagents and workflows keep running");
-      case "quit":
-        // Deferred: `destroy()` synchronously tears down renderables the React
-        // reconciler is still holding. `main.tsx` awaits the renderer's
-        // `onDestroy` in place of ink's `waitUntilExit`, so this IS the exit.
-        return queueMicrotask(() => renderer.destroy());
+      case "quit": {
+        // SAVE THE DRAFT FIRST. The switch path relies on an effect cleanup, and cleanups do not
+        // run when `main.tsx` reaches `process.exit(0)` — so quitting with a half-typed message
+        // threw it away, which is exactly what the persistence work was for. Verified: type a
+        // draft, `^c^c`, and `sessions.draft` was still null.
+        //
+        // Raced against a short timer so a dead or slow server cannot make `^c^c` hang: the key
+        // that leaves must always leave. Deferred destroy for the reason below.
+        const id = state.currentId;
+        const text = lineRef.current.text;
+        const leave = () => queueMicrotask(() => renderer.destroy());
+        if (!id) return leave();
+        void Promise.race([
+          api.putDraft(id, text === "" ? null : text).catch(() => {}),
+          new Promise((r) => setTimeout(r, 300)),
+        ]).finally(leave);
+        return;
+      }
       // The overlay and the transcript share `scrollOff`, so entering or leaving
       // help must rewind it — otherwise a scrolled-back transcript opens the
       // overlay somewhere in its middle, and vice versa.
