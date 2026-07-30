@@ -43,6 +43,9 @@ export interface Verdict {
   /** Did at least one predicted task improve, with no net regression? */
   held: boolean;
   reverted: boolean;
+  /** How the verdict was reached — a flip is strong evidence, a waste drop is weak. */
+  basis: "flip" | "waste" | "none";
+  waste?: { metric: string; before: number; after: number };
 }
 
 /**
@@ -67,15 +70,25 @@ export function settle(
 
   return changes.map((change) => {
     const hit = change.predicted_pass.filter((t) => up.includes(t));
-    const held = hit.length > 0 && net >= 0;
-    return {
+    const base = {
       file: change.file,
       predicted_pass: change.predicted_pass,
       flipped_to_pass: up,
       flipped_to_fail: down,
-      held,
-      reverted: !held,
     };
+    if (hit.length > 0 && net >= 0) {
+      return { ...base, held: true, reverted: false, basis: "flip" as const };
+    }
+    // No flip. Fall back to the named waste metric ONLY if nothing moved either
+    // way — a round that lost a task has already failed, and letting a tidier
+    // trace excuse a lost task is how a loop talks itself into a regression.
+    const metric = change.predicted_waste;
+    if (metric && up.length === 0 && down.length === 0) {
+      const waste = { metric, before: before[metric], after: after[metric] };
+      const dropped = after[metric] < before[metric];
+      return { ...base, held: dropped, reverted: !dropped, basis: "waste" as const, waste };
+    }
+    return { ...base, held: false, reverted: true, basis: "none" as const };
   });
 }
 

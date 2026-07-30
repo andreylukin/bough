@@ -47,6 +47,11 @@ export function meta(prompt: string, cwd: string, timeoutMs = 25 * 60_000): Prom
 
 /** A compact scoreboard — the analyzer gets the numbers, then goes and reads. */
 function scoreboard(result: SweepResult): string {
+  const waste = `\n\nAcross ${result.rows.length} trials: ${result.rounds} rounds, ` +
+    `${result.hostFnErrors} host-function calls came back an error, of which ` +
+    `${result.parseErrors} were programs that never parsed at all. A round that never ` +
+    `parsed taught the agent nothing about the task — it is pure harness waste, and it ` +
+    `is worth investigating even on a task that passed.`;
   return Object.entries(result.byTask)
     .map(([task, b]) => {
       const reasons = result.rows
@@ -55,7 +60,7 @@ function scoreboard(result: SweepResult): string {
         .filter((v, i, a) => a.indexOf(v) === i);
       return `- ${task}: ${b.pass}/${b.of}${reasons.length ? ` — ${reasons.join(" / ")}` : ""}`;
     })
-    .join("\n");
+    .join("\n") + waste;
 }
 
 /**
@@ -117,6 +122,18 @@ export interface ChangeEntry {
   targeted_fix: string;
   predicted_pass: string[];
   predicted_at_risk: string[];
+  /**
+   * A waste metric this edit predicts will FALL, for the case where the bank is
+   * saturated and no task can flip.
+   *
+   * This is a deviation from AHE, which settles every edit against task-level
+   * outcomes alone. It is forced by a small bank: when every task passes there is
+   * no outcome delta to settle against, and the alternative is a loop that either
+   * cannot act on a real defect it can see, or acts and never checks. The metric is
+   * a rate over a fixed bank, so it cannot be gamed by running longer — but it is a
+   * weaker claim than a flip, and a verdict that rests on it says so.
+   */
+  predicted_waste?: "parseErrors" | "hostFnErrors" | null;
 }
 
 /**
@@ -159,8 +176,14 @@ Then make your edits directly to the files in ${PROMPT_DIR}, and write
   "root_cause": "why the agent did what it did — not what failed",
   "targeted_fix": "what you changed and why that addresses the cause",
   "predicted_pass": ["task names you predict will flip to passing"],
-  "predicted_at_risk": ["task names your edit could plausibly break"]
+  "predicted_at_risk": ["task names your edit could plausibly break"],
+  "predicted_waste": "parseErrors" | "hostFnErrors" | null
 }]}
+
+Use "predicted_waste" when every task already passes and your edit targets wasted
+effort rather than a wrong outcome — a round whose program never parsed, or a host
+function called wrongly. It settles only when no task flips either way, so it is the
+weaker claim; prefer a predicted flip whenever one is honestly available.
 
 The prediction is a contract: the next sweep checks it, and an edit whose prediction
 does not hold is reverted. So predict what you actually believe, not what you hope —

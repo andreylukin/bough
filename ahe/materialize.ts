@@ -100,10 +100,34 @@ function readJsonl(path: string): Record<string, unknown>[] {
   return readFileSync(path, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
 }
 
+/** What a trial cost itself, beyond whether it passed. */
+export interface TrialStats {
+  rounds: number;
+  /** Host-function calls whose result came back an error. */
+  hostFnErrors: number;
+  /**
+   * Rounds the program never even ran — a syntax error, or a name collision with
+   * an injected binding. These are pure harness waste: the model paid for a round
+   * and learned nothing about the task, only about the harness. They are also the
+   * clearest evidence a prompt section can act on, which is why they are counted
+   * apart from ordinary tool failures.
+   */
+  parseErrors: number;
+}
+
 /**
  * Explode one trial into `dest`. Returns the manifest so the caller can index the
- * sections this trial was exposed to.
+ * sections this trial was exposed to, and the stats a saturated task still moves on.
  */
+export function statsOf(events: HostFnEvent[], rounds: number): TrialStats {
+  const failed = events.filter((e) => e.ok === false);
+  return {
+    rounds,
+    hostFnErrors: failed.length,
+    parseErrors: failed.filter((e) => (e.result ?? "").includes("program does not parse")).length,
+  };
+}
+
 export function materialize(row: TrialRow, dest: string): TurnManifest | null {
   if (!row.sessionId) return null;
   const sessionDir = join(TRACE_DIR, row.sessionId);
@@ -171,5 +195,18 @@ export function materialize(row: TrialRow, dest: string): TurnManifest | null {
     `- hostfn_events.jsonl — every call paired with its result`,
   ].join("\n");
   writeFileSync(join(dest, "README.md"), index + "\n");
+  writeFileSync(
+    join(dest, "stats.json"),
+    JSON.stringify(statsOf(events, rounds.length), null, 2),
+  );
   return manifest;
+}
+
+/** Read back the stats a materialized trial wrote. Zeroes if it has none. */
+export function readStats(dest: string): TrialStats {
+  try {
+    return JSON.parse(readFileSync(join(dest, "stats.json"), "utf8")) as TrialStats;
+  } catch {
+    return { rounds: 0, hostFnErrors: 0, parseErrors: 0 };
+  }
 }

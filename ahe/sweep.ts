@@ -14,7 +14,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { iterDir, TASKS_DIR } from "./config.ts";
-import { materialize } from "./materialize.ts";
+import { materialize, readStats, type TrialStats } from "./materialize.ts";
 import { start } from "./server.ts";
 import { runTrial, type TrialRow } from "./trial.ts";
 
@@ -24,6 +24,14 @@ export interface SweepResult {
   byTask: Record<string, { pass: number; of: number }>;
   passRate: number;
   costUsd: number;
+  /**
+   * Waste, summed across trials. A bank whose tasks all pass still moves these,
+   * which is the difference between a saturated sweep that says nothing and one
+   * that says "the agent got there, and here is what it paid on the way".
+   */
+  rounds: number;
+  hostFnErrors: number;
+  parseErrors: number;
 }
 
 export function tasksInBank(): string[] {
@@ -44,13 +52,16 @@ export async function sweep(
   await start();
 
   const rows: TrialRow[] = [];
+  const stats: TrialStats[] = [];
   for (const task of tasks) {
     for (let trial = 1; trial <= trials; trial++) {
       const row = await runTrial(task, trial, iteration);
       rows.push(row);
       // Materialize immediately: a sweep that dies at trial 30 still leaves 29
       // readable traces, and the trace directory is the expensive artifact.
-      materialize(row, join(dir, "traces", task, `trial-${trial}`));
+      const traceDir = join(dir, "traces", task, `trial-${trial}`);
+      materialize(row, traceDir);
+      stats.push(readStats(traceDir));
       writeFileSync(
         join(dir, "results.jsonl"),
         rows.map((r) => JSON.stringify(r)).join("\n") + "\n",
@@ -68,11 +79,15 @@ export async function sweep(
     b.of++;
     if (row.pass) b.pass++;
   }
+  const sum = (pick: (s: TrialStats) => number) => stats.reduce((n, s) => n + pick(s), 0);
   const result: SweepResult = {
     rows,
     byTask,
     passRate: rows.filter((r) => r.pass).length / (rows.length || 1),
-    costUsd: rows.reduce((sum, r) => sum + (r.costUsd ?? 0), 0),
+    costUsd: rows.reduce((total, r) => total + (r.costUsd ?? 0), 0),
+    rounds: sum((s) => s.rounds),
+    hostFnErrors: sum((s) => s.hostFnErrors),
+    parseErrors: sum((s) => s.parseErrors),
   };
   writeFileSync(join(dir, "summary.json"), JSON.stringify({ ...result, rows: undefined }, null, 2));
   return result;
