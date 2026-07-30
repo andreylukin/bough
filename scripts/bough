@@ -263,6 +263,10 @@ cmd_restart() {
 }
 
 cmd_update() {
+  # CHECKED BEFORE ANY GIT WORK. `update` finishes by calling `cmd_restart`, which refuses a
+  # non-default profile — so without this the fast-forward, the install and the rebuild would
+  # all run and only then fail, leaving the tree updated and the server stopped.
+  require_default_profile update
   echo "==> fetching origin/main"
   git -C "$ROOT" fetch origin main
 
