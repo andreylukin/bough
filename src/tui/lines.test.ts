@@ -200,6 +200,35 @@ test("an errored result is marked on the closed header", () => {
   assert.ok(head.text.includes("✗ error"), head.text);
 });
 
+test("declining a question is not a failed round", () => {
+  // `ask()` throws when the user presses esc, so the round came back with an error result
+  // and the header led with `✗ error` — red, for the user taking the option the card
+  // itself offers ("esc decline"), with the receipt saying `→ declined` two rows below.
+  const m = msg({
+    id: "m1",
+    parts: [
+      call("c1", "await ask('Enable strict mode?', ['yes', 'no'])"),
+      result("c1", "the user declined", { isError: true }),
+      { type: "ask", id: "a1", question: "Enable strict mode?", status: "declined" },
+    ],
+  });
+  const head = messageLines(m, CLOSED, CLOSED, 120).find((l) => l.text.includes("step"))!;
+  assert.ok(head.text.includes("⏹ declined"), head.text);
+  assert.equal(head.text.includes("✗ error"), false, head.text);
+
+  // An ANSWERED question whose program then genuinely failed is still an error.
+  const failed = msg({
+    id: "m2",
+    parts: [
+      call("c1", "await ask('pick', ['a'])"),
+      result("c1", "[program error] boom", { isError: true }),
+      { type: "ask", id: "a1", question: "pick", status: "answered", answer: "a" },
+    ],
+  });
+  const head2 = messageLines(failed, CLOSED, CLOSED, 120).find((l) => l.text.includes("step"))!;
+  assert.ok(head2.text.includes("✗ error"), head2.text);
+});
+
 test("a round that failed once and then worked is amber with a count, not red", () => {
   // Live on a skill run that finished ✓ and did the work: the model reached for `patch` as
   // a tool, was told off, wrote the program properly — and the header still led with

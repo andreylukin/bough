@@ -27,7 +27,14 @@
  * Ported from `src/tui/lines.ts`. Gone with the rewrite: the `prose` part kind and
  * the check-passed hue on subagent cards (there is no acceptance gate — spec §17).
  */
-import type { BackgroundJob, Message, Role, SessionKind, WorkflowStatus } from "../schema/parts.ts";
+import type {
+  BackgroundJob,
+  Message,
+  Part,
+  Role,
+  SessionKind,
+  WorkflowStatus,
+} from "../schema/parts.ts";
 import { isDelegated } from "./forest.ts";
 import {
   accent,
@@ -257,6 +264,12 @@ function toolGroupLines(
   full: boolean,
   w: number,
   toolLogs?: Record<string, string[]>,
+  /**
+   * The user declined an `ask()` in this MESSAGE. Passed in rather than read from
+   * `parts`, because `segmentParts` gives an ask its own segment — this function only
+   * ever sees the tool parts, so the receipt it needs is not in reach.
+   */
+  declined = false,
 ) {
   const capCode = full ? Infinity : CODE_LINES;
   const capOut = full ? Infinity : OUTPUT_LINES;
@@ -274,8 +287,14 @@ function toolGroupLines(
   //   ▸ ✗ error  2 steps  patch · run_steps · called patch as a tool · wrote parse.py
   //
   // Red is for a round that failed; amber and a count for one that had to retry.
+  // DECLINING A QUESTION IS NOT A PROGRAM FAILURE. `ask()` throws when the user presses
+  // esc, so the round came back with an error result and the header led with `✗ error` —
+  // red, for the user having exercised the option the card itself offers ("esc decline").
+  // The transcript's own ask receipt says `→ declined` two rows below it.
   const state = running
     ? warn("⚙ ")
+    : hasError && declined
+    ? warn("⏹ declined  ")
     : errors > 0 && errors < calls.length
     ? warn(`⚠ ${errors} of ${calls.length} failed  `)
     : hasError
@@ -495,7 +514,16 @@ export function messageLines(
       workflowCardLines(seg, s.part, runs?.get(s.part.id), now);
       copy = `${s.part.name} — ${s.part.description} (${s.part.id})`;
     } else {
-      toolGroupLines(seg, s.parts, key, isExpanded(key), isFull(key), inner, toolLogs);
+      toolGroupLines(
+        seg,
+        s.parts,
+        key,
+        isExpanded(key),
+        isFull(key),
+        inner,
+        toolLogs,
+        msg.parts.some((p: Part) => p.type === "ask" && p.status === "declined"),
+      );
       copy = toolGroupCopy(s.parts);
     }
     for (const l of seg) body.push({ ...l, copy });
