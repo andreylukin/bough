@@ -1103,7 +1103,17 @@ export function App(
       // thing a shell user does constantly. Kept verbatim rather than in a second
       // shell-only ring: one history is one mental model, and `!` is visible in it.
       setSent((h) => [...h, text]);
-      void store.runShell(command);
+      // A job belongs to a session, and on a fresh screen there is none — so `!git
+      // status`, the first thing a user types on arriving, hit "send a message first"
+      // and did nothing. The workspace is what a shell actually needs and the TUI
+      // already knows it, so this creates the conversation the same way sending a
+      // message would. Nothing is sent to the model.
+      if (state.currentId) void store.runShell(command);
+      else {
+        void store.createSession(defaultWorkspace).then((created) =>
+          created ? store.runShell(command) : undefined
+        );
+      }
       return;
     }
     // A BARE `/word` IS A COMMAND ATTEMPT, NEVER PROSE. An unrecognised one used to be

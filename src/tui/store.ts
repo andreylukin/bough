@@ -1625,11 +1625,11 @@ export function createStore(deps: StoreDeps = {}): Store {
     async runShell(command: string) {
       const id = state.currentId;
       if (!id) {
-        // `!` before there is a session has nowhere to run: a job belongs to a session
-        // and a session is created by sending a message. Say that rather than nothing.
+        // Reached only if the caller did not create one first (`App.tsx` does). A job
+        // belongs to a session, so there is nothing to attach this to.
         dispatch({
           type: "notice",
-          notice: "! runs in a conversation's workspace — send a message first",
+          notice: "! needs a conversation to run in — none is open",
         });
         return;
       }
