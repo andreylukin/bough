@@ -10,7 +10,10 @@ tag too, so a file you just wrote can be patched immediately without viewing it.
 
 That is the entire editing surface. There is no read() and no edit(). Raw file
 content comes from `Bun.file(path).text()` or `bash` — you have the full runtime and do
-not need a host function for it.
+not need a host function for it. The path must be ABSOLUTE: your program's own working
+directory is not the workspace (see Workspace), so `Bun.file("notes.txt")` reads
+somewhere else and throws ENOENT for a file that is sitting right there. The file verbs
+above and bash() resolve relative paths against the workspace; the raw runtime does not.
 
 view() + patch() is how you change an existing file. You NAME lines instead of
 reproducing them, so the code you are editing never has to survive your own string
