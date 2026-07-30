@@ -18,7 +18,7 @@
 import { TextAttributes } from "@opentui/core";
 import type { SessionKind } from "../../schema/parts.ts";
 import type { SessionRow } from "../api.ts";
-import { clip, fmtUsd, shortenPath, windowAround } from "../format.ts";
+import { clip, fmtUsd, legendLine, shortenPath, windowAround } from "../format.ts";
 import { type ForestRow, isDelegated } from "../forest.ts";
 
 const KIND_GLYPH: Record<SessionKind, string> = {
@@ -127,10 +127,12 @@ export interface TreeProps {
    * differs: labelling every row with the directory you are already in is noise.
    */
   workspace?: string | null;
+  /** Columns available, so the legend degrades instead of being cut mid-word. */
+  cols?: number;
 }
 
 export function Tree(
-  { rows: items, selected, height, filter, filtering, workspace }: TreeProps,
+  { rows: items, selected, height, filter, filtering, workspace, cols }: TreeProps,
 ) {
   const chrome = filtering || filter ? 1 : 0;
   const { start, height: shown } = forestWindow(items.length, selected, height, chrome);
@@ -224,8 +226,15 @@ export function Tree(
         );
       })}
       <text attributes={TextAttributes.DIM} wrapMode="none">
-        {`${items.length > shown ? `${selected + 1}/${items.length} · ` : ""}` +
-          "↑↓ move · →← turns · ⏎ open · ⏎ on a turn forks · / find · esc back"}
+        {legendLine([
+          ...(items.length > shown ? [`${selected + 1}/${items.length}`] : []),
+          "↑↓ move",
+          "→← turns",
+          "⏎ open",
+          "⏎ on a turn forks",
+          "/ find",
+          "esc back",
+        ], cols)}
       </text>
     </box>
   );

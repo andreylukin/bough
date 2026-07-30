@@ -1571,6 +1571,8 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
               filter={filter}
               filtering={filtering}
               workspace={state.sessions.find((s) => s.id === state.currentId)?.workspace ?? null}
+              // Inside the panel's border and padding, like every other tab's legend.
+              cols={Math.max(20, cols - 4)}
             />
           )
           : (

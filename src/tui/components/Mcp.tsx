@@ -20,7 +20,7 @@
 import { TextAttributes } from "@opentui/core";
 import { isCoveredHost } from "../../mcp/keychain.ts";
 import type { McpStatus } from "../../mcp/status.ts";
-import { clip, windowAround } from "../format.ts";
+import { clip, legendLine, windowAround } from "../format.ts";
 import { palette } from "../theme.ts";
 
 export interface McpTabProps {
@@ -34,6 +34,8 @@ export interface McpTabProps {
    * OpenTUI shrank the rows onto each other (`Panel.tsx`).
    */
   rows?: number;
+  /** Columns available, so the legend degrades instead of being cut mid-word. */
+  cols?: number;
   /**
    * The server URL being typed, or `null` when the buffer is closed.
    *
@@ -108,13 +110,28 @@ export function mcpDetail(status: McpStatus, name: string): string {
   ].filter(Boolean).join(" · ");
 }
 
-export function McpTab({ status, selected, message, rows = 20, entry = null }: McpTabProps) {
+export function McpTab(
+  { status, selected, message, rows = 20, entry = null, cols }: McpTabProps,
+) {
   if (!status) return <text attributes={TextAttributes.DIM}>loading…</text>;
   const names = Object.keys(status.registry.servers).sort();
   const legend = (
     <text attributes={TextAttributes.DIM} wrapMode="none">
+      {/* Nine keys is the longest legend bough has, and at 80 columns the terminal cut
+          it after `F forg` — the keys that authorize a server and forget its
+          credentials, gone. `legendLine` drops whole items and says it did. */}
       {entry === null
-        ? "↑↓ move · 1-9 pick · ⏎ grant/revoke · c test · a authorize · n add · F forget · d delete · esc back"
+        ? legendLine([
+          "↑↓ move",
+          "1-9 pick",
+          "⏎ grant/revoke",
+          "c test",
+          "a authorize",
+          "n add",
+          "F forget",
+          "d delete",
+          "esc back",
+        ], cols)
         : "⏎ registers · ⌫ back · esc cancels"}
     </text>
   );

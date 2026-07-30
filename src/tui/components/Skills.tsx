@@ -24,7 +24,7 @@
  * Split out of `Panel.tsx` so the panel file is chrome and a state machine.
  */
 import { TextAttributes } from "@opentui/core";
-import { clip } from "../format.ts";
+import { clip, legendLine } from "../format.ts";
 import { palette } from "../theme.ts";
 // Type-only: erased at compile time, so this component keeps its no-server-imports
 // property and cannot drag a handler module into the render graph.
@@ -101,7 +101,14 @@ export function SkillsTab(
     <text attributes={TextAttributes.DIM} wrapMode="none">
       {filtering
         ? "type to narrow · ⌫ back · esc clear the filter · ↑↓ move"
-        : "↑↓ move · pgup/pgdn page · 1-9 pick · / filter · esc back · name a skill to load it"}
+        : legendLine([
+          "↑↓ move",
+          "pgup/pgdn page",
+          "1-9 pick",
+          "/ filter",
+          "name a skill to load it",
+          "esc back",
+        ], cols)}
     </text>
   );
   if (skills.length === 0) {

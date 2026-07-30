@@ -38,7 +38,7 @@
 import { TextAttributes } from "@opentui/core";
 import type { ModelRow } from "../../llm/client.ts";
 import type { Effort } from "../../types.ts";
-import { clip, windowAround } from "../format.ts";
+import { clip, legendLine, windowAround } from "../format.ts";
 import { palette } from "../theme.ts";
 
 // ---------------------------------------------------------------------------
@@ -238,6 +238,8 @@ export function displayRows(
 }
 
 export interface ModelPickerProps {
+  /** Columns available, so the legend degrades instead of being cut mid-word. */
+  cols?: number;
   cfg: ModelConfig;
   entries: ModelEntry[];
   selected: number;
@@ -288,7 +290,8 @@ export function visibleEntries(display: readonly DisplayRow[], start: number, en
 }
 
 export function ModelPicker(
-  { cfg, entries, selected, rows, message, filter = "", filtering = false }: ModelPickerProps,
+  { cfg, entries, selected, rows, message, filter = "", filtering = false, cols }:
+    ModelPickerProps,
 ) {
   const display = displayRows(entries, { cheapUnset: cfg.cheapModel === null });
   const chrome = (message ? 1 : 0) + (filtering || filter ? 1 : 0);

@@ -17,6 +17,7 @@ import {
   fuzzyPositions,
   fuzzyScore,
   humanizeRetryReason,
+  legendLine,
   linkAt,
   md,
   meterLine,
@@ -782,4 +783,34 @@ test("clicking a CONTINUATION row resolves the whole address", () => {
     urlAcross(rows, 1, 3),
     "https://mcp.example.com/authorize?response_type=code&client_id=abc&scope=read",
   );
+});
+
+/**
+ * Every tab footer is a `·`-joined key list rendered with no wrapping, so a narrow
+ * terminal cut it mid-word and the LAST keys vanished — observed at 70 columns:
+ * `↑↓ move · → focus one file · x revert this path · X revert all · e`.
+ */
+test("legendLine drops whole items rather than cutting a word", () => {
+  const items = ["↑↓ move", "→ focus one file", "x revert this path", "X revert all", "esc back"];
+  // Fits: untouched, and no marker claiming otherwise.
+  assert.equal(legendLine(items), items.join(" · "));
+  assert.equal(legendLine(items, 200), items.join(" · "));
+
+  const cut = legendLine(items, 40);
+  assert.ok(width(cut) <= 40, `${width(cut)}: ${cut}`);
+  assert.ok(cut.includes("…"), cut);
+  // Whole items only — a dropped item leaves no fragment of itself behind.
+  assert.equal(cut.includes("X revert al"), false, cut);
+  assert.ok(cut.startsWith("↑↓ move"), cut);
+  // THE WAY OUT SURVIVES. Dropping `esc back` to keep an earlier key would throw away
+  // the one entry the user cannot do without.
+  assert.ok(cut.endsWith("esc back"), cut);
+
+  // Absurdly narrow: the escape hatch alone, and never a row of half a word plus a lie.
+  const tiny = legendLine(items, 10);
+  assert.ok(width(tiny) <= 10, tiny);
+  assert.equal(tiny, "esc back");
+  // Empty items never produce a dangling separator.
+  assert.equal(legendLine(["a", "", "b"]), "a · b");
+  assert.equal(legendLine([]), "");
 });

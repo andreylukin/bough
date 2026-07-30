@@ -289,21 +289,25 @@ function Body(
   { tab, rows, width, changes, model, mcp, skills, theme, children }: PanelProps,
 ) {
   const body = panelBodyRows(rows);
+  // The tabs paint INSIDE the border and the horizontal padding, so a legend measured
+  // against the panel's full width overran by exactly four columns — the mcp footer read
+  // `… · esc bac`, one character short of the way out.
+  const bodyCols = width === undefined ? undefined : Math.max(20, width - 4);
   switch (tab) {
     case "changes":
       return changes
-        ? <Changes {...changes} rows={body} />
+        ? <Changes {...changes} rows={body} cols={bodyCols} />
         : <text attributes={TextAttributes.DIM}>loading…</text>;
     case "model":
       return model
-        ? <ModelPicker {...model} rows={body} />
+        ? <ModelPicker {...model} rows={body} cols={bodyCols} />
         : <text attributes={TextAttributes.DIM}>loading…</text>;
     case "mcp":
-      return <McpTab {...(mcp ?? { status: null, selected: 0 })} rows={body} />;
+      return <McpTab {...(mcp ?? { status: null, selected: 0 })} rows={body} cols={bodyCols} />;
     case "skills":
       return (
         <SkillsTab
-          cols={width}
+          cols={bodyCols}
           selected={skills?.selected}
           skills={skills?.skills ?? null}
           note={skills?.note}

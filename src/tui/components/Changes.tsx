@@ -28,7 +28,7 @@
 import { TextAttributes } from "@opentui/core";
 import type { FileDiff } from "../../vcs/repodiff.ts";
 import type { SessionChangeSet } from "../../server/changes.ts";
-import { clip, windowAround } from "../format.ts";
+import { clip, legendLine, windowAround } from "../format.ts";
 import { palette } from "../theme.ts";
 
 // ---------------------------------------------------------------------------
@@ -120,6 +120,8 @@ function lineColor(line: string): string | undefined {
 // ---------------------------------------------------------------------------
 
 export interface ChangesProps {
+  /** Columns available, so the legend degrades instead of being cut mid-word. */
+  cols?: number;
   /** `null` while the fetch is in flight — distinct from an unavailable change set. */
   set: SessionChangeSet | null;
   items: ChangeItem[];
@@ -167,6 +169,7 @@ export function Changes(
     message,
     pending = null,
     hint = NOT_A_REPO_HINT,
+    cols,
   }: ChangesProps,
 ) {
   if (!set) return <text attributes={TextAttributes.DIM}>loading changes…</text>;
@@ -281,8 +284,19 @@ export function Changes(
         : (
           <text attributes={TextAttributes.DIM} wrapMode="none">
             {focused
-              ? "← back · ↑↓ scroll the diff · x revert this path · X revert everything"
-              : "↑↓ move · → focus one file · x revert this path · X revert all · esc back"}
+              ? legendLine([
+                "← back",
+                "↑↓ scroll the diff",
+                "x revert this path",
+                "X revert everything",
+              ], cols)
+              : legendLine([
+                "↑↓ move",
+                "→ focus one file",
+                "x revert this path",
+                "X revert all",
+                "esc back",
+              ], cols)}
           </text>
         )}
     </box>

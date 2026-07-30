@@ -390,6 +390,42 @@ export function codeGist(input: unknown, max = 60): string {
 }
 
 /**
+ * A legend row that DEGRADES instead of being cut off.
+ *
+ * Every tab's footer is a `·`-joined list of keys rendered `wrapMode="none"`, so at a
+ * narrow width the terminal cut it mid-word and the keys at the END simply vanished —
+ * `↑↓ move · → focus one file · x revert this path · X revert all · e`. Those are the
+ * discoverability rows: the whole reason the footer exists is that a key nobody can see
+ * is a key nobody presses, and the failure hit the last item hardest.
+ *
+ * Items are dropped from the middle — the list is ordered by importance, so the tail
+ * goes first — and an `…` marks that something was dropped, so the row never claims to
+ * be the whole list. **The LAST item survives**: a legend's final entry is the way out
+ * (`esc back`, `esc cancel`), and a degradation that drops the escape hatch to keep
+ * `c test` on screen has thrown away the one key the user cannot do without.
+ *
+ * With no width, or one that fits, the list is returned untouched.
+ */
+export function legendLine(items: readonly string[], width?: number): string {
+  const kept = items.filter((i) => i.trim() !== "");
+  const full = kept.join(" · ");
+  if (width === undefined || width <= 0 || stringWidth(full) <= width) return full;
+  const exit = kept[kept.length - 1];
+  for (let n = kept.length - 2; n > 0; n--) {
+    const candidate = [...kept.slice(0, n), "…", exit].join(" · ");
+    if (stringWidth(candidate) <= width) return candidate;
+  }
+  // Room for the way out and nothing else, or not even that: an honest truncation
+  // beats a row of half a word.
+  const pair = [kept[0], "…", exit].join(" · ");
+  if (kept.length > 1 && stringWidth(exit) <= width) {
+    return stringWidth(pair) <= width ? pair : exit;
+  }
+  return truncateAnsi(kept[0] ?? "", width, "…");
+}
+
+/**
+ * Slice bounds for a viewport of `height` rows keeping `selected` centered,/**
  * Slice bounds for a viewport of `height` rows keeping `selected` centered,
  * clamped so the window never runs past either edge. A list shorter than the
  * viewport yields `start = 0` and the whole list — no blank-row padding.
