@@ -476,3 +476,26 @@ test("topic sections caption the turns beneath them", () => {
     ["root", "·m1", "·m2", "·m3", "·m4"],
   );
 });
+
+/**
+ * `selectionFor` must be TOTAL over the row kinds. Adding the section row without touching it
+ * left ⏎ on a caption falling through to the fork branch, where
+ * `threads[...].find(x => x.id === row.id)` cannot match a `section:<id>:<i>` id — so the panel
+ * would have asked the server to fork at a message that does not exist.
+ */
+test("⏎ on a topic caption does nothing at all", () => {
+  const row = {
+    kind: "section" as const,
+    id: "section:root:0",
+    sessionId: "root",
+    depth: 1,
+    label: "the discount bug",
+  };
+  assert.deepEqual(selectionFor(row, { root: [msg("m1", "user", "fix it")] }), { none: true });
+
+  // The other kinds still resolve as before — a caption must not have changed them.
+  assert.deepEqual(
+    selectionFor({ kind: "collapsed", id: "c", originId: "root", depth: 1, count: 2 }, {}),
+    { drill: "root" },
+  );
+});

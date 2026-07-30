@@ -386,6 +386,8 @@ export function rewindIndex(rows: readonly ForestRow[], currentId: string | null
  * pointer move there; the user-visible behaviour is deliberately identical.
  */
 export type Selection =
+  /** Nothing to do — a caption row. Present so `selectionFor` is total over the row kinds. */
+  | { none: true }
   | { open: string }
   | { expand: string }
   | { drill: string }
@@ -399,6 +401,11 @@ export function selectionFor(
   threads: Readonly<Record<string, readonly Message[]>>,
 ): Selection {
   if (row.kind === "collapsed") return { drill: row.originId };
+  // A SECTION HEADER IS NOT A TURN. Without this it fell through to the fork branch below,
+  // where `threads[...].find(x => x.id === row.id)` cannot match a `section:<id>:<i>` row id —
+  // so ⏎ on a caption would have asked the server to fork at a message that does not exist.
+  // Caught by reading `selectionFor` after adding the row kind, not by a test.
+  if (row.kind === "section") return { none: true };
   // ⏎ on a conversation OPENS it — that is what the row is, and it is what the
   // sessions tab's ⏎ always did. Walking into its turns is `→`/`expand`, so the
   // switcher half of this surface stays one keypress.

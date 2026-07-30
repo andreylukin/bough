@@ -874,6 +874,7 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
         const row = tree[at];
         if (!row) return;
         const choice = selectionFor(row, threads);
+        if ("none" in choice) return; // a topic caption — nothing to open, fork or drill into
         if ("drill" in choice) return drillIn(choice.drill);
         if ("open" in choice) {
           dispatch({ type: "close" });
