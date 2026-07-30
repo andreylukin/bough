@@ -102,7 +102,15 @@ function requireSession(ctx: AppCtx, id: string): void {
  */
 export const listJobsH: Handler = (_req, ctx, params) => {
   requireSession(ctx, params.id);
-  return json({ jobs: jobsForTree(ctx.db, params.id) });
+  // With a TAIL, because the transcript's job card renders one and nothing ever filled
+  // it in: every card showed its header and no output, so a `!command` the user ran and
+  // a build the agent started both read as "something happened, go and open it". The
+  // read is non-destructive — it must not advance the model's `bashOutput` cursor.
+  const jobs = jobsForTree(ctx.db, params.id).map((job) => {
+    const tail = registry.jobTail(job.id);
+    return tail ? { ...job, ...tail } : job;
+  });
+  return json({ jobs });
 };
 
 /**
@@ -126,10 +134,14 @@ export const runShellH: Handler = async (req, ctx, params) => {
   const workspace = ctx.db.getSessionRuntime(params.id).workspace ?? process.cwd();
   // The name is what the rail shows. The command IS the name here: the user typed it
   // and knows exactly what they meant, so a summary would be a worse label.
-  const started = registry.bashBg(body.command.trim().slice(0, 60), body.command, {
-    sessionId: params.id,
-    workspace,
-  });
+  const started = registry.bashBg(
+    body.command.trim().slice(0, 60),
+    body.command,
+    { sessionId: params.id, workspace },
+    // The user is the one reading this output. Waking the model on exit would bill a
+    // turn for `!ls` AND let it claim the output out of the card (`hostfn/jobs.ts`).
+    { wake: false },
+  );
   return json(JSON.parse(started), 201);
 };
 

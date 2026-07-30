@@ -481,7 +481,18 @@ export class JobRegistry {
    * `npm run build` is "the release build" or "reproducing the cache bug". The
    * auto-background path is the exception (`promote`), because nothing chose it.
    */
-  bashBg(name: string, command: string, ctx: JobCtx): string {
+  /**
+   * `opts.wake: false` suppresses the `[background]` completion note.
+   *
+   * For a shell the USER started (`!command` in the composer — `server/jobs.ts`) the
+   * note is not just noise, it is a bill: the note wakes an idle session into a whole
+   * LLM turn, and the first thing that turn does is `bashOutput(bg_N)`, which ALSO
+   * advances the read cursor and empties the card the user was about to read. Measured
+   * on `!ls -1`: a 20k-token round trip in which the agent read the user's `ls` output
+   * and narrated the directory listing back to them. The job still emits its events and
+   * still sits in the rail and the job list, so the model can read it when ASKED.
+   */
+  bashBg(name: string, command: string, ctx: JobCtx, opts: { wake?: boolean } = {}): string {
     const label = normalizeJobName(name);
     if (!label) {
       throw new ProgramError(
@@ -509,6 +520,9 @@ export class JobRegistry {
     // No signal: an explicit background shell survives the turn's stop button.
     const shell = this.spawn(command, { cwd: ctx.workspace });
     const id = this.promote(shell, ctx, { force: true, name: label })!;
+    // Set BEFORE the process can exit: `notified` is the flag `#onExit` checks, and a
+    // fast command (`echo`, `ls`) can finish inside this same tick.
+    if (opts.wake === false) shell.notified = true;
     return JSON.stringify({ id, name: shell.name, pid: shell.pid });
   }
 
@@ -597,6 +611,25 @@ export class JobRegistry {
    * `bashOutput`, and a UI read that stole from it would make output vanish from
    * the agent's context just because a human looked at it.
    */
+  /**
+   * The last `lines` lines of a shell's buffer, plus how many there are in total.
+   *
+   * Non-destructive, like `jobOutput` and for the same reason: a human glancing at a
+   * log must not make that output vanish from the agent's next `bashOutput`. This
+   * exists because the job LISTING carried no output at all, so every job card in the
+   * transcript rendered its header and nothing else — the `tail` field the renderer has
+   * always had was never populated by anything but tests, and the only way to see what
+   * a command printed was to open it.
+   */
+  jobTail(id: string, lines = 5): { tail: string[]; outputLines: number } | null {
+    const shell = this.#find(id);
+    if (!shell) return null;
+    const body = shellText(shell).trimEnd();
+    if (!body) return { tail: [], outputLines: 0 };
+    const all = body.split("\n");
+    return { tail: all.slice(-lines), outputLines: all.length };
+  }
+
   jobOutput(id: string): { output: string; job: BackgroundJob } | null {
     const shell = this.#find(id);
     if (!shell) return null;

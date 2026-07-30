@@ -239,6 +239,17 @@ export interface MoveResult {
   appended: number;
 }
 
+/**
+ * A row of `GET /sessions/:id/jobs`: the job plus a short, non-destructive tail of what
+ * it printed. The tail is what the transcript's job card renders — before it was served
+ * the field existed in the renderer and no caller ever filled it, so every card showed
+ * a header and no output.
+ */
+export interface JobListRow extends BackgroundJob {
+  tail?: string[];
+  outputLines?: number;
+}
+
 /** `GET /sessions/:id/jobs/:jobId/output` — the whole retained buffer, non-destructively. */
 export interface JobOutput {
   output: string;
@@ -478,7 +489,8 @@ export function createApi(options: ApiOptions = {}) {
     // -- background jobs (T6.8) ------------------------------------------------
 
     /** The session AND its subagents — the work running on its behalf. */
-    listJobs: (id: string) => get<{ jobs: BackgroundJob[] }>(`/sessions/${seg(id)}/jobs`),
+    /** Rows carry a short non-destructive `tail`, which is what the cards render. */
+    listJobs: (id: string) => get<{ jobs: JobListRow[] }>(`/sessions/${seg(id)}/jobs`),
     /** The user's own `!command` — a background shell, not a turn. */
     runShell: (id: string, command: string) =>
       post<{ id: string; name: string; pid: number }>(`/sessions/${seg(id)}/jobs`, { command }),

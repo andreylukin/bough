@@ -260,6 +260,108 @@ test("POST /sessions/:id/jobs starts a shell in the session's workspace", async 
   assert.deepEqual(jobs.map((j) => j.id), [started.id]);
 });
 
+/**
+ * The bug this pins cost real money in a smoke test. A `!ls -1` exited with output, the
+ * registry posted its `[background]` note, the note woke the idle session into a full
+ * LLM turn, and that turn called `bashOutput(bg_2)` — which advanced the read cursor
+ * and emptied the card the user was about to read. So `!ls` billed 20k tokens and the
+ * agent narrated the user's own directory listing back at them.
+ */
+test("a shell the USER started does not wake the model", async () => {
+  await using f = fixture();
+  f.db.createSession(session("s", { workspace: process.cwd() }));
+  // ONE registry, and it is the one the route uses AND the one this test waits on —
+  // two instances would make every assertion below vacuous.
+  const notes: string[] = [];
+  const reg = new JobRegistry({ bus: f.bus, notify: (_id, text) => notes.push(text) });
+  const previous = setJobRegistry(reg);
+  try {
+    const res = await f.call(
+      new Request(url("/sessions/s/jobs"), {
+        method: "POST",
+        body: JSON.stringify({ command: "echo noisy-output" }),
+      }),
+    );
+    assert.equal(res.status, 201);
+    const started = await res.json() as { id: string };
+
+    // The contrast that makes this a SCOPING fix rather than a removal: a `bashBg` the
+    // MODEL started, with output, is exactly the case that must still notify.
+    const mine = JSON.parse(
+      reg.bashBg("model job", "echo also-noisy", {
+        sessionId: "s",
+        workspace: process.cwd(),
+      }),
+    ) as { id: string };
+
+    // NOT `bashWait`: waiting CLAIMS the shell, which suppresses the note on its own
+    // and would make this assertion pass with the fix reverted. Poll the read-only
+    // listing instead, which is what a client does.
+    for (let i = 0; i < 200; i++) {
+      const { jobs } = await (await f.call(get("/sessions/s/jobs"))).json() as {
+        jobs: BackgroundJob[];
+      };
+      if (jobs.every((j) => j.status === "exited")) break;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    assert.deepEqual(
+      notes.filter((n) => n.includes(started.id)),
+      [],
+      `the user's shell woke the model: ${notes.join(" | ")}`,
+    );
+    assert.equal(notes.some((n) => n.includes(mine.id)), true, notes.join(" | "));
+
+    // Suppressing the note must not suppress the BUFFER — the user has to be able to
+    // read what they ran, and the card is the surface that reads it.
+    const out = await (await f.call(get(`/sessions/s/jobs/${started.id}/output`))).json() as {
+      output: string;
+    };
+    assert.match(out.output, /noisy-output/);
+  } finally {
+    reg.killAll();
+    await reg.drain();
+    setJobRegistry(previous);
+  }
+});
+
+/**
+ * The `tail` field has existed on the renderer's `JobView` since the rewrite and NOTHING
+ * ever filled it: `GET /sessions/:id/jobs` served no output, so every job card in the
+ * transcript rendered a header and nothing else, and the only way to see what a command
+ * printed was to open it.
+ */
+test("the job listing carries a tail, and reading it does not steal the model's cursor", async () => {
+  await using f = fixture();
+  f.db.createSession(session("s", { workspace: process.cwd() }));
+  const started = JSON.parse(
+    f.registry.bashBg("counter", "printf 'one\\ntwo\\nthree\\n'", {
+      sessionId: "s",
+      workspace: process.cwd(),
+    }),
+  ) as { id: string };
+
+  for (let i = 0; i < 200; i++) {
+    const { jobs } = await (await f.call(get("/sessions/s/jobs"))).json() as {
+      jobs: { status: string }[];
+    };
+    if (jobs.every((j) => j.status === "exited")) break;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+
+  const { jobs } = await (await f.call(get("/sessions/s/jobs"))).json() as {
+    jobs: { id: string; tail?: string[]; outputLines?: number }[];
+  };
+  const row = jobs.find((j) => j.id === started.id)!;
+  assert.deepEqual(row.tail, ["one", "two", "three"]);
+  assert.equal(row.outputLines, 3);
+
+  // The model has not read this shell yet, so its whole buffer must still be waiting.
+  // A listing that advanced the cursor would delete output the agent never saw.
+  const first = f.registry.bashOutput(started.id, "s");
+  assert.match(first, /one/);
+  assert.match(first, /three/);
+});
+
 test("an empty command is rejected, and an unknown session is a 404", async () => {
   await using f = fixture();
   f.db.createSession(session("s", { workspace: process.cwd() }));

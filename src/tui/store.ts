@@ -55,7 +55,14 @@ import type {
 import type { AnyBoughEvent, BoughEvent, BoughEventOf, EventType } from "../schema/events.ts";
 import type { SessionChangeSet } from "../server/changes.ts";
 import type { Effort } from "../types.ts";
-import type { Api, ReplayReport, SessionRow, SessionSnapshot, WorkflowSummary } from "./api.ts";
+import type {
+  Api,
+  JobListRow,
+  ReplayReport,
+  SessionRow,
+  SessionSnapshot,
+  WorkflowSummary,
+} from "./api.ts";
 import { api as defaultApi } from "./api.ts";
 import { connectEvents, type EventStream } from "./events.ts";
 import { fmtDuration, fmtTokens, fmtUsd, humanizeRetryReason, oneLine } from "./format.ts";
@@ -182,7 +189,7 @@ export interface TuiState {
   /** null until fetched. `available: false` is an ANSWER, not an error (spec §13). */
   changes: SessionChangeSet | null;
   /** The open session's background shells AND its subagents' (spec §9). */
-  jobs: BackgroundJob[];
+  jobs: JobListRow[];
   /**
    * The job the user has OPENED, with its whole retained buffer — null when none is.
    *
@@ -271,7 +278,7 @@ export type StoreAction =
   /** Optimistic settle: the next hold surfaces immediately; the event confirms it. */
   | { type: "ask.settled"; id: string }
   | { type: "changes"; sessionId: string; changes: SessionChangeSet }
-  | { type: "jobs"; sessionId: string; jobs: BackgroundJob[] }
+  | { type: "jobs"; sessionId: string; jobs: JobListRow[] }
   /** Open, refresh, or (with `view: null`) close the job output view. */
   | { type: "jobView"; view: JobViewState | null }
   | { type: "workflows"; sessionId: string; workflows: WorkflowSummary[] }
