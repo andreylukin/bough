@@ -127,15 +127,21 @@ export function Composer(
   // Wrap ourselves (fixed-width chunks) so the cursor→row mapping is exact.
   const innerW = Math.max(4, width - 4); // border + paddingX
   // An empty composer states the first action: without it the box reads as
-  // decoration. Kept even when a ghost exists — a ghost only appears once you
-  // have started typing, so the two never collide.
+  // decoration.
+  //
+  // A GHOST SUPPRESSES IT. This comment used to say the two "never collide" because a ghost
+  // only appears once you have started typing — and then the ghost was wired to the EMPTY
+  // composer, where a next-step suggestion is actually useful, and both painted into the same
+  // cells: `› Atype a message · enter sendsdd reverse_words() to the public API`. The ghost is
+  // the better invitation of the two anyway: it names something to do and says `⇥ tab`.
+  //
   // When another surface has the keyboard the placeholder names it instead, because
   // the empty box is exactly where "type a message" is read as an invitation. A
   // draft that IS there stays visible and untouched — it is still your draft, it
   // just is not taking keys this second.
   const placeholder = keyboardOwner
     ? (input === "" ? `${keyboardOwner} has the keyboard · esc returns here` : "")
-    : input === ""
+    : input === "" && !ghost
     ? "type a message · enter sends"
     : "";
   const ghostHint = ghost ? "  ⇥ tab" : "";

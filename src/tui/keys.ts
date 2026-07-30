@@ -140,6 +140,8 @@ export type Command =
   | "history.next"
   // -- the @/ completion popup (guarded on `completing`) -------------------
   | "complete.accept"
+  /** ⇥ with no completion popup open: take the cheap tier's suggested next message. */
+  | "ghost.accept"
   | "complete.prev"
   | "complete.next"
   | "complete.dismiss"
@@ -861,6 +863,16 @@ export const BINDINGS: Binding[] = [
   // `esc closes`. Escape unwinds exactly ONE level, nearest surface first, which is
   // what every other surface in this TUI already does.
   { mode: "chat", chord: "tab", command: "complete.accept", when: ["completing"] },
+  // ⇥ with no popup takes the ghost. Ordered AFTER the popup row, so a menu always wins the
+  // key it advertises; documented on the compose row that already names ⇥.
+  {
+    mode: "chat",
+    chord: "tab",
+    command: "ghost.accept",
+    not: ["completing"],
+    section: "compose",
+    desc: "take the suggested next message",
+  },
   { mode: "chat", chord: "up", command: "complete.prev", when: ["completing"] },
   { mode: "chat", chord: "down", command: "complete.next", when: ["completing"] },
   { mode: "chat", chord: "esc", command: "complete.dismiss", when: ["completing"] },

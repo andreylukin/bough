@@ -527,7 +527,41 @@ export function App(
    * are about to commit to spending, and the only one that would not say on what.
    * The default is an install-wide fact, so once per process, like the skills above.
    */
-  /** Just the names, memoized: the transcript compares against this every rebuild. */
+  /**
+   * The cheap tier's guess at the next message, shown dim after the input.
+   *
+   * `Composer` has taken a `ghost` prop since it was written — with the contract spelled out
+   * in its own doc comment, "tab accepts it" — and NOTHING ever passed one, so the feature
+   * existed at both ends (`POST /sessions/:id/ghost`, `api.ghostText`, the renderer) and in
+   * the middle not at all.
+   *
+   * ONLY ON AN EMPTY COMPOSER OF AN IDLE SESSION. A prediction that appears while you are
+   * typing is a prediction fighting you for the row, and one that appears mid-turn is
+   * guessing at a conversation that is still moving. Debounced, and every failure is silence:
+   * the cheap tier answers `{ghost: null}` for a missing key, a provider error and an empty
+   * conversation alike (`worker/ghost.ts`), which is exactly what a cosmetic feature should
+   * do with all three.
+   */
+  const [ghost, setGhost] = useState("");
+  useEffect(() => {
+    const id = state.currentId;
+    if (!id || busy || line.text !== "" || state.thread.length === 0) {
+      setGhost("");
+      return;
+    }
+    let alive = true;
+    const timer = setTimeout(() => {
+      void api.ghostText(id)
+        .then((r) => alive && setGhost(r.ghost ?? ""))
+        .catch(() => {}); // silence, like every other cheap-tier failure
+    }, 400);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [state.currentId, busy, line.text, state.thread.length]);
+
+  /** Just the names, memoized: the transcript compares against this every rebuild. */  /** Just the names, memoized: the transcript compares against this every rebuild. */
   const skillNames = useMemo(() => skills.map((s) => s.name), [skills]);
   const [defaultModel, setDefaultModel] = useState<string | null>(null);
   useEffect(() => {
@@ -847,7 +881,16 @@ export function App(
   // 34 rows: the input bar was not pinned to anything.
   const composerRows = Math.min(8, Math.max(3, Math.floor(rows / 4)));
   const railH = units.length === 0 ? 0 : units.length + (mode === "rail" ? 0 : 1);
-  const boxH = composerHeight({ input: line.text, busy, width: cols, maxRows: composerRows });
+  // The GHOST counts toward the height: it is drawn inside the box and a long suggestion wraps.
+  // `composerHeight` has taken it since it was written; omitting it here would lay the box out
+  // one row short and the renderer would clip the wrap — the class of bug `Panel.tsx` documents.
+  const boxH = composerHeight({
+    input: line.text,
+    ghost: completing ? "" : ghost,
+    busy,
+    width: cols,
+    maxRows: composerRows,
+  });
   const popupH = trigger
     ? completionPopupHeight(
       completion.items.length,
@@ -1272,6 +1315,12 @@ export function App(
         return setLine({ text: sent[at], cursor: sent[at].length });
       }
 
+      // ⇥ ACCEPTS THE GHOST when there is no popup to accept from. The keymap routes ⇥ to
+      // `complete.accept` guarded on `completing`, so this branch only ever sees the free key.
+      case "ghost.accept":
+        if (!ghost) return;
+        setLine({ text: ghost, cursor: ghost.length });
+        return setGhost("");
       case "complete.accept": {
         const item = completion.items[selAt];
         if (!trigger || !item) return;
@@ -1884,6 +1933,9 @@ export function App(
             completions={completion.items}
             completionSel={selAt}
             completionMore={Math.max(0, completion.total - completion.items.length)}
+            // Only while the completion popup is closed: two things on one row both claiming
+            // ⇥ is one of them being wrong.
+            ghost={completing ? "" : ghost}
             // The rail is the third surface that takes the keyboard while this box
             // stays painted below it. `chat` is the only mode that types.
             keyboardOwner={uiMode === "rail" ? "the rail" : null}
