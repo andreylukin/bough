@@ -69,6 +69,7 @@ import {
   asEffortChoice,
   chooseEntry,
   displayRows,
+  isActive,
   type ModelConfig,
   modelEntries,
   modelWindow,
@@ -495,6 +496,13 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
     if (panel.tab !== "model" || filter.trim() === "") return all;
     return all.filter((e) => fuzzyScore(`${e.label} ${e.detail}`, filter.trim()) > 0);
   }, [models, panel.tab, filter]);
+  // Same reason as `treeRef`: the tab-arrival effect runs before the render that would
+  // rebuild these, and it needs the CURRENT rows to find the one already in force.
+  const entriesRef = useRef(entries);
+  entriesRef.current = entries;
+  const cfgRef = useRef<ModelConfig>(cfg);
+  /** Set on arrival at the model tab; cleared once the active row can be found. */
+  const landOnActive = useRef(false);
   const shownSkills = useMemo(() => {
     if (!skills || panel.tab !== "skills" || filter.trim() === "") return skills;
     return skills.filter((s) =>
@@ -521,6 +529,10 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
     // which row of the thinking-depth section wears the ●.
     sessionEffort: cfg.sessionEffort ?? asEffortChoice(state.session?.effort),
   };
+  // The hydrated config, for the arrival effect above — `cfg` alone lacks the session pin
+  // and the effective-model fallback, so a picker landing on `isActive(cfg, …)` would miss
+  // the very row the ● is on.
+  cfgRef.current = modelCfg;
 
   // Entering a tab is what refreshes it. Grants and connections change between turns,
   // so MCP is re-read every time rather than remembered (plan §6.13).
@@ -669,7 +681,20 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
     // first job finding themselves — worse once branches nest, because the row is
     // then inside another conversation entirely. Every other tab keeps "arrive at the
     // top": their lists have no you-are-here.
-    const here = panel.tab === "tree" ? treeRef.current.findIndex((r) => r.kind === "session" && r.current) : -1;
+    // ARRIVING LANDS ON WHAT IS ALREADY TRUE, where a tab has such a row.
+    //
+    // The tree lands on the conversation you are in (see below). The MODEL tab did not: it
+    // opened with the cursor on row 1 while the ● sat on row 5, so `^o` then ⏎ — the most
+    // natural pair of keys in a picker — silently switched the frontier model to whatever
+    // happened to be listed first. A migrant persona hit exactly that. `entriesRef` is read
+    // rather than `entries` because this effect runs before the render that would rebuild it.
+    const here = panel.tab === "tree"
+      ? treeRef.current.findIndex((r) => r.kind === "session" && r.current)
+      : -1;
+    // The model tab's answer is not known YET: arriving is what fetches the settings, so at
+    // this instant no row is active and a `findIndex` here returns -1 every time. Parked for
+    // the effect below, which fires when the config lands.
+    landOnActive.current = panel.tab === "model";
     setSel(landOn.current ?? (here >= 0 ? here : 0));
     landOn.current = null;
     setMessage(null);
@@ -687,6 +712,31 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
     setFiltering(false);
     setFilter("");
   }, [panel.tab, panel.open]);
+
+  /**
+   * Land on the model already in force, once the arrival fetch has told us which it is.
+   *
+   * DECLARED AFTER the arrival effect, because React runs effects in declaration order and
+   * the flag below is set there: declared first, this ran before the flag existed and the
+   * arrival effect then reset the cursor to 0 behind it.
+   *
+   * Separate from that effect because the answer arrives LATER because the answer arrives LATER: `^o` opened with the
+   * cursor on row 1 while the ● sat on row 5, so `^o` then ⏎ — the most natural pair of keys
+   * in a picker — silently switched the frontier model to whatever was listed first. Cleared
+   * as soon as it fires, so it can never fight the cursor afterwards.
+   */
+  useEffect(() => {
+    if (!landOnActive.current || !panel.open || panel.tab !== "model") return;
+    // WAIT FOR THE ANSWER. Until the arrival fetch lands, `modelCfg.defaultModel` falls back
+    // to the first row of the catalog — so an ungated version of this "landed" immediately,
+    // on row 1, marked itself done, and never corrected when the real model arrived. Which
+    // is the bug it was written to fix, reproduced from the other side.
+    if (!cfg.defaultModel && !cfg.sessionModel) return;
+    const at = entries.findIndex((e) => isActive(modelCfg, e));
+    if (at < 0) return;
+    landOnActive.current = false;
+    setSel(at);
+  }, [entries, modelCfg, cfg.defaultModel, cfg.sessionModel, panel.open, panel.tab]);
 
   /**
    * Apply a pending `openRun` once the workflows tab is actually showing.
