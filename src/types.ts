@@ -323,6 +323,17 @@ export interface TurnCtx extends AppCtx {
    */
   signal: AbortSignal;
   /**
+   * Commands that exited non-zero during this turn, recorded by `bash()` so a round can
+   * REPORT one the program never printed (`turn/runner.ts`: `withExitNotes`).
+   *
+   * On the ctx rather than in a closure because the host functions are built from it in more
+   * than one place — `baseHostFns` for an ordinary turn, and again inside `delegationDeps`
+   * for every session that can delegate, which is all of them. A closure-local array was
+   * silently bypassed by the second path, which is exactly how the first version of this
+   * shipped green tests and did nothing live.
+   */
+  exits?: { command: string; code: number }[];
+  /**
    * MCP servers inherited from the spawning turn. The human's grant to a spawner
    * extends to the subagents doing parts of that same granted work. Captured at
    * spawn time, so a later manual continuation does not inherit (spec §7).

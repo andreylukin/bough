@@ -32,6 +32,7 @@ import {
   createTurnStarter,
   DEFAULT_MODEL,
   friendlyTurnError,
+  withExitNotes,
   MAX_STOP_NUDGES,
   type ProgramRun,
   RUN_STEPS,
@@ -676,4 +677,30 @@ test("an auth failure names the environment variable, because there is no keys p
     assert.equal(friendlyTurnError(rejected, m).includes("keys panel"), false);
     assert.equal(friendlyTurnError(missing, m).includes("keys panel"), false);
   }
+});
+
+test("a command that exited non-zero is reported even when the program never printed it", () => {
+  // Found by a reviewer persona: `await bash("exit 3")` with no console.log produced
+  // `◇ run_steps ✓ done` over "(the program ran and printed nothing)", and the model then
+  // narrated an invented mechanism — "bash() threw on the non-zero exit code" — which
+  // `hostfn/shell.ts` explicitly does not do. The harness knew the code the whole time.
+  const silent = { ok: true, logs: [] };
+  const noted = withExitNotes(silent, [{ command: "exit 3", code: 3 }]);
+  assert.deepEqual(noted.logs, ["[exit code 3] exit 3"]);
+
+  // A program that DID print it is left alone — saying it twice is its own noise.
+  const printed = { ok: true, logs: ["boom\n[exit code 3]"] };
+  assert.deepEqual(withExitNotes(printed, [{ command: "exit 3", code: 3 }]).logs, printed.logs);
+
+  // Nothing failed, nothing appended.
+  assert.deepEqual(withExitNotes({ ok: true, logs: ["fine"] }, []).logs, ["fine"]);
+
+  // Several failures are each named, and a long command is clipped onto one line.
+  const many = withExitNotes({ ok: true, logs: [] }, [
+    { command: "false", code: 1 },
+    { command: `echo ${"x".repeat(200)}`, code: 2 },
+  ]);
+  assert.equal(many.logs.length, 2);
+  assert.ok(many.logs[0].startsWith("[exit code 1] false"));
+  assert.ok(many.logs[1].endsWith("…"), many.logs[1]);
 });

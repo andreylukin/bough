@@ -297,6 +297,15 @@ function toolGroupLines(
   // esc, so the round came back with an error result and the header led with `✗ error` —
   // red, for the user having exercised the option the card itself offers ("esc decline").
   // The transcript's own ask receipt says `→ declined` two rows below it.
+  //
+  // A COMMAND THAT FAILED IS NEWS ON THE ROW YOU SCAN. `bash()` reports a non-zero exit as
+  // data rather than throwing, so the round is a legitimate `✓ done` — and a reviewer reading
+  // `▸ 3 steps · wrote cart.py · ran 1 command · ran 1 command` had to expand to learn that
+  // one of those commands exited 127. The code is already in the result text
+  // (`hostfn/jobs.ts` writes `[exit code N]`, and `turn/runner.ts` now appends it when the
+  // program did not print it), so the header says so with no new plumbing.
+  const failed = [...results.values()]
+    .filter((r) => !r.isError && /\[exit code \d+/.test(outputText(r))).length;
   const state = running
     ? warn("⚙ ")
     : hasError && declined
@@ -307,6 +316,10 @@ function toolGroupLines(
     ? danger("✗ error  ")
     : interrupted
     ? warn("⏹ interrupted  ")
+    // Last, because every case above is a stronger fact about the round itself: a command
+    // that failed inside an otherwise-fine round is the one this catches.
+    : failed > 0
+    ? warn(`⚠ ${plural(failed, "command")} failed  `)
     : "";
   // Names only when they DIFFER. bough has one tool, so `calls.map(name)` rendered
   // a four-call turn as `run_steps · run_steps · run_steps · run_steps` — four

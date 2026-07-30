@@ -45,6 +45,20 @@ import {
  * `hostfn/` still imports nothing from `server/` (plan §3, module boundary rule).
  */
 export type ShellCtx = Pick<TurnCtx, "sessionId" | "workspace"> & {
+  /**
+   * Where a non-zero exit is recorded so the TRANSCRIPT can say it happened.
+   *
+   * `bash()` returns `[exit code N]` as data rather than throwing — the right call, it is a
+   * result to read. But the string goes into the PROGRAM, so a round that does not
+   * `console.log` it leaves no trace: a reviewer asked for `await bash("exit 3")` without
+   * logging and got `◇ run_steps ✓ done` over "(the program ran and printed nothing)", and
+   * the model then narrated a confident, invented mechanism ("bash() threw on the non-zero
+   * exit code"). The harness knew the code the whole time.
+   *
+   * Optional, so every existing caller and test is unaffected; the runner passes one per
+   * round and reads it after the program returns.
+   */
+  exits?: { command: string; code: number }[];
   /** The turn's interrupt. Absent in unit tests that never interrupt. */
   signal?: AbortSignal;
   /**
@@ -216,6 +230,10 @@ export async function bash(
       // become an unbounded wait on somebody else's dev server.
       await drained(shell, DRAIN_GRACE_MS);
       if (ctx.signal?.aborted) throw interruptedError(command);
+      // RECORDED BEFORE IT IS RETURNED. See `ShellCtx.exits`: the string below goes into the
+      // program, and a program that does not log it leaves the failure invisible.
+      const code = shell.status?.code ?? 0;
+      if (code !== 0) ctx.exits?.push({ command, code });
       return formatFinal(shell);
     }
     // Still running at the threshold. Stopped mid-wait dies like any interrupt.

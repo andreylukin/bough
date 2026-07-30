@@ -1063,3 +1063,28 @@ test("an expanded call is labelled by what it did, not by the tool's name", () =
     .map((l) => l.text);
   assert.ok(bad.some((t) => t.includes("patch (as a tool)")), bad.join("\n"));
 });
+
+test("a command that exited non-zero is flagged on the collapsed row", () => {
+  // A reviewer persona read `▸ 3 steps · wrote cart.py · ran 1 command · ran 1 command` and
+  // had to expand to learn one of those commands exited 127. `bash()` reports a non-zero exit
+  // as DATA, so the round itself is a legitimate `✓ done` — the row has to carry the failure.
+  const m = msg({
+    id: "m1",
+    parts: [
+      call("c1", 'await bash("python x.py");'),
+      result("c1", "/bin/sh: python: command not found\n[exit code 127]"),
+    ],
+  });
+  const head = messageLines(m, CLOSED, CLOSED, 120).find((l) => l.text.includes("step"))!;
+  assert.ok(head.text.includes("1 command failed"), head.text);
+  // Not an ERROR: the program ran fine and the exit code is a result it was handed.
+  assert.equal(head.text.includes("✗ error"), false, head.text);
+
+  // A clean command says nothing extra.
+  const ok = msg({
+    id: "m2",
+    parts: [call("c1", 'await bash("true");'), result("c1", "done")],
+  });
+  const okHead = messageLines(ok, CLOSED, CLOSED, 120).find((l) => l.text.includes("step"))!;
+  assert.equal(okHead.text.includes("failed"), false, okHead.text);
+});

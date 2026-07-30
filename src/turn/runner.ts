@@ -225,14 +225,23 @@ export const BASE_HOST_FNS: HostFnName[] = [
   "write",
 ];
 
-/** Build the always-wired host functions for one turn. */
+/**
+ * Build the always-wired host functions for one turn.
+ *
+ * `exits` is the seam that lets a round REPORT a command that failed — see
+ * `ShellCtx.exits` and `defaultProgramRunner`. Optional so every other caller is
+ * unchanged.
+ */
 export function baseHostFns(ctx: TurnCtx): HostFns {
+  // Initialised HERE so every construction path shares one array — see `TurnCtx.exits`.
+  const exits = (ctx.exits ??= []);
   return {
     ...createShellHostFns({
       sessionId: ctx.sessionId,
       workspace: ctx.workspace,
       signal: ctx.signal,
       scratch: ensureScratchDir(ctx.sessionId),
+      exits,
     }),
     ...createFileHostFns({ sessionId: ctx.sessionId, workspace: ctx.workspace }),
   };
@@ -244,9 +253,49 @@ export function baseHostFns(ctx: TurnCtx): HostFns {
  */
 export function defaultProgramRunner(
   ctx: TurnCtx,
-  host: HostFns = baseHostFns(ctx),
+  host?: HostFns,
 ): ProgramRunner {
-  return ({ code, signal, onLog }) => runProgram({ code, host, signal, onLog });
+  const fns = host ?? baseHostFns(ctx);
+  // Per TURN on the ctx, read per ROUND by index: the host functions may have been built by
+  // the caller (`delegationDeps` does exactly that for every delegating session), so the
+  // array cannot live in this closure.
+  const exits = (ctx.exits ??= []);
+  return async ({ code, signal, onLog }) => {
+    const from = exits.length;
+    const result = await runProgram({ code, host: fns, signal, onLog });
+    return withExitNotes(result, exits.slice(from));
+  };
+}
+
+/**
+ * Append the commands that exited non-zero, when the program did not print them itself.
+ *
+ * `bash()` returns `[exit code N]` as data rather than throwing, which is the right call —
+ * it is a result to read. But the string goes into the program, so a round that never logs
+ * it leaves the failure INVISIBLE: a reviewer ran `await bash("exit 3")` without logging and
+ * got `◇ run_steps ✓ done` over "(the program ran and printed nothing)", after which the
+ * model narrated a confident invented mechanism ("bash() threw on the non-zero exit"). The
+ * harness knew the code all along.
+ *
+ * Only when it is not already there: a program that DID log the output has said it, and
+ * saying it twice is its own kind of noise.
+ */
+export function withExitNotes(
+  result: ProgramResult,
+  exits: readonly { command: string; code: number }[],
+): ProgramResult {
+  if (exits.length === 0) return result;
+  const said = result.logs.join("\n");
+  const unsaid = exits.filter((e) => !said.includes(`[exit code ${e.code}`));
+  if (unsaid.length === 0) return result;
+  const notes = unsaid.map((e) => `[exit code ${e.code}] ${oneLineCommand(e.command)}`);
+  return { ...result, logs: [...result.logs, ...notes] };
+}
+
+/** A command on one line, short enough to sit in a result. */
+function oneLineCommand(command: string): string {
+  const flat = command.replace(/\s+/g, " ").trim();
+  return flat.length > 80 ? `${flat.slice(0, 79)}…` : flat;
 }
 
 export interface TurnDeps {
