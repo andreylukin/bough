@@ -29,6 +29,7 @@ import { BINDINGS } from "../keys.ts";
 import {
   agentDetailRows,
   agentRows,
+  costRows,
   footer,
   linesOf,
   phaseGroups,
@@ -411,4 +412,37 @@ test("every level's footer ends with the way out", () => {
     const line = footer(level, detail);
     assert.ok(line.endsWith("esc back"), `level ${level}: ${line}`);
   }
+});
+
+test("the usage row is labelled for what it carries, and says it once", () => {
+  // A delegator persona read `$ cost  8.6k tok · 2 agents  agents 8.6k tok` and asked where
+  // the dollars were: `RunCost` has tokens, agent-time and wall-time, and no money at all.
+  // The tail also repeated the total verbatim whenever there was a single phase.
+  const base: RunCost = {
+    runId: "r1",
+    agents: 2,
+    replayed: 0,
+    tokens: 8600,
+    agentMs: 4000,
+    wallMs: 4000,
+    byPhase: [{ phase: "", agents: 2, replayed: 0, tokens: 8600, elapsedMs: 4000 }],
+    byAgent: [],
+  };
+  const one = linesOf(costRows(base));
+  assert.equal(one.length, 1);
+  assert.ok(one[0].includes("8.6k tok · 2 agents"), one[0]);
+  assert.equal(one[0].includes("$"), false, one[0]);
+  // ONE phase: no breakdown, because it would be the same number twice on one row.
+  assert.equal(one[0].trimEnd().endsWith("2 agents"), true, one[0]);
+
+  // TWO phases: the breakdown earns its place.
+  const split = linesOf(costRows({
+    ...base,
+    byPhase: [
+      { phase: "Review", agents: 1, replayed: 0, tokens: 4300, elapsedMs: 2000 },
+      { phase: "Fix", agents: 1, replayed: 0, tokens: 4300, elapsedMs: 2000 },
+    ],
+  }));
+  assert.ok(split[0].includes("Review 4.3k tok"), split[0]);
+  assert.ok(split[0].includes("Fix 4.3k tok"), split[0]);
 });

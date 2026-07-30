@@ -236,13 +236,26 @@ export function replayRows(replay: ReplaySummary): Row[] {
   ];
 }
 
-/** Tokens and agent-time, per run and per phase. Visible while it runs, not after. */
+/**
+ * Tokens and agent-time, per run and per phase.
+ *
+ * LABELLED `≡ usage`, not `$ cost`. `RunCost` carries tokens, agent-time and wall-time and
+ * no money at all — so a row headed with a dollar sign showed `8.6k tok · 2 agents` and a
+ * delegator persona reasonably asked where the dollars were. Every tree row has them; this
+ * structure never did.
+ *
+ * The per-phase breakdown is dropped when there is only ONE group, where it repeated the
+ * total verbatim: `8.6k tok · 2 agents  agents 8.6k tok`, the same number twice on one row,
+ * which reads as a rendering bug even though both halves were right.
+ */
 export function costRows(cost: RunCost): Row[] {
-  const perPhase = cost.byPhase
-    .map((p) => `${p.phase || "agents"} ${tokenChip(p.tokens) || "0 tok"}`)
-    .join(" · ");
+  const perPhase = cost.byPhase.length > 1
+    ? cost.byPhase
+      .map((p) => `${p.phase || "agents"} ${tokenChip(p.tokens) || "0 tok"}`)
+      .join(" · ")
+    : "";
   return [[
-    { text: "$ cost    ", tone: "muted" },
+    { text: "≡ usage   ", tone: "muted" },
     { text: `${tokenChip(cost.tokens) || "0 tok"} · ${plural(cost.agents, "agent")}`, tone: "text" },
     { text: perPhase ? `  ${perPhase}` : "", tone: "muted" },
   ]];

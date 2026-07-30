@@ -747,6 +747,25 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
   }, [entries, modelCfg, cfg.defaultModel, cfg.sessionModel, panel.open, panel.tab]);
 
   /**
+   * Land on a phase that HAS agents.
+   *
+   * A run whose script declares `phases` but never passes `{phase}` to its `agent()` calls
+   * attributes nothing to the declared phase — so drilling in opened on `Parallel Review · 0`
+   * with an empty pane and a dead ⏎, while the row below said `agents 2/2`. The panel was
+   * telling the truth and a delegator persona read it as the panel lying about the run.
+   *
+   * Only moves off an EMPTY group, and only while the cursor is still where the drill-in put
+   * it, so it can never fight a cursor the user has moved.
+   */
+  useEffect(() => {
+    if (!panel.open || panel.tab !== "workflows" || wfLevel !== 1) return;
+    if (wfPhaseSel !== 0 || wfGroups.length === 0) return;
+    if ((wfGroups[0]?.agents.length ?? 0) > 0) return;
+    const at = wfGroups.findIndex((g) => g.agents.length > 0);
+    if (at > 0) setWfPhaseSel(at);
+  }, [wfGroups, wfLevel, wfPhaseSel, panel.open, panel.tab]);
+
+  /**
    * Apply a pending `openRun` once the workflows tab is actually showing.
    *
    * Two-step and not one because the reset effect directly above clears `wfOpen` on
@@ -1764,11 +1783,21 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
         // `agentDetailRows` prints "session <id> — o opens it" on every agent that ran.
         // It was a promise for a key that did not exist; this is the key.
         const agent = wfAgents[wfAgentSel];
-        if (!agent?.sessionId) {
-          return void setMessage(
-            "no session on this agent — the call was replayed from the journal",
-          ),
-            true;
+        // TWO DIFFERENT FACTS, and they were one message. With no agent under the cursor —
+        // an empty phase, or a filter that hid every row — this blamed the JOURNAL, on a run
+        // whose own panel said `0 replayed · 2 ran live`. A delegator persona read that
+        // contradiction as the panel lying about the run.
+        if (!agent) {
+          setMessage(
+            wfFilter
+              ? `no agent under the cursor — the ${wfFilter} filter is hiding them, f cycles it`
+              : "no agent under the cursor — this phase ran none",
+          );
+          return true;
+        }
+        if (!agent.sessionId) {
+          setMessage("no session on this agent — the call was replayed from the journal");
+          return true;
         }
         dispatch({ type: "close" });
         return void store.open(agent.sessionId), true;
