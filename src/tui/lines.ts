@@ -529,12 +529,19 @@ function subagentNoteLines(out: VLine[], note: SubagentNote, w: number, full: bo
   // It shared this checkout, so there is nothing to merge — the single most
   // common wrong move after a delegated report is looking for the merge step.
   //
-  // It used to say "click to open". Nothing in the TUI dispatches a click (App's
-  // mouse handler is wheel-only), so the one instruction the transcript gave the
-  // reader was an instruction to do something impossible. The `click` targets on
-  // these lines are kept — they are what a wired pointer would use — but the row
-  // names the key that works today.
-  push(out, dim("  ↳ ^s opens it · its edits are already in this checkout"), w, open);
+  // WHAT ACTUALLY OPENS IT. This row has said two wrong things in a row: first
+  // "click to open" when no click was dispatched, then `^s opens it` — and `^s` opens
+  // the TREE (it is the retired sessions tab's alias), from which this conversation is
+  // several keystrokes away, and it is guarded on an empty draft besides. Clicking IS
+  // wired now: every row of this card carries `open:<sessionId>`, which `App`'s mouse
+  // handler routes to `store.open`. So the row names the pointer first and the tree
+  // second, and neither claim is a key that does something else.
+  push(
+    out,
+    dim("  ↳ click to open it · or find it in the tree (^t) · its edits are already here"),
+    w,
+    open,
+  );
 }
 
 function branchCardLines(out: VLine[], b: Branch, w: number, isFull: (key: string) => boolean) {

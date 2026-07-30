@@ -380,7 +380,13 @@ test("a finished subagent's card replaces its raw note at the spawn point", () =
   assert.equal(text.includes("[subagent finished]"), false); // the raw wall is gone
   assert.ok(text.includes("extract token logic"));
   assert.ok(text.includes("Found three call sites."));
-  assert.ok(text.includes("its edits are already in this checkout"));
+  // The NEXT ACTION, and it has been wrong twice: "click to open" when no click was
+  // dispatched, then `^s opens it` when `^s` opens the tree and is guarded on an empty
+  // draft. Clicking is wired now (every row carries `open:<sessionId>`), so the row
+  // names the pointer, and the tree by the chord that is not guarded.
+  assert.ok(text.includes("its edits are already here"), text);
+  assert.ok(text.includes("click to open it"), text);
+  assert.equal(text.includes("^s opens it"), false, text);
 
   // With no branch to draw the card, the note itself must survive — otherwise the
   // report would render nowhere at all.
