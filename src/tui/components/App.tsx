@@ -1758,6 +1758,15 @@ export function App(
   }, [hooks, run, clickAt, rowAt, screenRows, copyText, openUrl, store]);
   runRef.current = run;
 
+  /**
+   * A fork that has said nothing yet, and the number of files its abandoned thread left
+   * changed on disk. Drives BOTH the branch-point note and the `^r` guard, so the key and
+   * the sentence advertising it can never disagree.
+   */
+  const branchPointFiles = state.session?.kind === "fork" && state.thread.length === 0
+    ? (state.changes?.available ? state.changes.files.length : 0)
+    : 0;
+
   useKeyboard((event) => {
     const { input, key } = inkKey(event);
     const chord = chordOf(input, key);
@@ -1870,15 +1879,28 @@ export function App(
    */
   const branchPointNote = state.session?.kind === "fork" && state.thread.length === 0
     ? (() => {
-      const n = state.changes?.available ? state.changes.files.length : 0;
+      const n = branchPointFiles;
       return n === 0
         ? "branched here · say it differently"
         // `^t`, not `^d`. A fresh fork's composer is PREFILLED with the forked turn (edit
         // & resend), and `^d` is guarded on an empty draft — so the note named a key that
         // cannot fire in the one state where the note is shown. `^t` opens the panel with
         // no guard; the changes tab is one ⇥ away and the tab bar says so.
-        : `branched here · the files were not rewound — ${n} still changed on disk · ^t, ` +
-          `then the changes tab`;
+        // NAMES BOTH KEYS. Measured against Claude Code on the same task and model: its
+        // `esc esc` offers to restore "the code and/or conversation" and one pick does
+        // both. bough keeps no snapshot store by design (AGENTS.md: plain git, edits land
+        // in the real files), so it cannot offer that pick — but it used to say only "^t,
+        // then the changes tab" and leave the reader to discover that `X` is the verb.
+        // Two keys, both named, beats one key that contradicts the help's "not bound"
+        // section — which is where `^r` is, and is why it is not bound here.
+        //
+        // `^t ^d`, not `^t`: `^t` opens the panel on whichever tab was last used, so on a
+        // fresh fork it lands on the TREE and `X` there does nothing. `^d` is guarded on
+        // an empty draft in chat — and the composer is prefilled here — but the generated
+        // tab chords are UNGUARDED in panel mode, which is what makes the pair work.
+        // Walked with shell-use: `^t ^d X ⏎` restored the file and left the tree clean.
+        : `branched here · the files were not rewound — ${plural(n, "file")} still changed ` +
+          `on disk · ^t ^d then X reverts them`;
     })()
     : null;
   /**

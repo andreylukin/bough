@@ -1106,7 +1106,13 @@ test("a fresh branch says the files were NOT rewound, and how many still differ"
     // name a key that cannot fire in the only state the note appears in.
     assert.equal(frame.includes("^d shows them"), false, frame);
     assert.ok(frame.includes("^t"), frame);
-    assert.ok(frame.includes("2 still changed"), frame);
+    assert.ok(frame.includes("2 files still changed"), frame);
+    // And the VERB, not just the tab. Naming `^t` alone left the reader in the changes tab
+    // to discover that `X` is what reverts — the measured gap against Claude Code, whose
+    // rewind offers code and conversation in one pick.
+    // `^t ^d`, both of them: `^t` alone opens the panel on the last tab used, which on a
+    // fresh fork is the tree, where `X` does nothing. Walked with shell-use before pinning.
+    assert.ok(frame.includes("^t ^d then X reverts"), frame);
   } finally {
     h.unmount();
   }

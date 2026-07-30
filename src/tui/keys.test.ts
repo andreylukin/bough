@@ -284,6 +284,7 @@ test("a bare letter means what the OPEN TAB says it means", () => {
   assert.equal(lookup(ctx({ mode: "panel", tab: "workflows" }), "r"), "wf.rerun");
   assert.equal(lookup(ctx({ mode: "panel", tab: "mcp" }), "r"), "mcp.restart");
   assert.equal(lookup(ctx({ mode: "panel", tab: "tree" }), "r"), null);
+
   assert.equal(lookup(ctx({ mode: "panel", tab: "tree", panelFiltering: true }), "e"), null);
   // …and outside its tab a scoped letter is not bound. `s` in the model picker used
   // to commit a model — a bare letter silently changing a setting.

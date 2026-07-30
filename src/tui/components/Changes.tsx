@@ -28,7 +28,7 @@
 import { TextAttributes } from "@opentui/core";
 import type { FileDiff } from "../../vcs/repodiff.ts";
 import type { SessionChangeSet } from "../../server/changes.ts";
-import { clip, legendLine, windowAround } from "../format.ts";
+import { clip, legendLine, plural, windowAround } from "../format.ts";
 import { palette } from "../theme.ts";
 
 // ---------------------------------------------------------------------------
@@ -323,7 +323,10 @@ function RevertConfirm(
     return (
       <box flexDirection="column">
         <text fg={palette.error} wrapMode="none">
-          <b>revert all {items.length} files (+{added} -{removed})?</b>
+          {/* `plural`, because this sentence is the last thing read before work is
+              destroyed: "revert all 1 files" on a one-file change set reads as a
+              placeholder, which is the wrong impression for a confirm to give. */}
+          <b>revert all {plural(items.length, "file")} (+{added} -{removed})?</b>
         </text>
         <text attributes={TextAttributes.DIM} wrapMode="none">
           everything this session touched goes back{base ? ` to ${base.slice(0, 8)}` : ""}, and
