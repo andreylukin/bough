@@ -56,6 +56,7 @@ import {
 } from "../selection.ts";
 import {
   activeTrigger,
+  clip,
   browsePrefix,
   applyCompletion,
   linkAt,
@@ -99,7 +100,8 @@ import { JobOutput, jobBodyRows } from "./JobOutput.tsx";
 import { Composer, completionPopupHeight, composerHeight } from "./Composer.tsx";
 import { type PanelControls, type PanelHostDeps, usePanelHost } from "./PanelHost.tsx";
 import { liveSubagents, SubagentRail } from "./SubagentRail.tsx";
-import { forestRows, revealPath, rewindIndex } from "../forest.ts";
+import { forestRows, isDelegated, revealPath, rewindIndex } from "../forest.ts";
+import { titleOf } from "./Tree.tsx";
 
 import { palette } from "../theme.ts";
 import { tabAtColumn } from "./Panel.tsx";
@@ -1647,6 +1649,29 @@ export function App(
         : `branched here · the files were not rewound — ${n} still changed on disk · ^d shows them`;
     })()
     : null;
+  /**
+   * What the "new conversation" screen says when there IS work to come back to.
+   *
+   * A cold start lands on a blank screen. Nothing in the tree reads or writes a
+   * last-session id (the `lastSessionId` in older `tui.json` files is a leftover the
+   * rewrite stopped honouring), so the conversation you were in five minutes ago is
+   * reachable only if you already know that `^f` is the switcher — and the blank screen
+   * is the one place a new user has no reason to think a switcher exists.
+   *
+   * It NAMES the most recent conversation rather than reopening it: opening straight
+   * into an old thread is how a message reaches the wrong one, and the fresh screen is
+   * a reasonable default. The point is that the door is visible from where you land.
+   */
+  const resumeNote = !state.session && state.thread.length === 0
+    ? (() => {
+      const recent = [...state.sessions]
+        .filter((s) => !isDelegated(s.kind))
+        .sort((a, b) => b.createdAt - a.createdAt)[0];
+      return recent
+        ? `type to start · ^f reopens “${clip(titleOf(recent), 40)}” and everything before it`
+        : null;
+    })()
+    : null;
   const workspaceDir = state.session?.workspace ?? defaultWorkspace ?? "";
   const workspace = shortenPath(workspaceDir, home);
   const header = (
@@ -1782,7 +1807,11 @@ export function App(
         turnTokens={turn?.tokens ?? null}
         queued={state.queued}
         notice={state.notice}
-        {...(branchPointNote ? { placeholder: branchPointNote } : {})}
+        {...(branchPointNote
+          ? { placeholder: branchPointNote }
+          : resumeNote
+          ? { placeholder: resumeNote }
+          : {})}
       />
       <SubagentRail
         units={units}
