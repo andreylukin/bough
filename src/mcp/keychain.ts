@@ -1,16 +1,27 @@
 /**
- * Reading a secret out of the macOS login keychain, for MCP servers that are
- * already authorized somewhere else on this machine.
+ * Reading a secret out of the credential store another client on this machine
+ * already put it in, for MCP servers that client has already authorized.
  *
  * WHY THIS EXISTS. bough's own way into a remote MCP server is OAuth: dynamic
  * client registration, a browser round trip, tokens in `~/.bough/mcp-auth.json`
  * (`oauth.ts`). That is the right default and it is not the only situation. Some
  * servers are already authorized on this machine by another client — the claude.ai
- * connectors are authorized by Claude Code, which keeps its credentials in a
- * keychain item — and running a second, parallel authorization for the same account
+ * connectors are authorized by Claude Code, which keeps its credentials in a store
+ * of its own, and running a second, parallel authorization for the same account
  * gets you a second grant to manage and revoke rather than access you did not have.
- * So a registry entry may say "the bearer token for this server is THAT keychain
- * item", and this module is the read.
+ * So a registry entry may say "the bearer token for this server is THAT item", and
+ * this module is the read.
+ *
+ * TWO STORES, ONE REFERENCE SYNTAX. Claude Code keeps the item in the macOS login
+ * keychain on a Mac and in a plain file (`$CLAUDE_CONFIG_DIR/.credentials.json`,
+ * default `~/.claude/.credentials.json`) everywhere else, and on a Mac where the
+ * keychain has been opted out of. `${keychain:…}` is the reference either way and
+ * `defaultCredentialReader` picks the store, because the alternative is a registry
+ * entry whose syntax has to be rewritten when it moves between machines. The name
+ * of the syntax is a historical accident (the keychain came first) and not a claim
+ * about which store answered; `KeychainResult.store` is what says that, and it is
+ * what makes a failure message name a real path instead of advising a Linux user to
+ * go and check a keychain they do not have.
  *
  * THE INVARIANT THIS HOLDS, and it is the registry's own rule extended one step:
  * **the registry stores a REFERENCE, never a secret.** `${VAR}` already worked that
@@ -34,21 +45,32 @@
  * that obtained them, refreshing on its behalf is impersonation rather than
  * plumbing, and the fix — open that client once — is both trivial and the user's.
  *
- * macOS only, by construction: this is the `security` binary. On any other platform
- * the reference fails with a sentence saying so rather than a spawn error.
+ * A reference that no store on this machine can answer fails with a sentence
+ * naming the stores that were tried, rather than a spawn error.
  */
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { McpError } from "../errors.ts";
 
-/** How a keychain read is performed. Injected so tests never touch a real keychain. */
+/** How a credential read is performed. Injected so tests never touch a real store. */
 export type KeychainReader = (service: string) => Promise<KeychainResult>;
 
 export interface KeychainResult {
   /** The item's secret, verbatim. Empty when `code` is non-zero. */
   value: string;
-  /** `security`'s exit code. 44 is "the item does not exist"; 128 is a denied prompt. */
+  /**
+   * `security`'s exit code, or the file reader's imitation of one. 44 is "the item
+   * does not exist"; 128 is a denied prompt.
+   */
   code: number;
-  /** Whatever `security` said on stderr, trimmed. Never contains the secret. */
+  /** Whatever the store said, trimmed. Never contains the secret. */
   error: string;
+  /**
+   * Which store produced this. Absent means the keychain, so an injected reader in a
+   * test keeps the wording it was written against.
+   */
+  store?: "keychain" | "file";
 }
 
 /**
@@ -58,30 +80,147 @@ export interface KeychainResult {
  * and no risk of a label leaking into the value. The read may raise the system's
  * "allow access?" dialog the first time — that is macOS asking the human, and it
  * is exactly the confirmation this should require.
+ *
+ * NO PLATFORM GATE. This used to refuse outright unless `process.platform` was
+ * `darwin`, which conflated "there is no keychain here" with "this is not a Mac" and
+ * made the two stores mutually exclusive by operating system rather than by what the
+ * machine has. A missing `security` binary reports as "no such item" (44), the same
+ * as a keychain that simply does not hold it, so `defaultCredentialReader` can try
+ * both stores anywhere and take whichever one answers.
  */
 export const securityReader: KeychainReader = async (service) => {
-  if (process.platform !== "darwin") {
-    return {
-      value: "",
-      code: -1,
-      error: `the login keychain is a macOS facility and this is ${process.platform}`,
-    };
+  try {
+    const proc = Bun.spawn(["security", "find-generic-password", "-s", service, "-w"], {
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [value, error, code] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    return { value, code, error: error.trim(), store: "keychain" };
+  } catch (e) {
+    // No `security` on PATH: there is no keychain on this machine to hold the item.
+    // 44 rather than an error, because "this store does not have it" is the truth and
+    // it is what lets the next store be asked.
+    return { value: "", code: 44, error: (e as Error).message, store: "keychain" };
   }
-  const proc = Bun.spawn(["security", "find-generic-password", "-s", service, "-w"], {
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [value, error, code] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-  return { value, code, error: error.trim() };
 };
 
+/**
+ * Where Claude Code keeps its configuration and its credentials file.
+ *
+ * `CLAUDE_CONFIG_DIR` is Claude Code's own override and is honoured for the same
+ * reason `BOUGH_HOME` is (`paths.ts`): a machine that has moved its config has moved
+ * the credentials with it, and reading the default path would silently find nothing.
+ */
+export function claudeConfigDir(
+  env: Record<string, string | undefined> = process.env,
+  home: string = homedir(),
+): string {
+  const override = env["CLAUDE_CONFIG_DIR"];
+  return override && override.trim() ? override : join(home, ".claude");
+}
+
+/** The credentials file inside it. */
+export function credentialsPath(
+  env?: Record<string, string | undefined>,
+  home?: string,
+): string {
+  return join(claudeConfigDir(env, home), ".credentials.json");
+}
+
+/**
+ * `$CLAUDE_CONFIG_DIR/.credentials.json`, the store Claude Code uses where it is not
+ * using a keychain: every non-Mac platform, and a Mac that opted out of one.
+ *
+ * THIS READER ANSWERS FOR EXACTLY ONE ITEM. A `${keychain:…}` reference names an
+ * arbitrary service, and a file holding Claude Code's login is not a general vault:
+ * answering some OTHER service's read with this file's contents would hand one
+ * client's credential to a reference that asked for a different one. Anything but
+ * `CLAUDE_CODE_ITEM` is therefore "no such item" (44) and falls through.
+ *
+ * The file's permissions are the confinement here, and they are the same ones Claude
+ * Code itself relies on. There is no keychain dialog to stand in for consent, which
+ * is worth knowing rather than worth working around: a process that can read this
+ * file can already read every other secret in that directory.
+ */
+export const credentialsFileReader: KeychainReader = async (service) => {
+  if (service !== CLAUDE_CODE_ITEM) {
+    return { value: "", code: 44, error: "", store: "file" };
+  }
+  const path = credentialsPath();
+  try {
+    return { value: await readFile(path, "utf8"), code: 0, error: "", store: "file" };
+  } catch (e) {
+    const err = e as NodeJS.ErrnoException;
+    // Absent is the ordinary state of a Mac that uses its keychain, so it reports as
+    // "not there" and lets the next store answer. A permission problem is NOT that:
+    // the file exists and is being withheld, which is worth saying rather than
+    // reporting as absence and blaming the setup.
+    const code = err.code === "ENOENT" ? 44 : err.code === "EACCES" ? 128 : 1;
+    return { value: "", code, error: `${path}: ${err.message}`, store: "file" };
+  }
+};
+
+/**
+ * The store this machine actually keeps Claude Code's credentials in.
+ *
+ * BOTH STORES ARE TRIED, ON EVERY PLATFORM, because which one holds the credential is
+ * a property of the machine and not of its operating system. A Mac can be running with
+ * the keychain opted out and the token in a file; a Linux box has the file and no
+ * keychain; a container can have the file mounted in with a `security` binary present
+ * and useless. Selecting by `process.platform` got all three of those wrong in one
+ * direction or another, and the failure it produced was the confusing kind: a token
+ * that plainly exists on disk, and a message about a facility the user does not have.
+ *
+ * ORDER IS BY AUTHORITY, not availability. The keychain goes first WHERE IT IS THE
+ * ONE CLAUDE CODE WRITES TO, so a stale `.credentials.json` left behind by an older
+ * install cannot shadow a live token; everywhere else the file is what gets written and
+ * is asked first, so the ordinary case costs no spawn. Either way the other store is
+ * still consulted, so neither setup is out of reach.
+ *
+ * The failure that gets REPORTED is the most specific one seen: "you denied the
+ * prompt" and "that file is not readable" are both actionable, and "no such item"
+ * from the store that was never going to have it is not.
+ */
+export const defaultCredentialReader: KeychainReader = (service) =>
+  readFromStores(service, credentialStores());
+
+/**
+ * The two stores, in the order this platform should ask them. Exported so the ordering
+ * can be asserted without spawning anything.
+ */
+export function credentialStores(
+  platform: string = process.platform,
+): KeychainReader[] {
+  return platform === "darwin"
+    ? [securityReader, credentialsFileReader]
+    : [credentialsFileReader, securityReader];
+}
+
+/**
+ * First store that has the item wins; if none does, the most specific failure is what
+ * gets reported. Separated from `defaultCredentialReader` so this rule is testable
+ * against fake stores rather than against the developer's own login.
+ */
+export async function readFromStores(
+  service: string,
+  stores: readonly KeychainReader[],
+): Promise<KeychainResult> {
+  let worst: KeychainResult | null = null;
+  for (const read of stores) {
+    const result = await read(service);
+    if (result.code === 0 && result.value) return result;
+    if (!worst || (worst.code === 44 && result.code !== 44)) worst = result;
+  }
+  return worst ?? { value: "", code: 44, error: "", store: "file" };
+}
+
 export interface KeychainOptions {
-  /** Absent = the real `security` binary. */
+  /** Absent = whichever store this machine keeps the credential in. */
   keychain?: KeychainReader;
 }
 
@@ -123,15 +262,15 @@ export async function readKeychainRef(
   ref: KeychainRef,
   opts: KeychainOptions = {},
 ): Promise<string> {
-  const read = opts.keychain ?? securityReader;
-  const { value: raw, code, error } = await read(ref.service);
+  const read = opts.keychain ?? defaultCredentialReader;
+  const { value: raw, code, error, store } = await read(ref.service);
   // `security -w` terminates its output with a newline that is not part of the
   // secret. Stripped HERE rather than in the reader so it holds for every reader:
   // a token with a newline welded on produces a header the remote end rejects for
   // reasons it will not explain, and that is a bad afternoon.
   const value = raw.replace(/\r?\n$/, "");
   if (code !== 0 || !value) {
-    throw new McpError(400, keychainFailure(ref.service, code, error));
+    throw new McpError(400, keychainFailure(ref.service, code, error, store));
   }
   if (ref.path.length === 0) return value;
 
@@ -202,8 +341,9 @@ export function isCoveredHost(url: string): boolean {
  * PREFILL, not authorization: it is what the server is tried with before anyone is
  * asked to authorize anything, and a stored token from bough's own OAuth flow
  * always wins over it (`BoughOAuthProvider.tokens`). If it is wrong, absent, stale,
- * or this is not a Mac, the connection proceeds exactly as it did before — a 401
- * from the endpoint puts the server back on the ordinary `a`-to-authorize path.
+ * or no store on this machine has it, the connection proceeds exactly as it did
+ * before: a 401 from the endpoint puts the server back on the ordinary
+ * `a`-to-authorize path.
  *
  * Hence: **every failure here is silent and returns `undefined`.** That is the
  * opposite of the rule the rest of this module follows, and it is deliberate. A
@@ -290,23 +430,50 @@ function describe(parsed: unknown): string {
 }
 
 /**
- * What went wrong, in the user's terms.
+ * What went wrong, in the user's terms, and in terms of the store that said so.
  *
- * `security`'s own exit codes are the only reliable signal here — its stderr is one
- * line of C-program diagnostics — and the two that matter are worth telling apart:
- * "there is no such item" is a setup problem, "you said no to the dialog" is a
- * decision the user just made and must not read as a bug.
+ * The store's own exit codes are the only reliable signal here (stderr is one line
+ * of C-program diagnostics), and the two that matter are worth telling apart: "there
+ * is no such item" is a setup problem, "you said no" is a decision the user just made
+ * and must not read as a bug.
+ *
+ * `store` is what keeps the advice true. Telling someone on Linux to run
+ * `security find-generic-password` is a dead end they have to discover for
+ * themselves, and telling a Mac user to go and look at a `.credentials.json` that is
+ * deliberately not there is the same dead end pointing the other way.
+ *
+ * "NOT FOUND" NAMES BOTH STORES, because both were tried. A message that mentions
+ * only the one that happened to answer last reads as though the other was never
+ * looked at, which sends someone to go and check a location that has already been
+ * checked. Every other failure names one store, correctly: those are specific to it.
  */
-function keychainFailure(service: string, code: number, error: string): string {
-  const head = `could not read keychain item "${service}"`;
+function keychainFailure(
+  service: string,
+  code: number,
+  error: string,
+  store: KeychainResult["store"],
+): string {
+  const file = store === "file";
+  const head = `could not read credential item "${service}"`;
   if (code === 44 || /could not be found/i.test(error)) {
-    return `${head}: no generic-password item with that service name is in the login ` +
-      `keychain. Check the name with \`security find-generic-password -s "${service}"\`, ` +
-      `and make sure the client that owns it has been logged in on this machine.`;
+    const advice = `Make sure the client that owns it has been logged in on this ` +
+      `machine. For "${CLAUDE_CODE_ITEM}", run \`claude\` once, and set ` +
+      `CLAUDE_CONFIG_DIR if its configuration lives somewhere else.`;
+    return file
+      ? `${head}: it is in neither ${credentialsPath()} nor the login keychain. ${advice}`
+      : `${head}: no generic-password item with that service name is in the login ` +
+        `keychain, and ${credentialsPath()} does not hold it either. Check the name ` +
+        `with \`security find-generic-password -s "${service}"\`. ${advice}`;
   }
   if (code === 128 || /User interaction|denied|cancel/i.test(error)) {
-    return `${head}: the keychain access prompt was denied or cancelled. macOS asks once ` +
-      `per program — answer "Always Allow" to stop it asking again.`;
+    return file
+      ? `${head}: ${credentialsPath()} is not readable by this process${
+        error ? `: ${error}` : ""
+      }.`
+      : `${head}: the keychain access prompt was denied or cancelled. macOS asks once ` +
+        `per program — answer "Always Allow" to stop it asking again.`;
   }
-  return `${head}: security exited ${code}${error ? ` — ${error}` : ""}.`;
+  return file
+    ? `${head}: ${error || `reading ${credentialsPath()} failed`}.`
+    : `${head}: security exited ${code}${error ? ` — ${error}` : ""}.`;
 }

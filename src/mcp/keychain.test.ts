@@ -1,6 +1,6 @@
 /**
- * Keychain-backed MCP credentials: the explicit `${keychain:…}` reference and the
- * automatic prefill.
+ * Store-backed MCP credentials: the explicit `${keychain:…}` reference, the store it
+ * resolves against, and the automatic prefill.
  *
  * Every test injects the reader, so nothing here spawns `security`, reads the
  * developer's login keychain, or raises an access dialog on a machine running the
@@ -11,14 +11,23 @@
  */
 import { test } from "bun:test";
 import assert from "node:assert/strict";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { McpError } from "../errors.ts";
 import {
   CLAUDE_CODE_ITEM,
   claudeCodePrefill,
+  claudeConfigDir,
+  credentialsFileReader,
+  credentialsPath,
+  credentialStores,
   isCoveredHost,
   type KeychainReader,
   parseKeychainRef,
+  readFromStores,
   readKeychainRef,
+  securityReader,
 } from "./keychain.ts";
 import { expandHeaders } from "./config.ts";
 
@@ -205,4 +214,140 @@ test("a missing or stale prefill is SILENT — the ordinary path must still work
   );
   // …and the item it looks in is the one Claude Code actually writes.
   assert.equal(CLAUDE_CODE_ITEM, "Claude Code-credentials");
+});
+
+// ---- the store the reference resolves against ---------------------------------
+
+test("the config directory is CLAUDE_CONFIG_DIR when set, else ~/.claude", () => {
+  assert.equal(claudeConfigDir({}, "/home/t"), "/home/t/.claude");
+  assert.equal(claudeConfigDir({ CLAUDE_CONFIG_DIR: "/elsewhere" }, "/home/t"), "/elsewhere");
+  // Blank is not a location. Treating it as one moves the read to a relative path.
+  assert.equal(claudeConfigDir({ CLAUDE_CONFIG_DIR: "  " }, "/home/t"), "/home/t/.claude");
+  assert.equal(credentialsPath({}, "/home/t"), "/home/t/.claude/.credentials.json");
+});
+
+/** Runs `fn` with `CLAUDE_CONFIG_DIR` pointed at a fresh directory. */
+async function withConfigDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
+  const dir = await mkdtemp(join(tmpdir(), "bough-creds-"));
+  const before = process.env["CLAUDE_CONFIG_DIR"];
+  process.env["CLAUDE_CONFIG_DIR"] = dir;
+  try {
+    return await fn(dir);
+  } finally {
+    if (before === undefined) delete process.env["CLAUDE_CONFIG_DIR"];
+    else process.env["CLAUDE_CONFIG_DIR"] = before;
+  }
+}
+
+test("off macOS the credential comes out of Claude Code's credentials file", async () => {
+  // The whole reason this store exists: there is no login keychain on Linux, so a
+  // `${keychain:…}` reference had nothing to resolve against and every adopted server
+  // failed with a sentence about a macOS facility.
+  await withConfigDir(async (dir) => {
+    await writeFile(join(dir, ".credentials.json"), blob(), "utf8");
+    const result = await credentialsFileReader(CLAUDE_CODE_ITEM);
+    assert.equal(result.code, 0);
+    assert.equal(result.store, "file");
+    assert.equal(
+      await readKeychainRef(
+        { service: CLAUDE_CODE_ITEM, path: ["claudeAiOauth", "accessToken"] },
+        { keychain: credentialsFileReader },
+      ),
+      "sk-ant-oat01-TOKEN",
+    );
+  });
+});
+
+test("the credentials file answers for ONE item, not as a general vault", async () => {
+  // A reference naming some other service must not be handed Claude Code's login.
+  // Answering it would give one client's credential to a reference that asked for a
+  // different one, which is the leak this whole module is arranged to prevent.
+  await withConfigDir(async (dir) => {
+    await writeFile(join(dir, ".credentials.json"), blob(), "utf8");
+    const other = await credentialsFileReader("Some Other App");
+    assert.equal(other.code, 44);
+    assert.equal(other.value, "");
+  });
+});
+
+test("an absent credentials file reads as absent, and says where it looked", async () => {
+  await withConfigDir(async () => {
+    const result = await credentialsFileReader(CLAUDE_CODE_ITEM);
+    assert.equal(result.code, 44);
+    const error = await readKeychainRef(
+      { service: CLAUDE_CODE_ITEM, path: ["claudeAiOauth", "accessToken"] },
+      { keychain: credentialsFileReader },
+    ).then(() => null, (e: McpError) => e.message);
+    // The advice has to be true for the store that actually answered: telling someone
+    // on Linux to run `security find-generic-password` is a dead end.
+    assert.match(String(error), /\.credentials\.json/);
+    assert.match(String(error), /CLAUDE_CONFIG_DIR/);
+    assert.equal(String(error).includes("generic-password"), false);
+  });
+});
+
+// ---- both setups, on either platform ------------------------------------------
+
+/** A store that HAS the item, tagged so the winner is identifiable. */
+const has = (store: "keychain" | "file"): KeychainReader => () =>
+  Promise.resolve({ value: blob(), code: 0, error: "", store });
+/** A store that does not have it. */
+const lacks = (store: "keychain" | "file", code = 44): KeychainReader => () =>
+  Promise.resolve({ value: "", code, error: "", store });
+
+test("either store can be the one that answers, whichever platform this is", async () => {
+  // The point of the change: which store holds the credential is a property of the
+  // MACHINE, not of its operating system. A Mac can have the keychain opted out and
+  // the token in a file; a container can have the file mounted and a useless
+  // `security` on PATH. Gating by platform got both of those wrong.
+  const fileOnly = await readFromStores(CLAUDE_CODE_ITEM, [lacks("keychain"), has("file")]);
+  assert.equal(fileOnly.store, "file");
+  assert.equal(fileOnly.code, 0);
+
+  const keychainOnly = await readFromStores(CLAUDE_CODE_ITEM, [lacks("file"), has("keychain")]);
+  assert.equal(keychainOnly.store, "keychain");
+  assert.equal(keychainOnly.code, 0);
+});
+
+test("ordering is by authority: the store the platform's Claude Code writes to is asked first", async () => {
+  // Not availability, authority. Asking the keychain first on a Mac is what stops a
+  // stale `.credentials.json` from an older install shadowing a live token. Off a Mac
+  // the file is what gets written, so it goes first and the ordinary case costs no spawn.
+  assert.equal(credentialStores("darwin")[0], securityReader);
+  assert.equal(credentialStores("linux")[0], credentialsFileReader);
+  assert.equal(credentialStores("win32")[0], credentialsFileReader);
+  // Both stores are present in both orders: neither setup is out of reach.
+  for (const platform of ["darwin", "linux", "win32"]) {
+    const stores = credentialStores(platform);
+    assert.equal(stores.length, 2, platform);
+    assert.ok(stores.includes(securityReader) && stores.includes(credentialsFileReader), platform);
+  }
+});
+
+test("a specific failure beats a bare absence when neither store has it", async () => {
+  // "You denied the prompt" and "that file is not readable" are both actionable. "No
+  // such item" from the store that was never going to have it is not, so it loses.
+  const denied = await readFromStores(CLAUDE_CODE_ITEM, [lacks("file"), lacks("keychain", 128)]);
+  assert.equal(denied.code, 128);
+  assert.equal(denied.store, "keychain");
+});
+
+test("not-found names BOTH stores, since both were tried", async () => {
+  // A message naming only the store that answered last reads as though the other was
+  // never looked at, and sends someone to check a location already checked.
+  const message = await readKeychainRef(
+    { service: CLAUDE_CODE_ITEM, path: [] },
+    { keychain: () => readFromStores(CLAUDE_CODE_ITEM, [lacks("file"), lacks("keychain")]) },
+  ).then(() => "", (e: McpError) => e.message);
+  assert.match(message, /\.credentials\.json/);
+  assert.match(message, /keychain/);
+});
+
+test("a missing `security` binary is an absent store, not an error", async () => {
+  // It reports 44 so the OTHER store still gets asked. A bogus service name gives the
+  // same 44 on a Mac where the binary does exist, so this holds on both platforms.
+  const result = await securityReader("bough-test-no-such-item-58a98873");
+  assert.equal(result.code, 44);
+  assert.equal(result.store, "keychain");
+  assert.equal(result.value, "");
 });
