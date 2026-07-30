@@ -583,6 +583,13 @@ export function programSummary(code: string, max = 64, running = false): string 
   // still running after it returns.
   const bg = count(/(?<![.\w])bashBg\s*\(/g);
   if (bg) bits.push(`started ${bg} background command${bg === 1 ? "" : "s"}`);
+  // The three shell-management verbs, which completed the set. Observed unnamed:
+  // `▸ 1 step · const output = await bashOutput("bg_1");` — a round whose whole act was
+  // reading a job's output, headlined with the line that read it.
+  else if (count(/(?<![.\w])bashKill\s*\(/g)) bits.push("killed a background command");
+  else if (count(/(?<![.\w])bashWait\s*\(/g)) {
+    bits.push(running ? "waiting for a background command" : "waited for a background command");
+  } else if (count(/(?<![.\w])bashOutput\s*\(/g)) bits.push("read a background command's output");
   // Delegation is FOUR verbs, not one. Counting only `agent(` meant the round that
   // fanned three subagents out with `spawn()` matched nothing and fell back to the
   // gist — the header read `const tasks = [`, raw source, on the single round a
@@ -604,6 +611,22 @@ export function programSummary(code: string, max = 64, running = false): string 
   if (count(/(?<![.\w])artifact\s*\(/g)) {
     bits.push(running ? "publishing an artifact" : "published an artifact");
   }
+  // THE REST OF THE HOST SURFACE. Everything not named here falls back to a line of source,
+  // which is the state `programSummary` exists to end — and after this morning's additions it
+  // was still true for half of `HOST_FN_NAMES`: a program whose only call was
+  // `state.set({key, value})` was headlined
+  // `await state.set({key: "campaign", value: "overnight-ux"});`.
+  if (count(/(?<![.\w])state\.(?:set|delete)\s*\(/g)) bits.push("wrote session state");
+  else if (count(/(?<![.\w])state\.(?:get|list)\s*\(/g)) bits.push("read session state");
+  if (count(/(?<![.\w])schedule\.\w+\s*\(/g)) bits.push("changed a schedule");
+  const fetched = count(/(?<![.\w])fetch\s*\(/g);
+  if (fetched) bits.push(`${running ? "fetching" : "fetched"} ${plural(fetched, "URL")}`);
+  if (count(/(?<![.\w])image\s*\(/g)) bits.push("attached an image");
+  const mcpCalls = count(/(?<![.\w])mcp\s*\(/g);
+  if (mcpCalls) bits.push(`${plural(mcpCalls, "MCP call")}`);
+  else if (count(/(?<![.\w])mcpStatus\s*\(/g)) bits.push("checked the MCP servers");
+  if (count(/(?<![.\w])lsp\.\w+\s*\(/g)) bits.push("looked up symbols");
+
   const searches = count(/(?<![.\w])(?:grep|glob|search)\s*\(/g);
   if (searches && bits.length === 0) bits.push(running ? "searching the tree" : "searched the tree");
 

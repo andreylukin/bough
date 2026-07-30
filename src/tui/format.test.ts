@@ -684,6 +684,14 @@ test("a step is headlined by what the program did, not by its first line of code
   assert.equal(programSummary('await workflow("review", args);'), "ran a workflow");
   assert.equal(programSummary('await ask("which one?", ["a", "b"]);'), "asked you a question");
   assert.equal(programSummary('await bashBg("npm run dev");'), "started 1 background command");
+  // The three shell-management verbs. Observed unnamed this campaign:
+  // `▸ 1 step · const output = await bashOutput("bg_1");`.
+  assert.equal(
+    programSummary('const out = await bashOutput("bg_1"); console.log(out);'),
+    "read a background command's output",
+  );
+  assert.equal(programSummary('await bashWait("bg_1");'), "waited for a background command");
+  assert.equal(programSummary('await bashKill("bg_1");'), "killed a background command");
   // A program that reached for `node:child_process` instead of `bash()` was
   // unrecognized, so the header read `const { execSync } = require("node:child_process");`.
   assert.equal(
@@ -708,6 +716,22 @@ test("a step is headlined by what the program did, not by its first line of code
   assert.equal(programSummary('await res.body.view("x"); await bash("ls");'), "ran 1 command");
   // And the real calls still count when they follow a dot-free boundary.
   assert.equal(programSummary('await join(id);'), "collected subagent reports");
+  // The rest of the host surface: unnamed, these fell back to a line of source, which is
+  // exactly what this function exists to end. Seen: `await state.set({key: "campaign", …});`
+  // as the headline of a step whose one act was storing a note.
+  assert.equal(
+    programSummary('await state.set({key: "campaign", value: "x"});'),
+    "wrote session state",
+  );
+  assert.equal(programSummary('const v = await state.get({key: "campaign"});'), "read session state");
+  assert.equal(programSummary('await schedule.add({cron: "0 9 * * *", prompt: "x"});'), "changed a schedule");
+  assert.equal(programSummary('const r = await fetch("https://example.com");'), "fetched 1 URL");
+  assert.equal(programSummary('await image("/tmp/a.png", "the chart");'), "attached an image");
+  assert.equal(programSummary('await mcp("github", "list_repos", {});'), "1 MCP call");
+  assert.equal(programSummary("const s = await mcpStatus();"), "checked the MCP servers");
+  assert.equal(programSummary('await lsp.refs({symbol: "Cart.total"});'), "looked up symbols");
+  // Member calls still do not count — `res.fetch(…)` is not the host verb.
+  assert.equal(programSummary('await client.fetch(u); await bash("ls");'), "ran 1 command");
   // patch() takes ONE string — the patch body — and naming it like a path-first
   // call captured the whole template literal, so the most-read line in the UI read
   // `wrote cart.js#8902] SWAP 3.=3: + for (let i = 0; …`. Its files are the section
@@ -852,4 +876,42 @@ test("plural agrees with its count", () => {
   // An irregular plural is passed, not guessed.
   assert.equal(plural(1, "entry", "entries"), "1 entry");
   assert.equal(plural(3, "entry", "entries"), "3 entries");
+});
+
+/**
+ * EVERY host function must be nameable, or the step row falls back to a line of source —
+ * the state this function exists to end. It regressed twice in one campaign: after the
+ * delegation fix, half of `HOST_FN_NAMES` was still unnamed (`state.set` headlined a step
+ * with `await state.set({key: "campaign", …});`), and `bashOutput` had been unnamed since
+ * the start. This test fails when a host function is ADDED without a label.
+ */
+test("no host function is left without a label", () => {
+  const CALLS: Record<string, string> = {
+    bash: 'await bash("ls");',
+    sh: 'await sh(["ls"]);',
+    bashBg: 'await bashBg("dev", "npm run dev");',
+    bashOutput: 'await bashOutput("bg_1");',
+    bashWait: 'await bashWait("bg_1");',
+    bashKill: 'await bashKill("bg_1");',
+    view: 'await view("a.ts");',
+    patch: "await patch(`[a.ts#F1]\nDEL 2.=3`);",
+    write: 'await write("a.ts", "x");',
+    agent: 'await agent("do it");',
+    spawn: 'await spawn("do it");',
+    join: 'await join("s1");',
+    adopt: 'await adopt("s1");',
+    workflow: 'await workflow("audit");',
+    ask: 'await ask("which?");',
+    state: 'await state.get({key: "k"});',
+    schedule: 'await schedule.list();',
+    image: 'await image("/tmp/a.png");',
+    fetch: 'await fetch("https://x.dev");',
+    artifact: 'await artifact("name", "body");',
+    mcp: 'await mcp("gh", "list", {});',
+    mcpStatus: "await mcpStatus();",
+    lsp: 'await lsp.refs({symbol: "X"});',
+  };
+  for (const [name, code] of Object.entries(CALLS)) {
+    assert.notEqual(programSummary(code), "", `${name} has no label — the step shows source`);
+  }
 });
