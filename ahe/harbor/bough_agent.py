@@ -191,8 +191,21 @@ class Bough(BaseInstalledAgent):
 #    disk fills fast. A full /var/lib/docker shows up as
 #    "apt-get update: At least one invalid signature was encountered" inside the
 #    container — a GPG error for what is actually ENOSPC. `colima ssh -- df -h
-#    /var/lib/docker` before believing anything else.
+#    /var/lib/docker` before believing anything else; grow it with
+#    `colima stop && colima start --disk 120` rather than pruning the images.
 #
 # Smoke test:
 #   cd ~/hb && PYTHONPATH=$HOME/hb harbor run -p smoke -a bough_agent:Bough \
 #     -m claude-haiku-4-5
+#
+# VERIFIED end to end on 2026-07-30. The smoke task returns reward 1.0, and a real
+# Terminal-Bench 2 task (gpt2-codegolf) runs clean with 0 exceptions — bough
+# finishes, harbor's verifier scores it 0.0, and `agent_result` carries the token
+# and cost accounting the envelope reported. The per-turn trace and prompt-section
+# manifest come back out of the container intact, so AHE's evidence layer works
+# inside someone else's sandbox.
+#
+# COST OF THE INSTALL PATH. Uploading src/ and running `bun install` per trial adds
+# ~2 minutes to every rollout. Fine for a proof, wasteful for a sweep: bake a
+# `FROM <task image>` layer with bun and bough already in it and have install()
+# skip the upload when it is present.

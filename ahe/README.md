@@ -136,6 +136,38 @@ diagnosed prompt edit did nothing to the outcome it named, and the loop said so
 and removed it, in the same shape the paper's ablation predicts for system-prompt
 edits.
 
+## Reusing the Terminal-Bench bank
+
+`ahe/harbor/bough_agent.py` registers bough as a Harbor agent, so the ~100
+Apache-2.0 Terminal-Bench tasks can be run without writing them. Harbor owns the
+container, the network policy, the verifier and the reward; we own getting bough
+into the image and running one turn. Every task ships an oracle solution, which
+is the expensive half of admitting a task to a bank.
+
+    cd ~/hb && PYTHONPATH=$HOME/hb harbor run -d terminal-bench@2.0 -l 5 \
+      -a bough_agent:Bough -m claude-haiku-4-5
+
+Verified 2026-07-30: reward 1.0 on a smoke task, and a clean run on the real TB2
+task `gpt2-codegolf` — 0 exceptions, reward 0.0, with the per-turn trace and
+prompt-section manifest recovered from inside the container. The evidence layer
+works in someone else's sandbox.
+
+Two things to weigh before adopting it as *the* bank:
+
+**Floor effects are as bad as ceiling effects.** TB2 is calibrated so that
+frontier models sit near 70%; haiku sits near the floor. `gpt2-codegolf` is not a
+harness signal, it is a task haiku was never going to do. A bank where everything
+fails teaches this loop exactly as little as one where everything passes, so the
+per-task haiku band has to be measured and the middle kept — a sweep of its own
+before any evolution starts. TB-Core v0.1.1 is the older, easier set.
+
+**The task mix points away from the action space.** Terminal-Bench is terminal
+and sysadmin shaped, which exercises `bash()` heavily and `patch()`, `view()` and
+`lsp()` barely. Since the editable surface here is the prompt, and the part of the
+prompt most likely to transfer is the host-function contracts, a bank that never
+exercises those contracts cannot produce evidence about them. Use TB as a source
+for calibrated difficulty, and keep hand-written tasks for the verbs it misses.
+
 ## Known limits
 
 **Bank size.** The paper runs 89 Terminal-Bench 2 tasks. Below roughly 40 a single
