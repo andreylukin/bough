@@ -361,6 +361,35 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
   const [filtering, setFiltering] = useState(false);
   const [filter, setFilter] = useState("");
   /**
+   * Conversations whose MESSAGES match the tree's `/` filter.
+   *
+   * The keymap has always said `/` "in the tree, searches every message", and the `not
+   * bound` list points `^r` at it — but the filter only ever compared titles and
+   * workspaces, so `/compound` answered `nothing matches "compound"` while
+   * `GET /search?q=compound` returned five hits in three conversations. Built, endpoint
+   * and client method and all, and never called.
+   *
+   * Session ids only: a row is either reachable or it is not, and that is the question
+   * the switcher is asking. The snippet the server returns is the next thing to surface
+   * and is deliberately not guessed at here.
+   */
+  const [searchHits, setSearchHits] = useState<{ q: string; ids: readonly string[] }>({
+    q: "",
+    ids: [],
+  });
+  useEffect(() => {
+    const q = panel.tab === "tree" ? filter.trim() : "";
+    if (q.length < 2) {
+      setSearchHits({ q: "", ids: [] });
+      return;
+    }
+    // Debounced: this fires per keystroke, and FTS over every transcript is not free.
+    const timer = setTimeout(() => {
+      void store.searchSessions(q).then((ids) => setSearchHits({ q, ids }));
+    }, 180);
+    return () => clearTimeout(timer);
+  }, [filter, panel.tab, store]);
+  /**
    * What the typed buffer IS. `filtering` means "the panel has the text keyboard";
    * this says what happens on ⏎.
    *
@@ -413,8 +442,11 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
         // Only when the buffer belongs to THIS tab: an MCP URL half-typed must never
         // narrow the conversation list underneath it.
         filter: panel.tab === "tree" ? filter : "",
+        ...(searchHits.q === filter.trim() && searchHits.ids.length > 0
+          ? { matchedSessions: searchHits.ids }
+          : {}),
       }),
-    [deps.forest, state.currentId, panel.tab, filter],
+    [deps.forest, state.currentId, panel.tab, filter, searchHits],
   );
   // Read by the arrival effect, which must not re-run when the rows change — only
   // when the tab does.

@@ -135,6 +135,15 @@ export interface ForestInput {
   currentId?: string | null;
   /** Narrows the TOP LEVEL by title. A branch is never hidden from its parent. */
   filter?: string;
+  /**
+   * Session ids whose MESSAGES matched the filter, from `GET /search`.
+   *
+   * The keymap says `/` in the tree "searches every message"; `matches` below only ever
+   * compared titles and workspaces, so a term that appears in five messages and no title
+   * answered "nothing matches". A row named here survives the filter even when its title
+   * does not contain the query.
+   */
+  matchedSessions?: readonly string[];
   /** Show only user turns — pi's `Ctrl+U`. */
   userOnly?: boolean;
 }
@@ -242,7 +251,7 @@ export function forestRows(input: ForestInput): ForestRow[] {
 
   const roots = sessions
     .filter((s) => !s.originId || !sessions.some((o) => o.id === s.originId))
-    .filter((s) => matches(s, input.filter, input.currentId))
+    .filter((s) => matches(s, input.filter, input.currentId, input.matchedSessions))
     .sort(byNewest);
   for (const root of roots) walk(root, 0);
   return rows;
@@ -255,10 +264,16 @@ export function forestRows(input: ForestInput): ForestRow[] {
  * conversation you are IN disappears from it is disorienting in a way no filter
  * should be, and it is the row the cursor most often wants to return to.
  */
-function matches(s: SessionRow, filter: string | undefined, currentId?: string | null): boolean {
+function matches(
+  s: SessionRow,
+  filter: string | undefined,
+  currentId?: string | null,
+  matched?: readonly string[],
+): boolean {
   const q = (filter ?? "").trim().toLowerCase();
   if (!q) return true;
   if (s.id === currentId) return true;
+  if (matched?.includes(s.id)) return true;
   return `${s.title} ${s.workspace ?? ""}`.toLowerCase().includes(q);
 }
 

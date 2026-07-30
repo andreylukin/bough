@@ -1174,6 +1174,15 @@ export interface Store {
    */
   runShell(command: string): Promise<void>;
   /**
+   * Session ids whose MESSAGES match `q` — the tree's `/` filter, widened from titles to
+   * transcripts (`GET /search`, FTS over every message).
+   *
+   * Returns `[]` on failure rather than raising: a filter that shows fewer rows because
+   * the index is unavailable is a degraded search, and a modal error over a list the user
+   * is typing into is worse than that.
+   */
+  searchSessions(q: string): Promise<string[]>;
+  /**
    * Post a message. While a turn runs, `queue` holds it locally and it drains into a
    * fresh turn when the current one ends; without `queue` it is posted immediately
    * and the server queues it (spec §5) — steering, rather than staging.
@@ -1638,6 +1647,15 @@ export function createStore(deps: StoreDeps = {}): Store {
         await refreshJobs();
       } catch (error) {
         fail(error);
+      }
+    },
+
+    async searchSessions(q: string) {
+      try {
+        const { hits } = await api.search(q, { limit: 60 });
+        return [...new Set(hits.map((h) => h.sessionId))];
+      } catch {
+        return [];
       }
     },
 

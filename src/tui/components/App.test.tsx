@@ -269,6 +269,10 @@ function fakeStore(over: Partial<TuiState> = {}): Store & { calls: string[] } {
     createSession: () => Promise.resolve(null),
     newConversation: () => calls.push("newConversation"),
     runShell: async (command: string) => void calls.push(`runShell:${command}`),
+    searchSessions: async (q: string) => {
+      calls.push(`searchSessions:${q}`);
+      return [];
+    },
     compact: async (goal?: string) => {
       calls.push(`compact:${goal ?? ""}`);
       return null;

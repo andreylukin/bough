@@ -369,3 +369,38 @@ test("revealPath survives a lineage cycle rather than hanging the terminal", () 
   const path = revealPath([x, y], {}, "x");
   assert.ok(path.length <= 2, path.join(","));
 });
+
+
+/**
+ * The keymap has always said `/` in the tree "searches every message", and `^r` is listed
+ * as unavailable BECAUSE of it — but the filter only ever compared titles and workspaces.
+ * Typing `/compound` answered `nothing matches "compound"` while `GET /search?q=compound`
+ * returned five hits in three conversations: endpoint, client method and legend all
+ * shipped, and nothing ever called it.
+ */
+test("a conversation whose MESSAGES match survives the filter", () => {
+  const a = session("alpha", "root", { title: "pricing bug" });
+  const b = session("beta", "root", { title: "unrelated" });
+  const rows = (over: Partial<Parameters<typeof forestRows>[0]> = {}) =>
+    forestRows({
+      sessions: [a, b],
+      childrenByOrigin: {},
+      threads: {},
+      expanded: new Set(),
+      drilled: new Set(),
+      filter: "compound",
+      ...over,
+    }).filter((r) => r.kind === "session").map((r) => r.id);
+
+  // Title-only matching hides both: neither title contains the word.
+  assert.deepEqual(rows(), []);
+  // With the search's answer, the conversation that said it is reachable.
+  assert.deepEqual(rows({ matchedSessions: ["beta"] }), ["beta"]);
+  // The title match still works, and the two combine rather than replacing each other.
+  assert.deepEqual(
+    rows({ filter: "pricing", matchedSessions: ["beta"] }).sort(),
+    ["alpha", "beta"],
+  );
+  // The open conversation is never filtered out, matched or not.
+  assert.deepEqual(rows({ currentId: "alpha" }), ["alpha"]);
+});
