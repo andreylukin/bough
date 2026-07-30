@@ -82,6 +82,29 @@ test("a tracked edit and an untracked file are both reported, and not twice", as
   }
 });
 
+test("an untracked BINARY file is flagged, never decoded into the review pane", async () => {
+  const { dir, head } = await repo();
+  try {
+    // The bug this pins: `readFile(…, "utf8")` does NOT throw on binary — it substitutes
+    // U+FFFD — so a 200-byte blob was diffed as "+" lines of replacement characters and
+    // painted into the diff pane. Raw bytes on a terminal are not merely unreadable: an
+    // escape sequence among them is executed.
+    await writeFile(join(dir, "blob.bin"), Buffer.from([0x89, 0x50, 0, 0x1b, 0x5b, 0x32, 0x4a, 0xff]));
+    await writeFile(join(dir, "text.txt"), "still text\n");
+    const set = await changeSet(dir, head);
+    const blob = set.files.find((f) => f.path === "blob.bin");
+    assert.equal(blob?.status, "added");
+    assert.equal(blob?.binary, true);
+    assert.deepEqual(blob?.hunks, []);
+    // A text file beside it is unaffected, and is NOT flagged.
+    const text = set.files.find((f) => f.path === "text.txt");
+    assert.equal(text?.binary, undefined);
+    assert.ok((text?.hunks.length ?? 0) > 0);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("a huge untracked file is listed but not inlined", async () => {
   const { dir, head } = await repo();
   try {

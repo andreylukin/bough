@@ -64,10 +64,33 @@ export function changeItems(set: SessionChangeSet | null): ChangeItem[] {
 export function diffBody(f: FileDiff | undefined): string[] {
   if (!f) return [];
   if (f.hunks.length === 0) {
-    // Binary or unreadable content yields no hunks — say which, do not show blank.
+    // BINARY IS ITS OWN ANSWER. This line already existed for "no hunks", but a binary
+    // file never reached it: `repodiff` decoded the bytes as UTF-8, which does not throw,
+    // so a 200-byte blob arrived as two "+" lines of replacement characters and was painted
+    // into the pane. Now it is flagged at the source, and an empty file and an unreadable
+    // one no longer give the reviewer the same sentence.
+    if (f.binary) return [`(binary file — ${f.status}, contents not shown)`];
     return [`(no textual diff — ${f.status})`];
   }
-  return f.hunks.flatMap((h) => [h.header, ...h.lines]);
+  return f.hunks.flatMap((h) => [h.header, ...h.lines]).map(printable);
+}
+
+/**
+ * Control bytes out of a diff line, before it is painted.
+ *
+ * The rows below render `line` verbatim, so a file that is not NUL-flagged but still holds
+ * raw bytes — 200 bytes of random data, a stray `\r`, a log with ANSI colour in it — put an
+ * ESC on the screen and the terminal OBEYED it. That is a diff viewer moving the cursor and
+ * repainting the frame, not merely showing something ugly. git gets away with the same
+ * output because a pager sanitises it downstream; nothing does that here.
+ *
+ * Tab is kept — it is layout, and the row already renders it. Everything else in C0, plus
+ * DEL, becomes a visible `·`, so a reviewer can see that something was there rather than
+ * wondering why two lines that differ look identical.
+ */
+function printable(line: string): string {
+  // deno-lint-ignore no-control-regex -- stripping control bytes is the entire point.
+  return line.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "·");
 }
 
 const STATUS_MARK: Record<FileDiff["status"], string> = {

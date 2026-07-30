@@ -336,10 +336,27 @@ test("a change set counts its own +/- and flattens hunks for display", async () 
   };
   assert.deepEqual(fileStats(set.files[0]), { added: 2, removed: 1 });
   assert.deepEqual(diffBody(set.files[0]), ["@@ -1,3 +1,4 @@", " keep", "-gone", "+new", "+also"]);
-  // A binary file has no hunks: say so rather than render nothing.
+  // A file with no hunks says so rather than rendering nothing…
   assert.deepEqual(diffBody({ path: "a.png", status: "added", hunks: [] }), [
     "(no textual diff — added)",
   ]);
+  // …and a BINARY one says which, now that `repodiff` flags it instead of decoding the
+  // bytes as UTF-8 and diffing the replacement characters.
+  assert.deepEqual(diffBody({ path: "a.png", status: "added", hunks: [], binary: true }), [
+    "(binary file — added, contents not shown)",
+  ]);
+  // CONTROL BYTES NEVER REACH THE ROW. The rows render `line` verbatim, so an ESC in a
+  // diff — byte soup with no NUL to flag it, a stray CR, a log with ANSI colour — was
+  // obeyed by the terminal: a diff viewer moving the cursor and repainting the frame.
+  // Tab survives; it is layout.
+  assert.deepEqual(
+    diffBody({
+      path: "x.log",
+      status: "modified",
+      hunks: [{ header: "@@ -1 +1 @@", lines: ["+red \x1b[31mtext\x07\r", "+keeps\ttab"] }],
+    }),
+    ["@@ -1 +1 @@", "+red ·[31mtext··", "+keeps\ttab"],
+  );
   const items = changeItems(set);
   const frame = await draw(
     createElement(Panel, {

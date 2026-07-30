@@ -70,6 +70,13 @@ export interface FileDiff {
   path: string;
   status: FileStatus;
   hunks: Hunk[];
+  /**
+   * The file is not text, so there are no hunks and none are coming.
+   *
+   * A separate fact from "no hunks": an empty file and a 200-byte blob both diff to
+   * nothing, and only one of them has content the reviewer cannot be shown.
+   */
+  binary?: boolean;
 }
 
 /**
@@ -300,22 +307,37 @@ async function addedFile(dir: string, path: string): Promise<FileDiff> {
   if (path.endsWith("/")) return { path, status: "added", hunks: [] };
 
   let lines: string[] = [];
+  let binary = false;
   try {
     const info = await stat(join(dir, path));
     if (info.size <= MAX_ADDED_BYTES) {
-      const body = (await readFile(join(dir, path), "utf8")).split("\n");
-      // A trailing "" from a final newline is not a line; a file without a final
-      // newline keeps its last one.
-      if (body.at(-1) === "") body.pop();
-      lines = body.map((l) => `+${l}`);
+      // READ THE BYTES FIRST. The `catch` below was written as though a binary file would
+      // throw here; `readFile(…, "utf8")` does not — it substitutes U+FFFD and returns
+      // happily, so a 200-byte blob was diffed as two "+" lines of replacement characters
+      // and painted into the review pane. git refuses to do this for a reason ("Binary
+      // files a/x and b/x differ"), and raw bytes on a terminal are not merely unreadable:
+      // an escape sequence among them is executed.
+      //
+      // NUL in the first 8000 bytes is git's own heuristic, and it is the cheap half of a
+      // read we are doing anyway.
+      const buf = await readFile(join(dir, path));
+      binary = buf.subarray(0, 8000).includes(0);
+      if (!binary) {
+        const body = buf.toString("utf8").split("\n");
+        // A trailing "" from a final newline is not a line; a file without a final
+        // newline keeps its last one.
+        if (body.at(-1) === "") body.pop();
+        lines = body.map((l) => `+${l}`);
+      }
     }
   } catch {
-    lines = []; // binary, unreadable, or deleted mid-review
+    lines = []; // unreadable, or deleted mid-review
   }
   return {
     path,
     status: "added",
     hunks: lines.length ? [{ header: `@@ -0,0 +1,${lines.length} @@`, lines }] : [],
+    ...(binary ? { binary: true } : {}),
   };
 }
 
