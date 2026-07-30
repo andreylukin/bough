@@ -553,13 +553,18 @@ export function programSummary(code: string, max = 64, running = false): string 
   // Its files are the `[path#hash]` section tags inside that body, and there may be
   // several of them in one call.
   const wrote = [
-    ...files(/\b(?:write|edit)\s*\(\s*["'`]([^"'`]+)/g),
+    ...files(/(?<![.\w])(?:write|edit)\s*\(\s*["'`]([^"'`]+)/g),
     ...(/\bpatch\s*\(/.test(code) ? files(/\[([^\]\s#]+)#[^\]\s]*\]/g) : []),
   ].filter((p, i, a) => a.indexOf(p) === i);
-  const read = files(/\b(?:view|read)\s*\(\s*["'`]([^"'`]+)/g);
+  const read = files(/(?<![.\w])(?:view|read)\s*\(\s*["'`]([^"'`]+)/g);
   if (wrote.length) bits.push(`${running ? "writing" : "wrote"} ${list(wrote)}`);
   if (read.length) bits.push(`${running ? "reading" : "read"} ${list(read)}`);
 
+  // `(?<![.\w])`, not `\b`: `\b` matches between a dot and a letter, so EVERY host-fn
+  // name also matched its member-call twin. Seen on screen: a program whose only host call
+  // was `artifact()` was headlined `collected subagent reports · published an artifact`,
+  // because it also contained `functions.join("\n")`. The same trap was waiting in
+  // `.write(` on a stream, `.search(` on a string, and `.view(`/`.ask(` on anything.
   const count = (re: RegExp) => [...code.matchAll(re)].length;
   // `execSync`/`spawnSync`/`Bun.$` are running a command too. A program that reached for
   // `node:child_process` instead of `bash()` was unrecognized, so the header fell back to
@@ -568,35 +573,38 @@ export function programSummary(code: string, max = 64, running = false): string 
   // The SYNC names only, plus `Bun.$`. Bare `spawn(` and `exec(` are excluded and that is
   // not fussiness: `spawn` IS bough's detached-delegation verb, so counting it here made
   // a fan-out report `ran 1 command · 1 subagent`.
-  const shells = count(/\bbash\s*\(/g) + count(/\bsh\s*\(/g) +
-    count(/\b(?:execSync|execFileSync|spawnSync)\s*\(/g) + count(/\bBun\.\$/g);
+  const shells = count(/(?<![.\w])bash\s*\(/g) + count(/(?<![.\w])sh\s*\(/g) +
+    count(/(?<![.\w])(?:execSync|execFileSync|spawnSync)\s*\(/g) + count(/\bBun\.\$/g);
   if (shells) {
     bits.push(`${running ? "running" : "ran"} ${shells} command${shells === 1 ? "" : "s"}`);
   }
   // `bashBg(` does not match `\bbash\s*\(`, so a round that only backgrounded a
   // command was unrecognized — the one round whose whole point is that something is
   // still running after it returns.
-  const bg = count(/\bbashBg\s*\(/g);
+  const bg = count(/(?<![.\w])bashBg\s*\(/g);
   if (bg) bits.push(`started ${bg} background command${bg === 1 ? "" : "s"}`);
   // Delegation is FOUR verbs, not one. Counting only `agent(` meant the round that
   // fanned three subagents out with `spawn()` matched nothing and fell back to the
   // gist — the header read `const tasks = [`, raw source, on the single round a
   // reader most needs named. `join`/`adopt` collect reports for spawns issued in an
   // earlier round, so they are named only when no spawn happens here.
-  const agents = count(/\b(?:agent|spawn)\s*\(/g);
+  const agents = count(/(?<![.\w])(?:agent|spawn)\s*\(/g);
   if (agents) bits.push(`${agents} subagent${agents === 1 ? "" : "s"}`);
-  else if (count(/\b(?:join|adopt)\s*\(/g)) {
+  else if (count(/(?<![.\w])(?:join|adopt)\s*\(/g)) {
     bits.push(running ? "collecting subagent reports" : "collected subagent reports");
   }
   // `workflow(…)` starts one; `workflow.status(…)` asks after one already running.
   // Naming only the first left every poll round falling back to the gist, so waiting
   // for a fan-out read as `await new Promise(r => setTimeout(r, 2000));`.
-  if (count(/\bworkflow\s*\(/g)) bits.push(running ? "running a workflow" : "ran a workflow");
-  else if (count(/\bworkflow\.\w+\s*\(/g)) bits.push("checked the workflow run");
+  if (count(/(?<![.\w])workflow\s*\(/g)) {
+    bits.push(running ? "running a workflow" : "ran a workflow");
+  } else if (count(/(?<![.\w])workflow\.\w+\s*\(/g)) bits.push("checked the workflow run");
   else if (/setTimeout\s*\(/.test(code)) bits.push(running ? "waiting" : "waited");
-  if (count(/\bask\s*\(/g)) bits.push("asked you a question");
-  if (count(/\bartifact\s*\(/g)) bits.push(running ? "publishing an artifact" : "published an artifact");
-  const searches = count(/\b(?:grep|glob|search)\s*\(/g);
+  if (count(/(?<![.\w])ask\s*\(/g)) bits.push("asked you a question");
+  if (count(/(?<![.\w])artifact\s*\(/g)) {
+    bits.push(running ? "publishing an artifact" : "published an artifact");
+  }
+  const searches = count(/(?<![.\w])(?:grep|glob|search)\s*\(/g);
   if (searches && bits.length === 0) bits.push(running ? "searching the tree" : "searched the tree");
 
   // Nothing recognized: fall back to the old gist rather than to an empty header.

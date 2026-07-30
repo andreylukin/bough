@@ -695,6 +695,19 @@ test("a step is headlined by what the program did, not by its first line of code
   // own detached-delegation verb, and counting it as a shell made a fan-out report
   // `ran 1 command · 1 subagent`.
   assert.equal(programSummary('const r = await spawn("do the thing");'), "1 subagent");
+  // MEMBER CALLS ARE NOT HOST CALLS. `\b` matches between a dot and a letter, so every
+  // host-fn name also matched its twin on an object. Seen on screen: a program whose only
+  // host call was `artifact()` was headlined `collected subagent reports · published an
+  // artifact` because it also contained `functions.join("\n")`.
+  assert.equal(
+    programSummary('const body = names.join("\n"); await artifact("summary", body);'),
+    "published an artifact",
+  );
+  assert.equal(programSummary('const i = text.search(/x/); await bash("ls");'), "ran 1 command");
+  assert.equal(programSummary('stream.write("x"); await bash("ls");'), "ran 1 command");
+  assert.equal(programSummary('await res.body.view("x"); await bash("ls");'), "ran 1 command");
+  // And the real calls still count when they follow a dot-free boundary.
+  assert.equal(programSummary('await join(id);'), "collected subagent reports");
   // patch() takes ONE string — the patch body — and naming it like a path-first
   // call captured the whole template literal, so the most-read line in the UI read
   // `wrote cart.js#8902] SWAP 3.=3: + for (let i = 0; …`. Its files are the section
