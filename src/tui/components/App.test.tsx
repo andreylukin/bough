@@ -1098,6 +1098,11 @@ test("a fresh branch says the files were NOT rewound, and how many still differ"
     const frame = h.frame();
     assert.ok(frame.includes("branched here"), frame);
     assert.ok(frame.includes("not rewound"), frame);
+    // The key it names has to be one that WORKS here. A fresh fork's composer is prefilled
+    // with the forked turn, and `^d` is guarded on an empty draft — so the note used to
+    // name a key that cannot fire in the only state the note appears in.
+    assert.equal(frame.includes("^d shows them"), false, frame);
+    assert.ok(frame.includes("^t"), frame);
     assert.ok(frame.includes("2 still changed"), frame);
   } finally {
     h.unmount();

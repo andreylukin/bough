@@ -652,7 +652,11 @@ export function App(
   useEffect(() => {
     const done = state.background;
     if (!done || backgroundSeq === 0) return;
-    const line = `✓ ${done.title} finished — ^s to open it`;
+    // `^t`, NOT `^s`. `^s` is the tree's alias and is guarded on an empty draft, and this
+    // toast is loudest exactly where a draft exists: it appeared over a fresh FORK, whose
+    // composer is prefilled with the forked turn by design, so the key it named could not
+    // fire. Same defect as the handoff notice (`store.ts`); `^t` carries no guard.
+    const line = `✓ ${done.title} finished — ^t opens the tree`;
     store.notify(line);
     notifyDesktop?.(`${done.title} finished`);
     // `store` and the title are read through the event that changed `seq`; adding
@@ -1675,7 +1679,12 @@ export function App(
       const n = state.changes?.available ? state.changes.files.length : 0;
       return n === 0
         ? "branched here · say it differently"
-        : `branched here · the files were not rewound — ${n} still changed on disk · ^d shows them`;
+        // `^t`, not `^d`. A fresh fork's composer is PREFILLED with the forked turn (edit
+        // & resend), and `^d` is guarded on an empty draft — so the note named a key that
+        // cannot fire in the one state where the note is shown. `^t` opens the panel with
+        // no guard; the changes tab is one ⇥ away and the tab bar says so.
+        : `branched here · the files were not rewound — ${n} still changed on disk · ^t, ` +
+          `then the changes tab`;
     })()
     : null;
   /**
