@@ -120,19 +120,25 @@ export function McpTab(
       {/* Nine keys is the longest legend bough has, and at 80 columns the terminal cut
           it after `F forg` — the keys that authorize a server and forget its
           credentials, gone. `legendLine` drops whole items and says it did. */}
-      {entry === null
-        ? legendLine([
-          "↑↓ move",
-          "1-9 pick",
-          "⏎ grant/revoke",
-          "c test",
-          "a authorize",
-          "n add",
-          "F forget",
-          "d delete",
-          "esc back",
-        ], cols)
-        : "⏎ registers · ⌫ back · esc cancels"}
+      {entry !== null
+        ? "⏎ registers · ⌫ back · esc cancels"
+        // With no servers registered, seven of these nine keys act on a row that does not
+        // exist. A legend listing inert keys is a legend the reader stops trusting, and
+        // the empty state already says what to do.
+        : legendLine(
+          names.length === 0 ? ["n add a server by URL", "esc back"] : [
+            "↑↓ move",
+            "1-9 pick",
+            "⏎ grant/revoke",
+            "c test",
+            "a authorize",
+            "n add",
+            "F forget",
+            "d delete",
+            "esc back",
+          ],
+          cols,
+        )}
     </text>
   );
   // The prompt REPLACES the list's affirmative while it is open — see `confirm`,
