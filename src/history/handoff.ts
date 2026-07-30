@@ -46,6 +46,15 @@ import { baseTitle, openBranch } from "./branch.ts";
 import { renderSpan } from "./compact.ts";
 import { inheritPins } from "./extract.ts";
 
+/** A goal, shortened to something that fits a tree row. Word-boundary, not mid-word. */
+function clipTitle(goal: string, max = 48): string {
+  const one = goal.replace(/\s+/g, " ").trim();
+  if (one.length <= max) return one;
+  const cut = one.slice(0, max);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > max / 2 ? cut.slice(0, space) : cut).trimEnd()}…`;
+}
+
 /**
  * What handoff needs from the world. Structurally satisfied by `AppCtx`, so a handler
  * passes the ctx it already has; declared narrowly so a test hands over a database, a
@@ -140,7 +149,12 @@ export async function handoff(
   const runtime = ctx.db.getSessionRuntime(sessionId);
   const seeder = openBranch(ctx, {
     parentId: null, // a ROOT: it inherits no thread, only the draft
-    title: `handoff · ${baseTitle(source.title)}`,
+    // The GOAL when the source has no title of its own. A conversation whose auto-title
+    // never landed produced `handoff · ` — a prefix with nothing after it, which every
+    // client then renders as "(untitled)" for the rest of its life, because the row is
+    // only ever retitled by a first message and this session's first message is sitting
+    // unsent in the composer. The goal is the one thing the user definitely wrote.
+    title: `handoff · ${baseTitle(source.title) || clipTitle(args.goal)}`,
     kind: "root",
     // The same checkout, worked in place — with the sha its change set is measured from
     // (spec §13). NOTE: `base` is not in the port, which snapshotted workspaces.

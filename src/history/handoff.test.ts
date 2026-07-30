@@ -347,3 +347,30 @@ test("posting the first message clears the draft", async () => {
   assert.equal(f.db.getSession(created.session.id)?.draft, null);
   f.db.close();
 });
+
+/**
+ * A source whose auto-title never landed produced `handoff · ` — a prefix with nothing
+ * after it, which clients render as "(untitled)" for the rest of that session's life:
+ * the row is only ever retitled by a first message, and a handoff's first message is
+ * sitting unsent in its composer by design.
+ */
+test("a handoff from an untitled conversation is named after its goal", async () => {
+  const f = fixture();
+  const source = session(f.db, { title: "", workspace: "/tmp/checkout" });
+  text(f.db, source.id, "user", "the coupons do not stack");
+
+  const created = await handoff(f.ctx, source.id, {
+    goal: "finish the coupon stacking fix",
+  });
+  assert.equal(created.title, "handoff · finish the coupon stacking fix");
+
+  // A long goal is cut at a word boundary rather than mid-word.
+  const long = await handoff(f.ctx, source.id, {
+    goal: "rewrite the whole pricing engine so that coupons, taxes and shipping " +
+      "compose in one pass instead of three",
+  });
+  assert.ok(long.title.startsWith("handoff · rewrite the whole pricing engine"), long.title);
+  assert.ok(long.title.length <= "handoff · ".length + 49, long.title);
+  assert.ok(long.title.endsWith("…"), long.title);
+  f.db.close();
+});
