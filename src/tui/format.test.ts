@@ -488,6 +488,14 @@ test("a narrow terminal degrades the meter instead of wrapping it", () => {
   assert.match(meterLine({ ...m, width: 60 }), /bough/);
   // At the narrowest, context left is the last thing standing.
   assert.equal(meterLine({ ...m, width: 14 }), "98% ctx left");
+
+  // The warning names the way out. bough never compacts on its own, so this chip is
+  // the only notice before a turn fails on overflow — and it used to state the
+  // problem without the one command that solves it.
+  const tight = meterLine({ contextTokens: 195_000, contextLimit: 200_000 });
+  assert.match(tight, /⚠ \d+% ctx left — \/compact/);
+  // Above the threshold it stays a plain number: a warning that is always on is noise.
+  assert.equal(meterLine({ contextTokens: 20_000, contextLimit: 200_000 }), "90% ctx left");
 });
 
 test("shortenPath only abbreviates a real home prefix", () => {

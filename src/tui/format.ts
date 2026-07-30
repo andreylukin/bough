@@ -925,9 +925,14 @@ export function meterLine(m: {
     // bough has no auto-compaction by design, so this chip is the ONLY warning
     // before a turn fails on overflow — and 97% and 7% used to read identically.
     // The mark is text, not colour: the caller renders this row as one dim string.
+    // And when it warns, it says the way OUT. The chip is the only notice before a
+    // turn fails on overflow, and "⚠ 7% ctx left" tells a user their problem without
+    // telling them the one command that solves it.
     context = pct === null
       ? `${fmtTokens(m.contextTokens)} ctx`
-      : `${pct <= CTX_WARN_PCT ? "⚠ " : ""}${pct}% ctx left`;
+      : pct <= CTX_WARN_PCT
+      ? `⚠ ${pct}% ctx left — /compact`
+      : `${pct}% ctx left`;
   }
   const shells = m.shells && m.shells > 0 ? `⚙ ${m.shells} shell${m.shells === 1 ? "" : "s"}` : "";
   const help = m.help ? "? help" : "";
