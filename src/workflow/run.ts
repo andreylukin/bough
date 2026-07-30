@@ -918,8 +918,31 @@ export async function startWorkflow(ctx: WorkflowCtx, opts: StartOpts): Promise<
           // which is the opposite of what happened and appears on every first run.
           : `Replay: not a relaunch — this run started fresh and journalled as it ` +
             `went, so a rerun can replay its unchanged prefix.`);
+      /**
+       * WHEN THE SCRIPT RETURNED NOTHING, THE NOTE CARRIES THE AGENTS' REPORTS ANYWAY.
+       *
+       * `workflow.md` already says the script's return value IS the report and that
+       * returning nothing costs a second `workflow.status` round-trip. Walked live on haiku:
+       * it wrote a two-agent script that returned `{}`, read `Result: {}`, and then spent a
+       * whole extra round fetching the reports it had just produced — the exact cost the
+       * prompt warns about, incurred anyway. Guidance the model does not follow is not a
+       * fix; putting the work in the note is, and it cannot be ignored.
+       *
+       * Only for an EMPTY result: a script that returned a summary has already decided what
+       * matters, and appending raw reports underneath would bury it.
+       */
+      const empty = result === null || result === undefined ||
+        (typeof result === "object" && Object.keys(result as object).length === 0);
+      const reports = agents
+        .filter((a) => a.result !== null && a.result !== "")
+        .map((a) => `- ${a.label}: ${clip(a.result ?? "", 600)}`)
+        .join("\n");
       const tail = status === "done"
-        ? `Result:\n${clip(JSON.stringify(result ?? null, null, 2), 4000)}`
+        ? `Result:\n${clip(JSON.stringify(result ?? null, null, 2), 4000)}` +
+          (empty && reports
+            ? `\nThe script returned nothing, so here is what each agent reported — do NOT ` +
+              `call workflow.status to fetch these again:\n${clip(reports, 4000)}`
+            : "")
         : status === "error"
         ? `Error: ${clip(error ?? "unknown", 2000)}`
         : "Stopped by the user.";

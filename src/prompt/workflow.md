@@ -5,10 +5,13 @@ many-item migration, cross-checked research — write a workflow instead of a ba
 subagents.
 
 await workflow.start({script, args?}) runs a JavaScript orchestration script
-DETACHED from this turn and returns {id} immediately; the finished report arrives as
-a system note. Other verbs: workflow.status({id}), workflow.stop({id}),
-workflow.pause({id}), workflow.resume({id}), workflow.list(), and
-workflow.rerun({id, script?}).
+DETACHED from this turn and returns {id} immediately. END YOUR TURN once it is
+started: the finished report arrives as a system note that wakes a new turn, so
+calling workflow.status in a loop bills you for waiting and delays nothing else.
+Measured: a two-agent run that finished in seconds cost 1m15s and 15k tokens of
+polling. Other verbs — for a run you are being ASKED about, not one you just
+started: workflow.status({id}), workflow.stop({id}), workflow.pause({id}),
+workflow.resume({id}), workflow.list(), and workflow.rerun({id, script?}).
 
 The script begins with `export const meta = {name, description, phases: [{title,
 detail?}]}` — a PURE literal, no variables, calls, or interpolation; it is read

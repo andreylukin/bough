@@ -1335,6 +1335,48 @@ test("a finished run notifies its owning session", async () => {
   }
 });
 
+test("a script that returns nothing still reports what its agents said", async () => {
+  const h = harness();
+  try {
+    const notes: string[] = [];
+    // Walked live on haiku: it wrote a two-agent script that returned `{}`, read
+    // `Result: {}`, then spent an extra round fetching the reports it had just produced —
+    // the round-trip `workflow.md` warns about, incurred anyway. The note carries them now.
+    await runScript(
+      h,
+      echoRunner(),
+      `await agent('count parse.py'); await agent('count render.py'); return {}`,
+      {},
+      (_sessionId, text) => void notes.push(text),
+    );
+    assert.equal(notes.length, 1);
+    assert.match(notes[0], /The script returned nothing/);
+    assert.match(notes[0], /do NOT call workflow\.status/);
+    assert.match(notes[0], /count parse\.py/);
+    assert.match(notes[0], /count render\.py/);
+  } finally {
+    h.close();
+  }
+});
+
+test("a script that DOES return a summary is not buried under raw reports", async () => {
+  const h = harness();
+  try {
+    const notes: string[] = [];
+    await runScript(
+      h,
+      echoRunner(),
+      `await agent('count parse.py'); return { lines: 2 }`,
+      {},
+      (_sessionId, text) => void notes.push(text),
+    );
+    assert.equal(notes.length, 1);
+    assert.equal(notes[0].includes("The script returned nothing"), false, notes[0]);
+  } finally {
+    h.close();
+  }
+});
+
 test("boot recovery orphans a run the previous process left running", () => {
   const h = harness();
   try {
