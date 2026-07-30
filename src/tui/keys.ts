@@ -124,6 +124,8 @@ export type Command =
   | "session.compact"
   /** Show the recurring runs — the only window the TUI has onto them. */
   | "schedules.show"
+  /** List the saved workflows — the tab promises they can be run by name. */
+  | "saved.show"
   // -- composing ------------------------------------------------------------
   | "send"
   | "send.queue"
@@ -322,6 +324,7 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
   },
   { name: "rewind", command: "tree.rewind", desc: "go back to a turn and say it differently" },
   { name: "schedules", command: "schedules.show", desc: "the recurring runs and when they fire" },
+  { name: "saved", command: "saved.show", desc: "workflows saved to run again by name" },
   { name: "help", command: "help.open", desc: "every key, by section" },
 ];
 

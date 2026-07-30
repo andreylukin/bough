@@ -1205,6 +1205,15 @@ export interface Store {
    */
   describeSchedules(): Promise<void>;
   /**
+   * The saved workflows, as one line for a notice.
+   *
+   * The workflows tab offers `s save to run again by name` and then tells the user "it can be
+   * run again by name" — while `api.listSavedWorkflows` and `api.runSavedWorkflow` are never
+   * called by anything, so the product could not keep that promise on its own. This makes the
+   * saved set visible; the agent is what runs one (`workflow.start({name})`).
+   */
+  describeSavedWorkflows(): Promise<void>;
+  /**
    * Post a message. While a turn runs, `queue` holds it locally and it drains into a
    * fresh turn when the current one ends; without `queue` it is posted immediately
    * and the server queues it (spec §5) — steering, rather than staging.
@@ -1721,6 +1730,22 @@ export function createStore(deps: StoreDeps = {}): Store {
         dispatch({
           type: "notice",
           notice: `${plural(rows.length, "schedule")}: ${list} — ask the agent to change one`,
+        });
+      } catch (error) {
+        fail(error);
+      }
+    },
+
+    async describeSavedWorkflows() {
+      try {
+        const { saved: rows } = await api.listSavedWorkflows();
+        dispatch({
+          type: "notice",
+          notice: rows.length === 0
+            ? "no saved workflows — open a run in ^w and press s to save its script"
+            : `${plural(rows.length, "saved workflow")}: ${
+              rows.map((r) => r.name).join(" · ")
+            } — ask the agent to run one by name`,
         });
       } catch (error) {
         fail(error);

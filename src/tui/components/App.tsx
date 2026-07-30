@@ -1229,6 +1229,10 @@ export function App(
       // daily run that spends money and the user could not see it.
       case "schedules.show":
         return void store.describeSchedules();
+      // The workflows tab promises a saved run "can be run again by name" and nothing in the
+      // TUI lists or runs one (`api.listSavedWorkflows`/`runSavedWorkflow` are never called).
+      case "saved.show":
+        return void store.describeSavedWorkflows();
       case "session.compact":
         return void store.compact(input || undefined).then((draft) => {
           if (draft) {

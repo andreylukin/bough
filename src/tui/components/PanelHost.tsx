@@ -1489,7 +1489,13 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
         const name = wfDetail.workflow.name;
         setMessage(null);
         void api.saveWorkflowAs(wfOpen, name)
-          .then(() => setMessage(`saved as "${name}" — it can be run again by name`))
+          // HOW to run it, not just that it can be. Nothing in the TUI runs a saved
+          // workflow — `api.runSavedWorkflow` and `listSavedWorkflows` are never called — so
+          // "it can be run again by name" was a promise the product could not keep on its own.
+          // The agent can (`workflow.start({name})`), and `/saved` lists what exists.
+          .then(() =>
+            setMessage(`saved as "${name}" — ask the agent to run it by name · /saved lists them`)
+          )
           .catch((e: unknown) => setMessage(e instanceof Error ? e.message : String(e)));
         return true;
       }
