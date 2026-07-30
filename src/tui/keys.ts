@@ -126,6 +126,8 @@ export type Command =
   | "schedules.show"
   /** List the saved workflows — the tab promises they can be run by name. */
   | "saved.show"
+  /** List this conversation's published artifacts and their URLs. */
+  | "artifacts.show"
   // -- composing ------------------------------------------------------------
   | "send"
   | "send.queue"
@@ -325,6 +327,7 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
   { name: "rewind", command: "tree.rewind", desc: "go back to a turn and say it differently" },
   { name: "schedules", command: "schedules.show", desc: "the recurring runs and when they fire" },
   { name: "saved", command: "saved.show", desc: "workflows saved to run again by name" },
+  { name: "artifacts", command: "artifacts.show", desc: "pages this conversation published" },
   { name: "help", command: "help.open", desc: "every key, by section" },
 ];
 

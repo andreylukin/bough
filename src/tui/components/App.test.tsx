@@ -274,6 +274,7 @@ function fakeStore(over: Partial<TuiState> = {}): Store & { calls: string[] } {
     runShell: async (command: string) => void calls.push(`runShell:${command}`),
     describeSchedules: async () => void calls.push("describeSchedules"),
     describeSavedWorkflows: async () => void calls.push("describeSavedWorkflows"),
+    describeArtifacts: async () => void calls.push("describeArtifacts"),
     searchSessions: async (q: string) => {
       calls.push(`searchSessions:${q}`);
       return [];

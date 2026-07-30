@@ -1214,6 +1214,16 @@ export interface Store {
    */
   describeSavedWorkflows(): Promise<void>;
   /**
+   * This conversation's published artifacts, with their clickable URLs.
+   *
+   * `api.listArtifacts` has existed since artifacts shipped and nothing called it, so a
+   * published page was findable only by scrolling back to the turn that announced it — and
+   * `artifact()` UPDATES in place, so the newest content sits behind the oldest mention. The
+   * URLs are OSC 8 hyperlinks in a terminal that supports them (`format.ts`'s `md`), and
+   * plain text everywhere else.
+   */
+  describeArtifacts(): Promise<void>;
+  /**
    * Post a message. While a turn runs, `queue` holds it locally and it drains into a
    * fresh turn when the current one ends; without `queue` it is posted immediately
    * and the server queues it (spec §5) — steering, rather than staging.
@@ -1746,6 +1756,27 @@ export function createStore(deps: StoreDeps = {}): Store {
             : `${plural(rows.length, "saved workflow")}: ${
               rows.map((r) => r.name).join(" · ")
             } — ask the agent to run one by name`,
+        });
+      } catch (error) {
+        fail(error);
+      }
+    },
+
+    async describeArtifacts() {
+      const id = state.currentId;
+      if (!id) {
+        dispatch({ type: "notice", notice: "no conversation is open, so it has no artifacts" });
+        return;
+      }
+      try {
+        const { artifacts } = await api.listArtifacts(id);
+        dispatch({
+          type: "notice",
+          notice: artifacts.length === 0
+            ? "this conversation has published no artifacts"
+            : `${plural(artifacts.length, "artifact")}: ${
+              artifacts.map((a) => `${a.name} ${a.href}`).join(" · ")
+            }`,
         });
       } catch (error) {
         fail(error);

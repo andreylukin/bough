@@ -1233,6 +1233,11 @@ export function App(
       // TUI lists or runs one (`api.listSavedWorkflows`/`runSavedWorkflow` are never called).
       case "saved.show":
         return void store.describeSavedWorkflows();
+      // `api.listArtifacts` shipped with artifacts and nothing called it: a published page was
+      // findable only by scrolling back to the turn that announced it, and `artifact()` updates
+      // in place, so the newest content hid behind the oldest mention.
+      case "artifacts.show":
+        return void store.describeArtifacts();
       case "session.compact":
         return void store.compact(input || undefined).then((draft) => {
           if (draft) {
