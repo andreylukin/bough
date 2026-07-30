@@ -200,6 +200,32 @@ test("an errored result is marked on the closed header", () => {
   assert.ok(head.text.includes("✗ error"), head.text);
 });
 
+test("a `<stop>` the model wrote as prose is not shown to the user", () => {
+  // `stop` is one of the two granted tools and a small model sometimes writes its name
+  // instead of calling it. Live, the answer to "what colour is this image" ended with a
+  // code block containing `<stop>` — harness plumbing as the last thing the reader sees.
+  const fenced = msg({
+    id: "m1",
+    parts: [{ type: "text", text: "The image is filled with green.\n\n```\n<stop>\n```" }],
+  });
+  const out = joined(messageLines(fenced, CLOSED, CLOSED, 120));
+  assert.ok(out.includes("filled with green"), out);
+  assert.equal(out.includes("<stop>"), false, out);
+
+  // A bare one on its own last line, too.
+  const bare = msg({ id: "m2", parts: [{ type: "text", text: "Done.\n<stop>" }] });
+  const out2 = joined(messageLines(bare, CLOSED, CLOSED, 120));
+  assert.ok(out2.includes("Done."), out2);
+  assert.equal(out2.includes("<stop>"), false, out2);
+
+  // NOT stripped mid-message: a reply that is ABOUT the protocol keeps every word.
+  const about = msg({
+    id: "m3",
+    parts: [{ type: "text", text: "Call `<stop>` in the same response as your final text." }],
+  });
+  assert.ok(joined(messageLines(about, CLOSED, CLOSED, 120)).includes("<stop>"));
+});
+
 test("declining a question is not a failed round", () => {
   // `ask()` throws when the user presses esc, so the round came back with an error result
   // and the header led with `✗ error` — red, for the user taking the option the card

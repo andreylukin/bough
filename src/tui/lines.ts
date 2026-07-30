@@ -472,8 +472,9 @@ export function messageLines(
     const seg: VLine[] = [];
     let copy: string;
     if (s.kind === "text") {
-      push(seg, md(s.text, inner), inner);
-      copy = s.text;
+      const shown = withoutStopSentinel(s.text);
+      push(seg, md(shown, inner), inner);
+      copy = shown;
     } else if (s.kind === "reasoning") {
       // Thinking folds like a tool step: a wall of reasoning is process, not
       // answer. Collapsed = one clickable gist line; expanded = a gutter block,
@@ -632,7 +633,29 @@ export function branchesFrom(
   });
 }
 
-/** The card for a finished subagent: header, files, capped report, next action. *//** The card for a finished subagent: header, files, capped report, next action. */
+/**
+ * Strip a trailing `<stop>` the model wrote as PROSE instead of calling the tool.
+ *
+ * `stop` is one of the two tools bough grants, and a small model sometimes emits its name
+ * as text instead — usually in a fence, at the very end. Rendered faithfully, the reply to
+ * "what colour is this image" ended:
+ *
+ *   The image is filled with a single green colour — a medium to forest green shade.
+ *
+ *   ╭ code
+ *   │ <stop>
+ *   ╰
+ *
+ * — harness plumbing, in a code block, as the last thing the user reads. Only at the END
+ * and only when the fence holds nothing else: a message that legitimately discusses
+ * `<stop>` (this file's own tests, a conversation about the protocol) keeps every word.
+ * Presentational only — the stored text is untouched, so replay and history are unchanged.
+ */
+function withoutStopSentinel(text: string): string {
+  return text.replace(/\n*(?:```[a-z]*\n)?\s*<stop>\s*(?:\n```)?\s*$/i, "").trimEnd();
+}
+
+/** The card for a finished subagent: header, files, capped report, next action. */
 function subagentNoteLines(
   out: VLine[],
   note: SubagentNote,
