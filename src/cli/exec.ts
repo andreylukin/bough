@@ -58,6 +58,7 @@
 import { realpath } from "node:fs/promises";
 import type { Session, TurnStatus } from "../schema/parts.ts";
 import type { MessageDeltaData, MessageRetryData, TurnFinishedData } from "../schema/events.ts";
+import type { AskQuestion } from "../schema/parts.ts";
 import type { UsageTotals } from "../types.ts";
 
 // ---- arguments ---------------------------------------------------------------
@@ -495,6 +496,35 @@ export async function runExec(argv: readonly string[], deps: ExecDeps): Promise<
             deps.warn(
               `[retry ${retry?.attempt ?? "?"}: ${retry?.reason ?? "no reason given"}]`,
             );
+            break;
+          }
+          case "ask.question": {
+            // NOBODY IS HERE TO ANSWER. A program that calls `ask()` — or a workflow
+            // launch, which raises an approval card by default (`workflow/control.ts`) —
+            // parked forever under this client: exec had no case for the event, so the
+            // turn sat held until `--timeout` and exited 1 on work that was one answer
+            // from finishing. Declining is the documented dismissal (spec §6: `ask()`
+            // throws a catchable "user declined"), so the program gets an error it can
+            // act on and the turn ends on its own terms.
+            const held = data as AskQuestion | undefined;
+            if (!held || held.status !== "pending") break;
+            deps.warn(
+              `[declined a question — bough exec is not interactive: ${
+                held.question.split("\n")[0].slice(0, 120)
+              }]`,
+            );
+            // Fire and forget: a failed decline leaves the old behaviour (a hold that
+            // waits out the deadline), and blocking the event loop on it would be worse.
+            void deps.fetchFn(
+              `${api}/sessions/${encodeURIComponent(held.sessionId)}/questions/${
+                encodeURIComponent(held.id)
+              }`,
+              {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ decline: true }),
+              },
+            ).catch(() => {});
             break;
           }
           case "turn.finished": {

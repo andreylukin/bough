@@ -614,3 +614,48 @@ test("the usage text names every flag it accepts, and the no-sandbox posture", (
   // Spec §2. A headless client is exactly where this is easiest to forget.
   assert.match(USAGE, /no sandbox/);
 });
+
+/**
+ * NOBODY IS HERE TO ANSWER. `exec` had no case for `ask.question`, so a program that
+ * called `ask()` — or any workflow launch, which raises an approval card by default —
+ * parked until `--timeout` elapsed and then exited 1 on work that was one answer from
+ * done. Declining is the documented dismissal (spec §6: a catchable "user declined").
+ */
+test("a question raised under exec is declined, not waited out", async () => {
+  const asking: FakeTurn = (ctx, session) => {
+    ctx.bus.publish({
+      type: "ask.question",
+      sessionId: session.id,
+      data: {
+        id: "q-1",
+        sessionId: session.id,
+        messageId: crypto.randomUUID(),
+        question: "Run the workflow \"audit\"?\nit fans out agents",
+        status: "pending",
+        ts: 1,
+      },
+    });
+    // The program's `ask()` rejects, the turn ends. A real turn does this because the
+    // decline reaches it; the fixture states the outcome directly.
+    ctx.bus.publish({
+      type: "turn.finished",
+      sessionId: session.id,
+      data: { turnId: crypto.randomUUID(), sessionId: session.id, status: "done" },
+    });
+  };
+  const f = fixture({ turn: asking });
+  try {
+    const code = await runExec(["do the thing"], f.deps);
+    assert.equal(code, 0);
+    // It said so, on stderr, quoting the first line of what it refused.
+    assert.match(f.err(), /declined a question/);
+    assert.match(f.err(), /Run the workflow/);
+    // And it actually posted the decline rather than only complaining.
+    assert.ok(
+      f.calls.some((c) => c.startsWith("POST") && c.includes("/questions/q-1")),
+      f.calls.join(" | "),
+    );
+  } finally {
+    f.close();
+  }
+});
