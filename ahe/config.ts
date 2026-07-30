@@ -13,8 +13,20 @@ import { join } from "node:path";
 /** The repo root — this file's parent's parent. Nothing here reads `cwd`. */
 export const REPO = join(import.meta.dir, "..");
 
-/** Frozen for every sweep. Cheap enough to run 40 tasks nightly, weak enough to discriminate. */
-export const MODEL = "claude-haiku-4-5";
+/**
+ * Frozen for every sweep.
+ *
+ * `openai/gpt-5.6-luna` via OpenRouter, ~9x cheaper than claude-haiku-4-5 on this
+ * workload — not from the headline rate but from the CACHE READ line: $0.01/M
+ * against haiku's $0.10/M, on a workload measured at 96% cache reads. A 40-task
+ * bank at k=3 costs ~$1.70 instead of ~$16.
+ *
+ * Changing this invalidates the bank's calibration, not just its cost. Pass rates
+ * are model-specific — that is the paper's whole point about harnesses — so every
+ * task's discriminating band has to be re-measured after a switch. The wall-clock
+ * perf gate in perf-overlap is the one thing that transfers unchanged.
+ */
+export const MODEL = process.env["AHE_MODEL"] ?? "openai/gpt-5.6-luna";
 
 /** The meta-agents (analyze, evolve) run on a DIFFERENT harness than the one under test. */
 export const META_CMD = "claude";
