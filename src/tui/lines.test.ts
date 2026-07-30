@@ -216,6 +216,11 @@ test("a round that failed once and then worked is amber with a count, not red", 
   const head = messageLines(m, CLOSED, CLOSED, 120).find((l) => l.text.includes("step"))!;
   assert.ok(head.text.includes("1 of 2 failed"), head.text);
   assert.equal(head.text.includes("✗ error"), false, head.text);
+  // And the INVENTED name is not printed as an identifier: the gist already explains it,
+  // so the header read `patch · run_steps · called patch as a tool · …` — two internal
+  // names, one of them fictional, in front of the prose that covers both.
+  assert.ok(head.text.includes("called patch as a tool"), head.text);
+  assert.equal(head.text.includes("patch · run_steps"), false, head.text);
 
   // Every call failing is still red: nothing recovered.
   const allBad = msg({

@@ -108,6 +108,13 @@ const roleLabel = (role: Role): string =>
  * replays to the model as text, but the bracketed wall is noise to a human. Parse
  * it back into fields so the transcript can draw a real card at the spawn point.
  */
+/**
+ * The tools bough actually grants (`turn/runner.ts`: `TOOLS`). Anything else in a
+ * `tool_call` is a name the model invented, which the header labels as prose rather than
+ * printing as an identifier.
+ */
+const GRANTED_TOOLS = new Set(["run_steps", "stop"]);
+
 export interface SubagentNote {
   title: string;
   sessionId: string;
@@ -279,7 +286,15 @@ function toolGroupLines(
   // Names only when they DIFFER. bough has one tool, so `calls.map(name)` rendered
   // a four-call turn as `run_steps · run_steps · run_steps · run_steps` — four
   // copies of an internal identifier where the prose summary should be.
-  const names = [...new Set(calls.map((c) => c.name))];
+  // GRANTED tool names only. A name the model invented is not a tool bough has, and the
+  // gist below already says `called patch as a tool` for it — so listing it here produced
+  //
+  //   ▸ ⚠ 2 of 4 failed  4 steps  patch · run_steps · called patch as a tool · wrote …
+  //
+  // where `patch · run_steps` is two internal identifiers, one of them fictional, in front
+  // of prose that explains both. The names column exists for a turn that used more than one
+  // REAL tool; an invented name is not that.
+  const names = [...new Set(calls.map((c) => c.name))].filter((n) => GRANTED_TOOLS.has(n));
   const count = `${calls.length} ${calls.length === 1 ? "step" : "steps"}`;
   // The fold glyph stays at text weight — it is the affordance that says
   // "expandable"; an all-dim header reads as inert.
