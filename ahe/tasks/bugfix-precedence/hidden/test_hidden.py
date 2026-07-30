@@ -10,74 +10,126 @@ from conf import Config, Layer, Value
 
 
 def layers(**by_source):
-    return [
-        Layer(name, {k: v if isinstance(v, Value) else Value(v) for k, v in values.items()})
-        for name, values in by_source.items()
-    ]
+    out = []
+    for name, values in by_source.items():
+        aliases = values.pop("__aliases__", {})
+        out.append(
+            Layer(
+                name,
+                {k: v if isinstance(v, Value) else Value(v) for k, v in values.items()},
+                aliases,
+            )
+        )
+    return out
 
 
-class TestPinning(unittest.TestCase):
-    """Spec R2: pinning applies to EVERY source, not to some of them."""
+class TestAliasesAreGlobal(unittest.TestCase):
+    """Spec R1: the resolved alias map applies to EVERY source's keys."""
 
-    def test_pinned_defaults_beat_env(self):
-        c = Config(layers(defaults={"port": Value(80, pinned=True)}, env={"port": 8080}))
-        self.assertEqual(c.get("port"), 80)
-
-    def test_pinned_defaults_beat_flags(self):
-        c = Config(layers(defaults={"port": Value(80, pinned=True)}, flags={"port": 9090}))
-        self.assertEqual(c.get("port"), 80)
-
-    def test_pinned_env_beats_flags(self):
-        c = Config(layers(env={"port": Value(80, pinned=True)}, flags={"port": 9090}))
-        self.assertEqual(c.get("port"), 80)
-
-    def test_highest_pinned_wins_over_lower_pinned(self):
+    def test_alias_declared_high_applies_to_a_lower_source(self):
         c = Config(
             layers(
-                defaults={"port": Value(80, pinned=True)},
-                env={"port": Value(8080, pinned=True)},
+                defaults={"bind_port": 80},
+                flags={"__aliases__": {"bind_port": "port"}},
+            )
+        )
+        self.assertEqual(c.get("port"), 80)
+
+    def test_alias_declared_low_applies_to_a_higher_source(self):
+        c = Config(
+            layers(
+                defaults={"__aliases__": {"bind_port": "port"}},
+                flags={"bind_port": 9090},
+            )
+        )
+        self.assertEqual(c.get("port"), 9090)
+
+    def test_aliased_and_canonical_claims_unify_under_precedence(self):
+        c = Config(
+            layers(
+                defaults={"bind_port": 80},
+                file={"__aliases__": {"bind_port": "port"}},
+                env={"port": 8080},
             )
         )
         self.assertEqual(c.get("port"), 8080)
 
-    def test_unpinned_still_follows_precedence(self):
-        c = Config(layers(defaults={"port": 80}, flags={"port": 9090}))
-        self.assertEqual(c.get("port"), 9090)
+    def test_conflicting_aliases_resolve_by_precedence(self):
+        c = Config(
+            layers(
+                defaults={"__aliases__": {"tag": "labels"}},
+                flags={"__aliases__": {"tag": "tags"}},
+                file={"tag": ["x"]},
+            )
+        )
+        self.assertEqual(c.get("tags"), ["x"])
+        with self.assertRaises(KeyError):
+            c.get("labels")
+
+    def test_aliased_lists_merge_after_renaming(self):
+        c = Config(
+            layers(
+                defaults={"tag": ["a"], "__aliases__": {"tag": "tags"}},
+                env={"tags": ["b"]},
+            )
+        )
+        self.assertEqual(c.get("tags"), ["a", "b"])
 
 
-class TestListOrder(unittest.TestCase):
-    """Spec R3: source order, lowest first, each value at its FIRST occurrence."""
+class TestPinnedListTruncates(unittest.TestCase):
+    """Spec R4: sources strictly below the highest pinned list contribute nothing."""
 
-    def test_merge_is_lowest_source_first(self):
+    def test_pinned_list_drops_lower_sources(self):
+        c = Config(
+            layers(
+                defaults={"tags": ["a"]},
+                env={"tags": Value(["b"], pinned=True)},
+                flags={"tags": ["c"]},
+            )
+        )
+        self.assertEqual(c.get("tags"), ["b", "c"])
+
+    def test_highest_pinned_list_is_the_cut(self):
+        c = Config(
+            layers(
+                defaults={"tags": Value(["a"], pinned=True)},
+                file={"tags": ["b"]},
+                env={"tags": Value(["c"], pinned=True)},
+                flags={"tags": ["d"]},
+            )
+        )
+        self.assertEqual(c.get("tags"), ["c", "d"])
+
+    def test_unpinned_lists_still_merge_whole(self):
         c = Config(layers(defaults={"tags": ["a"]}, env={"tags": ["b"]}, flags={"tags": ["c"]}))
         self.assertEqual(c.get("tags"), ["a", "b", "c"])
 
-    def test_duplicate_keeps_first_occurrence_position(self):
-        c = Config(layers(defaults={"tags": ["a", "b"]}, flags={"tags": ["b", "c"]}))
-        self.assertEqual(c.get("tags"), ["a", "b", "c"])
-
-    def test_duplicate_across_three_sources(self):
-        c = Config(
-            layers(
-                defaults={"tags": ["x", "y"]},
-                file={"tags": ["y", "z"]},
-                env={"tags": ["z", "x", "w"]},
-            )
-        )
-        self.assertEqual(c.get("tags"), ["x", "y", "z", "w"])
+    def test_scalar_pinning_is_unaffected(self):
+        c = Config(layers(defaults={"port": Value(80, pinned=True)}, flags={"port": 9090}))
+        self.assertEqual(c.get("port"), 80)
 
 
 class TestExplainAgrees(unittest.TestCase):
-    """Spec: explain() must report the outcome resolve() produces."""
+    """Spec R5: explain() must report the outcome resolve() produces."""
 
-    def test_explain_matches_resolved_list(self):
-        c = Config(layers(defaults={"tags": ["a", "b"]}, flags={"tags": ["b", "c"]}))
+    def test_explain_matches_a_truncated_merge(self):
+        c = Config(
+            layers(
+                defaults={"tags": ["a"]},
+                env={"tags": Value(["b"], pinned=True)},
+                flags={"tags": ["c"]},
+            )
+        )
         self.assertIn(repr(c.get("tags")), c.explain("tags"))
 
-    def test_explain_matches_resolved_scalar_when_pinned_low(self):
-        c = Config(layers(defaults={"port": Value(80, pinned=True)}, flags={"port": 9090}))
+    def test_explain_matches_an_aliased_resolution(self):
+        c = Config(
+            layers(
+                defaults={"bind_port": 80},
+                flags={"__aliases__": {"bind_port": "port"}},
+            )
+        )
         self.assertIn(repr(c.get("port")), c.explain("port"))
-        self.assertIn("defaults", c.explain("port"))
 
     def test_explain_missing_key_raises(self):
         c = Config(layers(defaults={"port": 80}))

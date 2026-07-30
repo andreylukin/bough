@@ -1,15 +1,14 @@
 """Resolution: given the layers, what is a key's value?
 
-The reference fix. Three edits against the fixture, and a solution that makes only
-one or two of them still fails:
-  * `_pick` honours `pinned` from every source, not just file/env (spec R2)
-  * `_merge_list` walks claims lowest-first, keeping first occurrences (spec R3)
+The reference fix. Two edits here, plus one in alias.py:
+  * `_merge_list` truncates at the highest-precedence pinned list (spec R4)
   * `explain`'s own inlined merge had the same defect and is not covered by the
     checked-in suite — the one an agent finds only by reading, not by running
 """
 
 from typing import Any, List
 
+from .alias import normalize
 from .types import Layer, Value
 
 # Lowest precedence first.
@@ -24,7 +23,7 @@ def _source_order(layers: List[Layer]) -> List[Layer]:
 def _claims(layers: List[Layer], key: str) -> List[tuple]:
     """Every (layer, value) claiming `key`, lowest precedence first."""
     out = []
-    for layer in _source_order(layers):
+    for layer in _source_order(normalize(layers)):
         value = layer.get(key)
         if value is not None:
             out.append((layer, value))
@@ -32,10 +31,14 @@ def _claims(layers: List[Layer], key: str) -> List[tuple]:
 
 
 def _merge_list(claims: List[tuple]) -> List[Any]:
-    """Concatenate every claim's items, dropping duplicates."""
+    """Concatenate every claim's items from the highest pinned list upward."""
+    start = 0
+    for index, (_layer, value) in enumerate(claims):
+        if value.pinned:
+            start = index
     seen = set()
     out = []
-    for _layer, value in claims:
+    for _layer, value in claims[start:]:
         for item in value.raw:
             if item in seen:
                 continue

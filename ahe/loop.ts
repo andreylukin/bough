@@ -129,9 +129,16 @@ export async function runLoop(iterations: number, opts: { trials?: number } = {}
       if (refuted.length) {
         revert(refuted);
         console.log(`  reverted ${refuted.join(", ")}`);
-      } else if (verdicts.length) {
+      }
+      // Commit whatever survived, INCLUDING when part of the round was reverted.
+      // A held edit left uncommitted is a held edit that the next round's
+      // `git checkout HEAD --` would silently throw away — the revert is exact
+      // about which file it touches and has no idea which of that file's lines
+      // were earned.
+      const held = verdicts.filter((v) => v.held).map((v) => v.file);
+      if (held.length && git("status", "--porcelain", PROMPT_DIR)) {
         git("add", PROMPT_DIR);
-        git("commit", "-m", `ahe(iter ${n - 1}): ${pending.map((c) => c.file).join(", ")}`);
+        git("commit", "-m", `ahe(iter ${n - 1}): ${held.join(", ")}`);
       }
     }
 

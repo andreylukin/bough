@@ -18,10 +18,11 @@ class Value:
 
 @dataclass
 class Layer:
-    """One configuration source."""
+    """One configuration source, with any key renames it declares."""
 
     name: str
     values: Dict[str, Value] = field(default_factory=dict)
+    aliases: Dict[str, str] = field(default_factory=dict)
 
     def get(self, key: str):
         return self.values.get(key)

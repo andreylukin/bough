@@ -1,7 +1,8 @@
 """Resolution: given the layers, what is a key's value?"""
 
-from typing import Any, List, Optional
+from typing import Any, List
 
+from .alias import normalize
 from .types import Layer, Value
 
 # Lowest precedence first.
@@ -19,7 +20,7 @@ def _source_order(layers: List[Layer]) -> List[Layer]:
 def _claims(layers: List[Layer], key: str) -> List[tuple]:
     """Every (layer, value) claiming `key`, lowest precedence first."""
     out = []
-    for layer in _source_order(layers):
+    for layer in _source_order(normalize(layers)):
         value = layer.get(key)
         if value is not None:
             out.append((layer, value))
@@ -30,7 +31,7 @@ def _merge_list(claims: List[tuple]) -> List[Any]:
     """Concatenate every claim's items, dropping duplicates."""
     seen = set()
     out = []
-    for _layer, value in reversed(claims):
+    for _layer, value in claims:
         for item in value.raw:
             if item in seen:
                 continue
@@ -41,11 +42,10 @@ def _merge_list(claims: List[tuple]) -> List[Any]:
 
 def _pick(claims: List[tuple]) -> Value:
     """The winning scalar claim."""
-    winner = claims[-1][1]
-    for layer, value in claims:
-        if value.pinned and layer.name in ("file", "env"):
-            winner = value
-    return winner
+    pinned = [value for _layer, value in claims if value.pinned]
+    if pinned:
+        return pinned[-1]
+    return claims[-1][1]
 
 
 def resolve(layers: List[Layer], key: str) -> Any:
@@ -65,7 +65,7 @@ def explain(layers: List[Layer], key: str) -> str:
     if any(value.is_list for _layer, value in claims):
         merged = []
         seen = set()
-        for _layer, value in reversed(claims):
+        for _layer, value in claims:
             for item in value.raw:
                 if item not in seen:
                     seen.add(item)
