@@ -86,6 +86,28 @@ Four rules, each of which some earlier bench violated:
 4. **Exercises host functions deliberately.** A section no task exercises is a
    section the loop can never improve, and the manifests make that visible.
 
+## What the first real iteration did
+
+Recorded end to end under `ahe/runs/`, on one task at k=4:
+
+1. The sweep scored 4/4 — nothing to learn from flips.
+2. The analyzer read the traces anyway and found that in three of four *passing*
+   trials the agent re-bound a host-function name (`const { bash } = globalThis`,
+   an import from a package that does not exist, a same-named helper) and the
+   program failed pre-flight before it ran. It cited the rounds.
+3. Its root cause: `identity.md` stated the rule with one example, the plain
+   `const bash = ...` form, and none of the three real failures took that shape.
+4. The evolve agent edited that sentence to name the shapes that occurred, and
+   predicted parse errors would fall with no task flipping. +180 chars, replacing
+   rather than appending.
+5. The next sweep: parse errors 3 → 0, exactly as predicted. And every trial ran
+   more rounds — 18→30, 26→33, 22→26, 22→39. The edit was **reverted**.
+
+That last step is the paper's reported blind spot, reproduced on iteration one,
+and it is why the waste path carries a round-count guard. The analysis also caught
+a real bug in this harness's own instrument: one failed program was being counted
+as several failures, once per host function it named.
+
 ## Known limits
 
 **Bank size.** The paper runs 89 Terminal-Bench 2 tasks. Below roughly 40 a single

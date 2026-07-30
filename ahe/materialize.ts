@@ -27,13 +27,23 @@ import type { RoundRecord, TurnManifest } from "../src/llm/trace.ts";
 import { TRACE_DIR } from "./config.ts";
 import type { TrialRow } from "./trial.ts";
 
-/** One host-function call and what came back. */
+/**
+ * One host-function call and what came back.
+ *
+ * `ok` and `result` describe the ROUND, not the individual call, and every call in
+ * the same program shares them. That is not an approximation this module could fix:
+ * bough is code-mode, so the model gets its program's output back as one result and
+ * the harness never reports per-call outcomes. Counting a three-call program's
+ * failure as three failures is therefore wrong, which is why `statsOf` counts
+ * distinct rounds — the loop's first analysis caught exactly that inflation in its
+ * own instrument.
+ */
 export interface HostFnEvent {
   round: number;
   fn: string;
-  /** Null when the round's result never arrived (the turn ended first). */
+  /** The round's outcome. Null when its result never arrived (the turn ended first). */
   ok: boolean | null;
-  /** The result text, truncated — enough to classify, not enough to bury. */
+  /** The PROGRAM's output, truncated — enough to classify, not enough to bury. */
   result: string | null;
 }
 
@@ -120,11 +130,19 @@ export interface TrialStats {
  * sections this trial was exposed to, and the stats a saturated task still moves on.
  */
 export function statsOf(events: HostFnEvent[], rounds: number): TrialStats {
-  const failed = events.filter((e) => e.ok === false);
+  // By ROUND, not by call: a program that failed is one failure however many host
+  // functions it happened to name (see `HostFnEvent`). Counting call sites made a
+  // single bad program look like three, which would have moved the metric a
+  // prompt edit is settled on.
+  const failedRounds = new Map<number, string>();
+  for (const e of events) {
+    if (e.ok === false) failedRounds.set(e.round, e.result ?? "");
+  }
+  const failures = [...failedRounds.values()];
   return {
     rounds,
-    hostFnErrors: failed.length,
-    parseErrors: failed.filter((e) => (e.result ?? "").includes("program does not parse")).length,
+    hostFnErrors: failures.length,
+    parseErrors: failures.filter((r) => r.includes("program does not parse")).length,
   };
 }
 

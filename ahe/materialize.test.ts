@@ -12,7 +12,7 @@
 import { test } from "bun:test";
 import { deepStrictEqual } from "node:assert";
 import type { RoundRecord } from "../src/llm/trace.ts";
-import { callSites, hostFnEvents } from "./materialize.ts";
+import { callSites, hostFnEvents, statsOf } from "./materialize.ts";
 
 test("a method that shares a host function's name is not a host function call", () => {
   // Every one of these names is BOTH a host function and an ordinary member.
@@ -74,4 +74,18 @@ test("a call is paired with the result that lands in the NEXT round", () => {
 test("the last round's call has no result rather than a false success", () => {
   const events = hostFnEvents([round(1, `await bash("ls")`)]);
   deepStrictEqual(events, [{ round: 1, fn: "bash", ok: null, result: null }]);
+});
+
+test("one failed program is one failure, however many host functions it named", () => {
+  // Code mode returns the PROGRAM's output, so every call in a round carries the
+  // same result. Counting call sites turned one bad program into three failures —
+  // and the metric a prompt edit gets settled on is built from this number.
+  const events = [
+    { round: 1, fn: "view", ok: false, result: "program does not parse: …" },
+    { round: 1, fn: "patch", ok: false, result: "program does not parse: …" },
+    { round: 1, fn: "bash", ok: false, result: "program does not parse: …" },
+    { round: 2, fn: "bash", ok: true, result: "ok" },
+    { round: 3, fn: "patch", ok: false, result: "no match for the context lines" },
+  ];
+  deepStrictEqual(statsOf(events, 3), { rounds: 3, hostFnErrors: 2, parseErrors: 1 });
 });
