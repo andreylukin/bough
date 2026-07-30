@@ -48,6 +48,7 @@ import {
   toolSummary,
   warn,
   wrapLine,
+  plural,
 } from "./format.ts";
 import type { TranscriptMark } from "./store.ts";
 
@@ -428,7 +429,7 @@ export function messageLines(
       if (!s.text.trim()) return;
       const logical = s.text.split("\n");
       if (isExpanded(key)) {
-        seg.push({ text: "▾ " + dim(`thinking (${logical.length} lines)`), click: key });
+        seg.push({ text: "▾ " + dim(`thinking (${plural(logical.length, "line")})`), click: key });
         pushBlock(seg, s.text, inner, {
           maxLines: isFull(key) ? Infinity : OUTPUT_LINES,
           style: dim,
@@ -621,7 +622,7 @@ export function jobCardLines(out: VLine[], job: JobView, w: number, now: number)
   }
   const total = job.outputLines ?? 0;
   if (total > (job.tail?.length ?? 0)) {
-    body.push({ text: dim(`  ${total} lines total`) });
+    body.push({ text: dim(`  ${plural(total, "line")} total`) });
   }
   const copy = [`${job.id} · ${job.command}`, ...(job.tail ?? [])].join("\n");
   out.push({ text: "" });

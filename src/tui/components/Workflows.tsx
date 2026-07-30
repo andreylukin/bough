@@ -46,7 +46,7 @@ import type { WorkflowRun } from "../../schema/parts.ts";
 import type { WorkflowAgentView } from "../../workflow/control.ts";
 import type { LargeRunFlag, ReplaySummary, RunCost } from "../../workflow/report.ts";
 import type { WorkflowDetail, WorkflowSummary } from "../api.ts";
-import { clip, fmtTokens, windowAround } from "../format.ts";
+import { clip, fmtTokens, plural, windowAround } from "../format.ts";
 
 // ---------------------------------------------------------------------------
 // Rows: the testable rendering unit
@@ -243,7 +243,7 @@ export function costRows(cost: RunCost): Row[] {
     .join(" · ");
   return [[
     { text: "$ cost    ", tone: "muted" },
-    { text: `${tokenChip(cost.tokens) || "0 tok"} · ${cost.agents} agents`, tone: "text" },
+    { text: `${tokenChip(cost.tokens) || "0 tok"} · ${plural(cost.agents, "agent")}`, tone: "text" },
     { text: perPhase ? `  ${perPhase}` : "", tone: "muted" },
   ]];
 }
@@ -402,7 +402,7 @@ export function agentDetailRows(
       text: "  " + [
         agent.model,
         tokenChip(agent.tokens),
-        agent.toolCalls ? `${agent.toolCalls} tool calls` : "",
+        agent.toolCalls ? plural(agent.toolCalls, "tool call") : "",
         agent.status === "queued"
           ? "waiting on the run's concurrency limit"
           : elapsed(agent.startedAt, agent.finishedAt, now),
@@ -418,12 +418,12 @@ export function agentDetailRows(
   }]);
   rows.push([]);
   rows.push([{
-    text: promptOpen ? "Prompt · ⏎ collapse" : `Prompt · ${prompt.length} lines · ⏎ expand`,
+    text: promptOpen ? "Prompt · ⏎ collapse" : `Prompt · ${plural(prompt.length, "line")} · ⏎ expand`,
     bold: true,
   }]);
   for (const l of promptOpen ? prompt : prompt.slice(0, 2)) rows.push([{ text: `  ${l}` }]);
   if (!promptOpen && prompt.length > 2) {
-    rows.push([{ text: `  … ${prompt.length - 2} more lines`, tone: "muted" }]);
+    rows.push([{ text: `  … ${plural(prompt.length - 2, "more line")} `.trimEnd(), tone: "muted" }]);
   }
   if (agent.activity.length > 0) {
     rows.push([], [{ text: "Activity", bold: true }]);
@@ -467,7 +467,7 @@ export function scriptRows(detail: WorkflowDetail): Row[] {
         // key on the one screen whose whole job is to explain the steering loop —
         // the same defect `e` had, one level down. `BOUND_STEER_KEYS` names what the
         // tab may promise; this sentence is inside that rule now.
-        : `r relaunches a NEW run from this one's journal · ${detail.replay.total} calls ` +
+        : `r relaunches a NEW run from this one's journal · ${plural(detail.replay.total, "call")} ` +
           `journaled here`,
       tone: detail.live ? "warn" : "muted",
     }],

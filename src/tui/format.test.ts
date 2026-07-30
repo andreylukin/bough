@@ -21,6 +21,7 @@ import {
   linkAt,
   md,
   meterLine,
+  plural,
   programSummary,
   rankCompletions,
   segmentParts,
@@ -824,4 +825,18 @@ test("legendLine drops whole items rather than cutting a word", () => {
   // Empty items never produce a dangling separator.
   assert.equal(legendLine(["a", "", "b"]), "a · b");
   assert.equal(legendLine([]), "");
+});
+
+/**
+ * `1 tool calls`, seen in the run view. One helper, because eight hand-written
+ * ternaries across two files is eight chances to get it wrong once.
+ */
+test("plural agrees with its count", () => {
+  assert.equal(plural(1, "agent"), "1 agent");
+  assert.equal(plural(2, "agent"), "2 agents");
+  assert.equal(plural(0, "agent"), "0 agents");
+  assert.equal(plural(1, "tool call"), "1 tool call");
+  // An irregular plural is passed, not guessed.
+  assert.equal(plural(1, "entry", "entries"), "1 entry");
+  assert.equal(plural(3, "entry", "entries"), "3 entries");
 });

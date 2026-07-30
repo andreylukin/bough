@@ -390,6 +390,14 @@ export function codeGist(input: unknown, max = 60): string {
 }
 
 /**
+ * `3 agents`, `1 agent`. One place, because eight hand-written ternaries is eight
+ * chances to render `1 tool calls` — which is what the run view did.
+ */
+export function plural(n: number, word: string, plural = `${word}s`): string {
+  return `${n} ${n === 1 ? word : plural}`;
+}
+
+/**
  * A legend row that DEGRADES instead of being cut off.
  *
  * Every tab's footer is a `·`-joined list of keys rendered `wrapMode="none"`, so at a
