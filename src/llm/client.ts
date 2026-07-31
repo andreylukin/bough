@@ -946,11 +946,35 @@ const OPENAI_EXCLUDE =
 const OPENAI_DATED = /-\d{4}-\d{2}-\d{2}$/;
 const OPENAI_CAP = 25;
 
+/**
+ * Newest-first, comparing version numbers as NUMBERS.
+ *
+ * A plain descending `localeCompare` reads "gpt-5.10" as older than "gpt-5.6", because
+ * "1" sorts before "6" one character at a time. That is invisible until a family reaches
+ * a double-digit minor, and then it is the newest model in the list that sinks below the
+ * cap and vanishes from the picker — the exact failure this discovery code exists to
+ * prevent. Digit runs are therefore compared numerically and everything else
+ * lexicographically, which leaves ids without numbers ordered exactly as before.
+ */
+function byNewest(a: string, b: string): number {
+  const split = (s: string) => s.split(/(\d+)/);
+  const [as, bs] = [split(a), split(b)];
+  for (let i = 0; i < Math.max(as.length, bs.length); i++) {
+    const [x, y] = [as[i] ?? "", bs[i] ?? ""];
+    if (x === y) continue;
+    // Both numeric only when the id shape matched this far; a number against a word is
+    // still a string comparison, which is what keeps `o3` above `gpt-5`.
+    const numeric = /^\d+$/.test(x) && /^\d+$/.test(y);
+    return numeric ? Number(y) - Number(x) : y.localeCompare(x);
+  }
+  return 0;
+}
+
 /** Pure filter/mapper, so the selection rules are testable without the network. */
 export function filterOpenAIModels(ids: string[]): ModelRow[] {
   return ids
     .filter((id) => OPENAI_INCLUDE.test(id) && !OPENAI_EXCLUDE.test(id) && !OPENAI_DATED.test(id))
-    .sort((a, b) => b.localeCompare(a)) // newer families first (gpt-5.2 before gpt-5)
+    .sort(byNewest)
     .slice(0, OPENAI_CAP)
     .map((id) => ({ id: `openai:${id}`, label: `${id} (OpenAI)`, provider: "openai" as const }));
 }

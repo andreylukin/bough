@@ -787,6 +787,19 @@ test("filterOpenAIModels: chat ids only, dated snapshots dropped, newest first",
   for (const r of rows) strictEqual(providerFor(r.id), "openai");
 });
 
+test("filterOpenAIModels: version numbers sort as numbers, not as text", () => {
+  // "gpt-5.10" is NEWER than "gpt-5.6". A plain string sort reads it as older, so the
+  // newest model in the list is the one that falls past the cap and never reaches the
+  // picker — which is the whole failure discovery exists to prevent.
+  const rows = filterOpenAIModels(["gpt-5.6", "gpt-5.10", "gpt-5.6-luna", "gpt-5.2"]);
+  deepStrictEqual(rows.map((r) => r.id), [
+    "openai:gpt-5.10",
+    "openai:gpt-5.6-luna",
+    "openai:gpt-5.6",
+    "openai:gpt-5.2",
+  ]);
+});
+
 test("mergeModels: the static table wins on id collisions", () => {
   const dynamic: ModelRow[] = [
     { id: "openai:gpt-5", label: "gpt-5 (OpenAI)", provider: "openai" },
