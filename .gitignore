@@ -12,3 +12,6 @@ scripts/guest-image/golden-rootfs/
 
 ahe/state/
 ahe/runs/
+.bough-bun/
+.bough-bun-linux
+.bough-bun-linux-musl

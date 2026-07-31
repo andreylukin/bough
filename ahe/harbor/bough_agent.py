@@ -63,68 +63,74 @@ class Bough(BaseInstalledAgent):
 
     @override
     async def install(self, environment: BaseEnvironment) -> None:
-        # Baked image? Then there is nothing to do. Checking rather than assuming
-        # keeps one adapter working for both paths: a prebuilt bough/<task> image
-        # skips straight to the turn, and a bare task image still runs.
+        # Baked image? Nothing to do. Checking rather than assuming keeps one
+        # adapter working for both paths.
         probe = await environment.exec(f"test -d {BOUGH_DIR}/node_modules")
         if probe.return_code == 0:
             self.logger.debug("bough is already baked into this image")
             return
 
-        # bough is not published anywhere, so the source comes from this checkout
-        # rather than a package manager. That is also what keeps the experiment
-        # honest: the harness under test is the working tree, at whatever sha the
-        # sweep recorded, not a release someone built last week.
-        await self.exec_as_root(
-            environment,
-            command=(
-                "if command -v apk >/dev/null 2>&1; then"
-                "  apk add --no-cache curl bash unzip git;"
-                " elif command -v apt-get >/dev/null 2>&1; then"
-                "  apt-get update && apt-get install -y curl unzip git;"
-                " elif command -v yum >/dev/null 2>&1; then"
-                "  yum install -y curl unzip git;"
-                " fi"
-            ),
-            env={"DEBIAN_FRONTEND": "noninteractive"},
-        )
-        await self.exec_as_root(
-            environment,
-            command=(
-                "set -eu; "
-                "command -v bun >/dev/null 2>&1 || "
-                "(curl -fsSL https://bun.sh/install | bash && "
-                " install -m 0755 $HOME/.bun/bin/bun /usr/local/bin/bun)"
-            ),
-        )
-
-        # The destination's parent must exist FIRST: `docker compose cp` does not
-        # create it, and the failure reads "Could not find the file /opt/bough in
-        # container" — which looks like a missing source, not a missing target. An
-        # 89-task run scored 52 straight zeros on this, every one of them a bough
-        # that was never installed rather than a task it could not do.
+        # ONE FILE, NO NETWORK. The first version of this uploaded src/ as a file
+        # tree and then ran `bun install` inside every container. Across 89 tasks at
+        # 4-way concurrency that cost ~2 minutes a trial and timed out 12 of them in
+        # agent setup — 12 tasks scored zero for a task bough was never given. A
+        # prebuilt bundle (src + node_modules, ~22MB) is a single copy and an
+        # extract: no per-file compose cp, no package registry, nothing that can be
+        # slow because someone else's mirror is slow.
+        #
+        # The bundle is built by ahe/harbor/bundle.sh from the working tree, so the
+        # harness under test is still this checkout and not a release.
+        bundle = os.environ.get("BOUGH_BUNDLE", "/tmp/bough-bundle.tgz")
+        if not os.path.exists(bundle):
+            raise RuntimeError(
+                f"{bundle} is missing — run ahe/harbor/bundle.sh first. Building it "
+                "per trial would put the cost back where it was."
+            )
         await self.exec_as_root(
             environment,
             command=f"mkdir -p {BOUGH_DIR} {BOUGH_HOME} {TRACE_DIR} && "
                     f"chmod 777 {BOUGH_HOME} {TRACE_DIR}",
         )
-
-        repo = os.environ.get("BOUGH_REPO", "/Users/andrey/repos/bough")
-        await environment.upload_dir(source_dir=repo + "/src", target_dir=BOUGH_DIR + "/src")
-        for f in ("package.json", "bun.lock", "bunfig.toml", "tsconfig.json"):
-            await environment.upload_file(
-                source_path=f"{repo}/{f}", target_path=f"{BOUGH_DIR}/{f}"
-            )
-        await self.exec_as_root(
-            environment,
-            command=f"cd {BOUGH_DIR} && bun install --frozen-lockfile",
+        await environment.upload_file(
+            source_path=bundle, target_path=f"{BOUGH_DIR}/bundle.tgz"
         )
-        # Prove the install actually landed. Without this the next failure surfaces
-        # much later as "bough server did not start", which reads like a bough bug
-        # rather than an upload that silently put nothing there.
+        # `bun` is the only thing that still has to come from outside, and only when
+        # the image has none. Kept last so a slow install cannot delay the upload.
         await self.exec_as_root(
             environment,
-            command=f"test -f {BOUGH_DIR}/src/server/main.ts && test -d {BOUGH_DIR}/node_modules",
+            command=(
+                # tar's exit status is deliberately NOT trusted here: it reports 1
+                # for warnings it emits about headers it does not recognise, and the
+                # explicit test below is what actually establishes the install.
+                f"set -u; cd {BOUGH_DIR}; tar xzf bundle.tgz 2>/dev/null || true; "
+                f"rm -f bundle.tgz; "
+                # The interpreter rides in the bundle, so this needs no network and
+                # no package manager: an image with neither curl nor unzip used to
+                # fail here with "unzip is required to install bun" — a task scored
+                # zero over a missing archiver.
+                f"mkdir -p /usr/local/bin && "
+                # Pick the libc the image actually has. Probing for the musl loader
+                # rather than parsing `ldd --version`, which alpine's busybox does
+                # not implement the same way.
+                f'if ls /lib/ld-musl-* >/dev/null 2>&1; then '
+                f'  cp {BOUGH_DIR}/.bough-bun-linux-musl /usr/local/bin/bun; '
+                f'else cp {BOUGH_DIR}/.bough-bun-linux /usr/local/bin/bun; fi && '
+                f"chmod 0755 /usr/local/bin/bun"
+            ),
+        )
+        # Prove the install landed. Without this the next failure surfaces much
+        # later as "bough server did not start", which reads like a bough bug.
+        await self.exec_as_root(
+            environment,
+            command=(
+                f"test -f {BOUGH_DIR}/src/server/main.ts && "
+                f"test -d {BOUGH_DIR}/node_modules && "
+                # Run it, do not just look for it: the previous version checked the
+                # files and still died later at "nohup: failed to run command 'bun'",
+                # which reads as a bough failure rather than an install that put the
+                # interpreter somewhere unusable.
+                f"bun --version"
+            ),
         )
 
     @with_prompt_template
