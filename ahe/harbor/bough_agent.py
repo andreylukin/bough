@@ -155,22 +155,31 @@ class Bough(BaseInstalledAgent):
         # ships, so this starts one and waits for it to answer. Polling the real
         # endpoint rather than sleeping: a fixed sleep is either a wasted 10s on
         # every trial or a flake on a slow image, and usually both.
+        # Wait for the server with BUN, not curl.
+        #
+        # This used to poll with `curl`, which worked only because the old install
+        # path happened to `apt-get install curl` on the way to fetching bun. Making
+        # install network-free removed that side effect, and on every image without
+        # curl the health check failed, the server was declared dead, and bough never
+        # ran: 71 of 89 tasks scored zero for a missing HTTP client in MY probe. The
+        # interpreter we ship is the only dependency this can safely have.
+        probe = (
+            "for (let i = 0; i < 60; i++) {"
+            f"  try {{ const r = await fetch('http://127.0.0.1:{PORT}/sessions');"
+            "    if (r.ok) { process.exit(0); } } catch {}"
+            "  await Bun.sleep(1000); }"
+            "process.exit(1);"
+        )
         await self.exec_as_root(
             environment,
             command=(
                 f"cd {BOUGH_DIR} && (nohup bun src/server/main.ts >{BOUGH_HOME}/server.log 2>&1 &) && "
-                f"for i in $(seq 1 60); do "
-                f"  curl -sf http://127.0.0.1:{PORT}/sessions >/dev/null && exit 0; sleep 1; "
-                f"done; echo 'bough server did not start' >&2; cat {BOUGH_HOME}/server.log >&2; exit 1"
+                f"bun -e {shlex.quote(probe)} || "
+                f"{{ echo 'bough server did not start' >&2; cat {BOUGH_HOME}/server.log >&2; exit 1; }}"
             ),
             env=env,
         )
 
-        # Pass the id through UNCHANGED. bough routes by the id itself — a bare
-        # name goes to Anthropic, `vendor/model` to OpenRouter, `openai:` to OpenAI
-        # (llm/client.ts providerFor) — so stripping the prefix the way most
-        # adapters do sent `openai/gpt-5.6-luna` to Anthropic as `gpt-5.6-luna`
-        # and every trial died on a 404.
         model = self.model_name or MODEL_DEFAULT
         workdir = self._get_env("BOUGH_WORKDIR") or "/app"
         result = await self.exec_as_agent(
