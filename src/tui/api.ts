@@ -76,6 +76,7 @@ import type { McpStatus } from "../mcp/status.ts";
 import type { AuthStart, AuthStatus } from "../mcp/oauth.ts";
 import type { ArtifactComment } from "../server/comments.ts";
 import type { RevertOutcome, SessionChangeSet } from "../server/changes.ts";
+import type { ModelCatalog } from "../server/models.ts";
 import type { SearchResult } from "../server/search.ts";
 import type { InterruptResult } from "../server/turns.ts";
 import type { SkillRow as SkillListRow } from "../server/skills.ts";
@@ -562,6 +563,16 @@ export function createApi(options: ApiOptions = {}) {
     /** Invoke a saved workflow by name, parameterized through `args`. */
     runSavedWorkflow: (name: string, body: { sessionId: string; args?: unknown }) =>
       post<WorkflowRun & { savedAs: string }>(`/saved-workflows/${seg(name)}/runs`, body),
+    /**
+     * What the picker may choose FROM: the built-in rows plus every model the server's
+     * key can actually reach (`server/models.ts`).
+     *
+     * Asked of the server rather than read from `llm/client.ts` because the key that
+     * decides the answer is the server's — it comes from `~/.bough/env`, and this
+     * process was launched from a shell that does not have it. A TUI that discovered
+     * models for itself would list ids the server cannot bill.
+     */
+    getModels: () => get<ModelCatalog>("/models"),
     /** What a NEW conversation runs on, for the picker's ● before any session exists. */
     getModelSettings: () => get<ModelSettings>("/model-settings"),
     /**

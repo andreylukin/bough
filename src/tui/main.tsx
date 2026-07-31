@@ -35,7 +35,7 @@ import { createRoot } from "@opentui/react";
 // `llm/client.ts` pulls the provider SDK, so a component that reached for the catalog
 // would drag the whole model layer into the component graph. The composition root is
 // allowed to know about both sides; nothing below it is.
-import { MODELS } from "../llm/client.ts";
+import { MODELS, type ModelRow } from "../llm/client.ts";
 import { api } from "./api.ts";
 import { createStore } from "./store.ts";
 import { enterTui, filteredStdin, leaveTui, type MouseEvent, type NavKey } from "./mouse.ts";
@@ -190,6 +190,29 @@ async function main() {
   }
 
   /**
+   * The picker's catalog, fetched for the same reason and on the same terms as the
+   * theme above: before the first frame, and best-effort.
+   *
+   * `MODELS` alone was what the picker used to get, so the rows were whatever was
+   * compiled in and a working `OPENAI_API_KEY` bought nothing — every model OpenAI
+   * shipped after that array was written was unreachable from the product. The server
+   * answers instead because it is the process that HOLDS the key (`~/.bough/env`); this
+   * one does not have it, and a catalog discovered here would offer rows the server
+   * cannot bill.
+   *
+   * The fallback is `MODELS` and not an empty list: a picker with no rows is a tab that
+   * looks broken, and the static ids are exactly as valid as they were before this
+   * fetch existed.
+   */
+  let models = MODELS as readonly ModelRow[];
+  try {
+    const catalog = await api.getModels();
+    if (catalog.models.length > 0) models = catalog.models;
+  } catch {
+    // Reported by its absence: the built-in rows are what the picker shows.
+  }
+
+  /**
    * Keeping a theme writes it through. `DELETE` and not `PUT` for the empty partial,
    * because "Default" IS the reset (`tui/theme.ts`'s `stateFor`), and PUTting an
    * empty colour map would store a named theme that overrides nothing — which reads
@@ -263,7 +286,7 @@ async function main() {
       home={process.env.HOME ?? ""}
       controls={controls}
       input={hooks}
-      models={MODELS}
+      models={models}
       theme={{ current: theme, persist: persistTheme }}
       notifyDesktop={(body) => terminal.notifyDesktop(body)}
       copyText={(text) => terminal.osc52Copy(text)}

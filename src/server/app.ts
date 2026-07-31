@@ -55,6 +55,7 @@ export { errorResponse, type Handler, json, parseBody, type Route, route } from 
 // ── handler imports; append below, one line per task ──
 import { events } from "./events.ts"; // T1.3
 import * as fsapi from "./fs.ts";
+import * as models from "./models.ts";
 import * as sessions from "./sessions.ts"; // T1.2
 import * as workflows from "./workflows.ts"; // T5.5
 import * as questions from "./questions.ts"; // T6.1
@@ -157,6 +158,10 @@ export const routes: Route[] = [
   route("GET", "/saved-workflows/:name", workflows.getSavedWorkflowH),
   route("PUT", "/saved-workflows/:name", workflows.putSavedWorkflowH),
   route("POST", "/saved-workflows/:name/runs", workflows.runSavedWorkflowH),
+  // What the picker may CHOOSE from, as opposed to what is currently chosen. Answered
+  // here and not compiled into the TUI because the key that decides the answer is the
+  // server's (`server/models.ts`).
+  route("GET", "/models", models.getModelsH),
   route("GET", "/model-settings", sessions.getModelSettingsH),
   // The write half. Without it a chosen model lasted one conversation: `ctx.model`
   // is `BOUGH_MODEL` frozen at start-up, so the next session reverted to the
