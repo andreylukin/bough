@@ -18,10 +18,6 @@ or launch a detached workflow that fans work across many of them.
 bough is an alternative harness **design**, not a better coding agent. That distinction is the point
 of the project, and this README tries not to blur it.
 
-<p align="center">
-  <img src="assets/shots/01-home.png" alt="bough home screen" width="800">
-</p>
-
 ## Read this before you run it
 
 **There is no isolation boundary.** Programs run as you, with your full authority — filesystem,
@@ -83,10 +79,6 @@ moves the listener, so a development instance never touches a live install. `BOU
 
 Point a session at a repo and ask in plain language. bough writes a small program, runs it, and
 answers — folded reasoning, the code that ran, live cost and context in one view.
-
-<p align="center">
-  <img src="assets/shots/02-chat.png" alt="a bough conversation" width="800">
-</p>
 
 **The program environment.** Host functions are pre-injected globals; the program also has the full
 Bun runtime and may ignore all of them.

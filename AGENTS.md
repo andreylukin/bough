@@ -6,8 +6,9 @@
 src/          the whole system — server, turn runner, harness, host functions,
               subagents, workflows, history ops, MCP, LSP, prompt, TUI
 docs/         spec.md (what the system is) · implementation-plan.md (how it is built)
-skills/       the one bundled skill
-assets/       logo and screenshots
+src/skills/   the bundled skills — history, wayfinder, domain-modeling, grilling
+ahe/          the prompt-evolution loop and its task bank
+assets/       the logo
 ```
 
 Everything runs on `bun` from the root `package.json`. There is no build step and no web UI — the
