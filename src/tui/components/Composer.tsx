@@ -265,7 +265,8 @@ export function Composer(
         })}
         {attachments.map((name, index) => (
           <text key={index} fg={index === attachmentSel ? UI.accent : UI.info} wrapMode="none">
-            {index === attachmentSel ? "❯ " : "  "}{"[image: " + name + "]"}
+            {index === attachmentSel ? "❯ " : "  "}
+            {name.startsWith("Pasted text #") ? "[" + name + "]" : "[image: " + name + "]"}
           </text>
         ))}
         {clipped

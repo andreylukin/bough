@@ -214,12 +214,11 @@ test("a question narrower than the width is left alone", () => {
   assert.deepEqual(askPromptLines("prod or staging?", 46, 120), ["prod or staging?"]);
 });
 
-
 test("Composer renders queued long text as a removable compact item", async () => {
   const frame = await draw(
     <Composer input="" cursor={0} busy={false} width={60} maxRows={6}
       attachments={["Pasted text #1"]} attachmentSel={0} />,
   );
-  assert.ok(frame.includes("[image: Pasted text #1]"), frame);
+  assert.ok(frame.includes("[Pasted text #1]"), frame);
   assert.ok(frame.includes("❯"), frame);
 });
