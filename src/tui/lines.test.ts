@@ -391,6 +391,25 @@ test("an [image] system note collapses onto the placeholder — no role label, n
   assert.equal(joined(lines).includes("/tmp/shot.png"), false);
 });
 
+test("a workflow completion report is folded in the transcript", () => {
+  const report = [
+    '[workflow done] "audit all handlers" (wf-1) — 2/2 agents succeeded.',
+    "Replay: not a relaunch — this run started fresh and journalled as it went.",
+    "Result:",
+    JSON.stringify({ findings: ["one", "two"] }, null, 2),
+  ].join("\n");
+  const m = msg({ id: "wf-note", role: "system", parts: [{ type: "text", text: report }] });
+  const collapsed = messageLines(m, CLOSED, CLOSED, 120);
+  const head = collapsed.find((l) => l.text.includes("audit all handlers"))!;
+  assert.ok(head.text.includes("▸") && head.text.includes("2/2 agents succeeded"), head.text);
+  assert.equal(joined(collapsed).includes('"findings"'), false);
+  assert.equal(head.click, "wf-note:workflow");
+
+  const expanded = messageLines(m, OPEN, CLOSED, 120);
+  assert.ok(joined(expanded).includes('"findings"'));
+  assert.ok(expanded.some((l) => l.text.includes("▾ workflow")));
+});
+
 // ---- system-note parsing ----------------------------------------------------
 
 const NOTE = (status: string, files: string, report: string | null) =>

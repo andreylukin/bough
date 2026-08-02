@@ -188,6 +188,45 @@ export function parseImageNote(text: string): { path: string; note?: string } | 
   return m ? { path: m[1], note: m[2]?.trim() || undefined } : null;
 }
 
+/** A workflow completion's full report is useful, but belongs behind a transcript fold. */
+export interface WorkflowNote {
+  status: "done" | "error" | "stopped";
+  name: string;
+  succeeded: string | null;
+}
+
+export function parseWorkflowNote(text: string): WorkflowNote | null {
+  const head = text.match(/^\[workflow (done|error|stopped)\] "(.*)" \([^)]+\) — ([\s\S]*)$/);
+  if (!head) return null;
+  const [, status, name, rest] = head;
+  return {
+    status: status as WorkflowNote["status"],
+    name,
+    succeeded: /^(\d+\/\d+ agents succeeded\.)/.exec(rest)?.[1] ?? null,
+  };
+}
+
+function workflowNoteLines(
+  out: VLine[], text: string, key: string, expanded: boolean, full: boolean, w: number,
+) {
+  const note = parseWorkflowNote(text)!;
+  const outcome = note.status === "done" ? accent("✓ finished")
+    : note.status === "error" ? danger("✗ failed") : warn("■ stopped");
+  const facts = [note.succeeded, "click to " + (expanded ? "collapse" : "expand")]
+    .filter(Boolean).join(" · ");
+  out.push({
+    text: `${expanded ? "▾" : "▸"} ${dim("workflow")} ${bold(note.name)} ${outcome}  ${dim(facts)}`,
+    click: key,
+  });
+  if (!expanded) return;
+  pushBlock(out, text, w, {
+    maxLines: full ? Infinity : OUTPUT_LINES,
+    style: dim,
+    click: key,
+    fullKey: `${key}!full`,
+  });
+}
+
 // ---- blocks -----------------------------------------------------------------
 
 /** Logical lines shown before "+N more" — the program, then its output. */
@@ -504,6 +543,18 @@ export function messageLines(
         copy: note.path,
       });
       return out;
+    }
+  }
+  // A completion note contains the workflow's whole returned report. Keep that input
+  // available to the model while presenting a compact, expandable transcript receipt.
+  if (msg.role === "system") {
+    const text = msg.parts.filter((p) => p.type === "text")
+      .map((p) => (p as { text: string }).text).join("\n");
+    if (parseWorkflowNote(text)) {
+      const key = `${msg.id}:workflow`;
+      out.push({ text: "" });
+      workflowNoteLines(out, text, key, isExpanded(key), isFull(key), w - 2);
+      return out.map((l) => (l.text ? { ...l, text: "  " + l.text, copy: text } : l));
     }
   }
   out.push({ text: "" });
