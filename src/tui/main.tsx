@@ -109,11 +109,22 @@ async function preflight(): Promise<void> {
 }
 
 /** Derive terminal chrome from store state; no terminal dependency enters the store. */
-function tabTitle(state: TuiState): string {
+function tabTitle(state: TuiState, spinnerFrame = 0): string {
   const session = state.session ?? state.sessions.find((row) => row.id === state.currentId) ?? null;
   const turn = state.turn?.sessionId === state.currentId ? state.turn : null;
-  return boughTitle(session?.title ?? null, turn ? turn.endedAt === null ? "running" : "complete" : null);
+  return boughTitle(
+    session?.title ?? null,
+    turn ? turn.endedAt === null ? "running" : "complete" : null,
+    spinnerFrame,
+  );
 }
+
+function tabTurnRunning(state: TuiState): boolean {
+  return state.turn?.sessionId === state.currentId && state.turn.endedAt === null;
+}
+
+/** The title moves slowly enough not to make terminal chrome noisy. */
+const TITLE_SPINNER_MS = 120;
 
 async function main() {
   // The command line is parsed BEFORE the terminal is taken, so a usage error is
@@ -306,11 +317,25 @@ async function main() {
   terminal.queryTermBg();
   store.start();
   let previousTabTitle = "";
+  let spinnerFrame = 0;
+  let spinnerTimer: ReturnType<typeof setInterval> | null = null;
   const updateTabTitle = (state: TuiState) => {
-    const title = tabTitle(state);
-    if (title === previousTabTitle) return;
-    previousTabTitle = title;
-    terminal.setTitle(title);
+    const title = tabTitle(state, spinnerFrame);
+    if (title !== previousTabTitle) {
+      previousTabTitle = title;
+      terminal.setTitle(title);
+    }
+    if (tabTurnRunning(state) === (spinnerTimer !== null)) return;
+    if (spinnerTimer !== null) {
+      clearInterval(spinnerTimer);
+      spinnerTimer = null;
+      return;
+    }
+    spinnerTimer = setInterval(() => {
+      spinnerFrame++;
+      updateTabTitle(store.getState());
+    }, TITLE_SPINNER_MS);
+    spinnerTimer.unref?.();
   };
   const unsubscribeTabTitle = store.subscribe(updateTabTitle);
   updateTabTitle(store.getState());
@@ -318,6 +343,7 @@ async function main() {
   try {
     await untilExit;
   } finally {
+    if (spinnerTimer !== null) clearInterval(spinnerTimer);
     unsubscribeTabTitle();
     await store.stop();
     leaveTui(() => terminal.cleanup());

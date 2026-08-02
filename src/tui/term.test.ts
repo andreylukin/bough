@@ -101,9 +101,10 @@ test("sanitize strips control bytes from titles and notification bodies", () => 
   assert.equal(sanitize("plain title"), "plain title");
 });
 
-test("bough title marks active and completed work", () => {
+test("bough title animates active work and marks completed work", () => {
   assert.equal(boughTitle(null, null), "bough");
-  assert.equal(boughTitle("Fix parser", "running"), "bough · Fix parser · running");
+  assert.equal(boughTitle("Fix parser", "running", 0), "bough · Fix parser · ⠋");
+  assert.equal(boughTitle("Fix parser", "running", 1), "bough · Fix parser · ⠙");
   assert.equal(boughTitle("Fix\x07 parser", "complete"), "bough · Fix  parser · complete");
 });
 

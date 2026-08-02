@@ -134,10 +134,18 @@ export function classifyBg(hex: string): { hex: string; scheme: "dark" | "light"
   return { hex, scheme: luma < 128 ? "dark" : "light" };
 }
 
-/** The compact title shared by the terminal window and zellij's tab bar. */
-export function boughTitle(session: string | null, status: "running" | "complete" | null): string {
+/** Frames for an active bough turn in a terminal or multiplexer tab. */
+export const TITLE_SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
+
+/** The compact title shared by the terminal window and multiplexer tab bars. */
+export function boughTitle(
+  session: string | null,
+  status: "running" | "complete" | null,
+  spinnerFrame = 0,
+): string {
   const label = sanitize(session ?? "").trim();
-  return ["bough", label, status].filter(Boolean).join(" · ");
+  const state = status === "running" ? TITLE_SPINNER[spinnerFrame % TITLE_SPINNER.length] : status;
+  return ["bough", label, state].filter(Boolean).join(" · ");
 }
 
 // ---------------------------------------------------------------------------
