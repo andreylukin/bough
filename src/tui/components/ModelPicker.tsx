@@ -133,14 +133,65 @@ export const SECTIONS: Record<Tier, { title: string; hint: string }> = {
   effort: { title: "thinking depth", hint: "not every model accepts one" },
 };
 
-/** The flat entry list: frontier catalog, cheap catalog, then the effort levels. */
+/**
+ * One search buffer per model tier.
+ *
+ * TWO BOXES AND NOT ONE, because the two tiers are searched for different things
+ * at the same time: picking a frontier model and picking a cheap one is a single
+ * decision about a pair, and a shared box made the second half of it erase the
+ * first. `haiku` typed to find a cheap model also hid every frontier row, so the
+ * ● that said what the supervisor runs on vanished mid-decision.
+ *
+ * The effort section has none: six fixed rows never need narrowing.
+ */
+export interface ModelFilters {
+  frontier: string;
+  cheap: string;
+}
+
+export const NO_FILTERS: ModelFilters = { frontier: "", cheap: "" };
+
+/** Which tier a row belongs to, for the tier whose box has the keyboard. */
+export type ModelTier = "frontier" | "cheap";
+
+/**
+ * The flat entry list: frontier catalog, cheap catalog, then the effort levels.
+ *
+ * `match` is injected rather than imported so the scoring stays one implementation
+ * (`format.ts`) and this file stays pure — the picker decides WHAT each box
+ * narrows, not how a query scores.
+ */
 export function modelEntries(
   catalog: readonly ModelRow[],
-  cheapCatalog: readonly ModelRow[] = catalog,
+  opts: {
+    cheapCatalog?: readonly ModelRow[];
+    filters?: ModelFilters;
+    /** Returns 0 for "no match"; higher is a better match. */
+    score?: (haystack: string, query: string) => number;
+  } = {},
 ): ModelEntry[] {
+  const cheapCatalog = opts.cheapCatalog ?? catalog;
+  const filters = opts.filters ?? NO_FILTERS;
+  const score = opts.score ??
+    ((h, q) => (h.toLowerCase().includes(q.toLowerCase()) ? 1 : 0));
+  const narrow = (rows: readonly ModelRow[], tier: ModelTier) => {
+    const q = filters[tier].trim();
+    const built = rows.map((m) => row(tier, m));
+    if (q === "") return built;
+    // RANKED, not just filtered. The catalog is hundreds of rows once a key is
+    // present, and a subsequence matcher says yes to a lot of them — "haiku"
+    // matches "Thinking Machines: Inkling Small" one scattered letter at a time.
+    // Unranked, the row you meant is real but buried; the search reads as broken.
+    // Ties keep catalog order (stable sort), so the curated rows stay on top.
+    return built
+      .map((e, i) => ({ e, i, s: score(`${e.label} ${e.detail}`, q) }))
+      .filter((x) => x.s > 0)
+      .sort((a, b) => b.s - a.s || a.i - b.i)
+      .map((x) => x.e);
+  };
   return [
-    ...catalog.map((m) => row("frontier", m)),
-    ...cheapCatalog.map((m) => row("cheap", m)),
+    ...narrow(catalog, "frontier"),
+    ...narrow(cheapCatalog, "cheap"),
     ...EFFORTS.map((e) => ({
       tier: "effort" as const,
       id: e,
@@ -205,10 +256,15 @@ export function chooseEntry(cfg: ModelConfig, e: ModelEntry): ModelConfig {
 export const CHEAP_UNSET =
   "(unset) — no cheap model is known for this install; pick a row to set one";
 
+/** Shown in a section whose own search box matched nothing. */
+export const NO_MATCH = "nothing in this section matches — ⌫ to widen the search";
+
 export type DisplayRow =
   | { header: Tier }
   /** A section's explanation, on its own row so the window height counts it. */
   | { hint: string }
+  /** A tier's search box. `focused` = this is the one `/` is typing into. */
+  | { search: ModelTier; query: string; focused: boolean }
   | { entry: ModelEntry; index: number }
   | { note: string };
 
@@ -221,19 +277,35 @@ export type DisplayRow =
  */
 export function displayRows(
   entries: readonly ModelEntry[],
-  opts: { cheapUnset?: boolean } = {},
+  opts: {
+    cheapUnset?: boolean;
+    filters?: ModelFilters;
+    /** The tier whose box has the keyboard, or null when nothing is being typed. */
+    focused?: ModelTier | null;
+  } = {},
 ): DisplayRow[] {
+  const filters = opts.filters ?? NO_FILTERS;
   const out: DisplayRow[] = [];
-  let last: Tier | null = null;
-  entries.forEach((entry, index) => {
-    if (entry.tier !== last) {
-      out.push({ header: entry.tier });
-      out.push({ hint: SECTIONS[entry.tier].hint });
-      if (entry.tier === "cheap" && opts.cheapUnset) out.push({ note: CHEAP_UNSET });
+  const indexOf = new Map<ModelEntry, number>();
+  entries.forEach((e, i) => indexOf.set(e, i));
+
+  // Built section by section rather than by walking the entries, so a tier whose
+  // search matched NOTHING still gets its header and its box. Walking entries
+  // meant an empty section rendered as nothing at all — and since the box lives
+  // in the section, the box you were typing into vanished at the first
+  // non-matching character, taking the keyboard's target off the screen with it.
+  for (const tier of ["frontier", "cheap", "effort"] as const) {
+    const rows = entries.filter((e) => e.tier === tier);
+    if (tier === "effort" && rows.length === 0) continue;
+    out.push({ header: tier });
+    out.push({ hint: SECTIONS[tier].hint });
+    if (tier !== "effort") {
+      out.push({ search: tier, query: filters[tier], focused: opts.focused === tier });
     }
-    last = entry.tier;
-    out.push({ entry, index });
-  });
+    if (tier === "cheap" && opts.cheapUnset) out.push({ note: CHEAP_UNSET });
+    if (tier !== "effort" && rows.length === 0) out.push({ note: NO_MATCH });
+    for (const entry of rows) out.push({ entry, index: indexOf.get(entry)! });
+  }
   return out;
 }
 
@@ -245,9 +317,10 @@ export interface ModelPickerProps {
   selected: number;
   rows: number;
   message?: string | null;
-  /** The `/` filter buffer. Narrowing happens in `PanelHost`; this only draws it. */
-  filter?: string;
-  filtering?: boolean;
+  /** Both search buffers. Narrowing happens in `modelEntries`; this only draws them. */
+  filters?: ModelFilters;
+  /** Which box has the keyboard, or null when neither does. */
+  focused?: ModelTier | null;
 }
 
 /**
@@ -290,11 +363,17 @@ export function visibleEntries(display: readonly DisplayRow[], start: number, en
 }
 
 export function ModelPicker(
-  { cfg, entries, selected, rows, message, filter = "", filtering = false, cols }:
+  { cfg, entries, selected, rows, message, filters = NO_FILTERS, focused = null, cols }:
     ModelPickerProps,
 ) {
-  const display = displayRows(entries, { cheapUnset: cfg.cheapModel === null });
-  const chrome = (message ? 1 : 0) + (filtering || filter ? 1 : 0);
+  const display = displayRows(entries, {
+    cheapUnset: cfg.cheapModel === null,
+    filters,
+    focused,
+  });
+  // The search boxes are DisplayRows now, so the window already counts them —
+  // only the message is chrome outside the list.
+  const chrome = message ? 1 : 0;
   const { start, end, height, marks } = modelWindow(display, selected, rows, chrome);
   // The entry ordinal within the window, so the digits run 1,2,3… down the entries
   // even where a section header sits between two of them.
@@ -304,22 +383,22 @@ export function ModelPicker(
       {message
         ? <text fg={palette.warn} wrapMode="none">{message}</text>
         : null}
-      {filtering
-        ? (
-          <text>
-            <span fg={palette.accent}>{"/ "}</span>
-            {filter}
-            <span fg="black" bg={palette.accent}>{" "}</span>
-          </text>
-        )
-        : filter
-        ? <text attributes={TextAttributes.DIM}>/ {filter}</text>
-        : null}
-      {height > 0 && display.length === 0
-        ? <text attributes={TextAttributes.DIM}>nothing matches that filter</text>
-        : null}
-
       {(height === 0 ? [] : display.slice(start, end)).map((d) => {
+        if ("search" in d) {
+          // The box is drawn where it applies — under its own section's heading —
+          // so which list a query narrows is a fact about the screen and not
+          // something the user has to remember.
+          return (
+            <text key={`search-${d.search}`} wrapMode="none">
+              <span attributes={TextAttributes.DIM}>{"  "}</span>
+              <span fg={d.focused ? palette.accent : undefined}>{"search "}</span>
+              <span attributes={d.focused ? TextAttributes.NONE : TextAttributes.DIM}>
+                {clip(d.query, 40) || (d.focused ? "" : "—")}
+              </span>
+              {d.focused ? <span fg="black" bg={palette.accent}>{" "}</span> : null}
+            </text>
+          );
+        }
         if ("hint" in d) {
           return (
             <text key={`hint-${d.hint.slice(0, 12)}`} attributes={TextAttributes.DIM} wrapMode="none">
@@ -329,7 +408,7 @@ export function ModelPicker(
         }
         if ("note" in d) {
           return (
-            <text key="cheap-unset" wrapMode="none">
+            <text key={`note-${d.note.slice(0, 12)}`} wrapMode="none">
               <span>{"    "}</span>
               <span fg={palette.accent}>●</span>
               <span attributes={TextAttributes.DIM}>{" "}{clip(d.note, 88)}</span>
@@ -381,9 +460,9 @@ export function ModelPicker(
         : null}
       {/* The legend is the LAST row, on every tab, naming only bound keys. */}
       <text attributes={TextAttributes.DIM} wrapMode="none">
-        {filtering
-          ? "type to narrow · ⌫ back · esc clear the filter · ↑↓ move · ⏎ choose"
-          : "↑↓ move · pgup/pgdn page · 1-9 pick · / filter · ⏎ choose · esc back"}
+        {focused
+          ? `narrowing ${focused} · tab other box · ⌫ back · esc clear · ↑↓ move · ⏎`
+          : "↑↓ move · pgup/pgdn page · 1-9 pick · / search this section · ⏎ choose · esc back"}
       </text>
     </box>
   );

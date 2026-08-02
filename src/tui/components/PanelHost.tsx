@@ -72,6 +72,9 @@ import {
   isActive,
   type ModelConfig,
   modelEntries,
+  type ModelFilters,
+  type ModelTier,
+  NO_FILTERS,
   modelWindow,
   visibleEntries,
 } from "./ModelPicker.tsx";
@@ -396,6 +399,14 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
   const [filtering, setFiltering] = useState(false);
   const [filter, setFilter] = useState("");
   /**
+   * The model tab searches PER TIER — see `ModelFilters`. `modelTier` is which box
+   * `/` opened, and it is sticky for the life of the search rather than re-derived
+   * from the cursor: narrowing moves the cursor, so a target read from it would
+   * hop to the other section mid-word and split the query across both boxes.
+   */
+  const [modelFilters, setModelFilters] = useState<ModelFilters>(NO_FILTERS);
+  const [modelTier, setModelTier] = useState<ModelTier | null>(null);
+  /**
    * Conversations whose MESSAGES match the tree's `/` filter.
    *
    * The keymap has always said `/` "in the tree, searches every message", and the `not
@@ -499,11 +510,14 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
   treeRef.current = tree;
   const threads = deps.forest.threads;
   const changes = useMemo(() => changeItems(state.changes), [state.changes]);
-  const entries = useMemo(() => {
-    const all = modelEntries(models);
-    if (panel.tab !== "model" || filter.trim() === "") return all;
-    return all.filter((e) => fuzzyScore(`${e.label} ${e.detail}`, filter.trim()) > 0);
-  }, [models, panel.tab, filter]);
+  const entries = useMemo(
+    () =>
+      modelEntries(models, {
+        filters: panel.tab === "model" ? modelFilters : NO_FILTERS,
+        score: fuzzyScore,
+      }),
+    [models, panel.tab, modelFilters],
+  );
   // Same reason as `treeRef`: the tab-arrival effect runs before the render that would
   // rebuild these, and it needs the CURRENT rows to find the one already in force.
   const entriesRef = useRef(entries);
@@ -1273,9 +1287,14 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
    */
   const filterInput = useCallback((text: string) => {
     if (!filtering) return;
+    if (modelTier) {
+      setModelFilters((f) => ({ ...f, [modelTier]: f[modelTier] + text }));
+      setSel(0);
+      return;
+    }
     setFilter((f) => f + text);
     setSel(0);
-  }, [filtering]);
+  }, [filtering, modelTier]);
 
   /** Move the cursor and disarm anything read against the row it was on. */
   const moveTo = useCallback((next: number) => {
@@ -1531,9 +1550,24 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
       case "panel.filter":
         setEntryKind("filter");
         setFiltering(true);
+        if (panel.tab === "model") {
+          // The box under the section the cursor is in. An effort row has no box
+          // of its own, so it opens the frontier one — the list above it.
+          const at = entriesRef.current[sel]?.tier;
+          setModelTier(at === "cheap" ? "cheap" : "frontier");
+        }
+        return true;
+      case "panel.filterTier":
+        // Both queries survive; only the keyboard moves.
+        setModelTier((t) => (t === "cheap" ? "frontier" : "cheap"));
+        setSel(0);
         return true;
       case "panel.filterBack":
-        setFilter((f) => f.slice(0, -1));
+        if (panel.tab === "model" && modelTier) {
+          setModelFilters((f) => ({ ...f, [modelTier]: f[modelTier].slice(0, -1) }));
+        } else {
+          setFilter((f) => f.slice(0, -1));
+        }
         setSel(0);
         return true;
       case "panel.filterExit":
@@ -1547,6 +1581,10 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
         // Parked by ID because the widened list renumbers every index.
         landOnId.current = tree[sel]?.id ?? null;
         setFiltering(false);
+        if (panel.tab === "model" && modelTier) {
+          setModelFilters((f) => ({ ...f, [modelTier]: "" }));
+          setModelTier(null);
+        }
         setFilter("");
         setEntryKind("filter");
         setSel(0);
@@ -1862,7 +1900,15 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
           message,
           pending: pendingRevert,
         }}
-        model={{ cfg: modelCfg, entries, selected: sel, rows: body, message, filter, filtering }}
+        model={{
+          cfg: modelCfg,
+          entries,
+          selected: sel,
+          rows: body,
+          message,
+          filters: modelFilters,
+          focused: modelTier,
+        }}
         mcp={{
           status: mcp,
           selected: sel,

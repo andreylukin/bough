@@ -25,13 +25,16 @@ import { LlmError } from "../errors.ts";
 import type { LlmClient, LlmParams, LlmResult, LlmToolDef } from "../types.ts";
 import { catalogKeys } from "./pricing.ts";
 import {
-  anthropicSystemBlocks,
   API_KEY_ENV,
+  MODELS,
+  anthropicSystemBlocks,
   clientFor,
   completeText,
+  discoverAnthropicModels,
+  discoverModels,
   discoverOpenAIModels,
+  discoverOpenRouterModels,
   effortParams,
-  type Env,
   errName,
   filterOpenAIModels,
   fromResponsesOutput,
@@ -39,15 +42,15 @@ import {
   isToolProtocol400,
   joinedSystem,
   mergeModels,
-  type ModelRow,
-  MODELS,
   openaiClient,
   openrouterClient,
-  type Provider,
   providerFor,
   toApiMessage,
   toOpenAIMessages,
   toResponsesInput,
+  type Env,
+  type ModelRow,
+  type Provider,
   withPricing,
   withRetries,
 } from "./client.ts";
@@ -827,4 +830,84 @@ test("discoverOpenAIModels: a good response maps into picker rows", async () => 
   const rows = await discoverOpenAIModels({ env: keyed, fetch: f });
   deepStrictEqual(rows, [{ id: "openai:gpt-5", label: "gpt-5 (OpenAI)", provider: "openai" }]);
   strictEqual(requests[0].url, "https://api.openai.com/v1/models");
+});
+
+// ---- discovery: the other two providers -------------------------------------
+
+const okJson = (body: unknown): typeof fetch =>
+  (async () => new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch;
+
+test("discoverAnthropicModels: display_name becomes the label, ids stay bare", async () => {
+  // Bare ids are what `providerFor` routes to Anthropic, so nothing is prefixed.
+  const rows = await discoverAnthropicModels({
+    env: (k) => (k === "ANTHROPIC_API_KEY" ? "sk-test" : undefined),
+    fetch: okJson({
+      data: [
+        { id: "claude-opus-4-7", display_name: "Claude Opus 4.7" },
+        { id: "claude-weird" },
+      ],
+    }),
+  });
+  deepStrictEqual(rows, [
+    { id: "claude-opus-4-7", label: "Claude Opus 4.7", provider: "anthropic" },
+    // No display_name: the id is a better label than an invented one.
+    { id: "claude-weird", label: "claude-weird", provider: "anthropic" },
+  ]);
+  for (const r of rows) strictEqual(providerFor(r.id), "anthropic");
+});
+
+test("discoverAnthropicModels: no key means no rows, and no request", async () => {
+  let called = false;
+  const rows = await discoverAnthropicModels({
+    env: () => undefined,
+    fetch: (() => {
+      called = true;
+      throw new Error("must not be called");
+    }) as unknown as typeof fetch,
+  });
+  deepStrictEqual(rows, []);
+  strictEqual(called, false);
+});
+
+test("discoverOpenRouterModels: asks WITHOUT a key — its catalog is public", async () => {
+  // The one provider whose list is worth showing to someone who has not signed up.
+  const rows = await discoverOpenRouterModels({
+    env: () => undefined,
+    fetch: okJson({ data: [{ id: "vendor/model", name: "Vendor: Model" }] }),
+  });
+  deepStrictEqual(rows, [
+    { id: "vendor/model", label: "Vendor: Model", provider: "openrouter" },
+  ]);
+  strictEqual(providerFor(rows[0].id), "openrouter");
+});
+
+/** Keys only — a blanket stub would also answer `*_API_BASE` and rewrite the URLs. */
+const keysOnly = (k: string) => (k.endsWith("_API_KEY") ? "sk-test" : undefined);
+
+test("discovery never throws: a non-2xx, a bad body and a dead socket all yield []", async () => {
+  const env = keysOnly;
+  const dead = (() => {
+    throw new TypeError("network");
+  }) as unknown as typeof fetch;
+  const notOk = (async () => new Response("nope", { status: 500 })) as unknown as typeof fetch;
+  const garbage = (async () => new Response("<html>", { status: 200 })) as unknown as typeof fetch;
+  for (const fetch of [dead, notOk, garbage]) {
+    deepStrictEqual(await discoverAnthropicModels({ env, fetch }), []);
+    deepStrictEqual(await discoverOpenRouterModels({ env, fetch }), []);
+    deepStrictEqual(await discoverOpenAIModels({ env, fetch }), []);
+  }
+});
+
+test("discoverModels: one provider failing does not cost the others their rows", async () => {
+  // The reason this is `allSettled` and not `all`.
+  const stub = (async (url: string | URL | Request) => {
+    const href = String(url);
+    if (href.includes("anthropic")) throw new TypeError("anthropic is down");
+    if (href.includes("openrouter")) {
+      return new Response(JSON.stringify({ data: [{ id: "v/m", name: "V M" }] }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ data: [{ id: "gpt-5" }] }), { status: 200 });
+  }) as unknown as typeof fetch;
+  const rows = await discoverModels({ env: keysOnly, fetch: stub });
+  deepStrictEqual(rows.map((r) => r.id).sort(), ["openai:gpt-5", "v/m"]);
 });

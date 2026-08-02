@@ -103,6 +103,15 @@ export type Command =
   /** `/` — hand the keyboard to the filter buffer. Guarded OFF while it has it. */
   | "panel.filter"
   | "panel.filterBack"
+  /**
+   * Move the keyboard to the model tab's OTHER search box, keeping both queries.
+   *
+   * The model tab has two boxes (`ModelPicker.tsx`) and `/` is an ordinary
+   * character once a box has the keyboard, so without this the only way to reach
+   * the second box was `esc` — which clears the first. Two boxes you cannot hold
+   * at once are one box with extra steps.
+   */
+  | "panel.filterTier"
   /** Clear the buffer and give the keyboard back. The panel stays open. */
   | "panel.filterExit"
   /** One per tab, derived from `TABS` so a tab cannot exist without a chord. */
@@ -1097,6 +1106,19 @@ export const BINDINGS: Binding[] = [
     desc: "a screenful at a time",
   },
   { mode: "panel", chord: "pagedown", command: "move.pageDown" },
+  {
+    mode: "panel",
+    chord: "tab",
+    command: "panel.filterTier",
+    tab: ["model"],
+    when: ["panelFiltering"],
+    section: "inside the panel",
+    desc: "switch between the frontier and cheap search boxes",
+  },
+  // AHEAD of `panel.next` on purpose: while a search box has the keyboard, ⇥
+  // belongs to the box, not to the tab bar. Same rule esc already follows here —
+  // the nearest surface gets the key, and the outer one gets it back the moment
+  // that surface closes.
   {
     mode: "panel",
     chord: "tab",

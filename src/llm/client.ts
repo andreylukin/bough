@@ -979,6 +979,38 @@ export function filterOpenAIModels(ids: string[]): ModelRow[] {
     .map((id) => ({ id: `openai:${id}`, label: `${id} (OpenAI)`, provider: "openai" as const }));
 }
 
+/** Static table first, discovered entries after, deduped by id. */
+export function mergeModels(staticModels: ModelRow[], dynamic: ModelRow[]): ModelRow[] {
+  const seen = new Set(staticModels.map((m) => m.id));
+  return [...staticModels, ...dynamic.filter((m) => !seen.has(m.id))];
+}
+
+/**
+ * One GET, parsed as `{data: [...]}`, or an empty list.
+ *
+ * Every provider's model endpoint answers that shape, so the differences that
+ * remain are the URL, the auth header, and how a row becomes a `ModelRow` — which
+ * is exactly what each caller passes in. Sharing the failure policy matters more
+ * than sharing the shape: discovery is a picker nicety, so **no key, a bad key, a
+ * rate limit or an offline machine all mean "no extra rows"**, never a thrown
+ * error, and never a slow boot (`server/models.ts` races this against a deadline).
+ */
+async function fetchModelList<T>(
+  url: string,
+  headers: Record<string, string>,
+  doFetch: typeof fetch,
+  map: (rows: T[]) => ModelRow[],
+): Promise<ModelRow[]> {
+  try {
+    const res = await doFetch(url, { headers, signal: AbortSignal.timeout(10_000) });
+    if (!res.ok) return [];
+    const body = await res.json() as { data?: T[] };
+    return map(body.data ?? []);
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Ask OpenAI what it offers, for the picker. **Never throws and never caches**: no
  * key, a bad key or an offline machine simply yields an empty list and the static
@@ -987,27 +1019,92 @@ export function filterOpenAIModels(ids: string[]): ModelRow[] {
  */
 export async function discoverOpenAIModels(opts: ProviderOpts = {}): Promise<ModelRow[]> {
   const env = opts.env ?? processEnv;
-  const doFetch = opts.fetch ?? fetch;
   const key = env(API_KEY_ENV.openai)?.trim();
   if (!key) return [];
   const base = env("OPENAI_API_BASE") ?? "https://api.openai.com";
-  try {
-    const res = await doFetch(`${base}/v1/models`, {
-      headers: { authorization: `Bearer ${key}` },
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!res.ok) return [];
-    const body = await res.json() as { data?: { id?: unknown }[] };
-    return filterOpenAIModels(
-      (body.data ?? []).map((m) => m.id).filter((id): id is string => typeof id === "string"),
-    );
-  } catch {
-    return [];
-  }
+  return fetchModelList<{ id?: unknown }>(
+    `${base}/v1/models`,
+    { authorization: `Bearer ${key}` },
+    opts.fetch ?? fetch,
+    (rows) =>
+      filterOpenAIModels(
+        rows.map((m) => m.id).filter((id): id is string => typeof id === "string"),
+      ),
+  );
 }
 
-/** Static table first, discovered entries after, deduped by id. */
-export function mergeModels(staticModels: ModelRow[], dynamic: ModelRow[]): ModelRow[] {
-  const seen = new Set(staticModels.map((m) => m.id));
-  return [...staticModels, ...dynamic.filter((m) => !seen.has(m.id))];
+/**
+ * Ask Anthropic what it offers. Same failure policy as the OpenAI path.
+ *
+ * `display_name` is used verbatim when present — the API already names its models
+ * the way a human would ("Claude Opus 4.8"), so inventing a label here would be a
+ * second naming scheme to keep in sync with theirs. Ids are bare, which is what
+ * `providerFor` routes to Anthropic, so nothing is prefixed.
+ */
+export async function discoverAnthropicModels(opts: ProviderOpts = {}): Promise<ModelRow[]> {
+  const env = opts.env ?? processEnv;
+  const key = env(API_KEY_ENV.anthropic)?.trim();
+  if (!key) return [];
+  const base = env("ANTHROPIC_API_BASE") ?? "https://api.anthropic.com";
+  return fetchModelList<{ id?: unknown; display_name?: unknown }>(
+    `${base}/v1/models?limit=1000`,
+    { "x-api-key": key, "anthropic-version": "2023-06-01" },
+    opts.fetch ?? fetch,
+    (rows) =>
+      rows.flatMap((m) =>
+        typeof m.id === "string"
+          ? [{
+            id: m.id,
+            label: typeof m.display_name === "string" && m.display_name ? m.display_name : m.id,
+            provider: "anthropic" as const,
+          }]
+          : []
+      ),
+  );
+}
+
+/**
+ * Ask OpenRouter what it offers.
+ *
+ * The one provider whose catalog is PUBLIC — `/api/v1/models` answers without a
+ * key. The key is still sent when there is one (it scopes the list to what the
+ * account can actually reach), but its absence is not a reason to skip the call:
+ * a user deciding whether to add an OpenRouter key is better served by seeing what
+ * they would get. This is also the list that makes a search box necessary rather
+ * than a nicety — it is hundreds of rows, where the others are tens.
+ */
+export async function discoverOpenRouterModels(opts: ProviderOpts = {}): Promise<ModelRow[]> {
+  const env = opts.env ?? processEnv;
+  const key = env(API_KEY_ENV.openrouter)?.trim();
+  const base = env("OPENROUTER_API_BASE") ?? "https://openrouter.ai/api";
+  return fetchModelList<{ id?: unknown; name?: unknown }>(
+    `${base}/v1/models`,
+    key ? { authorization: `Bearer ${key}` } : {},
+    opts.fetch ?? fetch,
+    (rows) =>
+      rows.flatMap((m) =>
+        typeof m.id === "string"
+          ? [{
+            id: m.id,
+            label: typeof m.name === "string" && m.name ? m.name : m.id,
+            provider: "openrouter" as const,
+          }]
+          : []
+      ),
+  );
+}
+
+/**
+ * Every provider at once. **Concurrent and independently fallible**: one provider
+ * being down, keyless or slow must not cost the others their rows, which is what
+ * `allSettled` buys over `all` — and each discovery already resolves to `[]` rather
+ * than rejecting, so the settled check is the belt to that braces.
+ */
+export async function discoverModels(opts: ProviderOpts = {}): Promise<ModelRow[]> {
+  const results = await Promise.allSettled([
+    discoverAnthropicModels(opts),
+    discoverOpenAIModels(opts),
+    discoverOpenRouterModels(opts),
+  ]);
+  return results.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
 }

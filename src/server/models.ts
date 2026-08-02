@@ -17,18 +17,13 @@
  *
  * NEVER SLOWER THAN THE TERMINAL IT BLOCKS. The TUI awaits this before the first
  * frame (the precedent is the theme fetch), and `discoverOpenAIModels` allows itself
- * ten seconds, so a hung `api.openai.com` would be ten seconds of blank terminal.
+ * ten seconds, so a hung provider would be ten seconds of blank terminal.
  * A caller waits `deadlineMs` and no longer: past it the request is answered from the
  * static table, the discovery it started keeps running, and the NEXT ask — the next
  * TUI launch, or the next time the tab is opened — is served from the warm cache.
  * The list arriving one launch late is a cost nobody notices; a boot that hangs is.
  */
-import {
-  discoverOpenAIModels,
-  mergeModels,
-  type ModelRow,
-  MODELS,
-} from "../llm/client.ts";
+import { discoverModels, mergeModels, type ModelRow, MODELS } from "../llm/client.ts";
 import { type Handler, json } from "./http.ts";
 
 /** What `GET /models` answers. An envelope, so a later field is not a breaking change. */
@@ -36,7 +31,7 @@ export interface ModelCatalog {
   models: ModelRow[];
 }
 
-/** How long a discovered list is trusted. Model lists change on OpenAI's schedule, not ours. */
+/** How long a discovered list is trusted. Model lists change on the providers' schedule, not ours. */
 const TTL_MS = 10 * 60_000;
 
 /** How long a request waits on a cold discovery before answering without it. */
@@ -66,13 +61,13 @@ export function resetModelCatalog(): void {
  * answer, which is a rate limit waiting for a busy morning.
  */
 export async function modelCatalog(
-  opts: { now?: () => number; deadlineMs?: number; discover?: typeof discoverOpenAIModels } = {},
+  opts: { now?: () => number; deadlineMs?: number; discover?: typeof discoverModels } = {},
 ): Promise<ModelRow[]> {
   const now = opts.now ?? Date.now;
-  const discover = opts.discover ?? discoverOpenAIModels;
+  const discover = opts.discover ?? discoverModels;
   if (cached && now() - cached.at < TTL_MS) return mergeModels(MODELS, cached.rows);
 
-  // `discoverOpenAIModels` documents that it never throws; the catch is here because
+  // `discoverModels` documents that it never throws; the catch is here because
   // an unhandled rejection on a module-level promise would take the server down over a
   // model list, which is the one outcome worse than an incomplete picker.
   inflight ??= discover()
