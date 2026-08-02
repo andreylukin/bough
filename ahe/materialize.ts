@@ -19,7 +19,7 @@
  * failing repeatedly is evidence about `patch-grammar.md`, and without this file the
  * analyzer can only say "the agent struggled with editing".
  */
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { HOST_FN_NAMES } from "../src/harness/protocol.ts";
 import { manifestPath, tracePath } from "../src/llm/trace.ts";
@@ -162,6 +162,12 @@ export function materialize(row: TrialRow, dest: string): TurnManifest | null {
   const prompts = lines.filter((l) => l["type"] === "prompt");
   const rounds = lines.filter((l) => l["type"] === "round") as unknown as RoundRecord[];
 
+  // Clear first. Re-running a sweep reuses (task, trial, iteration), so a shorter
+  // second trial would otherwise inherit the tail of a longer first one — stale
+  // round-NNN.md files that read exactly like this trial's own later rounds. That
+  // cost an hour: a trial that died at round 3 appeared to have written its answer
+  // in round 4, and the verifier looked like the thing that was wrong.
+  rmSync(dest, { recursive: true, force: true });
   mkdirSync(join(dest, "rounds"), { recursive: true });
   writeFileSync(join(dest, "manifest.json"), JSON.stringify(manifest, null, 2));
   writeFileSync(join(dest, "reward.txt"), `${row.pass ? "PASS" : "FAIL"}\n${row.failReason ?? ""}\n`);
