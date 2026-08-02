@@ -967,13 +967,42 @@ export function usePanelHost(deps: PanelHostDeps): PanelHandle {
         continue; // a blip mid-flow is not a failed flow
       }
       if (ok) {
-        setMessage(`${name} is authorized — ⏎ grants it in every conversation`);
+        // CONNECT, do not just say "authorized". The row's glyph is painted from
+        // `status.connections` — `●` means a live connection, `◐` means granted but
+        // not connected — so storing tokens moves nothing on screen. Every report of
+        // "I authorized it and it stays a half circle" is this: the flow succeeded
+        // and its result was invisible, because the last step nobody performed was
+        // the one that proves it. Connecting is not granting (`mcp/status.ts`), so
+        // this changes no permission; it just finishes what `a` started.
+        setMessage(`${name} is authorized — connecting…`);
+        await refreshMcp();
+        if (!controls.connectMcpServer) {
+          setMessage(`${name} is authorized — press c to connect · ⏎ grants it`);
+          return;
+        }
+        try {
+          const r = await controls.connectMcpServer(name, state.currentId ?? "");
+          const tools = r.tools ?? [];
+          setMessage(
+            r.connected
+              ? `${name} authorized and connected · ${tools.length} tool${
+                tools.length === 1 ? "" : "s"
+              } · ⏎ grants it in every conversation`
+              : `${name} is authorized but did not connect — ${r.error ?? "no reason given"}`,
+          );
+        } catch (e) {
+          setMessage(
+            `${name} is authorized, but connecting failed — ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          );
+        }
         await refreshMcp();
         return;
       }
     }
     setMessage(`${name}: still waiting on the browser — press a to start over`);
-  }, [controls, refreshMcp]);
+  }, [controls, refreshMcp, state.currentId]);
 
   /**
    * Page the FOCUSED diff, when there is one. Returns whether it consumed the key.

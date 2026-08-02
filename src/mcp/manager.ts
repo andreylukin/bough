@@ -74,7 +74,46 @@ import {
   requireServer,
   type ServerConfig,
 } from "./config.ts";
+import { hasTokens } from "./oauth.ts";
 import { McpRemoteClient } from "./remote.ts";
+
+/**
+ * The entry's static headers, or none when they cannot be resolved AND bough has
+ * its own way in.
+ *
+ * WHY AN UNRESOLVABLE HEADER IS NOT ALWAYS FATAL. `sync-mcp` writes
+ * `Authorization: Bearer ${keychain:…}` pointing at a grant another client holds.
+ * That grant can go dead — the other client stops refreshing it, or leaves the
+ * entry behind with an empty token — and `expandHeaders` then throws. Thrown from
+ * here it killed the connection before the transport existed, so the OAuth provider
+ * was never built and a token bough had stored ITSELF was never tried. The visible
+ * symptom was the one that makes no sense to the user: authorize the server, watch
+ * it succeed, and watch the row stay `◐` forever, because the thing failing was a
+ * header nobody had been told about.
+ *
+ * So: if bough holds tokens for this server, a dead reference is stale baggage and
+ * is dropped. If it does not, the reference IS the intended credential and its
+ * failure is the honest answer — it names the item and says what to do, which is
+ * strictly better than a 401 from the endpoint.
+ *
+ * Only the resolution is guarded. A header that resolves is sent unchanged.
+ */
+async function staticHeaders(
+  name: string,
+  server: ServerConfig,
+  config: McpConfigOptions,
+): Promise<Record<string, string> | undefined> {
+  if (Object.keys(server.headers).length === 0) return undefined;
+  try {
+    return await expandHeaders(server.headers, config);
+  } catch (error) {
+    // The default token directory, which is the one `defaultConnector` also lets
+    // `McpRemoteClient` build its provider against — asking a different store than
+    // the one that will be used would answer the wrong question.
+    if (!hasTokens(name)) throw error;
+    return undefined;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Shapes
@@ -549,9 +588,7 @@ export const defaultConnector: Connector = async ({ name, server, spawn, config,
       // Expanded HERE, not at load: a `${VAR}` or `${keychain:…}` reference is
       // resolved at the moment it is sent, so the secret never enters the registry
       // document, the `GET /mcp/servers` body, or the `/mcp` panel (`config.ts`).
-      ...(Object.keys(server.headers).length > 0
-        ? { headers: await expandHeaders(server.headers, config ?? {}) }
-        : {}),
+      ...(await staticHeaders(name, server, config ?? {}).then((h) => h ? { headers: h } : {})),
       ...(timeouts ? { timeouts } : {}),
     });
   }

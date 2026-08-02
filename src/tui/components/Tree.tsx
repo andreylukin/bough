@@ -126,11 +126,17 @@ export function forestWindow(
   rows: number,
   chrome = 0,
 ): { start: number; height: number } {
-  // One row of chrome: the legend, and it goes LAST. It used to be the tab's FIRST
-  // row — the only tab that put it there — and the budget reserved four rows for it
-  // while flooring the list at three, so a short panel painted rows it did not have
-  // and OpenTUI shrank them onto each other (`Panel.tsx`).
-  const height = Math.max(0, rows - 1 - chrome);
+  // TWO rows of chrome, and they go LAST: the mark legend, then the key legend. The
+  // count is FIXED rather than conditional on what is on screen, because both this
+  // and `PanelHost` compute the window and a reservation that depends on the rows
+  // being windowed is a reservation the two can disagree about.
+  //
+  // The legend used to be the tab's FIRST row — the only tab that put it there — and
+  // the budget reserved four rows for it while flooring the list at three, so a short
+  // panel painted rows it did not have and OpenTUI shrank them onto each other
+  // (`Panel.tsx`). Keep these two numbers equal to the number of <text> rows after
+  // the list below.
+  const height = Math.max(0, rows - 2 - chrome);
   const { start, end } = windowAround(selected, count, height);
   const from = Math.max(0, start);
   return { start: from, height: Math.max(0, end - from) };
@@ -165,6 +171,48 @@ export interface TreeProps {
    * both computed a sentence and dropped it, and the key looked simply dead.
    */
   message?: string | null;
+}
+
+/**
+ * What the marks ON SCREEN mean, in the order the eye meets them.
+ *
+ * The six kind glyphs and four status marks decide how every row reads, and until
+ * now they were explained in exactly one place: the `?` overlay, fifty rows deep,
+ * which is not where anybody is when they are looking at the tree and wondering what
+ * `⑂` is. A legend at the point of confusion is the whole fix.
+ *
+ * Only marks PRESENT in the given rows are described. A static legend would spend
+ * scarce columns on `≣ compaction` for the many users who have never made one, and
+ * `legendLine` would then drop the entries that were actually on screen.
+ */
+export function markLegend(rows: readonly ForestRow[]): string[] {
+  const kinds = new Map<string, string>([
+    ["●", "yours"],
+    [DERIVED_ROOT, "handoff"],
+    ["⑂", "fork"],
+    ["≣", "compaction"],
+    ["◆", "subagent"],
+  ]);
+  const statuses = new Map<string, string>([
+    ["⋯", "running"],
+    ["✓", "done"],
+    ["✗", "failed"],
+    ["◼", "stopped"],
+  ]);
+  const seenKind = new Set<string>();
+  const seenStatus = new Set<string>();
+  // Only `session` rows carry marks — a section caption and a turn row do not, and
+  // narrowing here rather than at the call site keeps the union check in one place.
+  for (const r of rows) {
+    if (r.kind !== "session") continue;
+    seenKind.add(kindGlyph(r.session));
+    const m = statusMark(r.session, r.busyBelow);
+    if (m) seenStatus.add(m.glyph);
+  }
+  const out: string[] = [];
+  for (const [g, label] of kinds) if (seenKind.has(g)) out.push(`${g} ${label}`);
+  for (const [g, label] of statuses) if (seenStatus.has(g)) out.push(`${g} ${label}`);
+  return out;
 }
 
 export function Tree(
@@ -282,6 +330,11 @@ export function Tree(
           </text>
         );
       })}
+      {/* The marks first, then the keys: the glyphs are what the reader is looking
+          at, and the keys are what they do next. */}
+      <text attributes={TextAttributes.DIM} wrapMode="none">
+        {legendLine(markLegend(window), cols)}
+      </text>
       <text attributes={TextAttributes.DIM} wrapMode="none">
         {legendLine([
           ...(items.length > shown ? [`${selected + 1}/${items.length}`] : []),

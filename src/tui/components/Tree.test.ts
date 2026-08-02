@@ -12,7 +12,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import type { SessionKind } from "../../schema/parts.ts";
 import type { SessionRow } from "../api.ts";
-import { kindGlyph, statusMark, titleOf, Tree } from "./Tree.tsx";
+import type { ForestRow } from "../forest.ts";
+import { kindGlyph, markLegend, statusMark, titleOf, Tree } from "./Tree.tsx";
 
 let clock = 1_700_000_000_000;
 
@@ -115,4 +116,63 @@ test("a root that came from another conversation is marked as derived", () => {
   assert.equal(kindGlyph(session("c", "fork", { originId: "a" })), "⑂");
   assert.equal(kindGlyph(session("d", "compaction", { originId: "a" })), "≣");
   assert.equal(kindGlyph(session("e", "subagent", { originId: "a" })), "◆");
+});
+
+// ---------------------------------------------------------------------------
+// The mark legend
+// ---------------------------------------------------------------------------
+
+/** A `session` forest row, the only kind that carries a mark. */
+function forestSession(s: SessionRow, busyBelow = 0): ForestRow {
+  return {
+    kind: "session",
+    id: s.id,
+    session: s,
+    depth: 0,
+    open: false,
+    delegated: 0,
+    current: false,
+    busyBelow,
+    expandable: false,
+  };
+}
+
+test("the mark legend explains what is on screen, and only that", () => {
+  // The glyphs were documented in exactly one place — the `?` overlay, fifty rows
+  // deep — which is not where anybody is when they are looking at a `⑂` and
+  // wondering what it is.
+  const legend = markLegend([
+    forestSession(session("a", "root", { lastTurnStatus: "done" })),
+    forestSession(session("b", "fork", { lastTurnStatus: "error" })),
+  ]);
+  assert.deepEqual(legend, ["● yours", "⑂ fork", "✓ done", "✗ failed"]);
+  // Absent kinds are not described: a static legend would spend scarce columns on
+  // `≣ compaction` for everyone who has never made one, and `legendLine` would then
+  // drop the entries that ARE on screen.
+  assert.equal(legend.some((l) => l.includes("compaction")), false);
+  assert.equal(legend.some((l) => l.includes("subagent")), false);
+});
+
+test("a derived root reads as a handoff, not as one you started", () => {
+  // `kindGlyph`'s own rule, surfaced: kind is still `root`, but `originId` means it
+  // came from somewhere and the legend must not call it "yours".
+  const legend = markLegend([forestSession(session("h", "root", { originId: "x" }))]);
+  assert.deepEqual(legend, ["↦ handoff"]);
+});
+
+test("rows that carry no mark contribute nothing to the legend", () => {
+  // Section captions and turn rows are rows for window math and nothing else.
+  assert.deepEqual(
+    markLegend([{ kind: "section", id: "s", sessionId: "a", depth: 0, label: "topic" }]),
+    [],
+  );
+});
+
+test("work running below a collapsed row is legended as running", () => {
+  // The `busyBelow` rule the tree already paints: a root sitting on live subagents
+  // is running, and the legend has to agree with the glyph beside it.
+  assert.deepEqual(
+    markLegend([forestSession(session("r", "root", { lastTurnStatus: "done" }), 3)]),
+    ["● yours", "⋯ running"],
+  );
 });

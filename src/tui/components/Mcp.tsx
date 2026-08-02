@@ -52,7 +52,7 @@ export function mcpWindow(
   rows: number,
   chrome = 0,
 ): { start: number; end: number; height: number; counter: boolean } {
-  const avail = Math.max(0, rows - chrome - 1 /* legend */);
+  const avail = Math.max(0, rows - chrome - 2 /* mark legend + key legend */);
   // Content over indicators when it is tight — see `sessionsWindow`.
   const counter = count > avail && avail >= 2;
   const height = Math.max(0, avail - (counter ? 1 : 0));
@@ -108,6 +108,35 @@ export function mcpDetail(status: McpStatus, name: string): string {
       : null,
     clip(entry.url ?? entry.command ?? "", 30),
   ].filter(Boolean).join(" · ");
+}
+
+/**
+ * What the three status glyphs mean, for the ones actually on screen.
+ *
+ * `●`/`◐`/`○` carry the whole state of a row and were explained nowhere. The gap
+ * this closes was reported exactly as it feels: authorize a server, watch it stay a
+ * half circle, and have no way to learn that `◐` is about a CONNECTION and not about
+ * the authorization that just succeeded.
+ *
+ * Present-only, like the tree's: a list where everything is connected should not
+ * spend columns explaining `○`.
+ */
+export function statusLegend(
+  names: readonly string[],
+  status: McpStatus,
+): string[] {
+  const out: string[] = [];
+  const state = (n: string) =>
+    status.connections.find((c) => c.server === n)?.alive
+      ? "alive"
+      : status.active.includes(n)
+      ? "granted"
+      : "off";
+  const seen = new Set(names.map(state));
+  if (seen.has("alive")) out.push("● connected");
+  if (seen.has("granted")) out.push("◐ granted, not connected — c connects");
+  if (seen.has("off")) out.push("○ not granted — ⏎ grants");
+  return out;
 }
 
 export function McpTab(
@@ -204,6 +233,11 @@ export function McpTab(
       {counter
         ? <text attributes={TextAttributes.DIM}>— {end}/{names.length} —</text>
         : null}
+      {/* Marks first, then keys — the glyph is what the reader is stuck on. Both are
+          counted in `mcpWindow`'s reservation; keep the two in step. */}
+      <text attributes={TextAttributes.DIM} wrapMode="none">
+        {legendLine(statusLegend(names, status), cols)}
+      </text>
       {/* The legend is the tab's LAST row. This tab had none at all until the
           message row happened to be absent, and the message row is not a legend. */}
       {legend}

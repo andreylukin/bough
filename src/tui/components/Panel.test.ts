@@ -20,6 +20,7 @@ import { test } from "bun:test";
 import { testRender } from "@opentui/react/test-utils";
 import { nameFromUrl } from "./PanelHost.tsx";
 import { tabAtColumn } from "./Panel.tsx";
+import { statusLegend } from "./Mcp.tsx";
 import { createElement, type ReactNode } from "react";
 import {
   initialPanel,
@@ -694,4 +695,32 @@ test("every tab is reachable by some column", () => {
     }
     assert.equal(seen.size, TABS.length, `active=${active}: reached ${[...seen].join(",")}`);
   }
+});
+
+test("the MCP tab says what its status glyphs mean, for the ones on screen", async () => {
+  // Reported exactly as it feels: authorize a server, watch it stay a half circle,
+  // and have no way to learn that `◐` is about a CONNECTION and not about the
+  // authorization that just succeeded.
+  const status = {
+    registry: {
+      servers: {
+        live: { url: "https://a.example/mcp", args: [], env: {}, headers: {} },
+        granted: { url: "https://b.example/mcp", args: [], env: {}, headers: {} },
+      },
+    },
+    auth: {},
+    active: ["live", "granted"],
+    connections: [{ server: "live", alive: true, toolCount: 2 }],
+  };
+  assert.deepEqual(statusLegend(["live", "granted"], status as any), [
+    "● connected",
+    "◐ granted, not connected — c connects",
+  ]);
+  // Present-only: a list where everything is granted should not spend columns on `○`.
+  assert.equal(
+    statusLegend(["live", "granted"], status as any).some((l) => l.includes("○")),
+    false,
+  );
+  const frame = await draw(createElement(McpTab, { status: status as any, selected: 0 }));
+  assert.ok(frame.includes("granted, not connected"), frame);
 });
