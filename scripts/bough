@@ -652,7 +652,7 @@ cmd_purge() {
 }
 
 usage() {
-  echo "usage: bough [tui|setup|start|kill|restart|update|status|logs|run|exec|purge]"
+  echo "usage: bough [tui|setup|start|kill|restart|update|status|logs|run|exec|mcp|purge]"
   echo "  (no args) open the terminal UI (auto-starts the server)"
   echo "  setup    fresh clone → running: install deps, configure env, start"
   echo "  start    install + start the background service (auto-starts at login)"
@@ -664,6 +664,8 @@ usage() {
   echo "           bough exec [-w dir] [-m model] [--json] \"...\" — or prompt on stdin"
   echo "  sync-mcp adopt Claude Code's MCP servers into bough's registry:"
   echo "           bough sync-mcp [--from DIR] [--dry-run] [--force]"
+  echo "  mcp      inspect and repair that registry (bough mcp for the full list):"
+  echo "           bough mcp [list|doctor|test|auth|grant|revoke|add|remove]"
   echo "  purge    hard-delete sessions archived over 30 days ago (also runs on boot)"
 }
 
@@ -690,6 +692,15 @@ case "${1:-}" in
     require_bun
     case " $* " in *" --port "*) ;; *) ensure_up ;; esac
     exec bun "$ROOT/src/cli/exec.ts" "$@"
+    ;;
+  mcp)
+    shift
+    # Needs a server, unlike `sync-mcp`: every verb here drives a route, because
+    # connecting and authorizing are things the running process does — its manager
+    # owns the connections and its OAuth callback is what the browser comes back to.
+    require_bun
+    case " $* " in *" --port "*) ;; *) ensure_up ;; esac
+    exec bun "$ROOT/src/cli/mcp.ts" "$@"
     ;;
   sync-mcp)
     shift
