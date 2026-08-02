@@ -36,7 +36,6 @@ import { jobs } from "../hostfn/jobs.ts";
 import { killAllMcpServers } from "../mcp/client.ts"; // T7.1
 import { loadRegistry, promoteSessionGrants, registryFile } from "../mcp/config.ts"; // T7.1
 import { authStatus, callbackUrl, configureOAuthCallback } from "../mcp/oauth.ts"; // T7.2
-import { createMcpHostFns } from "../hostfn/mcp.ts"; // T7.3
 import { bindTurnGrant, mcpManager } from "../mcp/manager.ts"; // T7.3
 import { reconcileMcp, reconcileSummary } from "../mcp/service.ts";
 import { sweepScratch } from "../scratch.ts";
@@ -609,8 +608,6 @@ ctx.startTurn = createDelegatingTurnStarter({
       "ask",
       "state",
       "artifact",
-      "mcp",
-      "mcpStatus",
     ],
   },
   deliver: createNoteDeliverer(),
@@ -624,7 +621,6 @@ ctx.startTurn = createDelegatingTurnStarter({
     ...createAskHostFn(turnCtx),
     ...createStateHostFn(turnCtx),
     ...createArtifactHostFn(turnCtx),
-    ...createMcpHostFns(bindTurnGrant(turnCtx)),
   }),
 });
 
@@ -664,8 +660,6 @@ ctx.startTurn = createDelegatingTurnStarter({
       "ask",
       "state",
       "artifact",
-      "mcp",
-      "mcpStatus",
     ],
   },
   deliver: createNoteDeliverer(),
@@ -679,7 +673,6 @@ ctx.startTurn = createDelegatingTurnStarter({
     ...createAskHostFn(turnCtx),
     ...createStateHostFn(turnCtx),
     ...createArtifactHostFn(turnCtx),
-    ...createMcpHostFns(bindTurnGrant(turnCtx)),
   }),
 });
 
@@ -871,8 +864,6 @@ const skillAwareStarter = (sessionId: string) =>
         "ask",
         "state",
         "artifact",
-        "mcp",
-        "mcpStatus",
       ],
       // Resolved per turn. `notes` carries the skills that were
       // NAMED and could not be loaded: a malformed SKILL.md must not make a `/name`
@@ -898,7 +889,6 @@ const skillAwareStarter = (sessionId: string) =>
       ...createAskHostFn(turnCtx),
       ...createStateHostFn(turnCtx),
       ...createArtifactHostFn(turnCtx),
-      ...createMcpHostFns(grantedCtxFor(turnCtx)),
     }),
   });
 

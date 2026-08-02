@@ -13,7 +13,7 @@
  *
  * The list is CLOSED. Every name is declared now, including ones whose
  * implementations land in M6 (`ask`, `state`, `schedule`, `image`, `fetch`,
- * `artifact`, `mcp`, `mcpStatus`, `workflow`). Later tasks implement against
+ * `artifact`, `workflow`). Later tasks implement against
  * an existing name; none adds one.
  *
  * The wire is string-only, both directions. A host function that logically takes
@@ -64,8 +64,6 @@ export const HOST_FN_NAMES = [
   "image",
   "fetch",
   "artifact",
-  "mcp",
-  "mcpStatus",
 ] as const;
 
 export type HostFnName = (typeof HOST_FN_NAMES)[number];

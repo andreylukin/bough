@@ -435,14 +435,6 @@ export interface HostFns {
   fetch?(url: string, optsJson: string): Promise<string>;
   /** Publish a file for browser viewing under the session's artifact dir; returns `{url, href}`. */
   artifact?(name: string, content: string): Promise<string>;
-  /** MCP tool invocation. Args in and result back both travel as JSON. */
-  mcp?(server: string, tool: string, argsJson: string): Promise<string>;
-  /**
-   * Live MCP state as JSON. Read-only and always bridged — status is not a
-   * capability grant. Never cached: grants and connections change between turns,
-   * so the model answers MCP questions from a fresh call (plan §6.13).
-   */
-  mcpStatus?(): Promise<string>;
 }
 
 /** Names in the protocol list that `HostFns` does not declare. Must be `never`. */

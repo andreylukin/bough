@@ -35,7 +35,6 @@ import { Bus } from "../bus.ts";
 import { openDb, type SqliteDb } from "../db/db.ts";
 import { McpError } from "../errors.ts";
 import { launchSubagent } from "../agents/subagent.ts";
-import { createMcpHostFns } from "../hostfn/mcp.ts";
 import type { ProgramResult } from "../harness/protocol.ts";
 import { TurnRegistry } from "../turn/queue.ts";
 import { baseHostFns, type ProgramRunner, STOP, type TurnDeps } from "../turn/runner.ts";
@@ -52,6 +51,7 @@ import {
   setMcpManager,
 } from "./manager.ts";
 import {
+  callMcpToolH,
   connectMcpServerH,
   deleteMcpServerH,
   getMcpServersH,
@@ -141,12 +141,47 @@ function turnCtx(sessionId: string, extra: Partial<TurnCtx> = {}): TurnCtx {
   };
 }
 
-function hostFns(ctx: TurnCtx, mgr: McpManager, file: string): Pick<HostFns, "mcp" | "mcpStatus"> {
-  return createMcpHostFns(ctx, { manager: mgr, config: { file }, auth: () => false });
+/**
+ * What the `mcp()` / `mcpStatus()` host functions used to do, as a local shim.
+ *
+ * Those host functions are gone — a tool is called through `bough mcp call` and the
+ * grant is enforced in `callMcpToolH` (`status.ts`). The tests below were never
+ * about the bridge: they are about GRANTS and STATUS, which did not move. Keeping
+ * the shape they were written against costs three lines and keeps the subject of
+ * each test the thing it was written to pin.
+ */
+interface McpShim {
+  mcp(server: string, tool: string, argsJson: string): Promise<string>;
+  mcpStatus(): Promise<string>;
 }
 
-async function statusOf(fns: Pick<HostFns, "mcp" | "mcpStatus">) {
-  return JSON.parse(await fns.mcpStatus!()) as ReturnType<typeof mcpStatusFor>;
+function hostFns(ctx: TurnCtx, mgr: McpManager, file: string, now?: () => number): McpShim {
+  // Read PER CALL, never once — `now` decides whether a TTL'd grant has lapsed, and
+  // a clock sampled once would keep a grant alive after it expired.
+  const opts = () => ({ file, ...(now ? { now: now() } : {}) });
+  return {
+    mcp: async (server: string, tool: string, argsJson: string) => {
+      requireGranted(ctx, server, opts());
+      const result = await mgr.call(ctx.sessionId, server, tool, JSON.parse(argsJson || "{}"), {
+        workspace: ctx.workspace,
+      });
+      return JSON.stringify(result ?? null);
+    },
+    mcpStatus: () => {
+      const o = opts();
+      return Promise.resolve(JSON.stringify(mcpStatusFor({
+        ...o,
+        sessionId: ctx.sessionId,
+        grant: resolveGrant(ctx, o),
+        manager: mgr,
+        auth: () => false,
+      })));
+    },
+  };
+}
+
+async function statusOf(fns: McpShim) {
+  return JSON.parse(await fns.mcpStatus()) as ReturnType<typeof mcpStatusFor>;
 }
 
 // ---------------------------------------------------------------------------
@@ -160,7 +195,7 @@ test("a registered server is not a callable one until a human grants it", async 
   const ctx = bindTurnGrant(turnCtx("s1"), { file });
   const fns = hostFns(ctx, mgr, file);
   try {
-    const refused = await fns.mcp!("echo", "echo", "{}").then(() => undefined, (e: unknown) => e);
+    const refused = await fns.mcp("echo", "echo", "{}").then(() => undefined, (e: unknown) => e);
     assert.ok(refused instanceof McpError, `expected McpError, got ${refused}`);
     assert.equal(refused.status, 403);
     assert.match(refused.message, /registered but not granted/);
@@ -168,14 +203,14 @@ test("a registered server is not a callable one until a human grants it", async 
     assert.match(refused.message, /a program cannot grant itself one/);
 
     // An unregistered name is a different failure, and says so.
-    const unknown = await fns.mcp!("nope", "echo", "{}").then(() => undefined, (e: unknown) => e);
+    const unknown = await fns.mcp("nope", "echo", "{}").then(() => undefined, (e: unknown) => e);
     assert.ok(unknown instanceof McpError);
     assert.equal(unknown.status, 404);
     assert.match(unknown.message, /Registered servers: echo/);
 
     setActivation("s1", "echo", true, { file });
     assert.equal(
-      await fns.mcp!("echo", "echo", '{"text":"hi"}'),
+      await fns.mcp("echo", "echo", '{"text":"hi"}'),
       JSON.stringify('echo:{"text":"hi"}'),
     );
   } finally {
@@ -189,21 +224,16 @@ test("a lapsed grant fails closed, and the clock that decides is injected", asyn
   const mgr = manager(file, ({ name }) => Promise.resolve(fakeConnection(name, ["echo"])));
   const ctx = turnCtx("s1");
   let now = 1_000_000;
-  const fns = createMcpHostFns(ctx, {
-    manager: mgr,
-    config: { file },
-    auth: () => false,
-    now: () => now,
-  });
+  const fns = hostFns(ctx, mgr, file, () => now);
   try {
     setActivation("s1", "echo", true, { file, expires: ttlToExpires("2h", now) });
     assert.deepEqual((await statusOf(fns)).active, ["echo"]);
-    assert.ok(await fns.mcp!("echo", "echo", "{}"));
+    assert.ok(await fns.mcp("echo", "echo", "{}"));
 
     now += 3 * 3_600_000; // two hours later, plus change
     assert.deepEqual((await statusOf(fns)).active, [], "the grant lapsed with no sweep");
     await assert.rejects(
-      () => fns.mcp!("echo", "echo", "{}"),
+      () => fns.mcp("echo", "echo", "{}"),
       (e: unknown) => e instanceof McpError && e.status === 403,
     );
   } finally {
@@ -233,7 +263,7 @@ test("AC: a revoked grant is visible to the very next mcpStatus() call", async (
     const after = await statusOf(fns);
     assert.deepEqual(after.active, [], "the very next status call reports the revocation");
     await assert.rejects(
-      () => fns.mcp!("echo", "echo", "{}"),
+      () => fns.mcp("echo", "echo", "{}"),
       (e: unknown) => e instanceof McpError && e.status === 403,
       "and the call refuses too — status and enforcement read the same grant",
     );
@@ -331,7 +361,7 @@ test("AC: a subagent inherits its spawner's grant and can call the server", asyn
     // And it is a real capability, not a label: the child's own bridge calls a real
     // server spawned in the child's turn.
     const childFns = hostFns(childCtx!, mgr, file);
-    const said = JSON.parse(await childFns.mcp!("echo", "echo", '{"text":"hello"}'));
+    const said = JSON.parse(await childFns.mcp("echo", "echo", '{"text":"hello"}'));
     assert.deepEqual(said, { echoed: "hello" });
 
     const childStatus = await statusOf(childFns);
@@ -345,7 +375,7 @@ test("AC: a subagent inherits its spawner's grant and can call the server", asyn
     // not disarm a child that is already running on the human's authorization…
     setActivation(spawner.id, "echo", false, { file });
     assert.deepEqual(childCtx!.mcpGrant, ["echo"]);
-    assert.ok(await childFns.mcp!("echo", "echo", '{"text":"still here"}'));
+    assert.ok(await childFns.mcp("echo", "echo", '{"text":"still here"}'));
     // …while the spawner itself is refused on its very next call.
     assert.deepEqual(await grantedNames(spawnerCtx, mgr, file), []);
   } finally {
@@ -407,7 +437,7 @@ test("AC: a server that cannot start degrades to a named status, not a hang", as
     setActivation("s1", "broken", true, { file });
 
     // The call fails by name, bounded, with the move that resolves it.
-    const failed = await fns.mcp!("broken", "anything", "{}").then(
+    const failed = await fns.mcp("broken", "anything", "{}").then(
       () => undefined,
       (e: unknown) => e,
     );
@@ -438,10 +468,10 @@ test("a server that dies is reported as exited, and the next call restarts it", 
   const fns = hostFns(ctx, mgr, file);
   try {
     setActivation("s1", "echo", true, { file });
-    assert.ok(await fns.mcp!("echo", "echo", '{"text":"one"}'));
+    assert.ok(await fns.mcp("echo", "echo", '{"text":"one"}'));
 
     // `die` takes the child down mid-call. That is a call failure, by name.
-    const died = await fns.mcp!("echo", "die", "{}").then(() => undefined, (e: unknown) => e);
+    const died = await fns.mcp("echo", "die", "{}").then(() => undefined, (e: unknown) => e);
     assert.ok(died instanceof McpError, `expected McpError, got ${died}`);
     assert.match(died.message, /MCP server "echo" exited/);
 
@@ -452,7 +482,7 @@ test("a server that dies is reported as exited, and the next call restarts it", 
     assert.match(row!.stderrTail ?? "", /asked to die/);
 
     // The next call reconnects rather than reporting a dead server forever.
-    assert.deepEqual(JSON.parse(await fns.mcp!("echo", "echo", '{"text":"two"}')), {
+    assert.deepEqual(JSON.parse(await fns.mcp("echo", "echo", '{"text":"two"}')), {
       echoed: "two",
     });
     const healed = await statusOf(fns);
@@ -471,21 +501,19 @@ test("a tool failure is the server's own words, and an unknown tool names the re
   try {
     setActivation("s1", "echo", true, { file });
 
-    const boom = await fns.mcp!("echo", "boom", "{}").then(() => undefined, (e: unknown) => e);
+    const boom = await fns.mcp("echo", "boom", "{}").then(() => undefined, (e: unknown) => e);
     assert.ok(boom instanceof McpError, `expected McpError, got ${boom}`);
     assert.match(boom.message, /MCP echo:boom failed: kaboom/);
 
-    const typo = await fns.mcp!("echo", "ecko", "{}").then(() => undefined, (e: unknown) => e);
+    const typo = await fns.mcp("echo", "ecko", "{}").then(() => undefined, (e: unknown) => e);
     assert.ok(typo instanceof McpError);
     assert.equal(typo.status, 404);
     assert.match(typo.message, /has no tool "ecko"/);
     assert.match(typo.message, /It advertises: echo, scream, boom, die, slow, loose/);
 
-    // Bad JSON from the bridge is caught before anything is spawned or called.
-    await assert.rejects(
-      () => fns.mcp!("echo", "echo", "{not json"),
-      (e: unknown) => e instanceof McpError && /not valid JSON/.test(e.message),
-    );
+    // Malformed arguments are rejected before anything is spawned — but that check
+    // now lives where the arguments are typed, in `cli/mcp.ts`, and is asserted
+    // there. The bridge that used to parse them is gone.
   } finally {
     await mgr.dropAll();
   }
@@ -514,17 +542,17 @@ test("connections are per session, reused across calls, and reaped when idle", a
     const one = hostFns(bindTurnGrant(turnCtx("s1"), { file }), mgr, file);
     const two = hostFns(bindTurnGrant(turnCtx("s2"), { file }), mgr, file);
 
-    await one.mcp!("echo", "echo", "{}");
-    await one.mcp!("echo", "echo", "{}");
+    await one.mcp("echo", "echo", "{}");
+    await one.mcp("echo", "echo", "{}");
     assert.equal(spawned, 1, "one child serves every call in a session");
 
-    await two.mcp!("echo", "echo", "{}");
+    await two.mcp("echo", "echo", "{}");
     assert.equal(spawned, 2, "a second session gets its own child — its own checkout");
     assert.equal(mgr.statuses().length, 2);
     assert.equal(mgr.statuses("s1").length, 1, "status is scoped to the session that asks");
 
     clock += 5_000; // both are now idle past the window
-    await one.mcp!("echo", "echo", "{}");
+    await one.mcp("echo", "echo", "{}");
     assert.equal(spawned, 3, "the idle child was reaped and a fresh one spawned");
     assert.equal(mgr.statuses().length, 1, "and the other session's idle child is gone too");
   } finally {
@@ -552,8 +580,8 @@ test("a REMOTE server is one connection for every conversation", async () => {
     const one = hostFns(bindTurnGrant(turnCtx("s1"), { file }), mgr, file);
     const two = hostFns(bindTurnGrant(turnCtx("s2"), { file }), mgr, file);
 
-    await one.mcp!("remote", "echo", "{}");
-    await two.mcp!("remote", "echo", "{}");
+    await one.mcp("remote", "echo", "{}");
+    await two.mcp("remote", "echo", "{}");
     assert.equal(connects, 1, "the second conversation reuses the first's connection");
 
     // …and BOTH conversations see it as connected. The panel asks per session, and a
@@ -645,7 +673,7 @@ test("status carries the live tool catalog, so a fresh call is enough to act on"
     setActivation("s1", "echo", true, { file });
     assert.deepEqual((await statusOf(fns)).connections, [], "status never connects on its own");
 
-    await fns.mcp!("echo", "echo", '{"text":"x"}');
+    await fns.mcp("echo", "echo", '{"text":"x"}');
     const row = (await statusOf(fns)).connections[0];
     assert.equal(row.server, "echo");
     assert.equal(row.toolCount, 6);
@@ -700,6 +728,7 @@ const TABLE = [
   route("PUT", "/mcp/servers/:name", putMcpServerH),
   route("DELETE", "/mcp/servers/:name", deleteMcpServerH),
   route("POST", "/mcp/servers/:name/connect", connectMcpServerH),
+  route("POST", "/mcp/servers/:name/tools/:tool", callMcpToolH),
   route("POST", "/mcp/servers/:name/restart", restartMcpServerH),
   route("POST", "/mcp/servers/:name/enable", setMcpActivationH(true)),
   route("POST", "/mcp/servers/:name/disable", setMcpActivationH(false)),
@@ -822,47 +851,75 @@ test("the API registers, grants, connects and revokes — and every reply is the
 // The bridge, as boot wires it
 // ---------------------------------------------------------------------------
 
-test("a real program calls mcp() and mcpStatus() through the worker bridge", async () => {
-  const file = tmpRegistry();
-  seedRegistry(file);
-  const mgr = manager(file);
-  const workspace = mkdtempSync(join(tmpdir(), "bough-mcp-ws-"));
-  const ctx = turnCtx("s1", { workspace });
-  try {
-    setActivation("s1", "echo", true, { file });
-    // Exactly what `server/main.ts` bridges: the always-wired host functions, plus
-    // the two MCP verbs over a ctx whose grant was bound for inheritance.
-    const host = {
-      ...baseHostFns(ctx),
-      ...createMcpHostFns(bindTurnGrant(ctx, { file }), {
-        manager: mgr,
-        config: { file },
-        auth: () => false,
-      }),
-    };
-    const result = await runProgram({
-      host,
-      code: `
-        const before = await mcpStatus();
-        const said = await mcp("echo", "echo", { text: "through the bridge" });
-        console.log(JSON.stringify({
-          granted: before.active,
-          registered: Object.keys(before.registry.servers),
-          said,
-          after: (await mcpStatus()).connections.map((c) => c.state),
-        }));
-      `,
+test("the route calls a tool, and the grant is enforced there", async () => {
+  // REPLACES a test that drove `mcp()` and `mcpStatus()` through the worker bridge.
+  // Those host functions are gone: a tool is reached by running `bough mcp call`,
+  // and `callMcpToolH` is where the grant is now checked. The property under test
+  // did not change — an ungranted server refuses, a granted one answers — only the
+  // caller did, so this asserts it at the seam that actually exists.
+  await withBoughHome(async () => {
+    const db = openDb(":memory:");
+    const bus = new Bus({ onListenerError: () => {} });
+    const call = createHandler({ db, bus } as AppCtx, { routes: TABLE });
+    const previous = setMcpManager(
+      new McpManager({ connect: ({ name }) => Promise.resolve(fakeConnection(name, ["echo"])) }),
+    );
+    const session = db.createSession({
+      id: crypto.randomUUID(),
+      title: "s",
+      kind: "root",
+      createdAt: 1,
+      parentId: null,
+      workspace: process.cwd(),
+      originDir: process.cwd(),
     });
-    assert.equal(result.ok, true, result.error);
-    const seen = JSON.parse(result.logs.join(""));
-    assert.deepEqual(seen.granted, ["echo"], "the program sees its grant as data");
-    assert.deepEqual(seen.registered, ["echo"]);
-    // The tool's structured content arrives as a real object, not a JSON string —
-    // the worker re-inflates what the bridge stringified.
-    assert.deepEqual(seen.said, { echoed: "through the bridge" });
-    assert.deepEqual(seen.after, ["connected"]);
-  } finally {
-    await mgr.dropAll();
-    rmSync(workspace, { recursive: true });
-  }
+    const q = `?session=${session.id}`;
+    try {
+      await call(
+        new Request(`http://x/mcp/servers/echo`, {
+          method: "PUT",
+          body: JSON.stringify({ command: "/bin/echo", args: [] }),
+        }),
+      );
+      // UNGRANTED IS A REFUSAL, and it names what would fix it. Registering is not
+      // granting, and the CLI relays this sentence verbatim.
+      const refused = await call(
+        new Request(`http://x/mcp/servers/echo/tools/echo${q}`, {
+          method: "POST",
+          body: JSON.stringify({ text: "x" }),
+        }),
+      );
+      assert.equal(refused.status, 403);
+      assert.match((await refused.json()).error, /registered but not granted/);
+      assert.match((await (await call(
+        new Request(`http://x/mcp/servers/echo/tools/echo${q}`, {
+          method: "POST",
+          body: JSON.stringify({}),
+        }),
+      )).json()).error, /a program cannot grant itself one/);
+
+      await call(
+        new Request(`http://x/mcp/servers/echo/enable`, {
+          method: "POST",
+          body: JSON.stringify({ sessionId: session.id }),
+        }),
+      );
+      const ok = await call(
+        new Request(`http://x/mcp/servers/echo/tools/echo${q}`, {
+          method: "POST",
+          body: JSON.stringify({ text: "through the route" }),
+        }),
+      );
+      assert.equal(ok.status, 200);
+      const body = await ok.json();
+      assert.equal(body.server, "echo");
+      assert.equal(body.tool, "echo");
+      // The tool's own return value, verbatim, not a wrapper the caller has to dig
+      // through — the CLI prints exactly this and a program parses it.
+      assert.equal(body.result, 'echo:{"text":"through the route"}');
+    } finally {
+      await setMcpManager(previous).dropAll();
+      db.close();
+    }
+  });
 });

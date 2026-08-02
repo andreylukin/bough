@@ -139,7 +139,6 @@ const GRANTS: { id: SectionId; fn: HostFnName; phrase: string }[] = [
   { id: "image", fn: "image", phrase: "await image(path, note?)" },
   { id: "fetch", fn: "fetch", phrase: "await fetch(url" },
   { id: "artifact", fn: "artifact", phrase: "await artifact(name, content)" },
-  { id: "mcp-status", fn: "mcpStatus", phrase: "await mcpStatus()" },
   // The probe is `spawn`'s own line, not `adopt`'s. It used to be the latter, which meant
   // this test — whose subject is "the delegation section appears iff spawn is granted" —
   // was pinned to a sentence about a DIFFERENT verb, and removing that undocumented verb
@@ -198,16 +197,19 @@ test("MCP tools appear only when servers are connected, and stay out of the stab
   });
   assert(p.sections.includes("mcp-tools"));
   assertStringIncludes(p.systemVolatile, "## MCP tools");
-  assertStringIncludes(p.systemVolatile, "await mcp(server, tool, args)");
+  assertStringIncludes(p.systemVolatile, "bough mcp call SERVER TOOL");
   assertStringIncludes(p.systemVolatile, "- read_file({path}) — Read a file");
   // A failed server is named with its error, not silently dropped.
   assertStringIncludes(p.systemVolatile, 'server "broken": UNAVAILABLE — exited before handshake');
   // The catalog is per-session; it must never reach the cacheable prefix.
   assert(!p.system.includes("MCP tools"));
-  // No mcp() bridge, no catalog.
+  // NO SHELL, NO CATALOG. A tool is called by running `bough mcp call`, so a turn
+  // that cannot run a command cannot reach one — and listing tools to it would be a
+  // list of things it has no way to use. (This used to be gated on the `mcp` host
+  // function, which no longer exists.)
   assert(
     !build({
-      granted: without("mcp"),
+      granted: without("bash"),
       mcpServers: [{ name: "files", tools: [] }],
     }).sections.includes("mcp-tools"),
   );

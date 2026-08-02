@@ -51,6 +51,7 @@ const VERBS = [
   "add",
   "remove",
   "doctor",
+  "call",
 ] as const;
 
 export type McpVerb = (typeof VERBS)[number];
@@ -59,8 +60,10 @@ export interface McpArgs {
   verb: McpVerb;
   /** The server the verb acts on. Absent for `list` and `doctor`. */
   name?: string;
-  /** `add` only: the remote endpoint. */
+  /** `add` only: the remote endpoint. `call` only: the tool name. */
   url?: string;
+  /** `call` only: the tool's arguments as JSON. Absent = no arguments. */
+  argsJson?: string;
   json: boolean;
   port?: number;
   /** `auth` only: seconds to wait for the browser round trip. */
@@ -89,6 +92,7 @@ export const USAGE = [
   "  logout NAME             forget the credentials bough stored for NAME",
   "  grant NAME              let every conversation call it",
   "  revoke NAME             take that back, everywhere",
+  "  call NAME TOOL [JSON]   call one of NAME's tools; JSON may come on stdin",
   "  add NAME URL            register a remote server",
   "  remove NAME             drop the registration and any grants it holds",
   "",
@@ -102,6 +106,7 @@ export const USAGE = [
 
 /** Verbs that name a server. `add` needs a URL beside it. */
 const NEEDS_NAME = new Set<McpVerb>([
+  "call",
   "test",
   "auth",
   "logout",
@@ -177,6 +182,11 @@ export function parseMcpArgs(argv: readonly string[]): McpArgs | McpUsageError {
   if (verbRaw === "add" && !url) {
     return { usageError: `add needs a name and a URL: bough mcp add notion https://…\n${USAGE}` };
   }
+  if (verbRaw === "call" && !url) {
+    return {
+      usageError: `call needs a server and a tool: bough mcp call notion search '{"q":"x"}'\n${USAGE}`,
+    };
+  }
   return {
     verb: verbRaw,
     json,
@@ -184,6 +194,7 @@ export function parseMcpArgs(argv: readonly string[]): McpArgs | McpUsageError {
     ...(name === undefined ? {} : { name }),
     ...(positionalSession === undefined ? {} : { session: positionalSession }),
     ...(url === undefined ? {} : { url }),
+    ...(positional[3] === undefined ? {} : { argsJson: positional[3] }),
     ...(port === undefined ? {} : { port }),
   };
 }
@@ -199,6 +210,8 @@ export interface McpDeps {
   env: Record<string, string | undefined>;
   /** Injected so the auth poll does not sleep in tests. */
   sleep?: (ms: number) => Promise<void>;
+  /** `call` only: reads the tool's arguments when they are not an argv word. */
+  stdin?: () => Promise<string>;
   now?: () => number;
 }
 
@@ -280,6 +293,19 @@ function diagnose(
   return { state: "bad", note: error };
 }
 
+/**
+ * The conversation this command belongs to.
+ *
+ * `--session` wins; otherwise `$BOUGH_SESSION`, which every shell a turn spawns
+ * carries (`hostfn/jobs.ts`, beside `$BOUGH_SCRATCH`). That default is what makes
+ * `bough mcp call` behave like the host function it replaced: the grant enforced is
+ * the one belonging to the turn that ran the command, without the model having to
+ * know its own session id or being trusted to report it honestly.
+ */
+function sessionOf(args: McpArgs, env: Record<string, string | undefined>): string | undefined {
+  return args.session ?? env["BOUGH_SESSION"] ?? undefined;
+}
+
 function base(args: McpArgs, env: Record<string, string | undefined>): string {
   const port = args.port ?? Number(env["BOUGH_PORT"] ?? 4321);
   return `http://127.0.0.1:${port}`;
@@ -324,6 +350,7 @@ export async function runMcp(argv: readonly string[], deps: McpDeps): Promise<nu
   }
   const args = parsed;
   const root = base(args, deps.env);
+  const session = sessionOf(args, deps.env);
   const sleep = deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
 
   const status = async (): Promise<McpStatus | null> => {
@@ -397,9 +424,9 @@ export async function runMcp(argv: readonly string[], deps: McpDeps): Promise<nu
         const remote = typeof s.registry.servers[name]?.url === "string";
         // Do not spawn a connect that is already known to be refused: a local server
         // with no session gets its answer from `diagnose` without a round trip.
-        const testable = s.active.includes(name) && (remote || !!args.session);
-        const conn = testable ? await connect(name, args.session) : null;
-        rows.push({ name, ...diagnose(s, name, conn, args.session) });
+        const testable = s.active.includes(name) && (remote || !!session);
+        const conn = testable ? await connect(name, session) : null;
+        rows.push({ name, ...diagnose(s, name, conn, session) });
       }
       if (args.json) {
         deps.out(JSON.stringify(rows, null, 2));
@@ -422,7 +449,7 @@ export async function runMcp(argv: readonly string[], deps: McpDeps): Promise<nu
     }
 
     case "test": {
-      const r = await connect(args.name!, args.session);
+      const r = await connect(args.name!, session);
       if (!r) return 2;
       if (args.json) {
         deps.out(JSON.stringify(r, null, 2));
@@ -559,6 +586,51 @@ export async function runMcp(argv: readonly string[], deps: McpDeps): Promise<nu
       return 0;
     }
 
+    case "call": {
+      const server = args.name!;
+      const tool = args.url!;
+      // Arguments may arrive as an argv word or on stdin. Stdin is what makes this
+      // usable from a program: a tool's parameters are frequently larger and more
+      // quote-hostile than a shell word wants to be, and `JSON.stringify` into a
+      // heredoc is the natural thing to write.
+      let raw = args.argsJson;
+      if (raw === undefined && deps.stdin) raw = (await deps.stdin()).trim() || undefined;
+      let parsed: unknown = {};
+      if (raw) {
+        try {
+          parsed = JSON.parse(raw);
+        } catch {
+          deps.err(
+            `the arguments were not valid JSON. Pass a plain object matching the ` +
+              `tool's parameters, e.g. '{"query":"x"}'.`,
+          );
+          return 2;
+        }
+      }
+      const q = session ? `?session=${encodeURIComponent(session)}` : "";
+      const r = await call(
+        deps,
+        `${root}/mcp/servers/${encodeURIComponent(server)}/tools/${encodeURIComponent(tool)}${q}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(parsed),
+        },
+      );
+      if (!r) return 2;
+      if (r.status >= 400) {
+        // The route's own sentence, verbatim: an ungranted server names what IS
+        // granted and says a human grants more, and a bad tool name lists the real
+        // ones. Rewriting either would lose the part that resolves it.
+        deps.err(errorOf(r));
+        return 1;
+      }
+      // The RESULT, not the envelope. A program parses this, and making it dig the
+      // payload out of a wrapper it did not ask for is friction with no benefit.
+      deps.out(JSON.stringify(r.body?.result ?? null, null, args.json ? 2 : 0));
+      return 0;
+    }
+
     case "remove": {
       const r = await call(deps, `${root}/mcp/servers/${encodeURIComponent(args.name!)}`, {
         method: "DELETE",
@@ -580,6 +652,9 @@ if (import.meta.main) {
     out: (l) => console.log(l),
     err: (l) => console.error(l),
     env: process.env,
+    // Only read when `call` asks for it, and only when no argv word carried the
+    // arguments — a verb that blocked on stdin would hang every other invocation.
+    stdin: () => new Response(Bun.stdin.stream()).text(),
   });
   process.exit(code);
 }

@@ -321,3 +321,54 @@ test("doctor does not spend a round trip on a connect it knows will be refused",
   assert.equal(f.calls.some((c) => c.endsWith("/connect")), false, f.calls.join(", "));
   await f.cleanup();
 });
+
+test("call rejects malformed arguments before it reaches the server", async () => {
+  // The check the `mcp()` host function used to do on the bridge. It moved to where
+  // the arguments are actually typed — nothing should be spawned or connected to
+  // find out that a shell word was not JSON.
+  const f = await fixture({ notion: { url: "https://mcp.notion.com/mcp" } });
+  f.calls.length = 0;
+  const code = await runMcp(["call", "notion", "search", "{not json"], f.deps);
+  assert.equal(code, 2);
+  assert.match(f.err(), /not valid JSON/);
+  assert.equal(f.calls.length, 0, f.calls.join(", "));
+  await f.cleanup();
+});
+
+test("call prints the tool's own result, and relays a refusal verbatim", async () => {
+  const f = await fixture({ notion: { url: "https://mcp.notion.com/mcp" } });
+  f.deps.fetch = ((input: any, init: any) => {
+    const req = new Request(input as string | URL, init);
+    if (new URL(req.url).pathname.includes("/tools/")) {
+      return Promise.resolve(
+        new Response(JSON.stringify({ server: "notion", tool: "search", result: { hits: 2 } })),
+      );
+    }
+    return Promise.resolve(new Response("{}"));
+  }) as typeof fetch;
+  assert.equal(await runMcp(["call", "notion", "search", '{"q":"x"}'], f.deps), 0, f.err());
+  // The RESULT, not the envelope: a program parses this and should not have to dig
+  // its payload out of a wrapper it did not ask for.
+  assert.equal(f.out().trim(), '{"hits":2}');
+  await f.cleanup();
+});
+
+test("call carries the turn's session, so the grant enforced is the caller's", async () => {
+  // `$BOUGH_SESSION` is exported into every shell a turn spawns. That default is what
+  // makes this behave like the host function it replaced: the model does not know
+  // its own session id and is not trusted to report one.
+  const f = await fixture({ notion: { url: "https://mcp.notion.com/mcp" } });
+  f.deps.env = { ...f.deps.env, BOUGH_SESSION: "sess-42" };
+  let seen = "";
+  f.deps.fetch = ((input: any, init: any) => {
+    const req = new Request(input as string | URL, init);
+    seen = req.url;
+    return Promise.resolve(new Response(JSON.stringify({ result: null })));
+  }) as typeof fetch;
+  await runMcp(["call", "notion", "search"], f.deps);
+  assert.match(seen, /session=sess-42/);
+  // An explicit --session still wins, for a human driving it by hand.
+  await runMcp(["call", "notion", "search", "--session", "other"], f.deps);
+  assert.match(seen, /session=other/);
+  await f.cleanup();
+});

@@ -387,17 +387,25 @@ export class JobRegistry {
    */
   spawn(
     command: string,
-    opts: { cwd?: string; signal?: AbortSignal; scratch?: string } = {},
+    opts: { cwd?: string; signal?: AbortSignal; scratch?: string; sessionId?: string } = {},
   ): Shell {
     const { argv, cwd } = shellInvocation(command, opts.cwd);
+    const extraEnv: Record<string, string> = {};
+    // `$BOUGH_SCRATCH` in the shell, because the prompt's sentence about a
+    // scratchpad reaches the model and not the command it writes. A `curl -o` or a
+    // `pytest --junitxml` is composed as text, and without a variable to name the
+    // one place it should point at, it points at /tmp — the exact gap every report
+    // of this problem describes.
+    if (opts.scratch) extraEnv["BOUGH_SCRATCH"] = opts.scratch;
+    // `$BOUGH_SESSION` for the same reason, one level up: `bough mcp` needs to know
+    // WHICH conversation is asking, because that is what its grant is scoped to.
+    // Passing it in the environment rather than expecting the model to write
+    // `--session <id>` is the point — the model does not know its own session id,
+    // and a value it composed would be a value it could get wrong or invent.
+    if (opts.sessionId) extraEnv["BOUGH_SESSION"] = opts.sessionId;
     const child = Bun.spawn(argv, {
       cwd,
-      // `$BOUGH_SCRATCH` in the shell, because the prompt's sentence about a
-      // scratchpad reaches the model and not the command it writes. A `curl -o` or a
-      // `pytest --junitxml` is composed as text, and without a variable to name the
-      // one place it should point at, it points at /tmp — the exact gap every report
-      // of this problem describes.
-      ...(opts.scratch ? { env: { ...process.env, BOUGH_SCRATCH: opts.scratch } } : {}),
+      ...(Object.keys(extraEnv).length > 0 ? { env: { ...process.env, ...extraEnv } } : {}),
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",

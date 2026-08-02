@@ -198,6 +198,10 @@ export const routes: Route[] = [
   route("PUT", "/mcp/servers/:name", mcpApi.putMcpServerH),
   route("DELETE", "/mcp/servers/:name", mcpApi.deleteMcpServerH),
   route("POST", "/mcp/servers/:name/connect", mcpApi.connectMcpServerH),
+  // Calling a tool. More specific than `/connect` in shape but not in prefix, so
+  // ordering against it does not matter; placed beside it because it is the same
+  // family. The grant is enforced in the handler, not here.
+  route("POST", "/mcp/servers/:name/tools/:tool", mcpApi.callMcpToolH),
   route("POST", "/mcp/servers/:name/restart", mcpApi.restartMcpServerH),
   route("POST", "/mcp/servers/:name/enable", mcpApi.setMcpActivationH(true)),
   route("POST", "/mcp/servers/:name/disable", mcpApi.setMcpActivationH(false)),

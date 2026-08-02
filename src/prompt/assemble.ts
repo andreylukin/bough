@@ -148,7 +148,6 @@ export type SectionId =
   | "image"
   | "fetch"
   | "artifact"
-  | "mcp-status"
   | "delegation"
   | "delegation-nested"
   | "workflow"
@@ -201,7 +200,6 @@ const SECTIONS: readonly SectionSpec[] = [
   { id: "image", file: "image.md", when: (f) => f.has("image") },
   { id: "fetch", file: "fetch.md", when: (f) => f.has("fetch") },
   { id: "artifact", file: "artifact.md", when: (f) => f.has("artifact") },
-  { id: "mcp-status", file: "mcp-status.md", when: (f) => f.has("mcpStatus") },
   {
     id: "delegation",
     file: "delegation.md",
@@ -321,11 +319,21 @@ function mcpServerBlock(server: PromptMcpServer): string {
  */
 function mcpToolsSection(servers: readonly PromptMcpServer[]): string {
   return "## MCP tools\n" +
-    "This turn has MCP servers connected. Inside your program, call\n" +
-    "`await mcp(server, tool, args)` — `args` is a plain object matching the tool's\n" +
-    "parameters. The call returns the tool's result (an object, or its text output)\n" +
-    "and throws on failure, with the server's own error text. Only the servers and\n" +
-    "tools listed here exist; a tool you do not see is not one to guess at.\n\n" +
+    "This turn has MCP servers connected. Call one through the shell:\n\n" +
+    "```\n" +
+    "const r = await bash(`bough mcp call SERVER TOOL '\''{\"arg\":\"value\"}'\''`);\n" +
+    "const result = JSON.parse(r.out);\n" +
+    "```\n\n" +
+    "The arguments are a JSON object matching the tool's parameters, and stdout is\n" +
+    "the tool's result as JSON. A failure exits non-zero with the server's own error\n" +
+    "text on stderr. For arguments too large or quote-hostile for a shell word, pipe\n" +
+    "them in instead: `echo \"$JSON\" | bough mcp call SERVER TOOL`.\n\n" +
+    "`bough mcp` on its own lists the servers and their state; `bough mcp doctor`\n" +
+    "says why one is not working. Registering, granting and authorizing are the\n" +
+    "human's to do — tell them to run `bough mcp` or type /mcp rather than\n" +
+    "improvising a config edit.\n\n" +
+    "Only the servers and tools listed here exist; a tool you do not see is not one\n" +
+    "to guess at.\n\n" +
     servers.map(mcpServerBlock).join("\n\n");
 }
 
@@ -438,7 +446,11 @@ export function assemblePrompt(input: PromptInput): AssembledPrompt {
 
   const volatile: string[] = [];
   const servers = input.mcpServers ?? [];
-  if (servers.length > 0 && granted.has("mcp")) {
+  // Gated on `bash`, because that is now how a tool is called — `bough mcp call`
+  // through the shell. It used to be gated on the `mcp` host function, which no
+  // longer exists; a catalog listed to a turn that cannot run a command would be a
+  // list of things it cannot reach.
+  if (servers.length > 0 && granted.has("bash")) {
     include("mcp-tools", mcpToolsSection(servers), volatile);
   }
   const skills = input.skills ?? [];

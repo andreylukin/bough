@@ -215,6 +215,7 @@ export async function bash(
     cwd: ctx.workspace,
     signal: ctx.signal,
     ...(ctx.scratch ? { scratch: ctx.scratch } : {}),
+    ...(ctx.sessionId ? { sessionId: ctx.sessionId } : {}),
   });
   const untrack = registry.trackForeground(shell, ctx.sessionId);
   // Stays attached past a promotion on purpose: an interrupt kills the running
@@ -291,6 +292,7 @@ export async function shConcurrent(
         cwd: ctx.workspace,
         signal: ctx.signal,
         ...(ctx.scratch ? { scratch: ctx.scratch } : {}),
+    ...(ctx.sessionId ? { sessionId: ctx.sessionId } : {}),
       });
     } catch (err) {
       // Spawn failure (no /bin/sh, an already-aborted signal). Reported, not thrown.

@@ -810,8 +810,15 @@ test("a step is headlined by what the program did, not by its first line of code
   assert.equal(programSummary('await schedule.add({cron: "0 9 * * *", prompt: "x"});'), "changed a schedule");
   assert.equal(programSummary('const r = await fetch("https://example.com");'), "fetched 1 URL");
   assert.equal(programSummary('await image("/tmp/a.png", "the chart");'), "attached an image");
-  assert.equal(programSummary('await mcp("github", "list_repos", {});'), "1 MCP call");
-  assert.equal(programSummary("const s = await mcpStatus();"), "checked the MCP servers");
+  // Command text, not a call shape — MCP is reached through the shell now.
+  assert.equal(
+    programSummary('await bash(`bough mcp call github list_repos \'{}\'`);'),
+    "ran 1 command · 1 MCP call",
+  );
+  assert.equal(
+    programSummary('await bash("bough mcp doctor");'),
+    "ran 1 command · checked the MCP servers",
+  );
   assert.equal(
     programSummary('await bash("ast-grep -p \'send($$$)\' -l ts src/");'),
     // Both, and in that order: it IS a command, and the structural search is the
@@ -995,8 +1002,6 @@ test("no host function is left without a label", () => {
     image: 'await image("/tmp/a.png");',
     fetch: 'await fetch("https://x.dev");',
     artifact: 'await artifact("name", "body");',
-    mcp: 'await mcp("gh", "list", {});',
-    mcpStatus: "await mcpStatus();",
   };
   for (const [name, code] of Object.entries(CALLS)) {
     assert.notEqual(programSummary(code), "", `${name} has no label — the step shows source`);

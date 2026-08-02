@@ -236,9 +236,6 @@ const bindings = {
   // A non-string content (an object) is stringified so programs can pass it directly.
   artifact: (name: string, content: unknown) =>
     jsonCall("artifact", [name, typeof content === "string" ? content : JSON.stringify(content)]),
-  mcp: (server: string, tool: string, args?: unknown) =>
-    jsonCall("mcp", [server, tool, JSON.stringify(args ?? {})]),
-  mcpStatus: () => jsonCall("mcpStatus", []),
 } satisfies Record<HostFnName, unknown>;
 
 /**

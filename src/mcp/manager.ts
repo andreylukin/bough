@@ -388,7 +388,7 @@ export class McpManager {
         404,
         `MCP server "${server}" has no tool "${tool}". It advertises: ` +
           (names.length > 0 ? names.join(", ") : "(none)") +
-          `. Call mcpStatus() for the live catalog rather than guessing a name.`,
+          `. Run \`bough mcp\` for the live catalog rather than guessing a name.`,
       );
     }
     return mapResult(server, tool, await conn.client.callTool(tool, args));

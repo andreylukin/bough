@@ -156,8 +156,6 @@ test("host names: one list, with the dropped verbs actually dropped", () => {
       "image",
       "fetch",
       "artifact",
-      "mcp",
-      "mcpStatus",
       "workflow",
     ]
   ) {

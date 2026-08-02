@@ -66,6 +66,7 @@ import {
   type GrantCtx,
   McpManager,
   mcpManager,
+  requireGranted,
   resolveGrant,
   SHARED_SCOPE,
 } from "./manager.ts";
@@ -285,6 +286,57 @@ export const connectMcpServerH: Handler = async (req, ctx, params) => {
     })),
     ...stateOf(sessionId),
   });
+};
+
+/**
+ * `POST /mcp/servers/:name/tools/:tool?session=` — call one tool and return its result.
+ *
+ * WHY THIS ROUTE EXISTS. It is the whole of what the `mcp()` host function used to
+ * be, moved to where every other MCP verb already lived. A program now reaches a
+ * tool the same way it reaches everything else on this machine — by running a
+ * command — instead of through a bridged name that had to be granted, documented in
+ * its own prompt section, and kept in step with both.
+ *
+ * THE GRANT IS ENFORCED HERE, AND IT IS THE SAME CHECK. `requireGranted` is the
+ * function the host function called, given the same scope: a session's grant, or a
+ * subagent's inherited one, resolved fresh so a grant revoked between two calls is
+ * gone from the second. What moved is the caller, not the rule.
+ *
+ * WHAT THIS DOES NOT PRETEND TO BE. A scope arrives as `?session=`, and any local
+ * process can pass any session id. That was already true of every route here, and
+ * programs are not sandboxed — one could always have reached this API directly
+ * (spec §17). The grant check is what stops a MISTAKE, not an attacker with the
+ * user's own shell; it never was the latter.
+ */
+export const callMcpToolH: Handler = async (req, ctx, params) => {
+  const sessionId = scopeOf(req, ctx);
+  const server = requireServer(params.name);
+  const body = await bodyOf(req);
+  if (body !== null && (typeof body !== "object" || Array.isArray(body))) {
+    throw new McpError(
+      400,
+      `the body must be the tool's arguments as a plain object, or empty for none.`,
+    );
+  }
+  // The same enforcement the host function did, against the same resolved grant.
+  // `GrantCtx` is satisfied by a bare session id: an inherited grant belongs to a
+  // subagent's own ctx and is read from its session row.
+  requireGranted({ sessionId: sessionId ?? "" } as GrantCtx, params.name);
+  if (!sessionId && isStdio(server)) {
+    throw new McpError(
+      400,
+      `"${params.name}" is a local command, so it runs in a conversation's checkout ` +
+        `— pass ?session=<id>.`,
+    );
+  }
+  const result = await mcpManager().call(
+    sessionId ?? SHARED_SCOPE,
+    params.name,
+    params.tool,
+    (body ?? {}) as Record<string, unknown>,
+    { workspace: sessionId ? workspaceOf(ctx, sessionId) : process.cwd() },
+  );
+  return jsonResponse({ server: params.name, tool: params.tool, result: result ?? null });
 };
 
 /** `POST /mcp/servers/:name/restart?session=` — drop the child and start a new one. */

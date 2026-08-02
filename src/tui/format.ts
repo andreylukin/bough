@@ -686,9 +686,12 @@ export function programSummary(code: string, max = 64, running = false): string 
   const fetched = count(/(?<![.\w])fetch\s*\(/g);
   if (fetched) bits.push(`${running ? "fetching" : "fetched"} ${plural(fetched, "URL")}`);
   if (count(/(?<![.\w])image\s*\(/g)) bits.push("attached an image");
-  const mcpCalls = count(/(?<![.\w])mcp\s*\(/g);
+  // Matched in the COMMAND TEXT, not as a call shape: MCP is reached by running
+  // `bough mcp call`, the same way `ast-grep` is. There is no host function left to
+  // count.
+  const mcpCalls = count(/\bbough mcp call\b/g);
   if (mcpCalls) bits.push(`${plural(mcpCalls, "MCP call")}`);
-  else if (count(/(?<![.\w])mcpStatus\s*\(/g)) bits.push("checked the MCP servers");
+  else if (count(/\bbough mcp\b/g)) bits.push("checked the MCP servers");
   // `ast-grep` rides inside a shell string rather than arriving as its own host
   // function, so this matches the command text, not a call shape. It stays in the
   // list because a structural search is a different ACT from a text sweep and the
