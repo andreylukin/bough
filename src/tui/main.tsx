@@ -37,11 +37,11 @@ import { createRoot } from "@opentui/react";
 // allowed to know about both sides; nothing below it is.
 import { MODELS, type ModelRow } from "../llm/client.ts";
 import { api } from "./api.ts";
-import { createStore } from "./store.ts";
+import { createStore, type TuiState } from "./store.ts";
 import { enterTui, filteredStdin, leaveTui, type MouseEvent, type NavKey } from "./mouse.ts";
 import { applyTheme, type ThemePreset, type ThemeState } from "./theme.ts";
 import { isTuiHelpRequest, isTuiUsageError, parseTuiArgs, USAGE as TUI_USAGE } from "./args.ts";
-import { term } from "./term.ts";
+import { boughTitle, term } from "./term.ts";
 import { App, type AppControls, type InputHooks } from "./components/App.tsx";
 
 /**
@@ -106,6 +106,13 @@ async function preflight(): Promise<void> {
     console.error(`bough tui: ${detail}`);
     process.exit(2);
   }
+}
+
+/** Derive terminal chrome from store state; no terminal dependency enters the store. */
+function tabTitle(state: TuiState): string {
+  const session = state.session ?? state.sessions.find((row) => row.id === state.currentId) ?? null;
+  const turn = state.turn?.sessionId === state.currentId ? state.turn : null;
+  return boughTitle(session?.title ?? null, turn ? turn.endedAt === null ? "running" : "complete" : null);
 }
 
 async function main() {
@@ -298,10 +305,20 @@ async function main() {
   // background query be read — and the filter is already in place to catch it.
   terminal.queryTermBg();
   store.start();
+  let previousTabTitle = "";
+  const updateTabTitle = (state: TuiState) => {
+    const title = tabTitle(state);
+    if (title === previousTabTitle) return;
+    previousTabTitle = title;
+    terminal.setTitle(title);
+  };
+  const unsubscribeTabTitle = store.subscribe(updateTabTitle);
+  updateTabTitle(store.getState());
 
   try {
     await untilExit;
   } finally {
+    unsubscribeTabTitle();
     await store.stop();
     leaveTui(() => terminal.cleanup());
     // The stdin data listener would otherwise hold the event loop open forever.

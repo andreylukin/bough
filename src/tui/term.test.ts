@@ -13,6 +13,7 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 import {
+  boughTitle,
   classifyBg,
   createTerm,
   kittyKeyboardMode,
@@ -87,6 +88,8 @@ test("the tab tint is iTerm2's alone, and not under tmux", () => {
 test("Terminal.app gets a bell, because it accepts OSC 9 and shows nothing", () => {
   assert.equal(termCaps({ TERM_PROGRAM: "Apple_Terminal" }).notify, "bell");
   assert.equal(termCaps({ TERM_PROGRAM: "ghostty" }).notify, "osc9");
+  assert.equal(termCaps({ ZELLIJ: "0" }).zellij, true);
+  assert.equal(termCaps({}).zellij, false);
 });
 
 // ---------------------------------------------------------------------------
@@ -96,6 +99,12 @@ test("Terminal.app gets a bell, because it accepts OSC 9 and shows nothing", () 
 test("sanitize strips control bytes from titles and notification bodies", () => {
   assert.equal(sanitize("ok\x07\x1b]0;evil\x07"), "ok  ]0;evil ");
   assert.equal(sanitize("plain title"), "plain title");
+});
+
+test("bough title marks active and completed work", () => {
+  assert.equal(boughTitle(null, null), "bough");
+  assert.equal(boughTitle("Fix parser", "running"), "bough · Fix parser · running");
+  assert.equal(boughTitle("Fix\x07 parser", "complete"), "bough · Fix  parser · complete");
 });
 
 test("tmuxWrap doubles every ESC and wraps in the passthrough DCS", () => {
@@ -195,6 +204,13 @@ test("the title names the pane, and under tmux the window too", () => {
   const inTmux = harness(termCaps({ TMUX: "x" }));
   inTmux.term.setTitle("bough");
   assert.deepEqual(inTmux.out, ["\x1b]0;bough\x07", "\x1bkbough\x1b\\"]);
+});
+
+test("a zellij session also names its focused multiplexer tab", () => {
+  const titles: string[] = [];
+  const terminal = createTerm({ caps: termCaps({ ZELLIJ: "1" }), write: () => {}, renameZellijTab: (title) => titles.push(title) });
+  terminal.setTitle("bough\x07 running");
+  assert.deepEqual(titles, ["bough  running"]);
 });
 
 test("OSC 52 base64-encodes the clipboard payload and caps it", () => {

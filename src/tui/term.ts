@@ -52,6 +52,8 @@ export interface TermCaps {
   term: string;
   /** Inside tmux: the outer terminal is unknowable and OSC needs wrapping. */
   tmux: boolean;
+  /** Inside zellij: use its action CLI to rename the focused multiplexer tab. */
+  zellij: boolean;
   /**
    * The terminal is known to implement the kitty keyboard protocol, so `key.super`
    * is a real modifier rather than a misparse. False under tmux — not because tmux
@@ -77,12 +79,14 @@ export function termCaps(env: TermEnv): TermCaps {
   const program = env.TERM_PROGRAM ?? "";
   const term = env.TERM ?? "";
   const tmux = !!env.TMUX;
+  const zellij = !!env.ZELLIJ;
   const kitty = !tmux &&
     (KITTY_PROGRAMS.includes(program) || KITTY_TERMS.includes(term) || !!env.KITTY_WINDOW_ID);
   return {
     program,
     term,
     tmux,
+    zellij,
     kitty,
     progress: PROGRESS_PROGRAMS.includes(program),
     tabColor: program === "iTerm.app" && !tmux,
@@ -130,6 +134,12 @@ export function classifyBg(hex: string): { hex: string; scheme: "dark" | "light"
   return { hex, scheme: luma < 128 ? "dark" : "light" };
 }
 
+/** The compact title shared by the terminal window and zellij's tab bar. */
+export function boughTitle(session: string | null, status: "running" | "complete" | null): string {
+  const label = sanitize(session ?? "").trim();
+  return ["bough", label, status].filter(Boolean).join(" · ");
+}
+
 // ---------------------------------------------------------------------------
 // Effects
 // ---------------------------------------------------------------------------
@@ -138,6 +148,8 @@ export interface TermOptions {
   caps: TermCaps;
   /** Where sequences go. A test passes a collector; production writes to stdout. */
   write: (seq: string) => void;
+  /** Renames zellij's focused tab; injected so terminal effects remain testable. */
+  renameZellijTab?: (title: string) => void;
   /** Absent = the real timers. Injected so a test never waits on the keep-alive. */
   setInterval?: (fn: () => void, ms: number) => number;
   clearInterval?: (handle: number) => void;
@@ -147,7 +159,7 @@ export interface TermOptions {
 
 export interface Term {
   caps: TermCaps;
-  /** Name the tab (and, under tmux, the window). */
+  /** Name the terminal pane and, when present, zellij's focused tab. */
   setTitle(title: string): void;
   /** Only while unfocused: a banner about the screen you are looking at is noise. */
   notifyDesktop(body: string): void;
@@ -172,6 +184,7 @@ export interface Term {
 
 export function createTerm(options: TermOptions): Term {
   const { caps, write } = options;
+  const renameZellijTab = options.renameZellijTab ?? (() => {});
   const every = options.setInterval ?? ((fn, ms) => setInterval(fn, ms) as unknown as number);
   const stopEvery = options.clearInterval ?? ((h) => clearInterval(h));
   const after = options.setTimeout ?? ((fn, ms) => setTimeout(fn, ms) as unknown as number);
@@ -188,8 +201,10 @@ export function createTerm(options: TermOptions): Term {
     setTitle(title) {
       const t = sanitize(title);
       write(`\x1b]0;${t}\x07`);
-      // Under tmux OSC 0 names the pane; \x1bk additionally names the window.
+      // Under tmux OSC 0 names the pane; k additionally names the window.
       if (caps.tmux) write(`\x1bk${t}\x1b\\`);
+      // OSC titles do not affect zellij's tab bar; its documented local action does.
+      if (caps.zellij) renameZellijTab(t);
     },
 
     notifyDesktop(body) {
@@ -308,6 +323,15 @@ function stdoutIsTty(): boolean {
   }
 }
 
+/** Best effort: a missing/old zellij client must never affect the TUI. */
+function renameZellijTab(title: string): void {
+  try {
+    Bun.spawn(["zellij", "action", "rename-tab", title], { stdin: "ignore", stdout: "ignore", stderr: "ignore" }).unref();
+  } catch {
+    // The session or CLI disappeared after zellij was detected.
+  }
+}
+
 let instance: Term | null = null;
 
 /**
@@ -322,6 +346,7 @@ export function term(): Term {
   const isTty = stdoutIsTty();
   instance = createTerm({
     caps: termCaps(readEnv()),
+    renameZellijTab,
     write: (seq) => {
       if (!isTty) return;
       try {
