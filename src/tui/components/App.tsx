@@ -406,6 +406,8 @@ export function App(
   const [sent, setSent] = useState<string[]>([]);
   const [histAt, setHistAt] = useState<number | null>(null);
   const [attachments, setAttachments] = useState<{ path: string; mediaType: string; name: string; size: number }[]>([]);
+  /** Long clipboard text remains compact until the message is sent. */
+  const [pastedTexts, setPastedTexts] = useState<string[]>([]);
   /** Null = editing the text; otherwise an index in the queued image rows. */
   const [attachmentSel, setAttachmentSel] = useState<number | null>(null);
   const [askText, setAskText] = useState("");
@@ -1285,7 +1287,7 @@ export function App(
   // commit. `setLine` maintains `lineRef` synchronously for exactly this read.
   const submit = useCallback((queue: boolean) => {
     const text = lineRef.current.text.trim();
-    if (text === "" && attachments.length === 0) return;
+    if (text === "" && attachments.length === 0 && pastedTexts.length === 0) return;
     // A DRAFT THAT IS A COMMAND IS RUN, NOT SENT. Dispatching used to happen only
     // when a popup row was accepted, and the popup only exists if the text was slow
     // enough to render — so a pasted `/model` went to the frontier model as prose
@@ -1341,15 +1343,18 @@ export function App(
       return runRef.current?.(invocation.command, invocation.arg);
     }
     const images = attachments;
+    const pasted = pastedTexts;
     setAttachments([]);
+    setPastedTexts([]);
     setAttachmentSel(null);
     setLine(EMPTY_LINE);
     setHistAt(null);
     setSent((h) => [...h, text]);
     setScrollOff(0);
-    if (state.currentId) void store.send(text, { queue, images } as Parameters<typeof store.send>[1]);
-    else void store.createSession(defaultWorkspace).then((s) => s && store.send(text, { images } as Parameters<typeof store.send>[1]));
-  }, [state.currentId, defaultWorkspace, store]);
+    const message = text + pasted.join("");
+    if (state.currentId) void store.send(message, { queue, images } as Parameters<typeof store.send>[1]);
+    else void store.createSession(defaultWorkspace).then((s) => s && store.send(message, { images } as Parameters<typeof store.send>[1]));
+  }, [state.currentId, defaultWorkspace, store, attachments, pastedTexts]);
 
   /** One command → one effect. Nothing here decides anything; it only dispatches. */
   const run = useCallback((command: Command, input: string) => {
@@ -1365,7 +1370,10 @@ export function App(
         if (!hooks.pasteClipboard || !uploadImage) return store.notify("clipboard paste is unavailable in this terminal");
         return void hooks.pasteClipboard().then((item) => {
           if (!item) return store.notify("clipboard has no text or supported image");
-          if ("text" in item) return setLine((line) => insertText(line, stripCtl(item.text)));
+          if ("text" in item) {
+            const clean = stripCtl(item.text);
+            return clean.length > 100 ? setPastedTexts((items) => [...items, clean]) : setLine((line) => insertText(line, clean));
+          }
           return uploadImage(item.image).then((part) => setAttachments((xs) => [...xs, part]));
         }).catch((error) => store.notify(error instanceof Error ? error.message : String(error)));
       case "quit.arm":
@@ -1411,6 +1419,7 @@ export function App(
         setHistAt(null);
         setScrollOff(0);
         setAttachments([]);
+        setPastedTexts([]);
         setAttachmentSel(null);
         store.newConversation();
         return setMode("chat");
@@ -1442,6 +1451,7 @@ export function App(
       case "draft.clear":
         setHistAt(null);
         setAttachments([]);
+        setPastedTexts([]);
         setAttachmentSel(null);
         return setLine(EMPTY_LINE);
       case "cancel":
@@ -1454,7 +1464,8 @@ export function App(
       case "attachment.up":
         return setAttachmentSel((at) => at === null || at === 0 ? null : at - 1);
       case "attachment.down":
-        return setAttachmentSel((at) => at === null ? 0 : Math.min(attachments.length - 1, at + 1));
+        const total = attachments.length + pastedTexts.length;
+        return setAttachmentSel((at) => total === 0 ? null : at === null ? 0 : Math.min(total - 1, at + 1));
       case "history.prev": {
         if (sent.length === 0) return;
         const at = histAt === null ? last(sent.length) : Math.max(0, histAt - 1);
@@ -1649,8 +1660,10 @@ export function App(
       case "delete.back":
         if (lineRef.current.text === "" && attachmentSel !== null) {
           const selected = attachmentSel;
-          setAttachments((items) => items.filter((_item, index) => index !== selected));
-          return setAttachmentSel((at) => at === null ? null : Math.min(at, attachments.length - 2));
+          if (selected < attachments.length) setAttachments((items) => items.filter((_item, index) => index !== selected));
+          else { const textIndex = selected - attachments.length; setPastedTexts((items) => items.filter((_item, index) => index !== textIndex)); }
+          const totalAfter = attachments.length + pastedTexts.length - 1;
+          return setAttachmentSel(totalAfter === 0 ? null : Math.min(selected, totalAfter - 1));
         }
         return setLine((s) => editLine(s, command));
       default:
@@ -1673,6 +1686,7 @@ export function App(
     store,
     submit,
     attachments,
+    pastedTexts,
     attachmentSel,
   ]);
 
@@ -1841,7 +1855,7 @@ export function App(
       quitArmed: quitArmedRef.current,
       railLive: units.length > 0,
       completing,
-      hasAttachments: attachments.length > 0,
+      hasAttachments: attachments.length + pastedTexts.length > 0,
     });
 
     // ---- Escape: the one chord whose meaning depends on the NEXT keypress ----
@@ -2138,7 +2152,7 @@ export function App(
             completionSel={selAt}
             completionMore={Math.max(0, completion.total - completion.items.length)}
             ghost={completing ? "" : ghost}
-            attachments={attachments.map((part) => part.name)}
+            attachments={[...attachments.map((part) => part.name), ...pastedTexts.map((_text, index) => "Pasted text #" + (index + 1))]}
             attachmentSel={attachmentSel}
             keyboardOwner={uiMode === "rail" ? "the rail" : null}
           />
