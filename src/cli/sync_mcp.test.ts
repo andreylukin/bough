@@ -718,6 +718,57 @@ test("an unusable entry is reported and the others still land", async () => {
   assert.match(lines.join("\n"), /broken.*failed/);
 });
 
+test("a grant that is empty or already expired is adopted, and SAID", async () => {
+  // The real report behind this: four servers synced cleanly, then failed one at a
+  // time in the panel — three "expired", one "has no string at #mcpOAuth…" — with
+  // nothing tying any of it back to the sync that wrote the references. The
+  // references were right; the grants behind them had gone quiet because Claude Code
+  // had stopped using those particular servers.
+  //
+  // Adopting anyway is correct: Claude Code refreshes its own tokens, so a grant that
+  // is stale at sync time is live again the next time that server is used there.
+  // Doing it silently was not.
+  const file = await registryFile();
+  const lines: string[] = [];
+  const code = await runSyncMcp([], {
+    out: (l) => lines.push(l),
+    err: (l) => lines.push(l),
+    readJson: reader(PLUGIN_FILES),
+    keychain: keychain({
+      "dead|aaa": {
+        serverName: "dead",
+        serverUrl: "https://dead.example/mcp",
+        accessToken: "",
+        expiresAt: 0,
+      },
+      "stale|bbb": {
+        serverName: "stale",
+        serverUrl: "https://stale.example/mcp",
+        accessToken: "an-old-token",
+        expiresAt: Date.now() - 3_600_000,
+      },
+    }),
+    home: HOME,
+    configDir: CONFIG_DIR,
+    cwd: "/w",
+    config: { file },
+  });
+  assert.equal(code, 0);
+  const text = lines.join("\n");
+  // The empty one names itself and says what to do — it can never resolve.
+  assert.match(text, /"dead" holds no token/);
+  assert.match(text, /Re-authorize it in Claude Code/);
+  // The expired one is a note, not a warning: it is expected to come back.
+  assert.match(text, /"stale"/);
+  assert.match(text, /already expired/);
+  assert.match(text, /bough does not refresh them/);
+  // Both are still adopted — the reference is written either way.
+  const servers = JSON.parse(await readFile(file, "utf8")).servers;
+  assert.ok(servers["dead"] && servers["stale"], Object.keys(servers).join(","));
+  // And no secret rides along.
+  assert.equal(text.includes("an-old-token"), false);
+});
+
 test("a literal-looking secret in env is warned about, not silently republished", () => {
   assert.equal(looksSecret("GITHUB_TOKEN", "ghp_averyrealtokenvalue"), true);
   assert.equal(looksSecret("API_KEY", "${MY_KEY}"), false); // already a reference

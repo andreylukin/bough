@@ -224,13 +224,18 @@ export function credentialStores(
  * WHY `satisfies` EXISTS, and why "first store with bytes wins" was wrong. Claude
  * Code keeps two different things under one item name: `claudeAiOauth` (its own
  * login) and `mcpOAuth` (one grant per remote MCP server it has authorized). Those
- * two do not have to live in the same store, and on a real machine they stopped
- * doing so — the keychain item was left holding only `claudeAiOauth` while every
- * `mcpOAuth` grant moved into `.credentials.json`. Asking "did this store return
- * bytes" made the keychain win every read, so `#mcpOAuth.<key>.accessToken`
- * resolved against a blob that could never contain it and every synced server
- * failed with "has no string at #mcpOAuth…" — while the token sat in the file the
- * next store would have read.
+ * two do not have to live in the same store, and on this developer's own Mac they
+ * do not: the keychain item holds `claudeAiOauth` alone. Asking "did this store
+ * return bytes" makes the keychain win every read there, so a
+ * `#mcpOAuth.<key>.accessToken` reference resolves against a blob that cannot
+ * contain it while the grant sits in the file the next store would have read.
+ *
+ * HONEST PROVENANCE. This is a latent bug found while investigating a DIFFERENT
+ * failure, and it was not that failure's cause. The machine that reported "has no
+ * string at #mcpOAuth…" turned out to have only one readable store, so old rule and
+ * new rule pick identically there; its grant was simply empty (see
+ * `cli/sync_mcp.ts`). The split above is real and reachable, which is why this
+ * stays — but it has not yet been observed to break anyone.
  *
  * So the question a store has to answer is not "do you have this item" but "do you
  * have what was asked for". A store that returns an item missing the requested path

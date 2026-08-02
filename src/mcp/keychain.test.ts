@@ -340,11 +340,14 @@ const withGrants = (store: "keychain" | "file"): KeychainReader => () =>
   });
 
 test("the store that has the FIELD wins, not the store that has the item", async () => {
-  // The bug this pins, observed on a real machine: Claude Code left `claudeAiOauth`
-  // in the keychain and moved every `mcpOAuth` grant into `.credentials.json`. The
-  // keychain answered first with a perfectly valid blob that could never contain the
-  // reference's path, so every synced server failed with "has no string at
-  // #mcpOAuth…" while the token sat in the next store along.
+  // The split this pins is real and observed: on this developer's Mac the keychain
+  // item holds `claudeAiOauth` alone while the `mcpOAuth` grants live in
+  // `.credentials.json`. Under "first store with bytes wins" the keychain answers
+  // with a valid blob that cannot contain the reference's path, and the token in the
+  // next store along is never reached.
+  //
+  // It is NOT the cause of the failure that led here — that machine had one readable
+  // store and an empty grant. Pinned anyway because the arrangement is reachable.
   const ref = parseKeychainRef(`\${keychain:${CLAUDE_CODE_ITEM}#mcpOAuth.${GRANT_KEY}.accessToken}`)!;
   const picked = await readFromStores(
     CLAUDE_CODE_ITEM,

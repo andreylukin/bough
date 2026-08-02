@@ -106,6 +106,21 @@ export interface KeychainGrant {
   url: string;
   /** Epoch ms, when the entry carried one. */
   expiresAt?: number;
+  /**
+   * The entry records a grant but holds no token. Claude Code leaves these behind
+   * for a connector it no longer has access to, and the reference written for one
+   * can never resolve — so it is worth SAYING at sync time rather than discovering
+   * as "has no string at #mcpOAuth…" per server, later, in a panel.
+   *
+   * A boolean, never the token: `Grant` deliberately does not read secret values
+   * into this process, and "is it empty" is answerable without loading one.
+   */
+  empty: boolean;
+}
+
+/** Already past its expiry at sync time. */
+export function isStale(g: KeychainGrant, now = Date.now()): boolean {
+  return typeof g.expiresAt === "number" && g.expiresAt <= now;
 }
 
 /**
@@ -159,10 +174,12 @@ export async function readGrants(
   for (const [key, raw] of Object.entries(map)) {
     const entry = Grant.safeParse(raw);
     if (!entry.success) continue; // a shape we do not recognize is not a server
+    const token = (raw as { accessToken?: unknown } | null)?.accessToken;
     grants.push({
       key,
       name: entry.data.serverName,
       url: entry.data.serverUrl,
+      empty: typeof token !== "string" || token.length === 0,
       ...(entry.data.expiresAt === undefined ? {} : { expiresAt: entry.data.expiresAt }),
     });
   }
@@ -698,6 +715,31 @@ export async function runSyncMcp(argv: string[], deps: SyncDeps = {}): Promise<n
   // servers; asking for "the store with the grants" gets the four that are there.
   const { grants, note } = await readGrants(deps.keychain ?? credentialReaderFor(holdsGrants));
   if (note) err(`warning: ${note}`);
+  // SAY WHAT WAS ADOPTED IN WHAT CONDITION. A reference is written for a grant
+  // whether or not the grant currently works, and that is the right behaviour —
+  // Claude Code refreshes its own tokens, so a grant that is stale now is usually
+  // live again the next time that server is used over there. What was wrong was
+  // doing it SILENTLY: an adopted-but-dead grant surfaced later, one server at a
+  // time, as a connect error in a panel, with nothing connecting it back to the
+  // sync that wrote it. These two lines are the whole difference between "bough is
+  // broken" and "Claude Code has not used that server in a while".
+  for (const g of grants.filter((x) => x.empty)) {
+    err(
+      `warning: Claude Code's grant for "${g.name}" holds no token — the entry exists ` +
+        `but is empty, so its reference cannot resolve. Re-authorize it in Claude Code, ` +
+        `or remove the server from bough's registry.`,
+    );
+  }
+  const stale = grants.filter((g) => !g.empty && isStale(g));
+  if (stale.length > 0) {
+    err(
+      `note: ${stale.map((g) => `"${g.name}"`).join(", ")} ` +
+        `${stale.length === 1 ? "has a grant that is" : "have grants that are"} already ` +
+        `expired. Adopted anyway — Claude Code refreshes its own tokens, so using ` +
+        `${stale.length === 1 ? "that server" : "those servers"} there makes ` +
+        `${stale.length === 1 ? "it" : "them"} work here. bough does not refresh them.`,
+    );
+  }
   // Matched by NAME first, then by URL: the name is what Claude Code keys the grant
   // under and what the config calls the server, and the URL catches the case where
   // the two disagree about spelling but plainly mean the same endpoint.
