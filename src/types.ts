@@ -443,12 +443,6 @@ export interface HostFns {
    * so the model answers MCP questions from a fresh call (plan §6.13).
    */
   mcpStatus?(): Promise<string>;
-  /**
-   * Verb-dispatched symbol navigation. An EMPTY result is an ordinary answer, not
-   * a failure; only a dead backend rejects, and it says so plainly so the program
-   * drops to `rg` for the rest of the task (plan §6.14).
-   */
-  lsp?(verb: string, argsJson: string): Promise<string>;
 }
 
 /** Names in the protocol list that `HostFns` does not declare. Must be `never`. */

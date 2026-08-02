@@ -158,7 +158,6 @@ test("host names: one list, with the dropped verbs actually dropped", () => {
       "artifact",
       "mcp",
       "mcpStatus",
-      "lsp",
       "workflow",
     ]
   ) {

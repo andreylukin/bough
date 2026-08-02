@@ -114,7 +114,7 @@ test("host-name lists: the worker binds exactly PROGRAM_PARAMS, nothing missing"
     );
   }
   // Every bridged name is callable — either a function or a verb-dispatched method
-  // object (`state.get`, `lsp.def`).
+  // object (`state.get`, `workflow.start`).
   for (const name of HOST_FN_NAMES) {
     ok(
       seen.get(name) === "function" || seen.get(name) === "object",

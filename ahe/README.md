@@ -27,7 +27,7 @@ ablation, which found the system prompt to be the one component that **regressed
 alone while tools, middleware and memory each carried the gain. The mitigating fact
 is what bough's prompt actually is: most of those files are not strategy prose but
 the interface documentation for the host functions — `shell.md`, `files.md`,
-`patch-grammar.md`, `lsp.md` — which is the half of the paper's "tools" component
+`patch-grammar.md`, `searching.md` — which is the half of the paper's "tools" component
 that transferred. The evolve agent is pushed toward those and away from
 exhortation, but the risk is real and the loop should be judged on measured flips,
 not on the fact that it ran.
@@ -162,8 +162,8 @@ per-task haiku band has to be measured and the middle kept — a sweep of its ow
 before any evolution starts. TB-Core v0.1.1 is the older, easier set.
 
 **The task mix points away from the action space.** Terminal-Bench is terminal
-and sysadmin shaped, which exercises `bash()` heavily and `patch()`, `view()` and
-`lsp()` barely. Since the editable surface here is the prompt, and the part of the
+and sysadmin shaped, which exercises `bash()` heavily and `patch()` and `view()`
+barely. Since the editable surface here is the prompt, and the part of the
 prompt most likely to transfer is the host-function contracts, a bank that never
 exercises those contracts cannot produce evidence about them. Use TB as a source
 for calibrated difficulty, and keep hand-written tasks for the verbs it misses.

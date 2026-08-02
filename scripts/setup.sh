@@ -146,28 +146,33 @@ case "$(command -v bun)" in
     ;;
 esac
 
-# leta: LSP backend for the lsp.* host functions (symbol navigation).
-# From a third-party tap, so it can't go in the main package array above — and the
-# tap is macOS-only. OPTIONAL EVERYWHERE: without it `lsp.*` is simply not granted
-# and the prompt tells the model to use rg + view instead (`prompt/searching.md`),
-# so a machine that cannot install it gets one fewer verb, not a broken bough.
-if command -v leta >/dev/null; then
-  echo "==> leta already installed"
-elif [ "$OS" = "Darwin" ]; then
-  echo "==> installing leta (LSP backend) via brew tap"
-  brew install andreasjansson/tap/leta
+# ast-grep: structural code search, taught in `prompt/searching.md` beside rg.
+#
+# It replaces the leta/language-server stack that used to back an `lsp.*` host
+# function. That stack was macOS-only (a brew tap), needed a language server per
+# language, and the measurement that retired it is blunt: one call in 184 programs on
+# a machine where it WAS installed. One static binary that works identically on both
+# platforms is worth more than a richer surface half the installs never had.
+#
+# NOT optional in the way leta was, and that is the point: the prompt names ast-grep
+# unconditionally, so an install without it is an install where a documented tool is
+# missing. It is still not fatal — the model is told to drop to rg — but it should be
+# loud rather than a shrug.
+if command -v ast-grep >/dev/null; then
+  echo "==> ast-grep already installed"
+elif [ "$OS" = "Darwin" ] && command -v brew >/dev/null; then
+  echo "==> installing ast-grep (structural search) via brew"
+  brew install ast-grep
+elif command -v cargo >/dev/null; then
+  echo "==> installing ast-grep (structural search) via cargo"
+  cargo install ast-grep --locked
+elif command -v npm >/dev/null; then
+  echo "==> installing ast-grep (structural search) via npm"
+  npm install -g @ast-grep/cli
 else
-  echo "==> leta not installed (no tap on $OS) — lsp.* will fall back to rg + view"
-  echo "    to add it: https://github.com/andreasjansson/leta"
-fi
-
-# typescript-language-server + typescript@5: leta's tsserver for TS/JS navigation.
-# TS7 ships no tsserver.js, so pin typescript@5.
-if ! command -v typescript-language-server >/dev/null; then
-  echo "==> installing typescript-language-server + typescript@5 (npm global)"
-  npm install -g typescript-language-server typescript@5
-else
-  echo "==> typescript-language-server already installed"
+  echo "warning: could not install ast-grep — no brew, cargo or npm."
+  echo "  bough works without it (programs fall back to rg + view), but the prompt"
+  echo "  documents it. Install it: https://ast-grep.github.io/guide/quick-start.html"
 fi
 
 echo "==> installing dependencies + typecheck"

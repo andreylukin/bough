@@ -92,7 +92,7 @@ Bun runtime and may ignore all of them.
 | Shell | `bash` (auto-backgrounds past 60s, never killed) · `sh` for concurrent commands · `bashBg` / `bashOutput` / `bashWait` / `bashKill` |
 | Files | `view` → numbered lines with a version tag · `patch` → hash-anchored line edits · `write` for new files |
 | Delegation | `agent` (blocking) · `spawn` (detached) · `join` · `adopt` · `workflow.*` |
-| Session | `ask` a human mid-program · `state.*` durable KV · `schedule.*` · `image` · `fetch` · `artifact` · `mcp` · `lsp.*` |
+| Session | `ask` a human mid-program · `state.*` durable KV · `schedule.*` · `image` · `fetch` · `artifact` · `mcp` |
 
 **One editing idiom.** `patch` names lines instead of quoting them, so code being edited never has
 to survive the model's own string escaping. The tag pins the version that was viewed: if the file

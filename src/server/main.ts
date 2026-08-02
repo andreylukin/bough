@@ -42,8 +42,6 @@ import { reconcileMcp, reconcileSummary } from "../mcp/service.ts";
 import { sweepScratch } from "../scratch.ts";
 import { createScheduleHostFn } from "../hostfn/schedule.ts"; // T6.3
 import { createStateHostFn } from "../hostfn/state.ts"; // T6.2
-import { createLspHostFn } from "../hostfn/lsp.ts"; // T7.4
-import { BACKEND_NAME, BIN_ENV_VAR, findBackend, lspAvailable } from "../lsp/lsp.ts"; // T7.4
 import { assemblePrompt } from "../prompt/assemble.ts"; // T7.4
 import { dbPath, workflowsDir } from "../paths.ts";
 import { startScheduleTicker, TICK_MS } from "../schedules.ts"; // T6.3
@@ -641,37 +639,19 @@ process.on("exit", () => {
   if (open > 0) console.log(`shutdown: ${open} MCP connection(s) were open`);
 });
 
-// T7.4 — symbol navigation. One rebuilt starter and one boot report.
+// Symbol navigation is NOT a host function. It used to be — a bridged `lsp.*`
+// namespace over a language-server backend — and the measurement that removed it is
+// worth keeping next to the code: across 184 programs on a machine where the backend
+// WAS installed and the prompt section WAS assembled, the model called it once. On the
+// machine where the backend was never installed, 616 programs reached for `grep`,
+// `git grep` and `sed` instead. A namespace that has to win an attention contest
+// against `grep` loses it, and the contest is decided largely by tool-description
+// wording rather than by which tool is better (arXiv 2505.18135).
 //
-// The starter is REBUILT rather than edited above, the same append-only discipline as
-// every block before it: identical wiring, plus `lsp()` merged into the `extend` seam,
-// `"lsp"` named in `granted`, and one new thing no earlier block needed — an
-// `assemble` override.
-//
-// WHY THE OVERRIDE. `prompt/lsp.md` is gated on TWO facts: the verb is bridged
-// (`granted`) and the backend is actually installed (`PromptInput.lsp`). The first is
-// fixed for the life of a starter; the second is a fact about the machine that can
-// change while the server runs — a user who installs the backend mid-session should
-// get symbol navigation on their next turn, not after a restart. `TurnDeps.assemble`
-// is the seam the runner already calls once per turn, so resolving availability there
-// is what keeps the two in step. It is a filesystem stat, never a spawn (`lsp/lsp.ts`),
-// so the laziness spec §10 requires survives being asked every turn.
-//
-// WHY THE BRIDGE IS UNCONDITIONAL while the prompt section is not. A turn told about a
-// verb it cannot call wastes a round, which is the failure `granted` exists to prevent
-// — but the reverse here is harmless and useful: with no backend installed the model is
-// never told the verbs exist, and the one path that could still reach them (a program
-// that guessed) gets a sentence saying the backend is not installed rather than
-// "unknown host function". Gating the bridge at boot instead would freeze the answer
-// for the life of the process.
-//
-// Granted at every tier, like `fetch`/`artifact`/`mcp` and unlike `workflow`: a
-// subagent handed "rename X across the codebase" needs the same verbs its spawner had,
-// and reading symbols is as core to delegated work as `bash` is.
-//
-// Nothing is constructed, connected or recovered here. The backend is a lazy
-// subprocess: the first `lsp.*` call of a turn registers the workspace and wakes the
-// daemon, and a turn that never asks about a symbol never pays for a language server.
+// So structure now arrives through the surface the model already uses 80% of the time:
+// `ast-grep` on PATH, taught in `prompt/searching.md` beside `rg`. There is nothing to
+// bridge, nothing to gate, and no per-machine capability difference to reason about —
+// which also means Linux and macOS bough are finally the same agent.
 ctx.startTurn = createDelegatingTurnStarter({
   base: {
     survivingJobs: (sessionId) => jobs.runningIds(sessionId),
@@ -686,11 +666,7 @@ ctx.startTurn = createDelegatingTurnStarter({
       "artifact",
       "mcp",
       "mcpStatus",
-      "lsp",
     ],
-    // Resolved per turn, for the reason above. Everything else the runner passes in
-    // (kind, granted, the workspace note) is forwarded untouched.
-    assemble: (input) => assemblePrompt({ ...input, lsp: lspAvailable() }),
   },
   deliver: createNoteDeliverer(),
   extend: (turnCtx) => ({
@@ -704,7 +680,6 @@ ctx.startTurn = createDelegatingTurnStarter({
     ...createStateHostFn(turnCtx),
     ...createArtifactHostFn(turnCtx),
     ...createMcpHostFns(bindTurnGrant(turnCtx)),
-    ...createLspHostFn(turnCtx),
   }),
 });
 
@@ -720,21 +695,6 @@ ctx.startTurn = createDelegatingTurnStarter({
 // exists to show. There is deliberately no backfill pass for rows created before this
 // task either: stamping today's HEAD onto an old session would silently declare its
 // whole diff reviewed.
-
-// The boot report. Not a gate and not a probe — it stats for the binary and says what
-// it found, because "the model never mentions lsp" and "the backend is not installed"
-// look identical from the outside and this is the only place that can tell them apart
-// cheaply. Absence is normal and is not a warning: bough works without it, which is
-// exactly what the fallback in `prompt/lsp.md` is for.
-{
-  const bin = findBackend();
-  console.log(
-    bin
-      ? `lsp backend: ${bin} — symbol navigation enabled (nothing spawns until the first call)`
-      : `lsp backend: ${BACKEND_NAME} not installed — symbol navigation off; programs use ` +
-        `rg + view + patch. Set ${BIN_ENV_VAR} to point at it.`,
-  );
-}
 
 // T8.6 — keyword search over transcripts. Two wirings, and the first one is the
 // required half.
@@ -913,9 +873,8 @@ const skillAwareStarter = (sessionId: string) =>
         "artifact",
         "mcp",
         "mcpStatus",
-        "lsp",
       ],
-      // Resolved per turn, like `lsp` beside it. `notes` carries the skills that were
+      // Resolved per turn. `notes` carries the skills that were
       // NAMED and could not be loaded: a malformed SKILL.md must not make a `/name`
       // vanish silently, and the model is the only thing in the loop that can tell the
       // user their file is broken (`skills/skills.ts`).
@@ -923,7 +882,6 @@ const skillAwareStarter = (sessionId: string) =>
         const active = skillsFor(sessionId);
         return assemblePrompt({
           ...input,
-          lsp: lspAvailable(),
           skills: active.skills,
           notes: [...(input.notes ?? []), ...active.notes],
         });
@@ -941,7 +899,6 @@ const skillAwareStarter = (sessionId: string) =>
       ...createStateHostFn(turnCtx),
       ...createArtifactHostFn(turnCtx),
       ...createMcpHostFns(grantedCtxFor(turnCtx)),
-      ...createLspHostFn(turnCtx),
     }),
   });
 

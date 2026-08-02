@@ -689,7 +689,11 @@ export function programSummary(code: string, max = 64, running = false): string 
   const mcpCalls = count(/(?<![.\w])mcp\s*\(/g);
   if (mcpCalls) bits.push(`${plural(mcpCalls, "MCP call")}`);
   else if (count(/(?<![.\w])mcpStatus\s*\(/g)) bits.push("checked the MCP servers");
-  if (count(/(?<![.\w])lsp\.\w+\s*\(/g)) bits.push("looked up symbols");
+  // `ast-grep` rides inside a shell string rather than arriving as its own host
+  // function, so this matches the command text, not a call shape. It stays in the
+  // list because a structural search is a different ACT from a text sweep and the
+  // header is the only place that distinction is visible to the user.
+  if (count(/\bast-grep\b/g)) bits.push("searched by structure");
 
   const searches = count(/(?<![.\w])(?:grep|glob|search)\s*\(/g);
   if (searches && bits.length === 0) bits.push(running ? "searching the tree" : "searched the tree");

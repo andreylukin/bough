@@ -58,7 +58,7 @@ function without(...drop: HostFnName[]): HostFnName[] {
 }
 
 function build(input: Partial<PromptInput> = {}) {
-  return assemblePrompt({ kind: "root", granted: ALL, lsp: true, ...input });
+  return assemblePrompt({ kind: "root", granted: ALL, ...input });
 }
 
 /** Whole prompt as one string — for asserting a phrase appears nowhere at all. */
@@ -146,7 +146,6 @@ const GRANTS: { id: SectionId; fn: HostFnName; phrase: string }[] = [
   // failed it for no reason connected to what it checks.
   { id: "delegation", fn: "spawn", phrase: "await spawn(task, {name})" },
   { id: "workflow", fn: "workflow", phrase: "await workflow.start(" },
-  { id: "lsp", fn: "lsp", phrase: "lsp.impls({symbol})" },
 ];
 
 test("a section granting a host function is absent when the capability is absent", () => {
@@ -177,13 +176,6 @@ test("a core-only turn gets exactly the always-on sections", () => {
     "ending",
   ]);
   assertEquals(p.systemVolatile, "");
-});
-
-test("lsp needs both the backend and the bridge", () => {
-  assert(build({ lsp: true }).sections.includes("lsp"));
-  assert(!build({ lsp: false }).sections.includes("lsp"));
-  assert(!build({ lsp: undefined }).sections.includes("lsp"));
-  assert(!build({ lsp: true, granted: without("lsp") }).sections.includes("lsp"));
 });
 
 // ---------------------------------------------------------------------------

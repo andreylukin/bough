@@ -13,7 +13,7 @@
  *
  * The list is CLOSED. Every name is declared now, including ones whose
  * implementations land in M6 (`ask`, `state`, `schedule`, `image`, `fetch`,
- * `artifact`, `mcp`, `mcpStatus`, `lsp`, `workflow`). Later tasks implement against
+ * `artifact`, `mcp`, `mcpStatus`, `workflow`). Later tasks implement against
  * an existing name; none adds one.
  *
  * The wire is string-only, both directions. A host function that logically takes
@@ -66,7 +66,6 @@ export const HOST_FN_NAMES = [
   "artifact",
   "mcp",
   "mcpStatus",
-  "lsp",
 ] as const;
 
 export type HostFnName = (typeof HOST_FN_NAMES)[number];
@@ -103,7 +102,6 @@ export const HOST_FN_VERBS = {
   state: ["get", "set", "list", "delete"],
   schedule: ["list", "add", "enable", "disable", "remove"],
   workflow: ["start", "rerun", "stop", "pause", "resume", "status", "list"],
-  lsp: ["find", "show", "def", "refs", "impls", "calls", "overview", "rename"],
 } as const satisfies Record<string, readonly string[]>;
 
 // ---- program worker: main → worker ------------------------------------------

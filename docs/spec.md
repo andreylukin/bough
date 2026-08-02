@@ -233,7 +233,6 @@ capabilities:
 | Delegation (nested) | Session is a subagent (blocking `agent()` only) |
 | Subagent framing | Session is a subagent or workflow agent |
 | MCP tools + calling convention | The turn has connected MCP servers |
-| Symbol navigation (`lsp`) | LSP backend is available |
 | Skill bodies | The user's message named a skill |
 | Project rules (`AGENTS.md`) | The workspace or `$BOUGH_HOME` has one |
 
@@ -338,7 +337,6 @@ program name two different files (§6, the workspace note).
 | `await fetch(url, opts)` | Host HTTP. Returns `{status, ok, url, contentType, body, truncated}`; 1MB cap, 30s deadline. Non-2xx is data, not an exception. |
 | `await artifact(name, content)` | Publishes a file for browser viewing; returns `{url, href}`. |
 | `await mcp(server, tool, args)` / `mcpStatus()` | MCP tool invocation and live state. |
-| `lsp.*` | Symbol navigation verbs. |
 | `console.log(...)` | Streams live to the UI and batches into the model's tool result. |
 
 ## 7. Subagents
@@ -553,11 +551,13 @@ entry may name a pre-registered client with `clientId` and a `clientSecret` give
 only as a `${VAR}` reference, since the registry is served and rendered and a secret
 belongs in the environment.
 
-**LSP.** Curated `lsp.*` verbs with bough-owned names over an external CLI backend,
-so the model-facing surface stays stable if the backing tool changes. Lazy — nothing
-spawns until the first `lsp.*` call. A verb that finds nothing has **not** failed;
-that is an ordinary empty answer. If the backend itself errors, the program drops to
-`rg` + `view` + `patch` for the rest of the task and finishes the job.
+**Structural search.** There is no symbol-navigation host function. `ast-grep` is on
+PATH and taught in `prompt/searching.md` beside `rg`, so structure reaches the model
+through the shell surface it already uses rather than through a namespace that has to
+compete with `grep` for its attention. This replaced a curated `lsp.*` bridge over a
+language-server backend: across 184 programs on a machine where that backend was
+installed and its prompt section assembled, it was called once. A structural search
+that returns nothing means the pattern is wrong, not that the code is absent.
 
 ## 11. Artifacts
 

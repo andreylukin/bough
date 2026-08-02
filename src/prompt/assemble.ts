@@ -85,8 +85,6 @@ export interface PromptInput {
    * grant — every section that documents a verb is gated on its presence here.
    */
   granted: Iterable<HostFnName>;
-  /** True when the LSP backend answered. Absent/false = no `lsp` section. */
-  lsp?: boolean;
   /** Connected (or failed-to-connect) MCP servers. Empty = no MCP tools section. */
   mcpServers?: readonly PromptMcpServer[];
   /** Skills the user's message named. */
@@ -157,7 +155,6 @@ export type SectionId =
   | "subagent"
   | "printing"
   | "searching"
-  | "lsp"
   | "network"
   | "ending"
   // volatile, rendered rather than read from a file
@@ -169,7 +166,6 @@ export type SectionId =
 interface Facts {
   kind: SessionKind;
   has(fn: HostFnName): boolean;
-  lsp: boolean;
 }
 
 interface SectionSpec {
@@ -228,7 +224,6 @@ const SECTIONS: readonly SectionSpec[] = [
   },
   { id: "printing", file: "printing.md", when: ALWAYS },
   { id: "searching", file: "searching.md", when: ALWAYS },
-  { id: "lsp", file: "lsp.md", when: (f) => f.lsp && f.has("lsp") },
   { id: "network", file: "network.md", when: ALWAYS },
   { id: "ending", file: "ending.md", when: ALWAYS },
 ];
@@ -424,7 +419,6 @@ export function assemblePrompt(input: PromptInput): AssembledPrompt {
   const facts: Facts = {
     kind: input.kind,
     has: (fn) => granted.has(fn),
-    lsp: input.lsp === true,
   };
 
   const sections: SectionId[] = [];

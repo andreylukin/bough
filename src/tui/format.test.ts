@@ -812,7 +812,12 @@ test("a step is headlined by what the program did, not by its first line of code
   assert.equal(programSummary('await image("/tmp/a.png", "the chart");'), "attached an image");
   assert.equal(programSummary('await mcp("github", "list_repos", {});'), "1 MCP call");
   assert.equal(programSummary("const s = await mcpStatus();"), "checked the MCP servers");
-  assert.equal(programSummary('await lsp.refs({symbol: "Cart.total"});'), "looked up symbols");
+  assert.equal(
+    programSummary('await bash("ast-grep -p \'send($$$)\' -l ts src/");'),
+    // Both, and in that order: it IS a command, and the structural search is the
+    // part worth naming. A single label would have to drop one of two true facts.
+    "ran 1 command · searched by structure",
+  );
   // Member calls still do not count — `res.fetch(…)` is not the host verb.
   assert.equal(programSummary('await client.fetch(u); await bash("ls");'), "ran 1 command");
   // patch() takes ONE string — the patch body — and naming it like a path-first
@@ -992,7 +997,6 @@ test("no host function is left without a label", () => {
     artifact: 'await artifact("name", "body");',
     mcp: 'await mcp("gh", "list", {});',
     mcpStatus: "await mcpStatus();",
-    lsp: 'await lsp.refs({symbol: "X"});',
   };
   for (const [name, code] of Object.entries(CALLS)) {
     assert.notEqual(programSummary(code), "", `${name} has no label — the step shows source`);

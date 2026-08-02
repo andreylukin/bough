@@ -468,29 +468,23 @@ cmd_update() {
   require_bun
   (cd "$ROOT" && bun install)
 
-  # leta + tsserver: LSP backend (lsp.* host functions). Added in the leta
-  # cutover — ensure they exist on update, not just fresh setup.
-  if ! command -v leta >/dev/null; then
+  # ast-grep: structural search (`prompt/searching.md`). Ensured on update, not just
+  # on fresh setup, because the prompt names it unconditionally — an update that left
+  # it out would document a tool the install does not have.
+  if ! command -v ast-grep >/dev/null; then
     if [ "$OS" = "Darwin" ] && command -v brew >/dev/null; then
-      echo "==> installing leta (LSP backend) via brew tap"
-      brew install andreasjansson/tap/leta
+      echo "==> installing ast-grep (structural search) via brew"
+      brew install ast-grep
+    elif command -v cargo >/dev/null; then
+      echo "==> installing ast-grep (structural search) via cargo"
+      cargo install ast-grep --locked
+    elif command -v npm >/dev/null; then
+      echo "==> installing ast-grep (structural search) via npm"
+      npm install -g @ast-grep/cli
     else
-      # NOT a failure. The lsp.* host functions degrade to rg + view when the
-      # backend is missing (`prompt/searching.md` says so to the model), so an
-      # update that cannot install leta is an update with one fewer verb, not a
-      # broken install.
-      echo "note: leta (LSP backend) not found and no brew tap on $OS —"
-      echo "  bough works without it; lsp.* falls back to rg + view."
-      echo "  to add it: https://github.com/andreasjansson/leta"
+      echo "note: ast-grep not found and no brew/cargo/npm to install it."
+      echo "  bough works without it; programs fall back to rg + view."
     fi
-  fi
-  if ! command -v typescript-language-server >/dev/null; then
-    echo "==> installing typescript-language-server + typescript@5 (npm global)"
-    npm install -g typescript-language-server typescript@5
-  fi
-  if ! command -v basedpyright-langserver >/dev/null; then
-    echo "==> installing basedpyright (Python LSP server, npm global)"
-    npm install -g basedpyright
   fi
 
   # Reclaim artifacts from the retired sandbox/snapshot layers.

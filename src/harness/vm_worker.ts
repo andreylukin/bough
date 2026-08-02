@@ -79,7 +79,7 @@ const jsonCall = async (fn: HostFnName, args: unknown[]): Promise<unknown> =>
  * program actually calls (`state.get(...)` → `state("get", argsJson)`). The verb
  * lists live in `protocol.ts` so the host dispatcher and this cannot drift.
  */
-function methodObject(fn: "state" | "schedule" | "workflow" | "lsp") {
+function methodObject(fn: "state" | "schedule" | "workflow") {
   const verbs: readonly string[] = HOST_FN_VERBS[fn];
   return Object.fromEntries(
     verbs.map((
@@ -239,7 +239,6 @@ const bindings = {
   mcp: (server: string, tool: string, args?: unknown) =>
     jsonCall("mcp", [server, tool, JSON.stringify(args ?? {})]),
   mcpStatus: () => jsonCall("mcpStatus", []),
-  lsp: methodObject("lsp"),
 } satisfies Record<HostFnName, unknown>;
 
 /**

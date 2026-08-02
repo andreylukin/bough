@@ -88,7 +88,7 @@ prompt sections were in it) and reward.txt (the verdict).
 
 The agent under test is "code mode": instead of calling tools one at a time it
 writes a JavaScript program that calls host functions — view(), patch(), write(),
-bash(), lsp() and so on — and gets the program's output back. So its mistakes look
+bash(), fetch() and so on — and gets the program's output back. So its mistakes look
 like program bugs, misused host functions, or a plan that never verified itself.
 
 Read the FAILING trials first, then read a passing one for contrast. For each task,
@@ -153,7 +153,7 @@ per section at ${PROMPT_DIR}:
 ${sections.map((s) => `  ${s}`).join("\n")}
 
 Most of these are not strategy prose — they are the interface documentation for the
-agent's host functions (shell.md, files.md, patch-grammar.md, lsp.md, fetch.md).
+agent's host functions (shell.md, files.md, patch-grammar.md, searching.md, fetch.md).
 Edits that make a host function's CONTRACT clearer are the ones that transfer. Edits
 that add exhortation ("be careful", "always verify") are the ones that get refuted,
 and adding several at once measurably degrades this model's instruction-following —
