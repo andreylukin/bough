@@ -53,9 +53,11 @@ fi
 
 # rg is what the prompt tells the model to search with. (bun has its own block
 # below — it needs a version floor, and may already be on PATH from the bun.sh
-# installer.) There is no local inference: the cheap tier is a hosted model you pick
-# in the model picker, so no llama.cpp and no GGUF. There is no tunnel: the server
-# binds loopback and has no auth layer (spec §17).
+# installer.) The cheap tier is a hosted model you pick in the model picker; the
+# one piece of local inference is the OPTIONAL command-history embedding layer
+# (sqlite-lembed + a ~25MB GGUF the server downloads lazily) — see the sqlite
+# block below for the only setup it needs. There is no tunnel: the server binds
+# loopback and has no auth layer (spec §17).
 echo "==> checking packages"
 need_bins=(node rg uv)
 need_pkgs=("$PKG_NODE" "$PKG_RG" "$PKG_UV")
@@ -173,6 +175,26 @@ else
   echo "warning: could not install ast-grep — no brew, cargo or npm."
   echo "  bough works without it (programs fall back to rg + view), but the prompt"
   echo "  documents it. Install it: https://ast-grep.github.io/guide/quick-start.html"
+fi
+
+# Extension-capable SQLite, macOS only. Apple's system SQLite compiles out
+# loadable extensions, and Bun's bundled build cannot load them on macOS either —
+# the server swaps in Homebrew's libsqlite3 at boot (`src/db/extensions.ts`) to
+# power the OPTIONAL history vector layer (sqlite-vec + sqlite-lembed,
+# `history.similar()`). Keg-only, so installing it shadows nothing on PATH.
+# Graceful absence by design: without it bough runs identically minus semantic
+# recall — tags + FTS recall still work — so this warns rather than fails.
+# Linux needs nothing: Bun's bundled SQLite loads extensions there as-is.
+if [ "$OS" = "Darwin" ]; then
+  if [ -e "$(brew --prefix)/opt/sqlite/lib/libsqlite3.dylib" ]; then
+    echo "==> extension-capable sqlite already installed"
+  else
+    echo "==> installing sqlite (extension-capable, for history.similar) via brew"
+    brew install sqlite || {
+      echo "warning: brew install sqlite failed — bough works without it, but"
+      echo "  semantic command recall (history.similar) stays off until it exists."
+    }
+  fi
 fi
 
 echo "==> installing dependencies + typecheck"
