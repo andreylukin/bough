@@ -231,11 +231,18 @@ export function credentialStores(
  * contain it while the grant sits in the file the next store would have read.
  *
  * HONEST PROVENANCE. This is a latent bug found while investigating a DIFFERENT
- * failure, and it was not that failure's cause. The machine that reported "has no
- * string at #mcpOAuth…" turned out to have only one readable store, so old rule and
- * new rule pick identically there; its grant was simply empty (see
- * `cli/sync_mcp.ts`). The split above is real and reachable, which is why this
- * stays — but it has not yet been observed to break anyone.
+ * failure, and it was not that failure's cause. On the machine that reported "has no
+ * string at #mcpOAuth…" the keychain does hold `mcpOAuth` — deduced from the server
+ * connecting a server whose grant was long expired in the FILE, which it could only
+ * do by reading a fresher copy from the keychain — so both stores had the path and
+ * the ordering already picked the right one. That failure was an empty grant (see
+ * `cli/sync_mcp.ts`). The split above is real on this developer's own Mac, which is
+ * why this stays; it has not yet been observed to break anyone.
+ *
+ * A MEASUREMENT TRAP worth leaving written down: over SSH the login keychain is not
+ * unlocked, so `security` returns nothing and every probe concludes "this machine has
+ * only a file". A launchd user agent sees the opposite. Diagnose store questions from
+ * the server's own context, never from a remote shell.
  *
  * So the question a store has to answer is not "do you have this item" but "do you
  * have what was asked for". A store that returns an item missing the requested path
