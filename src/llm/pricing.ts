@@ -50,7 +50,8 @@ export interface BillableTokens {
 /**
  * The catalog keys a bough model id could match, most specific first.
  *
- * Mirrors `providerFor` in `client.ts`: an `openai:x` id is OpenAI proper, any
+ * Mirrors `providerFor` in `client.ts`: an `openai:x` id is OpenAI proper, a `@cf/x`
+ * id is Cloudflare Workers AI, any
  * other `vendor/model` id is routed through OpenRouter, and a bare id is
  * Anthropic. The OpenRouter case tries the `openrouter/` key first and then the
  * bare `vendor/model` key, because models.dev also lists many of those vendors
@@ -61,6 +62,8 @@ export interface BillableTokens {
  */
 export function catalogKeys(model: string): string[] {
   if (model.startsWith("openai:")) return [`openai/${model.slice("openai:".length)}`];
+  // `@cf/…` before the slash test, exactly as `providerFor` orders them.
+  if (model.startsWith("@cf/")) return [`cloudflare-workers-ai/${model}`];
   if (model.includes("/")) return [`openrouter/${model}`, model];
   return [`anthropic/${model}`];
 }

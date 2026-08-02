@@ -47,7 +47,7 @@
  */
 import { z } from "zod";
 import { ContextOverflowError } from "../errors.ts";
-import { API_KEY_ENV, clientFor, errName } from "../llm/client.ts";
+import { API_KEY_ENV, clientFor, errName, providerFor } from "../llm/client.ts";
 import { contextWindowFor } from "../llm/pricing.ts";
 import { traceLabel, writeManifest } from "../llm/trace.ts";
 import { ensureScratchDir } from "../scratch.ts";
@@ -1052,16 +1052,26 @@ function indexQuietly(db: Db, _sessionId: string, messageId: string): void {
  */
 export function friendlyTurnError(err: unknown, model: string): string {
   const msg = (err as Error)?.message ?? String(err);
-  const openai = model.startsWith("openai:");
-  const openrouter = !openai && model.includes("/");
-  const provider = openai ? "OpenAI" : openrouter ? "OpenRouter" : "Anthropic";
+  const key = providerFor(model);
+  const provider = {
+    openai: "OpenAI",
+    openrouter: "OpenRouter",
+    cloudflare: "Cloudflare",
+    anthropic: "Anthropic",
+  }[key];
   // THE ENV VAR, BECAUSE THERE IS NO KEYS PANEL. Both messages below used to send the
   // reader to one; `ModelPicker.tsx` says in its header that the API-keys section was
   // never ported, since keys are environment variables in this tree and there is no
   // `/config/keys` route to write to. So the very first screen a new user with a bad key
   // saw named a surface that does not exist — the same defect as a legend naming a key
   // that is not bound, on the one screen where the reader has nothing else to go on.
-  const envVar = API_KEY_ENV[openai ? "openai" : openrouter ? "openrouter" : "anthropic"];
+  const envVar = API_KEY_ENV[key];
+
+  // Cloudflare is account-scoped: a valid key with no account id still cannot reach
+  // an endpoint, and the generic "no key" line would send the reader to the wrong var.
+  if (/CLOUDFLARE_ACCOUNT_ID is not set/.test(msg)) {
+    return `No Cloudflare account id set — export CLOUDFLARE_ACCOUNT_ID and restart the bough server.`;
+  }
 
   if (/Could not resolve authentication method|apiKey or authToken|API_KEY is not set/i.test(msg)) {
     return `No ${provider} API key set — export ${envVar} and restart the bough server.`;

@@ -13,6 +13,7 @@
  * Routing is by model id and nothing else (spec §12):
  *
  *   - `openai:gpt-5`        → OpenAI proper, the Responses API
+ *   - `@cf/vendor/model`    → Cloudflare Workers AI, the chat-completions API
  *   - `vendor/model`        → OpenRouter, the chat-completions API
  *   - `claude-opus-5`       → Anthropic, the official SDK
  *
@@ -54,15 +55,21 @@ import type { TraceLabel } from "./trace.ts";
 /** The SDK's own `fetch` slot. Named here because `ClientOptions` is not re-exported. */
 type AnthropicFetch = NonNullable<NonNullable<ConstructorParameters<typeof Anthropic>[0]>["fetch"]>;
 
-export type Provider = "anthropic" | "openai" | "openrouter";
+export type Provider = "anthropic" | "openai" | "openrouter" | "cloudflare";
 
 /**
- * Route a model id to its provider: an `openai:model` id → OpenAI proper, any
- * other `vendor/model` id → OpenRouter, everything else (a bare `claude-…`) →
- * Anthropic. Pure, so the routing is unit-testable without touching the network.
+ * Route a model id to its provider: an `openai:model` id → OpenAI proper, a
+ * `@cf/…` id → Cloudflare Workers AI, any other `vendor/model` id → OpenRouter,
+ * everything else (a bare `claude-…`) → Anthropic. Pure, so the routing is
+ * unit-testable without touching the network.
+ *
+ * Workers AI ids are themselves `vendor/model` shaped (`@cf/meta/llama-…`), so the
+ * `@cf/` test HAS to come before the slash test or every Cloudflare model would be
+ * sent to OpenRouter — which would answer with a 400 naming a model it never had.
  */
 export function providerFor(model: string): Provider {
   if (model.startsWith("openai:")) return "openai";
+  if (model.startsWith("@cf/")) return "cloudflare";
   return model.includes("/") ? "openrouter" : "anthropic";
 }
 
@@ -71,7 +78,14 @@ export const API_KEY_ENV: Record<Provider, string> = {
   anthropic: "ANTHROPIC_API_KEY",
   openai: "OPENAI_API_KEY",
   openrouter: "OPENROUTER_API_KEY",
+  cloudflare: "CLOUDFLARE_API_KEY",
 };
+
+/**
+ * Cloudflare is the one provider whose endpoint is account-scoped: the account id
+ * is part of the URL, not a header, so a key alone cannot reach it.
+ */
+export const CLOUDFLARE_ACCOUNT_ENV = "CLOUDFLARE_ACCOUNT_ID";
 
 /** Reads one environment variable. Injected so tests never depend on the shell. */
 export type Env = (key: string) => string | undefined;
@@ -692,8 +706,15 @@ export function toOpenAIMessages(system: string | undefined, messages: LlmMessag
 interface OpenAICompatOpts extends ProviderOpts {
   /** Names the provider in error text. */
   provider: Provider;
-  url: string;
+  /**
+   * A function when the URL depends on the environment (Cloudflare's account id is
+   * part of the path), so it is resolved at `run()` time like the key is — a value
+   * set through the running server must apply without a restart.
+   */
+  url: string | ((env: Env) => string);
   extraHeaders?: Record<string, string>;
+  /** Env vars accepted for the key besides `API_KEY_ENV[provider]`. */
+  keyAlternatives?: string[];
 }
 
 /**
@@ -706,8 +727,9 @@ function openAICompatClient(opts: OpenAICompatOpts): LlmClient {
   const doFetch = opts.fetch ?? fetch;
   return {
     async run(params, onText, signal) {
-      const apiKey = requireKey(env, opts.provider);
-      const res = await doFetch(opts.url, {
+      const apiKey = requireKey(env, opts.provider, ...(opts.keyAlternatives ?? []));
+      const url = typeof opts.url === "string" ? opts.url : opts.url(env);
+      const res = await doFetch(url, {
         method: "POST",
         signal,
         headers: {
@@ -843,6 +865,37 @@ export function openrouterClient(opts: ProviderOpts = {}): LlmClient {
   });
 }
 
+// ---- Cloudflare Workers AI: chat-completions, account-scoped ----------------
+
+/** The account-scoped Workers AI base, overridable for a gateway or a test server. */
+function cloudflareBase(env: Env): string {
+  const account = env(CLOUDFLARE_ACCOUNT_ENV)?.trim();
+  if (!account) {
+    // 401 for the same reason a missing key is: it will still be missing in 15
+    // seconds, so six backed-off attempts only delay the message that fixes it.
+    throw new LlmError(`cloudflare: ${CLOUDFLARE_ACCOUNT_ENV} is not set`, 401);
+  }
+  const base = env("CLOUDFLARE_API_BASE") ?? "https://api.cloudflare.com/client/v4";
+  return `${base}/accounts/${account}/ai`;
+}
+
+/**
+ * Workers AI over its OpenAI-compatible endpoint.
+ *
+ * Cloudflare serves `/ai/v1/chat/completions` in the chat-completions shape, so it
+ * reuses the OpenRouter family wholesale; the only thing that differs is that the
+ * account id lives in the path, which is why the URL is a function of the env.
+ */
+export function cloudflareClient(opts: ProviderOpts = {}): LlmClient {
+  return openAICompatClient({
+    ...opts,
+    provider: "cloudflare",
+    url: (env) => `${cloudflareBase(env)}/v1/chat/completions`,
+    // Cloudflare's own docs and dashboard call it a token, so accept that spelling.
+    keyAlternatives: ["CLOUDFLARE_API_TOKEN"],
+  });
+}
+
 // ---- the factory ------------------------------------------------------------
 
 export interface ClientOpts extends ProviderOpts {
@@ -861,6 +914,8 @@ export function providerClient(model: string, opts: ProviderOpts = {}): LlmClien
       return openaiClient(opts);
     case "openrouter":
       return openrouterClient(opts);
+    case "cloudflare":
+      return cloudflareClient(opts);
     case "anthropic":
       return anthropicClient(opts);
   }
@@ -935,6 +990,18 @@ export const MODELS: ModelRow[] = [
     provider: "openrouter",
   },
   { id: "moonshotai/kimi-k3", label: "Kimi K3 (OpenRouter)", provider: "openrouter" },
+  { id: "@cf/zai-org/glm-5.2", label: "GLM 5.2 (Workers AI)", provider: "cloudflare" },
+  { id: "@cf/openai/gpt-oss-120b", label: "GPT-OSS 120B (Workers AI)", provider: "cloudflare" },
+  {
+    id: "@cf/moonshotai/kimi-k2.7-code",
+    label: "Kimi K2.7 Code (Workers AI)",
+    provider: "cloudflare",
+  },
+  {
+    id: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+    label: "Llama 3.3 70B (Workers AI)",
+    provider: "cloudflare",
+  },
 ];
 
 // Chat models only: completions/embeddings/audio/image ids would either 404 on the
@@ -1095,6 +1162,42 @@ export async function discoverOpenRouterModels(opts: ProviderOpts = {}): Promise
 }
 
 /**
+ * Ask Cloudflare what its account can run.
+ *
+ * Two things make this one not reuse `fetchModelList`: the catalog is
+ * account-scoped (no account id, no list — same failure policy as no key: an empty
+ * list, never a throw), and Workers AI answers `{result: [...]}` rather than
+ * `{data: [...]}`. The task filter is the point of the call — the catalog is mostly
+ * embeddings, image and speech models, none of which belong in a model picker.
+ */
+export async function discoverCloudflareModels(opts: ProviderOpts = {}): Promise<ModelRow[]> {
+  const env = opts.env ?? processEnv;
+  const key = env(API_KEY_ENV.cloudflare)?.trim() ?? env("CLOUDFLARE_API_TOKEN")?.trim();
+  const account = env(CLOUDFLARE_ACCOUNT_ENV)?.trim();
+  if (!key || !account) return [];
+  const doFetch = opts.fetch ?? fetch;
+  const url = `${
+    env("CLOUDFLARE_API_BASE") ?? "https://api.cloudflare.com/client/v4"
+  }/accounts/${account}/ai/models/search?task=Text+Generation&per_page=100&hide_experimental=true`;
+  try {
+    const res = await doFetch(url, {
+      headers: { authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) return [];
+    const body = await res.json() as { result?: { name?: unknown; description?: unknown }[] };
+    return (body.result ?? []).flatMap((m) =>
+      typeof m.name === "string" && m.name.startsWith("@cf/")
+        ? [{ id: m.name, label: `${m.name.slice("@cf/".length)} (Workers AI)`, provider:
+          "cloudflare" as const }]
+        : []
+    );
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Every provider at once. **Concurrent and independently fallible**: one provider
  * being down, keyless or slow must not cost the others their rows, which is what
  * `allSettled` buys over `all` — and each discovery already resolves to `[]` rather
@@ -1105,6 +1208,7 @@ export async function discoverModels(opts: ProviderOpts = {}): Promise<ModelRow[
     discoverAnthropicModels(opts),
     discoverOpenAIModels(opts),
     discoverOpenRouterModels(opts),
+    discoverCloudflareModels(opts),
   ]);
   return results.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
 }

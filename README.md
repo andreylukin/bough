@@ -61,7 +61,7 @@ links `bough` into `~/.local/bin`, and writes an env template to `~/.bough/env`.
 clone? Run `scripts/setup.sh` directly. Then:
 
 ```bash
-$EDITOR ~/.bough/env      # ANTHROPIC_API_KEY=…  (OPENAI_/OPENROUTER_ keys optional)
+$EDITOR ~/.bough/env      # ANTHROPIC_API_KEY=…  (OPENAI_/OPENROUTER_/CLOUDFLARE_ keys optional)
 bough start               # background service: starts at login, restarts on crash
 bough                     # the TUI (auto-starts the server if it is down)
 ```

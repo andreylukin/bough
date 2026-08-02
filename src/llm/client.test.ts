@@ -29,8 +29,10 @@ import {
   MODELS,
   anthropicSystemBlocks,
   clientFor,
+  cloudflareClient,
   completeText,
   discoverAnthropicModels,
+  discoverCloudflareModels,
   discoverModels,
   discoverOpenAIModels,
   discoverOpenRouterModels,
@@ -158,6 +160,10 @@ test("providerFor: openai: prefix, vendor/model, bare id", () => {
     ["openai/gpt-5", "openrouter"],
     ["google/gemini-2.5-pro", "openrouter"],
     ["moonshotai/kimi-k3", "openrouter"],
+    // `@cf/` wins over the slash — a Workers AI id is vendor/model shaped too, and
+    // sending it to OpenRouter would 400 on a model that provider never had.
+    ["@cf/zai-org/glm-5.2", "cloudflare"],
+    ["@cf/meta/llama-3.3-70b-instruct-fp8-fast", "cloudflare"],
   ];
   for (const [model, provider] of table) strictEqual(providerFor(model), provider, model);
 });
@@ -174,6 +180,7 @@ test("pricing keys and client routing cannot drift apart", () => {
     anthropic: "anthropic/",
     openai: "openai/",
     openrouter: "openrouter/",
+    cloudflare: "cloudflare-workers-ai/",
   };
   for (const m of MODELS) {
     const keys = catalogKeys(m.id);
@@ -188,7 +195,7 @@ test("clientFor routes without a key and only fails when asked to run", async ()
   // Construction must not read a key or touch the network — the server builds a
   // client per model id long before anyone runs a round.
   const env: Env = () => undefined;
-  for (const model of ["claude-opus-5", "openai:gpt-5", "openai/gpt-5"]) {
+  for (const model of ["claude-opus-5", "openai:gpt-5", "openai/gpt-5", "@cf/zai-org/glm-5.2"]) {
     const client = clientFor(model, { env, retry: { maxAttempts: 2, baseDelayMs: 0 } });
     const err = await client.run(params({ model }), () => {}).then(
       () => null,
@@ -771,6 +778,105 @@ test("openrouter: finish_reason length normalizes to max_tokens", async () => {
   const result = await openrouterClient({ env: keyed, fetch: f })
     .run(params({ model: "z-ai/glm-5.2" }), () => {});
   strictEqual(result.stopReason, "max_tokens");
+});
+
+// ---- Cloudflare Workers AI --------------------------------------------------
+
+/** Key and account id, the pair Cloudflare needs; no `_API_BASE` so the URL is real. */
+const cfEnv: Env = (k) =>
+  k === "CLOUDFLARE_API_KEY" ? "cf-key" : k === "CLOUDFLARE_ACCOUNT_ID" ? "acct-1" : undefined;
+
+test("cloudflare: the account id lands in the URL and the round decodes", async () => {
+  const { fetch: f, requests } = stubFetch([
+    sse([
+      JSON.stringify({ choices: [{ delta: { content: "hi" } }] }),
+      JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] }),
+      "[DONE]",
+    ]),
+  ]);
+  const result = await cloudflareClient({ env: cfEnv, fetch: f })
+    .run(params({ model: "@cf/zai-org/glm-5.2" }), () => {});
+  strictEqual(
+    requests[0].url,
+    "https://api.cloudflare.com/client/v4/accounts/acct-1/ai/v1/chat/completions",
+  );
+  strictEqual(requests[0].headers.get("authorization"), "Bearer cf-key");
+  strictEqual((requests[0].body as Record<string, unknown>).model, "@cf/zai-org/glm-5.2");
+  deepStrictEqual(result.content, [{ type: "text", text: "hi" }]);
+});
+
+test("cloudflare: the endpoint comes from the env, read per run", async () => {
+  // A key or a base set through the running server must apply without a restart,
+  // so both are read at run() time — not when the client was constructed.
+  let account = "first";
+  const env: Env = (k) =>
+    k === "CLOUDFLARE_API_TOKEN"
+      ? "tok"
+      : k === "CLOUDFLARE_ACCOUNT_ID"
+      ? account
+      : k === "CLOUDFLARE_API_BASE"
+      ? "http://127.0.0.1:9/v4"
+      : undefined;
+  const done = () => sse([JSON.stringify({ choices: [{ finish_reason: "stop" }] }), "[DONE]"]);
+  const { fetch: f, requests } = stubFetch([done(), done()]);
+  const client = cloudflareClient({ env, fetch: f });
+  await client.run(params({ model: "@cf/openai/gpt-oss-120b" }), () => {});
+  account = "second";
+  await client.run(params({ model: "@cf/openai/gpt-oss-120b" }), () => {});
+  strictEqual(requests[0].url, "http://127.0.0.1:9/v4/accounts/first/ai/v1/chat/completions");
+  strictEqual(requests[1].url, "http://127.0.0.1:9/v4/accounts/second/ai/v1/chat/completions");
+  // CLOUDFLARE_API_TOKEN is accepted as the key — it is Cloudflare's own spelling.
+  strictEqual(requests[0].headers.get("authorization"), "Bearer tok");
+});
+
+test("cloudflare: a key with no account id fails fast, naming the missing var", async () => {
+  const env: Env = (k) => (k === "CLOUDFLARE_API_KEY" ? "cf-key" : undefined);
+  const f = (() => Promise.reject(new Error("must not be called"))) as unknown as typeof fetch;
+  const err = await clientFor("@cf/zai-org/glm-5.2", {
+    env,
+    fetch: f,
+    retry: { maxAttempts: 2, baseDelayMs: 0 },
+  }).run(params({ model: "@cf/zai-org/glm-5.2" }), () => {}).then(
+    () => null,
+    (e: unknown) => e as LlmError,
+  );
+  ok(err instanceof LlmError);
+  strictEqual(err.status, 401, "a missing account id must not be retried");
+  ok(err.message.includes("CLOUDFLARE_ACCOUNT_ID"), err.message);
+});
+
+test("discoverCloudflareModels: text-generation rows only, account-scoped", async () => {
+  const seen: string[] = [];
+  const f = (async (url: string | URL | Request) => {
+    seen.push(String(url));
+    return Response.json({
+      result: [
+        { name: "@cf/meta/llama-3.3-70b-instruct-fp8-fast" },
+        { name: "not-a-workers-ai-id" },
+      ],
+    });
+  }) as unknown as typeof fetch;
+  const rows = await discoverCloudflareModels({ env: cfEnv, fetch: f });
+  deepStrictEqual(rows, [{
+    id: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+    label: "meta/llama-3.3-70b-instruct-fp8-fast (Workers AI)",
+    provider: "cloudflare",
+  }]);
+  ok(seen[0].includes("/accounts/acct-1/ai/models/search"), seen[0]);
+  ok(seen[0].includes("task=Text+Generation"), seen[0]);
+  strictEqual(providerFor(rows[0].id), "cloudflare");
+
+  // No account id → no list, and no call: the endpoint cannot even be formed.
+  let called = false;
+  const guard = (() => {
+    called = true;
+    throw new Error("must not be called");
+  }) as unknown as typeof fetch;
+  deepStrictEqual(
+    await discoverCloudflareModels({ env: (k) => (k === "CLOUDFLARE_API_KEY" ? "k" : undefined), fetch: guard }),
+    [],
+  );
+  strictEqual(called, false);
 });
 
 // ---- the model catalog ------------------------------------------------------

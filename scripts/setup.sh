@@ -199,6 +199,9 @@ if [ ! -f "$ENV_FILE" ]; then
 ANTHROPIC_API_KEY=
 # OPENAI_API_KEY=          # only for the openai: entries in the model picker
 # OPENROUTER_API_KEY=      # only for the vendor/model entries in the model picker
+# CLOUDFLARE_API_KEY=      # Workers AI: the @cf/ entries. Needs the account id too
+# CLOUDFLARE_ACCOUNT_ID=   # the account the Workers AI endpoint is scoped to
+# CLOUDFLARE_API_BASE=     # override the endpoint (an AI Gateway, or a test server)
 # BOUGH_PORT=4321
 # BOUGH_CHEAP_MODEL=       # titles, ghost text, activity blurbs. Default: a cheap
 #                          # frontier model. Also settable in the model picker.
