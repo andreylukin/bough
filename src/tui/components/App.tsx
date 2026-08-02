@@ -879,6 +879,7 @@ export function App(
           marks,
           skills: skillNames,
           now: now(),
+          primedTags: state.primedTags,
         },
       ),
     [
@@ -894,6 +895,7 @@ export function App(
       foldAll,
       openKeys,
       fullKeys,
+      state.primedTags,
     ],
   );
   // The open conversation's thread comes from the store — it is live, and a copy in

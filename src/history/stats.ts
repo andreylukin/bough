@@ -113,6 +113,21 @@ export function primedTags(sessionId: string): Set<string> {
   return primedMemo.get(sessionId) ?? new Set();
 }
 
+/**
+ * The primed tags as an ordered list, computing (and freezing) them when this
+ * session has none yet — the TUI snapshot's view of the same memo the prompt
+ * note uses, so the two surfaces cannot disagree within a session.
+ */
+export function primedTagsFor(
+  db: Db,
+  sessionId: string,
+  workspace: string,
+  now: number,
+): string[] {
+  tagsNoteFor(db, sessionId, workspace, now);
+  return [...primedTags(sessionId)];
+}
+
 // ---------------------------------------------------------------------------
 // Directory-triggered hints
 // ---------------------------------------------------------------------------

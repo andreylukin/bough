@@ -194,6 +194,8 @@ export interface TuiState {
   effectiveModel: string | null;
   /** The effective model's context window. Null = the catalog does not know it. */
   contextLimit: number | null;
+  /** Command-history tags this session was primed with — the transcript's `#` row. */
+  primedTags: string[];
   /** null until fetched. `available: false` is an ANSWER, not an error (spec §13). */
   changes: SessionChangeSet | null;
   /** The open session's background shells AND its subagents' (spec §9). */
@@ -250,6 +252,7 @@ export function initialState(): TuiState {
     usage: null,
     effectiveModel: null,
     contextLimit: null,
+    primedTags: [],
     changes: null,
     jobs: [],
     jobView: null,
@@ -787,6 +790,7 @@ export function reduce(state: TuiState, action: StoreAction): TuiState {
         usage: null,
         effectiveModel: null,
         contextLimit: null,
+        primedTags: [],
         changes: null,
         jobs: [],
         // The open job belonged to the session being left, and its buffer is fetched
@@ -805,7 +809,7 @@ export function reduce(state: TuiState, action: StoreAction): TuiState {
     }
 
     case "snapshot": {
-      const { session, thread, usage, effectiveModel, contextLimit } = action.snapshot;
+      const { session, thread, usage, effectiveModel, contextLimit, primedTags } = action.snapshot;
       if (session.id !== state.currentId) {
         // A snapshot that lost the race with a session switch. Record the watermark
         // anyway — it is a fact about that session, not about the view.
@@ -827,6 +831,7 @@ export function reduce(state: TuiState, action: StoreAction): TuiState {
         streaming,
         effectiveModel: effectiveModel ?? state.effectiveModel,
         contextLimit: contextLimit ?? state.contextLimit,
+        primedTags: primedTags ?? state.primedTags,
         reconciledAt: { ...state.reconciledAt, [session.id]: action.at },
       }, usage);
     }

@@ -1107,3 +1107,48 @@ test("a command that exited non-zero is flagged on the collapsed row", () => {
   const okHead = messageLines(ok, CLOSED, CLOSED, 120).find((l) => l.text.includes("step"))!;
   assert.equal(okHead.text.includes("failed"), false, okHead.text);
 });
+
+// ---- the memory margin (`#` rows) -------------------------------------------
+
+test("primed tags render once, dim, as the transcript's first row", () => {
+  const thread = [msg({ id: "m1", role: "user", parts: [{ type: "text", text: "hi" }] })];
+  const lines = buildLines(thread, OPEN, OPEN, 100, {
+    primedTags: ["git:push", "bun:test", "psql:migrate"],
+  });
+  assert.equal(lines[0].text, "# this repo remembers: git:push · bun:test · psql:migrate");
+  assert.equal(lines[0].copy, lines[0].text);
+  // No primed tags — no row, not an empty row.
+  const bare = buildLines(thread, OPEN, OPEN, 100);
+  assert.ok(!bare[0].text.startsWith("#"));
+});
+
+test("a primed row longer than the terminal truncates with an ellipsis", () => {
+  const lines = buildLines([], OPEN, OPEN, 40, {
+    primedTags: ["git:push", "bun:test", "psql:migrate", "docker:exec"],
+  });
+  assert.ok(lines[0].text.endsWith("…"), lines[0].text);
+  assert.ok(width(lines[0].text) <= 40, lines[0].text);
+});
+
+test("[history] hints leave the output block and become # marginalia", () => {
+  const out =
+    "ok\n[history] tags previously used in migrations/: psql, alembic — see history.sql() for the commands behind them";
+  const m = msg({ id: "m1", parts: [call("c1", "await bash('x', 'y')"), result("c1", out)] });
+  const lines = buildLines([m], OPEN, OPEN, 100, {});
+  const text = joined(lines);
+  // The hint line is rewritten and outside the │ block…
+  assert.ok(text.includes("  # migrations/ also remembers: psql · alembic"), text);
+  // …and the model-facing raw line is nowhere on screen.
+  assert.ok(!text.includes("[history]"), text);
+  assert.ok(!text.includes("history.sql()"), text);
+  // The block keeps the program's real output.
+  assert.ok(text.includes("│ ok"), text);
+});
+
+test("a result that is ONLY hints renders no output block at all", () => {
+  const out = "[history] tags previously used in src/tui/: opentui — see history.sql()";
+  const m = msg({ id: "m1", parts: [call("c1", "await view('a')"), result("c1", out)] });
+  const text = joined(buildLines([m], OPEN, OPEN, 100, {}));
+  assert.ok(!text.includes("↳ output"), text);
+  assert.ok(text.includes("# src/tui/ also remembers: opentui"), text);
+});

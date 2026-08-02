@@ -183,6 +183,12 @@ export interface SessionSnapshot {
   effectiveModel?: string;
   /** The effective model's context window, for the meter's percentage. Null = unknown. */
   contextLimit?: number | null;
+  /**
+   * The command-history tags this session was primed with, ranked. The transcript
+   * renders them as the dim `#` row at the top. Absent from an older server, and
+   * [] for a workspace with no history — both render as nothing.
+   */
+  primedTags?: string[];
 }
 
 /**

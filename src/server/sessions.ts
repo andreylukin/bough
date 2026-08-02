@@ -48,6 +48,7 @@ import {
 import type { AppCtx } from "../types.ts";
 import { contextWindowFor } from "../llm/pricing.ts";
 import { DEFAULT_MODEL } from "../turn/runner.ts";
+import { primedTagsFor } from "../history/stats.ts";
 // The cheap tier's id, read per call from `BOUGH_CHEAP_MODEL` — see `getModelSettingsH`.
 import { cheapModel } from "../worker/titles.ts";
 // T8.5. `vcs/` is below `server/` and imports nothing from it, so this adds no cycle
@@ -343,6 +344,13 @@ export const getSession: Handler = (_req, ctx, params) => {
     // Null when the vendored catalog does not know the model — the client then
     // falls back to the raw count rather than inventing a denominator.
     contextLimit: contextWindowFor(model),
+    // The tag set this session was primed with (history/stats.ts) — same memo
+    // the prompt note reads, so the transcript's `#` row and what the model was
+    // told can never disagree. [] for a workspace with no history; derived here
+    // rather than stored so a reconnect gets it without a turn having run.
+    primedTags: session.workspace
+      ? primedTagsFor(ctx.db, session.id, session.workspace, (ctx.now ?? Date.now)())
+      : [],
   });
 };
 

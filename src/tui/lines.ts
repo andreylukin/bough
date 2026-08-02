@@ -296,6 +296,24 @@ function styleOutputLine(line: string, isError: boolean): string {
 }
 
 /**
+ * Split the `[history]` tag hints (`history/stats.ts`, appended by the runner at
+ * round end) off a tool result's output. They are always trailing lines; the
+ * returned hint text is rewritten for display — the raw line addresses the MODEL
+ * (`— see history.sql() for the commands behind them`), and that clause is
+ * instruction, not information, on a screen.
+ */
+export function splitHistoryHints(text: string): { body: string; hints: string[] } {
+  const lines = text.split("\n");
+  const hints: string[] = [];
+  while (lines.length > 0 && lines[lines.length - 1].startsWith("[history] ")) {
+    const raw = lines.pop()!.slice("[history] ".length);
+    const m = raw.match(/^tags previously used in (.+?): (.+?)(?: — .*)?$/);
+    hints.unshift(m ? `${m[1]} also remembers: ${m[2].split(", ").join(" · ")}` : raw);
+  }
+  return { body: lines.join("\n").trimEnd(), hints };
+}
+
+/**
  * One folded tool step. Collapsed, the header carries everything you would expand
  * to learn: how many calls, their names, a gist of the program that ran, an error
  * mark, and a live ⚙ for the call still running. Expanded, each call shows what
@@ -465,14 +483,24 @@ function toolGroupLines(
       });
     }
     if (res && outputText(res) !== "") {
-      out.push({ text: dim("↳ output"), click: key });
-      pushBlock(out, outputText(res), w, {
-        maxLines: capOut,
-        style: (l) => styleOutputLine(l, res.isError),
-        click: key,
-        fullKey: `${key}!full`,
-        raised: true,
-      });
+      // Directory tag hints ride the result's LOGS so the model sees them, but
+      // they are not the program's output — pulled out of the │-block here and
+      // rendered as `#` marginalia after it, in the same voice as the priming
+      // row at the top of the transcript.
+      const { body, hints } = splitHistoryHints(outputText(res));
+      if (body !== "") {
+        out.push({ text: dim("↳ output"), click: key });
+        pushBlock(out, body, w, {
+          maxLines: capOut,
+          style: (l) => styleOutputLine(l, res.isError),
+          click: key,
+          fullKey: `${key}!full`,
+          raised: true,
+        });
+      }
+      for (const h of hints) {
+        out.push({ text: "  " + dim(`# ${h}`), copy: `# ${h}` });
+      }
     } else {
       // Still running: the program's console lines as they stream in. The
       // finalized `tool_result` replaces them with the same lines joined — which
@@ -1063,6 +1091,12 @@ export interface BuildOptions {
   skills?: readonly string[];
   /** Injected clock — elapsed times are the only thing here that needs one. */
   now?: number;
+  /**
+   * The command-history tags this session was primed with (`history/stats.ts`,
+   * via the session snapshot). Rendered once as the dim `#` row at the very top
+   * of the transcript — where the injection actually happened in time.
+   */
+  primedTags?: readonly string[];
 }
 
 /**
@@ -1129,6 +1163,25 @@ export function buildLines(
     } else orphans.push(b);
   }
   const out: VLine[] = [];
+  // The memory margin. `#` is reserved across the transcript for exactly one
+  // meaning — remembered, not happening now — so this row and the per-directory
+  // hints under tool output share a glyph and share dimness, and neither borrows
+  // the tool grammar (◇, │-block, surface) or the system amber. One row, top of
+  // the transcript: that is where the priming was injected, and it scrolls away
+  // like anything else that already happened.
+  if (opts.primedTags?.length) {
+    let shown = "";
+    for (const tag of opts.primedTags) {
+      const next = shown === "" ? tag : `${shown} · ${tag}`;
+      if (`# this repo remembers: ${next}`.length > w - 2) {
+        shown = `${shown} …`;
+        break;
+      }
+      shown = next;
+    }
+    const row = `# this repo remembers: ${shown}`;
+    out.push({ text: dim(row), copy: row });
+  }
   // The ledger, drained in step with the thread: every mark older than the message
   // about to be pushed is flushed before it, so a settled-turn line lands under the
   // turn it measured and a revert lands where the conversation was when it happened.
