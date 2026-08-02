@@ -143,6 +143,38 @@ export function errName(err: unknown): string {
   return e?.constructor?.name ?? "";
 }
 
+/**
+ * Transport faults that carry a syscall-style `code` instead of a status.
+ *
+ * Bun's fetch does *not* raise a TypeError when the connection dies mid-stream:
+ * it throws a plain `Error` ("The socket connection was closed unexpectedly…")
+ * whose only usable signal is `code: "ECONNRESET"`. Classifying by class alone
+ * therefore called a momentary network flap fatal and killed the turn on the
+ * first blip, with no backoff.
+ */
+const NETWORK_CODES = new Set([
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ECONNABORTED",
+  "EPIPE",
+  "ETIMEDOUT",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ENETDOWN",
+  "UND_ERR_SOCKET",
+  "ERR_STREAM_PREMATURE_CLOSE",
+]);
+
+/** True when `err` — or anything it wraps as `cause` — is a network-level fault. */
+export function isNetworkFault(err: unknown, depth = 4): boolean {
+  const e = err as { code?: unknown; cause?: unknown } | null;
+  if (!e || typeof e !== "object") return false;
+  if (typeof e.code === "string" && NETWORK_CODES.has(e.code)) return true;
+  return depth > 0 && isNetworkFault(e.cause, depth - 1);
+}
+
 /** Should this failure be re-attempted? A user abort and a caller mistake never are. */
 export function isRetryable(err: unknown): boolean {
   const name = errName(err);
@@ -154,6 +186,7 @@ export function isRetryable(err: unknown): boolean {
   const e = err as { status?: unknown } | null;
   if (typeof e?.status === "number") return retryableStatus(e.status);
   if (name === "APIConnectionError" || name === "APIConnectionTimeoutError") return true;
+  if (isNetworkFault(err)) return true;
   return err instanceof TypeError; // a fetch network failure
 }
 

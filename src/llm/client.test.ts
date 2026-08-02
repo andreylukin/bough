@@ -268,6 +268,20 @@ test("isRetryable: transport faults yes, aborts and caller mistakes no", () => {
   strictEqual(errName(new APIConnectionError("x")), "APIConnectionError");
 });
 
+test("isRetryable: a Bun socket reset is a network flap, not a fatal error", () => {
+  // Bun's fetch throws a plain Error with only `code` to go on — verified live.
+  const reset = Object.assign(
+    new Error("The socket connection was closed unexpectedly. For more information, " +
+      "pass `verbose: true` in the second argument to fetch()"),
+    { code: "ECONNRESET" },
+  );
+  ok(isRetryable(reset));
+  ok(isRetryable(Object.assign(new Error("fetch failed"), { cause: reset }))); // wrapped
+  ok(isRetryable(Object.assign(new Error("dns"), { code: "EAI_AGAIN" })));
+  ok(!isRetryable(new Error("something else entirely")));
+  ok(!isRetryable(Object.assign(new Error("bad key"), { code: "ENOENT" })));
+});
+
 test("isToolProtocol400: the self-healed encoding is the one 400 worth retrying", () => {
   ok(isToolProtocol400(new LlmError("openrouter: 400 tool_call_id not found", 400)));
   ok(isRetryable(new LlmError("openrouter: 400 must be followed by tool messages", 400)));
