@@ -52,11 +52,32 @@ export const TextPart = z.object({ type: z.literal("text"), text: z.string() });
 export type TextPart = z.infer<typeof TextPart>;
 
 /**
- * Summarized thinking, persisted for DISPLAY ONLY. Reasoning parts are dropped on
- * replay (plan §6.4) — there are no signed thinking blocks to echo back, so
- * re-sending them would be both wrong and expensive.
+ * Summarized thinking — persisted for display AND, when it carries a provider
+ * signature, replayed across turns.
+ *
+ * `meta` is the provider's own block, verbatim. For Anthropic that is the signed
+ * `thinking` / `redacted_thinking` block, and the signature is the whole point:
+ * the API's rule is to pass a thinking block back EXACTLY as received when the
+ * conversation continues on the same model, and it rejects blocks whose content
+ * was modified — not blocks that were merely read. Dropping them is not the safe
+ * default it looks like; removing thinking can itself provoke ordering/signature
+ * 400s, and on another model the server drops them unbilled anyway.
+ *
+ * `model` is what produced and signed it. A signature is scoped to its model, so
+ * replay is gated on the request using the same one (`turn/replay.ts`).
+ *
+ * Both are absent on rows written before this was persisted, and on providers
+ * whose reasoning is not replayable across turns — those still render, and still
+ * do not replay.
  */
-export const ReasoningPart = z.object({ type: z.literal("reasoning"), text: z.string() });
+export const ReasoningPart = z.object({
+  type: z.literal("reasoning"),
+  text: z.string(),
+  /** The provider block verbatim, signature included. Never rendered. */
+  meta: z.unknown().optional(),
+  /** The model that signed `meta`. */
+  model: z.string().optional(),
+});
 export type ReasoningPart = z.infer<typeof ReasoningPart>;
 
 /** One `run_steps` / `stop` call. `input` is unknown here; the tool's own schema validates it. */

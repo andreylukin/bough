@@ -115,6 +115,48 @@ test("a supervisor round becomes an assistant message and then its tool results"
   }]);
 });
 
+test("signed reasoning replays verbatim to the model that signed it", () => {
+  const meta = { type: "thinking", thinking: "step one", signature: "sig-abc" };
+  const out = messageToLlm(
+    message("supervisor", [
+      { type: "reasoning", text: "step one", meta, model: "m1" },
+      { type: "text", text: "Here is the answer." },
+    ]),
+    { model: "m1" },
+  );
+  assert.deepEqual(types(out[0].content), ["reasoning", "text"]);
+  const block = out[0].content[0] as Extract<LlmContentBlock, { type: "reasoning" }>;
+  assert.deepEqual(block.meta, meta, "the payload survives the database untouched");
+});
+
+test("signed reasoning does NOT replay to a different model", () => {
+  // A signature is scoped to the model that produced it. This is the whole gate:
+  // no provider is named anywhere, because the rule holds for all of them.
+  const out = messageToLlm(
+    message("supervisor", [
+      { type: "reasoning", text: "step one", meta: { signature: "s" }, model: "m1" },
+      { type: "text", text: "Here is the answer." },
+    ]),
+    { model: "m2" },
+  );
+  assert.deepEqual(types(out[0].content), ["text"]);
+});
+
+test("unsigned reasoning never replays, whatever model is asking", () => {
+  // Rows written before signatures were persisted, and providers that give none.
+  // Re-sending the text alone would be an unsigned imitation of thinking.
+  for (const model of [undefined, "m1"]) {
+    const out = messageToLlm(
+      message("supervisor", [
+        { type: "reasoning", text: "SECRET-THINKING", model: "m1" },
+        { type: "text", text: "Here is the answer." },
+      ]),
+      { model },
+    );
+    assert.ok(!JSON.stringify(out).includes("SECRET-THINKING"));
+  }
+});
+
 test("reasoning is dropped on replay and takes nothing else with it", () => {
   const out = messageToLlm(message("supervisor", [
     { type: "reasoning", text: "SECRET-THINKING" },

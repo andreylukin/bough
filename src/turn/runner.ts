@@ -598,7 +598,11 @@ async function drive(
    * once: a turn's history does not change under it, and rebuilding per round would
    * re-read every attachment from disk every round.
    */
-  const messages: LlmMessage[] = buildThread(db.threadFor(sessionId), { exclude: messageId });
+  const messages: LlmMessage[] = buildThread(db.threadFor(sessionId), {
+    exclude: messageId,
+    // Reasoning replays only to the model that signed it (turn/replay.ts).
+    model,
+  });
 
   /**
    * Has the model written a CLOSING summary — text after the last tool call?
@@ -684,7 +688,13 @@ async function drive(
             assistant.push({ type: "text", text });
           }
         } else if (block.type === "reasoning") {
-          if (block.text.trim()) append({ type: "reasoning", text: block.text });
+          // Persisted WITH its provider payload and the model that signed it, so
+          // the next turn can replay it (turn/replay.ts, invariant 1). A block
+          // with no displayable text still persists when it is signed — that is a
+          // redacted thinking block, and it has to go back whole or not at all.
+          if (block.text.trim() || block.meta !== undefined) {
+            append({ type: "reasoning", text: block.text, meta: block.meta, model });
+          }
           assistant.push(block);
         } else if (block.type === "tool_use") {
           if (block.name === STOP) {

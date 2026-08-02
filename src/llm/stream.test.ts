@@ -181,33 +181,59 @@ test("blocksToParts: text, reasoning and tool calls map across in order", () => 
     { type: "text", text: "here goes" },
     { type: "tool_use", id: "t1", name: "run_steps", input: { code: "1" } },
   ];
-  deepStrictEqual(blocksToParts(blocks), [
-    { type: "reasoning", text: "weighing options" },
+  deepStrictEqual(blocksToParts(blocks, "some-model"), [
+    {
+      type: "reasoning",
+      text: "weighing options",
+      meta: { signature: "sig" },
+      model: "some-model",
+    },
     { type: "text", text: "here goes" },
     { type: "tool_call", id: "t1", name: "run_steps", input: { code: "1" } },
   ]);
 });
 
-test("blocksToParts: provider meta never reaches the database", () => {
-  // Reasoning is display-only and dropped from cross-turn replay (plan §6.4).
-  // Persisting a signature would only invite someone to echo it back.
-  const parts = blocksToParts([
-    { type: "reasoning", text: "hmm", meta: { type: "thinking", signature: "secret" } },
-  ]);
-  strictEqual(JSON.stringify(parts).includes("secret"), false);
-  deepStrictEqual(parts, [{ type: "reasoning", text: "hmm" }]);
+test("blocksToParts: the signature IS persisted, stamped with its model", () => {
+  // It is what lets the next turn replay the block verbatim (turn/replay.ts).
+  // Providers reject a thinking block whose content was altered, so the payload
+  // has to survive the round trip through the database intact.
+  const parts = blocksToParts(
+    [{ type: "reasoning", text: "hmm", meta: { type: "thinking", signature: "secret" } }],
+    "claude-opus-5",
+  );
+  deepStrictEqual(parts, [{
+    type: "reasoning",
+    text: "hmm",
+    meta: { type: "thinking", signature: "secret" },
+    model: "claude-opus-5",
+  }]);
 });
 
-test("blocksToParts: empty text and empty reasoning produce no part at all", () => {
-  // A redacted thinking block has nothing displayable; persisting it would render
-  // as a blank fold in the transcript.
+test("blocksToParts: with no model to stamp, reasoning stays display-only", () => {
+  // An unstamped part can never satisfy replay's model gate, which is the
+  // conservative answer for a caller that is not building a live request.
+  const parts = blocksToParts([
+    { type: "reasoning", text: "hmm", meta: { type: "thinking", signature: "s" } },
+  ]);
+  deepStrictEqual(parts, [{
+    type: "reasoning",
+    text: "hmm",
+    meta: { type: "thinking", signature: "s" },
+    model: undefined,
+  }]);
+});
+
+test("blocksToParts: a redacted block persists; unsigned empty reasoning does not", () => {
+  // A redacted thinking block has nothing displayable but must still go back
+  // whole, so it is kept for its payload alone and the UI skips the empty fold.
+  // Reasoning with neither text nor payload is worth nothing to anyone.
   deepStrictEqual(
     blocksToParts([
       { type: "reasoning", text: "", meta: { type: "redacted_thinking" } },
       { type: "reasoning", text: "   \n " },
       { type: "text", text: "" },
-    ]),
-    [],
+    ], "m1"),
+    [{ type: "reasoning", text: "", meta: { type: "redacted_thinking" }, model: "m1" }],
   );
 });
 

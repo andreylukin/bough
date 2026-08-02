@@ -20,15 +20,18 @@
  * wrong input. `{}` stays legitimate for a tool that requires nothing — the
  * schema, not the emptiness, decides.
  *
- * **3. Reasoning is display-only.** `blocksToParts` persists a `reasoning` part so
- * the UI can fold it, and drops the provider `meta` that rode along with it. That
- * meta is replayed verbatim *within* a turn (some providers reject a tool call
- * whose signed thinking was altered), but it never reaches the database, because
- * across turns reasoning is dropped from replay entirely (plan §6.4) and a stored
- * signature would only invite someone to echo it back.
+ * **3. Reasoning is persisted WITH its provider payload.** `blocksToParts` keeps
+ * the `reasoning` text so the UI can fold it open, and keeps the opaque `meta`
+ * that rode along with it, stamped with the model that produced it. That payload
+ * is what makes the block replayable — providers hand back a thinking block whole
+ * or not at all, and they reject one whose content was altered rather than one
+ * that was merely read. `turn/replay.ts` decides when it goes back out; storing it
+ * is what gives that decision anything to work with.
  *
  * Nothing here knows a provider by name — the provider string is a label for error
- * text. That is what lets all three clients in `client.ts` share this file.
+ * text, and `meta` is never opened, only carried. That is what lets all three
+ * clients in `client.ts` share this file, and it is why the replay rule needs no
+ * per-provider branch either: each mapper opens its own payload, and no one else's.
  */
 import { LlmError } from "../errors.ts";
 import type { LlmBlock, LlmToolDef } from "../types.ts";
@@ -147,12 +150,17 @@ export function parseToolArgs(
 /**
  * A finished round's blocks → the parts persisted on the supervisor message.
  *
- * Provider `meta` is deliberately not carried across: see invariant 3 above. An
- * empty `reasoning` block (a redacted thinking block has no displayable text) is
- * dropped rather than persisted as an empty fold, which would render as a
- * mysterious blank row in the transcript.
+ * `model` stamps the reasoning parts, because a provider signature is only valid
+ * for the model that produced it and replay is gated on that (`turn/replay.ts`).
+ * Callers that have no model to stamp get display-only reasoning, which is what
+ * the old behaviour was for everyone.
+ *
+ * A reasoning block with NO displayable text is still persisted when it carries
+ * `meta` — that is a redacted thinking block, and the provider's rule is that a
+ * block comes back exactly as it was received or not at all. The UI skips the
+ * empty fold rather than rendering a mysterious blank row.
  */
-export function blocksToParts(blocks: LlmBlock[]): Part[] {
+export function blocksToParts(blocks: LlmBlock[], model?: string): Part[] {
   const parts: Part[] = [];
   for (const b of blocks) {
     switch (b.type) {
@@ -160,7 +168,9 @@ export function blocksToParts(blocks: LlmBlock[]): Part[] {
         if (b.text) parts.push({ type: "text", text: b.text });
         break;
       case "reasoning":
-        if (b.text.trim()) parts.push({ type: "reasoning", text: b.text });
+        if (b.text.trim() || b.meta !== undefined) {
+          parts.push({ type: "reasoning", text: b.text, meta: b.meta, model });
+        }
         break;
       case "tool_use":
         parts.push({ type: "tool_call", id: b.id, name: b.name, input: b.input });

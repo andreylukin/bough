@@ -193,9 +193,12 @@ export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 export type LlmBlock =
   | { type: "text"; text: string }
   /**
-   * `meta` is an opaque provider payload replayed VERBATIM within a turn — some
-   * providers require a tool round's signed thinking to precede its tool_use on
-   * the next round. Across turns, reasoning is dropped entirely (plan §6.4).
+   * `meta` is an opaque provider payload replayed VERBATIM — within a turn,
+   * because some providers require a tool round's signed thinking to precede its
+   * tool_use on the next round, and ACROSS turns for as long as the same model is
+   * being asked. It is never inspected outside the provider's own mapper in
+   * `llm/client.ts`: that is what keeps the replay rule provider-agnostic, since
+   * each mapper already knows what its own payload is worth.
    */
   | { type: "reasoning"; text: string; meta?: unknown }
   | { type: "tool_use"; id: string; name: string; input: unknown };

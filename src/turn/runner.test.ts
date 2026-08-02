@@ -169,7 +169,7 @@ function eventTypes(events: BoughEvent[]): string[] {
 
 // ---- the multi-round turn ---------------------------------------------------
 
-test("a multi-round turn runs the program, ends on stop, and never replays reasoning", async () => {
+test("a multi-round turn runs the program, ends on stop, and replays only signed reasoning", async () => {
   const llm = scriptedLlm([
     // Round 1: thinks, narrates, runs a program.
     {
@@ -289,22 +289,43 @@ test("a multi-round turn runs the program, ends on stop, and never replays reaso
   });
 
   // ── THE ACCEPTANCE CRITERION, against a transcript the runner wrote ──
-  // A second turn over the same session: the reasoning this turn persisted must be
-  // absent from every payload, exactly as the seeded one was.
+  // A second turn over the same session, on the SAME model: the reasoning this
+  // turn persisted replays, and it replays VERBATIM — the payload that made it
+  // valid has to survive the round trip through the database untouched.
   const llm2 = scriptedLlm([{ content: [text("Nothing further."), stop("stop-2")] }]);
   const f2 = { ...f, ctx: { ...f.ctx, llm: llm2.client } };
   userMessage(f.db, f.session.id, "anything else?", 5_000);
   await beginTurn(f2.ctx, f.session.id, f.deps).done;
 
   const replayed = allBlocks(llm2.calls[0].messages);
-  assert.equal(
-    replayed.filter((b) => b.type === "reasoning").length,
-    0,
-    "no reasoning part, from any turn, ever reaches the provider payload",
+  const replayedThinking = replayed.filter((b) => b.type === "reasoning");
+  assert.equal(replayedThinking.length, 1, "the signed block from the previous turn replays");
+  assert.deepEqual(
+    replayedThinking[0].meta,
+    { signature: "sig-1" },
+    "verbatim: a provider rejects a thinking block whose content was altered",
   );
   assert.ok(
-    !JSON.stringify(llm2.calls[0]).includes("weighing two approaches"),
-    "the text of a stored reasoning part is not replayed under any block type",
+    !JSON.stringify(llm2.calls[0]).includes("PRIOR-THINKING-DO-NOT-REPLAY"),
+    "an UNSIGNED part still never replays — there is nothing to vouch for it",
+  );
+
+  // ── the gate is the model, and it is the only gate ──
+  // Same transcript, different model: the signature is not valid for it, so the
+  // block is dropped rather than sent to be discarded (or rejected) downstream.
+  const llm3 = scriptedLlm([{ content: [text("Still nothing."), stop("stop-3")] }]);
+  const f3 = { ...f, ctx: { ...f.ctx, llm: llm3.client, model: "a-different-model" } };
+  userMessage(f.db, f.session.id, "and now?", 6_000);
+  await beginTurn(f3.ctx, f.session.id, f.deps).done;
+
+  assert.equal(
+    allBlocks(llm3.calls[0].messages).filter((b) => b.type === "reasoning").length,
+    0,
+    "reasoning signed by another model does not replay",
+  );
+  assert.ok(
+    !JSON.stringify(llm3.calls[0]).includes("weighing two approaches"),
+    "and its text is not smuggled across as prose either",
   );
   // The turn's own words and its program's result did replay.
   assert.ok(

@@ -5,15 +5,27 @@
  * WHY IT IS A SEPARATE MODULE. The mapping is pure and total, and it is where two
  * invariants live that nothing else in the system can enforce:
  *
- *   **1. Reasoning is dropped on replay (plan §6.4).** A `reasoning` part is
- *   persisted so the UI can fold it open. It is never sent back. There are no
- *   signed thinking blocks to echo across a turn boundary — the signature that made
- *   the block valid rode in `LlmBlock.meta`, which `blocksToParts` deliberately did
- *   not persist (llm/stream.ts) — so re-sending the text would be an unsigned
- *   imitation of thinking the model never gets credit for, at full input price. The
- *   *in-turn* echo is a different thing entirely and lives in `runner.ts`: within one
- *   turn the block travels back verbatim, meta and all, because some providers reject
- *   a tool call whose thinking was altered. Across turns, nothing.
+ *   **1. Reasoning replays only to the model that signed it.** A `reasoning` part
+ *   is persisted so the UI can fold it open, and — when the provider gave it a
+ *   `meta` payload — so it can be sent back. The rule providers state is that a
+ *   thinking block returns EXACTLY as received or not at all: they reject a block
+ *   whose content was modified, not one that was merely read. So `meta` goes back
+ *   untouched, and the *text* is never reconstructed into a block on its own —
+ *   an unsigned imitation of thinking is both wrong and billable.
+ *
+ *   The gate is the model, and nothing else. A signature is scoped to the model
+ *   that produced it, which is true of every provider, so this needs no knowledge
+ *   of which one is in play: `messageToLlm` compares `part.model` to the model
+ *   being asked and hands the block through untouched when they match. What that
+ *   payload is worth is then the provider mapper's business in `llm/client.ts`,
+ *   which is the only place that ever looks inside it.
+ *
+ *   Dropping reasoning is NOT the conservative default it looks like — removing
+ *   thinking blocks can itself provoke ordering and signature errors, and a
+ *   mismatched model discards them server-side without billing. This module
+ *   therefore drops only what it cannot vouch for: a part with no `meta`, or one
+ *   signed by a different model. The *in-turn* echo is a separate mechanism in
+ *   `runner.ts`, which never consults the database at all.
  *
  *   **2. `ask` parts replay as plain text and can never re-block (plan §6.5).** A
  *   settled hold is a fact about what the user said, not a live question. Replaying
@@ -104,6 +116,13 @@ export function lostAttachmentText(part: ImagePart): string {
 export interface ReplayOptions {
   /** Defaults to `readAttachment`. */
   loadImage?: ImageLoader;
+  /**
+   * The model this thread is being replayed FOR. Reasoning replays only to the
+   * model that signed it (invariant 1); omitted means no reasoning replays at
+   * all, which is the right answer for any caller rebuilding a thread for
+   * something other than a live request — a UI, an export, a test.
+   */
+  model?: string;
 }
 
 /** Tool output is persisted as `unknown`; the wire wants a string. */
@@ -174,7 +193,11 @@ export function messageToLlm(m: Message, opts: ReplayOptions = {}): LlmMessage[]
         if (p.text) assistant.push({ type: "text", text: p.text });
         break;
       case "reasoning":
-        // Invariant 1. Persisted for display only; nothing is emitted here.
+        // Invariant 1. A signed block replays verbatim to the model that signed
+        // it; anything else is display-only and emits nothing.
+        if (p.meta !== undefined && opts.model !== undefined && p.model === opts.model) {
+          assistant.push({ type: "reasoning", text: p.text, meta: p.meta });
+        }
         break;
       case "tool_call":
         requested.push(p.id);
