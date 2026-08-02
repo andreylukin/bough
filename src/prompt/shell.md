@@ -1,7 +1,14 @@
 ## Shell
 
-await bash(cmd) — one shell command in the workspace (the user's real checkout),
-returning combined output. It carries your interrupt.
+await bash(cmd, tags) — one shell command in the workspace (the user's real
+checkout), returning combined output. It carries your interrupt.
+
+tags is REQUIRED: 1–3 short lowercase intent tags, colon-separated, naming what
+the command is FOR — bash("git push origin main", "git:push"),
+bash("psql -f migrations/004.sql", "psql:migrate"), bash("bun test src/tui",
+"bun:test"). Tags index the command in your cross-session history (searchable
+with history.sql()), so name the intent, not the syntax. Reuse this project's
+popular tags when they fit; coin new ones when not.
 
 A bash(cmd) still running after ~60s AUTO-BACKGROUNDS. It is NOT killed: the call
 returns "…moved to background as bg_N", the command keeps running, and a

@@ -21,7 +21,10 @@
 --   * `archived_at` / `deprecated_at` on sessions — visibility is DERIVED from
 --     `kind` + `origin_id`; there is no archive, deprecate, hide or purge action
 --     (spec §4, §17).
---   * `message_embeddings` — cross-session search is keyword FTS, not vectors.
+--   * `message_embeddings` — cross-session MESSAGE search is keyword FTS, not
+--     vectors. (The command-history tables below are a separate, additive memory
+--     with their own FTS index; a vector index over THEM may exist as an optional
+--     runtime layer, but never over messages.)
 --   * a jobs table — a background shell dies with the server, so a persisted row
 --     would always be a lie after a restart. Jobs are in-memory (spec §9).
 --   * artifacts / skills tables — both are filesystem-backed, and the directory is
@@ -223,6 +226,65 @@ CREATE TABLE IF NOT EXISTS schedules (
   next_run_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS schedules_due ON schedules(enabled, next_run_at);
+
+-- Command-history memory: one row per finished shell command, tagged by the model
+-- at write time (`bash(cmd, tags)`). The tags are the retrieval key — the command
+-- string alone is too varied to match across sessions — and the exit code is the
+-- ground truth that weights them (a tag on ten failing attempts must not become
+-- "popular"). Scoped by `repo` (git origin URL, else the workspace root path) so
+-- profiles survive a moved or re-cloned checkout.
+--
+-- INTEGER PRIMARY KEY rather than the TEXT ids used elsewhere: these rows are a
+-- high-volume append-only log joined through two junction tables, and the rowid
+-- alias is the natural join key. Nothing outside this table group references it.
+CREATE TABLE IF NOT EXISTS command_history (
+  id          INTEGER PRIMARY KEY,
+  session_id  TEXT NOT NULL REFERENCES sessions(id),
+  ts          INTEGER NOT NULL,
+  -- git remote origin URL when the workspace has one, else the workspace root
+  -- path. The scope key for every popularity/profile query.
+  repo        TEXT NOT NULL,
+  cmd         TEXT NOT NULL,
+  -- The normalized colon-separated string as recorded ('' for verbs that carry
+  -- no tags, e.g. `sh` legs). Split into command_tags for querying.
+  tags        TEXT NOT NULL,
+  -- NULL = unknown (still running when the turn moved on).
+  exit_code   INTEGER,
+  duration_ms INTEGER,
+  -- live | backfill. Backfilled labels are model-inferred after the fact and
+  -- weigh less than generation-time intent.
+  source      TEXT NOT NULL DEFAULT 'live'
+);
+CREATE INDEX IF NOT EXISTS command_history_repo ON command_history(repo, ts);
+
+-- One row per tag per command. `command_history.tags` split at record time.
+CREATE TABLE IF NOT EXISTS command_tags (
+  command_id INTEGER NOT NULL REFERENCES command_history(id),
+  tag        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS command_tags_tag ON command_tags(tag, command_id);
+CREATE INDEX IF NOT EXISTS command_tags_command ON command_tags(command_id);
+
+-- Directories a command was ABOUT, extracted from path-looking tokens that
+-- resolve inside the workspace (`history/record.ts`). Not the cwd: a bough
+-- program runs at the workspace root, so cwd carries no signal — `bun test
+-- src/tui/x.test.ts` is attributed to `src/tui`, which is what makes
+-- per-directory tag profiles possible at all. Workspace-relative.
+CREATE TABLE IF NOT EXISTS command_dirs (
+  command_id INTEGER NOT NULL REFERENCES command_history(id),
+  rel_dir    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS command_dirs_dir ON command_dirs(rel_dir, command_id);
+CREATE INDEX IF NOT EXISTS command_dirs_command ON command_dirs(command_id);
+
+-- Keyword search over recorded commands, for `history.sql()` recall. Same
+-- standalone shape and tokenizer as messages_fts below.
+CREATE VIRTUAL TABLE IF NOT EXISTS command_history_fts USING fts5(
+  cmd,
+  tags,
+  command_id UNINDEXED,
+  tokenize = 'unicode61 remove_diacritics 2'
+);
 
 -- Keyword search over transcripts (spec §17: FTS, no embeddings, no vector index).
 -- Standalone rather than an external-content table: message `parts` is JSON, so

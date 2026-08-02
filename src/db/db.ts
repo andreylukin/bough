@@ -42,7 +42,14 @@ import { dirname } from "node:path";
 import { dbPath } from "../paths.ts";
 import { BadRequestError } from "../errors.ts";
 import { migrate } from "./migrate.ts";
-import type { Db as DbPort, SearchHit, SessionRuntime, UsageTotals } from "../types.ts";
+import type {
+  CommandRecord,
+  CommandTagRow,
+  Db as DbPort,
+  SearchHit,
+  SessionRuntime,
+  UsageTotals,
+} from "../types.ts";
 import type {
   Message,
   Part,
@@ -1108,6 +1115,62 @@ export class SqliteDb implements DbPort {
     this.#run(`DELETE FROM messages_fts`);
     const rows = this.#all<MessageRow>(`SELECT * FROM messages ORDER BY created_at, rowid`);
     for (const r of rows) this.indexMessage(toMessage(r));
+  }
+
+  // ---- command-history memory ----------------------------------------------
+
+  /**
+   * Append one finished command with its tag/dir junction rows and FTS row, in
+   * one transaction — a half-recorded command (history row without its tags)
+   * would silently skew every popularity query that joins them.
+   */
+  recordCommand(r: CommandRecord): void {
+    const tx = this.#db.transaction(() => {
+      const info = this.#db.prepare(
+        `INSERT INTO command_history
+           (session_id, ts, repo, cmd, tags, exit_code, duration_ms, source)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(r.sessionId, r.ts, r.repo, r.cmd, r.tags, r.exitCode, r.durationMs, r.source);
+      const id = Number(info.lastInsertRowid);
+      for (const tag of r.tagList) {
+        this.#run(`INSERT INTO command_tags (command_id, tag) VALUES (?, ?)`, id, tag);
+      }
+      for (const dir of r.dirs) {
+        this.#run(`INSERT INTO command_dirs (command_id, rel_dir) VALUES (?, ?)`, id, dir);
+      }
+      this.#run(
+        `INSERT INTO command_history_fts (cmd, tags, command_id) VALUES (?, ?, ?)`,
+        r.cmd,
+        r.tags,
+        id,
+      );
+    });
+    tx();
+  }
+
+  commandTagRows(
+    repo: string,
+    opts: { dir?: string; sinceTs?: number } = {},
+  ): CommandTagRow[] {
+    const conds = [`h.repo = ?`];
+    const params: (string | number)[] = [repo];
+    if (opts.sinceTs !== undefined) {
+      conds.push(`h.ts >= ?`);
+      params.push(opts.sinceTs);
+    }
+    if (opts.dir !== undefined) {
+      conds.push(
+        `EXISTS (SELECT 1 FROM command_dirs d
+                  WHERE d.command_id = h.id AND (d.rel_dir = ? OR d.rel_dir LIKE ? || '/%'))`,
+      );
+      params.push(opts.dir, opts.dir);
+    }
+    return this.#all<{ tag: string; ts: number; exit_code: number | null }>(
+      `SELECT t.tag AS tag, h.ts AS ts, h.exit_code AS exit_code
+         FROM command_history h JOIN command_tags t ON t.command_id = h.id
+        WHERE ${conds.join(" AND ")}`,
+      ...params,
+    ).map((r) => ({ tag: r.tag, ts: r.ts, exitCode: r.exit_code }));
   }
 }
 

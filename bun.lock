@@ -12,6 +12,8 @@
         "react": "19.2.7",
         "react-dom": "19.2.7",
         "slice-ansi": "9.0.0",
+        "sqlite-lembed": "^0.0.1-alpha.8",
+        "sqlite-vec": "^0.1.9",
         "string-width": "7.2.0",
         "strip-ansi": "7.2.0",
         "wrap-ansi": "9.0.2",
@@ -259,6 +261,26 @@
     "side-channel-weakmap": ["side-channel-weakmap@1.0.2", "", { "dependencies": { "call-bound": "^1.0.2", "es-errors": "^1.3.0", "get-intrinsic": "^1.2.5", "object-inspect": "^1.13.3", "side-channel-map": "^1.0.1" } }, "sha512-WPS/HvHQTYnHisLo9McqBHOJk2FkHO/tlpvldyrnem4aeQp4hai3gythswg6p01oSoTl58rcpiFAjF2br2Ak2A=="],
 
     "slice-ansi": ["slice-ansi@9.0.0", "", { "dependencies": { "ansi-styles": "^6.2.3", "is-fullwidth-code-point": "^5.1.0" } }, "sha512-SO/3iYL5S3W57LLEniscOGPZgOqZUPCx6d3dB+52B80yJ0XstzsC/eV8gnA4tM3MHDrKz+OCFSLNjswdSC+/bA=="],
+
+    "sqlite-lembed": ["sqlite-lembed@0.0.1-alpha.8", "", { "optionalDependencies": { "sqlite-lembed-darwin-arm64": "0.0.1-alpha.8", "sqlite-lembed-darwin-x64": "0.0.1-alpha.8", "sqlite-lembed-linux-x64": "0.0.1-alpha.8", "sqlite-lembed-windows-x64": "0.0.1-alpha.8" } }, "sha512-TPj4Nwh2xVTJgb29FLFb/onMQ7nIi1P5aNceGi9EHKX7VM33CKtcelnMLmsiBbAkuFFaZMDv8oxHxDhO1IqDvg=="],
+
+    "sqlite-lembed-darwin-arm64": ["sqlite-lembed-darwin-arm64@0.0.1-alpha.8", "", { "os": "darwin", "cpu": "arm64" }, "sha512-Dg3nmU9stayqDNzlNRKOvhmERhpRU/uqKclf2mtRPo0hyB8uG9k4LGDgDtCoSOoPK9jMXdabI+qSUckqvn8o5w=="],
+
+    "sqlite-lembed-darwin-x64": ["sqlite-lembed-darwin-x64@0.0.1-alpha.8", "", { "os": "darwin", "cpu": "x64" }, "sha512-S5Ix4/8WXBk5yHjqjugm1Xh4Uq0axU8AhH5G97Kk5PzteXlXv24QzgUu6QE0hNh8HSKuDxyga89aUwRV1MsFjQ=="],
+
+    "sqlite-lembed-linux-x64": ["sqlite-lembed-linux-x64@0.0.1-alpha.8", "", { "os": "linux", "cpu": "x64" }, "sha512-N4Nlu0DqIDKIKgR51EBgURwwvTx8jp3NsJHm9yZBRc4OhqlG3eEaNUe5lX/MKWY31g+fO+0/Ew+gcQ2Sppk2Qw=="],
+
+    "sqlite-vec": ["sqlite-vec@0.1.9", "", { "optionalDependencies": { "sqlite-vec-darwin-arm64": "0.1.9", "sqlite-vec-darwin-x64": "0.1.9", "sqlite-vec-linux-arm64": "0.1.9", "sqlite-vec-linux-x64": "0.1.9", "sqlite-vec-windows-x64": "0.1.9" } }, "sha512-L7XJWRIBNvR9O5+vh1FQ+IGkh/3D2AzVksW5gdtk28m78Hy8skFD0pqReKH1Yp0/BUKRGcffgKvyO/EON5JXpA=="],
+
+    "sqlite-vec-darwin-arm64": ["sqlite-vec-darwin-arm64@0.1.9", "", { "os": "darwin", "cpu": "arm64" }, "sha512-jSsZpE42OfBkGL/ItyJTVCUwl6o6Ka3U5rc4j+UBDIQzC1ulSSKMEhQLthsOnF/MdAf1MuAkYhkdKmmcjaIZQg=="],
+
+    "sqlite-vec-darwin-x64": ["sqlite-vec-darwin-x64@0.1.9", "", { "os": "darwin", "cpu": "x64" }, "sha512-KDlVyqQT7pnOhU1ymB9gs7dMbSoVmKHitT+k1/xkjarcX8bBqPxWrGlK/R+C5WmWkfvWwyq5FfXfiBYCBs6PlA=="],
+
+    "sqlite-vec-linux-arm64": ["sqlite-vec-linux-arm64@0.1.9", "", { "os": "linux", "cpu": "arm64" }, "sha512-5wXVJ9c9kR4CHm/wVqXb/R+XUHTdpZ4nWbPHlS+gc9qQFVHs92Km4bPnCKX4rtcPMzvNis+SIzMJR1SCEwpuUw=="],
+
+    "sqlite-vec-linux-x64": ["sqlite-vec-linux-x64@0.1.9", "", { "os": "linux", "cpu": "x64" }, "sha512-w3tCH8xK2finW8fQJ/m8uqKodXUZ9KAuAar2UIhz4BHILfpE0WM/MTGCRfa7RjYbrYim5Luk3guvMOGI7T7JQA=="],
+
+    "sqlite-vec-windows-x64": ["sqlite-vec-windows-x64@0.1.9", "", { "os": "win32", "cpu": "x64" }, "sha512-y3gEIyy/17bq2QFPQOWLE68TYWcRZkBQVA2XLrTPHNTOp55xJi/BBBmOm40tVMDMjtP+Elpk6UBUXdaq+46b0Q=="],
 
     "statuses": ["statuses@2.0.2", "", {}, "sha512-DvEy55V3DB7uknRo+4iOGT5fP1slR8wQohVdknigZPMpMstaKJQWhwiYBACJE3Ul2pTnATihhBYnRhZQHGBiRw=="],
 

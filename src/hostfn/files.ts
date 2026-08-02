@@ -197,7 +197,7 @@ export function takeSessionWrites(sessionId: string): string[] {
  * touch no database, no bus and no LLM, and a test should not have to fabricate
  * one to edit a file in a temp directory.
  */
-export type FileCtx = Pick<TurnCtx, "workspace" | "sessionId">;
+export type FileCtx = Pick<TurnCtx, "workspace" | "sessionId" | "reads">;
 
 /** The three bridged file functions, as `HostFns` declares them. */
 export type FileHostFns = Pick<HostFns, "view" | "patch" | "write">;
@@ -279,6 +279,9 @@ export function createFileHostFns(ctx: FileCtx, opts: FileHostFnsOptions = {}): 
     // record, and the same relative path means different files in different
     // workspaces.
     snapshots.record(ctx.sessionId, full, text);
+    // The read trail behind the directory-triggered tag hints (`history/stats.ts`).
+    // Appended, never consulted here — the runner reads it at round end.
+    ctx.reads?.push(full);
 
     const rendered = renderNumbered(p, text);
     if (text.length === 0) {

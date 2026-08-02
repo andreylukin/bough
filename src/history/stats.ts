@@ -1,0 +1,172 @@
+/**
+ * Tag popularity over the command-history memory: the session-start priming note
+ * and the per-directory profiles behind the mid-turn hints.
+ *
+ * Weighting, not raw counts: a tag's weight is `success × recency` — a failing
+ * command's tag counts a quarter of a passing one, and weight halves every 30
+ * days, so a repo's profile tracks what the user does NOW (the Mem^p lesson:
+ * memory that is never deprecated erodes performance). The decay runs in JS
+ * rather than SQL so nothing depends on the sqlite build carrying math functions.
+ *
+ * Cache discipline: the priming note goes into the VOLATILE prompt tier, which is
+ * cached per session with a 1h TTL (`llm/client.ts`). Recomputing it per turn
+ * would change its text mid-session and bust that cache, so it is memoized per
+ * session for the process lifetime.
+ */
+
+import type { CommandTagRow, Db } from "../types.ts";
+import { repoIdentity } from "./record.ts";
+
+const HALF_LIFE_MS = 30 * 24 * 60 * 60 * 1000;
+/** Rows older than this carry <3% weight — not worth reading. */
+const LOOKBACK_MS = 5 * HALF_LIFE_MS;
+const TOP_TAGS = 10;
+
+function successFactor(exitCode: number | null): number {
+  if (exitCode === 0) return 1;
+  if (exitCode === null) return 0.5;
+  return 0.25;
+}
+
+/** Aggregate rows into per-tag weights. Exported for tests. */
+export function tagWeights(rows: CommandTagRow[], now: number): Map<string, number> {
+  const weights = new Map<string, number>();
+  for (const r of rows) {
+    const w = successFactor(r.exitCode) * Math.pow(0.5, (now - r.ts) / HALF_LIFE_MS);
+    weights.set(r.tag, (weights.get(r.tag) ?? 0) + w);
+  }
+  return weights;
+}
+
+function top(weights: Map<string, number>, limit: number): string[] {
+  return [...weights.entries()]
+    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
+    .slice(0, limit)
+    .map(([tag]) => tag);
+}
+
+/** The repo's most-used tags, weighted, best first. */
+export function topRepoTags(db: Db, workspace: string, now: number, limit = TOP_TAGS): string[] {
+  const rows = db.commandTagRows(repoIdentity(workspace), { sinceTs: now - LOOKBACK_MS });
+  return top(tagWeights(rows, now), limit);
+}
+
+/** A directory's most-used tags (commands attributed to it or its children). */
+export function topDirTags(
+  db: Db,
+  workspace: string,
+  relDir: string,
+  now: number,
+  limit = TOP_TAGS,
+): string[] {
+  const rows = db.commandTagRows(repoIdentity(workspace), {
+    dir: relDir,
+    sinceTs: now - LOOKBACK_MS,
+  });
+  return top(tagWeights(rows, now), limit);
+}
+
+// ---------------------------------------------------------------------------
+// The session-start priming note
+// ---------------------------------------------------------------------------
+
+/** Per-session memo. Both maps are process-lifetime; bounded below. */
+const noteMemo = new Map<string, string | null>();
+const primedMemo = new Map<string, Set<string>>();
+const MEMO_CAP = 512;
+
+function remember<T>(map: Map<string, T>, key: string, value: T): T {
+  if (map.size >= MEMO_CAP) map.clear();
+  map.set(key, value);
+  return value;
+}
+
+/**
+ * The volatile-tier note naming this project's popular tags, or null for a
+ * project with no history yet (the static examples in prompt/shell.md are the
+ * cold-start fallback). Frozen per session — see the module header.
+ */
+export function tagsNoteFor(
+  db: Db,
+  sessionId: string,
+  workspace: string,
+  now: number,
+): string | null {
+  const hit = noteMemo.get(sessionId);
+  if (hit !== undefined) return hit;
+  let note: string | null = null;
+  try {
+    const tags = topRepoTags(db, workspace, now);
+    remember(primedMemo, sessionId, new Set(tags));
+    if (tags.length > 0) {
+      note = `Tags most used in this project (recent, working commands first): ` +
+        tags.join(", ") + `. Reuse them when they fit; coin new ones when not.`;
+    }
+  } catch {
+    // Stats are a garnish; a failure here must not touch the turn.
+  }
+  return remember(noteMemo, sessionId, note);
+}
+
+/** The tag set the session was primed with; empty when priming never ran. */
+export function primedTags(sessionId: string): Set<string> {
+  return primedMemo.get(sessionId) ?? new Set();
+}
+
+// ---------------------------------------------------------------------------
+// Directory-triggered hints
+// ---------------------------------------------------------------------------
+
+/** Cap per session — the first thing to cut if these read as noise. */
+const MAX_HINTS_PER_SESSION = 4;
+
+interface HintState {
+  seenDirs: Set<string>;
+  emitted: number;
+}
+
+const hintMemo = new Map<string, HintState>();
+
+/**
+ * Hint lines for directories the round newly read, when a directory's tag profile
+ * DIVERGES from what the session was already primed with. No divergence → no
+ * line → no context bloat. Once per directory, at most 4 per session.
+ *
+ * `readDirs` are workspace-relative directories of files the program viewed.
+ */
+export function dirTagHints(
+  db: Db,
+  sessionId: string,
+  workspace: string,
+  readDirs: string[],
+  now: number,
+): string[] {
+  let state = hintMemo.get(sessionId);
+  if (!state) state = remember(hintMemo, sessionId, { seenDirs: new Set(), emitted: 0 });
+  const primed = primedTags(sessionId);
+  const lines: string[] = [];
+  for (const dir of readDirs) {
+    if (state.emitted >= MAX_HINTS_PER_SESSION) break;
+    if (dir === "" || dir === "." || state.seenDirs.has(dir)) continue;
+    state.seenDirs.add(dir);
+    try {
+      const fresh = topDirTags(db, workspace, dir, now, 5).filter((t) => !primed.has(t));
+      if (fresh.length === 0) continue;
+      state.emitted++;
+      lines.push(
+        `[history] tags previously used in ${dir}/: ${fresh.join(", ")} — ` +
+          `see history.sql() for the commands behind them`,
+      );
+    } catch {
+      // Same contract as everything here: hints never hurt a round.
+    }
+  }
+  return lines;
+}
+
+/** Test seam: reset the per-session memos. */
+export function resetStatsMemo(): void {
+  noteMemo.clear();
+  primedMemo.clear();
+  hintMemo.clear();
+}

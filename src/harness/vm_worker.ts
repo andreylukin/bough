@@ -79,7 +79,7 @@ const jsonCall = async (fn: HostFnName, args: unknown[]): Promise<unknown> =>
  * program actually calls (`state.get(...)` → `state("get", argsJson)`). The verb
  * lists live in `protocol.ts` so the host dispatcher and this cannot drift.
  */
-function methodObject(fn: "state" | "schedule" | "workflow") {
+function methodObject(fn: "state" | "schedule" | "workflow" | "history") {
   const verbs: readonly string[] = HOST_FN_VERBS[fn];
   return Object.fromEntries(
     verbs.map((
@@ -198,7 +198,9 @@ try {
  * stays string-only. `view`/`patch` are the exception — their text IS the payload.
  */
 const bindings = {
-  bash: (cmd: string) => hostCall("bash", [cmd]),
+  // Tags always cross the wire, even absent, so the host can enforce the required
+  // param with its corrective ProgramError instead of an arity surprise.
+  bash: (cmd: string, tags?: string) => hostCall("bash", [cmd, tags ?? ""]),
   // Concurrent shells: commands ride out as a JSON array, `[{code, out}, …]` comes
   // back as JSON. A non-zero code is DATA here, never a throw.
   sh: (...cmds: string[]) => jsonCall("sh", [JSON.stringify(cmds)]),
@@ -236,6 +238,9 @@ const bindings = {
   // A non-string content (an object) is stringified so programs can pass it directly.
   artifact: (name: string, content: unknown) =>
     jsonCall("artifact", [name, typeof content === "string" ? content : JSON.stringify(content)]),
+  // Recall over the command-history memory: history.sql("SELECT …") → rows,
+  // history.similar("text") → rows (when the vector layer is present).
+  history: methodObject("history"),
 } satisfies Record<HostFnName, unknown>;
 
 /**

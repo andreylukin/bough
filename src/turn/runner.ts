@@ -64,6 +64,9 @@ import {
   workspaceNote,
 } from "../prompt/assemble.ts";
 import { findProjectRules, projectRulesNote } from "../prompt/project.ts";
+import { createCommandRecorder } from "../history/record.ts";
+import { dirTagHints, tagsNoteFor } from "../history/stats.ts";
+import { dirname, isAbsolute, relative } from "node:path";
 import { boughHome } from "../paths.ts";
 import type { Message, Part, Session, Usage } from "../schema/parts.ts";
 import type {
@@ -236,6 +239,10 @@ export const BASE_HOST_FNS: HostFnName[] = [
 export function baseHostFns(ctx: TurnCtx): HostFns {
   // Initialised HERE so every construction path shares one array — see `TurnCtx.exits`.
   const exits = (ctx.exits ??= []);
+  // Same rule for the memory seams: one recorder and one read trail per turn,
+  // shared by every construction path (`TurnCtx.record` says why).
+  const record = (ctx.record ??= createCommandRecorder(ctx));
+  const reads = (ctx.reads ??= []);
   return {
     ...createShellHostFns({
       sessionId: ctx.sessionId,
@@ -243,8 +250,9 @@ export function baseHostFns(ctx: TurnCtx): HostFns {
       signal: ctx.signal,
       scratch: ensureScratchDir(ctx.sessionId),
       exits,
+      record,
     }),
-    ...createFileHostFns({ sessionId: ctx.sessionId, workspace: ctx.workspace }),
+    ...createFileHostFns({ sessionId: ctx.sessionId, workspace: ctx.workspace, reads }),
   };
 }
 
@@ -261,11 +269,34 @@ export function defaultProgramRunner(
   // the caller (`delegationDeps` does exactly that for every delegating session), so the
   // array cannot live in this closure.
   const exits = (ctx.exits ??= []);
+  const reads = (ctx.reads ??= []);
   return async ({ code, signal, onLog }) => {
     const from = exits.length;
+    const fromReads = reads.length;
     const result = await runProgram({ code, host: fns, signal, onLog });
-    return withExitNotes(result, exits.slice(from));
+    return withDirTagHintNotes(withExitNotes(result, exits.slice(from)), ctx, reads.slice(fromReads));
   };
+}
+
+/**
+ * Append the per-directory tag hints for files this round newly read — the
+ * mid-turn half of the tag-history memory. Appended to the round's RESULT, never
+ * to the prompt: a mid-session prompt edit would bust the volatile-tier cache
+ * (`llm/client.ts`). `history/stats.ts` owns the divergence rule and the caps;
+ * this just converts the read trail to workspace-relative directories.
+ */
+function withDirTagHintNotes(
+  result: ProgramResult,
+  ctx: TurnCtx,
+  reads: readonly string[],
+): ProgramResult {
+  if (reads.length === 0) return result;
+  const dirs = [...new Set(reads.map((p) => relative(ctx.workspace, dirname(p))))]
+    .filter((d) => d !== "" && d !== "." && !d.startsWith("..") && !isAbsolute(d));
+  if (dirs.length === 0) return result;
+  const lines = dirTagHints(ctx.db, ctx.sessionId, ctx.workspace, dirs, (ctx.now ?? Date.now)());
+  if (lines.length === 0) return result;
+  return { ...result, logs: [...result.logs, ...lines] };
 }
 
 /**
@@ -563,12 +594,19 @@ async function drive(
   // is fixed for the life of a starter — boot cannot supply a per-session fact.
   const rulesNote = projectRulesNote(findProjectRules(workspace, boughHome()), workspace);
   const projectRules = rulesNote === null ? [] : [rulesNote];
+  // Frozen per session even though this runs per turn — the memo in
+  // `history/stats.ts` — because the volatile tier caches per session and a note
+  // whose text drifts mid-session would bust it. Null for a project with no
+  // command history yet, and then simply omitted.
+  const tagsNote = tagsNoteFor(db, sessionId, workspace, ctx.now?.() ?? Date.now());
+  const tagNotes = tagsNote === null ? [] : [tagsNote];
   const prompt = (deps.assemble ?? assemblePrompt)({
     kind: session?.kind ?? "root",
     granted: deps.granted ?? BASE_HOST_FNS,
     notes: [
       workspaceNote(workspace),
       scratchNote(scratch),
+      ...tagNotes,
       // Read HERE, per turn, for the same reason the workspace note is built here:
       // it is a per-session fact boot cannot supply. Per turn rather than per
       // session so that editing AGENTS.md to correct a misbehaving model takes

@@ -140,6 +140,7 @@ export interface SectionSha {
 export type SectionId =
   | "identity"
   | "shell"
+  | "history"
   | "files"
   | "patch-grammar"
   | "ask"
@@ -192,6 +193,9 @@ const ALWAYS = () => true;
 const SECTIONS: readonly SectionSpec[] = [
   { id: "identity", file: "identity.md", when: ALWAYS },
   { id: "shell", file: "shell.md", when: (f) => f.has("bash") },
+  // Right after shell: the tags bash() requires are what this section makes
+  // worth writing, and the two read as one contract.
+  { id: "history", file: "history.md", when: (f) => f.has("history") },
   { id: "files", file: "files.md", when: (f) => f.has("view") },
   { id: "patch-grammar", file: "patch-grammar.md", when: (f) => f.has("patch") },
   { id: "ask", file: "ask.md", when: (f) => f.has("ask") },

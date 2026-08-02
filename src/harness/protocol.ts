@@ -15,6 +15,8 @@
  * implementations land in M6 (`ask`, `state`, `schedule`, `image`, `fetch`,
  * `artifact`, `workflow`). Later tasks implement against
  * an existing name; none adds one.
+ * (Amended 2026-08: `history` added with the tag-history memory — a deliberate
+ * reopening of the list, not a milestone task drifting a name in.)
  *
  * The wire is string-only, both directions. A host function that logically takes
  * or returns an object serializes it (`agent(task, JSON.stringify(opts))` →
@@ -35,8 +37,10 @@
  *
  * Absent by design (spec §17): `read` and `edit` (one editing idiom — `view`,
  * `patch`, `write`), `extract` (no output digestion; oversized output is truncated
- * deterministically), and `recall` (no semantic search; cross-session search is
- * keyword FTS behind an HTTP route, not a program verb).
+ * deterministically), and `recall` over MESSAGES (cross-session transcript search
+ * is keyword FTS behind an HTTP route, not a program verb). `history` is not that:
+ * it reads the COMMAND memory (db/schema.sql's command_history group), which
+ * exists precisely to be program-queryable.
  */
 export const HOST_FN_NAMES = [
   // shell
@@ -64,6 +68,7 @@ export const HOST_FN_NAMES = [
   "image",
   "fetch",
   "artifact",
+  "history",
 ] as const;
 
 export type HostFnName = (typeof HOST_FN_NAMES)[number];
@@ -100,6 +105,10 @@ export const HOST_FN_VERBS = {
   state: ["get", "set", "list", "delete"],
   schedule: ["list", "add", "enable", "disable", "remove"],
   workflow: ["start", "rerun", "stop", "pause", "resume", "status", "list"],
+  // `similar` is bound worker-side from day one but only granted host-side when
+  // the optional vector layer is present — absence rejects catchably, like any
+  // ungranted capability.
+  history: ["sql", "similar"],
 } as const satisfies Record<string, readonly string[]>;
 
 // ---- program worker: main → worker ------------------------------------------

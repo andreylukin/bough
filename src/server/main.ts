@@ -29,6 +29,9 @@ import {
   delegationTurnDeps,
 } from "../hostfn/delegate.ts";
 import { createArtifactHostFn } from "../hostfn/artifact.ts"; // T6.6
+import { createHistoryHostFn } from "../hostfn/history.ts";
+import { enableSqliteExtensions } from "../db/extensions.ts";
+import { createEmbedLayer } from "../history/embed.ts";
 import { createAskHostFn } from "../hostfn/ask.ts"; // T6.1
 import { createFetchHostFn } from "../hostfn/fetch.ts"; // T6.5
 import { createImageHostFn } from "../hostfn/image.ts"; // T6.4
@@ -79,6 +82,11 @@ import { indexRecoveredMessages, searchSafeDb } from "./search.ts"; // T8.6
 import type { WithTurnStarter } from "./sessions.ts";
 
 const PORT = Number(process.env["BOUGH_PORT"] ?? 4321);
+
+// FIRST, before any Database exists: Bun freezes the SQLite build at the first
+// open, and the optional vector layer needs an extension-capable one
+// (`db/extensions.ts`). A false return just means that layer never exists.
+enableSqliteExtensions();
 
 const db = openDb();
 const bus = new Bus();
@@ -851,6 +859,26 @@ const grantedCtxFor = (turnCtx: TurnCtx): TurnCtx => {
   return widenGrant(bound, skillsFor(turnCtx.sessionId).servers);
 };
 
+// The tag-history vector layer (optional — null without extension-capable
+// SQLite, and everything else works identically). One layer per process; the
+// drain ticker embeds pending commands in small batches so the first tick after
+// a busy session catches up gradually instead of blocking the event loop.
+// Drop-if-busy, like every cheap-tier consumer (plan §6.11).
+const embed = createEmbedLayer();
+if (embed) {
+  let draining = false;
+  const tick = () => {
+    if (draining) return;
+    draining = true;
+    embed.drain().finally(() => {
+      draining = false;
+    });
+  };
+  tick();
+  setInterval(tick, 60_000).unref();
+  console.log("history embeddings: drain ticker running, history.similar enabled");
+}
+
 const skillAwareStarter = (sessionId: string) =>
   createDelegatingTurnStarter({
     base: {
@@ -864,6 +892,7 @@ const skillAwareStarter = (sessionId: string) =>
         "ask",
         "state",
         "artifact",
+        "history",
       ],
       // Resolved per turn. `notes` carries the skills that were
       // NAMED and could not be loaded: a malformed SKILL.md must not make a `/name`
@@ -889,6 +918,7 @@ const skillAwareStarter = (sessionId: string) =>
       ...createAskHostFn(turnCtx),
       ...createStateHostFn(turnCtx),
       ...createArtifactHostFn(turnCtx),
+      ...createHistoryHostFn(embed ? { similar: (t) => embed.similar(t) } : {}),
     }),
   });
 

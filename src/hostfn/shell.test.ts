@@ -695,3 +695,62 @@ test("a scratchpad, when the ctx carries one, arrives under its own name", async
   await r.cleanup();
   await rm(dir, { recursive: true, force: true });
 });
+
+// ---------------------------------------------------------------------------
+// Tags and the history recorder
+// ---------------------------------------------------------------------------
+
+/** What one recorded command looks like to these tests. */
+type Recorded = { command: string; tags: string; exitCode: number | null; durationMs: number | null };
+
+test("the bridged bash requires tags and the error teaches the format", async () => {
+  const r = rig();
+  const host = createShellHostFns(r.ctx, { registry: r.registry });
+  for (const missing of [undefined, "", "   ", ":::"]) {
+    const err = await rejectsWith(() => host.bash("printf hi", missing as string), ProgramError);
+    has(err.message, 'bash("git push origin main", "git:push")');
+  }
+  await r.cleanup();
+});
+
+test("a finished bash records its command, normalized tags, code and duration", async () => {
+  const r = rig();
+  const recorded: Recorded[] = [];
+  const host = createShellHostFns(
+    { ...r.ctx, record: (e) => recorded.push(e) },
+    { registry: r.registry },
+  );
+  await host.bash("printf ok", " Git : PUSH ");
+  await host.bash("exit 3", "fail:case");
+  eq(recorded.length, 2);
+  eq(recorded[0].command, "printf ok");
+  eq(recorded[0].tags, "git:push");
+  eq(recorded[0].exitCode, 0);
+  ok(recorded[0].durationMs !== null && recorded[0].durationMs >= 0, "duration is measured");
+  eq(recorded[1].exitCode, 3);
+  await r.cleanup();
+});
+
+test("sh legs record untagged, one row per command, codes intact", async () => {
+  const r = rig();
+  const recorded: Recorded[] = [];
+  const ctx: ShellCtx = { ...r.ctx, record: (e) => recorded.push(e) };
+  await shConcurrent(["printf a", "exit 7"], ctx, { registry: r.registry });
+  eq(recorded.map((e) => ({ tags: e.tags, exitCode: e.exitCode })), [
+    { tags: "", exitCode: 0 },
+    { tags: "", exitCode: 7 },
+  ]);
+  await r.cleanup();
+});
+
+test("an auto-backgrounded bash records the REAL exit, not the handoff", async () => {
+  const r = rig();
+  const recorded: Recorded[] = [];
+  const ctx: ShellCtx = { ...r.ctx, record: (e) => recorded.push(e) };
+  const out = await bash("sleep 0.3; exit 9", ctx, { registry: r.registry, bgAfterMs: 30 });
+  has(out, "moved to background");
+  eq(recorded.length, 0, "nothing recorded at the handoff — the outcome is not known yet");
+  await untilTrue("the backgrounded exit is recorded", () => recorded.length === 1);
+  eq(recorded[0].exitCode, 9);
+  await r.cleanup();
+});

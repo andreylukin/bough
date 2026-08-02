@@ -31,6 +31,7 @@ import { join } from "node:path";
 import { openDb, SqliteDb } from "./db.ts";
 import { migrate, SCHEMA_VERSION, userVersion } from "./migrate.ts";
 import type { Message, Session, Turn } from "../schema/parts.ts";
+import type { CommandRecord } from "../types.ts";
 
 // ---- fixtures ---------------------------------------------------------------
 
@@ -835,4 +836,57 @@ test("openDb creates the parent directory", async () => {
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Command-history memory
+// ---------------------------------------------------------------------------
+
+function cmdRecord(over: Partial<CommandRecord> = {}): CommandRecord {
+  return {
+    sessionId: "s1",
+    ts: 1_000,
+    repo: "repo",
+    cmd: "true",
+    tags: "",
+    tagList: [],
+    dirs: [],
+    exitCode: 0,
+    durationMs: 1,
+    source: "live",
+    ...over,
+  };
+}
+
+test("recordCommand round-trips through commandTagRows, scoped by repo", () => {
+  const db = mem();
+  db.createSession(session("s1"));
+  db.recordCommand(cmdRecord({ tags: "git:push", tagList: ["git", "push"] }));
+  db.recordCommand(cmdRecord({ repo: "other", tags: "bun", tagList: ["bun"], ts: 2_000 }));
+  assert.deepStrictEqual(db.commandTagRows("repo"), [
+    { tag: "git", ts: 1_000, exitCode: 0 },
+    { tag: "push", ts: 1_000, exitCode: 0 },
+  ]);
+  assert.deepStrictEqual(db.commandTagRows("other"), [{ tag: "bun", ts: 2_000, exitCode: 0 }]);
+  db.close();
+});
+
+test("commandTagRows dir scope covers the dir and its descendants — not name prefixes", () => {
+  const db = mem();
+  db.createSession(session("s1"));
+  db.recordCommand(cmdRecord({ tagList: ["a"], tags: "a", dirs: ["src"] }));
+  db.recordCommand(cmdRecord({ tagList: ["b"], tags: "b", dirs: ["src/tui"] }));
+  db.recordCommand(cmdRecord({ tagList: ["c"], tags: "c", dirs: ["src2"] }));
+  assert.deepStrictEqual(db.commandTagRows("repo", { dir: "src" }).map((r) => r.tag), ["a", "b"]);
+  assert.deepStrictEqual(db.commandTagRows("repo", { dir: "src/tui" }).map((r) => r.tag), ["b"]);
+  db.close();
+});
+
+test("commandTagRows sinceTs floors the lookback", () => {
+  const db = mem();
+  db.createSession(session("s1"));
+  db.recordCommand(cmdRecord({ tagList: ["old"], tags: "old", ts: 10 }));
+  db.recordCommand(cmdRecord({ tagList: ["new"], tags: "new", ts: 500 }));
+  assert.deepStrictEqual(db.commandTagRows("repo", { sinceTs: 100 }).map((r) => r.tag), ["new"]);
+  db.close();
 });

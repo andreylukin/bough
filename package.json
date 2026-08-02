@@ -19,6 +19,8 @@
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "slice-ansi": "9.0.0",
+    "sqlite-lembed": "^0.0.1-alpha.8",
+    "sqlite-vec": "^0.1.9",
     "string-width": "7.2.0",
     "strip-ansi": "7.2.0",
     "wrap-ansi": "9.0.2",
@@ -32,7 +34,7 @@
     "typescript": "^5"
   },
   "// @types/node": "Pinned to 24 (bun-types would pull `*`). 26 retyped node:assert so `message` is `Error | AssertMessageFunction` on one overload and a REQUIRED `string` on the other, which rejects every `ok(cond, maybeUndefinedString)` in the suite.",
-  "// overrides":"One zod, not two. The MCP SDK's own dep range (^3.25 || ^4.0) resolves to zod 4 by default, so the `z3.ZodTypeAny` in its request() signature came from a SECOND copy of zod and no schema of ours was assignable to it. The old deno.json import map collapsed them; this does the same.",
+  "// overrides": "One zod, not two. The MCP SDK's own dep range (^3.25 || ^4.0) resolves to zod 4 by default, so the `z3.ZodTypeAny` in its request() signature came from a SECOND copy of zod and no schema of ours was assignable to it. The old deno.json import map collapsed them; this does the same.",
   "overrides": {
     "zod": "3.25.76"
   }

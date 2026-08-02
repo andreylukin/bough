@@ -81,6 +81,35 @@ export interface SearchHit {
 }
 
 /**
+ * One finished shell command entering the tag-history memory (`history/record.ts`
+ * builds these; `db/schema.sql`'s command_history group stores them).
+ */
+export interface CommandRecord {
+  sessionId: string;
+  ts: number;
+  /** Git remote origin URL, else the workspace root path — the scope key. */
+  repo: string;
+  cmd: string;
+  /** Normalized colon-separated tags as one string; "" when the verb carries none. */
+  tags: string;
+  /** `tags` split and deduped, for the junction table. */
+  tagList: string[];
+  /** Workspace-relative directories the command was about (`extractDirs`). */
+  dirs: string[];
+  /** null = unknown (still running when the turn moved on). */
+  exitCode: number | null;
+  durationMs: number | null;
+  source: "live" | "backfill";
+}
+
+/** One (tag, outcome) observation, the unit the popularity stats aggregate. */
+export interface CommandTagRow {
+  tag: string;
+  ts: number;
+  exitCode: number | null;
+}
+
+/**
  * Typed persistence. No raw SQL exists outside `db/`, so every read and write in
  * the system goes through a method here.
  *
@@ -173,6 +202,15 @@ export interface Db {
   listWorkflowAgents(runId: string): WorkflowAgent[];
   /** Journal lookup on rerun: the source run's row for a call key, if any. */
   findWorkflowAgent(runId: string, key: string): WorkflowAgent | undefined;
+
+  // command-history memory
+  /** Append one finished command + its tag/dir junction rows + FTS row. */
+  recordCommand(record: CommandRecord): void;
+  /**
+   * The (tag, ts, exit_code) observations for popularity aggregation, scoped to a
+   * repo, optionally to commands attributed to `dir` or its descendants.
+   */
+  commandTagRows(repo: string, opts?: { dir?: string; sinceTs?: number }): CommandTagRow[];
 
   // keyword search
   /** Idempotent: re-indexing a message replaces its rows. */
@@ -337,6 +375,25 @@ export interface TurnCtx extends AppCtx {
    */
   exits?: { command: string; code: number }[];
   /**
+   * Where finished shell commands enter the tag-history memory (`history/record.ts`).
+   *
+   * On the ctx for the same reason `exits` is: the host functions are built from it in
+   * more than one place (`baseHostFns`, and again inside `delegationDeps`), and a
+   * closure-local recorder would be silently bypassed by the second path.
+   */
+  record?: (e: {
+    command: string;
+    tags: string;
+    exitCode: number | null;
+    durationMs: number | null;
+  }) => void;
+  /**
+   * Absolute paths the turn's programs viewed, appended by `view()` — what the
+   * directory-triggered tag hints key on (`history/stats.ts`). Shared across
+   * construction paths exactly like `exits`.
+   */
+  reads?: string[];
+  /**
    * MCP servers inherited from the spawning turn. The human's grant to a spawner
    * extends to the subagents doing parts of that same granted work. Captured at
    * spawn time, so a later manual continuation does not inherit (spec §7).
@@ -369,8 +426,13 @@ export interface HostFns {
    * Combined output. Carries the turn's interrupt, and **auto-backgrounds past
    * 60s** — it returns "…moved to background as bg_N" and the command keeps
    * running, so a program must never write a sleep/poll loop (plan §6.7).
+   *
+   * `tags` is REQUIRED: 1–3 colon-separated intent tags (`"git:push"`,
+   * `"psql:migrate"`) that index the command in the cross-session history. The
+   * wire cannot enforce arity, so the host ALSO enforces it at runtime — a call
+   * without tags rejects with a catchable ProgramError naming the format.
    */
-  bash(cmd: string): Promise<string>;
+  bash(cmd: string, tags: string): Promise<string>;
   /**
    * Concurrent shells. The commands travel in as a JSON array and `[{code, out},
    * …]` comes back as JSON, in order. **Never throws on a non-zero exit** — the
@@ -435,6 +497,13 @@ export interface HostFns {
   fetch?(url: string, optsJson: string): Promise<string>;
   /** Publish a file for browser viewing under the session's artifact dir; returns `{url, href}`. */
   artifact?(name: string, content: string): Promise<string>;
+  /**
+   * Verb-dispatched recall over the command-history memory: `sql` (read-only
+   * SELECT over command_history/command_tags/command_dirs/command_history_fts,
+   * row-capped) and later `similar` (vector recall, when the optional local
+   * embedding layer is present).
+   */
+  history?(verb: string, argsJson: string): Promise<string>;
 }
 
 /** Names in the protocol list that `HostFns` does not declare. Must be `never`. */

@@ -28,6 +28,7 @@
 
 import { z } from "zod";
 import { ProgramError } from "../errors.ts";
+import { normalizeTags } from "../history/record.ts";
 import type { HostFns, TurnCtx } from "../types.ts";
 import {
   backgroundNote,
@@ -69,6 +70,17 @@ export type ShellCtx = Pick<TurnCtx, "sessionId" | "workspace"> & {
    * to /tmp. Absent in tests, which then spawn with the plain environment.
    */
   scratch?: string;
+  /**
+   * Where a finished command enters the tag-history memory (`history/record.ts`).
+   * Best-effort by contract — the recorder swallows its own failures — and
+   * optional so every existing caller and test is unaffected.
+   */
+  record?: (e: {
+    command: string;
+    tags: string;
+    exitCode: number | null;
+    durationMs: number | null;
+  }) => void;
 };
 
 /** Injected seams. Every default is a constant, never a hidden global. */
@@ -201,11 +213,13 @@ export async function bash(
   command: string,
   ctx: ShellCtx,
   opts: ShellOptions = {},
+  tags = "",
 ): Promise<string> {
   const registry = opts.registry ?? jobs;
   const bgAfterMs = opts.bgAfterMs ?? defaultBgAfterMs();
   // Already stopped: spawning here would produce a process nobody waits on.
   if (ctx.signal?.aborted) throw interruptedError(command);
+  const startedAt = Date.now();
 
   // Bound to the turn's interrupt only — the user's stop button must kill the
   // actual process. The output is streamed rather than collected with
@@ -235,6 +249,7 @@ export async function bash(
       // program, and a program that does not log it leaves the failure invisible.
       const code = shell.status?.code ?? 0;
       if (code !== 0) ctx.exits?.push({ command, code });
+      ctx.record?.({ command, tags, exitCode: code, durationMs: Date.now() - startedAt });
       return formatFinal(shell);
     }
     // Still running at the threshold. Stopped mid-wait dies like any interrupt.
@@ -251,6 +266,22 @@ export async function bash(
     // and the concurrency cap exists to brake `bashBg` loops, not to punish a
     // command for being slow. So this promotion always succeeds.
     const id = registry.promote(shell, ctx, { force: true })!;
+    // The memory row waits for the REAL exit: a backgrounded build that fails ten
+    // minutes from now must not be remembered as a success. Fire-and-forget — the
+    // turn has moved on, and the recorder swallows its own failures.
+    const record = ctx.record;
+    if (record) {
+      shell.exit.then(
+        (status) =>
+          record({
+            command,
+            tags,
+            exitCode: status.code ?? null,
+            durationMs: Date.now() - startedAt,
+          }),
+        () => record({ command, tags, exitCode: null, durationMs: Date.now() - startedAt }),
+      );
+    }
     return backgroundNote(shell, id, bgAfterMs);
   } finally {
     untrack();
@@ -286,6 +317,7 @@ export async function shConcurrent(
   const registry = opts.registry ?? jobs;
   const timeoutMs = opts.shTimeoutMs ?? SH_TIMEOUT_MS;
   return await Promise.all(commands.map(async (command): Promise<ShResult> => {
+    const startedAt = Date.now();
     let shell: Shell;
     try {
       shell = registry.spawn(command, {
@@ -310,6 +342,15 @@ export async function shConcurrent(
     try {
       const status = await shell.exit;
       detach();
+      // Untagged by design: `sh` is variadic, so a trailing tags string would be
+      // ambiguous with a command. The row still carries cmd/exit/dirs, so FTS and
+      // per-directory stats see it; only the tag junction is empty.
+      ctx.record?.({
+        command,
+        tags: "",
+        exitCode: status.code,
+        durationMs: Date.now() - startedAt,
+      });
       await drained(shell, DRAIN_GRACE_MS);
       // Retention already bounded the buffer; bound it again so the same rule
       // applies to a command whose output arrived in one burst — and so an
@@ -366,7 +407,22 @@ export type ShellHostFns = Pick<
 export function createShellHostFns(ctx: ShellCtx, opts: ShellOptions = {}): ShellHostFns {
   const registry = opts.registry ?? jobs;
   return {
-    bash: (cmd: string) => bash(cmd, ctx, opts),
+    // Tags are REQUIRED here, at the boundary, not inside `bash()` — internal
+    // callers and tests drive `bash()` directly and owe no tags; the MODEL does.
+    // The error is a catchable ProgramError that restates the format, so a model
+    // that forgot self-repairs on the next call instead of abandoning the round.
+    bash: (cmd: string, tags?: string) => {
+      const normalized = normalizeTags(tags);
+      if (!normalized) {
+        throw new ProgramError(
+          `bash(cmd, tags) requires tags: 1-3 short lowercase intent tags, ` +
+            `colon-separated — e.g. bash("git push origin main", "git:push") or ` +
+            `bash("psql -f migrations/004.sql", "psql:migrate"). They index this ` +
+            `command in your cross-session history (see history.sql()).`,
+        );
+      }
+      return bash(cmd, ctx, opts, normalized);
+    },
 
     sh: async (cmdsJson: string) => {
       let raw: unknown;
