@@ -652,7 +652,7 @@ cmd_purge() {
 }
 
 usage() {
-  echo "usage: bough [tui|setup|start|kill|restart|update|status|logs|run|exec|mcp|purge]"
+  echo "usage: bough [tui|setup|start|kill|restart|update|status|logs|run|exec|mcp|patterns|purge]"
   echo "  (no args) open the terminal UI (auto-starts the server)"
   echo "  setup    fresh clone → running: install deps, configure env, start"
   echo "  start    install + start the background service (auto-starts at login)"
@@ -666,6 +666,8 @@ usage() {
   echo "           bough sync-mcp [--from DIR] [--dry-run] [--force]"
   echo "  mcp      inspect and repair that registry (bough mcp for the full list):"
   echo "           bough mcp [list|doctor|test|auth|grant|revoke|add|remove]"
+  echo "  patterns compress a log into its distinct statements, with statistics:"
+  echo "           bough patterns [--llm|--json|--human] [--top N] [FILE]"
   echo "  purge    hard-delete sessions archived over 30 days ago (also runs on boot)"
 }
 
@@ -709,6 +711,15 @@ case "${1:-}" in
     # running bough picks the new entries up without a restart.
     require_bun
     exec bun "$ROOT/src/cli/sync_mcp.ts" "$@"
+    ;;
+  patterns)
+    shift
+    # No server, and no `ensure_up`: this reads a file (or stdin) and prints. It is
+    # the one subcommand that is useful with bough stopped — which matters, because
+    # "why did the server not come up" is answered by reading its log, and needing
+    # the server to read the log would be a circle.
+    require_bun
+    exec bun "$ROOT/src/cli/patterns.ts" "$@"
     ;;
   purge)
     cmd_purge
