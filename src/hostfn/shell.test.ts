@@ -754,3 +754,34 @@ test("an auto-backgrounded bash records the REAL exit, not the handoff", async (
   eq(recorded[0].exitCode, 9);
   await r.cleanup();
 });
+
+test("sh accepts {cmd, tag} legs and records each with its own tag", async () => {
+  const r = rig();
+  const recorded: Recorded[] = [];
+  const host = createShellHostFns(
+    { ...r.ctx, record: (e) => recorded.push(e) },
+    { registry: r.registry },
+  );
+  const out = JSON.parse(await host.sh(JSON.stringify([
+    { cmd: "printf a", tag: "Repo: Inspect" },
+    { cmd: "exit 4", tag: "fail:case" },
+    "printf plain",
+  ])));
+  eq(out, [{ code: 0, out: "a" }, { code: 4, out: "" }, { code: 0, out: "plain" }]);
+  eq(recorded.map((e) => ({ tags: e.tags, exitCode: e.exitCode })).sort((x, y) =>
+    x.tags.localeCompare(y.tags)
+  ), [
+    { tags: "", exitCode: 0 },
+    { tags: "fail:case", exitCode: 4 },
+    { tags: "repo:inspect", exitCode: 0 },
+  ]);
+  await r.cleanup();
+});
+
+test("the sh shape error teaches the {cmd, tag} form", async () => {
+  const r = rig();
+  const host = createShellHostFns(r.ctx, { registry: r.registry });
+  const err = await rejectsWith(() => host.sh("[1,2]"), ProgramError);
+  has(err.message, '{cmd: "git push", tag: "git:push"}');
+  await r.cleanup();
+});

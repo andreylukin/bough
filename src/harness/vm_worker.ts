@@ -203,7 +203,15 @@ const bindings = {
   bash: (cmd: string, tags?: string) => hostCall("bash", [cmd, tags ?? ""]),
   // Concurrent shells: commands ride out as a JSON array, `[{code, out}, …]` comes
   // back as JSON. A non-zero code is DATA here, never a throw.
-  sh: (...cmds: string[]) => jsonCall("sh", [JSON.stringify(cmds)]),
+  //
+  // Two call shapes. Variadic `sh("a", "b")` runs untagged. Array-first
+  // `sh([{cmd, tag}, …])` tags each leg for the command history — accepted
+  // because array-first is the shape models actually reach for when they want
+  // tagged legs (observed live: a model passed an array, got "non-string
+  // element", and its retry silently dropped the tags). Both shapes travel as
+  // one JSON array; the host validates elements.
+  sh: (...args: unknown[]) =>
+    jsonCall("sh", [JSON.stringify(Array.isArray(args[0]) ? args[0] : args)]),
   // Background shells: the handle comes back as JSON ({id, pid}); output/kill are
   // plain text.
   bashBg: (name: string, cmd: string) => jsonCall("bashBg", [name, cmd]),

@@ -19,7 +19,9 @@ continue with other work; the note will come.
 await sh(...cmds) — the same shell, running the commands CONCURRENTLY, returning
 [{code, out}, …] in order. It never throws on a non-zero exit: the code is data.
 Use it whenever independent commands would otherwise be awaited one after another
-(a build and a lint, three greps, status in two repos).
+(a build and a lint, three greps, status in two repos). To tag legs for your
+history, pass objects: sh([{cmd: "bun test", tag: "bun:test"}, {cmd: "bun run
+check", tag: "tsc"}]) — strings and objects mix freely in one array.
 
 await bashBg(name, cmd) — an explicit background shell that outlives your turn (dev
 servers, watchers, long builds). Returns {id, name, pid} immediately.

@@ -309,14 +309,20 @@ export interface ShResult {
  * the caller asked for a batch of outcomes and losing the other N-1 to one thrown
  * error is never the right answer.
  */
+/** One `sh` leg: a bare command runs untagged; `{cmd, tag}` stamps the history row. */
+export type ShCommand = string | { cmd: string; tag?: string };
+
 export async function shConcurrent(
-  commands: string[],
+  commands: ShCommand[],
   ctx: ShellCtx,
   opts: ShellOptions = {},
 ): Promise<ShResult[]> {
   const registry = opts.registry ?? jobs;
   const timeoutMs = opts.shTimeoutMs ?? SH_TIMEOUT_MS;
-  return await Promise.all(commands.map(async (command): Promise<ShResult> => {
+  const legs = commands.map((c) =>
+    typeof c === "string" ? { command: c, tags: "" } : { command: c.cmd, tags: normalizeTags(c.tag) }
+  );
+  return await Promise.all(legs.map(async ({ command, tags }): Promise<ShResult> => {
     const startedAt = Date.now();
     let shell: Shell;
     try {
@@ -342,12 +348,12 @@ export async function shConcurrent(
     try {
       const status = await shell.exit;
       detach();
-      // Untagged by design: `sh` is variadic, so a trailing tags string would be
-      // ambiguous with a command. The row still carries cmd/exit/dirs, so FTS and
-      // per-directory stats see it; only the tag junction is empty.
+      // A `{cmd, tag}` leg stamps its own history row; a bare string runs
+      // untagged. Either way the row carries cmd/exit/dirs, so FTS and
+      // per-directory stats see it.
       ctx.record?.({
         command,
-        tags: "",
+        tags,
         exitCode: status.code,
         durationMs: Date.now() - startedAt,
       });
@@ -387,9 +393,12 @@ function message(err: unknown): string {
  * The bridge is string-in/string-out (harness/protocol.ts), so `sh` receives a JSON
  * array. Parsing it is a boundary, and a boundary gets a schema: a model that sends
  * `sh("ls")` instead of `sh(["ls"])` must be told exactly that rather than watching
- * `commands.map` throw somewhere in the host.
+ * `commands.map` throw somewhere in the host. An element is a bare command string
+ * or `{cmd, tag}` — the tagged form the history records per leg.
  */
-const ShCommands = z.array(z.string());
+const ShCommands = z.array(
+  z.union([z.string(), z.object({ cmd: z.string(), tag: z.string().optional() })]),
+);
 
 /** The six shell host functions, bound to one turn. */
 export type ShellHostFns = Pick<
@@ -437,9 +446,10 @@ export function createShellHostFns(ctx: ShellCtx, opts: ShellOptions = {}): Shel
       const parsed = ShCommands.safeParse(raw);
       if (!parsed.success) {
         throw new ProgramError(
-          `sh expects a JSON array of command strings; got ${
-            Array.isArray(raw) ? "an array with a non-string element" : typeof raw
-          }. Call it as sh("cmd one", "cmd two").`,
+          `sh expects command strings or {cmd, tag} objects; got ${
+            Array.isArray(raw) ? "an array with an element that is neither" : typeof raw
+          }. Call it as sh("cmd one", "cmd two"), or tag legs for your command ` +
+            `history: sh([{cmd: "git push", tag: "git:push"}, "untagged cmd"]).`,
         );
       }
       return JSON.stringify(await shConcurrent(parsed.data, ctx, opts));

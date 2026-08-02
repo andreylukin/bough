@@ -436,7 +436,8 @@ export interface HostFns {
   /**
    * Concurrent shells. The commands travel in as a JSON array and `[{code, out},
    * …]` comes back as JSON, in order. **Never throws on a non-zero exit** — the
-   * code is data.
+   * code is data. An element is either a bare command string (untagged) or
+   * `{cmd, tag}` — the tag stamps that leg in the command history.
    */
   sh(cmdsJson: string): Promise<string>;
   /**
