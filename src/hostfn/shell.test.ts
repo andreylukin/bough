@@ -668,3 +668,30 @@ test("the bridged job verbs round-trip through the registry", async () => {
   matches(await host.bashKill(id), /already exited/);
   await r.cleanup();
 });
+
+// ---------------------------------------------------------------------------
+// What a command inherits
+// ---------------------------------------------------------------------------
+
+test("a command inherits $BOUGH_SESSION, and $BOUGH_SCRATCH when there is one", async () => {
+  // `$BOUGH_SESSION` is what makes `bough mcp call` enforce the grant belonging to
+  // the turn that ran it. The model does not know its own session id and is not
+  // trusted to report one, so the value has to arrive in the environment rather than
+  // in a string the model composed — which means this is the whole mechanism, and it
+  // had no test.
+  const r = rig({ sessionId: "sess-42" });
+  const host = createShellHostFns(r.ctx, { registry: r.registry });
+  const out = JSON.parse(await host.sh(JSON.stringify(['printf "%s" "$BOUGH_SESSION"'])));
+  eq(out, [{ code: 0, out: "sess-42" }]);
+  await r.cleanup();
+});
+
+test("a scratchpad, when the ctx carries one, arrives under its own name", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "bough-scratch-"));
+  const r = rig();
+  const host = createShellHostFns({ ...r.ctx, scratch: dir }, { registry: r.registry });
+  const out = JSON.parse(await host.sh(JSON.stringify(['printf "%s" "$BOUGH_SCRATCH"'])));
+  eq(out, [{ code: 0, out: dir }]);
+  await r.cleanup();
+  await rm(dir, { recursive: true, force: true });
+});
