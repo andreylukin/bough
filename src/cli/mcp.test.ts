@@ -294,3 +294,30 @@ test("authorized but ungranted says the last step instead of implying it is done
   assert.match(f.out(), /not granted yet — bough mcp grant notion/);
   await f.cleanup();
 });
+
+test("a local server is not told to run an OAuth flow that cannot exist", async () => {
+  // Live for exactly one commit, and `doctor` said it about both local servers on
+  // the machine it was written for. `status.auth` is populated for `url` entries
+  // alone, so a stdio server always reads as unauthorized — and "no credential —
+  // bough mcp auth bigquery" sends someone to a flow a local command does not have.
+  const f = await fixture({ bigquery: { command: "bq-mcp", args: [] } });
+  await runMcp(["grant", "bigquery"], f.deps);
+  const code = await runMcp(["doctor"], f.deps);
+  assert.match(f.out(), /local command — not tested/);
+  assert.match(f.out(), /--session ID/);
+  assert.equal(f.out().includes("bough mcp auth bigquery"), false, f.out());
+  // UNTESTED IS NOT BROKEN. Counting it as a failure would make `doctor` exit 1 on
+  // a healthy setup, and the exit code is the part a script depends on.
+  assert.equal(code, 0, f.out());
+  assert.match(f.out(), /not tested/);
+  await f.cleanup();
+});
+
+test("doctor does not spend a round trip on a connect it knows will be refused", async () => {
+  const f = await fixture({ bigquery: { command: "bq-mcp", args: [] } });
+  await runMcp(["grant", "bigquery"], f.deps);
+  f.calls.length = 0;
+  await runMcp(["doctor"], f.deps);
+  assert.equal(f.calls.some((c) => c.endsWith("/connect")), false, f.calls.join(", "));
+  await f.cleanup();
+});

@@ -65,6 +65,14 @@ export interface McpArgs {
   port?: number;
   /** `auth` only: seconds to wait for the browser round trip. */
   timeout: number;
+  /**
+   * `test`/`doctor` only: the conversation a LOCAL server's subprocess runs in.
+   *
+   * A stdio entry is a command spawned in a checkout, so the route refuses a
+   * scopeless connect (`mcp/status.ts`) — there is no "the" workspace for a CLI.
+   * Absent means local servers are reported as untested rather than as broken.
+   */
+  session?: string;
 }
 
 export interface McpUsageError {
@@ -85,6 +93,7 @@ export const USAGE = [
   "  remove NAME             drop the registration and any grants it holds",
   "",
   "  --json                  machine-readable output",
+  "  --session ID            test/doctor: conversation to run LOCAL servers in",
   "  --port N                server port (default BOUGH_PORT, else 4321)",
   "  --timeout SECS          auth only: how long to wait for the browser (default 180)",
   "",
@@ -121,11 +130,18 @@ export function parseMcpArgs(argv: readonly string[]): McpArgs | McpUsageError {
   let json = false;
   let port: number | undefined;
   let timeout = 180;
+  let positionalSession: string | undefined;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "-h" || a === "--help") return { usageError: USAGE };
     if (a === "--json") {
       json = true;
+      continue;
+    }
+    if (a === "--session") {
+      const raw = argv[++i];
+      if (raw === undefined) return { usageError: `--session needs a value\n${USAGE}` };
+      positionalSession = raw;
       continue;
     }
     if (a === "--port" || a === "--timeout") {
@@ -144,7 +160,13 @@ export function parseMcpArgs(argv: readonly string[]): McpArgs | McpUsageError {
   }
   const [verbRaw, name, url] = positional;
   if (verbRaw === undefined) {
-    return { verb: "list", json, timeout, ...(port === undefined ? {} : { port }) };
+    return {
+      verb: "list",
+      json,
+      timeout,
+      ...(port === undefined ? {} : { port }),
+      ...(positionalSession === undefined ? {} : { session: positionalSession }),
+    };
   }
   if (!isVerb(verbRaw)) {
     return { usageError: `unknown verb "${verbRaw}" — one of ${VERBS.join(", ")}\n${USAGE}` };
@@ -160,6 +182,7 @@ export function parseMcpArgs(argv: readonly string[]): McpArgs | McpUsageError {
     json,
     timeout,
     ...(name === undefined ? {} : { name }),
+    ...(positionalSession === undefined ? {} : { session: positionalSession }),
     ...(url === undefined ? {} : { url }),
     ...(port === undefined ? {} : { port }),
   };
@@ -206,13 +229,27 @@ function diagnose(
   status: McpStatus,
   name: string,
   conn: ConnectResult | null,
-): { ok: boolean; note: string } {
+  session?: string,
+): { state: "ok" | "bad" | "unknown"; note: string } {
   if (conn?.connected) {
     const n = conn.tools?.length ?? 0;
-    return { ok: true, note: `${n} tool${n === 1 ? "" : "s"}` };
+    return { state: "ok", note: `${n} tool${n === 1 ? "" : "s"}` };
   }
   if (!status.active.includes(name)) {
-    return { ok: false, note: `not granted — bough mcp grant ${name}` };
+    return { state: "bad", note: `not granted — bough mcp grant ${name}` };
+  }
+  // LOCAL SERVERS CANNOT BE TESTED WITHOUT A CONVERSATION, and that is not a fault.
+  // A stdio entry is a command spawned in a checkout, so the route refuses a
+  // scopeless connect — there is no "the" workspace for a CLI to pick. Reported as
+  // UNKNOWN rather than broken: counting an untested server as a failure would make
+  // `doctor` exit 1 on a perfectly good setup, and the exit code is the part of this
+  // verb a script depends on.
+  const remote = typeof status.registry.servers[name]?.url === "string";
+  if (!remote && !session) {
+    return {
+      state: "unknown",
+      note: `local command — not tested; needs a conversation: bough mcp doctor --session ID`,
+    };
   }
   const error = conn?.error ?? "did not connect";
   // A credential this machine's OTHER client owns. bough deliberately never
@@ -220,22 +257,27 @@ function diagnose(
   // that client and saying so beats repeating the error.
   if (/expired at/.test(error)) {
     return {
-      ok: false,
+      state: "bad",
       note: `its Claude Code grant expired — use that server in Claude Code once, ` +
         `or: bough mcp auth ${name}`,
     };
   }
   if (/has no string at/.test(error)) {
     return {
-      ok: false,
+      state: "bad",
       note: `Claude Code's grant for it is empty — re-authorize it there, or ` +
         `authorize bough separately: bough mcp auth ${name}`,
     };
   }
-  if (!status.auth[name]?.authorized) {
-    return { ok: false, note: `no credential — bough mcp auth ${name}` };
+  // ONLY REMOTE SERVERS HAVE CREDENTIALS. `status.auth` is populated for `url`
+  // entries alone, so a local command always reads as unauthorized — and telling
+  // someone to run `bough mcp auth` on a stdio server sends them to a flow that
+  // cannot exist. This was live for exactly one commit and `doctor` said it about
+  // both of the local servers on the machine it was written for.
+  if (remote && !status.auth[name]?.authorized) {
+    return { state: "bad", note: `no credential — bough mcp auth ${name}` };
   }
-  return { ok: false, note: error };
+  return { state: "bad", note: error };
 }
 
 function base(args: McpArgs, env: Record<string, string | undefined>): string {
@@ -294,8 +336,9 @@ export async function runMcp(argv: readonly string[], deps: McpDeps): Promise<nu
     return r.body as McpStatus;
   };
 
-  const connect = async (name: string): Promise<ConnectResult | null> => {
-    const r = await call(deps, `${root}/mcp/servers/${encodeURIComponent(name)}/connect`, {
+  const connect = async (name: string, session?: string): Promise<ConnectResult | null> => {
+    const q = session ? `?session=${encodeURIComponent(session)}` : "";
+    const r = await call(deps, `${root}/mcp/servers/${encodeURIComponent(name)}/connect${q}`, {
       method: "POST",
     });
     if (!r) return null;
@@ -349,28 +392,37 @@ export async function runMcp(argv: readonly string[], deps: McpDeps): Promise<nu
       // Sequential ON PURPOSE. These connect to third-party endpoints and some of
       // them spawn subprocesses; a burst of parallel handshakes makes a slow server
       // look like a broken one, and the output is read top to bottom anyway.
-      const rows: { name: string; ok: boolean; note: string }[] = [];
+      const rows: { name: string; state: "ok" | "bad" | "unknown"; note: string }[] = [];
       for (const name of names) {
-        const conn = s.active.includes(name) ? await connect(name) : null;
-        rows.push({ name, ...diagnose(s, name, conn) });
+        const remote = typeof s.registry.servers[name]?.url === "string";
+        // Do not spawn a connect that is already known to be refused: a local server
+        // with no session gets its answer from `diagnose` without a round trip.
+        const testable = s.active.includes(name) && (remote || !!args.session);
+        const conn = testable ? await connect(name, args.session) : null;
+        rows.push({ name, ...diagnose(s, name, conn, args.session) });
       }
       if (args.json) {
         deps.out(JSON.stringify(rows, null, 2));
       } else {
-        for (const r of rows) deps.out(`${r.ok ? "✓" : "✗"} ${r.name}  ${r.note}`);
-        const bad = rows.filter((r) => !r.ok).length;
+        const mark = { ok: "✓", bad: "✗", unknown: "?" } as const;
+        for (const r of rows) deps.out(`${mark[r.state]} ${r.name}  ${r.note}`);
+        const bad = rows.filter((r) => r.state === "bad").length;
+        const unknown = rows.filter((r) => r.state === "unknown").length;
         deps.out("");
         deps.out(
           bad === 0
-            ? `all ${rows.length} server${rows.length === 1 ? "" : "s"} working`
-            : `${bad} of ${rows.length} need${bad === 1 ? "s" : ""} attention`,
+            ? `all ${rows.length - unknown} tested server${
+              rows.length - unknown === 1 ? "" : "s"
+            } working` + (unknown > 0 ? ` · ${unknown} not tested` : "")
+            : `${bad} of ${rows.length} need${bad === 1 ? "s" : ""} attention` +
+              (unknown > 0 ? ` · ${unknown} not tested` : ""),
         );
       }
-      return rows.every((r) => r.ok) ? 0 : 1;
+      return rows.some((r) => r.state === "bad") ? 1 : 0;
     }
 
     case "test": {
-      const r = await connect(args.name!);
+      const r = await connect(args.name!, args.session);
       if (!r) return 2;
       if (args.json) {
         deps.out(JSON.stringify(r, null, 2));
