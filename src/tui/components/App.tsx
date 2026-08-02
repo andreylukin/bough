@@ -1372,7 +1372,7 @@ export function App(
           if (!item) return store.notify("clipboard has no text or supported image");
           if ("text" in item) {
             const clean = stripCtl(item.text);
-            return clean.length > 100 ? setPastedTexts((items) => [...items, clean]) : setLine((line) => insertText(line, clean));
+            return clean.length > 50 ? setPastedTexts((items) => [...items, clean]) : setLine((line) => insertText(line, clean));
           }
           return uploadImage(item.image).then((part) => setAttachments((xs) => [...xs, part]));
         }).catch((error) => store.notify(error instanceof Error ? error.message : String(error)));
@@ -1695,7 +1695,12 @@ export function App(
   // once; each handler is one line, because none of them is a decision.
   useEffect(() => {
     const off = [
-      hooks.onPaste?.((text) => setLine((s) => insertText(s, stripCtl(text)))),
+      hooks.onPaste?.((text) => {
+        const clean = stripCtl(text);
+        return clean.length > 50
+          ? setPastedTexts((items) => [...items, clean])
+          : setLine((line) => insertText(line, clean));
+      }),
       hooks.onMouse?.((event) => {
         // THE PANEL GETS FIRST REFUSAL. With a diff focused, the wheel was scrolling the
         // transcript hidden underneath it — so the one surface whose whole job is reading a
