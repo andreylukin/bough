@@ -196,14 +196,21 @@ test("cleanup clears every sticky state and cancels every timer", () => {
   assert.ok(out.includes("\x1b]6;1;bg;*;default\x07"));
 });
 
-test("the title names the pane, and under tmux the window too", () => {
+test("the title names the terminal pane", () => {
   const plain = harness(termCaps({}));
   plain.term.setTitle("bough · fix\x07 the parser");
   assert.deepEqual(plain.out, ["\x1b]0;bough · fix  the parser\x07"]);
+});
 
-  const inTmux = harness(termCaps({ TMUX: "x" }));
-  inTmux.term.setTitle("bough");
-  assert.deepEqual(inTmux.out, ["\x1b]0;bough\x07", "\x1bkbough\x1b\\"]);
+test("a tmux session also names its current window", () => {
+  const titles: string[] = [];
+  const terminal = createTerm({
+    caps: termCaps({ TMUX: "1" }),
+    write: () => {},
+    renameTmuxWindow: (title) => titles.push(title),
+  });
+  terminal.setTitle("bough\x07 running");
+  assert.deepEqual(titles, ["bough  running"]);
 });
 
 test("a zellij session also names its focused multiplexer tab", () => {
