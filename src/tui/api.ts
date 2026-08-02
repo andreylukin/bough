@@ -460,6 +460,21 @@ export function createApi(options: ApiOptions = {}) {
     sessionUsage: (id: string) => get<SessionUsage>(`/sessions/${seg(id)}/usage`),
     postMessage: (id: string, body: PostMessageBody) =>
       post<PostedMessage>(`/sessions/${seg(id)}/messages`, body),
+    uploadImage: async (image: Blob) => {
+      let res: Response;
+      try {
+        res = await doFetch(base + "/attachments", {
+          method: "POST", headers: { "content-type": image.type }, body: image,
+        });
+      } catch (cause) { throw new OfflineError(base, cause); }
+      const body = await res.text();
+      if (!res.ok) {
+        let message = body;
+        try { message = (JSON.parse(body) as { error?: string }).error ?? body; } catch {}
+        throw new ApiError(res.status, message || "could not attach image", "POST", "/attachments");
+      }
+      return JSON.parse(body) as { path: string; mediaType: string; name: string; size: number };
+    },
     /** `null` clears the prefilled composer text. No event — the writer is this client. */
     putDraft: (id: string, draft: string | null) =>
       put<{ ok: boolean; draft: string | null }>(`/sessions/${seg(id)}/draft`, { draft }),

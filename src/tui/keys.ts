@@ -144,6 +144,7 @@ export type Command =
   | "send"
   | "send.queue"
   | "newline"
+  | "image.paste"
   | "draft.clear"
   | "cancel"
   /** Stop the running turn (spec §5). Distinct from `cancel`, which dismisses a notice. */
@@ -821,6 +822,8 @@ export const BINDINGS: Binding[] = [
     desc: "queue for after this turn",
   },
   { mode: "chat", chord: "ctrl+j", command: "newline", section: "compose", desc: "newline" },
+  { mode: "chat", chord: "super+v", command: "image.paste", section: "compose", label: "⌘v", desc: "attach clipboard image" },
+  { mode: "chat", chord: "meta+v", command: "image.paste" },
   {
     mode: "chat",
     chord: "ctrl+n",
@@ -1521,10 +1524,9 @@ export const UNAVAILABLE: HelpSection = {
     // Not a chord, but it belongs here for exactly the reason the section exists:
     // three of the four sigils a user is told to expect are live, and typing `!ls`
     // did not fail loudly — it went to the frontier model as an ordinary prompt and
-    // billed for it. A sigil that is silently not a sigil is the one case where
     // saying nothing costs money.
     ["^g", "no $EDITOR handoff yet"],
-    ["^v", "your terminal pastes · no image attachments"],
+    ["^v", "your terminal pastes text; ⌘v attaches a clipboard image"],
     // The two halves of "search" are different questions and this line answered
     // neither: ^r is still not bound, but saying only that left the reader believing
     // bough cannot search at all, when ^f then / searches every message.

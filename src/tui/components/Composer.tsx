@@ -54,6 +54,7 @@ export interface ComposerProps {
    * cursor sits at end-of-input while one is shown; tab accepts it.
    */
   ghost?: string;
+  attachments?: readonly string[];
   /** The active `@`/`/` completion, or null. From `activeTrigger`. */
   trigger?: Trigger | null;
   /** Ranked rows for that trigger. From `rankCompletions`. */
@@ -89,9 +90,9 @@ export interface ComposerProps {
  * below — the two must be edited together.
  */
 export function composerHeight(
-  { input, ghost = "", busy, width, maxRows }: Pick<
+  { input, ghost = "", busy, width, maxRows, attachments = [] }: Pick<
     ComposerProps,
-    "input" | "busy" | "width" | "maxRows"
+    "input" | "busy" | "width" | "maxRows" | "attachments"
   > & { ghost?: string },
 ): number {
   const innerW = Math.max(4, width - 4);
@@ -101,7 +102,7 @@ export function composerHeight(
   const cap = Math.max(2, maxRows);
   const clipped = n > cap;
   const hint = (busy && input !== "") || input.startsWith("!") ? 1 : 0;
-  return 2 /* border */ + (clipped ? cap - 1 : n) + (clipped ? 1 : 0) + hint;
+  return 2 + (clipped ? cap - 1 : n) + (clipped ? 1 : 0) + hint + attachments.length;
 }
 
 /** Rows `CompletionPopup` will draw, for the same reason as `composerHeight`. */
@@ -122,6 +123,7 @@ export function Composer(
     completionSel = 0,
     completionMore = 0,
     keyboardOwner = null,
+    attachments = [],
   }: ComposerProps,
 ) {
   // Wrap ourselves (fixed-width chunks) so the cursor→row mapping is exact.
@@ -258,6 +260,9 @@ export function Composer(
             </text>
           );
         })}
+        {attachments.length > 0
+          ? <text fg={UI.info} wrapMode="none">{attachments.map((n) => "[image: " + n + "]").join(" ")}</text>
+          : null}
         {clipped
           ? (
             <text attributes={TextAttributes.DIM}>

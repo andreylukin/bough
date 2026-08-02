@@ -29,6 +29,9 @@
  * `createCliRenderer` call below; the stdin filter is documented in `mouse.ts`.
  */
 import process from "node:process";
+import { mkdir, stat, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
 // The one value imported from the model layer, and the reason it is imported HERE:
@@ -126,6 +129,30 @@ function tabTurnRunning(state: TuiState): boolean {
 /** The title moves slowly enough not to make terminal chrome noisy. */
 const TITLE_SPINNER_MS = 120;
 
+type Clipboard = { image: Blob } | { text: string } | null;
+
+/** Reads text immediately; compiles the macOS image extractor only once. */
+async function pasteClipboard(): Promise<Clipboard> {
+  if (process.platform !== "darwin") return null;
+  const textProcess = Bun.spawn(["pbpaste"], { stdout: "pipe", stderr: "ignore" });
+  const text = await new Response(textProcess.stdout).text();
+  if ((await textProcess.exited) === 0 && text !== "") return { text };
+  const dir = join(process.env.BOUGH_HOME ?? join(homedir(), ".bough"), "bin");
+  const helper = join(dir, "pasteboard-png");
+  try { await stat(helper); } catch {
+    await mkdir(dir, { recursive: true });
+    const source = join(dir, "pasteboard-png.swift");
+    await writeFile(source, "import AppKit\nlet p = NSPasteboard.general\nguard let d = p.data(forType: .tiff), let i = NSImage(data: d), let b = i.tiffRepresentation, let r = NSBitmapImageRep(data: b), let png = r.representation(using: .png, properties: [:]) else { exit(1) }\nFileHandle.standardOutput.write(png)\n");
+    const compile = Bun.spawn(["swiftc", "-O", source, "-o", helper], { stdout: "ignore", stderr: "ignore" });
+    if ((await compile.exited) !== 0) return null;
+  }
+  const imageProcess = Bun.spawn([helper], { stdout: "pipe", stderr: "ignore" });
+  const bytes = new Uint8Array(await new Response(imageProcess.stdout).arrayBuffer());
+  return (await imageProcess.exited) === 0 && bytes.length > 0
+    ? { image: new Blob([bytes], { type: "image/png" }) }
+    : null;
+}
+
 async function main() {
   // The command line is parsed BEFORE the terminal is taken, so a usage error is
   // printed to a normal screen rather than into the alternate buffer. `-w` used to
@@ -150,7 +177,7 @@ async function main() {
   const pastes = hub<string>();
   const mice = hub<MouseEvent>();
   const navKeys = hub<NavKey>();
-  const hooks: InputHooks = { onPaste: pastes.on, onMouse: mice.on, onNavKey: navKeys.on };
+  const hooks: InputHooks = { onPaste: pastes.on, onMouse: mice.on, onNavKey: navKeys.on, pasteClipboard };
 
   // Focus and the background report are terminal REPLIES: they belong to `term.ts`
   // and must never reach the app as keystrokes.
@@ -309,6 +336,7 @@ async function main() {
       notifyDesktop={(body) => terminal.notifyDesktop(body)}
       copyText={(text) => terminal.osc52Copy(text)}
       openUrl={openUrl}
+      uploadImage={api.uploadImage}
     />,
   );
 

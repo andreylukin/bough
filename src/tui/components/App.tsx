@@ -141,6 +141,7 @@ export interface InputHooks {
   onPaste?: (handler: (text: string) => void) => () => void;
   onMouse?: (handler: (event: MouseEvent) => void) => () => void;
   onNavKey?: (handler: (key: NavKey) => void) => () => void;
+  pasteClipboard?: () => Promise<{ image: Blob } | { text: string } | null>;
 }
 
 export interface AppProps {
@@ -186,6 +187,8 @@ export interface AppProps {
    * since OSC 8 links were added; this is the half that acts on the answer.
    */
   openUrl?: (url: string) => void;
+  /** Upload one image before sending it with the next message. */
+  uploadImage?: (image: Blob) => Promise<{ path: string; mediaType: string; name: string; size: number }>;
   /** Injected so a render is reproducible and the esc double-tap is testable. */
   now?: () => number;
 }
@@ -321,6 +324,7 @@ export function App(
     notifyDesktop,
     copyText,
     openUrl,
+    uploadImage,
     now = Date.now,
   }: AppProps,
 ) {
@@ -401,6 +405,7 @@ export function App(
   const [threads, setThreads] = useState<Record<string, Message[]>>({});
   const [sent, setSent] = useState<string[]>([]);
   const [histAt, setHistAt] = useState<number | null>(null);
+  const [attachments, setAttachments] = useState<{ path: string; mediaType: string; name: string; size: number }[]>([]);
   const [askText, setAskText] = useState("");
   // Same reason as the draft ref above: `^c^c` arriving in ONE read left the second
   // event reading `quitArmed` as false, so the gesture armed the hint twice and
@@ -1007,6 +1012,7 @@ export function App(
     busy,
     width: cols,
     maxRows: composerRows,
+    attachments: attachments.map((part) => part.name),
   });
   const popupH = trigger
     ? completionPopupHeight(
@@ -1277,7 +1283,7 @@ export function App(
   // commit. `setLine` maintains `lineRef` synchronously for exactly this read.
   const submit = useCallback((queue: boolean) => {
     const text = lineRef.current.text.trim();
-    if (text === "") return;
+    if (text === "" && attachments.length === 0) return;
     // A DRAFT THAT IS A COMMAND IS RUN, NOT SENT. Dispatching used to happen only
     // when a popup row was accepted, and the popup only exists if the text was slow
     // enough to render — so a pasted `/model` went to the frontier model as prose
@@ -1332,12 +1338,14 @@ export function App(
       setHistAt(null);
       return runRef.current?.(invocation.command, invocation.arg);
     }
+    const images = attachments;
+    setAttachments([]);
     setLine(EMPTY_LINE);
     setHistAt(null);
     setSent((h) => [...h, text]);
     setScrollOff(0);
-    if (state.currentId) void store.send(text, { queue });
-    else void store.createSession(defaultWorkspace).then((s) => s && store.send(text));
+    if (state.currentId) void store.send(text, { queue, images } as Parameters<typeof store.send>[1]);
+    else void store.createSession(defaultWorkspace).then((s) => s && store.send(text, { images } as Parameters<typeof store.send>[1]));
   }, [state.currentId, defaultWorkspace, store]);
 
   /** One command → one effect. Nothing here decides anything; it only dispatches. */
@@ -1350,6 +1358,13 @@ export function App(
     const page = Math.max(1, rows - 8);
     const last = (n: number) => Math.max(0, n - 1);
     switch (command) {
+      case "image.paste":
+        if (!hooks.pasteClipboard || !uploadImage) return store.notify("clipboard paste is unavailable in this terminal");
+        return void hooks.pasteClipboard().then((item) => {
+          if (!item) return store.notify("clipboard has no text or supported image");
+          if ("text" in item) return setLine((line) => insertText(line, stripCtl(item.text)));
+          return uploadImage(item.image).then((part) => setAttachments((xs) => [...xs, part]));
+        }).catch((error) => store.notify(error instanceof Error ? error.message : String(error)));
       case "quit.arm":
         setQuitArmed(true);
         return store.notify("^c again to quit — subagents and workflows keep running");
@@ -1392,6 +1407,7 @@ export function App(
         setLine(EMPTY_LINE);
         setHistAt(null);
         setScrollOff(0);
+        setAttachments([]);
         store.newConversation();
         return setMode("chat");
       // The old conversation is neither mutated nor inherited, so there is nothing to
@@ -1421,6 +1437,7 @@ export function App(
         });
       case "draft.clear":
         setHistAt(null);
+        setAttachments([]);
         return setLine(EMPTY_LINE);
       case "cancel":
         setScrollOff(0);
@@ -1621,6 +1638,11 @@ export function App(
         setAskText("");
         return void store.declineAsk();
 
+      case "delete.back":
+        if (lineRef.current.text === "" && attachments.length > 0) {
+          return setAttachments((items) => items.slice(0, -1));
+        }
+        return setLine((s) => editLine(s, command));
       default:
         // Everything left is line editing, which is a pure function of the draft.
         return setLine((s) => editLine(s, command));
@@ -2107,6 +2129,7 @@ export function App(
             ghost={completing ? "" : ghost}
             // The rail is the third surface that takes the keyboard while this box
             // stays painted below it. `chat` is the only mode that types.
+            attachments={attachments.map((part) => part.name)}
             keyboardOwner={uiMode === "rail" ? "the rail" : null}
           />
         )}

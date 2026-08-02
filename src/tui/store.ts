@@ -1241,7 +1241,7 @@ export interface Store {
    * fresh turn when the current one ends; without `queue` it is posted immediately
    * and the server queues it (spec §5) — steering, rather than staging.
    */
-  send(text: string, opts?: { queue?: boolean; sessionId?: string }): Promise<void>;
+  send(text: string, opts?: { queue?: boolean; sessionId?: string; images?: { path: string; mediaType: string; name: string; size: number }[] }): Promise<void>;
   drainQueue(): Promise<void>;
   answerAsk(answer: string): Promise<void>;
   declineAsk(): Promise<void>;
@@ -1534,7 +1534,7 @@ export function createStore(deps: StoreDeps = {}): Store {
     }
   };
 
-  const send = async (text: string, opts: { queue?: boolean; sessionId?: string } = {}) => {
+  const send = async (text: string, opts: { queue?: boolean; sessionId?: string; images?: { path: string; mediaType: string; name: string; size: number }[] } = {}) => {
     const id = opts.sessionId ?? state.currentId;
     if (!id) return;
     if (opts.queue && isBusy(state)) {
@@ -1542,7 +1542,7 @@ export function createStore(deps: StoreDeps = {}): Store {
       return;
     }
     try {
-      await api.postMessage(id, { text });
+      await api.postMessage(id, { text, ...(opts.images?.length ? { images: opts.images } : {}) });
     } catch (error) {
       fail(error);
     }

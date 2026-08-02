@@ -78,6 +78,7 @@ import * as skillsApi from "./skills.ts"; // T10.2
 import * as theme from "./theme.ts"; // T10.4
 import * as ghost from "../worker/ghost.ts"; // T10.1
 import * as turnsApi from "./turns.ts"; // final integration — the interrupt route
+import * as attachments from "./attachments.ts"; // composer clipboard images
 
 // ---- the route table --------------------------------------------------------
 
@@ -284,6 +285,8 @@ export const routes: Route[] = [
   // what lets the running line say what the turn has spent SO FAR instead of only
   // after it settles (`server/sessions.ts`).
   route("GET", "/sessions/:id/usage", sessions.getSessionUsageH),
+  // Native TUI clipboard images arrive as bytes once, then become durable paths.
+  route("POST", "/attachments", attachments.uploadAttachment),
 ];
 
 // ---- dispatch ---------------------------------------------------------------
