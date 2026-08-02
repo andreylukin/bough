@@ -60,11 +60,28 @@ import { HOST_FN_VERBS } from "../harness/protocol.ts";
 export const BACKEND_NAME = "leta";
 
 /**
- * Where the binary may live beyond `$PATH`. A launchd-spawned server inherits a
- * minimal PATH with none of the Homebrew bins an interactive shell has, so a backend
- * the user can run in their terminal is invisible to the server without this.
+ * Where the binary may live beyond `$PATH`. A service-spawned server inherits a
+ * minimal PATH with none of the bins an interactive shell has, so a backend the user
+ * can run in their terminal is invisible to the server without this.
+ *
+ * Both platforms' conventions, unconditionally: probing a directory that does not
+ * exist costs one failed stat, while gating the list on `process.platform` would
+ * put a platform check in a module whose job has nothing to do with one. Homebrew
+ * also installs to `/usr/local/bin` on Intel Macs and to `/home/linuxbrew` on
+ * Linux, so the sets overlap anyway.
  */
-export const EXTRA_BIN_DIRS = ["/opt/homebrew/bin", "/usr/local/bin"];
+export const EXTRA_BIN_DIRS = [
+  "/opt/homebrew/bin",
+  "/usr/local/bin",
+  "/home/linuxbrew/.linuxbrew/bin",
+  "/usr/bin",
+];
+
+/** `~/.local/bin` — the usual Linux user-install target, resolved per lookup. */
+function homeBinDir(env: (name: string) => string | undefined): string[] {
+  const home = env("HOME");
+  return home ? [`${home}/.local/bin`] : [];
+}
 
 /** An explicit absolute path to the backend, for installs the PATH scan misses. */
 export const BIN_ENV_VAR = "BOUGH_LSP_BIN";
@@ -106,7 +123,7 @@ export function findBackend(deps: BinLookup = {}): string | undefined {
   const isFile = isFileAt(deps);
   const explicit = env(BIN_ENV_VAR);
   if (explicit) return isFile(explicit) ? explicit : undefined;
-  const dirs = [...(env("PATH")?.split(":") ?? []), ...EXTRA_BIN_DIRS];
+  const dirs = [...(env("PATH")?.split(":") ?? []), ...EXTRA_BIN_DIRS, ...homeBinDir(env)];
   for (const dir of dirs) {
     if (!dir) continue;
     const candidate = `${dir.replace(/\/+$/, "")}/${BACKEND_NAME}`;

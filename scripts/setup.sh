@@ -1,26 +1,53 @@
 #!/usr/bin/env bash
-# Fresh-machine bootstrap for bough. macOS-only because the service is launchd —
-# nothing here is confined; bough runs as you (spec §2).
-# Installs toolchain deps via Homebrew, installs the npm dependencies, and links the
-# `bough` server manager onto PATH. Safe to re-run.
+# Fresh-machine bootstrap for bough. macOS and Linux — nothing here is confined;
+# bough runs as you (spec §2). Installs toolchain deps with the platform's package
+# manager, installs the npm dependencies, and links the `bough` server manager onto
+# PATH. Safe to re-run.
+#
+# WHAT IS AND IS NOT PLATFORM-SPECIFIC. The dependency LIST is identical everywhere
+# (git, node, rg, uv, bun); only the command that installs it differs. So this file
+# resolves one installer up front and the rest reads the same on both — which is
+# also why a distro nobody here has tested is a missing installer line and not a
+# port.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-if [ "$(uname -s)" != "Darwin" ]; then
-  echo "error: bough's service manager is launchd, so setup is macOS-only." >&2
+OS="$(uname -s)"
+
+# One installer, resolved once. `install_pkgs` takes the PACKAGE names for this
+# platform; every caller below passes the same logical set.
+if [ "$OS" = "Darwin" ]; then
+  if ! command -v brew >/dev/null; then
+    echo "error: Homebrew is required. Install it first:" >&2
+    echo '  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"' >&2
+    exit 1
+  fi
+  install_pkgs() { brew install "$@"; }
+  PKG_RG=ripgrep PKG_NODE=node PKG_UV=uv
+elif command -v apt-get >/dev/null; then
+  install_pkgs() { sudo apt-get install -y "$@"; }
+  PKG_RG=ripgrep PKG_NODE=nodejs PKG_UV=
+elif command -v dnf >/dev/null; then
+  install_pkgs() { sudo dnf install -y "$@"; }
+  PKG_RG=ripgrep PKG_NODE=nodejs PKG_UV=
+elif command -v pacman >/dev/null; then
+  install_pkgs() { sudo pacman -S --needed --noconfirm "$@"; }
+  PKG_RG=ripgrep PKG_NODE=nodejs PKG_UV=uv
+else
+  # Named rather than guessed at: a wrong `sudo <installer> install` is worse than
+  # a sentence telling you what to install.
+  echo "error: no supported package manager found on $OS (looked for brew, apt-get, dnf, pacman)." >&2
+  echo "  install these yourself, then re-run: git, node, ripgrep, uv" >&2
   exit 1
 fi
 
-if ! command -v brew >/dev/null; then
-  echo "error: Homebrew is required. Install it first:" >&2
-  echo '  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"' >&2
-  exit 1
-fi
-
-# git ships with the Xcode Command Line Tools; everything else comes from brew.
 if ! command -v git >/dev/null; then
-  echo "error: git not found — install the Xcode Command Line Tools: xcode-select --install" >&2
+  if [ "$OS" = "Darwin" ]; then
+    echo "error: git not found — install the Xcode Command Line Tools: xcode-select --install" >&2
+  else
+    echo "error: git not found — install it with your package manager, then re-run." >&2
+  fi
   exit 1
 fi
 
@@ -29,23 +56,32 @@ fi
 # installer.) There is no local inference: the cheap tier is a hosted model you pick
 # in the model picker, so no llama.cpp and no GGUF. There is no tunnel: the server
 # binds loopback and has no auth layer (spec §17).
-echo "==> checking Homebrew packages"
-brew_bins=(node rg uv)
-brew_pkgs=(node ripgrep uv)
+echo "==> checking packages"
+need_bins=(node rg uv)
+need_pkgs=("$PKG_NODE" "$PKG_RG" "$PKG_UV")
 missing=()
-for i in "${!brew_bins[@]}"; do
-  command -v "${brew_bins[$i]}" >/dev/null || missing+=("${brew_pkgs[$i]}")
+for i in "${!need_bins[@]}"; do
+  command -v "${need_bins[$i]}" >/dev/null && continue
+  # An empty package name means this platform has no distro package for it —
+  # `uv` on Debian/Fedora — so it is reported instead of silently skipped.
+  if [ -z "${need_pkgs[$i]}" ]; then
+    echo "note: ${need_bins[$i]} has no package here — install it with:" >&2
+    echo "  curl -LsSf https://astral.sh/uv/install.sh | sh" >&2
+  else
+    missing+=("${need_pkgs[$i]}")
+  fi
 done
 if [ "${#missing[@]}" -gt 0 ]; then
-  echo "==> brew install ${missing[*]}"
-  brew install "${missing[@]}"
+  echo "==> installing ${missing[*]}"
+  install_pkgs "${missing[@]}"
 else
   echo "==> all packages already installed"
 fi
 
-# Bun >= 1.3 via Homebrew. That is the floor the tree is developed and tested
-# against. We install/upgrade through brew even when an older bun is already on
-# PATH from the bun.sh installer (brew upgrade would fail on that one).
+# Bun >= 1.3. That is the floor the tree is developed and tested against. On macOS
+# we install/upgrade through brew even when an older bun is already on PATH from
+# the bun.sh installer (brew upgrade would fail on that one); elsewhere the bun.sh
+# installer IS the supported path, and it upgrades in place.
 # ~/.bun/bin is where the bun.sh installer puts it, and it is on PATH only if the
 # user's shell rc adds it. Looked at BEFORE deciding bun is missing, so a perfectly
 # good bun does not get a redundant brew install stacked on top of it.
@@ -63,17 +99,29 @@ bun_ok() {
 }
 if bun_ok; then
   echo "==> bun $(bun --version) ok"
-elif brew list --formula oven-sh/bun/bun >/dev/null 2>&1; then
+elif [ "$OS" = "Darwin" ] && brew list --formula oven-sh/bun/bun >/dev/null 2>&1; then
   echo "==> upgrading bun via brew"
   brew upgrade oven-sh/bun/bun
-else
+elif [ "$OS" = "Darwin" ]; then
   echo "==> installing bun via brew"
   brew install oven-sh/bun/bun
+else
+  echo "==> installing bun via bun.sh"
+  curl -fsSL https://bun.sh/install | bash
+  case ":$PATH:" in
+    *":$HOME/.bun/bin:"*) ;;
+    *) [ -d "$HOME/.bun/bin" ] && PATH="$PATH:$HOME/.bun/bin" && export PATH ;;
+  esac
 fi
 if ! bun_ok; then
   echo "error: need bun >= 1.3 on PATH — have '$(command -v bun || echo none)'." >&2
-  echo "  A non-brew bun (e.g. ~/.bun/bin) may be shadowing brew's; fix your PATH so" >&2
-  echo "  $(brew --prefix)/bin comes first, or remove the old bun." >&2
+  if [ "$OS" = "Darwin" ]; then
+    echo "  A non-brew bun (e.g. ~/.bun/bin) may be shadowing brew's; fix your PATH so" >&2
+    echo "  $(brew --prefix)/bin comes first, or remove the old bun." >&2
+  else
+    echo "  An older bun may be shadowing the one just installed; make sure" >&2
+    echo "  ~/.bun/bin comes first on PATH, or remove the old bun." >&2
+  fi
   exit 1
 fi
 
@@ -99,12 +147,18 @@ case "$(command -v bun)" in
 esac
 
 # leta: LSP backend for the lsp.* host functions (symbol navigation).
-# From a third-party tap, so it can't go in the main brew array above.
-if ! command -v leta >/dev/null; then
+# From a third-party tap, so it can't go in the main package array above — and the
+# tap is macOS-only. OPTIONAL EVERYWHERE: without it `lsp.*` is simply not granted
+# and the prompt tells the model to use rg + view instead (`prompt/searching.md`),
+# so a machine that cannot install it gets one fewer verb, not a broken bough.
+if command -v leta >/dev/null; then
+  echo "==> leta already installed"
+elif [ "$OS" = "Darwin" ]; then
   echo "==> installing leta (LSP backend) via brew tap"
   brew install andreasjansson/tap/leta
 else
-  echo "==> leta already installed"
+  echo "==> leta not installed (no tap on $OS) — lsp.* will fall back to rg + view"
+  echo "    to add it: https://github.com/andreasjansson/leta"
 fi
 
 # typescript-language-server + typescript@5: leta's tsserver for TS/JS navigation.

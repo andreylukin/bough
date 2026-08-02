@@ -28,7 +28,12 @@ ROOT="$(cd "$(dirname "$SOURCE")/.." && pwd)"
 # Prepended only when the directory exists and is not already on PATH, so this
 # cannot reorder a PATH the user deliberately arranged, and cannot shadow a brew
 # bun with an older bun.sh one that happens to be installed too.
-for d in "/opt/homebrew/bin" "/usr/local/bin" "$HOME/.bun/bin"; do
+# WHICH OS. Every platform-specific decision below routes through this and
+# nothing else, so "does bough run on Linux" is a question about four functions
+# (`svc_*`) rather than about the whole script.
+OS="$(uname -s)"
+
+for d in "/opt/homebrew/bin" "/usr/local/bin" "$HOME/.local/bin" "$HOME/.bun/bin"; do
   case ":$PATH:" in
     *":$d:"*) ;;
     *) [ -d "$d" ] && PATH="$PATH:$d" ;;
@@ -39,9 +44,13 @@ export PATH
 # Said once, here, rather than as `bun: command not found` from six call sites.
 require_bun() {
   command -v bun >/dev/null && return 0
-  echo "error: bun is not on PATH, and is not in ~/.bun/bin or $(brew --prefix 2>/dev/null || echo /opt/homebrew)/bin." >&2
-  echo "  install it with:  brew install oven-sh/bun/bun" >&2
-  echo "  or:               curl -fsSL https://bun.sh/install | bash" >&2
+  echo "error: bun is not on PATH, and is not in ~/.bun/bin." >&2
+  if [ "$OS" = "Darwin" ]; then
+    echo "  install it with:  brew install oven-sh/bun/bun" >&2
+    echo "  or:               curl -fsSL https://bun.sh/install | bash" >&2
+  else
+    echo "  install it with:  curl -fsSL https://bun.sh/install | bash" >&2
+  fi
   echo "  then re-run: $ROOT/scripts/setup.sh" >&2
   exit 1
 }
@@ -56,6 +65,25 @@ LABEL="com.bough.server"
 BOUGH_HOME="${BOUGH_HOME:-$HOME/.bough}"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 DOMAIN="gui/$(id -u)"
+
+# The Linux equivalents. A systemd USER unit, not a system one: bough runs as you,
+# in your account, reading your keys — the same property the LaunchAgent has, and
+# the reason neither of them needs root.
+UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+UNIT="$UNIT_DIR/bough.service"
+# The last resort. Plenty of Linux boxes have no user systemd at all — containers,
+# WSL1, minimal images — and "bough only works under systemd" would be a worse
+# answer than a pidfile. `svc_*` falls back to this when systemctl cannot answer.
+PIDFILE="$BOUGH_HOME/server.pid"
+
+case "$OS" in
+  Darwin) SERVICE_DESC="launchd service" ;;
+  *) if systemctl --user show-environment >/dev/null 2>&1; then
+       SERVICE_DESC="systemd user service"
+     else
+       SERVICE_DESC="background process"
+     fi ;;
+esac
 
 LOG_FILE="$BOUGH_HOME/server.log"
 ENV_FILE="$BOUGH_HOME/env"
@@ -86,13 +114,132 @@ PORT="${BOUGH_PORT:-4321}"
 
 # Always exits 0: with pipefail, lsof's exit 1 on "no listener" would otherwise
 # propagate through bare assignments and trip errexit.
+# lsof first because it is what macOS ships; ss is what a minimal Linux image
+# ships instead. Either answer is the same fact — who is listening on $PORT —
+# and a box with neither falls back to the pidfile rather than to a wrong "no".
 server_pid() {
-  lsof -ti "tcp:$PORT" -sTCP:LISTEN 2>/dev/null | head -n1
+  if command -v lsof >/dev/null; then
+    lsof -ti "tcp:$PORT" -sTCP:LISTEN 2>/dev/null | head -n1
+  elif command -v ss >/dev/null; then
+    ss -lptnH "sport = :$PORT" 2>/dev/null |
+      grep -o 'pid=[0-9]*' | head -n1 | cut -d= -f2
+  elif [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null; then
+    cat "$PIDFILE"
+  fi
   return 0
 }
 
+# ---------------------------------------------------------------------------
+# The service layer. Three backends, one interface — everything below calls
+# `svc_*` and never a platform's own verb, which is what keeps the lifecycle
+# commands (`start`, `kill`, `restart`) identical on every OS.
+# ---------------------------------------------------------------------------
+
+have_systemd() { systemctl --user show-environment >/dev/null 2>&1; }
+
 service_loaded() {
-  launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1
+  case "$OS" in
+    Darwin) launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1 ;;
+    *)
+      if have_systemd; then
+        systemctl --user is-active --quiet bough.service
+      else
+        [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null
+      fi
+      ;;
+  esac
+}
+
+write_unit() {
+  mkdir -p "$UNIT_DIR"
+  tee "$UNIT" >/dev/null <<EOF
+[Unit]
+Description=bough server
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/bin/bash $ROOT/scripts/bough run
+# Matches the LaunchAgent's KeepAlive{SuccessfulExit=false}: come back from a
+# crash, stay down after a clean exit, so an unconfigured machine (no API key,
+# which exits 0) does not relaunch-loop.
+Restart=on-failure
+StandardOutput=append:$LOG_FILE
+StandardError=append:$LOG_FILE
+
+[Install]
+WantedBy=default.target
+EOF
+  systemctl --user daemon-reload
+  return 0
+}
+
+# Install/refresh the service definition. Always rewritten rather than written
+# once: a stale definition (a moved repo, a log path left by another profile)
+# otherwise survives every restart, which is a bug this script has already had.
+svc_write() {
+  case "$OS" in
+    Darwin) write_plist ;;
+    *) have_systemd && write_unit || true ;;
+  esac
+}
+
+svc_start() {
+  case "$OS" in
+    Darwin)
+      launchctl enable "$DOMAIN/$LABEL" 2>/dev/null || true
+      if service_loaded; then
+        launchctl kickstart "$DOMAIN/$LABEL"
+      else
+        launchctl bootstrap "$DOMAIN" "$PLIST"
+      fi
+      ;;
+    *)
+      if have_systemd; then
+        systemctl --user enable --now bough.service
+      else
+        # No user systemd. Detached, output to the same log every other backend
+        # writes, pid recorded so `kill` and `status` still have an answer.
+        mkdir -p "$BOUGH_HOME"
+        nohup /bin/bash "$ROOT/scripts/bough" run >>"$LOG_FILE" 2>&1 &
+        echo $! >"$PIDFILE"
+      fi
+      ;;
+  esac
+}
+
+svc_stop() {
+  case "$OS" in
+    Darwin)
+      # disable makes the stop stick across logins (start re-enables). bootout can
+      # report non-zero while the teardown is still in flight — the caller's wait
+      # loop is the real confirmation.
+      launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
+      launchctl disable "$DOMAIN/$LABEL" 2>/dev/null || true
+      ;;
+    *)
+      if have_systemd; then
+        systemctl --user disable --now bough.service 2>/dev/null || true
+      elif [ -f "$PIDFILE" ]; then
+        kill "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null || true
+        rm -f "$PIDFILE"
+      fi
+      ;;
+  esac
+}
+
+svc_restart() {
+  case "$OS" in
+    Darwin) launchctl kickstart -k "$DOMAIN/$LABEL" ;;
+    *)
+      if have_systemd; then
+        systemctl --user restart bough.service
+      else
+        svc_stop
+        svc_start
+      fi
+      ;;
+  esac
 }
 
 # Up = any HTTP answer on the port (200 without auth, 401 with).
@@ -112,7 +259,7 @@ is_up() {
 # to my own install.
 require_default_profile() {
   if [ "$BOUGH_HOME" != "$HOME/.bough" ]; then
-    echo "error: the $LABEL launchd service is the DEFAULT profile's ($HOME/.bough)." >&2
+    echo "error: the $LABEL $SERVICE_DESC is the DEFAULT profile's ($HOME/.bough)." >&2
     echo "  \`bough $1\` with BOUGH_HOME=$BOUGH_HOME would repoint your login service." >&2
     echo "  Run this profile in the foreground instead:" >&2
     echo "  BOUGH_HOME=$BOUGH_HOME BOUGH_PORT=$PORT bough run" >&2
@@ -170,8 +317,8 @@ wait_up() {
   # `BOUGH_HOME=… BOUGH_PORT=… bough` — asks launchd to start something it already has
   # running for the main install, and times out here with nothing to show for it. Walked
   # exactly that way on a fresh profile.
-  if [ -f "$PLIST" ] && launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
-    echo "note: the $LABEL service is already loaded for another profile — launchd runs" >&2
+  if service_loaded; then
+    echo "note: the $LABEL service is already loaded for another profile — there is" >&2
     echo "  one per user. For a second profile run it in the foreground instead:" >&2
     echo "  BOUGH_HOME=$BOUGH_HOME BOUGH_PORT=$PORT bough run" >&2
   fi
@@ -196,7 +343,7 @@ cmd_run() {
 cmd_start() {
   if is_up; then
     local note=""
-    service_loaded || note=" (not the launchd service — a dev/foreground run?)"
+    service_loaded || note=" (not the $SERVICE_DESC — a dev/foreground run?)"
     echo "already running (pid $(server_pid)) on http://127.0.0.1:$PORT$note"
     return 0
   fi
@@ -205,13 +352,15 @@ cmd_start() {
     exit 1
   fi
   require_default_profile start
-  write_plist
+  svc_write
   echo "starting bough service on port $PORT (logs: $LOG_FILE)"
-  launchctl enable "$DOMAIN/$LABEL" 2>/dev/null || true
-  if service_loaded; then
-    launchctl kickstart "$DOMAIN/$LABEL"
-  else
-    launchctl bootstrap "$DOMAIN" "$PLIST"
+  svc_start
+  # Said once, on the platform where it is true: a systemd user service stops at
+  # logout unless the account lingers, which surprises anyone expecting the
+  # LaunchAgent's always-on behaviour.
+  if [ "$OS" != "Darwin" ] && have_systemd && ! loginctl show-user "$(id -un)" \
+      -p Linger 2>/dev/null | grep -q 'Linger=yes'; then
+    echo "note: to keep bough running after you log out:  sudo loginctl enable-linger $(id -un)"
   fi
   wait_up
 }
@@ -219,18 +368,14 @@ cmd_start() {
 cmd_kill() {
   if service_loaded; then
     echo "stopping service"
-    # disable makes the stop stick across logins (start re-enables). bootout can
-    # report non-zero while the teardown is still in flight — the wait loop below
-    # is the real confirmation.
-    launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
-    launchctl disable "$DOMAIN/$LABEL" 2>/dev/null || true
+    svc_stop
     local i
     for i in $(seq 1 20); do
       [ -z "$(server_pid)" ] && break
       sleep 0.5
     done
   fi
-  # Anything still holding the port was started outside launchd (e.g. bun run dev).
+  # Anything still holding the port was started outside the service (e.g. bun run dev).
   local pid
   pid="$(server_pid)"
   if [ -n "$pid" ]; then
@@ -253,9 +398,9 @@ cmd_restart() {
     # exactly as it was, so a stale one — a moved repo, or a log path left behind by another
     # profile — survived every restart and could only be fixed with `kill` + `start`. That
     # is precisely how I had to repair my own install after the bug above.
-    write_plist
+    svc_write
     echo "restarting service"
-    launchctl kickstart -k "$DOMAIN/$LABEL"
+    svc_restart
     wait_up
   else
     cmd_start
@@ -326,8 +471,18 @@ cmd_update() {
   # leta + tsserver: LSP backend (lsp.* host functions). Added in the leta
   # cutover — ensure they exist on update, not just fresh setup.
   if ! command -v leta >/dev/null; then
-    echo "==> installing leta (LSP backend) via brew tap"
-    brew install andreasjansson/tap/leta
+    if [ "$OS" = "Darwin" ] && command -v brew >/dev/null; then
+      echo "==> installing leta (LSP backend) via brew tap"
+      brew install andreasjansson/tap/leta
+    else
+      # NOT a failure. The lsp.* host functions degrade to rg + view when the
+      # backend is missing (`prompt/searching.md` says so to the model), so an
+      # update that cannot install leta is an update with one fewer verb, not a
+      # broken install.
+      echo "note: leta (LSP backend) not found and no brew tap on $OS —"
+      echo "  bough works without it; lsp.* falls back to rg + view."
+      echo "  to add it: https://github.com/andreasjansson/leta"
+    fi
   fi
   if ! command -v typescript-language-server >/dev/null; then
     echo "==> installing typescript-language-server + typescript@5 (npm global)"
@@ -387,9 +542,14 @@ migrate_reclaim() {
     rm -rf "$d"
   done
   rm -f "$HOME/.local/bin/smolvm"
-  local bplist="$HOME/Library/LaunchAgents/com.bough.credbroker.plist"
-  launchctl bootout "gui/$(id -u)/com.bough.credbroker" 2>/dev/null || true
-  [ -f "$bplist" ] && rm -f "$bplist"
+  # The retired cred-broker was a LaunchAgent, so there is only ever one to clean
+  # up on macOS. Guarded rather than left to fail quietly, so this stays readable
+  # as "remove the old thing" instead of as dead code on every other OS.
+  if [ "$OS" = "Darwin" ]; then
+    local bplist="$HOME/Library/LaunchAgents/com.bough.credbroker.plist"
+    launchctl bootout "gui/$(id -u)/com.bough.credbroker" 2>/dev/null || true
+    [ -f "$bplist" ] && rm -f "$bplist"
+  fi
   [ "$freed" -gt 0 ] && echo "==> reclaimed $(( freed / 1024 )) MB of retired-backend artifacts"
   return 0
 }
@@ -435,7 +595,9 @@ cmd_status() {
   local svc="not installed"
   if service_loaded; then
     svc="loaded"
-  elif [ -f "$PLIST" ]; then
+  elif [ "$OS" = "Darwin" ] && [ -f "$PLIST" ]; then
+    svc="installed, not loaded"
+  elif [ "$OS" != "Darwin" ] && [ -f "$UNIT" ]; then
     svc="installed, not loaded"
   fi
   local pid
@@ -499,11 +661,11 @@ usage() {
   echo "usage: bough [tui|setup|start|kill|restart|update|status|logs|run|exec|purge]"
   echo "  (no args) open the terminal UI (auto-starts the server)"
   echo "  setup    fresh clone → running: install deps, configure env, start"
-  echo "  start    install + start the launchd service (auto-starts at login)"
+  echo "  start    install + start the background service (auto-starts at login)"
   echo "  kill     stop the service and keep it stopped (across logins)"
   echo "  restart  pick up code changes explicitly"
   echo "  update   fast-forward to origin/main, rebuild, restart"
-  echo "  run      run the server in the foreground (what launchd executes)"
+  echo "  run      run the server in the foreground (what the service executes)"
   echo "  exec     headless one-shot turn (auto-starts the server; alias: prompt):"
   echo "           bough exec [-w dir] [-m model] [--json] \"...\" — or prompt on stdin"
   echo "  sync-mcp adopt Claude Code's MCP servers into bough's registry:"

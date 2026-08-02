@@ -45,20 +45,24 @@ exactly what happens.
 
 ## Setup
 
-macOS. The service manager is launchd; nothing else here is platform-specific.
+macOS or Linux. The service manager is the only platform-specific piece: launchd on macOS,
+a systemd **user** unit on Linux, and a plain background process where there is no user
+systemd (containers, WSL1). Everything else — the server, the TUI, `exec` — is the same
+code on both.
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/andreylukin/bough/main/install.sh)"
 ```
 
 That clones into `~/bough` (override with `BOUGH_DIR`) and hands off to `scripts/bough setup`, which
-installs the toolchain via Homebrew (`bun` ≥ 1.3, `node`, `ripgrep`, `uv`), installs dependencies,
+installs the toolchain (`bun` ≥ 1.3, `node`, `ripgrep`, `uv`) with the platform's package
+manager — Homebrew, `apt-get`, `dnf` or `pacman` — installs dependencies,
 links `bough` into `~/.local/bin`, and writes an env template to `~/.bough/env`. Already have a
 clone? Run `scripts/setup.sh` directly. Then:
 
 ```bash
 $EDITOR ~/.bough/env      # ANTHROPIC_API_KEY=…  (OPENAI_/OPENROUTER_ keys optional)
-bough start               # launchd service: starts at login, restarts on crash
+bough start               # background service: starts at login, restarts on crash
 bough                     # the TUI (auto-starts the server if it is down)
 ```
 
