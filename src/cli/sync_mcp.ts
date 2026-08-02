@@ -84,7 +84,7 @@ import { loadRegistry, type McpConfigOptions, upsertServer } from "../mcp/config
 import {
   CLAUDE_CODE_ITEM,
   claudeConfigDir,
-  defaultCredentialReader,
+  credentialReaderFor,
   type KeychainReader,
 } from "../mcp/keychain.ts";
 
@@ -117,6 +117,23 @@ export interface KeychainGrant {
  * loud is a denied prompt, since that is a decision the user just made and might
  * want to reverse.
  */
+/**
+ * Does this item hold any `mcpOAuth` grants? The store-selection predicate above.
+ *
+ * An item parsed but EMPTY of grants is a miss rather than an answer, which is the
+ * whole point: it is exactly the keychain blob that was winning the read.
+ */
+export function holdsGrants(value: string): boolean {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return false;
+  }
+  const map = (parsed as { mcpOAuth?: unknown } | null)?.mcpOAuth;
+  return !!map && typeof map === "object" && Object.keys(map).length > 0;
+}
+
 export async function readGrants(
   read: KeychainReader,
 ): Promise<{ grants: KeychainGrant[]; note: string | null }> {
@@ -674,7 +691,12 @@ export async function runSyncMcp(argv: string[], deps: SyncDeps = {}): Promise<n
     const claimedByConfig = new Set(found.map((f) => f.name));
     for (const p of plugins.found) if (!claimedByConfig.has(p.name)) found.push(p);
   }
-  const { grants, note } = await readGrants(deps.keychain ?? defaultCredentialReader);
+  // NOT `defaultCredentialReader`: the grants live in whichever store has an
+  // `mcpOAuth` map, and on a machine where Claude Code left `claudeAiOauth` in the
+  // keychain and moved the grants to `.credentials.json` those are different stores.
+  // Asking for "the item" gets the keychain's half and reports zero authorized
+  // servers; asking for "the store with the grants" gets the four that are there.
+  const { grants, note } = await readGrants(deps.keychain ?? credentialReaderFor(holdsGrants));
   if (note) err(`warning: ${note}`);
   // Matched by NAME first, then by URL: the name is what Claude Code keys the grant
   // under and what the config calls the server, and the URL catches the case where

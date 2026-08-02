@@ -22,6 +22,7 @@ import {
   credentialsFileReader,
   credentialsPath,
   credentialStores,
+  holdsPath,
   isCoveredHost,
   type KeychainReader,
   parseKeychainRef,
@@ -322,6 +323,65 @@ test("ordering is by authority: the store the platform's Claude Code writes to i
     assert.equal(stores.length, 2, platform);
     assert.ok(stores.includes(securityReader) && stores.includes(credentialsFileReader), platform);
   }
+});
+
+/** The real split: the keychain kept the login, the file kept the MCP grants. */
+const GRANT_KEY = "notion|eac663db915250e7";
+const loginOnly = (store: "keychain" | "file"): KeychainReader => () =>
+  Promise.resolve({ value: blob(), code: 0, error: "", store });
+const withGrants = (store: "keychain" | "file"): KeychainReader => () =>
+  Promise.resolve({
+    value: JSON.stringify({
+      mcpOAuth: { [GRANT_KEY]: { accessToken: "grant-token", serverName: "notion" } },
+    }),
+    code: 0,
+    error: "",
+    store,
+  });
+
+test("the store that has the FIELD wins, not the store that has the item", async () => {
+  // The bug this pins, observed on a real machine: Claude Code left `claudeAiOauth`
+  // in the keychain and moved every `mcpOAuth` grant into `.credentials.json`. The
+  // keychain answered first with a perfectly valid blob that could never contain the
+  // reference's path, so every synced server failed with "has no string at
+  // #mcpOAuth…" while the token sat in the next store along.
+  const ref = parseKeychainRef(`\${keychain:${CLAUDE_CODE_ITEM}#mcpOAuth.${GRANT_KEY}.accessToken}`)!;
+  const picked = await readFromStores(
+    CLAUDE_CODE_ITEM,
+    [loginOnly("keychain"), withGrants("file")],
+    (v) => holdsPath(v, ref.path),
+  );
+  assert.equal(picked.store, "file");
+  assert.equal(JSON.parse(picked.value).mcpOAuth[GRANT_KEY].accessToken, "grant-token");
+});
+
+test("a whole-item reference still takes the first store with bytes", async () => {
+  // No path means there is nothing to look inside for, so the authority ordering is
+  // the whole rule and the second store must not get a say.
+  const picked = await readFromStores(
+    CLAUDE_CODE_ITEM,
+    [loginOnly("keychain"), withGrants("file")],
+    (v) => holdsPath(v, []),
+  );
+  assert.equal(picked.store, "keychain");
+});
+
+test("when no store holds the field, the error still names what was actually found", async () => {
+  // Falling back to a bare "no such item" here would trade a diagnosis for a shrug:
+  // "it holds an object with claudeAiOauth" is what tells the user the grant moved.
+  const message = await readKeychainRef(
+    { service: CLAUDE_CODE_ITEM, path: ["mcpOAuth", GRANT_KEY, "accessToken"] },
+    {
+      keychain: () =>
+        readFromStores(
+          CLAUDE_CODE_ITEM,
+          [loginOnly("keychain"), loginOnly("file")],
+          (v) => holdsPath(v, ["mcpOAuth", GRANT_KEY, "accessToken"]),
+        ),
+    },
+  ).then(() => "", (e: McpError) => e.message);
+  assert.match(message, /has no string at #mcpOAuth/);
+  assert.match(message, /an object with claudeAiOauth/);
 });
 
 test("a specific failure beats a bare absence when neither store has it", async () => {

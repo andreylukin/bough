@@ -190,6 +190,21 @@ export const defaultCredentialReader: KeychainReader = (service) =>
   readFromStores(service, credentialStores());
 
 /**
+ * The same store selection, but for a caller that knows what it needs to find.
+ *
+ * `defaultCredentialReader` cannot express "the store that has the grants" because a
+ * `KeychainReader` is handed a service name and nothing else. Anything reading a
+ * FIELD out of the item — `readKeychainRef`, and `sync-mcp` reading the `mcpOAuth`
+ * map — needs the store chosen by content, since the two stores on one machine can
+ * hold different halves of the same item (see `readFromStores`).
+ */
+export function credentialReaderFor(
+  satisfies: (value: string) => boolean,
+): KeychainReader {
+  return (service) => readFromStores(service, credentialStores(), satisfies);
+}
+
+/**
  * The two stores, in the order this platform should ask them. Exported so the ordering
  * can be asserted without spawning anything.
  */
@@ -202,21 +217,65 @@ export function credentialStores(
 }
 
 /**
- * First store that has the item wins; if none does, the most specific failure is what
- * gets reported. Separated from `defaultCredentialReader` so this rule is testable
- * against fake stores rather than against the developer's own login.
+ * First store that SATISFIES the read wins; if none does, the most specific failure
+ * is what gets reported. Separated from `defaultCredentialReader` so this rule is
+ * testable against fake stores rather than against the developer's own login.
+ *
+ * WHY `satisfies` EXISTS, and why "first store with bytes wins" was wrong. Claude
+ * Code keeps two different things under one item name: `claudeAiOauth` (its own
+ * login) and `mcpOAuth` (one grant per remote MCP server it has authorized). Those
+ * two do not have to live in the same store, and on a real machine they stopped
+ * doing so — the keychain item was left holding only `claudeAiOauth` while every
+ * `mcpOAuth` grant moved into `.credentials.json`. Asking "did this store return
+ * bytes" made the keychain win every read, so `#mcpOAuth.<key>.accessToken`
+ * resolved against a blob that could never contain it and every synced server
+ * failed with "has no string at #mcpOAuth…" — while the token sat in the file the
+ * next store would have read.
+ *
+ * So the question a store has to answer is not "do you have this item" but "do you
+ * have what was asked for". A store that returns an item missing the requested path
+ * is a MISS, and the next store gets asked.
+ *
+ * The unsatisfying bytes are still remembered and returned when nothing satisfies,
+ * because the caller's error message names what the item DOES hold — losing that in
+ * favour of a bare "no such item" would trade a diagnosis for a shrug.
  */
 export async function readFromStores(
   service: string,
   stores: readonly KeychainReader[],
+  satisfies?: (value: string) => boolean,
 ): Promise<KeychainResult> {
   let worst: KeychainResult | null = null;
+  let unsatisfying: KeychainResult | null = null;
   for (const read of stores) {
     const result = await read(service);
-    if (result.code === 0 && result.value) return result;
+    if (result.code === 0 && result.value) {
+      if (!satisfies || satisfies(result.value)) return result;
+      unsatisfying ??= result;
+      continue;
+    }
     if (!worst || (worst.code === 44 && result.code !== 44)) worst = result;
   }
-  return worst ?? { value: "", code: 44, error: "", store: "file" };
+  return unsatisfying ?? worst ?? { value: "", code: 44, error: "", store: "file" };
+}
+
+/**
+ * Does this item hold a usable string at `path`? The `satisfies` predicate for an
+ * ordinary `${keychain:…#a.b}` reference.
+ *
+ * An empty path means the whole item is the secret, and any bytes satisfy that —
+ * there is nothing to look inside for.
+ */
+export function holdsPath(value: string, path: readonly string[]): boolean {
+  if (path.length === 0) return true;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return false;
+  }
+  const { found } = walk(parsed, path);
+  return typeof found === "string" && found.length > 0;
 }
 
 export interface KeychainOptions {
@@ -262,8 +321,15 @@ export async function readKeychainRef(
   ref: KeychainRef,
   opts: KeychainOptions = {},
 ): Promise<string> {
-  const read = opts.keychain ?? defaultCredentialReader;
-  const { value: raw, code, error, store } = await read(ref.service);
+  // An INJECTED reader is one store and is asked as one; the store-picking rule
+  // below only has meaning when there is more than one store to pick between.
+  const { value: raw, code, error, store } = opts.keychain
+    ? await opts.keychain(ref.service)
+    : await readFromStores(
+      ref.service,
+      credentialStores(),
+      (v) => holdsPath(v, ref.path),
+    );
   // `security -w` terminates its output with a newline that is not part of the
   // secret. Stripped HERE rather than in the reader so it holds for every reader:
   // a token with a newline welded on produces a header the remote end rejects for
@@ -387,7 +453,7 @@ function assertFresh(ref: KeychainRef, container: unknown): void {
 }
 
 /** The value at `path`, and the object it was found in (for the expiry check). */
-function walk(root: unknown, path: string[]): { found: unknown; container: unknown } {
+function walk(root: unknown, path: readonly string[]): { found: unknown; container: unknown } {
   let container: unknown = undefined;
   let node: unknown = root;
   for (let i = 0; i < path.length; i++) {
