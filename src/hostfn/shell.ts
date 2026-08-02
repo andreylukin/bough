@@ -37,8 +37,8 @@ import {
   type Shell,
   shellText,
   signalTree,
-  truncateMiddle,
 } from "./jobs.ts";
+import { spill } from "./spill.ts";
 
 /**
  * What the shell verbs need from a turn. `TurnCtx` satisfies it structurally, so
@@ -311,9 +311,13 @@ export async function shConcurrent(
       const status = await shell.exit;
       detach();
       await drained(shell, DRAIN_GRACE_MS);
-      // Retention already bounded the buffer; truncate again so the same rule
-      // applies to a command whose output arrived in one burst.
-      let out = truncateMiddle(shellText(shell)).trimEnd();
+      // Retention already bounded the buffer; bound it again so the same rule
+      // applies to a command whose output arrived in one burst — and so an
+      // oversized `sh` leg spills to a file exactly like an oversized `bash`.
+      let out = spill(shellText(shell), {
+        ...(ctx.scratch ? { scratch: ctx.scratch } : {}),
+        label: "sh",
+      }).trimEnd();
       if (timedOut) {
         out = `[killed after ${timeoutMs / 1000}s — sh has no background handoff; use ` +
           `bashBg(name, cmd) for a command that needs to keep running]\n${out}`.trimEnd();

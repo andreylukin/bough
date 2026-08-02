@@ -30,7 +30,31 @@ result before you can continue.
 
 await bashKill(id) — SIGTERM the job. Kill background shells you no longer need.
 
-Oversized output is truncated deterministically: the head and the tail are kept
-verbatim with an explicit marker naming what was dropped in between. Do not rely on
-that — filter at the source (rg, head, tail, wc, targeted reads) so only what the
-next round needs ever reaches you.
+## When a command prints too much
+
+Output over ~20k chars is SAVED TO A FILE automatically. You get the first and last
+5k verbatim, plus a marker naming the path, the size, and what to run next. Nothing
+is lost — the middle is on disk, not discarded.
+
+So when you see that marker, NEVER re-run the command to see the middle. Read the
+file the marker names:
+
+    rg -n 'FAIL|Error' PATH      — find the part you need
+    bough patterns --llm PATH    — summarize it, if it is log-shaped
+    view("PATH")                 — read it directly
+
+Filtering at the source is still better when you already know what you are looking
+for: `npm test 2>&1 | rg -B2 -A5 FAIL` beats reading the whole run back off disk.
+
+## Reading a big log
+
+    bough patterns --llm [--top N] FILE
+
+Compresses a log into the distinct statements it is made of — templates with counts,
+typed variable statistics (durations, addresses, status codes), flagged anomalies,
+problems first. It reads stdin too, so `kubectl logs … | bough patterns --llm` works.
+
+Reach for it whenever a log is more than a few hundred lines and you do not already
+know the exact string to grep for. Never `cat` a large log: that spends the context
+window on the least informative view of the data, and the answer is usually not in
+the part you can see.

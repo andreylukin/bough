@@ -42,56 +42,22 @@ import type { Subprocess } from "bun";
 import type { BackgroundJob } from "../schema/parts.ts";
 import type { Bus } from "../types.ts";
 import { ConflictError, NotFoundError, ProgramError } from "../errors.ts";
+import {
+  MAX_HEAD_CHARS,
+  MAX_TAIL_CHARS,
+  omissionMarker,
+  spill,
+  type SpillDeps,
+  type SpillSink,
+  streamSpill,
+  type TruncateLimits,
+} from "./spill.ts";
 
-// ---------------------------------------------------------------------------
-// Deterministic truncation
-// ---------------------------------------------------------------------------
+// Re-exported because these were jobs.ts's before the spill module took ownership
+// of output bounding, and the import sites are not what this change is about.
+export { MAX_BUF, MAX_HEAD_CHARS, MAX_TAIL_CHARS, truncateMiddle } from "./spill.ts";
+export type { TruncateLimits } from "./spill.ts";
 
-/**
- * Verbatim head retained per shell. Smaller than the tail on purpose: the head of
- * a build log is the invocation and the first failure, the tail is where it ended
- * up, and the middle is the part nobody reads.
- */
-export const MAX_HEAD_CHARS = 100_000;
-/** Verbatim tail retained per shell. */
-export const MAX_TAIL_CHARS = 300_000;
-
-/** How much output a single shell retains before the middle starts being omitted. */
-export const MAX_BUF = MAX_HEAD_CHARS + MAX_TAIL_CHARS;
-
-/** Head/tail budget for one retained buffer. Injected so tests can use small ones. */
-export interface TruncateLimits {
-  head?: number;
-  tail?: number;
-}
-
-/**
- * The omission marker.
- *
- * NOTE: the port dropped the OLDEST chars and said so in one line. Spec §6 asks
- * for head + tail verbatim instead, which means the marker has to name how much
- * went missing from the *middle* — and, because error text is a product surface,
- * name the move that avoids it next time (filter at the source).
- */
-function omissionMarker(omitted: number, total: number): string {
-  return `\n[… ${omitted} chars omitted from the middle of ${total} — head and tail are ` +
-    `verbatim. Filter at the source (rg, head, tail, targeted reads) instead of dumping ` +
-    `output …]\n`;
-}
-
-/**
- * Keep the first `head` and last `tail` characters verbatim, with an explicit
- * marker where the middle used to be. Pure and deterministic: the same input
- * always yields the same output, and nothing summarizes anything.
- */
-export function truncateMiddle(text: string, limits: TruncateLimits = {}): string {
-  const head = limits.head ?? MAX_HEAD_CHARS;
-  const tail = limits.tail ?? MAX_TAIL_CHARS;
-  if (text.length <= head + tail) return text;
-  const omitted = text.length - head - tail;
-  return text.slice(0, head) + omissionMarker(omitted, text.length) +
-    text.slice(text.length - tail);
-}
 
 // ---------------------------------------------------------------------------
 // One shell
@@ -147,6 +113,20 @@ export interface Shell {
   tail: string;
   /** Total chars the process has produced, including what retention dropped. */
   written: number;
+  /**
+   * The session scratchpad, when this shell belongs to a session.
+   *
+   * Carried on the shell rather than passed in at every read site because the two
+   * places output leaves this module — `formatFinal` and `bashOutput` — are called
+   * from contexts that no longer hold the spawn options.
+   */
+  scratch?: string;
+  /**
+   * The complete on-disk copy, once this shell's output grew large enough to earn
+   * one. Opened lazily by `append`; see `spill.ts` for why it streams rather than
+   * being written from the buffer at the end.
+   */
+  sink?: SpillSink;
   /** Chars of the stream already handed to `bashOutput`. */
   readTo: number;
   status: ExitStatus | null;
@@ -218,6 +198,24 @@ export function shellInvocation(
 /** Append to the retained buffer, maintaining head-then-rolling-tail. */
 function append(shell: Shell, text: string): void {
   shell.written += text.length;
+  retain(shell, text);
+  // AFTER the buffer update, so that when the sink opens mid-stream `pending()`
+  // includes the chunk that crossed the threshold. Opening first and writing only
+  // the prior buffer silently dropped exactly one chunk — 262,144 characters of a
+  // 1.29MB command — from a file whose banner said it held everything.
+  shell.sink = streamSpill(shell.sink, text, {
+    ...(shell.scratch ? { scratch: shell.scratch } : {}),
+    label: shell.id || "bash",
+    totalSoFar: shell.written,
+    // Everything so far. Whole at the moment this is called, because the spill
+    // threshold is an order of magnitude below the retention cap — the buffer
+    // cannot have dropped anything yet.
+    pending: () => shell.head + shell.tail,
+  });
+}
+
+/** The head-then-rolling-tail buffer, on its own so `append` has no early exit. */
+function retain(shell: Shell, text: string): void {
   let rest = text;
   if (shell.head.length < shell.limits.head) {
     const take = Math.min(shell.limits.head - shell.head.length, rest.length);
@@ -265,8 +263,18 @@ async function pump(stream: ReadableStream<Uint8Array>, shell: Shell): Promise<v
 }
 
 /** The inline format for a finished foreground command (see `shell.ts`). */
-export function formatFinal(shell: Shell): string {
-  const body = shellText(shell).trimEnd();
+export function formatFinal(shell: Shell, deps?: SpillDeps): string {
+  // Spilled before the exit line is appended, so the marker cannot be separated
+  // from the output it describes by a truncation that runs afterwards.
+  const body = spill(
+    shellText(shell),
+    {
+      ...(shell.scratch ? { scratch: shell.scratch } : {}),
+      ...(shell.sink ? { sink: shell.sink } : {}),
+      label: "bash",
+    },
+    deps,
+  ).trimEnd();
   const parts: string[] = [];
   if (body) parts.push(body);
   const code = shell.status?.code ?? 0;
@@ -291,7 +299,11 @@ export function backgroundNote(shell: Shell, id: string, afterMs: number): strin
     `${id}${shell.name ? ` "${shell.name}"` : ""}. It keeps running; you'll be notified ` +
     `when it finishes. Read progress: ` +
     `bashOutput("${id}"); block until done: bashWait("${id}"); stop it: bashKill("${id}").]`;
-  const soFar = text.trimEnd();
+  const soFar = spill(text, {
+    ...(shell.scratch ? { scratch: shell.scratch } : {}),
+    ...(shell.sink ? { sink: shell.sink } : {}),
+    label: id,
+  }).trimEnd();
   return soFar ? `${head}\n${soFar}` : head;
 }
 
@@ -417,6 +429,7 @@ export class JobRegistry {
     const shell: Shell = {
       id: "",
       name: "",
+      ...(opts.scratch ? { scratch: opts.scratch } : {}),
       command,
       sessionId: "",
       pid: child.pid,
@@ -543,7 +556,11 @@ export class JobRegistry {
     const shell = this.#require(id, sessionId);
     const { text } = retainedFrom(shell, shell.readTo);
     shell.readTo = shell.written;
-    const fresh = text.trimEnd();
+    const fresh = spill(text, {
+      ...(shell.scratch ? { scratch: shell.scratch } : {}),
+      ...(shell.sink ? { sink: shell.sink } : {}),
+      label: id || "bg",
+    }).trimEnd();
     const status = shell.status === null
       ? "[running]"
       : `[exited with code ${shell.status.code}${
