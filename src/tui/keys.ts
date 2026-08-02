@@ -148,6 +148,8 @@ export type Command =
   | "draft.clear"
   | "cancel"
   /** Stop the running turn (spec §5). Distinct from `cancel`, which dismisses a notice. */
+  | "attachment.up"
+  | "attachment.down"
   | "turn.interrupt"
   | "history.prev"
   | "history.next"
@@ -605,6 +607,8 @@ export interface KeyContext {
    * accepts a row or does nothing. Making it a mode would mean an escape path,
    * and there already is one — the popup closes on esc like any other transient.
    */
+  /** Queued images have a small cursor before message history owns ↑/↓. */
+  hasAttachments?: boolean;
   completing: boolean;
   /**
    * The panel's filter buffer has the keyboard (`/` opened it).
@@ -915,8 +919,10 @@ export const BINDINGS: Binding[] = [
     label: "↑/↓",
     desc: "history · lines if multiline",
   },
+  { mode: "chat", chord: "up", command: "attachment.up", when: ["emptyDraft", "hasAttachments"] },
   { mode: "chat", chord: "up", command: "history.prev" },
   { mode: "chat", chord: "down", command: "cursor.down", when: ["multiline"] },
+  { mode: "chat", chord: "down", command: "attachment.down", when: ["emptyDraft", "hasAttachments"] },
   {
     mode: "chat",
     chord: "down",

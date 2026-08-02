@@ -146,6 +146,7 @@ test("every binding is reachable — some real context resolves to it", () => {
     "railLive",
     "completing",
     "panelFiltering",
+    "hasAttachments",
     "inSubagent",
   ] as const;
   // The open tab is part of the context a panel row is matched against, so it is

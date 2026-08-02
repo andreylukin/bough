@@ -406,6 +406,8 @@ export function App(
   const [sent, setSent] = useState<string[]>([]);
   const [histAt, setHistAt] = useState<number | null>(null);
   const [attachments, setAttachments] = useState<{ path: string; mediaType: string; name: string; size: number }[]>([]);
+  /** Null = editing the text; otherwise an index in the queued image rows. */
+  const [attachmentSel, setAttachmentSel] = useState<number | null>(null);
   const [askText, setAskText] = useState("");
   // Same reason as the draft ref above: `^c^c` arriving in ONE read left the second
   // event reading `quitArmed` as false, so the gesture armed the hint twice and
@@ -1340,6 +1342,7 @@ export function App(
     }
     const images = attachments;
     setAttachments([]);
+    setAttachmentSel(null);
     setLine(EMPTY_LINE);
     setHistAt(null);
     setSent((h) => [...h, text]);
@@ -1408,6 +1411,7 @@ export function App(
         setHistAt(null);
         setScrollOff(0);
         setAttachments([]);
+        setAttachmentSel(null);
         store.newConversation();
         return setMode("chat");
       // The old conversation is neither mutated nor inherited, so there is nothing to
@@ -1438,6 +1442,7 @@ export function App(
       case "draft.clear":
         setHistAt(null);
         setAttachments([]);
+        setAttachmentSel(null);
         return setLine(EMPTY_LINE);
       case "cancel":
         setScrollOff(0);
@@ -1446,6 +1451,10 @@ export function App(
       // there is no busy check here — the guard is the binding.
       case "turn.interrupt":
         return void store.interrupt();
+      case "attachment.up":
+        return setAttachmentSel((at) => at === null || at === 0 ? null : at - 1);
+      case "attachment.down":
+        return setAttachmentSel((at) => at === null ? 0 : Math.min(attachments.length - 1, at + 1));
       case "history.prev": {
         if (sent.length === 0) return;
         const at = histAt === null ? last(sent.length) : Math.max(0, histAt - 1);
@@ -1637,10 +1646,11 @@ export function App(
       case "ask.decline":
         setAskText("");
         return void store.declineAsk();
-
       case "delete.back":
-        if (lineRef.current.text === "" && attachments.length > 0) {
-          return setAttachments((items) => items.slice(0, -1));
+        if (lineRef.current.text === "" && attachmentSel !== null) {
+          const selected = attachmentSel;
+          setAttachments((items) => items.filter((_item, index) => index !== selected));
+          return setAttachmentSel((at) => at === null ? null : Math.min(at, attachments.length - 2));
         }
         return setLine((s) => editLine(s, command));
       default:
@@ -1662,6 +1672,8 @@ export function App(
     sent,
     store,
     submit,
+    attachments,
+    attachmentSel,
   ]);
 
   // A paste, a wheel tick and the Home/End keys the filter takes off the stream
@@ -1829,6 +1841,7 @@ export function App(
       quitArmed: quitArmedRef.current,
       railLive: units.length > 0,
       completing,
+      hasAttachments: attachments.length > 0,
     });
 
     // ---- Escape: the one chord whose meaning depends on the NEXT keypress ----
@@ -2124,12 +2137,9 @@ export function App(
             completions={completion.items}
             completionSel={selAt}
             completionMore={Math.max(0, completion.total - completion.items.length)}
-            // Only while the completion popup is closed: two things on one row both claiming
-            // ⇥ is one of them being wrong.
             ghost={completing ? "" : ghost}
-            // The rail is the third surface that takes the keyboard while this box
-            // stays painted below it. `chat` is the only mode that types.
             attachments={attachments.map((part) => part.name)}
+            attachmentSel={attachmentSel}
             keyboardOwner={uiMode === "rail" ? "the rail" : null}
           />
         )}

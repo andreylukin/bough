@@ -55,6 +55,8 @@ export interface ComposerProps {
    */
   ghost?: string;
   attachments?: readonly string[];
+  /** The queued image under the composer's cursor, or null while editing text. */
+  attachmentSel?: number | null;
   /** The active `@`/`/` completion, or null. From `activeTrigger`. */
   trigger?: Trigger | null;
   /** Ranked rows for that trigger. From `rankCompletions`. */
@@ -123,6 +125,7 @@ export function Composer(
     completionSel = 0,
     completionMore = 0,
     keyboardOwner = null,
+    attachmentSel = null,
     attachments = [],
   }: ComposerProps,
 ) {
@@ -260,9 +263,11 @@ export function Composer(
             </text>
           );
         })}
-        {attachments.length > 0
-          ? <text fg={UI.info} wrapMode="none">{attachments.map((n) => "[image: " + n + "]").join(" ")}</text>
-          : null}
+        {attachments.map((name, index) => (
+          <text key={index} fg={index === attachmentSel ? UI.accent : UI.info} wrapMode="none">
+            {index === attachmentSel ? "❯ " : "  "}{"[image: " + name + "]"}
+          </text>
+        ))}
         {clipped
           ? (
             <text attributes={TextAttributes.DIM}>
