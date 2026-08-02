@@ -1016,7 +1016,7 @@ export function App(
     busy,
     width: cols,
     maxRows: composerRows,
-    attachments: attachments.map((part) => part.name),
+    attachments: [...attachments.map((part) => part.name), ...pastedTexts.map((_text, index) => "Pasted text #" + (index + 1))],
   });
   const popupH = trigger
     ? completionPopupHeight(

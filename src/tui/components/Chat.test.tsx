@@ -4,7 +4,7 @@ import { testRender } from "@opentui/react/test-utils";
 import type { ReactNode } from "react";
 import { askPromptLines } from "./App.tsx";
 import { Chat } from "./Chat.tsx";
-import { Composer } from "./Composer.tsx";
+import { Composer, composerHeight } from "./Composer.tsx";
 import { MessageView } from "./Message.tsx";
 import { activeTrigger, rankCompletions, setColorEnabled } from "../format.ts";
 import { buildLines } from "../lines.ts";
@@ -125,6 +125,13 @@ test("Composer caps its height on a large paste and says what is off-screen", as
   assert.ok(/… \d+ lines above · \d+ below/.test(frame), frame);
   assert.equal(frame.includes("line 0"), false); // windowed to the cursor
   assert.ok(frame.includes("line 29"));
+});
+
+test("Composer height reserves a row for each compact pasted-text item", () => {
+  assert.equal(
+    composerHeight({ input: "", busy: false, width: 60, maxRows: 6, attachments: ["Pasted text #1"] }),
+    composerHeight({ input: "", busy: false, width: 60, maxRows: 6 }) + 1,
+  );
 });
 
 test("Composer renders the @ popup for the trigger under the cursor", async () => {
