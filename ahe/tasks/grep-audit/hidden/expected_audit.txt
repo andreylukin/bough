@@ -1,0 +1,8 @@
+total: 7
+app/handlers/orders.py:7
+app/handlers/search.py:7
+app/handlers/search.py:14
+app/handlers/users.py:10
+app/jobs/nightly.py:10
+app/jobs/report.py:7
+app/lib/session.py:10
