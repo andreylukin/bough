@@ -201,6 +201,13 @@ test("MCP tools appear only when servers are connected, and stay out of the stab
   assertStringIncludes(p.systemVolatile, "- read_file({path}) — Read a file");
   // A failed server is named with its error, not silently dropped.
   assertStringIncludes(p.systemVolatile, 'server "broken": UNAVAILABLE — exited before handshake');
+  // Nor is a granted server whose tools are not known yet rendered as `(0 tools)`,
+  // which reads as "this server has nothing" — the opposite of what is true.
+  const pending = build({
+    mcpServers: [{ name: "notion", note: "granted, not connected yet — call it to connect" }],
+  });
+  assertStringIncludes(pending.systemVolatile, 'server "notion": granted, not connected yet');
+  assert(!pending.systemVolatile.includes("0 tools"));
   // The catalog is per-session; it must never reach the cacheable prefix.
   assert(!p.system.includes("MCP tools"));
   // NO SHELL, NO CATALOG. A tool is called by running `bough mcp call`, so a turn

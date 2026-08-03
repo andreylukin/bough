@@ -41,6 +41,7 @@ import { loadRegistry, promoteSessionGrants, registryFile } from "../mcp/config.
 import { authStatus, callbackUrl, configureOAuthCallback } from "../mcp/oauth.ts"; // T7.2
 import { bindTurnGrant, mcpManager } from "../mcp/manager.ts"; // T7.3
 import { reconcileMcp, reconcileSummary } from "../mcp/service.ts";
+import { mcpStatusFor, promptMcpServers } from "../mcp/status.ts";
 import { sweepScratch } from "../scratch.ts";
 import { createScheduleHostFn } from "../hostfn/schedule.ts"; // T6.3
 import { createStateHostFn } from "../hostfn/state.ts"; // T6.2
@@ -583,27 +584,28 @@ try {
   console.log(`could not read MCP authorization state: ${error}`);
 }
 
-// T7.3 — the MCP manager, the per-session grant, and the two program verbs.
+// T7.3 — the MCP manager and the per-session grant.
 //
-// The starter is REBUILT rather than edited above, the same append-only discipline as
-// every block before it: identical wiring, plus `mcp()` and `mcpStatus()` merged into
-// the `extend` seam and named in `granted` so `prompt/assemble.ts` includes
-// `prompt/mcp-status.md`. Both halves are required and neither is sufficient (spec §6)
-// — without the bridge the prompt documents a verb that rejects at runtime, and
-// without the grant the model is never told the verbs exist and will not reach for
-// them. Granted at every tier, like `fetch`/`artifact` and unlike `workflow`: a
-// subagent is doing part of the same granted work, and refusing it the servers its
-// spawner had would fail every delegated MCP task at the first call (spec §7).
+// THERE ARE NO MCP PROGRAM VERBS. `mcp()` and `mcpStatus()` were host functions once;
+// a tool is called through `bough mcp call SERVER TOOL '{…}'` in the shell now, and
+// the catalog the model reads is `prompt/assemble.ts`'s mcp-tools section, gated on
+// `bash` for that reason. One calling convention, documented in one place, and no
+// bridge to keep in step with the CLI. Nothing is granted or extended here — which is
+// why this block only builds the manager and binds the grant.
 //
-// `bindTurnGrant` is the line that makes that inheritance real, and it is not
-// decoration. `agents/subagent.ts` copies `ctx.mcpGrant` into the child at spawn, so
-// a turn whose ctx never had one hands its subagents nothing; setting a plain array
-// instead would fix that and freeze the grant for the whole turn, so a revocation
-// would keep working until the turn ended. It installs a LIVE READ of the
-// activations instead: every access re-reads them — which is what makes a revoked
-// grant visible to the very next `mcpStatus()` call — while the one access that
-// matters for inheritance, the spawn, copies the value out as the snapshot spec §7
-// describes (`mcp/manager.ts`).
+// The GRANT still matters, and is enforced where the call now lands: `callMcpToolH`
+// (`mcp/status.ts`) checks it against `$BOUGH_SESSION`, which `hostfn/jobs.ts` puts in
+// every command's environment. A server the human has not granted refuses there,
+// exactly as it refused at the old bridge.
+//
+// `bindTurnGrant` is what makes inheritance real, and it is not decoration.
+// `agents/subagent.ts` copies `ctx.mcpGrant` into the child at spawn, so a turn whose
+// ctx never had one hands its subagents nothing; setting a plain array instead would
+// fix that and freeze the grant for the whole turn, so a revocation would keep working
+// until the turn ended. It installs a LIVE READ of the activations instead: every
+// access re-reads them — which is what makes a revoked grant visible to the very next
+// call — while the one access that matters for inheritance, the spawn, copies the
+// value out as the snapshot spec §7 describes (`mcp/manager.ts`).
 ctx.startTurn = createDelegatingTurnStarter({
   base: {
     survivingJobs: (sessionId) => jobs.runningIds(sessionId),
@@ -903,6 +905,16 @@ const skillAwareStarter = (sessionId: string) =>
         return assemblePrompt({
           ...input,
           skills: active.skills,
+          // The MCP catalog, per turn, from the same read-only status document the
+          // panel and `bough mcp` render — resolved HERE because this is where the
+          // session id is known, and read fresh because grants and connections
+          // change between turns (spec §10).
+          //
+          // Nothing populated this before, so the mcp-tools section never rendered:
+          // servers could be registered, granted and connected, and the model was
+          // never told they existed or how to call one. A capability nobody is told
+          // about is not a capability.
+          mcpServers: promptMcpServers(mcpStatusFor({ sessionId })),
           notes: [...(input.notes ?? []), ...active.notes],
         });
       },

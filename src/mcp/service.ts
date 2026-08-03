@@ -26,7 +26,7 @@
  * FAILURE IS NORMAL AND SILENT HERE. A server that is down, unauthorized or
  * misconfigured must not delay start-up or print a stack: the failure is already
  * recorded by the manager and surfaces as a `failed` row in the panel and in
- * `mcpStatus()`, with the reason. Reconciling is best-effort by construction.
+ * `bough mcp` / `bough mcp doctor`, with the reason. Reconciling is best-effort by construction.
  */
 import { activationsFor, isStdio, loadRegistry, type McpConfigOptions } from "./config.ts";
 import { McpManager, mcpManager, SHARED_SCOPE } from "./manager.ts";

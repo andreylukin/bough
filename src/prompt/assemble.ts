@@ -71,6 +71,12 @@ export interface PromptMcpServer {
   name: string;
   tools?: readonly PromptMcpTool[];
   error?: string;
+  /**
+   * Why the tool list is unknown, when it is. A granted server is not connected
+   * until something calls it, and rendering that as `(0 tools)` says the opposite of
+   * what is true — the model reads "this server has nothing" and stops looking.
+   */
+  note?: string;
 }
 
 /**
@@ -298,6 +304,7 @@ function mcpToolLine(tool: PromptMcpTool): string {
 
 function mcpServerBlock(server: PromptMcpServer): string {
   if (server.error) return `server "${server.name}": UNAVAILABLE — ${server.error}`;
+  if (server.note) return `server "${server.name}": ${server.note}`;
   const tools = server.tools ?? [];
   const lines = [`server "${server.name}" (${tools.length} tools):`];
   let used = 0;

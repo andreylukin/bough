@@ -601,7 +601,7 @@ route entries.
 
 | Task | Owns | Port from | AC |
 |---|---|---|---|
-| **T7.1** MCP core | `mcp/config.ts`, `client.ts`, `manager.ts`, `status.ts` | `src/mcp/*` (drop seatbelt spawn) | Test echo server registers, connects, answers `mcp()`; a server that fails to start surfaces as catalog status, **not a hang** |
+| **T7.1** MCP core | `mcp/config.ts`, `client.ts`, `manager.ts`, `status.ts` | `src/mcp/*` (drop seatbelt spawn) | Test echo server registers, connects, answers a tool call; a server that fails to start surfaces as catalog status, **not a hang** |
 | **T7.2** remote + OAuth | `mcp/remote.ts`, `mcp/oauth.ts` | `src/mcp/remote.ts`, `src/mcp/oauth.ts` | A 401 surfaces as "not authorized — /mcp auth `<name>`", never a hang; expired refresh degrades the same way |
 | **T7.3** LSP | `lsp/` | `src/mcp/lsp.ts` | Empty result is an ordinary answer; a dead backend is reported once and does not retry every verb |
 
@@ -719,8 +719,9 @@ of them are rediscoverable from a spec.
     round describes itself.
 12. **Artifact comment sidecars live outside the artifact directory**, or listing
     walks them.
-13. **MCP state is never cached.** Answer from a fresh `mcpStatus()`; grants and
-    connections change between turns.
+13. **MCP state is never cached.** Answer from a fresh `bough mcp` (there is no MCP
+    host function — a tool is called with `bough mcp call`); grants and connections
+    change between turns.
 14. **An empty LSP result is an answer, not an error.**
 15. **Workflow scripts are deterministic.** No `Date.now()`, no `Math.random()` —
     rerun correctness depends on it.

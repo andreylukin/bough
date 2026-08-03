@@ -56,6 +56,7 @@ import {
   deleteMcpServerH,
   getMcpServersH,
   mcpStatusFor,
+  promptMcpServers,
   putMcpServerH,
   putMcpServersH,
   restartMcpServerH,
@@ -681,6 +682,39 @@ test("status carries the live tool catalog, so a fresh call is enough to act on"
   } finally {
     await mgr.dropAll();
   }
+});
+
+test("the turn's catalog is the GRANT, not the live connections", () => {
+  // Built from `active` on purpose. A catalog derived from connections would list
+  // nothing on the first turn — nothing has connected yet — so the model would never
+  // learn the server exists, and "there is no MCP host function, call `bough mcp
+  // call`" would be advice about a server it was never told about.
+  const status = {
+    registry: { servers: {} },
+    auth: {},
+    active: ["files", "notion", "broken"],
+    connections: [
+      { server: "files", sessionId: "s1", state: "connected", alive: true, toolCount: 2, tools: ["read_file", "write_file"], lastUsed: 0 },
+      { server: "broken", sessionId: "s1", state: "failed", alive: false, toolCount: 0, tools: [], lastUsed: 0, error: "exited before handshake" },
+    ],
+  } as unknown as Parameters<typeof promptMcpServers>[0];
+
+  const catalog = promptMcpServers(status);
+  assert.deepEqual(catalog.map((c) => c.name), ["files", "notion", "broken"]);
+
+  // Connected: the live tool names, which is what a call can name.
+  assert.deepEqual(catalog[0].tools?.map((t) => t.name), ["read_file", "write_file"]);
+  // Granted but never connected: NAMED, with the way to see its tools — not dropped,
+  // and not rendered as an empty catalog that reads as "this server has nothing".
+  assert.equal(catalog[1].tools, undefined);
+  assert.match(catalog[1].note ?? "", /not connected yet/);
+  assert.match(catalog[1].note ?? "", /bough mcp test notion/);
+  // Broken: its own error, so the model stops rather than inventing a workaround.
+  assert.equal(catalog[2].error, "exited before handshake");
+
+  // A server nobody granted is not in the catalog at all — the catalog IS the grant,
+  // and `bough mcp call` would refuse it (`callMcpToolH` resolves the same grant).
+  assert.equal(catalog.some((c) => c.name === "ungranted"), false);
 });
 
 // ---------------------------------------------------------------------------

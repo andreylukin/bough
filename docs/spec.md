@@ -336,7 +336,6 @@ program name two different files (§6, the workspace note).
 | `await image(path, note?)` | Attaches an image so the model can see it. Arrives as a system note on the **next** turn — attach and end the turn, never wait. |
 | `await fetch(url, opts)` | Host HTTP. Returns `{status, ok, url, contentType, body, truncated}`; 1MB cap, 30s deadline. Non-2xx is data, not an exception. |
 | `await artifact(name, content)` | Publishes a file for browser viewing; returns `{url, href}`. |
-| `await mcp(server, tool, args)` / `mcpStatus()` | MCP tool invocation and live state. |
 | `console.log(...)` | Streams live to the UI and batches into the model's tool result. |
 
 ## 7. Subagents
@@ -543,9 +542,16 @@ buffers are readable while running and after exit.
 
 **MCP.** A registry of servers, local (stdio subprocess) and remote (Streamable
 HTTP with OAuth/PKCE against a bough-hosted callback). Per-session grants carry
-into subagents. Servers are managed through bough itself — the model answers MCP
-questions from a fresh `mcpStatus()` call, never from conversation memory, since
-grants and connections change between turns. The OAuth client is registered
+into subagents.
+
+**There is no MCP host function.** A tool is called through the shell —
+`bough mcp call SERVER TOOL '{"arg":"value"}'`, with oversized arguments piped on
+stdin — and the grant is enforced there against `$BOUGH_SESSION`, which every
+command carries. One calling convention serves the model and the human, and there
+is no bridge to keep in step with the CLI. The turn's prompt carries the catalog of
+what is connected; anything beyond calling — what state a server is in, why one is
+broken — is `bough mcp` and `bough mcp doctor`, answered fresh rather than from
+conversation memory, since grants and connections change between turns. The OAuth client is registered
 dynamically where the authorization server offers it; where it does not, a registry
 entry may name a pre-registered client with `clientId` and a `clientSecret` given
 only as a `${VAR}` reference, since the registry is served and rendered and a secret

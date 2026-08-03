@@ -191,8 +191,8 @@ export const routes: Route[] = [
   // Registering is not granting (`mcp/config.ts`): `PUT` defines a server, `enable`
   // is what lets a session's programs call it, and `connect` only proves the command
   // works. Every one of these answers with the SAME `{registry, auth, active,
-  // connections}` document `mcpStatus()` returns, so the human's panel and the
-  // model's fresh call can never be looking at different MCP states (plan §6.13).
+  // connections}` document `bough mcp` renders, so the human's panel and the model's
+  // fresh `bough mcp call` can never be looking at different MCP states (plan §6.13).
   // The `/auth` verbs above are T7.2's and are deliberately not restated here.
   route("GET", "/mcp/servers", mcpApi.getMcpServersH),
   route("PUT", "/mcp/servers", mcpApi.putMcpServersH),

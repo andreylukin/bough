@@ -23,9 +23,10 @@
  *
  * NOTHING HERE IS CACHED (plan §6.13). The registry and the activations are re-read
  * per operation, connections are consulted live, and `statuses()` reports what the
- * process actually holds at the instant it is called. `mcpStatus()` is the model's
- * only truthful source of MCP state, and a status served from a cache is how a model
- * ends up confidently calling a tool that was revoked two turns ago. The only thing
+ * process actually holds at the instant it is called. `bough mcp` is the model's only
+ * truthful source of MCP state — there is no host function, a tool is called through
+ * the CLI — and a status served from a cache is how a model ends up confidently
+ * calling a tool that was revoked two turns ago. The only thing
  * kept between calls is the connection itself, which is a live process, not an
  * answer.
  *
@@ -33,8 +34,8 @@
  * client already bounds every path out of a broken server (`client.ts`); this layer
  * adds the part the model sees: a failed connect is REMEMBERED per (session, server)
  * and reported by `statuses()` as `state: "failed"` with the reason, so a down
- * server degrades to a line in `mcpStatus()` rather than to an exception the model
- * has to have caught, or to a spinner. A connection whose child died since the last
+ * server degrades to a line in `bough mcp` rather than to an exception the model has
+ * to have caught, or to a spinner. A connection whose child died since the last
  * call reports `state: "exited"` and is respawned on the next use.
  *
  * A STDIO CONNECTION IS PER (SESSION, SERVER); A REMOTE ONE IS SHARED. Two sessions
@@ -144,7 +145,7 @@ export interface ServerCatalog {
  */
 export type McpConnState = "connected" | "exited" | "failed";
 
-/** One (session, server) pair as `mcpStatus()` and `GET /mcp/servers` report it. */
+/** One (session, server) pair as `bough mcp` and `GET /mcp/servers` report it. */
 export interface ConnStatus {
   server: string;
   sessionId: string;
@@ -152,7 +153,7 @@ export interface ConnStatus {
   alive: boolean;
   toolCount: number;
   /**
-   * Tool names, so `mcpStatus()` carries a callable catalog. The turn-start prompt
+   * Tool names, so `bough mcp` carries a callable catalog. The turn-start prompt
    * catalog renders full signatures (`prompt/assemble.ts`); this is the live answer
    * to "what can I call right now", which is the question the model is told to ask
    * from a fresh call rather than from memory.
@@ -241,7 +242,7 @@ export function resolveGrant(ctx: GrantCtx, opts: McpConfigOptions = {}): string
  * revoked mid-turn would keep working until the turn ended.
  *
  * So the property is installed as a LIVE READ. Every access re-reads the
- * activations, which makes a revocation visible to the very next `mcpStatus()` call;
+ * activations, which makes a revocation visible to the very next call;
  * and the one access that matters for inheritance — the spawn — copies the value out
  * as a plain array, which is exactly the spawn-time snapshot spec §7 describes.
  *

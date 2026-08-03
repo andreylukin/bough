@@ -94,7 +94,7 @@ Bun runtime and may ignore all of them.
 | Files | `view` → numbered lines with a version tag · `patch` → hash-anchored line edits · `write` for new files |
 | Memory | `history.sql` → read-only SQL over the command memory · `history.similar` → semantic recall where the vector layer exists |
 | Delegation | `agent` (blocking) · `spawn` (detached) · `join` · `adopt` · `workflow.*` |
-| Session | `ask` a human mid-program · `state.*` durable KV · `schedule.*` · `image` · `fetch` · `artifact` · `mcp` |
+| Session | `ask` a human mid-program · `state.*` durable KV · `schedule.*` · `image` · `fetch` · `artifact` |
 
 **One editing idiom.** `patch` names lines instead of quoting them, so code being edited never has
 to survive the model's own string escaping. The tag pins the version that was viewed: if the file
@@ -127,6 +127,12 @@ that reports back as a system note. For bigger fan-outs, a **workflow** is a scr
 detached from the turn, with `agent` / `parallel` / `pipeline` primitives and structured (schema
 validated) results. Every `agent()` call is journaled before it runs, so a stopped run loses no
 completed work and a relaunch replays the unchanged prefix instead of paying for it twice.
+
+**MCP is a command, not a verb.** There is no MCP host function: a granted server's tool is
+called with `bough mcp call SERVER TOOL '{"arg":"value"}'` through the shell, and the turn's prompt
+carries the catalog of what is connected. One calling convention for the model and the human, and
+nothing to keep in step with the CLI. Registering, granting and authorizing stay the human's —
+`bough mcp` on its own says what every server's state is.
 
 **Everything else in one panel.** Sessions, conversation tree, changes review, model picker, MCP,
 skills, themes — with direct-jump keys. Models route to Anthropic, OpenAI, or OpenRouter by id

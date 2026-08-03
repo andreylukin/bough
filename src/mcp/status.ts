@@ -3,9 +3,10 @@
  * and changes it.
  *
  * THE INVARIANT THIS HOLDS: **there is exactly one builder, and it never serves a
- * cached answer.** `mcpStatus()` inside a program, `GET /mcp/servers` in the TUI's
- * MCP tab, and the response to every mutation below all come from `mcpStatusFor` —
- * so the model and the human cannot be looking at different MCP states, and neither
+ * cached answer.** `bough mcp` (which is what a program uses — there is no MCP host
+ * function), `GET /mcp/servers` in the TUI's MCP tab, and the response to every
+ * mutation below all come from `mcpStatusFor` — so the model and the human cannot
+ * be looking at different MCP states, and neither
  * can be looking at a stale one. Every call re-reads the registry file, re-resolves
  * the grant, re-reads the credential store and re-reads the live connections (plan
  * §6.13). The prompt tells the model to answer every MCP question from a FRESH call
@@ -73,6 +74,9 @@ import {
 // Type-only: erased at compile time, so this module has no runtime edge into
 // `server/`. See the header.
 import type { Handler } from "../server/http.ts";
+// Type-only, like `Handler` above: the catalog builder at the bottom of this file
+// shapes its output for the prompt, and this module keeps no runtime edge outward.
+import type { PromptMcpServer } from "../prompt/assemble.ts";
 
 // ---------------------------------------------------------------------------
 // The state
@@ -256,7 +260,7 @@ export const deleteMcpServerH: Handler = async (req, ctx, params) => {
  * A server that fails to start answers 200 with `connected: false` and the reason.
  * That is not a swallowed error: the request succeeded, and "this server is broken,
  * here is why" is the answer it asked for. The same reason appears in `connections`
- * as a `failed` row, so the next `mcpStatus()` says it too.
+ * as a `failed` row, so the next `bough mcp` says it too.
  */
 export const connectMcpServerH: Handler = async (req, ctx, params) => {
   const sessionId = scopeOf(req, ctx);
@@ -402,3 +406,37 @@ export const setMcpActivationH = (on: boolean): Handler => async (req, ctx, para
     ...stateOf(sessionId || undefined),
   });
 };
+
+/**
+ * The turn-start catalog: what `prompt/assemble.ts` renders as the MCP tools
+ * section, derived from the same status document the panel and `bough mcp` read.
+ *
+ * WHY IT IS BUILT FROM `active` RATHER THAN FROM THE CONNECTIONS. `active` is the
+ * grant — precisely the set `bough mcp call` will let this session reach, since
+ * `callMcpToolH` resolves it from the same session id. A catalog built from live
+ * connections instead would list nothing on the first turn (nothing has connected
+ * yet) and would silently omit a granted server whose child had exited, which is
+ * exactly the "the model never knew it could" failure this section exists to stop.
+ *
+ * A granted server with no live connection is therefore NAMED, with a note saying
+ * how to see its tools, rather than dropped or rendered as an empty catalog. Pure,
+ * and it never connects: the prompt is assembled on the turn's critical path.
+ */
+export function promptMcpServers(status: McpStatus): PromptMcpServer[] {
+  return status.active.map((name) => {
+    // The connection for THIS scope; a remote server shared with other sessions
+    // reports under the shared scope, which is still the right catalog for it.
+    const conn = status.connections.find((c) => c.server === name);
+    if (conn && conn.state === "failed") {
+      return { name, error: conn.error ?? "failed to connect" };
+    }
+    if (conn && conn.tools.length > 0) {
+      return { name, tools: conn.tools.map((tool) => ({ name: tool })) };
+    }
+    return {
+      name,
+      note: "granted, not connected yet — the first `bough mcp call` connects it, " +
+        `and \`bough mcp test ${name}\` lists its tools without calling one`,
+    };
+  });
+}
