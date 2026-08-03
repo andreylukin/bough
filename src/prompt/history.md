@@ -14,10 +14,18 @@ is context for the answer, not just a reusable incantation.
 await history.sql(query) — read-only SELECT over the memory, returning rows as
 objects. Tables:
 
-    command_history(id, session_id, ts, repo, cmd, tags, exit_code, duration_ms)
+    command_history(id, session_id, ts, repo, cmd, tags, exit_code, duration_ms,
+                    output_head, spill_path)
     command_tags(command_id, tag)          — one row per tag
     command_dirs(command_id, rel_dir)      — directories the command was about
-    command_history_fts(cmd, tags)         — FTS5; MATCH for keyword search
+    command_history_fts(cmd, tags, output_head) — FTS5; MATCH for keyword search
+
+output_head is the first ~2k chars a command PRINTED, so you can recall results,
+not just invocations; spill_path names the file holding a big output in full (it
+may have been cleaned since — check before reading). The same connection can
+also read the transcript: messages(id, session_id, role, parts, created_at) and
+messages_fts(text, message_id, session_id) — past reasoning and answers,
+FTS-searchable.
 
 await history.similar(text) — semantic recall over the same memory ("get into
 the running container" finds docker exec commands no keyword would). On machines

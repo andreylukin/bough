@@ -99,6 +99,10 @@ export interface CommandRecord {
   /** null = unknown (still running when the turn moved on). */
   exitCode: number | null;
   durationMs: number | null;
+  /** First ~2k chars of what it printed, as the program saw it. "" = silent. */
+  outputHead: string;
+  /** The spill file holding the full output, when there was one. */
+  spillPath: string | null;
   source: "live" | "backfill";
 }
 
@@ -386,6 +390,8 @@ export interface TurnCtx extends AppCtx {
     tags: string;
     exitCode: number | null;
     durationMs: number | null;
+    outputHead: string;
+    spillPath: string | null;
   }) => void;
   /**
    * Absolute paths the turn's programs viewed, appended by `view()` — what the

@@ -36,6 +36,8 @@ const rec = (over: Partial<CommandRecord>): CommandRecord => ({
   dirs: [],
   exitCode: 0,
   durationMs: 1,
+  outputHead: "",
+  spillPath: null,
   source: "live",
   ...over,
 });

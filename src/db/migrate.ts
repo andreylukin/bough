@@ -59,9 +59,34 @@ export function migrate(db: Database): number {
         `data. Upgrade bough, or point BOUGH_DB at a different file.`,
     );
   }
+  rebuildDayOneCommandHistory(db);
   db.exec(schemaSql());
   if (found < SCHEMA_VERSION) setUserVersion(db, SCHEMA_VERSION);
   return found;
+}
+
+/**
+ * The ONE sanctioned reshape, and a deliberate exception to "no migration
+ * ladder": command_history gained `output_head`/`spill_path` the day after it
+ * shipped (2026-08), while exactly two installs held a handful of rows. A file
+ * whose command_history predates the columns has its command-history GROUP
+ * dropped and recreated empty by the schema exec that follows — the memory is
+ * an accumulating cache, not a record, and losing a day of it beats carrying a
+ * permanent ALTER ladder for tables nothing else references. Deleted rows'
+ * embeddings become orphans the embed layer never returns (their rowids stay
+ * absent from a rebuilt history). No-op on every database born after.
+ */
+function rebuildDayOneCommandHistory(db: Database): void {
+  const table = db
+    .prepare(`SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'command_history'`)
+    .get();
+  if (!table) return;
+  const cols = db.prepare(`PRAGMA table_info(command_history)`).all() as { name: string }[];
+  if (cols.some((c) => c.name === "output_head")) return;
+  db.exec(`DROP TABLE IF EXISTS command_history_fts;
+           DROP TABLE IF EXISTS command_dirs;
+           DROP TABLE IF EXISTS command_tags;
+           DROP TABLE IF EXISTS command_history;`);
 }
 
 /** The file's stamped schema generation; 0 for a database this never touched. */

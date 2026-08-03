@@ -39,6 +39,8 @@ function record(over: Partial<CommandRecord>): CommandRecord {
     dirs: [],
     exitCode: 0,
     durationMs: 1,
+    outputHead: "",
+    spillPath: null,
     source: "live",
     ...over,
   };
@@ -147,3 +149,26 @@ test("an unknown verb names the two that exist", () =>
     const err = await rejectsWith(() => history!("query", JSON.stringify("SELECT 1")));
     ok(err.message.includes("sql or similar"), err.message);
   }));
+
+test("FTS matches what a command PRINTED, and the row points at its spill file", () =>
+  withDb(async (path) => {
+    const { history } = createHistoryHostFn({ path });
+    const rows = JSON.parse(
+      await history!(
+        "sql",
+        JSON.stringify(
+          `SELECT h.cmd, h.spill_path FROM command_history_fts f
+            JOIN command_history h ON h.id = f.command_id
+           WHERE command_history_fts MATCH 'output_head:relation'`,
+        ),
+      ),
+    );
+    eq(rows, [{ cmd: "psql -f 004.sql", spill_path: "/scratch/s1/psql.txt" }]);
+  }, [
+    record({
+      cmd: "psql -f 004.sql",
+      outputHead: 'ERROR: relation "users" does not exist',
+      spillPath: "/scratch/s1/psql.txt",
+    }),
+    record({ cmd: "true", outputHead: "ok" }),
+  ]));

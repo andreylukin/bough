@@ -25,6 +25,24 @@ export interface FinishedCommand {
   /** NULL when the command was still running as the turn moved on. */
   exitCode: number | null;
   durationMs: number | null;
+  /** First ~2k chars of the output as the program saw it. */
+  outputHead: string;
+  /** The spill file when the full output went to disk; null when it fit. */
+  spillPath: string | null;
+}
+
+/** How much printed output one history row keeps inline. */
+export const OUTPUT_HEAD_CHARS = 2_000;
+
+/**
+ * The spill file a bounded output points at, parsed back out of the marker
+ * (`hostfn/spill.ts`'s `spillMarker`). The marker travels INSIDE the text the
+ * program saw, so parsing it here spares the spill module a second return
+ * channel it would only ever grow for this one consumer.
+ */
+export function spillPathFrom(output: string): string | null {
+  const m = output.match(/FULL OUTPUT SAVED[^\n]*\n\s+(\S+)\n/);
+  return m ? m[1] : null;
 }
 
 export type CommandRecorder = (e: FinishedCommand) => void;
@@ -248,6 +266,8 @@ export function createCommandRecorder(ctx: RecorderCtx): CommandRecorder {
         dirs: relDirs,
         exitCode: e.exitCode,
         durationMs: e.durationMs,
+        outputHead: e.outputHead.slice(0, OUTPUT_HEAD_CHARS),
+        spillPath: e.spillPath,
         source: "live",
       };
       ctx.db.recordCommand(record);

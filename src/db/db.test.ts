@@ -853,6 +853,8 @@ function cmdRecord(over: Partial<CommandRecord> = {}): CommandRecord {
     dirs: [],
     exitCode: 0,
     durationMs: 1,
+    outputHead: "",
+    spillPath: null,
     source: "live",
     ...over,
   };
@@ -889,4 +891,31 @@ test("commandTagRows sinceTs floors the lookback", () => {
   db.recordCommand(cmdRecord({ tagList: ["new"], tags: "new", ts: 500 }));
   assert.deepStrictEqual(db.commandTagRows("repo", { sinceTs: 100 }).map((r) => r.tag), ["new"]);
   db.close();
+});
+
+test("a pre-output_head command_history is rebuilt empty at open, once", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "bough-rebuild-"));
+  const path = join(dir, "old.db");
+  try {
+    // Fabricate the day-one shape: the table group without output_head.
+    const raw = new Database(path);
+    raw.exec(`CREATE TABLE command_history (id INTEGER PRIMARY KEY, session_id TEXT NOT NULL,
+      ts INTEGER NOT NULL, repo TEXT NOT NULL, cmd TEXT NOT NULL, tags TEXT NOT NULL,
+      exit_code INTEGER, duration_ms INTEGER, source TEXT NOT NULL DEFAULT 'live');
+      CREATE TABLE command_tags (command_id INTEGER NOT NULL, tag TEXT NOT NULL);
+      CREATE TABLE command_dirs (command_id INTEGER NOT NULL, rel_dir TEXT NOT NULL);
+      CREATE VIRTUAL TABLE command_history_fts USING fts5(cmd, tags, command_id UNINDEXED);
+      INSERT INTO command_history (session_id, ts, repo, cmd, tags)
+        VALUES ('s', 1, 'r', 'old cmd', 't');`);
+    raw.close();
+    const db = openDb(path);
+    // The old rows are gone, the new shape accepts a full record.
+    assert.deepStrictEqual(db.commandTagRows("r"), []);
+    db.createSession(session("s1"));
+    db.recordCommand(cmdRecord({ tags: "a", tagList: ["a"], outputHead: "out" }));
+    assert.equal(db.commandTagRows("repo").length, 1);
+    db.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

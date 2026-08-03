@@ -28,7 +28,7 @@
 
 import { z } from "zod";
 import { ProgramError } from "../errors.ts";
-import { normalizeTags } from "../history/record.ts";
+import { normalizeTags, OUTPUT_HEAD_CHARS, spillPathFrom } from "../history/record.ts";
 import type { HostFns, TurnCtx } from "../types.ts";
 import {
   backgroundNote,
@@ -80,6 +80,8 @@ export type ShellCtx = Pick<TurnCtx, "sessionId" | "workspace"> & {
     tags: string;
     exitCode: number | null;
     durationMs: number | null;
+    outputHead: string;
+    spillPath: string | null;
   }) => void;
 };
 
@@ -249,8 +251,18 @@ export async function bash(
       // program, and a program that does not log it leaves the failure invisible.
       const code = shell.status?.code ?? 0;
       if (code !== 0) ctx.exits?.push({ command, code });
-      ctx.record?.({ command, tags, exitCode: code, durationMs: Date.now() - startedAt });
-      return formatFinal(shell);
+      // The memory keeps what the PROGRAM saw — head, spill marker and all — so
+      // recall can answer "what did it print" and point at the spill file.
+      const final = formatFinal(shell);
+      ctx.record?.({
+        command,
+        tags,
+        exitCode: code,
+        durationMs: Date.now() - startedAt,
+        outputHead: final.slice(0, OUTPUT_HEAD_CHARS),
+        spillPath: spillPathFrom(final),
+      });
+      return final;
     }
     // Still running at the threshold. Stopped mid-wait dies like any interrupt.
     if (ctx.signal?.aborted) {
@@ -271,16 +283,18 @@ export async function bash(
     // turn has moved on, and the recorder swallows its own failures.
     const record = ctx.record;
     if (record) {
-      shell.exit.then(
-        (status) =>
-          record({
-            command,
-            tags,
-            exitCode: status.code ?? null,
-            durationMs: Date.now() - startedAt,
-          }),
-        () => record({ command, tags, exitCode: null, durationMs: Date.now() - startedAt }),
-      );
+      // The retained buffer at exit, not `formatFinal` — a promoted shell's final
+      // rendering belongs to whoever reads the job, and the head is enough here.
+      const done = (exitCode: number | null) =>
+        record({
+          command,
+          tags,
+          exitCode,
+          durationMs: Date.now() - startedAt,
+          outputHead: shellText(shell).slice(0, OUTPUT_HEAD_CHARS),
+          spillPath: null,
+        });
+      shell.exit.then((status) => done(status.code ?? null), () => done(null));
     }
     return backgroundNote(shell, id, bgAfterMs);
   } finally {
@@ -348,15 +362,6 @@ export async function shConcurrent(
     try {
       const status = await shell.exit;
       detach();
-      // A `{cmd, tag}` leg stamps its own history row; a bare string runs
-      // untagged. Either way the row carries cmd/exit/dirs, so FTS and
-      // per-directory stats see it.
-      ctx.record?.({
-        command,
-        tags,
-        exitCode: status.code,
-        durationMs: Date.now() - startedAt,
-      });
       await drained(shell, DRAIN_GRACE_MS);
       // Retention already bounded the buffer; bound it again so the same rule
       // applies to a command whose output arrived in one burst — and so an
@@ -371,6 +376,17 @@ export async function shConcurrent(
       } else if (ctx.signal?.aborted) {
         out = `[the turn was interrupted; this command was killed]\n${out}`.trimEnd();
       }
+      // A `{cmd, tag}` leg stamps its own history row; a bare string runs
+      // untagged. Recorded from the FINAL text, so the memory keeps exactly
+      // what the program saw — spill marker included.
+      ctx.record?.({
+        command,
+        tags,
+        exitCode: status.code,
+        durationMs: Date.now() - startedAt,
+        outputHead: out.slice(0, OUTPUT_HEAD_CHARS),
+        spillPath: spillPathFrom(out),
+      });
       return { code: status.code, out };
     } catch (err) {
       return { code: -1, out: message(err) };

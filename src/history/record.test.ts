@@ -161,7 +161,7 @@ test("the recorder writes a full row and never throws for a broken db", async ()
     const db = new SqliteDb(":memory:");
     db.createSession({ id: "s1", parentId: null, title: "s1", kind: "root", createdAt: 1 });
     const record = createCommandRecorder({ db, sessionId: "s1", workspace: ws, now: () => 42 });
-    record({ command: "bun test src/a.ts", tags: "bun:test", exitCode: 0, durationMs: 7 });
+    record({ command: "bun test src/a.ts", tags: "bun:test", exitCode: 0, durationMs: 7, outputHead: "ok", spillPath: null });
     const rows = db.commandTagRows(ws);
     eq(rows, [
       { tag: "bun", ts: 42, exitCode: 0 },
@@ -173,7 +173,7 @@ test("the recorder writes a full row and never throws for a broken db", async ()
     // A recorder over a session the db has never seen (FK violation) swallows it.
     const db2 = new SqliteDb(":memory:");
     const broken = createCommandRecorder({ db: db2 as Db, sessionId: "ghost", workspace: ws });
-    broken({ command: "true", tags: "t", exitCode: 0, durationMs: 1 });
+    broken({ command: "true", tags: "t", exitCode: 0, durationMs: 1, outputHead: "", spillPath: null });
     eq(db2.commandTagRows(ws), []);
     db2.close();
   } finally {
@@ -185,6 +185,6 @@ test("the recorder swallows a db whose recordCommand itself throws", () => {
   const db = { recordCommand: () => { throw new Error("disk full"); } } as unknown as Db;
   const record = createCommandRecorder({ db, sessionId: "s", workspace: "/nope" });
   // Not throwing IS the assertion.
-  record({ command: "true", tags: "t", exitCode: 0, durationMs: 1 });
+  record({ command: "true", tags: "t", exitCode: 0, durationMs: 1, outputHead: "", spillPath: null });
   ok(true);
 });

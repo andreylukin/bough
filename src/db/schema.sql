@@ -251,6 +251,14 @@ CREATE TABLE IF NOT EXISTS command_history (
   -- NULL = unknown (still running when the turn moved on).
   exit_code   INTEGER,
   duration_ms INTEGER,
+  -- The first ~2k chars of what the command PRINTED (as the program saw it,
+  -- spill marker included). Recall over results, not just invocations: "what
+  -- did the migration say" is answerable without re-running it. '' = silent.
+  output_head TEXT NOT NULL DEFAULT '',
+  -- Where the full output was spilled when it was over the bound
+  -- (hostfn/spill.ts). NULL = it fit. The file may since have been cleaned;
+  -- the path is a pointer, not a guarantee.
+  spill_path  TEXT,
   -- live | backfill. Backfilled labels are model-inferred after the fact and
   -- weigh less than generation-time intent.
   source      TEXT NOT NULL DEFAULT 'live'
@@ -277,11 +285,12 @@ CREATE TABLE IF NOT EXISTS command_dirs (
 CREATE INDEX IF NOT EXISTS command_dirs_dir ON command_dirs(rel_dir, command_id);
 CREATE INDEX IF NOT EXISTS command_dirs_command ON command_dirs(command_id);
 
--- Keyword search over recorded commands, for `history.sql()` recall. Same
--- standalone shape and tokenizer as messages_fts below.
+-- Keyword search over recorded commands — invocation AND result — for
+-- `history.sql()` recall. Same standalone shape and tokenizer as messages_fts.
 CREATE VIRTUAL TABLE IF NOT EXISTS command_history_fts USING fts5(
   cmd,
   tags,
+  output_head,
   command_id UNINDEXED,
   tokenize = 'unicode61 remove_diacritics 2'
 );

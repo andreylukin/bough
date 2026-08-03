@@ -1128,9 +1128,21 @@ export class SqliteDb implements DbPort {
     const tx = this.#db.transaction(() => {
       const info = this.#db.prepare(
         `INSERT INTO command_history
-           (session_id, ts, repo, cmd, tags, exit_code, duration_ms, source)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(r.sessionId, r.ts, r.repo, r.cmd, r.tags, r.exitCode, r.durationMs, r.source);
+           (session_id, ts, repo, cmd, tags, exit_code, duration_ms, output_head,
+            spill_path, source)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        r.sessionId,
+        r.ts,
+        r.repo,
+        r.cmd,
+        r.tags,
+        r.exitCode,
+        r.durationMs,
+        r.outputHead,
+        r.spillPath,
+        r.source,
+      );
       const id = Number(info.lastInsertRowid);
       for (const tag of r.tagList) {
         this.#run(`INSERT INTO command_tags (command_id, tag) VALUES (?, ?)`, id, tag);
@@ -1139,9 +1151,11 @@ export class SqliteDb implements DbPort {
         this.#run(`INSERT INTO command_dirs (command_id, rel_dir) VALUES (?, ?)`, id, dir);
       }
       this.#run(
-        `INSERT INTO command_history_fts (cmd, tags, command_id) VALUES (?, ?, ?)`,
+        `INSERT INTO command_history_fts (cmd, tags, output_head, command_id)
+         VALUES (?, ?, ?, ?)`,
         r.cmd,
         r.tags,
+        r.outputHead,
         id,
       );
     });

@@ -701,7 +701,14 @@ test("a scratchpad, when the ctx carries one, arrives under its own name", async
 // ---------------------------------------------------------------------------
 
 /** What one recorded command looks like to these tests. */
-type Recorded = { command: string; tags: string; exitCode: number | null; durationMs: number | null };
+type Recorded = {
+  command: string;
+  tags: string;
+  exitCode: number | null;
+  durationMs: number | null;
+  outputHead?: string;
+  spillPath?: string | null;
+};
 
 test("the bridged bash requires tags and the error teaches the format", async () => {
   const r = rig();
@@ -784,4 +791,20 @@ test("the sh shape error teaches the {cmd, tag} form", async () => {
   const err = await rejectsWith(() => host.sh("[1,2]"), ProgramError);
   has(err.message, '{cmd: "git push", tag: "git:push"}');
   await r.cleanup();
+});
+
+test("a recorded command carries its output head, and a spilled one its file", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "bough-spillrec-"));
+  const r = rig();
+  const recorded: Recorded[] = [];
+  const ctx: ShellCtx = { ...r.ctx, scratch: dir, record: (e) => recorded.push(e) };
+  const host = createShellHostFns(ctx, { registry: r.registry });
+  await host.bash("printf hello-there", "smoke:out");
+  // 30k chars: over the spill bound, so the head keeps the marker's file path.
+  await host.bash("yes x | head -c 30000", "smoke:spill");
+  eq(recorded[0].outputHead?.startsWith("hello-there"), true);
+  eq(recorded[0].spillPath, null);
+  ok(recorded[1].spillPath?.startsWith(dir), `spill path in ${recorded[1].spillPath}`);
+  await r.cleanup();
+  await rm(dir, { recursive: true, force: true });
 });
