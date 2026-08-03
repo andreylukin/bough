@@ -715,7 +715,7 @@ test("the bridged bash requires tags and the error teaches the format", async ()
   const host = createShellHostFns(r.ctx, { registry: r.registry });
   for (const missing of [undefined, "", "   ", ":::"]) {
     const err = await rejectsWith(() => host.bash("printf hi", missing as string), ProgramError);
-    has(err.message, 'bash("git push origin main", "git:push")');
+    has(err.message, 'bash("git push origin main", "git:push:main")');
   }
   await r.cleanup();
 });

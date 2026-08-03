@@ -440,10 +440,11 @@ export function createShellHostFns(ctx: ShellCtx, opts: ShellOptions = {}): Shel
       const normalized = normalizeTags(tags);
       if (!normalized) {
         throw new ProgramError(
-          `bash(cmd, tags) requires tags: 1-3 short lowercase intent tags, ` +
-            `colon-separated — e.g. bash("git push origin main", "git:push") or ` +
-            `bash("psql -f migrations/004.sql", "psql:migrate"). They index this ` +
-            `command in your cross-session history (see history.sql()).`,
+          `bash(cmd, tags) requires tags: 3-5 lowercase tags, colon-separated, ` +
+            `naming the tool, the intent and the subject — e.g. ` +
+            `bash("git push origin main", "git:push:main") or ` +
+            `bash("psql -f migrations/004.sql", "psql:migrate:demand"). They index ` +
+            `this command in your cross-session history (see history.sql()).`,
         );
       }
       return bash(cmd, ctx, opts, normalized);

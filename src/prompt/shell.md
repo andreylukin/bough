@@ -3,12 +3,15 @@
 await bash(cmd, tags) — one shell command in the workspace (the user's real
 checkout), returning combined output. It carries your interrupt.
 
-tags is REQUIRED: 1–3 short lowercase intent tags, colon-separated, naming what
-the command is FOR — bash("git push origin main", "git:push"),
-bash("psql -f migrations/004.sql", "psql:migrate"), bash("bun test src/tui",
-"bun:test"). Tags index the command in your cross-session history (searchable
-with history.sql()), so name the intent, not the syntax. Reuse this project's
-popular tags when they fit; coin new ones when not.
+tags is REQUIRED: 3–5 lowercase tags, colon-separated, naming the tool, the
+intent, AND the subject — bash("git push origin main", "git:push:main"),
+bash("psql -f migrations/004.sql", "psql:migrate:demand"), bash("bun test
+src/tui", "bun:test:composer"). Tags index the command in your cross-session
+history (history.sql()), and a future session finds this command BY these
+words — so a bare tool name is a wasted tag: not "wc" but "app:linecount", not
+"find" but "repo:layout". Include the feature or topic you are working on as a
+tag whenever there is one. Reuse this project's popular tags when they fit;
+coin new ones when not.
 
 A bash(cmd) still running after ~60s AUTO-BACKGROUNDS. It is NOT killed: the call
 returns "…moved to background as bg_N", the command keeps running, and a
