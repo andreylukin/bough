@@ -147,7 +147,22 @@ test("host names: one list, with the dropped verbs actually dropped", () => {
   // and `mcp` were bridged once and are not any more: HTTP is the runtime's own
   // fetch, and an MCP tool is called through `bough mcp call` in the shell — so
   // neither may be re-added here without the prompt section to match.
-  for (const gone of ["read", "edit", "extract", "recall", "fetch", "mcp", "mcpStatus", "image"]) {
+  for (
+    const gone of [
+      "read",
+      "edit",
+      "extract",
+      "recall",
+      "fetch",
+      "mcp",
+      "mcpStatus",
+      "image",
+      // The memory is `bough tags` in the shell now. A verb here would be a second
+      // door to the same database, and the CLI's read-only guarantee would stop
+      // being the only way in.
+      "history",
+    ]
+  ) {
     assert(!(HOST_FN_NAMES as readonly string[]).includes(gone), `${gone} must not be bridged`);
   }
   // Declared now even though M6 implements them — the list is frozen.

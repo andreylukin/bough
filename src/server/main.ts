@@ -29,7 +29,6 @@ import {
   delegationTurnDeps,
 } from "../hostfn/delegate.ts";
 import { createArtifactHostFn } from "../hostfn/artifact.ts"; // T6.6
-import { createHistoryHostFn } from "../hostfn/history.ts";
 import { enableSqliteExtensions } from "../db/extensions.ts";
 import { createEmbedLayer } from "../history/embed.ts";
 import { createAskHostFn } from "../hostfn/ask.ts"; // T6.1
@@ -874,7 +873,6 @@ const skillAwareStarter = (sessionId: string) =>
         "ask",
         "state",
         "artifact",
-        "history",
       ],
       // Resolved per turn. `notes` carries the skills that were
       // NAMED and could not be loaded: a malformed SKILL.md must not make a `/name`
@@ -908,7 +906,6 @@ const skillAwareStarter = (sessionId: string) =>
       ...createAskHostFn(turnCtx),
       ...createStateHostFn(turnCtx),
       ...createArtifactHostFn(turnCtx),
-      ...createHistoryHostFn(embed ? { similar: (t) => embed.similar(t) } : {}),
     }),
   });
 

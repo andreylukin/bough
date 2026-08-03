@@ -34,13 +34,22 @@
  *   1  there is no command memory yet
  *   2  usage problem
  */
+import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
+import { createEmbedLayer } from "../history/embed.ts";
 import type { Db, TagDiversityDay, TaggedCommand } from "../types.ts";
 import { openDb } from "../db/db.ts";
 import { dbPath } from "../paths.ts";
 import { type RankedTag, rankedRepoTags, workspaceRepo } from "../history/stats.ts";
 
-export type TagsVerb = "list" | "show" | "stats";
+export type TagsVerb = "list" | "show" | "stats" | "sql" | "similar";
+
+/** Bounded so one greedy SELECT cannot flood a terminal — or a tool result. */
+const MAX_ROWS = 200;
+
+/** The tables a query may read. Names only — the message a refusal shows. */
+const SURFACE =
+  "command_history, command_tags, command_dirs, command_history_fts, messages, messages_fts, sessions, turns";
 
 export interface TagsArgs {
   verb: TagsVerb;
@@ -67,6 +76,8 @@ export const USAGE = [
   "  (none)          this project's tag vocabulary — what the model is primed with",
   "  show TAG        the commands recorded under TAG, newest first",
   "  stats           tag coverage and vocabulary per day — did anything change?",
+  "  sql QUERY       a read-only SELECT over the memory and the transcripts",
+  "  similar TEXT    semantic recall, where the local vector layer exists",
   "",
   "  --repo R        scope to a repo identity (origin URL or path); default: here",
   "  --all           every repo the memory knows, not just this one",
@@ -128,7 +139,13 @@ export function parseTagsArgs(argv: readonly string[]): TagsArgs | UsageError {
   }
 
   const [first, ...rest] = positional;
-  if (first === "show") {
+  if (first === "sql" || first === "similar") {
+    if (rest.length !== 1) {
+      return { usageError: `${first} needs exactly one quoted argument\n${USAGE}` };
+    }
+    args.verb = first;
+    args.tag = rest[0];
+  } else if (first === "show") {
     if (rest.length !== 1) return { usageError: `show needs exactly one TAG\n${USAGE}` };
     args.verb = "show";
     args.tag = rest[0];
@@ -150,11 +167,53 @@ export function parseTagsArgs(argv: readonly string[]): TagsArgs | UsageError {
 
 export interface TagsDeps {
   db?: Db;
+  /** The file `sql` opens read-only. Absent = the live `paths.dbPath()`. */
+  dbFile?: string;
+  /** The vector layer factory, injected so a test needs no extensions. */
+  embed?: () => { similar(text: string): Promise<unknown[]>; close(): void } | null;
   /** Where "this checkout" is resolved from. Absent = the process's cwd. */
   cwd?: string;
   now?: () => number;
   out: (line: string) => void;
   err: (line: string) => void;
+}
+
+/**
+ * A read-only SELECT over the whole database — what `history.sql()` used to be, and
+ * now the only door to it.
+ *
+ * READ-ONLY IS ENFORCED TWICE, both at the connection: the handle is opened
+ * `{readonly: true}` AND `PRAGMA query_only = ON`, which also covers anything a
+ * clever statement ATTACHes. The keyword check on top exists only to answer a write
+ * attempt with a sentence instead of a bare SQLITE_READONLY. That is the whole
+ * reason this is a command rather than advice to run `sqlite3`: the guarantee is
+ * structural, against a file a live server is writing to, instead of a convention
+ * the caller is asked to remember.
+ */
+function querySql(path: string, sql: string): { rows: unknown[] } | { error: string } {
+  const head = sql.replace(/^\s*(--[^\n]*\n|\/\*[\s\S]*?\*\/|\s)+/g, "").slice(0, 8)
+    .toUpperCase();
+  if (!head.startsWith("SELECT") && !head.startsWith("WITH")) {
+    return {
+      error: `read-only: a query must start with SELECT or WITH. Queryable: ${SURFACE}.`,
+    };
+  }
+  let db: Database | undefined;
+  try {
+    db = new Database(path, { readonly: true });
+    db.exec("PRAGMA query_only = ON");
+    // A concurrent writer holding the journal must surface as a brief wait, not as
+    // a spurious "database is locked".
+    db.exec("PRAGMA busy_timeout = 2000");
+    return { rows: (db.prepare(sql).all() as unknown[]).slice(0, MAX_ROWS) };
+  } catch (err) {
+    // The caller wrote the SQL; the driver's own message is what lets them fix it.
+    return {
+      error: `${err instanceof Error ? err.message : String(err)}. Queryable: ${SURFACE}.`,
+    };
+  } finally {
+    db?.close();
+  }
 }
 
 /** `2 days ago`, `3h ago` — a timestamp a reader can place without arithmetic. */
@@ -267,8 +326,11 @@ function renderStats(days: TagDiversityDay[], out: (l: string) => void): void {
 /**
  * Run the command. Returns an exit code; every effect is injected, so the whole
  * thing is testable against an in-memory database and two collectors.
+ *
+ * Async only because `similar` is — the vector layer embeds the query inside SQLite
+ * and that is a real await. Every other verb resolves without yielding.
  */
-export function runTags(argv: readonly string[], deps: TagsDeps): number {
+export async function runTags(argv: readonly string[], deps: TagsDeps): Promise<number> {
   const parsed = parseTagsArgs(argv);
   if ("usageError" in parsed) {
     deps.err(parsed.usageError);
@@ -288,6 +350,39 @@ export function runTags(argv: readonly string[], deps: TagsDeps): number {
   // `--all` is the one way to see across projects; otherwise the scope is this
   // checkout's identity, which is what the memory is keyed by (`history/record.ts`).
   const repo = parsed.allRepos ? undefined : parsed.repo ?? workspaceRepo(deps.cwd ?? process.cwd());
+
+  if (parsed.verb === "sql") {
+    const answer = querySql(deps.dbFile ?? dbPath(), parsed.tag!);
+    if ("error" in answer) {
+      deps.err(answer.error);
+      return 2;
+    }
+    deps.out(JSON.stringify(answer.rows, null, 2));
+    return 0;
+  }
+
+  if (parsed.verb === "similar") {
+    const layer = (deps.embed ?? createEmbedLayer)();
+    if (!layer) {
+      deps.err(
+        `no local embedding layer here, so there is nothing to be similar with. ` +
+          `Keyword search always works: bough tags sql "SELECT h.cmd FROM ` +
+          `command_history_fts f JOIN command_history h ON h.id = f.command_id ` +
+          `WHERE f.cmd MATCH 'docker' ORDER BY h.ts DESC LIMIT 10"`,
+      );
+      return 1;
+    }
+    try {
+      const rows = await layer.similar(parsed.tag!);
+      deps.out(JSON.stringify(rows.slice(0, MAX_ROWS), null, 2));
+      return 0;
+    } catch (err) {
+      deps.err(`similar failed: ${err instanceof Error ? err.message : String(err)}`);
+      return 1;
+    } finally {
+      layer.close();
+    }
+  }
 
   if (parsed.verb === "show") {
     const rows = db.commandsForTag(parsed.tag!, {
@@ -337,7 +432,7 @@ export function runTags(argv: readonly string[], deps: TagsDeps): number {
 }
 
 if (import.meta.main) {
-  const code = runTags(process.argv.slice(2), {
+  const code = await runTags(process.argv.slice(2), {
     out: (l) => console.log(l),
     err: (l) => console.error(l),
   });

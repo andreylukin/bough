@@ -165,6 +165,9 @@ test("a core-only turn gets exactly the always-on sections", () => {
   assertEquals(p.sections, [
     "identity",
     "shell",
+    // The memory is a `bough tags` invocation now, not a host verb — so a turn that
+    // can run a command can reach it, and the section rides with `bash`.
+    "history",
     "files",
     "patch-grammar",
     "printing",

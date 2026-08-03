@@ -543,13 +543,6 @@ export interface HostFns {
   schedule?(verb: string, argsJson: string): Promise<string>;
   /** Publish a file for browser viewing under the session's artifact dir; returns `{url, href}`. */
   artifact?(name: string, content: string): Promise<string>;
-  /**
-   * Verb-dispatched recall over the command-history memory: `sql` (read-only
-   * SELECT over command_history/command_tags/command_dirs/command_history_fts,
-   * row-capped) and later `similar` (vector recall, when the optional local
-   * embedding layer is present).
-   */
-  history?(verb: string, argsJson: string): Promise<string>;
 }
 
 /** Names in the protocol list that `HostFns` does not declare. Must be `never`. */

@@ -146,13 +146,13 @@ export interface SectionSha {
 export type SectionId =
   | "identity"
   | "shell"
-  | "history"
   | "files"
   | "patch-grammar"
   | "ask"
   | "state"
   | "schedule"
   | "artifact"
+  | "history"
   | "delegation"
   | "delegation-nested"
   | "workflow"
@@ -199,7 +199,9 @@ const SECTIONS: readonly SectionSpec[] = [
   { id: "shell", file: "shell.md", when: (f) => f.has("bash") },
   // Right after shell: the tags bash() requires are what this section makes
   // worth writing, and the two read as one contract.
-  { id: "history", file: "history.md", when: (f) => f.has("history") },
+  // Gated on `bash`, like the MCP catalog: the memory is reached by running
+  // `bough tags`, so a turn that cannot run a command cannot reach it.
+  { id: "history", file: "history.md", when: (f) => f.has("bash") },
   { id: "files", file: "files.md", when: (f) => f.has("view") },
   { id: "patch-grammar", file: "patch-grammar.md", when: (f) => f.has("patch") },
   { id: "ask", file: "ask.md", when: (f) => f.has("ask") },

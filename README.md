@@ -93,7 +93,6 @@ Bun runtime and may ignore all of them.
 |---|---|
 | Shell | `bash` (auto-backgrounds past 60s, never killed) · `sh` for concurrent commands · `bashBg` / `bashOutput` / `bashWait` / `bashKill` |
 | Files | `view` → numbered lines with a version tag · `patch` → hash-anchored line edits · `write` for new files |
-| Memory | `history.sql` → read-only SQL over the command memory · `history.similar` → semantic recall where the vector layer exists |
 | Delegation | `agent` (blocking) · `spawn` (detached) · `join` · `adopt` · `workflow.*` |
 | Session | `ask` a human mid-program · `state.*` durable KV · `schedule.*` · `artifact` |
 
@@ -111,15 +110,22 @@ command strings after the fact, and the exit code is the ground truth that weigh
 scope key is the repo a command *touched* — git origin URL, else path — not where the session sits,
 so a session rooted at `~` still files into the right project.
 
+Recall is a COMMAND, not a verb. There is no memory host function: the program runs `bough tags`
+in the shell — `show TAG` for what worked, `sql "SELECT …"` for anything else, `similar "text"`
+where the vector layer exists — and `sql` opens the file read-only with `query_only` on, so the
+guarantee holds against the database the server is writing to. One door for the model and the
+human, and nothing to keep in step with a bridge.
+
 Recall runs both ways. The harness primes: a session opens with the project's own tag vocabulary —
 weighted by success and a 30-day recency half-life, then damped by how many *other* projects use the
 same word, so the list is the subjects this repo talks about rather than the tool names every repo
 shares — and a round that reaches into a new directory gets one dim
-`[history]` line naming what past sessions tagged there. The program pulls: `history.sql()` is a
+`[history]` line naming what past sessions tagged there. The program pulls:
+`bough tags sql` is a
 read-only SELECT over `command_history`, its tag and directory junctions, and an FTS index covering
 *output* as well as invocations — so "what did that migration actually print" is answerable without
 re-running it. It is the same `~/.bough/bough.db` that holds the transcripts, which is why the
-bundled `history` skill can answer across both with one `sqlite3` connection. `history.similar()`
+bundled `history` skill answers across both through the same command. `bough tags similar`
 adds KNN recall where the optional vector layer exists: `sqlite-vec` + `sqlite-lembed` embed with a
 local MiniLM *inside* SQLite, into a separate `~/.bough/embeddings.db` — no native module, no
 subprocess, no API call. Where the SQLite build cannot load extensions it simply is not there, and

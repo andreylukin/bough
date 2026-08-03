@@ -336,6 +336,10 @@ program name two different files (§6, the workspace note).
 | `await artifact(name, content)` | Publishes a file for browser viewing; returns `{url, href}`. |
 | `console.log(...)` | Streams live to the UI and batches into the model's tool result. |
 
+The command memory has no verb of its own: it is read with `bough tags` in the
+shell (`show`, `sql`, `similar`, `stats`), which opens the database read-only.
+One door for the model and the human, and no bridge to keep in step with it.
+
 ## 7. Subagents
 
 A subagent is a real session (`kind: "subagent"`) with a **fresh, task-only

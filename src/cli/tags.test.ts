@@ -14,6 +14,9 @@
  */
 import { test } from "bun:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { openDb, type SqliteDb } from "../db/db.ts";
 import { parseTagsArgs, runTags, USAGE } from "./tags.ts";
 import { resetStatsMemo } from "../history/stats.ts";
@@ -70,7 +73,7 @@ function seeded(): SqliteDb {
   return db;
 }
 
-test("parsing is pure and total, and a bare word is a tag", () => {
+test("parsing is pure and total, and a bare word is a tag", async () => {
   assert.deepEqual(parseTagsArgs([]), {
     verb: "list",
     limit: 20,
@@ -97,16 +100,16 @@ test("parsing is pure and total, and a bare word is a tag", () => {
   assert.equal("usageError" in all ? "x" : all.repo, undefined);
 });
 
-test("--help is not a failure", () => {
+test("--help is not a failure", async () => {
   const c = collector();
-  assert.equal(runTags(["--help"], { ...c.deps, db: seeded() }), 0);
+  assert.equal(await runTags(["--help"], { ...c.deps, db: seeded() }), 0);
   assert.equal(c.err[0], USAGE);
 });
 
-test("the default view is the priming note's ranking, arithmetic shown", () => {
+test("the default view is the priming note's ranking, arithmetic shown", async () => {
   resetStatsMemo();
   const c = collector();
-  const code = runTags(["--repo", "mine"], { ...c.deps, db: seeded(), now: () => T0 });
+  const code = await runTags(["--repo", "mine"], { ...c.deps, db: seeded(), now: () => T0 });
   assert.equal(code, 0);
   const text = c.out.join("\n");
   // The ranking itself: `git` outweighs `bun` here (6 successes to 3) and loses,
@@ -125,10 +128,10 @@ test("the default view is the priming note's ranking, arithmetic shown", () => {
   assert.match(text, /how FEW repos use the tag/);
 });
 
-test("show answers what worked, newest first, with the exit code first", () => {
+test("show answers what worked, newest first, with the exit code first", async () => {
   const c = collector();
   assert.equal(
-    runTags(["show", "bun", "--repo", "mine"], { ...c.deps, db: seeded(), now: () => T0 }),
+    await runTags(["show", "bun", "--repo", "mine"], { ...c.deps, db: seeded(), now: () => T0 }),
     0,
   );
   const text = c.out.join("\n");
@@ -138,19 +141,19 @@ test("show answers what worked, newest first, with the exit code first", () => {
   assert.match(text, /✗ .*bun test failing/);
 });
 
-test("show is scoped to this repo unless --all says otherwise", () => {
+test("show is scoped to this repo unless --all says otherwise", async () => {
   const mine = collector();
-  runTags(["show", "git", "--repo", "mine"], { ...mine.deps, db: seeded(), now: () => T0 });
+  await runTags(["show", "git", "--repo", "mine"], { ...mine.deps, db: seeded(), now: () => T0 });
   assert.equal(mine.out.join("\n").includes("git push"), false, "the other repo's commands");
 
   const all = collector();
-  runTags(["show", "git", "--all"], { ...all.deps, db: seeded(), now: () => T0 });
+  await runTags(["show", "git", "--all"], { ...all.deps, db: seeded(), now: () => T0 });
   assert.match(all.out.join("\n"), /git push/);
 });
 
-test("stats reports coverage and vocabulary per day", () => {
+test("stats reports coverage and vocabulary per day", async () => {
   const c = collector();
-  assert.equal(runTags(["stats", "--repo", "mine"], { ...c.deps, db: seeded(), now: () => T0 }), 0);
+  assert.equal(await runTags(["stats", "--repo", "mine"], { ...c.deps, db: seeded(), now: () => T0 }), 0);
   const text = c.out.join("\n");
   assert.match(text, /day\s+sessions\s+cmds\s+tagged\s+vocab\s+refs\s+uses/);
   // The day with the untagged leg is the one that reports less than 100% coverage —
@@ -159,15 +162,15 @@ test("stats reports coverage and vocabulary per day", () => {
   assert.match(text, /100%/);
 });
 
-test("--json is the same answer without the rendering", () => {
+test("--json is the same answer without the rendering", async () => {
   const c = collector();
-  runTags(["show", "bun", "--repo", "mine", "--json"], { ...c.deps, db: seeded(), now: () => T0 });
+  await runTags(["show", "bun", "--repo", "mine", "--json"], { ...c.deps, db: seeded(), now: () => T0 });
   const rows = JSON.parse(c.out.join("\n")) as { cmd: string; exitCode: number }[];
   assert.equal(rows.length, 4);
   assert.equal(rows.some((r) => r.exitCode === 1), true);
 });
 
-test("a recalled command reaches the PROGRAM that ran it", () => {
+test("a recalled command reaches the PROGRAM that ran it", async () => {
   const db = openDb(":memory:");
   db.createSession({ id: "s1", title: "t", kind: "root", parentId: null, createdAt: T0 });
   const program = `const r = await bash("psql -f migrations/004.sql", "psql:migrate:demand");\nconsole.log(r);`;
@@ -201,7 +204,7 @@ test("a recalled command reaches the PROGRAM that ran it", () => {
   // The command is recalled by the REFERENCE as readily as by a word — same table,
   // same join, which is the whole point of keeping them in one namespace.
   const c = collector();
-  runTags(["show", "linear.eng-1234", "--repo", "mine"], {
+  await runTags(["show", "linear.eng-1234", "--repo", "mine"], {
     ...c.deps,
     db,
     now: () => T0,
@@ -215,7 +218,7 @@ test("a recalled command reaches the PROGRAM that ran it", () => {
 
   // …and `--program` prints it, which is the half that is actually reusable.
   const full = collector();
-  runTags(["show", "linear.eng-1234", "--repo", "mine", "--program"], {
+  await runTags(["show", "linear.eng-1234", "--repo", "mine", "--program"], {
     ...full.deps,
     db,
     now: () => T0,
@@ -239,12 +242,12 @@ test("a recalled command reaches the PROGRAM that ran it", () => {
     source: "live",
   });
   const old = collector();
-  runTags(["show", "probe", "--repo", "mine"], { ...old.deps, db, now: () => T0 });
+  await runTags(["show", "probe", "--repo", "mine"], { ...old.deps, db, now: () => T0 });
   assert.match(old.out.join("\n"), /select 1/);
   assert.equal(old.out.join("\n").includes("↳ program"), false);
 });
 
-test("references are recalled but never primed", () => {
+test("references are recalled but never primed", async () => {
   // The ranking must not hand a ticket number the maximum rarity boost and open
   // every session reciting it. It is still in the table, still joinable, still
   // findable by name — just not in the vocabulary the model is shown.
@@ -264,17 +267,95 @@ test("references are recalled but never primed", () => {
     spillPath: null,
     source: "live",
   });
-  runTags(["--repo", "mine"], { ...c.deps, db, now: () => T0 });
+  await runTags(["--repo", "mine"], { ...c.deps, db, now: () => T0 });
   assert.equal(c.out.join("\n").includes("linear.eng-1234"), false, c.out.join("\n"));
 
   const shown = collector();
-  runTags(["show", "linear.eng-1234", "--repo", "mine"], { ...shown.deps, db, now: () => T0 });
+  await runTags(["show", "linear.eng-1234", "--repo", "mine"], { ...shown.deps, db, now: () => T0 });
   assert.match(shown.out.join("\n"), /bun test src\/tui/);
 });
 
-test("an empty memory says so rather than printing an empty table", () => {
+test("sql answers a SELECT and refuses everything else", async () => {
+  // The guarantee that makes this a command instead of advice to run `sqlite3`:
+  // a write cannot be expressed, against a file the server has open.
+  const dir = mkdtempSync(join(tmpdir(), "bough-tags-sql-"));
+  const file = join(dir, "bough.db");
+  try {
+    const db = openDb(file);
+    db.createSession({ id: "s1", title: "wire the panel", kind: "root", parentId: null, createdAt: T0 });
+    db.close();
+
+    const ok = collector();
+    assert.equal(
+      await runTags(["sql", "SELECT title FROM sessions"], { ...ok.deps, dbFile: file, db: openDb(file) }),
+      0,
+    );
+    assert.deepEqual(JSON.parse(ok.out.join("\n")), [{ title: "wire the panel" }]);
+
+    for (
+      const bad of [
+        "DELETE FROM sessions",
+        "UPDATE sessions SET title = 'x'",
+        "DROP TABLE sessions",
+        "PRAGMA writable_schema = ON",
+      ]
+    ) {
+      const c = collector();
+      assert.equal(await runTags(["sql", bad], { ...c.deps, dbFile: file, db: openDb(file) }), 2);
+      assert.match(c.err.join("\n"), /must start with SELECT or WITH|read-only/);
+    }
+
+    // A malformed query answers with the driver's own words, which is what lets the
+    // caller fix it — not a bare failure.
+    const broken = collector();
+    assert.equal(
+      await runTags(["sql", "SELECT nope FROM sessions"], {
+        ...broken.deps,
+        dbFile: file,
+        db: openDb(file),
+      }),
+      2,
+    );
+    assert.match(broken.err.join("\n"), /nope/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("similar says why it cannot answer, and names what always works", async () => {
+  // Graceful absence: the vector layer is optional by design, and the FTS path it
+  // points at needs no extensions at all.
+  const c = collector();
+  assert.equal(
+    await runTags(["similar", "get into the container"], {
+      ...c.deps,
+      db: seeded(),
+      embed: () => null,
+    }),
+    1,
+  );
+  assert.match(c.err.join("\n"), /no local embedding layer/);
+  assert.match(c.err.join("\n"), /bough tags sql/);
+
+  // …and answers through the layer when there is one.
+  const live = collector();
+  assert.equal(
+    await runTags(["similar", "docker"], {
+      ...live.deps,
+      db: seeded(),
+      embed: () => ({
+        similar: () => Promise.resolve([{ cmd: "docker exec -it web sh", distance: 0.2 }]),
+        close: () => {},
+      }),
+    }),
+    0,
+  );
+  assert.match(live.out.join("\n"), /docker exec -it web sh/);
+});
+
+test("an empty memory says so rather than printing an empty table", async () => {
   const c = collector();
   const empty = openDb(":memory:");
-  assert.equal(runTags([], { ...c.deps, db: empty, now: () => T0, cwd: "/nowhere" }), 0);
+  assert.equal(await runTags([], { ...c.deps, db: empty, now: () => T0, cwd: "/nowhere" }), 0);
   assert.match(c.out.join("\n"), /no tagged commands yet/);
 });

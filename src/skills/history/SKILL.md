@@ -6,26 +6,30 @@ description: Search and read bough's own conversation and command history by que
 # bough's own history
 
 bough keeps everything in one SQLite database — `~/.bough/bough.db`, or
-`$BOUGH_DB` / `$BOUGH_HOME/bough.db` when those are set. In a program you have
-`history.sql()` / `history.similar()` for the command memory; this skill is for
-everything else — transcripts, costs, the session tree — and for reading the
-same file directly when that is more convenient. Cross-session transcript
-search is **keyword FTS**; the command memory additionally has an optional
-vector index in a SEPARATE file (`~/.bough/embeddings.db`) that plain `sqlite3`
-cannot open — it needs the vec0 extension, so query commands here and leave
-similarity to `history.similar()`.
+`$BOUGH_DB` / `$BOUGH_HOME/bough.db` when those are set. Transcripts, costs, the
+session tree and the command memory are all in that one file.
 
-Open it **read-only** so a query can never corrupt a live server's file:
+**Query it through `bough tags`, never by opening the file yourself.** Not with
+`sqlite3`, not with a library, not read-only-by-convention:
 
 ```bash
-sqlite3 "file:$HOME/.bough/bough.db?mode=ro" -readonly
+bough tags sql "SELECT id, title FROM sessions ORDER BY created_at DESC LIMIT 5"
+bough tags sql --json "SELECT tag, count(*) n FROM command_tags GROUP BY tag"
 ```
 
-Run one-shot queries with `-cmd` / `-json`, e.g.
+The command opens the file `{readonly: true}` with `PRAGMA query_only = ON` and
+refuses anything that is not `SELECT` or `WITH`, so the guarantee holds against a
+database the server is writing to right now — where a hand-rolled connection is
+one forgotten flag away from a write lock, or a write, on live data. Rows come
+back as JSON, capped at 200.
 
-```bash
-sqlite3 -readonly -json "$HOME/.bough/bough.db" "SELECT id, title FROM sessions LIMIT 5"
-```
+The curated views are worth reaching for first, because they already know the
+joins: `bough tags` (this project's vocabulary), `bough tags show TAG`
+(what worked, exit code first, `--program` for the round), `bough tags stats`
+(coverage and vocabulary per day). `bough tags similar "text"` is semantic
+recall where the local vector layer exists — it lives in a SEPARATE file
+(`~/.bough/embeddings.db`) that needs the vec0 extension, which is exactly why
+it is a command rather than a query you could write here.
 
 Timestamps are **epoch milliseconds** everywhere; `datetime(created_at/1000,
 'unixepoch','localtime')` renders one. Booleans are `0`/`1`.
@@ -222,9 +226,11 @@ SELECT date(created_at/1000,'unixepoch','localtime') AS day,
 
 ## Rules of engagement
 
-- **Read-only.** Never INSERT, UPDATE or DELETE here, and never `VACUUM` — the
-  server owns this file and is probably writing to it right now. Use the HTTP API
-  for anything that changes state.
+- **Read-only, and enforced.** `bough tags sql` refuses anything that is not
+  SELECT or WITH and cannot write even if it wanted to — so this is a guarantee
+  now rather than a rule you have to keep. Use the HTTP API for anything that
+  changes state. The SQL blocks below are query bodies: pass one as the quoted
+  argument.
 - A row can be mid-turn: `messages.pending = 1` and `turns.status = 'running'`
   mean the supervisor is still streaming. `orphaned` means a server restart ended
   it.

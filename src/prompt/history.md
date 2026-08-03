@@ -1,44 +1,55 @@
 ## Command history
 
 Every bash() you run is remembered across sessions — command, tags, exit code,
-duration, and the directories it touched — scoped to this project. Before
-trial-and-erroring a command someone (you, in a past session) likely already got
-right (connecting to a container, a deploy incantation, a tricky migration),
-check the memory first.
+duration, what it printed, and the program it ran in — scoped to this project.
+Before trial-and-erroring a command someone (you, in a past session) likely
+already got right — connecting to a container, a deploy incantation, a tricky
+migration — check the memory first.
 
 This holds for TOPICS, not just commands: when a request names something that
 matches one of this project's tags (in the popular-tags note or a [history]
-hint), query that tag before exploring fresh — what past sessions did under it
-is context for the answer, not just a reusable incantation.
+hint), query that tag before exploring fresh. It holds for REFERENCES too — if
+the work is for a ticket or a PR, `bough tags show linear.eng-1234` is every
+command already run for it.
 
-await history.sql(query) — read-only SELECT over the memory, returning rows as
-objects. Tables:
+The memory is reached through the CLI, in bash. There is no host function:
+
+    bough tags                  this project's tag vocabulary, ranked
+    bough tags show TAG         the commands under TAG, newest first, exit code
+                                first — add --program for the round each ran in
+    bough tags sql "SELECT …"   a read-only SELECT, rows as JSON
+    bough tags similar "text"   semantic recall, where the vector layer exists
+
+Add --json to any of them for parseable output, --all to cross projects, and
+--limit N to widen a list.
+
+`sql` refuses anything that is not SELECT or WITH, and opens the file read-only,
+so it is safe against the database the server is writing to right now. Tables:
 
     command_history(id, session_id, ts, repo, cmd, tags, exit_code, duration_ms,
-                    output_head, spill_path)
+                    output_head, spill_path, message_id)
     command_tags(command_id, tag)          — one row per tag
     command_dirs(command_id, rel_dir)      — directories the command was about
     command_history_fts(cmd, tags, output_head) — FTS5; MATCH for keyword search
 
 output_head is the first ~2k chars a command PRINTED, so you can recall results,
 not just invocations; spill_path names the file holding a big output in full (it
-may have been cleaned since — check before reading). The same connection can
-also read the transcript: messages(id, session_id, role, parts, created_at) and
-messages_fts(text, message_id, session_id) — past reasoning and answers,
-FTS-searchable.
-
-await history.similar(text) — semantic recall over the same memory ("get into
-the running container" finds docker exec commands no keyword would). On machines
-without the local embedding layer it rejects catchably; history.sql() with MATCH
-is the fallback it names.
+may have been cleaned since — check before reading); message_id is the message
+whose run_steps program ran it, so `messages.parts` gives you the whole round.
+The same query can read the transcript: messages(id, session_id, role, parts,
+created_at), messages_fts(text, message_id, session_id), sessions and turns.
 
 The commands worth copying are the ones that WORKED — filter exit_code = 0.
 
-    // what worked for docker here before
-    await history.sql("SELECT cmd FROM command_history JOIN command_tags t ON
+    # what worked for docker here before
+    bough tags sql "SELECT cmd FROM command_history JOIN command_tags t ON
       t.command_id = id WHERE t.tag = 'docker' AND exit_code = 0
-      ORDER BY ts DESC LIMIT 5")
-    // keyword search when you don't know the tag
-    await history.sql("SELECT h.cmd, h.exit_code FROM command_history_fts f JOIN
+      ORDER BY ts DESC LIMIT 5"
+    # keyword search when you do not know the tag
+    bough tags sql "SELECT h.cmd, h.exit_code FROM command_history_fts f JOIN
       command_history h ON h.id = f.command_id WHERE f.cmd MATCH 'migrate'
-      ORDER BY h.ts DESC LIMIT 10")
+      ORDER BY h.ts DESC LIMIT 10"
+
+Never open the database file yourself — not with sqlite3, not with a library.
+The CLI is read-only by construction and the file is one a live server is
+writing to; a stray write or a long lock there is a broken turn for everyone.

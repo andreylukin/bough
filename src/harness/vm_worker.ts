@@ -79,7 +79,7 @@ const jsonCall = async (fn: HostFnName, args: unknown[]): Promise<unknown> =>
  * program actually calls (`state.get(...)` → `state("get", argsJson)`). The verb
  * lists live in `protocol.ts` so the host dispatcher and this cannot drift.
  */
-function methodObject(fn: "state" | "schedule" | "workflow" | "history") {
+function methodObject(fn: "state" | "schedule" | "workflow") {
   const verbs: readonly string[] = HOST_FN_VERBS[fn];
   return Object.fromEntries(
     verbs.map((
@@ -239,9 +239,6 @@ const bindings = {
   // A non-string content (an object) is stringified so programs can pass it directly.
   artifact: (name: string, content: unknown) =>
     jsonCall("artifact", [name, typeof content === "string" ? content : JSON.stringify(content)]),
-  // Recall over the command-history memory: history.sql("SELECT …") → rows,
-  // history.similar("text") → rows (when the vector layer is present).
-  history: methodObject("history"),
 } satisfies Record<HostFnName, unknown>;
 
 /**

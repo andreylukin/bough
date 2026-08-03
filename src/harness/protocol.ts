@@ -66,7 +66,6 @@ export const HOST_FN_NAMES = [
   "state",
   "schedule",
   "artifact",
-  "history",
 ] as const;
 
 export type HostFnName = (typeof HOST_FN_NAMES)[number];
@@ -103,10 +102,6 @@ export const HOST_FN_VERBS = {
   state: ["get", "set", "list", "delete"],
   schedule: ["list", "add", "enable", "disable", "remove"],
   workflow: ["start", "rerun", "stop", "pause", "resume", "status", "list"],
-  // `similar` is bound worker-side from day one but only granted host-side when
-  // the optional vector layer is present — absence rejects catchably, like any
-  // ungranted capability.
-  history: ["sql", "similar"],
 } as const satisfies Record<string, readonly string[]>;
 
 // ---- program worker: main → worker ------------------------------------------
