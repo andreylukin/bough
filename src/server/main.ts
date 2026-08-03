@@ -33,7 +33,6 @@ import { createHistoryHostFn } from "../hostfn/history.ts";
 import { enableSqliteExtensions } from "../db/extensions.ts";
 import { createEmbedLayer } from "../history/embed.ts";
 import { createAskHostFn } from "../hostfn/ask.ts"; // T6.1
-import { createImageHostFn } from "../hostfn/image.ts"; // T6.4
 import { jobs } from "../hostfn/jobs.ts";
 import { killAllMcpServers } from "../mcp/client.ts"; // T7.1
 import { loadRegistry, promoteSessionGrants, registryFile } from "../mcp/config.ts"; // T7.1
@@ -284,7 +283,7 @@ if (mirrored.length > 0) {
 ctx.startTurn = createDelegatingTurnStarter({
   base: {
     survivingJobs: (sessionId) => jobs.runningIds(sessionId),
-    granted: [...BASE_HOST_FNS, "workflow", "schedule", "image"],
+    granted: [...BASE_HOST_FNS, "workflow", "schedule"],
   },
   deliver: createNoteDeliverer(),
   extend: (turnCtx) => ({
@@ -292,7 +291,6 @@ ctx.startTurn = createDelegatingTurnStarter({
       ? { workflow: createWorkflowHostFn(turnCtx, workflowControl) }
       : {}),
     ...createScheduleHostFn(turnCtx),
-    ...createImageHostFn(turnCtx),
   }),
 });
 
@@ -329,7 +327,7 @@ console.log(`schedule ticker running every ${TICK_MS / 1000}s`);
 ctx.startTurn = createDelegatingTurnStarter({
   base: {
     survivingJobs: (sessionId) => jobs.runningIds(sessionId),
-    granted: [...BASE_HOST_FNS, "workflow", "schedule", "image", "ask", "state"],
+    granted: [...BASE_HOST_FNS, "workflow", "schedule", "ask", "state"],
   },
   deliver: createNoteDeliverer(),
   extend: (turnCtx) => ({
@@ -337,7 +335,6 @@ ctx.startTurn = createDelegatingTurnStarter({
       ? { workflow: createWorkflowHostFn(turnCtx, workflowControl) }
       : {}),
     ...createScheduleHostFn(turnCtx),
-    ...createImageHostFn(turnCtx),
     ...createAskHostFn(turnCtx),
     ...createStateHostFn(turnCtx),
   }),
@@ -369,7 +366,6 @@ ctx.startTurn = createDelegatingTurnStarter({
       ...BASE_HOST_FNS,
       "workflow",
       "schedule",
-      "image",
       "ask",
       "state",
       "artifact",
@@ -381,7 +377,6 @@ ctx.startTurn = createDelegatingTurnStarter({
       ? { workflow: createWorkflowHostFn(turnCtx, workflowControl) }
       : {}),
     ...createScheduleHostFn(turnCtx),
-    ...createImageHostFn(turnCtx),
     ...createAskHostFn(turnCtx),
     ...createStateHostFn(turnCtx),
     ...createArtifactHostFn(turnCtx),
@@ -608,7 +603,6 @@ ctx.startTurn = createDelegatingTurnStarter({
       ...BASE_HOST_FNS,
       "workflow",
       "schedule",
-      "image",
       "ask",
       "state",
       "artifact",
@@ -620,7 +614,6 @@ ctx.startTurn = createDelegatingTurnStarter({
       ? { workflow: createWorkflowHostFn(turnCtx, workflowControl) }
       : {}),
     ...createScheduleHostFn(turnCtx),
-    ...createImageHostFn(turnCtx),
     ...createAskHostFn(turnCtx),
     ...createStateHostFn(turnCtx),
     ...createArtifactHostFn(turnCtx),
@@ -658,7 +651,6 @@ ctx.startTurn = createDelegatingTurnStarter({
       ...BASE_HOST_FNS,
       "workflow",
       "schedule",
-      "image",
       "ask",
       "state",
       "artifact",
@@ -670,7 +662,6 @@ ctx.startTurn = createDelegatingTurnStarter({
       ? { workflow: createWorkflowHostFn(turnCtx, workflowControl) }
       : {}),
     ...createScheduleHostFn(turnCtx),
-    ...createImageHostFn(turnCtx),
     ...createAskHostFn(turnCtx),
     ...createStateHostFn(turnCtx),
     ...createArtifactHostFn(turnCtx),
@@ -880,7 +871,6 @@ const skillAwareStarter = (sessionId: string) =>
         ...BASE_HOST_FNS,
         "workflow",
         "schedule",
-        "image",
         "ask",
         "state",
         "artifact",
@@ -915,7 +905,6 @@ const skillAwareStarter = (sessionId: string) =>
         ? { workflow: createWorkflowHostFn(turnCtx, workflowControl) }
         : {}),
       ...createScheduleHostFn(turnCtx),
-      ...createImageHostFn(turnCtx),
       ...createAskHostFn(turnCtx),
       ...createStateHostFn(turnCtx),
       ...createArtifactHostFn(turnCtx),

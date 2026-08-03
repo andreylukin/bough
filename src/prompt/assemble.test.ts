@@ -136,7 +136,6 @@ const GRANTS: { id: SectionId; fn: HostFnName; phrase: string }[] = [
   { id: "ask", fn: "ask", phrase: "await ask(question" },
   { id: "state", fn: "state", phrase: "await state.get(key)" },
   { id: "schedule", fn: "schedule", phrase: "await schedule.list()" },
-  { id: "image", fn: "image", phrase: "await image(path, note?)" },
   { id: "artifact", fn: "artifact", phrase: "await artifact(name, content)" },
   // The probe is `spawn`'s own line, not `adopt`'s. It used to be the latter, which meant
   // this test — whose subject is "the delegation section appears iff spawn is granted" —

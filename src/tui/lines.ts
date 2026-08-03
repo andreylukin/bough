@@ -177,10 +177,15 @@ export function parseBgNote(text: string): string | null {
 }
 
 /**
- * The `[image]` note (`hostfn/image.ts`). The attached part already renders its
- * own placeholder, so the text would repeat an absolute path directly under it —
- * and a program attaching a dozen screenshots would spend three lines each saying
- * so. The note's WORDS are the only part worth keeping.
+ * The `[image]` note, from back when a program could attach one.
+ *
+ * The `image()` verb is gone; this stays because an OLD transcript still holds its
+ * notes, and a replay that stopped parsing them would render an absolute path as a
+ * bare line. Same reason `parseBgNote` tolerates the unnamed form above: the
+ * transcript is a record, and a record outlives the feature that wrote it.
+ *
+ * The attached part renders its own placeholder, so the text would repeat the path
+ * directly under it. The note's WORDS are the only part worth keeping.
  */
 const IMAGE_NOTE_RE = /^\[image\] (\S+)(?: — (.*))?$/s;
 export function parseImageNote(text: string): { path: string; note?: string } | null {

@@ -152,7 +152,6 @@ export type SectionId =
   | "ask"
   | "state"
   | "schedule"
-  | "image"
   | "artifact"
   | "delegation"
   | "delegation-nested"
@@ -206,7 +205,6 @@ const SECTIONS: readonly SectionSpec[] = [
   { id: "ask", file: "ask.md", when: (f) => f.has("ask") },
   { id: "state", file: "state.md", when: (f) => f.has("state") },
   { id: "schedule", file: "schedule.md", when: (f) => f.has("schedule") },
-  { id: "image", file: "image.md", when: (f) => f.has("image") },
   { id: "artifact", file: "artifact.md", when: (f) => f.has("artifact") },
   {
     id: "delegation",

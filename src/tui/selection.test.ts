@@ -119,6 +119,51 @@ test("a copy across a wrap rejoins the line and drops the gutter", () => {
   assert.equal(out.includes("\n"), false, "one source line pastes as one line");
 });
 
+// One paragraph, wrapped across three rows — what `push()` produces for prose, and
+// the shape the source substitution was over-reaching on.
+const PARA = "the quick brown fox jumps over the lazy dog and keeps going";
+const paraRows = [
+  row("the quick brown fox jumps", PARA),
+  row("over the lazy dog and", PARA),
+  row("keeps going", PARA),
+];
+
+test("a drag INSIDE a wrapped line copies the drag, not the whole line", () => {
+  // The bug, reported from a real terminal: selecting a phrase in a message pasted
+  // the entire message. Every wrapped row carries the whole logical line as its
+  // source, so answering any two-row drag from the source hands back the paragraph.
+  const out = selectedCopy(
+    { anchor: { x: 5, y: 1 }, focus: { x: 9, y: 2 } },
+    (y) => paraRows[y - 1] ?? null,
+  );
+  assert.equal(out, "quick brown fox jumps\nover the");
+  assert.equal(out.includes("keeps going"), false, "a row the drag never reached");
+  assert.equal(out.includes("the quick"), false, "text before where the drag started");
+});
+
+test("a drag that starts mid-paragraph does not reach back for the rows above", () => {
+  // Rows 2-3 covered edge to edge — but row 1 is the same source and outside the
+  // drag, so the source is not the answer to this selection either.
+  const out = selectedCopy(
+    { anchor: { x: 1, y: 2 }, focus: { x: 40, y: 3 } },
+    (y) => paraRows[y - 1] ?? null,
+  );
+  assert.equal(out, "over the lazy dog and\nkeeps going");
+  assert.equal(out.includes("quick brown"), false, "row 1 was never selected");
+});
+
+test("a drag holding EVERY row of a source still rejoins it", () => {
+  // The behaviour the clipping must not cost: the whole paragraph, selected whole,
+  // still pastes as one un-wrapped line rather than as the terminal's three.
+  assert.equal(
+    selectedCopy(
+      { anchor: { x: 1, y: 1 }, focus: { x: 40, y: 3 } },
+      (y) => paraRows[y - 1] ?? null,
+    ),
+    PARA,
+  );
+});
+
 test("distinct source lines stay on distinct lines", () => {
   // The inverse guard: dedupe must not collapse two real lines into one.
   const rows = [row("  │ first()", "first()"), row("  │ second()", "second()")];

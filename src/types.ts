@@ -496,12 +496,6 @@ export interface HostFns {
   state?(verb: string, argsJson: string): Promise<string>;
   /** Verb-dispatched: list/add/enable/disable/remove. */
   schedule?(verb: string, argsJson: string): Promise<string>;
-  /**
-   * Attach an image the model can see. It arrives as a system note on the NEXT
-   * turn — attach and end the turn, never wait. Returns a confirmation line; the
-   * bytes never cross the bridge.
-   */
-  image?(path: string, note?: string): Promise<string>;
   /** Publish a file for browser viewing under the session's artifact dir; returns `{url, href}`. */
   artifact?(name: string, content: string): Promise<string>;
   /**

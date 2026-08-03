@@ -88,6 +88,22 @@ export function extractSpan(text: string, from: number, to: number): string {
   return stripAnsi(to === Infinity ? sliceAnsi(text, from) : sliceAnsi(text, from, to)).trimEnd();
 }
 
+/**
+ * Does this span cover everything the row actually SHOWS?
+ *
+ * Both edges are measured against the content, not the cells: the left one against
+ * the chrome `rowContent` strips (a drag from column 0 and one from just after the
+ * `│` gutter both hold the whole line), the right one against the painted width
+ * with its trailing padding gone (a drag that ran past the end of a short row holds
+ * it, and the bottom row of a drag never reports `Infinity`).
+ */
+function coversRow(text: string, span: { from: number; to: number }): boolean {
+  const { offset } = rowContent(text);
+  if (span.from > offset) return false;
+  if (span.to === Infinity) return true;
+  return span.to >= stripAnsi(text).replace(RIGHT_BORDER, "").trimEnd().length;
+}
+
 /** What a row can offer a copy: what is painted, and the raw source behind it. */
 export interface CopyRow {
   /** The styled row as it appears on screen. */
@@ -181,8 +197,20 @@ function cleanSource(src: string): string | null {
  * the gutter in the same step. A row with no source falls back to its cells, minus
  * the gutter.
  *
- * A single-row selection stays exact: dragging across part of one line means that
- * part, not the paragraph it belongs to.
+ * ONLY WHEN THE DRAG COVERS THAT WHOLE SOURCE, and this is the part the first
+ * version got wrong. `push()` gives every wrapped row the whole logical line as its
+ * source, so a paragraph is one source across five rows — and answering any
+ * two-row drag inside it from the source pasted the ENTIRE paragraph. Selecting a
+ * phrase and getting the message back is not a copy, it is a different feature.
+ *
+ * A source is therefore substituted only when the selection holds all of it: every
+ * one of its rows spanned edge to edge, and no row of it left outside the drag
+ * (checked by looking one row past each end for the same source). Anything else is
+ * answered from the cells the user actually dragged over — which keeps the window's
+ * line breaks, exactly as every terminal's own selection does.
+ *
+ * A single-row selection stays exact for the same reason: dragging across part of
+ * one line means that part, not the paragraph it belongs to.
  */
 export function selectedCopy(
   sel: Selection,
@@ -198,6 +226,22 @@ export function selectedCopy(
       "$1",
     );
   }
+  // The sources this drag does NOT hold in full. Two ways to fail: a row of the
+  // source that the drag clipped, or a row of it that the drag never reached —
+  // which is why the rows one past each end are consulted.
+  const clipped = new Set<string>();
+  const edge = (inside: number, outside: number) => {
+    const row = rowAt(inside);
+    if (row?.src !== undefined && rowAt(outside)?.src === row.src) clipped.add(row.src);
+  };
+  edge(top, top - 1);
+  edge(bottom, bottom + 1);
+  for (let y = top; y <= bottom; y++) {
+    const span = rowSpan(sel, y);
+    const row = rowAt(y);
+    if (span && row?.src !== undefined && !coversRow(row.text, span)) clipped.add(row.src);
+  }
+
   const out: string[] = [];
   let lastSource: string | null = null;
   for (let y = top; y <= bottom; y++) {
@@ -211,7 +255,7 @@ export function selectedCopy(
       lastSource = null;
       continue;
     }
-    if (row.src !== undefined) {
+    if (row.src !== undefined && !clipped.has(row.src)) {
       // One source, however many rows it was wrapped across.
       if (row.src !== lastSource) {
         const clean = cleanSource(row.src);

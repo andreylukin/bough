@@ -236,12 +236,6 @@ const bindings = {
     hostCall("ask", [question, JSON.stringify(opts ?? {})]),
   state: methodObject("state"),
   schedule: methodObject("schedule"),
-  // The image itself never crosses the bridge — the host copies the file into the
-  // attachment store and a plain confirmation line comes back.
-  image: (path: string, note?: string) =>
-    hostCall("image", note === undefined ? [path] : [path, note]),
-  // HTTP hops to the host. A non-2xx response is data on the returned object, not a
-  // rejection.
   // A non-string content (an object) is stringified so programs can pass it directly.
   artifact: (name: string, content: unknown) =>
     jsonCall("artifact", [name, typeof content === "string" ? content : JSON.stringify(content)]),

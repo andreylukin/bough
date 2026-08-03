@@ -147,7 +147,7 @@ test("host names: one list, with the dropped verbs actually dropped", () => {
   // and `mcp` were bridged once and are not any more: HTTP is the runtime's own
   // fetch, and an MCP tool is called through `bough mcp call` in the shell — so
   // neither may be re-added here without the prompt section to match.
-  for (const gone of ["read", "edit", "extract", "recall", "fetch", "mcp", "mcpStatus"]) {
+  for (const gone of ["read", "edit", "extract", "recall", "fetch", "mcp", "mcpStatus", "image"]) {
     assert(!(HOST_FN_NAMES as readonly string[]).includes(gone), `${gone} must not be bridged`);
   }
   // Declared now even though M6 implements them — the list is frozen.
@@ -156,7 +156,6 @@ test("host names: one list, with the dropped verbs actually dropped", () => {
       "ask",
       "state",
       "schedule",
-      "image",
       "artifact",
       "workflow",
     ]
