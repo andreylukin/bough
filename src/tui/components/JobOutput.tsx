@@ -42,10 +42,12 @@ export interface JobOutputProps {
 /** The status word, in the colour the rail and the transcript card already use. */
 function statusText(job: BackgroundJob, now: number): string {
   const took = fmtDuration((job.exitedAt ?? now) - job.startedAt);
-  if (job.status === "running") return `${warn("⋯ running")} ${dim(`· ${took}`)}`;
+  if (job.status === "running") return warn("⋯ running") + " " + dim("· " + took);
+  // A signal leaves exitCode null; treating null as zero paints a killed shell green.
+  if (job.signal) return warn("◼ stopped (" + job.signal + ")") + " " + dim("· ran " + took);
   const code = job.exitCode ?? 0;
-  const verdict = code === 0 ? accent("✓ done") : danger(`✗ exit ${code}`);
-  return `${verdict} ${dim(`· ran ${took}`)}`;
+  const verdict = code === 0 ? accent("✓ done") : danger("✗ exit " + code);
+  return verdict + " " + dim("· ran " + took);
 }
 
 export function JobOutput(

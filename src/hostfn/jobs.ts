@@ -386,16 +386,16 @@ export class JobRegistry {
 
   /**
    * Spawn a shell and start pumping its output. Does NOT register it: a foreground
-   * `bash` uses this to stream while it decides whether to background (`promote`)
-   * or return inline. Output and status are tracked either way.
+   * bash uses this to stream while it decides whether to background or return inline.
+   * Output and status are tracked either way.
    *
-   * `signal` is honoured by `killTreeOnAbort` in `shell.ts` and is DELIBERATELY NOT
-   * handed to `Bun.spawn`. Bun's `signal` option registers its own abort listener at
-   * spawn time — before the caller can add one — and it SIGTERMs the direct child
-   * only. `sh -c 'sleep 300; echo done'` forks rather than execs, so Bun killed the
-   * `sh`, the `sleep` reparented onto init, and the tree walk that runs next found an
-   * empty tree: the interrupt printed "the program's children are killed" while the
-   * command ran to completion. One killer, and it is the one that walks the tree.
+   * The child is detached from our process group. Ignored stdin alone is insufficient:
+   * an interactive program can open /dev/tty directly and paint a password prompt over
+   * OpenTUI's alternate screen. A fresh group/session makes that open fail while the
+   * child's ordinary stdout and stderr still flow through our pipes.
+   *
+   * The abort signal is deliberately not handed to Bun.spawn. Bun kills the direct
+   * child before our tree walk can snapshot descendants, orphaning commands like sleep.
    */
   spawn(
     command: string,
@@ -421,6 +421,9 @@ export class JobRegistry {
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
+      // ssh/sudo/pinentry can bypass stdio through /dev/tty. A detached process
+      // cannot acquire the TUI's controlling terminal.
+      detached: true,
     });
     const exit: Promise<ExitStatus> = child.exited.then(() => ({
       code: child.exitCode ?? 0,

@@ -419,10 +419,27 @@ test("bashBg returns an id and a pid and publishes job.spawned", async () => {
   await r.cleanup();
 });
 
+test("shells cannot write through the TUI's controlling terminal", async () => {
+  // macOS script(1) gives this test a real controlling terminal. Without detached,
+  // LEAK escapes the child's stdout pipe and paints over the outer terminal.
+  if (process.platform !== "darwin") return;
+  const probe = "const p=Bun.spawn(['/bin/sh','-c','printf LEAK >/dev/tty 2>/dev/null || printf ISOLATED']," +
+    "{stdin:'ignore',stdout:'pipe',stderr:'pipe',detached:true});" +
+    "const out=await new Response(p.stdout).text();await p.exited;console.log('CAPTURED='+out)";
+  const outer = Bun.spawn(["script", "-q", "/dev/null", "bun", "-e", probe], {
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const text = await new Response(outer.stdout).text();
+  await outer.exited;
+  has(text, "CAPTURED=ISOLATED");
+  lacks(text, "LEAK", "a shell must never bypass its pipes and repaint the TUI");
+});
+
 test("bashBg refuses a nameless job and carries the name it was given", async () => {
   const r = rig();
   // Blank, whitespace-only and missing all fail the same way, and the message says
-  // the order — a caller that passed the command first must be told which argument
   // it landed in, not just that something was wrong.
   for (const bad of ["", "   ", "\n\t"]) {
     const err = throwsWith(() => r.registry.bashBg(bad, "sleep 60", r.ctx), ProgramError);
