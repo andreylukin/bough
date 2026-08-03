@@ -18,7 +18,7 @@
  * running build is the end that is still moving.
  */
 import type { BackgroundJob } from "../../schema/parts.ts";
-import { accent, bold, danger, dim, fmtDuration, oneLine, warn } from "../format.ts";
+import { accent, bold, danger, dim, fmtDuration, oneLine, truncateAnsi, warn, wrapLine } from "../format.ts";
 import { MessageRow, padRow } from "./Message.tsx";
 
 export interface JobOutputProps {
@@ -54,15 +54,13 @@ export function JobOutput(
   { id, job, output, scroll = 0, width, height, now, error, armed }: JobOutputProps,
 ) {
   const w = Math.max(1, width);
-  // Header, the command line, a blank, and the footer. The body takes what is left,
-  // and never less than one row: a claim about available space that is false is how
-  // six rows came to be painted into three elsewhere in this tree.
-  const body = jobBodyRows(height);
-  // Both of these are ONE row of a fixed-height box, and a job's command is very
-  // often several lines (a `for` loop, a heredoc) — see `oneLine`.
+  // Header, the command line(s), a blank, and the footer. The body takes what is
+  // left, and never less than one row: a claim about available space that is false
+  // is how six rows came to be painted into three elsewhere in this tree.
   const name = oneLine(job?.name || id);
   const head = `⚙ ${bold(name)}  ${job ? statusText(job, now) : dim("(job not found)")}`;
-  const sub = job ? `${dim(`${id} · pid ${job.pid} ·`)} ${oneLine(job.command)}` : dim(id);
+  const sub = jobSubLines(job, id, w, height);
+  const body = jobBodyRows(height, sub.length);
 
   // Split on the raw buffer rather than on wrapped rows: long lines are truncated to
   // the width instead of reflowed, so a column of build output stays a column and the
@@ -95,7 +93,7 @@ export function JobOutput(
   return (
     <box flexDirection="column">
       <MessageRow line={{ text: head }} width={w} />
-      <MessageRow line={{ text: sub }} width={w} />
+      {sub.map((text, i) => <MessageRow key={`sub${i}`} line={{ text }} width={w} />)}
       {Array.from({ length: pad }, (_, i) => (
         <text key={`pad${i}`} wrapMode="none" content={padRow(" ", w)} />
       ))}
@@ -108,7 +106,30 @@ export function JobOutput(
   );
 }
 
+/**
+ * The command line(s): id and pid, then the whole command wrapped to the width.
+ * The command's own line breaks still collapse to `¶` (`oneLine`) — every row
+ * emitted here must be exactly one row — but nothing is cut off sideways any more.
+ * Capped at half the view so a pasted heredoc cannot squeeze the buffer out; the
+ * cap is marked with an ellipsis.
+ */
+export function jobSubLines(
+  job: BackgroundJob | null,
+  id: string,
+  width: number,
+  height: number,
+): string[] {
+  if (!job) return [dim(id)];
+  const w = Math.max(1, width);
+  const lines = wrapLine(`${dim(`${id} · pid ${job.pid} ·`)} ${oneLine(job.command)}`, w);
+  const cap = Math.max(1, Math.floor((height - 3) / 2));
+  if (lines.length <= cap) return lines;
+  const kept = lines.slice(0, cap);
+  kept[cap - 1] = truncateAnsi(kept[cap - 1], w - 2) + dim(" …");
+  return kept;
+}
+
 /** The rows the buffer itself gets — the page step, and this view's own budget. */
-export function jobBodyRows(height: number): number {
-  return Math.max(1, height - 4);
+export function jobBodyRows(height: number, subRows = 1): number {
+  return Math.max(1, height - 3 - subRows);
 }

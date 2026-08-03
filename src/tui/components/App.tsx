@@ -103,7 +103,7 @@ import {
   type TuiState,
 } from "../store.ts";
 import { Chat, type ChatMeter } from "./Chat.tsx";
-import { JobOutput, jobBodyRows } from "./JobOutput.tsx";
+import { JobOutput, jobBodyRows, jobSubLines } from "./JobOutput.tsx";
 import { Composer, completionPopupHeight, composerHeight } from "./Composer.tsx";
 import { type PanelControls, type PanelHostDeps, usePanelHost } from "./PanelHost.tsx";
 import { liveSubagents, SubagentRail } from "./SubagentRail.tsx";
@@ -1055,6 +1055,16 @@ export function App(
   // renderer lays out with; two copies would put a click one row off its row.
   const chatH = Math.max(1, rows - 1 /* header */ - railH - inputH - 1 /* status */);
 
+  // The job view's page step must match the rows the buffer actually gets, which
+  // shrinks when the command wraps — a step sized to the whole view skips lines.
+  const jobPage = () =>
+    jobBodyRows(
+      chatH,
+      state.jobView
+        ? jobSubLines(state.jobView.job, state.jobView.id, cols, chatH).length
+        : 1,
+    );
+
   // The panel keeps the pinned rows below it (rule 4: state lives in one row), so
   // it gets the screen minus them. `Panel` subtracts its own chrome twice on the
   // way down (`PanelHost` takes 4, `Panel` takes 2 more) and draws `rows - 2`, so
@@ -1551,12 +1561,12 @@ export function App(
       // put its last section — `won't do`, where the no-sandbox posture is stated —
       // forty keypresses from the top, on the one surface that advertises pgup/pgdn.
       case "scroll.pageUp":
-        if (uiMode === "job") return setJobScroll((o) => o + jobBodyRows(chatH));
+        if (uiMode === "job") return setJobScroll((o) => o + jobPage());
         if (uiMode === "help") return setScrollOff((o) => Math.max(0, o - page));
         return setScrollOff((o) => Math.min(Math.max(0, lines.length - 1), o + page));
       case "scroll.pageDown":
         if (uiMode === "job") {
-          return setJobScroll((o) => Math.max(0, o - jobBodyRows(chatH)));
+          return setJobScroll((o) => Math.max(0, o - jobPage()));
         }
         if (uiMode === "help") {
           const max = Math.max(0, helpLines().length - Math.max(1, rows - 2));
