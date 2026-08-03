@@ -18,7 +18,7 @@
  *       ├─ bough I found the layout bug…
  *       ├─ you   now name the jobs         ← active
  *       │  └─ ⑂ try it without the ¶
- *       └─ ⋯ 3 delegated
+ *       └─ ⋯ 3 spawned
  *     ▸ nightly bench                        $1.08
  *
  * THE RULES, all three of them derived and none of them stored:
@@ -31,11 +31,12 @@
  *   2. **Turns are shown for expanded conversations only.** A forest that expanded
  *      everything would be thousands of rows on any real install, and the top level
  *      is also the switcher — it has to stay scannable.
- *   3. **Delegated work still collapses into a count** (spec §4). A 40-agent
- *      fan-out inlined under the turn that spawned it buries the conversation; a
- *      fan-out that is hidden outright is unreachable. One row that says `⋯ 40
- *      delegated` is both. This is the one rule carried over verbatim from the
- *      lineage tree, because it was right.
+ *   3. **Spawned work still collapses into a count** (spec §4). A 40-agent fan-out
+ *      inlined under the turn that spawned it buries the conversation; a fan-out
+ *      that is hidden outright is unreachable. One row that says `⋯ 40 spawned` is
+ *      both. Carried over verbatim from the lineage tree, because it was right —
+ *      and widened from delegated work to every collapsing kind, so a schedule's
+ *      firings land here too instead of at the top level.
  *
  * PURE. Rows in, rows out — no fetch, no clock, no React. The caller supplies the
  * threads it has fetched and the sets of what is expanded; every layout rule below
@@ -44,13 +45,30 @@
  */
 import type { Message } from "../schema/parts.ts";
 import type { SessionKind } from "../schema/parts.ts";
+import { isCollapsedKind, isDelegatedKind } from "../schema/parts.ts";
 import type { SessionRow } from "./api.ts";
 
-/** The kinds that collapse under their origin and surface on drill-in (spec §4). */
-export const DELEGATED_KINDS: readonly SessionKind[] = ["subagent", "workflow_agent"];
+/**
+ * The kinds that collapse under their origin and surface on drill-in (spec §4),
+ * and the narrower set that is DELEGATED work. Both come from `schema/parts.ts`;
+ * re-exported here because this module is where the TUI has always asked.
+ *
+ * They are not the same question, and the difference is the whole reason a schedule
+ * firing can be tidy without lying: it COLLAPSES (so a daily run does not add a
+ * top-level row a day), but it is not DELEGATED (so it stays out of the live-work
+ * rail, which is about what a turn asked for, and out of the transcript's branch
+ * cards, since a firing posts its own note when it settles).
+ */
+export { COLLAPSED_KINDS, DELEGATED_KINDS } from "../schema/parts.ts";
 
+/** True when this kind is only reachable under its origin. */
+export function isCollapsed(kind: SessionKind): boolean {
+  return isCollapsedKind(kind);
+}
+
+/** True when a program asked for this session inside a turn. */
 export function isDelegated(kind: SessionKind): boolean {
-  return DELEGATED_KINDS.includes(kind);
+  return isDelegatedKind(kind);
 }
 
 /**
@@ -67,7 +85,11 @@ export type ForestRow =
     depth: number;
     /** Its turns are shown. */
     open: boolean;
-    /** Delegated children, shown or not — the count the collapsed row reports. */
+    /**
+     * Children that collapse under this one, shown or not — the count the collapsed
+     * row reports. Delegated work AND schedule firings: everything spawned under this
+     * conversation rather than opened by the user.
+     */
     delegated: number;
     /** This is the conversation currently on screen. */
     current: boolean;
@@ -111,7 +133,6 @@ export type ForestRow =
   /** The collapsed fan-out: reachable, countable, one row. */
   | { kind: "collapsed"; id: string; originId: string; depth: number; count: number };
 
-/** The visible text of a message, collapsed to one line. */
 /**
  * A message's text parts, VERBATIM — newlines, runs of spaces and all.
  *
@@ -124,6 +145,7 @@ export function messageText(m: Message): string {
   return m.parts.map((p) => (p.type === "text" ? p.text : "")).join("");
 }
 
+/** The visible text of a message, collapsed to one line. */
 export function messageGist(m: Message, max = 56): string {
   const text = m.parts
     .map((p) => (p.type === "text" ? p.text : ""))
@@ -140,7 +162,7 @@ export function messageGist(m: Message, max = 56): string {
 }
 
 export interface ForestInput {
-  /** `GET /sessions` — every non-delegated session: roots, forks, compactions. */
+  /** `GET /sessions` — every session that does not collapse: roots, forks, compactions, shells. */
   sessions: readonly SessionRow[];
   /** `originId` → `GET /sessions?originId=`. Absent means "not fetched yet". */
   childrenByOrigin: Readonly<Record<string, readonly SessionRow[]>>;
@@ -224,8 +246,11 @@ export function forestRows(input: ForestInput): ForestRow[] {
     if (seen.has(session.id)) return;
     seen.add(session.id);
     const children = childrenOf(session.id);
-    const branches = children.filter((c) => !isDelegated(c.kind)).sort(byOldest);
-    const delegated = children.filter((c) => isDelegated(c.kind)).sort(byOldest);
+    // COLLAPSE, not delegation: a schedule firing hangs under the conversation that
+    // created the schedule exactly as a subagent hangs under its spawner, even
+    // though nothing delegated it.
+    const branches = children.filter((c) => !isCollapsed(c.kind)).sort(byOldest);
+    const delegated = children.filter((c) => isCollapsed(c.kind)).sort(byOldest);
     const thread = threads[session.id];
     const open = expanded.has(session.id);
     rows.push({

@@ -97,6 +97,19 @@ test("AC: the tree walk collects subagents transitively, and only delegates", as
   assert.deepEqual(jobSessionIds(f.db, "branch"), ["branch"]);
 });
 
+test("a schedule firing's shells are the creating conversation's to see and kill", async () => {
+  await using f = fixture();
+  f.db.createSession(session("root"));
+  // The firing collapses under the conversation that created the schedule, so the
+  // work it leaves running belongs in that conversation's list — otherwise a nightly
+  // run's stuck `npm test` is invisible from the only screen that leads to it.
+  f.db.createSession(session("run", { kind: "schedule_run", originId: "root" }));
+  f.db.createSession(session("run-kid", { kind: "subagent", originId: "run" }));
+
+  assert.deepEqual(jobSessionIds(f.db, "root").sort(), ["root", "run", "run-kid"]);
+  assert.deepEqual(jobSessionIds(f.db, "run").sort(), ["run", "run-kid"]);
+});
+
 test("a lineage cycle does not hang the walk", async () => {
   await using f = fixture();
   f.db.createSession(session("a"));

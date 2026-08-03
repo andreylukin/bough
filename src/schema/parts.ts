@@ -32,9 +32,9 @@ export const Role = z.enum(["user", "supervisor", "system"]);
 export type Role = z.infer<typeof Role>;
 
 /**
- * Visibility is derived from this plus lineage: `subagent` and `workflow_agent`
- * collapse under their `originId` and surface only on drill-in; `root`, `fork` and
- * `compaction` are always listed (spec §4).
+ * Visibility is derived from this plus lineage: the collapsing kinds below sit
+ * under their `originId` and surface only on drill-in; `root`, `fork`, `compaction`
+ * and `shell` are always listed (spec §4).
  */
 export const SessionKind = z.enum([
   "root",
@@ -42,8 +42,62 @@ export const SessionKind = z.enum([
   "compaction",
   "subagent",
   "workflow_agent",
+  /**
+   * One firing of a schedule. A real session with a fresh, task-only thread — the
+   * prompt is the whole briefing, exactly as before — but hung off the conversation
+   * that CREATED the schedule instead of standing as a root of its own. A daily
+   * schedule used to add a top-level conversation every day, which is a listing that
+   * fills with runs nobody opened: the same failure `subagent` collapses to avoid.
+   */
+  "schedule_run",
+  /**
+   * The conversation a `!` command runs in when none is open.
+   *
+   * Not collapsed — it has no origin to collapse under, and its job output is the
+   * thing the user is watching, so it has to be openable. It is a KIND rather than a
+   * title convention so it can be found again: nothing auto-opens a session at boot,
+   * so every launch's first `!` minted a fresh conversation, and one per launch is
+   * the clutter. One per workspace, reused.
+   */
+  "shell",
 ]);
 export type SessionKind = z.infer<typeof SessionKind>;
+
+/**
+ * The kinds that collapse under their `originId` and are reached by drill-in.
+ *
+ * Canonical HERE rather than in the server, because three modules enforce it —
+ * `server/sessions.ts` at the listing and the door, `server/search.ts` when
+ * attributing a hit, and `tui/forest.ts` when building rows — and they had drifted
+ * into three separate literals of the same list. A kind that collapses in one and
+ * not another is a session that exists in a listing it cannot be opened from.
+ */
+export const COLLAPSED_KINDS: readonly SessionKind[] = [
+  "subagent",
+  "workflow_agent",
+  "schedule_run",
+];
+
+/** True when a session of this kind surfaces only under its origin. */
+export function isCollapsedKind(kind: SessionKind): boolean {
+  return COLLAPSED_KINDS.includes(kind);
+}
+
+/**
+ * The kinds that are DELEGATED work — a program asked for them, inside a turn.
+ *
+ * A narrower question than `isCollapsedKind`, and the two must not be merged: a
+ * schedule firing collapses in the tree like a subagent, but it is not delegation.
+ * It must not appear in the live-work rail (it has its own countdown row there), and
+ * it must not be reported as a branch card in the transcript (it posts its own
+ * system note when it settles).
+ */
+export const DELEGATED_KINDS: readonly SessionKind[] = ["subagent", "workflow_agent"];
+
+/** True when a program spawned this session as part of a turn. */
+export function isDelegatedKind(kind: SessionKind): boolean {
+  return DELEGATED_KINDS.includes(kind);
+}
 
 // ---- parts -----------------------------------------------------------------
 

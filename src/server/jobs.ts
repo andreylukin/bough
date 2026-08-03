@@ -32,6 +32,7 @@ import { RunShellBody } from "../schema/requests.ts";
 import { parseBody } from "./http.ts";
 import { JobRegistry, jobs as processJobs } from "../hostfn/jobs.ts";
 import type { BackgroundJob } from "../schema/parts.ts";
+import { isCollapsedKind } from "../schema/parts.ts";
 import type { AppCtx, Db } from "../types.ts";
 import { type Handler, json } from "./http.ts";
 
@@ -69,7 +70,11 @@ export function jobSessionIds(db: Db, sessionId: string): string[] {
   const seen = new Set<string>([sessionId]);
   for (let i = 0; i < out.length; i++) {
     for (const child of db.sessionsByOrigin(out[i])) {
-      if (child.kind !== "subagent" && child.kind !== "workflow_agent") continue;
+      // Every kind that COLLAPSES under this session, which is exactly the work done
+      // on its behalf: its subagents, their subagents, and the firings of the
+      // schedules it created. A fork is excluded by the same rule as before — it is a
+      // sibling conversation the user drives, not work this one caused.
+      if (!isCollapsedKind(child.kind)) continue;
       if (seen.has(child.id)) continue;
       seen.add(child.id);
       out.push(child.id);

@@ -266,8 +266,8 @@ function fakeStore(over: Partial<TuiState> = {}): Store & { calls: string[] } {
     stop: noop,
     reload: noop,
     open: (id: string) => (calls.push(`open:${id}`), Promise.resolve()),
-    createSession: (workspace?: string, title?: string) => {
-      calls.push(`createSession:${workspace ?? ""}:${title ?? ""}`);
+    createSession: (workspace?: string, title?: string, kind?: string) => {
+      calls.push(`createSession:${workspace ?? ""}:${title ?? ""}:${kind ?? ""}`);
       return Promise.resolve(null);
     },
     newConversation: () => calls.push("newConversation"),
@@ -437,6 +437,48 @@ const BUSY: Partial<TuiState> = {
     },
   ] as TuiState["thread"],
 };
+
+test("`!` on a fresh screen reuses one shell conversation instead of minting one", async () => {
+  // Nothing opens a session at boot, so a fresh screen is where every launch starts
+  // and `!git status` is the first thing typed. Each one used to create a
+  // conversation titled after the command; a week of that is a switcher full of
+  // one-line conversations nobody opened twice.
+  const cold = fakeStore({ ...STATE, currentId: null, session: null, sessions: [] });
+  const h = await mount(app(cold, { defaultWorkspace: "/src/bough" }));
+  try {
+    await h.press("!git status\r");
+    // The first one has nothing to reuse, so it makes the shell conversation — once,
+    // titled for what it is rather than for whichever command happened to be first.
+    assert.ok(
+      cold.calls.includes("createSession:/src/bough:shell:shell"),
+      cold.calls.join(","),
+    );
+  } finally {
+    h.unmount();
+  }
+
+  // With one already there, the same keystrokes open it and run the job in it. No
+  // new conversation, and the user still lands where the output is.
+  const warm = fakeStore({
+    ...STATE,
+    currentId: null,
+    session: null,
+    sessions: [session("sh1", { kind: "shell", title: "shell" })],
+  });
+  const h2 = await mount(app(warm, { defaultWorkspace: "/src/bough" }));
+  try {
+    await h2.press("!git status\r");
+    assert.ok(warm.calls.includes("open:sh1"), warm.calls.join(","));
+    assert.ok(warm.calls.includes("runShell:git status"), warm.calls.join(","));
+    assert.equal(
+      warm.calls.some((c) => c.startsWith("createSession")),
+      false,
+      `a second conversation was created: ${warm.calls.join(",")}`,
+    );
+  } finally {
+    h2.unmount();
+  }
+});
 
 test("esc STOPS a running turn, and only dismisses a notice when none is running", async () => {
   // The gap this closes: `turn/runner.ts` has always been able to interrupt and

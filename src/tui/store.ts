@@ -44,6 +44,7 @@
  * the merge is well-defined: union by id, the longer part list wins, finished beats
  * pending.
  */
+import { isCollapsedKind } from "../schema/parts.ts";
 import type {
   AskQuestion,
   BackgroundJob,
@@ -51,6 +52,7 @@ import type {
   Part,
   Schedule,
   Session,
+  SessionKind,
   TurnStatus,
 } from "../schema/parts.ts";
 import type { AnyBoughEvent, BoughEvent, BoughEventOf, EventType } from "../schema/events.ts";
@@ -608,9 +610,11 @@ function applyEvent(state: TuiState, raw: BoughEvent): TuiState {
     case "session.created": {
       const s = event.data;
       if (state.sessions.some((p) => p.id === s.id)) return state;
-      // Delegated work collapses under its origin and is reached by drill-in, never
-      // by the top-level list (spec §4). Visibility is derived, here as everywhere.
-      if (s.kind === "subagent" || s.kind === "workflow_agent") return state;
+      // Machine-spawned work collapses under its origin and is reached by drill-in,
+      // never by the top-level list (spec §4). Visibility is derived, here as
+      // everywhere — a schedule firing included, which is what stops a daily run
+      // from adding a row a day to the conversation the user actually works in.
+      if (isCollapsedKind(s.kind)) return state;
       return { ...state, sessions: [{ ...s, busy: false }, ...state.sessions] };
     }
 
@@ -729,9 +733,11 @@ function applyEvent(state: TuiState, raw: BoughEvent): TuiState {
           busy: false,
           unseen: s.unseen || !mine,
         }));
-        // A background session finishing while you watch another is news; a subagent
-        // finishing inside its spawner's still-running turn is not.
-        if (row?.busy && !mine && row.kind !== "subagent" && row.kind !== "workflow_agent") {
+        // A background session finishing while you watch another is news; work that
+        // collapses under an origin is not — a subagent finishes inside its spawner's
+        // still-running turn, and a schedule firing posts its own note to the
+        // conversation that created it (`schedules.ts`), which is the report.
+        if (row?.busy && !mine && !isCollapsedKind(row.kind)) {
           background = {
             sessionId,
             title: row.title || "session",
@@ -1293,7 +1299,7 @@ export interface Store {
   stop(): Promise<void>;
   reload(): Promise<void>;
   open(sessionId: string): Promise<void>;
-  createSession(workspace?: string, title?: string): Promise<Session | null>;
+  createSession(workspace?: string, title?: string, kind?: SessionKind): Promise<Session | null>;
   /**
    * Focus nothing, so the next message starts a fresh root conversation.
    *
@@ -1824,7 +1830,7 @@ export function createStore(deps: StoreDeps = {}): Store {
       dispatch({ type: "open", sessionId: null });
     },
 
-    async createSession(workspace?: string, title?: string) {
+    async createSession(workspace?: string, title?: string, kind?: SessionKind) {
       try {
         // No title unless the caller has one: the cheap tier names the session from its
         // first MESSAGE (§12), and a conversation that only ever ran `!` commands never
@@ -1833,6 +1839,7 @@ export function createStore(deps: StoreDeps = {}): Store {
         const session = await api.createSession({
           ...(workspace ? { workspace } : {}),
           ...(title ? { title } : {}),
+          ...(kind ? { kind } : {}),
         });
         await open(session.id);
         await reload();

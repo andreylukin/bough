@@ -93,14 +93,29 @@ export function fireSchedule(
       console.error(`schedule ${s.id} (${s.title}) failed to fire:`, error));
 
   try {
+    // The conversation that created the schedule, when it still exists. A firing
+    // COLLAPSES under it (`kind: "schedule_run"`) instead of standing as a root of
+    // its own: a daily schedule was adding a top-level conversation a day, none of
+    // which the user opened, and the listing is also the switcher.
+    //
+    // Falls back to a root when there is nobody to collapse under — a schedule made
+    // over REST carries no `sessionId`, and a creator can have been branched away
+    // from since. A collapsed session with no reachable origin would be invisible in
+    // every listing, which is a worse failure than an untidy one.
+    const creator = schedule.sessionId ? ctx.db.getSession(schedule.sessionId) : null;
     const session = ctx.db.createSession({
       id: crypto.randomUUID(),
       title: schedule.title,
-      kind: "root",
-      // A fired session inherits nothing: no parent thread, no lineage edge. The
-      // prompt is the whole briefing, which is what the prompt section tells the
-      // model when it writes one (`prompt/schedule.md`).
+      kind: creator ? "schedule_run" : "root",
+      // A fired session inherits nothing: no parent thread. The prompt is the whole
+      // briefing, which is what the prompt section tells the model when it writes one
+      // (`prompt/schedule.md`) — and that is unchanged by the lineage edge below,
+      // which is for VISIBILITY and carries no context.
       parentId: null,
+      // The lineage edge, and the only record that this run belongs to that
+      // conversation. No `originMessageId`: nothing in a thread asked for this — the
+      // clock did — so the run hangs under the conversation rather than under a turn.
+      ...(creator ? { originId: creator.id } : {}),
       createdAt: now(),
       ...(schedule.workspace
         ? { workspace: schedule.workspace, originDir: schedule.workspace }

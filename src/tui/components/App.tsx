@@ -108,7 +108,14 @@ import { JobOutput, jobBodyRows, jobSubLines } from "./JobOutput.tsx";
 import { Composer, completionPopupHeight, composerHeight } from "./Composer.tsx";
 import { type PanelControls, type PanelHostDeps, usePanelHost } from "./PanelHost.tsx";
 import { liveSubagents, SubagentRail } from "./SubagentRail.tsx";
-import { forestRows, isDelegated, revealPath, rewindIndex, takeBackTarget } from "../forest.ts";
+import {
+  forestRows,
+  isCollapsed,
+  isDelegated,
+  revealPath,
+  rewindIndex,
+  takeBackTarget,
+} from "../forest.ts";
 import { titleOf } from "./Tree.tsx";
 
 import { palette } from "../theme.ts";
@@ -116,6 +123,15 @@ import { tabAtColumn } from "./Panel.tsx";
 
 /** How long a second Escape still counts as a double-tap. */
 const DOUBLE_ESC_MS = 600;
+
+/**
+ * The title of the per-workspace conversation `!` commands run in when none is open.
+ *
+ * Fixed rather than taken from the command, which is what the per-launch version
+ * did: a reused conversation named after whichever command happened to create it
+ * (`! git status`) is a worse label every time after the first.
+ */
+const SHELL_SESSION_TITLE = "shell";
 
 /**
  * The operations the store does not expose yet.
@@ -1343,11 +1359,27 @@ export function App(
       // message would. Nothing is sent to the model.
       if (state.currentId) void store.runShell(command);
       else {
-        // Titled from the command: the cheap tier titles a session from its first
-        // MESSAGE, and a shell-only conversation never sends one.
-        void store.createSession(defaultWorkspace, `! ${command}`.slice(0, 60)).then((created) =>
-          created ? store.runShell(command) : undefined
+        // ONE shell conversation per workspace, reused — not one per command.
+        //
+        // Nothing opens a session at boot, so a fresh screen is where EVERY launch
+        // starts: `!git status` as the first thing typed minted a conversation
+        // titled `! git status`, and a week of that is a switcher full of one-line
+        // conversations nobody opened twice. Reusing the existing one keeps the
+        // jobs together, keeps the screen the user is used to landing on, and costs
+        // the history exactly one row however often the habit is used.
+        //
+        // Still a REAL conversation — visible, openable, and where the job's output
+        // is watched. It carries a `kind` rather than a title convention because
+        // that is what lets it be found again after a restart.
+        const shell = state.sessions.find((s) =>
+          s.kind === "shell" && (s.workspace ?? null) === (defaultWorkspace ?? null)
         );
+        if (shell) void store.open(shell.id).then(() => store.runShell(command));
+        else {
+          void store.createSession(defaultWorkspace, SHELL_SESSION_TITLE, "shell").then((created) =>
+            created ? store.runShell(command) : undefined
+          );
+        }
       }
       return;
     }
@@ -2068,7 +2100,7 @@ export function App(
   const resumeNote = !state.session && state.thread.length === 0
     ? (() => {
       const recent = [...state.sessions]
-        .filter((s) => !isDelegated(s.kind))
+        .filter((s) => !isCollapsed(s.kind))
         .sort((a, b) => b.createdAt - a.createdAt)[0];
       return recent
         ? `type to start · ^f reopens “${clip(titleOf(recent), 40)}” and everything before it`

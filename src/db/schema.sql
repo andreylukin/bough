@@ -40,9 +40,12 @@ CREATE TABLE IF NOT EXISTS sessions (
   -- gets a fresh, task-only thread with no inherited context (spec §7).
   parent_id         TEXT REFERENCES sessions(id),
   title             TEXT NOT NULL,
-  -- root | fork | compaction | subagent | workflow_agent.
-  -- `subagent` and `workflow_agent` collapse under `origin_id` in listings and
-  -- surface only on drill-in. This column IS the visibility rule.
+  -- root | fork | compaction | subagent | workflow_agent | schedule_run | shell.
+  -- `subagent`, `workflow_agent` and `schedule_run` collapse under `origin_id` in
+  -- listings and surface only on drill-in (`schema/parts.ts` owns that list). This
+  -- column IS the visibility rule. `shell` is the per-workspace conversation a `!`
+  -- command runs in when none is open — listed like any root, and reused rather
+  -- than re-created, so the habit costs the switcher one row and not one a launch.
   kind              TEXT NOT NULL,
   created_at        INTEGER NOT NULL,
   -- The checkout the session operates on, edited in place. NULL = the process

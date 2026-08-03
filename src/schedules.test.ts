@@ -24,6 +24,7 @@ import { openDb, type SqliteDb } from "./db/db.ts";
 import { scheduleCreate } from "./hostfn/schedule.ts";
 import type { BoughEvent } from "./schema/events.ts";
 import type { Message, Schedule, Session } from "./schema/parts.ts";
+import { isCollapsedKind } from "./schema/parts.ts";
 import type { AppCtx } from "./types.ts";
 import {
   createScheduleH,
@@ -217,6 +218,54 @@ test("firing opens a FRESH ROOT session carrying the prompt, and starts a turn",
   // Announced in order: the session, then the message on it.
   const kinds = f.events.map((e) => e.type);
   assert.deepEqual(kinds, ["session.created", "message.started"]);
+  f.close();
+});
+
+test("a firing collapses under the conversation that created the schedule", () => {
+  const f = fixture();
+  const creator = f.db.createSession({
+    id: crypto.randomUUID(),
+    title: "wire the deploy check",
+    kind: "root",
+    parentId: null,
+    createdAt: T0,
+  });
+  const schedule = seed(f.db, { sessionId: creator.id });
+
+  const fired = fireSchedule(f.ctx, schedule)!;
+  const session = f.db.getSession(fired.session.id)!;
+
+  // A run is not a conversation the user started, so it does not get a row beside
+  // them: a daily schedule was adding one a day to the switcher.
+  assert.equal(session.kind, "schedule_run");
+  assert.equal(session.originId, creator.id, "the lineage edge is what makes it reachable");
+  assert.equal(
+    f.db.listSessions().filter((x) => !isCollapsedKind(x.kind)).map((x) => x.id).join(),
+    creator.id,
+    "the top level still holds exactly the one conversation the user made",
+  );
+  assert.deepEqual(f.db.sessionsByOrigin(creator.id).map((x) => x.id), [session.id]);
+
+  // Collapsed, but NOT inherited: the prompt is still the whole briefing.
+  assert.equal(session.parentId, null, "a firing inherits no thread");
+  assert.equal(session.originMessageId ?? null, null, "the clock asked for it, not a turn");
+  const thread = f.db.threadFor(session.id);
+  assert.deepEqual(thread.map((m) => m.parts), [[{ type: "text", text: schedule.prompt }]]);
+  f.close();
+});
+
+test("a firing with nobody to collapse under stands on its own", () => {
+  const f = fixture();
+  // Two ways to get here, and a hidden session with no reachable origin would be
+  // worse than an untidy one: a schedule created over REST carries no sessionId…
+  const orphan = fireSchedule(f.ctx, seed(f.db))!;
+  assert.equal(f.db.getSession(orphan.session.id)!.kind, "root");
+
+  // …and a creator can be gone by the time the schedule fires.
+  const gone = fireSchedule(f.ctx, seed(f.db, { sessionId: "deleted-long-ago" }))!;
+  const session = f.db.getSession(gone.session.id)!;
+  assert.equal(session.kind, "root");
+  assert.equal(session.originId ?? null, null);
   f.close();
 });
 

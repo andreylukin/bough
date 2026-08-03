@@ -2,18 +2,18 @@
  * Session CRUD, thread assembly, and the message intake.
  *
  * The invariant this module holds is **derived visibility** (spec §4, §17). A
- * session of kind `subagent` or `workflow_agent` collapses under its `originId`
- * and surfaces only on drill-in — and it does so because of what it *is*, not
+ * session of a COLLAPSING kind (`schema/parts.ts`: `subagent`, `workflow_agent`,
+ * `schedule_run`) sits under its `originId` and surfaces only on drill-in — and it does so because of what it *is*, not
  * because anything marked it. There is no archive, deprecate, hide or purge verb
  * here and no column behind one: `GET /sessions` filters on `kind`, and
  * `GET /sessions?originId=` is the drill-in that reveals what collapsed. Two
  * consequences worth stating, because both were bugs in the old tree:
  *
  *   - Every hidden session MUST be reachable through some origin. That is why
- *     `POST /sessions` refuses to create a `subagent`/`workflow_agent`: the
- *     creation body carries no `originId`, so an HTTP-created one would be
- *     invisible to every listing at once. Delegated sessions are created by
- *     `agent()`/`spawn()` (M4), which set the lineage edge.
+ *     `POST /sessions` refuses to create one of those kinds: the creation body
+ *     carries no `originId`, so an HTTP-created one would be invisible to every
+ *     listing at once. They are made where the lineage edge is known — delegated
+ *     ones by `agent()`/`spawn()` (M4), a firing by `schedules.ts`.
  *   - Nothing here stores the answer. A client that wants the collapsed view
  *     computes it from `kind` + `originId`, the same way this does.
  *
@@ -38,6 +38,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { BadRequestError, NotFoundError } from "../errors.ts";
 import type { Message, Part, Session, SessionKind, TurnStatus } from "../schema/parts.ts";
+import { COLLAPSED_KINDS } from "../schema/parts.ts";
 import {
   CreateSessionBody,
   PatchSessionBody,
@@ -60,11 +61,13 @@ import { loadDefaults, type ModelDefaults, saveDefaults } from "./defaults.ts";
 // ---- derived visibility ------------------------------------------------------
 
 /**
- * The kinds that collapse under their origin. Delegated work is not a separate
- * concept from a session — a subagent IS a session (spec §7) — so the top-level
- * listing would otherwise fill with machine-spawned branches nobody opened.
+ * The kinds that collapse under their origin. Machine-spawned work is not a
+ * separate concept from a session — a subagent IS a session (spec §7), and so is a
+ * schedule firing — so the top-level listing would otherwise fill with branches
+ * nobody opened. Re-exported from the schema, which is where the list lives so the
+ * server, the search index and the TUI cannot drift apart on it.
  */
-export const COLLAPSED_KINDS: readonly SessionKind[] = ["subagent", "workflow_agent"];
+export { COLLAPSED_KINDS };
 
 /** True when the session surfaces only on drill-in under its `originId`. */
 export function isCollapsed(session: Session): boolean {
@@ -210,7 +213,7 @@ async function requireDirectory(path: string): Promise<void> {
 // ---- handlers ----------------------------------------------------------------
 
 /**
- * `GET /sessions` — the top level, with `subagent` and `workflow_agent` excluded.
+ * `GET /sessions` — the top level, with every collapsing kind excluded.
  * `GET /sessions?originId=<id>` — the drill-in: everything that branched from that
  * session, collapsed kinds included, in creation order.
  *

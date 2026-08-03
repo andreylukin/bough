@@ -46,6 +46,13 @@ const KIND_GLYPH: Record<SessionKind, string> = {
   // schema still has the value and this map must be total over it — but the help no longer
   // advertises the glyph, since a legend cannot promise a mark the tree never draws.
   workflow_agent: "◈",
+  // A firing of a schedule, collapsed under the conversation that created the
+  // schedule. The clock reads as "this ran on its own", which is the one fact that
+  // distinguishes it from a turn the user started.
+  schedule_run: "◷",
+  // The conversation `!` runs in when none is open. Marked as the user's own,
+  // because it is: they typed the command.
+  shell: "●",
 };
 
 /**
@@ -192,6 +199,7 @@ export function markLegend(rows: readonly ForestRow[]): string[] {
     ["⑂", "fork"],
     ["≣", "compaction"],
     ["◆", "subagent"],
+    ["◷", "scheduled run"],
   ]);
   const statuses = new Map<string, string>([
     ["⋯", "running"],
@@ -254,7 +262,7 @@ export function Tree(
             <text key={item.id} wrapMode="none">
               <span fg={sel ? "cyan" : undefined}>{cursor}</span>
               <span attributes={TextAttributes.DIM}>
-                {`${indent}⋯ ${item.count} delegated · → drill in`}
+                {`${indent}⋯ ${item.count} spawned · → drill in`}
               </span>
             </text>
           );

@@ -396,7 +396,7 @@ test("the tree tab lists conversations newest first, delegated work collapsed", 
   assert.ok(frame.includes("wire the panel"), frame);
   // Spec §4: the subagent is a COUNT, not a row of its own, until it is drilled into.
   assert.equal(frame.includes("review"), false, frame);
-  assert.ok(frame.includes("1 delegated"), frame);
+  assert.ok(frame.includes("1 spawned"), frame);
 });
 
 test("the MCP tab reports granted, connected and unauthorized distinctly", async () => {

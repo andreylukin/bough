@@ -37,13 +37,15 @@ Timestamps are **epoch milliseconds** everywhere; `datetime(created_at/1000,
 `base`, `origin_id`, `origin_message_id`, `model`, `effort`, `cost_usd`,
 `input_tokens` / `output_tokens` / `reasoning_tokens`, `outcome_ok`.
 
-- `kind` is `root` | `fork` | `compaction` | `subagent` | `workflow_agent`.
+- `kind` is `root` | `fork` | `compaction` | `subagent` | `workflow_agent` |
+  `schedule_run` (one firing of a schedule, hung off the conversation that created
+  it) | `shell` (the per-workspace conversation `!` commands run in).
 - `parent_id` is **thread inheritance**: a session's thread is its ancestors'
   messages followed by its own. A subagent has `parent_id` NULL — it gets a
   fresh, task-only thread.
 - `origin_id` is the **lineage edge** for the tree view: what this branched from.
-  Subagents and workflow agents collapse under their `origin_id`; roots and forks
-  are top-level. Visibility is derived from `kind` + `origin_id` alone — no column
+  Subagents, workflow agents and schedule runs collapse under their `origin_id`;
+  roots, forks and shells are top-level. Visibility is derived from `kind` + `origin_id` alone — no column
   hides, deprecates or purges a session, because no such operation exists.
 
 `messages` — `id`, `session_id`, `role` (`user` | `supervisor` | `system`),

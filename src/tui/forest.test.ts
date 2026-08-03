@@ -23,6 +23,7 @@ import type { Message, SessionKind } from "../schema/parts.ts";
 import type { SessionRow } from "./api.ts";
 import {
   forestRows,
+  isCollapsed,
   isDelegated,
   messageGist,
   revealPath,
@@ -97,12 +98,49 @@ function fixture() {
 
 // ---- lineage (inherited from the session tree) -------------------------------
 
-test("delegated kinds are the ones that collapse", () => {
+test("collapsing and delegation are different questions", () => {
+  // Delegation is "a program asked for this inside a turn". It drives the live-work
+  // rail and the transcript's branch cards.
   assert.equal(isDelegated("subagent"), true);
   assert.equal(isDelegated("workflow_agent"), true);
+  assert.equal(isDelegated("schedule_run"), false, "the clock is not a delegator");
   assert.equal(isDelegated("root"), false);
   assert.equal(isDelegated("fork"), false);
   assert.equal(isDelegated("compaction"), false);
+
+  // Collapsing is "this is only reachable under its origin". It drives the tree and
+  // every listing. A firing collapses without being delegated — which is the whole
+  // reason the two predicates exist rather than one.
+  assert.equal(isCollapsed("subagent"), true);
+  assert.equal(isCollapsed("workflow_agent"), true);
+  assert.equal(isCollapsed("schedule_run"), true);
+  assert.equal(isCollapsed("root"), false);
+  assert.equal(isCollapsed("fork"), false);
+  assert.equal(isCollapsed("compaction"), false);
+  // The conversation `!` runs in is the user's own, and openable.
+  assert.equal(isCollapsed("shell"), false);
+  assert.equal(isDelegated("shell"), false);
+});
+
+test("a schedule's firings collapse under the conversation that made it", () => {
+  const creator = session("root", "root");
+  const runs = [
+    session("run-1", "schedule_run", { originId: "root" }),
+    session("run-2", "schedule_run", { originId: "root" }),
+  ];
+  const rows = build({
+    sessions: [creator],
+    childrenByOrigin: { root: runs },
+    threads: { root: [] },
+    expanded: new Set(["root"]),
+  });
+  // One row for the conversation, one for its runs — not a row per firing, which is
+  // what a daily schedule used to add to the top level every day.
+  assert.deepEqual(shape(rows), ["root", "⋯root"]);
+  const collapsed = rows.find((r) => r.kind === "collapsed");
+  assert.equal(collapsed?.kind === "collapsed" && collapsed.count, 2);
+  const head = rows[0];
+  assert.equal(head.kind === "session" && head.delegated, 2, "counted on the parent row");
 });
 
 test("a collapsed conversation is ONE row — the top level stays a switcher", () => {

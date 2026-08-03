@@ -43,6 +43,7 @@
  */
 import { BadRequestError, HttpError, NotFoundError } from "../errors.ts";
 import type { Message, Session, SessionKind } from "../schema/parts.ts";
+import { COLLAPSED_KINDS } from "../schema/parts.ts";
 import { SearchQuery } from "../schema/requests.ts";
 import type { Db, SearchHit } from "../types.ts";
 import { type Handler, json } from "./http.ts";
@@ -63,7 +64,8 @@ const NEEDS_A_QUERY = "search needs a query — GET /search?q=<words>. Bare word
   'ANDed; quote a phrase as "like this"; OR, NOT, NEAR and pref* work too.';
 
 /** The kinds that collapse under their `originId` and open only on drill-in (spec §4). */
-const COLLAPSED_KINDS: readonly SessionKind[] = ["subagent", "workflow_agent"];
+// The canonical list lives in `schema/parts.ts`; this was a local copy of it.
+// See the import at the top of the file.
 
 /** One hit, with enough around it to be worth rendering. */
 export interface SearchResultHit {
