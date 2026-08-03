@@ -55,7 +55,8 @@ code on both.
 ```
 
 That clones into `~/bough` (override with `BOUGH_DIR`) and hands off to `scripts/bough setup`, which
-installs the toolchain (`bun` ≥ 1.3, `node`, `ripgrep`, `uv`) with the platform's package
+installs the toolchain (`bun` ≥ 1.3, `node`, `ripgrep`, `uv`, plus an extension-capable `sqlite` on
+macOS for the optional vector layer) with the platform's package
 manager — Homebrew, `apt-get`, `dnf` or `pacman` — installs dependencies,
 links `bough` into `~/.local/bin`, and writes an env template to `~/.bough/env`. Already have a
 clone? Run `scripts/setup.sh` directly. Then:
@@ -91,6 +92,7 @@ Bun runtime and may ignore all of them.
 |---|---|
 | Shell | `bash` (auto-backgrounds past 60s, never killed) · `sh` for concurrent commands · `bashBg` / `bashOutput` / `bashWait` / `bashKill` |
 | Files | `view` → numbered lines with a version tag · `patch` → hash-anchored line edits · `write` for new files |
+| Memory | `history.sql` → read-only SQL over the command memory · `history.similar` → semantic recall where the vector layer exists |
 | Delegation | `agent` (blocking) · `spawn` (detached) · `join` · `adopt` · `workflow.*` |
 | Session | `ask` a human mid-program · `state.*` durable KV · `schedule.*` · `image` · `fetch` · `artifact` · `mcp` |
 
@@ -99,6 +101,26 @@ to survive the model's own string escaping. The tag pins the version that was vi
 moved on but the patched lines are untouched, the edit rebases; if they *were* touched, it reports a
 conflict. With subagents sharing one checkout, that is the primary safeguard against silent
 clobbering.
+
+**Memory across sessions.** Every `bash` carries tags naming what it is *for* —
+`bash("bun test src/tui", "bun:test:composer")` — and every finished command is recorded under
+them: command, exit code, duration, the first 2k chars it *printed*, and the directories it was
+about. Labeling intent at generation time is nearly free and far more accurate than clustering
+command strings after the fact, and the exit code is the ground truth that weights the label. The
+scope key is the repo a command *touched* — git origin URL, else path — not where the session sits,
+so a session rooted at `~` still files into the right project.
+
+Recall runs both ways. The harness primes: a session opens with the project's top tags, weighted by
+success and a 30-day recency half-life, and a round that reaches into a new directory gets one dim
+`[history]` line naming what past sessions tagged there. The program pulls: `history.sql()` is a
+read-only SELECT over `command_history`, its tag and directory junctions, and an FTS index covering
+*output* as well as invocations — so "what did that migration actually print" is answerable without
+re-running it. It is the same `~/.bough/bough.db` that holds the transcripts, which is why the
+bundled `history` skill can answer across both with one `sqlite3` connection. `history.similar()`
+adds KNN recall where the optional vector layer exists: `sqlite-vec` + `sqlite-lembed` embed with a
+local MiniLM *inside* SQLite, into a separate `~/.bough/embeddings.db` — no native module, no
+subprocess, no API call. Where the SQLite build cannot load extensions it simply is not there, and
+tags plus FTS carry recall alone.
 
 **Fan out.** `agent()` runs a subagent to completion and returns its report; `spawn()` detaches one
 that reports back as a system note. For bigger fan-outs, a **workflow** is a script that runs
@@ -157,8 +179,11 @@ These are decisions, not gaps:
 - No confinement of any kind, and no credential gating.
 - No acceptance gate — the model reports what it did and you verify it. The harness does not re-run
   a committed command or block a turn from finishing.
-- No local inference; the cheap tier is a hosted model.
-- No embeddings or vector index — cross-session search is SQLite FTS over transcripts.
+- No local inference in the turn loop; the cheap tier is a hosted model. The one exception is the
+  optional embedding layer, which runs a small model inside SQLite and is absent when the build
+  cannot load extensions.
+- No embeddings over transcripts — cross-session transcript search is SQLite FTS. Only the tagged
+  command memory has a vector index, and it is optional and derived.
 - No per-agent worktrees or file leases. One shared checkout.
 - No remote access, no auth layer, no web UI.
 
