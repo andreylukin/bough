@@ -51,26 +51,14 @@ export function pasteMark(ordinal: number): string {
   return `[Pasted text #${ordinal}]`;
 }
 
-/** Global, because a draft may hold several — and the same one more than once. */
+/**
+ * Global, because a draft may hold several — and the same one more than once.
+ *
+ * There is deliberately no "which pastes does this draft refer to" helper beside it:
+ * a held paste has no chip row of its own, because the mark in the draft IS the row.
+ * One label, in the place the user put it.
+ */
 const MARK = /\[Pasted text #(\d+)\]/g;
-
-/**
- * The ordinals a draft still refers to, in the order they appear in it. Duplicates
- * are kept: a user who copied a mark twice meant it twice.
- */
-export function marksIn(text: string): number[] {
-  return [...text.matchAll(MARK)].map((m) => Number(m[1]));
-}
-
-/**
- * The queue indexes (0-based) a draft still refers to, deduped and in queue order —
- * what the chip row shows, so the rows and the draft can never disagree about what
- * is about to be sent.
- */
-export function referencedPastes(text: string, count: number): number[] {
-  const seen = new Set(marksIn(text).map((ordinal) => ordinal - 1));
-  return [...Array(count).keys()].filter((index) => seen.has(index));
-}
 
 /**
  * The message as it will actually be sent: every mark replaced by its paste.

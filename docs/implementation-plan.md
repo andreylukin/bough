@@ -590,7 +590,7 @@ route entries.
 | **T6.2** `state.*` | `hostfn/state.ts` | `src/state.ts` | Scoped to the **lineage root**; 16KB/key | A fork and its parent read the same store |
 | **T6.3** `schedule.*` | `schedules/` | `src/schedules.ts` | Spec grammar + `nextRun(spec, now)` pure; catch-up advances **from now** | A ticker down through 5 slots fires **once** |
 | **T6.4** `image()` | `hostfn/image.ts` | `src/turn.ts` (image path) | Copies to attachments; next-turn system note | Missing/unsupported file throws catchably |
-| **T6.5** `fetch()` | `hostfn/net.ts` | `src/tools/fetch_url.ts` | 1MB cap with `truncated`; 30s deadline; non-2xx is data | Only transport failure/deadline/interrupt throws |
+| **T6.5** `fetch()` | ~~`hostfn/fetch.ts`~~ | `src/tools/fetch_url.ts` | **Removed.** HTTP is the runtime's own `fetch` inside the program; no host verb, no cap, no wrapper to keep in step with it | — |
 | **T6.6** artifacts | `server/artifacts.ts` | `src/server/artifacts.ts` | Per-session path confinement; FS is source of truth | Traversal blocked; listing survives a db reset |
 | **T6.7** comments | `server/comments.ts` | `src/server/comments.ts` | Widget injected at serve time; sidecar **outside** the artifact dir | Sidecar never appears in `listArtifacts`; send posts a system note |
 | **T6.8** jobs API | job route handlers | `src/server/app.ts` | List/kill/read for a session **and its subagents** | Killing a job emits `job.exited` |

@@ -143,8 +143,11 @@ test("the event-name set is closed and stamped", () => {
 
 test("host names: one list, with the dropped verbs actually dropped", () => {
   assertEquals(new Set(HOST_FN_NAMES).size, HOST_FN_NAMES.length, "no duplicate host names");
-  // Spec §17: one editing idiom, no output digestion, no semantic recall.
-  for (const gone of ["read", "edit", "extract", "recall"]) {
+  // Spec §17: one editing idiom, no output digestion, no semantic recall. `fetch`
+  // and `mcp` were bridged once and are not any more: HTTP is the runtime's own
+  // fetch, and an MCP tool is called through `bough mcp call` in the shell — so
+  // neither may be re-added here without the prompt section to match.
+  for (const gone of ["read", "edit", "extract", "recall", "fetch", "mcp", "mcpStatus"]) {
     assert(!(HOST_FN_NAMES as readonly string[]).includes(gone), `${gone} must not be bridged`);
   }
   // Declared now even though M6 implements them — the list is frozen.
@@ -154,7 +157,6 @@ test("host names: one list, with the dropped verbs actually dropped", () => {
       "state",
       "schedule",
       "image",
-      "fetch",
       "artifact",
       "workflow",
     ]

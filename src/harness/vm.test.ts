@@ -233,6 +233,20 @@ test("an unbridged host name rejects catchably and names the grant", async () =>
   ok(res.logs[0].includes("system prompt"), res.logs[0]);
 });
 
+test("fetch inside a program is the RUNTIME's, not a host verb", async () => {
+  // `fetch` was a bridged host function once, which meant the parameter list shadowed
+  // the real one: a program could not reach the platform `fetch` even though spec §2
+  // gives it the whole runtime. Removing the verb has to leave the ordinary one
+  // reachable, or "HTTP moved to the runtime" would just mean HTTP disappeared.
+  const res = await runProgram({
+    code: `console.log(typeof fetch + " " + (typeof Response));`,
+    host: fakeHost(),
+  });
+
+  ok(res.ok, res.error);
+  strictEqual(res.logs[0], "function function");
+});
+
 test("console.* both streams live and batches into the result", async () => {
   const streamed: string[] = [];
   const res = await runProgram({

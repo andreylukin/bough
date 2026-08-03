@@ -266,7 +266,10 @@ export function Composer(
         {attachments.map((name, index) => (
           <text key={index} fg={index === attachmentSel ? UI.accent : UI.info} wrapMode="none">
             {index === attachmentSel ? "❯ " : "  "}
-            {name.startsWith("Pasted text #") ? "[" + name + "]" : "[image: " + name + "]"}
+            {/* Images only. A held paste has no row of its own: its mark sits in the
+                draft where it was pasted (`paste.ts`), and drawing the same label
+                underneath was the same thing said twice. */}
+            {"[image: " + name + "]"}
           </text>
         ))}
         {clipped

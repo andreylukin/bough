@@ -66,7 +66,6 @@ export const HOST_FN_NAMES = [
   "state",
   "schedule",
   "image",
-  "fetch",
   "artifact",
   "history",
 ] as const;

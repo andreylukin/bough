@@ -502,12 +502,6 @@ export interface HostFns {
    * bytes never cross the bridge.
    */
   image?(path: string, note?: string): Promise<string>;
-  /**
-   * Host HTTP. Returns `{status, ok, url, contentType, body, truncated}` as JSON;
-   * 1MB cap, 30s deadline. A non-2xx response is DATA, not an exception — only a
-   * transport failure, the deadline, or an interrupt rejects.
-   */
-  fetch?(url: string, optsJson: string): Promise<string>;
   /** Publish a file for browser viewing under the session's artifact dir; returns `{url, href}`. */
   artifact?(name: string, content: string): Promise<string>;
   /**

@@ -334,7 +334,6 @@ program name two different files (§6, the workspace note).
 | `state.get/set/list/delete` | Durable KV scoped to the **lineage root**, so forks, compactions and subagents of one piece of work share it. Any JSON, 16KB per key. Notes, not storage — keep payloads in files. |
 | `schedule.list/add/enable/disable/remove` | Recurring runs. |
 | `await image(path, note?)` | Attaches an image so the model can see it. Arrives as a system note on the **next** turn — attach and end the turn, never wait. |
-| `await fetch(url, opts)` | Host HTTP. Returns `{status, ok, url, contentType, body, truncated}`; 1MB cap, 30s deadline. Non-2xx is data, not an exception. |
 | `await artifact(name, content)` | Publishes a file for browser viewing; returns `{url, href}`. |
 | `console.log(...)` | Streams live to the UI and batches into the model's tool result. |
 

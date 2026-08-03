@@ -108,7 +108,7 @@ import { JobOutput, jobBodyRows, jobSubLines } from "./JobOutput.tsx";
 import { Composer, completionPopupHeight, composerHeight } from "./Composer.tsx";
 import { type PanelControls, type PanelHostDeps, usePanelHost } from "./PanelHost.tsx";
 import { liveSubagents, SubagentRail } from "./SubagentRail.tsx";
-import { expandPastes, pasteMark, QUEUE_ABOVE_CHARS, referencedPastes } from "../paste.ts";
+import { expandPastes, pasteMark, QUEUE_ABOVE_CHARS } from "../paste.ts";
 import {
   forestRows,
   isCollapsed,
@@ -1054,17 +1054,16 @@ export function App(
   // The GHOST counts toward the height: it is drawn inside the box and a long suggestion wraps.
   // `composerHeight` has taken it since it was written; omitting it here would lay the box out
   // one row short and the renderer would clip the wrap — the class of bug `Panel.tsx` documents.
-  // The chip rows, DERIVED from the draft: a held paste is shown only while its mark
-  // is still in the text, so the rows and the message about to be sent cannot
-  // disagree. Deleting `[Pasted text #1]` removes its row, which is the whole
-  // removal gesture (`paste.ts`).
-  const attachmentLabels = useMemo(
-    () => [
-      ...attachments.map((part) => part.name),
-      ...referencedPastes(line.text, pastedTexts.length).map((i) => `Pasted text #${i + 1}`),
-    ],
-    [attachments, pastedTexts.length, line.text],
-  );
+  /**
+   * The chip rows: IMAGES ONLY.
+   *
+   * A held paste used to get one, because the draft said nothing about it. The draft
+   * says it now — `[Pasted text #1]`, where the cursor was — so a row underneath is
+   * the same label twice, which is what it looked like: a composer reading
+   * `look at this notion doc [Pasted text #1]` over a row reading `[Pasted text #1]`.
+   * An image has no mark in the text and still needs its row.
+   */
+  const attachmentLabels = useMemo(() => attachments.map((part) => part.name), [attachments]);
 
   const boxH = composerHeight({
     input: line.text,
@@ -1592,11 +1591,7 @@ export function App(
       case "attachment.up":
         return setAttachmentSel((at) => at === null || at === 0 ? null : at - 1);
       case "attachment.down":
-        // From the LIVE draft, like every other guard in this dispatcher: a burst of
-        // keypresses is processed before any of them re-renders, and a mark deleted
-        // two keystrokes ago has already removed its row.
-        const total = attachments.length +
-          referencedPastes(lineRef.current.text, pastedTexts.length).length;
+        const total = attachments.length;
         return setAttachmentSel((at) => total === 0 ? null : at === null ? 0 : Math.min(total - 1, at + 1));
       case "history.prev": {
         if (sent.length === 0) return;

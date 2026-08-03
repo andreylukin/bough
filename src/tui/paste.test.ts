@@ -10,7 +10,7 @@
  */
 import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { expandPastes, marksIn, pasteMark, referencedPastes } from "./paste.ts";
+import { expandPastes, pasteMark } from "./paste.ts";
 
 const A = "aaa\nbbb";
 const B = "console.error('boom')";
@@ -30,31 +30,22 @@ test("the draft's order wins over the queue's", () => {
 test("deleting a mark drops its paste — that is the removal gesture", () => {
   assert.equal(expandPastes(`only ${pasteMark(2)}`, [A, B]), `only ${B}`);
   assert.equal(expandPastes("nothing held", [A, B]), "nothing held");
-  // …and the chip row follows the draft, so it cannot advertise what will not be sent.
-  assert.deepEqual(referencedPastes(`only ${pasteMark(2)}`, 2), [1]);
-  assert.deepEqual(referencedPastes("nothing held", 2), []);
 });
 
 test("an ordinal is a name, not a position", () => {
   // #1's mark is gone; #2 is still #2 in both the draft and the row. Renumbering
   // would rewrite marks the user is looking at, under their cursor.
-  const draft = `keep ${pasteMark(2)}`;
-  assert.deepEqual(marksIn(draft), [2]);
-  assert.deepEqual(referencedPastes(draft, 3), [1]);
-  assert.equal(expandPastes(draft, [A, B, "third"]), `keep ${B}`);
+  assert.equal(expandPastes(`keep ${pasteMark(2)}`, [A, B, "third"]), `keep ${B}`);
 });
 
 test("a mark repeated is a paste repeated", () => {
   assert.equal(expandPastes(`${pasteMark(1)} vs ${pasteMark(1)}`, [A]), `${A} vs ${A}`);
-  // Deduped for the ROW, though — one held paste is one row however often it is said.
-  assert.deepEqual(referencedPastes(`${pasteMark(1)} ${pasteMark(1)}`, 1), [0]);
 });
 
 test("a mark with no paste behind it is left exactly as written", () => {
   // Typed by hand, or left over from a message that was already sent. Substituting
   // something for it would be worse than the literal text that was asked for.
   assert.equal(expandPastes(`see ${pasteMark(7)}`, [A]), `see ${pasteMark(7)}`);
-  assert.deepEqual(referencedPastes(`see ${pasteMark(7)}`, 1), []);
 });
 
 test("the mark is the chip's own label, so the draft reads like the row", () => {

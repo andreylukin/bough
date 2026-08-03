@@ -137,7 +137,6 @@ const GRANTS: { id: SectionId; fn: HostFnName; phrase: string }[] = [
   { id: "state", fn: "state", phrase: "await state.get(key)" },
   { id: "schedule", fn: "schedule", phrase: "await schedule.list()" },
   { id: "image", fn: "image", phrase: "await image(path, note?)" },
-  { id: "fetch", fn: "fetch", phrase: "await fetch(url" },
   { id: "artifact", fn: "artifact", phrase: "await artifact(name, content)" },
   // The probe is `spawn`'s own line, not `adopt`'s. It used to be the latter, which meant
   // this test — whose subject is "the delegation section appears iff spawn is granted" —
@@ -373,7 +372,7 @@ test("a section's sha is over the text that actually went into the prefix", () =
 });
 
 test("a turn without a capability carries no fingerprint for its section", () => {
-  const p = build({ granted: without("fetch") });
-  assertEquals(p.shas.some((s) => s.id === "fetch"), false);
-  // An experiment editing fetch.md must not count this turn as exposed to it.
+  const p = build({ granted: without("artifact") });
+  assertEquals(p.shas.some((s) => s.id === "artifact"), false);
+  // An experiment editing artifact.md must not count this turn as exposed to it.
 });

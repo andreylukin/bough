@@ -127,9 +127,9 @@ test("Composer caps its height on a large paste and says what is off-screen", as
   assert.ok(frame.includes("line 29"));
 });
 
-test("Composer height reserves a row for each compact pasted-text item", () => {
+test("Composer height reserves a row for each attachment", () => {
   assert.equal(
-    composerHeight({ input: "", busy: false, width: 60, maxRows: 6, attachments: ["Pasted text #1"] }),
+    composerHeight({ input: "", busy: false, width: 60, maxRows: 6, attachments: ["shot.png"] }),
     composerHeight({ input: "", busy: false, width: 60, maxRows: 6 }) + 1,
   );
 });
@@ -221,11 +221,13 @@ test("a question narrower than the width is left alone", () => {
   assert.deepEqual(askPromptLines("prod or staging?", 46, 120), ["prod or staging?"]);
 });
 
-test("Composer renders queued long text as a removable compact item", async () => {
+test("Composer renders an attachment as a removable compact item", async () => {
+  // Images only in the product: a held paste has no row, because its mark is in the
+  // draft itself (`paste.ts`). The row rendering is still the row rendering.
   const frame = await draw(
     <Composer input="" cursor={0} busy={false} width={60} maxRows={6}
-      attachments={["Pasted text #1"]} attachmentSel={0} />,
+      attachments={["shot.png"]} attachmentSel={0} />,
   );
-  assert.ok(frame.includes("[Pasted text #1]"), frame);
+  assert.ok(frame.includes("[image: shot.png]"), frame);
   assert.ok(frame.includes("❯"), frame);
 });

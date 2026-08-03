@@ -242,7 +242,6 @@ const bindings = {
     hostCall("image", note === undefined ? [path] : [path, note]),
   // HTTP hops to the host. A non-2xx response is data on the returned object, not a
   // rejection.
-  fetch: (url: string, opts?: unknown) => jsonCall("fetch", [url, JSON.stringify(opts ?? {})]),
   // A non-string content (an object) is stringified so programs can pass it directly.
   artifact: (name: string, content: unknown) =>
     jsonCall("artifact", [name, typeof content === "string" ? content : JSON.stringify(content)]),

@@ -94,7 +94,7 @@ Bun runtime and may ignore all of them.
 | Files | `view` → numbered lines with a version tag · `patch` → hash-anchored line edits · `write` for new files |
 | Memory | `history.sql` → read-only SQL over the command memory · `history.similar` → semantic recall where the vector layer exists |
 | Delegation | `agent` (blocking) · `spawn` (detached) · `join` · `adopt` · `workflow.*` |
-| Session | `ask` a human mid-program · `state.*` durable KV · `schedule.*` · `image` · `fetch` · `artifact` |
+| Session | `ask` a human mid-program · `state.*` durable KV · `schedule.*` · `image` · `artifact` |
 
 **One editing idiom.** `patch` names lines instead of quoting them, so code being edited never has
 to survive the model's own string escaping. The tag pins the version that was viewed: if the file

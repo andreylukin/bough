@@ -454,9 +454,17 @@ test("a long paste is said WHERE it was pasted, not at the end", async () => {
     // Polled, not painted once: a paste is a state update off React's own schedule,
     // exactly like a keypress (`frameShowing`).
     await frameShowing(h, "[Pasted text #1]");
-    // The draft shows the compact row, not 80 characters of it…
+    // The draft shows the compact mark, not 80 characters of it…
     assert.ok(h.frame().includes("[Pasted text #1]"), h.frame());
     assert.equal(h.frame().includes(long), false, "the paste itself must stay out of the composer");
+    // …and shows it ONCE. The mark went into the draft while the chip row still
+    // drew its own copy underneath, so the composer read
+    // `look at this notion doc [Pasted text #1]` over a row saying the same thing.
+    assert.equal(
+      h.frame().split("[Pasted text #1]").length - 1,
+      1,
+      `the label is on screen twice:\n${h.frame()}`,
+    );
 
     await h.press(" and explain\r");
     // …and the message says it in the place it was put.
