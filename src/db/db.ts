@@ -1135,8 +1135,8 @@ export class SqliteDb implements DbPort {
       const info = this.#db.prepare(
         `INSERT INTO command_history
            (session_id, ts, repo, cmd, tags, exit_code, duration_ms, output_head,
-            spill_path, source)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            spill_path, source, message_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         r.sessionId,
         r.ts,
@@ -1148,6 +1148,7 @@ export class SqliteDb implements DbPort {
         r.outputHead,
         r.spillPath,
         r.source,
+        r.messageId ?? null,
       );
       const id = Number(info.lastInsertRowid);
       for (const tag of r.tagList) {
@@ -1238,6 +1239,7 @@ export class SqliteDb implements DbPort {
       commands: number;
       tagged: number;
       distinct_tags: number;
+      distinct_refs: number;
       tag_uses: number;
     }>(
       `WITH d AS (
@@ -1249,7 +1251,8 @@ export class SqliteDb implements DbPort {
               COUNT(DISTINCT d.session_id) AS sessions,
               COUNT(DISTINCT d.id) AS commands,
               COUNT(DISTINCT CASE WHEN d.tags <> '' THEN d.id END) AS tagged,
-              COUNT(DISTINCT t.tag) AS distinct_tags,
+              COUNT(DISTINCT CASE WHEN instr(t.tag, '.') = 0 THEN t.tag END) AS distinct_tags,
+              COUNT(DISTINCT CASE WHEN instr(t.tag, '.') > 0 THEN t.tag END) AS distinct_refs,
               COUNT(t.tag) AS tag_uses
          FROM d LEFT JOIN command_tags t ON t.command_id = d.id
         GROUP BY d.day ORDER BY d.day DESC`,
@@ -1260,8 +1263,35 @@ export class SqliteDb implements DbPort {
       commands: r.commands,
       tagged: r.tagged,
       distinctTags: r.distinct_tags,
+      distinctRefs: r.distinct_refs,
       tagUses: r.tag_uses,
     }));
+  }
+
+  /**
+   * The program a supervisor message ran, or null.
+   *
+   * The other half of `command_history.message_id`: a recalled command reaches the
+   * ROUND that used it. Reads the first `run_steps` call in the message's parts —
+   * one program per round is the whole design (spec §2), so "first" is "the one".
+   * Null covers every ordinary absence: a row from before the column, a message a
+   * compaction dropped, a turn that ran no program.
+   */
+  programForMessage(messageId: string): string | null {
+    const row = this.#get<{ parts: string }>(
+      `SELECT parts FROM messages WHERE id = ?`,
+      messageId,
+    );
+    if (!row) return null;
+    try {
+      const parts = JSON.parse(row.parts) as { type: string; input?: { code?: unknown } }[];
+      for (const p of parts) {
+        if (p.type === "tool_call" && typeof p.input?.code === "string") return p.input.code;
+      }
+    } catch {
+      // A part list that will not parse is a corrupt row, not a crash for a reader.
+    }
+    return null;
   }
 
   /** Commands recorded under one tag, newest first — `bough tags show`. */
@@ -1275,9 +1305,12 @@ export class SqliteDb implements DbPort {
       tags: string;
       exit_code: number | null;
       duration_ms: number | null;
+      session_id: string;
+      message_id: string | null;
     }>(
       `SELECT h.ts AS ts, h.repo AS repo, h.cmd AS cmd, h.tags AS tags,
-              h.exit_code AS exit_code, h.duration_ms AS duration_ms
+              h.exit_code AS exit_code, h.duration_ms AS duration_ms,
+              h.session_id AS session_id, h.message_id AS message_id
          FROM command_history h JOIN command_tags t ON t.command_id = h.id
         WHERE t.tag = ?${scope}
         ORDER BY h.ts DESC LIMIT ${Math.max(1, Math.trunc(opts.limit ?? 20))}`,
@@ -1289,6 +1322,8 @@ export class SqliteDb implements DbPort {
       tags: r.tags,
       exitCode: r.exit_code,
       durationMs: r.duration_ms,
+      sessionId: r.session_id,
+      messageId: r.message_id,
     }));
   }
 }

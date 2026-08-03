@@ -77,6 +77,7 @@ test("parsing is pure and total, and a bare word is a tag", () => {
     days: 30,
     json: false,
     allRepos: false,
+    program: false,
   });
   const show = parseTagsArgs(["show", "git"]);
   assert.equal("usageError" in show ? "" : show.verb, "show");
@@ -151,7 +152,7 @@ test("stats reports coverage and vocabulary per day", () => {
   const c = collector();
   assert.equal(runTags(["stats", "--repo", "mine"], { ...c.deps, db: seeded(), now: () => T0 }), 0);
   const text = c.out.join("\n");
-  assert.match(text, /day\s+sessions\s+cmds\s+tagged\s+vocab\s+uses/);
+  assert.match(text, /day\s+sessions\s+cmds\s+tagged\s+vocab\s+refs\s+uses/);
   // The day with the untagged leg is the one that reports less than 100% coverage —
   // which is the number the whole `sh`-leg problem shows up in.
   assert.match(text, /50%/);
@@ -164,6 +165,111 @@ test("--json is the same answer without the rendering", () => {
   const rows = JSON.parse(c.out.join("\n")) as { cmd: string; exitCode: number }[];
   assert.equal(rows.length, 4);
   assert.equal(rows.some((r) => r.exitCode === 1), true);
+});
+
+test("a recalled command reaches the PROGRAM that ran it", () => {
+  const db = openDb(":memory:");
+  db.createSession({ id: "s1", title: "t", kind: "root", parentId: null, createdAt: T0 });
+  const program = `const r = await bash("psql -f migrations/004.sql", "psql:migrate:demand");\nconsole.log(r);`;
+  db.createMessage({
+    id: "m1",
+    sessionId: "s1",
+    role: "supervisor",
+    parts: [
+      { type: "text", text: "running the migration" },
+      { type: "tool_call", id: "c1", name: "run_steps", input: { code: program } },
+    ],
+    pending: false,
+    createdAt: T0,
+  });
+  db.recordCommand({
+    sessionId: "s1",
+    ts: T0,
+    repo: "mine",
+    cmd: "psql -f migrations/004.sql",
+    tags: "psql:migrate:demand:linear.eng-1234",
+    tagList: ["psql", "migrate", "demand", "linear.eng-1234"],
+    dirs: [],
+    exitCode: 0,
+    durationMs: 900,
+    outputHead: "",
+    spillPath: null,
+    source: "live",
+    messageId: "m1",
+  });
+
+  // The command is recalled by the REFERENCE as readily as by a word — same table,
+  // same join, which is the whole point of keeping them in one namespace.
+  const c = collector();
+  runTags(["show", "linear.eng-1234", "--repo", "mine"], {
+    ...c.deps,
+    db,
+    now: () => T0,
+  });
+  const text = c.out.join("\n");
+  assert.match(text, /psql -f migrations\/004\.sql/);
+  // By default the program is a pointer, because a full program per row would bury
+  // the commands the list is for.
+  assert.match(text, /↳ program: 2 lines · --program to see it/);
+  assert.equal(text.includes("console.log"), false);
+
+  // …and `--program` prints it, which is the half that is actually reusable.
+  const full = collector();
+  runTags(["show", "linear.eng-1234", "--repo", "mine", "--program"], {
+    ...full.deps,
+    db,
+    now: () => T0,
+  });
+  assert.match(full.out.join("\n"), /│ console\.log\(r\);/);
+
+  // A row with no message — every row written before the link existed — still
+  // recalls, it just has no program to offer.
+  db.recordCommand({
+    sessionId: "s1",
+    ts: T0 - 5,
+    repo: "mine",
+    cmd: "psql -c 'select 1'",
+    tags: "psql:probe:demand",
+    tagList: ["psql", "probe", "demand"],
+    dirs: [],
+    exitCode: 0,
+    durationMs: 10,
+    outputHead: "",
+    spillPath: null,
+    source: "live",
+  });
+  const old = collector();
+  runTags(["show", "probe", "--repo", "mine"], { ...old.deps, db, now: () => T0 });
+  assert.match(old.out.join("\n"), /select 1/);
+  assert.equal(old.out.join("\n").includes("↳ program"), false);
+});
+
+test("references are recalled but never primed", () => {
+  // The ranking must not hand a ticket number the maximum rarity boost and open
+  // every session reciting it. It is still in the table, still joinable, still
+  // findable by name — just not in the vocabulary the model is shown.
+  const c = collector();
+  const db = seeded();
+  db.recordCommand({
+    sessionId: "s1",
+    ts: T0,
+    repo: "mine",
+    cmd: "bun test src/tui",
+    tags: "bun:test:linear.eng-1234",
+    tagList: ["bun", "test", "linear.eng-1234"],
+    dirs: [],
+    exitCode: 0,
+    durationMs: 10,
+    outputHead: "",
+    spillPath: null,
+    source: "live",
+  });
+  runTags(["--repo", "mine"], { ...c.deps, db, now: () => T0 });
+  assert.equal(c.out.join("\n").includes("linear.eng-1234"), false, c.out.join("\n"));
+
+  const shown = collector();
+  runTags(["show", "linear.eng-1234", "--repo", "mine"], { ...shown.deps, db, now: () => T0 });
+  assert.match(shown.out.join("\n"), /bun test src\/tui/);
 });
 
 test("an empty memory says so rather than printing an empty table", () => {

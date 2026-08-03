@@ -125,6 +125,14 @@ local MiniLM *inside* SQLite, into a separate `~/.bough/embeddings.db` — no na
 subprocess, no API call. Where the SQLite build cannot load extensions it simply is not there, and
 tags plus FTS carry recall alone.
 
+A tag with a DOT is a **reference** — `linear.eng-1234`, `pr.456`, `commit.3c1c78e` — pointing at
+something with an identity outside bough. Same table and same joins as any other tag, so a ticket
+recalls the commands run for it and the graph connects them; but references are excluded from the
+priming note, because an id lives in exactly one project and the rarity boost would float last
+week's ticket numbers above the vocabulary. Dashes survive inside a reference and nowhere else.
+Every row also points at the message whose program ran it, so recall reaches the ROUND, not just
+the incantation.
+
 `bough tags` is the human's door into the same memory: the project's tag vocabulary with the
 arithmetic the priming note ranked it by, `bough tags show TAG` for what worked under one, and
 `bough tags stats` for coverage and vocabulary per day — which is how you tell whether a prompt

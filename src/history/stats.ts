@@ -17,7 +17,7 @@
 import { isAbsolute, relative } from "node:path";
 import { homedir } from "node:os";
 import type { CommandTagRow, Db } from "../types.ts";
-import { findGitRoot, repoIdentity } from "./record.ts";
+import { findGitRoot, isRef, repoIdentity } from "./record.ts";
 
 const HALF_LIFE_MS = 30 * 24 * 60 * 60 * 1000;
 /** Rows older than this carry <3% weight — not worth reading. */
@@ -86,6 +86,13 @@ export function rankTags(
   limit: number,
 ): RankedTag[] {
   return [...weights.entries()]
+    // REFERENCES NEVER RANK. `linear.eng-1234` lives in exactly one repo, so the idf
+    // below hands it the maximum boost — and it accumulates real weight, because a
+    // ticket is worked over many commands. The two multiply, and the note would open
+    // every session by reciting last week's ticket numbers instead of this project's
+    // words. They are recalled by name (`bough tags show`, history.sql), which is how
+    // an identifier is used; a vocabulary is what this list is for.
+    .filter(([tag]) => !isRef(tag))
     .map(([tag, weight]) => {
       const repos = spread.byTag.get(tag) ?? 1;
       return { tag, weight, repos, score: weight * Math.log(1 + spread.repos / repos) };

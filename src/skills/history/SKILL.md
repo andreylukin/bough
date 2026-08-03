@@ -77,7 +77,11 @@ each with `--json`. Reach for it before hand-writing the SQL below.
 `cmd`, `tags` (colon-joined intent tags the model wrote), `exit_code`,
 `duration_ms`, `output_head` (first ~2k chars it printed, spill marker
 included), `spill_path` (the scratch file holding an oversized output in full —
-may have been cleaned since). Junctions: `command_tags(command_id, tag)` and
+may have been cleaned since), `message_id` (the supervisor message whose
+`run_steps` program ran it — join to `messages` and read `parts` for the code;
+NULL on rows written before the column). A tag containing a DOT is a reference
+to something outside bough (`linear.eng-1234`, `pr.456`); it joins like any
+other tag and is excluded from the popularity ranking. Junctions: `command_tags(command_id, tag)` and
 `command_dirs(command_id, rel_dir)` (repo-root-relative dirs the command was
 about). `command_history_fts` indexes `cmd`, `tags` AND `output_head`, so a
 MATCH finds results as well as invocations.

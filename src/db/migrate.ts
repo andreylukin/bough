@@ -61,9 +61,36 @@ export function migrate(db: Database): number {
   }
   rebuildDayOneCommandHistory(db);
   addScheduleSessionId(db);
+  addCommandMessageId(db);
   db.exec(schemaSql());
   if (found < SCHEMA_VERSION) setUserVersion(db, SCHEMA_VERSION);
   return found;
+}
+
+/**
+ * The third sanctioned reshape: command_history gained `message_id` (2026-08) — the
+ * supervisor message whose program ran the command, so a recalled command reaches
+ * the round around it.
+ *
+ * The closed-table invariant this file opens with was opened DELIBERATELY here: it
+ * says a later task that needs a column "stops and asks", and this one did. The rule
+ * it leaves behind is the one its two siblings already follow — a reshape is a named
+ * function with a PRAGMA guard, never an `ALTER` in a `catch`, and it explains in
+ * prose why the column could not have been derived instead. Three of these is not yet
+ * a ladder; a fourth without a paragraph like this one would be.
+ *
+ * ALTER rather than rebuild, unlike the day-one reshape below: the memory is worth
+ * more now than it was with a handful of rows, and existing commands losing only
+ * their link to a program is a far smaller loss than losing the commands.
+ */
+function addCommandMessageId(db: Database): void {
+  const table = db
+    .prepare(`SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'command_history'`)
+    .get();
+  if (!table) return;
+  const cols = db.prepare(`PRAGMA table_info(command_history)`).all() as { name: string }[];
+  if (cols.some((c) => c.name === "message_id")) return;
+  db.exec(`ALTER TABLE command_history ADD COLUMN message_id TEXT`);
 }
 
 /**

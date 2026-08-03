@@ -270,7 +270,18 @@ CREATE TABLE IF NOT EXISTS command_history (
   spill_path  TEXT,
   -- live | backfill. Backfilled labels are model-inferred after the fact and
   -- weigh less than generation-time intent.
-  source      TEXT NOT NULL DEFAULT 'live'
+  source      TEXT NOT NULL DEFAULT 'live',
+  -- The supervisor message whose `run_steps` program ran this command, so a
+  -- recalled command reaches the PROGRAM around it: `messages.parts` holds the
+  -- tool_call whose `input.code` is what the round actually did. Recall answers
+  -- "here is the incantation" without it and "here is the shape of the round that
+  -- used it" with it, which is the more useful half on anything but a one-liner.
+  --
+  -- NULL for rows written before the column existed, and for any writer that has
+  -- no message (a backfill, a test). Deliberately NOT a foreign key: the memory
+  -- outlives its transcript — a compaction or a fresh root can leave a command
+  -- whose message is gone, and losing the row would be worse than losing the link.
+  message_id  TEXT
 );
 CREATE INDEX IF NOT EXISTS command_history_repo ON command_history(repo, ts);
 

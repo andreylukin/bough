@@ -56,6 +56,32 @@ const TAG_CHARS = /[^a-z0-9_.]+/g;
 const MAX_TAGS = 8;
 
 /**
+ * A REFERENCE: `namespace.id`, pointing at something with an identity outside
+ * bough — `linear.eng-1234`, `pr.456`, `commit.3c1c78e`, `branch.tags-history`.
+ *
+ * THE DOT IS THE WHOLE RULE, and it exists because the two kinds of tag behave
+ * oppositely. A tag is a WORD the model coins: it converges through reuse, and
+ * ranking it by popularity is the point. A reference is a KEY with one referent:
+ * it never converges, it lives in exactly one project, and the popularity math
+ * would therefore hand it the maximum rarity boost and float last week's ticket
+ * numbers to the top of the priming note (`history/stats.ts` excludes them for
+ * exactly that reason). Same table, same joins, same graph — different ranking.
+ *
+ * Dashes survive INSIDE a reference and nowhere else. `ENG-1234` written bare
+ * still becomes `eng:1234`, because without a namespace there is nothing to tell
+ * an identifier from a hyphenated phrase, and `repo-inspect` must keep splitting.
+ * With one, the id is whatever the tracker calls it and bough does not get to
+ * reformat it. Slashes survive there too, because `branch.claude/tags-history` is
+ * the branch's actual name and half of one is not a reference to anything.
+ */
+const REF = /^[a-z][a-z0-9]*\.[a-z0-9][a-z0-9._\/-]*$/;
+
+/** Is this normalized tag a reference rather than a coined word? */
+export function isRef(tag: string): boolean {
+  return tag.includes(".");
+}
+
+/**
  * Normalize a model-written tag string: lowercase, split into tags, slugify
  * each part, drop empties, cap the count. Returns "" when nothing survives —
  * which the caller treats as "no tags given".
@@ -64,17 +90,28 @@ const MAX_TAGS = 8;
  * `psql:migrate` must be the same tag or the popularity stats fragment. Dashes
  * and whitespace are SEPARATORS, not tag characters — `repo-inspect` and
  * `git push` become `repo:inspect` and `git:push`, so one intent never exists
- * in both hyphenated and colonized spellings.
+ * in both hyphenated and colonized spellings. A reference is the one exception,
+ * and `REF` says why.
  */
 export function normalizeTags(raw: string | undefined): string {
   if (!raw) return "";
-  return raw
-    .toLowerCase()
-    .split(/[:\s-]+/)
-    .map((t) => t.replace(TAG_CHARS, ""))
-    .filter((t) => t.length > 0)
-    .slice(0, MAX_TAGS)
-    .join(":");
+  const out: string[] = [];
+  // Split on colons and whitespace FIRST, so a reference is still whole when it
+  // is tested — splitting on dashes up front would have shredded it already.
+  for (const piece of raw.toLowerCase().split(/[:\s]+/)) {
+    if (piece === "") continue;
+    if (REF.test(piece)) {
+      out.push(piece);
+      continue;
+    }
+    for (const part of piece.split(/-+/)) {
+      const tag = part.replace(TAG_CHARS, "");
+      // At least one letter or digit: `...` survives the character filter (dots are
+      // legal in a tag) and would then read as a reference, which it is not.
+      if (/[a-z0-9]/.test(tag)) out.push(tag);
+    }
+  }
+  return out.slice(0, MAX_TAGS).join(":");
 }
 
 /** The individual tags of a normalized string; [] for "". */
@@ -241,6 +278,13 @@ export interface RecorderCtx {
   db: Db;
   sessionId: string;
   workspace: string;
+  /**
+   * The turn's supervisor message — the one whose `run_steps` program is running
+   * this command. Stamped on every row so recall reaches the program, not just the
+   * incantation. Optional because a caller without a turn (a test, a backfill) has
+   * no message, and a row without the link is still a memory.
+   */
+  messageId?: string;
   now?: () => number;
   /**
    * Where the absolute dirs each command touched are appended — the trigger
@@ -272,6 +316,7 @@ export function createCommandRecorder(ctx: RecorderCtx): CommandRecorder {
         outputHead: e.outputHead.slice(0, OUTPUT_HEAD_CHARS),
         spillPath: e.spillPath,
         source: "live",
+        messageId: ctx.messageId ?? null,
       };
       ctx.db.recordCommand(record);
     } catch {

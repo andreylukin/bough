@@ -17,6 +17,7 @@ import type { Db } from "../types.ts";
 import {
   attributeCommand,
   createCommandRecorder,
+  isRef,
   normalizeTags,
   repoIdentity,
   splitTags,
@@ -41,6 +42,31 @@ test("dashes and spaces are separators — no tag ever contains a dash", () => {
   eq(normalizeTags("git push"), "git:push");
   eq(normalizeTags("bun--test"), "bun:test");
   eq(normalizeTags("pre-commit-hook"), "pre:commit:hook");
+});
+
+test("a dot makes a REFERENCE, and only there do dashes survive", () => {
+  // The one exception to "dashes are separators", and the rule is the dot: a
+  // namespace says the thing has an identity outside bough, so bough does not get
+  // to reformat the id.
+  eq(normalizeTags("git:push:linear.ENG-1234"), "git:push:linear.eng-1234");
+  eq(normalizeTags("pr.456"), "pr.456");
+  eq(normalizeTags("commit.3c1c78e"), "commit.3c1c78e");
+  // A branch name keeps its slashes, because half of one points at nothing.
+  eq(normalizeTags("branch.claude/tags-history-db-docs"), "branch.claude/tags-history-db-docs");
+
+  // WITHOUT a namespace it is still a hyphenated phrase — there is nothing to tell
+  // an identifier from `repo-inspect`, and that split has to keep working.
+  eq(normalizeTags("ENG-1234"), "eng:1234");
+  eq(normalizeTags("repo-inspect"), "repo:inspect");
+
+  // `isRef` is what the ranking and the stats split on.
+  eq(isRef("linear.eng-1234"), true);
+  eq(isRef("composer"), false);
+
+  // Punctuation alone is not a reference. Dots are legal tag characters, so `...`
+  // used to survive the filter and would now read as one.
+  eq(normalizeTags("..."), "");
+  eq(normalizeTags("--"), "");
 });
 
 test("normalizeTags returns '' when nothing survives — the caller's 'no tags' signal", () => {

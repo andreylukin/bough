@@ -53,6 +53,8 @@ export interface TagsArgs {
   limit: number;
   days: number;
   json: boolean;
+  /** `show`: print the whole program each command ran in, not just its size. */
+  program: boolean;
 }
 
 export interface UsageError {
@@ -68,6 +70,7 @@ export const USAGE = [
   "",
   "  --repo R        scope to a repo identity (origin URL or path); default: here",
   "  --all           every repo the memory knows, not just this one",
+  "  --program       show: print the program each command ran in, not just its size",
   "  --limit N       rows (default 20)",
   "  --days N        stats: how far back to look (default 30)",
   "  --json          machine-readable output",
@@ -80,7 +83,14 @@ const NUMERIC = new Set(["--limit", "--days"]);
 
 /** Pure and total: arguments in, arguments or a usage error out. Never throws. */
 export function parseTagsArgs(argv: readonly string[]): TagsArgs | UsageError {
-  const args: TagsArgs = { verb: "list", limit: 20, days: 30, json: false, allRepos: false };
+  const args: TagsArgs = {
+    verb: "list",
+    limit: 20,
+    days: 30,
+    json: false,
+    allRepos: false,
+    program: false,
+  };
   const positional: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -91,6 +101,10 @@ export function parseTagsArgs(argv: readonly string[]): TagsArgs | UsageError {
     }
     if (a === "--all") {
       args.allRepos = true;
+      continue;
+    }
+    if (a === "--program") {
+      args.program = true;
       continue;
     }
     if (a === "--repo") {
@@ -185,6 +199,8 @@ function renderShow(
   tag: string,
   now: number,
   out: (l: string) => void,
+  program_: (messageId: string) => string | null,
+  showProgram: boolean,
 ): void {
   if (rows.length === 0) {
     out(`no commands tagged "${tag}"`);
@@ -205,6 +221,16 @@ function renderShow(
     // The exit code first, because "what worked here" is the question this answers.
     const mark = r.exitCode === 0 ? "✓" : r.exitCode === null ? "·" : "✗";
     out(`    ${mark} ${pad(ago(r.ts, now), 9)} ${r.cmd.replace(/\s+/g, " ").slice(0, 96)}`);
+    // …and the round it ran in, because on anything but a one-liner the program is
+    // the reusable part and the command is a line inside it.
+    const program = r.messageId === null ? null : program_(r.messageId);
+    if (program === null) continue;
+    if (showProgram) {
+      for (const line of program.split("\n")) out(`      │ ${line}`);
+    } else {
+      const lines = program.split("\n").length;
+      out(`      ↳ program: ${lines} line${lines === 1 ? "" : "s"} · --program to see it`);
+    }
   }
 }
 
@@ -216,7 +242,7 @@ function renderStats(days: TagDiversityDay[], out: (l: string) => void): void {
   out(
     `  ${pad("day", 12)}${lpad("sessions", 9)}${lpad("cmds", 6)}${lpad("tagged", 8)}${
       lpad("vocab", 7)
-    }${lpad("uses", 6)}`,
+    }${lpad("refs", 6)}${lpad("uses", 6)}`,
   );
   for (const d of days) {
     // `tagged` as a share, because the absolute count says nothing without the
@@ -225,13 +251,17 @@ function renderStats(days: TagDiversityDay[], out: (l: string) => void): void {
     out(
       `  ${pad(d.day, 12)}${lpad(String(d.sessions), 9)}${lpad(String(d.commands), 6)}${
         lpad(share, 8)
-      }${lpad(String(d.distinctTags), 7)}${lpad(String(d.tagUses), 6)}`,
+      }${lpad(String(d.distinctTags), 7)}${lpad(String(d.distinctRefs), 6)}${
+        lpad(String(d.tagUses), 6)
+      }`,
     );
   }
   out("");
-  out("  vocab is DISTINCT tags that day; uses is how often tags were applied.");
-  out("  vocab rising with uses flat is the model naming more things, which is the");
-  out("  point; uses rising with vocab flat is it repeating itself.");
+  out("  vocab is DISTINCT coined tags that day; refs are `linear.*`-style pointers,");
+  out("  counted apart so a busy ticket week does not read as a richer vocabulary;");
+  out("  uses is how often any tag was applied. vocab rising with uses flat is the");
+  out("  model naming more things, which is the point; uses rising with vocab flat is");
+  out("  it repeating itself.");
 }
 
 /**
@@ -264,8 +294,25 @@ export function runTags(argv: readonly string[], deps: TagsDeps): number {
       ...(repo === undefined ? {} : { repo }),
       limit: parsed.limit,
     });
-    if (parsed.json) deps.out(JSON.stringify(rows, null, 2));
-    else renderShow(rows, parsed.tag!, now, deps.out);
+    if (parsed.json) {
+      deps.out(JSON.stringify(
+        rows.map((r) => ({
+          ...r,
+          program: r.messageId === null ? null : db!.programForMessage(r.messageId),
+        })),
+        null,
+        2,
+      ));
+    } else {
+      renderShow(
+        rows,
+        parsed.tag!,
+        now,
+        deps.out,
+        (id) => db!.programForMessage(id),
+        parsed.program,
+      );
+    }
     return 0;
   }
 

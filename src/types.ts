@@ -104,6 +104,8 @@ export interface CommandRecord {
   /** The spill file holding the full output, when there was one. */
   spillPath: string | null;
   source: "live" | "backfill";
+  /** The supervisor message whose program ran it; absent when there is none. */
+  messageId?: string | null;
 }
 
 /** One (tag, outcome) observation, the unit the popularity stats aggregate. */
@@ -115,8 +117,16 @@ export interface TagDiversityDay {
   commands: number;
   /** Commands that carried at least one tag. The rest are unfindable by tag. */
   tagged: number;
-  /** The vocabulary: distinct tags used that day. */
+  /** The vocabulary: distinct COINED tags that day, references excluded. */
   distinctTags: number;
+  /**
+   * Distinct references that day (`linear.*`, `pr.*`, …), counted apart.
+   *
+   * Kept out of `distinctTags` because they would inflate it by one per ticket and
+   * make "is the model naming more things" unreadable — and reported anyway, because
+   * "how many work items did this day touch" is worth its own number.
+   */
+  distinctRefs: number;
   /** Total tag applications, so `distinctTags / tagUses` reads as repetition. */
   tagUses: number;
 }
@@ -129,6 +139,9 @@ export interface TaggedCommand {
   tags: string;
   exitCode: number | null;
   durationMs: number | null;
+  sessionId: string;
+  /** The message whose program ran it — null for a row written before the link. */
+  messageId: string | null;
 }
 
 export interface CommandTagRow {
@@ -245,6 +258,8 @@ export interface Db {
   tagDiversityByDay(sinceTs: number, repo?: string): TagDiversityDay[];
   /** Commands recorded under one tag, newest first. */
   commandsForTag(tag: string, opts?: { repo?: string; limit?: number }): TaggedCommand[];
+  /** The `run_steps` program a supervisor message ran, or null. */
+  programForMessage(messageId: string): string | null;
 
   // keyword search
   /** Idempotent: re-indexing a message replaces its rows. */

@@ -13,6 +13,17 @@ words — so a bare tool name is a wasted tag: not "wc" but "app:linecount", not
 tag whenever there is one. Reuse this project's popular tags when they fit;
 coin new ones when not.
 
+A tag with a DOT is a REFERENCE to something outside bough, and it is how a
+command joins the work it belongs to: linear.eng-1234, pr.456, jira.abc-99.
+Add one whenever you know what ticket, PR or issue the work is for — the user's
+message usually says, and a branch name usually carries it. Dashes survive
+inside a reference and nowhere else, so write linear.eng-1234, not ENG-1234
+(which becomes the two useless tags "eng" and "1234"). References are recalled
+by name and never appear in the popular-tags note, so spending one costs your
+vocabulary nothing:
+
+    await bash("psql -f migrations/004.sql", "psql:migrate:demand:linear.eng-1234");
+
 ONE COMMAND, ONE INTENT — do not chain steps with &&. A chain is ONE row in that
 history under ONE tag set, so `mkdir -p out && bun run build && bun test` becomes a
 single thing you can recall instead of three, and the two intents you did not tag
