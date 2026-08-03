@@ -99,13 +99,13 @@ test("a directory hints only when its profile diverges from the primed set", () 
   );
   // Prime the session so the divergence rule has a baseline.
   tagsNoteFor(db, "sess", "/ws", now);
-  const lines = dirTagHints(db, "sess", "/ws", ["migrations", "src/tui"], now);
+  const lines = dirTagHints(db, "sess", "/ws", ["/ws/migrations", "/ws/src/tui"], now);
   // migrations diverges (psql); src/tui is covered by the primed set — silent.
   eq(lines.length, 1);
   ok(lines[0].includes("migrations/") && lines[0].includes("psql"));
   ok(!lines[0].includes("bun"), "already-primed tags never repeat in a hint");
   // Once per directory, ever.
-  eq(dirTagHints(db, "sess", "/ws", ["migrations"], now), []);
+  eq(dirTagHints(db, "sess", "/ws", ["/ws/migrations"], now), []);
 });
 
 test("hints stop at the per-session cap", () => {
@@ -114,9 +114,39 @@ test("hints stop at the per-session cap", () => {
   const dirs: string[] = [];
   for (let i = 0; i < 6; i++) {
     dirRows[`d${i}`] = [{ tag: `t${i}`, ts: now, exitCode: 0 }];
-    dirs.push(`d${i}`);
+    dirs.push(`/ws/d${i}`);
   }
   const db = stubDb([], dirRows);
   const lines = dirTagHints(db, "sess", "/ws", dirs, now);
   eq(lines.length, 4);
+});
+
+test("touching a FOREIGN checkout surfaces that repo's own profile", async () => {
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const { mkdirSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const home = await mkdtemp(join(tmpdir(), "bough-xrepo-"));
+  try {
+    const proj = join(home, "repos/proj");
+    mkdirSync(join(proj, ".git"), { recursive: true });
+    const now = 1_000_000;
+    // Repo-aware stub: only the foreign checkout's identity has history.
+    const db = {
+      commandTagRows: (repo: string, opts: { dir?: string } = {}) =>
+        repo === proj && opts.dir === undefined
+          ? [{ tag: "docs:read", ts: now, exitCode: 0 }]
+          : [],
+    } as unknown as Db;
+    // The workspace (home) has no history of its own — priming is empty.
+    tagsNoteFor(db, "sess", home, now);
+    const lines = dirTagHints(db, "sess", home, [proj], now);
+    eq(lines.length, 1);
+    ok(lines[0].includes("repos/proj/"), lines[0]);
+    ok(lines[0].includes("docs:read"), lines[0]);
+    // The workspace's OWN root never hints — its profile is the priming set.
+    eq(dirTagHints(db, "sess", home, [home], now), []);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
 });

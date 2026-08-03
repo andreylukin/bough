@@ -14,8 +14,10 @@
  * session for the process lifetime.
  */
 
+import { isAbsolute, relative } from "node:path";
+import { homedir } from "node:os";
 import type { CommandTagRow, Db } from "../types.ts";
-import { repoIdentity } from "./record.ts";
+import { findGitRoot, repoIdentity } from "./record.ts";
 
 const HALF_LIFE_MS = 30 * 24 * 60 * 60 * 1000;
 /** Rows older than this carry <3% weight — not worth reading. */
@@ -45,25 +47,23 @@ function top(weights: Map<string, number>, limit: number): string[] {
     .map(([tag]) => tag);
 }
 
-/** The repo's most-used tags, weighted, best first. */
-export function topRepoTags(db: Db, workspace: string, now: number, limit = TOP_TAGS): string[] {
-  const rows = db.commandTagRows(repoIdentity(workspace), { sinceTs: now - LOOKBACK_MS });
-  return top(tagWeights(rows, now), limit);
+/** The workspace's memory scope: its enclosing checkout's identity, else its path. */
+export function workspaceRepo(workspace: string): string {
+  return repoIdentity(findGitRoot(workspace) ?? workspace);
 }
 
-/** A directory's most-used tags (commands attributed to it or its children). */
-export function topDirTags(
-  db: Db,
-  workspace: string,
-  relDir: string,
-  now: number,
-  limit = TOP_TAGS,
-): string[] {
-  const rows = db.commandTagRows(repoIdentity(workspace), {
-    dir: relDir,
+/** A scope's most-used tags — whole repo, or one directory of it. */
+function topTags(db: Db, repo: string, now: number, limit: number, dir?: string): string[] {
+  const rows = db.commandTagRows(repo, {
+    ...(dir === undefined ? {} : { dir }),
     sinceTs: now - LOOKBACK_MS,
   });
   return top(tagWeights(rows, now), limit);
+}
+
+/** The workspace repo's most-used tags, weighted, best first. */
+export function topRepoTags(db: Db, workspace: string, now: number, limit = TOP_TAGS): string[] {
+  return topTags(db, workspaceRepo(workspace), now, limit);
 }
 
 // ---------------------------------------------------------------------------
@@ -143,33 +143,50 @@ interface HintState {
 const hintMemo = new Map<string, HintState>();
 
 /**
- * Hint lines for directories the round newly read, when a directory's tag profile
- * DIVERGES from what the session was already primed with. No divergence → no
- * line → no context bloat. Once per directory, at most 4 per session.
+ * Hint lines for directories the round newly touched — by `view()` reads or by
+ * the paths its shell commands named — when a directory's tag profile DIVERGES
+ * from what the session was already primed with. No divergence → no line → no
+ * context bloat. Once per directory, at most 4 per session.
  *
- * `readDirs` are workspace-relative directories of files the program viewed.
+ * `absDirs` are ABSOLUTE. Each resolves to its own enclosing checkout, so a
+ * session rooted at `~` that starts working on `~/repos/bough` gets THAT repo's
+ * profile — the cross-repo case the workspace-scoped version was blind to. The
+ * workspace repo's own root is skipped (its profile IS the priming set); a
+ * foreign repo's root surfaces its whole-repo tags.
  */
 export function dirTagHints(
   db: Db,
   sessionId: string,
   workspace: string,
-  readDirs: string[],
+  absDirs: string[],
   now: number,
 ): string[] {
   let state = hintMemo.get(sessionId);
   if (!state) state = remember(hintMemo, sessionId, { seenDirs: new Set(), emitted: 0 });
   const primed = primedTags(sessionId);
+  const wsRoot = findGitRoot(workspace) ?? workspace;
+  const wsRepo = repoIdentity(wsRoot);
   const lines: string[] = [];
-  for (const dir of readDirs) {
+  for (const abs of absDirs) {
     if (state.emitted >= MAX_HINTS_PER_SESSION) break;
-    if (dir === "" || dir === "." || state.seenDirs.has(dir)) continue;
-    state.seenDirs.add(dir);
+    if (!isAbsolute(abs) || state.seenDirs.has(abs)) continue;
+    state.seenDirs.add(abs);
     try {
-      const fresh = topDirTags(db, workspace, dir, now, 5).filter((t) => !primed.has(t));
+      const root = findGitRoot(abs) ?? wsRoot;
+      const repo = repoIdentity(root);
+      const rel = relative(root, abs);
+      if (rel.startsWith("..") || isAbsolute(rel)) continue;
+      const atRoot = rel === "" || rel === ".";
+      if (repo === wsRepo && atRoot) continue;
+      const fresh = topTags(db, repo, now, 5, atRoot ? undefined : rel)
+        .filter((t) => !primed.has(t));
       if (fresh.length === 0) continue;
       state.emitted++;
+      // Same-repo dirs label as the familiar relative path; a foreign repo
+      // labels as its own location, home-abbreviated.
+      const label = repo === wsRepo ? rel : abs.replace(homedir(), "~");
       lines.push(
-        `[history] tags previously used in ${dir}/: ${fresh.join(", ")} — ` +
+        `[history] tags previously used in ${label}/: ${fresh.join(", ")} — ` +
           `see history.sql() for the commands behind them`,
       );
     } catch {

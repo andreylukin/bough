@@ -66,7 +66,7 @@ import {
 import { findProjectRules, projectRulesNote } from "../prompt/project.ts";
 import { createCommandRecorder } from "../history/record.ts";
 import { dirTagHints, tagsNoteFor } from "../history/stats.ts";
-import { dirname, isAbsolute, relative } from "node:path";
+import { dirname, isAbsolute } from "node:path";
 import { boughHome } from "../paths.ts";
 import type { Message, Part, Session, Usage } from "../schema/parts.ts";
 import type {
@@ -239,8 +239,10 @@ export const BASE_HOST_FNS: HostFnName[] = [
 export function baseHostFns(ctx: TurnCtx): HostFns {
   // Initialised HERE so every construction path shares one array — see `TurnCtx.exits`.
   const exits = (ctx.exits ??= []);
-  // Same rule for the memory seams: one recorder and one read trail per turn,
-  // shared by every construction path (`TurnCtx.record` says why).
+  // Same rule for the memory seams: one recorder and one read/touch trail per
+  // turn, shared by every construction path (`TurnCtx.record` says why). The
+  // touch trail must exist BEFORE the recorder closes over the ctx.
+  ctx.touched ??= [];
   const record = (ctx.record ??= createCommandRecorder(ctx));
   const reads = (ctx.reads ??= []);
   return {
@@ -270,29 +272,34 @@ export function defaultProgramRunner(
   // array cannot live in this closure.
   const exits = (ctx.exits ??= []);
   const reads = (ctx.reads ??= []);
+  const touched = (ctx.touched ??= []);
   return async ({ code, signal, onLog }) => {
     const from = exits.length;
     const fromReads = reads.length;
+    const fromTouched = touched.length;
     const result = await runProgram({ code, host: fns, signal, onLog });
-    return withDirTagHintNotes(withExitNotes(result, exits.slice(from)), ctx, reads.slice(fromReads));
+    return withDirTagHintNotes(
+      withExitNotes(result, exits.slice(from)),
+      ctx,
+      [...reads.slice(fromReads).map((p) => dirname(p)), ...touched.slice(fromTouched)],
+    );
   };
 }
 
 /**
- * Append the per-directory tag hints for files this round newly read — the
- * mid-turn half of the tag-history memory. Appended to the round's RESULT, never
- * to the prompt: a mid-session prompt edit would bust the volatile-tier cache
- * (`llm/client.ts`). `history/stats.ts` owns the divergence rule and the caps;
- * this just converts the read trail to workspace-relative directories.
+ * Append the per-directory tag hints for directories this round newly touched —
+ * by `view()` reads or by its shell commands — the mid-turn half of the
+ * tag-history memory. Appended to the round's RESULT, never to the prompt: a
+ * mid-session prompt edit would bust the volatile-tier cache (`llm/client.ts`).
+ * `history/stats.ts` owns per-dir repo resolution, the divergence rule and the
+ * caps; the dirs here are absolute.
  */
 function withDirTagHintNotes(
   result: ProgramResult,
   ctx: TurnCtx,
-  reads: readonly string[],
+  absDirs: readonly string[],
 ): ProgramResult {
-  if (reads.length === 0) return result;
-  const dirs = [...new Set(reads.map((p) => relative(ctx.workspace, dirname(p))))]
-    .filter((d) => d !== "" && d !== "." && !d.startsWith("..") && !isAbsolute(d));
+  const dirs = [...new Set(absDirs)].filter((d) => isAbsolute(d));
   if (dirs.length === 0) return result;
   const lines = dirTagHints(ctx.db, ctx.sessionId, ctx.workspace, dirs, (ctx.now ?? Date.now)());
   if (lines.length === 0) return result;

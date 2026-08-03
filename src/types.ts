@@ -394,6 +394,12 @@ export interface TurnCtx extends AppCtx {
    */
   reads?: string[];
   /**
+   * Absolute directories the turn's shell commands were about, appended by the
+   * command recorder — the other hint trigger, so shell exploration surfaces
+   * directory memory without a single `view()`. Shared like `exits`.
+   */
+  touched?: string[];
+  /**
    * MCP servers inherited from the spawning turn. The human's grant to a spawner
    * extends to the subagents doing parts of that same granted work. Captured at
    * spawn time, so a later manual continuation does not inherit (spec §7).

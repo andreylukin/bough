@@ -14,7 +14,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SqliteDb } from "../db/db.ts";
 import type { Db } from "../types.ts";
-import { createCommandRecorder, extractDirs, normalizeTags, repoIdentity, splitTags } from "./record.ts";
+import {
+  attributeCommand,
+  createCommandRecorder,
+  normalizeTags,
+  repoIdentity,
+  splitTags,
+} from "./record.ts";
 
 function eq(actual: unknown, expected: unknown, message?: string): void {
   deepStrictEqual(actual, expected, message);
@@ -66,33 +72,56 @@ async function withWorkspace(fn: (ws: string) => void | Promise<void>): Promise<
   }
 }
 
-test("extractDirs attributes a command to the directories of the paths it names", () =>
+test("attributeCommand maps a command to the dirs of the paths it names", () =>
   withWorkspace((ws) => {
-    eq(extractDirs("bun test src/tui/composer.ts", ws), ["src/tui"]);
-    eq(extractDirs("psql -f migrations/004.sql", ws), ["migrations"]);
+    eq(attributeCommand("bun test src/tui/composer.ts", ws).relDirs, ["src/tui"]);
+    eq(attributeCommand("psql -f migrations/004.sql", ws).relDirs, ["migrations"]);
     // A directory token attributes to itself; a file to its dirname.
-    eq(extractDirs("ls -la src/tui", ws), ["src/tui"]);
+    eq(attributeCommand("ls -la src/tui", ws).relDirs, ["src/tui"]);
     // `--flag=path` and line refs both resolve.
-    eq(extractDirs("tool --input=src/tui/composer.ts", ws), ["src/tui"]);
-    eq(extractDirs("rg -n foo src/tui/composer.ts:12", ws), ["src/tui"]);
+    eq(attributeCommand("tool --input=src/tui/composer.ts", ws).relDirs, ["src/tui"]);
+    eq(attributeCommand("rg -n foo src/tui/composer.ts:12", ws).relDirs, ["src/tui"]);
+    // A non-git workspace's scope is its own path.
+    eq(attributeCommand("ls -la src/tui", ws).repo, ws);
   }));
 
-test("extractDirs ignores non-paths, outside paths, and the trees nobody means", () =>
+test("attributeCommand ignores non-paths and the trees nobody means", () =>
   withWorkspace((ws) => {
-    eq(extractDirs("git push origin main", ws), []);
-    eq(extractDirs("curl https://example.com/a/b", ws), []);
-    eq(extractDirs("cat /etc/hosts", ws), []);
-    eq(extractDirs("ls node_modules/pkg", ws), []);
+    eq(attributeCommand("git push origin main", ws).relDirs, []);
+    eq(attributeCommand("curl https://example.com/a/b", ws).relDirs, []);
+    // Outside every checkout and outside the workspace: touch-tracked, never a rel dir.
+    eq(attributeCommand("cat /etc/hosts", ws).relDirs, []);
+    eq(attributeCommand("ls node_modules/pkg", ws).relDirs, []);
     // A path that does not exist attributes nothing — the heuristic never guesses.
-    eq(extractDirs("bun test src/gone/nope.ts", ws), []);
+    eq(attributeCommand("bun test src/gone/nope.ts", ws).relDirs, []);
   }));
 
-test("extractDirs dedupes and caps", () =>
+test("attributeCommand dedupes and caps", () =>
   withWorkspace((ws) => {
     eq(
-      extractDirs("diff src/tui/composer.ts src/tui/composer.ts migrations/004.sql", ws),
+      attributeCommand("diff src/tui/composer.ts src/tui/composer.ts migrations/004.sql", ws)
+        .relDirs,
       ["src/tui", "migrations"],
     );
+  }));
+
+test("a command about ANOTHER checkout is scoped to that checkout, not the workspace", () =>
+  withWorkspace((ws) => {
+    // `ws` plays the home dir; a separate checkout lives at ws/repos/proj.
+    const proj = join(ws, "repos/proj");
+    mkdirSync(join(proj, ".git"), { recursive: true });
+    mkdirSync(join(proj, "src"), { recursive: true });
+    writeFileSync(join(proj, "src/a.ts"), "x");
+    // Touching the checkout's root scopes the row to it, with no dir rows.
+    const atRoot = attributeCommand(`cd ${proj} && ls -la`, ws);
+    eq(atRoot.repo, proj);
+    eq(atRoot.relDirs, []);
+    eq(atRoot.absDirs, [proj]);
+    // Touching a file inside it attributes REPO-ROOT-relative dirs, so sessions
+    // rooted anywhere agree on what "src" means.
+    const inside = attributeCommand(`sed -n 1p ${proj}/src/a.ts`, ws);
+    eq(inside.repo, proj);
+    eq(inside.relDirs, ["src"]);
   }));
 
 // ---------------------------------------------------------------------------

@@ -95,7 +95,7 @@ export function repoIdentity(workspace: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Directory attribution
+// Directory + repo attribution
 // ---------------------------------------------------------------------------
 
 /** Tokens that are clearly not paths, cheaply. */
@@ -104,15 +104,16 @@ const MAX_TOKENS_CHECKED = 24;
 const MAX_DIRS = 4;
 
 /**
- * The directories a command was ABOUT, workspace-relative.
+ * The ABSOLUTE directories a command was about.
  *
  * Not the cwd: a bough program runs at the workspace root and never cds, so cwd
  * carries no per-directory signal. Instead, tokens that resolve to real paths
- * under the workspace attribute the command to their directories — `bun test
- * src/tui/composer.test.ts` → `src/tui`. Cheap heuristic, wrong rarely, and when
- * it finds nothing the command is honestly "about the repo generally".
+ * attribute the command to their directories — `bun test src/tui/x.test.ts` →
+ * `<ws>/src/tui`. Absolute tokens OUTSIDE the workspace count too: a session
+ * rooted at `~` that runs `cd ~/repos/bough && …` is working on that repo, and
+ * dropping the path was exactly how such commands got mis-scoped to `~`.
  */
-export function extractDirs(command: string, workspace: string): string[] {
+function extractAbsDirs(command: string, workspace: string): string[] {
   const dirs = new Set<string>();
   const tokens = command.split(/[\s;|&<>()]+/).slice(0, 200);
   let checked = 0;
@@ -130,9 +131,7 @@ export function extractDirs(command: string, workspace: string): string[] {
     if (!tok.includes("/") && !/^[^./]+\.[^./]+$/.test(tok)) continue;
     if (tok.includes("://")) continue;
     const full = isAbsolute(tok) ? tok : resolve(workspace, tok);
-    const rel = relative(workspace, full);
-    if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) continue;
-    if (rel === ".git" || rel.startsWith(".git/") || rel.includes("node_modules")) continue;
+    if (full.includes("/node_modules") || full.includes("/.git")) continue;
     checked++;
     let st;
     try {
@@ -140,10 +139,76 @@ export function extractDirs(command: string, workspace: string): string[] {
     } catch {
       continue;
     }
-    const dir = st.isDirectory() ? rel : dirname(rel);
-    if (dir !== "" && dir !== ".") dirs.add(dir);
+    dirs.add(st.isDirectory() ? full : dirname(full));
   }
   return [...dirs];
+}
+
+const gitRootCache = new Map<string, string | null>();
+
+/** The enclosing git checkout's root, or null. Walks up; cached per directory. */
+export function findGitRoot(dir: string): string | null {
+  const hit = gitRootCache.get(dir);
+  if (hit !== undefined) return hit;
+  let cur = dir;
+  for (let i = 0; i < 32; i++) {
+    try {
+      statSync(resolve(cur, ".git"));
+      gitRootCache.set(dir, cur);
+      return cur;
+    } catch {
+      const parent = dirname(cur);
+      if (parent === cur) break;
+      cur = parent;
+    }
+  }
+  gitRootCache.set(dir, null);
+  return null;
+}
+
+/** What one command resolves to: its memory scope and the dirs inside it. */
+export interface Attribution {
+  /** The repo identity the history row is scoped to. */
+  repo: string;
+  /** Directories relative to that repo's root (or the workspace, without one). */
+  relDirs: string[];
+  /** The absolute dirs the command touched — the hint trigger's input. */
+  absDirs: string[];
+}
+
+/**
+ * Resolve a command's memory scope from the paths it TOUCHES, not from where
+ * the session sits. Each touched directory is mapped to its enclosing git
+ * checkout; the checkout containing the most touched dirs wins and the command
+ * is scoped to ITS identity, with dirs relative to its root. A session rooted
+ * at `~` inspecting `~/repos/bough` therefore writes rows other sessions rooted
+ * IN that repo can recall — the miss that motivated this function.
+ *
+ * A command touching nothing (or nothing inside any checkout) falls back to the
+ * workspace's own scope, which is the common case and the cheap path.
+ */
+export function attributeCommand(command: string, workspace: string): Attribution {
+  const absDirs = extractAbsDirs(command, workspace);
+  const wsRoot = findGitRoot(workspace) ?? workspace;
+  const byRoot = new Map<string, string[]>();
+  for (const d of absDirs) {
+    const root = findGitRoot(d) ?? wsRoot;
+    byRoot.set(root, [...(byRoot.get(root) ?? []), d]);
+  }
+  let root = wsRoot;
+  let best = byRoot.get(wsRoot)?.length ?? 0;
+  for (const [r, ds] of byRoot) {
+    if (ds.length > best) {
+      root = r;
+      best = ds.length;
+    }
+  }
+  const relDirs = [...new Set(
+    (byRoot.get(root) ?? [])
+      .map((d) => relative(root, d))
+      .filter((r) => r !== "" && r !== "." && !r.startsWith("..") && !isAbsolute(r)),
+  )];
+  return { repo: repoIdentity(root), relDirs, absDirs };
 }
 
 // ---------------------------------------------------------------------------
@@ -156,6 +221,12 @@ export interface RecorderCtx {
   sessionId: string;
   workspace: string;
   now?: () => number;
+  /**
+   * Where the absolute dirs each command touched are appended — the trigger
+   * input for the round's directory hints (`turn/runner.ts`), so hints fire on
+   * shell exploration too, not only on `view()` reads.
+   */
+  touched?: string[];
 }
 
 /**
@@ -165,14 +236,16 @@ export interface RecorderCtx {
 export function createCommandRecorder(ctx: RecorderCtx): CommandRecorder {
   return (e) => {
     try {
+      const { repo, relDirs, absDirs } = attributeCommand(e.command, ctx.workspace);
+      ctx.touched?.push(...absDirs);
       const record: CommandRecord = {
         sessionId: ctx.sessionId,
         ts: (ctx.now ?? Date.now)(),
-        repo: repoIdentity(ctx.workspace),
+        repo,
         cmd: e.command,
         tags: e.tags,
         tagList: splitTags(e.tags),
-        dirs: extractDirs(e.command, ctx.workspace),
+        dirs: relDirs,
         exitCode: e.exitCode,
         durationMs: e.durationMs,
         source: "live",
