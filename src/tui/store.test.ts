@@ -35,7 +35,7 @@ import { test } from "bun:test";
 import assert from "node:assert/strict";
 import type { SearchResultHit } from "../server/search.ts";
 import type { BoughEvent, EventType } from "../schema/events.ts";
-import type { AskQuestion, Message, Part, Session } from "../schema/parts.ts";
+import type { AskQuestion, Message, Part, Schedule, Session } from "../schema/parts.ts";
 import type { Api, SessionRow, SessionSnapshot } from "./api.ts";
 import {
   createStore,
@@ -646,6 +646,10 @@ function fakeApi(overrides: Partial<Api> = {}) {
       calls.push("listWorkflows");
       return Promise.resolve({ workflows: [] });
     },
+    listSchedules: () => {
+      calls.push("listSchedules");
+      return Promise.resolve([]);
+    },
     postMessage: (id: string) => {
       calls.push(`postMessage:${id}`);
       return Promise.resolve({
@@ -1070,6 +1074,10 @@ test("stopping a unit uses the right route and records what it killed", async ()
       killed.push(`stopWorkflow:${id}`);
       return Promise.resolve({} as never);
     },
+    patchSchedule: (id: string, body: object) => {
+      killed.push(`patchSchedule:${id}:${JSON.stringify(body)}`);
+      return Promise.resolve({} as never);
+    },
   });
   const events = fakeStream();
   const store = createStore({ api, connect: events.connect });
@@ -1094,15 +1102,25 @@ test("stopping a unit uses the right route and records what it killed", async ()
   await store.stopUnit(unit({}));
   await store.stopUnit(unit({ kind: "subagent", id: "sub-1", sessionId: "sub-1", title: "review" }));
   await store.stopUnit(unit({ kind: "workflow", id: "run-1", sessionId: "run-1", title: "bench" }));
+  // A schedule is DISABLED, never killed: it keeps its spec and prompt.
+  await store.stopUnit(
+    unit({ kind: "schedule", id: "sched-1", sessionId: "sched-1", title: "nightly bench" }),
+  );
   assert.deepEqual(killed, [
     `kill:${SESSION}/bg_7`,
     "interrupt:sub-1",
     "stopWorkflow:run-1",
+    'patchSchedule:sched-1:{"enabled":false}',
   ]);
   // Every one of them is in the ledger, with its scope named.
   assert.deepEqual(
     marksFor(store.getState(), SESSION).map((m) => m.text),
-    ["killed bg_7 — sleep 90", "stopped subagent review", "stopped workflow bench"],
+    [
+      "killed bg_7 — sleep 90",
+      "stopped subagent review",
+      "stopped workflow bench",
+      "disabled schedule nightly bench — ask the agent to re-enable it",
+    ],
   );
   await store.stop();
 });
@@ -1192,6 +1210,53 @@ test("liveUnits attributes every running thing separately", () => {
   assert.equal(units[2].progress, 3 / 8);
   // …and everything else must report NO progress rather than an invented bar.
   assert.equal(units[0].progress, null);
+  assert.equal(units[1].progress, null);
+});
+
+test("enabled schedules ride the rail as countdowns, below the live work", () => {
+  const now = 100_000;
+  const schedule = (id: string, over: Partial<Schedule> = {}): Schedule => ({
+    id,
+    title: id,
+    prompt: "run the bench",
+    workspace: null,
+    spec: "every:4h",
+    enabled: true,
+    createdAt: 0,
+    lastRunAt: null,
+    nextRunAt: now + 60_000,
+    ...over,
+  });
+  const units = liveUnits({
+    now,
+    jobs: [{
+      id: "bg_7",
+      name: "dev server",
+      sessionId: SESSION,
+      pid: 1,
+      command: "npm run dev",
+      status: "running",
+      startedAt: now - 30_000,
+    }],
+    subagents: [],
+    workflows: [],
+    schedules: [
+      // Created later but due sooner: order is by CREATION, so a fire advancing
+      // `nextRunAt` never re-sorts a row out from under the cursor.
+      schedule("soon", { createdAt: 2, nextRunAt: now + 10_000 }),
+      schedule("later", { createdAt: 1, nextRunAt: now + 7_200_000 }),
+      schedule("off", { enabled: false }),
+    ],
+  });
+  assert.deepEqual(units.map((u) => `${u.kind}:${u.id}`), [
+    "shell:bg_7",
+    "schedule:later",
+    "schedule:soon",
+  ]);
+  // The countdown, unclamped — `unitLine` words a due one, not this.
+  assert.equal(units[2].elapsedMs, 10_000);
+  assert.equal(units[1].detail, "every:4h");
+  assert.equal(units[1].tokens, null);
   assert.equal(units[1].progress, null);
 });
 

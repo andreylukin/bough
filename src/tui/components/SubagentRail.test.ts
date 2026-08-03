@@ -83,3 +83,11 @@ test("the hint counts by kind — three shells and three agents are different ne
   );
   assert.equal(railHint([unit("workflow", "run")]), "↓ 1 run running");
 });
+
+test("schedules are counted apart — 'running' would be a lie about a countdown", () => {
+  assert.equal(railHint([unit("schedule", "s1"), unit("schedule", "s2")]), "↓ 2 scheduled");
+  assert.equal(
+    railHint([unit("shell", "bg_1"), unit("schedule", "s1")]),
+    "↓ 1 shell running · 1 scheduled",
+  );
+});

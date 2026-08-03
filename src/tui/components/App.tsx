@@ -222,6 +222,13 @@ const RAIL_POLL_MS = 1500;
 const RAIL_TICK_MS = 1000;
 
 /**
+ * The clock's third, slowest rate: nothing is live and only schedule countdowns
+ * are on the rail. The server ticker is itself ~30s-grained (`schedules.ts`
+ * TICK_MS), so a finer clock would move a number the truth cannot move.
+ */
+const SCHEDULE_TICK_MS = 30_000;
+
+/**
  * Below this many turns a conversation needs no topic headers.
  *
  * The sections route is a cheap-tier LLM pass over every turn gist: worth it on a thirty-turn
@@ -475,11 +482,19 @@ export function App(
   const anyLive = busy || railBranches.length > 0 ||
     state.jobs.some((j) => j.status === "running") ||
     state.workflows.some((w) => w.status === "running" || w.status === "paused");
+  // An enabled schedule keeps a SLOW clock (its rail row is a countdown, and a
+  // frozen countdown is a lying one) — but not the one-second clock: 30s matches
+  // the server ticker's own resolution, so a quiet TUI with a schedule wakes
+  // twice a minute rather than every second forever.
+  const anyScheduled = state.schedules.some((s) => s.enabled);
   useEffect(() => {
-    if (!anyLive) return;
-    const id = setInterval(() => setTick((t) => t + 1), busy ? SPINNER_MS : RAIL_TICK_MS);
+    if (!anyLive && !anyScheduled) return;
+    const id = setInterval(
+      () => setTick((t) => t + 1),
+      busy ? SPINNER_MS : anyLive ? RAIL_TICK_MS : SCHEDULE_TICK_MS,
+    );
     return () => clearInterval(id);
-  }, [anyLive, busy]);
+  }, [anyLive, anyScheduled, busy]);
   // THE STORE'S METER IS THE ONLY TURN CLOCK. This used to be a local `busySince` ref
   // stamped when `busy` went true, which meant two answers to "how long has this been
   // running" — and the ref's one was the one that could not also say what the turn had
@@ -795,9 +810,10 @@ export function App(
         jobs: state.jobs,
         subagents: railBranches,
         workflows: state.workflows,
+        schedules: state.schedules,
         now: now(),
       }),
-    [state.jobs, railBranches, state.workflows, tick],
+    [state.jobs, railBranches, state.workflows, state.schedules, tick],
   );
   // A RUNNING shell is on the rail, so its card would be the same fact twice — and the
   // copy at the tail of the transcript is the one you can only see while scrolled to
@@ -1599,6 +1615,10 @@ export function App(
           setJobScroll(0);
           return void openJobView(target.id, target.sessionId);
         }
+        // A schedule has no session to open and no buffer to show — its ⏎ says
+        // what all the schedules are, spec and next fire included, as the notice
+        // `/schedules` shows. The cursor stays on the rail: you glanced, not left.
+        if (target.kind === "schedule") return void store.describeSchedules();
         setMode("chat");
         return void store.open(target.sessionId);
       }
@@ -1647,6 +1667,10 @@ export function App(
               ? `x again to kill ${u.title}${
                 u.detail && u.detail !== u.title ? ` — ${u.detail}` : ""
               }`
+              // Disabling loses nothing in flight — the schedule keeps its spec
+              // and prompt — so the warning names what actually stops: the firing.
+              : u.kind === "schedule"
+              ? `x again to disable ${u.title} — it will not fire until re-enabled`
               : `x again to stop ${u.title} — work in flight is lost`,
           );
         }

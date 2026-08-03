@@ -1465,9 +1465,24 @@ function progressBar(fraction: number): string {
  * the numbers are the message.
  */
 export function unitLine(u: LiveUnit, cols: number): string {
-  const glyph = u.kind === "shell" ? "⚙" : u.kind === "subagent" ? "◆" : "⧉";
-  const hue = u.kind === "shell" ? warn : u.kind === "subagent" ? info : accent;
-  const bits = [fmtDuration(u.elapsedMs)];
+  const glyph = u.kind === "shell"
+    ? "⚙"
+    : u.kind === "subagent"
+    ? "◆"
+    : u.kind === "schedule"
+    ? "⏱"
+    : "⧉";
+  // A schedule's glyph is DIM where the live kinds get a colour: the rail is a
+  // "what is happening" surface and a schedule is a thing that will happen.
+  const hue = u.kind === "shell" ? warn : u.kind === "subagent" ? info : u.kind === "schedule" ? dim : accent;
+  // A schedule counts DOWN — `elapsedMs` is time until it fires (store.ts) — and
+  // once due it says so: the ticker fires within ~30s, and a negative countdown
+  // rendered as elapsed time would read as a schedule that has been running.
+  const bits = [
+    u.kind === "schedule"
+      ? u.elapsedMs < 1000 ? "due" : `in ${fmtDuration(u.elapsedMs)}`
+      : fmtDuration(u.elapsedMs),
+  ];
   if (typeof u.tokens === "number" && u.tokens > 0) bits.push(`${fmtTokens(u.tokens)} tok`);
   if (typeof u.costUsd === "number" && u.costUsd > 0) bits.push(fmtUsd(u.costUsd));
   if (u.progress !== null) bits.push(progressBar(u.progress));

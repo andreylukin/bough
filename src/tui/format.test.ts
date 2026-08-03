@@ -612,6 +612,19 @@ test("a rail row attributes elapsed, tokens and spend to ONE unit", () => {
       unitLine({ ...shell, title: "bg_7", detail: "npm run dev" }, 80),
       "⚙ bg_7  2m12s · npm run dev",
     );
+    // A schedule counts DOWN — elapsedMs is time until the fire — and its detail
+    // is the spec, so the row says when and on what cadence.
+    const sched = {
+      ...base,
+      kind: "schedule" as const,
+      title: "nightly bench",
+      tokens: null,
+      costUsd: null,
+      detail: "every:4h",
+    };
+    assert.equal(unitLine(sched, 80), "⏱ nightly bench  in 2m12s · every:4h");
+    // Past due is "due", not a negative age: the server ticker fires within ~30s.
+    assert.equal(unitLine({ ...sched, elapsedMs: -5_000 }, 80), "⏱ nightly bench  due · every:4h");
   });
 });
 

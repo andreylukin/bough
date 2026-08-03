@@ -49,6 +49,7 @@ import type {
   BackgroundJob,
   Message,
   Part,
+  Schedule,
   Session,
   TurnStatus,
 } from "../schema/parts.ts";
@@ -212,6 +213,13 @@ export interface TuiState {
    */
   jobView: JobViewState | null;
   workflows: WorkflowSummary[];
+  /**
+   * Every schedule, verbatim from `GET /schedules`. GLOBAL, not per-session — a
+   * schedule fires whatever conversation is open, so the list survives a switch
+   * where `jobs` and `workflows` are cleared. The rail shows the enabled ones
+   * (`liveUnits`); disabled ones are still here for `describeSchedules`.
+   */
+  schedules: Schedule[];
   /** runId → the last narrator `log()` line. Memory-only, like the run's chip. */
   workflowLogs: Record<string, string>;
   /** Bumped on every `workflow.*` event — a detail view refetches on the change. */
@@ -257,6 +265,7 @@ export function initialState(): TuiState {
     jobs: [],
     jobView: null,
     workflows: [],
+    schedules: [],
     workflowLogs: {},
     workflowSeq: 0,
     replay: null,
@@ -293,6 +302,8 @@ export type StoreAction =
   /** Open, refresh, or (with `view: null`) close the job output view. */
   | { type: "jobView"; view: JobViewState | null }
   | { type: "workflows"; sessionId: string; workflows: WorkflowSummary[] }
+  /** The whole schedule list, re-read. No sessionId gate — schedules are global. */
+  | { type: "schedules"; schedules: Schedule[] }
   | { type: "replay"; replay: ReplayReport | null }
   | { type: "notice"; notice: string | null }
   /**
@@ -851,6 +862,8 @@ export function reduce(state: TuiState, action: StoreAction): TuiState {
     case "jobView":
       return { ...state, jobView: action.view };
 
+    case "schedules":
+      return { ...state, schedules: action.schedules };
     case "workflows":
       return action.sessionId === state.currentId
         ? { ...state, workflows: action.workflows }
@@ -988,16 +1001,21 @@ export function marksFor(state: TuiState, sessionId: string | null): TranscriptM
  * key can stop them.
  */
 export interface LiveUnit {
-  kind: "shell" | "subagent" | "workflow";
-  /** The job id, the session id, the run id. Unique across kinds by construction. */
+  kind: "shell" | "subagent" | "workflow" | "schedule";
+  /** The job id, the session id, the run id, the schedule id. Unique across kinds by construction. */
   id: string;
   /**
    * The session a stop is addressed to: a shell's owner, the subagent itself, the
-   * run's id. `stopUnit` needs no branch beyond `kind` because of this field.
+   * run's id. A schedule has no session — `stopUnit` addresses it by `id`.
    */
   sessionId: string;
   /** Short, human: `bg_7`, `review app.ts`, `nightly bench`. */
   title: string;
+  /**
+   * For a schedule this is the time UNTIL it fires (negative once it is due),
+   * not time since it started — a schedule row counts down where the others
+   * count up, and `unitLine` words it accordingly.
+   */
   elapsedMs: number;
   /** This unit's own tokens. Null for a shell, which spends none. */
   tokens: number | null;
@@ -1027,9 +1045,11 @@ export function liveUnits(opts: {
   /** The open session's delegated children — `liveSubagents` is applied here. */
   subagents: readonly SessionRow[];
   workflows: readonly WorkflowSummary[];
+  /** Global, enabled-only after the filter here — a disabled one fires nothing. */
+  schedules?: readonly Schedule[];
   now: number;
 }): LiveUnit[] {
-  const { jobs, subagents, workflows, now } = opts;
+  const { jobs, subagents, workflows, schedules = [], now } = opts;
   const shells: LiveUnit[] = jobs
     .filter((j) => j.status === "running")
     .sort((a, b) => a.startedAt - b.startedAt)
@@ -1085,7 +1105,27 @@ export function liveUnits(opts: {
         ? `paused · ${w.currentPhase ?? "no phase"}`
         : w.currentPhase ?? null,
     }));
-  return [...shells, ...agents, ...runs];
+  // LAST, below the live work: a schedule is a standing promise, not a thing in
+  // flight, and the rows that are actually burning time stay nearest the cursor.
+  // Ordered by creation, not by `nextRunAt` — a fire re-sorts the latter, and a
+  // row must not move under the cursor.
+  const timers: LiveUnit[] = schedules
+    .filter((s) => s.enabled)
+    .sort((a, b) => a.createdAt - b.createdAt)
+    .map((s) => ({
+      kind: "schedule" as const,
+      id: s.id,
+      sessionId: s.id,
+      title: oneLine(s.title || s.prompt),
+      // Countdown, deliberately unclamped: past-due reads as "due" (`unitLine`),
+      // which is true for at most one ticker interval before the fire resets it.
+      elapsedMs: s.nextRunAt - now,
+      tokens: null,
+      costUsd: null,
+      progress: null,
+      detail: s.spec,
+    }));
+  return [...shells, ...agents, ...runs, ...timers];
 }
 
 // ---------------------------------------------------------------------------
@@ -1462,6 +1502,21 @@ export function createStore(deps: StoreDeps = {}): Store {
   };
 
   /**
+   * Re-read the schedule list for the rail. Event-driven, never polled: a
+   * schedule changes when the agent edits one (a turn finishing) or when one
+   * fires (a `session.created` for the fired root), and both arrive on the bus.
+   * SILENT on failure for the same reason `refreshUsage` is — it runs on every
+   * such event against a route a slightly older server may not have.
+   */
+  const refreshSchedules = async () => {
+    try {
+      dispatch({ type: "schedules", schedules: await api.listSchedules() });
+    } catch {
+      // A stale countdown says less; a banner per event says nothing at all.
+    }
+  };
+
+  /**
    * Spend, without the thread. Deliberately SILENT on failure: it runs on a timer
    * against a route a slightly older server may not have, and a notice per poll
    * would turn a missing number into a wall of banners. A stale meter says less; a
@@ -1504,7 +1559,7 @@ export function createStore(deps: StoreDeps = {}): Store {
       fail(error);
       return;
     }
-    await Promise.all([refreshChanges(), refreshJobs(), refreshWorkflows()]);
+    await Promise.all([refreshChanges(), refreshJobs(), refreshWorkflows(), refreshSchedules()]);
   };
 
   /**
@@ -1522,7 +1577,7 @@ export function createStore(deps: StoreDeps = {}): Store {
       // disconnected indicator already says it.
       return;
     }
-    await Promise.all([refreshChanges(), refreshJobs(), refreshWorkflows()]);
+    await Promise.all([refreshChanges(), refreshJobs(), refreshWorkflows(), refreshSchedules()]);
   };
 
   const drainQueue = async () => {
@@ -1623,6 +1678,14 @@ export function createStore(deps: StoreDeps = {}): Store {
           if (event.type === "job.spawned" || event.type === "job.exited") void refreshJobs();
           if (event.type === "workflow.updated" || event.type === "workflow.agent") {
             void refreshWorkflows();
+          }
+          // Schedules have no events of their own. The agent edits one during a
+          // turn (so the turn finishing is when the edit is final), and a fire
+          // announces itself as the fired root's `session.created` — between them,
+          // every change to `next_run_at` has a signal, so the rail's countdown
+          // needs no poll.
+          if (event.type === "turn.finished" || event.type === "session.created") {
+            void refreshSchedules();
           }
           if (event.type === "message.finished") void drainQueue();
         },
@@ -1849,6 +1912,10 @@ export function createStore(deps: StoreDeps = {}): Store {
       try {
         if (unit.kind === "shell") await api.killJob(unit.sessionId, unit.id);
         else if (unit.kind === "subagent") await api.interrupt(unit.sessionId);
+        // Stopping a schedule is DISABLING it, not deleting: the row leaves the
+        // rail, the schedule keeps its spec and prompt, and the agent (or
+        // /schedules) can turn it back on.
+        else if (unit.kind === "schedule") await api.patchSchedule(unit.id, { enabled: false });
         else await api.stopWorkflow(unit.id);
       } catch (error) {
         fail(error);
@@ -1861,10 +1928,13 @@ export function createStore(deps: StoreDeps = {}): Store {
           ? `killed ${unit.title} — ${unit.detail ?? "background shell"}`
           : unit.kind === "subagent"
           ? `stopped subagent ${unit.title}`
+          : unit.kind === "schedule"
+          ? `disabled schedule ${unit.title} — ask the agent to re-enable it`
           : `stopped workflow ${unit.title}`,
       );
       if (unit.kind === "shell") await refreshJobs();
       if (unit.kind === "workflow") await refreshWorkflows();
+      if (unit.kind === "schedule") await refreshSchedules();
     },
 
     async setModel(patch) {

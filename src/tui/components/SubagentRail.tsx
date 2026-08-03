@@ -9,13 +9,18 @@
  * fan-out and pushed the composer off screen, so the one thing it existed to show — the
  * two agents currently working — was the part you could not see.
  *
- * IT NOW HOLDS THREE KINDS, not one (spec §5: nothing runs invisibly, and every unit
+ * IT NOW HOLDS FOUR KINDS, not one (spec §5: nothing runs invisibly, and every unit
  * is attributed separately). A background shell used to live as a card at the TAIL of
  * the transcript, visible only while you were scrolled to the bottom; a workflow run
  * lived in a tab you had to open. Both ran with no pixels on screen for as long as you
  * were reading anything else. `liveUnits` (store.ts) reduces shells, subagents and
  * runs to one shape, this renders one row each, and `x` stops whichever the cursor is
  * on — one list, one key, no per-kind surface.
+ *
+ * SCHEDULES ARE THE DELIBERATE EXCEPTION to "live only": a schedule will fire a
+ * session whether or not you are watching, which is exactly the invisibly-running
+ * work the rail exists to pin — it just has not started yet. Enabled ones sit at
+ * the BOTTOM, count down instead of up, and `x` disables rather than kills.
  *
  * The rows are pre-filtered and ordered by `liveUnits`; nothing is re-derived here.
  * `unitLine` (format.ts) words a row, so what a row SAYS is testable without a
@@ -57,12 +62,16 @@ export function railHint(units: readonly LiveUnit[]): string {
     const n = units.filter((u) => u.kind === kind).length;
     return n === 0 ? "" : `${n} ${n === 1 ? one : many}`;
   };
-  const bits = [
+  const live = [
     count("shell", "shell", "shells"),
     count("subagent", "agent", "agents"),
     count("workflow", "run", "runs"),
   ].filter(Boolean);
-  return `↓ ${bits.join(" · ")} running`;
+  // Schedules are counted apart because "running" would be a lie about them —
+  // a schedule row is a countdown, not work in flight.
+  const scheduled = count("schedule", "scheduled", "scheduled");
+  const bits = [live.length ? `${live.join(" · ")} running` : "", scheduled].filter(Boolean);
+  return `↓ ${bits.join(" · ")}`;
 }
 
 export function SubagentRail(
@@ -91,10 +100,12 @@ export function SubagentRail(
         const on = sel === i;
         // The armed row says what the next press destroys, in the row's own space —
         // spec §7: consent is never inferred, and the scope is said out loud.
+        // A schedule's verbs differ: there is no output to open and `x` disables
+        // rather than kills — the hint must not promise what ⏎ cannot do.
         const hint = armedId === u.id
-          ? dim("  x again stops it · esc cancels")
+          ? dim(u.kind === "schedule" ? "  x again disables it · esc cancels" : "  x again stops it · esc cancels")
           : on
-          ? dim("  ⏎ open · x stop · esc composer")
+          ? dim(u.kind === "schedule" ? "  ⏎ details · x disable · esc composer" : "  ⏎ open · x stop · esc composer")
           : "";
         const head = on ? bold(info("❯")) : " ";
         return row(u.id, `${head} ${unitLine(u, w - 2)}${hint}`);
