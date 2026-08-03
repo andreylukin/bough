@@ -89,6 +89,21 @@ import {
 export const DEDUPE_WINDOW = 256;
 
 /**
+ * How many sessions' snapshot watermarks are kept (layer 2 of the dedupe story).
+ *
+ * A watermark is a fact about a session, so the map only ever grew: browsing a
+ * forest of a few hundred conversations in one long-lived TUI left an entry for
+ * every one of them, none of which could be reached again without a fresh snapshot
+ * that overwrites it anyway.
+ *
+ * Evicting the OLDEST is safe in a way that matters: losing a watermark costs
+ * nothing but the wholesale drop of pre-snapshot events for a session that is not
+ * open — layer 1 (the dedupe window) and layer 3 (identity-keyed appends) still
+ * cover re-delivery, and reopening the session re-fetches and rewrites the mark.
+ */
+export const RECONCILED_LIMIT = 64;
+
+/**
  * A listed session plus the one fact only the client knows.
  *
  * `unseen` is deliberately NOT a wire field: it means "this session finished a turn
@@ -366,6 +381,31 @@ function remember(seen: readonly string[], key: string): readonly string[] {
   return next;
 }
 
+/**
+ * Write a session's snapshot watermark, capped at `RECONCILED_LIMIT`.
+ *
+ * The one just written is never the one evicted — a snapshot that lost the race
+ * with a session switch still records the newest fact the client has.
+ */
+function rememberWatermark(
+  reconciledAt: Record<string, number>,
+  sessionId: string,
+  at: number,
+  currentId: string | null,
+): Record<string, number> {
+  const next = { ...reconciledAt, [sessionId]: at };
+  const ids = Object.keys(next);
+  if (ids.length <= RECONCILED_LIMIT) return next;
+  // The OPEN session is never evicted whatever its age: it is the one whose events
+  // are still arriving, and so the one whose watermark is still doing work.
+  const stale = ids
+    .filter((id) => id !== sessionId && id !== currentId)
+    .sort((a, b) => next[a] - next[b])
+    .slice(0, ids.length - RECONCILED_LIMIT);
+  for (const id of stale) delete next[id];
+  return next;
+}
+
 /** A part's identity, or null when it has none (text, reasoning). */
 export function partKey(part: Part): string | null {
   switch (part.type) {
@@ -639,6 +679,16 @@ function applyEvent(state: TuiState, raw: BoughEvent): TuiState {
         // The finalized text part supersedes the live buffer; keeping both renders
         // the same prose twice.
         streaming: part.type === "text" ? withoutKey(state.streaming, messageId) : state.streaming,
+        // Same rule for a call's live output, and for the same reason: the arriving
+        // `tool_result` carries those lines joined, and `lines.ts` renders the live
+        // buffer only WHILE a call has no result (its `else` arm). Freeing it here is
+        // what keeps a chatty program — a test run, a dev server, anything that
+        // streams thousands of lines — from being retained, unread, for the whole
+        // session. Before this, the only thing that ever released them was a session
+        // switch.
+        toolLogs: part.type === "tool_result"
+          ? withoutKey(state.toolLogs, part.callId)
+          : state.toolLogs,
       };
     }
 
@@ -808,6 +858,10 @@ export function reduce(state: TuiState, action: StoreAction): TuiState {
         // per session — carrying it across would paint another conversation's shell.
         jobView: null,
         workflows: [],
+        // The narrator lines belong to the runs in `workflows`, which just went with
+        // the session — a line kept past its chip is unreachable state that only ever
+        // grows, since a runId never recurs.
+        workflowLogs: {},
         replay: null,
         // The meter belongs to the turn you were watching. `marks` deliberately do
         // NOT reset: they are keyed by session and a record you lose by looking away
@@ -824,7 +878,15 @@ export function reduce(state: TuiState, action: StoreAction): TuiState {
       if (session.id !== state.currentId) {
         // A snapshot that lost the race with a session switch. Record the watermark
         // anyway — it is a fact about that session, not about the view.
-        return { ...state, reconciledAt: { ...state.reconciledAt, [session.id]: action.at } };
+        return {
+          ...state,
+          reconciledAt: rememberWatermark(
+            state.reconciledAt,
+            session.id,
+            action.at,
+            state.currentId,
+          ),
+        };
       }
       const merged = mergeThread(thread, state.thread);
       // Drop the live buffer of any message the database now shows as finished: its
@@ -843,7 +905,12 @@ export function reduce(state: TuiState, action: StoreAction): TuiState {
         effectiveModel: effectiveModel ?? state.effectiveModel,
         contextLimit: contextLimit ?? state.contextLimit,
         primedTags: primedTags ?? state.primedTags,
-        reconciledAt: { ...state.reconciledAt, [session.id]: action.at },
+        reconciledAt: rememberWatermark(
+          state.reconciledAt,
+          session.id,
+          action.at,
+          state.currentId,
+        ),
       }, usage);
     }
 
