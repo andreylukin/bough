@@ -7,7 +7,14 @@
 import { afterEach, test } from "bun:test";
 import { deepStrictEqual, ok } from "node:assert";
 import type { CommandTagRow, Db } from "../types.ts";
-import { dirTagHints, resetStatsMemo, tagsNoteFor, tagWeights, topRepoTags } from "./stats.ts";
+import {
+  dirTagHints,
+  rankTags,
+  resetStatsMemo,
+  tagsNoteFor,
+  tagWeights,
+  topRepoTags,
+} from "./stats.ts";
 
 function eq(actual: unknown, expected: unknown, message?: string): void {
   deepStrictEqual(actual, expected, message);
@@ -17,10 +24,21 @@ afterEach(() => resetStatsMemo());
 
 const DAY = 24 * 60 * 60 * 1000;
 
-function stubDb(rows: CommandTagRow[], dirRows: Record<string, CommandTagRow[]> = {}): Db {
+/**
+ * `spread` is what `rankTags` contrasts against. The default is ONE repo, which is
+ * the fresh-install case and makes every idf identical — so these tests read as
+ * pure popularity, which is what they were written to pin. The distinctiveness
+ * ranking has its own tests below.
+ */
+function stubDb(
+  rows: CommandTagRow[],
+  dirRows: Record<string, CommandTagRow[]> = {},
+  spread: { repos: number; byTag: Map<string, number> } = { repos: 1, byTag: new Map() },
+): Db {
   return {
     commandTagRows: (_repo: string, opts: { dir?: string } = {}) =>
       opts.dir !== undefined ? dirRows[opts.dir] ?? [] : rows,
+    tagSpread: () => spread,
   } as unknown as Db;
 }
 
@@ -65,6 +83,49 @@ test("topRepoTags ranks by summed weight: ten failures lose to two successes", (
 // ---------------------------------------------------------------------------
 // The priming note
 // ---------------------------------------------------------------------------
+
+test("the note prefers this project's OWN words over the tools every project uses", () => {
+  const now = 1_000 * DAY;
+  // `git` is used twice as much as `composer` here — and in all twelve repos the
+  // memory knows, which is what makes it a tool name rather than this project's
+  // vocabulary. A popularity ranking spent its slots on exactly these.
+  const rows: CommandTagRow[] = [
+    ...Array.from({ length: 8 }, () => ({ tag: "git", ts: now, exitCode: 0 })),
+    ...Array.from({ length: 8 }, () => ({ tag: "bun", ts: now, exitCode: 0 })),
+    ...Array.from({ length: 4 }, () => ({ tag: "composer", ts: now, exitCode: 0 })),
+    ...Array.from({ length: 3 }, () => ({ tag: "retention", ts: now, exitCode: 0 })),
+  ];
+  const spread = {
+    repos: 12,
+    byTag: new Map([["git", 12], ["bun", 9], ["composer", 1], ["retention", 1]]),
+  };
+  eq(topRepoTags(stubDb(rows, {}, spread), "/w", now, 4), [
+    "composer",
+    "retention",
+    "bun",
+    "git",
+  ]);
+
+  // The whole ranking inverts back to popularity when there is nothing to contrast
+  // against — one repo means every idf is ln 2, which is the honest answer on a
+  // fresh install and needs no special case.
+  const alone = { repos: 1, byTag: new Map([["git", 1], ["composer", 1]]) };
+  eq(topRepoTags(stubDb(rows, {}, alone), "/w", now, 2), ["bun", "git"]);
+});
+
+test("rankTags carries the arithmetic it sorted by", () => {
+  // `bough tags` shows these columns, so a user can see WHY the note says what it
+  // says rather than being told to trust it.
+  const weights = new Map([["git", 8], ["composer", 4]]);
+  const ranked = rankTags(weights, { repos: 12, byTag: new Map([["git", 12], ["composer", 1]]) }, 5);
+  eq(ranked.map((r) => r.tag), ["composer", "git"]);
+  eq(ranked[0].repos, 1);
+  eq(ranked[0].weight, 4);
+  ok(ranked[0].score > ranked[1].score, "the score is what the order is by");
+  // A tag the spread has never seen is treated as this project's alone, not as
+  // ubiquitous — an unknown must not be damped into last place.
+  eq(rankTags(new Map([["new", 1]]), { repos: 4, byTag: new Map() }, 5)[0].repos, 1);
+});
 
 test("tagsNoteFor names the top tags once and freezes per session", () => {
   const now = 1_000_000;

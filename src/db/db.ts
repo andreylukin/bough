@@ -48,6 +48,8 @@ import type {
   Db as DbPort,
   SearchHit,
   SessionRuntime,
+  TagDiversityDay,
+  TaggedCommand,
   UsageTotals,
 } from "../types.ts";
 import type {
@@ -1189,6 +1191,105 @@ export class SqliteDb implements DbPort {
         WHERE ${conds.join(" AND ")}`,
       ...params,
     ).map((r) => ({ tag: r.tag, ts: r.ts, exitCode: r.exit_code }));
+  }
+
+  /**
+   * How many distinct repos the memory holds, and how many of them use each tag.
+   *
+   * The contrast the priming note is ranked against: a tag every project uses names
+   * a TOOL (`git`, `bun`, `rg`) and reusing it was never in question, while a tag
+   * only this project uses names its subject and is the vocabulary worth sharing.
+   * One pass, because the note is built per session and both halves come from the
+   * same scan.
+   */
+  tagSpread(sinceTs?: number): { repos: number; byTag: Map<string, number> } {
+    const where = sinceTs === undefined ? "" : ` WHERE h.ts >= ${Number(sinceTs)}`;
+    const repos = this.#get<{ n: number }>(
+      `SELECT COUNT(DISTINCT h.repo) AS n FROM command_history h${where}`,
+    )?.n ?? 0;
+    const byTag = new Map<string, number>();
+    for (
+      const r of this.#all<{ tag: string; repos: number }>(
+        `SELECT t.tag AS tag, COUNT(DISTINCT h.repo) AS repos
+           FROM command_history h JOIN command_tags t ON t.command_id = h.id${where}
+          GROUP BY t.tag`,
+      )
+    ) byTag.set(r.tag, r.repos);
+    return { repos, byTag };
+  }
+
+  /**
+   * Tag diversity per day — what `bough tags stats` reports.
+   *
+   * The measurement the priming note and every prompt change need and did not have:
+   * whether the model is naming MORE things or fewer. `distinctTags` against
+   * `tagUses` is the vocabulary; `tagged` against `commands` is the coverage a bare
+   * `sh` leg costs. Both are per day so a change on a date shows as a step.
+   *
+   * Grouped in SQLite's local time, because the question is "what did I do on
+   * Tuesday" and a UTC day boundary answers a different one.
+   */
+  tagDiversityByDay(sinceTs: number, repo?: string): TagDiversityDay[] {
+    const scope = repo === undefined ? "" : " AND h.repo = ?";
+    const params: (string | number)[] = repo === undefined ? [sinceTs] : [sinceTs, repo];
+    return this.#all<{
+      day: string;
+      sessions: number;
+      commands: number;
+      tagged: number;
+      distinct_tags: number;
+      tag_uses: number;
+    }>(
+      `WITH d AS (
+         SELECT h.id AS id, h.session_id AS session_id, h.tags AS tags,
+                date(h.ts / 1000, 'unixepoch', 'localtime') AS day
+           FROM command_history h WHERE h.ts >= ?${scope}
+       )
+       SELECT d.day AS day,
+              COUNT(DISTINCT d.session_id) AS sessions,
+              COUNT(DISTINCT d.id) AS commands,
+              COUNT(DISTINCT CASE WHEN d.tags <> '' THEN d.id END) AS tagged,
+              COUNT(DISTINCT t.tag) AS distinct_tags,
+              COUNT(t.tag) AS tag_uses
+         FROM d LEFT JOIN command_tags t ON t.command_id = d.id
+        GROUP BY d.day ORDER BY d.day DESC`,
+      ...params,
+    ).map((r) => ({
+      day: r.day,
+      sessions: r.sessions,
+      commands: r.commands,
+      tagged: r.tagged,
+      distinctTags: r.distinct_tags,
+      tagUses: r.tag_uses,
+    }));
+  }
+
+  /** Commands recorded under one tag, newest first — `bough tags show`. */
+  commandsForTag(tag: string, opts: { repo?: string; limit?: number } = {}): TaggedCommand[] {
+    const scope = opts.repo === undefined ? "" : " AND h.repo = ?";
+    const params: (string | number)[] = opts.repo === undefined ? [tag] : [tag, opts.repo];
+    return this.#all<{
+      ts: number;
+      repo: string;
+      cmd: string;
+      tags: string;
+      exit_code: number | null;
+      duration_ms: number | null;
+    }>(
+      `SELECT h.ts AS ts, h.repo AS repo, h.cmd AS cmd, h.tags AS tags,
+              h.exit_code AS exit_code, h.duration_ms AS duration_ms
+         FROM command_history h JOIN command_tags t ON t.command_id = h.id
+        WHERE t.tag = ?${scope}
+        ORDER BY h.ts DESC LIMIT ${Math.max(1, Math.trunc(opts.limit ?? 20))}`,
+      ...params,
+    ).map((r) => ({
+      ts: r.ts,
+      repo: r.repo,
+      cmd: r.cmd,
+      tags: r.tags,
+      exitCode: r.exit_code,
+      durationMs: r.duration_ms,
+    }));
   }
 }
 

@@ -68,6 +68,10 @@ counts and `cost_usd`.
 of each message, joined by newlines — prose, not tool output. A message with no
 prose has no row.
 
+For the tag memory specifically there is a command that already knows these joins:
+`bough tags` (the project's vocabulary), `bough tags show TAG`, `bough tags stats`,
+each with `--json`. Reach for it before hand-writing the SQL below.
+
 `command_history` — the tag memory: one row per finished shell command.
 `session_id`, `ts`, `repo` (git origin URL, else a path — the scope key),
 `cmd`, `tags` (colon-joined intent tags the model wrote), `exit_code`,

@@ -68,7 +68,8 @@ bough                     # the TUI (auto-starts the server if it is down)
 ```
 
 `bough` also takes `kill`, `restart`, `update` (fast-forward `origin/main` and restart), `status`,
-`logs`, `run` (foreground server), `purge`, and `sync-mcp` (adopt Claude Code's MCP servers).
+`logs`, `run` (foreground server), `purge`, `sync-mcp` (adopt Claude Code's MCP servers), and
+`tags` (what the command memory knows, and what it primes the model with).
 
 There is no file watcher on the service: editing code lands only on an explicit `bough restart`.
 
@@ -110,8 +111,10 @@ command strings after the fact, and the exit code is the ground truth that weigh
 scope key is the repo a command *touched* — git origin URL, else path — not where the session sits,
 so a session rooted at `~` still files into the right project.
 
-Recall runs both ways. The harness primes: a session opens with the project's top tags, weighted by
-success and a 30-day recency half-life, and a round that reaches into a new directory gets one dim
+Recall runs both ways. The harness primes: a session opens with the project's own tag vocabulary —
+weighted by success and a 30-day recency half-life, then damped by how many *other* projects use the
+same word, so the list is the subjects this repo talks about rather than the tool names every repo
+shares — and a round that reaches into a new directory gets one dim
 `[history]` line naming what past sessions tagged there. The program pulls: `history.sql()` is a
 read-only SELECT over `command_history`, its tag and directory junctions, and an FTS index covering
 *output* as well as invocations — so "what did that migration actually print" is answerable without
@@ -121,6 +124,11 @@ adds KNN recall where the optional vector layer exists: `sqlite-vec` + `sqlite-l
 local MiniLM *inside* SQLite, into a separate `~/.bough/embeddings.db` — no native module, no
 subprocess, no API call. Where the SQLite build cannot load extensions it simply is not there, and
 tags plus FTS carry recall alone.
+
+`bough tags` is the human's door into the same memory: the project's tag vocabulary with the
+arithmetic the priming note ranked it by, `bough tags show TAG` for what worked under one, and
+`bough tags stats` for coverage and vocabulary per day — which is how you tell whether a prompt
+change made the model name more things or just repeat itself.
 
 **Fan out.** `agent()` runs a subagent to completion and returns its report; `spawn()` detaches one
 that reports back as a system note. For bigger fan-outs, a **workflow** is a script that runs

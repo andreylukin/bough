@@ -47,12 +47,65 @@ function top(weights: Map<string, number>, limit: number): string[] {
     .map(([tag]) => tag);
 }
 
+/** One tag as the priming note ranks it. Exported for `bough tags`, which shows it. */
+export interface RankedTag {
+  tag: string;
+  /** Success × recency, the raw popularity. */
+  weight: number;
+  /** How many repos in the memory use it. */
+  repos: number;
+  /** `weight × idf` — what the order is actually by. */
+  score: number;
+}
+
+/**
+ * Rank tags by how much this project's OWN vocabulary they are, not by raw use.
+ *
+ * WHY NOT POPULARITY. The grammar is `tool:intent:subject`, and a popularity
+ * ranking is dominated by the first two: `git`, `bun`, `rg`, `test` recur in every
+ * project, while `composer` or `retention` recur only in the one they belong to. So
+ * a top-ten by weight spent most of its ten slots anchoring the model on the
+ * dimension where reuse was never in doubt, and none on the dimension where a
+ * shared vocabulary actually pays.
+ *
+ * That anchoring is not free. Social-tagging studies find suggested tags drive quick
+ * convergence on a shared vocabulary — the power-law that forms when taggers are
+ * left alone does not form the same way once suggestions are shown — so whatever
+ * this note lists is what gets reused, and listing tool names buys a narrower
+ * vocabulary for nothing.
+ *
+ * The correction is inverse document frequency over REPOS: `weight × ln(1 + N/n)`.
+ * A tag in every repo is damped, one in a single repo is lifted. With one repo in
+ * the memory every idf is `ln 2` and the order is exactly the popularity order —
+ * which is the honest answer when there is nothing to contrast against, and means
+ * this needs no special case for a fresh install.
+ */
+export function rankTags(
+  weights: Map<string, number>,
+  spread: { repos: number; byTag: Map<string, number> },
+  limit: number,
+): RankedTag[] {
+  return [...weights.entries()]
+    .map(([tag, weight]) => {
+      const repos = spread.byTag.get(tag) ?? 1;
+      return { tag, weight, repos, score: weight * Math.log(1 + spread.repos / repos) };
+    })
+    .sort((a, b) => b.score - a.score || (a.tag < b.tag ? -1 : 1))
+    .slice(0, limit);
+}
+
 /** The workspace's memory scope: its enclosing checkout's identity, else its path. */
 export function workspaceRepo(workspace: string): string {
   return repoIdentity(findGitRoot(workspace) ?? workspace);
 }
 
-/** A scope's most-used tags — whole repo, or one directory of it. */
+/**
+ * A scope's most-used tags — whole repo, or one directory of it.
+ *
+ * A DIRECTORY hint stays on plain popularity: it answers "what has been done in
+ * here", where the tool is part of the answer, and the set is already narrow enough
+ * that the tool names do not crowd anything out.
+ */
 function topTags(db: Db, repo: string, now: number, limit: number, dir?: string): string[] {
   const rows = db.commandTagRows(repo, {
     ...(dir === undefined ? {} : { dir }),
@@ -61,9 +114,21 @@ function topTags(db: Db, repo: string, now: number, limit: number, dir?: string)
   return top(tagWeights(rows, now), limit);
 }
 
-/** The workspace repo's most-used tags, weighted, best first. */
+/** The workspace repo's tags as the priming note ranks them — see `rankTags`. */
 export function topRepoTags(db: Db, workspace: string, now: number, limit = TOP_TAGS): string[] {
-  return topTags(db, workspaceRepo(workspace), now, limit);
+  return rankedRepoTags(db, workspaceRepo(workspace), now, limit).map((r) => r.tag);
+}
+
+/** The same ranking with its arithmetic attached, for `bough tags` to show. */
+export function rankedRepoTags(
+  db: Db,
+  repo: string,
+  now: number,
+  limit = TOP_TAGS,
+): RankedTag[] {
+  const since = now - LOOKBACK_MS;
+  const weights = tagWeights(db.commandTagRows(repo, { sinceTs: since }), now);
+  return rankTags(weights, db.tagSpread(since), limit);
 }
 
 // ---------------------------------------------------------------------------
@@ -99,8 +164,10 @@ export function tagsNoteFor(
     const tags = topRepoTags(db, workspace, now);
     remember(primedMemo, sessionId, new Set(tags));
     if (tags.length > 0) {
-      note = `Tags most used in this project (recent, working commands first): ` +
-        tags.join(", ") + `. Reuse them when they fit; coin new ones when not.`;
+      note = `This project's own tag vocabulary — the words it uses that other ` +
+        `projects do not: ` + tags.join(", ") +
+        `. Reuse these when they fit; coin new ones freely when they do not, ` +
+        `especially for the tool and the intent.`;
     }
   } catch {
     // Stats are a garnish; a failure here must not touch the turn.

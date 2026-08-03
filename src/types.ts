@@ -107,6 +107,30 @@ export interface CommandRecord {
 }
 
 /** One (tag, outcome) observation, the unit the popularity stats aggregate. */
+/** One day of the tag memory, as `bough tags stats` reports it. */
+export interface TagDiversityDay {
+  /** `YYYY-MM-DD`, local time — the question is about a day someone worked. */
+  day: string;
+  sessions: number;
+  commands: number;
+  /** Commands that carried at least one tag. The rest are unfindable by tag. */
+  tagged: number;
+  /** The vocabulary: distinct tags used that day. */
+  distinctTags: number;
+  /** Total tag applications, so `distinctTags / tagUses` reads as repetition. */
+  tagUses: number;
+}
+
+/** One recalled command, as `bough tags show` prints it. */
+export interface TaggedCommand {
+  ts: number;
+  repo: string;
+  cmd: string;
+  tags: string;
+  exitCode: number | null;
+  durationMs: number | null;
+}
+
 export interface CommandTagRow {
   tag: string;
   ts: number;
@@ -215,6 +239,12 @@ export interface Db {
    * repo, optionally to commands attributed to `dir` or its descendants.
    */
   commandTagRows(repo: string, opts?: { dir?: string; sinceTs?: number }): CommandTagRow[];
+  /** Distinct repos in the memory, and how many of them use each tag. */
+  tagSpread(sinceTs?: number): { repos: number; byTag: Map<string, number> };
+  /** Per-day tag coverage and vocabulary size — the `bough tags stats` measurement. */
+  tagDiversityByDay(sinceTs: number, repo?: string): TagDiversityDay[];
+  /** Commands recorded under one tag, newest first. */
+  commandsForTag(tag: string, opts?: { repo?: string; limit?: number }): TaggedCommand[];
 
   // keyword search
   /** Idempotent: re-indexing a message replaces its rows. */
