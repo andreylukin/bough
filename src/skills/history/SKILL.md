@@ -1,14 +1,19 @@
 ---
 name: history
-description: Search and read bough's own conversation history by querying its SQLite database directly
+description: Search and read bough's own conversation and command history by querying its SQLite database directly
 ---
 
 # bough's own history
 
 bough keeps everything in one SQLite database — `~/.bough/bough.db`, or
-`$BOUGH_DB` / `$BOUGH_HOME/bough.db` when those are set. There is no recall verb
-and no embedding index: cross-session search is **keyword FTS over transcripts**,
-and the way to use it is to query the database yourself.
+`$BOUGH_DB` / `$BOUGH_HOME/bough.db` when those are set. In a program you have
+`history.sql()` / `history.similar()` for the command memory; this skill is for
+everything else — transcripts, costs, the session tree — and for reading the
+same file directly when that is more convenient. Cross-session transcript
+search is **keyword FTS**; the command memory additionally has an optional
+vector index in a SEPARATE file (`~/.bough/embeddings.db`) that plain `sqlite3`
+cannot open — it needs the vec0 extension, so query commands here and leave
+similarity to `history.similar()`.
 
 Open it **read-only** so a query can never corrupt a live server's file:
 
@@ -61,9 +66,46 @@ counts and `cost_usd`.
 of each message, joined by newlines — prose, not tool output. A message with no
 prose has no row.
 
+`command_history` — the tag memory: one row per finished shell command.
+`session_id`, `ts`, `repo` (git origin URL, else a path — the scope key),
+`cmd`, `tags` (colon-joined intent tags the model wrote), `exit_code`,
+`duration_ms`, `output_head` (first ~2k chars it printed, spill marker
+included), `spill_path` (the scratch file holding an oversized output in full —
+may have been cleaned since). Junctions: `command_tags(command_id, tag)` and
+`command_dirs(command_id, rel_dir)` (repo-root-relative dirs the command was
+about). `command_history_fts` indexes `cmd`, `tags` AND `output_head`, so a
+MATCH finds results as well as invocations.
+
 Also present: `workflows` and `workflow_agents` (the fan-out journal: `key`,
 `label`, `phase`, `status`, `result`), `session_state` (durable KV keyed by
 `(root_id, key)`), `schedules`.
+
+## What worked here before
+
+```sql
+SELECT h.cmd, h.exit_code, h.output_head,
+       datetime(h.ts/1000,'unixepoch','localtime') AS ran
+  FROM command_history h JOIN command_tags t ON t.command_id = h.id
+ WHERE t.tag = 'deploy' AND h.exit_code = 0
+ ORDER BY h.ts DESC LIMIT 10;
+```
+
+By what a command PRINTED, not what it was called:
+
+```sql
+SELECT h.cmd, h.spill_path
+  FROM command_history_fts f JOIN command_history h ON h.id = f.command_id
+ WHERE command_history_fts MATCH 'output_head:timeout'
+ ORDER BY h.ts DESC LIMIT 10;
+```
+
+Tag popularity per repo (what the priming row is built from):
+
+```sql
+SELECT h.repo, t.tag, count(*) AS uses
+  FROM command_history h JOIN command_tags t ON t.command_id = h.id
+ GROUP BY h.repo, t.tag ORDER BY uses DESC LIMIT 20;
+```
 
 ## Find past work
 
