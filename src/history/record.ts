@@ -51,24 +51,27 @@ export type CommandRecorder = (e: FinishedCommand) => void;
 // Tags
 // ---------------------------------------------------------------------------
 
-/** Tags the model may write: short lowercase slugs, colon-separated. */
-const TAG_CHARS = /[^a-z0-9_.-]+/g;
+/** Tags the model may write: short lowercase slugs, colon-separated. No dashes. */
+const TAG_CHARS = /[^a-z0-9_.]+/g;
 const MAX_TAGS = 8;
 
 /**
- * Normalize a model-written tag string: lowercase, split on `:`, slugify each
- * part, drop empties, cap the count. Returns "" when nothing survives — which the
- * caller treats as "no tags given".
+ * Normalize a model-written tag string: lowercase, split into tags, slugify
+ * each part, drop empties, cap the count. Returns "" when nothing survives —
+ * which the caller treats as "no tags given".
  *
  * Normalization is what makes a folksonomy converge: `PSQL:Migrate` and
- * `psql:migrate` must be the same tag or the popularity stats fragment.
+ * `psql:migrate` must be the same tag or the popularity stats fragment. Dashes
+ * and whitespace are SEPARATORS, not tag characters — `repo-inspect` and
+ * `git push` become `repo:inspect` and `git:push`, so one intent never exists
+ * in both hyphenated and colonized spellings.
  */
 export function normalizeTags(raw: string | undefined): string {
   if (!raw) return "";
   return raw
     .toLowerCase()
-    .split(":")
-    .map((t) => t.trim().replace(/\s+/g, "-").replace(TAG_CHARS, ""))
+    .split(/[:\s-]+/)
+    .map((t) => t.replace(TAG_CHARS, ""))
     .filter((t) => t.length > 0)
     .slice(0, MAX_TAGS)
     .join(":");

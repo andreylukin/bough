@@ -33,8 +33,14 @@ function eq(actual: unknown, expected: unknown, message?: string): void {
 test("normalizeTags lowercases, trims, slugifies and rejoins", () => {
   eq(normalizeTags("PSQL:Migrate"), "psql:migrate");
   eq(normalizeTags(" Git : PUSH "), "git:push");
-  eq(normalizeTags("git push"), "git-push");
-  eq(normalizeTags("a!!:b c:d.e"), "a:b-c:d.e");
+  eq(normalizeTags("a!!:b c:d.e"), "a:b:c:d.e");
+});
+
+test("dashes and spaces are separators — no tag ever contains a dash", () => {
+  eq(normalizeTags("repo-inspect"), "repo:inspect");
+  eq(normalizeTags("git push"), "git:push");
+  eq(normalizeTags("bun--test"), "bun:test");
+  eq(normalizeTags("pre-commit-hook"), "pre:commit:hook");
 });
 
 test("normalizeTags returns '' when nothing survives — the caller's 'no tags' signal", () => {
