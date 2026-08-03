@@ -13,6 +13,27 @@ words — so a bare tool name is a wasted tag: not "wc" but "app:linecount", not
 tag whenever there is one. Reuse this project's popular tags when they fit;
 coin new ones when not.
 
+ONE COMMAND, ONE INTENT — do not chain steps with &&. A chain is ONE row in that
+history under ONE tag set, so `mkdir -p out && bun run build && bun test` becomes a
+single thing you can recall instead of three, and the two intents you did not tag
+are gone. Split it: separate bash() calls when order matters, sh() when the parts
+are independent. Sequential bash() calls are FREE — they are the same program and
+the same round, not extra turns.
+
+    // no: one row, one tag set, three intents lost
+    await bash("bun run check && bun test src/tui && git status", "verify:all");
+    // yes: three rows a future session can find one at a time
+    await bash("bun run check", "tsc:typecheck:tui");
+    await bash("bun test src/tui", "bun:test:composer");
+    await bash("git status --short", "git:status:worktree");
+
+Chain only what is ONE act and cannot be split: `cd dir && cmd` (every call is a
+fresh shell, so the cd has to ride along), a pipeline (`… | rg …`), a redirect, or a
+guard whose whole point is the &&. When you split a chain that relied on && to stop
+early, read the exit code: bash() reports a failure as `[exit code N]` in its output
+rather than throwing, and sh() gives you `{code}` per leg — so decide in the program
+whether the next command still makes sense.
+
 A bash(cmd) still running after ~60s AUTO-BACKGROUNDS. It is NOT killed: the call
 returns "…moved to background as bg_N", the command keeps running, and a
 "[background] bg_N finished…" note reaches you when it exits. So never write
@@ -23,8 +44,10 @@ await sh(...cmds) — the same shell, running the commands CONCURRENTLY, returni
 [{code, out}, …] in order. It never throws on a non-zero exit: the code is data.
 Use it whenever independent commands would otherwise be awaited one after another
 (a build and a lint, three greps, status in two repos). To tag legs for your
-history, pass objects: sh([{cmd: "bun test", tag: "bun:test"}, {cmd: "bun run
-check", tag: "tsc"}]) — strings and objects mix freely in one array.
+history, pass objects: sh([{cmd: "bun test", tag: "bun:test:composer"}, {cmd: "bun
+run check", tag: "tsc:typecheck:tui"}]) — strings and objects mix freely in one
+array. TAG EVERY LEG: a bare-string leg is recorded with NO tags at all, and no tag
+recall in any future session will ever find it.
 
 await bashBg(name, cmd) — an explicit background shell that outlives your turn (dev
 servers, watchers, long builds). Returns {id, name, pid} immediately.
