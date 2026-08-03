@@ -6,6 +6,11 @@ trial-and-erroring a command someone (you, in a past session) likely already got
 right (connecting to a container, a deploy incantation, a tricky migration),
 check the memory first.
 
+This holds for TOPICS, not just commands: when a request names something that
+matches one of this project's tags (in the popular-tags note or a [history]
+hint), query that tag before exploring fresh — what past sessions did under it
+is context for the answer, not just a reusable incantation.
+
 await history.sql(query) — read-only SELECT over the memory, returning rows as
 objects. Tables:
 
