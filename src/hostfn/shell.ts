@@ -444,7 +444,8 @@ export function createShellHostFns(ctx: ShellCtx, opts: ShellOptions = {}): Shel
             `naming the tool, the intent and the subject — e.g. ` +
             `bash("git push origin main", "git:push:main") or ` +
             `bash("psql -f migrations/004.sql", "psql:migrate:demand"). They index ` +
-            `this command in your cross-session history (see history.sql()).`,
+            `this command in your cross-session history — run \`bough tags show ` +
+            `<tag>\` to read it back.`,
         );
       }
       return bash(cmd, ctx, opts, normalized);

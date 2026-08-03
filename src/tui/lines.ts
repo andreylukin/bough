@@ -304,8 +304,9 @@ function styleOutputLine(line: string, isError: boolean): string {
  * Split the `[history]` tag hints (`history/stats.ts`, appended by the runner at
  * round end) off a tool result's output. They are always trailing lines; the
  * returned hint text is rewritten for display — the raw line addresses the MODEL
- * (`— see history.sql() for the commands behind them`), and that clause is
- * instruction, not information, on a screen.
+ * (`— run \`bough tags show <tag>\` for the commands behind them`), and that clause
+ * is instruction, not information, on a screen. The regex drops everything from the
+ * ` — ` on, so the clause can be reworded without touching this.
  */
 export function splitHistoryHints(text: string): { body: string; hints: string[] } {
   const lines = text.split("\n");

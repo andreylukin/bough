@@ -859,7 +859,7 @@ if (embed) {
   };
   tick();
   setInterval(tick, 60_000).unref();
-  console.log("history embeddings: drain ticker running, history.similar enabled");
+  console.log("history embeddings: drain ticker running, `bough tags similar` enabled");
 }
 
 const skillAwareStarter = (sessionId: string) =>

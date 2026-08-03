@@ -11,8 +11,8 @@
  *   similar:  … WHERE embedding MATCH lembed('embed', ?) ORDER BY distance
  *
  * Vectors live in their OWN database file (`~/.bough/embeddings.db`), never in
- * bough.db: every other connection in the system (the migrator, `history.sql`'s
- * readonly handle, the bough-history skill reading the file directly) lacks the
+ * bough.db: every other connection in the system (the migrator, `bough tags sql`'s
+ * readonly handle, the drain's own reader) lacks the
  * vec0 module, and a virtual table they cannot even parse must not sit in a file
  * they walk. The embed connection ATTACHes bough.db and treats it as read-only
  * by discipline; embeddings.db is fully derived state and can be deleted freely.

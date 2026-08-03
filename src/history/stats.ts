@@ -90,7 +90,7 @@ export function rankTags(
     // below hands it the maximum boost — and it accumulates real weight, because a
     // ticket is worked over many commands. The two multiply, and the note would open
     // every session by reciting last week's ticket numbers instead of this project's
-    // words. They are recalled by name (`bough tags show`, history.sql), which is how
+    // words. They are recalled by name (`bough tags show`), which is how
     // an identifier is used; a vocabulary is what this list is for.
     .filter(([tag]) => !isRef(tag))
     .map(([tag, weight]) => {
@@ -261,7 +261,7 @@ export function dirTagHints(
       const label = repo === wsRepo ? rel : abs.replace(homedir(), "~");
       lines.push(
         `[history] tags previously used in ${label}/: ${fresh.join(", ")} — ` +
-          `see history.sql() for the commands behind them`,
+          `run \`bough tags show <tag>\` for the commands behind them`,
       );
     } catch {
       // Same contract as everything here: hints never hurt a round.
