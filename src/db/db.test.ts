@@ -197,6 +197,7 @@ test("migration is idempotent across two opens", async () => {
       createdAt: 1,
       lastRunAt: null,
       nextRunAt: 2,
+      sessionId: "s",
     });
     const schemaBefore = introspect(path, first);
     first.close();
@@ -540,6 +541,7 @@ test("dueSchedules returns enabled, past-due rows soonest first", () => {
       createdAt: 1,
       lastRunAt: null,
       nextRunAt: next,
+      sessionId: null,
     });
   make("late", 50, true);
   make("later", 90, true);
@@ -891,6 +893,35 @@ test("commandTagRows sinceTs floors the lookback", () => {
   db.recordCommand(cmdRecord({ tagList: ["new"], tags: "new", ts: 500 }));
   assert.deepStrictEqual(db.commandTagRows("repo", { sinceTs: 100 }).map((r) => r.tag), ["new"]);
   db.close();
+});
+
+test("a pre-session_id schedules table is ALTERed in place, rows kept", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "bough-sched-alter-"));
+  const path = join(dir, "old.db");
+  try {
+    // Fabricate the old shape: schedules without session_id. Unlike the
+    // command_history rebuild below, these rows are USER RECORDS and must survive.
+    const raw = new Database(path);
+    raw.exec(`CREATE TABLE schedules (id TEXT PRIMARY KEY, title TEXT NOT NULL,
+      prompt TEXT NOT NULL, workspace TEXT, spec TEXT NOT NULL, enabled INTEGER NOT NULL,
+      created_at INTEGER NOT NULL, last_run_at INTEGER, next_run_at INTEGER NOT NULL);
+      INSERT INTO schedules VALUES ('sc1', 'nightly', 'check the deploy', NULL,
+        'every:1h', 1, 1, NULL, 2);
+      PRAGMA user_version = 1;`);
+    raw.close();
+    const db = openDb(path);
+    const kept = db.getSchedule("sc1")!;
+    assert.equal(kept.title, "nightly");
+    assert.equal(kept.enabled, true);
+    // Reports to nobody, which is exactly what it did before the column existed.
+    assert.equal(kept.sessionId, null);
+    // …and the new shape round-trips through the added column.
+    db.updateSchedule({ ...kept, enabled: false });
+    assert.equal(db.getSchedule("sc1")!.enabled, false);
+    db.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("a pre-output_head command_history is rebuilt empty at open, once", async () => {

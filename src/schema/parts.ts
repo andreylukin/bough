@@ -361,6 +361,13 @@ export const Schedule = z.object({
   title: z.string(),
   prompt: z.string(),
   workspace: z.string().nullable(),
+  /**
+   * The conversation that created it — where each firing's outcome is posted back
+   * as a system note that wakes an idle model (`schedules.ts`). Null = created
+   * outside any conversation (REST), so the firing reports to nobody. Defaulted
+   * so a row from an older server still parses.
+   */
+  sessionId: z.string().nullable().default(null),
   /** `every:<N><m|h|d>` (N ≥ 1) or `daily@HH:MM` (local wall clock). Stored verbatim. */
   spec: z.string(),
   enabled: z.boolean(),

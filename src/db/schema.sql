@@ -223,7 +223,13 @@ CREATE TABLE IF NOT EXISTS schedules (
   enabled     INTEGER NOT NULL,
   created_at  INTEGER NOT NULL,
   last_run_at INTEGER,
-  next_run_at INTEGER NOT NULL
+  next_run_at INTEGER NOT NULL,
+  -- The conversation that created it: each firing's outcome is posted back there
+  -- as a system note (schedules.ts). NULL = created outside any conversation.
+  -- Deliberately no FK: the creator may be deleted, and the note then simply
+  -- drops rather than the schedule refusing to exist. LAST because ALTER TABLE
+  -- appends — a migrated file and a fresh one must agree on column order.
+  session_id  TEXT
 );
 CREATE INDEX IF NOT EXISTS schedules_due ON schedules(enabled, next_run_at);
 

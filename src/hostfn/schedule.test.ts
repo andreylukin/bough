@@ -390,6 +390,9 @@ test("the schedule host fn takes JSON in and returns JSON out", async () => {
   // The session's own checkout is the default — a schedule made from a program must
   // not silently target the server's cwd months later.
   assert.equal(added.workspace, "/resolved/work/repo");
+  // The calling conversation is stamped as where firings report back — from the
+  // ctx, never from the wire (`ScheduleDeps.sessionId`).
+  assert.equal(added.sessionId, "session-1");
 
   const listed = JSON.parse(await schedule!("list", "null")) as Schedule[];
   assert.deepEqual(listed.map((s) => s.id), [added.id]);

@@ -60,13 +60,32 @@ export function migrate(db: Database): number {
     );
   }
   rebuildDayOneCommandHistory(db);
+  addScheduleSessionId(db);
   db.exec(schemaSql());
   if (found < SCHEMA_VERSION) setUserVersion(db, SCHEMA_VERSION);
   return found;
 }
 
 /**
- * The ONE sanctioned reshape, and a deliberate exception to "no migration
+ * The second sanctioned reshape: schedules gained `session_id` (2026-08) — the
+ * conversation each firing reports back to. Unlike command_history below, a
+ * schedule is a USER RECORD, not a cache, so this one ALTERs in place and keeps
+ * every row (existing schedules get NULL: they report to nobody, which is the
+ * pre-change behavior). Idempotent by PRAGMA check, exactly like its sibling;
+ * no-op on a fresh file, where `schema.sql` creates the column directly.
+ */
+function addScheduleSessionId(db: Database): void {
+  const table = db
+    .prepare(`SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'schedules'`)
+    .get();
+  if (!table) return;
+  const cols = db.prepare(`PRAGMA table_info(schedules)`).all() as { name: string }[];
+  if (cols.some((c) => c.name === "session_id")) return;
+  db.exec(`ALTER TABLE schedules ADD COLUMN session_id TEXT`);
+}
+
+/**
+ * The first sanctioned reshape, and a deliberate exception to "no migration
  * ladder": command_history gained `output_head`/`spill_path` the day after it
  * shipped (2026-08), while exactly two installs held a handful of rows. A file
  * whose command_history predates the columns has its command-history GROUP

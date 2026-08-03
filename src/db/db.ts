@@ -133,6 +133,7 @@ type ScheduleRow = {
   created_at: number;
   last_run_at: number | null;
   next_run_at: number;
+  session_id: string | null;
 };
 
 type WorkflowRow = {
@@ -246,6 +247,7 @@ function toSchedule(r: ScheduleRow): Schedule {
     createdAt: r.created_at,
     lastRunAt: r.last_run_at,
     nextRunAt: r.next_run_at,
+    sessionId: r.session_id,
   };
 }
 
@@ -778,8 +780,9 @@ export class SqliteDb implements DbPort {
   createSchedule(s: Schedule): Schedule {
     this.#run(
       `INSERT INTO schedules
-         (id, title, prompt, workspace, spec, enabled, created_at, last_run_at, next_run_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, title, prompt, workspace, spec, enabled, created_at, last_run_at, next_run_at,
+          session_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       s.id,
       s.title,
       s.prompt,
@@ -789,6 +792,7 @@ export class SqliteDb implements DbPort {
       s.createdAt,
       s.lastRunAt,
       s.nextRunAt,
+      s.sessionId,
     );
     return this.getSchedule(s.id)!;
   }

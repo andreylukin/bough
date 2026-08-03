@@ -1225,6 +1225,7 @@ test("enabled schedules ride the rail as countdowns, below the live work", () =>
     createdAt: 0,
     lastRunAt: null,
     nextRunAt: now + 60_000,
+    sessionId: null,
     ...over,
   });
   const units = liveUnits({

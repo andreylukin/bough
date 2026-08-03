@@ -152,12 +152,19 @@ export const resolveWorkspace: WorkspaceResolver = async (raw) => {
   return abs;
 };
 
-/** The seams the CRUD takes. Both default to production behavior. */
+/** The seams the CRUD takes. All default to production behavior. */
 export interface ScheduleDeps {
   /** Injected clock. Absent = `Date.now`. */
   now?: () => number;
   /** Absent = `resolveWorkspace`. */
   workspace?: WorkspaceResolver;
+  /**
+   * The conversation the schedule reports its firings back to (`schedules.ts`).
+   * Stamped by the host fn from the calling turn, NEVER taken from the wire — a
+   * program must not point another conversation's wake at itself. Absent (the
+   * REST path) = null: the firing reports to nobody.
+   */
+  sessionId?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -205,6 +212,7 @@ export async function scheduleCreate(
     createdAt: now,
     lastRunAt: null,
     nextRunAt: nextRun(body.spec, now),
+    sessionId: deps.sessionId ?? null,
   });
 }
 
@@ -349,6 +357,9 @@ export function createScheduleHostFn(
       // at fire time, months later.
       const result = await scheduleVerb(ctx.db, verb, args, ctx.workspace ?? null, {
         now: deps.now ?? ctx.now,
+        // The calling conversation is where the firings report back — see
+        // `ScheduleDeps.sessionId` for why this is stamped here and only here.
+        sessionId: ctx.sessionId,
         ...(deps.workspace ? { workspace: deps.workspace } : {}),
       });
       return JSON.stringify(result ?? null);

@@ -81,6 +81,7 @@ function seed(db: SqliteDb, over: Partial<Schedule> = {}): Schedule {
     createdAt: T0,
     lastRunAt: null,
     nextRunAt: T0 + 30 * MINUTE,
+    sessionId: null,
     ...over,
   });
 }
@@ -247,6 +248,102 @@ test("firing with no turn starter wired still records the session", () => {
   const fired = fireSchedule(f.ctx, seed(f.db))!;
   assert.ok(fired);
   assert.equal(f.db.threadFor(fired.session.id).length, 1);
+  f.close();
+});
+
+// ---------------------------------------------------------------------------
+// Reporting back (CC-parity: a finished background run wakes the model that
+// asked for it)
+// ---------------------------------------------------------------------------
+
+/** A starter that plays the runner for the fired session: it persists the turn
+ * row and the supervisor message a real run would leave, so the note is
+ * assembled from what the database actually holds. The wake call for the
+ * creator is recorded like any other start. */
+function playRun(
+  f: Fixture,
+  outcome: { status: "done" | "error"; report: string },
+): void {
+  f.ctx.startTurn = (_c, session, message) => {
+    f.started.push({ session, message });
+    if (session.id === "creator") return;
+    const sup = f.db.createMessage({
+      id: crypto.randomUUID(),
+      sessionId: session.id,
+      role: "supervisor",
+      parts: outcome.report ? [{ type: "text", text: outcome.report }] : [],
+      pending: false,
+      createdAt: T0 + 1,
+    });
+    f.db.createTurn({
+      id: crypto.randomUUID(),
+      sessionId: session.id,
+      messageId: sup.id,
+      status: outcome.status,
+      step: outcome.status,
+      createdAt: T0,
+      updatedAt: T0 + 1,
+    });
+    return outcome.status === "done"
+      ? Promise.resolve()
+      : Promise.reject(new Error("the run errored"));
+  };
+}
+
+test("a firing's outcome is posted back to the creating conversation, and wakes it", async () => {
+  const f = fixture();
+  f.db.createSession({ id: "creator", title: "main", kind: "root", parentId: null, createdAt: T0 });
+  const schedule = seed(f.db, { sessionId: "creator" });
+  playRun(f, { status: "done", report: "Bench passed: 14/16 solved." });
+
+  const fired = fireSchedule(f.ctx, schedule, { now: () => T0 })!;
+  assert.ok(fired);
+  await new Promise((r) => setTimeout(r, 0));
+
+  // The note landed in the CREATOR, prefixed and carrying the run's final text.
+  const notes = f.db.threadFor("creator");
+  assert.equal(notes.length, 1);
+  assert.equal(notes[0].role, "system");
+  const text = (notes[0].parts[0] as { type: "text"; text: string }).text;
+  assert.ok(
+    text.startsWith(`[schedule fired] "deploy check" finished (session ${fired.session.id})`),
+    text,
+  );
+  assert.match(text, /Bench passed: 14\/16 solved\./);
+
+  // …and woke it: the creator was idle, so the note started a turn there.
+  assert.deepEqual(f.started.map((s) => s.session.id), [fired.session.id, "creator"]);
+  f.close();
+});
+
+test("a FAILED run reports as failed — the firing the creator most needs to hear", async () => {
+  const f = fixture();
+  f.db.createSession({ id: "creator", title: "main", kind: "root", parentId: null, createdAt: T0 });
+  const schedule = seed(f.db, { sessionId: "creator" });
+  playRun(f, { status: "error", report: "" });
+  const errors: unknown[] = [];
+
+  fireSchedule(f.ctx, schedule, { now: () => T0, reportError: (e) => errors.push(e) });
+  await new Promise((r) => setTimeout(r, 0));
+
+  const note = f.db.threadFor("creator")[0];
+  assert.ok(note, "the failed firing still owes the creator its note");
+  assert.match((note.parts[0] as { type: "text"; text: string }).text, /FAILED/);
+  // The starter's rejection is reported too — the note does not swallow it.
+  assert.equal(errors.length, 1);
+  f.close();
+});
+
+test("a firing whose schedule has no creating conversation notes nobody", async () => {
+  const f = fixture();
+  const fired = fireSchedule(f.ctx, seed(f.db))!;
+  assert.ok(fired);
+  await new Promise((r) => setTimeout(r, 0));
+  // Only the fired session's own prompt message was announced — no system note.
+  assert.deepEqual(
+    f.events.filter((e) => e.type === "message.started").map((e) => (e.data as Message).role),
+    ["user"],
+  );
   f.close();
 });
 

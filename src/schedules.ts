@@ -39,6 +39,8 @@
 import { CreateScheduleBody, PatchScheduleBody } from "./schema/requests.ts";
 import type { Message, Schedule, Session } from "./schema/parts.ts";
 import type { AppCtx, Db } from "./types.ts";
+import { postSystemNote } from "./agents/notes.ts";
+import { buildResult, type SubagentResult } from "./agents/subagent.ts";
 import {
   nextRun,
   scheduleCreate,
@@ -122,14 +124,74 @@ export function fireSchedule(
     // pre-M2 shape, and the session is still there with its prompt.
     const start = (ctx as AppCtx & WithTurnStarter).startTurn;
     if (start) {
+      // The firing's other half: when the run settles, its outcome goes back to
+      // the conversation that created the schedule as a system note, which wakes
+      // that model if it is idle (`agents/notes.ts` owns the one wake rule).
+      // Settled EITHER way — a failed run is precisely the firing the creator
+      // needs to hear about — and read from the database afterwards, so the note
+      // reports how the turn actually ended rather than how it was meant to.
+      const settle = () =>
+        noteFiringOutcome(ctx, schedule, session.id, deps)
+          .catch((err) => report(err, schedule));
       const running = start(ctx, session, message);
-      if (running instanceof Promise) running.catch((err) => report(err, schedule));
+      if (running instanceof Promise) {
+        running.then(settle, (err) => {
+          report(err, schedule);
+          void settle();
+        });
+      } else void settle();
     }
     return { session, message };
   } catch (err) {
     report(err, schedule);
     return null;
   }
+}
+
+/** The marker the creating conversation's model and UI key off. Stable text. */
+export const SCHEDULE_NOTE_PREFIX = "[schedule fired]";
+
+/** How the run ended, in words the creator can act on — same idea as the subagent
+ * note's status matrix (`agents/notes.ts`): distinct outcomes, distinct first words. */
+const RAN_TEXT: Record<SubagentResult["status"], string> = {
+  done: "finished",
+  error: "FAILED — its turn errored, and the report below carries the error",
+  interrupted: "was STOPPED before it finished",
+  orphaned: "ended without a completed turn",
+};
+
+/**
+ * Tell the creating conversation how a firing went — the schedule analog of a
+ * background shell's exit note (spec §9). Posted from a completion callback with
+ * nobody to throw to, so the caller wraps this in the same `report` the fire path
+ * uses. A schedule with no creating session (made over REST, or its conversation
+ * since deleted) reports to nobody: `postSystemNote` answers `dropped` for a
+ * missing session, and that is the correct outcome, not an error.
+ *
+ * The outcome is read from the DATABASE, not from the promise that settled: the
+ * fired session's last turn row and its supervisor message are what a restart
+ * would have left behind, so the note and the transcript can never disagree.
+ */
+async function noteFiringOutcome(
+  ctx: AppCtx,
+  schedule: Schedule,
+  firedSessionId: string,
+  deps: FireDeps,
+): Promise<void> {
+  if (!schedule.sessionId) return;
+  const turn = ctx.db.turnsForSession(firedSessionId).at(-1);
+  const result = turn
+    ? await buildResult({ db: ctx.db }, firedSessionId, turn.messageId)
+    : null;
+  const text = [
+    `${SCHEDULE_NOTE_PREFIX} "${schedule.title}" ${
+      RAN_TEXT[result?.status ?? "orphaned"]
+    } (session ${firedSessionId}).`,
+    result?.report ? `Report:\n${result.report}` : "No report.",
+    "Act on it only if it needs something — the run is its own session, and this " +
+    "note is its outcome.",
+  ].join("\n");
+  postSystemNote(ctx, schedule.sessionId, text, deps.now ? { now: deps.now } : {});
 }
 
 /** Indexing failure is a degraded search, never a lost firing. */
