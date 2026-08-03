@@ -288,6 +288,7 @@ function fakeStore(over: Partial<TuiState> = {}): Store & { calls: string[] } {
     answerAsk: noop,
     declineAsk: noop,
     interrupt: track("interrupt"),
+    takeBackQueued: () => (calls.push("takeBackQueued"), null),
     stopUnit: (unit) => (calls.push(`stop:${unit.kind}:${unit.id}`), Promise.resolve()),
     setModel: (patch) => (calls.push(`model:${JSON.stringify(patch)}`), Promise.resolve()),
     refreshChanges: track("refreshChanges"),

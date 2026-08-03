@@ -112,6 +112,18 @@ export type ForestRow =
   | { kind: "collapsed"; id: string; originId: string; depth: number; count: number };
 
 /** The visible text of a message, collapsed to one line. */
+/**
+ * A message's text parts, VERBATIM — newlines, runs of spaces and all.
+ *
+ * The counterpart to `messageGist`, and deliberately not it: a gist is for a row in
+ * a list, so it collapses whitespace and truncates. Handing a message back to the
+ * composer must do neither, or taking back a three-paragraph message returns it as
+ * one long line and the user has to rebuild what they wrote.
+ */
+export function messageText(m: Message): string {
+  return m.parts.map((p) => (p.type === "text" ? p.text : "")).join("");
+}
+
 export function messageGist(m: Message, max = 56): string {
   const text = m.parts
     .map((p) => (p.type === "text" ? p.text : ""))
@@ -405,6 +417,40 @@ export type Selection =
     fork: { sessionId: string; atMessageId: string; exclusive?: boolean };
     editorText?: string;
   };
+
+/**
+ * What taking back the last thing you sent has to act on — `keys.ts`'s
+ * `message.unsend`, decided as data so the gesture is testable without a renderer
+ * or a socket.
+ *
+ * The two shapes are not two versions of one operation, they are different acts:
+ * a QUEUED message was never posted and comes back with nothing else to undo,
+ * while a SENT one is history the server holds, and history is never rewritten in
+ * place (spec §14) — so the undo is the branch that never contained it, which is
+ * the same `exclusive: true` fork a user turn gets in `selectionFor`.
+ *
+ * Newest first, and queued before sent: the queue holds what was typed most
+ * recently, so it is what "the message I just sent" means whenever it is non-empty.
+ */
+export type TakeBack =
+  /** Pop the tail of the local queue. Nothing outside this client knew about it. */
+  | { kind: "queued" }
+  /** Fork exclusive at this message and hand its text back to the composer. */
+  | { kind: "sent"; atMessageId: string; text: string }
+  /** Nothing to take back — the window was armed but the message has not landed. */
+  | { kind: "none" };
+
+export function takeBackTarget(
+  queued: readonly string[],
+  thread: readonly Message[],
+): TakeBack {
+  if (queued.length > 0) return { kind: "queued" };
+  // The LAST user turn, which is the one the window was armed by. Searched from the
+  // end rather than assumed to be the final message: the supervisor's reply to it
+  // may already have started streaming inside the window.
+  const sent = [...thread].reverse().find((m) => m.role === "user");
+  return sent ? { kind: "sent", atMessageId: sent.id, text: messageText(sent) } : { kind: "none" };
+}
 
 export function selectionFor(
   row: ForestRow,

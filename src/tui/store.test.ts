@@ -773,6 +773,63 @@ test("a queued message drains once the turn ends, and only into its own session"
   await store.stop();
 });
 
+test("sending arms the take-back window, and a session switch disarms it", async () => {
+  // `lastSendAt` is what makes Escape mean "undo that" for a few seconds
+  // (`keys.ts`'s UNSEND_MS). Two properties: every send arms it — the posted path
+  // and the queued one alike, since a user cannot tell which they got — and it does
+  // not survive a switch, or Escape would arm over a message on another screen.
+  const { api } = fakeApi();
+  const events = fakeStream();
+  let clock = 5_000;
+  const store = createStore({ api, connect: events.connect, now: () => clock });
+  store.start();
+  events.open(false);
+  await store.open(SESSION);
+  await settle();
+  assert.equal(store.getState().lastSendAt, null, "nothing sent yet");
+
+  await store.send("hello");
+  assert.equal(store.getState().lastSendAt, 5_000);
+
+  clock = 6_000;
+  await store.open(OTHER);
+  assert.equal(store.getState().lastSendAt, null, "the window belongs to one conversation");
+
+  await store.stop();
+});
+
+test("a queued message can be taken back before it is ever posted", async () => {
+  const { api, calls } = fakeApi({
+    getSession: (id: string) =>
+      Promise.resolve({
+        session: session(id),
+        thread: [message("m-1", { pending: true })],
+        usage: snapshotAfterOutage().usage,
+      }),
+  });
+  const events = fakeStream();
+  const store = createStore({ api, connect: events.connect, now: () => 1 });
+  store.start();
+  events.open(false);
+  await store.open(SESSION);
+  await settle();
+
+  await store.send("first", { queue: true });
+  await store.send("second thoughts", { queue: true });
+  assert.deepEqual(store.getState().queued, ["first", "second thoughts"]);
+
+  // The newest comes back — the take-back is an undo of the last send, not a purge.
+  assert.equal(store.takeBackQueued(), "second thoughts");
+  assert.deepEqual(store.getState().queued, ["first"]);
+  assert.equal(store.takeBackQueued(), "first");
+  assert.deepEqual(store.getState().queued, []);
+  // Nothing was ever posted, so nothing has to be undone anywhere else.
+  assert.equal(calls.some((c) => c.startsWith("postMessage")), false);
+  assert.equal(store.takeBackQueued(), null, "with nothing queued it is a no-op");
+
+  await store.stop();
+});
+
 test("a failing request becomes a notice, never a thrown render", async () => {
   const { api } = fakeApi({
     listSessions: () => Promise.reject(new Error("can't reach the bough server")),

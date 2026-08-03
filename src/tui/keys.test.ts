@@ -148,11 +148,23 @@ test("every binding is reachable — some real context resolves to it", () => {
     "panelFiltering",
     "hasAttachments",
     "inSubagent",
+    "justSent",
   ] as const;
   // The open tab is part of the context a panel row is matched against, so it is
   // part of the space this walk covers: a row scoped to a tab is only reachable
   // from that tab, and `null` (the panel closed) must reach none of them.
-  const tabs: (PanelTab | null)[] = [null, ...PANEL_TABS];
+  //
+  // Only where a row is actually scoped to one, though — and every scoped row is a
+  // panel row. Walking nine tabs through the five modes that have none was five
+  // sixths of this test's cost and could not change an outcome, which is what put it
+  // over its timeout as guards were added. The assumption is asserted rather than
+  // trusted: a tab-scoped row appearing in another mode fails here, not silently.
+  assert.deepEqual(
+    BINDINGS.filter((b) => b.tab && b.mode !== "panel").map((b) => `${b.mode} ${b.chord}`),
+    [],
+  );
+  const tabsFor = (mode: UiMode): (PanelTab | null)[] =>
+    mode === "panel" ? [null, ...PANEL_TABS] : [null];
   const reached = new Set<number>();
   const firstMatch = (c: KeyContext, chord: string): number =>
     BINDINGS.findIndex((b) =>
@@ -162,7 +174,7 @@ test("every binding is reachable — some real context resolves to it", () => {
     );
   const chords = [...new Set(BINDINGS.map((b) => b.chord))];
   for (const mode of modes) {
-    for (const tab of tabs) {
+    for (const tab of tabsFor(mode)) {
       for (let mask = 0; mask < 1 << flags.length; mask++) {
         const c = ctx({ mode, tab });
         flags.forEach((f, i) => (c[f] = (mask & (1 << i)) !== 0));
@@ -223,6 +235,34 @@ test("esc unwinds exactly one level: popup, then turn, then notice", () => {
   );
   assert.equal(lookup(ctx({ busy: true }), "esc"), "turn.interrupt");
   assert.equal(lookup(ctx({}), "esc"), "cancel");
+});
+
+test("esc inside the take-back window unsends; outside it, it stops the turn", () => {
+  // The window is the whole difference: same key, same running turn, and the only
+  // thing that decides is whether the user pressed ⏎ a moment ago.
+  assert.equal(lookup(ctx({ justSent: true, busy: true }), "esc"), "message.unsend");
+  assert.equal(lookup(ctx({ justSent: false, busy: true }), "esc"), "turn.interrupt");
+  // A queued send arms it with no turn of this client's running.
+  assert.equal(lookup(ctx({ justSent: true, busy: false }), "esc"), "message.unsend");
+});
+
+test("the take-back never costs a draft, and never outranks a popup", () => {
+  // Typing after sending re-arms the ordinary meanings: the text on screen is worth
+  // more than the message already gone, and trading one for the other is the way
+  // this gesture would earn its distrust.
+  assert.equal(
+    lookup(ctx({ justSent: true, busy: true, emptyDraft: false }), "esc"),
+    "turn.interrupt",
+  );
+  assert.equal(
+    lookup(ctx({ justSent: true, busy: false, emptyDraft: false }), "esc"),
+    "cancel",
+  );
+  // Every Escape unwinds the nearest surface first, this one included.
+  assert.equal(
+    lookup(ctx({ justSent: true, busy: true, completing: true }), "esc"),
+    "complete.dismiss",
+  );
 });
 
 test("⏎ commits the highlighted completion before it sends", () => {

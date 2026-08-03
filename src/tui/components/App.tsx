@@ -93,6 +93,7 @@ import {
   unknownCommand,
   stripCtl,
   type UiMode,
+  UNSEND_MS,
 } from "../keys.ts";
 import {
   currentAsk,
@@ -107,7 +108,7 @@ import { JobOutput, jobBodyRows, jobSubLines } from "./JobOutput.tsx";
 import { Composer, completionPopupHeight, composerHeight } from "./Composer.tsx";
 import { type PanelControls, type PanelHostDeps, usePanelHost } from "./PanelHost.tsx";
 import { liveSubagents, SubagentRail } from "./SubagentRail.tsx";
-import { forestRows, isDelegated, revealPath, rewindIndex } from "../forest.ts";
+import { forestRows, isDelegated, revealPath, rewindIndex, takeBackTarget } from "../forest.ts";
 import { titleOf } from "./Tree.tsx";
 
 import { palette } from "../theme.ts";
@@ -1489,6 +1490,47 @@ export function App(
       // there is no busy check here — the guard is the binding.
       case "turn.interrupt":
         return void store.interrupt();
+      /**
+       * The take-back, within `UNSEND_MS` of a send. Two shapes, because a message
+       * that never left is a different thing from one the server already has:
+       *
+       *   - QUEUED — never posted. Pop it back into the composer; nothing outside
+       *     this client ever knew about it, so there is nothing else to undo.
+       *   - SENT — the server has it, and history is never rewritten in place
+       *     (spec §14). The honest undo is therefore the BRANCH that never contained
+       *     it: fork exclusive at the message, hand its exact text back, and stop the
+       *     turn it started on the way out — nobody takes a message back and still
+       *     wants to pay for the answer to it.
+       *
+       * WHICH of the two is `takeBackTarget`'s decision, in `forest.ts` — a pure
+       * function, so the rule is tested without a renderer or a socket, and this
+       * arm is only the I/O.
+       */
+      case "message.unsend": {
+        const sessionId = state.currentId;
+        const target = takeBackTarget(state.queued, state.thread);
+        if (target.kind === "queued") {
+          const text = store.takeBackQueued();
+          return text === null ? undefined : setLine({ text, cursor: text.length });
+        }
+        // Nothing to take back — the window was armed by a send whose message has not
+        // reached the thread yet. Doing nothing beats falling through to a stop the
+        // user did not ask for; the next Escape is outside the window and stops it.
+        if (target.kind === "none" || !sessionId) return;
+        // The notice lands LAST, after both calls settle, because the stop reports a
+        // sentence of its own and the one that explains a changed screen has to be
+        // the one left standing.
+        return void Promise.all([
+          busy ? store.interrupt() : Promise.resolve(),
+          forkAt(sessionId, { atMessageId: target.atMessageId, exclusive: true }, target.text),
+        ]).then(() =>
+          store.notify(
+            busy
+              ? "took that back — the turn was stopped, and the conversation you sent it in is untouched"
+              : "took that back — the conversation you sent it in is untouched",
+          )
+        );
+      }
       case "attachment.up":
         return setAttachmentSel((at) => at === null || at === 0 ? null : at - 1);
       case "attachment.down":
@@ -1894,6 +1936,10 @@ export function App(
       busy,
       doubleEsc,
       quitArmed: quitArmedRef.current,
+      // The take-back window, read at the KEYSTROKE rather than held in React state:
+      // it expires on the clock, not on a re-render, and a guard that went stale
+      // between renders would leave Escape forking a turn the user meant to stop.
+      justSent: state.lastSendAt !== null && now() - state.lastSendAt < UNSEND_MS,
       railLive: units.length > 0,
       completing,
       hasAttachments: attachments.length + pastedTexts.length > 0,

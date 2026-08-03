@@ -151,6 +151,11 @@ export type Command =
   | "attachment.up"
   | "attachment.down"
   | "turn.interrupt"
+  /**
+   * Take back the message just sent and put it back in the composer — the few
+   * seconds after ⏎ in which a send is still felt as undoable.
+   */
+  | "message.unsend"
   | "history.prev"
   | "history.next"
   // -- the @/ completion popup (guarded on `completing`) -------------------
@@ -593,6 +598,16 @@ export interface KeyContext {
   multiline: boolean;
   /** A turn is in flight in the open session. */
   busy: boolean;
+  /**
+   * A message left this client within the take-back window (`UNSEND_MS`).
+   *
+   * OPTIONAL and absent means false — a caller that omits it never reaches
+   * `message.unsend`, and Escape keeps the meaning it has always had. That is the
+   * safe degrade, because the binding this gates is the one that BORROWS a key
+   * from `turn.interrupt`: the cost of not passing it is a gesture nobody gets,
+   * and the cost of passing it wrongly is a stop that forks instead.
+   */
+  justSent?: boolean;
   /** The previous Escape landed inside the double-tap window. */
   doubleEsc: boolean;
   /** A ^c is already pending — the next one quits (spec: ^c ^c quits). */
@@ -765,6 +780,20 @@ const digits = (
   }));
 
 /**
+ * How long after a send Escape still means "take that back".
+ *
+ * Lives here rather than with the dispatcher's other timings because the legend row
+ * for `message.unsend` states the number to the user, and a window that disagrees
+ * with what the help says is worse than no window: the whole gesture is a promise
+ * about a few seconds. `App.tsx` reads it to decide the guard.
+ *
+ * Three seconds is the "I pressed ⏎ too early" reflex — long enough to notice a
+ * wrong conversation or a half-finished sentence, short enough that Escape is
+ * unambiguously the stop key again by the time a turn has done anything.
+ */
+export const UNSEND_MS = 3_000;
+
+/**
  * Every binding in the TUI, in resolution order within a mode.
  *
  * Ordering is only ever used to put a GUARDED row ahead of its unguarded fallback
@@ -901,6 +930,34 @@ export const BINDINGS: Binding[] = [
   // Guarded on `busy` rather than bound to a chord of its own because Escape is the
   // key every user already reaches for to stop something, and a stop button nobody
   // finds is the gap this closes, not a smaller version of it.
+  /**
+   * The take-back window. For `UNSEND_MS` after ⏎, one Escape means "I did not mean
+   * to send that": the message comes back to the composer, and the turn it started
+   * is stopped on the way.
+   *
+   * WHY IT OUTRANKS THE STOP. In those first seconds the two readings are not in
+   * competition — a user who has just pressed ⏎ and immediately reaches for Escape
+   * is not asking for a stopped turn and an empty composer, they are asking for the
+   * typo back. Taking it back stops the turn as part of doing so, so nothing that
+   * Escape used to mean is lost inside the window; after it, this row simply does
+   * not match and the stop below answers as it always did.
+   *
+   * GATED ON `emptyDraft`, which is what makes it safe: the composer is empty
+   * immediately after a send, so the window is armed exactly when there is nothing
+   * to clobber. Type one character and Escape goes back to meaning stop — the draft
+   * you are writing is never traded for the message you already sent.
+   *
+   * Behind the popup rows above, like every other Escape: it unwinds the nearest
+   * surface first.
+   */
+  {
+    mode: "chat",
+    chord: "esc",
+    command: "message.unsend",
+    when: ["justSent", "emptyDraft"],
+    section: "compose",
+    desc: `take back the message you just sent (${Math.round(UNSEND_MS / 1000)}s)`,
+  },
   {
     mode: "chat",
     chord: "esc",

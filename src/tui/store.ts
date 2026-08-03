@@ -202,6 +202,18 @@ export interface TuiState {
   asks: AskQuestion[];
   /** Typed while a turn was running, held locally until it ends. */
   queued: string[];
+  /**
+   * When this client last sent a message, or null if it has not since the open
+   * session changed. What arms the take-back window (`UNSEND_MS`): for a few
+   * seconds after a send, Escape means "I did not mean to say that" rather than
+   * "stop the turn", which is the moment a typo or a wrong-conversation send is
+   * actually noticed.
+   *
+   * A timestamp rather than a held copy of the message: WHAT is taken back is
+   * derived at the keystroke (the tail of `queued`, else the last user turn in
+   * `thread`), so this cannot drift out of agreement with either of them.
+   */
+  lastSendAt: number | null;
   notice: string | null;
   /** Cheap-tier blurb for the open session, or null. Fails silently by construction. */
   activity: string | null;
@@ -270,6 +282,7 @@ export function initialState(): TuiState {
     toolLogs: {},
     asks: [],
     queued: [],
+    lastSendAt: null,
     notice: null,
     activity: null,
     usage: null,
@@ -349,7 +362,11 @@ export type StoreAction =
    */
   | { type: "turn.settle"; at: number }
   | { type: "queue"; text: string }
-  | { type: "queue.drained" };
+  | { type: "queue.drained" }
+  /** The tail of `queued` goes back to the composer — a take-back before it was ever posted. */
+  | { type: "queue.pop" }
+  /** A message left this client. Arms the take-back window. */
+  | { type: "sent"; at: number };
 
 // ---------------------------------------------------------------------------
 // Dedupe and reconciliation primitives (pure)
@@ -847,6 +864,9 @@ export function reduce(state: TuiState, action: StoreAction): TuiState {
         streaming: {},
         toolLogs: {},
         queued: [],
+        // The take-back window is about the conversation you sent INTO. Carrying it
+        // across a switch would arm Escape over a message that is not on this screen.
+        lastSendAt: null,
         activity: null,
         usage: null,
         effectiveModel: null,
@@ -983,6 +1003,14 @@ export function reduce(state: TuiState, action: StoreAction): TuiState {
 
     case "queue.drained":
       return state.queued.length === 0 ? state : { ...state, queued: [] };
+
+    case "queue.pop":
+      return state.queued.length === 0
+        ? state
+        : { ...state, queued: state.queued.slice(0, -1) };
+
+    case "sent":
+      return { ...state, lastSendAt: action.at };
   }
 }
 
@@ -1365,6 +1393,16 @@ export interface Store {
    */
   interrupt(): Promise<void>;
   /**
+   * Take the most recently QUEUED message back, returning its text for the composer
+   * — null when nothing is queued.
+   *
+   * The easy half of the take-back gesture, and the one with no server in it: a
+   * queued message was never posted, so retracting it is a local pop and the
+   * conversation never knows. The posted half is a fork (`App.tsx`), because a
+   * message the server has is history and history is never rewritten (spec §14).
+   */
+  takeBackQueued(): string | null;
+  /**
    * Stop one unit of running work — a background shell, a subagent, a workflow run.
    *
    * ONE method for three kinds because the caller is a rail row and the rail does
@@ -1664,6 +1702,9 @@ export function createStore(deps: StoreDeps = {}): Store {
   const send = async (text: string, opts: { queue?: boolean; sessionId?: string; images?: { path: string; mediaType: string; name: string; size: number }[] } = {}) => {
     const id = opts.sessionId ?? state.currentId;
     if (!id) return;
+    // Armed on both paths and BEFORE the post: the window is about when the user
+    // let go of the message, not about when the server acknowledged it.
+    dispatch({ type: "sent", at: now() });
     if (opts.queue && isBusy(state)) {
       dispatch({ type: "queue", text });
       return;
@@ -1973,6 +2014,13 @@ export function createStore(deps: StoreDeps = {}): Store {
       } catch (error) {
         fail(error);
       }
+    },
+
+    takeBackQueued() {
+      const text = state.queued[state.queued.length - 1];
+      if (text === undefined) return null;
+      dispatch({ type: "queue.pop" });
+      return text;
     },
 
     async stopUnit(unit) {

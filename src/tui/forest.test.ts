@@ -28,6 +28,7 @@ import {
   revealPath,
   rewindIndex,
   selectionFor,
+  takeBackTarget,
 } from "./forest.ts";
 
 let clock = 1_700_000_000_000;
@@ -292,6 +293,39 @@ test("Enter follows pi's selection rules, addressed to the row's OWN conversatio
   assert.deepEqual(selectionFor(at("fork"), threads), { open: "fork" });
   // A collapsed fan-out drills in.
   assert.deepEqual(selectionFor(at("collapsed:root"), threads), { drill: "root" });
+});
+
+// ---- what a take-back acts on ----------------------------------------------
+
+test("the take-back prefers a queued message, then the last user turn", () => {
+  // A queued message never reached the server, so it is both the most recent thing
+  // said and the one with nothing to undo anywhere else.
+  assert.deepEqual(takeBackTarget(["typed while busy"], THREAD), { kind: "queued" });
+  // Otherwise it is the last USER turn — m3 here, not m2, and not the whole thread.
+  assert.deepEqual(takeBackTarget([], THREAD), {
+    kind: "sent",
+    atMessageId: "m3",
+    text: "now validate pct",
+  });
+  // The supervisor may already be answering inside the window; the user turn is
+  // still the one that was sent.
+  assert.deepEqual(
+    takeBackTarget([], [...THREAD, msg("m4", "supervisor", "validating…")]),
+    { kind: "sent", atMessageId: "m3", text: "now validate pct" },
+  );
+  // Armed by a send whose message has not reached the thread yet: nothing to do.
+  assert.deepEqual(takeBackTarget([], []), { kind: "none" });
+  assert.deepEqual(takeBackTarget([], [msg("m1", "supervisor", "hi")]), { kind: "none" });
+});
+
+test("a taken-back message comes back verbatim, not as a gist", () => {
+  // What the tree shows in a row and what the composer has to receive are different
+  // things: a gist collapses whitespace, and getting a three-paragraph message back
+  // as one line means rebuilding what you wrote.
+  const multiline = msg("m9", "user", "first line\n\n  indented second\n");
+  const target = takeBackTarget([], [multiline]);
+  assert.equal(target.kind === "sent" && target.text, "first line\n\n  indented second\n");
+  assert.equal(messageGist(multiline, Infinity), "first line indented second");
 });
 
 // ---- where esc esc lands ----------------------------------------------------
