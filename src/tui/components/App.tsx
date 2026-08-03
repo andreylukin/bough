@@ -108,6 +108,7 @@ import { JobOutput, jobBodyRows, jobSubLines } from "./JobOutput.tsx";
 import { Composer, completionPopupHeight, composerHeight } from "./Composer.tsx";
 import { type PanelControls, type PanelHostDeps, usePanelHost } from "./PanelHost.tsx";
 import { liveSubagents, SubagentRail } from "./SubagentRail.tsx";
+import { expandPastes, pasteMark, QUEUE_ABOVE_CHARS, referencedPastes } from "../paste.ts";
 import {
   forestRows,
   isCollapsed,
@@ -432,6 +433,14 @@ export function App(
   const [attachments, setAttachments] = useState<{ path: string; mediaType: string; name: string; size: number }[]>([]);
   /** Long clipboard text remains compact until the message is sent. */
   const [pastedTexts, setPastedTexts] = useState<string[]>([]);
+  /**
+   * The held pastes, mirrored for the paste handler.
+   *
+   * A paste is a burst the same way a keypress burst is (`lineRef`): the handler has
+   * to know how many are already held to name the next one, and the state it would
+   * read has not re-rendered yet.
+   */
+  const pastedRef = useRef<string[]>([]);
   /** Null = editing the text; otherwise an index in the queued image rows. */
   const [attachmentSel, setAttachmentSel] = useState<number | null>(null);
   const [askText, setAskText] = useState("");
@@ -1045,13 +1054,25 @@ export function App(
   // The GHOST counts toward the height: it is drawn inside the box and a long suggestion wraps.
   // `composerHeight` has taken it since it was written; omitting it here would lay the box out
   // one row short and the renderer would clip the wrap — the class of bug `Panel.tsx` documents.
+  // The chip rows, DERIVED from the draft: a held paste is shown only while its mark
+  // is still in the text, so the rows and the message about to be sent cannot
+  // disagree. Deleting `[Pasted text #1]` removes its row, which is the whole
+  // removal gesture (`paste.ts`).
+  const attachmentLabels = useMemo(
+    () => [
+      ...attachments.map((part) => part.name),
+      ...referencedPastes(line.text, pastedTexts.length).map((i) => `Pasted text #${i + 1}`),
+    ],
+    [attachments, pastedTexts.length, line.text],
+  );
+
   const boxH = composerHeight({
     input: line.text,
     ghost: completing ? "" : ghost,
     busy,
     width: cols,
     maxRows: composerRows,
-    attachments: [...attachments.map((part) => part.name), ...pastedTexts.map((_text, index) => "Pasted text #" + (index + 1))],
+    attachments: attachmentLabels,
   });
   const popupH = trigger
     ? completionPopupHeight(
@@ -1332,7 +1353,9 @@ export function App(
   // commit. `setLine` maintains `lineRef` synchronously for exactly this read.
   const submit = useCallback((queue: boolean) => {
     const text = lineRef.current.text.trim();
-    if (text === "" && attachments.length === 0 && pastedTexts.length === 0) return;
+    // No `pastedTexts` term: a held paste is only in the message if its mark is in
+    // the draft, and a draft holding a mark is not empty.
+    if (text === "" && attachments.length === 0) return;
     // A DRAFT THAT IS A COMMAND IS RUN, NOT SENT. Dispatching used to happen only
     // when a popup row was accepted, and the popup only exists if the text was slow
     // enough to render — so a pasted `/model` went to the frontier model as prose
@@ -1407,12 +1430,15 @@ export function App(
     const pasted = pastedTexts;
     setAttachments([]);
     setPastedTexts([]);
+    pastedRef.current = [];
     setAttachmentSel(null);
     setLine(EMPTY_LINE);
     setHistAt(null);
     setSent((h) => [...h, text]);
     setScrollOff(0);
-    const message = text + pasted.join("");
+    // Marks expand where they sit, so the message reads the way the draft did. A
+    // paste whose mark was deleted is dropped; see `paste.ts`.
+    const message = expandPastes(text, pasted);
     if (state.currentId) void store.send(message, { queue, images } as Parameters<typeof store.send>[1]);
     else void store.createSession(defaultWorkspace).then((s) => s && store.send(message, { images } as Parameters<typeof store.send>[1]));
   }, [state.currentId, defaultWorkspace, store, attachments, pastedTexts]);
@@ -1566,7 +1592,11 @@ export function App(
       case "attachment.up":
         return setAttachmentSel((at) => at === null || at === 0 ? null : at - 1);
       case "attachment.down":
-        const total = attachments.length + pastedTexts.length;
+        // From the LIVE draft, like every other guard in this dispatcher: a burst of
+        // keypresses is processed before any of them re-renders, and a mark deleted
+        // two keystrokes ago has already removed its row.
+        const total = attachments.length +
+          referencedPastes(lineRef.current.text, pastedTexts.length).length;
         return setAttachmentSel((at) => total === 0 ? null : at === null ? 0 : Math.min(total - 1, at + 1));
       case "history.prev": {
         if (sent.length === 0) return;
@@ -1768,11 +1798,14 @@ export function App(
         setAskText("");
         return void store.declineAsk();
       case "delete.back":
+        // Images only, and not by omission: this arm needs an EMPTY draft, and a held
+        // paste that is still in the message has a mark in the draft — so the rows
+        // reachable here are exactly the image ones. A paste is removed by deleting
+        // its mark, which is ordinary editing and needs no branch (`paste.ts`).
         if (lineRef.current.text === "" && attachmentSel !== null) {
           const selected = attachmentSel;
-          if (selected < attachments.length) setAttachments((items) => items.filter((_item, index) => index !== selected));
-          else { const textIndex = selected - attachments.length; setPastedTexts((items) => items.filter((_item, index) => index !== textIndex)); }
-          const totalAfter = attachments.length + pastedTexts.length - 1;
+          setAttachments((items) => items.filter((_item, index) => index !== selected));
+          const totalAfter = attachments.length - 1;
           return setAttachmentSel(totalAfter === 0 ? null : Math.min(selected, totalAfter - 1));
         }
         return setLine((s) => editLine(s, command));
@@ -1807,9 +1840,17 @@ export function App(
     const off = [
       hooks.onPaste?.((text) => {
         const clean = stripCtl(text);
-        return clean.length > 50
-          ? setPastedTexts((items) => [...items, clean])
-          : setLine((line) => insertText(line, clean));
+        if (clean.length <= QUEUE_ABOVE_CHARS) return setLine((line) => insertText(line, clean));
+        // The ordinal comes from the REF and the ref is advanced here, not on the
+        // next render: two pastes arriving in one batch would otherwise both read the
+        // same length and claim the same number, and the second would expand to the
+        // first's text. Same reason `lineRef` exists, one state over.
+        const ordinal = pastedRef.current.length + 1;
+        pastedRef.current = [...pastedRef.current, clean];
+        setPastedTexts(pastedRef.current);
+        // The mark goes where the cursor is. That is the whole feature: the paste is
+        // held aside for the composer's sake, but it is SAID here (`paste.ts`).
+        return setLine((line) => insertText(line, pasteMark(ordinal)));
       }),
       hooks.onMouse?.((event) => {
         // THE PANEL GETS FIRST REFUSAL. With a diff focused, the wheel was scrolling the
@@ -2271,7 +2312,7 @@ export function App(
             completionSel={selAt}
             completionMore={Math.max(0, completion.total - completion.items.length)}
             ghost={completing ? "" : ghost}
-            attachments={[...attachments.map((part) => part.name), ...pastedTexts.map((_text, index) => "Pasted text #" + (index + 1))]}
+            attachments={attachmentLabels}
             attachmentSel={attachmentSel}
             keyboardOwner={uiMode === "rail" ? "the rail" : null}
           />

@@ -438,6 +438,60 @@ const BUSY: Partial<TuiState> = {
   ] as TuiState["thread"],
 };
 
+test("a long paste is said WHERE it was pasted, not at the end", async () => {
+  // The defect: held pastes were appended at submit, so "compare X with Y" arrived
+  // as the sentence followed by both pastes. Driven through the real paste hook and
+  // the real composer, because the bug lived in the seam between them.
+  const store = fakeStore(STATE);
+  let paste: ((text: string) => void) | null = null;
+  const h = await mount(app(store, {
+    input: { onPaste: (fn: (text: string) => void) => (paste = fn, () => {}) },
+  }));
+  const long = "x".repeat(80);
+  try {
+    await h.press("compare ");
+    paste!(long);
+    // Polled, not painted once: a paste is a state update off React's own schedule,
+    // exactly like a keypress (`frameShowing`).
+    await frameShowing(h, "[Pasted text #1]");
+    // The draft shows the compact row, not 80 characters of it…
+    assert.ok(h.frame().includes("[Pasted text #1]"), h.frame());
+    assert.equal(h.frame().includes(long), false, "the paste itself must stay out of the composer");
+
+    await h.press(" and explain\r");
+    // …and the message says it in the place it was put.
+    assert.ok(
+      store.calls.includes(`send:compare ${long} and explain`),
+      store.calls.filter((c) => c.startsWith("send:")).join(","),
+    );
+  } finally {
+    h.unmount();
+  }
+});
+
+test("a pasted mark deleted from the draft takes its paste with it", async () => {
+  const store = fakeStore(STATE);
+  let paste: ((text: string) => void) | null = null;
+  const h = await mount(app(store, {
+    input: { onPaste: (fn: (text: string) => void) => (paste = fn, () => {}) },
+  }));
+  try {
+    await h.press("keep ");
+    paste!("y".repeat(80));
+    await frameShowing(h, "[Pasted text #1]");
+    assert.ok(h.frame().includes("[Pasted text #1]"), h.frame());
+
+    // Backspace over the whole mark — ordinary editing, which is the removal gesture.
+    for (let i = 0; i < "[Pasted text #1]".length; i++) await h.press("\x7f");
+    assert.equal(h.frame().includes("[Pasted text #1]"), false, h.frame());
+
+    await h.press("nothing\r");
+    assert.ok(store.calls.includes("send:keep nothing"), store.calls.join(","));
+  } finally {
+    h.unmount();
+  }
+});
+
 test("`!` on a fresh screen reuses one shell conversation instead of minting one", async () => {
   // Nothing opens a session at boot, so a fresh screen is where every launch starts
   // and `!git status` is the first thing typed. Each one used to create a
