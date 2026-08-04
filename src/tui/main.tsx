@@ -45,6 +45,7 @@ import { enterTui, filteredStdin, leaveTui, type MouseEvent, type NavKey } from 
 import { applyTheme, type ThemePreset, type ThemeState } from "./theme.ts";
 import { isTuiHelpRequest, isTuiUsageError, parseTuiArgs, USAGE as TUI_USAGE } from "./args.ts";
 import { boughTitle, term } from "./term.ts";
+import { type Clipboard, clipboardFromText } from "./clipboard.ts";
 import { App, type AppControls, type InputHooks } from "./components/App.tsx";
 
 /**
@@ -129,14 +130,23 @@ function tabTurnRunning(state: TuiState): boolean {
 /** The title moves slowly enough not to make terminal chrome noisy. */
 const TITLE_SPINNER_MS = 120;
 
-type Clipboard = { image: Blob } | { text: string } | null;
-
-/** Reads text immediately; compiles the macOS image extractor only once. */
+/**
+ * The image on the pasteboard wins over the text beside it; see `clipboard.ts` for
+ * why that order is the fix and not a preference. Compiles the macOS image
+ * extractor only once.
+ */
 async function pasteClipboard(): Promise<Clipboard> {
   if (process.platform !== "darwin") return null;
+  const bytes = await pasteboardPng();
+  if (bytes) return { image: new Blob([bytes], { type: "image/png" }) };
   const textProcess = Bun.spawn(["pbpaste"], { stdout: "pipe", stderr: "ignore" });
   const text = await new Response(textProcess.stdout).text();
-  if ((await textProcess.exited) === 0 && text !== "") return { text };
+  if ((await textProcess.exited) !== 0 || text === "") return null;
+  return await clipboardFromText(text);
+}
+
+/** The pasteboard's image data as PNG bytes, or `null` if it holds none. */
+async function pasteboardPng(): Promise<Uint8Array<ArrayBuffer> | null> {
   const dir = join(process.env.BOUGH_HOME ?? join(homedir(), ".bough"), "bin");
   const helper = join(dir, "pasteboard-png");
   try { await stat(helper); } catch {
@@ -148,9 +158,7 @@ async function pasteClipboard(): Promise<Clipboard> {
   }
   const imageProcess = Bun.spawn([helper], { stdout: "pipe", stderr: "ignore" });
   const bytes = new Uint8Array(await new Response(imageProcess.stdout).arrayBuffer());
-  return (await imageProcess.exited) === 0 && bytes.length > 0
-    ? { image: new Blob([bytes], { type: "image/png" }) }
-    : null;
+  return (await imageProcess.exited) === 0 && bytes.length > 0 ? bytes : null;
 }
 
 async function main() {
