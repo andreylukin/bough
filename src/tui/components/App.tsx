@@ -119,7 +119,7 @@ import {
 } from "../forest.ts";
 import { titleOf } from "./Tree.tsx";
 
-import { palette } from "../theme.ts";
+import { palette, subscribeTheme, themeEpoch } from "../theme.ts";
 import { tabAtColumn } from "./Panel.tsx";
 
 /** How long a second Escape still counts as a double-tap. */
@@ -355,6 +355,14 @@ export function App(
 ) {
   const renderer = useRenderer();
   const state = useSyncExternalStore<TuiState>(store.subscribe, store.getState, store.getState);
+  // The palette is a mutable singleton outside React, and applying a theme is the one
+  // event that changes what every row on the screen looks like without changing a
+  // single piece of state. Subscribing here is what makes the picker's live preview
+  // live: it re-renders THIS component, which is where the transcript is memoized
+  // (`palette.epoch` is that memo's first dependency). Without it the preview
+  // repainted the panel it was drawn in and nothing else, and only when some
+  // unrelated update happened to arrive.
+  useSyncExternalStore(subscribeTheme, themeEpoch, themeEpoch);
 
   const [mode, setMode] = useState<UiMode>("chat");
   // The draft is kept in a REF as well as in state, and every write goes through
@@ -926,6 +934,13 @@ export function App(
         },
       ),
     [
+      // `palette.epoch` FIRST, and load-bearing: `buildLines` bakes SGR colour codes
+      // into every row, so the transcript is a rendering of the palette that was in
+      // force when it was built. Without this dep a theme change — including every
+      // cursor move in the picker, which is the one place a user is watching for the
+      // repaint — recoloured the components and left the whole transcript in the old
+      // palette until an unrelated edit happened to invalidate this memo.
+      palette.epoch,
       state.thread,
       state.streaming,
       state.toolLogs,

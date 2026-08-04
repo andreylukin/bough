@@ -29,6 +29,7 @@
 import { TextAttributes } from "@opentui/core";
 import type { Completion, Trigger } from "../format.ts";
 import { UI } from "../format.ts";
+import { palette } from "../theme.ts";
 
 /**
  * The block caret's foreground, against an accent background.
@@ -39,8 +40,14 @@ import { UI } from "../format.ts";
  * pair back to white-on-white. A cell dump of the caret returned `fg #ffffff bg
  * #ffffff inverse=true`, i.e. a composer with no visible cursor at all. An explicit
  * pair states the colours once and cannot be flipped twice.
+ *
+ * The explicit pair is the SCREEN'S OWN BACKGROUND on the accent — the same reversed
+ * pair the header chip uses (`App.tsx`) — and not the literal `"black"` it was,
+ * which is right for a dark built-in palette and wrong the moment a theme moves the
+ * background. A function, not a constant, so it is read at render and a live preview
+ * repaints it.
  */
-const CARET_FG = "black";
+const caretFg = () => palette.bg;
 
 export interface ComposerProps {
   input: string;
@@ -211,6 +218,10 @@ export function Composer(
         // hairline is right for the opposite case — another surface holds the
         // keyboard and this box is not where the next keystroke lands.
         borderColor={keyboardOwner ? UI.muted : busy ? UI.warn : UI.accent}
+        // The inset surface the palette has always had a token for. It is what
+        // separates the composer from the transcript above it without a second
+        // border, and it is the other half of a "deeper surfaces" theme.
+        backgroundColor={palette.panelInset}
         paddingX={1}
       >
         {shown.map((r, i) => {
@@ -229,7 +240,7 @@ export function Composer(
                 ? (
                   <>
                     {r.text.slice(prefix, col)}
-                    <span fg={CARET_FG} bg={UI.accent}>{at ?? " "}</span>
+                    <span fg={caretFg()} bg={UI.accent}>{at ?? " "}</span>
                     {placeholder
                       ? <span attributes={TextAttributes.DIM}>{placeholder}</span>
                       : null}
@@ -313,7 +324,7 @@ export function CompletionPopup({ kind, items, sel, more }: CompletionPopupProps
           return (
             <text key={it.label} wrapMode="none">
               {/* A `❯` and an accent, not a reverse-video bar: reverse renders
-                  white-on-white here (see CARET_FG), so the row Enter was about to
+                  white-on-white here (see `caretFg`), so the row Enter was about to
                   act on was marked with nothing at all. This is also the cursor
                   Sessions, Changes, ModelPicker and Theme already use, which is the
                   point — one cursor glyph across every list in the TUI. */}
