@@ -6,6 +6,7 @@
 src/          the whole system — server, turn runner, harness, host functions,
               subagents, workflows, history ops, MCP, LSP, prompt, TUI
 docs/         spec.md (what the system is) · implementation-plan.md (how it is built)
+              tags.md (the command-memory tag system, end to end)
 src/skills/   the bundled skills — history, wayfinder, domain-modeling, grilling
 ahe/          the prompt-evolution loop and its task bank
 assets/       the logo
