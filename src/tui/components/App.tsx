@@ -120,6 +120,9 @@ import {
 import { titleOf } from "./Tree.tsx";
 
 import { palette, subscribeTheme, themeEpoch } from "../theme.ts";
+// Pure and filesystem-free: it decides from the string alone, which is what lets the
+// paste path ask "is this a picture?" without this component learning about disk.
+import { clipboardImagePath } from "../clipboard.ts";
 import { tabAtColumn } from "./Panel.tsx";
 
 /** How long a second Escape still counts as a double-tap. */
@@ -160,6 +163,16 @@ export interface InputHooks {
   onMouse?: (handler: (event: MouseEvent) => void) => () => void;
   onNavKey?: (handler: (key: NavKey) => void) => () => void;
   pasteClipboard?: () => Promise<{ image: Blob } | { text: string } | null>;
+  /**
+   * Read a pasted PATH as image bytes — null when it is not one, or cannot be read.
+   *
+   * The other half of the clipboard story, and the half that actually fires. A
+   * terminal answers ⌘v by keeping the keypress and pasting the clipboard's TEXT, so
+   * a file copied in Finder arrives here as its path, in a bracketed paste, in every
+   * terminal there is. Injected rather than imported so this component still touches
+   * no filesystem.
+   */
+  imageFromPasteText?: (text: string) => Promise<Blob | null>;
 }
 
 export interface AppProps {
@@ -1886,17 +1899,40 @@ export function App(
     const off = [
       hooks.onPaste?.((text) => {
         const clean = stripCtl(text);
-        if (clean.length <= QUEUE_ABOVE_CHARS) return setLine((line) => insertText(line, clean));
-        // The ordinal comes from the REF and the ref is advanced here, not on the
-        // next render: two pastes arriving in one batch would otherwise both read the
-        // same length and claim the same number, and the second would expand to the
-        // first's text. Same reason `lineRef` exists, one state over.
-        const ordinal = pastedRef.current.length + 1;
-        pastedRef.current = [...pastedRef.current, clean];
-        setPastedTexts(pastedRef.current);
-        // The mark goes where the cursor is. That is the whole feature: the paste is
-        // held aside for the composer's sake, but it is SAID here (`paste.ts`).
-        return setLine((line) => insertText(line, pasteMark(ordinal)));
+        const asText = () => {
+          if (clean.length <= QUEUE_ABOVE_CHARS) return setLine((line) => insertText(line, clean));
+          // The ordinal comes from the REF and the ref is advanced here, not on the
+          // next render: two pastes arriving in one batch would otherwise both read the
+          // same length and claim the same number, and the second would expand to the
+          // first's text. Same reason `lineRef` exists, one state over.
+          const ordinal = pastedRef.current.length + 1;
+          pastedRef.current = [...pastedRef.current, clean];
+          setPastedTexts(pastedRef.current);
+          // The mark goes where the cursor is. That is the whole feature: the paste is
+          // held aside for the composer's sake, but it is SAID here (`paste.ts`).
+          return setLine((line) => insertText(line, pasteMark(ordinal)));
+        };
+        // A PASTED PATH TO AN IMAGE IS A PICTURE, and this is the path ⌘v actually
+        // takes: the terminal keeps the keypress and answers with the clipboard's
+        // text, which for a file copied in Finder is its path. Handling that only
+        // under the `image.paste` COMMAND left the gesture broken in every terminal
+        // that binds ⌘v — which is all of them, by default — and put a path in the
+        // composer for the model to read as prose about a file it cannot open.
+        //
+        // The decision is pure and never touches disk (`clipboardImagePath`), so an
+        // ordinary paste pays one regex and falls straight through. A read that FAILS
+        // is a text paste too: the string may be a path the user meant to type, and
+        // swallowing it would be worse than not attaching.
+        if (!clipboardImagePath(clean) || !hooks.imageFromPasteText || !uploadImage) {
+          return asText();
+        }
+        return void hooks.imageFromPasteText(clean)
+          .then((image) =>
+            image
+              ? uploadImage(image).then((part) => setAttachments((xs) => [...xs, part]))
+              : asText()
+          )
+          .catch(asText);
       }),
       hooks.onMouse?.((event) => {
         // THE PANEL GETS FIRST REFUSAL. With a diff focused, the wheel was scrolling the

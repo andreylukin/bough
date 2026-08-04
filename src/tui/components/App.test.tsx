@@ -1268,3 +1268,88 @@ test("a ROOT conversation keeps the ordinary empty-screen prompt", async () => {
     h.unmount();
   }
 });
+
+// ---------------------------------------------------------------------------
+// The clipboard: a pasted image path is a picture, not prose
+// ---------------------------------------------------------------------------
+
+/**
+ * THE BUG THESE EXIST FOR. `image.paste` was bound to ⌘v alone, and a terminal only
+ * forwards ⌘v when it speaks the kitty keyboard protocol AND the user has taken the
+ * key away from the terminal's own paste. Everywhere else — which is everywhere, by
+ * default — the terminal keeps the keypress and answers it with a bracketed paste of
+ * the clipboard's TEXT. That text is the file's path for a copied file, and this
+ * handler treated every paste as words, so "copy image, ⌘v" typed a path into the
+ * composer and the model was asked about a file it cannot open.
+ *
+ * Driven through the real `onPaste` hook against a mounted App, because the defect
+ * was never in the decision (`clipboard.ts` had it right and was unit-tested) but in
+ * which code path the decision was wired to.
+ */
+function pasteHarness(over: Record<string, unknown> = {}) {
+  let paste: ((text: string) => void) | null = null;
+  const uploaded: Blob[] = [];
+  const props = {
+    input: {
+      onPaste: (fn: (text: string) => void) => {
+        paste = fn;
+        return () => {};
+      },
+      imageFromPasteText: async (text: string) =>
+        text.endsWith(".png") ? new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }) : null,
+      ...(over.input as object ?? {}),
+    },
+    uploadImage: async (image: Blob) => {
+      uploaded.push(image);
+      return { path: "/store/a.png", mediaType: "image/png", name: "clipboard.png", size: 3 };
+    },
+    ...over,
+  };
+  return { props, uploaded, fire: (text: string) => paste?.(text) };
+}
+
+test("a pasted image path is attached, and never typed into the composer", async () => {
+  const { props, uploaded, fire } = pasteHarness();
+  const h = await mount(app(fakeStore(STATE), props));
+  try {
+    fire("/tmp/screenshot.png");
+    await settle(h.paint, () => uploaded.length > 0);
+    assert.equal(uploaded.length, 1, "the file was read and uploaded");
+    const frame = h.frame();
+    assert.ok(frame.includes("[image: clipboard.png]"), frame);
+    // The whole point: the path is NOT in the draft. This is what the model used to
+    // be sent instead of a picture.
+    assert.equal(frame.includes("/tmp/screenshot.png"), false, frame);
+  } finally {
+    h.unmount();
+  }
+});
+
+test("a paste that is not an image path is still ordinary text", async () => {
+  const { props, uploaded, fire } = pasteHarness();
+  const h = await mount(app(fakeStore(STATE), props));
+  try {
+    fire("just some words");
+    await settle(h.paint, () => h.frame().includes("just some words"));
+    assert.equal(uploaded.length, 0);
+    assert.ok(h.frame().includes("just some words"), h.frame());
+  } finally {
+    h.unmount();
+  }
+});
+
+test("a path whose file cannot be read falls back to being text", async () => {
+  // `imageFromPasteText` answers null for anything but .png here, so this is the
+  // gone-file case: the string may be a path the user meant to type, and swallowing
+  // it would be worse than not attaching.
+  const { props, uploaded, fire } = pasteHarness();
+  const h = await mount(app(fakeStore(STATE), props));
+  try {
+    fire("/tmp/missing.webp");
+    await settle(h.paint, () => h.frame().includes("/tmp/missing.webp"));
+    assert.equal(uploaded.length, 0);
+    assert.ok(h.frame().includes("/tmp/missing.webp"), h.frame());
+  } finally {
+    h.unmount();
+  }
+});

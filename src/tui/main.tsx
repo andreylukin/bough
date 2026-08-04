@@ -190,7 +190,19 @@ async function main() {
   const pastes = hub<string>();
   const mice = hub<MouseEvent>();
   const navKeys = hub<NavKey>();
-  const hooks: InputHooks = { onPaste: pastes.on, onMouse: mice.on, onNavKey: navKeys.on, pasteClipboard };
+  const hooks: InputHooks = {
+    onPaste: pastes.on,
+    onMouse: mice.on,
+    onNavKey: navKeys.on,
+    pasteClipboard,
+    // The bracketed-paste half of ⌘v (`clipboard.ts` owns the rule, and returning
+    // `{text}` for anything it will not vouch for is what keeps a mistaken guess
+    // from swallowing a paste meant as words).
+    imageFromPasteText: async (text) => {
+      const item = await clipboardFromText(text);
+      return item && "image" in item ? item.image : null;
+    },
+  };
 
   // Focus and the background report are terminal REPLIES: they belong to `term.ts`
   // and must never reach the app as keystrokes.
