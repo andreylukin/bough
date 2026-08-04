@@ -502,7 +502,11 @@ test('the "not bound" section is true — none of those chords is bound', () => 
   // which is the one thing it may not do.
   // ^g left the section the same way ^y did: it copies the open conversation's id
   // now, so listing it as unavailable would be the section telling a lie.
-  const unbound = ["ctrl+v", "ctrl+r", "ctrl+z", "meta+d"];
+  // ^v LEFT this list when it became the clipboard-image chord. It used to sit here
+  // saying "your terminal pastes text; ⌘v attaches a clipboard image", which was the
+  // advice that made the gesture look implemented: ⌘v reaches the app only under the
+  // kitty keyboard protocol with the key unbound from the terminal's own paste.
+  const unbound = ["ctrl+r", "ctrl+z", "meta+d"];
   for (const chord of unbound) {
     assert.equal(
       BINDINGS.some((b) => b.chord === chord),
@@ -714,4 +718,20 @@ test("a bare /word that is not a command is caught, with the nearest name", () =
   assert.equal(unknownCommand("look at /clear"), null);
   assert.equal(unknownCommand("/"), null);
   assert.equal(unknownCommand(""), null);
+});
+
+test("the clipboard image gesture is reachable by a chord terminals actually send", () => {
+  // ⌘v arrives as `super` only from a terminal speaking the kitty keyboard protocol
+  // with ⌘v unbound from its own paste — neither of which is anyone's default. Every
+  // other terminal keeps the key and answers with a bracketed paste, so a binding on
+  // `super+v` alone left "attach the clipboard image" unreachable in practice, and
+  // raw image DATA has no text to arrive as a paste at all.
+  const chat = ctx({ emptyDraft: true });
+  assert.equal(resolve(chat, "v", { ctrl: true }), "image.paste");
+  assert.equal(resolve(chat, "v", { super: true }), "image.paste");
+  assert.equal(resolve(chat, "v", { meta: true }), "image.paste");
+  // …and it is the one the legend shows, so the key a user is told about is the key
+  // that reaches the app.
+  const listed = BINDINGS.filter((b) => b.command === "image.paste" && b.desc);
+  assert.deepEqual(listed.map((b) => b.chord), ["ctrl+v"]);
 });

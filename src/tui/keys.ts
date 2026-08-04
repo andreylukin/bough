@@ -869,7 +869,24 @@ export const BINDINGS: Binding[] = [
     desc: "queue for after this turn",
   },
   { mode: "chat", chord: "ctrl+j", command: "newline", section: "compose", desc: "newline" },
-  { mode: "chat", chord: "super+v", command: "image.paste", section: "compose", label: "⌘v", desc: "attach clipboard image" },
+  /**
+   * ATTACH THE CLIPBOARD'S IMAGE. Three chords for one gesture, because the obvious
+   * one mostly does not arrive.
+   *
+   * `super+v` is ⌘v, and a terminal only reports it when it speaks the kitty
+   * keyboard protocol AND the user has taken ⌘v away from the terminal's own paste
+   * — which is neither the macOS default nor anyone's setup by accident. Everywhere
+   * else ⌘v is swallowed by the terminal, which answers it with a bracketed paste of
+   * the clipboard's TEXT: the file's path for a copied file, and nothing at all for a
+   * screenshot. That paste is handled in `App.tsx`, which now attaches an image whose
+   * path was pasted; but raw image DATA has no text to arrive as, so it needs a chord
+   * the terminal actually forwards.
+   *
+   * `ctrl+v` is that chord. It reaches the app in every terminal, on every platform,
+   * and it is what reads the pasteboard directly.
+   */
+  { mode: "chat", chord: "ctrl+v", command: "image.paste", section: "compose", desc: "attach clipboard image" },
+  { mode: "chat", chord: "super+v", command: "image.paste", label: "⌘v" },
   { mode: "chat", chord: "meta+v", command: "image.paste" },
   {
     mode: "chat",
@@ -1605,7 +1622,6 @@ export const UNAVAILABLE: HelpSection = {
   section: "not bound",
   unavailable: true,
   keys: [
-    ["^v", "your terminal pastes text; ⌘v attaches a clipboard image"],
     // The two halves of "search" are different questions and this line answered
     // neither: ^r is still not bound, but saying only that left the reader believing
     // bough cannot search at all, when ^f then / searches every message.
