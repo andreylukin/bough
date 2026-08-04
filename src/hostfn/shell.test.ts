@@ -20,6 +20,7 @@
 
 import { test } from "bun:test";
 import { deepStrictEqual, ok } from "node:assert";
+import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -824,4 +825,43 @@ test("a recorded command carries its output head, and a spilled one its file", a
   ok(recorded[1].spillPath?.startsWith(dir), `spill path in ${recorded[1].spillPath}`);
   await r.cleanup();
   await rm(dir, { recursive: true, force: true });
+});
+
+// ---------------------------------------------------------------------------
+// The memory pushed back — `history/echo.ts` wired through the shell verbs
+// ---------------------------------------------------------------------------
+
+test("a failing bash carries the memory's note below its own output", async () => {
+  const r = rig();
+  const host = createShellHostFns(
+    { ...r.ctx, echo: { note: () => "[history] seen this before", guard: () => null } },
+    { registry: r.registry },
+  );
+  const out = await host.bash("printf boom; exit 1", "smoke:echo");
+  has(out, "boom");
+  has(out, "[history] seen this before");
+  ok(
+    out.indexOf("boom") < out.indexOf("[history]"),
+    "the command's own result comes first; the note is a footnote",
+  );
+  await r.cleanup();
+});
+
+test("a guarded command is not spawned, not recorded, and says it was skipped", async () => {
+  const r = rig();
+  const recorded: Recorded[] = [];
+  const host = createShellHostFns(
+    {
+      ...r.ctx,
+      record: (e) => recorded.push(e),
+      echo: { note: () => null, guard: () => "[not run] skipped: it keeps failing" },
+    },
+    { registry: r.registry },
+  );
+  // Would create the file if it ran. It must not run.
+  const out = await host.bash("touch /tmp/bough-guard-must-not-exist", "smoke:guard");
+  eq(out, "[not run] skipped: it keeps failing");
+  eq(recorded.length, 0, "a command that did not run must not enter the memory");
+  eq(existsSync("/tmp/bough-guard-must-not-exist"), false);
+  await r.cleanup();
 });

@@ -12,7 +12,15 @@ hint), query that tag before exploring fresh. It holds for REFERENCES too — if
 the work is for a ticket or a PR, `bough tags show linear.eng-1234` is every
 command already run for it.
 
-The memory is reached through the CLI, in bash. There is no host function:
+Some of it reaches you without being asked. When a command fails that has failed
+here before, a `[history]` line follows its output with the earlier error and, if
+there is one, a command of the same shape that exited 0 — read it before you try
+again. And a command that has already failed three times in this session inside
+two minutes is NOT RUN a fourth time: the output starts `[not run]`, nothing was
+spawned, and the previous error is quoted. That is a loop, not a flake. Change
+the command — any edit makes it a different command and it runs.
+
+The rest is reached through the CLI, in bash. There is no host function:
 
     bough tags                  this project's tag vocabulary, ranked
     bough tags show TAG         the commands under TAG, newest first, exit code

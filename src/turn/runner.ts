@@ -69,6 +69,7 @@ import {
   noteProjectRules,
   projectRulesNote,
 } from "../prompt/project.ts";
+import { createCommandEcho } from "../history/echo.ts";
 import { createCommandRecorder } from "../history/record.ts";
 import { dirTagHints, tagsNoteFor } from "../history/stats.ts";
 import { dirname, isAbsolute } from "node:path";
@@ -258,6 +259,7 @@ export function baseHostFns(ctx: TurnCtx): HostFns {
       scratch: ensureScratchDir(ctx.sessionId),
       exits,
       record,
+      echo: createCommandEcho(ctx),
     }),
     ...createFileHostFns({ sessionId: ctx.sessionId, workspace: ctx.workspace, reads }),
   };

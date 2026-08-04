@@ -83,6 +83,16 @@ export type ShellCtx = Pick<TurnCtx, "sessionId" | "workspace"> & {
     outputHead: string;
     spillPath: string | null;
   }) => void;
+  /**
+   * The other direction of the same memory: what it already knows, appended to a
+   * failure or returned instead of a command that is failing in a loop. See
+   * `history/echo.ts` for why this is pushed rather than looked up. Optional, so a
+   * caller without a database — every existing test — simply gets no echo.
+   */
+  echo?: {
+    note(command: string, exitCode: number | null): string | null;
+    guard(command: string): string | null;
+  };
 };
 
 /** Injected seams. Every default is a constant, never a hidden global. */
@@ -198,6 +208,18 @@ function interruptedError(command: string): ProgramError {
   );
 }
 
+/**
+ * Append the memory's note to a command's output, if there is one.
+ *
+ * Below the output rather than above it: the command's own result is what was
+ * asked for, and a recall note that pushed it down the screen would be the harness
+ * talking over the answer. A blank line keeps the two from reading as one message.
+ */
+function withEcho(out: string, echo: string | null | undefined): string {
+  if (!echo) return out;
+  return out === "" ? echo : `${out}\n\n${echo}`;
+}
+
 // ---------------------------------------------------------------------------
 // bash
 // ---------------------------------------------------------------------------
@@ -221,6 +243,10 @@ export async function bash(
   const bgAfterMs = opts.bgAfterMs ?? defaultBgAfterMs();
   // Already stopped: spawning here would produce a process nobody waits on.
   if (ctx.signal?.aborted) throw interruptedError(command);
+  // Nothing is spawned, nothing is recorded — a command that did not run must not
+  // enter the memory as if it had, least of all as another failure of itself.
+  const skipped = ctx.echo?.guard(command);
+  if (skipped) return skipped;
   const startedAt = Date.now();
 
   // Bound to the turn's interrupt only — the user's stop button must kill the
@@ -254,6 +280,9 @@ export async function bash(
       // The memory keeps what the PROGRAM saw — head, spill marker and all — so
       // recall can answer "what did it print" and point at the spill file.
       const final = formatFinal(shell);
+      // Asked BEFORE this run is recorded, so "already failed here 3×" means three
+      // times before this one — a first failure has no history and says nothing.
+      const echo = ctx.echo?.note(command, code);
       ctx.record?.({
         command,
         tags,
@@ -262,7 +291,7 @@ export async function bash(
         outputHead: final.slice(0, OUTPUT_HEAD_CHARS),
         spillPath: spillPathFrom(final),
       });
-      return final;
+      return withEcho(final, echo);
     }
     // Still running at the threshold. Stopped mid-wait dies like any interrupt.
     if (ctx.signal?.aborted) {
@@ -379,6 +408,9 @@ export async function shConcurrent(
       // A `{cmd, tag}` leg stamps its own history row; a bare string runs
       // untagged. Recorded from the FINAL text, so the memory keeps exactly
       // what the program saw — spill marker included.
+      // Noted but never guarded: `sh` legs run concurrently, so the count a guard
+      // would read is racing its own siblings. A loop is a `bash` shape anyway.
+      const echo = ctx.echo?.note(command, status.code);
       ctx.record?.({
         command,
         tags,
@@ -387,7 +419,7 @@ export async function shConcurrent(
         outputHead: out.slice(0, OUTPUT_HEAD_CHARS),
         spillPath: spillPathFrom(out),
       });
-      return { code: status.code, out };
+      return { code: status.code, out: withEcho(out, echo) };
     } catch (err) {
       return { code: -1, out: message(err) };
     } finally {

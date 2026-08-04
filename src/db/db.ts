@@ -46,6 +46,7 @@ import type {
   CommandRecord,
   CommandTagRow,
   Db as DbPort,
+  PriorFailures,
   SearchHit,
   SessionRuntime,
   TagDiversityDay,
@@ -1372,6 +1373,70 @@ export class SqliteDb implements DbPort {
       sessionId: r.session_id,
       messageId: r.message_id,
     }));
+  }
+
+  /**
+   * How this EXACT command has failed here before — the lookup behind the
+   * repeat-failure echo (`history/echo.ts`).
+   *
+   * One row, or null when the command has no failing history: the count, how many
+   * of those were this session, and — via SQLite's bare-column-with-max rule, which
+   * takes the non-aggregated columns from the `max(ts)` row — what the last one
+   * printed. `(repo, ts)` is indexed, and `sinceTs` keeps the scan to the window
+   * that could still be interesting.
+   */
+  priorFailures(
+    repo: string,
+    cmd: string,
+    sinceTs: number,
+    sessionId: string,
+  ): PriorFailures | null {
+    const row = this.#get<{
+      n: number;
+      n_session: number;
+      last_ts: number | null;
+      exit_code: number | null;
+      output_head: string | null;
+    }>(
+      `SELECT count(*) AS n,
+              sum(session_id = ?) AS n_session,
+              max(ts) AS last_ts, exit_code, output_head
+         FROM command_history
+        WHERE repo = ? AND cmd = ? AND ts >= ?
+          AND exit_code IS NOT NULL AND exit_code <> 0`,
+      sessionId,
+      repo,
+      cmd,
+      sinceTs,
+    );
+    if (!row || row.n === 0 || row.last_ts === null) return null;
+    return {
+      count: row.n,
+      inSession: row.n_session ?? 0,
+      lastTs: row.last_ts,
+      exitCode: row.exit_code,
+      outputHead: row.output_head ?? "",
+    };
+  }
+
+  /**
+   * The most recent command that SUCCEEDED here and starts with `prefix` — the
+   * "someone already got this right" half of the echo. `prefix` is matched with
+   * LIKE and must already be escaped for it (`history/echo.ts` builds it from the
+   * failing command's leading tokens); `\` is the escape character.
+   */
+  lastSuccessLike(repo: string, prefix: string, notCmd: string, sinceTs: number): string | null {
+    const row = this.#get<{ cmd: string }>(
+      `SELECT cmd FROM command_history
+        WHERE repo = ? AND exit_code = 0 AND ts >= ?
+          AND cmd LIKE ? ESCAPE '\\' AND cmd <> ?
+        ORDER BY ts DESC LIMIT 1`,
+      repo,
+      sinceTs,
+      `${prefix}%`,
+      notCmd,
+    );
+    return row?.cmd ?? null;
   }
 }
 

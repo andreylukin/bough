@@ -36,6 +36,7 @@
  */
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
+import { enableSqliteExtensions } from "../db/extensions.ts";
 import { createEmbedLayer } from "../history/embed.ts";
 import type { Db, TagDiversityDay, TaggedCommand } from "../types.ts";
 import { openDb } from "../db/db.ts";
@@ -432,6 +433,17 @@ export async function runTags(argv: readonly string[], deps: TagsDeps): Promise<
 }
 
 if (import.meta.main) {
+  // FIRST, before anything opens a Database. `enableSqliteExtensions` is a
+  // one-shot swap that must happen ahead of the first `new Database()`, and
+  // `extensionsEnabled()` reports the decision without ever making it — so a
+  // process that never calls this has NO vector layer, whatever is installed.
+  //
+  // It was missing here, and that made `bough tags similar` structurally dead on
+  // every machine: the server enables extensions and writes embeddings.db, this
+  // process never did, so `createEmbedLayer()` returned null and the verb always
+  // answered "no local embedding layer here" over a store that was filling up
+  // fine. Writes worked, reads could not.
+  enableSqliteExtensions();
   const code = await runTags(process.argv.slice(2), {
     out: (l) => console.log(l),
     err: (l) => console.error(l),

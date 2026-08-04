@@ -108,6 +108,18 @@ export interface CommandRecord {
   messageId?: string | null;
 }
 
+/** What the memory already knows about one command failing here (`history/echo.ts`). */
+export interface PriorFailures {
+  /** Failing runs of this exact command in this repo, inside the window. */
+  count: number;
+  /** How many of those were this session — the loop signal, as opposed to history. */
+  inSession: number;
+  lastTs: number;
+  /** The last failure's exit code, and the first ~2k chars it printed. */
+  exitCode: number | null;
+  outputHead: string;
+}
+
 /** One (tag, outcome) observation, the unit the popularity stats aggregate. */
 /** One day of the tag memory, as `bough tags stats` reports it. */
 export interface TagDiversityDay {
@@ -264,6 +276,15 @@ export interface Db {
   tagDiversityByDay(sinceTs: number, repo?: string): TagDiversityDay[];
   /** Commands recorded under one tag, newest first. */
   commandsForTag(tag: string, opts?: { repo?: string; limit?: number }): TaggedCommand[];
+  /** How this exact command has failed in this repo since `sinceTs`, or null. */
+  priorFailures(
+    repo: string,
+    cmd: string,
+    sinceTs: number,
+    sessionId: string,
+  ): PriorFailures | null;
+  /** The newest successful command in this repo starting with a LIKE `prefix`. */
+  lastSuccessLike(repo: string, prefix: string, notCmd: string, sinceTs: number): string | null;
   /** The `run_steps` program a supervisor message ran, or null. */
   programForMessage(messageId: string): string | null;
 
