@@ -1494,3 +1494,69 @@ test("a search hit inside a collapsed session is attributed to its spawner", asy
   // rather than only the conversation it lives in.
   assert.deepEqual(messages, ["m1"]);
 });
+
+// ---------------------------------------------------------------------------
+// The take-back, on the posted half (`history/unsend.ts`)
+// ---------------------------------------------------------------------------
+
+test("a take-back drops the message and its half-written answer, and disarms the window", () => {
+  const rec = new Recorder();
+  let state = apply(initialState(), { type: "open", sessionId: SESSION });
+  state = replay(state, [
+    rec.emit("message.started", message("m-user", {
+      role: "user",
+      parts: [{ type: "text", text: "the typo" }],
+    })),
+    rec.emit("message.started", message("m-1", { pending: true })),
+    rec.emit("message.delta", { messageId: "m-1", delta: "half an ans" }),
+  ]);
+  state = apply(state, { type: "sent", at: 5_000 });
+  assert.equal(state.thread.length, 2);
+  assert.equal(state.streaming["m-1"], "half an ans");
+
+  state = apply(state, { type: "thread.dropped", sessionId: SESSION, ids: ["m-user", "m-1"] });
+
+  assert.deepEqual(state.thread, []);
+  // The live buffer goes with the message: it is held here and nowhere else, so
+  // leaving it would paint prose the transcript has no row for.
+  assert.deepEqual(state.streaming, {});
+  // The window was armed by the message that just went away.
+  assert.equal(state.lastSendAt, null);
+});
+
+test("a snapshot in flight when the take-back landed cannot resurrect the message", () => {
+  const rec = new Recorder();
+  let state = apply(initialState(), { type: "open", sessionId: SESSION });
+  state = replay(state, [
+    rec.emit("message.started", message("m-user", {
+      role: "user",
+      parts: [{ type: "text", text: "the typo" }],
+    })),
+  ]);
+  state = apply(state, { type: "thread.dropped", sessionId: SESSION, ids: ["m-user"] });
+
+  // The read the server computed BEFORE it deleted the row. Without the tombstone
+  // this re-adds the message — and because `mergeThread` keeps anything local the
+  // database lacks, every later snapshot would then preserve it forever.
+  const stale: SessionSnapshot = { ...snapshotAfterOutage(), thread: [
+    message("m-user", { role: "user", parts: [{ type: "text", text: "the typo" }] }),
+  ] };
+  state = apply(state, { type: "snapshot", at: 9_000, snapshot: stale });
+  assert.deepEqual(state.thread.map((m) => m.id), []);
+
+  // …and a fresh read that no longer carries it settles the same way.
+  state = apply(state, {
+    type: "snapshot",
+    at: 10_000,
+    snapshot: { ...snapshotAfterOutage(), thread: [] },
+  });
+  assert.deepEqual(state.thread, []);
+});
+
+test("a take-back aimed at another session leaves the open one alone", () => {
+  const rec = new Recorder();
+  let state = apply(initialState(), { type: "open", sessionId: SESSION });
+  state = replay(state, [rec.emit("message.started", message("m-user", { role: "user" }))]);
+  state = apply(state, { type: "thread.dropped", sessionId: "other", ids: ["m-user"] });
+  assert.deepEqual(state.thread.map((m) => m.id), ["m-user"]);
+});

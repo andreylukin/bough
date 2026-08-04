@@ -61,6 +61,7 @@ import type { Effort } from "../types.ts";
 import type {
   Api,
   JobListRow,
+  ProjectRuleSummary,
   ReplayReport,
   SessionRow,
   SessionSnapshot,
@@ -226,6 +227,18 @@ export interface TuiState {
   contextLimit: number | null;
   /** Command-history tags this session was primed with — the transcript's `#` row. */
   primedTags: string[];
+  /** The `AGENTS.md` files the next turn injects — the other `#` row, and `/rules`. */
+  projectRules: ProjectRuleSummary[];
+  /**
+   * Messages the server deleted for a take-back, kept as TOMBSTONES.
+   *
+   * A snapshot computed before the delete can land after it (the interrupt's own
+   * `turn.finished` triggers one), and `mergeThread` keeps anything local that the
+   * database does not have — so without this, a stale read resurrects the retracted
+   * message and the merge then preserves it forever. Cleared on a session switch,
+   * which is the only time these ids stop being able to arrive.
+   */
+  droppedIds: string[];
   /** null until fetched. `available: false` is an ANSWER, not an error (spec §13). */
   changes: SessionChangeSet | null;
   /** The open session's background shells AND its subagents' (spec §9). */
@@ -291,6 +304,8 @@ export function initialState(): TuiState {
     effectiveModel: null,
     contextLimit: null,
     primedTags: [],
+    projectRules: [],
+    droppedIds: [],
     changes: null,
     jobs: [],
     jobView: null,
@@ -368,7 +383,14 @@ export type StoreAction =
   /** The tail of `queued` goes back to the composer — a take-back before it was ever posted. */
   | { type: "queue.pop" }
   /** A message left this client. Arms the take-back window. */
-  | { type: "sent"; at: number };
+  | { type: "sent"; at: number }
+  /**
+   * Messages the server has DELETED — the posted half of the take-back
+   * (`history/unsend.ts`). Named ids rather than "everything after x", because the
+   * server is the one that decided what went, and a client re-deriving the tail
+   * from its own thread would drop a message the server kept.
+   */
+  | { type: "thread.dropped"; sessionId: string; ids: readonly string[] };
 
 // ---------------------------------------------------------------------------
 // Dedupe and reconciliation primitives (pure)
@@ -878,6 +900,8 @@ export function reduce(state: TuiState, action: StoreAction): TuiState {
         effectiveModel: null,
         contextLimit: null,
         primedTags: [],
+        projectRules: [],
+        droppedIds: [],
         changes: null,
         jobs: [],
         // The open job belonged to the session being left, and its buffer is fetched
@@ -900,7 +924,8 @@ export function reduce(state: TuiState, action: StoreAction): TuiState {
     }
 
     case "snapshot": {
-      const { session, thread, usage, effectiveModel, contextLimit, primedTags } = action.snapshot;
+      const { session, thread, usage, effectiveModel, contextLimit, primedTags, projectRules } =
+        action.snapshot;
       if (session.id !== state.currentId) {
         // A snapshot that lost the race with a session switch. Record the watermark
         // anyway — it is a fact about that session, not about the view.
@@ -914,7 +939,12 @@ export function reduce(state: TuiState, action: StoreAction): TuiState {
           ),
         };
       }
-      const merged = mergeThread(thread, state.thread);
+      // Tombstones win over the read: a snapshot in flight when a take-back landed
+      // still carries the retracted message, and `mergeThread` would then keep it.
+      const dropped = new Set(state.droppedIds);
+      const merged = dropped.size === 0
+        ? mergeThread(thread, state.thread)
+        : mergeThread(thread.filter((m) => !dropped.has(m.id)), state.thread);
       // Drop the live buffer of any message the database now shows as finished: its
       // text is in the parts. A still-pending message keeps its buffer — that text is
       // not persisted anywhere yet, and the outage's hole in it is repaired wholesale
@@ -931,6 +961,7 @@ export function reduce(state: TuiState, action: StoreAction): TuiState {
         effectiveModel: effectiveModel ?? state.effectiveModel,
         contextLimit: contextLimit ?? state.contextLimit,
         primedTags: primedTags ?? state.primedTags,
+        projectRules: projectRules ?? state.projectRules,
         reconciledAt: rememberWatermark(
           state.reconciledAt,
           session.id,
@@ -1017,6 +1048,27 @@ export function reduce(state: TuiState, action: StoreAction): TuiState {
 
     case "sent":
       return { ...state, lastSendAt: action.at };
+
+    case "thread.dropped": {
+      if (action.sessionId !== state.currentId || action.ids.length === 0) return state;
+      const gone = new Set(action.ids);
+      // The live buffers go WITH them: a deleted pending message's streamed text is
+      // held here and nowhere else, and leaving it behind would paint prose from a
+      // message the transcript no longer has a row for.
+      const streaming: Record<string, string> = {};
+      for (const [messageId, text] of Object.entries(state.streaming)) {
+        if (!gone.has(messageId)) streaming[messageId] = text;
+      }
+      return {
+        ...state,
+        thread: state.thread.filter((m) => !gone.has(m.id)),
+        droppedIds: [...state.droppedIds, ...action.ids],
+        streaming,
+        // The window is spent — it was armed by the message that just went away, and
+        // leaving it armed points Escape at the turn before it.
+        lastSendAt: null,
+      };
+    }
   }
 }
 
@@ -1383,6 +1435,17 @@ export interface Store {
    */
   describeArtifacts(): Promise<void>;
   /**
+   * Name every `AGENTS.md` the next turn will inject, with paths, sizes and the
+   * order they concatenate in — `/rules`.
+   *
+   * The transcript's `#` rules row is one line of labels; this is the full answer,
+   * and it re-reads the server rather than the row because these files are loaded
+   * from disk per turn (`prompt/project.ts`). A rule that is not being followed is
+   * either not being read or not being obeyed, and until this command there was no
+   * way to tell those two apart from inside the TUI.
+   */
+  describeProjectRules(): Promise<void>;
+  /**
    * Post a message. While a turn runs, `queue` holds it locally and it drains into a
    * fresh turn when the current one ends; without `queue` it is posted immediately
    * and the server queues it (spec §5) — steering, rather than staging.
@@ -1404,10 +1467,22 @@ export interface Store {
    *
    * The easy half of the take-back gesture, and the one with no server in it: a
    * queued message was never posted, so retracting it is a local pop and the
-   * conversation never knows. The posted half is a fork (`App.tsx`), because a
-   * message the server has is history and history is never rewritten (spec §14).
+   * conversation never knows. `unsend` below is the posted half, which has to ask
+   * the server to forget a row it already wrote.
    */
   takeBackQueued(): string | null;
+  /**
+   * Take back a message the server already has: it is DELETED from the
+   * conversation it was sent in, the turn it started is stopped, and its text comes
+   * back for the composer — null when the server refused.
+   *
+   * The posted half of the gesture. It used to fork: the message stayed where it
+   * was, a sibling conversation was created without it, and the user was moved
+   * there — three seconds after a typo. `history/unsend.ts` carries the rules that
+   * make deleting rows safe here and nowhere else; this is the I/O and the local
+   * reconciliation.
+   */
+  unsend(atMessageId: string): Promise<string | null>;
   /**
    * Stop one unit of running work — a background shell, a subagent, a workflow run.
    *
@@ -2010,6 +2085,31 @@ export function createStore(deps: StoreDeps = {}): Store {
       }
     },
 
+    async describeProjectRules() {
+      const id = state.currentId;
+      if (!id) {
+        dispatch({ type: "notice", notice: "no conversation is open, so nothing is injected yet" });
+        return;
+      }
+      try {
+        // Re-fetched, not read off `state.projectRules`: the files are read from
+        // disk per turn, so an answer from a snapshot taken before the user edited
+        // one would be exactly the stale reassurance this command exists to avoid.
+        const { projectRules } = await api.getSession(id);
+        const rules = projectRules ?? [];
+        dispatch({
+          type: "notice",
+          notice: rules.length === 0
+            ? "no AGENTS.md applies here — write one in the workspace, or in $BOUGH_HOME for every project"
+            : `${plural(rules.length, "AGENTS.md")} in every turn's prompt, in this order: ` +
+              rules.map((r) => `${r.path} (${r.bytes} chars)`).join(" → ") +
+              (rules.length > 1 ? " — the last one wins where two disagree" : ""),
+        });
+      } catch (error) {
+        fail(error);
+      }
+    },
+
     async interrupt() {
       const id = state.currentId;
       if (!id) return;
@@ -2028,6 +2128,32 @@ export function createStore(deps: StoreDeps = {}): Store {
       if (text === undefined) return null;
       dispatch({ type: "queue.pop" });
       return text;
+    },
+
+    async unsend(atMessageId) {
+      const id = state.currentId;
+      if (!id) return null;
+      let result;
+      try {
+        result = await api.unsend(id, { atMessageId });
+      } catch (error) {
+        // A refusal is the server's sentence, and it is a real answer: the message
+        // is no longer the last thing said, or it belongs to an ancestor. Said
+        // rather than swallowed, because Escape otherwise appears to do nothing.
+        fail(error);
+        return null;
+      }
+      dispatch({ type: "thread.dropped", sessionId: id, ids: result.removed });
+      // The authoritative read, AFTER the delete: the thread is now shorter, and
+      // usage/changes moved with the stopped turn. Failure is silent — the local
+      // drop already reflects what the server did, and the next resync repairs the
+      // rest.
+      try {
+        await snapshot(id);
+      } catch {
+        // Unreachable server; the disconnected indicator is already saying so.
+      }
+      return result.text;
     },
 
     async stopUnit(unit) {

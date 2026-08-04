@@ -245,6 +245,14 @@ so editing the file to correct a misbehaving model takes effect on the next mess
 The section states that these rules outrank the model's habits, and names each
 block's source path.
 
+**What was injected is reported.** A rule sheet whose effect is invisible is one the
+user debugs by guessing, and "is it even being read" was unanswerable from inside
+the product. Three surfaces, all fed from the same read the prompt was built from: a
+dim `#` row in the transcript naming the files in effect, `/rules` for their full
+paths, sizes and precedence order, and one `[rules]` line on the turn where the set
+changes — a file added, removed, or edited — which is the surface that matters,
+because per-turn reading means a mid-session edit lands silently otherwise.
+
 A host function exists **only** when the prompt grants it. The model never guesses
 at capabilities, and a section that grants one must document its failure mode
 alongside its signature.
@@ -614,16 +622,32 @@ produces no reviewable change set, and nothing else degrades.
 
 ## 14. History operations
 
-All operate by **branching**, never by mutating history in place.
+All operate by **branching**, never by mutating history in place — with one named
+exception, **Take-back**, whose rules are what keep it from becoming a general
+in-place rewrite.
 
 | Operation | Result |
 |---|---|
 | **Fork** | Cut a thread at one of the session's own turns; branch a sibling seeded with the messages before it. With `editedText`, replace that turn's user message and run a fresh turn ("edit & resend"). |
+| **Take-back** | Delete the session's own **last user message** and everything after it, stopping the turn it started. The only destructive operation, and the only one that does not branch. |
 | **Compact** | Replace a selected span with an LLM summary on a new sibling branch. Non-contiguous selections collapse each maximal run to one summary in place. |
 | **Sections** | Stateless LLM pass labeling turns into contiguous topic sections, so the UI can color history and offer whole sections as selections. |
 | **Extract** | Copy hand-picked messages into a fresh **root** — any message in the visible thread, ancestors included. Picks may carry part indexes to copy a turn's prose without its tool calls. |
 | **Move-into** | Append copies of picked messages onto an **existing** session. |
 | **Handoff** | LLM drafts the opening prompt for a fresh root from a stated goal — the goal restated, only the context that matters, and the relevant paths. Persisted as the new session's `draft`; the source is never mutated. |
+
+**Take-back is undo, and undo may not leave a second conversation behind.** For
+`UNSEND_MS` after a send, Escape on an empty composer retracts the message: it is
+deleted from the conversation it was sent in, the partial answer it provoked goes
+with it, the turn is stopped, and the text returns to the composer. This was a fork
+— the message stayed, a sibling branch was created without it, and the user was
+moved there — which honored the rule above and served nobody: the gesture means "I
+did not mean to send that", and answering a three-second-old typo with a permanent
+branch is not what undo is. Three guards keep the exception narrow: the session's
+**own** messages only (ancestor history belongs to another session's rows, as for
+fork), a **user** message only, and the **last** user message only. Anything earlier
+is settled history with answers built on it, and reaching back into it is what fork
+is for.
 
 **The TUI's `/compact` is a handoff, not a compaction.** Filling a context and
 wanting to keep going is answered by a clean thread that knows what matters, not by

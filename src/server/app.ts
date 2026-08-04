@@ -69,6 +69,7 @@ import * as mcpApi from "../mcp/status.ts"; // T7.3
 import * as compact from "../history/compact.ts"; // T8.3
 import * as sections from "../history/sections.ts"; // T8.3
 import * as fork from "../history/fork.ts"; // T8.2
+import * as unsend from "../history/unsend.ts";
 import * as extract from "../history/extract.ts"; // T8.4
 import * as move from "../history/move.ts"; // T8.4
 import * as handoff from "../history/handoff.ts"; // T8.4
@@ -287,6 +288,13 @@ export const routes: Route[] = [
   route("GET", "/sessions/:id/usage", sessions.getSessionUsageH),
   // Native TUI clipboard images arrive as bytes once, then become durable paths.
   route("POST", "/attachments", attachments.uploadAttachment),
+  // The take-back (`history/unsend.ts`). The one route that deletes messages rather
+  // than branching, and the rules that make that safe live in that module, not here:
+  // the session's own last USER message, plus whatever followed it, within the
+  // gesture the TUI arms for `UNSEND_MS` after a send. Escape used to answer this by
+  // forking, which left a sibling conversation behind for a message that existed for
+  // three seconds.
+  route("POST", "/sessions/:id/unsend", unsend.unsendMessageH),
 ];
 
 // ---- dispatch ---------------------------------------------------------------

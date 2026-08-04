@@ -63,7 +63,12 @@ import {
   scratchNote,
   workspaceNote,
 } from "../prompt/assemble.ts";
-import { findProjectRules, projectRulesNote } from "../prompt/project.ts";
+import {
+  drainProjectRuleNotes,
+  findProjectRules,
+  noteProjectRules,
+  projectRulesNote,
+} from "../prompt/project.ts";
 import { createCommandRecorder } from "../history/record.ts";
 import { dirTagHints, tagsNoteFor } from "../history/stats.ts";
 import { dirname, isAbsolute } from "node:path";
@@ -278,12 +283,29 @@ export function defaultProgramRunner(
     const fromReads = reads.length;
     const fromTouched = touched.length;
     const result = await runProgram({ code, host: fns, signal, onLog });
-    return withDirTagHintNotes(
-      withExitNotes(result, exits.slice(from)),
+    return withProjectRuleNotes(
+      withDirTagHintNotes(
+        withExitNotes(result, exits.slice(from)),
+        ctx,
+        [...reads.slice(fromReads).map((p) => dirname(p)), ...touched.slice(fromTouched)],
+      ),
       ctx,
-      [...reads.slice(fromReads).map((p) => dirname(p)), ...touched.slice(fromTouched)],
     );
   };
+}
+
+/**
+ * Append the `AGENTS.md` report queued when this turn's prompt was assembled.
+ *
+ * Same carrier as the tag hints and for the same reason — the round's RESULT, not
+ * the prompt, because a per-turn prompt edit would bust the volatile tier's cache.
+ * The queue drains on the first round of the turn, so a multi-round turn says it
+ * once. `prompt/project.ts` owns what is worth saying.
+ */
+function withProjectRuleNotes(result: ProgramResult, ctx: TurnCtx): ProgramResult {
+  const lines = drainProjectRuleNotes(ctx.sessionId);
+  if (lines.length === 0) return result;
+  return { ...result, logs: [...result.logs, ...lines] };
 }
 
 /**
@@ -599,8 +621,15 @@ async function drive(
   // (`prompt/assemble.ts`'s `workspaceNote` says why, including the cwd trap). It is
   // built HERE because `workspace` is resolved here, per session, and `deps.notes`
   // is fixed for the life of a starter — boot cannot supply a per-session fact.
-  const rulesNote = projectRulesNote(findProjectRules(workspace, boughHome()), workspace);
+  const ruleFiles = findProjectRules(workspace, boughHome());
+  const rulesNote = projectRulesNote(ruleFiles, workspace);
   const projectRules = rulesNote === null ? [] : [rulesNote];
+  // What went in is reported, from the SAME read the prompt was built from — a
+  // line on the first turn, and one on any later turn where a file was added,
+  // removed or edited. Drained onto the round's result below, never into the
+  // prompt: the model already has the rules themselves, and this is for the human
+  // who edited a file mid-session and got no sign it had landed.
+  noteProjectRules(sessionId, ruleFiles, workspace);
   // Frozen per session even though this runs per turn — the memo in
   // `history/stats.ts` — because the volatile tier caches per session and a note
   // whose text drifts mid-session would bust it. Null for a project with no

@@ -7,10 +7,17 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { afterEach, beforeEach, test } from "bun:test";
 
-import { findProjectRules, projectRulesNote } from "./project.ts";
+import {
+  drainProjectRuleNotes,
+  findProjectRules,
+  noteProjectRules,
+  projectRulesNote,
+  resetProjectRulesMemo,
+  ruleSummaries,
+} from "./project.ts";
 
 let root = "";
 
@@ -118,4 +125,112 @@ test("a global file outside the workspace is shown by absolute path", () => {
   assert.match(note ?? "", /### \/home\/u\/\.bough\/AGENTS\.md/);
   // One source: nothing to disambiguate, so no cascade footnote.
   assert.doesNotMatch(note ?? "", /Later blocks/);
+});
+
+// ---------------------------------------------------------------------------
+// Reporting what was injected
+// ---------------------------------------------------------------------------
+
+test("the summary is the prompt's own order, labelled relative to the workspace", () => {
+  const repo = join(root, "mono");
+  const pkg = join(repo, "packages", "api");
+  mkdirSync(join(repo, ".git"), { recursive: true });
+  mkdirSync(pkg, { recursive: true });
+  write(join(repo, "AGENTS.md"), "house style");
+  write(join(pkg, "AGENTS.md"), "package rules");
+  write(join(root, "home", "AGENTS.md"), "global");
+
+  const files = findProjectRules(pkg, join(root, "home"));
+  const summary = ruleSummaries(files, pkg);
+
+  // Global first, then the repo root, then the workspace's own — the order they
+  // concatenate in, so a reader of the row knows which one wins without opening any
+  // of them. The labelling rule is `projectRulesNote`'s, deliberately: anything
+  // outside the workspace is shown by absolute path rather than as `../../`, so the
+  // row and the note the model got can never name the same file differently.
+  assert.deepEqual(summary.map((r) => r.label), [
+    join(root, "home", "AGENTS.md"),
+    join(repo, "AGENTS.md"),
+    "AGENTS.md",
+  ]);
+  assert.deepEqual(summary.map((r) => r.bytes), [6, 11, 13]);
+  assert.ok(summary.every((r) => isAbsolute(r.path)));
+});
+
+test("the first turn reports what is in the prompt; an unchanged second turn says nothing", () => {
+  resetProjectRulesMemo();
+  const ws = join(root, "repo");
+  mkdirSync(join(ws, ".git"), { recursive: true });
+  write(join(ws, "AGENTS.md"), "always use tabs");
+
+  noteProjectRules("s1", findProjectRules(ws), ws);
+  const first = drainProjectRuleNotes("s1");
+  assert.equal(first.length, 1);
+  assert.match(first[0], /^\[rules\] AGENTS\.md \(15\) in this turn's prompt — /);
+
+  // Drained, so the same turn cannot say it twice on a second round.
+  assert.deepEqual(drainProjectRuleNotes("s1"), []);
+
+  noteProjectRules("s1", findProjectRules(ws), ws);
+  // Nothing changed, so nothing is said. A line repeated every turn is a line
+  // nobody reads by the third one.
+  assert.deepEqual(drainProjectRuleNotes("s1"), []);
+});
+
+test("an edit, an addition and a removal each say so on the turn they land in", () => {
+  resetProjectRulesMemo();
+  const repo = join(root, "repo");
+  const pkg = join(repo, "pkg");
+  mkdirSync(join(repo, ".git"), { recursive: true });
+  mkdirSync(pkg, { recursive: true });
+  write(join(repo, "AGENTS.md"), "short");
+
+  noteProjectRules("s1", findProjectRules(pkg), pkg);
+  drainProjectRuleNotes("s1"); // the opening report
+
+  // Edited mid-session — the case the whole surface exists for: this used to take
+  // effect on the next turn with no sign whatsoever that it had.
+  write(join(repo, "AGENTS.md"), "considerably longer rules");
+  noteProjectRules("s1", findProjectRules(pkg), pkg);
+  const edited = drainProjectRuleNotes("s1");
+  assert.equal(edited.length, 1);
+  assert.match(edited[0], /changed \(5 → 25\)/);
+
+  // A new nearer file: added, not "changed".
+  write(join(pkg, "AGENTS.md"), "pkg");
+  noteProjectRules("s1", findProjectRules(pkg), pkg);
+  const added = drainProjectRuleNotes("s1");
+  assert.equal(added.length, 1);
+  assert.match(added[0], /^\[rules\] \+ AGENTS\.md \(3\)/);
+
+  rmSync(join(pkg, "AGENTS.md"));
+  noteProjectRules("s1", findProjectRules(pkg), pkg);
+  const removed = drainProjectRuleNotes("s1");
+  assert.equal(removed.length, 1);
+  assert.match(removed[0], /gone, no longer in the prompt/);
+});
+
+test("a project with no rules says nothing at all, ever", () => {
+  resetProjectRulesMemo();
+  const ws = join(root, "bare");
+  mkdirSync(join(ws, ".git"), { recursive: true });
+
+  noteProjectRules("s1", findProjectRules(ws), ws);
+  assert.deepEqual(drainProjectRuleNotes("s1"), []);
+  noteProjectRules("s1", findProjectRules(ws), ws);
+  assert.deepEqual(drainProjectRuleNotes("s1"), []);
+});
+
+test("sessions do not share a memo — a second conversation gets its own report", () => {
+  resetProjectRulesMemo();
+  const ws = join(root, "repo");
+  mkdirSync(join(ws, ".git"), { recursive: true });
+  write(join(ws, "AGENTS.md"), "rules");
+
+  noteProjectRules("s1", findProjectRules(ws), ws);
+  assert.equal(drainProjectRuleNotes("s1").length, 1);
+  // A session that has never seen these files is on its first turn, whatever the
+  // session before it saw.
+  noteProjectRules("s2", findProjectRules(ws), ws);
+  assert.equal(drainProjectRuleNotes("s2").length, 1);
 });

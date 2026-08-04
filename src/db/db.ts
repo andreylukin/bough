@@ -629,6 +629,53 @@ export class SqliteDb implements DbPort {
     return this.ancestorChain(sessionId).flatMap((s) => this.messagesFor(s.id));
   }
 
+  /**
+   * Delete `messageId` and every message after it in that session — the ONE
+   * destructive write in this file, and the take-back gesture's whole backend
+   * (`history/unsend.ts`, which owns the rules about when it may be called).
+   *
+   * Deliberately narrow. It takes a session and a message rather than a predicate,
+   * it deletes a contiguous tail and nothing else, and it returns the ids it
+   * removed so the caller can say what it did. Every history operation in `history/`
+   * still branches (spec §14); this exists because a message retracted three
+   * seconds after it was sent is not history anyone is preserving, and the branch
+   * that used to represent it was a second conversation the user never asked for.
+   *
+   * Ordering is `(created_at, rowid)`, the same tie-broken order `messagesFor`
+   * reads by — a row-value comparison, so a message that shares a millisecond with
+   * the target is cut only if it was actually written after it.
+   *
+   * One transaction, and the turn rows go first: `turns.message_id` is a real
+   * foreign key, so a supervisor message cannot be deleted while a row points at
+   * it. Its own FTS rows go with it, or a deleted message keeps answering searches.
+   */
+  deleteMessagesFrom(sessionId: string, messageId: string): string[] {
+    const anchor = this.#get<{ created_at: number; rowid: number }>(
+      `SELECT created_at, rowid FROM messages WHERE id = ? AND session_id = ?`,
+      messageId,
+      sessionId,
+    );
+    if (!anchor) return [];
+    const doomed = this.#all<{ id: string }>(
+      `SELECT id FROM messages
+        WHERE session_id = ? AND (created_at, rowid) >= (?, ?)
+        ORDER BY created_at, rowid`,
+      sessionId,
+      anchor.created_at,
+      anchor.rowid,
+    ).map((r) => r.id);
+    if (doomed.length === 0) return [];
+    const tx = this.#db.transaction(() => {
+      for (const id of doomed) {
+        this.#run(`DELETE FROM turns WHERE message_id = ?`, id);
+        this.#run(`DELETE FROM messages_fts WHERE message_id = ?`, id);
+        this.#run(`DELETE FROM messages WHERE id = ?`, id);
+      }
+    });
+    tx();
+    return doomed;
+  }
+
   /** Wholesale overwrite — the turn runner streams into this every round. */
   updateMessage(id: string, parts: Part[], pending: boolean): void {
     this.#run(

@@ -50,6 +50,8 @@ import type { AppCtx } from "../types.ts";
 import { contextWindowFor } from "../llm/pricing.ts";
 import { DEFAULT_MODEL } from "../turn/runner.ts";
 import { primedTagsFor } from "../history/stats.ts";
+import { findProjectRules, ruleSummaries } from "../prompt/project.ts";
+import { boughHome } from "../paths.ts";
 // The cheap tier's id, read per call from `BOUGH_CHEAP_MODEL` — see `getModelSettingsH`.
 import { cheapModel } from "../worker/titles.ts";
 // T8.5. `vcs/` is below `server/` and imports nothing from it, so this adds no cycle
@@ -353,6 +355,14 @@ export const getSession: Handler = (_req, ctx, params) => {
     // rather than stored so a reconnect gets it without a turn having run.
     primedTags: session.workspace
       ? primedTagsFor(ctx.db, session.id, session.workspace, (ctx.now ?? Date.now)())
+      : [],
+    // The `AGENTS.md` files the NEXT turn will inject, resolved exactly as the
+    // runner resolves them (`prompt/project.ts`). Read here rather than stored
+    // because they are read per turn from disk: a stored list would be a claim
+    // about a file the user may have edited since, which is the confusion this
+    // whole surface exists to end. [] for a session with no workspace.
+    projectRules: session.workspace
+      ? ruleSummaries(findProjectRules(session.workspace, boughHome()), session.workspace)
       : [],
   });
 };

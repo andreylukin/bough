@@ -922,6 +922,7 @@ export function App(
           skills: skillNames,
           now: now(),
           primedTags: state.primedTags,
+          projectRules: state.projectRules,
         },
       ),
     [
@@ -938,6 +939,7 @@ export function App(
       openKeys,
       fullKeys,
       state.primedTags,
+      state.projectRules,
     ],
   );
   // The open conversation's thread comes from the store — it is live, and a copy in
@@ -1527,6 +1529,13 @@ export function App(
       // in place, so the newest content hid behind the oldest mention.
       case "artifacts.show":
         return void store.describeArtifacts();
+      // The `#` rules row names the files and nothing else, because it is one row. This
+      // is the full answer — every path, its size, and the order they concatenate in —
+      // for the moment a rule is not being followed and "is it even being read" is the
+      // question. It re-fetches rather than reading the row: these files are read from
+      // disk per turn, so the truthful answer is the one taken now.
+      case "rules.show":
+        return void store.describeProjectRules();
       // The id is the handle every out-of-band route to this conversation needs —
       // a `session_id =` filter over the history tables, a `bough` subcommand, a
       // bug report naming the run — and until now the TUI never showed it, so it
@@ -1570,11 +1579,19 @@ export function App(
        *
        *   - QUEUED — never posted. Pop it back into the composer; nothing outside
        *     this client ever knew about it, so there is nothing else to undo.
-       *   - SENT — the server has it, and history is never rewritten in place
-       *     (spec §14). The honest undo is therefore the BRANCH that never contained
-       *     it: fork exclusive at the message, hand its exact text back, and stop the
-       *     turn it started on the way out — nobody takes a message back and still
-       *     wants to pay for the answer to it.
+       *   - SENT — the server has it. It is DELETED from this conversation, along
+       *     with the partial answer it provoked, and the turn it started is stopped
+       *     on the way out — nobody takes a message back and still wants to pay for
+       *     the answer to it. The text comes back to the composer, where editing it
+       *     and pressing ⏎ again is an ordinary send on the SAME conversation.
+       *
+       *     This used to fork: the message stayed where it was, a sibling branch was
+       *     created without it, and the user was moved there. Correct by the letter
+       *     of "history is never rewritten" (spec §14) and wrong by every other
+       *     measure — the gesture reads as undo, and undo that leaves a permanent
+       *     second conversation behind is not undo. `history/unsend.ts` states the
+       *     rules that keep this from being a general in-place rewrite: the
+       *     session's own LAST user message, and nothing else, ever.
        *
        * WHICH of the two is `takeBackTarget`'s decision, in `forest.ts` — a pure
        * function, so the rule is tested without a renderer or a socket, and this
@@ -1591,19 +1608,20 @@ export function App(
         // reached the thread yet. Doing nothing beats falling through to a stop the
         // user did not ask for; the next Escape is outside the window and stops it.
         if (target.kind === "none" || !sessionId) return;
-        // The notice lands LAST, after both calls settle, because the stop reports a
-        // sentence of its own and the one that explains a changed screen has to be
-        // the one left standing.
-        return void Promise.all([
-          busy ? store.interrupt() : Promise.resolve(),
-          forkAt(sessionId, { atMessageId: target.atMessageId, exclusive: true }, target.text),
-        ]).then(() =>
+        // ONE call, not an interrupt raced against a delete: the route stops the turn
+        // and drops the rows in that order, so the runner cannot be mid-write on a
+        // message that is going away. The text comes back from the server rather than
+        // from `target`, because the server is what decided the take-back was legal.
+        return void store.unsend(target.atMessageId).then((text) => {
+          if (text === null) return; // refused — `store.unsend` has said why
+          setLine({ text, cursor: text.length });
+          setScrollOff(0);
           store.notify(
             busy
-              ? "took that back — the turn was stopped, and the conversation you sent it in is untouched"
-              : "took that back — the conversation you sent it in is untouched",
-          )
-        );
+              ? "took that back — the turn was stopped and the message is gone from this conversation"
+              : "took that back — the message is gone from this conversation",
+          );
+        });
       }
       case "attachment.up":
         return setAttachmentSel((at) => at === null || at === 0 ? null : at - 1);
@@ -2024,7 +2042,9 @@ export function App(
       quitArmed: quitArmedRef.current,
       // The take-back window, read at the KEYSTROKE rather than held in React state:
       // it expires on the clock, not on a re-render, and a guard that went stale
-      // between renders would leave Escape forking a turn the user meant to stop.
+      // between renders would leave Escape RETRACTING a message when the user meant
+      // to stop the turn — which since the take-back deletes rather than branches is
+      // a message they would have to retype rather than a branch they could leave.
       justSent: state.lastSendAt !== null && now() - state.lastSendAt < UNSEND_MS,
       railLive: units.length > 0,
       completing,
