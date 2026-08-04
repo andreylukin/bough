@@ -39,6 +39,18 @@ whose run_steps program ran it, so `messages.parts` gives you the whole round.
 The same query can read the transcript: messages(id, session_id, role, parts,
 created_at), messages_fts(text, message_id, session_id), sessions and turns.
 
+THIS conversation's id is `$BOUGH_SESSION` in every shell you run — so a query
+about your own session names it rather than guessing, and a command that needs
+it passes it through the variable instead of a literal you composed:
+
+    bough tags sql "SELECT cmd FROM command_history
+      WHERE session_id = '$BOUGH_SESSION' ORDER BY ts DESC LIMIT 10"
+
+Never write the id out yourself; you do not know it, and an invented one reads
+as another conversation. To use it inside the program rather than in a command,
+read it once: `const session = (await bash("echo $BOUGH_SESSION",
+"bough:session:id")).trim()`.
+
 The commands worth copying are the ones that WORKED — filter exit_code = 0.
 
     # what worked for docker here before
