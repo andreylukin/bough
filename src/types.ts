@@ -200,6 +200,12 @@ export interface Db {
   /** Ancestors root→parent, then own. The full replayable thread. */
   threadFor(sessionId: string): Message[];
   updateMessage(id: string, parts: Part[], pending: boolean): void;
+  /**
+   * Delete a message and every message after it in its session, returning the ids
+   * removed. The take-back's backend and the only destructive write on the thread
+   * — `history/unsend.ts` owns when it is allowed to be called.
+   */
+  deleteMessagesFrom(sessionId: string, messageId: string): string[];
 
   // turns
   createTurn(turn: Turn): Turn;

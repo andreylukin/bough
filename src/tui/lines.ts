@@ -301,18 +301,33 @@ function styleOutputLine(line: string, isError: boolean): string {
 }
 
 /**
- * Split the `[history]` tag hints (`history/stats.ts`, appended by the runner at
- * round end) off a tool result's output. They are always trailing lines; the
- * returned hint text is rewritten for display — the raw line addresses the MODEL
- * (`— run \`bough tags show <tag>\` for the commands behind them`), and that clause
- * is instruction, not information, on a screen. The regex drops everything from the
- * ` — ` on, so the clause can be reworded without touching this.
+ * Split the harness's own trailing notes off a tool result's output — the
+ * `[history]` tag hints (`history/stats.ts`) and the `[rules]` AGENTS.md report
+ * (`prompt/project.ts`), both appended by the runner at round end.
+ *
+ * They are always trailing lines, and both are rewritten for display: the raw text
+ * addresses the MODEL (`— run \`bough tags show <tag>\` for the commands behind
+ * them`), and that clause is instruction, not information, on a screen. Everything
+ * from the ` — ` on is dropped, so either sentence can be reworded without touching
+ * this.
+ *
+ * Order between the two does not matter — the loop takes whichever prefix the last
+ * line carries and keeps walking backwards — which is what stops the rule notes the
+ * runner appends LAST from hiding the history hints underneath them.
  */
-export function splitHistoryHints(text: string): { body: string; hints: string[] } {
+export function splitMarginNotes(text: string): { body: string; hints: string[] } {
   const lines = text.split("\n");
   const hints: string[] = [];
-  while (lines.length > 0 && lines[lines.length - 1].startsWith("[history] ")) {
-    const raw = lines.pop()!.slice("[history] ".length);
+  const isNote = (l: string) => l.startsWith("[history] ") || l.startsWith("[rules] ");
+  while (lines.length > 0 && isNote(lines[lines.length - 1])) {
+    const line = lines.pop()!;
+    if (line.startsWith("[rules] ")) {
+      // One shape for every rule note, because they are already written to read as
+      // one: `rules: ` and then what changed, with the model-facing tail cut.
+      hints.unshift(`rules: ${line.slice("[rules] ".length).split(" — ")[0]}`);
+      continue;
+    }
+    const raw = line.slice("[history] ".length);
     const m = raw.match(/^tags previously used in (.+?): (.+?)(?: — .*)?$/);
     hints.unshift(m ? `${m[1]} also remembers: ${m[2].split(", ").join(" · ")}` : raw);
   }
@@ -493,7 +508,7 @@ function toolGroupLines(
       // they are not the program's output — pulled out of the │-block here and
       // rendered as `#` marginalia after it, in the same voice as the priming
       // row at the top of the transcript.
-      const { body, hints } = splitHistoryHints(outputText(res));
+      const { body, hints } = splitMarginNotes(outputText(res));
       if (body !== "") {
         out.push({ text: dim("↳ output"), click: key });
         pushBlock(out, body, w, {
@@ -1103,6 +1118,44 @@ export interface BuildOptions {
    * of the transcript — where the injection actually happened in time.
    */
   primedTags?: readonly string[];
+  /**
+   * The `AGENTS.md` files every turn injects (`prompt/project.ts`, via the session
+   * snapshot). The second `#` row, for the same reason as the first: a rule sheet
+   * whose effect is invisible is one the user debugs by guessing. `/rules` prints
+   * the same list with paths and sizes; a mid-session edit says so on its own turn.
+   */
+  projectRules?: readonly { label: string }[];
+}
+
+/**
+ * One `#` margin row: a prefix and a `·`-joined list, elided at the terminal's
+ * width so a long list is one row rather than a wrapped paragraph.
+ *
+ * `suffix` is a hint about where the full version lives, and is only spent when the
+ * list actually fit — a row that has already been elided has no room to advertise.
+ */
+function marginRow(
+  prefix: string,
+  items: readonly string[],
+  w: number,
+  suffix = "",
+): VLine {
+  let shown = "";
+  let elided = false;
+  for (const item of items) {
+    const next = shown === "" ? item : `${shown} · ${item}`;
+    if (`${prefix}${next}`.length > w - 2) {
+      shown = `${shown} …`;
+      elided = true;
+      break;
+    }
+    shown = next;
+  }
+  const withSuffix = `${prefix}${shown}${suffix}`;
+  const row = !elided && suffix && withSuffix.length <= w - 2
+    ? withSuffix
+    : `${prefix}${shown}`;
+  return { text: dim(row), copy: row };
 }
 
 /**
@@ -1176,17 +1229,14 @@ export function buildLines(
   // the transcript: that is where the priming was injected, and it scrolls away
   // like anything else that already happened.
   if (opts.primedTags?.length) {
-    let shown = "";
-    for (const tag of opts.primedTags) {
-      const next = shown === "" ? tag : `${shown} · ${tag}`;
-      if (`# this repo remembers: ${next}`.length > w - 2) {
-        shown = `${shown} …`;
-        break;
-      }
-      shown = next;
-    }
-    const row = `# this repo remembers: ${shown}`;
-    out.push({ text: dim(row), copy: row });
+    out.push(marginRow("# this repo remembers: ", opts.primedTags, w));
+  }
+  // The second margin row, same glyph and same reasoning: what the user WROTE is
+  // injected into every turn, and until this row the only evidence was the model
+  // behaving. Under the tags row because it is the more static of the two — the
+  // tag set is this session's, the rule sheet is the project's.
+  if (opts.projectRules?.length) {
+    out.push(marginRow("# rules: ", opts.projectRules.map((r) => r.label), w, " · /rules"));
   }
   // The ledger, drained in step with the thread: every mark older than the message
   // about to be pushed is flushed before it, so a settled-turn line lands under the

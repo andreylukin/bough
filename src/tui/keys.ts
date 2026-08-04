@@ -149,6 +149,8 @@ export type Command =
   | "saved.show"
   /** List this conversation's published artifacts and their URLs. */
   | "artifacts.show"
+  /** Name every `AGENTS.md` in this turn's prompt, with paths, sizes and order. */
+  | "rules.show"
   // -- composing ------------------------------------------------------------
   | "send"
   | "send.queue"
@@ -359,6 +361,7 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
   { name: "schedules", command: "schedules.show", desc: "the recurring runs and when they fire" },
   { name: "saved", command: "saved.show", desc: "workflows saved to run again by name" },
   { name: "artifacts", command: "artifacts.show", desc: "pages this conversation published" },
+  { name: "rules", command: "rules.show", desc: "the AGENTS.md files injected into every turn" },
   { name: "help", command: "help.open", desc: "every key, by section" },
 ];
 
@@ -614,7 +617,9 @@ export interface KeyContext {
    * `message.unsend`, and Escape keeps the meaning it has always had. That is the
    * safe degrade, because the binding this gates is the one that BORROWS a key
    * from `turn.interrupt`: the cost of not passing it is a gesture nobody gets,
-   * and the cost of passing it wrongly is a stop that forks instead.
+   * and the cost of passing it wrongly is a stop that also DELETES the last thing
+   * the user said (`history/unsend.ts`) — which is why nothing but the composer's
+   * own send arms it.
    */
   justSent?: boolean;
   /** The previous Escape landed inside the double-tap window. */

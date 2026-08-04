@@ -32,6 +32,19 @@
  *
  * NEVER `CLAUDE.md`. bough reads exactly `AGENTS.md`. Reading another harness's
  * file would mean obeying instructions written about a different tool's verbs.
+ *
+ * WHAT WAS INJECTED IS REPORTED, because a rule sheet the user cannot see the
+ * effect of is one they debug by guessing. Two surfaces, both fed from here and
+ * both from the SAME `findProjectRules` call the prompt was built from, so neither
+ * can describe a file the model was not actually told about:
+ *
+ *  - `ruleSummaries()` — what is in effect right now, for the session snapshot and
+ *    the transcript's `#` margin row. The standing answer to "which".
+ *  - `noteProjectRules()` / `drainProjectRuleNotes()` — one dim line when the set
+ *    CHANGES, queued at prompt-assembly time and drained onto the round's result.
+ *    The answer to "when", which matters precisely because these files are re-read
+ *    per turn: editing one mid-session takes effect on the next message, and until
+ *    now it did so with no sign whatsoever that it had.
  */
 import { readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
@@ -132,4 +145,130 @@ export function projectRulesNote(files: readonly ProjectRuleFile[], workspace: s
     (files.length > 1
       ? "\n\n(Later blocks are nearer the workspace and win where two disagree.)"
       : "");
+}
+
+// ---------------------------------------------------------------------------
+// Reporting what was injected
+// ---------------------------------------------------------------------------
+
+/** One injected file as the clients name it. `bytes` is what went into the prompt. */
+export interface ProjectRuleSummary {
+  /** Workspace-relative where it is inside the workspace, else absolute. */
+  label: string;
+  /** Absolute, so a client can open it and the report is unambiguous. */
+  path: string;
+  bytes: number;
+}
+
+/** `2.4k`, `312` — a size a reader can compare at a glance. */
+function size(bytes: number): string {
+  return bytes < 1_000 ? `${bytes}` : `${(bytes / 1_000).toFixed(1)}k`;
+}
+
+/**
+ * What is in effect, in prompt order — global first, then git root down to the
+ * workspace, nearest last, exactly as `projectRulesNote` concatenated them.
+ *
+ * Derived from a `findProjectRules` result rather than re-reading, so a caller
+ * cannot report one set while the model was told another.
+ */
+export function ruleSummaries(
+  files: readonly ProjectRuleFile[],
+  workspace: string,
+): ProjectRuleSummary[] {
+  const root = resolve(workspace);
+  return files.map((f) => {
+    const rel = relative(root, f.path);
+    return {
+      label: rel && !rel.startsWith("..") ? rel : f.path,
+      path: f.path,
+      bytes: f.body.length,
+    };
+  });
+}
+
+// The per-session memo behind the change notes. Same shape and the same cap as
+// `history/stats.ts`'s: process-lifetime, cleared wholesale rather than evicted
+// one at a time, because a note that is occasionally repeated costs a line and
+// tracking LRU across every session costs a data structure nobody reads.
+const lastSeen = new Map<string, ProjectRuleSummary[]>();
+const pending = new Map<string, string[]>();
+const MEMO_CAP = 512;
+
+function remember<T>(map: Map<string, T>, key: string, value: T): T {
+  if (map.size >= MEMO_CAP) map.clear();
+  map.set(key, value);
+  return value;
+}
+
+/**
+ * Record what this turn injected, and queue a line for the round's result when it
+ * differs from the last turn's.
+ *
+ * The FIRST turn of a session always reports, unconditionally: "which files am I
+ * being governed by" is a question asked at the start of a conversation, and a
+ * surface that only speaks up on change would answer it with silence in the one
+ * session where nothing has changed yet. After that, only real differences — a
+ * file added, removed, or edited to a different length — because a line repeated
+ * every turn is a line nobody reads by the third one.
+ *
+ * Called for its effect at prompt-assembly time and drained after the round runs
+ * (`turn/runner.ts`), so the note describes the prompt the model actually got
+ * rather than the files as they stand a few seconds later.
+ */
+export function noteProjectRules(
+  sessionId: string,
+  files: readonly ProjectRuleFile[],
+  workspace: string,
+): void {
+  const now = ruleSummaries(files, workspace);
+  const before = lastSeen.get(sessionId);
+  remember(lastSeen, sessionId, now);
+  const lines: string[] = [];
+
+  if (before === undefined) {
+    if (now.length > 0) {
+      // Worded so it survives the transcript's rewrite: the client keeps everything
+      // before the ` — ` and prefixes `rules: `, so the head has to read as a phrase
+      // on its own and the tail is where the model-facing sentence goes.
+      lines.push(
+        `[rules] ${now.map((r) => `${r.label} (${size(r.bytes)})`).join(" · ")} ` +
+          `in this turn's prompt — AGENTS.md is re-read every turn, and the file ` +
+          `nearest the workspace wins where two disagree`,
+      );
+    }
+  } else {
+    const wasBy = new Map(before.map((r) => [r.path, r]));
+    const nowBy = new Map(now.map((r) => [r.path, r]));
+    for (const r of now) {
+      const was = wasBy.get(r.path);
+      if (was === undefined) {
+        lines.push(`[rules] + ${r.label} (${size(r.bytes)}) — now in the prompt`);
+      }
+      else if (was.bytes !== r.bytes) {
+        lines.push(
+          `[rules] ${r.label} changed (${size(was.bytes)} → ${size(r.bytes)}) — the edit is in this turn's prompt`,
+        );
+      }
+    }
+    for (const r of before) {
+      if (!nowBy.has(r.path)) lines.push(`[rules] − ${r.label} — gone, no longer in the prompt`);
+    }
+  }
+
+  if (lines.length > 0) remember(pending, sessionId, [...(pending.get(sessionId) ?? []), ...lines]);
+}
+
+/** Take the queued lines for a session. Empty when nothing changed. */
+export function drainProjectRuleNotes(sessionId: string): string[] {
+  const lines = pending.get(sessionId);
+  if (lines === undefined || lines.length === 0) return [];
+  pending.delete(sessionId);
+  return lines;
+}
+
+/** Test seam: forget every session's rule history. */
+export function resetProjectRulesMemo(): void {
+  lastSeen.clear();
+  pending.clear();
 }

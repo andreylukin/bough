@@ -66,6 +66,7 @@ import type {
   PostMessageBody,
   RerunWorkflowBody,
   SectionsBody,
+  UnsendBody,
 } from "../schema/requests.ts";
 import type { Effort, UsageTotals } from "../types.ts";
 // Type-only, all of them: erased at compile time, so this module has no runtime edge
@@ -79,6 +80,7 @@ import type { RevertOutcome, SessionChangeSet } from "../server/changes.ts";
 import type { ModelCatalog } from "../server/models.ts";
 import type { SearchResult } from "../server/search.ts";
 import type { InterruptResult } from "../server/turns.ts";
+import type { UnsendResult } from "../history/unsend.ts";
 import type { SkillRow as SkillListRow } from "../server/skills.ts";
 import type { SkillSource } from "../skills/skills.ts";
 import type { WorkflowAgentView } from "../workflow/control.ts";
@@ -189,6 +191,22 @@ export interface SessionSnapshot {
    * [] for a workspace with no history — both render as nothing.
    */
   primedTags?: string[];
+  /**
+   * The `AGENTS.md` files the next turn will inject, in prompt order — global
+   * first, then git root down to the workspace, nearest last. The transcript
+   * renders them as a dim `#` row beside the tags one, and `/rules` prints them in
+   * full. Absent from an older server, and [] where the user wrote none.
+   */
+  projectRules?: ProjectRuleSummary[];
+}
+
+/** One injected `AGENTS.md`, as `GET /sessions/:id` reports it. */
+export interface ProjectRuleSummary {
+  /** Workspace-relative where it sits inside the workspace, else absolute. */
+  label: string;
+  path: string;
+  /** Characters that went into the prompt — what the change note compares. */
+  bytes: number;
 }
 
 /**
@@ -540,6 +558,16 @@ export function createApi(options: ApiOptions = {}) {
     // -- history operations (T8.2–T8.4) ---------------------------------------
 
     fork: (id: string, body: ForkBody) => post<BranchResult>(`/sessions/${seg(id)}/fork`, body),
+    /**
+     * The take-back — the one history call that does NOT create a branch.
+     *
+     * Deletes the named message and everything after it from the session it was
+     * sent in, stopping the turn it started on the way, and hands the text back for
+     * the composer. Only ever called with the session's own LAST user message: the
+     * server refuses anything else, and everything else is a fork.
+     */
+    unsend: (id: string, body: UnsendBody) =>
+      post<UnsendResult>(`/sessions/${seg(id)}/unsend`, body),
     compact: (id: string, body: CompactBody) =>
       post<BranchResult>(`/sessions/${seg(id)}/compact`, body),
     /** Stateless: gists in, labeled ranges out. Nothing is read or written. */

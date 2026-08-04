@@ -450,9 +450,9 @@ export type Selection =
  *
  * The two shapes are not two versions of one operation, they are different acts:
  * a QUEUED message was never posted and comes back with nothing else to undo,
- * while a SENT one is history the server holds, and history is never rewritten in
- * place (spec §14) — so the undo is the branch that never contained it, which is
- * the same `exclusive: true` fork a user turn gets in `selectionFor`.
+ * while a SENT one is a row the server holds and has to be asked to forget
+ * (`history/unsend.ts` — the one history operation that deletes rather than
+ * branching, and the rules that keep that narrow live there).
  *
  * Newest first, and queued before sent: the queue holds what was typed most
  * recently, so it is what "the message I just sent" means whenever it is non-empty.
@@ -460,7 +460,7 @@ export type Selection =
 export type TakeBack =
   /** Pop the tail of the local queue. Nothing outside this client knew about it. */
   | { kind: "queued" }
-  /** Fork exclusive at this message and hand its text back to the composer. */
+  /** Unsend this message — it and its partial answer go — and hand the text back. */
   | { kind: "sent"; atMessageId: string; text: string }
   /** Nothing to take back — the window was armed but the message has not landed. */
   | { kind: "none" };

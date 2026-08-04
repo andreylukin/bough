@@ -275,6 +275,7 @@ function fakeStore(over: Partial<TuiState> = {}): Store & { calls: string[] } {
     describeSchedules: async () => void calls.push("describeSchedules"),
     describeSavedWorkflows: async () => void calls.push("describeSavedWorkflows"),
     describeArtifacts: async () => void calls.push("describeArtifacts"),
+    describeProjectRules: async () => void calls.push("describeProjectRules"),
     searchSessions: async (q: string) => {
       calls.push(`searchSessions:${q}`);
       return { sessions: [], messages: [] };
@@ -289,6 +290,7 @@ function fakeStore(over: Partial<TuiState> = {}): Store & { calls: string[] } {
     declineAsk: noop,
     interrupt: track("interrupt"),
     takeBackQueued: () => (calls.push("takeBackQueued"), null),
+    unsend: async () => (calls.push("unsend"), null),
     stopUnit: (unit) => (calls.push(`stop:${unit.kind}:${unit.id}`), Promise.resolve()),
     setModel: (patch) => (calls.push(`model:${JSON.stringify(patch)}`), Promise.resolve()),
     refreshChanges: track("refreshChanges"),

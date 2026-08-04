@@ -1130,6 +1130,38 @@ test("a primed row longer than the terminal truncates with an ellipsis", () => {
   assert.ok(width(lines[0].text) <= 40, lines[0].text);
 });
 
+test("the injected AGENTS.md files render as their own # row, under the tags one", () => {
+  const thread = [msg({ id: "m1", role: "user", parts: [{ type: "text", text: "hi" }] })];
+  const lines = buildLines(thread, OPEN, OPEN, 100, {
+    primedTags: ["git:push"],
+    projectRules: [{ label: "AGENTS.md" }, { label: "packages/api/AGENTS.md" }],
+  });
+  assert.equal(lines[0].text, "# this repo remembers: git:push");
+  // Names the files and points at the command that prints them in full — the row is
+  // one line, and "which rules am I under" deserves a longer answer than fits here.
+  assert.equal(
+    lines[1].text,
+    "# rules: AGENTS.md · packages/api/AGENTS.md · /rules",
+  );
+  // No AGENTS.md anywhere — no row, exactly as with no primed tags.
+  const bare = buildLines(thread, OPEN, OPEN, 100, { primedTags: ["git:push"] });
+  assert.equal(bare[1].text.startsWith("#"), false);
+});
+
+test("a rules row that fills the terminal drops its hint rather than wrapping", () => {
+  const lines = buildLines([], OPEN, OPEN, 40, {
+    projectRules: [
+      { label: "AGENTS.md" },
+      { label: "packages/api/AGENTS.md" },
+      { label: "packages/web/AGENTS.md" },
+    ],
+  });
+  assert.ok(width(lines[0].text) <= 40, lines[0].text);
+  // The suffix is an advertisement; a row that has already been elided has no room
+  // for one, and half a `/rules` reads as corruption.
+  assert.equal(lines[0].text.includes("/rules"), false, lines[0].text);
+});
+
 test("[history] hints leave the output block and become # marginalia", () => {
   const out =
     "ok\n[history] tags previously used in migrations/: psql, alembic — see history.sql() for the commands behind them";

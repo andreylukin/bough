@@ -137,6 +137,19 @@ export const ForkBody = z.object({
 export type ForkBody = z.infer<typeof ForkBody>;
 
 /**
+ * POST /sessions/:id/unsend — the take-back (`history/unsend.ts`).
+ *
+ * The one history route that does NOT branch, and the body is a single id on
+ * purpose: it names the message the client believes is the last thing the user
+ * said, and the handler refuses anything else. There is no "and everything after
+ * it" flag, because dropping the answer to a retracted question is not optional.
+ */
+export const UnsendBody = z.object({
+  atMessageId: z.string(),
+});
+export type UnsendBody = z.infer<typeof UnsendBody>;
+
+/**
  * POST /sessions/:id/compact. Each maximal contiguous run of picks collapses to
  * one summary in place; unselected messages between runs are copied verbatim.
  * Own messages only, same rule as fork.
