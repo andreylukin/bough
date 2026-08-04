@@ -17,11 +17,22 @@
  * and `epoch` (bumped on each apply) is the dependency that invalidates a memoized
  * render such as the pre-wrapped transcript.
  *
- * THIRD — **one apply paints both renderers.** The TUI draws through two paths: ink's
- * `<Text color>` (hex) and the hand-rolled SGR line renderer in `format.ts` (parameter
- * bodies). `applyTheme` writes both, using `format.ts`'s own `setColors` hook, so a
- * theme cannot land in half the screen. `format.ts` deliberately does not import this
- * module — the dependency points this way, never back.
+ * THIRD — **one apply paints every path.** The TUI draws through three: component
+ * props (`<text fg>`, hex), the hand-rolled SGR line renderer in `format.ts` (SGR
+ * parameter bodies), and the renderer's own screen background. `applyTheme` writes all
+ * three — `setColors` and `setUiColors` for the first two, and a background painter
+ * the client registers for the third — so a theme cannot land in half the screen.
+ * `format.ts` deliberately does not import this module; the dependency points this
+ * way, never back, which is why the two setters exist at all.
+ *
+ * THE BACKGROUND IS PAINTED, NOT JUST STORED. `palette.bg` was set on every apply and
+ * read by nothing, so the one preset that exists to deepen the surfaces
+ * ("Midnight") changed a border and nothing else, and every theme showed through to
+ * whatever colour the user's terminal happened to be. `setBackgroundPainter` is the
+ * seam: `tui/main.tsx` hands over `renderer.setBackgroundColor`, which clears the
+ * next frame's buffer to that colour. It is registered rather than imported because
+ * the renderer exists only in a real terminal — a test, or `bough exec`, applies
+ * themes with nothing registered and paints nothing.
  *
  * FOURTH — **nothing in this file fetches or persists, and that is still true now
  * that `/theme` exists.** `ThemeState` is the shape `server/theme.ts` serves;
@@ -37,7 +48,7 @@
  * handling, which is why "browsing never commits" was a convention rather than a
  * property.
  */
-import { setColors } from "./format.ts";
+import { setColors, setUiColors } from "./format.ts";
 
 // ---------------------------------------------------------------------------
 // Wire shape
@@ -127,8 +138,59 @@ export function resolveColors(state: ThemeState | null): ThemeColors {
 }
 
 /**
- * Paint a theme. Mutates the singleton and pushes the same colors into `format.ts`'s
- * SGR parameters, so ink components and the raw line renderer never disagree.
+ * Who wants to know when the palette changes.
+ *
+ * A theme apply mutates a singleton, which React cannot see. Nothing subscribed to
+ * it, and the panel's `move` action returns its state UNCHANGED (it is the preview
+ * controller, not the panel, that moved) — so React bailed out of the re-render and
+ * previewing a theme repainted nothing until some unrelated event happened to
+ * re-render the app. On an idle TUI, which is where anyone browses themes, that is
+ * "the picker does not work".
+ *
+ * `subscribeTheme` + `themeEpoch` are the `useSyncExternalStore` pair that fixes it
+ * at the source: the event is "the palette changed", so the repaint hangs off the
+ * palette rather than off whatever state a caller happens to touch nearby.
+ */
+const listeners = new Set<() => void>();
+
+/** Subscribe to theme applies. Returns the unsubscribe. */
+export function subscribeTheme(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+/** The palette generation — the snapshot half of the store pair. */
+export function themeEpoch(): number {
+  return palette.epoch;
+}
+
+/**
+ * Where the screen background goes. `null` until a client registers one, because
+ * this module never reaches for a renderer — see the header.
+ */
+let backgroundPainter: ((hex: string) => void) | null = null;
+
+/**
+ * Register (or clear) the screen-background sink.
+ *
+ * Painting happens on registration as well as on every later apply, because the boot
+ * order is fetch-and-apply-theme BEFORE the renderer exists (`tui/main.tsx`): without
+ * that first call the very theme the user chose would be the one theme never painted.
+ */
+export function setBackgroundPainter(fn: ((hex: string) => void) | null): void {
+  backgroundPainter = fn;
+  fn?.(palette.bg);
+}
+
+/**
+ * Paint a theme.
+ *
+ * Mutates the singleton and pushes the same colours down every other path a pixel
+ * can come from: `format.ts`'s SGR parameters (the transcript), its `UI` map (the
+ * components), and the registered screen background. Subscribers are notified last,
+ * so nothing re-renders against a half-applied palette.
  */
 export function applyTheme(state: ThemeState | null): void {
   const c = resolveColors(state);
@@ -153,6 +215,20 @@ export function applyTheme(state: ThemeState | null): void {
     info: fgParams(palette.info),
     surfaceBg: bgParams(palette.panelInset),
   });
+  // The component-facing half of the same write. Without it the components kept
+  // painting the terminal's own ANSI `green`/`yellow`/`red`/`cyan`/`gray` while the
+  // transcript beside them painted the theme — one screen, two palettes.
+  setUiColors({
+    accent: palette.accent,
+    warn: palette.warn,
+    error: palette.error,
+    info: palette.info,
+    muted: palette.muted,
+  });
+  backgroundPainter?.(palette.bg);
+  // Last, after every colour is in place: a listener that re-renders must not read a
+  // half-applied palette. Copied because a listener may unsubscribe as it runs.
+  for (const listener of [...listeners]) listener();
 }
 
 /** hex → SGR truecolor foreground params (`38;2;r;g;b`) for `format.ts`. */

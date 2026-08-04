@@ -335,6 +335,11 @@ export function Panel(props: PanelProps) {
       height={props.rows + 2}
       borderStyle="rounded"
       borderColor={palette.border}
+      // The panel is a RAISED surface, and `palette.panel` existed for exactly this
+      // and was painted by nothing — so a preset whose whole note is "deeper
+      // surfaces" changed a border colour and left the panel transparent over the
+      // transcript behind it.
+      backgroundColor={palette.panel}
       paddingX={1}
     >
       <PanelTabs tab={props.tab} width={props.width} />

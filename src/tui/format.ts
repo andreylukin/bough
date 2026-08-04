@@ -102,14 +102,47 @@ export function setColors(next: Partial<ColorParams>): void {
   Object.assign(colors, next);
 }
 
-/** Ink `<Text color>` values for components. Names, not hex: no theme dependency. */
-export const UI = {
+/**
+ * The colours COMPONENTS paint with — `<text fg={UI.warn}>`, `borderColor`,
+ * `backgroundColor`.
+ *
+ * Mutable, and mutated by `theme.ts`'s `applyTheme` through `setUiColors`, for the
+ * same reason `colors` above is: every call site reads a property at render time, so
+ * one assignment recolours the component layer without a rebuild or a context.
+ *
+ * The ANSI NAMES below are the pre-theme floor, not the intent. They were the whole
+ * of this object once, `as const`, which meant roughly twenty component call sites
+ * painted the terminal's own `green`/`yellow`/`red`/`cyan`/`gray` no matter what
+ * theme was in force — so Rosé Pine's accent reached the transcript (rendered through
+ * the SGR path) and never reached the composer's border beside it. They survive as
+ * the value before the first apply, and as the answer for a terminal with no
+ * truecolor.
+ *
+ * Foregrounds only. A component that paints a SURFACE — the panel, the composer —
+ * reads `theme.ts`'s `palette` directly, because there is no ANSI name for
+ * "#1f2329" and no sensible pre-theme floor for a background: one way to say each
+ * thing, and this is not the one that says surfaces.
+ */
+export interface UiColors {
+  accent: string;
+  warn: string;
+  error: string;
+  info: string;
+  muted: string;
+}
+
+export const UI: UiColors = {
   accent: "green",
   warn: "yellow",
   error: "red",
   info: "cyan",
   muted: "gray",
-} as const;
+};
+
+/** How a theme recolours the component layer. The twin of `setColors` above. */
+export function setUiColors(next: Partial<UiColors>): void {
+  Object.assign(UI, next);
+}
 
 const sgr = (
   params: string,

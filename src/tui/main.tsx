@@ -42,7 +42,12 @@ import { MODELS, type ModelRow } from "../llm/client.ts";
 import { api } from "./api.ts";
 import { createStore, type TuiState } from "./store.ts";
 import { enterTui, filteredStdin, leaveTui, type MouseEvent, type NavKey } from "./mouse.ts";
-import { applyTheme, type ThemePreset, type ThemeState } from "./theme.ts";
+import {
+  applyTheme,
+  setBackgroundPainter,
+  type ThemePreset,
+  type ThemeState,
+} from "./theme.ts";
 import { isTuiHelpRequest, isTuiUsageError, parseTuiArgs, USAGE as TUI_USAGE } from "./args.ts";
 import { boughTitle, term } from "./term.ts";
 import { type Clipboard, clipboardFromText } from "./clipboard.ts";
@@ -329,8 +334,21 @@ async function main() {
     enableMouseMovement: false,
     // Teardown is teardown, whether the app asked for it, an uncaught throw caused
     // it, or a signal did.
-    onDestroy: () => exited(),
+    onDestroy: () => {
+      // The painter holds this renderer; past destroy a repaint would call into a
+      // torn-down one. Cleared here rather than at the exit paths below, because
+      // OpenTUI destroys itself on its own errors too.
+      setBackgroundPainter(null);
+      exited();
+    },
   });
+
+  // The theme was fetched and applied above, before this renderer existed, so the
+  // registration paints the current background itself rather than waiting for the
+  // next apply — otherwise the one theme that never lands is the stored one.
+  // Cleared on the way out: `renderer.destroy()` resets the terminal's own colour,
+  // and a painter holding a destroyed renderer is a call into nothing.
+  setBackgroundPainter((hex) => renderer.setBackgroundColor(hex));
 
   createRoot(renderer).render(
     <App
