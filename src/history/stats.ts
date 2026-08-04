@@ -2,11 +2,13 @@
  * Tag popularity over the command-history memory: the session-start priming note
  * and the per-directory profiles behind the mid-turn hints.
  *
- * Weighting, not raw counts: a tag's weight is `success × recency` — a failing
- * command's tag counts a quarter of a passing one, and weight halves every 30
- * days, so a repo's profile tracks what the user does NOW (the Mem^p lesson:
- * memory that is never deprecated erodes performance). The decay runs in JS
- * rather than SQL so nothing depends on the sqlite build carrying math functions.
+ * Weighting, not raw counts: a tag's weight is its ACT-R base-level activation,
+ * scaled by whether the command worked — frequency and recency in one term, with
+ * recency decaying as a power law (`tagWeights` carries the evidence). So a repo's
+ * profile tracks what the user does NOW (the Mem^p lesson: memory that is never
+ * deprecated erodes performance) without burying a long-standing habit. The decay
+ * runs in JS rather than SQL so nothing depends on the sqlite build carrying math
+ * functions.
  *
  * Cache discipline: the priming note goes into the VOLATILE prompt tier, which is
  * cached per session with a 1h TTL (`llm/client.ts`). Recomputing it per turn
@@ -19,10 +21,23 @@ import { homedir } from "node:os";
 import type { CommandTagRow, Db } from "../types.ts";
 import { findGitRoot, isRef, repoIdentity } from "./record.ts";
 
-const HALF_LIFE_MS = 30 * 24 * 60 * 60 * 1000;
-/** Rows older than this carry <3% weight — not worth reading. */
-const LOOKBACK_MS = 5 * HALF_LIFE_MS;
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** Rows older than this contribute under a tenth of a fresh use — not worth reading. */
+const LOOKBACK_MS = 150 * DAY_MS;
 const TOP_TAGS = 10;
+
+/**
+ * The power law of forgetting. ACT-R's base-level learning equation puts the decay
+ * exponent at 0.5 and the whole cognitive-psychology literature has left it there.
+ */
+const DECAY_D = 0.5;
+/**
+ * A floor on "how long ago", because `t^-d` diverges at zero and the note must not
+ * be dominated by whatever ran ninety seconds ago. An hour is also roughly the
+ * resolution the note has anyway — it is memoized per session (see the header), so
+ * finer recency than this could not reach the model even if it were computed.
+ */
+const RECENCY_FLOOR_MS = 60 * 60 * 1000;
 
 function successFactor(exitCode: number | null): number {
   if (exitCode === 0) return 1;
@@ -30,11 +45,44 @@ function successFactor(exitCode: number | null): number {
   return 0.25;
 }
 
-/** Aggregate rows into per-tag weights. Exported for tests. */
+/**
+ * Aggregate rows into per-tag weights: **base-level activation**, the ACT-R model of
+ * how available a memory is, applied to tags.
+ *
+ *     BLA_i = ln( Σ_j t_j^-d )     d = 0.5
+ *
+ * where `t_j` is how long ago the j-th use was. Frequency and recency in one term,
+ * with recency decaying as a POWER law rather than an exponential one.
+ *
+ * WHY THIS AND NOT THE HALF-LIFE IT REPLACES. This function used to decay
+ * exponentially — `0.5^(Δ/30d)`. Kowald, Seitlinger, Trattner & Ley (*Long Time No
+ * See*, 2014) tested exactly that substitution on BibSonomy, CiteULike and Flickr:
+ * the ACT-R power law beat most-popular-tags on every dataset and every metric, and
+ * beat the exponential-decay approach it was compared against, whose exponential
+ * they call "clearly at odds with the power law of forgetting". Combined with a
+ * resource-specific term it beat FolkRank and PITF at a fraction of the cost.
+ *
+ * The finding that makes it OUR case rather than a general improvement: the recency
+ * component mattered most in the NARROW folksonomy (Flickr, few taggers per item)
+ * and least in the broad ones. bough is as narrow as a folksonomy gets — one tagger,
+ * one vocabulary, no crowd to converge with — so recency is carrying more here than
+ * in any system the paper measured.
+ *
+ * THE LOG IS DROPPED, deliberately. `ln` is monotone, so it cannot change this
+ * ranking; ACT-R takes it because activation feeds a sigmoid retrieval probability,
+ * which nothing here computes. And `rankTags` MULTIPLIES this weight by an idf
+ * factor — a log-scaled magnitude would make that product meaningless (and can go
+ * negative, which would invert the boost). The sum is the magnitude; keep it.
+ *
+ * `successFactor` is ours and stays: the paper's corpora have no exit codes, and a
+ * tag attached to a command that failed is weaker evidence about this project's
+ * vocabulary than one attached to a command that worked.
+ */
 export function tagWeights(rows: CommandTagRow[], now: number): Map<string, number> {
   const weights = new Map<string, number>();
   for (const r of rows) {
-    const w = successFactor(r.exitCode) * Math.pow(0.5, (now - r.ts) / HALF_LIFE_MS);
+    const elapsed = Math.max(now - r.ts, RECENCY_FLOOR_MS) / DAY_MS;
+    const w = successFactor(r.exitCode) * Math.pow(elapsed, -DECAY_D);
     weights.set(r.tag, (weights.get(r.tag) ?? 0) + w);
   }
   return weights;

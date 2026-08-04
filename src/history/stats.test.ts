@@ -53,19 +53,37 @@ test("a failing command's tag weighs a quarter of a passing one", () => {
     { tag: "bad", ts: now, exitCode: 1 },
     { tag: "unknown", ts: now, exitCode: null },
   ], now);
-  eq(w.get("ok"), 1);
-  eq(w.get("bad"), 0.25);
-  eq(w.get("unknown"), 0.5);
+  // Ratios, not absolutes: the magnitude of a fresh use is the recency floor's
+  // business, and the success factor must hold whatever that constant is.
+  ok(Math.abs(w.get("bad")! / w.get("ok")! - 0.25) < 1e-9);
+  ok(Math.abs(w.get("unknown")! / w.get("ok")! - 0.5) < 1e-9);
 });
 
-test("weight halves every 30 days, so one old habit loses to a new one", () => {
+test("recency decays as a POWER law, so doubling the age costs a factor of √2", () => {
   const now = 400 * DAY;
   const w = tagWeights([
-    { tag: "old", ts: now - 30 * DAY, exitCode: 0 },
-    { tag: "fresh", ts: now, exitCode: 0 },
+    { tag: "d10", ts: now - 10 * DAY, exitCode: 0 },
+    { tag: "d20", ts: now - 20 * DAY, exitCode: 0 },
+    { tag: "d40", ts: now - 40 * DAY, exitCode: 0 },
   ], now);
-  ok(Math.abs(w.get("old")! - 0.5) < 1e-9);
-  eq(w.get("fresh"), 1);
+  // t^-0.5: every doubling of elapsed time is the same constant ratio. An
+  // exponential half-life — what this used to be — would give 2^-10/30 here, and
+  // would have buried the 40-day tag an order of magnitude deeper.
+  const r1 = w.get("d20")! / w.get("d10")!;
+  const r2 = w.get("d40")! / w.get("d20")!;
+  ok(Math.abs(r1 - Math.SQRT1_2) < 1e-9, `20d/10d = ${r1}`);
+  ok(Math.abs(r2 - Math.SQRT1_2) < 1e-9, `40d/20d = ${r2}`);
+});
+
+test("frequency and recency trade off: four old uses beat one recent one", () => {
+  const now = 400 * DAY;
+  const w = tagWeights([
+    ...Array.from({ length: 4 }, () => ({ tag: "habit", ts: now - 40 * DAY, exitCode: 0 })),
+    { tag: "novelty", ts: now - 8 * DAY, exitCode: 0 },
+  ], now);
+  // 4×40^-0.5 = 0.632 against 8^-0.5 = 0.354. Activation is a SUM over uses, which
+  // is what keeps a long-standing habit visible against whatever happened lately.
+  ok(w.get("habit")! > w.get("novelty")!, `${w.get("habit")} vs ${w.get("novelty")}`);
 });
 
 test("topRepoTags ranks by summed weight: ten failures lose to two successes", () => {
