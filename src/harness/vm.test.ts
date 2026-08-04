@@ -18,8 +18,8 @@
  *   - **an aborted program leaves no orphan** — children are killed BEFORE the
  *     worker is terminated; reverse order orphans processes (plan §6.3).
  *
- * Hermetic and offline: no network, no `~/.bough`, no API keys. The one test that
- * spawns a process uses `sh` in a temp dir and cleans up after itself.
+ * Hermetic and offline: no network, no `~/.bough`, no API keys. The tests that spawn
+ * a process run `bun -e` in a temp dir and clean up after themselves.
  *
  * Assertions come from `node:assert` rather than a package: it is built into the
  * runtime and needs no fetch, and this environment's egress policy denies the
@@ -65,7 +65,17 @@ function fakeHost(over: Partial<HostFns> = {}): HostFns {
   };
 }
 
-/** A file that exists, polled — `sh` writing it is not synchronous with our loop. */
+/**
+ * The body of the child the wind-down tests spawn: announce, wait, then claim
+ * survival. Run as `bun -e <this>` rather than `sh -c`, because a program may no
+ * longer spawn a shell (vm_worker's shell doors) and these tests are about tracking
+ * a child process, not about shells.
+ */
+const childScript = (pidFile: string, marker: string) =>
+  `require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));` +
+  `setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(marker)}, "alive"), 2000);`;
+
+/** A file that exists, polled — the child writing it is not synchronous with our loop. */
 async function waitForFile(path: string, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -343,6 +353,58 @@ test("an uncaught process.exit() surfaces as a program error, not a dead worker"
 });
 
 // ---------------------------------------------------------------------------
+// the shell doors
+// ---------------------------------------------------------------------------
+
+// These are the reason the block exists rather than a prompt line: a shell run from
+// inside a program leaves no row in the command memory, and the observed failure was
+// a whole session that reached for `execSync` and never called `bash` once. The
+// assertions are on the ERROR NAMING `bash(cmd, tags)`, because a program that is
+// merely refused and not redirected just tries the next spelling.
+const SHELL_DOORS: Array<[label: string, code: string]> = [
+  ["execSync", `const { execSync } = await import("node:child_process"); execSync("echo hi");`],
+  ["exec", `(await import("node:child_process")).exec("echo hi", () => {});`],
+  ["require'd execSync", `require("child_process").execSync("echo hi");`],
+  [
+    "spawn of sh",
+    `(await import("node:child_process")).spawn("/bin/sh", ["-c", "echo hi"]);`,
+  ],
+  [
+    "spawn with shell:true",
+    `(await import("node:child_process")).spawn("echo", ["hi"], { shell: true });`,
+  ],
+  ["Bun.spawn of sh", `Bun.spawn(["sh", "-c", "echo hi"]);`],
+  ["Bun.spawn({cmd}) of bash", `Bun.spawn({ cmd: ["/bin/bash", "-c", "echo hi"] });`],
+  ["Bun.spawnSync of sh", `Bun.spawnSync(["sh", "-c", "echo hi"]);`],
+  ["Bun.$", "Bun.$`echo hi`;"],
+];
+
+for (const [label, code] of SHELL_DOORS) {
+  test(`a shell via ${label} is refused and points at bash(cmd, tags)`, async () => {
+    const res = await runProgram({ code, host: fakeHost() });
+
+    strictEqual(res.ok, false, `${label} was allowed to run a shell`);
+    ok(/bash\(cmd, tags\)|bash\(cmd\)/.test(res.error!), res.error);
+  });
+}
+
+test("spawning a binary directly is still allowed", async () => {
+  // The rule is narrow on purpose: the raw runtime stays open for what the host
+  // functions genuinely do not cover. If this test starts failing, the block has
+  // grown into a sandbox, which spec §2.2 says it must not be.
+  const res = await runProgram({
+    code: `
+      const child = Bun.spawn(["bun", "-e", "console.log(1)"], { stdout: "pipe" });
+      console.log("exit " + (await child.exited));
+    `,
+    host: fakeHost(),
+  });
+
+  ok(res.ok, res.error);
+  strictEqual(res.logs[0], "exit 0");
+});
+
+// ---------------------------------------------------------------------------
 // wind-down: children first, then the worker
 // ---------------------------------------------------------------------------
 
@@ -351,14 +413,17 @@ test("an aborted program that spawned a child leaves no orphan process", async (
   const pidFile = `${dir}/pid`;
   const marker = `${dir}/marker`;
 
-  // The child announces itself, waits, then claims it survived. SIGTERM lands on
-  // `sh` while it waits, so the marker is never written — an orphan would write it.
-  const script = `echo $$ > ${pidFile}; sleep 2; echo alive > ${marker}`;
+  // The child announces itself, waits, then claims it survived. SIGTERM lands on it
+  // while it waits, so the marker is never written — an orphan would write it.
+  // NOTE: a plain binary, not `sh -c`: shell-shaped spawning is shut inside a
+  // program (it would bypass the command memory), and this test needs a tracked
+  // child process, not a shell.
+  const script = childScript(pidFile, marker);
   const controller = new AbortController();
   try {
     const running = runProgram({
       code: `
-        const child = Bun.spawn(["sh", "-c", ${JSON.stringify(script)}], {
+        const child = Bun.spawn(["bun", "-e", ${JSON.stringify(script)}], {
           stdout: "ignore",
           stderr: "ignore",
         });
@@ -405,7 +470,7 @@ test("the abort handshake sweeps children BEFORE it acks", async () => {
   const dir = await mkdtemp(join(tmpdir(), "bough_vm_sweep_"));
   const pidFile = `${dir}/pid`;
   const marker = `${dir}/marker`;
-  const script = `echo $$ > ${pidFile}; sleep 2; echo alive > ${marker}`;
+  const script = childScript(pidFile, marker);
 
   const worker = new Worker(new URL("./vm_worker.ts", import.meta.url).href, {
     type: "module",
@@ -419,7 +484,7 @@ test("the abort handshake sweeps children BEFORE it acks", async () => {
     worker.postMessage({
       type: "run",
       code: `
-        const child = Bun.spawn(["sh", "-c", ${JSON.stringify(script)}], {
+        const child = Bun.spawn(["bun", "-e", ${JSON.stringify(script)}], {
           stdout: "ignore",
           stderr: "ignore",
         });

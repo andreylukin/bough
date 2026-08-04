@@ -3,6 +3,11 @@
 await bash(cmd, tags) — one shell command in the workspace (the user's real
 checkout), returning combined output. It carries your interrupt.
 
+It is the ONLY way to run a shell command. `child_process.execSync`, `Bun.$` and
+`Bun.spawn(["sh", "-c", …])` throw, because a command that does not pass through
+here is not recorded, and an unrecorded command is one this project can never
+recall. Tagging is the price of the memory; there is no untagged door.
+
 bash() RETURNS A STRING. sh() returns OBJECTS — [{code, out}, …]. Mixing the two
 is the one mistake that kills a round outright, with a stack pointing into the
 harness as though bough were broken:

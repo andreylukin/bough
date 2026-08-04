@@ -30,6 +30,12 @@
  *      hole: an untracked shell survives the sweep, and the interrupt then tells the
  *      user "the program's children are killed" while a process keeps running.
  *
+ * A third interception, for a different reason: SHELL-SHAPED process creation is
+ * shut across `Bun.spawn`/`Bun.spawnSync` and `node:child_process`, because a shell
+ * run that way leaves no row in the command memory that `bash(cmd, tags)` feeds.
+ * That is a memory boundary, not a security one — see the block itself for why the
+ * rule stops at shells and leaves direct binary spawning open.
+ *
  * The program's parameters come from `protocol.ts` — the same list the host's
  * pre-flight check parses with, so the two cannot disagree about which names are
  * taken (see that module's header). This file declares no name of its own; the
@@ -151,6 +157,69 @@ function killChildren(): void {
   children.clear();
 }
 
+// ---------------------------------------------------------------------------
+// The shell doors
+// ---------------------------------------------------------------------------
+
+/**
+ * A shell run from inside a program is invisible to the COMMAND MEMORY: `bash()`
+ * records its command under the tags the model chose, and `bough tags` /
+ * `history.sql()` are built on nothing else. `execSync("rg …")` produces the same
+ * output and leaves no row, so the memory silently under-reports what the agent
+ * actually does — and a model that can reach the untagged door takes it, because
+ * tagging is work and `execSync` is not (observed: a session that ran 54 commands
+ * through `node:child_process` and zero through `bash`).
+ *
+ * So the shell-shaped doors are shut, with an error naming the one that is open.
+ * The rule is narrow on purpose — SHELL-SHAPED process creation only. Spawning a
+ * binary directly (`Bun.spawn(["bun", "x.ts"])`, a piped long-lived server, stdin
+ * streaming) is real work the host functions do not cover, and it stays open, as do
+ * fs, network and `npm:` imports. This is a memory boundary, not a security one:
+ * §2.2 still holds, and a program that truly wants a shell can still write one out
+ * and exec it. It is a door that costs more than tagging, which is the whole point.
+ */
+const SHELLS = new Set([
+  "sh",
+  "bash",
+  "zsh",
+  "dash",
+  "ksh",
+  "fish",
+  "csh",
+  "tcsh",
+  "pwsh",
+  "powershell",
+  "cmd",
+  "cmd.exe",
+]);
+
+function shellDoorShut(what: string): Error {
+  return new Error(
+    `${what} is not available inside a program — a command run that way is absent from ` +
+      `your command history, so no future session can recall it. Use await bash(cmd, tags) ` +
+      `for one command, sh(a, b, …) to run several at once, or bashBg(name, cmd) for work ` +
+      `that should outlive the round. Spawning a binary directly is still fine.`,
+  );
+}
+
+/** `shell: true`, or an argv whose program IS a shell. Either way it is a shell. */
+function isShellSpawn(cmd: unknown, ...maybeOpts: unknown[]): boolean {
+  for (const o of maybeOpts) {
+    if (o && typeof o === "object" && (o as { shell?: unknown }).shell) return true;
+  }
+  const argv0 = Array.isArray(cmd) ? cmd[0] : cmd;
+  if (typeof argv0 !== "string") return false;
+  return SHELLS.has(argv0.split("/").pop() ?? "");
+}
+
+/** `Bun.spawn` is overloaded — `(cmd, opts)` and `({cmd, …})` both reach here. */
+function isShellBunSpawn(args: unknown[]): boolean {
+  const [first, second] = args;
+  if (Array.isArray(first)) return isShellSpawn(first, second);
+  if (first && typeof first === "object") return isShellSpawn((first as { cmd?: unknown }).cmd, first);
+  return false;
+}
+
 try {
   // `Bun.spawn` is a function, not a class, so this is a forwarding wrapper rather
   // than a subclass — and a plain assignment, because the property is writable but
@@ -163,8 +232,44 @@ try {
   // still Bun's, and the wrapper is invisible to the caller.
   const realSpawn = Bun.spawn;
   const spawnAny = realSpawn as unknown as (...args: unknown[]) => Bun.Subprocess;
-  Bun.spawn = ((...args: unknown[]) => trackChild(spawnAny(...args))) as typeof Bun.spawn;
+  Bun.spawn = ((...args: unknown[]) => {
+    if (isShellBunSpawn(args)) throw shellDoorShut("Bun.spawn of a shell");
+    return trackChild(spawnAny(...args));
+  }) as typeof Bun.spawn;
+
+  const realSpawnSync = Bun.spawnSync;
+  const spawnSyncAny = realSpawnSync as unknown as (...args: unknown[]) => unknown;
+  Bun.spawnSync = ((...args: unknown[]) => {
+    if (isShellBunSpawn(args)) throw shellDoorShut("Bun.spawnSync of a shell");
+    return spawnSyncAny(...args);
+  }) as typeof Bun.spawnSync;
 } catch { /* namespace locked down — natively spawned children stay untracked */ }
+
+// `node:child_process` routes through `Bun.spawn`, so the wrapper above already
+// SEES it — but it sees an argv, and blocking there would report the wrong door
+// ("Bun.spawn" to a program that wrote `execSync`). Patching the module's own
+// exports names what the program actually called. Mutating the CJS export object
+// is enough for every spelling: `import("node:child_process")`, a destructured
+// import, and `require("child_process")` all resolve to this same object.
+try {
+  const cp = createRequire(import.meta.url)("node:child_process") as Record<string, unknown>;
+  // `exec`/`execSync` take a command LINE — they are a shell by definition, with no
+  // shape to check.
+  for (const name of ["exec", "execSync"]) {
+    cp[name] = () => {
+      throw shellDoorShut(`child_process.${name}`);
+    };
+  }
+  // The rest take a program and an argv, so they are only a shell when they say so.
+  for (const name of ["spawn", "spawnSync", "execFile", "execFileSync"]) {
+    const real = cp[name] as (...args: unknown[]) => unknown;
+    if (typeof real !== "function") continue;
+    cp[name] = (...args: unknown[]) => {
+      if (isShellSpawn(args[0], args[1], args[2])) throw shellDoorShut(`child_process.${name}`);
+      return real(...args);
+    };
+  }
+} catch { /* the module could not be patched — the untagged door stays open */ }
 
 // `Bun.$` has no kill handle and does not route through `Bun.spawn` (verified: a
 // `Bun.$` shell produces zero calls through the wrapper above), so a shell started
