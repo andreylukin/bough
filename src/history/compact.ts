@@ -48,6 +48,7 @@ import { DEFAULT_MODEL } from "../turn/runner.ts";
 import type { AppCtx, Bus, Db, LlmClient } from "../types.ts";
 import { json, parseBody } from "../server/http.ts";
 import { openBranch, type PartPick, resolvePicks } from "./branch.ts";
+import { exploreSpan } from "./explore.ts";
 
 /**
  * What compaction needs from the world. Structurally satisfied by `AppCtx`, so a
@@ -70,6 +71,16 @@ export interface CompactCtx {
    * nothing else degrades (spec §12: every cheap-tier call fails silently).
    */
   cheap?: AppCtx["cheap"];
+  /**
+   * The scout (`history/explore.ts`): a bash-capable subagent that reads the current
+   * state of the directories a span touched, so the summary can describe the checkout
+   * rather than the conversation's memory of it. A seam so a test drives compaction
+   * with no shell and no second provider key.
+   *
+   * Returning `null` — which it does for every failure, by design — is the pre-scout
+   * behaviour: summarize from the transcript alone.
+   */
+  explore?: (span: readonly Message[], workspace: string) => Promise<string | null>;
 }
 
 const SYSTEM =
@@ -77,6 +88,22 @@ const SYSTEM =
   "that preserves the decisions made, files/code changed, the resulting state, and any " +
   "open questions — enough that the conversation can continue as if the original " +
   "messages were still present. Output only the summary text.";
+
+/**
+ * Appended to the system prompt only when a scout actually returned notes.
+ *
+ * Separate from `SYSTEM`, and both halves matter. A summary that quietly averaged the
+ * transcript against the tree would be the worst of both — so the notes are named as
+ * the authority on present state, and the transcript stays the authority on what was
+ * decided and why, which no amount of reading the checkout can recover.
+ */
+const SCOUT_SYSTEM =
+  " You are also given SCOUT NOTES: what a subagent found in the files this span " +
+  "touched, read from the checkout as it stands now. Where the notes and the " +
+  "conversation disagree about the state of the code, the notes are right and the " +
+  "summary must say what is actually there — the conversation records intentions, some " +
+  "of which were undone later. The conversation remains the only source for decisions, " +
+  "reasons and open questions.";
 
 const MAX_TOKENS = 1024;
 /** Keeps the prompt bounded when a span contains a 200KB tool result. */
@@ -199,13 +226,20 @@ async function summarize(
   model: string,
   span: readonly Message[],
   instructions?: string,
+  notes?: string | null,
 ): Promise<string> {
   const llm = ctx.llm ?? clientFor(model);
   const rendered = renderSpan(span);
-  const prompt = instructions
-    ? `${rendered}\n\nAdditional instructions: ${instructions}`
-    : rendered;
-  const text = (await completeText(llm, { model, system: SYSTEM, maxTokens: MAX_TOKENS, prompt }))
+  const parts = [rendered];
+  if (notes) parts.push(`Scout notes — the files this span touched, as they are now:\n${notes}`);
+  if (instructions) parts.push(`Additional instructions: ${instructions}`);
+  const prompt = parts.join("\n\n");
+  const text = (await completeText(llm, {
+    model,
+    system: notes ? SYSTEM + SCOUT_SYSTEM : SYSTEM,
+    maxTokens: MAX_TOKENS,
+    prompt,
+  }))
     .trim();
   // An empty summary is not a summary. Seeding it would put an empty message where a
   // span of work used to be — a branch that silently lost the span rather than
@@ -300,11 +334,26 @@ export async function compact(
   // there is nothing partial worth keeping — unlike a fan-out of independent launches
   // (plan §6.9), where the siblings that started are real work.
   const model = modelFor(ctx, session);
+  // The runtime is read HERE rather than at the seeder, because the scout needs the
+  // workspace and the scout runs before the first summary — see the ordering note in
+  // the header: everything that can fail happens before anything is written.
+  const runtime = ctx.db.getSessionRuntime(sessionId);
+  // One scout PER RUN, concurrently with nothing: each run is a separate summary about
+  // a separate stretch of work, and pointing one scout at the union of their files
+  // would scope every summary by every other run's subject. Failures are already `null`
+  // inside `exploreSpan`, so this cannot reject.
+  // No workspace, no scout: there is no checkout to read, and the transcript is then
+  // all there ever was to summarize from.
+  const workspace = runtime.workspace;
+  const explore = ctx.explore ?? ((span: readonly Message[], dir: string) =>
+    exploreSpan({ sessionId, workspace: dir }, span));
+  const notes = workspace
+    ? await Promise.all(runs.map((r) => explore(r.span, workspace)))
+    : runs.map(() => null);
   const summaries = await Promise.all(
-    runs.map((r) => summarize(ctx, model, r.span, args.instructions)),
+    runs.map((r, i) => summarize(ctx, model, r.span, args.instructions, notes[i])),
   );
 
-  const runtime = ctx.db.getSessionRuntime(sessionId);
   const seeder = openBranch(ctx, {
     // The TARGET'S parent — a sibling, not a child. This is the whole mechanism.
     parentId: session.parentId,

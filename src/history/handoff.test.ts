@@ -394,3 +394,63 @@ test("the drafting prompt forbids replying to the user or asking for input", asy
   assert.match(system, /a short prompt is a correct answer/i);
   f.db.close();
 });
+
+// ---- the scout --------------------------------------------------------------
+//
+// `/compact` in the TUI runs THIS, not compaction (spec §14), so the grounding that
+// keeps a draft from asserting work that was undone lands here. `history/explore.ts`
+// owns the scouting itself; what is pinned here is the contract: notes reach the
+// drafter, and a handoff happens whether or not the scout had anything to say.
+
+test("scout notes reach the drafter, ahead of the goal", async () => {
+  const f = fixture();
+  const { source } = scenario(f);
+  f.db.setSessionWorkspace(source.id, "/w");
+  let sawWorkspace = "";
+  f.ctx.explore = (_thread, workspace) => {
+    sawWorkspace = workspace;
+    return Promise.resolve("NOTES: the rename was reverted");
+  };
+
+  await handoff(f.ctx, source.id, { goal: "finish the relaunch path" });
+
+  assert.equal(sawWorkspace, "/w");
+  const prompt = f.llm.prompts[0];
+  assert.match(prompt, /NOTES: the rename was reverted/);
+  // Order matters: transcript, then what is true now, then what the new thread is for.
+  assert.ok(
+    prompt.indexOf("NOTES:") < prompt.indexOf("Goal for the new conversation"),
+    "the goal must be the last thing the drafter reads",
+  );
+  assert.match(f.llm.systems[0], /the notes are right/);
+  f.db.close();
+});
+
+test("a scout with nothing to say still hands off", async () => {
+  const f = fixture();
+  const { source } = scenario(f);
+  f.db.setSessionWorkspace(source.id, "/w");
+  f.ctx.explore = () => Promise.resolve(null);
+
+  const created = await handoff(f.ctx, source.id, { goal: "finish it" });
+
+  assert.equal(created.draft, "DRAFT");
+  assert.doesNotMatch(f.llm.prompts[0], /Scout notes/);
+  f.db.close();
+});
+
+test("a session with no workspace is never scouted", async () => {
+  const f = fixture();
+  // NOT `scenario`, which pins a checkout: the case is a session that never had one,
+  // and then there is nothing on disk for a scout to read.
+  const source = session(f.db, { title: "no checkout" });
+  text(f.db, source.id, "user", "we only talked");
+  f.ctx.explore = () => {
+    throw new Error("there is no checkout to read");
+  };
+
+  const created = await handoff(f.ctx, source.id, { goal: "finish it" });
+
+  assert.equal(created.draft, "DRAFT");
+  f.db.close();
+});

@@ -581,3 +581,45 @@ test("the route maps domain refusals to their statuses", async () => {
   );
   assert.equal(bad.status, 400);
 });
+
+// ---- the scout --------------------------------------------------------------
+//
+// `history/explore.ts` owns what the scout is pointed at and how its loop runs; what
+// belongs here is only the contract between them: notes reach the summarizer, and a
+// compaction happens either way. The `explore` seam is injected, so these run with no
+// shell and no second provider key.
+
+test("scout notes reach the summarizer, per run, with the prompt that ranks them", async () => {
+  const f = fixture();
+  const { source, messages } = conversation(f.db, ["m0", "m1", "m2", "m3", "m4", "m5"]);
+  // A scout only runs where there is a checkout to read, so the session needs one.
+  f.db.setSessionWorkspace(source.id, "/w");
+  const spans: string[][] = [];
+  f.ctx.explore = (span) => {
+    spans.push(span.map((m) => (m.parts[0]?.type === "text" ? m.parts[0].text : "")));
+    return Promise.resolve(`NOTES-${spans.length - 1}`);
+  };
+
+  await compact(f.ctx, source.id, { picks: picks(messages, 1, 4) });
+
+  // One scout per RUN, each seeing only its own run — the same scoping the summaries get.
+  assert.deepEqual(spans, [["m1"], ["m4"]]);
+  assert.match(f.llm.prompts[0], /NOTES-0/);
+  assert.doesNotMatch(f.llm.prompts[0], /NOTES-1/);
+  assert.match(f.llm.prompts[1], /NOTES-1/);
+  // And the summarizer is told what to do when the notes and the transcript disagree.
+  assert.match(f.llm.systems[0], /the notes are right/);
+});
+
+test("no notes leaves the summarizer exactly as it was before the scout existed", async () => {
+  const f = fixture();
+  const { source, messages } = conversation(f.db, ["a", "b", "c"]);
+  f.db.setSessionWorkspace(source.id, "/w");
+  f.ctx.explore = () => Promise.resolve(null);
+
+  const branch = await compact(f.ctx, source.id, { picks: picks(messages, 1) });
+
+  assert.deepEqual(textsOf(f.db.messagesFor(branch.id)), ["a", "SUMMARY-0", "c"]);
+  assert.doesNotMatch(f.llm.systems[0], /the notes are right/);
+  assert.doesNotMatch(f.llm.prompts[0], /Scout notes/);
+});

@@ -37,13 +37,14 @@
  */
 import { HandoffError } from "../errors.ts";
 import { clientFor, completeText } from "../llm/client.ts";
-import type { Session } from "../schema/parts.ts";
+import type { Message, Session } from "../schema/parts.ts";
 import { HandoffBody } from "../schema/requests.ts";
 import { DEFAULT_MODEL } from "../turn/runner.ts";
 import type { AppCtx, Bus, Db, LlmClient } from "../types.ts";
 import { json, parseBody } from "../server/http.ts";
 import { baseTitle, openBranch } from "./branch.ts";
 import { renderSpan } from "./compact.ts";
+import { exploreSpan } from "./explore.ts";
 import { inheritPins } from "./extract.ts";
 
 /** A goal, shortened to something that fits a tree row. Word-boundary, not mid-word. */
@@ -69,6 +70,12 @@ export interface HandoffCtx {
   model?: string;
   /** Injected clock, forwarded to the seeder. Absent = `Date.now`. */
   now?: () => number;
+  /**
+   * The scout (`history/explore.ts`). Same seam, same contract as compaction's: a
+   * bash-capable subagent reads the directories of the files the thread touched and
+   * returns notes, or `null` for every failure — a handoff is never taken down by it.
+   */
+  explore?: (thread: readonly Message[], workspace: string) => Promise<string | null>;
 }
 
 const SYSTEM =
@@ -91,9 +98,21 @@ const SYSTEM =
   "little or nothing relevant to the goal, say so in one line and then state the goal " +
   "as the task — a short prompt is a correct answer, a request for input is not. State " +
   "it as an INSTRUCTION (\"fix the coupon stacking in src/cart.py\"), never as a request " +
-  "for details: whoever reads this prompt is the one who will do the work.";
+  "for details: whoever reads this prompt is the one who will do the work.\n\n" +
+  // THE LIVE WORKSPACE. A draft written from the transcript alone asserts whatever the
+  // conversation last claimed, and a conversation claims things that were undone three
+  // turns later — which matters more here than anywhere else, because the new root
+  // inherits NO thread: this draft is the only context the next agent will ever have.
+  // The drafter itself gets no tools (it writes one prompt, in one call); the grounding
+  // arrives as SCOUT NOTES from a subagent that does run the commands
+  // (`history/explore.ts`), so what this paragraph says is what to DO with them.
+  "You may be given SCOUT NOTES: what a subagent found in the files this conversation " +
+  "touched, read from the checkout as it stands now. Where the notes and the " +
+  "transcript disagree about the state of the code, the notes are right — the " +
+  "transcript records intentions, some of which were undone later — so carry the paths " +
+  "and the state from the notes and the decisions and constraints from the transcript.";
 
-const MAX_TOKENS = 2048;
+const MAX_TOKENS = 8192;
 
 /**
  * The model that drafts.
@@ -140,7 +159,18 @@ export async function handoff(
   // `renderSpan` is compaction's transcript renderer, reused rather than reimplemented:
   // a second renderer would drift the moment a part kind is added, and it already clips
   // oversized tool payloads so one 200KB result cannot swallow the prompt.
-  const prompt = `${renderSpan(thread)}\n\nGoal for the new conversation: ${args.goal}`;
+  // The scout runs BEFORE the draft, and its workspace is read here for the same reason
+  // compaction reads it early: everything that can fail happens before a row is written.
+  // No workspace means no checkout to scout, and the transcript is all there is.
+  const runtime = ctx.db.getSessionRuntime(sessionId);
+  const explore = ctx.explore ?? ((span: readonly Message[], dir: string) =>
+    exploreSpan({ sessionId, workspace: dir }, span));
+  const notes = runtime.workspace ? await explore(thread, runtime.workspace) : null;
+  const prompt = [
+    renderSpan(thread),
+    ...(notes ? [`Scout notes — the files this conversation touched, as they are now:\n${notes}`] : []),
+    `Goal for the new conversation: ${args.goal}`,
+  ].join("\n\n");
   const draft = (await completeText(llm, {
     model,
     system: SYSTEM,
@@ -158,7 +188,6 @@ export async function handoff(
     );
   }
 
-  const runtime = ctx.db.getSessionRuntime(sessionId);
   const seeder = openBranch(ctx, {
     parentId: null, // a ROOT: it inherits no thread, only the draft
     // The GOAL when the source has no title of its own. A conversation whose auto-title

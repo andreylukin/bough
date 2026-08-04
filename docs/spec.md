@@ -632,6 +632,15 @@ prefills the new root's composer with the distilled prompt, editable and unsent.
 Compaction proper remains the operation for shortening a thread you intend to stay
 in. bough never compacts on its own (§17).
 
+**Both are scouted.** Before the drafter or the summarizer is called, a subagent
+with `bash` reads the directories of the files the span touched and reports what is
+in the checkout NOW; its notes go into the prompt, ranked above the transcript on
+matters of state. A transcript records intentions, some of which were undone later,
+and a handoff's draft is the *only* context the new root will ever have. The scout
+runs on a pinned cheap model (`BOUGH_COMPACT_EXPLORE_MODEL`, default
+`gpt-5.6-luna`) and is pure enrichment: no paths, no key, an error or an overrun all
+degrade to the unscouted prompt rather than failing the operation.
+
 Fork and compact rely on thread-through-parents: a new session parented at the
 target's parent inherits shared ancestors for free, and its own seeded messages
 reconstruct the rest. Both are limited to the session's *own* messages; a selection
