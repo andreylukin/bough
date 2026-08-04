@@ -500,7 +500,9 @@ test('the "not bound" section is true — none of those chords is bound', () => 
   // the section. `!` left for a different reason — it is a real sigil now (it starts
   // a shell job), so listing it as unavailable would be the section telling a lie,
   // which is the one thing it may not do.
-  const unbound = ["ctrl+g", "ctrl+v", "ctrl+r", "ctrl+z", "meta+d"];
+  // ^g left the section the same way ^y did: it copies the open conversation's id
+  // now, so listing it as unavailable would be the section telling a lie.
+  const unbound = ["ctrl+v", "ctrl+r", "ctrl+z", "meta+d"];
   for (const chord of unbound) {
     assert.equal(
       BINDINGS.some((b) => b.chord === chord),

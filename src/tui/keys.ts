@@ -134,6 +134,15 @@ export type Command =
    */
   | "session.new"
   | "session.compact"
+  /**
+   * Put the open conversation's id on the clipboard.
+   *
+   * The id is what every out-of-band route to this conversation is keyed by —
+   * `bough tags sql "… WHERE session_id = …"`, a `$BOUGH_SESSION` filter, a bug
+   * report naming the run — and the TUI never showed it. Transcribing it out of
+   * `~/.bough/bough.db` by hand is how you end up querying a neighbouring session.
+   */
+  | "session.copyId"
   /** Show the recurring runs — the only window the TUI has onto them. */
   | "schedules.show"
   /** List the saved workflows — the tab promises they can be run by name. */
@@ -864,6 +873,13 @@ export const BINDINGS: Binding[] = [
     section: "compose",
     desc: "start a fresh conversation",
   },
+  {
+    mode: "chat",
+    chord: "ctrl+g",
+    command: "session.copyId",
+    section: "compose",
+    desc: "copy this conversation's id",
+  },
   // `not: ["emptyDraft"]` is not decoration: with nothing typed there is nothing to
   // clear, and a double-tap that resolved here anyway SWALLOWED the gesture — a
   // user hammering Escape at a running turn got "cleared an empty draft" instead of
@@ -1584,11 +1600,6 @@ export const UNAVAILABLE: HelpSection = {
   section: "not bound",
   unavailable: true,
   keys: [
-    // Not a chord, but it belongs here for exactly the reason the section exists:
-    // three of the four sigils a user is told to expect are live, and typing `!ls`
-    // did not fail loudly — it went to the frontier model as an ordinary prompt and
-    // saying nothing costs money.
-    ["^g", "no $EDITOR handoff yet"],
     ["^v", "your terminal pastes text; ⌘v attaches a clipboard image"],
     // The two halves of "search" are different questions and this line answered
     // neither: ^r is still not bound, but saying only that left the reader believing

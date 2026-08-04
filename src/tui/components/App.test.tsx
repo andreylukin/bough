@@ -319,9 +319,12 @@ function fakeStore(over: Partial<TuiState> = {}): Store & { calls: string[] } {
     refreshWorkflows: track("refreshWorkflows"),
     refreshReplay: (id: string) => (calls.push(`replay:${id}`), Promise.resolve()),
     resync: noop,
-    notify: () => {},
+    // Publishes, rather than swallowing: a notice is the ONLY feedback some
+    // gestures give (^g says which id it copied), so a fake that drops it makes
+    // "the user was told" untestable — the same reason `publish` exists at all.
+    notify: (notice: string) => publish({ notice }),
     record: (m: string) => calls.push(`record:${m}`),
-    dismissNotice: () => {},
+    dismissNotice: () => publish({ notice: null }),
   };
 }
 
@@ -814,6 +817,36 @@ test("a drag over the PANEL copies what is on screen, not the transcript", async
       copied[0]?.includes("tree"),
       `expected the panel's own rows, got ${JSON.stringify(copied[0])}`,
     );
+  } finally {
+    await h.unmount();
+  }
+});
+
+test("^g copies the OPEN conversation's id, and says so", async () => {
+  // The id is the handle for every out-of-band route back to this conversation, and
+  // the assertion that matters is that it is the CURRENT one: the handler reads the
+  // store rather than the render it was memoised in, so a session switch after mount
+  // must move what ^g copies.
+  const copied: string[] = [];
+  const store = fakeStore(STATE);
+  const h = await mount(app(store, { copyText: (t: string) => copied.push(t) }));
+  try {
+    await h.press(ctrl("g"));
+    assert.deepEqual(copied, ["s1"]);
+    assert.ok(h.frame().includes("copied s1"), h.frame());
+  } finally {
+    await h.unmount();
+  }
+});
+
+test("^g with no conversation open copies nothing and says why", async () => {
+  const copied: string[] = [];
+  const store = fakeStore({ ...STATE, currentId: null, session: null, sessions: [] });
+  const h = await mount(app(store, { copyText: (t: string) => copied.push(t) }));
+  try {
+    await h.press(ctrl("g"));
+    assert.deepEqual(copied, [], "there is no id to copy");
+    assert.ok(h.frame().includes("no conversation is open"), h.frame());
   } finally {
     await h.unmount();
   }

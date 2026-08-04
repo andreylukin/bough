@@ -1527,6 +1527,23 @@ export function App(
       // in place, so the newest content hid behind the oldest mention.
       case "artifacts.show":
         return void store.describeArtifacts();
+      // The id is the handle every out-of-band route to this conversation needs —
+      // a `session_id =` filter over the history tables, a `bough` subcommand, a
+      // bug report naming the run — and until now the TUI never showed it, so it
+      // was read off the database by hand or guessed. `copyText` is the same OSC 52
+      // path a drag uses, so it survives SSH and tmux; if the terminal has no
+      // clipboard the id still lands in the notice, which is readable and
+      // selectable, rather than the gesture silently doing nothing.
+      case "session.copyId": {
+        // `store.getState()` and not the rendered `state`: this callback is memoised
+        // on `store`, so a captured `state` is the one from the render that built it
+        // — and copying the id of the conversation you were in two sessions ago is
+        // worse than not copying at all, because it looks like it worked.
+        const id = store.getState().currentId;
+        if (!id) return store.notify("no conversation is open yet");
+        copyText?.(id);
+        return store.notify(copyText ? `copied ${id}` : id);
+      }
       case "session.compact":
         return void store.compact(input || undefined).then((draft) => {
           if (draft) {
@@ -1826,6 +1843,7 @@ export function App(
     attachments,
     pastedTexts,
     attachmentSel,
+    copyText,
   ]);
 
   // A paste, a wheel tick and the Home/End keys the filter takes off the stream
