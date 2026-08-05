@@ -147,14 +147,26 @@ test("rankTags carries the arithmetic it sorted by", () => {
 
 test("tagsNoteFor names the top tags once and freezes per session", () => {
   const now = 1_000_000;
+  // Two uses each: the note demotes a word used exactly once, which is not yet
+  // vocabulary — see `rankTags`.
   const db = stubDb([
     { tag: "git", ts: now, exitCode: 0 },
+    { tag: "git", ts: now - DAY, exitCode: 0 },
     { tag: "bun", ts: now, exitCode: 0 },
+    { tag: "bun", ts: now - DAY, exitCode: 0 },
   ]);
   const first = tagsNoteFor(db, "sess", "/ws", now);
   ok(first !== null && first.includes("git") && first.includes("bun"));
   // A session's note never drifts, even when the stats underneath it change.
-  const drifted = tagsNoteFor(stubDb([{ tag: "other", ts: now, exitCode: 0 }]), "sess", "/ws", now);
+  const drifted = tagsNoteFor(
+    stubDb([
+      { tag: "other", ts: now, exitCode: 0 },
+      { tag: "other", ts: now - DAY, exitCode: 0 },
+    ]),
+    "sess",
+    "/ws",
+    now,
+  );
   eq(drifted, first);
 });
 
@@ -170,7 +182,7 @@ test("tagsNoteFor is null — and stays null — for a project with no history",
 test("a directory hints only when its profile diverges from the primed set", () => {
   const now = 1_000_000;
   const db = stubDb(
-    [{ tag: "bun", ts: now, exitCode: 0 }],
+    [{ tag: "bun", ts: now, exitCode: 0 }, { tag: "bun", ts: now - DAY, exitCode: 0 }],
     {
       "migrations": [{ tag: "psql", ts: now, exitCode: 0 }, { tag: "bun", ts: now, exitCode: 0 }],
       "src/tui": [{ tag: "bun", ts: now, exitCode: 0 }],

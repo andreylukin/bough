@@ -141,6 +141,15 @@ export interface TagDiversityDay {
   distinctRefs: number;
   /** Total tag applications, so `distinctTags / tagUses` reads as repetition. */
   tagUses: number;
+  /**
+   * Coined tags used EXACTLY ONCE that day — the vocabulary that did not converge.
+   *
+   * The measurement hygiene is judged by: `singletons / distinctTags` is the share
+   * of a day's new words that named something once and were never reached for
+   * again. It will never be zero (vocabulary growth is a power law), so the number
+   * to watch is the ratio moving on a date, not its absolute value.
+   */
+  singletons: number;
 }
 
 /** One recalled command, as `bough tags show` prints it. */
@@ -276,6 +285,8 @@ export interface Db {
   tagDiversityByDay(sinceTs: number, repo?: string): TagDiversityDay[];
   /** Commands recorded under one tag, newest first. */
   commandsForTag(tag: string, opts?: { repo?: string; limit?: number }): TaggedCommand[];
+  /** This repo's coined tags (references excluded) and their use counts. */
+  repoTagCounts(repo: string, sinceTs: number): Map<string, number>;
   /** How this exact command has failed in this repo since `sinceTs`, or null. */
   priorFailures(
     repo: string,

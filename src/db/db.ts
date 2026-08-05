@@ -1289,6 +1289,7 @@ export class SqliteDb implements DbPort {
       distinct_tags: number;
       distinct_refs: number;
       tag_uses: number;
+      singletons: number;
     }>(
       `WITH d AS (
          SELECT h.id AS id, h.session_id AS session_id, h.tags AS tags,
@@ -1301,7 +1302,12 @@ export class SqliteDb implements DbPort {
               COUNT(DISTINCT CASE WHEN d.tags <> '' THEN d.id END) AS tagged,
               COUNT(DISTINCT CASE WHEN instr(t.tag, '.') = 0 THEN t.tag END) AS distinct_tags,
               COUNT(DISTINCT CASE WHEN instr(t.tag, '.') > 0 THEN t.tag END) AS distinct_refs,
-              COUNT(t.tag) AS tag_uses
+              COUNT(t.tag) AS tag_uses,
+              (SELECT COUNT(*) FROM (
+                 SELECT t2.tag FROM d d2 JOIN command_tags t2 ON t2.command_id = d2.id
+                  WHERE d2.day = d.day AND instr(t2.tag, '.') = 0
+                  GROUP BY t2.tag HAVING COUNT(*) = 1
+               )) AS singletons
          FROM d LEFT JOIN command_tags t ON t.command_id = d.id
         GROUP BY d.day ORDER BY d.day DESC`,
       ...params,
@@ -1313,6 +1319,7 @@ export class SqliteDb implements DbPort {
       distinctTags: r.distinct_tags,
       distinctRefs: r.distinct_refs,
       tagUses: r.tag_uses,
+      singletons: r.singletons,
     }));
   }
 
@@ -1373,6 +1380,26 @@ export class SqliteDb implements DbPort {
       sessionId: r.session_id,
       messageId: r.message_id,
     }));
+  }
+
+  /**
+   * This repo's coined vocabulary and how often each word was used — the input to
+   * write-time tag hygiene (`history/hygiene.ts`), which needs to know what is
+   * already a word here before it can tell a novel one from a typo of one.
+   *
+   * References are excluded: they are keys, never vocabulary, and nothing may snap
+   * onto or away from `linear.eng-1234`.
+   */
+  repoTagCounts(repo: string, sinceTs: number): Map<string, number> {
+    const rows = this.#all<{ tag: string; uses: number }>(
+      `SELECT t.tag AS tag, count(*) AS uses
+         FROM command_history h JOIN command_tags t ON t.command_id = h.id
+        WHERE h.repo = ? AND h.ts >= ? AND instr(t.tag, '.') = 0
+        GROUP BY t.tag`,
+      repo,
+      sinceTs,
+    );
+    return new Map(rows.map((r) => [r.tag, r.uses]));
   }
 
   /**

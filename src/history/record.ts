@@ -16,6 +16,7 @@ import { spawnSync } from "node:child_process";
 import { statSync } from "node:fs";
 import { isAbsolute, dirname, relative, resolve } from "node:path";
 import type { CommandRecord, Db } from "../types.ts";
+import { cleanTags } from "./hygiene.ts";
 
 /** What the shell verbs hand over when a command finishes. */
 export interface FinishedCommand {
@@ -54,6 +55,14 @@ export type CommandRecorder = (e: FinishedCommand) => void;
 /** Tags the model may write: short lowercase slugs, colon-separated. No dashes. */
 const TAG_CHARS = /[^a-z0-9_.]+/g;
 const MAX_TAGS = 8;
+
+/**
+ * How far back "already a word here" reaches. Matches the priming note's lookback
+ * (`history/stats.ts`) on purpose: hygiene should judge a tag against the same
+ * vocabulary the model is being primed with, or it would drop words the note is
+ * still recommending.
+ */
+const VOCAB_LOOKBACK_MS = 150 * 24 * 60 * 60 * 1000;
 
 /**
  * A REFERENCE: `namespace.id`, pointing at something with an identity outside
@@ -109,6 +118,14 @@ export function normalizeTags(raw: string | undefined): string {
       // At least one letter or digit: `...` survives the character filter (dots are
       // legal in a tag) and would then read as a reference, which it is not.
       if (/[a-z0-9]/.test(tag)) out.push(tag);
+      // NO BARE-NUMBER RULE HERE, though 28 of this corpus's 572 singletons are
+      // bare numbers and dropping them was the obvious cheap win. It is wrong:
+      // `ENG-1234` written without a namespace normalizes to `eng:1234`, and the
+      // number is the half that identifies the ticket — dropping it leaves `eng`,
+      // which points at nothing, and `bough tags show 1234` is exactly how a
+      // bare-written reference is meant to be found again. Guy & Tonkin's warning
+      // covers this case precisely: some single-use tags are unique markers BY
+      // DESIGN, and a ticket number is one.
     }
   }
   return out.slice(0, MAX_TAGS).join(":");
@@ -299,17 +316,29 @@ export interface RecorderCtx {
  * Every failure is swallowed: memory is a side channel, never a turn hazard.
  */
 export function createCommandRecorder(ctx: RecorderCtx): CommandRecorder {
+  // One vocabulary read per repo per turn. The set a turn is judged against must
+  // also be STABLE across that turn — a word coined by the first command would
+  // otherwise be established vocabulary by the third, and the same tag would be
+  // dropped or kept depending on where in the program it happened to run.
+  const vocabByRepo = new Map<string, Map<string, number>>();
+  const vocabFor = (repo: string, now: number): Map<string, number> => {
+    let v = vocabByRepo.get(repo);
+    if (!v) vocabByRepo.set(repo, (v = ctx.db.repoTagCounts(repo, now - VOCAB_LOOKBACK_MS)));
+    return v;
+  };
   return (e) => {
     try {
       const { repo, relDirs, absDirs } = attributeCommand(e.command, ctx.workspace);
       ctx.touched?.push(...absDirs);
+      const ts = (ctx.now ?? Date.now)();
+      const tagList = cleanTags(splitTags(e.tags), e.command, vocabFor(repo, ts));
       const record: CommandRecord = {
         sessionId: ctx.sessionId,
-        ts: (ctx.now ?? Date.now)(),
+        ts,
         repo,
         cmd: e.command,
-        tags: e.tags,
-        tagList: splitTags(e.tags),
+        tags: tagList.join(":"),
+        tagList,
         dirs: relDirs,
         exitCode: e.exitCode,
         durationMs: e.durationMs,

@@ -132,8 +132,25 @@ export function rankTags(
   weights: Map<string, number>,
   spread: { repos: number; byTag: Map<string, number> },
   limit: number,
+  uses?: Map<string, number>,
 ): RankedTag[] {
   return [...weights.entries()]
+    // A WORD USED ONCE IS NOT YET VOCABULARY. 40% of this memory's coined tags have
+    // exactly one use, and a list whose job is "the words to reuse here" cannot be
+    // teaching one of them. Sen et al. (CSCW 2006) put it as a design rule: a tag
+    // "applied very few times may be useless due to its obscurity".
+    //
+    // DEMOTED, NOT DELETED — the row keeps the tag, `tags show` still finds it, FTS
+    // still indexes it. Guy & Tonkin's objection to tidying folksonomies is about
+    // destroying metadata that may prove useful in another context; hiding a word
+    // from a ten-slot suggestion list destroys nothing. This is where the bulk of
+    // the singleton problem is handled, because write-time rules provably cannot:
+    // no command in the corpus coins more than two novel tags, so the sprawl is 530
+    // separate commands each coining one, which only a read-side filter can reach.
+    //
+    // Absent `uses` (the per-directory hints), nothing is demoted — those lists are
+    // already narrow and answer a different question.
+    .filter(([tag]) => (uses?.get(tag) ?? 2) > 1)
     // REFERENCES NEVER RANK. `linear.eng-1234` lives in exactly one repo, so the idf
     // below hands it the maximum boost — and it accumulates real weight, because a
     // ticket is worked over many commands. The two multiply, and the note would open
@@ -182,8 +199,10 @@ export function rankedRepoTags(
   limit = TOP_TAGS,
 ): RankedTag[] {
   const since = now - LOOKBACK_MS;
-  const weights = tagWeights(db.commandTagRows(repo, { sinceTs: since }), now);
-  return rankTags(weights, db.tagSpread(since), limit);
+  const rows = db.commandTagRows(repo, { sinceTs: since });
+  const uses = new Map<string, number>();
+  for (const r of rows) uses.set(r.tag, (uses.get(r.tag) ?? 0) + 1);
+  return rankTags(tagWeights(rows, now), db.tagSpread(since), limit, uses);
 }
 
 // ---------------------------------------------------------------------------

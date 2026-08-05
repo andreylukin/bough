@@ -302,18 +302,23 @@ function renderStats(days: TagDiversityDay[], out: (l: string) => void): void {
   out(
     `  ${pad("day", 12)}${lpad("sessions", 9)}${lpad("cmds", 6)}${lpad("tagged", 8)}${
       lpad("vocab", 7)
-    }${lpad("refs", 6)}${lpad("uses", 6)}`,
+    }${lpad("refs", 6)}${lpad("uses", 6)}${lpad("once", 6)}`,
   );
   for (const d of days) {
     // `tagged` as a share, because the absolute count says nothing without the
     // total — and the share is the number that moves when a leg goes untagged.
     const share = d.commands === 0 ? "—" : `${Math.round((d.tagged / d.commands) * 100)}%`;
+    // As a share of the day's vocabulary, for the same reason `tagged` is a share:
+    // 572 singletons means nothing until you know it is 40% of 1,431.
+    const once = d.distinctTags === 0
+      ? "—"
+      : `${Math.round((d.singletons / d.distinctTags) * 100)}%`;
     out(
       `  ${pad(d.day, 12)}${lpad(String(d.sessions), 9)}${lpad(String(d.commands), 6)}${
         lpad(share, 8)
       }${lpad(String(d.distinctTags), 7)}${lpad(String(d.distinctRefs), 6)}${
         lpad(String(d.tagUses), 6)
-      }`,
+      }${lpad(once, 6)}`,
     );
   }
   out("");
@@ -321,7 +326,10 @@ function renderStats(days: TagDiversityDay[], out: (l: string) => void): void {
   out("  counted apart so a busy ticket week does not read as a richer vocabulary;");
   out("  uses is how often any tag was applied. vocab rising with uses flat is the");
   out("  model naming more things, which is the point; uses rising with vocab flat is");
-  out("  it repeating itself.");
+  out("  it repeating itself. once is the share of that day's vocabulary used");
+  out("  EXACTLY ONCE — words that named something and were never reached for");
+  out("  again. It is never zero (vocabulary growth is a power law); what matters");
+  out("  is the share moving on a date a hygiene or prompt change landed.");
 }
 
 /**
