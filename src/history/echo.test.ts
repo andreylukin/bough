@@ -25,6 +25,8 @@ import type { Db } from "../types.ts";
 const WS = "/nonexistent-workspace-for-echo-tests";
 const SESSION = "s1";
 const T0 = 1_700_000_000_000;
+/** What every failing command in these tests printed. */
+const ERR = 'invalid argument "merged"\n[exit code 1]';
 
 function fail(db: Db, cmd: string, opts: { ts: number; session?: string; out?: string }): void {
   db.recordCommand({
@@ -59,7 +61,7 @@ function echoOver(db: Db, now: () => number) {
 test("a command with no failing history gets no note", () => {
   const db = freshDb();
   const echo = echoOver(db, () => T0);
-  assert.equal(echo.note("gh search prs --state merged", 1), null);
+  assert.equal(echo.note("gh search prs --state merged", 1, ERR), null);
   db.close();
 });
 
@@ -67,7 +69,7 @@ test("a repeat failure is echoed with the count and the last error", () => {
   const db = freshDb();
   fail(db, "gh search prs --state merged", { ts: T0 - 60_000 });
   fail(db, "gh search prs --state merged", { ts: T0 - 30_000 });
-  const note = echoOver(db, () => T0).note("gh search prs --state merged", 1);
+  const note = echoOver(db, () => T0).note("gh search prs --state merged", 1, ERR);
   assert.ok(note, "expected a note");
   assert.match(note, /already failed here 2×/);
   assert.match(note, /invalid argument "merged"/);
@@ -93,7 +95,7 @@ test("a successful sibling command is offered alongside the failure", () => {
     spillPath: null,
     source: "live",
   });
-  const note = echoOver(db, () => T0).note("gh search prs --state merged", 1);
+  const note = echoOver(db, () => T0).note("gh search prs --state merged", 1, ERR);
   assert.ok(note);
   assert.match(note, /this exited 0 here: gh search prs --state closed --json number/);
   db.close();
@@ -103,7 +105,7 @@ test("a success is never echoed, however bad its history", () => {
   const db = freshDb();
   fail(db, "flaky", { ts: T0 - 10_000 });
   fail(db, "flaky", { ts: T0 - 5_000 });
-  assert.equal(echoOver(db, () => T0).note("flaky", 0), null);
+  assert.equal(echoOver(db, () => T0).note("flaky", 0, ERR), null);
   db.close();
 });
 
@@ -166,7 +168,7 @@ test("a command containing LIKE wildcards cannot widen its own success lookup", 
     spillPath: null,
     source: "live",
   });
-  const note = echoOver(db, () => T0).note("rg %_ src", 1);
+  const note = echoOver(db, () => T0).note("rg %_ src", 1, ERR);
   assert.ok(note);
   assert.doesNotMatch(note, /unrelated-thing/, "`%_` must be escaped, not matched as wildcards");
   db.close();
@@ -182,6 +184,72 @@ test("a broken lookup is silent, never a thrown round", () => {
     },
   } as unknown as Db;
   const echo = echoOver(exploding, () => T0);
-  assert.equal(echo.note("anything", 1), null);
+  assert.equal(echo.note("anything", 1, ERR), null);
   assert.equal(echo.guard("anything"), null);
+});
+
+// ---------------------------------------------------------------------------
+// The error path — the incident this was actually built for
+// ---------------------------------------------------------------------------
+
+test("THE REAL INCIDENT: a hundred distinct commands, one mistake", () => {
+  // Reconstructed from the rows that motivated this module. Every command differs
+  // (one ticket each), every command fails identically. Command-identity matching
+  // sees nothing here — that is the whole point of the error path.
+  const db = freshDb();
+  const tickets = ["NMC-5630", "NMFB-1811", "NMC-5602", "NMC-5881"];
+  const cmdFor = (t: string) =>
+    `gh search prs "${t}" --owner uni-intelligence --state merged --json number --limit 20`;
+  tickets.forEach((t, i) => fail(db, cmdFor(t), { ts: T0 - (40 - i) * 1_000 }));
+  const echo = echoOver(db, () => T0);
+  const next = cmdFor("NMC-9999");
+
+  // The byte-exact matchers are blind to it, exactly as they were in production.
+  assert.equal(echo.guard(next), null, "distinct commands are not a stuck loop");
+  const note = echo.note(next, 1, ERR);
+  assert.ok(note, "the error path must see what command identity cannot");
+  assert.match(note, /4 other commands here failed the same way/);
+  assert.match(note, /invalid argument "merged"/);
+  assert.match(note, /The command has been changing; the mistake has not/);
+  assert.doesNotMatch(note, /this exact command/, "no command ran twice");
+  db.close();
+});
+
+test("one other command with the same error is not yet a pattern", () => {
+  const db = freshDb();
+  fail(db, "gh pr list --state merged", { ts: T0 - 5_000 });
+  assert.equal(echoOver(db, () => T0).note("gh search prs --state merged", 1, ERR), null);
+  db.close();
+});
+
+test("a different error does not group, however many commands failed", () => {
+  const db = freshDb();
+  for (let i = 0; i < 6; i++) {
+    fail(db, `cmd-${i}`, { ts: T0 - 5_000, out: `connection refused on port ${i}\n[exit code 1]` });
+  }
+  // Same repo, plenty of failures, unrelated mistake.
+  assert.equal(echoOver(db, () => T0).note("gh search prs --state merged", 1, ERR), null);
+  db.close();
+});
+
+test("both matchers can speak at once, command first", () => {
+  const db = freshDb();
+  const cmd = "gh search prs --state merged";
+  fail(db, cmd, { ts: T0 - 9_000 });
+  fail(db, "gh search prs --owner x --state merged", { ts: T0 - 8_000 });
+  fail(db, "gh search prs --owner y --state merged", { ts: T0 - 7_000 });
+  const note = echoOver(db, () => T0).note(cmd, 1, ERR);
+  assert.ok(note);
+  const exact = note.indexOf("this exact command");
+  const spread = note.indexOf("other commands here failed the same way");
+  assert.ok(exact >= 0 && spread >= 0, "both lines present");
+  assert.ok(exact < spread, "the certain fact comes before the inferred pattern");
+  db.close();
+});
+
+test("a command that printed nothing has no signature to group on", () => {
+  const db = freshDb();
+  for (let i = 0; i < 4; i++) fail(db, `q-${i}`, { ts: T0 - 5_000, out: "" });
+  assert.equal(echoOver(db, () => T0).note("q-new", 1, ""), null);
+  db.close();
 });

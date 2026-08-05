@@ -12,13 +12,16 @@ hint), query that tag before exploring fresh. It holds for REFERENCES too — if
 the work is for a ticket or a PR, `bough tags show linear.eng-1234` is every
 command already run for it.
 
-Some of it reaches you without being asked. When a command fails that has failed
-here before, a `[history]` line follows its output with the earlier error and, if
-there is one, a command of the same shape that exited 0 — read it before you try
-again. And a command that has already failed three times in this session inside
-two minutes is NOT RUN a fourth time: the output starts `[not run]`, nothing was
-spawned, and the previous error is quoted. That is a loop, not a flake. Change
-the command — any edit makes it a different command and it runs.
+Some of it reaches you without being asked. A failing command gets a `[history]`
+line under its output when the memory has something on it — that this exact
+command has failed here before, or that OTHER commands here have already failed
+the same way. The second one is the one to slow down for: it means the thing you
+keep changing is not the thing that is wrong. Read the error, not the arguments.
+
+A command that has failed three times in this session inside two minutes is NOT
+RUN a fourth time: the output starts `[not run]`, nothing was spawned, and the
+previous error is quoted. That is a loop, not a flake. Any edit makes it a
+different command and it runs again.
 
 The rest is reached through the CLI, in bash. There is no host function:
 

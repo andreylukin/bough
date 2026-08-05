@@ -90,7 +90,7 @@ export type ShellCtx = Pick<TurnCtx, "sessionId" | "workspace"> & {
    * caller without a database — every existing test — simply gets no echo.
    */
   echo?: {
-    note(command: string, exitCode: number | null): string | null;
+    note(command: string, exitCode: number | null, output: string): string | null;
     guard(command: string): string | null;
   };
 };
@@ -282,7 +282,7 @@ export async function bash(
       const final = formatFinal(shell);
       // Asked BEFORE this run is recorded, so "already failed here 3×" means three
       // times before this one — a first failure has no history and says nothing.
-      const echo = ctx.echo?.note(command, code);
+      const echo = ctx.echo?.note(command, code, final);
       ctx.record?.({
         command,
         tags,
@@ -410,7 +410,7 @@ export async function shConcurrent(
       // what the program saw — spill marker included.
       // Noted but never guarded: `sh` legs run concurrently, so the count a guard
       // would read is racing its own siblings. A loop is a `bash` shape anyway.
-      const echo = ctx.echo?.note(command, status.code);
+      const echo = ctx.echo?.note(command, status.code, out);
       ctx.record?.({
         command,
         tags,

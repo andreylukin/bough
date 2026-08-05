@@ -294,6 +294,12 @@ export interface Db {
     sinceTs: number,
     sessionId: string,
   ): PriorFailures | null;
+  /** Recent failing commands in this repo, newest first — for error-signature recall. */
+  recentFailures(
+    repo: string,
+    sinceTs: number,
+    limit: number,
+  ): { cmd: string; outputHead: string; ts: number; sessionId: string }[];
   /** The newest successful command in this repo starting with a LIKE `prefix`. */
   lastSuccessLike(repo: string, prefix: string, notCmd: string, sinceTs: number): string | null;
   /** The `run_steps` program a supervisor message ran, or null. */

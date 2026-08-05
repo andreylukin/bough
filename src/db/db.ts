@@ -1447,6 +1447,36 @@ export class SqliteDb implements DbPort {
   }
 
   /**
+   * Recent failures in this repo, newest first — the input to error-signature
+   * recall (`history/echo.ts`), which groups by what a command PRINTED rather than
+   * by what it was called.
+   *
+   * The signature is computed in JS rather than SQL because it is a line-oriented
+   * normalization of `output_head`, and because storing one would mean a column;
+   * the schema is frozen. Bounded by `limit` and the caller's window so this stays
+   * an index range-scan over `(repo, ts)`.
+   */
+  recentFailures(
+    repo: string,
+    sinceTs: number,
+    limit: number,
+  ): { cmd: string; outputHead: string; ts: number; sessionId: string }[] {
+    return this.#all<{ cmd: string; output_head: string; ts: number; session_id: string }>(
+      `SELECT cmd, output_head, ts, session_id
+         FROM command_history
+        WHERE repo = ? AND ts >= ? AND exit_code IS NOT NULL AND exit_code <> 0
+        ORDER BY ts DESC LIMIT ${Math.max(1, Math.trunc(limit))}`,
+      repo,
+      sinceTs,
+    ).map((r) => ({
+      cmd: r.cmd,
+      outputHead: r.output_head ?? "",
+      ts: r.ts,
+      sessionId: r.session_id,
+    }));
+  }
+
+  /**
    * The most recent command that SUCCEEDED here and starts with `prefix` — the
    * "someone already got this right" half of the echo. `prefix` is matched with
    * LIKE and must already be escaped for it (`history/echo.ts` builds it from the
