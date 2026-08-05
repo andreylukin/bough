@@ -77,6 +77,20 @@ function successFactor(exitCode: number | null): number {
  * `successFactor` is ours and stays: the paper's corpora have no exit codes, and a
  * tag attached to a command that failed is weaker evidence about this project's
  * vocabulary than one attached to a command that worked.
+ *
+ * MEASURED HERE, and the answer depended entirely on the horizon —
+ * `bench/tags/rank_ab.ts` over 6,795 commands across 28 repos. Predicting the next
+ * TWO hours of tags, this ranking beats the exponential it replaced on precision@10
+ * (54.4% vs 53.0%), on MRR (0.888 vs 0.853), and head-to-head on 16 cuts against 8.
+ * Predicting the next TWENTY-FOUR, it loses, and raw frequency with no time term at
+ * all wins 10 cuts to 0.
+ *
+ * Two hours is the horizon that exists: the note is frozen for the life of a session
+ * (see the module header) and 124 of 127 sessions in that corpus ran under two
+ * hours, mean thirteen minutes. A ranking tuned for the day-long session would be
+ * tuned for nobody. The effects are small and the corpus is three days old, so this
+ * is a reason to keep the change rather than proof it is large — but the exponential
+ * came last or tied at every horizon tested, and that part is not ambiguous.
  */
 export function tagWeights(rows: CommandTagRow[], now: number): Map<string, number> {
   const weights = new Map<string, number>();
